@@ -218,7 +218,7 @@ export function convertResponsesMessages<TApi extends Api>(
 
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
-					if (block.thinkingSignature) {
+					if (block.thinkingSignature && assistantMsg.api === model.api) {
 						const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
 						output.push(reasoningItem);
 					}

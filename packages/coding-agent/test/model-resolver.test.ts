@@ -795,3 +795,10 @@ describe("default model selection", () => {
 		expect(result.model?.id).toBe("deepseek-v4-flash");
 	});
 });
+
+describe("timi provider defaults", () => {
+	test("defaults to gpt-5.6-sol for timi provider", () => {
+		expect(defaultModelPerProvider.timi).toBe("gpt-5.6-sol");
+		console.log("[VERIFY] VC-003: default_model=gpt-5.6-sol");
+	});
+});

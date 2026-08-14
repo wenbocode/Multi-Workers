@@ -211,6 +211,14 @@ export async function retryAssistantCall(
 }
 
 /**
+ * Diagnostic type set by providers to opt out of outer retries for errors that
+ * occurred before the stream started (pre-start terminal errors). When present
+ * with `outerRetryEligible: false`, the outer agent loop must not restart the
+ * turn.
+ */
+export const PROVIDER_RETRY_BOUNDARY_DIAGNOSTIC = "provider_retry_boundary";
+
+/**
  * Classifies whether a failed assistant message looks like a transient provider
  * or transport error, so callers can decide if the last assistant turn should be
  * restarted.
@@ -221,6 +229,10 @@ export async function retryAssistantCall(
  */
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
 	if (message.stopReason !== "error" || !message.errorMessage) return false;
+	const boundary = message.diagnostics?.find(
+		(d) => d.type === PROVIDER_RETRY_BOUNDARY_DIAGNOSTIC && d.details?.outerRetryEligible === false,
+	);
+	if (boundary) return false;
 	const errorMessage = message.errorMessage;
 	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
 	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);

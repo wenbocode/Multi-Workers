@@ -1166,6 +1166,8 @@ function convertMessages(
 				});
 			}
 		} else if (msg.role === "assistant") {
+			const assistantMsgForApi = msg as AssistantMessage;
+			const isSameApi = assistantMsgForApi.api === "anthropic-messages";
 			const blocks: ContentBlockParam[] = [];
 
 			for (const block of msg.content) {
@@ -1176,6 +1178,7 @@ function convertMessages(
 						text: sanitizeSurrogates(block.text),
 					});
 				} else if (block.type === "thinking") {
+					if (!isSameApi) continue;
 					// Redacted thinking: pass the opaque payload back as redacted_thinking
 					if (block.redacted) {
 						blocks.push({

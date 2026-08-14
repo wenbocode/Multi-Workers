@@ -78,6 +78,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 
 	const envMap: Record<string, string> = {
 		"ant-ling": "ANT_LING_API_KEY",
+		timi: "TIMI_API_KEY",
 		"qwen-token-plan": "QWEN_TOKEN_PLAN_API_KEY",
 		"qwen-token-plan-cn": "QWEN_TOKEN_PLAN_CN_API_KEY",
 		openai: "OPENAI_API_KEY",

@@ -361,6 +361,8 @@ ${chalk.bold("Environment Variables:")}
   ANTHROPIC_API_KEY                - Anthropic Claude API key
   ANTHROPIC_OAUTH_TOKEN            - Anthropic OAuth token (alternative to API key)
   ANT_LING_API_KEY                 - Ant Ling API key
+  TIMI_API_KEY                     - Timi AI API key
+  TIMI_BASE_URL                    - Timi AI base URL (default: http://api.timiai.woa.com/ai_api_manage/llmproxy; set to http://127.0.0.1:7003 for local claude proxy)
   OPENAI_API_KEY                   - OpenAI GPT API key
   AZURE_OPENAI_API_KEY             - Azure OpenAI API key
   AZURE_OPENAI_BASE_URL            - Azure OpenAI/Cognitive Services base URL (e.g. https://{resource}.openai.azure.com)

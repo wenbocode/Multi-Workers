@@ -1,0 +1,6 @@
+# Index Parallel
+
+| Key | Status | Phase | ClaimId | Deps | Desc | Updated |
+|-----|--------|-------|---------|------|------|---------|
+| agent-team-loop | active | EXECUTE | 20260808-174558-3176 | — | Agent Team Loop: multi-CLI worker orchestration (pi/codex/claude) via AgenticTask PM + timi-proxy routing | 2026-08-11 16:14 |
+| timi-gpt-pi-routing | active | EXECUTE | 20260814-151438-9272 | agent-team-loop | Fix Pi Timi GPT Responses routing and Multi-Workers launcher integration | 2026-08-14 15:25 |
