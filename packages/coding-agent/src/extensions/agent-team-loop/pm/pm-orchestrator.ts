@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import { IndexStore } from "../shared/index-store.ts";
-import { getMwStatus, startMw } from "../shared/mw-runner.ts";
+import { getMwStatus, initMw, startMw } from "../shared/mw-runner.ts";
 import { WorkerStore } from "../shared/worker-store.ts";
 import { readOrElicitGoal } from "./goal-reader.ts";
 import { dispatchTask } from "./task-dispatcher.ts";
@@ -108,6 +108,18 @@ export function pmActivate(pi: ExtensionAPI): void {
 
 	// Defer action method calls to after runner.initialize() (session_start fires post-init)
 	pi.on("session_start", async () => {
+		// Auto-init project if extension bundle not installed yet
+		const bundleInstalled = fs.existsSync(path.join(projectDir, ".pi", "extensions", "agent-team-loop.js"));
+		if (!bundleInstalled) {
+			const result = initMw(projectDir);
+			if (result.ok) {
+				displaySummary(pi, "[mw] Project initialized — .agenticdoc/ .mw/ .pi/extensions/ created.");
+			} else {
+				displaySummary(pi, `[mw] Init failed: ${result.error}`);
+				return;
+			}
+		}
+
 		// Auto-start mw background service if not already running
 		const mwStatus = getMwStatus(projectDir);
 		if (!mwStatus.running) {

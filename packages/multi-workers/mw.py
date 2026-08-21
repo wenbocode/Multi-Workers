@@ -6,7 +6,9 @@ Subcommands:
   start  — background: detach and run serve
   stop   — send SIGTERM to running mw serve
   status — check if mw serve is running
-  init   — install Extension bundle into project (implemented in T-14)
+  init   — install Extension bundle + AgenticTask framework into project
+  pull-agentictask — cache the AgenticTask framework source into .tmp/
+  setup  — one-time machine bootstrap: cache framework + install extension globally
 """
 
 from __future__ import annotations
@@ -22,6 +24,13 @@ import time
 _SCRIPT_DIR = pathlib.Path(__file__).parent
 _LAUNCHER_PY = _SCRIPT_DIR / "launcher.py"
 _PROXY_MULTI_PY = _SCRIPT_DIR / "proxy_multi.py"
+
+# Local, gitignored cache for the AgenticTask framework source. `pull-agentictask`
+# populates it once; `init` installs from it so target projects never reach into
+# an external directory. Override the pull source with `--from`.
+_TMP_AGENTICTASK = _SCRIPT_DIR / ".tmp" / "agentic-task"
+_DEFAULT_AGENTICTASK_SOURCE = pathlib.Path(r"H:\AgenticTask")
+_AGENTICTASK_IGNORE = {".git", "__pycache__"}
 
 
 # ── PID helpers ──────────────────────────────────────────────────────────────
@@ -104,6 +113,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     project_dir = pathlib.Path(args.project).resolve()
     pid_path = _pid_path(project_dir)
+    mw_dir = project_dir / ".mw"
+    mw_dir.mkdir(parents=True, exist_ok=True)
 
     existing = _check_pid(pid_path)
     if existing is not None:
@@ -116,12 +127,24 @@ def cmd_serve(args: argparse.Namespace) -> int:
     _clear_stop_request(project_dir)
     _write_pid(pid_path)
 
+    # ── Logging: redirect own stdout/stderr to mw.log ──
+    mw_log = open(mw_dir / "mw.log", "a", encoding="utf-8")
+    proxy_log = open(mw_dir / "proxy.log", "a", encoding="utf-8")
+    launcher_log = open(mw_dir / "launcher.log", "a", encoding="utf-8")
+    sys.stdout = mw_log
+    sys.stderr = mw_log
+
     intentional_stop = threading.Event()
     exit_code = 1  # default: unexpected/error exit
     proxy_proc: subprocess.Popen[bytes] | None = None
     launcher_proc: subprocess.Popen[bytes] | None = None
 
     try:
+        # Build spawn kwargs: hide console window on Windows
+        spawn_kwargs: dict = {}
+        if sys.platform == "win32":
+            spawn_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+
         proxy_cmd = [
             sys.executable,
             str(_PROXY_MULTI_PY),
@@ -130,7 +153,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         ]
         if args.deepseek_port:
             proxy_cmd.append(f"--deepseek-port={args.deepseek_port}")
-        proxy_proc = subprocess.Popen(proxy_cmd)  # noqa: S603
+        proxy_proc = subprocess.Popen(proxy_cmd, stdout=proxy_log, stderr=proxy_log, **spawn_kwargs)  # noqa: S603
 
         launcher_cmd = [
             sys.executable,
@@ -147,7 +170,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         if args.providers:
             launcher_cmd.append(f"--providers={args.providers}")
 
-        launcher_proc = subprocess.Popen(launcher_cmd)  # noqa: S603
+        launcher_proc = subprocess.Popen(launcher_cmd, stdout=launcher_log, stderr=launcher_log, **spawn_kwargs)  # noqa: S603
 
         print(
             f"[mw serve] started (PID {os.getpid()}) — proxy={proxy_proc.pid} launcher={launcher_proc.pid}",
@@ -192,6 +215,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
         _remove_pid(pid_path)
         _clear_stop_request(project_dir)
         print("[mw serve] stopped", flush=True)
+        # Close log files
+        mw_log.close()
+        proxy_log.close()
+        launcher_log.close()
 
     return exit_code
 
@@ -216,12 +243,12 @@ def cmd_start(args: argparse.Namespace) -> int:
         cmd.append(f"--deepseek-port={args.deepseek_port}")
 
     if sys.platform == "win32":
-        # START /B equivalent: CREATE_NEW_PROCESS_GROUP + DETACHED_PROCESS
+        # START /B equivalent: CREATE_NEW_PROCESS_GROUP + DETACHED_PROCESS + CREATE_NO_WINDOW
         import subprocess as _sp
 
         proc = _sp.Popen(  # noqa: S603
             cmd,
-            creationflags=_sp.DETACHED_PROCESS | _sp.CREATE_NEW_PROCESS_GROUP,
+            creationflags=_sp.DETACHED_PROCESS | _sp.CREATE_NEW_PROCESS_GROUP | _sp.CREATE_NO_WINDOW,
             close_fds=True,
         )
     else:
@@ -269,6 +296,57 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 1
 
 
+# ── Subcommand: pull-agentictask ───────────────────────────────────────────────
+
+def _git_short_commit(repo: pathlib.Path) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _copy_agentictask_source(src: pathlib.Path, dst: pathlib.Path) -> None:
+    """Copy the framework source tree into the cache, excluding .git/__pycache__."""
+    import shutil
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(
+        str(src),
+        str(dst),
+        ignore=shutil.ignore_patterns(*_AGENTICTASK_IGNORE),
+    )
+
+
+def _pull_agentictask(source: pathlib.Path, *, force: bool) -> tuple[bool, str]:
+    """Populate the local cache from an AgenticTask source dir. Idempotent unless
+    force overwrites an existing cache. Returns (ok, message)."""
+    src = source.resolve()
+    if not src.is_dir():
+        return False, f"source not found: {src}"
+    # An AgenticTask source must carry install.py (the installer we invoke later).
+    if not (src / "install.py").is_file():
+        return False, f"{src} does not look like an AgenticTask source (missing install.py)."
+    if _TMP_AGENTICTASK.exists() and not force:
+        return True, f"cache already present: {_TMP_AGENTICTASK} (use --force to refresh)"
+
+    _TMP_AGENTICTASK.parent.mkdir(parents=True, exist_ok=True)
+    _copy_agentictask_source(src, _TMP_AGENTICTASK)
+    return True, f"cached from {src} (commit {_git_short_commit(src)}) → {_TMP_AGENTICTASK}"
+
+
+def cmd_pull_agentictask(args: argparse.Namespace) -> int:
+    ok, msg = _pull_agentictask(pathlib.Path(args.source), force=args.force)
+    if ok:
+        print(f"[mw pull-agentictask] {msg}")
+        return 0
+    print(f"[mw pull-agentictask] Error: {msg}", file=sys.stderr)
+    return 1
+
+
 # ── Subcommand: init ─────────────────────────────────────────────────────────
 
 _BUNDLE_REL = pathlib.Path("dist") / "extensions" / "agent-team-loop.js"
@@ -291,6 +369,36 @@ def _sync_dir(src: pathlib.Path, dst: pathlib.Path) -> None:
             target = dst / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(item), str(target))
+
+
+def _install_framework(
+    project_dir: pathlib.Path,
+    *,
+    source: pathlib.Path,
+    codex_scope: str = "project",
+) -> tuple[bool, str]:
+    """Install the AgenticTask framework into project_dir by invoking the
+    installer bundled with the framework source (single source of truth). This
+    lays down .claude/ + .agents/skills/agentic-task and writes .agentic-framework.
+    Returns (ok, message)."""
+    installer = source / "install.py"
+    if not installer.is_file():
+        return (
+            False,
+            f"AgenticTask source not found at {source}. "
+            "Run 'python mw.py pull-agentictask' first.",
+        )
+    cmd = [
+        sys.executable,
+        str(installer),
+        str(project_dir),
+        "--codex-scope",
+        codex_scope,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout or "install.py failed").strip()
+    return True, f"framework installed from {source}"
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -325,17 +433,65 @@ def cmd_init(args: argparse.Namespace) -> int:
     shutil.copy2(str(_bundle_path()), str(bundle_dst))
     print(f"[mw init] Extension installed: {bundle_dst}")
 
-    # AC-022: optional --sync-agentictask
-    if args.sync_agentictask:
-        src_dir = pathlib.Path(args.sync_agentictask).resolve()
-        if not src_dir.is_dir():
-            print(f"[mw init] Warning: --sync-agentictask source not found: {src_dir}", file=sys.stderr)
+    # Install the AgenticTask framework (.claude/ + .agents/skills/agentic-task)
+    # by default so pi/codex can run the framework out of the box. Skippable
+    # with --no-framework.
+    #   - --sync-agentictask SOURCE overrides the install source with a dir.
+    #   - Otherwise install from the local .tmp cache; if that is missing, auto-pull
+    #     it once from the default source so a fresh machine still works unattended.
+    # Framework failure is a WARNING, not fatal: the bundle + mw service must still
+    # come up so any project (even offline/unrelated) initializes cleanly.
+    if not args.no_framework:
+        if args.sync_agentictask:
+            source = pathlib.Path(args.sync_agentictask).resolve()
         else:
-            dst_dir = project_dir / ".claude"
-            _sync_dir(src_dir, dst_dir)
-            print(f"[mw init] AgenticTask synced: {src_dir} → {dst_dir}")
+            if not (_TMP_AGENTICTASK / "install.py").is_file():
+                pulled, pull_msg = _pull_agentictask(_DEFAULT_AGENTICTASK_SOURCE, force=False)
+                print(f"[mw init] auto-pull: {pull_msg}")
+            source = _TMP_AGENTICTASK
+        ok, msg = _install_framework(project_dir, source=source, codex_scope=args.codex_scope)
+        print(f"[mw init] {msg}" if ok else f"[mw init] Warning: {msg}", file=sys.stderr if not ok else None)
 
     print(f"[mw init] Project initialized: {project_dir}")
+    return 0
+
+
+# ── Subcommand: setup (one-time per machine) ───────────────────────────────────
+
+def _global_ext_dir() -> pathlib.Path:
+    """pi's global extensions dir: $PI_CODING_AGENT_DIR/extensions if set, else
+    ~/.pi/agent/extensions (mirrors getAgentDir() in coding-agent/src/config.ts).
+    Extensions placed here load for EVERY project pi opens."""
+    env_dir = os.environ.get("PI_CODING_AGENT_DIR")
+    base = pathlib.Path(env_dir).expanduser() if env_dir else (pathlib.Path.home() / ".pi" / "agent")
+    return base / "extensions"
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Bootstrap the machine so ANY project auto-installs on pi launch:
+    (1) cache the framework source, (2) install the extension bundle GLOBALLY so
+    pi loads it in every project → its session_start auto-runs `mw init` per project."""
+    if not _check_bundle():
+        print(
+            f"[mw setup] Error: Extension bundle not found at {_bundle_path()}\n"
+            "Run 'bash packages/multi-workers/build-extension.sh' to build it first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # (1) framework source cache
+    ok, msg = _pull_agentictask(pathlib.Path(args.source), force=args.force)
+    print(f"[mw setup] {msg}" if ok else f"[mw setup] Warning: pull failed: {msg}",
+          file=sys.stderr if not ok else None)
+
+    # (2) global extension install
+    import shutil
+    ext_dir = _global_ext_dir()
+    ext_dir.mkdir(parents=True, exist_ok=True)
+    ext_dst = ext_dir / "agent-team-loop.js"
+    shutil.copy2(str(_bundle_path()), str(ext_dst))
+    print(f"[mw setup] Extension installed globally: {ext_dst}")
+    print("[mw setup] Done — pi will now auto-init the agent-team loop in every project on launch.")
     return 0
 
 
@@ -362,10 +518,26 @@ def _parse_args() -> argparse.Namespace:
         p = sub.add_parser(name)
         p.add_argument("--project", required=True)
 
-    init_p = sub.add_parser("init", help="Initialize project and install Extension")
+    init_p = sub.add_parser("init", help="Initialize project and install Extension + framework")
     init_p.add_argument("--project", required=True)
+    init_p.add_argument("--no-framework", action="store_true",
+                        help="Skip installing the AgenticTask framework (.claude/ + .agents/skills)")
+    init_p.add_argument("--codex-scope", choices=("project", "user"), default="project",
+                        help="Where to install the codex/pi skill (default: project-local .agents/skills)")
     init_p.add_argument("--sync-agentictask", default=None, metavar="SOURCE_DIR",
-                        help="Sync AgenticTask platform files from SOURCE_DIR into .claude/")
+                        help="Install the framework from SOURCE_DIR instead of the local .tmp cache")
+
+    pull_p = sub.add_parser("pull-agentictask",
+                            help="Pull the AgenticTask framework source into the local .tmp cache")
+    pull_p.add_argument("--from", dest="source", default=str(_DEFAULT_AGENTICTASK_SOURCE),
+                        metavar="SOURCE", help="Source dir to pull from (default: %(default)s)")
+    pull_p.add_argument("--force", action="store_true", help="Overwrite an existing cache")
+
+    setup_p = sub.add_parser("setup",
+                             help="One-time machine bootstrap: cache framework + install extension globally")
+    setup_p.add_argument("--from", dest="source", default=str(_DEFAULT_AGENTICTASK_SOURCE),
+                         metavar="SOURCE", help="Framework source dir to cache (default: %(default)s)")
+    setup_p.add_argument("--force", action="store_true", help="Refresh an existing cache")
 
     return parser.parse_args()
 
@@ -378,5 +550,7 @@ if __name__ == "__main__":
         "stop": cmd_stop,
         "status": cmd_status,
         "init": cmd_init,
+        "pull-agentictask": cmd_pull_agentictask,
+        "setup": cmd_setup,
     }
     sys.exit(dispatch[args.subcommand](args))

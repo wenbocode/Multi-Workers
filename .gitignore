@@ -42,3 +42,6 @@ plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh
+
+# AgenticTask framework source cache (populated by `mw pull-agentictask`)
+packages/multi-workers/.tmp/
