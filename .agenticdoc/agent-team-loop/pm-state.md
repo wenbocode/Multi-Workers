@@ -3,7 +3,7 @@
 ## Section 1: Snapshot
 - Key: agent-team-loop
 - Claim-Id: 20260808-174558-3176
-- Phase: EXECUTE → DONE（待 advance_phase）
+- Phase: EXECUTE
 - 下一步行动: 全部 17 Task 代码完成 + L0/L1 验证通过；待用户确认后 advance_phase → DONE
 - 任务总数: 17
 - 已完成: 17
