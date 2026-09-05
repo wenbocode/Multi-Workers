@@ -1,5 +1,43 @@
 {
-  "claude":     {"port": 7001, "base_url_env": "ANTHROPIC_BASE_URL",  "api_key_env": "ANTHROPIC_API_KEY"},
-  "claude-cli": {"port": 7003, "base_url_env": "ANTHROPIC_BASE_URL",  "api_key_env": "ANTHROPIC_AUTH_TOKEN"},
-  "deepseek":   {"port": 7004, "base_url_env": "DEEPSEEK_BASE_URL",   "api_key_env": "DEEPSEEK_API_KEY"}
+  "credentials": {
+    "anthropic": {
+      "sources": [{ "env": "ANTHROPIC_API_KEY" }]
+    },
+    "anthropic-auth": {
+      "sources": [{ "env": "ANTHROPIC_AUTH_TOKEN" }]
+    },
+    "deepseek": {
+      "sources": [{ "env": "DEEPSEEK_API_KEY" }]
+    },
+    "timi": {
+      "sources": [
+        { "env": "TIMI_API_KEY" },
+        { "file": "~/.pi/agent/auth.json", "format": "json", "field": "timi.key" }
+      ]
+    }
+  },
+  "providers": {
+    "claude": {
+      "port": 7001,
+      "base_url_env": "ANTHROPIC_BASE_URL",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "credential": "anthropic"
+    },
+    "claude-cli": {
+      "port": 7003,
+      "base_url_env": "ANTHROPIC_BASE_URL",
+      "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+      "credential": "anthropic-auth"
+    },
+    "deepseek": {
+      "port": 7004,
+      "base_url_env": "DEEPSEEK_BASE_URL",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "credential": "deepseek"
+    },
+    "timi": {
+      "api_key_env": "TIMI_API_KEY",
+      "credential": "timi"
+    }
+  }
 }

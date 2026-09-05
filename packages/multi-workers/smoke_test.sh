@@ -31,6 +31,11 @@ _assert "[ -f '$TEST_DIR/.pi/extensions/agent-team-loop.js' ]" "VC-028: Extensio
 
 # ── T2: mw serve ───────────────────────────────────────────────────────────────
 echo "=== T2: mw serve start ==="
+# mw-dispatch-reliability: serve fails fast when NO route has credentials
+# (AC-002), so the smoke run must provide at least one. A dummy key is fine:
+# the spawned pi worker just fails auth and reaches status "failed", which is
+# exactly what T5's detection assertion observes.
+export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-smoke-dummy-key}"
 python3 "$MW_PY" start \
     --project="$TEST_DIR" \
     --pi-port=17001 --claude-port=17003 &
@@ -61,18 +66,26 @@ done
 # ── T5: pending task detected ≤ 5s ────────────────────────────────────────────
 echo "=== T5: pending task detection ==="
 WORKERS_FILE="$TEST_DIR/.agenticdoc/_workers.parallel"
-echo "t-smoke | pending | pi |  | $TEST_DIR/.agenticdoc/t-smoke/task.md | $(date -u +%Y-%m-%dT%H:%M:%SZ) | $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$WORKERS_FILE"
+# The task must actually exist: pending entries whose task.md is missing are
+# archived as stale by the launcher instead of being spawned. Worker tasks live
+# under {owner}/workers/<task-key>/ (keyless ad-hoc: _scratch/workers/).
+TASK_DIR="$TEST_DIR/.agenticdoc/_scratch/workers/t-smoke"
+mkdir -p "$TASK_DIR"
+printf 'type: coding\nsmoke detection task\n' > "$TASK_DIR/task.md"
+echo "t-smoke | pending | pi |  | $TASK_DIR/task.md | $(date -u +%Y-%m-%dT%H:%M:%SZ) | $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$WORKERS_FILE"
 
-# Wait up to 7s for status to change to running/done/failed
-TIMEOUT=7; DETECTED=false
+# Wait up to 15s for the status to change to running/done/failed (poll
+# interval 5s + spawn latency). NOT detecting the task is a failure — the old
+# else-branch here used to pass unconditionally (false positive, AC-014).
+TIMEOUT=15; DETECTED=false
 for i in $(seq 1 $TIMEOUT); do
     sleep 1
     if grep -q "t-smoke | running\|t-smoke | done\|t-smoke | failed" "$WORKERS_FILE" 2>/dev/null; then
         DETECTED=true; break
     fi
 done
-if $DETECTED; then _pass "AC-001: pending task detected ≤ ${i}s"
-else _pass "AC-001: launcher poll interval verified (task detection may need pi binary)"; fi
+if $DETECTED; then _pass "AC-001: pending task detected within ${i}s"
+else _fail "AC-001: pending task NOT detected within ${TIMEOUT}s (check .mw/launcher.log)"; fi
 
 # ── T6: mw serve survives pi exit ─────────────────────────────────────────────
 echo "=== T6: mw serve survives pi exit ==="

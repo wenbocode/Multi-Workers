@@ -37,15 +37,51 @@ def _make_proxy(bind_port: int, upstream_host: str, upstream_port: int, upstream
     )
 
 
+def _start_proxy_with_retry(
+    bind_port: int,
+    upstream_host: str,
+    upstream_port: int,
+    upstream_base_path: str,
+    retries: int = 8,
+    retry_delay: float = 3.0,
+) -> LocalProxyServer:
+    """Create and start a proxy, retrying if the port is temporarily unavailable.
+
+    Needed because Windows TIME_WAIT can hold the port for 30-120s after a
+    previous proxy process terminates, causing WinError 10048 on fast restarts.
+    """
+    _WSAEADDRINUSE = 10048  # Windows-specific errno for "address already in use"
+    for attempt in range(retries):
+        try:
+            p = _make_proxy(bind_port, upstream_host, upstream_port, upstream_base_path)
+            p.start()
+            return p
+        except OSError as exc:
+            is_port_busy = (
+                getattr(exc, "winerror", None) == _WSAEADDRINUSE  # Windows
+                or exc.errno == 98  # Linux EADDRINUSE
+                or exc.errno == 48  # macOS EADDRINUSE
+            )
+            if is_port_busy and attempt < retries - 1:
+                print(
+                    f"[proxy_multi] port {bind_port} busy (attempt {attempt + 1}/{retries}),"
+                    f" retrying in {retry_delay:.0f}s…",
+                    flush=True,
+                )
+                time.sleep(retry_delay)
+            else:
+                raise
+
+
 def run(pi_port: int, claude_port: int, deepseek_port: int | None = None) -> None:
     """Start proxy servers and block until interrupted."""
-    pi_proxy = _make_proxy(
+    pi_proxy = _start_proxy_with_retry(
         pi_port,
         _DEFAULT_UPSTREAM_HOST,
         _DEFAULT_UPSTREAM_PORT,
         _DEFAULT_UPSTREAM_BASE_PATH,
     )
-    claude_proxy = _make_proxy(
+    claude_proxy = _start_proxy_with_retry(
         claude_port,
         _DEFAULT_UPSTREAM_HOST,
         _DEFAULT_UPSTREAM_PORT,
@@ -56,7 +92,7 @@ def run(pi_port: int, claude_port: int, deepseek_port: int | None = None) -> Non
     status_parts = [f"pi={pi_port}", f"claude-cli={claude_port}"]
 
     if deepseek_port is not None:
-        deepseek_proxy = _make_proxy(
+        deepseek_proxy = _start_proxy_with_retry(
             deepseek_port,
             _DEFAULT_UPSTREAM_HOST,
             _DEFAULT_UPSTREAM_PORT,
@@ -64,9 +100,6 @@ def run(pi_port: int, claude_port: int, deepseek_port: int | None = None) -> Non
         )
         proxies.append(deepseek_proxy)
         status_parts.append(f"deepseek={deepseek_port}")
-
-    for p in proxies:
-        p.start()
 
     print(f"[proxy_multi] listening: {' '.join(status_parts)}", flush=True)
 
