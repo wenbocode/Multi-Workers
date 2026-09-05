@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { goalPath } from "../shared/paths.ts";
 
 export interface TaskPhase {
 	name: string;
@@ -18,9 +19,9 @@ export interface PhaseResult {
 }
 
 export function goalMtime(agenticdocRoot: string): number {
-	const goalPath = path.join(agenticdocRoot, "goal.md");
+	const goalPathResolved = goalPath(agenticdocRoot);
 	try {
-		return fs.statSync(goalPath).mtimeMs;
+		return fs.statSync(goalPathResolved).mtimeMs;
 	} catch {
 		return 0;
 	}

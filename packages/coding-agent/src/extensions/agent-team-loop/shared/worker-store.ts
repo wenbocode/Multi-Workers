@@ -12,14 +12,17 @@ export interface WorkerEntry {
 	taskPath: string;
 	dispatchedAt: string;
 	updatedAt: string;
+	/** Optional model id passed to the worker CLI (--model/-m). Empty = launcher default. */
+	model: string;
 }
 
-const WORKER_COLS = 7;
+const WORKER_COLS = 8;
 
 function parseWorkerLine(line: string): WorkerEntry | undefined {
 	const parts = line.split("|");
-	if (parts.length !== WORKER_COLS) return undefined;
-	const [taskKey, status, cli, provider, taskPath, dispatchedAt, updatedAt] = parts.map((s) => s.trim());
+	// Tolerate legacy 7-column rows (no model) as well as the current 8-column layout.
+	if (parts.length !== WORKER_COLS && parts.length !== WORKER_COLS - 1) return undefined;
+	const [taskKey, status, cli, provider, taskPath, dispatchedAt, updatedAt, model] = parts.map((s) => s.trim());
 	if (!taskKey || taskKey.startsWith("#")) return undefined;
 	return {
 		taskKey: taskKey ?? "",
@@ -29,6 +32,7 @@ function parseWorkerLine(line: string): WorkerEntry | undefined {
 		taskPath: taskPath ?? "",
 		dispatchedAt: dispatchedAt ?? "",
 		updatedAt: updatedAt ?? "",
+		model: model ?? "",
 	};
 }
 
@@ -41,6 +45,7 @@ function serializeWorkerLine(entry: WorkerEntry): string {
 		entry.taskPath,
 		entry.dispatchedAt,
 		entry.updatedAt,
+		entry.model ?? "",
 	].join(" | ");
 }
 

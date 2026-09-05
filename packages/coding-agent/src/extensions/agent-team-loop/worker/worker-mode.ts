@@ -78,6 +78,26 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 
 	const meta = parseTaskMd(taskPath);
 
+	// Safety net: guarantee an output.md exists on any exit path. The normal
+	// writers (success / timeout / catch) set outputWritten=true; if the process
+	// dies before any of them run (hard crash, unexpected process.exit), the
+	// exit hook writes a minimal failure output so the PM never sees silence.
+	let outputWritten = false;
+	process.on("exit", () => {
+		if (outputWritten) return;
+		try {
+			writeOutput({
+				taskKey: meta.taskKey,
+				agenticdocRoot: meta.agenticdocRoot,
+				exitCode: 1,
+				summary: "(worker exited without writing output)",
+				exitReason: "Process exited before output.md was written (crash or unexpected exit).",
+			});
+		} catch {
+			// Best-effort during exit — nothing else we can do.
+		}
+	});
+
 	// Set tool allowlist once before the first agent run (AC-010)
 	// setActiveTools is an action method — must be deferred to after runner.initialize()
 	pi.on("before_agent_start", () => {
@@ -119,6 +139,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			summary: "Worker timed out waiting for agent_settled.",
 			exitReason: `No response after ${timeoutMs}ms.`,
 		});
+		outputWritten = true;
 		process.exit(1);
 	}, timeoutMs);
 	watchdog.unref();
@@ -149,6 +170,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			verificationSteps: "See task output for details.",
 			exitReason: `Agent settled after ${toolCallCount} tool call(s).`,
 		});
+		outputWritten = true;
 		process.exit(0);
 	}
 
@@ -199,6 +221,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 				summary: "Task failed during output writing.",
 				exitReason: String(err),
 			});
+			outputWritten = true;
 			process.exit(1);
 		}
 	});

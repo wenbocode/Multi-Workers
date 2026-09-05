@@ -106,4 +106,9 @@ export class IndexStore {
 	findByKey(key: string): IndexEntry | undefined {
 		return this.readAll().find((e) => e.key === key);
 	}
+
+	/** The currently active AgenticTask key, if any (single-active discipline). */
+	activeKey(): string | undefined {
+		return this.readAll().find((e) => e.status === "active")?.key;
+	}
 }
