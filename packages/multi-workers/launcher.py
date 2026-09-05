@@ -151,6 +151,37 @@ def _require_task_file(task_path: str) -> pathlib.Path:
     return p
 
 
+def _validate_task_path(project_dir: pathlib.Path, task_path: str) -> None:
+    """Enforce the worker-task location contract.
+
+    Valid: <project>/.agenticdoc/{ownerKey}/workers/<task_key>/task.md or
+    <project>/.agenticdoc/_scratch/workers/<task_key>/task.md. The .agenticdoc
+    root belongs to AgenticTask keys; task dirs found there (OverCode
+    pch-migration-s1 incident: hand-written task.md + queue rows at the root
+    bypassed dispatch_worker's workerTaskDir placement) must be rejected
+    loudly instead of spawned.
+    """
+    agentic = (project_dir / ".agenticdoc").resolve()
+    p = pathlib.Path(task_path).resolve()
+    try:
+        rel = p.relative_to(agentic)
+    except ValueError:
+        raise RuntimeError(f"task path is outside .agenticdoc: {task_path}") from None
+    parts = rel.parts
+    ok = (
+        len(parts) == 4
+        and parts[1] == "workers"
+        and parts[3] == "task.md"
+        and (parts[0] == "_scratch" or not parts[0].startswith(("_", ".")))
+    )
+    if not ok:
+        raise RuntimeError(
+            f"invalid worker-task location: {rel} - tasks must live under "
+            ".agenticdoc/{key}/workers/<task_key>/task.md (or _scratch/workers/...); "
+            "the .agenticdoc root belongs to AgenticTask keys"
+        )
+
+
 def _starter_prompt(task_path: str) -> str:
     """Build the short ASCII turn-starter pointing the worker at its task file.
 
@@ -273,6 +304,17 @@ def _poll_once(
             continue
         if key in running_procs:
             continue  # AC-008: no duplicate spawn
+        # Location contract (D-001 isolation): reject root-level / misplaced
+        # task dirs loudly instead of spawning them.
+        try:
+            _validate_task_path(project_dir, entry["task_path"])
+        except RuntimeError as exc:
+            _record_spawn_failure(entry, str(exc))
+            try:
+                _update_status(project_dir, key, "failed")
+            except Exception:  # noqa: BLE001 — never mask the poll loop
+                pass
+            continue
         if max_workers and len(running_procs) >= max_workers:
             if not any(q["task_key"] == key for q in pending_queue):
                 pending_queue.append(entry)  # AC-007

@@ -204,7 +204,7 @@ def _make_task(
     proj: pathlib.Path, key: str, prompt: str,
     cli: str = "pi", provider: str = "timi", model: str = "",
 ) -> pathlib.Path:
-    task_dir = proj / ".agenticdoc" / key
+    task_dir = proj / ".agenticdoc" / "int-tests" / "workers" / key
     task_dir.mkdir(parents=True, exist_ok=True)
     task_md = task_dir / "task.md"
     task_md.write_text(f"type: coding\n\n{prompt}\n", encoding="utf-8")
@@ -242,8 +242,8 @@ class TestExitCodeStateMachine:
 
         assert _wait_for(proj, "t-ok", {"done"}, proc=proc) == "done"
         assert _wait_for(proj, "t-bad", {"failed"}, proc=proc) == "failed"
-        assert (proj / ".agenticdoc" / "t-ok" / "worker.log").exists()
-        assert (proj / ".agenticdoc" / "t-bad" / "worker.log").exists()
+        assert (proj / ".agenticdoc" / "int-tests" / "workers" / "t-ok" / "worker.log").exists()
+        assert (proj / ".agenticdoc" / "int-tests" / "workers" / "t-bad" / "worker.log").exists()
         time.sleep(1.5)
         assert proc.poll() is None  # launcher alive after both tasks
 
@@ -324,7 +324,7 @@ class TestCredentialIsolation:
         proc = start_launcher({"TEST_TIMI_API_KEY": "hermetic"})
 
         assert _wait_for(proj, "iso-claude", {"failed"}, proc=proc) == "failed"
-        worker_log = proj / ".agenticdoc" / "iso-claude" / "worker.log"
+        worker_log = proj / ".agenticdoc" / "int-tests" / "workers" / "iso-claude" / "worker.log"
         assert "TEST_ANTHROPIC_AUTH_TOKEN" in worker_log.read_text(encoding="utf-8")
 
         assert _wait_for(proj, "iso-pi", {"done"}, proc=proc) == "done"

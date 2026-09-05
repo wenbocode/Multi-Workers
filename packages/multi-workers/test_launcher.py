@@ -25,6 +25,7 @@ from launcher import (
     _starter_prompt,
     _spawn,
     _update_status,
+    _validate_task_path,
 )
 
 _HERMETIC_CONFIG = {
@@ -54,7 +55,9 @@ _HERMETIC_CONFIG = {
 
 @pytest.fixture()
 def task_file(tmp_path: pathlib.Path) -> pathlib.Path:
-    t = tmp_path / "task.md"
+    # Real convention: .agenticdoc/{key}/workers/<task_key>/task.md (4 levels).
+    t = tmp_path / ".agenticdoc" / "test-key" / "workers" / "t001" / "task.md"
+    t.parent.mkdir(parents=True, exist_ok=True)
     t.write_text("type: coding\nDo something useful.", encoding="utf-8")
     return t
 
@@ -499,3 +502,48 @@ class TestPromptShimSafety:
     def test_missing_task_file_raises(self, tmp_path: pathlib.Path):
         with pytest.raises(RuntimeError, match="task.md not found"):
             _build_command({"cli": "pi", "provider": "timi", "task_path": str(tmp_path / "nope.md")})
+
+
+# ── Worker-task location contract (OverCode pch-migration-s1: root-level dirs) ──
+
+class TestTaskLocationContract:
+    def test_validator_accepts_key_workers(self, tmp_path: pathlib.Path):
+        p = tmp_path / ".agenticdoc" / "my-key" / "workers" / "t1" / "task.md"
+        _validate_task_path(tmp_path, str(p))  # no raise
+
+    def test_validator_accepts_scratch_workers(self, tmp_path: pathlib.Path):
+        p = tmp_path / ".agenticdoc" / "_scratch" / "workers" / "t1" / "task.md"
+        _validate_task_path(tmp_path, str(p))  # no raise
+
+    def test_validator_rejects_root_level(self, tmp_path: pathlib.Path):
+        (tmp_path / ".agenticdoc").mkdir(exist_ok=True)
+        p = tmp_path / ".agenticdoc" / "some-task" / "task.md"
+        with pytest.raises(RuntimeError, match="invalid worker-task location"):
+            _validate_task_path(tmp_path, str(p))
+
+    def test_validator_rejects_outside_agenticdoc(self, tmp_path: pathlib.Path):
+        (tmp_path / ".agenticdoc").mkdir(exist_ok=True)
+        p = tmp_path / "elsewhere" / "task.md"
+        with pytest.raises(RuntimeError, match="outside .agenticdoc"):
+            _validate_task_path(tmp_path, str(p))
+
+    def test_poll_rejects_root_level_task(
+        self, tmp_path: pathlib.Path, providers: dict,
+        queue_file: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # OverCode incident shape: hand-written task.md + queue row at the
+        # .agenticdoc root must be marked failed with the reason, never spawned.
+        monkeypatch.setenv("TIMI_API_KEY", "test-timi-key")
+        bad = tmp_path / ".agenticdoc" / "root-task" / "task.md"
+        bad.parent.mkdir(parents=True)
+        bad.write_text("type: coding\nwork", encoding="utf-8")
+        entry = _entry(bad)
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+
+        running: dict = {}
+        _poll_once(tmp_path, providers, running, {}, [], None)
+
+        assert running == {}
+        assert _parse_workers_file(queue_file)[0]["status"] == "failed"
+        log = (bad.parent / "worker.log").read_text(encoding="utf-8")
+        assert "invalid worker-task location" in log
