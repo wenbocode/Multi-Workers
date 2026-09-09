@@ -36,14 +36,15 @@ _SCRIPT_DIR = pathlib.Path(__file__).parent
 _LAUNCHER_PY = _SCRIPT_DIR / "launcher.py"
 _PROXY_MULTI_PY = _SCRIPT_DIR / "proxy_multi.py"
 
-# Local, gitignored clone of the AgenticTask framework repo. `pull-agentictask`
-# clones it from the remote once (then fast-forward-updates it); `init` installs
-# from it so target projects never reach into an external directory. Because it is
-# a real git clone, `push-agentictask` can commit+push framework changes straight
-# back to the remote — Multi-Workers only records the remote URL, not any local
-# path. `.tmp/` stays gitignored here; the nested `.git` is an independent repo.
-# Override the source with `--from` (a git URL clones; an existing local dir is
-# copied byte-for-byte, no .git — a non-pushable fallback for offline/vendored use).
+# Local, gitignored clone of the AgenticTask framework repo — the bootstrap
+# fallback for `init` on machines without a live framework checkout.
+# `pull-agentictask` clones it from the remote once (then fast-forward-updates
+# it). Because it is a real git clone, `push-agentictask` can commit+push
+# framework changes straight back to the remote — Multi-Workers only records
+# the remote URL, not any local path. `.tmp/` stays gitignored here; the
+# nested `.git` is an independent repo. `init` source priority (see
+# _resolve_framework_source): --sync-agentictask > the mw checkout's own
+# .agents/skills/agentic-task (dev machine: the live working repo) > this cache.
 _TMP_AGENTICTASK = _SCRIPT_DIR / ".tmp" / "agentic-task"
 _DEFAULT_AGENTICTASK_REMOTE = "https://github.com/wenbocode/AgenticTask.git"
 _DEFAULT_AGENTICTASK_BRANCH = "master"
@@ -417,6 +418,40 @@ def _validate_agentictask_install(dst: pathlib.Path) -> tuple[bool, str]:
     return True, ""
 
 
+def _checkout_framework_dir() -> pathlib.Path:
+    """The mw checkout's own AgenticTask install (dev machines only).
+
+    mw.py always lives inside a Multi-Workers checkout; when that checkout has
+    itself been mw-inited, this is the live working repo the framework is
+    developed and published from — always fresher than any cache. The directory
+    is untracked in the Multi-Workers repo, so it only exists where someone ran
+    `mw init` on the checkout itself.
+    """
+    return _repo_root() / ".agents" / "skills" / "agentic-task"
+
+
+def _resolve_framework_source(sync_source: str | None) -> pathlib.Path:
+    """Pick the AgenticTask install source, freshest first:
+
+    1. --sync-agentictask <dir>  (explicit override)
+    2. the mw checkout's own .agents/skills/agentic-task — the live working
+       repo on a dev machine; bypasses the cache entirely, so installs can
+       never go stale behind it. May carry uncommitted state: commit & push
+       first when you want published state propagated.
+    3. the .tmp/agentic-task cache — bootstrap fallback; auto-cloned once from
+       the default remote when missing, refreshed later via pull-agentictask.
+    """
+    if sync_source:
+        return pathlib.Path(sync_source).resolve()
+    checkout = _checkout_framework_dir()
+    if (checkout / "install.py").is_file():
+        return checkout
+    if not (_TMP_AGENTICTASK / "install.py").is_file():
+        pulled, pull_msg = _pull_agentictask(_DEFAULT_AGENTICTASK_REMOTE, force=False)
+        print(f"[mw init] auto-pull: {pull_msg}")
+    return _TMP_AGENTICTASK
+
+
 def _pull_via_git(url: str, *, force: bool, branch: str) -> tuple[bool, str]:
     """Clone the framework repo into the cache, or fast-forward an existing clone.
     The cache becomes a real, independently pushable git repo (see push-agentictask)."""
@@ -785,18 +820,14 @@ def cmd_init(args: argparse.Namespace) -> int:
     # by default so pi/codex can run the framework out of the box. Skippable
     # with --no-framework.
     #   - --sync-agentictask SOURCE overrides the install source with a local dir.
-    #   - Otherwise install from the local .tmp clone; if that is missing, auto-clone
-    #     it once from the default remote so a fresh machine still works unattended.
+    #   - Otherwise _resolve_framework_source picks the freshest source: the mw
+    #     checkout's own framework repo (dev machine), then the .tmp cache
+    #     (auto-cloned once from the default remote so fresh machines work
+    #     unattended).
     # Framework failure is a WARNING, not fatal: the bundle + mw service must still
     # come up so any project (even offline/unrelated) initializes cleanly.
     if not args.no_framework:
-        if args.sync_agentictask:
-            source = pathlib.Path(args.sync_agentictask).resolve()
-        else:
-            if not (_TMP_AGENTICTASK / "install.py").is_file():
-                pulled, pull_msg = _pull_agentictask(_DEFAULT_AGENTICTASK_REMOTE, force=False)
-                print(f"[mw init] auto-pull: {pull_msg}")
-            source = _TMP_AGENTICTASK
+        source = _resolve_framework_source(args.sync_agentictask)
         ok, msg = _install_framework(project_dir, source=source, codex_scope=args.codex_scope)
         print(f"[mw init] {msg}" if ok else f"[mw init] Warning: {msg}", file=sys.stderr if not ok else None)
 
@@ -889,7 +920,8 @@ def _parse_args() -> argparse.Namespace:
     init_p.add_argument("--codex-scope", choices=("project", "user"), default="project",
                         help="Where to install the codex/pi skill (default: project-local .agents/skills)")
     init_p.add_argument("--sync-agentictask", default=None, metavar="SOURCE_DIR",
-                        help="Install the framework from SOURCE_DIR instead of the local .tmp clone")
+                        help="Install the framework from SOURCE_DIR, overriding automatic "
+                             "source resolution (checkout framework repo > .tmp cache)")
 
     pull_p = sub.add_parser("pull-agentictask",
                             help="Clone/update the AgenticTask framework repo into the local .tmp clone")
