@@ -6,9 +6,12 @@ providers.json (TEST_* env names); doctor tests exercise the real CLI as a
 subprocess. No network, no real CLIs, no real credentials (AC-009).
 """
 import argparse
+import datetime
+import importlib.util
 import json
 import os
 import pathlib
+import socket
 import subprocess
 import sys
 import time
@@ -91,7 +94,115 @@ def no_codex(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mw_common.shutil, "which", lambda name: None)
 
 
-# ── VC-003: all routes missing -> refuse to start ─────────────────────────────
+# ── VC-006: worker heartbeat liveness (mw-dispatch-flow-fixes D-004) ───────────
+
+class TestWorkerLiveness:
+    """Heartbeat-based liveness verdicts: alive / stale / no-heartbeat,
+    threshold configurable, informational only (never flips healthy/exit)."""
+
+    @staticmethod
+    def _hb_line(age_s: float, phase: str = "1/2") -> str:
+        # TS wire format (appendHeartbeat → Date.toISOString()): always `...Z`.
+        # Pin the exact suffix so the parse path is tested against what the
+        # extension actually writes (review M3: `+00:00` hid the 3.10 bug).
+        ts = (
+            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=age_s)
+        ).isoformat().replace("+00:00", "Z")
+        return f"[HEARTBEAT] {ts} task=t phase={phase}\n"
+
+    def _queue_running(
+        self, proj: pathlib.Path, rows: list[tuple[str, str | None]]
+    ) -> None:
+        """Write running queue rows; trace content None = no trace.log."""
+        agentic = proj / ".agenticdoc"
+        agentic.mkdir(parents=True, exist_ok=True)
+        lines: list[str] = []
+        for key, trace in rows:
+            task_dir = agentic / key
+            task_dir.mkdir(parents=True, exist_ok=True)
+            task_md = task_dir / "task.md"
+            task_md.write_text("type: coding\n\nwork\n", encoding="utf-8")
+            if trace is not None:
+                (task_dir / "trace.log").write_text(trace, encoding="utf-8")
+            lines.append(f"{key} | running | pi | timi | {task_md} | a | b | m")
+        (agentic / "_workers.parallel").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def test_parse_heartbeat_ts_accepts_z_suffix(self) -> None:
+        """Review M3: TS emits Date.toISOString() (always `...Z`);
+        datetime.fromisoformat rejects `Z` before Python 3.11 — the
+        normalization in _parse_heartbeat_ts must accept the wire format."""
+        ts = mw_common._parse_heartbeat_ts("2026-09-08T06:26:23.446Z")
+        assert ts.tzinfo is not None
+        assert ts.second == 23
+        # Second-precision variant (also produced by toISOString when ms=0).
+        ts2 = mw_common._parse_heartbeat_ts("2026-09-08T06:26:23Z")
+        assert ts2.tzinfo is not None
+        # The +00:00 form keeps working.
+        assert mw_common._parse_heartbeat_ts("2026-09-08T06:26:23+00:00").second == 23
+
+    def test_verdicts_alive_stale_no_heartbeat(self, tmp_path: pathlib.Path) -> None:
+        proj = tmp_path
+        self._queue_running(
+            proj,
+            [
+                ("t-fresh", self._hb_line(10)),
+                ("t-old", self._hb_line(300)),
+                ("t-legacy", None),
+            ],
+        )
+        verdicts = {v["task_key"]: v for v in mw_common.worker_liveness(proj)}
+        assert verdicts["t-fresh"]["verdict"] == "alive"
+        assert 0 <= verdicts["t-fresh"]["age_s"] < 90
+        assert verdicts["t-old"]["verdict"] == "stale"
+        assert verdicts["t-old"]["age_s"] >= 300
+        assert verdicts["t-legacy"]["verdict"] == "no-heartbeat"
+        assert verdicts["t-legacy"]["last_heartbeat"] is None
+
+    def test_stale_after_override(self, tmp_path: pathlib.Path) -> None:
+        # Age 75s: alive under the default 90s threshold, stale under 60.
+        proj = tmp_path
+        self._queue_running(proj, [("t-mid", self._hb_line(75))])
+        assert mw_common.worker_liveness(proj)[0]["verdict"] == "alive"
+        assert mw_common.worker_liveness(proj, stale_after_sec=60)[0]["verdict"] == "stale"
+
+    def test_doctor_report_section_is_informational(self, tmp_path: pathlib.Path) -> None:
+        # A stale running worker must NOT flip healthy/exit codes: doctor still
+        # exits 0 with a live service and zero issues, and the JSON carries the
+        # verdicts. Text output names the stale task.
+        proj = tmp_path
+        (proj / ".mw").mkdir()
+        self._queue_running(
+            proj,
+            [("t-ok", self._hb_line(5)), ("t-stuck", self._hb_line(600))],
+        )
+        mw_common.pid_file(proj).write_text(str(os.getpid()), encoding="utf-8")
+
+        result = subprocess.run(
+            [sys.executable, str(_MW_PY), "doctor", f"--project={proj}", "--json"],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        verdicts = {v["task_key"]: v["verdict"] for v in report["worker_liveness"]}
+        assert verdicts == {"t-ok": "alive", "t-stuck": "stale"}
+        assert report["summary"]["healthy"] is True
+        assert report["summary"]["issues"] == []
+        text = mw_common.format_doctor_text(report)
+        assert "workers: alive 1, stale: t-stuck" in text
+
+    def test_cli_stale_after_flag(self, tmp_path: pathlib.Path) -> None:
+        proj = tmp_path
+        (proj / ".mw").mkdir()
+        self._queue_running(proj, [("t-mid", self._hb_line(75))])
+        mw_common.pid_file(proj).write_text(str(os.getpid()), encoding="utf-8")
+
+        result = subprocess.run(
+            [sys.executable, str(_MW_PY), "doctor", f"--project={proj}", "--json", "--stale-after=60"],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        assert report["worker_liveness"][0]["verdict"] == "stale"
 
 class TestServeAllMissing:
     def test_refuses_to_start(
@@ -256,3 +367,106 @@ class TestDoctorCli:
         assert len(applied) == 2
         # No real proxy/bundle was touched by fix (suggestions only).
         assert isinstance(report["summary"]["suggestions"], list)
+
+
+# ── M4: update_index.py claim protocol alignment (mw-dispatch-flow-fixes) ────
+
+_UPDATE_INDEX = (
+    pathlib.Path(__file__).resolve().parent.parent.parent / ".agents/skills/agentic-task/scripts/update_index.py"
+)
+
+
+def _load_update_index():
+    spec = importlib.util.spec_from_file_location("update_index_test_mod", _UPDATE_INDEX)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestUpdateIndexClaim:
+    """host:pid claim ids (TS-parity), shared .mw/index.lock, and stale-local
+    takeover without --force (review M4)."""
+
+    def test_claim_id_is_host_pid(self) -> None:
+        mod = _load_update_index()
+        cid = mod.now_claim_id()
+        host, _, pid = cid.partition(":")
+        assert host == socket.gethostname()
+        assert pid.isdigit()
+
+    def test_claim_demotes_other_active_rows_and_releases_lock(self, tmp_path: pathlib.Path) -> None:
+        mod = _load_update_index()
+        agentic = tmp_path / ".agenticdoc"
+        agentic.mkdir()
+        index = agentic / "_index.parallel"
+        mod._ensure_index(index)
+        mod._write_index_atomic(
+            index,
+            lambda rows: rows
+            + [
+                {
+                    "key": "key-x",
+                    "status": "active",
+                    "phase": "SPEC",
+                    "claim_id": "someone-else:1",
+                    "deps": "—",
+                    "desc": "—",
+                    "updated": "2026-09-08 10:00",
+                }
+            ],
+        )
+
+        rc = mod.cmd_claim(agentic, "key-a", False)
+        assert rc == 0
+        rows = {r["key"]: r for r in mod.read_index(index)}
+        assert rows["key-a"]["status"] == "active"
+        assert rows["key-a"]["claim_id"] == mod.now_claim_id()  # same process → same id
+        assert rows["key-x"]["status"] == "idle"  # demoted (single-active)
+        # The shared lock is released after the write.
+        assert not (tmp_path / ".mw" / "index.lock").exists()
+
+    def test_stale_local_claim_taken_without_force_live_conflicts(self, tmp_path: pathlib.Path) -> None:
+        mod = _load_update_index()
+        agentic = tmp_path / ".agenticdoc"
+        agentic.mkdir()
+        index = agentic / "_index.parallel"
+        mod._ensure_index(index)
+
+        def seed(key: str, claim_id: str) -> None:
+            mod._write_index_atomic(
+                index,
+                lambda rows: rows
+                + [
+                    {
+                        "key": key,
+                        "status": "active",
+                        "phase": "EXECUTE",
+                        "claim_id": claim_id,
+                        "deps": "—",
+                        "desc": "—",
+                        "updated": "2026-09-08 10:00",
+                    }
+                ],
+            )
+
+        # A crashed local window (dead pid) — takeover allowed WITHOUT --force.
+        dead = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        dead_pid = dead.pid
+        dead.kill()
+        dead.wait()
+        seed("key-dead", f"{socket.gethostname()}:{dead_pid}")
+        assert mod.cmd_claim(agentic, "key-dead", False) == 0
+
+        # A live local window — CONFLICT without --force, ok with it.
+        live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            seed("key-live", f"{socket.gethostname()}:{live.pid}")
+            assert mod.cmd_claim(agentic, "key-live", False) == 1
+            assert mod.cmd_claim(agentic, "key-live", True) == 0
+        finally:
+            live.kill()
+            live.wait()
+
+        # Legacy timestamp ids are unverifiable — still a conflict.
+        seed("key-legacy", "20260808-174558-3176")
+        assert mod.cmd_claim(agentic, "key-legacy", False) == 1

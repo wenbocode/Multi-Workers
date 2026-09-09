@@ -538,14 +538,20 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("should handle process spawn errors", async () => {
-			vi.spyOn(shellModule, "getShellConfig").mockReturnValueOnce({
+			// mockReturnValue (not Once) — createBashToolDefinition now calls getShellConfig
+			// at creation time for name/description detection, consuming an extra call, so the
+			// mock must remain active through the subsequent execute() call.
+			const spy = vi.spyOn(shellModule, "getShellConfig").mockReturnValue({
 				shell: "/nonexistent-shell-path-xyz123",
 				args: ["-c"],
 			});
 
-			const bashWithBadShell = createBashTool(testDir);
-
-			await expect(bashWithBadShell.execute("test-call-12", { command: "echo test" })).rejects.toThrow(/ENOENT/);
+			try {
+				const bashWithBadShell = createBashTool(testDir);
+				await expect(bashWithBadShell.execute("test-call-12", { command: "echo test" })).rejects.toThrow(/ENOENT/);
+			} finally {
+				spy.mockRestore();
+			}
 		});
 
 		it("should pass shellPath through to shell resolution", async () => {
@@ -611,6 +617,7 @@ describe("Coding Agent Tools", () => {
 					shell: shellPath,
 					args: ["-s"],
 					commandTransport: "stdin",
+					type: "bash",
 				});
 			} finally {
 				process.chdir(originalCwd);
@@ -618,6 +625,46 @@ describe("Coding Agent Tools", () => {
 					Object.defineProperty(process, "platform", platformDescriptor);
 				}
 			}
+		});
+
+		describe("resolveScriptPath", () => {
+			it("returns original path when shell type is bash", () => {
+				const config: shellModule.ShellConfig = { shell: "/bin/bash", args: ["-c"], type: "bash" };
+				expect(shellModule.resolveScriptPath("/scripts/bash-only/deploy.sh", config)).toBe(
+					"/scripts/bash-only/deploy.sh",
+				);
+			});
+
+			it("returns original path when shell type is undefined", () => {
+				const config: shellModule.ShellConfig = { shell: "/bin/bash", args: ["-c"] };
+				expect(shellModule.resolveScriptPath("/scripts/bash-only/deploy.sh", config)).toBe(
+					"/scripts/bash-only/deploy.sh",
+				);
+			});
+
+			it("returns original path when powershell variant does not exist", () => {
+				const config: shellModule.ShellConfig = {
+					shell: "powershell.exe",
+					args: ["-Command"],
+					type: "powershell",
+				};
+				expect(shellModule.resolveScriptPath(join(testDir, "bash-only", "deploy.sh"), config)).toBe(
+					join(testDir, "bash-only", "deploy.sh"),
+				);
+			});
+
+			it("returns windows variant path when powershell and variant exists", () => {
+				const config: shellModule.ShellConfig = {
+					shell: "powershell.exe",
+					args: ["-Command"],
+					type: "powershell",
+				};
+				const windowsVariant = join(testDir, "bash-only", "windows", "deploy.ps1");
+				mkdirSync(join(testDir, "bash-only", "windows"), { recursive: true });
+				writeFileSync(windowsVariant, "");
+
+				expect(shellModule.resolveScriptPath(join(testDir, "bash-only", "deploy.sh"), config)).toBe(windowsVariant);
+			});
 		});
 
 		it("should prepend command prefix when configured", async () => {

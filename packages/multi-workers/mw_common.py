@@ -36,8 +36,10 @@ import datetime
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
+import time
 import sys
 from typing import Mapping
 
@@ -611,6 +613,72 @@ def _doctor_launcher_log(project_dir: pathlib.Path) -> dict:
     return {"exists": True, "tail": lines[-10:], "error_count": error_count, "fatal": fatal}
 
 
+_HEARTBEAT_LINE_RE = re.compile(r"^\[HEARTBEAT\] (\S+) task=")
+
+
+def _parse_heartbeat_ts(hb: str) -> datetime.datetime:
+    """Parse a heartbeat timestamp written by the TS side.
+
+    appendHeartbeat emits Date.toISOString() (always `...Z`), but
+    datetime.fromisoformat only accepts the `Z` designator on Python 3.11+ —
+    on the stated 3.10 floor every real heartbeat would raise ValueError and
+    the whole liveness feature would silently degrade to no-heartbeat
+    (review M3). Normalize `Z` to `+00:00` before parsing.
+    """
+    return datetime.datetime.fromisoformat(hb.replace("Z", "+00:00", 1) if hb.endswith("Z") else hb)
+
+
+def _last_heartbeat(task_dir: pathlib.Path) -> str | None:
+    """ISO timestamp of the last [HEARTBEAT] line in a worker task's trace.log,
+    or None when the file/line is absent (old bundle, just started)."""
+    trace = task_dir / "trace.log"
+    try:
+        lines = trace.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        m = _HEARTBEAT_LINE_RE.match(line)
+        if m:
+            return m.group(1)
+    return None
+
+
+def worker_liveness(project_dir: pathlib.Path, stale_after_sec: int = 90) -> list[dict]:
+    """Heartbeat-based liveness verdicts for RUNNING queue rows (design D-004).
+
+    Verdicts: alive (last heartbeat within stale_after_sec), stale (older),
+    no-heartbeat (running but no [HEARTBEAT] lines — old bundle or fresh
+    start). Informational only: killing stuck workers stays with the
+    worker-side 30-min watchdog (GC-4). Keep the 90s default in sync with the
+    TS HEARTBEAT_STALE_MS constant in agent-team-loop/shared/heartbeat.ts.
+    """
+    entries = parse_workers_file(workers_path(project_dir))
+    verdicts: list[dict] = []
+    now = time.time()
+    for e in entries:
+        if e["status"] != "running":
+            continue
+        task_dir = pathlib.Path(e["task_path"]).parent
+        hb = _last_heartbeat(task_dir)
+        if hb is None:
+            verdicts.append(
+                {"task_key": e["task_key"], "last_heartbeat": None, "age_s": None, "verdict": "no-heartbeat"}
+            )
+            continue
+        try:
+            age_s = max(0, int(now - _parse_heartbeat_ts(hb).timestamp()))
+        except ValueError:
+            verdicts.append(
+                {"task_key": e["task_key"], "last_heartbeat": hb, "age_s": None, "verdict": "no-heartbeat"}
+            )
+            continue
+        verdict = "stale" if age_s > stale_after_sec else "alive"
+        verdicts.append(
+            {"task_key": e["task_key"], "last_heartbeat": hb, "age_s": age_s, "verdict": verdict}
+        )
+    return verdicts
+
+
 def _doctor_queue(project_dir: pathlib.Path) -> dict:
     entries = parse_workers_file(workers_path(project_dir))
     non_terminal = [
@@ -707,11 +775,18 @@ def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
     return issues, suggestions
 
 
-def doctor_report(project_dir: pathlib.Path, fix: bool = False, config: dict | None = None) -> dict:
+def doctor_report(
+    project_dir: pathlib.Path,
+    fix: bool = False,
+    config: dict | None = None,
+    stale_after_sec: int = 90,
+) -> dict:
     """Full diagnostic snapshot. Local-only checks (no network), <5s.
 
-    Sections: service, proxy, orphan_proxy, launcher_log, queue, credentials,
-    bundle (+ fix when fix=True), summary. healthy=True iff no issues."""
+    Sections: service, proxy, orphan_proxy, launcher_log, queue,
+    worker_liveness, credentials, bundle (+ fix when fix=True), summary.
+    healthy=True iff no issues; worker_liveness is informational and never
+    flips healthy/exit codes."""
     project_dir = pathlib.Path(project_dir)
     if config is None:
         config = load_providers(pathlib.Path(__file__).parent / "providers.json")
@@ -723,6 +798,7 @@ def doctor_report(project_dir: pathlib.Path, fix: bool = False, config: dict | N
     report["orphan_proxy"] = _doctor_orphan(report["service"], report["proxy"])
     report["launcher_log"] = _doctor_launcher_log(project_dir)
     report["queue"] = _doctor_queue(project_dir)
+    report["worker_liveness"] = worker_liveness(project_dir, stale_after_sec)
     report["credentials"] = route_precheck(config, os.environ)
     report["bundle"] = _doctor_bundle()
     issues, suggestions = _doctor_issues(report)
@@ -760,6 +836,17 @@ def format_doctor_text(report: dict) -> str:
         f"queue: {len(queue['non_terminal'])} non-terminal task(s), "
         f"{queue['stale_count']} stale, {queue['archived_total']} archived"
     )
+    liveness = report.get("worker_liveness", [])
+    if liveness:
+        alive = sum(1 for v in liveness if v["verdict"] == "alive")
+        stale = [v["task_key"] for v in liveness if v["verdict"] == "stale"]
+        no_hb = sum(1 for v in liveness if v["verdict"] == "no-heartbeat")
+        parts = [f"alive {alive}"]
+        if stale:
+            parts.append(f"stale: {', '.join(stale)}")
+        if no_hb:
+            parts.append(f"no-heartbeat {no_hb}")
+        lines.append("workers: " + ", ".join(parts))
     for r in report["credentials"]["routes"]:
         state = "available (" + _source_desc(r["source"]) + ")" if r["available"] else "missing (" + str(r["missing"]) + ")"
         lines.append(f"credentials: {r['route']} {state}")

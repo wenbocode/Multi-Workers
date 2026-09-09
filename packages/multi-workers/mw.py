@@ -354,7 +354,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         else pathlib.Path(__file__).parent / "providers.json"
     )
     config = mw_common.load_providers(providers_path)
-    report = mw_common.doctor_report(project_dir, fix=args.fix, config=config)
+    report = mw_common.doctor_report(project_dir, fix=args.fix, config=config, stale_after_sec=args.stale_after)
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
@@ -912,6 +912,9 @@ def _parse_args() -> argparse.Namespace:
                           help="Path to providers.json (default: the mw package copy)")
     doctor_p.add_argument("--json", action="store_true", help="Emit the JSON report (used by /mw doctor)")
     doctor_p.add_argument("--fix", action="store_true", help="Auto-fix stale entries and stale PID files")
+    doctor_p.add_argument("--stale-after", type=int, default=90, metavar="SEC",
+                          help="Worker heartbeat staleness threshold in seconds (default: %(default)s, "
+                               "in sync with the TS HEARTBEAT_STALE_MS constant)")
 
     init_p = sub.add_parser("init", help="Initialize project and install Extension + framework")
     init_p.add_argument("--project", required=True)

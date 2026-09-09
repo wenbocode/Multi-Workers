@@ -179,9 +179,7 @@ describe("Timi models", () => {
 				reasoning: expected.reasoning,
 				cost: ZERO_COST,
 			});
-			expect(model.compat).toEqual(
-				isAnthropicMessages ? TIMI_ANTHROPIC_COMPAT : TIMI_RESPONSES_COMPAT,
-			);
+			expect(model.compat).toEqual(isAnthropicMessages ? TIMI_ANTHROPIC_COMPAT : TIMI_RESPONSES_COMPAT);
 		}
 	});
 });

@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import * as path from "node:path";
 import { delimiter } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
@@ -7,18 +8,64 @@ export interface ShellConfig {
 	shell: string;
 	args: string[];
 	commandTransport?: "argv" | "stdin";
+	/** Identifies the shell family so callers can route to platform-specific script variants. */
+	type?: "bash" | "powershell";
 }
 
 /**
  * Find bash executable on PATH (cross-platform)
  */
-function isLegacyWslBashPath(path: string): boolean {
-	const normalized = path.replace(/\//g, "\\").toLowerCase();
+function isLegacyWslBashPath(shellPath: string): boolean {
+	const normalized = shellPath.replace(/\//g, "\\").toLowerCase();
 	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
 }
 
 function getBashShellConfig(shell: string): ShellConfig {
-	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
+	return isLegacyWslBashPath(shell)
+		? { shell, args: ["-s"], commandTransport: "stdin", type: "bash" }
+		: { shell, args: ["-c"], type: "bash" };
+}
+
+/**
+ * Probe whether a WSL/system bash is actually functional (has a distro installed).
+ * Returns false if the process exits non-zero or if stdout doesn't match "ok".
+ */
+function isWslBashWorking(bashPath: string): boolean {
+	try {
+		const result = spawnSync(bashPath, ["-c", "echo ok"], {
+			encoding: "utf-8",
+			timeout: 3000,
+			windowsHide: true,
+		});
+		return result.status === 0 && (result.stdout ?? "").trim() === "ok";
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Find PowerShell on Windows. Prefers pwsh (7+) over powershell (5.1).
+ * Returns null if neither is found.
+ */
+function getPowerShellConfig(): ShellConfig | null {
+	for (const name of ["pwsh.exe", "powershell.exe"]) {
+		try {
+			const result = spawnSync("where", [name], {
+				encoding: "utf-8",
+				timeout: 3000,
+				windowsHide: true,
+			});
+			if (result.status === 0 && result.stdout) {
+				const first = result.stdout.trim().split(/\r?\n/)[0];
+				if (first && existsSync(first)) {
+					return { shell: first, args: ["-NoProfile", "-NonInteractive", "-Command"], type: "powershell" };
+				}
+			}
+		} catch {
+			// continue to next candidate
+		}
+	}
+	return null;
 }
 
 function findBashOnPath(): string | null {
@@ -59,10 +106,15 @@ function findBashOnPath(): string | null {
 
 /**
  * Resolve shell configuration based on platform and an optional explicit shell path.
- * Resolution order:
+ * Resolution order (Windows):
  * 1. User-specified shellPath
- * 2. On Windows: Git Bash in known locations, then bash on PATH
- * 3. On Unix: /bin/bash, then bash on PATH, then fallback to sh
+ * 2. WSL bash — only if a distro is installed and responds to `echo ok`
+ * 3. PowerShell (pwsh / powershell) — universal fallback; bash-only scripts
+ *    should provide a windows/ PowerShell variant via resolveScriptPath()
+ *
+ * Resolution order (Unix):
+ * 1. User-specified shellPath
+ * 2. /bin/bash, then bash on PATH, then sh
  */
 export function getShellConfig(customShellPath?: string): ShellConfig {
 	// 1. Check user-specified shell path
@@ -74,35 +126,22 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 	}
 
 	if (process.platform === "win32") {
-		// 2. Try Git Bash in known locations
-		const paths: string[] = [];
-		const programFiles = process.env.ProgramFiles;
-		if (programFiles) {
-			paths.push(`${programFiles}\\Git\\bin\\bash.exe`);
-		}
-		const programFilesX86 = process.env["ProgramFiles(x86)"];
-		if (programFilesX86) {
-			paths.push(`${programFilesX86}\\Git\\bin\\bash.exe`);
-		}
-
-		for (const path of paths) {
-			if (existsSync(path)) {
-				return getBashShellConfig(path);
-			}
-		}
-
-		// 3. Fallback: search bash.exe on PATH (Cygwin, MSYS2, WSL, etc.)
+		// 2. WSL bash — only if a distro is installed and actually responding.
+		//    WSL is the preferred bash on Windows when configured correctly.
 		const bashOnPath = findBashOnPath();
-		if (bashOnPath) {
+		if (bashOnPath && isLegacyWslBashPath(bashOnPath) && isWslBashWorking(bashOnPath)) {
 			return getBashShellConfig(bashOnPath);
 		}
 
+		// 3. PowerShell fallback — universal on Windows, no third-party install needed.
+		//    bash-only scripts should have a windows/ PowerShell variant (resolveScriptPath).
+		const psConfig = getPowerShellConfig();
+		if (psConfig) {
+			return psConfig;
+		}
+
 		throw new Error(
-			`No bash shell found. Options:\n` +
-				`  1. Install Git for Windows: https://git-scm.com/download/win\n` +
-				`  2. Add your bash to PATH (Cygwin, MSYS2, etc.)\n` +
-				"  3. Set shellPath in settings.json\n\n" +
-				`Searched Git Bash in:\n${paths.map((p) => `  ${p}`).join("\n")}`,
+			`No shell found. Options:\n` + `  1. Install WSL: wsl --install\n` + `  2. Set shellPath in settings.json\n`,
 		);
 	}
 
@@ -116,7 +155,27 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 		return getBashShellConfig(bashOnPath);
 	}
 
-	return { shell: "sh", args: ["-c"] };
+	return { shell: "sh", args: ["-c"], type: "bash" };
+}
+
+/**
+ * Resolve the platform-appropriate path for a bash-only script.
+ *
+ * Convention: bash-only scripts live at some/path/script.sh; their Windows
+ * PowerShell equivalents live at some/path/windows/script.ps1.
+ *
+ * When the active shell is PowerShell, this function replaces the .sh path with
+ * the windows/ variant if it exists. Falls back to the original path so the
+ * caller can decide how to handle a missing variant.
+ */
+export function resolveScriptPath(scriptPath: string, shellConfig: ShellConfig): string {
+	if (shellConfig.type !== "powershell") return scriptPath;
+
+	const dir = path.dirname(scriptPath);
+	const name = path.basename(scriptPath, path.extname(scriptPath));
+	const windowsVariant = path.join(dir, "windows", `${name}.ps1`);
+
+	return existsSync(windowsVariant) ? windowsVariant : scriptPath;
 }
 
 export function getShellEnv(): NodeJS.ProcessEnv {

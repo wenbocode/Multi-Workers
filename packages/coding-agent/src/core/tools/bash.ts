@@ -321,11 +321,34 @@ export function createBashToolDefinition(
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
+
+	// Detect shell family at tool-creation time (getShellConfig is sync) so the
+	// agent receives an accurate description and uses the right command syntax.
+	let shellType: "bash" | "powershell" = "bash";
+	if (!options?.operations && !options?.shellPath) {
+		try {
+			const cfg = getShellConfig();
+			shellType = cfg.type === "powershell" ? "powershell" : "bash";
+		} catch {
+			// Resolution failure — keep the bash default; the tool will surface
+			// the real error when the agent first tries to run a command.
+		}
+	}
+
+	const isPowerShell = shellType === "powershell";
+	const toolName = isPowerShell ? "powershell" : "bash";
+	const toolDesc = isPowerShell
+		? `Execute a PowerShell command in the current working directory (no bash available — use PowerShell syntax). Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`
+		: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`;
+	const promptSnippetText = isPowerShell
+		? "Execute PowerShell commands (Get-ChildItem, Select-String, etc.)"
+		: "Execute bash commands (ls, grep, find, etc.)";
+
 	return {
-		name: "bash",
-		label: "bash",
-		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
-		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
+		name: toolName,
+		label: toolName,
+		description: toolDesc,
+		promptSnippet: promptSnippetText,
 		promptGuidelines: exposeSessionEnvironment
 			? ["Inspect PI_* environment variables for current model and session details."]
 			: undefined,

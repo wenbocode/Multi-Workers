@@ -205,6 +205,12 @@ export interface DoctorJson {
 		stale_count?: number;
 		archived_total?: number;
 	};
+	worker_liveness?: Array<{
+		task_key?: string;
+		last_heartbeat?: string | null;
+		age_s?: number | null;
+		verdict?: "alive" | "stale" | "no-heartbeat";
+	}>;
 	credentials?: {
 		routes?: Array<{
 			route?: string;

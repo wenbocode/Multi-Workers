@@ -1,34 +1,307 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI } from "../../../core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
+import { formatHeartbeatAge, readTaskProgress } from "../shared/heartbeat.ts";
 import { IndexStore } from "../shared/index-store.ts";
 import { getMwStatus, initMw, startMw, waitForMwStart } from "../shared/mw-runner.ts";
-import { agenticdocRoot as resolveAgenticdocRoot } from "../shared/paths.ts";
-import { WorkerStore } from "../shared/worker-store.ts";
+import { agenticdocRoot as resolveAgenticdocRoot, SCRATCH_WORKERS_KEY } from "../shared/paths.ts";
+import { dispatchDocGaps, readPhaseDocs } from "../shared/phase-docs.ts";
+import { registerPmStateGuard } from "../shared/pm-state-guard.ts";
+import { type WorkerEntry, type WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 import { isGoalEstablished, readGoal } from "./goal-reader.ts";
 import { dispatchTask } from "./task-dispatcher.ts";
 import {
+	applyWatchWidget,
+	claimState,
+	deliverPmAlert,
+	deliverWorkerResult,
 	displaySummary,
+	makeScopedDocGateNotifier,
+	ownerKeyOf,
+	type PmUiHolder,
+	type PmWatchState,
+	readOutputBody,
+	readSpawnFailure,
 	registerMwCommands,
 	registerMwTools,
 	registerPmKeyCommands,
+	registerSwitchKeyTool,
+	registerWatchCommand,
 	registerWorkerCommands,
 	registerWorkerTools,
+	renderWatchLines,
+	setWatchWidget,
+	takeOverKey,
+	WATCH_ENTRY_TYPE,
+	windowClaimId,
 } from "./ui-bridge.ts";
 
 const POLL_INTERVAL_MS = 4000; // < 5s per AC-001
 
-function readOutputSummary(taskDir: string): string | undefined {
-	const outputPath = path.join(taskDir, "output.md");
-	if (!fs.existsSync(outputPath)) return undefined;
-	const content = fs.readFileSync(outputPath, "utf8");
-	const m = content.match(/## Summary\s*\n+([\s\S]*?)(?=\n## |$)/);
-	return m ? m[1].trim() : undefined;
+function isTerminal(status: WorkerStatus): boolean {
+	return status === "done" || status === "failed" || status === "needs-clarification";
+}
+
+export type PhaseDocName = "spec.md" | "design.md" | "plan.md";
+
+interface DocWriteTarget {
+	key: string;
+	doc: PhaseDocName;
+}
+
+/** The phase-doc write/edit target, when the tool path resolves to
+ * {agenticdocRoot}/{key}/spec.md | design.md | plan.md — the PM phase docs that
+ * mean "this window is now executing this key". Any other path (or file) is
+ * not a claim signal. */
+function docWriteTarget(
+	toolName: string,
+	args: unknown,
+	projectDir: string,
+	agenticdocRoot: string,
+): DocWriteTarget | undefined {
+	if (toolName !== "write" && toolName !== "edit") return undefined;
+	const filePath = (args as { path?: unknown } | undefined)?.path;
+	if (typeof filePath !== "string" || filePath === "") return undefined;
+	const rel = path.relative(path.resolve(agenticdocRoot), path.resolve(projectDir, filePath));
+	if (rel.startsWith("..") || path.isAbsolute(rel)) return undefined; // outside .agenticdoc
+	const parts = rel.split(path.sep);
+	const doc = parts.length === 2 ? parts[1] : undefined;
+	if (doc !== "spec.md" && doc !== "design.md" && doc !== "plan.md") return undefined;
+	const key = parts[0] ?? "";
+	if (!key || key.startsWith("_") || key.startsWith(".")) return undefined;
+	return { key, doc };
+}
+
+/** The key a phase-doc write/edit belongs to (see docWriteTarget). */
+export function keyFromDocWrite(
+	toolName: string,
+	args: unknown,
+	projectDir: string,
+	agenticdocRoot: string,
+): string | undefined {
+	return docWriteTarget(toolName, args, projectDir, agenticdocRoot)?.key;
+}
+
+/** Which phase doc was written/edited (see docWriteTarget). */
+export function docFromWrite(
+	toolName: string,
+	args: unknown,
+	projectDir: string,
+	agenticdocRoot: string,
+): PhaseDocName | undefined {
+	return docWriteTarget(toolName, args, projectDir, agenticdocRoot)?.doc;
+}
+
+export type EvidencePhase = "spec" | "design";
+
+/** The evidence-note write target, when the tool path resolves to
+ * {agenticdocRoot}/{key}/evidence/research/spec-*.md | design-*.md. Not a
+ * claim signal (only phase docs are) — but the moment evidence lands is the
+ * moment an already-written phase doc's claims can be re-reviewed against
+ * it. */
+export function evidencePhaseFromWrite(
+	toolName: string,
+	args: unknown,
+	projectDir: string,
+	agenticdocRoot: string,
+): { key: string; phase: EvidencePhase } | undefined {
+	if (toolName !== "write" && toolName !== "edit") return undefined;
+	const filePath = (args as { path?: unknown } | undefined)?.path;
+	if (typeof filePath !== "string" || filePath === "") return undefined;
+	const rel = path.relative(path.resolve(agenticdocRoot), path.resolve(projectDir, filePath));
+	if (rel.startsWith("..") || path.isAbsolute(rel)) return undefined; // outside .agenticdoc
+	const parts = rel.split(path.sep);
+	if (parts.length !== 4 || parts[1] !== "evidence" || parts[2] !== "research") return undefined;
+	const note = parts[3] ?? "";
+	if (!note.endsWith(".md")) return undefined;
+	const phase: EvidencePhase | undefined = note.startsWith("spec-")
+		? "spec"
+		: note.startsWith("design-")
+			? "design"
+			: undefined;
+	if (!phase) return undefined;
+	const key = parts[0] ?? "";
+	if (!key || key.startsWith("_") || key.startsWith(".")) return undefined;
+	return { key, phase };
+}
+
+const SPEC_REVIEW_CHECKLIST = `1. 断言-证据对照：量级/价值/成本类断言要么引用 research note（出处），要么标注「未实证」并写明取证方法（design 前完成）
+2. 数字口径：估算必须锚定实测数据并注明出处与口径；口径存疑 → 重锚定并标注
+3. 内部一致性：AC 引用的对象/范围与正文枚举一致（AC 提到 X，枚举必须含 X）
+4. 可证伪性：量化断言（如「调用数 = 0」）必须有机器观测口径（日志/状态/输出字段），否则移入「待确认」`;
+
+const DESIGN_REVIEW_CHECKLIST = `1. 决策-证据对照：每个 D-xxx 决策的 Pros/Cons 关键事实须有 research note 出处；无出处的标「未实证」
+2. 复用≠零成本：复用既有组件的决策必须估算适配量（数据规模/语义差异）
+3. VC 可观测性：VC 断言绑定可机器解析的输出（日志行/状态字段/命令输出），不可观测的移入待确认
+4. 数字口径：性能/容量估算锚定实测数据并注明出处`;
+
+/** Nudge the window agent to re-review a phase doc against its research
+ * evidence — the "re-review when evidence is generated" protocol. Fires once
+ * per (key, phase) per session, only when both the phase doc (>= 500 bytes)
+ * and >= 1 evidence note exist: the review needs both sides of the comparison.
+ * The agent applies corrections/annotations to the doc itself and reports the
+ * "证据不足、已修正标注" findings. */
+export function nudgeEvidenceReview(
+	pi: ExtensionAPI,
+	key: string,
+	phase: EvidencePhase,
+	agenticdocRoot: string,
+	nudged: Set<string>,
+): void {
+	const dedup = `${key}:${phase}`;
+	if (nudged.has(dedup)) return;
+	const docs = readPhaseDocs(agenticdocRoot, key);
+	const docOk = phase === "spec" ? docs.spec : docs.design;
+	const evidence = phase === "spec" ? docs.specEvidence : docs.designEvidence;
+	if (!docOk || evidence < 1) return;
+	nudged.add(dedup);
+	const doc = phase === "spec" ? "spec.md" : "design.md";
+	const checklist = phase === "spec" ? SPEC_REVIEW_CHECKLIST : DESIGN_REVIEW_CHECKLIST;
+	pi.sendUserMessage(
+		`[agent-team-loop] ${key}：${phase} 阶段证据已就位（${evidence} 份 research note）。请立即执行证据复查——对照 evidence/research/ 逐条核查 ${doc}：\n${checklist}\n修正与标注直接写入 ${doc}，并逐条汇报「证据不足、已修正标注的部分」。`,
+	);
+}
+
+/** Auto-takeover on phase-doc write: writing/editing {key}/spec.md, design.md,
+ * or plan.md is this window saying "I am now executing key X" — claim it and
+ * watch it, exactly like /pm-key switch. A live foreign claim blocks the claim
+ * (watch-only) but never the watch itself. Writing design.md / plan.md also
+ * runs the next-phase evidence gate (mirrors advance_phase.py): the previous
+ * phase's research notes must exist, or the user is warned immediately. */
+export async function autoTakeOverFromDoc(
+	pi: ExtensionAPI,
+	indexStore: IndexStore,
+	watch: PmWatchState,
+	refreshWatch: (ctx: ExtensionContext) => void,
+	key: string,
+	doc: PhaseDocName,
+	agenticdocRoot: string,
+	ctx: ExtensionContext,
+): Promise<void> {
+	// Next-phase evidence gate: writing design.md means the spec phase should be
+	// complete (its research notes exist); writing plan.md means design should be.
+	// Fires regardless of takeover idempotency — the missing evidence is the
+	// message, and it stays true until the notes are written.
+	const docs = readPhaseDocs(agenticdocRoot, key);
+	if (doc === "spec.md" && docs.specEvidence < 1) {
+		ctx.ui.notify(
+			`[mw] ${key}: no evidence/research/spec-*.md found — write the research notes (or a zero-research declaration) alongside the spec; the advance-to-design gate checks them.`,
+			"warning",
+		);
+	}
+	if (doc === "design.md" && docs.specEvidence < 1) {
+		ctx.ui.notify(
+			`[mw] ${key}: no evidence/research/spec-*.md found — the advance-to-design gate requires >= 1 research note (a zero-research declaration counts). Write it before advancing.`,
+			"warning",
+		);
+	}
+	if (doc === "plan.md") {
+		if (!docs.design) {
+			ctx.ui.notify(
+				`[mw] ${key}: design.md missing or under 500 bytes — required before plan (run the system-design workflow).`,
+				"warning",
+			);
+		} else if (docs.designEvidence < 1) {
+			ctx.ui.notify(
+				`[mw] ${key}: no evidence/research/design-*.md found — the advance-to-plan gate requires >= 1 research note (a zero-research declaration counts). Write it before advancing.`,
+				"warning",
+			);
+		}
+	}
+
+	const row = indexStore.findByKey(key);
+	const wasWatching = watch.key === key;
+	const wasClaimed = row?.claimId === windowClaimId();
+	if (wasWatching && wasClaimed) return; // already ours — nothing to do
+
+	const result = await takeOverKey(indexStore, key, false, agenticdocRoot);
+	watch.key = key;
+	pi.appendEntry(WATCH_ENTRY_TYPE, { key, claimed: result.ok });
+	refreshWatch(ctx);
+	if (result.ok) {
+		ctx.ui.notify(
+			`[mw] claimed key '${key}' (doc write detected) — watching it${result.created ? " (new key registered)" : ""}.`,
+			"info",
+		);
+		if (result.audit.length > 0) ctx.ui.notify(result.audit.join("\n"), "warning");
+	} else {
+		ctx.ui.notify(
+			`[mw] key '${key}' is claimed by another live window (${result.blockedBy}) — watching only.`,
+			"warning",
+		);
+	}
+}
+
+/** Restore this window's watched key from the session file (survives restart
+ * and resume) and re-render the bottom widget. A watch that came with a key
+ * takeover re-claims the key with this process's identity — quietly, unless
+ * another live window took it over in the meantime. */
+export async function restoreWatch(
+	pi: ExtensionAPI,
+	watch: PmWatchState,
+	indexStore: IndexStore,
+	workerStore: WorkerStore,
+	agenticdocRoot: string,
+	ctx: ExtensionContext,
+): Promise<void> {
+	let data: { key?: string; claimed?: boolean } | undefined;
+	try {
+		const entries = ctx.sessionManager.getEntries();
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const e = entries[i];
+			if (e.type === "custom" && e.customType === WATCH_ENTRY_TYPE) {
+				data = e.data as { key?: string; claimed?: boolean } | undefined;
+				break;
+			}
+		}
+	} catch {
+		return; // session entries unavailable — nothing to restore
+	}
+	if (!data?.key) return;
+	const key = data.key;
+	watch.key = key;
+
+	if (data.claimed) {
+		const row = indexStore.findByKey(key);
+		if (row) {
+			const self = windowClaimId();
+			if (claimState(row.claimId, self) === "held-live") {
+				// Another window took over while this one was closed — keep the
+				// watch (display-only) and say so; do not touch the shared row.
+				ctx.ui.notify(
+					`[mw] key '${key}' is claimed by another window (${row.claimId}) — watching only.`,
+					"warning",
+				);
+			} else {
+				// Our previous process is gone; re-bind ownership through the
+				// atomic claim — a window that raced us to this key wins and we
+				// degrade to watch-only (review M2). Quiet re-claim: no demote of
+				// other active rows, no status flip; only claimId/updated move.
+				const outcome = await indexStore.claim(key, self, (id) => claimState(id, self) === "held-live", {
+					demoteOthers: false,
+					activate: false,
+				});
+				if (!outcome.ok) {
+					ctx.ui.notify(
+						`[mw] key '${key}' is claimed by another window (${outcome.blockedBy}) — watching only.`,
+						"warning",
+					);
+				}
+			}
+		}
+	}
+
+	setWatchWidget(ctx, renderWatchLines(indexStore, workerStore, agenticdocRoot, key));
+	// Re-stamp the entry so it lands in the (possibly new) session file.
+	pi.appendEntry(WATCH_ENTRY_TYPE, { key, claimed: data.claimed ?? false });
 }
 
 function pickWorkerRoute(taskContent: string): { cli: string; provider: string } {
+	// Global default is pi/timi: review/research are routing HINTS for the
+	// agent, not claude redirects (design D-005) — a claude worker requires an
+	// explicit `cli` param on dispatch_worker / /worker, where missing
+	// credentials fail per-task instead of silently degrading the route.
 	if (/^type:\s*codex/im.test(taskContent)) return { cli: "codex", provider: "" };
-	if (/^type:\s*(review|research)/im.test(taskContent)) return { cli: "claude", provider: "" };
 	return { cli: "pi", provider: "timi" };
 }
 
@@ -38,7 +311,21 @@ function readModel(taskContent: string): string {
 	return m ? m[1].trim() : "";
 }
 
-export async function dispatchNewTasks(workerStore: WorkerStore, agenticdocRoot: string): Promise<void> {
+export interface DispatchScanOptions {
+	/** Keys already warned about in this session — a key is reported at most once. */
+	warnedKeys?: Set<string>;
+	/** Fires once per undocumented key whose worker tasks were skipped.
+	 * MUST return whether the event was actually broadcast: false when it was
+	 * intentionally suppressed (e.g. scoped to another window's key) so the
+	 * once-per-session dedup does not burn the key's only slot. */
+	onDocGate?: (key: string, gaps: string[]) => boolean;
+}
+
+export async function dispatchNewTasks(
+	workerStore: WorkerStore,
+	agenticdocRoot: string,
+	opts: DispatchScanOptions = {},
+): Promise<void> {
 	// Worker tasks live under {key}/workers/<task-key>/task.md (owner = AgenticTask
 	// key) or _scratch/workers/<task-key>/task.md (keyless ad-hoc). Root-level
 	// task dirs are no longer dispatched - they polluted the key namespace.
@@ -61,13 +348,38 @@ export async function dispatchNewTasks(workerStore: WorkerStore, agenticdocRoot:
 		} catch {
 			continue; // owner has no workers/ dir (plain key or meta entry)
 		}
+		// Collect undispatched tasks FIRST (AC-010): a key with nothing new to
+		// queue must not even evaluate the docs gate — fully-queued undoc keys
+		// are historical, not actionable, and gate noise for them drowns real
+		// blockage in multi-key projects.
+		const undispatched: Array<{ taskKey: string; taskMdPath: string }> = [];
 		for (const taskDir of taskDirs) {
 			if (!taskDir.isDirectory() || taskDir.name.startsWith(".")) continue;
 			const taskKey = taskDir.name;
 			if (dispatched.has(taskKey)) continue;
 			const taskMdPath = path.join(workersDir, taskKey, "task.md");
 			if (!fs.existsSync(taskMdPath)) continue;
-
+			undispatched.push({ taskKey, taskMdPath });
+		}
+		if (undispatched.length === 0) continue;
+		// Docs gate: real AgenticTask keys must be fully documented (spec + design
+		// + research evidence) before their worker tasks enter the queue. _scratch
+		// is the ad-hoc escape hatch. Report each blocked key at most once.
+		if (owner.name !== SCRATCH_WORKERS_KEY) {
+			const gaps = dispatchDocGaps(agenticdocRoot, owner.name);
+			if (gaps.length > 0) {
+				if (!opts.warnedKeys?.has(owner.name)) {
+					// Mark as warned only when the notifier actually broadcast —
+					// a suppressed broadcast (scoped to another window's key) must
+					// not burn this key's once-per-session slot (review m1).
+					if (opts.onDocGate?.(owner.name, gaps) !== false) {
+						opts.warnedKeys?.add(owner.name);
+					}
+				}
+				continue;
+			}
+		}
+		for (const { taskKey, taskMdPath } of undispatched) {
 			const taskContent = fs.readFileSync(taskMdPath, "utf8");
 			const { cli, provider } = pickWorkerRoute(taskContent);
 			const model = readModel(taskContent);
@@ -86,34 +398,128 @@ export async function dispatchNewTasks(workerStore: WorkerStore, agenticdocRoot:
 	}
 }
 
+/** Continuation directive appended to terminal worker results: the finish
+ * call wakes an idle PM (triggerTurn) — this line tells it what "continue the
+ * PM loop" means per terminal status, so results are processed and the next
+ * task is dispatched without the user re-prompting. Timeout failures get an
+ * explicit retry policy (AC-004/D-005): the Exit Reason in the readback body
+ * distinguishes idle (true hang) from wall (healthy but out of budget). */
+const PM_CONTINUE_HINT =
+	"[mw] worker 终态回读。请继续 PM 循环：吸收上述结果（done→推进下一任务/phase；failed→读 worker.log 与 trace.log 排查后决定重试或修复；needs-clarification→整理问题向用户澄清；超时失败（Exit Reason 含 idle/wall timeout）→ wall 型用双倍 timeout 预算重派一次，再失败转 PM 直执，idle 型直接排查环境），然后派发下一个任务或汇报阶段完成。";
+
+/** Runtime stats for terminal worker summaries (AC-013):
+ * ` (6m-style coarse duration, ph i/n)`. Preference order: exact [START]→[END]
+ * interval from trace.log (present on every new-bundle terminal task), ≥2
+ * [HEARTBEAT] lines (older format), then the queue row's dispatchedAt→updatedAt
+ * (coarse but always present). Empty when nothing is derivable. */
+function heartbeatStatsSuffix(taskDir: string, entry: WorkerEntry): string {
+	const prog = readTaskProgress(taskDir);
+	if (prog?.startTs && prog.endTs) {
+		const durMs = Math.max(0, Date.parse(prog.endTs) - Date.parse(prog.startTs));
+		const ph = prog.endPhases && prog.endPhases !== "-" ? `, ph ${prog.endPhases}` : "";
+		return ` (${formatHeartbeatAge(durMs)}${ph})`;
+	}
+	const hb = prog?.heartbeat;
+	if (hb && hb.count >= 2) {
+		const durMs = Math.max(0, Date.parse(hb.lastTs) - Date.parse(hb.firstTs));
+		const ph = hb.phase === "-" ? "" : `, ph ${hb.phase}/${hb.phaseTotal}`;
+		return ` (${formatHeartbeatAge(durMs)}${ph})`;
+	}
+	const durMs = Date.parse(entry.updatedAt) - Date.parse(entry.dispatchedAt);
+	if (!Number.isNaN(durMs) && durMs > 0) return ` (${formatHeartbeatAge(durMs)})`;
+	return "";
+}
+
 export function startWorkerPollLoop(
 	pi: ExtensionAPI,
 	workerStore: WorkerStore,
+	indexStore: IndexStore,
+	agenticdocRoot: string,
+	watch: PmWatchState,
+	ui: PmUiHolder,
 	pollIntervalMs = POLL_INTERVAL_MS,
 ): NodeJS.Timeout {
-	const notified = new Set<string>();
+	// Baseline snapshot: rows already terminal when this window opens are
+	// history — never replay their summaries. Only transitions observed while
+	// this session is open are notified, at most once each.
+	const notified = new Set(
+		workerStore
+			.readAll()
+			.filter((e) => isTerminal(e.status))
+			.map((e) => e.taskKey),
+	);
+	// Running workers already escalated for divergence (AC-004): one PM wake
+	// per task, at the first mid/high convergence checkpoint.
+	const escalated = new Set<string>();
+	let widgetShown = false;
 
 	return setInterval(() => {
 		try {
+			// Live bottom widget for the watched key (per-window state, NOT the
+			// shared _index.parallel active set — every window decides its own key).
+			if (watch.key) {
+				applyWatchWidget(ui, renderWatchLines(indexStore, workerStore, agenticdocRoot, watch.key));
+				widgetShown = true;
+			} else if (widgetShown) {
+				applyWatchWidget(ui, undefined);
+				widgetShown = false;
+			}
+
 			const entries = workerStore.readAll();
+			// Divergence escalation (AC-004): running workers past the convergence
+			// checkpoint whose machine risk is mid/high wake the PM once per task
+			// with the evidence — the PM (fullest context) decides continue /
+			// descope / kill + split / takeover. Low-risk checkpoints stay in the
+			// widget only; no cross-window broadcast (scoped to the watched key).
 			for (const entry of entries) {
-				if (notified.has(entry.taskKey)) continue;
-				if (entry.status === "done" || entry.status === "failed" || entry.status === "needs-clarification") {
-					notified.add(entry.taskKey);
-					// Task dir from the queue row taskPath: works for keyed {key}/workers/<task-key>/ and legacy root paths.
-					const taskDir = path.dirname(entry.taskPath);
-					const summary = readOutputSummary(taskDir);
-					if (summary) {
-						displaySummary(pi, `[${entry.taskKey}] ${entry.status}: ${summary}`);
-					} else {
-						// Terminal but no output.md summary — never stay silent. The worker may
-						// have crashed/timed out; point at the per-task log for diagnosis.
-						const logPath = path.join(taskDir, "worker.log");
-						displaySummary(
-							pi,
-							`[${entry.taskKey}] ${entry.status} — 无 output.md 摘要（worker 可能崩溃/超时）。日志：${logPath}`,
-						);
-					}
+				if (entry.status !== "running" || escalated.has(entry.taskKey)) continue;
+				if (!watch.key || ownerKeyOf(entry, agenticdocRoot) !== watch.key) continue;
+				const ck = readTaskProgress(path.dirname(entry.taskPath))?.checkpoint;
+				if (!ck || ck.risk === "low") continue;
+				escalated.add(entry.taskKey);
+				const taskDir = path.dirname(entry.taskPath);
+				deliverPmAlert(
+					pi,
+					`[mw] 发散风险：worker '${entry.taskKey}' 检查点 risk=${ck.risk}` +
+						`（elapsed ${Math.round(ck.elapsedS / 60)}m，reads=${ck.reads} writes=${ck.writes}，phases=${ck.phases}，` +
+						`重复读 top=${ck.repeatTop}）。机器判据仅供参考——请结合本 key 最全上下文判断：继续等待 / steer 收窄范围 / 终止并分拆重派 / PM 直执。` +
+						`证据：${path.join(taskDir, "trace.log")}（[CHECKPOINT] 行）与 ${path.join(taskDir, "progress.md")}（worker 自评）。`,
+				);
+			}
+			for (const entry of entries) {
+				if (notified.has(entry.taskKey) || !isTerminal(entry.status)) continue;
+				notified.add(entry.taskKey);
+				// One-shot transcript summaries fire only for this window's watched
+				// key; without a watched key the window stays silent (no cross-window
+				// broadcast). The widget above still shows current state either way.
+				if (!watch.key || ownerKeyOf(entry, agenticdocRoot) !== watch.key) continue;
+				// Task dir from the queue row taskPath: works for keyed {key}/workers/<task-key>/ and legacy root paths.
+				const taskDir = path.dirname(entry.taskPath);
+				// Terminal readback (AC-014): inject the full output.md body into
+				// the conversation so worker results reach the PM without manual
+				// file reads. Falls through to the spawn-failure / no-output
+				// notices when there is nothing to read back. Sent via
+				// deliverWorkerResult (triggerTurn) so an idle PM wakes up,
+				// processes the result, and runs the next step — the finish call
+				// of dispatch → monitor → finish call → pm run (AC-015).
+				const header = `[${entry.taskKey}] ${entry.status}${heartbeatStatsSuffix(taskDir, entry)}`;
+				const body = readOutputBody(taskDir);
+				if (body) {
+					deliverWorkerResult(pi, `${header}:\n\n${body}\n\n${PM_CONTINUE_HINT}`);
+				} else {
+					// Terminal but no output.md summary — never stay silent. Prefer the
+					// launcher's exact spawn-failure reason (e.g. missing credential) over
+					// the generic crash/timeout guess; both point at the per-task log.
+					const logPath = path.join(taskDir, "worker.log");
+					const spawnFailure = readSpawnFailure(taskDir);
+					deliverWorkerResult(
+						pi,
+						`${header} — ${
+							spawnFailure
+								? `${spawnFailure}。日志：${logPath}`
+								: `无 output.md 摘要（worker 可能崩溃/超时）。日志：${logPath}`
+						}\n\n${PM_CONTINUE_HINT}`,
+					);
 				}
 			}
 		} catch {
@@ -128,25 +534,107 @@ export function pmActivate(pi: ExtensionAPI): void {
 	const workerStore = new WorkerStore(agenticdocRoot);
 	const indexStore = new IndexStore(agenticdocRoot);
 
+	// Per-window watch state: the key THIS window explicitly executes (set via
+	// /mw-watch or /pm-key switch|new). Worker summaries and the bottom progress
+	// widget are scoped to it — replacing the old global active-keys matching
+	// that made every window notify about every active key.
+	const watch: PmWatchState = { key: undefined };
+	const ui: PmUiHolder = { ctx: undefined };
+	const refreshWatch = (ctx: ExtensionContext): void => {
+		if (!watch.key) {
+			setWatchWidget(ctx, undefined);
+			return;
+		}
+		setWatchWidget(ctx, renderWatchLines(indexStore, workerStore, agenticdocRoot, watch.key));
+	};
+
 	// Register commands and tools during loading (safe — not action methods)
-	registerPmKeyCommands(pi, indexStore);
+	registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agenticdocRoot);
 	registerMwCommands(pi, projectDir);
 	registerMwTools(pi, projectDir);
-	registerWorkerTools(pi, workerStore, indexStore, agenticdocRoot);
-	registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot);
+	registerWorkerTools(pi, workerStore, indexStore, agenticdocRoot, watch);
+	registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agenticdocRoot);
+	registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch);
+	registerWatchCommand(pi, watch, refreshWatch, indexStore);
+
+	// Hard gate: pm-state.md's '- Phase:' / '- Claim-Id:' interface lines are
+	// script-owned (advance_phase.py / update_index.py). Hand-editing them is
+	// how phase gates get bypassed (mw-worker-timeout-convergence: pm-state
+	// hand-set to EXECUTE while _index.parallel stayed at SPEC), so the edit is
+	// blocked at the tool layer and the agent is pointed at the script.
+	registerPmStateGuard(pi, projectDir, agenticdocRoot);
 
 	// Start worker status poll loop (setInterval is safe; displaySummary inside fires later)
-	startWorkerPollLoop(pi, workerStore);
+	const pollHandle = startWorkerPollLoop(pi, workerStore, indexStore, agenticdocRoot, watch, ui);
+	// Session teardown stops the loop (review m3): a fresh runtime re-runs
+	// pmActivate and starts a new one, so this only removes the zombie that
+	// would keep ticking against a disposed context after /reload or session
+	// replacement.
+	pi.on("session_shutdown", () => clearInterval(pollHandle));
 
-	// After each agent turn, scan for new task.md files and dispatch them (AC-030)
+	// After each agent turn, scan for new task.md files and dispatch them (AC-030).
+	// Undocumented keys are skipped and reported once per session (docs gate).
+	// Gate broadcast is scoped to this window's watched key (AC-011) — the scan
+	// itself stays global, and blocking semantics are unchanged.
+	const docGateWarned = new Set<string>();
 	pi.on("agent_settled", () => {
-		dispatchNewTasks(workerStore, agenticdocRoot).catch(() => {
+		dispatchNewTasks(workerStore, agenticdocRoot, {
+			warnedKeys: docGateWarned,
+			onDocGate: makeScopedDocGateNotifier(pi, watch),
+		}).catch(() => {
 			// Dispatch errors are non-fatal — PM loop continues
 		});
 	});
 
+	// Spec-write auto-takeover: tool_execution_end carries no args, so correlate
+	// them with the args captured on tool_execution_start via toolCallId. Only
+	// write/edit calls are tracked; the map entry is consumed on end.
+	const pendingToolArgs = new Map<string, { toolName: string; args: unknown }>();
+	pi.on("tool_execution_start", (event) => {
+		if (event.toolName === "write" || event.toolName === "edit") {
+			pendingToolArgs.set(event.toolCallId, { toolName: event.toolName, args: event.args });
+		}
+	});
+	// Evidence-review nudges fire once per (key, phase) per session.
+	const evidenceReviewNudged = new Set<string>();
+	pi.on("tool_execution_end", (event, ctx) => {
+		const pending = pendingToolArgs.get(event.toolCallId);
+		pendingToolArgs.delete(event.toolCallId);
+		if (!pending || event.isError) return;
+		const target = docWriteTarget(pending.toolName, pending.args, projectDir, agenticdocRoot);
+		if (target) {
+			autoTakeOverFromDoc(pi, indexStore, watch, refreshWatch, target.key, target.doc, agenticdocRoot, ctx).catch(
+				() => {
+					// Takeover failures (e.g. lock contention) must never disturb the turn
+				},
+			);
+			// Phase-doc write with its evidence already present → re-review the
+			// doc's claims against the notes (plan has no evidence phase).
+			if (target.doc !== "plan.md") {
+				nudgeEvidenceReview(
+					pi,
+					target.key,
+					target.doc === "spec.md" ? "spec" : "design",
+					agenticdocRoot,
+					evidenceReviewNudged,
+				);
+			}
+			return;
+		}
+		// Research-note write: not a claim signal, but it may complete the
+		// evidence set for an already-written phase doc → re-review nudge.
+		const ev = evidencePhaseFromWrite(pending.toolName, pending.args, projectDir, agenticdocRoot);
+		if (ev) {
+			nudgeEvidenceReview(pi, ev.key, ev.phase, agenticdocRoot, evidenceReviewNudged);
+		}
+	});
+
 	// Defer action method calls to after runner.initialize() (session_start fires post-init)
-	pi.on("session_start", async () => {
+	pi.on("session_start", async (_event, ctx) => {
+		// Capture the UI context so the poll loop can render the bottom widget.
+		ui.ctx = ctx;
+		// Resume the watched key this session had before restart/resume.
+		await restoreWatch(pi, watch, indexStore, workerStore, agenticdocRoot, ctx);
 		// Auto-init project if it hasn't been initialized yet. Gate on .agenticdoc
 		// (the project marker mw init creates), NOT on a project-local bundle copy:
 		// the extension is now installed GLOBALLY (mw setup), so no project-local
