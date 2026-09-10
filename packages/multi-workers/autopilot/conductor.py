@@ -599,7 +599,7 @@ def _stage_closure(
 
 def _l3_verdict(key_dir: pathlib.Path) -> tuple[str, str]:
     """(verdict, report path) for one key: meets|below from l3-verdict.txt
-    when the T-12 EXECUTE loop wrote it, else none (T-11 dossier shape)."""
+    (written by the done transaction / stall path), else none."""
     verdict_file = key_dir / "l3-verdict.txt"
     if verdict_file.is_file():
         verdict = verdict_file.read_text(encoding="utf-8").strip().lower()
@@ -607,6 +607,26 @@ def _l3_verdict(key_dir: pathlib.Path) -> tuple[str, str]:
             report = key_dir / "l3-report.md"
             return verdict, str(report) if report.is_file() else "—"
     return "none", "—"
+
+
+def _persist_l3_verdict(
+    key_dir: pathlib.Path, verdict: str, report_src: pathlib.Path
+) -> None:
+    """Persist the final L3 verdict for the closure dossier (AC-003):
+    l3-verdict.txt + l3-report.md. Check-before-write — idempotent across
+    crash-retry ticks, never clobbers an earlier verdict of the same run."""
+    verdict_file = key_dir / "l3-verdict.txt"
+    if not verdict_file.is_file():
+        verdict_file.write_text(verdict + "\n", encoding="utf-8", newline="\n")
+    report = key_dir / "l3-report.md"
+    if not report.is_file() and report_src.is_file():
+        try:
+            report.write_text(
+                report_src.read_text(encoding="utf-8", errors="replace"),
+                encoding="utf-8", newline="\n",
+            )
+        except OSError:
+            pass  # dossier shows "—"; the verdict itself is already durable
 
 
 def _iso_now() -> str:
@@ -868,8 +888,6 @@ def execute_loop(
 
 # ── VERIFY: L3 review loop + done transaction (D-108/D-112, T-12) ────────────
 
-_L3_BUDGET = 2  # 复评总轮数 ≤ 2 (AC-010)
-
 
 def _md_section(text: str, header: str) -> str | None:
     """One markdown section (header line to the next ## header); None when
@@ -946,7 +964,15 @@ def _verify_loop(
     path, never padded (D-108 后验)."""
     key_dir = pathlib.Path(project_root) / ".agenticdoc" / key
     l3_loop = f"l3:{key}"
+    # Three loop families share round_budget (spec §2.2 / AC-011):
+    # L1↔L2, L3 convergence, task retry. Default 2 preserves AC-010's
+    # 复评总轮数 ≤ 2.
+    l3_budget = max(1, int(cfg["round_budget"]))
     used = rounds.get(l3_loop, 0)
+    l3_report_src = (
+        key_dir / "workers" / dispatch.task_key_for(key, f"l3-a{used}")
+        / "output.md"
+    )
     for prefix in (f"ap-{key}-l3-", f"ap-{key}-repair-"):
         if any(_is_in_flight(r) for r in rows if r["task_key"].startswith(prefix)):
             return False  # wait for the in-flight review/repair
@@ -967,10 +993,11 @@ def _verify_loop(
         if _done_transaction(project_root, st, key, l3_output) != "below":
             return False  # advanced (or gated — retried next tick)
         # meets-but-short achieved draft → same repair path as below
-    if used >= _L3_BUDGET:
+    if used >= l3_budget:
+        _persist_l3_verdict(key_dir, "below", l3_report_src)
         mark_stalled(
             project_root, st, key,
-            f"L3 below {_L3_BUDGET} rounds (budget {_L3_BUDGET})",
+            f"L3 below {l3_budget} rounds (budget {l3_budget})",
         )
         return False
     repair_base = f"repair-a{used}"
@@ -980,6 +1007,7 @@ def _verify_loop(
         if any(_is_in_flight(r) for r in fam):
             return False
         if repair_used >= max(1, int(cfg["round_budget"])):
+            _persist_l3_verdict(key_dir, "below", l3_report_src)
             mark_stalled(
                 project_root, st, key,
                 f"repair exhausted {repair_used} attempts at L3 round {used}",
@@ -1093,6 +1121,9 @@ def _done_transaction(
                 f"{qg}\n",
                 encoding="utf-8", newline="\n",
             )
+        # 1b. persist the L3 verdict for the closure dossier (AC-003):
+        # l3-verdict.txt + l3-report.md, written once (check-before-write)
+        _persist_l3_verdict(key_dir, "meets", l3_output)
         # 2. achieved.md draft (only when absent/short — never clobbers a
         #    ≥200B draft from an earlier attempt of the same verdict)
         achieved_path = key_dir / "achieved.md"

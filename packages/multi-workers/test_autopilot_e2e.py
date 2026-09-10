@@ -47,7 +47,7 @@ _MW_PY = _HERE / "mw.py"
 sys.path.insert(0, str(_HERE))
 
 import mw_common  # noqa: E402
-from autopilot import config, gates, roadmap, state, timeline  # noqa: E402
+from autopilot import config, conductor, gates, roadmap, state, timeline  # noqa: E402
 
 try:
     import pytest
@@ -61,7 +61,12 @@ _SERVE_POLL = 1.0        # mw serve supervision loop (mw.py: time.sleep(1))
 _FAST = os.environ.get("MW_E2E_FAST", "") == "1"
 _BEAT_WINDOW = 15.0 if _FAST else 60.0
 _STRESS_WINDOW = 20.0 if _FAST else 60.0
-_GRACE_MS = 250.0        # poll granularity + scheduler jitter on the delay bound
+_GRACE_MS = 250.0        # VC-018 erratum (2026-09-10): gate consumption is
+                         # "within the first tick after the answer" — the
+                         # answer can land mid-tick, so delay <= interval +
+                         # tick-processing overhead (poll granularity +
+                         # scheduler jitter), never the bare interval.
+_TICK_SLACK_MS = _GRACE_MS
 
 
 def _verify(tag: str, **kv) -> None:
@@ -346,12 +351,14 @@ def _start_launcher(project: pathlib.Path, env: dict) -> subprocess.Popen:
     )
 
 
-def _start_serve(project: pathlib.Path, env: dict) -> subprocess.Popen:
+def _start_serve(
+    project: pathlib.Path, env: dict, *, pi_port: int = 7097, claude_port: int = 7098
+) -> subprocess.Popen:
     return _spawn(
         [
             sys.executable, str(_MW_PY), "serve",
             f"--project={project}",
-            "--pi-port=7097", "--claude-port=7098",
+            f"--pi-port={pi_port}", f"--claude-port={claude_port}",
             f"--providers={project / 'providers-e2e.json'}",
         ],
         env,
@@ -375,6 +382,18 @@ def _kill_tree(proc: subprocess.Popen | None) -> None:
         proc.wait(timeout=10)
     except Exception:
         pass
+
+
+def _kill_pid(pid: int) -> None:
+    """Kill one process by PID (no tree) — the AC-022 conductor kill."""
+    if sys.platform == "win32":
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+    else:
+        import signal
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def _mw_stop(project: pathlib.Path) -> None:
@@ -499,7 +518,9 @@ def test_full_chain_single_key() -> None:
         )
         assert t_consumed is not None, "gate-answered event never appeared"
         delay_ms = (t_consumed - t_answer) * 1000
-        assert delay_ms <= _INTERVAL * 1000 + _GRACE_MS, f"gate delay {delay_ms}ms"
+        # VC-018 (erratum): gate consumed within the first tick after the
+        # answer — delay <= interval + tick-processing overhead
+        assert delay_ms <= _INTERVAL * 1000 + _TICK_SLACK_MS, f"gate delay {delay_ms}ms"
 
         # first dispatch row for the stage (gen spec)
         t_dispatch = _wait_until(lambda: _rows(project, "ap-k1-"), timeout=30)
@@ -509,7 +530,7 @@ def test_full_chain_single_key() -> None:
         assert d_delay_ms <= 2 * _INTERVAL * 1000 + _GRACE_MS, f"dispatch delay {d_delay_ms}ms"
         _verify(
             "VC-018", delay_ms=round(delay_ms), interval_ms=round(_INTERVAL * 1000),
-            **{"pass": "true"},
+            slack_ms=round(_TICK_SLACK_MS), **{"pass": "true"},
         )
         _verify(
             "VC-004", delay_ms=round(d_delay_ms), interval_ms=round(_INTERVAL * 1000),
@@ -827,6 +848,189 @@ def test_serve_enable_chain() -> None:
         shutil.rmtree(bin_dir, ignore_errors=True)
 
 
+# ── 6. real conductor kill + serve respawn (AC-022, VC-024 process form) ────
+
+def test_conductor_kill_respawn() -> None:
+    keys = {"k1": "EXECUTE"}
+    project = _make_project(keys=keys, roadmap_text=_rm_running(list(keys)))
+    _tasks(project, "k1", ["T-01-one"])
+    bin_dir = _make_stub_bin()
+    env = _child_env(bin_dir)
+    serve = None
+    try:
+        serve = _start_serve(project, env)
+        got = _wait_until(
+            lambda: (project / ".mw" / "mw.pid").is_file(), timeout=20
+        )
+        assert got, "mw serve did not start"
+        got = _wait_until(
+            lambda: (project / ".mw" / "conductor.pid").is_file(), timeout=20
+        )
+        assert got, "conductor not spawned"
+        old_pid = int(
+            (project / ".mw" / "conductor.pid").read_text(encoding="utf-8").strip()
+        )
+
+        # the exec task completes (stub worker under the launcher)
+        got = _wait_until(
+            lambda: any(
+                r["status"] == "done" for r in _rows(project, "ap-k1-T-01-one")
+            ),
+            timeout=30,
+        )
+        assert got, "exec task never completed"
+        task_dir = next(
+            (project / ".agenticdoc" / "k1" / "workers").glob("ap-k1-T-01-one*")
+        )
+        trace = task_dir / "trace.log"
+        output = task_dir / "output.md"
+        start_lines_before = trace.read_text(encoding="utf-8").count("[START]")
+        mtime_before = output.stat().st_mtime_ns
+        rounds_before = state.used_rounds(conductor._all_workers_dirs(project))
+
+        # kill the conductor process (stage mid-flight; serve must respawn)
+        _kill_pid(old_pid)
+
+        respawn_by = _SERVE_POLL + 2.0
+        got = _wait_until(
+            lambda: (
+                (project / ".mw" / "conductor.pid").is_file()
+                and int(
+                    (project / ".mw" / "conductor.pid").read_text(encoding="utf-8").strip()
+                ) != old_pid
+            ),
+            timeout=respawn_by + 5,
+        )
+        assert got, "serve did not respawn a new conductor"
+        new_pid = int(
+            (project / ".mw" / "conductor.pid").read_text(encoding="utf-8").strip()
+        )
+
+        # invariants after recovery (AC-022): no re-dispatch, single [START],
+        # budget continuity, completed-artifact mtime unchanged
+        got = _wait_until(
+            lambda: any(
+                e["ev"] == "advance" and "execute->verify exit=0" in e["detail"]
+                for e in _events(project)
+            ),
+            timeout=2 * _INTERVAL + respawn_by + 5,
+        )
+        assert got, "recovered conductor did not resume progression"
+        fam = _rows(project, "ap-k1-T-01-one")
+        assert len(fam) == 1, f"re-dispatched the completed task: {fam}"
+        assert trace.read_text(encoding="utf-8").count("[START]") == start_lines_before
+        assert output.stat().st_mtime_ns == mtime_before
+        # budget continuity (AC-022): every pre-kill loop's count is
+        # unchanged — recovery neither resets nor inflates rounds; NEW loops
+        # (e.g. the L3 review after execute->verify) may legitimately appear
+        rounds_after = state.used_rounds(conductor._all_workers_dirs(project))
+        assert all(
+            rounds_after.get(loop_id, 0) == count
+            for loop_id, count in rounds_before.items()
+        ), (rounds_before, rounds_after)
+        _verify(
+            "VC-024", kill="real-process", respawned="true", new_pid=new_pid,
+            start_lines=start_lines_before, budgets_unchanged="true",
+            mtime_unchanged="true",
+        )
+    finally:
+        _mw_stop(project)
+        if serve is not None:
+            try:
+                serve.wait(timeout=15)
+            except Exception:
+                _kill_tree(serve)
+        _kill_tree(serve)
+        shutil.rmtree(project, ignore_errors=True)
+        shutil.rmtree(bin_dir, ignore_errors=True)
+
+
+# ── 7. multi-project isolation (one serve per project, spec "mw serve 托管多项目")
+
+def test_multi_project_isolation() -> None:
+    p1 = _make_project(keys={"k1": "EXECUTE"}, roadmap_text=_rm_running(["k1"]))
+    _tasks(p1, "k1", ["T-01-one"])
+    p2 = _make_project(keys={"k2": "EXECUTE"}, roadmap_text=_rm_running(["k2"]))
+    _tasks(p2, "k2", ["T-02-two"])
+    bin_dir = _make_stub_bin()
+    env = _child_env(bin_dir)
+    serve1 = serve2 = None
+    try:
+        serve1 = _start_serve(p1, env, pi_port=7097, claude_port=7098)
+        serve2 = _start_serve(p2, env, pi_port=7197, claude_port=7198)
+        for proj in (p1, p2):
+            got = _wait_until(
+                lambda proj=proj: (proj / ".mw" / "mw.pid").is_file()
+                and (proj / ".mw" / "conductor.pid").is_file(),
+                timeout=20,
+            )
+            assert got, f"serve/conductor not up for {proj}"
+        pid1 = int((p1 / ".mw" / "conductor.pid").read_text(encoding="utf-8").strip())
+        pid2 = int((p2 / ".mw" / "conductor.pid").read_text(encoding="utf-8").strip())
+        assert pid1 != pid2, "conductors must be per-project processes"
+
+        # both projects progress independently (own queues, own timelines)
+        for proj, prefix in ((p1, "ap-k1-"), (p2, "ap-k2-")):
+            got = _wait_until(
+                lambda proj=proj, prefix=prefix: any(
+                    r["status"] == "done" for r in _rows(proj, prefix)
+                ),
+                timeout=30,
+            )
+            assert got, f"no completed dispatch in {proj}"
+        # no cross-project leakage: each queue holds only its own key's rows
+        assert all(
+            r["task_key"].startswith("ap-k1-") for r in _rows(p1)
+        ), "foreign rows in project 1 queue"
+        assert all(
+            r["task_key"].startswith("ap-k2-") for r in _rows(p2)
+        ), "foreign rows in project 2 queue"
+
+        # kill project 1's conductor → project 2 is unaffected
+        _kill_pid(pid1)
+        got = _wait_until(
+            lambda: any(
+                e["ev"] == "advance" and "execute->verify exit=0" in e["detail"]
+                for e in _events(p2)
+            ),
+            timeout=30,
+        )
+        assert got, "project 2 progression blocked by project 1's conductor kill"
+        pid2_after = int(
+            (p2 / ".mw" / "conductor.pid").read_text(encoding="utf-8").strip()
+        )
+        assert pid2_after == pid2, "project 2 conductor was disturbed"
+        # project 1 recovers on its own serve
+        got = _wait_until(
+            lambda: (
+                (p1 / ".mw" / "conductor.pid").is_file()
+                and int(
+                    (p1 / ".mw" / "conductor.pid").read_text(encoding="utf-8").strip()
+                ) != pid1
+            ),
+            timeout=_SERVE_POLL + 7,
+        )
+        assert got, "project 1 conductor not respawned"
+        _verify(
+            "MULTI-PROJECT", conductors=2, per_project_pids="true",
+            queues_isolated="true", p2_unaffected="true", p1_respawned="true",
+        )
+    finally:
+        _mw_stop(p1)
+        _mw_stop(p2)
+        for serve in (serve1, serve2):
+            if serve is not None:
+                try:
+                    serve.wait(timeout=15)
+                except Exception:
+                    _kill_tree(serve)
+        _kill_tree(serve1)
+        _kill_tree(serve2)
+        shutil.rmtree(p1, ignore_errors=True)
+        shutil.rmtree(p2, ignore_errors=True)
+        shutil.rmtree(bin_dir, ignore_errors=True)
+
+
 # ── script mode ──────────────────────────────────────────────────────────────
 
 _TESTS = [
@@ -835,6 +1039,8 @@ _TESTS = [
     test_beat_observation_window,
     test_concurrent_write_stress,
     test_serve_enable_chain,
+    test_conductor_kill_respawn,
+    test_multi_project_isolation,
 ]
 
 

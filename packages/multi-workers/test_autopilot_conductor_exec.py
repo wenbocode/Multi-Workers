@@ -272,6 +272,38 @@ def test_exec_retry_exhausted_stalls_other_key_unblocked(
     )
 
 
+def test_exec_budget_one_escalates_immediately(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-011/VC-013, task-retry loop at round_budget=1: the first failure
+    spends the whole budget — no second-round dispatch, key stalls, other
+    keys unaffected."""
+    project = _key_project(tmp_path, phases={"k1": "EXECUTE", "k2": "EXECUTE"})
+    _tasks(project, "k1", ["T-01-first"])
+    _tasks(project, "k2", ["T-09-other"])
+    cfg = config.load_config(project)
+    cfg["round_budget"] = 1
+    config.save_config(project, cfg)
+    fake_advance, _calls = _fake_advance_factory(project)
+    monkeypatch.setattr(conductor.advance, "advance", fake_advance)
+    st = _state(project)
+    conductor.tick(project, st)  # a1 for both keys
+    _set_row(project, "ap-k1-T-01-first", "failed")
+    assert conductor.tick(project, st) == "ok"
+    # budget=1 spent by the failed attempt 1 → no a2, k1 stalled
+    assert _rows(project, "ap-k1-T-01-first-a2") == []
+    rm = roadmap.load_roadmap(
+        project / ".agenticdoc" / "_autopilot" / "_roadmap.md"
+    )
+    assert rm.stages[0].key_status["k1"] == "stalled"
+    # AC-023 still holds: the other key is not blocked
+    assert len(_rows(project, "ap-k2-")) >= 1
+    _verify(
+        "VC-013", loop="task-retry", budget=1, second_round_rows=0,
+        escalated="stalled", other_key_rows=len(_rows(project, "ap-k2-")),
+    )
+
+
 def test_exec_needs_clarification_counts_as_failure(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -377,6 +409,24 @@ def test_meets_done_transaction(
     # idempotent: a later tick does not redo the transaction
     assert conductor.tick(project, st) == "ok"
     assert len(list((key_dir / "evidence").glob("quality-gate-report-*.md"))) == 1
+    # L3 verdict persisted for the closure dossier (AC-003): meets + report
+    assert (key_dir / "l3-verdict.txt").read_text(encoding="utf-8").strip() == "meets"
+    l3_report = (key_dir / "l3-report.md").read_text(encoding="utf-8")
+    assert "## Quality Gate Report" in l3_report
+    # all keys terminal → closure dossier carries the per-key verdict row
+    dossier = (
+        project / ".agenticdoc" / "_autopilot" / "stages" / "stage-1-close.md"
+    )
+    assert dossier.is_file(), "closure dossier not written"
+    row = [
+        l for l in dossier.read_text(encoding="utf-8").splitlines()
+        if l.startswith("| k1 |")
+    ]
+    assert row and "| meets |" in row[0] and "l3-report.md" in row[0], row
+    _verify(
+        "VC-005", dossier_verdict="meets", report="l3-report.md",
+        verdict_file=true_str(True),
+    )
     _verify(
         "VC-012", verdict="meets", qg_reports=1, achieved_bytes=(
             key_dir / "achieved.md").stat().st_size, advance_exit=0,
@@ -416,6 +466,40 @@ def test_below_repair_reeval_then_stalled(
     rm = roadmap.load_roadmap(project / ".agenticdoc" / "_autopilot" / "_roadmap.md")
     assert rm.stages[0].key_status["k1"] == "stalled"
     _verify("VC-012", verdict="below-twice", repair_rounds=1, stalled=true_str(True))
+
+
+def test_l3_budget_one_escalates_after_one_round(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-011/VC-013, L3 convergence loop at round_budget=1: one below
+    round spends the budget — no second review round, no repair dispatch,
+    key stalls with the verdict persisted for the closure dossier."""
+    project = _verify_key_project(tmp_path)
+    cfg = config.load_config(project)
+    cfg["round_budget"] = 1
+    config.save_config(project, cfg)
+    fake_advance, _calls = _fake_advance_factory(project)
+    monkeypatch.setattr(conductor.advance, "advance", fake_advance)
+    st = _state(project)
+    conductor.tick(project, st)  # l3-a1
+    _worker_output(project, "k1", "ap-k1-l3-a1", _L3_BELOW)
+    _set_row(project, "ap-k1-l3-a1", "done")
+    assert conductor.tick(project, st) == "ok"
+    # 1 轮后升级：no l3-a2, no repair, stalled
+    assert _rows(project, "ap-k1-l3-a2") == []
+    assert _rows(project, "ap-k1-repair-") == []
+    rm = roadmap.load_roadmap(
+        project / ".agenticdoc" / "_autopilot" / "_roadmap.md"
+    )
+    assert rm.stages[0].key_status["k1"] == "stalled"
+    # verdict persisted (AC-003 dossier input)
+    key_dir = project / ".agenticdoc" / "k1"
+    assert (key_dir / "l3-verdict.txt").read_text(encoding="utf-8").strip() == "below"
+    assert "## Quality Gate Report" in (key_dir / "l3-report.md").read_text(encoding="utf-8")
+    _verify(
+        "VC-013", loop="l3", budget=1, second_round_rows=0, escalated="stalled",
+        verdict_persisted=true_str(True),
+    )
 
 
 def test_missing_sections_and_short_achieved_are_below(
