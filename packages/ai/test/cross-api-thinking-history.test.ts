@@ -82,6 +82,7 @@ function makeAnthropicModel(): Model<"anthropic-messages"> {
 		name: "Claude Sonnet 4.6",
 		api: "anthropic-messages",
 		provider: "timi",
+		baseUrl: "https://example.invalid/v1",
 		reasoning: false,
 		input: ["text", "image"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -111,7 +112,7 @@ function makeAssistantMsg(api: Api, thinkingSignature: string): AssistantMessage
 		provider: "timi",
 		model: api === "anthropic-messages" ? "claude-sonnet-4.6" : "gpt-5.6-sol",
 		usage: ZERO_USAGE,
-		stopReason: "end_turn",
+		stopReason: "stop",
 		timestamp: 1720000000000,
 	};
 }
@@ -131,9 +132,10 @@ async function captureAnthropicMessages(context: Context): Promise<unknown[]> {
 	mockState.createParams = undefined;
 	const s = streamAnthropic(makeAnthropicModel(), context, { apiKey: "test-key" });
 	for await (const event of s) {
-		if (event.type === "stop" || event.type === "error") break;
+		if (event.type === "done" || event.type === "error") break;
 	}
-	return (mockState.createParams?.messages as unknown[]) ?? [];
+	const captured = mockState.createParams as Record<string, unknown> | undefined;
+	return (captured?.messages as unknown[]) ?? [];
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +159,7 @@ describe("cross-api thinking history isolation (VC-006)", () => {
 		// Find any reasoning items in the output
 		const reasoningItems = output.filter((item) => {
 			if (typeof item === "object" && item !== null) {
-				const obj = item as Record<string, unknown>;
+				const obj = item as unknown as Record<string, unknown>;
 				return obj.type === "reasoning";
 			}
 			return false;
@@ -167,7 +169,7 @@ describe("cross-api thinking history isolation (VC-006)", () => {
 
 		// Text content from the assistant message is still present
 		const assistantOutputs = output.filter((item) => {
-			const obj = item as Record<string, unknown>;
+			const obj = item as unknown as Record<string, unknown>;
 			return obj.type === "message" && obj.role === "assistant";
 		});
 		expect(assistantOutputs.length).toBeGreaterThan(0);
@@ -227,12 +229,12 @@ describe("cross-api thinking history isolation (VC-006)", () => {
 		const output = convertResponsesMessages(model, context, new Set());
 
 		const reasoningItems = output.filter((item) => {
-			const obj = item as Record<string, unknown>;
+			const obj = item as unknown as Record<string, unknown>;
 			return obj.type === "reasoning";
 		});
 
 		expect(reasoningItems).toHaveLength(1);
-		expect((reasoningItems[0] as Record<string, unknown>).id).toBe("rs_test_abc123");
+		expect((reasoningItems[0] as unknown as Record<string, unknown>).id).toBe("rs_test_abc123");
 	});
 
 	afterAll(() => {

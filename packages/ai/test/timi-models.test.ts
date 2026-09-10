@@ -118,6 +118,14 @@ const EXPECTED_MODELS: Record<
 		maxTokens: 64000,
 		reasoning: false,
 	},
+	"glm-5.3": {
+		name: "GLM-5.3",
+		api: "anthropic-messages",
+		input: ["text"],
+		contextWindow: 200000,
+		maxTokens: 64000,
+		reasoning: false,
+	},
 	hy3: {
 		name: "Hunyuan 3",
 		api: "anthropic-messages",

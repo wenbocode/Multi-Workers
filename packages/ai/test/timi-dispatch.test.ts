@@ -27,8 +27,11 @@ vi.mock("@anthropic-ai/sdk", () => {
 // ---------------------------------------------------------------------------
 
 class PayloadCaptured extends Error {
-	constructor(readonly captured: unknown) {
+	readonly captured: unknown;
+
+	constructor(captured: unknown) {
 		super("payload captured");
+		this.captured = captured;
 	}
 }
 

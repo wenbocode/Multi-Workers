@@ -86,6 +86,9 @@
 - Updated GPT-5.6 Terra and Luna pricing across OpenAI and passthrough model catalogs.
 - Fixed Fireworks Kimi K3 models to use the OpenAI-compatible API with native reasoning-effort levels and deferred tools ([#7199](https://github.com/earendil-works/pi/issues/7199), [#7230](https://github.com/earendil-works/pi/pull/7230) by [@XBeg9](https://github.com/XBeg9)).
 - Updated Groq's Qwen reasoning override for the replacement `qwen/qwen3.6-27b` model.
+- Pinned the Cloudflare AI Gateway api map to all three API kinds so the openai-completions route survives generated catalogs that temporarily contain no gateway `workers-ai/*` models.
+- Mirrored the Cloudflare Workers AI catalog into the AI Gateway provider under `workers-ai/*` ids during model generation, keeping gateway `/compat` lookups stable when `models.dev` drops those entries.
+- Replaced retired model ids in provider test suites (claude-opus-4-1, gemini-2.0-flash, gpt-5.2-codex, gpt-4.1, grok-build-0.1) with current catalog ids and aligned cross-api thinking history, tool-choice compat, timi catalog, and baseten/fireworks/github-copilot expectations with the current generated catalog, restoring `npm run check` (tsgo) and the package test suite to green.
 
 ## [0.83.0] - 2026-07-29
 

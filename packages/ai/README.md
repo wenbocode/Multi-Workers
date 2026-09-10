@@ -1666,6 +1666,14 @@ Add an entry to `packages/ai/CHANGELOG.md` under `## [Unreleased]`:
 - Added support for [Provider Name] provider ([#PR](link) by [@author](link))
 ```
 
+## Model Catalog and Test Hygiene
+
+The generated provider catalogs under `src/providers/data/` (gitignored, produced by `npm run generate:models`) are the source of truth for the test suite. Follow these rules when catalog churn breaks checks:
+
+- **Fork-specific tests** (for example `timi-models`, `timi-dispatch`, `cross-api-thinking-history`) must not hardcode versioned model ids or frozen metadata snapshots. Derive ids from the catalog, or assert structural invariants that survive `models.dev` refreshes; otherwise the next regeneration drifts and fails.
+- **Tests shared with upstream pi** should stay close to the upstream file. When the generated catalog moves on, prefer mirroring the upstream hunk that fixes the same failure. Skip hunks that depend on providers or APIs this tree does not have, and record the skipped hunk in the commit or task notes.
+- **Cloudflare AI Gateway specifics**: the provider pins its api map to all three API kinds, and the generator mirrors the Workers AI catalog into the gateway under `workers-ai/*` ids, because `models.dev` intermittently drops those entries from the gateway catalog. Do not remove either safeguard; the compat-layer dispatch in `src/compat.ts` relies on the catalog containing at least one model per api kind.
+
 ## License
 
 MIT
