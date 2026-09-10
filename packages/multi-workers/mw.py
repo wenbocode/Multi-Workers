@@ -760,6 +760,33 @@ def _build_bundle() -> tuple[bool, str]:
     return True, (result.stdout or "").strip() or f"built {out}"
 
 
+def _rebuild_pi_dist() -> tuple[bool, str]:
+    """Rebuild packages/coding-agent/dist via `npm run build` (tsgo + copy-assets).
+
+    The npm global `pi` links to packages/coding-agent, so the runtime executes
+    the repo's dist. Without this rebuild the built-in agent-team-loop copy
+    compiled into dist goes stale behind the freshly installed global bundle
+    (mostly benign - the global bundle wins activation - but it drifts
+    silently), and any pi-core changes never reach the runtime at all.
+    """
+    pkg = _repo_root() / "packages" / "coding-agent"
+    npm = shutil.which("npm")
+    if npm is None:
+        return False, "npm not found on PATH - cannot rebuild packages/coding-agent/dist"
+    result = subprocess.run(  # noqa: S603
+        [npm, "run", "build"],
+        cwd=str(pkg),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "npm run build failed").strip().splitlines()
+        return False, "npm run build failed: " + " | ".join(tail[-3:])
+    return True, "dist rebuilt"
+
+
 def _mw_py_path_file() -> pathlib.Path:
     """Sidecar next to the global extension recording mw.py's absolute path, so
     the extension's findMwPy() resolves mw.py from any project (the repo-relative
@@ -786,7 +813,18 @@ def cmd_build(args: argparse.Namespace) -> int:
         shutil.copy2(str(_bundle_path()), str(ext_dst))
         _write_mw_py_path()
         print(f"[mw build] installed globally: {ext_dst}")
-        print("[mw build] Restart open pi windows to load the new bundle.")
+        # The npm global `pi` links to packages/coding-agent, so the runtime
+        # executes the repo's dist — rebuild it so the built-in agent-team-loop
+        # copy and any pi-core changes reach the runtime (opt out: --no-dist).
+        if args.no_dist:
+            print("[mw build] dist rebuild skipped (--no-dist)")
+        else:
+            dok, dmsg = _rebuild_pi_dist()
+            if not dok:
+                print(f"[mw build] Error: {dmsg}", file=sys.stderr)
+                return 1
+            print(f"[mw build] {dmsg}: {_repo_root() / 'packages' / 'coding-agent' / 'dist'}")
+        print("[mw build] Restart open pi windows to load the new bundle and dist.")
     return 0
 
 
@@ -1037,6 +1075,9 @@ def _parse_args() -> argparse.Namespace:
                              help="Rebuild the extension bundle with esbuild (bash-free, cwd-independent)")
     build_p.add_argument("--install", action="store_true",
                          help="Also install the freshly built bundle into the global extensions dir")
+    build_p.add_argument("--no-dist", dest="no_dist", action="store_true",
+                         help="Skip rebuilding packages/coding-agent/dist (the npm-link pi runtime); "
+                              "by default --install also rebuilds it")
 
     return parser.parse_args()
 
