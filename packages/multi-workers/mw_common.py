@@ -679,6 +679,141 @@ def worker_liveness(project_dir: pathlib.Path, stale_after_sec: int = 90) -> lis
     return verdicts
 
 
+# ── Terminal evidence / launcher beat (D-007/D-008, T-02) ─────────────────────
+
+# Mirrors END_LINE_RE in agent-team-loop/shared/heartbeat.ts. Only a full
+# `[END] <ts> exit=<n> elapsed=<n>s tools=<n> phases=<...>` line counts as
+# terminal evidence (AC-012); the exit->status mapping itself lives in the
+# launcher (T-08).
+_END_LINE_RE = re.compile(r"^\[END\] (\S+) exit=(\d+) elapsed=(\d+)s tools=(\d+) phases=(\S+)$")
+_TRACE_TAIL_BYTES = 64 * 1024
+
+
+def parse_end_exit(task_dir: pathlib.Path) -> int | None:
+    """Exit code from the last [END] line of a worker task's trace.log.
+
+    Reads only the file tail (64KB, design section 9: stat + tail-read so
+    polling stays cheap). Missing file or no [END] line -> None; the caller
+    decides what unverifiable means (T-08). Later [END] lines win, mirroring
+    the TS parse loop.
+    """
+    trace = pathlib.Path(task_dir) / "trace.log"
+    try:
+        with trace.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - _TRACE_TAIL_BYTES))
+            tail = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    exit_code: int | None = None
+    for line in tail.splitlines():
+        m = _END_LINE_RE.match(line)
+        if m:
+            exit_code = int(m.group(2))
+    return exit_code
+
+
+# Launcher beat protocol (D-008): every poll overwrites
+# .mw/launcher-beat.<pid> with a single `ts=<iso>` line. Before applying the
+# silence rule (presumed dead), a launcher checks for another live launcher's
+# fresh beat and yields. No lock: one small file per launcher, overwritten.
+_BEAT_FILE_PREFIX = "launcher-beat."
+_BEAT_FRESH_SEC = 30
+_ORPHAN_DEAD_ENV = "PI_WORKER_ORPHAN_DEAD_MIN"
+_DEFAULT_ORPHAN_DEAD_MIN = 90
+
+
+def launcher_beat_write(project_dir: pathlib.Path, pid: int) -> None:
+    """Refresh this launcher's beat file: .mw/launcher-beat.<pid>, single
+    `ts=<iso>` (UTC) line, overwritten every poll (D-008)."""
+    beat = pathlib.Path(project_dir) / ".mw" / f"{_BEAT_FILE_PREFIX}{pid}"
+    beat.parent.mkdir(parents=True, exist_ok=True)
+    beat.write_text(f"ts={iso_now()}\n", encoding="utf-8")
+
+
+def other_live_launcher(project_dir: pathlib.Path, self_pid: int) -> bool:
+    """True when another live launcher has a fresh beat (D-008).
+
+    A beat file counts only when its pid is not ours, its ts is younger than
+    30s, and the pid is alive (reuses _is_alive). Missing files, expired or
+    unparseable beats, and dead pids all mean "no other live launcher", so
+    the caller keeps the silence rule for itself. A beat proven expired
+    whose pid is dead is unlinked along the way (hygiene, review S2: one
+    stale file would otherwise accumulate per dead launcher; correctness is
+    unaffected either way since expired beats are already ignored).
+    """
+    beat_dir = pathlib.Path(project_dir) / ".mw"
+    now = time.time()
+    for beat in beat_dir.glob(f"{_BEAT_FILE_PREFIX}*"):
+        try:
+            pid = int(beat.name[len(_BEAT_FILE_PREFIX):])
+        except ValueError:
+            continue  # malformed name; not ours to judge
+        if pid == self_pid:
+            continue
+        try:
+            content = beat.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        m = re.match(r"^ts=(\S+)", content.strip())
+        if not m:
+            continue
+        try:
+            ts = _parse_heartbeat_ts(m.group(1))
+        except ValueError:
+            continue
+        if ts.tzinfo is None:  # spec 2.1: timestamps are UTC
+            ts = ts.replace(tzinfo=datetime.timezone.utc)
+        if now - ts.timestamp() >= _BEAT_FRESH_SEC:
+            if not _is_alive(pid):  # expired AND dead: prune the leftover beat
+                try:
+                    beat.unlink(missing_ok=True)
+                except OSError:
+                    pass  # best-effort hygiene
+            continue
+        if _is_alive(pid):
+            return True
+    return False
+
+
+def orphan_dead_after(env: Mapping[str, str] | None = None) -> int:
+    """Silence-rule window in minutes (D-007): env PI_WORKER_ORPHAN_DEAD_MIN
+    (int >= 1), default 90. Missing/0/negative/non-numeric values fall back
+    to the default so a typo can never disable or zero the rule."""
+    if env is None:
+        env = os.environ
+    try:
+        minutes = int(env.get(_ORPHAN_DEAD_ENV, ""))
+    except (TypeError, ValueError):
+        return _DEFAULT_ORPHAN_DEAD_MIN
+    if minutes < 1:
+        return _DEFAULT_ORPHAN_DEAD_MIN
+    return minutes
+
+
+def task_dir_last_activity(task_dir: pathlib.Path) -> float | None:
+    """Newest mtime among all files in a worker task directory (D-007 silence
+    rule input). None when the directory is missing or holds no files."""
+    task_dir = pathlib.Path(task_dir)
+    if not task_dir.is_dir():
+        return None
+    newest: float | None = None
+    try:
+        entries = list(task_dir.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        try:
+            if not entry.is_file():
+                continue
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        newest = mtime if newest is None else max(newest, mtime)
+    return newest
+
+
 def _doctor_queue(project_dir: pathlib.Path) -> dict:
     entries = parse_workers_file(workers_path(project_dir))
     non_terminal = [

@@ -9,11 +9,20 @@ mw-dispatch-reliability changes (design D-001/D-004):
   reason persisted to its worker.log; it never kills the launcher loop.
 - Each poll archives queue entries whose task.md no longer exists.
 - Credential resolution and the file bus live in mw_common (single source).
+
+mw-widget-terminal-lifecycle (T-08, AC-012/AC-013):
+- Each poll refreshes the launcher beat (.mw/launcher-beat.<pid>) and
+  reconciles orphaned running rows (running but not in running_procs):
+  positive terminal evidence (an [END] line, or a lone output.md from an old
+  bundle) applies unconditionally; evidence-less rows fail as presumed dead
+  after the silence window, yielding to another live launcher's fresh beat
+  (design D-006~D-008).
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import pathlib
@@ -57,6 +66,22 @@ def _record_spawn_failure(entry: dict[str, str], msg: str) -> None:
             fh.write(f"[launcher] spawn failed ({mw_common.iso_now()}): {msg}\n")
     except OSError:
         pass  # best-effort; the launcher.log line still carries the reason
+
+
+def _record_reconcile(entry: dict[str, str], reason: str) -> None:
+    """Persist a reconcile decision into the task's worker.log.
+
+    Same family as _record_spawn_failure: a status flip without a persisted
+    reason is undiagnosable after the fact (AC-012/AC-013 both require the
+    reconcile reason line in worker.log).
+    """
+    try:
+        log_path = _worker_log_path(entry)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(f"[launcher] reconcile ({mw_common.iso_now()}): {reason}\n")
+    except OSError:
+        pass  # best-effort; the queue row still carries the terminal status
 
 
 # ── Provider / env helpers ────────────────────────────────────────────────────
@@ -201,7 +226,9 @@ def _starter_prompt(task_path: str) -> str:
     return (
         f"Read your task file at {p.resolve()} and execute it end-to-end. "
         "It is self-contained: full instructions, context and acceptance "
-        "criteria. Do not ask for the task body; report results when done."
+        "criteria. Do not ask for the task body; report results when done. "
+        "Your final reply MUST open with a one-line conclusion: status plus "
+        "key result or blocker."
     )
 
 
@@ -259,6 +286,105 @@ def _build_command(entry: dict[str, str]) -> list[str]:
         return [cli, starter]
 
 
+# ── Orphan reconcile (AC-012/AC-013, design D-006~D-008) ──────────────────────
+
+def _parse_utc_ts(raw: str) -> datetime.datetime | None:
+    """Parse a UTC ISO timestamp carrying `+00:00` or `Z` (spec §5 pitfall).
+
+    The TS side writes Date.toISOString() (`...Z`) while the Python side
+    writes iso_now() (`...+00:00`); datetime.fromisoformat only accepts `Z`
+    on Python 3.11+, so normalize before parsing. Naive values are read as
+    UTC (spec 2.1). Unparseable/empty -> None.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        ts = datetime.datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=datetime.timezone.utc)
+    return ts
+
+
+def _row_last_activity(entry: dict[str, str], task_dir: pathlib.Path) -> float | None:
+    """Epoch seconds of the newest silence-rule evidence for one queue row:
+    max(newest task-dir file mtime, row updated_at).
+
+    updated_at parse failure falls back to dispatched_at; when both are
+    unparseable there is no timestamp evidence at all and the caller skips
+    the row rather than guessing (AC-013).
+    """
+    row_ts: datetime.datetime | None = None
+    for field in ("updated_at", "dispatched_at"):
+        row_ts = _parse_utc_ts(entry.get(field, ""))
+        if row_ts is not None:
+            break
+    if row_ts is None:
+        return None
+    dir_last = mw_common.task_dir_last_activity(task_dir)
+    if dir_last is None:
+        return row_ts.timestamp()
+    return max(dir_last, row_ts.timestamp())
+
+
+def _reconcile_orphans(
+    project_dir: pathlib.Path,
+    running_procs: dict[str, subprocess.Popen[bytes]],
+) -> None:
+    """Converge orphaned running rows to a terminal status (AC-012/AC-013).
+
+    An orphan row is status==running with task_key not in running_procs —
+    spawned by another launcher, or by one that has since died. Own rows are
+    never touched (the reap path owns them). Positive evidence (an [END]
+    line, or a lone output.md from an old bundle) applies unconditionally
+    every poll; the silence rule (presumed dead) additionally yields to
+    another live launcher's fresh beat (D-008).
+    """
+    for entry in _parse_workers_file(_workers_path(project_dir)):
+        if entry["status"] != "running":
+            continue
+        key = entry["task_key"]
+        if key in running_procs:
+            continue  # own row: never touched by reconcile
+        task_dir = pathlib.Path(entry["task_path"]).parent
+        end_exit = mw_common.parse_end_exit(task_dir)
+        if end_exit is not None:
+            status = _exit_to_status(end_exit)
+            reason = f"reconcile: [END] exit={end_exit} (orphaned row)"
+        elif (task_dir / "output.md").exists():
+            status = "failed"
+            reason = "reconcile: completed without END marker, status unverifiable — read output.md"
+        else:
+            # Silence rule (AC-013): no terminal evidence at all.
+            last = _row_last_activity(entry, task_dir)
+            if last is None:
+                continue  # no parseable activity evidence — never guess
+            age_min = (time.time() - last) / 60.0
+            if age_min < mw_common.orphan_dead_after():
+                continue  # within the silence window: keep running
+            if mw_common.other_live_launcher(project_dir, os.getpid()):
+                print(
+                    f"[launcher] reconcile: silence rule yielded for {key!r} "
+                    "(another live launcher holds a fresh beat)",
+                    file=sys.stderr, flush=True,
+                )
+                continue
+            status = "failed"
+            reason = f"reconcile: presumed dead (no activity for {int(age_min)}m)"
+        _record_reconcile(entry, reason)
+        try:
+            _update_status(project_dir, key, status)
+        except Exception as exc:  # noqa: BLE001 — never kill the poll loop
+            print(
+                f"[launcher] reconcile status update failed for {key!r}: {exc}",
+                file=sys.stderr, flush=True,
+            )
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def _poll_once(
@@ -269,7 +395,11 @@ def _poll_once(
     pending_queue: list[dict[str, str]],
     max_workers: int | None,
 ) -> None:
-    """One launcher poll cycle: archive stale, reap, discover, spawn."""
+    """One launcher poll cycle: beat, archive stale, reap, reconcile, discover, spawn."""
+    # D-008: refresh this launcher's beat first — it is how another
+    # launcher's silence rule knows we are live (and ours knows of them).
+    mw_common.launcher_beat_write(project_dir, os.getpid())
+
     archived = mw_common.archive_stale_entries(project_dir)
     if archived:
         print(
@@ -295,6 +425,10 @@ def _poll_once(
         if pending_queue:
             next_entry = pending_queue.pop(0)
             _spawn(next_entry, project_dir, config, running_procs, log_handles)
+
+    # Reconcile orphaned running rows (AC-012/AC-013): after reap (rows just
+    # reaped are already terminal) and before discover/spawn.
+    _reconcile_orphans(project_dir, running_procs)
 
     # Discover new pending tasks
     entries = _parse_workers_file(_workers_path(project_dir))

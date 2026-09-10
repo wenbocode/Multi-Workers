@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
 import { registerAutopilotCommands } from "../autopilot/console.ts";
+import { AckStore } from "../shared/ack-store.ts";
 import { formatHeartbeatAge, readTaskProgress } from "../shared/heartbeat.ts";
 import { IndexStore } from "../shared/index-store.ts";
 import { getMwStatus, initMw, startMw, waitForMwStart } from "../shared/mw-runner.ts";
@@ -242,6 +243,7 @@ export async function restoreWatch(
 	watch: PmWatchState,
 	indexStore: IndexStore,
 	workerStore: WorkerStore,
+	ackStore: AckStore,
 	agenticdocRoot: string,
 	ctx: ExtensionContext,
 ): Promise<void> {
@@ -292,7 +294,7 @@ export async function restoreWatch(
 		}
 	}
 
-	setWatchWidget(ctx, renderWatchLines(indexStore, workerStore, agenticdocRoot, key));
+	setWatchWidget(ctx, renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, key));
 	// Re-stamp the entry so it lands in the (possibly new) session file.
 	pi.appendEntry(WATCH_ENTRY_TYPE, { key, claimed: data.claimed ?? false });
 }
@@ -436,7 +438,7 @@ export async function dispatchNewTasks(
  * explicit retry policy (AC-004/D-005): the Exit Reason in the readback body
  * distinguishes idle (true hang) from wall (healthy but out of budget). */
 const PM_CONTINUE_HINT =
-	"[mw] worker 终态回读。请继续 PM 循环：吸收上述结果（done→推进下一任务/phase；failed→读 worker.log 与 trace.log 排查后决定重试或修复；needs-clarification→整理问题向用户澄清；超时失败（Exit Reason 含 idle/wall timeout）→ wall 型用双倍 timeout 预算重派一次，再失败转 PM 直执，idle 型直接排查环境），然后派发下一个任务或汇报阶段完成。";
+	"[mw] worker 终态回读。请继续 PM 循环：吸收上述结果（done→推进下一任务/phase；failed→读 worker.log 与 trace.log 排查后决定重试或修复；needs-clarification→整理问题向用户澄清；超时失败（Exit Reason 含 idle/wall timeout）→ wall 型用双倍 timeout 预算重派一次，再失败转 PM 直执，idle 型直接排查环境），然后派发下一个任务或汇报阶段完成。吸收终态结果后调用 ack_worker_result(task_key)（或 /mw ack all）确认处理完成，widget 待处理区才会清空。";
 
 /** Runtime stats for terminal worker summaries (AC-013):
  * ` (6m-style coarse duration, ph i/n)`. Preference order: exact [START]→[END]
@@ -464,6 +466,7 @@ function heartbeatStatsSuffix(taskDir: string, entry: WorkerEntry): string {
 export function startWorkerPollLoop(
 	pi: ExtensionAPI,
 	workerStore: WorkerStore,
+	ackStore: AckStore,
 	indexStore: IndexStore,
 	agenticdocRoot: string,
 	watch: PmWatchState,
@@ -489,7 +492,7 @@ export function startWorkerPollLoop(
 			// Live bottom widget for the watched key (per-window state, NOT the
 			// shared _index.parallel active set — every window decides its own key).
 			if (watch.key) {
-				applyWatchWidget(ui, renderWatchLines(indexStore, workerStore, agenticdocRoot, watch.key));
+				applyWatchWidget(ui, renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, watch.key));
 				widgetShown = true;
 			} else if (widgetShown) {
 				applyWatchWidget(ui, undefined);
@@ -563,6 +566,7 @@ export function pmActivate(pi: ExtensionAPI): void {
 	const projectDir = process.cwd();
 	const agenticdocRoot = resolveAgenticdocRoot(projectDir);
 	const workerStore = new WorkerStore(agenticdocRoot);
+	const ackStore = new AckStore(agenticdocRoot);
 	const indexStore = new IndexStore(agenticdocRoot);
 
 	// Per-window watch state: the key THIS window explicitly executes (set via
@@ -576,14 +580,14 @@ export function pmActivate(pi: ExtensionAPI): void {
 			setWatchWidget(ctx, undefined);
 			return;
 		}
-		setWatchWidget(ctx, renderWatchLines(indexStore, workerStore, agenticdocRoot, watch.key));
+		setWatchWidget(ctx, renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, watch.key));
 	};
 
 	// Register commands and tools during loading (safe — not action methods)
 	registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agenticdocRoot);
-	registerMwCommands(pi, projectDir);
+	registerMwCommands(pi, projectDir, workerStore, ackStore);
 	registerMwTools(pi, projectDir);
-	registerWorkerTools(pi, workerStore, indexStore, agenticdocRoot, watch);
+	registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch);
 	registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agenticdocRoot);
 	registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch);
 	registerWatchCommand(pi, watch, refreshWatch, indexStore);
@@ -599,7 +603,7 @@ export function pmActivate(pi: ExtensionAPI): void {
 	registerPmStateGuard(pi, projectDir, agenticdocRoot);
 
 	// Start worker status poll loop (setInterval is safe; displaySummary inside fires later)
-	const pollHandle = startWorkerPollLoop(pi, workerStore, indexStore, agenticdocRoot, watch, ui);
+	const pollHandle = startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, ui);
 	// Session teardown stops the loop (review m3): a fresh runtime re-runs
 	// pmActivate and starts a new one, so this only removes the zombie that
 	// would keep ticking against a disposed context after /reload or session
@@ -668,7 +672,7 @@ export function pmActivate(pi: ExtensionAPI): void {
 		// Capture the UI context so the poll loop can render the bottom widget.
 		ui.ctx = ctx;
 		// Resume the watched key this session had before restart/resume.
-		await restoreWatch(pi, watch, indexStore, workerStore, agenticdocRoot, ctx);
+		await restoreWatch(pi, watch, indexStore, workerStore, ackStore, agenticdocRoot, ctx);
 		// Auto-init project if it hasn't been initialized yet. Gate on .agenticdoc
 		// (the project marker mw init creates), NOT on a project-local bundle copy:
 		// the extension is now installed GLOBALLY (mw setup), so no project-local

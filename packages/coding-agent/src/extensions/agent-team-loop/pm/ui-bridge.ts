@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
+import type { AckStore } from "../shared/ack-store.ts";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.ts";
 import { type IndexStore, readIndexMdActive } from "../shared/index-store.ts";
 import type { DoctorJson } from "../shared/mw-runner.ts";
@@ -11,6 +12,7 @@ import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.ts";
 import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "../shared/phase-docs.ts";
 import { phaseAuditWarnings } from "../shared/pm-state-guard.ts";
 import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
+import { headline } from "../worker/output-writer.ts";
 import { dispatchTask } from "./task-dispatcher.ts";
 
 /** Owner key for a worker task, synchronized with this window's watch state.
@@ -178,7 +180,11 @@ export async function takeOverKey(
 }
 
 const WATCH_WIDGET_KEY = "agent-team-loop-watch";
-const WATCH_MAX_TASK_LINES = 6;
+/** History rows kept in the widget (D-003): done rows and acked terminal
+ * rows are processed history — newest five shown, the rest folded into
+ * `+N more`. Live (running/pending) and unhandled (failed/nc awaiting ack)
+ * rows are never folded. */
+const WATCH_HISTORY_MAX = 5;
 const WATCH_LINE_MAX = 110;
 
 const STATUS_GLYPH: Record<WorkerStatus, string> = {
@@ -201,12 +207,28 @@ export function ownerKeyOf(entry: WorkerEntry, agenticdocRoot: string): string {
 	return rel.split(path.sep)[0] ?? "";
 }
 
-export function readOutputSummary(taskDir: string): string | undefined {
-	const outputPath = path.join(taskDir, "output.md");
-	if (!fs.existsSync(outputPath)) return undefined;
-	const content = fs.readFileSync(outputPath, "utf8");
-	const m = content.match(/## Summary\s*\n+([\s\S]*?)(?=\n## |$)/);
+/** Body of a `## <section>` block in output.md (first match), trimmed;
+ * undefined when the file or section is missing. Generic reader behind
+ * readOutputSummary and the terminal-detail fallback chains (D-004): `##
+ * TL;DR`, `## Exit Reason`, `## Questions`. The section literal is regex-escaped
+ * so a future caller-side string with metacharacters can never inject. */
+export function readOutputSection(taskDir: string, section: string): string | undefined {
+	let content: string;
+	try {
+		content = fs.readFileSync(path.join(taskDir, "output.md"), "utf8");
+	} catch {
+		return undefined;
+	}
+	const m = content.match(
+		new RegExp(`## ${section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\n+([\\s\\S]*?)(?=\\n## |$)`),
+	);
 	return m ? m[1].trim() : undefined;
+}
+
+/** `## Summary` body — the legacy detail source, now the done-row fallback
+ * when no `## TL;DR` exists (old output.md files, AC-009). */
+export function readOutputSummary(taskDir: string): string | undefined {
+	return readOutputSection(taskDir, "Summary");
 }
 
 /** Cap for terminal readback bodies (AC-014). */
@@ -248,11 +270,127 @@ export function readSpawnFailure(taskDir: string): string | undefined {
 	}
 }
 
-/** Live bottom-widget lines for the watched key: phase from _index.parallel,
- * per-task worker statuses, and failure/summary details for terminal tasks. */
+/** worker.log read guard for the needs-clarification fallback: larger logs
+ * mean the worker actually ran (D-004) — skip the read entirely. */
+const WORKER_LOG_TAIL_MAX = 256 * 1024;
+
+/** Last non-empty worker.log line, or undefined. The needs-clarification
+ * fallback for tasks that never wrote an output.md (claude/codex workers,
+ * old bundles) — their last logged line names what they were asking about. */
+export function readWorkerLogTail(taskDir: string): string | undefined {
+	try {
+		const stat = fs.statSync(path.join(taskDir, "worker.log"));
+		if (stat.size > WORKER_LOG_TAIL_MAX) return undefined;
+		const lines = fs.readFileSync(path.join(taskDir, "worker.log"), "utf8").split("\n");
+		for (let i = lines.length - 1; i >= 0; i--) {
+			const line = lines[i].trim();
+			if (line !== "") return line;
+		}
+		return undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** First non-empty line of a section body, trimmed, leading markdown
+ * markers stripped so terminal details never start with `#`/`**`/`- `/`> `
+ * (AC-007). Mirrors HEADLINE_MARKER_RE in worker/output-writer. */
+const DETAIL_MARKER_RE = /^(?:#{1,6}\s+|\*\*|[-*]\s+|>\s+)/;
+
+function firstLine(body: string | undefined): string | undefined {
+	let line = body?.split("\n")[0]?.trim() ?? "";
+	while (DETAIL_MARKER_RE.test(line)) {
+		line = line.replace(DETAIL_MARKER_RE, "").trim();
+	}
+	return line === "" ? undefined : line;
+}
+
+/** Widget detail line for a terminal worker row (D-004): the glyph/status
+ * says what happened, this says why it stuck or what it concluded.
+ *  - failed: spawn-failure reason (launcher prefix stripped, timestamp-free)
+ *    ?? `## Exit Reason` first line
+ *  - needs-clarification: `## Questions` first line ?? worker.log tail ??
+ *    explicit no-output hint (claude/codex tasks write no output.md at all)
+ *  - done: `## TL;DR` first line ?? headline-normalized `## Summary` first
+ *    line (old output.md files)
+ * Returns "" when nothing informative exists (caller renders the key only).
+ * Line-width truncation stays with the caller (WATCH_LINE_MAX). */
+export function readTerminalDetail(taskDir: string, status: WorkerStatus): string {
+	if (status === "failed") {
+		const spawn = readSpawnFailure(taskDir);
+		if (spawn !== undefined) {
+			const reason = spawn.match(/^\[launcher\] spawn failed \([^)]*\):\s*(.*)$/);
+			return (reason?.[1] ?? spawn).trim();
+		}
+		return firstLine(readOutputSection(taskDir, "Exit Reason")) ?? "";
+	}
+	if (status === "needs-clarification") {
+		return firstLine(readOutputSection(taskDir, "Questions")) ?? readWorkerLogTail(taskDir) ?? "no output.md";
+	}
+	if (status === "done") {
+		const tldr = firstLine(readOutputSection(taskDir, "TL;DR"));
+		if (tldr !== undefined) return tldr;
+		const summary = readOutputSummary(taskDir);
+		return summary === undefined ? "" : headline(summary);
+	}
+	return "";
+}
+
+/** Terminal worker statuses (queue semantics; mirrors pm-orchestrator's
+ * isTerminal — shared by the ack validation path). */
+function isTerminalStatus(status: WorkerStatus): boolean {
+	return status === "done" || status === "failed" || status === "needs-clarification";
+}
+
+/** Shared ack validation + write path behind /mw ack and the ack_worker_result
+ * tool (D-002). `"all"` expands to every terminal row not yet acked;
+ * individual keys must reference an existing terminal row — running/pending
+ * rows are rejected and nothing is written for them (AC-004). */
+export async function ackTasks(
+	workerStore: WorkerStore,
+	ackStore: AckStore,
+	targets: string[] | "all",
+): Promise<{ acked: string[]; rejected: Array<{ key: string; reason: string }> }> {
+	const entries = workerStore.readAll();
+	if (targets === "all") {
+		const alreadyAcked = new Set(ackStore.readAll().keys());
+		const keys = entries
+			.filter((e) => isTerminalStatus(e.status) && !alreadyAcked.has(e.taskKey))
+			.map((e) => e.taskKey);
+		if (keys.length === 0) return { acked: [], rejected: [] };
+		return { acked: (await ackStore.ack(keys)).acked, rejected: [] };
+	}
+	const byKey = new Map(entries.map((e) => [e.taskKey, e]));
+	const acked: string[] = [];
+	const rejected: Array<{ key: string; reason: string }> = [];
+	for (const key of targets) {
+		const entry = byKey.get(key);
+		if (entry === undefined) {
+			rejected.push({ key, reason: "no such task in the worker queue" });
+		} else if (!isTerminalStatus(entry.status)) {
+			rejected.push({
+				key,
+				reason: `not terminal (status: ${entry.status}) — only done/failed/needs-clarification rows can be acked`,
+			});
+		} else {
+			acked.push(key);
+		}
+	}
+	const written = acked.length > 0 ? await ackStore.ack(acked) : { acked: [], rejected: [] };
+	return { acked: written.acked, rejected };
+}
+
+/** Live bottom-widget lines for the watched key, in three sections (D-003):
+ *  1. live — running then pending, all shown, never folded
+ *  2. unhandled — failed/needs-clarification rows the PM has not acked
+ *     (/mw ack), all shown, never folded; header carries the count
+ *  3. history — done rows ∪ acked terminal rows, newest-first, capped at
+ *     WATCH_HISTORY_MAX with a `+N more` fold line
+ * Terminal-row details come from readTerminalDetail (D-004). */
 export function renderWatchLines(
 	indexStore: IndexStore,
 	workerStore: WorkerStore,
+	ackStore: AckStore,
 	agenticdocRoot: string,
 	key: string,
 ): string[] {
@@ -263,8 +401,14 @@ export function renderWatchLines(
 		failed: 0,
 		"needs-clarification": 0,
 	};
+	const acked = new Set(ackStore.readAll().keys());
 	const owned = workerStore.readAll().filter((e) => ownerKeyOf(e, agenticdocRoot) === key);
 	for (const e of owned) counts[e.status]++;
+	// Unhandled = failed/needs-clarification not yet acked — the PM's explicit
+	// to-do list; ack moves a row out of this section into history.
+	const unhandled = owned.filter(
+		(e) => (e.status === "failed" || e.status === "needs-clarification") && !acked.has(e.taskKey),
+	);
 
 	const idx = indexStore.findByKey(key);
 	const phase = idx
@@ -279,19 +423,16 @@ export function renderWatchLines(
 	if (counts.done > 0) parts.push(`${counts.done} done`);
 	if (counts.failed > 0) parts.push(`${counts.failed} failed`);
 	if (counts["needs-clarification"] > 0) parts.push(`${counts["needs-clarification"]} needs-clarification`);
+	if (unhandled.length > 0) parts.push(`${unhandled.length} unhandled`);
 	const header = `[mw] ${key} | ${phase}${badge ? ` | docs ${badge}` : ""} | ${
 		parts.length > 0 ? parts.join(" / ") : "no workers"
 	}`;
 
 	if (owned.length === 0) return [header, "  (no worker tasks)"];
 
-	// Live tasks first (running, then pending), terminal tasks newest-first.
-	const rank = (s: WorkerStatus): number => (s === "running" ? 0 : s === "pending" ? 1 : 2);
-	const tasks = [...owned].sort(
-		(a, b) => rank(a.status) - rank(b.status) || (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""),
-	);
-	const lines = [header];
-	for (const e of tasks.slice(0, WATCH_MAX_TASK_LINES)) {
+	// One rendered row per entry; detail per status (live heartbeat vs D-04
+	// terminal sources). Width truncation is uniform (WATCH_LINE_MAX).
+	const rowLine = (e: WorkerEntry): string => {
 		let detail = "";
 		if (e.status === "running") {
 			// Heartbeat-derived live progress (design D-008): phase counter + age
@@ -318,16 +459,25 @@ export function renderWatchLines(
 			}
 			if (prog?.lastAction) detail += ` · ${prog.lastAction}`;
 		} else if (e.status !== "pending") {
-			const taskDir = path.dirname(e.taskPath);
-			detail = readOutputSummary(taskDir) ?? readSpawnFailure(taskDir) ?? "";
-			detail = (detail.split("\n")[0] ?? "").trim();
-			// Strip the launcher prefix (timestamp) so the reason fits the line budget.
-			const reason = detail.match(/^\[launcher\] spawn failed \([^)]*\):\s*(.*)$/);
-			if (reason) detail = reason[1] ?? "";
+			// Terminal detail per status (D-004): spawn reason / Exit Reason /
+			// Questions / TL;DR with their fallback chains.
+			detail = readTerminalDetail(path.dirname(e.taskPath), e.status);
 		}
-		lines.push(trunc(`  ${STATUS_GLYPH[e.status]} ${e.taskKey}${detail ? ` — ${detail}` : ""}`, WATCH_LINE_MAX));
-	}
-	if (tasks.length > WATCH_MAX_TASK_LINES) lines.push(`  ... +${tasks.length - WATCH_MAX_TASK_LINES} more`);
+		return trunc(`  ${STATUS_GLYPH[e.status]} ${e.taskKey}${detail ? ` — ${detail}` : ""}`, WATCH_LINE_MAX);
+	};
+
+	const newestFirst = (a: WorkerEntry, b: WorkerEntry): number => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
+	const live = [
+		...owned.filter((e) => e.status === "running").sort(newestFirst),
+		...owned.filter((e) => e.status === "pending").sort(newestFirst),
+	];
+	const history = owned.filter((e) => e.status === "done" || acked.has(e.taskKey)).sort(newestFirst);
+
+	const lines = [header];
+	for (const e of live) lines.push(rowLine(e));
+	for (const e of [...unhandled].sort(newestFirst)) lines.push(rowLine(e));
+	for (const e of history.slice(0, WATCH_HISTORY_MAX)) lines.push(rowLine(e));
+	if (history.length > WATCH_HISTORY_MAX) lines.push(`  ... +${history.length - WATCH_HISTORY_MAX} more`);
 	return lines;
 }
 
@@ -533,6 +683,7 @@ export function registerMwTools(pi: ExtensionAPI, projectDir: string): void {
 export function registerWorkerTools(
 	pi: ExtensionAPI,
 	workerStore: WorkerStore,
+	ackStore: AckStore,
 	indexStore: IndexStore,
 	agenticdocRoot: string,
 	watch: PmWatchState,
@@ -650,21 +801,53 @@ export function registerWorkerTools(
 		},
 	});
 
-	// list_tasks: return all tracked tasks and their current status.
+	// ack_worker_result: the agent-side ack channel (AC-005) — equivalent to
+	// /mw ack. Registered here (PM activation path only); worker mode never
+	// registers tools, so workers cannot ack their own results.
+	pi.registerTool({
+		name: "ack_worker_result",
+		label: "ack_worker_result",
+		description:
+			"Acknowledge a worker's terminal result (done/failed/needs-clarification) after absorbing it: the row moves out of the watch widget's unhandled section into folded history. task_key acks one task; 'all' acks every unacked terminal task.",
+		promptGuidelines: [
+			"After absorbing a terminal worker result (the readback body / output.md), call ack_worker_result with its task_key — or 'all' after a batch — so the widget's unhandled section clears; unacked failed/needs-clarification rows stay listed until acked.",
+		],
+		parameters: Type.Object({
+			task_key: Type.String({ description: "Worker task key to ack, or 'all' for every unacked terminal task." }),
+		}),
+		execute: async (_toolCallId, params, _signal, _onUpdate, _context) => {
+			const { task_key } = params as { task_key: string };
+			const target = task_key.trim();
+			if (!target) {
+				return { content: [{ type: "text", text: "task_key is required (or 'all')." }], details: undefined };
+			}
+			const result = await ackTasks(workerStore, ackStore, target === "all" ? "all" : [target]);
+			const parts: string[] = [];
+			if (result.acked.length > 0) parts.push(`Acked ${result.acked.length} task(s): ${result.acked.join(", ")}.`);
+			for (const r of result.rejected) parts.push(`NOT acked: ${r.key} — ${r.reason}.`);
+			if (parts.length === 0) parts.push("No unacked terminal tasks.");
+			return { content: [{ type: "text", text: parts.join("\n") }], details: undefined };
+		},
+	});
+
+	// list_tasks: return all tracked tasks and their current status; terminal
+	// rows carry an `acked` badge when acknowledged (AC-011).
 	pi.registerTool({
 		name: "list_tasks",
 		label: "list_tasks",
 		description:
-			"List all worker tasks in this project with their current status (pending / running / done / failed / needs-clarification).",
+			"List all worker tasks in this project with their current status (pending / running / done / failed / needs-clarification). Acked terminal tasks are badged 'acked'.",
 		parameters: Type.Object({}),
 		execute: async (_toolCallId, _params, _signal, _onUpdate, _context) => {
 			const entries = workerStore.readAll();
 			if (entries.length === 0) {
 				return { content: [{ type: "text", text: "No tasks found." }], details: undefined };
 			}
-			const lines = entries.map(
-				(e) => `${e.taskKey} | ${e.status} | ${e.cli}${e.model ? ` | model: ${e.model}` : ""}`,
-			);
+			const acked = new Set(ackStore.readAll().keys());
+			const lines = entries.map((e) => {
+				const base = `${e.taskKey} | ${e.status} | ${e.cli}${e.model ? ` | model: ${e.model}` : ""}`;
+				return acked.has(e.taskKey) ? `${base} | acked` : base;
+			});
 			return { content: [{ type: "text", text: lines.join("\n") }], details: undefined };
 		},
 	});
@@ -900,7 +1083,12 @@ export function formatDoctorReport(report: DoctorJson, fix: boolean): string {
 	return lines.join("\n");
 }
 
-export function registerMwCommands(pi: ExtensionAPI, projectDir: string): void {
+export function registerMwCommands(
+	pi: ExtensionAPI,
+	projectDir: string,
+	workerStore: WorkerStore,
+	ackStore: AckStore,
+): void {
 	pi.registerCommand("mw", {
 		description: "Control mw: build / init / start / stop / status",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
@@ -969,7 +1157,27 @@ export function registerMwCommands(pi: ExtensionAPI, projectDir: string): void {
 				return;
 			}
 
-			ctx.ui.notify("Usage: /mw build|init|start|stop|status|doctor [fix]", "warning");
+			if (sub === "ack") {
+				// Ack terminal worker results (AC-004): <task-key> acks one row,
+				// all acks every unacked terminal row. Running/pending rows are
+				// rejected with the reason — nothing is written for them.
+				const target = _args.trim().split(/\s+/)[1] ?? "";
+				if (!target) {
+					ctx.ui.notify("Usage: /mw ack <task-key> | all", "warning");
+					return;
+				}
+				const result = await ackTasks(workerStore, ackStore, target === "all" ? "all" : [target]);
+				if (result.acked.length > 0) {
+					ctx.ui.notify(`Acked ${result.acked.length} task(s): ${result.acked.join(", ")}`, "info");
+				}
+				for (const r of result.rejected) ctx.ui.notify(`Not acked: ${r.key} — ${r.reason}`, "warning");
+				if (result.acked.length === 0 && result.rejected.length === 0) {
+					ctx.ui.notify("No unacked terminal tasks.", "info");
+				}
+				return;
+			}
+
+			ctx.ui.notify("Usage: /mw build|init|start|stop|status|doctor [fix] | ack <task-key>|all", "warning");
 		},
 	});
 }

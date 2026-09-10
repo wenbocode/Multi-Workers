@@ -697,7 +697,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		pi.sendUserMessage(
 			`[mw deadline] 预算还剩约 ${formatHeartbeatAge(
 				budgetMs - steerAtMs(budgetMs),
-			)}。立即停止开始新工作：完成当前最小步骤后收尾，最终回复中列出已完成/未完成/后续建议（会被存为 output.md 摘要）。`,
+			)}。立即停止开始新工作：完成当前最小步骤后收尾，最终回复中列出已完成/未完成/后续建议（会被存为 output.md 摘要）。最终回复第一行必须是单行结论（状态 + 关键产出/卡点）。`,
 			{ deliverAs: "steer" },
 		);
 	}, steerAtMs(budgetMs));

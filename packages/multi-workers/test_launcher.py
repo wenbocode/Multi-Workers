@@ -5,21 +5,26 @@ mw-dispatch-reliability: the providers fixture is fully hermetic (env-only
 credential sources written to a tmp providers.json) so no test ever reads the
 real ~/.pi/agent/auth.json (AC-009).
 """
+import datetime
 import json
+import os
 import pathlib
 import sys
+import time
 
 import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import launcher
+import mw_common
 from launcher import (
     _build_command,
     _build_env,
     _load_providers,
     _parse_workers_file,
     _poll_once,
+    _reconcile_orphans,
     _resolve_cli,
     _serialize_entry,
     _starter_prompt,
@@ -86,6 +91,12 @@ def _entry(task_file: pathlib.Path, **overrides) -> dict[str, str]:
     }
     entry.update(overrides)
     return entry
+
+
+def _emit_verify(capsys: pytest.CaptureFixture[str], line: str) -> None:
+    """Print a [VERIFY] line for quality-gate extraction, bypassing pytest capture."""
+    with capsys.disabled():
+        print(line)
 
 
 # ── VC-008: Pi + timi ─────────────────────────────────────────────────────────
@@ -547,3 +558,398 @@ class TestTaskLocationContract:
         assert _parse_workers_file(queue_file)[0]["status"] == "failed"
         log = (bad.parent / "worker.log").read_text(encoding="utf-8")
         assert "invalid worker-task location" in log
+
+
+# ── T-04 (AC-009 source half): starter one-line conclusion directive ─────────
+
+class TestStarterConclusionDirective:
+    """The starter is the single cross-CLI behavior-guidance injection point
+    (design D-005): it must direct the worker to open its final reply with a
+    one-line conclusion (status + key result or blocker) so the done-row
+    TL;DR is model-authored at the source. Headline normalization for old
+    output.md files is the writeOutput fallback (T-03), not this file."""
+
+    def test_starter_prompt_contains_conclusion_directive(self, task_file):
+        starter = _starter_prompt(str(task_file))
+        assert "one-line conclusion" in starter
+
+    def test_pi_branch_last_arg_ends_with_starter(self, task_file):
+        entry = {"cli": "pi", "provider": "timi", "task_path": str(task_file)}
+        cmd = _build_command(entry)
+        starter = _starter_prompt(str(task_file))
+        assert cmd[-1] == starter
+        assert "one-line conclusion" in cmd[-1]
+
+    def test_claude_branch_last_arg_ends_with_starter(self, task_file):
+        entry = {"cli": "claude", "provider": "", "task_path": str(task_file)}
+        cmd = _build_command(entry)
+        starter = _starter_prompt(str(task_file))
+        assert cmd[-1] == starter
+        assert "one-line conclusion" in cmd[-1]
+
+    def test_codex_branch_last_arg_ends_with_starter(self, task_file):
+        entry = {"cli": "codex", "provider": "", "task_path": str(task_file)}
+        cmd = _build_command(entry)
+        starter = _starter_prompt(str(task_file))
+        assert cmd[-1] == starter
+        assert "one-line conclusion" in cmd[-1]
+
+    def test_vc009_starter_directive_beacon(self, task_file, capsys):
+        starter = _starter_prompt(str(task_file))
+        assert "one-line conclusion" in starter
+        _emit_verify(capsys, "[VERIFY] VC-009: starter_directive=present")
+
+
+# ── T-08 (AC-012/AC-013): orphaned running-row reconcile ─────────────────────
+
+def _make_worker_dir(tmp_path: pathlib.Path, key: str) -> pathlib.Path:
+    """Worker task dir with a real task.md (queue-row convention)."""
+    d = tmp_path / ".agenticdoc" / "test-key" / "workers" / key
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "task.md").write_text("type: coding\nDo something useful.", encoding="utf-8")
+    return d
+
+
+def _end_line(code: int) -> str:
+    """A full [END] trace.log line (must satisfy _END_LINE_RE in mw_common)."""
+    return f"[END] 2026-09-10T00:00:00+00:00 exit={code} elapsed=120s tools=6 phases=1>2>3"
+
+
+def _age_task_dir(task_dir: pathlib.Path, seconds: float) -> None:
+    """Push every file mtime in a task dir back by `seconds`."""
+    cut = time.time() - seconds
+    for p in task_dir.iterdir():
+        os.utime(p, (cut, cut))
+
+
+def _iso_minutes_ago(minutes: float) -> str:
+    """UTC ISO timestamp (`+00:00` form) `minutes` in the past."""
+    return (
+        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=minutes)
+    ).isoformat(timespec="seconds")
+
+
+def _aged_orphan_entry(task_dir: pathlib.Path, key: str, age_min: float) -> dict[str, str]:
+    """Running orphan row with no terminal evidence, aged `age_min` minutes."""
+    return _entry(
+        task_dir / "task.md",
+        status="running",
+        task_key=key,
+        dispatched_at=_iso_minutes_ago(age_min),
+        updated_at=_iso_minutes_ago(age_min),
+    )
+
+
+class TestReconcilePositiveEvidence:
+    """VC-012: an orphaned running row (task_key not in running_procs) whose
+    trace.log carries [END] converges to the exit-mapped terminal status in
+    one reconcile pass, unconditionally — the beat guard never gates it
+    (D-008)."""
+
+    @pytest.mark.parametrize(
+        ("code", "status"),
+        [(0, "done"), (1, "failed"), (2, "needs-clarification"), (3, "failed")],
+    )
+    def test_end_exit_maps_to_terminal_status(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path, code: int, status: str,
+    ) -> None:
+        d = _make_worker_dir(tmp_path, "t001")
+        (d / "trace.log").write_text(_end_line(code) + "\n", encoding="utf-8")
+        entry = _entry(d / "task.md", status="running")
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == status
+        log_text = (d / "worker.log").read_text(encoding="utf-8")
+        assert "[launcher] reconcile (" in log_text
+        assert f"exit={code}" in log_text
+        assert "(orphaned row)" in log_text
+
+    def test_output_md_without_end_failed_unverifiable(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        # Old bundle: completed (output.md exists) but no [END] marker.
+        d = _make_worker_dir(tmp_path, "t001")
+        (d / "output.md").write_text("# Result\nold bundle, no trace END\n", encoding="utf-8")
+        entry = _entry(d / "task.md", status="running")
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "failed"
+        log_text = (d / "worker.log").read_text(encoding="utf-8")
+        assert "[launcher] reconcile (" in log_text
+        assert "unverifiable" in log_text
+
+    def test_own_running_row_never_touched(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        # Own row: task_key in running_procs — untouched even with [END]
+        # evidence present (the reap path owns its status transition).
+        d = _make_worker_dir(tmp_path, "t001")
+        (d / "trace.log").write_text(_end_line(0) + "\n", encoding="utf-8")
+        entry = _entry(d / "task.md", status="running")
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+
+        running: dict = {"t001": _FakeProc()}
+        _reconcile_orphans(tmp_path, running)
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "running"
+        assert not (d / "worker.log").exists()
+
+    def test_vc012_three_mappings_plus_own_row(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path, capsys,
+    ) -> None:
+        dirs: dict[str, pathlib.Path] = {}
+        lines: list[str] = []
+        for key, code in (("t001", 0), ("t002", 1), ("t003", 2)):
+            d = _make_worker_dir(tmp_path, key)
+            (d / "trace.log").write_text(_end_line(code) + "\n", encoding="utf-8")
+            dirs[key] = d
+            lines.append(_serialize_entry(_entry(d / "task.md", status="running", task_key=key)))
+        own = _make_worker_dir(tmp_path, "t004")
+        (own / "trace.log").write_text(_end_line(0) + "\n", encoding="utf-8")
+        lines.append(_serialize_entry(_entry(own / "task.md", status="running", task_key="t004")))
+        queue_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        _reconcile_orphans(tmp_path, {"t004": _FakeProc()})
+
+        rows = {e["task_key"]: e["status"] for e in _parse_workers_file(queue_file)}
+        assert rows == {
+            "t001": "done", "t002": "failed", "t003": "needs-clarification", "t004": "running",
+        }
+        for key in ("t001", "t002", "t003"):
+            assert "[launcher] reconcile (" in (dirs[key] / "worker.log").read_text(encoding="utf-8")
+        assert not (own / "worker.log").exists()
+        _emit_verify(capsys, "[VERIFY] VC-012: map=0-done,1-failed,2-nc, own_row=untouched")
+
+
+class TestReconcileSilenceRule:
+    """VC-013: an orphaned running row with no terminal evidence fails only
+    once its last activity (task-dir mtimes AND row updated_at) is older than
+    the silence window (default 90m, PI_WORKER_ORPHAN_DEAD_MIN override).
+    Any fresher evidence keeps it running; another live launcher's fresh beat
+    makes the silence rule yield (D-008)."""
+
+    def test_stale_orphan_failed_presumed_dead(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        d = _make_worker_dir(tmp_path, "t001")
+        queue_file.write_text(
+            _serialize_entry(_aged_orphan_entry(d, "t001", 95)) + "\n", encoding="utf-8"
+        )
+        _age_task_dir(d, 95 * 60)
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "failed"
+        log_text = (d / "worker.log").read_text(encoding="utf-8")
+        assert "[launcher] reconcile (" in log_text
+        assert "presumed dead" in log_text
+        assert "no activity for 95m" in log_text
+
+    def test_fresh_orphan_stays_running(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        d = _make_worker_dir(tmp_path, "t001")
+        queue_file.write_text(
+            _serialize_entry(_aged_orphan_entry(d, "t001", 5)) + "\n", encoding="utf-8"
+        )
+        _age_task_dir(d, 5 * 60)
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "running"
+        assert not (d / "worker.log").exists()
+
+    def test_fresh_dir_activity_beats_old_updated_at(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        # AC-013: ANY evidence fresher than the window keeps the row running —
+        # task.md mtime stays fresh while updated_at is 95m old.
+        d = _make_worker_dir(tmp_path, "t001")
+        queue_file.write_text(
+            _serialize_entry(_aged_orphan_entry(d, "t001", 95)) + "\n", encoding="utf-8"
+        )
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "running"
+        assert not (d / "worker.log").exists()
+
+    def test_silence_window_env_override(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("PI_WORKER_ORPHAN_DEAD_MIN", "1")
+        d = _make_worker_dir(tmp_path, "t001")
+        queue_file.write_text(
+            _serialize_entry(_aged_orphan_entry(d, "t001", 5)) + "\n", encoding="utf-8"
+        )
+        _age_task_dir(d, 5 * 60)
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "failed"
+        assert "presumed dead" in (d / "worker.log").read_text(encoding="utf-8")
+
+    def test_updated_at_z_suffix_parsed(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        # spec §5: updated_at may carry `Z` (TS side) or `+00:00` (Python side).
+        d = _make_worker_dir(tmp_path, "t001")
+        z_ts = _iso_minutes_ago(95).replace("+00:00", "Z")
+        entry = _entry(
+            d / "task.md", status="running", dispatched_at=z_ts, updated_at=z_ts,
+        )
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+        _age_task_dir(d, 95 * 60)
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "failed"
+        assert "presumed dead" in (d / "worker.log").read_text(encoding="utf-8")
+
+    def test_updated_at_fallback_to_dispatched_at(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        d = _make_worker_dir(tmp_path, "t001")
+        entry = _entry(
+            d / "task.md", status="running",
+            updated_at="not-a-timestamp", dispatched_at=_iso_minutes_ago(95),
+        )
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+        _age_task_dir(d, 95 * 60)
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "failed"
+        assert "presumed dead" in (d / "worker.log").read_text(encoding="utf-8")
+
+    def test_unparseable_row_timestamps_skip_row(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        # Both row timestamps garbage: the silence rule never guesses, even
+        # though the task-dir files are 95m old.
+        d = _make_worker_dir(tmp_path, "t001")
+        entry = _entry(
+            d / "task.md", status="running",
+            updated_at="not-a-timestamp", dispatched_at="also-garbage",
+        )
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+        _age_task_dir(d, 95 * 60)
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "running"
+        assert not (d / "worker.log").exists()
+
+    def test_beat_guard_skips_silence_but_not_evidence(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch, capsys,
+    ) -> None:
+        # Another live launcher holds a fresh beat: the silence rule yields,
+        # but positive [END] evidence still applies (D-008).
+        stale = _make_worker_dir(tmp_path, "t001")
+        ended = _make_worker_dir(tmp_path, "t002")
+        (ended / "trace.log").write_text(_end_line(0) + "\n", encoding="utf-8")
+        queue_file.write_text(
+            _serialize_entry(_aged_orphan_entry(stale, "t001", 95)) + "\n"
+            + _serialize_entry(_entry(ended / "task.md", status="running", task_key="t002")) + "\n",
+            encoding="utf-8",
+        )
+        _age_task_dir(stale, 95 * 60)
+
+        beat_dir = tmp_path / ".mw"
+        beat_dir.mkdir(exist_ok=True)
+        (beat_dir / f"launcher-beat.{os.getpid() + 1}").write_text(
+            f"ts={mw_common.iso_now()}\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(mw_common, "_is_alive", lambda pid: True)
+
+        _reconcile_orphans(tmp_path, {})
+
+        rows = {e["task_key"]: e["status"] for e in _parse_workers_file(queue_file)}
+        assert rows["t001"] == "running"  # silence rule yielded
+        assert rows["t002"] == "done"  # evidence applied unconditionally
+        assert not (stale / "worker.log").exists()
+        assert "another live launcher" in capsys.readouterr().err
+
+    def test_vc013_silence_fresh_and_beat_guard(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch, capsys,
+    ) -> None:
+        # One stale orphan (95m, no evidence) + one fresh orphan (5m).
+        stale_a = _make_worker_dir(tmp_path, "t001")
+        fresh = _make_worker_dir(tmp_path, "t002")
+        queue_file.write_text(
+            _serialize_entry(_aged_orphan_entry(stale_a, "t001", 95)) + "\n"
+            + _serialize_entry(_aged_orphan_entry(fresh, "t002", 5)) + "\n",
+            encoding="utf-8",
+        )
+        _age_task_dir(stale_a, 95 * 60)
+        _age_task_dir(fresh, 5 * 60)
+
+        # Pass 1 (no other launcher): the stale orphan fails.
+        _reconcile_orphans(tmp_path, {})
+        assert _parse_workers_file(queue_file)[0]["status"] == "failed"
+
+        # Pass 2: a new stale orphan appears while another live launcher
+        # holds a fresh beat -> the silence rule yields to it.
+        stale_b = _make_worker_dir(tmp_path, "t003")
+        with queue_file.open("a", encoding="utf-8") as fh:
+            fh.write(_serialize_entry(_aged_orphan_entry(stale_b, "t003", 95)) + "\n")
+        _age_task_dir(stale_b, 95 * 60)
+        beat_dir = tmp_path / ".mw"
+        beat_dir.mkdir(exist_ok=True)
+        (beat_dir / f"launcher-beat.{os.getpid() + 1}").write_text(
+            f"ts={mw_common.iso_now()}\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(mw_common, "_is_alive", lambda pid: True)
+
+        _reconcile_orphans(tmp_path, {})
+
+        rows = {e["task_key"]: e["status"] for e in _parse_workers_file(queue_file)}
+        assert rows["t001"] == "failed"  # silence_failed=1
+        assert rows["t002"] == "running"  # fresh_untouched=1
+        assert rows["t003"] == "running"  # beat_guard=skipped
+        assert "presumed dead" in (stale_a / "worker.log").read_text(encoding="utf-8")
+        assert not (fresh / "worker.log").exists()
+        assert not (stale_b / "worker.log").exists()
+        _emit_verify(capsys, "[VERIFY] VC-013: silence_failed=1, fresh_untouched=1, beat_guard=skipped")
+
+
+class TestPollOnceReconcileIntegration:
+    def test_poll_beat_reconcile_and_spawn_ordering(
+        self, tmp_path: pathlib.Path, providers: dict, queue_file: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # One poll: orphan running row with [END] converges, own running row
+        # is untouched, pending row is discovered and spawned, and the beat
+        # file is refreshed (D-008).
+        orphan = _make_worker_dir(tmp_path, "t001")
+        (orphan / "trace.log").write_text(_end_line(0) + "\n", encoding="utf-8")
+        own = _make_worker_dir(tmp_path, "t002")
+        (own / "trace.log").write_text(_end_line(1) + "\n", encoding="utf-8")
+        monkeypatch.setenv("TIMI_API_KEY", "test-timi-key")
+        pending = _make_worker_dir(tmp_path, "t003")
+        rows = (
+            _entry(orphan / "task.md", status="running", task_key="t001"),
+            _entry(own / "task.md", status="running", task_key="t002"),
+            _entry(pending / "task.md", status="pending", task_key="t003"),
+        )
+        queue_file.write_text("\n".join(_serialize_entry(e) for e in rows) + "\n", encoding="utf-8")
+
+        monkeypatch.setattr(launcher.shutil, "which", lambda name: str(tmp_path / "pi.CMD"))
+        monkeypatch.setattr(launcher.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+        running: dict = {"t002": _FakeProc()}
+        _poll_once(tmp_path, providers, running, {}, [], None)
+
+        statuses = {e["task_key"]: e["status"] for e in _parse_workers_file(queue_file)}
+        assert statuses["t001"] == "done"  # orphan converged by reconcile
+        assert statuses["t002"] == "running"  # own row untouched
+        assert statuses["t003"] == "running"  # pending discovered and spawned
+        assert "t003" in running
+        assert "[launcher] reconcile (" in (orphan / "worker.log").read_text(encoding="utf-8")
+        assert (tmp_path / ".mw" / f"launcher-beat.{os.getpid()}").exists()

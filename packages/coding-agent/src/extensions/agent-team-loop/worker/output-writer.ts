@@ -21,6 +21,27 @@ function outputDir(taskKey: string, agenticdocRoot: string): string {
 	return resolved;
 }
 
+/** Leading markdown markers stripped from a summary's first line (D-005):
+ * heading hashes, bold asterisks, list bullets, blockquotes. */
+const HEADLINE_MARKER_RE = /^(?:#{1,6}\s+|\*\*|[-*]\s+|>\s+)/;
+
+/** Single-line conclusion extracted from a summary (D-005): first non-empty
+ * line, leading markdown markers stripped in a loop, whitespace collapsed,
+ * capped at 100 chars (truncLine style — total length, ellipsis included,
+ * stays <=100). Empty input, or a line that strips to nothing (e.g. `**`),
+ * yields "(no conclusion)". writeOutput writes this as the `## TL;DR` first section
+ * (AC-009 write half) so done-row widget details are single-line conclusions;
+ * the verbatim `## Summary` section keeps readOutputSummary compatible. */
+export function headline(summary: string): string {
+	const firstLine = summary.split("\n").find((line) => line.trim() !== "") ?? "";
+	let s = firstLine.trim();
+	while (HEADLINE_MARKER_RE.test(s)) {
+		s = s.replace(HEADLINE_MARKER_RE, "").trim();
+	}
+	s = s.replace(/\s+/g, " ");
+	return s === "" ? "(no conclusion)" : truncLine(s, 100);
+}
+
 export function writeOutput(opts: WriteOutputOpts): void {
 	const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
 	fs.mkdirSync(dir, { recursive: true });
@@ -28,6 +49,9 @@ export function writeOutput(opts: WriteOutputOpts): void {
 	const outputPath = path.join(dir, "output.md");
 
 	const sections: string[] = [];
+	// TL;DR first section (D-005): single-line conclusion on every exit path,
+	// ahead of the verbatim ## Summary (readOutputSummary regex compatibility).
+	sections.push(`## TL;DR\n\n${headline(opts.summary)}`);
 	sections.push(`## Summary\n\n${opts.summary || "(no summary)"}`);
 
 	if (opts.exitCode === 0) {

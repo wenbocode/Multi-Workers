@@ -28,17 +28,23 @@ import {
 import { StateManager } from "../../src/extensions/agent-team-loop/pm/state-manager.ts";
 import { dispatchTask } from "../../src/extensions/agent-team-loop/pm/task-dispatcher.ts";
 import {
+	ackTasks,
 	claimState,
 	formatDoctorReport,
 	makeScopedDocGateNotifier,
 	type PmUiHolder,
 	type PmWatchState,
+	readOutputSection,
+	readTerminalDetail,
+	readWorkerLogTail,
+	registerMwCommands,
 	registerPmKeyCommands,
 	registerSwitchKeyTool,
 	registerWorkerTools,
 	renderWatchLines,
 	windowClaimId,
 } from "../../src/extensions/agent-team-loop/pm/ui-bridge.ts";
+import { AckStore } from "../../src/extensions/agent-team-loop/shared/ack-store.ts";
 import {
 	HEARTBEAT_INTERVAL_MS,
 	readHeartbeatInfo,
@@ -1193,7 +1199,7 @@ describe("dispatchNewTasks keyed workers scan", () => {
 		writePhaseDocs(root, "vc3-active"); // documented so dispatch proceeds
 		await seedKey(root, "vc3-active", windowClaimId());
 		const watch: PmWatchState = { key: "vc3-watched" };
-		registerWorkerTools(pi, ws, is, root, watch);
+		registerWorkerTools(pi, ws, new AckStore(root), is, root, watch);
 		const tool = tools.get("dispatch_worker");
 		if (!tool) throw new Error("dispatch_worker not registered");
 
@@ -1410,7 +1416,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			vi.advanceTimersByTime(500);
 			expect(messages).toEqual([]);
 			clearInterval(handle);
@@ -1432,7 +1438,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages, options } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			const entry = store.findByKey("t1");
 			if (!entry) throw new Error("t1 missing from queue");
 			await store.upsert({ ...entry, status: "done" });
@@ -1465,7 +1471,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			for (const key of ["t0", "t2"]) {
 				const entry = store.findByKey(key);
 				if (!entry) throw new Error(`${key} missing from queue`);
@@ -1496,7 +1502,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			const entry = store.findByKey("t4");
 			if (!entry) throw new Error("t4 missing from queue");
 			await store.upsert({ ...entry, status: "failed" });
@@ -1545,7 +1551,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			const entry = store.findByKey("t5");
 			if (!entry) throw new Error("t5 missing from queue");
 			await store.upsert({ ...entry, status: "failed" });
@@ -1576,7 +1582,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			const entry = store.findByKey("t6");
 			if (!entry) throw new Error("t6 missing from queue");
 			await store.upsert({ ...entry, status: "failed" });
@@ -1604,7 +1610,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			vi.advanceTimersByTime(500);
 			expect(widgets.length).toBeGreaterThan(0);
 			const last = widgets[widgets.length - 1];
@@ -1635,7 +1641,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			vi.advanceTimersByTime(500);
 			expect(messages).toEqual([]); // no terminal transitions
 			clearInterval(handle);
@@ -1662,7 +1668,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 		await store.upsert({ ...failEntry, status: "failed" });
 		await queueTask(root, "key-b", "other-key-task", "running");
 
-		const lines = renderWatchLines(is, store, root, "key-a");
+		const lines = renderWatchLines(is, store, new AckStore(root), root, "key-a");
 		expect(lines[0]).toContain("[mw] key-a");
 		expect(lines[0]).toContain("phase=EXECUTE");
 		expect(lines[0]).toContain("docs S- D- ev:0/2");
@@ -1695,7 +1701,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 			"utf8",
 		);
 
-		const lines = renderWatchLines(is, store, root, "key-a");
+		const lines = renderWatchLines(is, store, new AckStore(root), root, "key-a");
 		const fresh = lines.find((l) => l.includes("fresh-task"));
 		const stale = lines.find((l) => l.includes("stale-task"));
 		const legacy = lines.find((l) => l.includes("legacy-task"));
@@ -1722,7 +1728,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 				`[TOOL] ${new Date(Date.now() - 5_000).toISOString()} read src/deep/nested/file.ts\n`,
 			"utf8",
 		);
-		const lines = renderWatchLines(is, store, root, "key-a");
+		const lines = renderWatchLines(is, store, new AckStore(root), root, "key-a");
 		const live = lines.find((l) => l.includes("live-task"));
 		expect(live).toContain("ph 1/3");
 		expect(live).toMatch(/up 4m/);
@@ -1753,7 +1759,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			for (const key of ["t-hb", "t-low"]) {
 				const entry = store.findByKey(key);
 				if (!entry) throw new Error(`${key} missing from queue`);
@@ -1796,7 +1802,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			const entry = store.findByKey("t-exact");
 			if (!entry) throw new Error("t-exact missing from queue");
 			await store.upsert({ ...entry, status: "done" });
@@ -1836,7 +1842,7 @@ describe("startWorkerPollLoop summary scoping", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages, options } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			const entry = store.findByKey("t-fail");
 			if (!entry) throw new Error("t-fail missing from queue");
 			await store.upsert({ ...entry, status: "failed" });
@@ -1852,6 +1858,487 @@ describe("startWorkerPollLoop summary scoping", () => {
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 });
+
+describe("terminal detail sources (T-05: AC-007/008/009, VC-007/008/009)", () => {
+	/** Task dir fixture under key-a/workers/<taskKey> with arbitrary files. */
+	function detailDir(files: Record<string, string>): string {
+		const root = mkdtemp();
+		const dir = path.join(root, "key-a", "workers", "t-detail");
+		fs.mkdirSync(dir, { recursive: true });
+		for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), body, "utf8");
+		return dir;
+	}
+
+	it("readOutputSection extracts any section body, tolerating missing files", () => {
+		const dir = detailDir({
+			"output.md": "## TL;DR\n\nall green\n\n## Summary\n\nlong text\n\n## Exit Reason\n\nboom\n",
+		});
+		expect(readOutputSection(dir, "TL;DR")).toBe("all green");
+		expect(readOutputSection(dir, "Exit Reason")).toBe("boom");
+		expect(readOutputSection(dir, "Missing")).toBeUndefined();
+		expect(readOutputSection(path.join(dir, "nowhere"), "TL;DR")).toBeUndefined();
+		fs.rmSync(path.dirname(path.dirname(dir)), { recursive: true, force: true });
+	});
+
+	it("review S3: section literal is regex-escaped, metacharacters cannot inject", () => {
+		const dir = detailDir({
+			"output.md": "## a.b(c)+\n\nbrackets body\n\n## Summary\n\nplain body\n",
+		});
+		// `.`/`(`/`+` would match other sections if injected raw.
+		expect(readOutputSection(dir, "a.b(c)+")).toBe("brackets body");
+		expect(readOutputSection(dir, "Summary")).toBe("plain body");
+		expect(readOutputSection(dir, "aXbXcX")).toBeUndefined();
+		fs.rmSync(path.dirname(path.dirname(dir)), { recursive: true, force: true });
+	});
+
+	it("VC-007: failed detail = spawn reason (prefix stripped) ?? Exit Reason first line", () => {
+		const spawn = detailDir({
+			"worker.log":
+				"[launcher] spawn failed (2026-09-05T10:23:12+00:00): Required credential for route 'claude-cli' is not available.\n",
+			"output.md": "## Exit Reason\n\nignored\n",
+		});
+		expect(readTerminalDetail(spawn, "failed")).toBe("Required credential for route 'claude-cli' is not available.");
+		fs.rmSync(path.dirname(path.dirname(spawn)), { recursive: true, force: true });
+
+		const exit = detailDir({
+			"output.md": "## Exit Reason\n\nwall budget exhausted at 45m\nsecond line ignored\n",
+		});
+		expect(readTerminalDetail(exit, "failed")).toBe("wall budget exhausted at 45m");
+		fs.rmSync(path.dirname(path.dirname(exit)), { recursive: true, force: true });
+	});
+
+	it("VC-007: failed detail never starts with markdown markers", () => {
+		const dir = detailDir({ "output.md": "## Exit Reason\n\n## 预算耗尽（wall）\n" });
+		const detail = readTerminalDetail(dir, "failed");
+		expect(detail).toBe("预算耗尽（wall）");
+		expect(detail.startsWith("#")).toBe(false);
+		fs.rmSync(path.dirname(path.dirname(dir)), { recursive: true, force: true });
+	});
+
+	it("VC-008: needs-clarification detail = Questions ?? worker.log tail ?? no-output hint", () => {
+		const questions = detailDir({ "output.md": "## Questions\n\n- 需要确认数据库选型：Postgres 还是 SQLite？\n" });
+		expect(readTerminalDetail(questions, "needs-clarification")).toBe("需要确认数据库选型：Postgres 还是 SQLite？");
+		fs.rmSync(path.dirname(path.dirname(questions)), { recursive: true, force: true });
+
+		// No output.md (claude/codex task): worker.log tail is the fallback.
+		const logTail = detailDir({
+			"worker.log": "[worker] start task=x type=coding\n\n[worker] asking about schema\n",
+		});
+		expect(readTerminalDetail(logTail, "needs-clarification")).toBe("[worker] asking about schema");
+		expect(readWorkerLogTail(logTail)).toBe("[worker] asking about schema");
+		fs.rmSync(path.dirname(path.dirname(logTail)), { recursive: true, force: true });
+
+		// Neither file: explicit hint.
+		const nothing = detailDir({ "task.md": "type: coding\n" });
+		expect(readTerminalDetail(nothing, "needs-clarification")).toBe("no output.md");
+		fs.rmSync(path.dirname(path.dirname(nothing)), { recursive: true, force: true });
+	});
+
+	it("VC-008: oversized worker.log is not read (256KB guard)", () => {
+		const dir = detailDir({ "task.md": "type: coding\n" });
+		fs.writeFileSync(path.join(dir, "worker.log"), "x".repeat(256 * 1024 + 1), "utf8");
+		expect(readWorkerLogTail(dir)).toBeUndefined();
+		expect(readTerminalDetail(dir, "needs-clarification")).toBe("no output.md");
+		fs.rmSync(path.dirname(path.dirname(dir)), { recursive: true, force: true });
+	});
+
+	it("VC-009: done detail = TL;DR ?? headline-cleaned Summary first line", () => {
+		const tldr = detailDir({ "output.md": "## TL;DR\n\nall tests green\n\n## Summary\n\nignored\n" });
+		expect(readTerminalDetail(tldr, "done")).toBe("all tests green");
+		fs.rmSync(path.dirname(path.dirname(tldr)), { recursive: true, force: true });
+
+		// Old output.md (pre-TL;DR): Summary first line, markers stripped.
+		const legacy = detailDir({ "output.md": "## Summary\n\n## Task 002 执行完毕（TDD red 阶段完成）\n细节…\n" });
+		expect(readTerminalDetail(legacy, "done")).toBe("Task 002 执行完毕（TDD red 阶段完成）");
+		fs.rmSync(path.dirname(path.dirname(legacy)), { recursive: true, force: true });
+
+		// No output.md at all: empty detail, not a placeholder.
+		const bare = detailDir({ "task.md": "type: coding\n" });
+		expect(readTerminalDetail(bare, "done")).toBe("");
+		fs.rmSync(path.dirname(path.dirname(bare)), { recursive: true, force: true });
+		console.log("[VERIFY] VC-007: exit_reason=yes, marker_strip=yes");
+		console.log("[VERIFY] VC-008: questions=yes, log_tail=yes, hint=yes, size_guard=yes");
+		console.log("[VERIFY] VC-009: tldr=yes, legacy_summary_fallback=yes");
+	});
+
+	it("renderWatchLines wires readTerminalDetail into terminal rows", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const is = new IndexStore(root);
+		await is.upsert({
+			key: "key-a",
+			status: "active",
+			phase: "EXECUTE",
+			claimId: "1",
+			deps: "",
+			desc: "",
+			updated: new Date().toISOString(),
+		});
+		const taskDir = path.join(root, "key-a", "workers", "t-done");
+		fs.mkdirSync(taskDir, { recursive: true });
+		fs.writeFileSync(path.join(taskDir, "task.md"), "type: coding\n\nwork\n", "utf8");
+		fs.writeFileSync(
+			path.join(taskDir, "output.md"),
+			"## TL;DR\n\n回归收口完成，三套件全绿\n\n## Summary\n\nignored\n",
+			"utf8",
+		);
+		await store.upsert({
+			taskKey: "t-done",
+			status: "done",
+			cli: "pi",
+			provider: "timi",
+			taskPath: path.join(taskDir, "task.md"),
+			dispatchedAt: "",
+			updatedAt: "",
+			model: "",
+		});
+		const lines = renderWatchLines(is, store, new AckStore(root), root, "key-a");
+		expect(lines.some((l) => l.includes("+ t-done") && l.includes("回归收口完成，三套件全绿"))).toBe(true);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+});
+
+describe("watch widget sections (T-06: AC-001/002/003, VC-001/002/003)", () => {
+	/** Queue row + task dir fixture under key-a/workers/<taskKey>. */
+	async function row(root: string, taskKey: string, status: WorkerStatus, updatedAt: string): Promise<void> {
+		const taskDir = path.join(root, "key-a", "workers", taskKey);
+		fs.mkdirSync(taskDir, { recursive: true });
+		fs.writeFileSync(path.join(taskDir, "task.md"), "type: coding\n\nwork\n", "utf8");
+		fs.writeFileSync(path.join(taskDir, "output.md"), `## Summary\n\n${taskKey} body\n`, "utf8");
+		await new WorkerStore(root).upsert({
+			taskKey,
+			status,
+			cli: "pi",
+			provider: "timi",
+			taskPath: path.join(taskDir, "task.md"),
+			dispatchedAt: "",
+			updatedAt,
+			model: "",
+		});
+	}
+
+	async function setup(root: string): Promise<void> {
+		await new IndexStore(root).upsert({
+			key: "key-a",
+			status: "active",
+			phase: "EXECUTE",
+			claimId: "1",
+			deps: "",
+			desc: "",
+			updated: new Date().toISOString(),
+		});
+	}
+
+	it("VC-001: live rows (running, then pending) are all shown, never folded", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const is = new IndexStore(root);
+		await setup(root);
+		for (let i = 1; i <= 3; i++) await row(root, `run-${i}`, "running", `2026-09-10T07:0${i}:00Z`);
+		for (let i = 1; i <= 2; i++) await row(root, `pend-${i}`, "pending", `2026-09-10T07:0${i}:00Z`);
+		// Six done rows: history folds at 5 — live must not inherit the cap.
+		for (let i = 1; i <= 6; i++) await row(root, `hist-${i}`, "done", `2026-09-10T06:0${i}:00Z`);
+		const lines = renderWatchLines(is, store, new AckStore(root), root, "key-a");
+		for (const k of ["run-1", "run-2", "run-3", "pend-1", "pend-2"]) {
+			expect(lines.some((l) => l.includes(k))).toBe(true);
+		}
+		const idxOf = (k: string): number => lines.findIndex((l) => l.includes(k));
+		expect(idxOf("run-1")).toBeLessThan(idxOf("pend-1")); // running before pending
+		const more = lines.find((l) => l.includes("more"));
+		expect(more).toContain("+1 more"); // 6 done -> 5 shown + 1 folded
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("review S1: live rows sort newest-first within running and pending", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const is = new IndexStore(root);
+		await setup(root);
+		// Seed in file order old→new so file order differs from recency order.
+		await row(root, "run-old", "running", "2026-09-10T07:00:00Z");
+		await row(root, "run-new", "running", "2026-09-10T08:00:00Z");
+		await row(root, "pend-old", "pending", "2026-09-10T07:30:00Z");
+		await row(root, "pend-new", "pending", "2026-09-10T08:30:00Z");
+		const lines = renderWatchLines(is, store, new AckStore(root), root, "key-a");
+		const idxOf = (k: string): number => lines.findIndex((l) => l.includes(k));
+		expect(idxOf("run-new")).toBeLessThan(idxOf("run-old"));
+		expect(idxOf("pend-new")).toBeLessThan(idxOf("pend-old"));
+		expect(idxOf("run-old")).toBeLessThan(idxOf("pend-new")); // running section first
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("VC-002: unacked failed/nc rows are always shown; ack clears them from unhandled", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const is = new IndexStore(root);
+		const ackStore = new AckStore(root);
+		await setup(root);
+		for (let i = 1; i <= 7; i++) await row(root, `fail-${i}`, "failed", `2026-09-10T06:0${i}:00Z`);
+		await row(root, "nc-1", "needs-clarification", "2026-09-10T07:00:00Z");
+		let lines = renderWatchLines(is, store, ackStore, root, "key-a");
+		expect(lines[0]).toContain("8 unhandled");
+		// Unhandled rows never fold: all 8 visible even though > 5.
+		for (let i = 1; i <= 7; i++) expect(lines.some((l) => l.includes(`fail-${i}`))).toBe(true);
+		expect(lines.some((l) => l.includes("nc-1"))).toBe(true);
+		expect(lines.some((l) => l.includes("more"))).toBe(false);
+
+		// Ack everything: unhandled empties (header count gone), rows become
+		// history (folded at 5) — the ack channel effect AC-002 leans on.
+		await ackStore.ack(["fail-1", "fail-2", "fail-3", "fail-4", "fail-5", "fail-6", "fail-7", "nc-1"]);
+		lines = renderWatchLines(is, store, ackStore, root, "key-a");
+		expect(lines[0]).not.toContain("unhandled");
+		expect(lines.some((l) => l.includes("more"))).toBe(true);
+		expect(lines.filter((l) => l.includes("more")).some((l) => l.includes("+3 more"))).toBe(true);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("VC-003: history = done ∪ acked terminal, newest-first, capped at 5 with +N more", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const is = new IndexStore(root);
+		const ackStore = new AckStore(root);
+		await setup(root);
+		// h-1 oldest … h-7 newest.
+		for (let i = 1; i <= 7; i++) await row(root, `h-${i}`, "done", `2026-09-10T06:0${i}:00Z`);
+		let lines = renderWatchLines(is, store, ackStore, root, "key-a");
+		expect(lines.some((l) => l.includes("h-7"))).toBe(true); // newest kept
+		expect(lines.some((l) => l.includes("h-3"))).toBe(true);
+		expect(lines.some((l) => l.includes("h-2"))).toBe(false); // oldest folded
+		expect(lines.some((l) => l.includes("h-1"))).toBe(false);
+		expect(lines.some((l) => l.includes("+2 more"))).toBe(true);
+		const idxOf = (k: string): number => lines.findIndex((l) => l.includes(k));
+		expect(idxOf("h-7")).toBeLessThan(idxOf("h-3")); // newest first
+
+		// Five done rows: no fold line.
+		const root2 = mkdtemp();
+		const store2 = new WorkerStore(root2);
+		const is2 = new IndexStore(root2);
+		await setup(root2);
+		for (let i = 1; i <= 5; i++) await row(root2, `d-${i}`, "done", `2026-09-10T06:0${i}:00Z`);
+		lines = renderWatchLines(is2, store2, new AckStore(root2), root2, "key-a");
+		expect(lines.some((l) => l.includes("more"))).toBe(false);
+
+		// An acked failed row joins history (done ∪ acked).
+		await row(root2, "f-acked", "failed", "2026-09-10T08:00:00Z");
+		await new AckStore(root2).ack(["f-acked"]);
+		lines = renderWatchLines(is2, store2, new AckStore(root2), root2, "key-a");
+		expect(lines.some((l) => l.includes("f-acked"))).toBe(true); // newest -> shown
+		expect(lines[0]).not.toContain("unhandled");
+		console.log("[VERIFY] VC-001: live_rows=5/5, fold=history_only");
+		console.log("[VERIFY] VC-002: unhandled_persist=8/8, after_ack=0");
+		console.log("[VERIFY] VC-003: history_cap=5, more=+2, order=newest_first");
+		fs.rmSync(root, { recursive: true, force: true });
+		fs.rmSync(root2, { recursive: true, force: true });
+	});
+});
+
+describe("ack channels (T-07: AC-004/005/006/010/011, VC-004/005/006/010/011)", () => {
+	async function terminalRow(root: string, taskKey: string, status: WorkerStatus): Promise<void> {
+		const taskDir = path.join(root, "key-a", "workers", taskKey);
+		fs.mkdirSync(taskDir, { recursive: true });
+		fs.writeFileSync(path.join(taskDir, "task.md"), "type: coding\n\nwork\n", "utf8");
+		await new WorkerStore(root).upsert({
+			taskKey,
+			status,
+			cli: "pi",
+			provider: "timi",
+			taskPath: path.join(taskDir, "task.md"),
+			dispatchedAt: "",
+			updatedAt: new Date().toISOString(),
+			model: "",
+		});
+	}
+
+	it("VC-004: ackTasks acks terminal rows, persists across instances, rejects non-terminal", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const ackStore = new AckStore(root);
+		await terminalRow(root, "t-done", "done");
+		await terminalRow(root, "t-fail", "failed");
+		await terminalRow(root, "t-run", "running");
+
+		// Terminal rows: acked + persisted (a fresh instance reads the same keys).
+		const ok = await ackTasks(store, ackStore, ["t-done", "t-fail"]);
+		expect(ok.acked).toEqual(["t-done", "t-fail"]);
+		expect(ok.rejected).toEqual([]);
+		const reread = new AckStore(root).readAll();
+		expect(reread.has("t-done")).toBe(true);
+		expect(reread.has("t-fail")).toBe(true);
+		expect(reread.get("t-fail")).toMatch(/^\d{4}-\d{2}-\d{2}T/); // ISO timestamp
+
+		// Running row: rejected, nothing written.
+		const bad = await ackTasks(store, ackStore, ["t-run"]);
+		expect(bad.acked).toEqual([]);
+		expect(bad.rejected[0]?.key).toBe("t-run");
+		expect(bad.rejected[0]?.reason).toContain("not terminal");
+		expect(new AckStore(root).readAll().has("t-run")).toBe(false);
+
+		// Unknown key: rejected.
+		const ghost = await ackTasks(store, ackStore, ["no-such-task"]);
+		expect(ghost.rejected[0]?.reason).toContain("no such task");
+
+		// "all" after both were acked: nothing unacked remains, then a new
+		// terminal row is covered.
+		const all = await ackTasks(store, new AckStore(root), "all");
+		expect(all.acked).toEqual([]);
+		await terminalRow(root, "t-nc", "needs-clarification");
+		const all2 = await ackTasks(store, new AckStore(root), "all");
+		expect(all2.acked).toEqual(["t-nc"]);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("VC-004: /mw ack writes the sidecar and reports rejections", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const ackStore = new AckStore(root);
+		await terminalRow(root, "t-fail", "failed");
+		await terminalRow(root, "t-run", "running");
+		const { pi, commands } = fakeCmdPi();
+		registerMwCommands(pi, root, store, ackStore);
+		const handler = commands.get("mw");
+		if (!handler) throw new Error("mw command not registered");
+		const { ctx, notifications } = fakeCmdCtx();
+
+		await handler("ack t-fail", ctx);
+		expect(notifications.some((n) => n.includes("Acked 1 task") && n.includes("t-fail"))).toBe(true);
+		expect(new AckStore(root).readAll().has("t-fail")).toBe(true);
+
+		await handler("ack t-run", ctx);
+		expect(notifications.some((n) => n.includes("Not acked: t-run") && n.includes("not terminal"))).toBe(true);
+		expect(new AckStore(root).readAll().has("t-run")).toBe(false);
+
+		await handler("ack all", ctx);
+		const all = new AckStore(root).readAll();
+		expect(all.has("t-fail")).toBe(true);
+		expect(all.has("t-run")).toBe(false);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("VC-005: ack_worker_result tool registered in PM mode, absent in worker mode", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const is = new IndexStore(root);
+		const { pi, tools } = fakeCmdPi();
+		registerWorkerTools(pi, store, new AckStore(root), is, root, { key: undefined });
+		expect(tools.has("ack_worker_result")).toBe(true);
+
+		// Worker mode (PI_WORKER_TASK set) registers no tools at all — the
+		// ack tool can never reach a worker.
+		const workerTools: string[] = [];
+		const workerPi = {
+			on: () => {},
+			registerTool: (t: { name: string }) => {
+				workerTools.push(t.name);
+			},
+			sendUserMessage: () => {},
+		} as unknown as ExtensionAPI;
+		const taskDir = path.join(root, "key-a", "workers", "w1");
+		fs.mkdirSync(taskDir, { recursive: true });
+		fs.writeFileSync(path.join(taskDir, "task.md"), "type: coding\n\nwork\n", "utf8");
+		process.env.PI_WORKER_TASK = path.join(taskDir, "task.md");
+		process.env.PI_WORKER_IDLE_MS = "60000";
+		try {
+			await workerModeActivate(workerPi);
+			expect(workerTools.includes("ack_worker_result")).toBe(false);
+		} finally {
+			delete process.env.PI_WORKER_TASK;
+			delete process.env.PI_WORKER_IDLE_MS;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("VC-005: ack_worker_result tool acks and reports like /mw ack", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const ackStore = new AckStore(root);
+		await terminalRow(root, "t-nc", "needs-clarification");
+		await terminalRow(root, "t-run", "running");
+		const { pi, tools } = fakeCmdPi();
+		registerWorkerTools(pi, store, ackStore, new IndexStore(root), root, { key: undefined });
+		const tool = tools.get("ack_worker_result");
+		if (!tool) throw new Error("ack_worker_result not registered");
+
+		const res1 = await tool.execute("id", { task_key: "t-nc" }, undefined, undefined, {} as ExtensionContext);
+		expect(res1.content[0]?.type === "text" && res1.content[0].text.includes("Acked 1 task(s): t-nc")).toBe(true);
+		expect(new AckStore(root).readAll().has("t-nc")).toBe(true);
+
+		const res2 = await tool.execute("id", { task_key: "t-run" }, undefined, undefined, {} as ExtensionContext);
+		const text2 = res2.content[0]?.type === "text" ? res2.content[0].text : "";
+		expect(text2.includes("NOT acked: t-run")).toBe(true);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("VC-006: ack never touches queue statuses and never triggers re-dispatch", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const ackStore = new AckStore(root);
+		writePhaseDocs(root, "key-a");
+		await terminalRow(root, "t-done", "done");
+		const before = store.readAll().map((e) => `${e.taskKey}:${e.status}`);
+
+		await ackTasks(store, ackStore, ["t-done"]);
+		// Status columns are byte-identical after ack.
+		expect(store.readAll().map((e) => `${e.taskKey}:${e.status}`)).toEqual(before);
+
+		// agent_settled-style dispatch scan: the row's task.md still exists, but
+		// the queue already owns the row — no duplicate pending dispatch.
+		await dispatchNewTasks(store, root);
+		const rows = store.readAll();
+		expect(rows.filter((e) => e.taskKey === "t-done")).toHaveLength(1);
+		expect(rows.find((e) => e.taskKey === "t-done")?.status).toBe("done");
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("VC-010: terminal readbacks carry the ack directive; VC-011: list_tasks badges acked rows", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const ackStore = new AckStore(root);
+		await terminalRow(root, "t-new", "pending");
+		await terminalRow(root, "t-old", "failed");
+		await ackStore.ack(["t-old"]);
+
+		// VC-010: the finish-call message (PM_CONTINUE_HINT) directs the PM to ack.
+		// The readback fires only on transitions observed by the loop — seed a
+		// pending row and flip it to done mid-loop.
+		const watch: PmWatchState = { key: "key-a" };
+		const ui: PmUiHolder = { ctx: undefined };
+		vi.useFakeTimers();
+		try {
+			const { pi, sent } = fakeCmdPi();
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), new IndexStore(root), root, watch, ui, 100);
+			vi.advanceTimersByTime(150); // baseline snapshot: t-new still pending
+			const entry = store.findByKey("t-new");
+			if (!entry) throw new Error("t-new missing");
+			await store.upsert({ ...entry, status: "done" });
+			vi.advanceTimersByTime(150);
+			clearInterval(handle);
+			const withHint = sent.map((s) => s.content).find((m) => m.includes("ack_worker_result"));
+			expect(withHint).toBeDefined();
+			expect(withHint).toContain("/mw ack all");
+		} finally {
+			vi.useRealTimers();
+		}
+
+		// VC-011: list_tasks output — acked terminal row badged, unacked not.
+		const { pi, tools } = fakeCmdPi();
+		registerWorkerTools(pi, store, ackStore, new IndexStore(root), root, { key: undefined });
+		const list = tools.get("list_tasks");
+		if (!list) throw new Error("list_tasks not registered");
+		const res = await list.execute("id", {}, undefined, undefined, {} as ExtensionContext);
+		const text = res.content[0]?.type === "text" ? res.content[0].text : "";
+		const oldLine = text.split("\n").find((l) => l.startsWith("t-old"));
+		const newLine = text.split("\n").find((l) => l.startsWith("t-new"));
+		expect(oldLine).toContain("| acked");
+		expect(newLine).not.toContain("acked");
+		console.log("[VERIFY] VC-004: persist=yes, non_terminal_rejected=yes, all=yes");
+		console.log("[VERIFY] VC-005: tool_registered=yes, worker_mode_absent=yes");
+		console.log("[VERIFY] VC-006: status_unchanged=yes, no_redispatch=yes");
+		console.log("[VERIFY] VC-010: hint=ack_worker_result-present");
+		console.log("[VERIFY] VC-011: badge=acked-present");
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+});
+
 describe("terminal readback (AC-014 / VC-020)", () => {
 	function fakePi(): {
 		pi: ExtensionAPI;
@@ -1922,7 +2409,7 @@ describe("terminal readback (AC-014 / VC-020)", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			for (const key of ["t-full", "t-big"]) {
 				const entry = store.findByKey(key);
 				if (!entry) throw new Error(`${key} missing from queue`);
@@ -2077,7 +2564,7 @@ describe("pm-key takeover claims", () => {
 			sessionManager: { getEntries: () => entries1 },
 		} as unknown as ExtensionContext;
 		const pi = { appendEntry: (_t: string, _d: unknown) => {} } as unknown as ExtensionAPI;
-		await restoreWatch(pi, watch, is, ws, root, fake1);
+		await restoreWatch(pi, watch, is, ws, new AckStore(root), root, fake1);
 		expect(watch.key).toBe("key-a");
 		expect(is.findByKey("key-a")?.claimId).toBe(windowClaimId());
 		// M2: the quiet re-claim spares other active rows (no global demote —
@@ -2104,7 +2591,7 @@ describe("pm-key takeover claims", () => {
 				},
 				sessionManager: { getEntries: () => entries2 },
 			} as unknown as ExtensionContext;
-			await restoreWatch(pi, watch2, is, ws, root, fake2);
+			await restoreWatch(pi, watch2, is, ws, new AckStore(root), root, fake2);
 			expect(watch2.key).toBe("key-b");
 			expect(is.findByKey("key-b")?.claimId).toBe(`${os.hostname()}:${live.pid}`);
 			expect(notes.some((n) => n.includes("watching only"))).toBe(true);
@@ -2253,7 +2740,7 @@ describe("pm-key takeover claims", () => {
 		const ws = new WorkerStore(root);
 		const is = new IndexStore(root);
 		const { pi, tools } = fakeCmdPi();
-		registerWorkerTools(pi, ws, is, root, { key: undefined });
+		registerWorkerTools(pi, ws, new AckStore(root), is, root, { key: undefined });
 		const tool = tools.get("dispatch_worker");
 		if (!tool) throw new Error("dispatch_worker not registered");
 
@@ -2638,7 +3125,7 @@ describe("watchdog budgets and convergence checkpoint", () => {
 			"utf8",
 		);
 
-		const lines = renderWatchLines(is, store, root, "key-a");
+		const lines = renderWatchLines(is, store, new AckStore(root), root, "key-a");
 		const diverging = lines.find((l) => l.includes("diverging"));
 		const converging = lines.find((l) => l.includes("converging"));
 		expect(diverging).toContain("ck30m high\u26a0");
@@ -2682,7 +3169,7 @@ describe("watchdog budgets and convergence checkpoint", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages, options } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			vi.advanceTimersByTime(500);
 			// Exactly one escalation: the high-risk worker, not the low-risk one.
 			expect(messages).toHaveLength(1);
@@ -2728,7 +3215,7 @@ describe("watchdog budgets and convergence checkpoint", () => {
 		vi.useFakeTimers();
 		try {
 			const { pi, messages } = fakePi();
-			const handle = startWorkerPollLoop(pi, store, is, root, watch, ui, 100);
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
 			vi.advanceTimersByTime(500);
 			expect(messages).toHaveLength(0);
 			clearInterval(handle);
