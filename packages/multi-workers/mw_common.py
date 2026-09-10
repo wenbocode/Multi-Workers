@@ -847,6 +847,17 @@ def format_doctor_text(report: dict) -> str:
         if no_hb:
             parts.append(f"no-heartbeat {no_hb}")
         lines.append("workers: " + ", ".join(parts))
+    # Conductor row (D-101, injected by mw.py cmd_doctor): informational —
+    # not running simply means autopilot is disabled for this project.
+    conductor = report.get("conductor")
+    if conductor is not None:
+        if conductor["running"]:
+            lines.append(
+                f"conductor: running (PID {conductor['pid']}, "
+                f"last tick seq={conductor['last_seq']} ts={conductor['last_ts']})"
+            )
+        else:
+            lines.append("conductor: not running")
     for r in report["credentials"]["routes"]:
         state = "available (" + _source_desc(r["source"]) + ")" if r["available"] else "missing (" + str(r["missing"]) + ")"
         lines.append(f"credentials: {r['route']} {state}")

@@ -31,10 +31,13 @@ from mw_common import (
     check_pid as _check_pid,
     port_is_bound as _port_is_bound,
 )
+from autopilot import config as _ap_config
+from autopilot import conductor as _ap_conductor
 
 _SCRIPT_DIR = pathlib.Path(__file__).parent
 _LAUNCHER_PY = _SCRIPT_DIR / "launcher.py"
 _PROXY_MULTI_PY = _SCRIPT_DIR / "proxy_multi.py"
+_CONDUCTOR_PY = _SCRIPT_DIR / "autopilot" / "conductor.py"
 
 # Local, gitignored clone of the AgenticTask framework repo — the bootstrap
 # fallback for `init` on machines without a live framework checkout.
@@ -99,6 +102,61 @@ def _clear_stop_request(project_dir: pathlib.Path) -> None:
         pass
 
 
+# ── Conductor supervision (D-101: conductor = mw serve third child) ─────────
+
+def _conductor_decision(enabled: bool, pid_alive: bool) -> str:
+    """Pure supervision decision: spawn | terminate | none.
+
+    serve's 1s loop applies this each iteration: enabled + no live conductor
+    → spawn; disabled + live conductor → terminate; conductor death is
+    detected via the pid file within 1s and healed by respawn (存活自愈)."""
+    if enabled and not pid_alive:
+        return "spawn"
+    if (not enabled) and pid_alive:
+        return "terminate"
+    return "none"
+
+
+def _conductor_supervise_step(
+    project_dir: pathlib.Path,
+    proc: subprocess.Popen[bytes] | None,
+    spawn_kwargs: dict,
+    log_handle: object,
+) -> subprocess.Popen[bytes] | None:
+    """One serve-loop supervision step for the conductor (config mtime-cached
+    via cached_load). Returns the (possibly new) conductor proc."""
+    enabled = _ap_config.cached_load(project_dir)["enabled"]
+    pid_alive = (
+        _check_pid(_ap_conductor.conductor_pid_file(project_dir)) is not None
+        or (proc is not None and proc.poll() is None)
+    )
+    decision = _conductor_decision(enabled, pid_alive)
+    if decision == "spawn":
+        proc = subprocess.Popen(  # noqa: S603
+            [sys.executable, str(_CONDUCTOR_PY), f"--project={project_dir}"],
+            stdout=log_handle,
+            stderr=log_handle,
+            **spawn_kwargs,
+        )
+        print(f"[mw serve] conductor spawned (PID {proc.pid})", flush=True)
+    elif decision == "terminate":
+        if proc is not None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            except Exception:
+                pass
+        try:
+            _ap_conductor.conductor_pid_file(project_dir).unlink()
+        except FileNotFoundError:
+            pass
+        proc = None
+        print("[mw serve] conductor terminated (autopilot disabled)", flush=True)
+    return proc
+
+
 # ── Subcommand: serve ────────────────────────────────────────────────────────
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -126,6 +184,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # child of THIS serve instance, and stale FATAL lines from previous
     # (pre-fix) sessions would otherwise keep doctor reporting a false issue.
     launcher_log = open(mw_dir / "launcher.log", "w", encoding="utf-8")
+    # Same per-session truncate pattern as launcher.log; respawns within one
+    # serve session share the handle, so their output appends (D-101).
+    conductor_log = open(mw_dir / "conductor.log", "w", encoding="utf-8")
     real_stdout, real_stderr = sys.stdout, sys.stderr
     sys.stdout = mw_log
     sys.stderr = mw_log
@@ -134,6 +195,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     exit_code = 1  # default: unexpected/error exit
     proxy_proc: subprocess.Popen[bytes] | None = None
     launcher_proc: subprocess.Popen[bytes] | None = None
+    conductor_proc: subprocess.Popen[bytes] | None = None
     wrote_pid = False
 
     try:
@@ -232,6 +294,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
                     break
                 if proxy_proc is not None and proxy_proc.poll() is not None:
                     break
+                # Conductor supervision (D-101): config-driven spawn/terminate,
+                # respawn within 1s on death. A dead conductor does NOT stop serve.
+                conductor_proc = _conductor_supervise_step(
+                    project_dir, conductor_proc, spawn_kwargs, conductor_log
+                )
                 time.sleep(1)
         except KeyboardInterrupt:
             intentional_stop.set()
@@ -239,7 +306,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         exit_code = 0 if intentional_stop.is_set() else 1
 
     finally:
-        for proc in (launcher_proc, proxy_proc):
+        for proc in (conductor_proc, launcher_proc, proxy_proc):
             if proc is not None:
                 try:
                     proc.terminate()
@@ -263,6 +330,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         mw_log.close()
         proxy_log.close()
         launcher_log.close()
+        conductor_log.close()
 
     return exit_code
 
@@ -334,10 +402,18 @@ def cmd_status(args: argparse.Namespace) -> int:
     pid = _check_pid(pid_path)
     if pid is not None:
         print(f"[mw status] running (PID {pid})")
-        return 0
     else:
         print("[mw status] not running")
-        return 1
+    # Conductor row (D-101): PID, alive, last tick watermark (timeline tail).
+    cstat = _ap_conductor.conductor_status(project_dir)
+    if cstat["running"]:
+        print(
+            f"[mw status] conductor: running (PID {cstat['pid']}, "
+            f"last tick seq={cstat['last_seq']} ts={cstat['last_ts']})"
+        )
+    else:
+        print("[mw status] conductor: not running")
+    return 0 if pid is not None else 1
 
 
 # ── Subcommand: doctor ───────────────────────────────────────────────────────
@@ -355,6 +431,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     )
     config = mw_common.load_providers(providers_path)
     report = mw_common.doctor_report(project_dir, fix=args.fix, config=config, stale_after_sec=args.stale_after)
+    # Conductor section (D-101): informational like worker_liveness — a not
+    # running conductor (autopilot disabled) is not an issue.
+    report["conductor"] = _ap_conductor.conductor_status(project_dir)
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
