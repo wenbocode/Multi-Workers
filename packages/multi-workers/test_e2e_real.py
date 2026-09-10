@@ -72,7 +72,10 @@ def launcher_proc(proj: pathlib.Path):
 
 
 def _make_task(proj: pathlib.Path, key: str, prompt: str) -> pathlib.Path:
-    task_dir = proj / ".agenticdoc" / key
+    # Keyed layout contract (launcher._validate_task_path): tasks live under
+    # .agenticdoc/{owner}/workers/<task_key>/ or .agenticdoc/_scratch/workers/.
+    # The .agenticdoc root belongs to AgenticTask keys and is rejected.
+    task_dir = proj / ".agenticdoc" / "_scratch" / "workers" / key
     task_dir.mkdir(parents=True)
     task_md = task_dir / "task.md"
     # Multiline on purpose: the -p argument is flattened by the launcher, and
@@ -113,7 +116,7 @@ class TestRealTimiDispatch:
                 break
             time.sleep(1.0)
 
-        task_dir = proj / ".agenticdoc" / "e2e-ok"
+        task_dir = proj / ".agenticdoc" / "_scratch" / "workers" / "e2e-ok"
         worker_log = task_dir / "worker.log"
         if status is None or status not in ("done", "failed", "needs-clarification"):
             tail = worker_log.read_text(encoding="utf-8", errors="replace")[-2000:] if worker_log.exists() else "(no worker.log)"
