@@ -14,10 +14,18 @@ import {
 	appendTool,
 	appendToolError,
 	appendTrace,
+	type WriteOutputOpts,
 	writeOutput,
 } from "./output-writer.ts";
 import type { TaskPhase } from "./phase-runner.ts";
 import { goalMtime, writePhaseFile } from "./phase-runner.ts";
+import {
+	checkReadScopeCall,
+	type ReadScopeConfig,
+	type ReadScopeRejection,
+	type ReadScopeState,
+	readScopeConfigFromMeta,
+} from "./read-scope.ts";
 
 // ── Tool allowlists by task type ─────────────────────────────────────────────
 
@@ -25,8 +33,25 @@ const TOOL_ALLOWLISTS: Record<string, string[]> = {
 	coding: ["read", "write", "edit", "bash", "find", "grep", "ls"],
 	review: ["read", "find", "grep", "ls"],
 	research: ["read", "find", "grep", "ls", "bash"],
+	// Autopilot typed dispatches (D-107/VC-023): per-type tool sets must stay
+	// EXACTLY equal to the Python-side REGISTRY in
+	// packages/multi-workers/autopilot/dispatch.py (entry order included) —
+	// the T-17 L0 parity test locks that equality. "fallback" is the internal
+	// default bucket, not a dispatchable type.
+	"roadmap-writer": ["read", "write", "edit", "find", "grep", "ls"],
+	"phase-writer": ["read", "write", "edit", "bash", "find", "grep", "ls"],
+	verifier: ["read", "find", "grep", "ls"],
+	reviewer: ["read", "find", "grep", "ls"],
+	repair: ["read", "write", "edit", "bash", "find", "grep", "ls"],
 	fallback: ["read", "write", "edit", "bash", "find", "grep", "ls"],
 };
+
+/** Is this a dispatchable type with an explicit allowlist entry? "fallback"
+ * is the internal default bucket (D-107: a `type: fallback` task with
+ * origin: conductor must fail closed, not resolve to the full set). */
+function isRegisteredType(taskType: string): boolean {
+	return taskType !== "fallback" && taskType in TOOL_ALLOWLISTS;
+}
 
 function toolsForType(taskType: string): string[] {
 	return TOOL_ALLOWLISTS[taskType] ?? TOOL_ALLOWLISTS.fallback ?? [];
@@ -113,8 +138,23 @@ interface TaskMeta {
 	phases?: TaskPhase[];
 	taskKey: string;
 	agenticdocRoot: string;
+	/** Dispatch origin marker (D-104): "conductor" on autopilot dispatches,
+	 * undefined on manual/legacy tasks (which keep the fallback path, GC-8). */
+	origin?: string;
+	/** TRUE .agenticdoc root — task.md four levels up
+	 * (.agenticdoc/{owner}/workers/{taskKey}/task.md → .agenticdoc), where
+	 * goal.md lives (D-116). Distinct from `agenticdocRoot`, which is the
+	 * owner's workers/ dir and stays the outputDir base (contract unchanged). */
+	trueAgenticdocRoot: string;
 	/** Wall budget in minutes from the task.md `timeout:` header. */
 	timeoutMin?: number;
+	/** read_scope entries (D-106), project-root relative. Present → read
+	 * containment enabled; absent → zero interception (AC-012 red line). */
+	readScope?: string[];
+	/** l2_read_file_cap frontmatter (positive int), when present. */
+	readFileCap?: number;
+	/** l2_read_byte_cap frontmatter (positive int), when present. */
+	readByteCap?: number;
 }
 
 export function parseTaskMd(taskPath: string): TaskMeta {
@@ -123,9 +163,14 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 
 	let taskType = "default";
 	let timeoutMin: number | undefined;
+	let origin: string | undefined;
 	const phases: TaskPhase[] = [];
 	let currentPhase: TaskPhase | null = null;
 	let inPhasePrompt = false;
+	let readScope: string[] | undefined;
+	let inReadScopeList = false;
+	let readFileCap: number | undefined;
+	let readByteCap: number | undefined;
 
 	for (const line of lines) {
 		const trimmed = line.trim();
@@ -135,6 +180,32 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 		if (trimmed.startsWith("timeout:")) {
 			const v = Number(trimmed.slice("timeout:".length).trim());
 			if (Number.isFinite(v) && v > 0) timeoutMin = v;
+		}
+		if (trimmed.startsWith("origin:")) {
+			origin = trimmed.slice("origin:".length).trim();
+		}
+		// read_scope renders as a YAML block list (dispatch.py render_task_md):
+		// `  - entry` lines after a bare `read_scope:`. Any other line ends the
+		// list. `read_scope:` present-but-empty keeps the field defined — the
+		// interceptor then fails closed (everything out of scope).
+		if (trimmed === "read_scope:") {
+			readScope = [];
+			inReadScopeList = true;
+		} else if (inReadScopeList && !inPhasePrompt) {
+			if (trimmed.startsWith("- ")) {
+				const item = trimmed.slice(2).trim();
+				if (item) readScope?.push(item);
+			} else {
+				inReadScopeList = false;
+			}
+		}
+		if (trimmed.startsWith("l2_read_file_cap:")) {
+			const v = Number(trimmed.slice("l2_read_file_cap:".length).trim());
+			if (Number.isFinite(v) && v > 0) readFileCap = v;
+		}
+		if (trimmed.startsWith("l2_read_byte_cap:")) {
+			const v = Number(trimmed.slice("l2_read_byte_cap:".length).trim());
+			if (Number.isFinite(v) && v > 0) readByteCap = v;
 		}
 		if (trimmed.startsWith("- name:")) {
 			currentPhase = { name: trimmed.slice("- name:".length).trim(), prompt: "" };
@@ -151,16 +222,25 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 		}
 	}
 
-	// taskKey is the parent directory name of the task file
+	// taskKey is the parent directory name of the task file; `agenticdocRoot`
+	// is its parent — the owner's workers/ dir, the outputDir base (contract
+	// unchanged). The TRUE .agenticdoc root (goal.md's parent) is four levels
+	// up from task.md (D-116 semantic split).
 	const agenticdocRoot = path.dirname(path.dirname(taskPath));
 	const taskKey = path.basename(path.dirname(taskPath));
+	const trueAgenticdocRoot = path.dirname(path.dirname(agenticdocRoot));
 
 	return {
 		type: taskType,
 		phases: phases.length > 0 ? phases : undefined,
 		taskKey,
 		agenticdocRoot,
+		origin,
+		trueAgenticdocRoot,
 		timeoutMin,
+		readScope,
+		readFileCap,
+		readByteCap,
 	};
 }
 
@@ -204,6 +284,98 @@ function writeWorkerLogLine(line: string): void {
 	}
 }
 
+// ── Process observation + fail-closed gate (D-115/D-107) ──────────────────
+
+/** D-115 process-observation anchor: one pure `[START] pid=<pid>` line per
+ * spawn, appended (never reset) to trace.log before the first agent turn —
+ * the launcher truncates worker.log per spawn, but trace.log only ever
+ * grows, so spawn counts survive. Python autopilot/state.py start_pids
+ * counts spawns by exactly this line format (`^\[START\] pid=(\d+)\s*$`);
+ * the timestamped [START] runtime anchor from appendStart is a different,
+ * coexisting line. */
+function appendStartPidLine(taskKey: string, agenticdocRoot: string): void {
+	try {
+		const dir = path.resolve(agenticdocRoot, taskKey);
+		fs.mkdirSync(dir, { recursive: true });
+		fs.appendFileSync(path.join(dir, "trace.log"), `[START] pid=${process.pid}\n`, "utf8");
+	} catch {
+		// Diagnostic append — must never break worker startup
+	}
+}
+
+/** Worker-side re-check of the conductor's dispatch-time refusals (D-107
+ * double insurance, VC-023): what the Python registry rejects must also fail
+ * closed here, so a stale bundle or a non-conductor queue path can never land
+ * an unregistered conductor type in the fallback full tool set, nor run a
+ * scopeless conductor verifier. Conductor dispatches only — the manual path
+ * keeps the GC-8 fallback and the T-13 no-read_scope contract (no origin
+ * marker → zero interception) untouched. Returns the exit reason, or
+ * undefined when the task may run. */
+function dispatchRefusal(meta: TaskMeta): string | undefined {
+	if (meta.origin !== "conductor") return undefined;
+	if (!isRegisteredType(meta.type)) {
+		const registered = Object.keys(TOOL_ALLOWLISTS)
+			.filter((t) => t !== "fallback")
+			.sort()
+			.join(", ");
+		return (
+			`Fail-closed (D-107/VC-023): this task carries origin: conductor but type '${meta.type}' has no ` +
+			`tool-allowlist entry — running it would fall back to the full tool set, which conductor dispatches ` +
+			`never get. Registered types: ${registered}.`
+		);
+	}
+	if (meta.type === "verifier" && (meta.readScope?.length ?? 0) === 0) {
+		return (
+			"Fail-closed (D-106): verifier dispatches require a non-empty read_scope in task.md — " +
+			"without one the L2 containment boundary is undefined."
+		);
+	}
+	return undefined;
+}
+
+// ── Read-scope rejection records (D-106/AC-009) ──────────────────────────────
+// Blocked read-ish calls are recorded twice: immediately in trace.log (the PM
+// watch reads trace.log live) and at exit in output.md. Both land in the
+// worker task dir, the same directory the output-writer functions use.
+
+/** Append one `[READ_SCOPE]` line to trace.log at block time. */
+function appendReadScopeTraceLine(taskKey: string, agenticdocRoot: string, r: ReadScopeRejection): void {
+	try {
+		const dir = path.resolve(agenticdocRoot, taskKey);
+		fs.mkdirSync(dir, { recursive: true });
+		fs.appendFileSync(
+			path.join(dir, "trace.log"),
+			`[READ_SCOPE] ${r.ts} blocked path=${r.path} rule=${r.rule} tool=${r.tool}\n`,
+			"utf8",
+		);
+	} catch {
+		// Diagnostic append — a failure must never break the block itself
+	}
+}
+
+/** Append the `## Read Scope Rejections` section to output.md. Called right
+ * after every writeOutput (which overwrites output.md), so the section rides
+ * along the unified write-out points on every exit path. No-op when nothing
+ * was blocked. */
+function appendReadScopeRejectionsSection(
+	taskKey: string,
+	agenticdocRoot: string,
+	rejections: ReadScopeRejection[],
+): void {
+	if (rejections.length === 0) return;
+	try {
+		const dir = path.resolve(agenticdocRoot, taskKey);
+		fs.mkdirSync(dir, { recursive: true });
+		const lines = ["## Read Scope Rejections", "", "| tool | rule | path | ts |", "| ---- | ---- | ---- | ---- |"];
+		for (const r of rejections) {
+			lines.push(`| ${r.tool} | ${r.rule} | ${r.path.replaceAll("|", "\\|")} | ${r.ts} |`);
+		}
+		fs.appendFileSync(path.join(dir, "output.md"), `\n${lines.join("\n")}\n`, "utf8");
+	} catch {
+		// Best-effort at exit — nothing else we can do
+	}
+}
+
 // ── Main entry ───────────────────────────────────────────────────────────────
 
 export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
@@ -221,6 +393,41 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	const startedAt = Date.now();
 	const phaseTotal = meta.phases?.length ?? 0;
 
+	// D-115: record this spawn before anything else — the process itself is
+	// the observation unit (spawn count + pid liveness), even when the task
+	// is refused right below.
+	appendStartPidLine(meta.taskKey, meta.agenticdocRoot);
+
+	// D-107 fail-closed gate: refuse the task before any agent turn, with the
+	// reason in output.md (counts into the loop budget escalation on the
+	// conductor side, AC-023).
+	const refusal = dispatchRefusal(meta);
+	if (refusal !== undefined) {
+		appendError(meta.taskKey, meta.agenticdocRoot, refusal);
+		writeOutput({
+			taskKey: meta.taskKey,
+			agenticdocRoot: meta.agenticdocRoot,
+			exitCode: 1,
+			summary: "Task refused at startup (fail-closed).",
+			exitReason: refusal,
+		});
+		writeWorkerLogLine(`[worker] refused task=${meta.taskKey} type=${meta.type}: ${refusal}`);
+		process.exit(1);
+	}
+
+	// Read-scope enforcement (D-106/AC-009): active only when task.md carries
+	// read_scope — otherwise zero interception (AC-012 red line). Rejections
+	// accumulate in memory and are written to output.md on every exit path via
+	// writeOutputGuarded (the output-writer remains the unified write-out point).
+	const readScopeConfig: ReadScopeConfig | undefined = readScopeConfigFromMeta(meta);
+	const readScopeState: ReadScopeState = { allowedCalls: 0, bytesRead: 0 };
+	const readScopeRejections: ReadScopeRejection[] = [];
+
+	function writeOutputGuarded(opts: WriteOutputOpts): void {
+		writeOutput(opts);
+		appendReadScopeRejectionsSection(meta.taskKey, meta.agenticdocRoot, readScopeRejections);
+	}
+
 	// Task lifecycle start: trace.log gets a machine-parseable [START] anchor
 	// (runtime origin for elapsed computation), worker.log a human status line.
 	appendStart(meta.taskKey, meta.agenticdocRoot, meta.type, phaseTotal);
@@ -236,7 +443,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	process.on("exit", () => {
 		if (outputWritten) return;
 		try {
-			writeOutput({
+			writeOutputGuarded({
 				taskKey: meta.taskKey,
 				agenticdocRoot: meta.agenticdocRoot,
 				exitCode: 1,
@@ -253,6 +460,42 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	pi.on("before_agent_start", () => {
 		pi.setActiveTools(toolsForType(meta.type));
 	});
+
+	// Read-scope interceptor (D-106): read/ls/find/grep share one containment
+	// gate. ls/find/grep default to the cwd (= project root) when their path
+	// is omitted — that implicit target goes through the same containment as
+	// an explicit path, so dropping the argument cannot bypass the scope.
+	// grep's glob filter is not separately validated (the search root is).
+	if (readScopeConfig) {
+		const projectRoot = process.cwd(); // launcher spawns workers with cwd = project root (D-106 base)
+		pi.on("tool_call", (event) => {
+			if (
+				event.toolName !== "read" &&
+				event.toolName !== "ls" &&
+				event.toolName !== "find" &&
+				event.toolName !== "grep"
+			) {
+				return undefined;
+			}
+			const inputPath = (event.input as { path?: unknown } | undefined)?.path;
+			const rawPath = typeof inputPath === "string" && inputPath !== "" ? inputPath : ".";
+			const verdict = checkReadScopeCall(projectRoot, readScopeConfig, readScopeState, event.toolName, rawPath);
+			if (verdict.allowed) {
+				readScopeState.allowedCalls++;
+				readScopeState.bytesRead += verdict.chargedBytes;
+				return undefined;
+			}
+			const rejection: ReadScopeRejection = {
+				tool: event.toolName,
+				path: rawPath,
+				rule: verdict.rule ?? "scope",
+				ts: new Date().toISOString(),
+			};
+			readScopeRejections.push(rejection);
+			appendReadScopeTraceLine(meta.taskKey, meta.agenticdocRoot, rejection);
+			return { block: true, reason: verdict.reason };
+		});
+	}
 
 	// Activity tracking (AC-001): lastActivityAt is refreshed by every
 	// lifecycle signal — token deltas (message_update: the discriminator
@@ -383,7 +626,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 					lastCheckpoint.writes
 				} phases=${lastCheckpoint.phases})`
 			: "";
-		writeOutput({
+		writeOutputGuarded({
 			taskKey: meta.taskKey,
 			agenticdocRoot: meta.agenticdocRoot,
 			exitCode: 1,
@@ -520,7 +763,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		taskDone = true;
 		clearWatchdogTimers();
 		clearInterval(heartbeat);
-		writeOutput({
+		writeOutputGuarded({
 			taskKey: meta.taskKey,
 			agenticdocRoot: meta.agenticdocRoot,
 			exitCode: 0,
@@ -559,7 +802,10 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 					phaseIndex,
 					lastAssistantText || `Phase ${phaseIndex + 1} complete`,
 				);
-				appendGoalCheck(meta.taskKey, meta.agenticdocRoot, phaseIndex + 1, goalMtime(meta.agenticdocRoot));
+				// D-116: goal.md lives in the TRUE .agenticdoc root (task.md four
+				// levels up) — meta.agenticdocRoot is the workers dir and would stat
+				// {owner}/workers/goal.md, a guaranteed miss ([GOAL_CHECK] recorded 0).
+				appendGoalCheck(meta.taskKey, meta.agenticdocRoot, phaseIndex + 1, goalMtime(meta.trueAgenticdocRoot));
 				completedPhaseIdx++;
 				appendPhase(meta.taskKey, meta.agenticdocRoot, "done", phaseIndex + 1, phases.length);
 
@@ -580,7 +826,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			clearWatchdogTimers();
 			clearInterval(heartbeat);
 			appendError(meta.taskKey, meta.agenticdocRoot, String(err));
-			writeOutput({
+			writeOutputGuarded({
 				taskKey: meta.taskKey,
 				agenticdocRoot: meta.agenticdocRoot,
 				exitCode: 1,

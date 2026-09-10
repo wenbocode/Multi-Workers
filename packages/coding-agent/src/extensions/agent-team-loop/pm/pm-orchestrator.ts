@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
+import { registerAutopilotCommands } from "../autopilot/console.ts";
 import { formatHeartbeatAge, readTaskProgress } from "../shared/heartbeat.ts";
 import { IndexStore } from "../shared/index-store.ts";
 import { getMwStatus, initMw, startMw, waitForMwStart } from "../shared/mw-runner.ts";
@@ -311,6 +312,31 @@ function readModel(taskContent: string): string {
 	return m ? m[1].trim() : "";
 }
 
+// Conductor-origin marker line (D-104): `origin: conductor`. Conductor task.md
+// files are rendered by autopilot/dispatch.py render_task_md; the value is the
+// literal token "conductor" (line-exact, CRLF-tolerant).
+const ORIGIN_LINE_RE = /^origin:[ \t]*(\S+)[ \t\r]*$/m;
+
+/** Dispatch origin of a task.md, when it carries an `origin:` line. */
+function readTaskOrigin(taskContent: string): string | undefined {
+	return ORIGIN_LINE_RE.exec(taskContent)?.[1];
+}
+
+/** Is this a conductor-owned task (D-104)? Such tasks are queued by the
+ * conductor alone — the TS scan must never upsert them, closing both the
+ * scan/upsert race and the re-insert-as-pending path that a launcher restart
+ * (or an archived row) would otherwise open. Manual/legacy tasks carry no
+ * marker and behave exactly as before (AC-012 zero regression). Unreadable
+ * task.md returns false so the dispatch loop hits the same read error it
+ * always did. */
+function isConductorTask(taskMdPath: string): boolean {
+	try {
+		return readTaskOrigin(fs.readFileSync(taskMdPath, "utf8")) === "conductor";
+	} catch {
+		return false;
+	}
+}
+
 export interface DispatchScanOptions {
 	/** Keys already warned about in this session — a key is reported at most once. */
 	warnedKeys?: Set<string>;
@@ -359,6 +385,11 @@ export async function dispatchNewTasks(
 			if (dispatched.has(taskKey)) continue;
 			const taskMdPath = path.join(workersDir, taskKey, "task.md");
 			if (!fs.existsSync(taskMdPath)) continue;
+			// D-104: conductor-owned tasks (origin: conductor) never enter the TS
+			// dispatch path — not queued, not upserted, and not counted as
+			// undispatched work for the docs gate below. The conductor is their
+			// only queue writer; its reconciliation is the sole repair path.
+			if (isConductorTask(taskMdPath)) continue;
 			undispatched.push({ taskKey, taskMdPath });
 		}
 		if (undispatched.length === 0) continue;
@@ -556,6 +587,9 @@ export function pmActivate(pi: ExtensionAPI): void {
 	registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agenticdocRoot);
 	registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch);
 	registerWatchCommand(pi, watch, refreshWatch, indexStore);
+	// Autopilot console (T-15): /autopilot status|gates|gate|timeline|enable|
+	// disable|pause|resume|roadmap — stateless, file-derived (D-005).
+	registerAutopilotCommands(pi, projectDir);
 
 	// Hard gate: pm-state.md's '- Phase:' / '- Claim-Id:' interface lines are
 	// script-owned (advance_phase.py / update_index.py). Hand-editing them is
