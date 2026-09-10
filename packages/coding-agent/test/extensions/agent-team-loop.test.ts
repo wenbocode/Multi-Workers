@@ -21,6 +21,7 @@ import {
 	evidencePhaseFromWrite,
 	keyFromDocWrite,
 	nudgeEvidenceReview,
+	nudgeGoalUnestablished,
 	pmActivate,
 	restoreWatch,
 	startWorkerPollLoop,
@@ -2901,6 +2902,46 @@ describe("pm-key takeover claims", () => {
 		expect(messages).toHaveLength(2);
 		expect(messages[1]).toContain("复用≠零成本");
 		expect(messages[1]).toContain("design.md");
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("nudgeGoalUnestablished is skipped headless and for established goals", () => {
+		const root = mkdtemp();
+		fs.mkdirSync(path.join(root, ".agenticdoc"), { recursive: true });
+		const { pi, messages } = fakeCmdPi();
+
+		// No goal.md + headless (print/-p): the nudge would start a generation
+		// that collides with the queued -p prompt — must be skipped.
+		nudgeGoalUnestablished(pi, root, false);
+		expect(messages).toHaveLength(0);
+
+		// No goal.md + UI: the nudge fires.
+		nudgeGoalUnestablished(pi, root, true);
+		expect(messages).toHaveLength(1);
+		expect(messages[0]).toContain("尚未确立");
+
+		// Established goal (status active): no nudge even with UI.
+		fs.writeFileSync(path.join(root, "goal.md"), "status: active\n\n## Goal\n\nShip it.\n", "utf8");
+		nudgeGoalUnestablished(pi, root, true);
+		expect(messages).toHaveLength(1);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("nudgeEvidenceReview queues as followUp — it fires mid-run from tool-write events", () => {
+		const root = mkdtemp();
+		const calls: Array<{ content: string; options?: { deliverAs?: string } }> = [];
+		const pi = {
+			sendUserMessage: (content: string, options?: { deliverAs?: string }) => {
+				calls.push({ content, options });
+			},
+		} as unknown as ExtensionAPI;
+		fs.mkdirSync(path.join(root, "k", "evidence", "research"), { recursive: true });
+		fs.writeFileSync(path.join(root, "k", "evidence", "research", "spec-x.md"), "n", "utf8");
+		writePhaseDocs(root, "k");
+
+		nudgeEvidenceReview(pi, "k", "spec", root, new Set<string>());
+		expect(calls).toHaveLength(1);
+		expect(calls[0].options?.deliverAs).toBe("followUp");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 });

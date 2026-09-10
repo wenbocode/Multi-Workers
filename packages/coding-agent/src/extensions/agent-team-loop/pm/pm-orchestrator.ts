@@ -159,9 +159,31 @@ export function nudgeEvidenceReview(
 	nudged.add(dedup);
 	const doc = phase === "spec" ? "spec.md" : "design.md";
 	const checklist = phase === "spec" ? SPEC_REVIEW_CHECKLIST : DESIGN_REVIEW_CHECKLIST;
+	// deliverAs "followUp": this fires from tool-write events while the agent
+	// run is still active — queue behind it instead of colliding. Without
+	// deliverAs, sendUserMessage throws "Agent is already processing" mid-run
+	// and the nudge is lost.
 	pi.sendUserMessage(
 		`[agent-team-loop] ${key}：${phase} 阶段证据已就位（${evidence} 份 research note）。请立即执行证据复查——对照 evidence/research/ 逐条核查 ${doc}：\n${checklist}\n修正与标注直接写入 ${doc}，并逐条汇报「证据不足、已修正标注的部分」。`,
+		{ deliverAs: "followUp" },
 	);
+}
+
+/** Nudge the user toward the /goal brainstorm when the project goal is not
+ * yet established. Headless sessions (print/-p) skip the nudge entirely:
+ * sendUserMessage starts a generation immediately, and the queued -p prompt
+ * would collide with it ("Agent is already processing") before ever reaching
+ * the model — `pi -p` in any project without an established goal.md would
+ * hard-fail at startup. */
+export function nudgeGoalUnestablished(pi: ExtensionAPI, agenticdocRoot: string, hasUI: boolean): void {
+	const goal = readGoal(agenticdocRoot);
+	if (hasUI && !isGoalEstablished(goal)) {
+		pi.sendUserMessage(
+			"[agent-team-loop] 项目总目标（.agenticdoc/goal.md）尚未确立。\n" +
+				"建议先运行 /goal，与我对话共创项目总目标——它是后续每个 spec 对齐的锚点。\n" +
+				"（也可直接编辑 .agenticdoc/goal.md 填好三段内容并把 status 改为 active。）",
+		);
+	}
 }
 
 /** Auto-takeover on phase-doc write: writing/editing {key}/spec.md, design.md,
@@ -714,13 +736,7 @@ export function pmActivate(pi: ExtensionAPI): void {
 		// Do NOT fabricate a placeholder — if it isn't established yet, softly
 		// guide the user into the goal brainstorm workflow (/goal). An
 		// established goal (or a legacy goal.md with content) is left untouched.
-		const goal = readGoal(agenticdocRoot);
-		if (!isGoalEstablished(goal)) {
-			pi.sendUserMessage(
-				"[agent-team-loop] 项目总目标（.agenticdoc/goal.md）尚未确立。\n" +
-					"建议先运行 /goal，与我对话共创项目总目标——它是后续每个 spec 对齐的锚点。\n" +
-					"（也可直接编辑 .agenticdoc/goal.md 填好三段内容并把 status 改为 active。）",
-			);
-		}
+		// Headless sessions skip the goal nudge (see nudgeGoalUnestablished).
+		nudgeGoalUnestablished(pi, agenticdocRoot, ctx.hasUI);
 	});
 }
