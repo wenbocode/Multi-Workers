@@ -82,6 +82,7 @@
 - Added page scrolling and marked-message navigation shortcuts to fullscreen mode.
 - Added an optional `scrollbarThumb` theme color for fullscreen scrollbar thumbs, falling back to `selectedBg`.
 - Added configurable themed Unicode rendering for supported Mermaid diagrams in interactive messages, including optional rendering while streaming.
+- Added `/autopilot monitor [on|off]`: a live bottom panel for the orchestration stack — mw serve (PID, fresh/stale, uptime), conductor (alive, enabled/paused), running workers across all keys with elapsed minutes, and pending gates with the approve/reject hint. Read-only file sources (pid/meta/config/workers/gates), 4s refresh, per-window in-memory toggle; headless sessions degrade to a notice.
 
 ### Fixed
 

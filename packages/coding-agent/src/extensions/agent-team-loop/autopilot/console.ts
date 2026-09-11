@@ -26,6 +26,10 @@
  *                                     (AC-025)
  *   /autopilot pause | resume         write config paused — the conductor
  *                                     stays alive but stops dispatching
+ *   /autopilot monitor [on|off]        toggle the bottom monitor panel
+ *                                     (serve/conductor/workers/gates,
+ *                                     read-only, 4s refresh — AC-001..008;
+ *                                     print mode degrades to a notice)
  *   /autopilot roadmap                stage summary view
  */
 
@@ -34,6 +38,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../../../core/extens
 import { windowClaimId } from "../pm/ui-bridge.ts";
 import { getMwStatus, restartMw, serveStaleness, startMw } from "../shared/mw-runner.ts";
 import { answerGate } from "./gate-writer.ts";
+import { isMonitorActive, MONITOR_WIDGET_ID, type readMonitorState, startMonitor, stopMonitor } from "./monitor.ts";
 import {
 	deriveStatusModel,
 	gatesDir,
@@ -62,15 +67,21 @@ export interface AutopilotConsoleDeps {
 	 * stale-serve restart — a serve predating the current code never spawns
 	 * the conductor, so enable must not promise one. */
 	ensureMwRunning?: (projectDir: string) => EnsureMwOutcome | Promise<EnsureMwOutcome>;
+	/** Test seam for the monitor panel's state derivation (autopilot-monitor
+	 * L1 fixtures). Default: readMonitorState from monitor.ts. */
+	readMonitorState?: typeof readMonitorState;
+	/** Test seam for the monitor poll interval (default 4000ms). */
+	monitorIntervalMs?: number;
 }
 
 const USAGE =
 	"Usage: /autopilot status [--json] | gates | gate <id> approve|reject [--note <text>] | " +
-	"timeline [--since <iso>] [--all] | enable | disable | pause | resume | roadmap";
+	"timeline [--since <iso>] [--all] | enable | disable | pause | resume | roadmap | monitor [on|off]";
 
 export function registerAutopilotCommands(pi: ExtensionAPI, projectDir: string, deps: AutopilotConsoleDeps = {}): void {
 	pi.registerCommand("autopilot", {
-		description: "Autopilot console: status / gates / gate / timeline / enable / disable / pause / resume / roadmap",
+		description:
+			"Autopilot console: status / gates / gate / timeline / enable / disable / pause / resume / roadmap / monitor",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const tokens = args
 				.trim()
@@ -105,6 +116,9 @@ export function registerAutopilotCommands(pi: ExtensionAPI, projectDir: string, 
 					return;
 				case "roadmap":
 					cmdRoadmap(ctx, projectDir);
+					return;
+				case "monitor":
+					cmdMonitor(ctx, projectDir, deps, rest);
 					return;
 				default:
 					ctx.ui.notify(USAGE, "warning");
@@ -328,6 +342,49 @@ function cmdSetPaused(ctx: ExtensionCommandContext, projectDir: string, paused: 
 		paused
 			? "[autopilot] paused — the conductor stays alive but dispatches nothing until /autopilot resume."
 			: "[autopilot] resumed — the conductor resumes dispatching on its next tick.",
+		"info",
+	);
+}
+
+// ── /autopilot monitor (autopilot-monitor T-01, AC-001..008) ─────────────────
+
+/** Toggle the bottom monitor panel. `on`/`off` are explicit; no argument
+ * toggles (D-006). Print mode (ctx.hasUI === false) is guarded BEFORE any
+ * UI path: the command degrades to a notice, never starts the poll loop,
+ * never throws (AC-006 — the goal-nudge 8a063f4d9 lesson). */
+function cmdMonitor(
+	ctx: ExtensionCommandContext,
+	projectDir: string,
+	deps: AutopilotConsoleDeps,
+	rest: string[],
+): void {
+	if (!ctx.hasUI) {
+		ctx.ui.notify(
+			"[autopilot] monitor needs a visual UI — there is no visual UI in this mode, so no panel was started.",
+			"warning",
+		);
+		return;
+	}
+	const arg = rest[0] ?? "";
+	if (arg !== "" && arg !== "on" && arg !== "off") {
+		ctx.ui.notify("Usage: /autopilot monitor [on|off]", "warning");
+		return;
+	}
+	const apply = (lines: string[] | undefined): void => {
+		ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor" });
+	};
+	if (arg === "off" || (arg === "" && isMonitorActive())) {
+		const stopped = stopMonitor(apply);
+		ctx.ui.notify(
+			stopped ? "[autopilot] monitor off — bottom panel cleared." : "[autopilot] monitor was not running.",
+			"info",
+		);
+		return;
+	}
+	startMonitor(projectDir, apply, { intervalMs: deps.monitorIntervalMs, readState: deps.readMonitorState });
+	ctx.ui.notify(
+		"[autopilot] monitor on — serve/conductor/workers/gates panel below the editor, refreshed every 4s. " +
+			"/autopilot monitor off closes it.",
 		"info",
 	);
 }
