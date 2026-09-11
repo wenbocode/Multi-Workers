@@ -32,7 +32,7 @@
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../../core/extensions/types.ts";
 import { windowClaimId } from "../pm/ui-bridge.ts";
-import { getMwStatus, startMw } from "../shared/mw-runner.ts";
+import { getMwStatus, restartMw, serveStaleness, startMw } from "../shared/mw-runner.ts";
 import { answerGate } from "./gate-writer.ts";
 import {
 	deriveStatusModel,
@@ -54,11 +54,14 @@ import {
  * seq/watermark protocol — same mechanism as WATCH_ENTRY_TYPE). */
 export const AUTOPILOT_SEEN_ENTRY_TYPE = "agent-team-loop:autopilot-seen";
 
+export type EnsureMwOutcome = "started" | "already-running" | "restarted" | "spawn-failed";
+
 export interface AutopilotConsoleDeps {
-	/** Test seam for the enable flow's "start mw when it is not running"
-	 * step (AC-025). Default: getMwStatus + startMw (the /mw command
-	 * pattern). */
-	ensureMwRunning?: (projectDir: string) => "started" | "already-running" | "spawn-failed";
+	/** Test seam for the enable flow's "ensure a CURRENT mw serve is running"
+	 * step (AC-025 + stale-serve fix). Default: getMwStatus + startMw, plus a
+	 * stale-serve restart — a serve predating the current code never spawns
+	 * the conductor, so enable must not promise one. */
+	ensureMwRunning?: (projectDir: string) => EnsureMwOutcome | Promise<EnsureMwOutcome>;
 }
 
 const USAGE =
@@ -253,12 +256,12 @@ function renderTimelineText(query: TimelineQuery, mark: number): string {
 
 // ── /autopilot enable|disable (AC-025) and pause|resume ──────────────────────
 
-function cmdSetEnabled(
+async function cmdSetEnabled(
 	ctx: ExtensionCommandContext,
 	projectDir: string,
 	enabled: boolean,
 	deps: AutopilotConsoleDeps,
-): void {
+): Promise<void> {
 	const cfg = readConfig(projectDir);
 	if (!cfg.ok) {
 		ctx.ui.notify(`[autopilot] ${cfg.error}`, "error");
@@ -276,12 +279,14 @@ function cmdSetEnabled(
 		);
 		return;
 	}
-	const outcome = (deps.ensureMwRunning ?? defaultEnsureMwRunning)(projectDir);
+	const outcome = await (deps.ensureMwRunning ?? defaultEnsureMwRunning)(projectDir);
 	if (outcome === "started") {
 		ctx.ui.notify(
 			"[autopilot] enabled + mw serve starting — the conductor spawns within ~1s of serve startup (AC-025).",
 			"info",
 		);
+	} else if (outcome === "restarted") {
+		ctx.ui.notify("[autopilot] enabled — stale serve restarted; the conductor spawns within ~1s (AC-025).", "info");
 	} else if (outcome === "already-running") {
 		ctx.ui.notify(
 			"[autopilot] enabled — mw serve is running and spawns the conductor on its next config poll (<=1s).",
@@ -292,9 +297,19 @@ function cmdSetEnabled(
 	}
 }
 
-/** The /mw command pattern: check the PID file, spawn `mw.py start` detached. */
-function defaultEnsureMwRunning(projectDir: string): "started" | "already-running" | "spawn-failed" {
-	if (getMwStatus(projectDir).running) return "already-running";
+/** The /mw command pattern, extended with the stale-serve restart: a
+ * running-but-stale serve never spawns the conductor (its supervision code
+ * predates the feature), so restart it before promising one. */
+async function defaultEnsureMwRunning(projectDir: string): Promise<EnsureMwOutcome> {
+	if (getMwStatus(projectDir).running) {
+		const stale = serveStaleness(projectDir);
+		if (stale?.stale) {
+			const r = await restartMw(projectDir);
+			if (r === "restarted") return "restarted";
+			return "spawn-failed"; // restart failed — surface it instead of a false promise
+		}
+		return "already-running";
+	}
 	return startMw(projectDir) ? "started" : "spawn-failed";
 }
 

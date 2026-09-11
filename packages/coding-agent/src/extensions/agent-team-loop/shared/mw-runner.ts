@@ -192,6 +192,146 @@ export function stopMw(projectDir: string): boolean {
 	return true;
 }
 
+// ── Serve staleness detection + restart (stale-serve fix) ──────────────────
+
+/** `.mw/serve.meta` written by mw serve at startup (pid + started_at_ms). */
+export interface MwServeMeta {
+	pid: number;
+	startedAtMs: number;
+}
+
+function serveMetaPath(projectDir: string): string {
+	return path.join(projectDir, ".mw", "serve.meta");
+}
+
+export function readServeMeta(projectDir: string): MwServeMeta | null {
+	try {
+		const raw = fs.readFileSync(serveMetaPath(projectDir), "utf8");
+		const m = JSON.parse(raw) as { pid?: unknown; started_at_ms?: unknown };
+		if (typeof m.pid !== "number" || typeof m.started_at_ms !== "number") return null;
+		return { pid: m.pid, startedAtMs: m.started_at_ms };
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Newest mtime among mw runtime sources (.py + providers.json) — the serve
+ * staleness baseline. Serves load these at startup, so any file newer than
+ * the serve's start means the running serve predates current code. Skips
+ * tests, dev scratch (`_*`), `__pycache__`, and `dist` (bundle output).
+ */
+export function mwCodeNewestMtimeMs(mwPyOverride?: string): number | null {
+	const mwPy = mwPyOverride ?? findMwPy();
+	if (!mwPy) return null;
+	let newest = 0;
+	const walk = (dir: string): void => {
+		let entries: fs.Dirent[];
+		try {
+			entries = fs.readdirSync(dir, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const e of entries) {
+			if (e.isDirectory()) {
+				if (e.name === "__pycache__" || e.name === "dist") continue;
+				walk(path.join(dir, e.name));
+				continue;
+			}
+			if (!e.isFile()) continue;
+			if (!/\.(py|json)$/.test(e.name)) continue;
+			if (e.name.startsWith("test_") || e.name.startsWith("_")) continue;
+			try {
+				const m = fs.statSync(path.join(dir, e.name)).mtimeMs;
+				if (m > newest) newest = m;
+			} catch {
+				// raced away — skip
+			}
+		}
+	};
+	walk(path.dirname(mwPy));
+	return newest > 0 ? newest : null;
+}
+
+export interface ServeStaleness {
+	stale: boolean;
+	/** Human-readable timestamps for the stale notification. */
+	detail: string;
+}
+
+/**
+ * mtime-based staleness (agreed design: simple; false positives from e.g.
+ * git checkouts only cost a restart prompt, and a restart is safe — all state
+ * lives in files). Falls back to the PID file's mtime for serves started
+ * before serve.meta existed. Returns undefined when it cannot be determined
+ * (no meta AND no PID file, or no mw source dir resolved).
+ */
+export function serveStaleness(projectDir: string, codeMtimeMs?: number): ServeStaleness | undefined {
+	const codeMs = codeMtimeMs ?? mwCodeNewestMtimeMs();
+	if (codeMs === null) return undefined;
+	let startedAtMs: number | null = readServeMeta(projectDir)?.startedAtMs ?? null;
+	if (startedAtMs === null) {
+		try {
+			startedAtMs = fs.statSync(pidFilePath(projectDir)).mtimeMs;
+		} catch {
+			return undefined;
+		}
+	}
+	// 2s slack: FS timestamp granularity vs the serve's wall-clock stamp.
+	const stale = codeMs > startedAtMs + 2000;
+	return {
+		stale,
+		detail: `serve started ${new Date(startedAtMs).toISOString()}, mw code changed ${new Date(codeMs).toISOString()}`,
+	};
+}
+
+export type RestartMwResult = "restarted" | "stop-failed" | "start-failed";
+
+/**
+ * Testable restart core: graceful stop (stop-request + poll) then start +
+ * confirm-up. Injected collaborators keep this unit-testable without real
+ * processes.
+ */
+export async function restartSequence(
+	isRunning: () => boolean,
+	requestStop: () => void,
+	start: () => boolean,
+	waitUp: () => Promise<boolean>,
+	timeoutMs: number,
+	pollMs = 250,
+): Promise<RestartMwResult> {
+	if (isRunning()) {
+		requestStop();
+		const deadline = Date.now() + timeoutMs;
+		while (isRunning() && Date.now() < deadline) {
+			await new Promise<void>((resolve) => setTimeout(resolve, pollMs));
+		}
+		if (isRunning()) return "stop-failed";
+	}
+	if (!start()) return "start-failed";
+	return (await waitUp()) ? "restarted" : "start-failed";
+}
+
+/**
+ * Restart mw serve: same stop protocol as `mw.py stop` (stop-request file +
+ * poll), then a fresh detached start. In-flight workers are NOT killed — the
+ * new launcher's orphan reconcile adopts them. Returns "restarted" only when
+ * the new serve is confirmed up (stability window applies).
+ */
+export async function restartMw(projectDir: string, timeoutMs = 30_000): Promise<RestartMwResult> {
+	return restartSequence(
+		() => getMwStatus(projectDir).running,
+		() => {
+			const stopReq = path.join(projectDir, ".mw", "mw.stop");
+			fs.mkdirSync(path.dirname(stopReq), { recursive: true });
+			fs.writeFileSync(stopReq, "stop", "utf8");
+		},
+		() => startMw(projectDir),
+		() => waitForMwStart(projectDir),
+		timeoutMs,
+	);
+}
+
 // ── mw doctor (mw-dispatch-reliability D-005) ──────────────────────────────
 
 /** Minimal typed view of `mw.py doctor --json` output used by /mw doctor. */

@@ -7,7 +7,16 @@ import type { AckStore } from "../shared/ack-store.ts";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.ts";
 import { type IndexStore, readIndexMdActive } from "../shared/index-store.ts";
 import type { DoctorJson } from "../shared/mw-runner.ts";
-import { buildMw, doctorMw, getMwStatus, initMw, startMw, stopMw } from "../shared/mw-runner.ts";
+import {
+	buildMw,
+	doctorMw,
+	getMwStatus,
+	initMw,
+	restartMw,
+	serveStaleness,
+	startMw,
+	stopMw,
+} from "../shared/mw-runner.ts";
 import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.ts";
 import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "../shared/phase-docs.ts";
 import { phaseAuditWarnings } from "../shared/pm-state-guard.ts";
@@ -1090,7 +1099,7 @@ export function registerMwCommands(
 	ackStore: AckStore,
 ): void {
 	pi.registerCommand("mw", {
-		description: "Control mw: build / init / start / stop / status",
+		description: "Control mw: build / init / start / stop / restart / status",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const sub = _args.trim().split(/\s+/)[0] ?? "status";
 
@@ -1128,7 +1137,17 @@ export function registerMwCommands(
 
 			if (sub === "status") {
 				const s = getMwStatus(projectDir);
-				ctx.ui.notify(s.running ? `mw running (PID ${s.pid})` : "mw not running", "info");
+				if (!s.running) {
+					ctx.ui.notify("mw not running", "info");
+					return;
+				}
+				const stale = serveStaleness(projectDir);
+				ctx.ui.notify(
+					stale?.stale
+						? `mw running (PID ${s.pid}) — STALE CODE (${stale.detail}). Run /mw restart.`
+						: `mw running (PID ${s.pid})`,
+					stale?.stale ? "warning" : "info",
+				);
 				return;
 			}
 
@@ -1154,6 +1173,23 @@ export function registerMwCommands(
 				}
 				stopMw(projectDir);
 				ctx.ui.notify("mw stop signal sent", "info");
+				return;
+			}
+
+			if (sub === "restart") {
+				ctx.ui.notify("mw restarting (graceful stop, then start)...", "info");
+				const r = await restartMw(projectDir);
+				if (r === "restarted") {
+					const s = getMwStatus(projectDir);
+					ctx.ui.notify(
+						`mw restarted (PID ${s.pid ?? "?"}) — in-flight workers are adopted by the new launcher's orphan reconcile.`,
+						"info",
+					);
+				} else if (r === "stop-failed") {
+					ctx.ui.notify("mw restart failed: serve did not exit in time — run /mw doctor.", "error");
+				} else {
+					ctx.ui.notify("mw restart failed: serve did not come up — run /mw doctor.", "error");
+				}
 				return;
 			}
 

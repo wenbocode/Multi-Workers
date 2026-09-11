@@ -5,7 +5,7 @@ import { registerAutopilotCommands } from "../autopilot/console.ts";
 import { AckStore } from "../shared/ack-store.ts";
 import { formatHeartbeatAge, readTaskProgress } from "../shared/heartbeat.ts";
 import { IndexStore } from "../shared/index-store.ts";
-import { getMwStatus, initMw, startMw, waitForMwStart } from "../shared/mw-runner.ts";
+import { getMwStatus, initMw, serveStaleness, startMw, waitForMwStart } from "../shared/mw-runner.ts";
 import { agenticdocRoot as resolveAgenticdocRoot, SCRATCH_WORKERS_KEY } from "../shared/paths.ts";
 import { dispatchDocGaps, readPhaseDocs } from "../shared/phase-docs.ts";
 import { registerPmStateGuard } from "../shared/pm-state-guard.ts";
@@ -729,6 +729,18 @@ export function pmActivate(pi: ExtensionAPI): void {
 				);
 			} else {
 				displaySummary(pi, "[mw] Could not find mw.py — run `mw start --project=.` manually.");
+			}
+		} else {
+			// Stale-serve detection: a serve started before the current mw code
+			// silently misses features (e.g. conductor supervision) — surface it
+			// instead of letting /autopilot enable promise a conductor that never
+			// spawns.
+			const stale = serveStaleness(projectDir);
+			if (stale?.stale) {
+				displaySummary(
+					pi,
+					`[mw] serve (PID ${mwStatus.pid}) is running stale code — ${stale.detail}. Run /mw restart.`,
+				);
 			}
 		}
 

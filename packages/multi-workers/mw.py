@@ -102,6 +102,32 @@ def _clear_stop_request(project_dir: pathlib.Path) -> None:
         pass
 
 
+def _serve_meta_path(project_dir: pathlib.Path) -> pathlib.Path:
+    """Serve stamp for extension-side staleness detection (stale-serve fix):
+    the agent-team-loop extension compares started_at_ms against the mw source
+    tree's newest mtime — same pattern as doctor's bundle staleness check.
+    Removed on serve exit alongside the PID file."""
+    return project_dir / ".mw" / "serve.meta"
+
+
+def _write_serve_meta(project_dir: pathlib.Path) -> None:
+    meta = {
+        "pid": os.getpid(),
+        "started_at_ms": int(time.time() * 1000),
+        "code_dir": str(_SCRIPT_DIR),
+    }
+    p = _serve_meta_path(project_dir)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(meta), encoding="utf-8")
+
+
+def _remove_serve_meta(project_dir: pathlib.Path) -> None:
+    try:
+        _serve_meta_path(project_dir).unlink()
+    except FileNotFoundError:
+        pass
+
+
 # ── Conductor supervision (D-101: conductor = mw serve third child) ─────────
 
 def _conductor_decision(enabled: bool, pid_alive: bool) -> str:
@@ -228,6 +254,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
         _write_pid(pid_path)
         wrote_pid = True
+        _write_serve_meta(project_dir)
         # Build spawn kwargs: hide console window on Windows
         spawn_kwargs: dict = {}
         if sys.platform == "win32":
@@ -321,6 +348,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
                     pass
         if wrote_pid:
             _remove_pid(pid_path)
+            _remove_serve_meta(project_dir)
         _clear_stop_request(project_dir)
         print("[mw serve] stopped", flush=True)
         # Restore the real streams (in-process callers like tests keep working)

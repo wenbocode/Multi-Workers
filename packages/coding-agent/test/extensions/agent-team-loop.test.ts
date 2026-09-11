@@ -53,7 +53,13 @@ import {
 } from "../../src/extensions/agent-team-loop/shared/heartbeat.ts";
 import { IndexStore, readIndexMdActive } from "../../src/extensions/agent-team-loop/shared/index-store.ts";
 import type { DoctorJson } from "../../src/extensions/agent-team-loop/shared/mw-runner.ts";
-import { waitForStart } from "../../src/extensions/agent-team-loop/shared/mw-runner.ts";
+import {
+	mwCodeNewestMtimeMs,
+	readServeMeta,
+	restartSequence,
+	serveStaleness,
+	waitForStart,
+} from "../../src/extensions/agent-team-loop/shared/mw-runner.ts";
 import {
 	dispatchDocGaps,
 	formatDocsBadge,
@@ -595,6 +601,128 @@ describe("IndexStore", () => {
 		const raw = fs.readFileSync(path.join(root, "_index.parallel"), "utf8");
 		expect(raw).toContain("| my-key | active | EXECUTE | 123 |");
 		fs.rmSync(root, { recursive: true, force: true });
+	});
+});
+
+// ── Serve staleness detection + restart (stale-serve fix) ──────────────────
+
+describe("serve staleness detection + restart", () => {
+	const T = 1_700_000_000_000; // fixed epoch ms base
+
+	it("mwCodeNewestMtimeMs: newest runtime source, tests/scratch/pycache/dist excluded", () => {
+		const dir = mkdtemp();
+		try {
+			const touch = (rel: string, atime: number): void => {
+				const p = path.join(dir, rel);
+				fs.mkdirSync(path.dirname(p), { recursive: true });
+				fs.writeFileSync(p, "x", "utf8");
+				fs.utimesSync(p, new Date(atime), new Date(atime));
+			};
+			touch("mw.py", T);
+			touch("providers.json", T + 5_000);
+			touch("autopilot/conductor.py", T + 10_000);
+			// All newer than the expected result — must be ignored:
+			touch("test_dev.py", T + 100_000);
+			touch("_scratch.py", T + 100_000);
+			touch("__pycache__/mw.cpython-314.pyc", T + 100_000);
+			touch("dist/agent-team-loop.js", T + 100_000);
+			expect(mwCodeNewestMtimeMs(path.join(dir, "mw.py"))).toBe(T + 10_000);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("serveStaleness: fresh / stale / unknown / pid-file fallback", () => {
+		const root = mkdtemp();
+		try {
+			fs.mkdirSync(path.join(root, ".mw"), { recursive: true });
+			// No meta, no pid — cannot determine.
+			expect(serveStaleness(root, T)).toBeUndefined();
+
+			// serve.meta present: code newer than start → stale.
+			fs.writeFileSync(
+				path.join(root, ".mw", "serve.meta"),
+				JSON.stringify({ pid: 1, started_at_ms: T, code_dir: "x" }),
+				"utf8",
+			);
+			expect(serveStaleness(root, T + 60_000)?.stale).toBe(true);
+			expect(serveStaleness(root, T)?.stale).toBe(false); // same age = fresh
+
+			// Fallback: no meta but a pid file — its mtime approximates serve start.
+			fs.rmSync(path.join(root, ".mw", "serve.meta"));
+			const pidFile = path.join(root, ".mw", "mw.pid");
+			fs.writeFileSync(pidFile, "1", "utf8");
+			fs.utimesSync(pidFile, new Date(T), new Date(T));
+			expect(serveStaleness(root, T + 60_000)?.stale).toBe(true);
+			expect(serveStaleness(root, T)?.stale).toBe(false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("readServeMeta tolerates garbage", () => {
+		const root = mkdtemp();
+		try {
+			fs.mkdirSync(path.join(root, ".mw"), { recursive: true });
+			fs.writeFileSync(path.join(root, ".mw", "serve.meta"), "{not json", "utf8");
+			expect(readServeMeta(root)).toBeNull();
+			fs.writeFileSync(path.join(root, ".mw", "serve.meta"), JSON.stringify({ pid: 1 }), "utf8");
+			expect(readServeMeta(root)).toBeNull(); // missing started_at_ms
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("restartSequence: graceful stop -> start -> confirmed up", async () => {
+		const running = true;
+		let stopRequested = false;
+		const r = await restartSequence(
+			() => running && !stopRequested,
+			() => {
+				stopRequested = true;
+			},
+			() => true,
+			async () => true,
+			1000,
+			1,
+		);
+		expect(r).toBe("restarted");
+		expect(stopRequested).toBe(true);
+	});
+
+	it("restartSequence: serve refusing to exit fails the restart", async () => {
+		const r = await restartSequence(
+			() => true,
+			() => {},
+			() => true,
+			async () => true,
+			50,
+			1,
+		);
+		expect(r).toBe("stop-failed");
+	});
+
+	it("restartSequence: start failure and unconfirmed startup both fail", async () => {
+		expect(
+			await restartSequence(
+				() => false,
+				() => {},
+				() => false,
+				async () => true,
+				100,
+				1,
+			),
+		).toBe("start-failed");
+		expect(
+			await restartSequence(
+				() => false,
+				() => {},
+				() => true,
+				async () => false,
+				100,
+				1,
+			),
+		).toBe("start-failed");
 	});
 });
 

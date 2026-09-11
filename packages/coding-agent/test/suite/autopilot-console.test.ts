@@ -1008,6 +1008,29 @@ describe("/autopilot command set (VC-017 / AC-015 / AC-016 / AC-025)", () => {
 		}
 	});
 
+	it("stale-serve fix: enable surfaces the restarted outcome (sync and async deps)", async () => {
+		const root = mkdtemp();
+		try {
+			const outcomes: string[] = [];
+			const { pi, commands } = fakeConsolePi();
+			registerAutopilotCommands(pi, root, {
+				// Async on purpose: defaultEnsureMwRunning is async now — the seam
+				// must accept promises.
+				ensureMwRunning: async () => {
+					const r = "restarted" as const;
+					outcomes.push(r);
+					return r;
+				},
+			});
+			const { ctx, notifications } = fakeCmdCtx();
+			await commands.get("autopilot")?.handler("enable", ctx);
+			expect(outcomes).toEqual(["restarted"]);
+			expect(notifications[0]).toContain("stale serve restarted");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("AC-025: enable against a running mw does not spawn a second serve", async () => {
 		const root = mkdtemp();
 		try {
