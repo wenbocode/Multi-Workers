@@ -37,3 +37,15 @@ export function workersDirFor(agenticdocRoot: string, ownerKey: string): string 
 export function workerTaskDir(agenticdocRoot: string, ownerKey: string, taskKey: string): string {
 	return path.join(workersDirFor(agenticdocRoot, ownerKey), taskKey);
 }
+
+/** Control workspace root for a worker task path (mw-dual-workspace D-001).
+ *
+ * <control>/.agenticdoc/{owner}/workers/{taskKey}/task.md → <control>. In
+ * dual mode the worker cwd is the game root, but every coordination write
+ * (trace.log / output.md / phase docs) anchors here via the PI_WORKER_TASK
+ * derivation — zero env, zero target-tree files. */
+export function controlRootFromTaskPath(taskPath: string): string {
+	const workersDir = path.dirname(path.dirname(taskPath)); // {owner}/workers
+	const agenticdocRoot = path.dirname(path.dirname(workersDir)); // the .agenticdoc dir
+	return path.dirname(agenticdocRoot); // the control workspace (project dir)
+}

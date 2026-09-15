@@ -165,12 +165,14 @@ export class IndexStore {
 		return this.readAll().find((e) => e.key === key);
 	}
 
-	/** The currently active AgenticTask key, if any (single-active discipline).
+	/** The currently active row, if any (single-active discipline).
 	 * Legacy divergence can leave several active rows; the most recently
 	 * updated one wins (ties: the later row in file order). TS rows carry
 	 * ISO-UTC `updated` while update_index.py writes local "YYYY-MM-DD HH:MM",
-	 * so compare via Date.parse rather than lexicographic order. */
-	activeKey(): string | undefined {
+	 * so compare via Date.parse rather than lexicographic order. Exposes the
+	 * full row so callers can also read its claimId (owner resolution must
+	 * distinguish "our" active row from another live window's). */
+	activeEntry(): IndexEntry | undefined {
 		let best: IndexEntry | undefined;
 		let bestTs = Number.NEGATIVE_INFINITY;
 		for (const e of this.readAll()) {
@@ -182,7 +184,11 @@ export class IndexStore {
 				bestTs = ts;
 			}
 		}
-		return best?.key;
+		return best;
+	}
+
+	activeKey(): string | undefined {
+		return this.activeEntry()?.key;
 	}
 }
 

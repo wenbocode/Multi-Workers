@@ -149,7 +149,7 @@ describe("read-scope caps", () => {
 		const root = mkdtemp();
 		fs.mkdirSync(path.join(root, "allowed"), { recursive: true });
 		fs.writeFileSync(path.join(root, "allowed", "a.txt"), "x", "utf8");
-		const config = { scope: ["allowed"], fileCap: 2, byteCap: DEFAULT_READ_BYTE_CAP };
+		const config = { scope: ["allowed"], denyGlobs: [], fileCap: 2, byteCap: DEFAULT_READ_BYTE_CAP };
 		const state: ReadScopeState = { allowedCalls: 0, bytesRead: 0 };
 
 		const v1 = checkReadScopeCall(root, config, state, "read", "allowed/a.txt");
@@ -174,7 +174,7 @@ describe("read-scope caps", () => {
 		fs.writeFileSync(path.join(root, "allowed", "b.txt"), "x".repeat(50), "utf8");
 		fs.writeFileSync(path.join(root, "allowed", "c.txt"), "x".repeat(100), "utf8");
 		fs.writeFileSync(path.join(root, "allowed", "d.txt"), "x", "utf8");
-		const config = { scope: ["allowed"], fileCap: DEFAULT_READ_FILE_CAP, byteCap: 100 };
+		const config = { scope: ["allowed"], denyGlobs: [], fileCap: DEFAULT_READ_FILE_CAP, byteCap: 100 };
 		const state: ReadScopeState = { allowedCalls: 0, bytesRead: 0 };
 
 		// 60B read passes and charges 60.
@@ -214,7 +214,7 @@ describe("read-scope caps", () => {
 	it("out-of-scope is checked before caps; defaults are 8 files / 65536 bytes", () => {
 		const root = mkdtemp();
 		fs.writeFileSync(path.join(root, "outside.txt"), "x", "utf8");
-		const config = { scope: ["allowed"], fileCap: 0, byteCap: 0 };
+		const config = { scope: ["allowed"], denyGlobs: [], fileCap: 0, byteCap: 0 };
 		// Cap would fire on everything, but the scope violation wins.
 		const v = checkReadScopeCall(root, config, { allowedCalls: 0, bytesRead: 0 }, "read", "outside.txt");
 		expect(v.rule).toBe("scope");
@@ -223,19 +223,96 @@ describe("read-scope caps", () => {
 		expect(DEFAULT_READ_BYTE_CAP).toBe(65536);
 		expect(readScopeConfigFromMeta({ readScope: ["x"] })).toEqual({
 			scope: ["x"],
+			denyGlobs: [],
 			fileCap: 8,
 			byteCap: 65536,
 		});
 		expect(readScopeConfigFromMeta({ readScope: ["x"], readFileCap: 3, readByteCap: 100 })).toEqual({
 			scope: ["x"],
+			denyGlobs: [],
 			fileCap: 3,
 			byteCap: 100,
 		});
-		// No read_scope → undefined → interception disabled.
+		// No read_scope and no deny_globs → undefined → interception disabled.
 		expect(readScopeConfigFromMeta({})).toBeUndefined();
 		// Present-but-empty scope fails closed.
 		expect(readScopeConfigFromMeta({ readScope: [] })?.scope).toEqual([]);
+		// deny_globs without read_scope → deny-only mode (scope=null).
+		expect(readScopeConfigFromMeta({ denyGlobs: ["**/*.uasset"] })).toEqual({
+			scope: null,
+			denyGlobs: ["**/*.uasset"],
+			fileCap: 8,
+			byteCap: 65536,
+		});
 		fs.rmSync(root, { recursive: true, force: true });
+	});
+});
+
+// ── deny globs (mw-dual-workspace AC-006, D-003 dual basis) ──────────────────
+
+describe("deny globs: dual-basis matching and deny priority", () => {
+	it("VC-011: **/*.uasset matches absolute (backslash) and relative bases", () => {
+		const root = mkdtemp();
+		const config = { scope: null, denyGlobs: ["**/*.uasset"], fileCap: 8, byteCap: 65536 };
+		fs.mkdirSync(path.join(root, "Content"), { recursive: true });
+		const asset = path.join(root, "Content", "X.uasset");
+		fs.writeFileSync(asset, "bin", "utf8");
+
+		// relative request + absolute request both hit
+		const vRel = checkReadScopeCall(root, config, { allowedCalls: 0, bytesRead: 0 }, "read", "Content/X.uasset");
+		expect(vRel.allowed).toBe(false);
+		expect(vRel.rule).toBe("deny-glob");
+		const vAbs = checkReadScopeCall(root, config, { allowedCalls: 0, bytesRead: 0 }, "read", asset);
+		expect(vAbs.allowed).toBe(false);
+		expect(vAbs.rule).toBe("deny-glob");
+		expect(vAbs.reason).toContain("deny glob '**/*.uasset'");
+		expect(vAbs.reason).toContain("[rule=deny-glob]");
+		// non-denied sibling passes (deny-only mode: no scope, no caps)
+		fs.writeFileSync(path.join(root, "Content", "ok.txt"), "x", "utf8");
+		const vOk = checkReadScopeCall(root, config, { allowedCalls: 0, bytesRead: 0 }, "read", "Content/ok.txt");
+		expect(vOk.allowed).toBe(true);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("VC-011: bare-directory form DerivedDataCache/** hits via the root-relative basis only", () => {
+		const root = mkdtemp();
+		const config = { scope: null, denyGlobs: ["DerivedDataCache/**"], fileCap: 8, byteCap: 65536 };
+		const dd = path.join(root, "DerivedDataCache", "a", "b");
+		fs.mkdirSync(dd, { recursive: true });
+
+		const v = checkReadScopeCall(root, config, { allowedCalls: 0, bytesRead: 0 }, "ls", dd);
+		expect(v.allowed).toBe(false);
+		expect(v.rule).toBe("deny-glob");
+		// nested path with ../ escape still normalizes into the deny basis
+		const vEscape = checkReadScopeCall(
+			root,
+			config,
+			{ allowedCalls: 0, bytesRead: 0 },
+			"find",
+			path.join(root, "Content", "..", "DerivedDataCache"),
+		);
+		expect(vEscape.allowed).toBe(false);
+		// outside the denied dir is untouched
+		const vOk = checkReadScopeCall(root, config, { allowedCalls: 0, bytesRead: 0 }, "ls", path.join(root, "Content"));
+		expect(vOk.allowed).toBe(true);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("VC-012: deny wins over an allow scope entry (deny priority)", () => {
+		const root = mkdtemp();
+		fs.mkdirSync(path.join(root, "allowed"), { recursive: true });
+		fs.writeFileSync(path.join(root, "allowed", "a.uasset"), "bin", "utf8");
+		const config = {
+			scope: ["allowed"],
+			denyGlobs: ["**/*.uasset"],
+			fileCap: 8,
+			byteCap: 65536,
+		};
+		const v = checkReadScopeCall(root, config, { allowedCalls: 0, bytesRead: 0 }, "read", "allowed/a.uasset");
+		expect(v.allowed).toBe(false);
+		expect(v.rule).toBe("deny-glob"); // not "scope" — the allow entry does not rescue it
+		fs.rmSync(root, { recursive: true, force: true });
+		console.log("[VERIFY] VC-012: precedence=deny");
 	});
 });
 
@@ -298,6 +375,20 @@ describe("parseTaskMd read_scope frontmatter", () => {
 		const root = mkdtemp();
 		const meta = parseTaskMd(writeTask(root, "type: verifier\nread_scope:\n---\n\nwork\n"));
 		expect(meta.readScope).toEqual([]);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("deny_globs parses as a quoted/unquoted block list (mw-dual-workspace)", () => {
+		const root = mkdtemp();
+		const meta = parseTaskMd(
+			writeTask(
+				root,
+				`${["type: coding", "deny_globs:", '  - "**/*.uasset"', "  - '**/*.umap'", "  - DerivedDataCache/**", ""].join("\n")}\nwork\n`,
+			),
+		);
+		expect(meta.denyGlobs).toEqual(["**/*.uasset", "**/*.umap", "DerivedDataCache/**"]);
+		// readScope untouched by deny_globs parsing
+		expect(meta.readScope).toBeUndefined();
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 });
@@ -523,6 +614,61 @@ describe("worker-mode read_scope wiring (AC-009)", () => {
 			expect(output).not.toContain("## Read Scope Rejections");
 			const trace = fs.readFileSync(path.join(taskDir, "trace.log"), "utf8");
 			expect(trace).not.toContain("[READ_SCOPE]");
+		} finally {
+			process.chdir(cwd);
+			delete process.env.PI_WORKER_TASK;
+		}
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("mw-dual-workspace VC-011: deny globs block read/ls/find/grep 100% with rule=deny-glob in trace", async () => {
+		const root = mkdtemp();
+		for (const dir of ["Content", "DerivedDataCache/a", "allowed"]) {
+			fs.mkdirSync(path.join(root, dir), { recursive: true });
+		}
+		fs.writeFileSync(path.join(root, "Content", "X.uasset"), "bin", "utf8");
+		fs.writeFileSync(path.join(root, "DerivedDataCache", "a", "b"), "x", "utf8");
+		fs.writeFileSync(path.join(root, "allowed", "ok.txt"), "x", "utf8");
+
+		const cwd = process.cwd();
+		process.chdir(root);
+		try {
+			const { worker, taskDir } = await startScopedWorker(root, "ap-dual-vc011", [
+				"read_scope:",
+				"  - allowed",
+				"  - Content",
+				"  - DerivedDataCache",
+				"deny_globs:",
+				'  - "**/*.uasset"',
+				"  - DerivedDataCache/**",
+			]);
+			expect(worker.interceptorCount()).toBe(1);
+
+			// Both deny forms x all four read-ish tools: 100% blocked.
+			const blocked = [
+				worker.toolCall("read", { path: "Content/X.uasset" }),
+				worker.toolCall("ls", { path: "Content/X.uasset" }),
+				worker.toolCall("find", { path: "Content/X.uasset" }),
+				worker.toolCall("grep", { path: "Content/X.uasset" }),
+				worker.toolCall("ls", { path: "DerivedDataCache/a" }),
+				worker.toolCall("find", { path: "DerivedDataCache" }),
+			];
+			for (const b of blocked) {
+				expect(b?.block).toBe(true);
+				expect(b?.reason).toContain("[rule=deny-glob]");
+			}
+			// In-scope, non-denied read still passes.
+			expect(worker.toolCall("read", { path: "allowed/ok.txt" })).toBeUndefined();
+
+			const trace = fs.readFileSync(path.join(taskDir, "trace.log"), "utf8");
+			expect(trace).toMatch(/\[READ_SCOPE\] \S+ blocked path=Content\/X\.uasset rule=deny-glob tool=read/);
+			expect(trace).toMatch(/\[READ_SCOPE\] \S+ blocked path=Content\/X\.uasset rule=deny-glob tool=grep/);
+			expect(trace).toMatch(/\[READ_SCOPE\] \S+ blocked path=DerivedDataCache\/a rule=deny-glob tool=ls/);
+			const denyLines = trace.split("\n").filter((l) => l.includes("rule=deny-glob"));
+			expect(denyLines.length).toBe(6);
+			console.log(
+				`[VERIFY] VC-011: deny-block-rate=100 trace-has-reason=true (blocks=${blocked.length}, trace-lines=${denyLines.length})`,
+			);
 		} finally {
 			process.chdir(cwd);
 			delete process.env.PI_WORKER_TASK;

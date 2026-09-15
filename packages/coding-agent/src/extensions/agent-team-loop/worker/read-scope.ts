@@ -25,13 +25,14 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { minimatch } from "minimatch";
 
 /** Default per-worker caps (D-106): 8 read-ish calls, 64 KiB of read bytes. */
 export const DEFAULT_READ_FILE_CAP = 8;
 export const DEFAULT_READ_BYTE_CAP = 65_536;
 
 /** Rejection rule identifiers — recorded with every blocked call (AC-009). */
-export type ReadScopeRule = "scope" | "cap-file" | "cap-byte";
+export type ReadScopeRule = "scope" | "cap-file" | "cap-byte" | "deny-glob";
 
 /** One blocked call, as accumulated in memory and written to output.md. */
 export interface ReadScopeRejection {
@@ -45,9 +46,15 @@ export interface ReadScopeRejection {
 
 /** Parsed read_scope frontmatter, as enforcement config. */
 export interface ReadScopeConfig {
-	/** Scope entries (project-root relative or absolute). A present-but-empty
-	 * list blocks every read-ish call (fail-closed on a misconfigured task). */
-	scope: string[];
+	/** Scope entries (root-relative or absolute). A present-but-empty
+	 * list blocks every read-ish call (fail-closed on a misconfigured task).
+	 * null = deny-only mode: a task.md carrying deny_globs but no read_scope
+	 * gets the deny firewall without containment or caps (mw-dual-workspace
+	 * D-004 L1 — deny is not silently disabled by a missing scope). */
+	scope: string[] | null;
+	/** deny_globs frontmatter (mw-dual-workspace AC-006): minimatch globs,
+	 * dual-basis matched (see matchedDenyGlob). Deny wins over scope allow. */
+	denyGlobs: string[];
 	/** Max allowed read/ls/find/grep calls over the worker lifetime. */
 	fileCap: number;
 	/** Max cumulative bytes charged by allowed read calls. */
@@ -122,10 +129,40 @@ function defaultStatSize(absolutePath: string): number {
 }
 
 /**
- * The full gate for one read-ish tool call: containment first, then the file
- * cap, then (read only) the byte cap. statSize is injectable for tests; the
- * default stats the resolved path (the read tool loads whole files, so the
- * file size is what the call actually reads).
+ * Dual-basis deny matching (mw-dual-workspace D-003, minimatch 实测):
+ * a deny glob hits when it matches EITHER the normalized absolute path OR
+ * the projectRoot-relative path with forward slashes. The relative basis is
+ * what makes bare-directory forms like `DerivedDataCache/**` work — minimatch
+ * does not match them against absolute paths (measured, design note 补充核查).
+ * projectRoot is the worker cwd (dual mode: the game root; single: the
+ * control root), so "relative to root" keeps one meaning everywhere.
+ * Returns the matching glob for the block reason, or null.
+ */
+export function matchedDenyGlob(projectRoot: string, denyGlobs: string[], rawPath: string): string | null {
+	if (denyGlobs.length === 0) return null;
+	const abs = normalizeForCompare(projectRoot, rawPath);
+	const rel = path.relative(projectRoot, abs).replaceAll("\\", "/");
+	for (const glob of denyGlobs) {
+		if (minimatch(abs, glob) || minimatch(rel, glob)) return glob;
+		// A trailing /** also denies the directory itself: plain minimatch
+		// leaves `ls`/`find` on the bare directory (which lists its contents)
+		// unblocked — a firewall hole. `DerivedDataCache/**` therefore also
+		// matches the root-relative `DerivedDataCache`.
+		if (glob.endsWith("/**")) {
+			const stripped = glob.slice(0, -3);
+			if (stripped !== "" && minimatch(rel, stripped)) return glob;
+		}
+	}
+	return null;
+}
+
+/**
+ * The full gate for one read-ish tool call: deny globs first (deny wins over
+ * scope allow, AC-006), then containment, then the file cap, then (read only)
+ * the byte cap. Containment and caps apply only in scope mode (scope !==
+ * null). statSize is injectable for tests; the default stats the resolved
+ * path (the read tool loads whole files, so the file size is what the call
+ * actually reads).
  */
 export function checkReadScopeCall(
 	projectRoot: string,
@@ -135,7 +172,16 @@ export function checkReadScopeCall(
 	rawPath: string,
 	statSize: (absolutePath: string) => number = defaultStatSize,
 ): ReadScopeVerdict {
-	if (!isWithinScope(projectRoot, config.scope, rawPath)) {
+	const denyGlob = matchedDenyGlob(projectRoot, config.denyGlobs, rawPath);
+	if (denyGlob !== null) {
+		return {
+			allowed: false,
+			rule: "deny-glob",
+			reason: `read_scope: blocked ${tool} of ${rawPath}: the path matches deny glob '${denyGlob}' [rule=deny-glob]`,
+			chargedBytes: 0,
+		};
+	}
+	if (config.scope !== null && !isWithinScope(projectRoot, config.scope, rawPath)) {
 		return {
 			allowed: false,
 			rule: "scope",
@@ -145,7 +191,7 @@ export function checkReadScopeCall(
 			chargedBytes: 0,
 		};
 	}
-	if (state.allowedCalls >= config.fileCap) {
+	if (config.scope !== null && state.allowedCalls >= config.fileCap) {
 		return {
 			allowed: false,
 			rule: "cap-file",
@@ -172,18 +218,21 @@ export function checkReadScopeCall(
 	return { allowed: true, chargedBytes };
 }
 
-/** Build the enforcement config from parsed task.md meta. Undefined when the
- * task carries no read_scope: interception disabled (AC-012 red line —
- * manual/legacy tasks behave exactly as before). Missing or invalid caps
- * fall back to the defaults, never an error. */
+/** Build the enforcement config from parsed task.md meta. Undefined when
+ * the task carries neither read_scope nor deny_globs: interception disabled
+ * (AC-012 red line — manual/legacy tasks behave exactly as before). A task
+ * with deny_globs but no read_scope gets deny-only mode (scope=null). Missing
+ * or invalid caps fall back to the defaults, never an error. */
 export function readScopeConfigFromMeta(meta: {
 	readScope?: string[];
+	denyGlobs?: string[];
 	readFileCap?: number;
 	readByteCap?: number;
 }): ReadScopeConfig | undefined {
-	if (meta.readScope === undefined) return undefined;
+	if (meta.readScope === undefined && meta.denyGlobs === undefined) return undefined;
 	return {
-		scope: meta.readScope,
+		scope: meta.readScope === undefined ? null : meta.readScope,
+		denyGlobs: meta.denyGlobs ?? [],
 		fileCap: meta.readFileCap ?? DEFAULT_READ_FILE_CAP,
 		byteCap: meta.readByteCap ?? DEFAULT_READ_BYTE_CAP,
 	};

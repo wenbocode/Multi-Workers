@@ -14,13 +14,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../src/core/extensions/types.ts";
+import { activate } from "../../src/extensions/agent-team-loop/index.ts";
 import {
 	autoTakeOverFromDoc,
 	dispatchNewTasks,
 	docFromWrite,
 	evidencePhaseFromWrite,
+	evidenceReviewNotice,
 	keyFromDocWrite,
-	nudgeEvidenceReview,
 	nudgeGoalUnestablished,
 	pmActivate,
 	restoreWatch,
@@ -40,6 +41,7 @@ import {
 	readWorkerLogTail,
 	registerMwCommands,
 	registerPmKeyCommands,
+	registerPmSaveCommand,
 	registerSwitchKeyTool,
 	registerWorkerTools,
 	renderWatchLines,
@@ -208,6 +210,29 @@ async function seedKey(
 		deps: "",
 		desc: "",
 		updated: new Date().toISOString(),
+	});
+}
+
+/** Spawn a short-lived child and wait until its pid is observable — the
+ * stand-in for "another live window's" claim in takeover/owner-resolution
+ * tests. */
+function spawnLivePid(): Promise<{ pid: number; done: Promise<void> }> {
+	const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 15000)"]);
+	if (child.pid === undefined) throw new Error("spawn failed");
+	return new Promise((resolve) => {
+		child.on("spawn", () => {
+			const done = new Promise<void>((res) => {
+				child.on("exit", () => res());
+			});
+			resolve({ pid: child.pid as number, done });
+		});
+		// Fallback if the spawn event never fires
+		setTimeout(() => {
+			const done = new Promise<void>((res) => {
+				child.on("exit", () => res());
+			});
+			resolve({ pid: child.pid as number, done });
+		}, 500);
 	});
 }
 
@@ -1353,6 +1378,73 @@ describe("dispatchNewTasks keyed workers scan", () => {
 		expect(sent.filter((m) => m.content.includes("owner-key mismatch"))).toHaveLength(1);
 		fs.rmSync(root, { recursive: true, force: true });
 	});
+
+	it("MW-001: this window's claimed key wins over the globally-latest active row", async () => {
+		const root = mkdtemp();
+		const ws = new WorkerStore(root);
+		const is = new IndexStore(root);
+		const { pi, tools, sent } = fakeCmdPi();
+		writePhaseDocs(root, "k-own"); // documented so dispatch proceeds
+		await seedKey(root, "k-own", windowClaimId());
+		// Seeded after k-own → the latest-updated ACTIVE row belongs to another
+		// window (stale claim: no live pid). Old behavior dispatched here.
+		await seedKey(root, "k-other", "20260808-142655-3496");
+		const watch: PmWatchState = { key: "k-own" };
+		registerWorkerTools(pi, ws, new AckStore(root), is, root, watch);
+		const tool = tools.get("dispatch_worker");
+		if (!tool) throw new Error("dispatch_worker not registered");
+
+		const r = await tool.execute(
+			"id1",
+			{ task_key: "t1", description: "work" },
+			undefined,
+			undefined,
+			fakeCmdCtx().ctx,
+		);
+		expect(r.content[0]?.text).toContain("under key 'k-own'");
+		// The task lands under THIS window's key, never the latest active row.
+		expect(fs.existsSync(path.join(root, "k-own", "workers", "t1", "task.md"))).toBe(true);
+		expect(fs.existsSync(path.join(root, "k-other", "workers", "t1"))).toBe(false);
+		// Own claim → authoritative, no mismatch warning.
+		expect(sent.filter((m) => m.content.includes("owner-key mismatch"))).toHaveLength(0);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("MW-002: a live foreign claim on the active key degrades dispatch to _scratch", async () => {
+		const root = mkdtemp();
+		const ws = new WorkerStore(root);
+		const is = new IndexStore(root);
+		const { pi, tools, sent } = fakeCmdPi();
+		const live = await spawnLivePid();
+		try {
+			// The only active row is held live by another window; this window
+			// watches nothing — the old behavior injected work into that key.
+			await seedKey(root, "k-foreign", `${os.hostname()}:${live.pid}`);
+			const watch: PmWatchState = { key: undefined };
+			registerWorkerTools(pi, ws, new AckStore(root), is, root, watch);
+			const tool = tools.get("dispatch_worker");
+			if (!tool) throw new Error("dispatch_worker not registered");
+
+			const r = await tool.execute(
+				"id1",
+				{ task_key: "t2", description: "work" },
+				undefined,
+				undefined,
+				fakeCmdCtx().ctx,
+			);
+			expect(r.content[0]?.text).toContain("under key '_scratch'");
+			expect(fs.existsSync(path.join(root, "_scratch", "workers", "t2", "task.md"))).toBe(true);
+			expect(fs.existsSync(path.join(root, "k-foreign", "workers", "t2"))).toBe(false);
+			// Warned once, naming the foreign-held key.
+			const warns = sent.filter((m) => m.content.includes("claimed by another live window"));
+			expect(warns).toHaveLength(1);
+			expect(warns[0]?.content).toContain("k-foreign");
+		} finally {
+			process.kill(live.pid);
+			await live.done;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	}, 20000);
 });
 
 // ── pm-state.md interface guard (hard block) + takeover audit ──────────────
@@ -2565,28 +2657,6 @@ describe("terminal readback (AC-014 / VC-020)", () => {
 });
 
 describe("pm-key takeover claims", () => {
-	/** Command ctx capturing notifications and widget renders. */
-	/** Spawn a short-lived child and wait until its pid is observable. */
-	function spawnLivePid(): Promise<{ pid: number; done: Promise<void> }> {
-		const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 15000)"]);
-		if (child.pid === undefined) throw new Error("spawn failed");
-		return new Promise((resolve) => {
-			child.on("spawn", () => {
-				const done = new Promise<void>((res) => {
-					child.on("exit", () => res());
-				});
-				resolve({ pid: child.pid as number, done });
-			});
-			// Fallback if the spawn event never fires
-			setTimeout(() => {
-				const done = new Promise<void>((res) => {
-					child.on("exit", () => res());
-				});
-				resolve({ pid: child.pid as number, done });
-			}, 500);
-		});
-	}
-
 	it("classifies claims: empty/self/legacy are free, live and foreign pids held", async () => {
 		const self = windowClaimId();
 		expect(claimState("", self)).toBe("free");
@@ -2668,6 +2738,105 @@ describe("pm-key takeover claims", () => {
 		// m2: /pm-key new routes through the atomic claim — the previously
 		// active key is demoted instead of silently creating a second active row.
 		expect(is.findByKey("key-a")?.status).toBe("idle");
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("/pm-save writes a session snapshot and asks the agent to fill in context", async () => {
+		const root = mkdtemp();
+		const is = new IndexStore(root);
+		const ws = new WorkerStore(root);
+		await seedKey(root, "key-a", windowClaimId());
+		await ws.upsert({
+			taskKey: "t1",
+			status: "done",
+			cli: "pi",
+			provider: "timi",
+			taskPath: path.join(root, "key-a", "workers", "t1", "task.md"),
+			dispatchedAt: "",
+			updatedAt: "",
+			model: "",
+		});
+		const { pi, commands, messages } = fakeCmdPi();
+		const watch: PmWatchState = { key: "key-a" };
+		registerPmSaveCommand(pi, is, ws, watch, root);
+		const handler = commands.get("pm-save");
+		if (!handler) throw new Error("pm-save not registered");
+
+		// No watch → warning, nothing written.
+		const off = fakeCmdPi();
+		registerPmSaveCommand(off.pi, is, ws, { key: undefined }, root);
+		const offHandler = off.commands.get("pm-save");
+		if (!offHandler) throw new Error("pm-save not registered");
+		const warnCtx = fakeCmdCtx();
+		await offHandler("", warnCtx.ctx);
+		expect(warnCtx.notifications.some((n) => n.includes("Not watching any key"))).toBe(true);
+		expect(fs.existsSync(path.join(root, "key-a", "pm-state.md"))).toBe(false);
+
+		// Watched key: skeleton created, snapshot inserted under ## Notes.
+		const okCtx = fakeCmdCtx();
+		await handler("restart before framework swap", okCtx.ctx);
+		const statePath = path.join(root, "key-a", "pm-state.md");
+		const content = fs.readFileSync(statePath, "utf8");
+		expect(content).toContain("# PM State: key-a");
+		expect(content).toContain("### Session Snapshot — ");
+		expect(content).toContain("Watch: key-a");
+		expect(content).toContain("status=active phase=EXECUTE");
+		expect(content).toContain("1 done");
+		expect(content).toContain("Note: restart before framework swap");
+		expect(okCtx.notifications.some((n) => n.includes("Saved session snapshot"))).toBe(true);
+		// The agent is explicitly asked to fill in the conversational context
+		// (user-invoked command — not a framework-injected nudge).
+		expect(messages.at(-1)).toContain("pm-state.md");
+		expect(messages.at(-1)).toContain("上下文状态");
+
+		// Existing pm-state.md: machine-interface lines stay byte-identical and
+		// prior notes survive; the snapshot is inserted under ## Notes.
+		fs.writeFileSync(
+			statePath,
+			"# PM State: key-a\n\n## Section 1: Snapshot\n- Key: key-a\n- Claim-Id: cid-1\n- Phase: EXECUTE\n- Updated: 2026-01-01T00:00:00Z\n\n## Notes\n\nprior log line\n",
+			"utf8",
+		);
+		const againCtx = fakeCmdCtx();
+		await handler("", againCtx.ctx);
+		const content2 = fs.readFileSync(statePath, "utf8");
+		expect(content2).toContain("- Phase: EXECUTE");
+		expect(content2).toContain("- Claim-Id: cid-1");
+		expect(content2).toContain("prior log line");
+		const notesIdx = content2.indexOf("## Notes");
+		const snapIdx = content2.indexOf("### Session Snapshot");
+		expect(notesIdx).toBeGreaterThanOrEqual(0);
+		expect(snapIdx).toBeGreaterThan(notesIdx);
+		expect(snapIdx).toBeLessThan(content2.indexOf("prior log line"));
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("restoreWatch points at a saved pm-state.md instead of injecting it", async () => {
+		const root = mkdtemp();
+		const is = new IndexStore(root);
+		const ws = new WorkerStore(root);
+		const as = new AckStore(root);
+		await seedKey(root, "key-a", windowClaimId());
+		fs.mkdirSync(path.join(root, "key-a"), { recursive: true });
+		fs.writeFileSync(
+			path.join(root, "key-a", "pm-state.md"),
+			"# PM State: key-a\n\n## Notes\n\n### Session Snapshot — 2026-09-14T00:00:00Z (w)\n- Watch: key-a\n",
+			"utf8",
+		);
+		const { pi } = fakeCmdPi();
+		const watch: PmWatchState = { key: undefined };
+		const entries = [{ type: "custom", customType: "agent-team-loop:watch", data: { key: "key-a", claimed: false } }];
+		const notifications: string[] = [];
+		const ctx = {
+			hasUI: true,
+			ui: { notify: (m: string) => notifications.push(m), setWidget: () => {} },
+			sessionManager: { getEntries: () => entries },
+		} as unknown as ExtensionContext;
+		await restoreWatch(pi, watch, is, ws, as, root, ctx);
+		expect(watch.key).toBe("key-a");
+		// A notice pointing at the file — never an injected instruction
+		// (evidenceReviewNotice principle).
+		expect(notifications.some((n) => n.includes("pm-state.md"))).toBe(true);
+		expect(notifications.some((n) => n.includes("让 agent 读取"))).toBe(true);
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
@@ -3004,32 +3173,40 @@ describe("pm-key takeover claims", () => {
 		fs.rmSync(project, { recursive: true, force: true });
 	});
 
-	it("nudgeEvidenceReview fires once when doc + evidence coexist, with the checklist", () => {
+	it("evidenceReviewNotice fires once when doc + evidence coexist — as a UI notice, never an injected instruction", () => {
 		const root = mkdtemp();
-		const { pi, messages } = fakeCmdPi();
-		const nudged = new Set<string>();
+		const notices: Array<{ message: string; type: string }> = [];
+		const ctx = {
+			ui: {
+				notify: (message: string, type?: string) => notices.push({ message, type: type ?? "" }),
+			},
+		} as unknown as ExtensionContext;
+		const notified = new Set<string>();
 
 		// Evidence alone (no phase doc yet) — review needs both sides.
 		fs.mkdirSync(path.join(root, "k", "evidence", "research"), { recursive: true });
 		fs.writeFileSync(path.join(root, "k", "evidence", "research", "spec-x.md"), "n", "utf8");
-		nudgeEvidenceReview(pi, "k", "spec", root, nudged);
-		expect(messages).toHaveLength(0);
+		evidenceReviewNotice(ctx, "k", "spec", root, notified);
+		expect(notices).toHaveLength(0);
 
-		// Phase doc present: nudge fires once, then dedups within the session.
+		// Phase doc present: notice fires once, then dedups within the session.
 		writePhaseDocs(root, "k");
-		nudgeEvidenceReview(pi, "k", "spec", root, nudged);
-		expect(messages).toHaveLength(1);
-		expect(messages[0]).toContain("证据复查");
-		expect(messages[0]).toContain("断言-证据对照");
-		expect(messages[0]).toContain("spec.md");
-		nudgeEvidenceReview(pi, "k", "spec", root, nudged);
-		expect(messages).toHaveLength(1);
+		evidenceReviewNotice(ctx, "k", "spec", root, notified);
+		expect(notices).toHaveLength(1);
+		expect(notices[0].type).toBe("info");
+		expect(notices[0].message).toContain("k");
+		expect(notices[0].message).toContain("spec.md");
+		expect(notices[0].message).toContain("建议对照");
+		// Never an injected user instruction (mw-evidence-nudge-notify): the
+		// framework flags the moment; it must not command the agent. The notice
+		// signature takes only a UI ctx — there is no sendUserMessage path.
+		evidenceReviewNotice(ctx, "k", "spec", root, notified);
+		expect(notices).toHaveLength(1);
 
-		// Design phase is tracked independently with its own checklist.
-		nudgeEvidenceReview(pi, "k", "design", root, nudged);
-		expect(messages).toHaveLength(2);
-		expect(messages[1]).toContain("复用≠零成本");
-		expect(messages[1]).toContain("design.md");
+		// Design phase is tracked independently.
+		evidenceReviewNotice(ctx, "k", "design", root, notified);
+		expect(notices).toHaveLength(2);
+		expect(notices[1].message).toContain("design.md");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
@@ -3052,24 +3229,6 @@ describe("pm-key takeover claims", () => {
 		fs.writeFileSync(path.join(root, "goal.md"), "status: active\n\n## Goal\n\nShip it.\n", "utf8");
 		nudgeGoalUnestablished(pi, root, true);
 		expect(messages).toHaveLength(1);
-		fs.rmSync(root, { recursive: true, force: true });
-	});
-
-	it("nudgeEvidenceReview queues as followUp — it fires mid-run from tool-write events", () => {
-		const root = mkdtemp();
-		const calls: Array<{ content: string; options?: { deliverAs?: string } }> = [];
-		const pi = {
-			sendUserMessage: (content: string, options?: { deliverAs?: string }) => {
-				calls.push({ content, options });
-			},
-		} as unknown as ExtensionAPI;
-		fs.mkdirSync(path.join(root, "k", "evidence", "research"), { recursive: true });
-		fs.writeFileSync(path.join(root, "k", "evidence", "research", "spec-x.md"), "n", "utf8");
-		writePhaseDocs(root, "k");
-
-		nudgeEvidenceReview(pi, "k", "spec", root, new Set<string>());
-		expect(calls).toHaveLength(1);
-		expect(calls[0].options?.deliverAs).toBe("followUp");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 });
@@ -3658,6 +3817,103 @@ describe("pmActivate lifecycle (m3)", () => {
 				vi.useRealTimers();
 			}
 		} finally {
+			process.chdir(cwd);
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	}, 20000);
+});
+
+describe("activation guard re-arm (double-load + session replacement)", () => {
+	/** Fake pi capturing event handlers (arrays — several registrations per
+	 * event), commands, and tools, for direct activate() calls. */
+	function fakePi(): {
+		pi: ExtensionAPI;
+		handlers: Map<string, Array<(event?: unknown, ctx?: unknown) => Promise<unknown> | unknown>>;
+		commands: Set<string>;
+		tools: Set<string>;
+	} {
+		const handlers = new Map<string, Array<(event?: unknown, ctx?: unknown) => Promise<unknown> | unknown>>();
+		const commands = new Set<string>();
+		const tools = new Set<string>();
+		const pi = {
+			on: (name: string, handler: (event?: unknown, ctx?: unknown) => Promise<unknown> | unknown) => {
+				const list = handlers.get(name) ?? [];
+				list.push(handler);
+				handlers.set(name, list);
+			},
+			registerCommand: (name: string) => {
+				commands.add(name);
+			},
+			registerTool: (tool: { name: string }) => {
+				tools.add(tool.name);
+			},
+			registerShortcut: () => {},
+			registerFlag: () => {},
+			appendEntry: () => {},
+			sendMessage: () => {},
+			sendUserMessage: () => {},
+		} as unknown as ExtensionAPI;
+		return { pi, handlers, commands, tools };
+	}
+
+	async function fireShutdown(handlers: Map<string, Array<(event?: unknown) => unknown>>): Promise<void> {
+		for (const h of handlers.get("session_shutdown") ?? []) await h({ type: "session_shutdown" });
+	}
+
+	it("blocks a same-pass double load, then fully re-activates after session_shutdown", async () => {
+		const root = mkdtemp();
+		fs.mkdirSync(path.join(root, ".agenticdoc"), { recursive: true });
+		const cwd = process.cwd();
+		process.chdir(root);
+		delete process.env.PI_WORKER_TASK;
+		const g = globalThis as Record<string, unknown>;
+		const copies: ReturnType<typeof fakePi>[] = [];
+		try {
+			vi.useFakeTimers();
+			// First load: full registration.
+			const first = fakePi();
+			copies.push(first);
+			await activate(first.pi);
+			expect(first.commands.has("pm-key")).toBe(true);
+			expect(first.commands.has("mw")).toBe(true);
+			expect(first.tools.has("dispatch_worker")).toBe(true);
+			expect(g.__agentTeamLoopActivated).toBe(true);
+
+			// Same-pass second copy (global + stale local double-load): blocked.
+			const second = fakePi();
+			copies.push(second);
+			await activate(second.pi);
+			expect(second.commands.size).toBe(0);
+			expect(second.tools.size).toBe(0);
+
+			// Session replacement (/new, /resume, /fork, /reload): teardown fires
+			// session_shutdown on every live registration, re-arming the guard...
+			for (const c of copies) await fireShutdown(c.handlers);
+			expect(g.__agentTeamLoopActivated).toBeUndefined();
+
+			// ...so the replacement runtime's activate() registers everything again
+			// (the old behavior left the session with no commands/tools/widget).
+			const third = fakePi();
+			copies.push(third);
+			await activate(third.pi);
+			expect(third.commands.has("pm-key")).toBe(true);
+			expect(third.commands.has("mw")).toBe(true);
+			expect(third.commands.has("mw-watch")).toBe(true);
+			expect(third.commands.has("autopilot")).toBe(true);
+			expect(third.tools.has("dispatch_worker")).toBe(true);
+			expect(third.tools.has("switch_key")).toBe(true);
+
+			// A same-pass double load after re-activation is still blocked.
+			const fourth = fakePi();
+			copies.push(fourth);
+			await activate(fourth.pi);
+			expect(fourth.commands.size).toBe(0);
+		} finally {
+			vi.useRealTimers();
+			// Stop every poll loop the activations started and clear the flag so
+			// later tests in this file start from a clean slate.
+			for (const c of copies) await fireShutdown(c.handlers);
+			delete g.__agentTeamLoopActivated;
 			process.chdir(cwd);
 			fs.rmSync(root, { recursive: true, force: true });
 		}

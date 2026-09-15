@@ -27,6 +27,7 @@ import {
 	registerMwCommands,
 	registerMwTools,
 	registerPmKeyCommands,
+	registerPmSaveCommand,
 	registerSwitchKeyTool,
 	registerWatchCommand,
 	registerWorkerCommands,
@@ -127,45 +128,34 @@ export function evidencePhaseFromWrite(
 	return { key, phase };
 }
 
-const SPEC_REVIEW_CHECKLIST = `1. 断言-证据对照：量级/价值/成本类断言要么引用 research note（出处），要么标注「未实证」并写明取证方法（design 前完成）
-2. 数字口径：估算必须锚定实测数据并注明出处与口径；口径存疑 → 重锚定并标注
-3. 内部一致性：AC 引用的对象/范围与正文枚举一致（AC 提到 X，枚举必须含 X）
-4. 可证伪性：量化断言（如「调用数 = 0」）必须有机器观测口径（日志/状态/输出字段），否则移入「待确认」`;
-
-const DESIGN_REVIEW_CHECKLIST = `1. 决策-证据对照：每个 D-xxx 决策的 Pros/Cons 关键事实须有 research note 出处；无出处的标「未实证」
-2. 复用≠零成本：复用既有组件的决策必须估算适配量（数据规模/语义差异）
-3. VC 可观测性：VC 断言绑定可机器解析的输出（日志行/状态字段/命令输出），不可观测的移入待确认
-4. 数字口径：性能/容量估算锚定实测数据并注明出处`;
-
-/** Nudge the window agent to re-review a phase doc against its research
- * evidence — the "re-review when evidence is generated" protocol. Fires once
- * per (key, phase) per session, only when both the phase doc (>= 500 bytes)
- * and >= 1 evidence note exist: the review needs both sides of the comparison.
- * The agent applies corrections/annotations to the doc itself and reports the
- * "证据不足、已修正标注" findings. */
-export function nudgeEvidenceReview(
-	pi: ExtensionAPI,
+/** UI notice when a phase doc and its research evidence coexist — the
+ * "re-review when evidence is generated" protocol, as a *notice*, not an
+ * injected instruction (mw-evidence-nudge-notify): the old sendUserMessage
+ * form made the model treat the automatic nudge as the user ordering an
+ * immediate review pass, so the window agent started rewriting the doc with
+ * no consent and no chance to veto, hijacking the turn. The framework's role
+ * is to flag the moment; the user decides when (and whether) to run the
+ * review. Fires once per (key, phase) per session, only when both the phase
+ * doc (>= 500 bytes) and >= 1 evidence note exist: the review needs both
+ * sides of the comparison. */
+export function evidenceReviewNotice(
+	ctx: ExtensionContext,
 	key: string,
 	phase: EvidencePhase,
 	agenticdocRoot: string,
-	nudged: Set<string>,
+	notified: Set<string>,
 ): void {
 	const dedup = `${key}:${phase}`;
-	if (nudged.has(dedup)) return;
+	if (notified.has(dedup)) return;
 	const docs = readPhaseDocs(agenticdocRoot, key);
 	const docOk = phase === "spec" ? docs.spec : docs.design;
 	const evidence = phase === "spec" ? docs.specEvidence : docs.designEvidence;
 	if (!docOk || evidence < 1) return;
-	nudged.add(dedup);
+	notified.add(dedup);
 	const doc = phase === "spec" ? "spec.md" : "design.md";
-	const checklist = phase === "spec" ? SPEC_REVIEW_CHECKLIST : DESIGN_REVIEW_CHECKLIST;
-	// deliverAs "followUp": this fires from tool-write events while the agent
-	// run is still active — queue behind it instead of colliding. Without
-	// deliverAs, sendUserMessage throws "Agent is already processing" mid-run
-	// and the nudge is lost.
-	pi.sendUserMessage(
-		`[agent-team-loop] ${key}：${phase} 阶段证据已就位（${evidence} 份 research note）。请立即执行证据复查——对照 evidence/research/ 逐条核查 ${doc}：\n${checklist}\n修正与标注直接写入 ${doc}，并逐条汇报「证据不足、已修正标注的部分」。`,
-		{ deliverAs: "followUp" },
+	ctx.ui.notify(
+		`[mw] ${key}: ${phase} 阶段证据已就位（${evidence} 份 research note）——建议对照 evidence/research/ 复查 ${doc}（断言-证据对照 / 数字口径 / 内部一致性 / 可证伪性）。何时执行复查由你决定。`,
+		"info",
 	);
 }
 
@@ -319,6 +309,18 @@ export async function restoreWatch(
 	setWatchWidget(ctx, renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, key));
 	// Re-stamp the entry so it lands in the (possibly new) session file.
 	pi.appendEntry(WATCH_ENTRY_TYPE, { key, claimed: data.claimed ?? false });
+
+	// Saved working context (pm-save): point the user at it — a notice, never
+	// an injected instruction (same principle as evidenceReviewNotice: the
+	// framework flags, the user decides whether the agent reads it).
+	const pmStatePath = path.join(agenticdocRoot, key, "pm-state.md");
+	if (fs.existsSync(pmStatePath)) {
+		const updated = fs.statSync(pmStatePath).mtime.toISOString();
+		ctx.ui.notify(
+			`[mw] key '${key}' 有已保存的 pm-state.md（更新于 ${updated}）。如需接续上次的工作上下文，让 agent 读取 ${key}/pm-state.md 的 Notes 区。`,
+			"info",
+		);
+	}
 }
 
 function pickWorkerRoute(taskContent: string): { cli: string; provider: string } {
@@ -438,17 +440,26 @@ export async function dispatchNewTasks(
 			const taskContent = fs.readFileSync(taskMdPath, "utf8");
 			const { cli, provider } = pickWorkerRoute(taskContent);
 			const model = readModel(taskContent);
-			await dispatchTask(
-				{
-					taskKey,
-					status: "pending",
-					cli,
-					provider,
-					model,
-					taskPath: taskMdPath,
-				},
-				workerStore,
-			);
+			try {
+				await dispatchTask(
+					{
+						taskKey,
+						status: "pending",
+						cli,
+						provider,
+						model,
+						taskPath: taskMdPath,
+					},
+					workerStore,
+				);
+			} catch (err) {
+				// Fail-closed (mw-dual-workspace AC-007): an unusable target.yml
+				// must never silently degrade to an un-injected task.md — the task
+				// stays undispatched and is retried on the next scan once the
+				// config is fixed. Per-task isolation: one bad task never blocks
+				// the rest of the scan.
+				console.error(`[mw] dispatch refused for ${taskKey}: ${err instanceof Error ? err.message : String(err)}`);
+			}
 		}
 	}
 }
@@ -607,6 +618,7 @@ export function pmActivate(pi: ExtensionAPI): void {
 
 	// Register commands and tools during loading (safe — not action methods)
 	registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agenticdocRoot);
+	registerPmSaveCommand(pi, indexStore, workerStore, watch, agenticdocRoot);
 	registerMwCommands(pi, projectDir, workerStore, ackStore);
 	registerMwTools(pi, projectDir);
 	registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch);
@@ -655,8 +667,8 @@ export function pmActivate(pi: ExtensionAPI): void {
 			pendingToolArgs.set(event.toolCallId, { toolName: event.toolName, args: event.args });
 		}
 	});
-	// Evidence-review nudges fire once per (key, phase) per session.
-	const evidenceReviewNudged = new Set<string>();
+	// Evidence-review notices fire once per (key, phase) per session.
+	const evidenceReviewNotified = new Set<string>();
 	pi.on("tool_execution_end", (event, ctx) => {
 		const pending = pendingToolArgs.get(event.toolCallId);
 		pendingToolArgs.delete(event.toolCallId);
@@ -668,24 +680,25 @@ export function pmActivate(pi: ExtensionAPI): void {
 					// Takeover failures (e.g. lock contention) must never disturb the turn
 				},
 			);
-			// Phase-doc write with its evidence already present → re-review the
-			// doc's claims against the notes (plan has no evidence phase).
+			// Phase-doc write with its evidence already present → notice that the
+			// doc's claims can be re-reviewed against the notes (plan has no
+			// evidence phase). A notice, never an injected instruction.
 			if (target.doc !== "plan.md") {
-				nudgeEvidenceReview(
-					pi,
+				evidenceReviewNotice(
+					ctx,
 					target.key,
 					target.doc === "spec.md" ? "spec" : "design",
 					agenticdocRoot,
-					evidenceReviewNudged,
+					evidenceReviewNotified,
 				);
 			}
 			return;
 		}
 		// Research-note write: not a claim signal, but it may complete the
-		// evidence set for an already-written phase doc → re-review nudge.
+		// evidence set for an already-written phase doc → review notice.
 		const ev = evidencePhaseFromWrite(pending.toolName, pending.args, projectDir, agenticdocRoot);
 		if (ev) {
-			nudgeEvidenceReview(pi, ev.key, ev.phase, agenticdocRoot, evidenceReviewNudged);
+			evidenceReviewNotice(ctx, ev.key, ev.phase, agenticdocRoot, evidenceReviewNotified);
 		}
 	});
 

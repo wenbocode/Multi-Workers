@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
 import type { AckStore } from "../shared/ack-store.ts";
+import { acquireLock } from "../shared/file-lock.ts";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.ts";
 import { type IndexStore, readIndexMdActive } from "../shared/index-store.ts";
 import type { DoctorJson } from "../shared/mw-runner.ts";
@@ -24,12 +25,18 @@ import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-st
 import { headline } from "../worker/output-writer.ts";
 import { dispatchTask } from "./task-dispatcher.ts";
 
-/** Owner key for a worker task, synchronized with this window's watch state.
- * Explicit key wins (deliberate choice — no warning). Otherwise resolve the
- * active key: latest-active row in _index.parallel, then the degraded
- * _index.md `active:` pointer, then _scratch. When auto-resolution lands on
- * a key other than what this window watches, warn once per (watch, owner)
- * pair — the dispatch follows the active key, never a stale watch. */
+/** Owner key for a worker task — this window's own claim first, the shared
+ * active pointer second. Explicit key wins (deliberate choice — no warning).
+ * Otherwise, when this window watches a key whose _index.parallel row it
+ * holds (claimId === this window's host:pid), dispatches land under that key
+ * even when another window's later takeover made a different row the
+ * globally-latest active one: single-active demote flips the shared pointer
+ * between windows, but ownership does not move. A stale or foreign watch
+ * (no claim held) falls back to the global active row — but never one held
+ * live by another window (injecting work into another window's key is the
+ * cross-window dispatch bug this guards); that case degrades to _scratch
+ * with a warning. Then the degraded _index.md `active:` pointer, then
+ * _scratch. */
 export function resolveOwnerKeyWithSync(
 	pi: ExtensionAPI,
 	indexStore: IndexStore,
@@ -39,7 +46,19 @@ export function resolveOwnerKeyWithSync(
 ): string {
 	const explicitKey = (explicit ?? "").trim();
 	if (explicitKey) return explicitKey;
-	const owner = indexStore.activeKey() ?? readIndexMdActive(agenticdocRoot) ?? SCRATCH_WORKERS_KEY;
+	const self = windowClaimId();
+	if (watch.key) {
+		// _scratch is watchable but never indexed; a window watching it means
+		// its ad-hoc dispatches belong there.
+		if (watch.key === SCRATCH_WORKERS_KEY) return watch.key;
+		if (indexStore.findByKey(watch.key)?.claimId === self) return watch.key;
+	}
+	const active = indexStore.activeEntry();
+	if (active && claimState(active.claimId, self) === "held-live") {
+		warnForeignActiveOnce(pi, active.key);
+		return SCRATCH_WORKERS_KEY;
+	}
+	const owner = active?.key ?? readIndexMdActive(agenticdocRoot) ?? SCRATCH_WORKERS_KEY;
 	if (watch.key && watch.key !== owner) warnOwnerMismatchOnce(pi, watch.key, owner);
 	return owner;
 }
@@ -54,8 +73,22 @@ function warnOwnerMismatchOnce(pi: ExtensionAPI, watchKey: string, ownerKey: str
 	warnedOwnerMismatches.add(pair);
 	displaySummary(
 		pi,
-		`[mw] owner-key mismatch: this window watches '${watchKey}' but the active key is '${ownerKey}' — ` +
+		`[mw] owner-key mismatch: this window watches '${watchKey}' but holds no claim on it, and the active key is '${ownerKey}' — ` +
 			`dispatching under '${ownerKey}'. Run /pm-key switch ${ownerKey} to align the window.`,
+	);
+}
+
+/** Warned foreign active keys this session (same once-per-pair rationale as
+ * warnedOwnerMismatches). */
+const warnedForeignActives = new Set<string>();
+
+function warnForeignActiveOnce(pi: ExtensionAPI, activeKey: string): void {
+	if (warnedForeignActives.has(activeKey)) return;
+	warnedForeignActives.add(activeKey);
+	displaySummary(
+		pi,
+		`[mw] active key '${activeKey}' is claimed by another live window — not dispatching under it; ` +
+			`using '${SCRATCH_WORKERS_KEY}' instead. Pass an explicit key, or switch_key in this window first.`,
 	);
 }
 
@@ -618,6 +651,94 @@ export function registerPmKeyCommands(
 	});
 }
 
+/** Insert a session-snapshot section at the top of {key}/pm-state.md's Notes
+ * area. Machine-interface lines (- Phase: / - Claim-Id:) are owned by the
+ * framework scripts and stay byte-identical: the snapshot is inserted under
+ * "## Notes" only, never rewriting the rest of the file (pm-state-guard
+ * principle, framework-side write with the same lock protocol as
+ * StateManager). Returns the path written. */
+export async function writeSessionSnapshot(agenticdocRoot: string, key: string, lines: string[]): Promise<string> {
+	const statePath = path.join(agenticdocRoot, key, "pm-state.md");
+	const content = fs.existsSync(statePath) ? fs.readFileSync(statePath, "utf8") : `# PM State: ${key}\n\n## Notes\n`;
+	const section = [
+		`### Session Snapshot — ${new Date().toISOString()} (${windowClaimId()})`,
+		...lines.map((l) => (l ? `- ${l}` : "")),
+		"",
+	].join("\n");
+	const NOTES_HEADING = /^## Notes[ \t]*$/m;
+	const next = NOTES_HEADING.test(content)
+		? content.replace(NOTES_HEADING, `## Notes\n\n${section}`)
+		: `${content.trimEnd()}\n\n## Notes\n\n${section}`;
+	fs.mkdirSync(path.dirname(statePath), { recursive: true });
+	const release = await acquireLock(`${statePath}.lock`);
+	try {
+		const tmpPath = `${statePath}.tmp`;
+		fs.writeFileSync(tmpPath, next, "utf8");
+		fs.renameSync(tmpPath, statePath);
+	} finally {
+		release();
+	}
+	return statePath;
+}
+
+/** /pm-save — persist this window's working context into the watched key's
+ * pm-state.md so a restarted pi window (e.g. after a framework rebuild) can
+ * pick the work back up. The handler writes the mechanical snapshot (watch
+ * key, index row, worker counts, free note) itself; the conversational
+ * context (what we are doing, decisions, next steps) can only be summarized
+ * by the agent, so the handler asks it to — the user invoked the command, so
+ * this is a user-requested action, not a framework-injected nudge. */
+export function registerPmSaveCommand(
+	pi: ExtensionAPI,
+	indexStore: IndexStore,
+	workerStore: WorkerStore,
+	watch: PmWatchState,
+	agenticdocRoot: string,
+): void {
+	pi.registerCommand("pm-save", {
+		description: "Save this window's working context to {watched key}/pm-state.md for restart pickup",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const note = args.trim();
+			if (!watch.key) {
+				ctx.ui.notify(
+					"Not watching any key — /pm-key switch <key> (take over) or /mw-watch <key> (display only) first.",
+					"warning",
+				);
+				return;
+			}
+			const key = watch.key;
+			const row = indexStore.findByKey(key);
+			const owned = workerStore.readAll().filter((e) => ownerKeyOf(e, agenticdocRoot) === key);
+			const ORDER = ["pending", "running", "done", "failed", "needs-clarification"] as const;
+			const counts = new Map<string, number>();
+			for (const e of owned) counts.set(e.status, (counts.get(e.status) ?? 0) + 1);
+			const workerSummary =
+				owned.length === 0
+					? "no workers"
+					: ORDER.filter((s) => counts.get(s))
+							.map((s) => `${counts.get(s)} ${s}`)
+							.join(" / ");
+			const lines = [
+				`Watch: ${key} (window ${windowClaimId()})`,
+				row
+					? `Index: status=${row.status} phase=${row.phase}${row.desc ? ` — ${row.desc}` : ""}`
+					: "Index: (not in _index.parallel)",
+				`Workers: ${workerSummary}`,
+			];
+			if (note) lines.push(`Note: ${note}`);
+			lines.push("(agent: fill in below — 当前工作脉络 / 关键决策 / 进行中 / 下一步)");
+			const statePath = await writeSessionSnapshot(agenticdocRoot, key, lines);
+			ctx.ui.notify(
+				`Saved session snapshot to ${path.relative(agenticdocRoot, statePath)} — asking the agent to fill in the working context.`,
+				"info",
+			);
+			pi.sendUserMessage(
+				`[agent-team-loop] /pm-save：已在 ${key}/pm-state.md 的 Notes 区写入会话快照。请立即把当前对话的上下文状态补全到该快照小节：当前工作脉络、关键决策、进行中的事项、下一步动作。只编辑 ${key}/pm-state.md 的 Notes 区，不要动 - Phase: / - Claim-Id: 机器接口行。写完简短确认。`,
+			);
+		},
+	});
+}
+
 /** /mw-watch — toggle this window's bottom progress widget for one key.
  * Display-only observation: no claim is taken. Use /pm-key switch to take
  * over a key while developing it.
@@ -725,7 +846,7 @@ export function registerWorkerTools(
 			key: Type.Optional(
 				Type.String({
 					description:
-						"AgenticTask key owning this worker task. Default: the active key (latest active row in _index.parallel, or the _index.md pointer); falls back to _scratch when no key is active.",
+						"AgenticTask key owning this worker task. Default: this window's claimed key (the one it watches and holds in _index.parallel), else the active key when no other live window holds it, else _scratch.",
 				}),
 			),
 		}),

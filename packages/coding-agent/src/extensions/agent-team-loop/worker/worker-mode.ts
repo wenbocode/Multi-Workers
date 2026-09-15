@@ -151,6 +151,9 @@ interface TaskMeta {
 	/** read_scope entries (D-106), project-root relative. Present → read
 	 * containment enabled; absent → zero interception (AC-012 red line). */
 	readScope?: string[];
+	/** deny_globs entries (mw-dual-workspace AC-006), minimatch dual-basis.
+	 * Present → deny firewall active even without read_scope (deny-only). */
+	denyGlobs?: string[];
 	/** l2_read_file_cap frontmatter (positive int), when present. */
 	readFileCap?: number;
 	/** l2_read_byte_cap frontmatter (positive int), when present. */
@@ -169,6 +172,8 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 	let inPhasePrompt = false;
 	let readScope: string[] | undefined;
 	let inReadScopeList = false;
+	let denyGlobs: string[] | undefined;
+	let inDenyGlobsList = false;
 	let readFileCap: number | undefined;
 	let readByteCap: number | undefined;
 
@@ -197,6 +202,23 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 				if (item) readScope?.push(item);
 			} else {
 				inReadScopeList = false;
+			}
+		}
+		// deny_globs renders like read_scope (dispatch.py render_task_md), but
+		// entries are globs — dispatch quotes them (a leading `*` is a YAML
+		// alias marker), so strip one pair of surrounding quotes when present.
+		if (trimmed === "deny_globs:") {
+			denyGlobs = [];
+			inDenyGlobsList = true;
+		} else if (inDenyGlobsList && !inPhasePrompt) {
+			if (trimmed.startsWith("- ")) {
+				let item = trimmed.slice(2).trim();
+				if ((item.startsWith('"') && item.endsWith('"')) || (item.startsWith("'") && item.endsWith("'"))) {
+					item = item.slice(1, -1);
+				}
+				if (item) denyGlobs?.push(item);
+			} else {
+				inDenyGlobsList = false;
 			}
 		}
 		if (trimmed.startsWith("l2_read_file_cap:")) {
@@ -239,6 +261,7 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 		trueAgenticdocRoot,
 		timeoutMin,
 		readScope,
+		denyGlobs,
 		readFileCap,
 		readByteCap,
 	};
