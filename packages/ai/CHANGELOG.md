@@ -68,7 +68,7 @@
 
 ### Added
 
-- Added timi proxy models `gpt-6` (openai-responses, reasoning, text+image), `deepseek-v4-flash-vision-exp` (anthropic-messages, text+image), and `glm-5.3-flash` (anthropic-messages).
+- Added timi proxy models `gpt-6` (openai-responses, reasoning, text+image), `deepseek-v4-flash-vision-exp` (anthropic-messages, text+image), `glm-5.3-flash` (anthropic-messages), and `deepseek-v4.1-flash` (anthropic-messages, text-only, 200K/64K, mirroring the deepseek flash family).
 - Added deferred provider request contracts, durable response handles, authenticated fetch/cancel dispatch, and faux-provider support for pending, ready, failed, and cancelled responses ([#7339](https://github.com/earendil-works/pi/pull/7339) by [@davidbrai](https://github.com/davidbrai)).
 - Added Baseten as a built-in OpenAI-compatible provider with models.dev catalog generation and native `chat_template_args` reasoning controls.
 
