@@ -7,7 +7,7 @@ import type { AckStore } from "../shared/ack-store.ts";
 import { acquireLock } from "../shared/file-lock.ts";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.ts";
 import { type IndexStore, readIndexMdActive } from "../shared/index-store.ts";
-import type { DoctorJson } from "../shared/mw-runner.ts";
+import type { DoctorJson, TargetMwResult } from "../shared/mw-runner.ts";
 import {
 	buildMw,
 	doctorMw,
@@ -17,6 +17,7 @@ import {
 	serveStaleness,
 	startMw,
 	stopMw,
+	targetMw,
 } from "../shared/mw-runner.ts";
 import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.ts";
 import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "../shared/phase-docs.ts";
@@ -1213,6 +1214,104 @@ export function formatDoctorReport(report: DoctorJson, fix: boolean): string {
 	return lines.join("\n");
 }
 
+/** Split a command line on whitespace, honoring double-quoted segments
+ * (Windows paths with spaces). Exported for tests. */
+export function splitCommandLine(line: string): string[] {
+	const out: string[] = [];
+	let cur = "";
+	let inQuote = false;
+	let has = false;
+	for (const ch of line) {
+		if (ch === '"') {
+			inQuote = !inQuote;
+			has = true;
+		} else if (!inQuote && /\s/.test(ch)) {
+			if (has) {
+				out.push(cur);
+				cur = "";
+				has = false;
+			}
+		} else {
+			cur += ch;
+			has = true;
+		}
+	}
+	if (has) out.push(cur);
+	return out;
+}
+
+/** Parsed /mw target set flags. */
+export interface TargetSetFlags {
+	game: string;
+	engine?: string;
+	vcs?: string;
+	uproject?: string;
+}
+
+/** Parse the flag tail of `/mw target set`. null when --game is missing or a
+ * known flag has no value (unknown flags are ignored — mw.py validates). */
+export function parseTargetSetFlags(parts: string[]): TargetSetFlags | null {
+	const flags: TargetSetFlags = { game: "" };
+	for (let i = 0; i < parts.length; i++) {
+		const m = /^--(game|engine|vcs|uproject)$/.exec(parts[i]);
+		if (!m) continue;
+		const value = parts[i + 1];
+		if (value === undefined || value.startsWith("--")) return null;
+		flags[m[1] as keyof TargetSetFlags] = value;
+		i++;
+	}
+	if (!flags.game) return null;
+	return flags;
+}
+
+/** /mw target — dual-workspace config from the pi window. Thin wrapper over
+ * `mw.py target` (single source of parsing/validation/rendering); the runner
+ * is injectable for tests. set/clear remind that dual mode applies on the
+ * NEXT worker spawn — no serve restart needed (launcher resolves per spawn). */
+export async function runMwTargetCommand(
+	ctx: ExtensionCommandContext,
+	projectDir: string,
+	argsText: string,
+	runner: (projectDir: string, args: string[]) => TargetMwResult = targetMw,
+): Promise<void> {
+	const parts = splitCommandLine(argsText);
+	const action = parts[0] ?? "";
+	if (action === "show" || action === "clear") {
+		const r = runner(projectDir, [action]);
+		ctx.ui.notify(
+			r.ok ? r.output || `mw target ${action}: ok` : `mw target ${action} failed: ${r.error}`,
+			r.ok ? "info" : "error",
+		);
+		return;
+	}
+	if (action === "set") {
+		const flags = parseTargetSetFlags(parts.slice(1));
+		if (!flags) {
+			ctx.ui.notify(
+				"Usage: /mw target set --game <dir> [--engine <dir>] [--vcs git|p4|none] [--uproject <file>] — quote paths containing spaces",
+				"warning",
+			);
+			return;
+		}
+		const args = ["set", `--game=${flags.game}`];
+		if (flags.engine !== undefined) args.push(`--engine=${flags.engine}`);
+		if (flags.vcs !== undefined) args.push(`--vcs=${flags.vcs}`);
+		if (flags.uproject !== undefined) args.push(`--uproject=${flags.uproject}`);
+		const r = runner(projectDir, args);
+		ctx.ui.notify(
+			r.ok
+				? `${r.output}\nDual mode takes effect on the next worker spawn (no serve restart needed).`
+				: `mw target set failed: ${r.error}`,
+			r.ok ? "info" : "error",
+		);
+		return;
+	}
+	ctx.ui.notify(
+		"Usage: /mw target show | set --game <dir> [--engine <dir>] [--vcs git|p4|none] [--uproject <file>] | clear",
+		"warning",
+	);
+}
+
 export function registerMwCommands(
 	pi: ExtensionAPI,
 	projectDir: string,
@@ -1222,7 +1321,8 @@ export function registerMwCommands(
 	pi.registerCommand("mw", {
 		description: "Control mw: build / init / start / stop / restart / status",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
-			const sub = _args.trim().split(/\s+/)[0] ?? "status";
+			const trimmed = _args.trim();
+			const sub = trimmed.split(/\s+/)[0] ?? "status";
 
 			if (sub === "build") {
 				ctx.ui.notify("Rebuilding extension bundle (bash-free)…", "info");
@@ -1314,6 +1414,13 @@ export function registerMwCommands(
 				return;
 			}
 
+			if (sub === "target") {
+				// Dual-workspace config (mw.py target show/set/clear) — thin wrapper,
+				// Python stays the single source of parsing and validation.
+				await runMwTargetCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
+				return;
+			}
+
 			if (sub === "ack") {
 				// Ack terminal worker results (AC-004): <task-key> acks one row,
 				// all acks every unacked terminal row. Running/pending rows are
@@ -1334,7 +1441,10 @@ export function registerMwCommands(
 				return;
 			}
 
-			ctx.ui.notify("Usage: /mw build|init|start|stop|status|doctor [fix] | ack <task-key>|all", "warning");
+			ctx.ui.notify(
+				"Usage: /mw build|init|start|stop|status|doctor [fix] | target show|set|clear | ack <task-key>|all",
+				"warning",
+			);
 		},
 	});
 }

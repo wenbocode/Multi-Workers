@@ -45,6 +45,8 @@ import {
 	registerSwitchKeyTool,
 	registerWorkerTools,
 	renderWatchLines,
+	runMwTargetCommand,
+	splitCommandLine,
 	windowClaimId,
 } from "../../src/extensions/agent-team-loop/pm/ui-bridge.ts";
 import { AckStore } from "../../src/extensions/agent-team-loop/shared/ack-store.ts";
@@ -3918,4 +3920,71 @@ describe("activation guard re-arm (double-load + session replacement)", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	}, 20000);
+});
+
+describe("/mw target (dual-workspace config)", () => {
+	it("show/clear forward to mw.py target with the control root as --project", async () => {
+		const calls: Array<[string, string[]]> = [];
+		const ctx = fakeCmdCtx();
+		await runMwTargetCommand(ctx.ctx, "/proj", "show", (projectDir, args) => {
+			calls.push([projectDir, args]);
+			return { ok: true, output: "[mw target] mode: single (source: default)" };
+		});
+		expect(calls).toEqual([["/proj", ["show"]]]);
+		expect(ctx.notifications.some((n) => n.includes("mode: single"))).toBe(true);
+	});
+
+	it("set parses quoted Windows paths and forwards --game/--engine/--vcs/--uproject", async () => {
+		const calls: Array<[string, string[]]> = [];
+		const ctx = fakeCmdCtx();
+		await runMwTargetCommand(
+			ctx.ctx,
+			"/proj",
+			'set --game "D:\\My Game" --engine D:\\UE5 --vcs p4 --uproject "D:\\My Game\\X.uproject"',
+			(projectDir, args) => {
+				calls.push([projectDir, args]);
+				return { ok: true, output: "[mw target] mode: dual" };
+			},
+		);
+		expect(calls).toEqual([
+			["/proj", ["set", "--game=D:\\My Game", "--engine=D:\\UE5", "--vcs=p4", "--uproject=D:\\My Game\\X.uproject"]],
+		]);
+		// The next-spawn reminder rides along on success.
+		expect(ctx.notifications.some((n) => n.includes("next worker spawn"))).toBe(true);
+	});
+
+	it("set without --game shows usage and runs nothing", async () => {
+		let ran = false;
+		const ctx = fakeCmdCtx();
+		await runMwTargetCommand(ctx.ctx, "/proj", "set --engine D:\\UE5", () => {
+			ran = true;
+			return { ok: true, output: "" };
+		});
+		expect(ran).toBe(false);
+		expect(ctx.notifications.some((n) => n.startsWith("Usage: /mw target set"))).toBe(true);
+	});
+
+	it("unknown action shows the general usage", async () => {
+		const ctx = fakeCmdCtx();
+		await runMwTargetCommand(ctx.ctx, "/proj", "frobnicate", () => ({ ok: true, output: "" }));
+		expect(ctx.notifications.some((n) => n.startsWith("Usage: /mw target show"))).toBe(true);
+	});
+
+	it("runner failure notifies an error", async () => {
+		const ctx = fakeCmdCtx();
+		await runMwTargetCommand(ctx.ctx, "/proj", "clear", () => ({ ok: false, error: "target.yml is read-only" }));
+		expect(ctx.notifications.some((n) => n.includes("mw target clear failed") && n.includes("read-only"))).toBe(true);
+	});
+
+	it("splitCommandLine honors double quotes and collapses whitespace", () => {
+		expect(splitCommandLine('set --game "D:\\My Game"  --engine  D:\\UE5')).toEqual([
+			"set",
+			"--game",
+			"D:\\My Game",
+			"--engine",
+			"D:\\UE5",
+		]);
+		expect(splitCommandLine("")).toEqual([]);
+		expect(splitCommandLine('   "a b"   ')).toEqual(["a b"]);
+	});
 });

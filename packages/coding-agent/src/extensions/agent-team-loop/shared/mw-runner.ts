@@ -398,3 +398,30 @@ export function doctorMw(projectDir: string, fix = false): DoctorMwResult {
 		return { ok: false, error: `mw doctor returned non-JSON output: ${String(err)}` };
 	}
 }
+
+export type TargetMwResult = { ok: true; output: string } | { ok: false; error: string };
+
+/**
+ * Run `mw.py target <args...> --project=<dir>` (dual-workspace config:
+ * show / set / clear). The Python side stays the single source of parsing,
+ * validation, and rendering — the TS side only forwards and displays.
+ * `--project` is appended here so callers never forget the control root.
+ */
+export function targetMw(projectDir: string, args: string[]): TargetMwResult {
+	const mwPy = findMwPy();
+	if (!mwPy) return { ok: false, error: "Could not find mw.py — set MW_PY env var." };
+	const result = spawnSync(PYTHON_EXE, [mwPy, "target", ...args, `--project=${projectDir}`], {
+		encoding: "utf8",
+		timeout: 30_000,
+	});
+	if (result.error) {
+		return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
+	}
+	// mw.py target prints its formatted lines to stdout and failures to stderr
+	// with a nonzero exit; surface both through one text channel.
+	const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+	if (result.status !== 0) {
+		return { ok: false, error: output || `mw target exited with code ${result.status}` };
+	}
+	return { ok: true, output };
+}
