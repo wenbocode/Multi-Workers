@@ -10,6 +10,7 @@ Subcommands:
   pull-agentictask — clone/update the AgenticTask framework repo into .tmp/
   push-agentictask — commit+push local framework changes back to the remote repo
   setup  — one-time machine bootstrap: clone framework + install extension globally
+  bootstrap — fresh-machine one-shot: prereqs → npm ci → build → link pi → setup → init → start → doctor
 """
 
 from __future__ import annotations
@@ -1194,6 +1195,319 @@ def cmd_setup(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── Subcommand: bootstrap (fresh-machine one-shot, steps 1-8) ─────────────────
+
+# Fallback minimum node version when the root package.json engines.node is
+# unreadable (kept in sync with package.json ">=22.19.0").
+_NODE_MIN_FALLBACK = (22, 19, 0)
+
+
+def _version_tuple(raw: str) -> tuple[int, int, int] | None:
+    """"v22.19.0" / "22.19.0" → (22, 19, 0); unparseable → None."""
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", raw)
+    return (int(m[1]), int(m[2]), int(m[3])) if m else None
+
+
+def _node_engine_min(repo_root: pathlib.Path) -> tuple[int, int, int]:
+    """Minimum node version from the root package.json `engines.node` so the
+    check never drifts from the declared requirement. Falls back to
+    _NODE_MIN_FALLBACK when unreadable — bootstrap must not block on metadata."""
+    try:
+        data = json.loads((repo_root / "package.json").read_text(encoding="utf-8"))
+        parsed = _version_tuple(str(data["engines"]["node"]))
+        if parsed is not None:
+            return parsed
+    except (OSError, KeyError, ValueError, json.JSONDecodeError):
+        pass
+    return _NODE_MIN_FALLBACK
+
+
+def _run_stream(cmd: list[str], *, cwd: pathlib.Path) -> bool:
+    """Run a long child (npm/pip) with inherited stdio so progress streams to
+    the console. cmd[0] must be a RESOLVED executable (shutil.which), never a
+    bare name — Windows Popen does not apply PATHEXT resolution."""
+    result = subprocess.run(cmd, cwd=str(cwd))  # noqa: S603 - resolved paths, list args, no shell
+    return result.returncode == 0
+
+
+def _run_capture(cmd: list[str], *, timeout: float = 60.0) -> str | None:
+    """Short child with captured stdout (version probes). None = failed."""
+    try:
+        result = subprocess.run(  # noqa: S603 - resolved paths, list args, no shell
+            cmd, capture_output=True, text=True, encoding="utf-8", timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+# Fallback scoped name when packages/coding-agent/package.json is unreadable.
+_PI_PKG_NAME_FALLBACK = "@earendil-works/pi-coding-agent"
+
+
+def _pi_package_name(repo_root: pathlib.Path) -> str:
+    """The pi package's scoped name, read from its own package.json (no drift)."""
+    try:
+        data = json.loads(
+            (repo_root / "packages" / "coding-agent" / "package.json").read_text(encoding="utf-8")
+        )
+        name = data.get("name")
+        if isinstance(name, str) and name:
+            return name
+    except (OSError, ValueError):
+        pass
+    return _PI_PKG_NAME_FALLBACK
+
+
+def _global_pi_package_dir(npm: str, repo_root: pathlib.Path) -> pathlib.Path | None:
+    """Where the global install of the pi package sits (`npm root -g`/<name>).
+    None when npm fails or the dir is absent — the caller decides what that
+    means (after npm link, the package must exist there)."""
+    root_raw = _run_capture([npm, "root", "-g"])
+    if not root_raw:
+        return None
+    pkg_dir = pathlib.Path(root_raw.strip()) / _pi_package_name(repo_root)
+    return pkg_dir if pkg_dir.exists() else None
+
+
+def _pi_link_target_ok(global_pkg: pathlib.Path, repo_pkg: pathlib.Path) -> bool:
+    """True when the global package path resolves (realpath — junctions and
+    symlinks included) to the repo's packages/coding-agent. This is what makes
+    the global `pi` THIS fork rather than a leftover registry install of the
+    official package (which lacks the timi provider and only fails later, at
+    worker dispatch time)."""
+    return os.path.normcase(os.path.realpath(global_pkg)) == os.path.normcase(
+        os.path.realpath(repo_pkg)
+    )
+
+
+def cmd_bootstrap(args: argparse.Namespace) -> int:
+    """Fresh-machine one-shot: everything from prerequisites to a running,
+    doctor-verified service. Re-runnable: every step is idempotent or
+    self-verifying.
+
+      1. prerequisites: python >= 3.11, node >= engines.node, npm, git, and at
+         least one dispatchable credential route (mw serve refuses to start
+         with none — fail fast BEFORE the slow npm steps)
+      2. node_modules: `npm ci --ignore-scripts` on a fresh clone,
+         `npm install --ignore-scripts` when node_modules exists (incremental)
+      3. repo build: root `npm run build` (tui→ai→…→coding-agent; the ai build
+         fetches the models.dev catalog — network required)
+      4. global `pi`: `npm link packages/coding-agent` — workers run
+         `pi --provider timi` and the timi provider/models only exist in this
+         fork, so the npm-registry pi cannot be used; verified via `pi --version`
+      5. mw setup --build: extension bundle + global extension install +
+         AgenticTask framework source cache
+      6. mw init: per-project init (idempotent; .agenticdoc may already be
+         committed) + framework install into .agents/ / .claude/
+      7. mw start: background service (proxy + launcher + conductor), waiting
+         for the PID file (serve runs its route precheck before writing it)
+      8. mw doctor: full-chain verification
+
+    --fast skips steps 2-3 for credential-fix re-runs (requires a previous
+    full bootstrap); --no-start leaves the service down (the doctor verdict
+    then tolerates the expected 'service not running' issue).
+    """
+    t0 = time.monotonic()
+    repo_root = _repo_root()
+    project_dir = (
+        pathlib.Path(args.project).resolve() if args.project else repo_root
+    )
+    node_modules = repo_root / "node_modules"
+    dist_cli = repo_root / "packages" / "coding-agent" / "dist" / "cli.js"
+
+    def step(n: int, msg: str) -> None:
+        print(f"[mw bootstrap] step {n}/8: {msg}", flush=True)
+
+    def skip(n: int, msg: str) -> None:
+        print(f"[mw bootstrap] step {n}/8: skipped ({msg})", flush=True)
+
+    def fail(msg: str) -> int:
+        print(f"[mw bootstrap] Error: {msg}", file=sys.stderr, flush=True)
+        return 1
+
+    if args.fast and not (node_modules.is_dir() and dist_cli.is_file()):
+        return fail(
+            "--fast needs a previous full bootstrap (node_modules + dist missing) — "
+            "run without --fast first"
+        )
+
+    # 1. prerequisites
+    step(1, "prerequisites (python, node, npm, git, credential route)")
+    if sys.version_info < (3, 11):
+        return fail(f"python >= 3.11 required (tomllib / fromisoformat), running {sys.version.split()[0]}")
+    node = shutil.which("node")
+    npm = shutil.which("npm")
+    git = shutil.which("git")
+    if node is None or npm is None:
+        return fail("node/npm not found on PATH — install Node.js (see package.json engines.node)")
+    if git is None:
+        return fail("git not found on PATH — needed to clone the AgenticTask framework")
+    node_raw = _run_capture([node, "--version"])
+    node_ver = _version_tuple(node_raw) if node_raw else None
+    if node_ver is None or node_ver < _node_engine_min(repo_root):
+        return fail(
+            f"node >= {'.'.join(map(str, _node_engine_min(repo_root)))} required "
+            f"(package.json engines.node), running {node_raw or 'unknown'}"
+        )
+    providers_path = pathlib.Path(__file__).parent / "providers.json"
+    config = mw_common.load_providers(providers_path)
+    precheck = mw_common.route_precheck(config, os.environ)
+    if precheck["all_missing"]:
+        return fail(
+            "no route has credentials — mw serve would refuse to start.\n"
+            "  Set one before re-running (the default worker route is timi):\n"
+            "    set TIMI_API_KEY in your environment, or\n"
+            "    write ~/.pi/agent/auth.json: {\"timi\": {\"key\": \"<key>\"}}\n"
+            "  After setting it, re-run with: python mw.py bootstrap --fast"
+        )
+    available = ", ".join(
+        r["route"] for r in precheck["routes"] if r["available"]
+    )
+    print(
+        f"[mw bootstrap] python {sys.version.split()[0]}, node {node_raw}, "
+        f"git ok; credential routes available: {available}",
+        flush=True,
+    )
+    try:
+        import yaml  # noqa: F401 - availability probe for target.yml (dual-workspace)
+    except ImportError:
+        print("[mw bootstrap] PyYAML missing — attempting pip install (dual-workspace target.yml)", flush=True)
+        if not _run_stream([sys.executable, "-m", "pip", "install", "pyyaml"], cwd=repo_root):
+            print(
+                "[mw bootstrap] Warning: pip install pyyaml failed — dual-workspace "
+                "target.yml stays disabled; single-mode works without it",
+                flush=True,
+            )
+
+    # 2. node_modules
+    if args.fast:
+        skip(2, "--fast")
+    else:
+        step(2, "npm ci/install --ignore-scripts")
+        install_cmd = [npm, "install" if node_modules.is_dir() else "ci", "--ignore-scripts"]
+        if not _run_stream(install_cmd, cwd=repo_root):
+            return fail("npm install failed — see the output above")
+
+    # 3. repo build (all packages, dependency order)
+    if args.fast:
+        skip(3, "--fast")
+    else:
+        step(3, "npm run build (root; the ai build fetches models.dev — network required)")
+        if not _run_stream([npm, "run", "build"], cwd=repo_root):
+            return fail("repo build failed — see the output above")
+
+    # 4. global pi link (the runtime must be THIS fork: timi provider lives here)
+    step(4, "npm link packages/coding-agent (global pi = this repo)")
+    if not _run_stream([npm, "link"], cwd=repo_root / "packages" / "coding-agent"):
+        return fail("npm link failed — see the output above")
+    pi_bin = shutil.which("pi")
+    if pi_bin is None:
+        return fail("pi not on PATH after npm link")
+    # The global pi must BE this fork, not just any pi: a machine that
+    # previously installed the official package from the npm registry must
+    # not silently keep running it (no timi provider — workers would only
+    # fail later, at dispatch time, far away from the real cause).
+    repo_pkg = repo_root / "packages" / "coding-agent"
+    global_pkg = _global_pi_package_dir(npm, repo_root)
+    if global_pkg is None:
+        return fail(
+            "global pi package not found via 'npm root -g' — npm link did not "
+            f"install {_pi_package_name(repo_root)} globally"
+        )
+    if not _pi_link_target_ok(global_pkg, repo_pkg):
+        return fail(
+            f"global pi is not linked to this repo: {global_pkg} does not resolve "
+            f"to {repo_pkg}. It is likely a registry install of the official "
+            "package (no timi provider). Fix: "
+            f"npm uninstall -g {_pi_package_name(repo_root)} && re-run bootstrap"
+        )
+    pi_ver = _run_capture([pi_bin, "--version"])
+    if pi_ver is None:
+        return fail(f"pi --version failed at {pi_bin} — is packages/coding-agent/dist built?")
+    print(f"[mw bootstrap] pi on PATH: {pi_bin} ({pi_ver})", flush=True)
+
+    # 5. machine setup: bundle + global extension + framework source cache
+    step(5, "mw setup --build (extension bundle, global install, framework cache)")
+    setup_args = argparse.Namespace(
+        build=True, source=args.source, branch=args.branch, force=False,
+    )
+    if cmd_setup(setup_args) != 0:
+        return fail("mw setup failed — see the output above")
+
+    # 6. project init (idempotent; global extension wins over a local copy)
+    step(6, f"mw init {project_dir}")
+    init_args = argparse.Namespace(
+        project=str(project_dir), no_framework=False, codex_scope="project",
+        sync_agentictask=None,
+    )
+    if cmd_init(init_args) != 0:
+        return fail("mw init failed — see the output above")
+    if not (project_dir / ".agents" / "skills" / "agentic-task" / "SKILL.md").is_file():
+        print(
+            "[mw bootstrap] Warning: AgenticTask framework not installed — the "
+            "/agentic PM workflow is unavailable (workers still dispatch). "
+            "Check the mw setup / mw init messages above.",
+            flush=True,
+        )
+
+    # 7. service start (background proxy + launcher + conductor)
+    pid_path = _pid_path(project_dir)
+    if args.no_start:
+        skip(7, "--no-start; start later with: python mw.py start --project <dir>")
+    elif _check_pid(pid_path) is not None:
+        skip(7, f"already running (PID {_check_pid(pid_path)})")
+    else:
+        step(7, "mw start (background service: proxy + launcher + conductor)")
+        start_args = argparse.Namespace(
+            project=str(project_dir), pi_port=7001, claude_port=7003,
+            deepseek_port=None, poll_interval=5, max_workers=None, providers=None,
+        )
+        if cmd_start(start_args) != 0:
+            return fail("mw start failed — see the output above")
+        # serve runs its route precheck BEFORE writing the PID file, so "PID
+        # file exists" implies "service actually started" (cmd_serve contract)
+        for _ in range(60):
+            time.sleep(0.5)
+            if _check_pid(pid_path) is not None:
+                break
+        pid = _check_pid(pid_path)
+        if pid is None:
+            return fail(
+                "service did not come up within 30s — inspect "
+                f"{project_dir / '.mw' / 'mw.log'}"
+            )
+        print(f"[mw bootstrap] service running (PID {pid})", flush=True)
+
+    # 8. full-chain verification
+    step(8, "mw doctor (full-chain verification)")
+    report = mw_common.doctor_report(
+        project_dir, fix=False, config=config, stale_after_sec=90,
+    )
+    report["conductor"] = _ap_conductor.conductor_status(project_dir)
+    print(mw_common.format_doctor_text(report))
+    issues = list(report["summary"]["issues"])
+    if args.no_start:
+        # Expected by construction — do not fail the verdict for what was asked.
+        issues = [i for i in issues if "mw service not running" not in i]
+    timi_missing = [
+        r for r in precheck["routes"] if r["route"] == "timi" and not r["available"]
+    ]
+    if timi_missing:
+        print(
+            "[mw bootstrap] Warning: TIMI_API_KEY is not set — pi workers "
+            "(the default dispatch route) cannot run. Set it and restart: "
+            "python mw.py stop --project <dir> && python mw.py bootstrap --fast",
+            flush=True,
+        )
+    elapsed = int(time.monotonic() - t0)
+    if issues:
+        print(f"[mw bootstrap] finished with {len(issues)} issue(s) in {elapsed}s", flush=True)
+        return 1
+    print(f"[mw bootstrap] done in {elapsed}s", flush=True)
+    return 0
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _add_serve_args(parser: argparse.ArgumentParser) -> None:
@@ -1285,6 +1599,24 @@ def _parse_args() -> argparse.Namespace:
     setup_p.add_argument("--build", action="store_true",
                          help="Rebuild the extension bundle (bash-free) before installing")
 
+    bootstrap_p = sub.add_parser(
+        "bootstrap",
+        help="Fresh-machine one-shot: prereqs → npm ci → build → link pi → setup → init → start → doctor",
+    )
+    bootstrap_p.add_argument("--project", default=None, metavar="DIR",
+                             help="Project directory to init/start (default: this repo root)")
+    bootstrap_p.add_argument("--from", dest="source", default=_DEFAULT_AGENTICTASK_REMOTE,
+                             metavar="SOURCE",
+                             help="AgenticTask framework source forwarded to setup "
+                                  "(default: %(default)s)")
+    bootstrap_p.add_argument("--branch", default=_DEFAULT_AGENTICTASK_BRANCH,
+                             help="Framework branch to clone/track (default: %(default)s)")
+    bootstrap_p.add_argument("--fast", action="store_true",
+                             help="Skip npm install + repo build (credential-fix re-run; "
+                                  "requires a previous full bootstrap)")
+    bootstrap_p.add_argument("--no-start", dest="no_start", action="store_true",
+                             help="Do not start the service (steps 1-6 + doctor only)")
+
     build_p = sub.add_parser("build",
                              help="Rebuild the extension bundle with esbuild (bash-free, cwd-independent)")
     build_p.add_argument("--install", action="store_true",
@@ -1310,5 +1642,6 @@ if __name__ == "__main__":
         "push-agentictask": cmd_push_agentictask,
         "setup": cmd_setup,
         "build": cmd_build,
+        "bootstrap": cmd_bootstrap,
     }
     sys.exit(dispatch[args.subcommand](args))
