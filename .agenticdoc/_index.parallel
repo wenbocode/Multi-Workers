@@ -1,7 +1,17 @@
 # Index Parallel
-
-| Key | Status | Phase | ClaimId | Deps | Desc | Updated |
-|-----|--------|-------|---------|------|------|---------|
-| agent-team-loop | active | EXECUTE | 20260808-174558-3176 | — | Agent Team Loop: multi-CLI worker orchestration (pi/codex/claude) via AgenticTask PM + timi-proxy routing | 2026-08-11 16:14 |
-| timi-gpt-pi-routing | active | DONE | 20260814-151438-9272 | agent-team-loop | Fix Pi Timi GPT Responses routing and Multi-Workers launcher integration | 2026-09-02 16:14 |
-| mw-dispatch-reliability | active | EXECUTE | 20260828-160111-8496 | — | Fix multi-worker dispatch availability (per-task credential failure isolation, stale entry cleanup) and build debug/test system (mw doctor, L0/L1/L2 tests) | 2026-08-28 18:00 |
+| agent-team-loop | idle | EXECUTE | 20260808-174558-3176 | — | Agent Team Loop: multi-CLI worker orchestration (pi/codex/claude) via AgenticTask PM + timi-proxy routing | 2026-09-07T12:05:36.859Z |
+| timi-gpt-pi-routing | idle | DONE | 20260814-151438-9272 | agent-team-loop | Fix Pi Timi GPT Responses routing and Multi-Workers launcher integration | 2026-09-07T12:05:36.859Z |
+| mw-dispatch-reliability | idle | EXECUTE | 20260828-160111-8496 | — | Fix multi-worker dispatch availability (per-task credential failure isolation, stale entry cleanup) and build debug/test system (mw doctor, L0/L1/L2 tests) | 2026-09-07T12:05:36.859Z |
+| goal-autopilot | idle | DONE | WENBOZHOU-PC4:8420 | agent-team-loop | Autonomous orchestration: staged key roadmap from project goal, conductor auto-advances phases with L1/L2/L3 layered gates, human gates at stage boundaries | 2026-09-10 19:32 |
+| mw-dispatch-flow-fixes | idle | DONE | WENBOZHOU-PC4:16000 | agent-team-loop | Fix mw worker dispatch flow: owner-key sync with window active key, worker progress heartbeat via structured logs, default pi routing when claude route unavailable | 2026-09-14T08:32:56.555Z |
+| mw-stale-builtin-fix | idle | DONE | — | agent-team-loop | Root-cause stale built-in agent-team-loop (Aug-14 dist) double-loading with the global bundle; option A dist rebuild; worker.log truncation and print-mode hang fixed (retroactive archive, see archived.md) | 2026-09-09 23:57 |
+| mw-worker-timeout-convergence | idle | DONE | — | agent-team-loop | Worker watchdog redo: activity-based idle detection (10m, env-tunable) + per-task wall budget (task.md timeout header, 60m default) + convergence checkpoint with machine evidence + PM triggerTurn escalation + deadline steer; GC-4 amended; quality gate PASS | 2026-09-09 23:56 |
+| mw-widget-terminal-lifecycle | idle | DONE | WENBOZHOU-PC4:80660 | agent-team-loop | Watch widget terminal-row lifecycle: ack (command+tool) + sectioned display (live/unhandled always shown, processed/done folded past 5) + terminal summary quality (exit reason / TL;DR) | 2026-09-14T08:20:15.400Z |
+| ai-baseline-repair | idle | DONE | WENBOZHOU-PC4:74812 | — | — | 2026-09-11 14:38 |
+| mw-dual-workspace | idle | EXECUTE | WENBOZHOU-PC4:93848 | agent-team-loop | Dual-workspace mode: control workspace (framework files) separated from target project (game/UE source); Game+Engine dual-dir target config, mode switch via config/command, read-scope deny globs, target profile injection | 2026-09-11 16:40 |
+| autopilot-monitor | idle | DONE | WENBOZHOU-PC4:8420 |  |  | 2026-09-14T06:37:59.114Z |
+| mw-owner-key-per-window | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-14T08:10:11.482Z |
+| mw-activation-rearm | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-14T09:25:30.889Z |
+| mw-evidence-nudge-notify | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-14T09:58:19.011Z |
+| mw-pm-save-snapshot | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-15T04:10:55.224Z |
+| mw-timi-models-add | active | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-15T04:10:55.224Z |

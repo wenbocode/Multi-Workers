@@ -1,0 +1,48 @@
+L2 rerun: claude-route isolation probe (AC-001, live)
+Date: 2026-08-28 · Keys: mw-dr-live-claude2/3/4 · Trigger: review of mw-dr-live-claude returned NOT VERIFIED
+
+Context
+- The original probe entry `mw-dr-live-claude` was dispatched through the
+  default pi route (queue row: `cli=pi, provider=timi`), so the L2 summary's
+  isolation claim was unsupported. The rerun below dispatches with cli=claude.
+- Route resolution: cli=claude, provider="" -> route 'claude-cli'
+  (credential anthropic-auth, env ANTHROPIC_AUTH_TOKEN).
+- Credential state at test time (mw serve precheck, PID 62804, started
+  2026-08-28T12:29:42Z, launcher PID 6652):
+  "[mw serve] route claude-cli: missing (env ANTHROPIC_AUTH_TOKEN unset)"
+
+Run 1: mw-dr-live-claude2 (dispatched 2026-08-28T12:30:14.830Z, cli=claude)
+- queue: mw-dr-live-claude2 | failed | claude |  | ...task.md | 2026-08-28T12:30:14.830Z | 2026-08-28T12:30:18+00:00 |
+- worker.log:
+  [launcher] spawn failed (2026-08-28T12:30:18+00:00): Required credential for route 'claude-cli' is not available (env ANTHROPIC_AUTH_TOKEN unset).
+- launcher.log:
+  [launcher] spawn failed for 'mw-dr-live-claude2': Required credential for route 'claude-cli' is not available (env ANTHROPIC_AUTH_TOKEN unset).
+
+Run 2: mw-dr-live-claude3 (dispatched 2026-08-28T12:31:02.546Z, cli=claude)
+- queue: mw-dr-live-claude3 | failed | claude |  | ...task.md | 2026-08-28T12:31:02.546Z | 2026-08-28T12:31:03+00:00 |
+- worker.log:
+  [launcher] spawn failed (2026-08-28T12:31:03+00:00): Required credential for route 'claude-cli' is not available (env ANTHROPIC_AUTH_TOKEN unset).
+
+Run 3: mw-dr-live-claude4 (dispatched 2026-08-28T12:31:42.868Z, cli=claude)
+- detached watcher polling _workers.parallel at 100ms (raw capture):
+  2026-08-28T20:31:39.336+08:00 | <absent>
+  2026-08-28T20:31:42.974+08:00 | pending
+  2026-08-28T20:31:43.077+08:00 | failed
+- queue: mw-dr-live-claude4 | failed | claude |  | ...task.md | 2026-08-28T12:31:42.868Z | 2026-08-28T12:31:43+00:00 |
+- worker.log:
+  [launcher] spawn failed (2026-08-28T12:31:43+00:00): Required credential for route 'claude-cli' is not available (env ANTHROPIC_AUTH_TOKEN unset).
+
+Service survival (requirement: alive >=60s after failure)
+- mw serve PID 62804 (python, started 2026-08-28T20:29:42 local) and launcher
+  PID 6652 (python, same start) both alive at 2026-08-28T20:33:04 local
+  (= 2026-08-28T12:33:04Z): 81s after the last failure (12:31:43Z) and 166s
+  after the first (12:30:18Z).
+- During the window the launcher kept processing other tasks:
+  mw-dr-live-ok (pi/timi) -> done at 12:30:28Z, mw-dr-glm53 (pi/timi) ->
+  done at 12:30:28Z. Three consecutive claude-route failures did not affect
+  them, the launcher loop, or mw serve.
+
+PM broadcast
+- Each failure was reported to the PM session in real time with the worker.log
+  pointer, e.g.:
+  "[mw-dr-live-claude2] failed - 无 output.md 摘要（worker 可能崩溃/超时）。日志：H:\git\Multi-Workers\.agenticdoc\mw-dr-live-claude2\worker.log"

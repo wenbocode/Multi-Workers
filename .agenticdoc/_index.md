@@ -1,1 +1,1 @@
-active: agent-team-loop
+active: mw-dual-workspace
