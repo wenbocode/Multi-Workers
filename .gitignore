@@ -45,3 +45,26 @@ collect.sh
 
 # AgenticTask framework source cache (populated by `mw pull-agentictask`)
 packages/multi-workers/.tmp/
+
+# Python runtime
+__pycache__/
+*.pyc
+
+# mw runtime state (logs, pids, launcher beats, toolchain cache)
+.mw/
+
+# AgenticTask framework install (machine-local, `mw pull-agentictask` + install)
+.agentic-framework
+.agents/
+
+# Local scratch (codex proxy debugging)
+.codex-fix/
+
+# pi context autosaves
+context-autosave-*.md
+
+# agenticdoc runtime state: worker run dirs, live worker tables, lock files
+.agenticdoc/**/workers/
+.agenticdoc/**/_workers*
+.agenticdoc/.mw/
+.agenticdoc/**/*.lock
