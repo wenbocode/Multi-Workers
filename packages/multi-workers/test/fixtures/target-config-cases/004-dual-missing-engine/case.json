@@ -1,0 +1,17 @@
+{
+  "description": "dual missing engine; {engine} render fails, no game fallback",
+  "env": {},
+  "expect": {
+    "mode": "dual",
+    "source": "target-yml",
+    "game_root_rel": "game",
+    "engine_root_null": true
+  },
+  "render_error": {
+    "command": "build",
+    "kind": "missing-field",
+    "contains": [
+      "{engine}"
+    ]
+  }
+}

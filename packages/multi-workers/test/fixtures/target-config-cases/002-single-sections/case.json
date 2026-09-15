@@ -1,0 +1,17 @@
+{
+  "description": "mode single + ignore/contract sections still parsed",
+  "env": {},
+  "expect": {
+    "mode": "single",
+    "source": "target-yml",
+    "game_root_equals_control": true,
+    "engine_root_null": true,
+    "deny_globs": [
+      "**/*.uasset",
+      "**/DerivedDataCache/**"
+    ],
+    "conventions_contains": [
+      "line two"
+    ]
+  }
+}

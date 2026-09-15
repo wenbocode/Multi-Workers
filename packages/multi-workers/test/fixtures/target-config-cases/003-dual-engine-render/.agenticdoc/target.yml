@@ -1,0 +1,5 @@
+mode: dual
+game: ./game
+engine: ./engine
+toolchain:
+  build_editor: 'build {engine} -project {game}'

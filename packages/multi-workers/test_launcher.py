@@ -953,3 +953,83 @@ class TestPollOnceReconcileIntegration:
         assert "t003" in running
         assert "[launcher] reconcile (" in (orphan / "worker.log").read_text(encoding="utf-8")
         assert (tmp_path / ".mw" / f"launcher-beat.{os.getpid()}").exists()
+
+
+# ── Dual-workspace spawn cwd (mw-dual-workspace D-001, VC-004) ────────────────
+
+class TestDualWorkspaceSpawnCwd:
+    """VC-004: dual mode spawns with cwd=game root; single keeps project_dir;
+    an unusable target.yml refuses the spawn (fail-closed, per-task isolation).
+    List args / no shell / absolute PI_WORKER_TASK all unchanged (AC-023/D-001)."""
+
+    @staticmethod
+    def _capture_popen(monkeypatch: pytest.MonkeyPatch) -> dict:
+        captured: dict = {}
+
+        def fake_popen(cmd, **kwargs):  # noqa: ANN001, ANN202
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return _FakeProc()
+
+        monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
+        return captured
+
+    def test_single_mode_cwd_is_project_dir(
+        self, task_file: pathlib.Path, tmp_path: pathlib.Path, providers: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MW_TARGET_GAME", raising=False)
+        monkeypatch.delenv("MW_TARGET_ENGINE", raising=False)
+        monkeypatch.setenv("TIMI_API_KEY", "test-timi-key")
+        monkeypatch.setattr(launcher.shutil, "which", lambda name: str(tmp_path / "pi.CMD"))
+        captured = self._capture_popen(monkeypatch)
+
+        running: dict = {}
+        _spawn(_entry(task_file), tmp_path, providers, running)
+        assert "t001" in running
+        assert captured["kwargs"]["cwd"] == str(tmp_path)
+        # D-001 zero-new-env invariant: PI_WORKER_TASK is absolute.
+        assert pathlib.Path(captured["kwargs"]["env"]["PI_WORKER_TASK"]).is_absolute()
+
+    def test_dual_mode_cwd_is_game_root(
+        self, task_file: pathlib.Path, tmp_path: pathlib.Path, providers: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MW_TARGET_GAME", raising=False)
+        monkeypatch.delenv("MW_TARGET_ENGINE", raising=False)
+        game = tmp_path / "game"
+        game.mkdir()
+        (tmp_path / ".agenticdoc" / "target.yml").write_text(
+            f"mode: dual\ngame: '{game}'\n", encoding="utf-8"
+        )
+        monkeypatch.setenv("TIMI_API_KEY", "test-timi-key")
+        monkeypatch.setattr(launcher.shutil, "which", lambda name: str(tmp_path / "pi.CMD"))
+        captured = self._capture_popen(monkeypatch)
+
+        running: dict = {}
+        _spawn(_entry(task_file), tmp_path, providers, running)
+        assert "t001" in running
+        assert captured["kwargs"]["cwd"] == str(game.resolve())
+        print(f"[VERIFY] VC-004: spawn-cwd={captured['kwargs']['cwd']}")
+
+    def test_broken_target_yml_refuses_spawn(
+        self, task_file: pathlib.Path, tmp_path: pathlib.Path, providers: dict,
+        queue_file: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MW_TARGET_GAME", raising=False)
+        monkeypatch.delenv("MW_TARGET_ENGINE", raising=False)
+        (tmp_path / ".agenticdoc" / "target.yml").write_text(
+            "mode: [unclosed\n", encoding="utf-8"
+        )
+        monkeypatch.setenv("TIMI_API_KEY", "test-timi-key")
+        self._capture_popen(monkeypatch)
+
+        entry = _entry(task_file)
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+        running: dict = {}
+        _spawn(entry, tmp_path, providers, running)  # no exception (D-001 isolation)
+        assert "t001" not in running  # refused, not spawned
+        worker_log = (task_file.parent / "worker.log").read_text(encoding="utf-8")
+        assert "target.yml" in worker_log
+        statuses = {e["task_key"]: e["status"] for e in _parse_workers_file(queue_file)}
+        assert statuses["t001"] == "failed"  # fail-closed, visible in the queue

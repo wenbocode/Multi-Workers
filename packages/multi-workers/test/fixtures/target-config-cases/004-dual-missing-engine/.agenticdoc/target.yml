@@ -1,0 +1,4 @@
+mode: dual
+game: ./game
+toolchain:
+  build: 'build {engine}'

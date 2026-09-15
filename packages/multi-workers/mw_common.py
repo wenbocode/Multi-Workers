@@ -48,6 +48,11 @@ try:
 except ImportError:  # pragma: no cover - very old interpreters
     tomllib = None  # type: ignore[assignment]
 
+try:
+    import yaml  # PyYAML: implicit dep for target.yml (mw-dual-workspace D-010)
+except ImportError:  # pragma: no cover - doctor reports this explicitly
+    yaml = None  # type: ignore[assignment]
+
 # Credential env vars that are never declared in providers.json but must still
 # be stripped from every worker env (kept from the pre-schema launcher).
 EXTRA_CREDENTIAL_VARS: frozenset[str] = frozenset([
@@ -886,6 +891,17 @@ def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
         )
     if report["launcher_log"].get("fatal"):
         issues.append("launcher.log contains FATAL lines - inspect the tail")
+    target = report.get("target")
+    if target is not None:
+        if target.get("error") is not None:
+            err = target["error"]
+            issues.append(f"target config error ({err['kind']}): {err['message']}")
+        else:
+            for check in target.get("checks") or []:
+                if not check["ok"]:
+                    issues.append(
+                        f"target toolchain check failed: {check['name']} ({check['detail']})"
+                    )
     if report["bundle"].get("stale"):
         suggestions.append(
             "extension bundle older than source - run '/mw build' or 'mw.py build --install'"
@@ -936,6 +952,7 @@ def doctor_report(
     report["worker_liveness"] = worker_liveness(project_dir, stale_after_sec)
     report["credentials"] = route_precheck(config, os.environ)
     report["bundle"] = _doctor_bundle()
+    report["target"] = _doctor_target(project_dir)
     issues, suggestions = _doctor_issues(report)
     report["summary"] = {"healthy": not issues, "issues": issues, "suggestions": suggestions}
     return report
@@ -982,6 +999,24 @@ def format_doctor_text(report: dict) -> str:
         if no_hb:
             parts.append(f"no-heartbeat {no_hb}")
         lines.append("workers: " + ", ".join(parts))
+    # Target workspace row (mw-dual-workspace D-011/D-013)
+    target = report.get("target")
+    if target is not None:
+        if target.get("error") is not None:
+            err = target["error"]
+            lines.append(f"target: ERROR {err['kind']}: {err['message']}")
+        else:
+            cfg = target["config"]
+            roots = f"game={cfg['game_root']}"
+            if cfg["engine_root"]:
+                roots += f" engine={cfg['engine_root']}"
+            lines.append(f"target: {cfg['mode']} (source {cfg['source']}) {roots}")
+            checks = target.get("checks")
+            if checks:
+                state = ", ".join(
+                    f"{c['name']} {'ok' if c['ok'] else 'FAIL: ' + c['detail']}" for c in checks
+                )
+                lines.append(f"target_toolchain: {state} ({target.get('probe_cache')})")
     # Conductor row (D-101, injected by mw.py cmd_doctor): informational —
     # not running simply means autopilot is disabled for this project.
     conductor = report.get("conductor")
@@ -1015,3 +1050,324 @@ def format_doctor_text(report: dict) -> str:
     for s in summary["suggestions"]:
         lines.append(f"suggest: {s}")
     return "\n".join(lines)
+
+
+# ── Dual-workspace target config (mw-dual-workspace D-002/D-010/D-011/D-014) ───
+
+# Parity module: mirrors packages/coding-agent/src/extensions/agent-team-loop/
+# shared/target-config.ts 1:1 (T-17 pattern). Field names in the returned dict
+# are snake_case twins of the TS interface; parity is asserted by the shared
+# fixtures under test/fixtures/target-config-cases/ (kind + key facts, not
+# message text).
+
+ENV_TARGET_GAME = "MW_TARGET_GAME"
+ENV_TARGET_ENGINE = "MW_TARGET_ENGINE"
+
+# Error kinds — the parity contract. Both sides raise these exact tokens.
+_TARGET_KINDS = (
+    "invalid-yaml",
+    "invalid-config",
+    "missing-field",
+    "uproject-not-found",
+    "ambiguous-uproject",
+)
+
+
+class TargetConfigError(Exception):
+    """Fail-closed target.yml / env resolution error (see _TARGET_KINDS)."""
+
+    def __init__(self, kind: str, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+def _tc_fail(kind: str, message: str) -> None:
+    raise TargetConfigError(kind, message)
+
+
+def _tc_require_string(value: object, field: str) -> str:
+    if not isinstance(value, str) or value.strip() == "":
+        _tc_fail("invalid-config", f"target.yml: field '{field}' must be a non-empty string")
+    return value
+
+
+def _tc_optional_string(value: object, field: str) -> str | None:
+    if value is None:
+        return None
+    return _tc_require_string(value, field)
+
+
+def _tc_string_array(value: object, field: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(
+        not isinstance(e, str) or e.strip() == "" for e in value
+    ):
+        _tc_fail("invalid-config", f"target.yml: field '{field}' must be a list of non-empty strings")
+    return list(value)
+
+
+def _tc_normalize_root(raw: str, control_root: str) -> str:
+    """Resolve against control_root, then realpath when it exists (junction/
+    case folding parity with the TS normalizeRoot)."""
+    resolved = os.path.normpath(os.path.join(control_root, raw))
+    return str(pathlib.Path(resolved).resolve())
+
+
+def target_yml_path(control_root: pathlib.Path | str) -> pathlib.Path:
+    return pathlib.Path(control_root) / ".agenticdoc" / "target.yml"
+
+
+def _tc_read_target_yml(control_root: str) -> dict:
+    path = target_yml_path(control_root)
+    if not path.exists():
+        return {}
+    if yaml is None:
+        _tc_fail(
+            "invalid-config",
+            "PyYAML is required to read target.yml (mw doctor checks this); "
+            "install it or unset MW_TARGET_GAME to stay in single mode",
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        _tc_fail("invalid-yaml", f"target.yml unreadable ({path}): {e}")
+    try:
+        parsed = yaml.safe_load(text)
+    except yaml.YAMLError as e:  # type: ignore[union-attr]
+        _tc_fail("invalid-yaml", f"target.yml is not valid YAML ({path}): {e}")
+    if parsed is None:
+        return {}
+    if not isinstance(parsed, dict):
+        _tc_fail("invalid-config", "target.yml: top level must be a mapping")
+    return parsed
+
+
+def _tc_parse_toolchain(value: object) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        _tc_fail("invalid-config", "target.yml: 'toolchain' must be a mapping of name to command")
+    out: dict[str, str] = {}
+    for name, cmd in value.items():
+        if not isinstance(cmd, str) or cmd.strip() == "":
+            _tc_fail("invalid-config", f"target.yml: toolchain.{name} must be a non-empty string")
+        out[str(name)] = cmd
+    return out
+
+
+def _tc_parse_ignore(value: object) -> dict:
+    if value is None:
+        return {"deny_globs": []}
+    if not isinstance(value, dict):
+        _tc_fail("invalid-config", "target.yml: 'ignore' must be a mapping")
+    return {"deny_globs": _tc_string_array(value.get("deny_globs"), "ignore.deny_globs")}
+
+
+def _tc_parse_contract(value: object) -> dict:
+    if value is None:
+        return {"forbidden_paths": [], "conventions": None, "docs": []}
+    if not isinstance(value, dict):
+        _tc_fail("invalid-config", "target.yml: 'contract' must be a mapping")
+    conventions = value.get("conventions")
+    if conventions is not None and not isinstance(conventions, str):
+        _tc_fail("invalid-config", "target.yml: contract.conventions must be a string")
+    return {
+        "forbidden_paths": _tc_string_array(value.get("forbidden_paths"), "contract.forbidden_paths"),
+        "conventions": conventions,
+        "docs": _tc_string_array(value.get("docs"), "contract.docs"),
+    }
+
+
+def load_target_config(
+    control_root: pathlib.Path | str,
+    env: Mapping[str, str] | None = None,
+) -> dict:
+    """Resolve the dual-workspace config for a control root.
+
+    Precedence: MW_TARGET_GAME/MW_TARGET_ENGINE env > target.yml > single
+    fallback (game_root === control_root). Raises TargetConfigError on
+    contradictory or unusable configuration (fail-closed, never a silent
+    single fallback). Mirrors resolveWorkspaceConfig() in target-config.ts.
+    """
+    control_root = str(control_root)
+    if env is None:
+        env = os.environ
+    raw = _tc_read_target_yml(control_root)
+
+    env_game = (env.get(ENV_TARGET_GAME) or "").strip() or None
+    env_engine = (env.get(ENV_TARGET_ENGINE) or "").strip() or None
+
+    file_mode = _tc_optional_string(raw.get("mode"), "mode")
+    if file_mode is not None and file_mode not in ("dual", "single"):
+        _tc_fail("invalid-config", f"target.yml: 'mode' must be 'dual' or 'single', got '{file_mode}'")
+    file_game = _tc_optional_string(raw.get("game"), "game")
+    file_engine = _tc_optional_string(raw.get("engine"), "engine")
+
+    game_raw = env_game if env_game is not None else file_game
+    engine_raw = env_engine if env_engine is not None else file_engine
+
+    # File-internal contradictions fail closed before precedence applies
+    # (same order as the TS side — see the 001 task evidence note).
+    if file_mode == "single" and file_game is not None:
+        _tc_fail("invalid-config", "target.yml: mode 'single' with a 'game' field is contradictory")
+    if file_mode == "dual" and file_game is None and env_game is None:
+        _tc_fail(
+            "invalid-config",
+            "target.yml: mode 'dual' requires a game root (field 'game' or env MW_TARGET_GAME)",
+        )
+
+    mode = "dual" if game_raw is not None else "single"
+    if engine_raw is not None and mode == "single":
+        _tc_fail("invalid-config", "target.yml: 'engine' requires dual mode (configure 'game' first)")
+
+    control_norm = _tc_normalize_root(control_root, control_root)
+    game_root = _tc_normalize_root(game_raw, control_root) if mode == "dual" else control_norm
+    if env_game is not None:
+        source = "env"
+    elif game_raw is not None or file_mode is not None:
+        source = "target-yml"
+    else:
+        source = "default"
+    return {
+        "mode": mode,
+        "control_root": control_norm,
+        "game_root": game_root,
+        "engine_root": None if engine_raw is None else _tc_normalize_root(engine_raw, control_root),
+        "vcs": _tc_optional_string(raw.get("vcs"), "vcs"),
+        "uproject": _tc_optional_string(raw.get("uproject"), "uproject"),
+        "toolchain": _tc_parse_toolchain(raw.get("toolchain")),
+        "ignore": _tc_parse_ignore(raw.get("ignore")),
+        "contract": _tc_parse_contract(raw.get("contract")),
+        "source": source,
+    }
+
+
+def discover_uproject(game_root: str, explicit: str | None = None) -> str:
+    """Resolve {uproject} (D-014): explicit field wins (must exist on disk);
+    otherwise exactly one *.uproject under the game root. 0 or many is an
+    error carrying the count — never a guess."""
+    if explicit is not None:
+        p = os.path.normpath(os.path.join(game_root, explicit))
+        if not os.path.exists(p):
+            _tc_fail("uproject-not-found", f"explicit uproject '{explicit}' not found under game root {game_root}")
+        return str(pathlib.Path(p).resolve())
+    try:
+        entries = os.listdir(game_root)
+    except OSError as e:
+        _tc_fail("invalid-config", f"game root is not readable ({game_root}): {e}")
+    matches = [e for e in entries if e.lower().endswith(".uproject")]
+    if len(matches) != 1:
+        detail = f" ({', '.join(matches)})" if len(matches) > 1 else ""
+        _tc_fail(
+            "ambiguous-uproject",
+            f"expected exactly one *.uproject under game root {game_root}, found {len(matches)}{detail}",
+        )
+    return str(pathlib.Path(os.path.join(game_root, matches[0])).resolve())
+
+
+def render_toolchain_command(command: str, config: dict) -> str:
+    """Render one toolchain command template (AC-004, fail-closed). Replaces
+    {game}/{engine}/{uproject}; a token whose root is unconfigured raises
+    with the field name and the original command — no game-root fallback."""
+    out = command
+    if "{game}" in out:
+        out = out.replace("{game}", config["game_root"])
+    if "{engine}" in out:
+        if config["engine_root"] is None:
+            _tc_fail(
+                "missing-field",
+                f"toolchain command references {{engine}} but engine is not configured "
+                f"(dual mode requires it): {command}",
+            )
+        out = out.replace("{engine}", config["engine_root"])
+    if "{uproject}" in out:
+        uproject = discover_uproject(config["game_root"], config.get("uproject"))
+        out = out.replace("{uproject}", uproject)
+    return out
+
+
+def toolchain_probe_path(project_dir: pathlib.Path | str) -> pathlib.Path:
+    """Machine-local toolchain probe cache (mw-dual-workspace D-013)."""
+    return pathlib.Path(project_dir) / ".mw" / "toolchain.json"
+
+
+def probe_target_toolchain(config: dict) -> list[dict]:
+    """Machine-level checks on a resolved target config (D-013): root
+    readability, engine presence, {uproject} resolvability. Pure — the cache
+    layer in _doctor_target decides whether to run them."""
+    checks: list[dict] = []
+    game = config["game_root"]
+    checks.append({"name": "game_root", "ok": os.path.isdir(game), "detail": game})
+    if config["engine_root"] is not None:
+        engine = config["engine_root"]
+        checks.append({"name": "engine_root", "ok": os.path.isdir(engine), "detail": engine})
+    needs_uproject = config["uproject"] is not None or any(
+        "{uproject}" in cmd for cmd in config["toolchain"].values()
+    )
+    if needs_uproject:
+        try:
+            p = discover_uproject(game, config["uproject"])
+            checks.append({"name": "uproject", "ok": True, "detail": p})
+        except TargetConfigError as e:
+            checks.append({"name": "uproject", "ok": False, "detail": f"{e.kind}: {e}"})
+    return checks
+
+
+def _doctor_target(project_dir: pathlib.Path) -> dict:
+    """Target config + cached toolchain probe section (mw-dual-workspace D-013).
+
+    Probe results persist to .mw/toolchain.json and are reused while fresh
+    (target.yml not newer than the probe timestamp) — the machine property
+    rarely changes once the project is set up. Config load errors and failed
+    probe checks become doctor issues; a single-mode default (no target.yml)
+    has nothing to probe."""
+    yml = target_yml_path(project_dir)
+    section: dict = {"yaml_available": yaml is not None}
+    try:
+        config = load_target_config(project_dir)
+    except TargetConfigError as e:
+        section["config"] = None
+        section["error"] = {"kind": e.kind, "message": str(e)}
+        return section
+    section["config"] = {
+        "mode": config["mode"],
+        "source": config["source"],
+        "game_root": config["game_root"],
+        "engine_root": config["engine_root"],
+        "vcs": config["vcs"],
+        "uproject": config["uproject"],
+    }
+    if config["source"] == "default":
+        section["checks"] = None
+        return section
+
+    cache = toolchain_probe_path(project_dir)
+    yml_mtime = yml.stat().st_mtime if yml.exists() else 0.0
+    cached: dict | None = None
+    if cache.exists():
+        try:
+            cached = json.loads(cache.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cached = None
+    if cached is not None and isinstance(cached.get("checks"), list) and cached.get("probed_at_epoch", 0.0) >= yml_mtime:
+        section["checks"] = cached["checks"]
+        section["probe_cache"] = "fresh"
+        return section
+
+    checks = probe_target_toolchain(config)
+    section["checks"] = checks
+    section["probe_cache"] = "probed"
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(
+            json.dumps(
+                {"probed_at": iso_now(), "probed_at_epoch": time.time(), "checks": checks},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        section["probe_cache"] = "probed (cache write failed)"
+    return section

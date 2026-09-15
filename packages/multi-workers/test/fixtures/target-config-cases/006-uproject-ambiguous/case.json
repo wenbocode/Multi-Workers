@@ -1,0 +1,17 @@
+{
+  "description": "two *.uproject files fail with the count",
+  "env": {},
+  "expect": {
+    "mode": "dual",
+    "source": "target-yml",
+    "game_root_rel": "game",
+    "engine_root_null": true
+  },
+  "render_error": {
+    "command": "b",
+    "kind": "ambiguous-uproject",
+    "contains": [
+      "found 2"
+    ]
+  }
+}

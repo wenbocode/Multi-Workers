@@ -30,6 +30,7 @@ for ``verifier`` (D-106 containment) and omitted otherwise.
 from __future__ import annotations
 
 import dataclasses
+import os
 import pathlib
 import sys
 from collections.abc import Sequence
@@ -56,7 +57,7 @@ class DispatchType:
     name: str
     tools: tuple[str, ...]
     cli: str
-    provider: str  # "" = route default (CLI_DEFAULT_PROVIDER at spawn time)
+    provider: str  # explicit route; "" = route default (CLI_DEFAULT_PROVIDER at spawn time)
     requires_read_scope: bool
 
 
@@ -65,23 +66,23 @@ REGISTRY: dict[str, DispatchType] = {
     "roadmap-writer": DispatchType(
         "roadmap-writer",
         ("read", "write", "edit", "find", "grep", "ls"),
-        "pi", "", False,
+        "pi", "timi", False,
     ),
     # Evidence/artifact patches: full coding set.
     "phase-writer": DispatchType(
-        "phase-writer", _CODING_TOOLS, "pi", "", False,
+        "phase-writer", _CODING_TOOLS, "pi", "timi", False,
     ),
     # L2 gate verdicts: review set + mandatory read_scope (D-106).
     "verifier": DispatchType(
-        "verifier", _REVIEW_TOOLS, "pi", "", True,
+        "verifier", _REVIEW_TOOLS, "pi", "timi", True,
     ),
     # L3 final verdicts: review set.
     "reviewer": DispatchType(
-        "reviewer", _REVIEW_TOOLS, "pi", "", False,
+        "reviewer", _REVIEW_TOOLS, "pi", "timi", False,
     ),
     # Post-below repair: full coding set.
     "repair": DispatchType(
-        "repair", _CODING_TOOLS, "pi", "", False,
+        "repair", _CODING_TOOLS, "pi", "timi", False,
     ),
 }
 
@@ -108,13 +109,17 @@ def render_task_md(
     loop: str,
     attempt: int,
     read_scope: Sequence[str] = (),
+    deny_globs: Sequence[str] = (),
     model: str = "",
 ) -> str:
     """Render one conductor task.md: frontmatter labels + prompt body.
 
     Every conductor dispatch carries origin/loop/attempt (design §4.1);
     read_scope renders as a YAML block list (verifier requires it —
-    dispatch() enforces, this renderer just renders)."""
+    dispatch() enforces, this renderer just renders). deny_globs (mw-
+    dual-workspace AC-006) renders single-quoted: a leading ``*`` is a YAML
+    alias marker, and single-quote style has no escape sequences — the
+    worker-side parser (worker-mode.ts) strips one quote pair."""
     lines = [
         "---",
         f"type: {task_type}",
@@ -129,8 +134,46 @@ def render_task_md(
     if read_scope:
         lines.append("read_scope:")
         lines.extend(f"  - {item}" for item in read_scope)
+    if deny_globs:
+        lines.append("deny_globs:")
+        lines.extend(f"  - '{item}'" for item in deny_globs)
     lines += ["---", "", prompt.strip(), ""]
     return "\n".join(lines) + "\n"
+
+
+# ── workspace-profile injection (mw-dual-workspace D-005/D-007) ────────────────
+
+def _expand_read_scope(
+    scope: list[str], config: dict, project_root: pathlib.Path
+) -> list[str]:
+    """D-007: dual mode anchors relative entries against the game root
+    (worker cwd) and appends the control root (D-005: profile authorization —
+    the worker must be able to read target.yml / task context files).
+    Single mode: scope passes through unchanged — relative entries anchor
+    cwd = the (single) control root, so expansion would only churn output."""
+    if config["mode"] != "dual" or not scope:
+        return scope
+    game = pathlib.Path(config["game_root"])
+    expanded = [
+        item if pathlib.Path(item).is_absolute() else str((game / item).resolve())
+        for item in scope
+    ]
+    # Only widen an ALREADY-configured containment: appending the control
+    # root to an empty scope would create containment the dispatch never
+    # asked for (scopeless types keep full access — AC-012 red line).
+    control = str(project_root.resolve())
+    if all(os.path.normcase(s) != os.path.normcase(control) for s in expanded):
+        expanded.append(control)
+    return expanded
+
+
+def _resolve_deny_globs(config: dict, explicit: Sequence[str] | None) -> list[str]:
+    """AC-006 generation side: deny globs default from target.yml's
+    ignore.deny_globs (any mode — a single-root UE project can still deny
+    its DDC); an explicit per-task list (including empty) wins."""
+    if explicit is not None:
+        return [str(g) for g in explicit]
+    return [str(g) for g in config.get("ignore", {}).get("deny_globs", [])]
 
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
@@ -174,6 +217,7 @@ def dispatch(
     loop: str,
     attempt: int,
     read_scope: Sequence[str] = (),
+    deny_globs: Sequence[str] | None = None,
     model: str = "",
     timeline: timeline_mod.Timeline | None = None,
 ) -> DispatchResult:
@@ -183,16 +227,18 @@ def dispatch(
     Rejections (zero queue rows, timeline type-rejected event):
       - unregistered type (never a tool-set fallback, GC-8/D-107)
       - verifier without a non-empty read_scope (D-106)
+      - unusable target.yml (mw-dual-workspace fail-closed: never a silently
+        un-injected task.md; event kind target-config-rejected)
     On success a ``dispatch`` timeline event is appended (AC-017: every
     dispatch leaves a timeline trace), when a timeline writer is given.
     """
     project_root = pathlib.Path(project_root)
     task_key = task_key_for(owner, stem)
 
-    def reject(reason: str, detail: str) -> DispatchResult:
+    def reject(reason: str, detail: str, ev: str = "type-rejected") -> DispatchResult:
         if timeline is not None:
             timeline.append(
-                "type-rejected", key=_timeline_key(owner), detail=f"{task_key}: {detail}"
+                ev, key=_timeline_key(owner), detail=f"{task_key}: {detail}"
             )
         return DispatchResult(
             ok=False, reason=reason, task_key=task_key, task_md=None, row_verified=False
@@ -212,6 +258,19 @@ def dispatch(
             "verifier dispatches require a non-empty read_scope (D-106)",
         )
 
+    # Workspace-profile injection (mw-dual-workspace D-005/D-007): the
+    # resolved config drives scope expansion + deny_globs defaults.
+    try:
+        config = mw_common.load_target_config(project_root)
+    except mw_common.TargetConfigError as exc:
+        return reject(
+            "target-config-unusable",
+            f"target.yml is unusable ({exc.kind}): {exc}",
+            ev="target-config-rejected",
+        )
+    scope = _expand_read_scope(scope, config, project_root)
+    globs = _resolve_deny_globs(config, deny_globs)
+
     # 1. task.md (before the queue row — the crash gap is the orphan shape
     #    that reconciliation heals; see module docstring / D-102).
     task_dir = project_root / ".agenticdoc" / owner / "workers" / task_key
@@ -219,7 +278,8 @@ def dispatch(
     task_md = task_dir / "task.md"
     task_md.write_text(
         render_task_md(
-            task_type, prompt, loop=loop, attempt=attempt, read_scope=scope, model=model
+            task_type, prompt, loop=loop, attempt=attempt, read_scope=scope,
+            deny_globs=globs, model=model,
         ),
         encoding="utf-8",
         newline="\n",

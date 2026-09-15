@@ -1,0 +1,10 @@
+{
+  "description": "engine field requires dual mode",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "engine"
+    ]
+  }
+}

@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import shutil
 import signal
 import subprocess
@@ -467,6 +468,174 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print(mw_common.format_doctor_text(report))
     return 0 if report["summary"]["healthy"] else 1
+
+
+# ── Subcommand: target (dual-workspace config, mw-dual-workspace D-011) ──────
+
+def _yml_scalar(value: str) -> str:
+    """Single-quoted YAML scalar (no escape sequences; Windows paths safe)."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _apply_bootstrap_line(text: str, key: str, value: str | None) -> str:
+    """Line-level top-level `key: value` update — comments, section bodies and
+    line endings elsewhere are preserved byte-for-byte (design D-010: the three
+    profile sections are hand-maintained; `target set` never rewrites them via
+    YAML round-trip). value=None drops the key."""
+    lines = text.splitlines(keepends=True)
+    pattern = re.compile(rf"^{re.escape(key)}\s*:")
+    out: list[str] = []
+    replaced = False
+    for line in lines:
+        if pattern.match(line):
+            if value is not None:
+                ending = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
+                out.append(f"{key}: {value}{ending}")
+            replaced = True
+        else:
+            out.append(line)
+    if value is not None and not replaced:
+        idx = 0
+        while idx < len(out) and (out[idx].lstrip().startswith("#") or out[idx].strip() == ""):
+            idx += 1
+        out.insert(idx, f"{key}: {value}\n")
+    return "".join(out)
+
+
+def _target_template(game: str, engine: str | None, vcs: str | None, uproject: str | None) -> str:
+    lines = [
+        "# Dual-workspace target config (mw target set). File absent = single mode.",
+        "# Bootstrap fields are managed by `mw target set/clear`; the three sections",
+        "# below are hand-maintained profiles (mw-dual-workspace design D-010).",
+        "mode: dual",
+        f"game: {game}",
+    ]
+    if engine is not None:
+        lines.append(f"engine: {engine}")
+    if vcs is not None:
+        lines.append(f"vcs: {vcs}")
+    if uproject is not None:
+        lines.append(f"uproject: {uproject}")
+    lines += [
+        "",
+        "toolchain:",
+        "  # command templates with {game}/{engine}/{uproject} placeholders, e.g.",
+        "  # build_editor: '\"{engine}/Engine/Build/BatchFiles/Build.bat\" ProjEditor Win64 Development -project=\"{uproject}\"'",
+        "",
+        "ignore:",
+        "  # L1 deny globs for read/ls/find/grep (absolute or game-root-relative",
+        "  # minimatch basis). Uncomment and extend:",
+        "  # deny_globs:",
+        "  #   - \"**/*.uasset\"",
+        "  #   - \"**/DerivedDataCache/**\"",
+        "",
+        "contract:",
+        "  # forbidden_paths: []",
+        "  # conventions: |",
+        "  #   project conventions injected into every dispatched task.md",
+        "  # docs: []",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _print_target_summary(config: dict) -> None:
+    print(f"[mw target] mode: {config['mode']} (source: {config['source']})")
+    print(f"[mw target] control root: {config['control_root']}")
+    print(f"[mw target] game root:    {config['game_root']}")
+    print(f"[mw target] engine root:  {config['engine_root'] or '-'}")
+    print(f"[mw target] vcs: {config['vcs'] or '-'}  uproject: {config['uproject'] or '-'}")
+    if config["toolchain"]:
+        print(f"[mw target] toolchain commands: {', '.join(sorted(config['toolchain']))}")
+
+
+def _target_set(project_dir: pathlib.Path, args: argparse.Namespace) -> int:
+    game = pathlib.Path(args.game).resolve()
+    if not game.is_dir():
+        print(f"[mw target set] Error: game root not found: {game}", file=sys.stderr)
+        return 1
+    engine: str | None = None
+    if args.engine is not None:
+        engine_path = pathlib.Path(args.engine).resolve()
+        if not engine_path.is_dir():
+            print(f"[mw target set] Error: engine root not found: {engine_path}", file=sys.stderr)
+            return 1
+        engine = _yml_scalar(str(engine_path))
+    vcs = args.vcs
+    uproject: str | None = None
+    if args.uproject is not None:
+        candidate = pathlib.Path(args.uproject)
+        if not candidate.is_absolute():
+            candidate = game / candidate
+        if not candidate.is_file():
+            print(f"[mw target set] Error: uproject not found: {candidate}", file=sys.stderr)
+            return 1
+        uproject = _yml_scalar(args.uproject)
+
+    yml = mw_common.target_yml_path(project_dir)
+    yml.parent.mkdir(parents=True, exist_ok=True)
+    if yml.exists():
+        text = yml.read_text(encoding="utf-8")
+        text = _apply_bootstrap_line(text, "mode", "dual")
+        text = _apply_bootstrap_line(text, "game", _yml_scalar(str(game)))
+        text = _apply_bootstrap_line(text, "engine", engine)
+        text = _apply_bootstrap_line(text, "vcs", f"{vcs}" if vcs is not None else None)
+        text = _apply_bootstrap_line(text, "uproject", uproject)
+        yml.write_text(text, encoding="utf-8")
+    else:
+        yml.write_text(
+            _target_template(_yml_scalar(str(game)), engine, vcs, uproject),
+            encoding="utf-8",
+        )
+    try:
+        config = mw_common.load_target_config(project_dir)
+    except mw_common.TargetConfigError as e:
+        # Bootstrap fields are written; a hand-maintained section is broken.
+        print(f"[mw target set] Warning: config resolves with an error ({e.kind}): {e}", file=sys.stderr)
+        return 1
+    _print_target_summary(config)
+    return 0
+
+
+def _target_clear(project_dir: pathlib.Path) -> int:
+    yml = mw_common.target_yml_path(project_dir)
+    if not yml.exists():
+        print("[mw target clear] no target.yml — already single mode")
+        return 0
+    yml.unlink()
+    print(f"[mw target clear] removed {yml} — mode resolves to single")
+    return 0
+
+
+def _target_show(project_dir: pathlib.Path) -> int:
+    try:
+        config = mw_common.load_target_config(project_dir)
+    except mw_common.TargetConfigError as e:
+        print(f"[mw target show] Error ({e.kind}): {e}", file=sys.stderr)
+        return 1
+    _print_target_summary(config)
+    render_failed = False
+    for name, command in sorted(config["toolchain"].items()):
+        try:
+            rendered = mw_common.render_toolchain_command(command, config)
+            print(f"[mw target]   {name}: {rendered}")
+        except mw_common.TargetConfigError as e:
+            render_failed = True
+            print(f"[mw target]   {name}: ERROR ({e.kind}): {e}", file=sys.stderr)
+    if config["ignore"]["deny_globs"]:
+        print(f"[mw target] deny_globs: {len(config['ignore']['deny_globs'])} rule(s)")
+    return 1 if render_failed else 0
+
+
+def cmd_target(args: argparse.Namespace) -> int:
+    """Dual-workspace target config: set bootstrap fields / clear / show the
+    resolved view (mw-dual-workspace AC-005, D-011)."""
+    project_dir = pathlib.Path(args.project).resolve()
+    if args.target_action == "set":
+        return _target_set(project_dir, args)
+    if args.target_action == "clear":
+        return _target_clear(project_dir)
+    return _target_show(project_dir)
 
 
 # ── Subcommand: pull-agentictask ───────────────────────────────────────────────
@@ -1061,6 +1230,23 @@ def _parse_args() -> argparse.Namespace:
                           help="Worker heartbeat staleness threshold in seconds (default: %(default)s, "
                                "in sync with the TS HEARTBEAT_STALE_MS constant)")
 
+    target_p = sub.add_parser(
+        "target",
+        help="Dual-workspace target config: set bootstrap fields, clear, or show the resolved view",
+    )
+    target_sub = target_p.add_subparsers(dest="target_action", required=True)
+    target_set_p = target_sub.add_parser("set", help="Write bootstrap fields; mode becomes dual")
+    target_set_p.add_argument("--project", required=True, help="Control workspace directory")
+    target_set_p.add_argument("--game", required=True, metavar="DIR", help="Game root (UE project)")
+    target_set_p.add_argument("--engine", default=None, metavar="DIR", help="Engine root (optional)")
+    target_set_p.add_argument("--vcs", default=None, choices=("git", "p4", "none"),
+                              help="Target VCS (informational, optional)")
+    target_set_p.add_argument("--uproject", default=None, metavar="FILE",
+                              help="Explicit .uproject (game-relative or absolute; default: unique discovery)")
+    for action in ("clear", "show"):
+        p = target_sub.add_parser(action, help="Delete target.yml (back to single)" if action == "clear" else "Print the resolved config")
+        p.add_argument("--project", required=True, help="Control workspace directory")
+
     init_p = sub.add_parser("init", help="Initialize project and install Extension + framework")
     init_p.add_argument("--project", required=True)
     init_p.add_argument("--no-framework", action="store_true",
@@ -1118,6 +1304,7 @@ if __name__ == "__main__":
         "stop": cmd_stop,
         "status": cmd_status,
         "doctor": cmd_doctor,
+        "target": cmd_target,
         "init": cmd_init,
         "pull-agentictask": cmd_pull_agentictask,
         "push-agentictask": cmd_push_agentictask,

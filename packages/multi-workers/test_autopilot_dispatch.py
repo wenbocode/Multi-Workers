@@ -45,7 +45,7 @@ def test_registry_types_and_tools() -> None:
     )
     for entry in dispatch.REGISTRY.values():
         assert entry.cli == "pi"
-        assert entry.provider == ""
+        assert entry.provider == "timi"
     assert dispatch.REGISTRY["verifier"].requires_read_scope is True
     assert all(
         not e.requires_read_scope for n, e in dispatch.REGISTRY.items() if n != "verifier"
@@ -120,7 +120,7 @@ def test_dispatch_writes_task_and_verified_row(tmp_path: pathlib.Path) -> None:
     row = rows[0]
     assert row["task_key"] == "ap-k1-t-05"
     assert row["status"] == "pending"
-    assert row["cli"] == "pi" and row["provider"] == ""
+    assert row["cli"] == "pi" and row["provider"] == "timi"
     assert row["task_path"] == str(task_md)
     assert row["model"] == ""
     assert result.row_verified is True
@@ -243,3 +243,247 @@ def test_dispatch_no_timeline_writer_still_works(tmp_path: pathlib.Path) -> None
     )
     assert result.ok and result.row_verified
     assert not (tmp_path / ".agenticdoc" / "_autopilot").exists()
+
+
+# ── workspace-profile injection (mw-dual-workspace D-005/D-007, Task 006) ─────
+
+def _clear_target_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hermetic: MW_TARGET_* overrides would flip the mode behind the test."""
+    monkeypatch.delenv("MW_TARGET_GAME", raising=False)
+    monkeypatch.delenv("MW_TARGET_ENGINE", raising=False)
+
+
+def _write_target_yml(
+    control: pathlib.Path, body: str
+) -> None:
+    agentic = control / ".agenticdoc"
+    agentic.mkdir(parents=True, exist_ok=True)
+    (agentic / "target.yml").write_text(body, encoding="utf-8")
+
+
+def test_dispatch_single_mode_no_yml_snapshot(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression lock: with no target.yml the dispatch output is
+    byte-identical to the pre-dual-workspace rendering."""
+    _clear_target_env(monkeypatch)
+    result = dispatch.dispatch(
+        tmp_path, "k1", "snap", "verifier", "Verify.",
+        loop="l2:k1", attempt=1, read_scope=[".agenticdoc/k1"],
+    )
+    assert result.ok and result.row_verified
+    expected = (
+        "---\n"
+        "type: verifier\n"
+        "origin: conductor\n"
+        "loop: l2:k1\n"
+        "attempt: 1\n"
+        "read_scope:\n"
+        "  - .agenticdoc/k1\n"
+        "---\n"
+        "\n"
+        "Verify.\n"
+        "\n"
+    )
+    assert result.task_md is not None
+    assert result.task_md.read_text(encoding="utf-8") == expected
+    _verify("VC-013", single_no_yml_snapshot=true_str(True))
+
+
+def test_dispatch_dual_mode_expands_scope_and_injects_deny_globs(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """VC-013/VC-009 generation side: dual mode expands relative entries
+    against the game root, passes absolute entries through, appends the
+    control root, and injects ignore.deny_globs as quoted frontmatter."""
+    _clear_target_env(monkeypatch)
+    game = tmp_path / "game"
+    engine = tmp_path / "engine"
+    game.mkdir()
+    engine.mkdir()
+    _write_target_yml(
+        tmp_path,
+        "mode: dual\n"
+        f"game: '{game}'\n"
+        f"engine: '{engine}'\n"
+        "ignore:\n"
+        "  deny_globs:\n"
+        '    - "**/*.uasset"\n'
+        '    - "**/DerivedDataCache/**"\n',
+    )
+    result = dispatch.dispatch(
+        tmp_path, "k1", "dual-01", "verifier", "Verify.",
+        loop="l2:k1", attempt=1,
+        read_scope=["Content", str(engine / "Source")],
+    )
+    assert result.ok and result.row_verified
+    assert result.task_md is not None
+    text = result.task_md.read_text(encoding="utf-8")
+
+    game_content = str((game / "Content").resolve())
+    assert f"  - {game_content}" in text  # VC-009: game-root absolute
+    assert f"  - {engine / 'Source'}" in text  # VC-009: engine root passthrough
+    control_line = f"  - {tmp_path.resolve()}"  # VC-013: control root appended
+    assert control_line in text
+    assert text.count("deny_globs:") == 1
+    assert "  - '**/*.uasset'" in text  # VC-013: quoted (YAML alias marker)
+    assert "  - '**/DerivedDataCache/**'" in text
+    _verify(
+        "VC-013",
+        deny_globs_line=true_str("deny_globs:" in text),
+        control_scope=true_str(control_line in text),
+    )
+    _verify(
+        "VC-009",
+        game_abs=true_str(f"  - {game_content}" in text),
+        engine_abs=true_str(f"  - {engine / 'Source'}" in text),
+    )
+
+
+def test_dispatch_dual_scopeless_type_gets_deny_globs_without_scope(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No read_scope given -> no scope rendered, no control-root entry
+    (appending one would CREATE containment that was never asked for),
+    but the deny firewall still injects (deny-only is valid, AC-006)."""
+    _clear_target_env(monkeypatch)
+    game = tmp_path / "game"
+    game.mkdir()
+    _write_target_yml(
+        tmp_path,
+        "mode: dual\n"
+        f"game: '{game}'\n"
+        "ignore:\n"
+        "  deny_globs:\n"
+        '    - "**/*.uasset"\n',
+    )
+    result = dispatch.dispatch(
+        tmp_path, "k1", "dual-02", "phase-writer", "Write.",
+        loop="gen:k1", attempt=1,
+    )
+    assert result.ok
+    assert result.task_md is not None
+    text = result.task_md.read_text(encoding="utf-8")
+    assert "read_scope:" not in text
+    assert f"  - {tmp_path.resolve()}" not in text
+    assert "  - '**/*.uasset'" in text
+    _verify(
+        "VC-013",
+        scopeless_deny_injected=true_str("deny_globs:" in text),
+        no_scope_forced=true_str("read_scope:" not in text),
+    )
+
+
+def test_dispatch_dual_control_root_deduped(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control root already present as an entry is not appended twice."""
+    _clear_target_env(monkeypatch)
+    game = tmp_path / "game"
+    game.mkdir()
+    _write_target_yml(
+        tmp_path, f"mode: dual\ngame: '{game}'\n",
+    )
+    result = dispatch.dispatch(
+        tmp_path, "k1", "dual-03", "verifier", "Verify.",
+        loop="l2:k1", attempt=1,
+        read_scope=[str(tmp_path.resolve()), "Source"],
+    )
+    assert result.ok
+    assert result.task_md is not None
+    text = result.task_md.read_text(encoding="utf-8")
+    control_line = f"  - {tmp_path.resolve()}"
+    # Line-exact count: a substring count would also hit the game/Source
+    # entry, which contains the control root as a path prefix.
+    assert text.splitlines().count(control_line) == 1
+
+
+def test_dispatch_deny_globs_explicit_override(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit per-task deny_globs list wins over the yml default;
+    an explicit empty list suppresses injection entirely."""
+    _clear_target_env(monkeypatch)
+    game = tmp_path / "game"
+    game.mkdir()
+    _write_target_yml(
+        tmp_path,
+        "mode: dual\n"
+        f"game: '{game}'\n"
+        "ignore:\n"
+        "  deny_globs:\n"
+        '    - "**/*.uasset"\n',
+    )
+    r1 = dispatch.dispatch(
+        tmp_path, "k1", "ovr-01", "repair", "Fix.",
+        loop="repair:k1", attempt=1, deny_globs=["Saved/**"],
+    )
+    assert r1.ok
+    assert r1.task_md is not None
+    t1 = r1.task_md.read_text(encoding="utf-8")
+    assert "  - 'Saved/**'" in t1
+    assert "*.uasset" not in t1  # yml default fully overridden
+
+    r2 = dispatch.dispatch(
+        tmp_path, "k1", "ovr-02", "repair", "Fix.",
+        loop="repair:k1", attempt=1, deny_globs=[],
+    )
+    assert r2.ok
+    assert r2.task_md is not None
+    assert "deny_globs:" not in r2.task_md.read_text(encoding="utf-8")
+
+
+def test_dispatch_single_mode_with_yml_injects_deny_globs_only(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Single mode WITH a target.yml: deny globs inject (any mode — a
+    single-root UE project can still deny its DDC), but scope passes through
+    untouched (relative entries already anchor cwd = the control root)."""
+    _clear_target_env(monkeypatch)
+    _write_target_yml(
+        tmp_path,
+        "mode: single\n"
+        "ignore:\n"
+        "  deny_globs:\n"
+        '    - "**/*.uasset"\n',
+    )
+    result = dispatch.dispatch(
+        tmp_path, "k1", "sgl-01", "verifier", "Verify.",
+        loop="l2:k1", attempt=1, read_scope=[".agenticdoc/k1"],
+    )
+    assert result.ok
+    assert result.task_md is not None
+    text = result.task_md.read_text(encoding="utf-8")
+    assert "  - .agenticdoc/k1" in text  # relative entry untouched
+    assert f"  - {tmp_path.resolve()}" not in text  # no control append
+    assert "  - '**/*.uasset'" in text  # deny firewall injected
+
+
+def test_dispatch_broken_target_yml_rejected(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail-closed: an unusable target.yml rejects the dispatch (zero rows,
+    zero task.md, target-config-rejected timeline event) — never a silently
+    un-injected task.md."""
+    _clear_target_env(monkeypatch)
+    _write_target_yml(tmp_path, "mode: [unclosed\n")
+    tl = timeline_mod.Timeline(
+        tmp_path / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+    )
+    result = dispatch.dispatch(
+        tmp_path, "k1", "brk-01", "verifier", "Verify.",
+        loop="l2:k1", attempt=1, read_scope=[".agenticdoc/k1"], timeline=tl,
+    )
+    assert not result.ok
+    assert result.reason.startswith("target-config-unusable")
+    assert result.task_md is None
+    assert not mw_common.workers_path(tmp_path).exists()  # zero rows
+    assert not (tmp_path / ".agenticdoc" / "k1" / "workers").exists()
+    events = timeline_mod.query_events(tl.path).events
+    assert [e["ev"] for e in events] == ["target-config-rejected"]
+    assert "ap-k1-brk-01" in events[0]["detail"]
+    _verify(
+        "VC-013",
+        broken_yml_rows=0,
+        fail_closed=true_str(result.reason.startswith("target-config-unusable")),
+    )

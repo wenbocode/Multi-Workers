@@ -45,13 +45,13 @@ def test_append_line_schema_all_event_types(tmp_path: pathlib.Path) -> None:
     writer = tl.Timeline(path)
     for ev in sorted(tl.EVENT_TYPES):
         assert writer.append(ev, key=f"key-{ev}", stage=1, detail=f"detail for {ev}") is not None
-    assert len(tl.EVENT_TYPES) == 14  # enum locked by D-109
+    assert len(tl.EVENT_TYPES) == 15  # enum locked by D-109; +target-config-rejected (mw-dual-workspace D-005 fail-closed dispatch)
 
     raw = path.read_bytes()
     assert b"\r" not in raw  # newline symmetry: LF only, never \r\n
     events = _read_lines(path)
-    assert len(events) == 14
-    assert [e["seq"] for e in events] == list(range(1, 15))  # dense, increasing
+    assert len(events) == 15
+    assert [e["seq"] for e in events] == list(range(1, 16))  # dense, increasing
     for e in events:
         assert set(e) == {"ts", "seq", "ev", "key", "stage", "detail"}
         assert isinstance(e["seq"], int)

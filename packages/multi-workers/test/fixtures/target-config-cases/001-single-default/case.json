@@ -1,0 +1,10 @@
+{
+  "description": "no target.yml, no env → single/default, gameRoot=controlRoot",
+  "env": {},
+  "expect": {
+    "mode": "single",
+    "source": "default",
+    "game_root_equals_control": true,
+    "engine_root_null": true
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "description": "MW_TARGET_ENGINE without a game root is invalid",
+  "env": {
+    "MW_TARGET_ENGINE": "./engine"
+  },
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "engine"
+    ]
+  }
+}

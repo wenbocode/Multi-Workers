@@ -1,0 +1,8 @@
+{
+  "description": "malformed target.yml fails closed",
+  "env": {},
+  "error": {
+    "kind": "invalid-yaml",
+    "contains": []
+  }
+}

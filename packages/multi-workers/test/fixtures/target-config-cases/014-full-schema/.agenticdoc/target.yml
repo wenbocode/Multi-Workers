@@ -1,0 +1,19 @@
+mode: dual
+game: ./game
+engine: ./engine
+vcs: p4
+uproject: Custom.uproject
+toolchain:
+  build: 'Build.bat {game} {engine} {uproject}'
+ignore:
+  deny_globs:
+    - "**/*.uasset"
+    - "**/DerivedDataCache/**"
+contract:
+  forbidden_paths:
+    - "**/Generated/*"
+  conventions: |
+    line one
+    line two
+  docs:
+    - _profile/conventions.md

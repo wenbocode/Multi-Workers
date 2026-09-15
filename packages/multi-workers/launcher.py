@@ -495,6 +495,20 @@ def run(
         time.sleep(poll_interval)
 
 
+def _worker_cwd(project_dir: pathlib.Path) -> pathlib.Path:
+    """Dual-workspace spawn root (mw-dual-workspace D-001): worker cwd is the
+    game root in dual mode, the control workspace in single mode. Fail closed:
+    an unusable target.yml refuses the spawn (recorded per-task by _spawn's
+    isolation handler) instead of silently falling back to the control root."""
+    try:
+        config = mw_common.load_target_config(project_dir)
+    except mw_common.TargetConfigError as e:
+        raise RuntimeError(f"target.yml is unusable ({e.kind}): {e}") from None
+    if config["mode"] == "dual":
+        return pathlib.Path(config["game_root"])
+    return project_dir
+
+
 def _spawn(
     entry: dict[str, str],
     project_dir: pathlib.Path,
@@ -519,9 +533,11 @@ def _spawn(
             log_file = open(_worker_log_path(entry), "wb")  # noqa: SIM115 — closed at reap (or below)
         except OSError:
             log_file = None
-        # subprocess.Popen with list args (no shell=True — AC-023); cwd keeps relative paths consistent
+        # subprocess.Popen with list args (no shell=True — AC-023); cwd is the
+        # game root in dual mode, else the control workspace (D-001) — relative
+        # tool paths stay anchored to the target project.
         spawn_kwargs: dict = {
-            "env": env, "cwd": str(project_dir),
+            "env": env, "cwd": str(_worker_cwd(project_dir)),
             "stdout": log_file if log_file is not None else subprocess.DEVNULL,
             "stderr": subprocess.STDOUT if log_file is not None else subprocess.DEVNULL,
         }

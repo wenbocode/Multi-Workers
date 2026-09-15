@@ -1,0 +1,25 @@
+{
+  "description": "full schema: vcs/uproject explicit/toolchain/ignore/contract",
+  "env": {},
+  "expect": {
+    "mode": "dual",
+    "source": "target-yml",
+    "game_root_rel": "game",
+    "engine_root_rel": "engine",
+    "vcs": "p4",
+    "uproject_explicit": "Custom.uproject",
+    "deny_globs": [
+      "**/*.uasset",
+      "**/DerivedDataCache/**"
+    ],
+    "conventions_contains": [
+      "line two"
+    ],
+    "docs": [
+      "_profile/conventions.md"
+    ]
+  },
+  "render": {
+    "build": "Build.bat {game_root} {engine_root} {uproject}"
+  }
+}

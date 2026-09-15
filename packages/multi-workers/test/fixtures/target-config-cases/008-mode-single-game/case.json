@@ -1,0 +1,10 @@
+{
+  "description": "mode single with a game field is contradictory",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "contradictory"
+    ]
+  }
+}

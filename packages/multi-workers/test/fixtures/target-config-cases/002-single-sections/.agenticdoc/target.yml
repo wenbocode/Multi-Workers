@@ -1,0 +1,9 @@
+mode: single
+ignore:
+  deny_globs:
+    - "**/*.uasset"
+    - "**/DerivedDataCache/**"
+contract:
+  conventions: |
+    line one
+    line two

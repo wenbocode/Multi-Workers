@@ -1,0 +1,12 @@
+{
+  "description": "MW_TARGET_GAME env wins over target.yml game",
+  "env": {
+    "MW_TARGET_GAME": "./envgame"
+  },
+  "expect": {
+    "mode": "dual",
+    "source": "env",
+    "game_root_rel": "envgame",
+    "engine_root_null": true
+  }
+}

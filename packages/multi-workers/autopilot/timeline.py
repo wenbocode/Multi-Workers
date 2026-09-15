@@ -78,6 +78,7 @@ EVENT_TYPES: frozenset[str] = frozenset({
     "goal-halt",
     "goal-snapshot",
     "type-rejected",
+    "target-config-rejected",
     "reconcile",
 })
 
