@@ -1286,9 +1286,12 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     doctor-verified service. Re-runnable: every step is idempotent or
     self-verifying.
 
-      1. prerequisites: python >= 3.11, node >= engines.node, npm, git, and at
-         least one dispatchable credential route (mw serve refuses to start
-         with none — fail fast BEFORE the slow npm steps)
+      1. prerequisites: python >= 3.11, node >= engines.node, npm, git, and
+         the credential-route status. Missing credentials do NOT abort a
+         fresh install (~/.pi/agent/auth.json cannot exist yet): steps 2-6
+         are credential-free, so bootstrap warns, skips the service start
+         (step 7), and points at the --fast re-run for after credentials
+         are configured
       2. node_modules: `npm ci --ignore-scripts` on a fresh clone,
          `npm install --ignore-scripts` when node_modules exists (incremental)
       3. repo build: root `npm run build` (tui→ai→…→coding-agent; the ai build
@@ -1353,22 +1356,31 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     providers_path = pathlib.Path(__file__).parent / "providers.json"
     config = mw_common.load_providers(providers_path)
     precheck = mw_common.route_precheck(config, os.environ)
-    if precheck["all_missing"]:
-        return fail(
-            "no route has credentials — mw serve would refuse to start.\n"
-            "  Set one before re-running (the default worker route is timi):\n"
+    creds_missing = bool(precheck["all_missing"])
+    if creds_missing:
+        # Fresh machine: nothing is configured yet (~/.pi/agent/auth.json
+        # does not exist). That must not block the install — steps 2-6 are
+        # credential-free, pi windows open without the service, and the
+        # service start (step 7) is skipped until credentials exist.
+        print(
+            "[mw bootstrap] Warning: no route has credentials yet (fresh install?)\n"
+            "  Steps 2-6 proceed; the service start (step 7) will be skipped.\n"
+            "  Configure later (the default worker route is timi):\n"
             "    set TIMI_API_KEY in your environment, or\n"
             "    write ~/.pi/agent/auth.json: {\"timi\": {\"key\": \"<key>\"}}\n"
-            "  After setting it, re-run with: python mw.py bootstrap --fast"
+            "  Then start the service: python mw.py bootstrap --fast\n"
+            "  (pi windows and /mw commands work without the service)",
+            flush=True,
         )
-    available = ", ".join(
-        r["route"] for r in precheck["routes"] if r["available"]
-    )
-    print(
-        f"[mw bootstrap] python {sys.version.split()[0]}, node {node_raw}, "
-        f"git ok; credential routes available: {available}",
-        flush=True,
-    )
+    else:
+        available = ", ".join(
+            r["route"] for r in precheck["routes"] if r["available"]
+        )
+        print(
+            f"[mw bootstrap] python {sys.version.split()[0]}, node {node_raw}, "
+            f"git ok; credential routes available: {available}",
+            flush=True,
+        )
     try:
         import yaml  # noqa: F401 - availability probe for target.yml (dual-workspace)
     except ImportError:
@@ -1457,6 +1469,12 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         skip(7, "--no-start; start later with: python mw.py start --project <dir>")
     elif _check_pid(pid_path) is not None:
         skip(7, f"already running (PID {_check_pid(pid_path)})")
+    elif creds_missing:
+        skip(
+            7,
+            "no credential route configured — set TIMI_API_KEY or write "
+            "~/.pi/agent/auth.json, then: python mw.py bootstrap --fast",
+        )
     else:
         step(7, "mw start (background service: proxy + launcher + conductor)")
         start_args = argparse.Namespace(
@@ -1487,17 +1505,25 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     report["conductor"] = _ap_conductor.conductor_status(project_dir)
     print(mw_common.format_doctor_text(report))
     issues = list(report["summary"]["issues"])
-    if args.no_start:
-        # Expected by construction — do not fail the verdict for what was asked.
+    if args.no_start or creds_missing:
+        # Expected by construction — do not fail the verdict for what was
+        # asked (--no-start) or for the documented fresh-install path
+        # (credentials configured after bootstrap; service starts on the
+        # --fast re-run).
         issues = [i for i in issues if "mw service not running" not in i]
     timi_missing = [
         r for r in precheck["routes"] if r["route"] == "timi" and not r["available"]
     ]
     if timi_missing:
+        action = (
+            "Configure it, then: python mw.py bootstrap --fast"
+            if creds_missing
+            else "Set it and restart: python mw.py stop --project <dir> && "
+                 "python mw.py bootstrap --fast"
+        )
         print(
             "[mw bootstrap] Warning: TIMI_API_KEY is not set — pi workers "
-            "(the default dispatch route) cannot run. Set it and restart: "
-            "python mw.py stop --project <dir> && python mw.py bootstrap --fast",
+            f"(the default dispatch route) cannot run. {action}",
             flush=True,
         )
     elapsed = int(time.monotonic() - t0)

@@ -34,6 +34,14 @@ To learn more about Pi:
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
 
+## Multi-Workers (this fork)
+
+This fork adds **[packages/multi-workers](packages/multi-workers/README.md)** — an agent-team framework where one PM agent orchestrates multiple parallel worker agents (independent `pi` processes) on the same project. Coordination is file-driven (`.agenticdoc/`), backed by a Python service (LLM proxy, scheduler, watchdog) and the `agent-team-loop` extension.
+
+- Fresh-machine one-shot setup: `python packages/multi-workers/mw.py bootstrap --project .`
+- Dual-workspace targets (control workspace vs game root): `mw target set` or `/mw target` in a pi window
+- Full docs: [packages/multi-workers/README.md](packages/multi-workers/README.md)
+
 ## Permissions & Containerization
 
 Pi does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.

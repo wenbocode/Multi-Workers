@@ -215,22 +215,60 @@ class TestFastRerun:
         assert "step 3/8: skipped (--fast)" in out
 
 
-class TestFailFastGates:
-    def test_no_credentials_aborts_before_any_npm_step(
+    def test_no_credentials_warns_proceeds_and_skips_service_start(
         self, fake_machine: _Recorder, monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
+        # Fresh machine before any auth configuration (~/.pi/agent/auth.json
+        # does not exist yet): bootstrap must NOT abort — steps 2-6 are
+        # credential-free, the service start is held back, and the doctor
+        # verdict tolerates the expected service-not-running issue.
         monkeypatch.setattr(
             mw.mw_common,
             "route_precheck",
-            lambda config, env: {"routes": [], "all_missing": True},
+            lambda config, env: {
+                "routes": [
+                    {"route": "timi", "available": False,
+                     "missing": "TIMI_API_KEY", "source": None},
+                ],
+                "all_missing": True,
+            },
+        )
+        monkeypatch.setattr(mw, "_check_pid", lambda pid_path: None)
+        base_doctor = {
+            "service": {"running": False},
+            "queue": {"stale_count": 0},
+            "launcher_log": {},
+            "target": None,
+            "bundle": {},
+            "orphan_proxy": {"detected": False, "ports": []},
+            "worker_liveness": {},
+            "credentials": {"routes": []},
+            "conductor": {"running": False},
+            "summary": {
+                "healthy": False,
+                "issues": ["mw service not running (workers will not be dispatched)"],
+                "suggestions": [],
+            },
+        }
+        monkeypatch.setattr(
+            mw.mw_common, "doctor_report",
+            lambda project_dir, fix, config, stale_after_sec: base_doctor,
         )
         rc = mw.cmd_bootstrap(_bootstrap_args(project=str(fake_machine.project)))
-        assert rc == 1
-        # Nothing expensive ran: no npm, no setup, no init.
-        assert fake_machine.calls == []
-        assert "TIMI_API_KEY" in capsys.readouterr().err
+        assert rc == 0
+        # The install ran to completion: npm, build, link, setup, init — only
+        # the service start is held back.
+        assert fake_machine.tags() == ["stream", "stream", "stream", "setup", "init"]
+        out = capsys.readouterr().out
+        assert "Warning: no route has credentials yet" in out
+        assert "auth.json" in out
+        assert "step 7/8: skipped (no credential route configured" in out
+        # Doctor's service-not-running issue did not fail the verdict.
+        assert "finished with" not in out
 
+
+class TestFailFastGates:
     def test_old_node_aborts(
         self, fake_machine: _Recorder, monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],

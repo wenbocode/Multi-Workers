@@ -1,4 +1,7 @@
 # Index Parallel
+
+| Key | Status | Phase | ClaimId | Deps | Desc | Updated |
+|-----|--------|-------|---------|------|------|---------|
 | agent-team-loop | idle | EXECUTE | 20260808-174558-3176 | — | Agent Team Loop: multi-CLI worker orchestration (pi/codex/claude) via AgenticTask PM + timi-proxy routing | 2026-09-07T12:05:36.859Z |
 | timi-gpt-pi-routing | idle | DONE | 20260814-151438-9272 | agent-team-loop | Fix Pi Timi GPT Responses routing and Multi-Workers launcher integration | 2026-09-07T12:05:36.859Z |
 | mw-dispatch-reliability | idle | EXECUTE | 20260828-160111-8496 | — | Fix multi-worker dispatch availability (per-task credential failure isolation, stale entry cleanup) and build debug/test system (mw doctor, L0/L1/L2 tests) | 2026-09-07T12:05:36.859Z |
@@ -14,4 +17,6 @@
 | mw-activation-rearm | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-14T09:25:30.889Z |
 | mw-evidence-nudge-notify | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-14T09:58:19.011Z |
 | mw-pm-save-snapshot | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-15T04:10:55.224Z |
-| mw-timi-models-add | active | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-15T04:10:55.224Z |
+| mw-timi-models-add | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-15 21:52 |
+| mw-protected-config-guard | idle | — | — | — | Cross-window config hard guard: agent tool layer blocks write/edit/bash modification of ~/.pi/agent auth.json/models.json/settings.json/oauth.json while sessions run (2026-09-15 all-windows credential-loss incident); Python-side same-rule helpers | 2026-09-16 15:06 |
+| mw-bootstrap-fresh-install-tolerance | idle | — | — | — | Bootstrap fresh-install tolerance: missing credentials no longer abort (warn + skip service start + --fast re-run hint); package README rewritten clean (mojibake + behavior fix); changelog synced; 20/20 + 430 package tests | 2026-09-16 15:06 |
