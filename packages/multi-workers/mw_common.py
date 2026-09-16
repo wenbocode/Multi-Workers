@@ -264,6 +264,84 @@ def describe_missing(cred_cfg: dict | None) -> str:
     return "; ".join(parts) if parts else "no credential sources declared"
 
 
+# --- Protected agent config (cross-window files) ----------------------------
+#
+# Incident 2026-09-15: a running pi session cleared ~/.pi/agent/auth.json
+# while other windows were live; every window lost its credentials
+# ("Provider is not configured: timi") and several hung. These files are
+# live config shared by ALL pi sessions, so framework code must never write
+# them. Credential/model/settings changes belong to the user, outside pi
+# (plain terminal, or `pi /login` which is a core flow, not the tool layer).
+# The agent-side hard block lives in the agent-team-loop extension
+# (shared/protected-config.ts); this is the Python-side mirror for any
+# future framework write path.
+
+#: Protected file names inside the pi agent config dir (oauth.json is the
+#: legacy pre-migration credential store, same blast radius).
+PROTECTED_AGENT_CONFIG_FILES: tuple[str, ...] = (
+    "auth.json",
+    "models.json",
+    "settings.json",
+    "oauth.json",
+)
+
+#: Mirrors ENV_AGENT_DIR in coding-agent src/config.ts (getAgentDir()).
+AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
+
+
+def agent_config_dir(env: Mapping[str, str] | None = None) -> pathlib.Path:
+    """The effective pi agent config dir: the AGENT_DIR_ENV override
+    (tilde-expanded) else ~/.pi/agent. Mirrors core getAgentDir(); env is
+    injectable for tests (defaults to os.environ)."""
+    if env is None:
+        env = os.environ
+    raw = env.get(AGENT_DIR_ENV, "")
+    if raw:
+        return pathlib.Path(os.path.expanduser(raw))
+    return pathlib.Path.home() / ".pi" / "agent"
+
+
+def is_protected_agent_config(path: str | os.PathLike[str], env: Mapping[str, str] | None = None) -> bool:
+    """True when `path` targets a protected file (or an agent dir itself).
+
+    Checked against BOTH the effective agent dir and the default ~/.pi/agent
+    (defense-in-depth, matching the TS guard): an env override in the calling
+    process does not un-protect the default location. Pure: ~ expansion and
+    cwd-relative resolution only, no fs access, never raises.
+    """
+    p = pathlib.Path(os.path.expanduser(str(path))).resolve()
+    candidates = {agent_config_dir(env).resolve(), (pathlib.Path.home() / ".pi" / "agent").resolve()}
+    for agent_dir in candidates:
+        if p == agent_dir:
+            return True
+        if any(p == agent_dir / name for name in PROTECTED_AGENT_CONFIG_FILES):
+            return True
+    return False
+
+
+class ProtectedConfigError(RuntimeError):
+    """Raised when framework code tries to modify a protected agent config
+    file. No override exists on purpose: the fix is to not write the file."""
+
+
+def assert_not_protected_agent_config(
+    path: str | os.PathLike[str],
+    action: str = "modify",
+    env: Mapping[str, str] | None = None,
+) -> None:
+    """Guard for any future framework write path: raises before the write
+    when the target is a protected agent config file."""
+    if is_protected_agent_config(path, env):
+        target = os.path.expanduser(str(path))
+        raise ProtectedConfigError(
+            f"refusing to {action} {target}: cross-window pi config file "
+            f"({', '.join(PROTECTED_AGENT_CONFIG_FILES)} under the agent dir) shared "
+            "by every live pi session (2026-09-15 incident: clearing auth.json "
+            "broke all open windows). Framework code never writes these files; "
+            "the user changes them outside pi (plain terminal / `pi /login`)."
+        )
+
+
 # 鈹€鈹€ Route resolution 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def route_for(config: dict, cli: str, provider: str) -> dict:

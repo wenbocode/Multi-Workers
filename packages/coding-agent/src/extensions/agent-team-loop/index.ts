@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { pmActivate } from "./pm/pm-orchestrator.ts";
+import { registerProtectedConfigGuard } from "./shared/protected-config.ts";
 import { workerModeActivate } from "./worker/worker-mode.ts";
 
 // Defense against a double-load: if the same bundle is loaded twice in one host
@@ -29,6 +30,14 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 		return;
 	}
 	g[ACTIVATION_FLAG] = true;
+
+	// Cross-window config guard (2026-09-15 incident: a session cleared
+	// ~/.pi/agent/auth.json and every live window lost its credentials).
+	// Registered in EVERY mode — PM, worker, and plain interactive windows —
+	// after the double-load flag so a duplicate bundle copy cannot double-
+	// register the listener. Hard block on write/edit/bash targeting the
+	// protected agent config; reads pass through.
+	registerProtectedConfigGuard(pi);
 
 	if (process.env.PI_WORKER_TASK) {
 		await workerModeActivate(pi);
