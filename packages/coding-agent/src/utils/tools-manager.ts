@@ -71,6 +71,14 @@ const TOOLS: Record<string, ToolConfig> = {
 	},
 };
 
+// Fallback versions for when the GitHub API is unreachable or rate-limited:
+// unauthenticated requests are capped at 60/h per IP and some networks get
+// 403 outright. Direct release-download URLs bypass the API entirely.
+const PINNED_VERSIONS: Record<string, string> = {
+	fd: "10.2.0",
+	rg: "14.1.0",
+};
+
 // Check if a command exists in PATH by trying to run it
 function commandExists(cmd: string): boolean {
 	try {
@@ -106,11 +114,13 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 
 // Fetch latest release version from GitHub
 async function getLatestVersion(repo: string): Promise<string> {
+	const headers: Record<string, string> = { "User-Agent": `${APP_NAME}-coding-agent` };
+	if (process.env.GITHUB_TOKEN) {
+		headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+	}
 	const response = await fetchWithRetry(
 		`https://api.github.com/repos/${repo}/releases/latest`,
-		{
-			headers: { "User-Agent": `${APP_NAME}-coding-agent` },
-		},
+		{ headers },
 		{ timeoutMs: NETWORK_TIMEOUT_MS },
 	);
 
@@ -240,15 +250,34 @@ function extractZipArchive(archivePath: string, extractDir: string, assetName: s
 }
 
 // Download and install a tool
-async function downloadTool(tool: "fd" | "rg"): Promise<string> {
+async function downloadTool(tool: "fd" | "rg", silent: boolean = false): Promise<string> {
 	const config = TOOLS[tool];
 	if (!config) throw new Error(`Unknown tool: ${tool}`);
 
 	const plat = platform();
 	const architecture = arch();
 
-	// Get latest version
-	let version = await getLatestVersion(config.repo);
+	// Get latest version. The unauthenticated GitHub API is rate-limited
+	// (60/h per IP; rate-limited regions see 403), so fall back to a pinned
+	// known-good version and keep going — the direct release-download URL
+	// below does not go through the API.
+	let version: string;
+	try {
+		version = await getLatestVersion(config.repo);
+	} catch (e) {
+		const pinned = PINNED_VERSIONS[tool];
+		if (!pinned) {
+			throw e;
+		}
+		version = pinned;
+		if (!silent) {
+			console.log(
+				chalk.dim(
+					`GitHub API unavailable (${e instanceof Error ? e.message : e}); using pinned ${config.name} ${pinned}`,
+				),
+			);
+		}
+	}
 	if (tool === "fd" && plat === "darwin" && architecture === "x64") {
 		version = "10.3.0";
 	}
@@ -357,7 +386,7 @@ export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Pr
 	}
 
 	try {
-		const path = await downloadTool(tool);
+		const path = await downloadTool(tool, silent);
 		if (!silent) {
 			console.log(chalk.dim(`${config.name} installed to ${path}`));
 		}

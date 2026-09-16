@@ -144,6 +144,7 @@
 - Fixed GitHub Copilot compaction and branch summaries using the Individual endpoint instead of the credential-resolved Business or Enterprise endpoint ([#6768](https://github.com/earendil-works/pi/issues/6768)).
 - Fixed extension model calls dropping credential-resolved endpoints when forwarding request authentication, including custom compaction with GitHub Copilot Business and Enterprise accounts ([#7579](https://github.com/earendil-works/pi/issues/7579)).
 - Fixed fullscreen transcript navigation leaving no editor-accessible `Home`, `End`, `PageUp`, or `PageDown` variants by adding Ctrl-modified editor bindings ([#7574](https://github.com/earendil-works/pi/issues/7574)).
+- Fixed fd/ripgrep tool bootstrap failing on rate-limited GitHub API networks: `ensureTool` downloads now send `GITHUB_TOKEN` authentication when the variable is set and fall back to pinned known-good versions (ripgrep 14.1.0, fd 10.2.0) whose direct release-download URLs bypass `api.github.com` entirely — unauthenticated API calls are capped at 60/h per IP and rate-limited regions see a hard 403, which previously left fresh installs without `rg`/`fd` and broke the grep/find tools.
 
 ## [0.83.0] - 2026-07-29
 

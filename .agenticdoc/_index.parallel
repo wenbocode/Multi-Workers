@@ -20,3 +20,4 @@
 | mw-timi-models-add | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-15 21:52 |
 | mw-protected-config-guard | idle | — | — | — | Cross-window config hard guard: agent tool layer blocks write/edit/bash modification of ~/.pi/agent auth.json/models.json/settings.json/oauth.json while sessions run (2026-09-15 all-windows credential-loss incident); Python-side same-rule helpers | 2026-09-16 15:06 |
 | mw-bootstrap-fresh-install-tolerance | idle | — | — | — | Bootstrap fresh-install tolerance: missing credentials no longer abort (warn + skip service start + --fast re-run hint); package README rewritten clean (mojibake + behavior fix); changelog synced; 20/20 + 430 package tests | 2026-09-16 15:06 |
+| mw-rg-download-403-fallback | idle | — | — | — | Fix fresh-install rg/fd download failure on 403-rate-limited GitHub API networks: pinned-version fallback via direct release URLs + optional GITHUB_TOKEN; sandbox e2e verified rg 14.1.0 and fd 10.2.0 | 2026-09-16 16:00 |
