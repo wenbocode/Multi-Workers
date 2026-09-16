@@ -1,11 +1,10 @@
 node_modules/
-dist/
+/dist/
 .artifacts/
 *.log
 .DS_Store
 *.tsbuildinfo
 # packages/*/node_modules/
-packages/*/dist/
 packages/*/dist-chrome/
 packages/*/dist-firefox/
 packages/ai/src/providers/data/
