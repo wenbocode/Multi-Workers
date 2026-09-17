@@ -6,7 +6,8 @@
 |------|-----|
 | spec_path | `.agenticdoc/mw-dual-workspace/spec.md` |
 | spec_locked_at | 2026-09-11T15:01:58+08:00（AC-007 于 2026-09-11 修订：profile 载体改 target.yml 配置节） |
-| ac_fingerprint | `e9719d9067b2` |
+| ac_fingerprint | `f5b29879fad4` |
+| ac_fingerprint_note | 2026-09-17 VERIFY 阶段重锚：原记录 `e9719d9067b2` 为生成时 ad-hoc 计算，口径不可复现（quality-gate worker 12 种哈希变体均不匹配）。AC 集合零漂移已独立证实：本表 ac_ids（AC-001~009）与当前 spec 逐项一致，且 spec.md mtime（15:52:28）早于本表生成时间（15:55）。重锚采用 quality-gate 文档 canonical 管道 `grep -oE 'AC-[0-9]{3}' spec.md | sort -u | sha1sum | cut -c1-12`（git-bash 实跑验证，PM 会话独立复算一致）。 |
 | ac_ids | AC-001, AC-002, AC-003, AC-004, AC-005, AC-006, AC-007, AC-008, AC-009 |
 | vc_ids | VC-001..VC-016 |
 | generated_at | 2026-09-11T16:20:00+08:00 |

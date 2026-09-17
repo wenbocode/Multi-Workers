@@ -2,10 +2,11 @@
 
 ## 1. Snapshot
 - Key: mw-dual-workspace
-- Phase: EXECUTE
+- Phase: DONE
 - Next Action: 12/12 task 全部验证通过，EXECUTE 完成。待用户决策：1) 是否推进 VERIFY 阶段（evidence-requirement.md 质检门禁 + audit_phase.py）；2) 代码提交策略（多会话仓库，仅本 key 文件，待用户逐次决定）；3) 真机 ProjectH 双根实测（mw target set --game F:/ProjectH --engine E:/CFHEngine 后跑一个真实 worker）
 - Started: 2026-09-11 14:40
-- Updated: 2026-09-11 16:40
+- Updated: 2026-09-17 17:00
+- Completed: 2026-09-17 17:00
 
 ## 2. Task Status
 
@@ -42,12 +43,18 @@
 - 2026-09-11 18:25 | 004 验证 | 客观现象: 24/24 + 关联 139/139；两 deny 形态 × 四工具 6 调用 100% block、trace 6 行 rule=deny-glob；allow+deny 冲突判 deny | 映射: AC-006
 - 2026-09-11 18:20 | 004 迭代 | 客观现象: 纯 minimatch 下裸目录形式不拦截 ls/find 目录本身（漏洞），测试抓出后补尾部 /** 目录自匹配，已回写 design D-003 [EXEC 注记] | 映射: AC-006 L1 完整性
 - 2026-09-11 17:00 | 002 迭代 | 客观现象: fixture 布局 bug（target.yml 未入 .agenticdoc/）与 _substitute 无条件 discover 均被 runner 首跑抓出 | 映射: parity 锁有效性自证
+- 2026-09-17 16:40 | 质检门禁（worker qg-review-mw-dual-workspace） | 客观现象: ⚠️ 有条件通过——9/9 AC、16/16 VC 证据充分且独立复跑全绿（target-config 36/36、read-scope+dual-root 28/28、Py 433、audit exit 0），代码审查零 High；唯一门禁项 ac_fingerprint 不可复现已重锚 f5b29879fad4（canonical 管道 PM 独立复算一致，零漂移双证）；P-2 按（b）design §9 EXEC 注记修订；报告 evidence/quality-gate-report-2026-09-17.md | 映射: AC-001~009 全体
+- 2026-09-17 17:00 | 质检终判 | 客观现象: 用户确认接受全部 4 项 ⚠️（task-012 vc_refs 已注明 / F6 P-3 欠债 / P-4 欠债 / CR-1 候选）；P-1/P-2 处置闭环后合入前标准达成（无 ❌，⚠️ 经用户确认接受）→ 质检判定 PASS | 映射: 合入门禁
 
 ## 4. Hypothesis Queue
 *(empty)*
 
 ## 5. Decisions
-*(empty)*
+
+### 验证欠债（质检 ⚠️ 登记不阻断）
+- P-3: F6 遍历洪泛有界性无专门回归用例（design D-004 已接受有界；后续补 P4 工作区遍历限流用例）
+- P-4: task 模板不统一（read-scope deny 块在 Py/TS 双渲染器之外的手写形态无模板约束）
+- CR-1: checkReadScopeCall deny/scope 双分支归一化结果复用（可选微优化，~0.088ms/调用量级，不随本次合入）
 
 ## 6. Turn End Records
 *(empty)*

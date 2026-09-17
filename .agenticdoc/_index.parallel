@@ -11,7 +11,7 @@
 | mw-worker-timeout-convergence | idle | DONE | — | agent-team-loop | Worker watchdog redo: activity-based idle detection (10m, env-tunable) + per-task wall budget (task.md timeout header, 60m default) + convergence checkpoint with machine evidence + PM triggerTurn escalation + deadline steer; GC-4 amended; quality gate PASS | 2026-09-09 23:56 |
 | mw-widget-terminal-lifecycle | idle | DONE | WENBOZHOU-PC4:80660 | agent-team-loop | Watch widget terminal-row lifecycle: ack (command+tool) + sectioned display (live/unhandled always shown, processed/done folded past 5) + terminal summary quality (exit reason / TL;DR) | 2026-09-14T08:20:15.400Z |
 | ai-baseline-repair | idle | DONE | WENBOZHOU-PC4:74812 | — | — | 2026-09-11 14:38 |
-| mw-dual-workspace | idle | EXECUTE | WENBOZHOU-PC4:93848 | agent-team-loop | Dual-workspace mode: control workspace (framework files) separated from target project (game/UE source); Game+Engine dual-dir target config, mode switch via config/command, read-scope deny globs, target profile injection | 2026-09-11 16:40 |
+| mw-dual-workspace | idle | DONE | WENBOZHOU-PC4:93848 | agent-team-loop | Dual-workspace mode: control workspace (framework files) separated from target project (game/UE source); Game+Engine dual-dir target config, mode switch via config/command, read-scope deny globs, target profile injection | 2026-09-17 17:00 |
 | autopilot-monitor | idle | DONE | WENBOZHOU-PC4:8420 |  |  | 2026-09-14T06:37:59.114Z |
 | mw-owner-key-per-window | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-14T08:10:11.482Z |
 | mw-activation-rearm | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-14T09:25:30.889Z |

@@ -300,7 +300,7 @@ VC-016: 当控制工作区 mw 源码 mtime 晚于 serve.meta 的 started_at 时�
 
 ## §9 非功能实现方案
 
-- **性能**：协调层 IO 维持同步 `fs.appendFileSync`（实测 p95 ≤ 0.2ms 跨盘，阈值 p95 < 1ms/max < 50ms）；deny glob 匹配作用于已归一化路径（minimatch，纯内存，无新增 IO）；read-scope 每调用 realpathSync 维持现状（实测 0.088ms），双根不新增每调用 realpath——控制根推导是启动期一次性的（PI_WORKER_TASK dirname）
+- **性能**：协调层 IO 维持同步 `fs.appendFileSync`（实测 p95 ≤ 0.2ms 跨盘，阈值 p95 < 1ms/max < 50ms）；deny glob 匹配作用于已归一化路径（minimatch，纯内存，无新增 IO）；read-scope 每调用 realpathSync 维持现状（实测 0.088ms），双根不新增每调用 realpath——控制根推导是启动期一次性的（PI_WORKER_TASK dirname）。[EXEC 注记 2026-09-17 质检修正：deny-glob 任务的 read 类调用在 deny 判定（内 realpathSync 归一）未命中后再走 scope 判定（再次归一），最 2 次 realpath/调用（改造前 1 次）；deny-only 任务 0~1 次。增量 = 1 次 realpathSync ≈ 0.088ms/调用（本节既有实测值），无可感知影响。归一化结果双分支复用为可选微优化（质检 CR-1 建议，登记后续候选，不随本次合入）。]
 - **安全**：凭证隔离不变（launcher 既有机制）；fail-closed 链完整——空 scope 阻断全部读取、deny 优先于 allow、engine/uproject 缺失显式非零退出、YAML 未知节不破坏引导字段
 - **可观测**：trace 新增 `[READ_SCOPE] rule=deny-glob` block 行（沿用 appendReadScopeTraceLine 通道）；`mw target show` 显示解析后 roots 与渲染示例；doctor 输出 toolchain 探测结果
 - **已知限制**（接受并记录）：P4 工作区无 .gitignore 时 find/grep 遍历不排除 deny 目录，依赖输出截断 + caps 限流（有界非阻断）；长路径依赖机器 LongPathsEnabled=1
