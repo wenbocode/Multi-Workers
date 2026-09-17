@@ -13885,6 +13885,12 @@ function formatDoctorReport(report, fix) {
   if (bundle?.available) {
     lines.push(bundle.stale ? "\u6269\u5C55 bundle: \u6E90\u7801\u8F83\u65B0\uFF0C\u5EFA\u8BAE /mw build \u91CD\u5EFA" : "\u6269\u5C55 bundle: \u6700\u65B0");
   }
+  const piShell = report.pi_shell;
+  if (piShell?.status === "ok") {
+    lines.push(`pi shell: ${piShell.shell_path ?? "?"}`);
+  } else if (piShell?.status && piShell.status !== "not-applicable") {
+    lines.push(`pi shell: ${piShell.status} \u2014 ${piShell.detail ?? ""}`);
+  }
   if (fix) {
     const applied = report.fix?.applied;
     lines.push(Array.isArray(applied) && applied.length > 0 ? `\u5DF2\u81EA\u52A8\u4FEE\u590D: ${applied.join("; ")}` : "\u65E0\u53EF\u81EA\u52A8\u4FEE\u590D\u9879");

@@ -975,6 +975,42 @@ describe("formatDoctorReport", () => {
 		// Old doctor output without the section keeps a clean summary.
 		expect(formatDoctorReport(sample, false)).not.toContain("worker 活性");
 	});
+
+	it("renders the pi_shell row: ok shows the path, other statuses show detail, not-applicable stays silent", () => {
+		const ok: DoctorJson = {
+			...sample,
+			pi_shell: {
+				status: "ok",
+				settings: "C:/x/settings.json",
+				shell_path: "C:/pwsh.exe",
+				detected: null,
+				detail: "",
+			},
+		};
+		expect(formatDoctorReport(ok, false)).toContain("pi shell: C:/pwsh.exe");
+
+		const missing: DoctorJson = {
+			...sample,
+			pi_shell: {
+				status: "missing",
+				settings: "C:/x/settings.json",
+				shell_path: null,
+				detected: "C:/pwsh.exe",
+				detail: "shellPath not configured — detected C:/pwsh.exe; pin it",
+			},
+		};
+		expect(formatDoctorReport(missing, false)).toContain("pi shell: missing");
+		expect(formatDoctorReport(missing, false)).toContain("shellPath not configured");
+
+		const notApplicable: DoctorJson = {
+			...sample,
+			pi_shell: { status: "not-applicable", settings: "/home/x", shell_path: null, detected: null, detail: "" },
+		};
+		expect(formatDoctorReport(notApplicable, false)).not.toContain("pi shell");
+
+		// Absent section (old serve) stays silent too.
+		expect(formatDoctorReport(sample, false)).not.toContain("pi shell");
+	});
 });
 
 // ── keyed workers layout ({key}/workers/<task-key>/, _scratch fallback) ──────

@@ -1222,6 +1222,21 @@ def cmd_setup(args: argparse.Namespace) -> int:
     shutil.copy2(str(_bundle_path()), str(ext_dst))
     _write_mw_py_path()
     print(f"[mw setup] Extension installed globally: {ext_dst}")
+
+    # (3) pin pi's shellPath when missing (fresh-machine shell bootstrap):
+    # additive merge into ~/.pi/agent/settings.json — PowerShell detected via
+    # PATH, mirroring pi's own resolution order. Never overwrites an existing
+    # value; never rewrites a malformed file (mw_common.ensure_pi_shell_path).
+    shell = mw_common.ensure_pi_shell_path(env=os.environ, fix=True)
+    if shell["status"] in ("filled", "replaced"):
+        print(f"[mw setup] pi shellPath {shell['status']}: {shell['shell_path']}")
+    elif shell["status"] == "ok":
+        print(f"[mw setup] pi shellPath already configured: {shell['shell_path']}")
+    elif shell["status"] != "not-applicable":
+        print(
+            f"[mw setup] Warning: pi shellPath {shell['status']} — {shell['detail']}",
+            file=sys.stderr,
+        )
     print("[mw setup] Done — pi will now auto-init the agent-team loop in every project on launch.")
     return 0
 

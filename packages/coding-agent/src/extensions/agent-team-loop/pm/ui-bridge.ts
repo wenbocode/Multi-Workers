@@ -1273,6 +1273,15 @@ export function formatDoctorReport(report: DoctorJson, fix: boolean): string {
 		lines.push(bundle.stale ? "扩展 bundle: 源码较新，建议 /mw build 重建" : "扩展 bundle: 最新");
 	}
 
+	// pi shellPath row (fresh-machine shell bootstrap; non-Windows reports
+	// not-applicable and stays silent here).
+	const piShell = report.pi_shell;
+	if (piShell?.status === "ok") {
+		lines.push(`pi shell: ${piShell.shell_path ?? "?"}`);
+	} else if (piShell?.status && piShell.status !== "not-applicable") {
+		lines.push(`pi shell: ${piShell.status} — ${piShell.detail ?? ""}`);
+	}
+
 	if (fix) {
 		const applied = report.fix?.applied;
 		lines.push(Array.isArray(applied) && applied.length > 0 ? `已自动修复: ${applied.join("; ")}` : "无可自动修复项");

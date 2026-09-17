@@ -45,7 +45,7 @@ python packages/multi-workers/mw.py bootstrap --project .
 | 2 | `npm ci` / `npm install --ignore-scripts` |
 | 3 | `npm run build`（根；ai 构建需网络拉取 models.dev） |
 | 4 | 全局 link `pi`：已存在则校验链接目标确为本仓库（防 registry 版顶替），失败时提示 `npm uninstall -g` 修复 |
-| 5 | `setup`：克隆 AgenticTask 框架 + 全局安装扩展 |
+| 5 | `setup`：克隆 AgenticTask 框架 + 全局安装扩展；Windows 上检测并填充 pi 的 `shellPath`（`~/.pi/agent/settings.json`，只在缺失/失效时写入，已有有效值不覆盖） |
 | 6 | `init`：创建 `.agenticdoc/` `.mw/` `.pi/extensions/` 脚手架 |
 | 7 | `start`：后台启动服务（无凭据路径下跳过，见步骤 1） |
 | 8 | `doctor`：全链路诊断，期望 `summary: healthy` |
@@ -70,11 +70,11 @@ python mw.py <子命令>
 |------|------|
 | `serve` / `start` | 前台 / 后台运行服务。参数：`--project`（必填）、`--pi-port`（默认 7001）、`--claude-port`（7003）、`--deepseek-port`、`--poll-interval`（2s）、`--max-workers`、`--providers`。LLM 代理按需启动：仅当 claude/claude-cli/deepseek 代理路由有凭证时才拉起（需私有包 `timi-proxy-cli`）；纯 timi/codex 直连路由不起代理、无该包也能正常服务 |
 | `stop` / `status` | 停止 / 查看服务 |
-| `doctor [--json] [--fix]` | 全链路诊断：服务、代理端口、日志、队列、凭据、bundle、target |
+| `doctor [--json] [--fix]` | 全链路诊断：服务、代理端口、日志、队列、凭据、bundle、target、pi shellPath |
 | `bootstrap` | 新机器一键安装（见上） |
 | `init [--no-framework]` | 初始化项目脚手架；`--no-framework` 跳过 AgenticTask 框架安装 |
 | `build [--install]` | esbuild 重建扩展 bundle（无 bash 依赖、cwd 无关）；`--install` 同时装到全局扩展目录并重建 pi dist |
-| `setup` | 一次性机器初始化：克隆框架 + 全局装扩展 |
+| `setup` | 一次性机器初始化：克隆框架 + 全局装扩展 + 自动填充 pi `shellPath`（Windows；幂等，不覆盖已配置值） |
 | `pull-agentictask` / `push-agentictask` | 更新 / 推送 AgenticTask 框架 |
 | `target set/show/clear` | 双工作区配置（见下） |
 

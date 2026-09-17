@@ -367,6 +367,13 @@ export interface DoctorJson {
 		source_newest_mtime?: string;
 		note?: string;
 	};
+	pi_shell?: {
+		status?: string;
+		settings?: string;
+		shell_path?: string | null;
+		detected?: string | null;
+		detail?: string;
+	};
 	fix?: { applied?: unknown };
 	summary?: { healthy?: boolean; issues?: unknown; suggestions?: unknown };
 }

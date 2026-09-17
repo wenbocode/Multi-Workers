@@ -180,6 +180,7 @@ class TestWorkerLiveness:
         result = subprocess.run(
             [sys.executable, str(_MW_PY), "doctor", f"--project={proj}", "--json"],
             capture_output=True, text=True, timeout=30,
+            env={**os.environ, mw_common.AGENT_DIR_ENV: str(proj / "pi-agent")},
         )
         assert result.returncode == 0, result.stderr
         report = json.loads(result.stdout)
@@ -199,6 +200,7 @@ class TestWorkerLiveness:
         result = subprocess.run(
             [sys.executable, str(_MW_PY), "doctor", f"--project={proj}", "--json", "--stale-after=60"],
             capture_output=True, text=True, timeout=30,
+            env={**os.environ, mw_common.AGENT_DIR_ENV: str(proj / "pi-agent")},
         )
         assert result.returncode == 0, result.stderr
         report = json.loads(result.stdout)
@@ -369,9 +371,13 @@ class TestServePartialAvailability:
 
 class TestDoctorCli:
     def _run_doctor(self, proj: pathlib.Path, *extra: str) -> subprocess.CompletedProcess:
+        # PI_CODING_AGENT_DIR scopes the pi_shell section (and any --fix write
+        # to settings.json) to the per-test tmp agent dir — never the user's
+        # real ~/.pi/agent.
+        env = {**os.environ, mw_common.AGENT_DIR_ENV: str(proj / "pi-agent")}
         return subprocess.run(
             [sys.executable, str(_MW_PY), "doctor", f"--project={proj}", "--json", *extra],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, env=env,
         )
 
     def test_sections_and_exit_code_semantics(self, tmp_path: pathlib.Path) -> None:
@@ -390,12 +396,14 @@ class TestDoctorCli:
         report = json.loads(result.stdout)
         for section in (
             "service", "proxy", "orphan_proxy", "launcher_log",
-            "queue", "credentials", "bundle", "summary",
+            "queue", "credentials", "bundle", "pi_shell", "summary",
         ):
             assert section in report, f"missing doctor section: {section}"
         assert report["service"]["running"] is True
         assert report["summary"]["healthy"] is True
         assert report["summary"]["issues"] == []
+        text = mw_common.format_doctor_text(report)
+        assert "pi_shell:" in text
 
     def test_issues_exit_code_one(self, tmp_path: pathlib.Path) -> None:
         proj = tmp_path
@@ -444,6 +452,14 @@ class TestDoctorCli:
         )
         mw_common.pid_file(proj).write_text("4000000000", encoding="utf-8")
 
+        # A pre-configured (valid) pi shellPath keeps the pi_shell section out
+        # of the fix list — machine-independent (must exist BEFORE the run).
+        agent_dir = proj / "pi-agent"
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        (agent_dir / "settings.json").write_text(
+            json.dumps({"shellPath": sys.executable}), encoding="utf-8"
+        )
+
         result = self._run_doctor(proj, "--fix")
         assert result.returncode == 1  # service still not running -> issue remains
         report = json.loads(result.stdout)
@@ -457,6 +473,119 @@ class TestDoctorCli:
         assert len(applied) == 2
         # No real proxy/bundle was touched by fix (suggestions only).
         assert isinstance(report["summary"]["suggestions"], list)
+        assert report["pi_shell"]["status"] == "ok"
+
+    @pytest.mark.skipif(os.name != "nt", reason="detect_pi_shell_path is Windows-only")
+    def test_fix_fills_missing_pi_shell_path(self, tmp_path: pathlib.Path) -> None:
+        # Fresh-machine path: no settings.json in the (injected) agent dir;
+        # doctor --fix pins the real detected PowerShell and records the action.
+        proj = tmp_path
+        (proj / ".mw").mkdir()
+        (proj / ".agenticdoc").mkdir()
+        result = self._run_doctor(proj, "--fix")
+        report = json.loads(result.stdout)
+        assert report["pi_shell"]["status"] == "filled"
+        assert report["pi_shell"]["shell_path"] == report["pi_shell"]["detected"]
+        assert any(
+            "shellPath filled" in a for a in report["fix"]["applied"]
+        )
+        data = json.loads(
+            (proj / "pi-agent" / "settings.json").read_text(encoding="utf-8")
+        )
+        assert data["shellPath"] == report["pi_shell"]["detected"]
+
+
+# ── pi shellPath auto-fill (fresh-machine shell bootstrap) ───────────────────
+
+class TestEnsurePiShellPath:
+    """Cross-platform unit tests via an injected `detect` + a temp agent dir
+    (PI_CODING_AGENT_DIR) — never the user's real ~/.pi/agent."""
+
+    @staticmethod
+    def _env(tmp_path: pathlib.Path) -> tuple[dict, pathlib.Path]:
+        agent_dir = tmp_path / "pi-agent"
+        return {mw_common.AGENT_DIR_ENV: str(agent_dir)}, agent_dir
+
+    def test_fills_missing_shell_path(self, tmp_path: pathlib.Path) -> None:
+        env, agent_dir = self._env(tmp_path)
+        fake_shell = tmp_path / "pwsh.exe"
+        fake_shell.write_text("", encoding="utf-8")
+        r = mw_common.ensure_pi_shell_path(env=env, fix=True, detect=lambda: str(fake_shell))
+        assert r["status"] == "filled"
+        assert r["shell_path"] == str(fake_shell)
+        data = json.loads((agent_dir / "settings.json").read_text(encoding="utf-8"))
+        assert data["shellPath"] == str(fake_shell)
+
+    def test_missing_without_fix_reports_only(self, tmp_path: pathlib.Path) -> None:
+        env, agent_dir = self._env(tmp_path)
+        fake_shell = tmp_path / "pwsh.exe"
+        fake_shell.write_text("", encoding="utf-8")
+        r = mw_common.ensure_pi_shell_path(env=env, fix=False, detect=lambda: str(fake_shell))
+        assert r["status"] == "missing"
+        assert "detected" in r["detail"]
+        assert not (agent_dir / "settings.json").exists()
+
+    def test_no_overwrite_when_configured_and_file_exists(self, tmp_path: pathlib.Path) -> None:
+        env, agent_dir = self._env(tmp_path)
+        agent_dir.mkdir(parents=True)
+        good = tmp_path / "good-shell.exe"
+        good.write_text("", encoding="utf-8")
+        (agent_dir / "settings.json").write_text(
+            json.dumps({"shellPath": str(good), "theme": "dark"}), encoding="utf-8"
+        )
+        other = tmp_path / "other.exe"
+        other.write_text("", encoding="utf-8")
+        r = mw_common.ensure_pi_shell_path(env=env, fix=True, detect=lambda: str(other))
+        assert r["status"] == "ok"
+        data = json.loads((agent_dir / "settings.json").read_text(encoding="utf-8"))
+        assert data["shellPath"] == str(good)  # untouched
+        assert data["theme"] == "dark"
+
+    def test_replaces_stale_shell_path(self, tmp_path: pathlib.Path) -> None:
+        env, agent_dir = self._env(tmp_path)
+        agent_dir.mkdir(parents=True)
+        (agent_dir / "settings.json").write_text(
+            json.dumps({"shellPath": str(tmp_path / "gone" / "pwsh.exe")}), encoding="utf-8"
+        )
+        fresh = tmp_path / "powershell.exe"
+        fresh.write_text("", encoding="utf-8")
+        r = mw_common.ensure_pi_shell_path(env=env, fix=True, detect=lambda: str(fresh))
+        assert r["status"] == "replaced"
+        data = json.loads((agent_dir / "settings.json").read_text(encoding="utf-8"))
+        assert data["shellPath"] == str(fresh)
+
+    def test_broken_without_fix(self, tmp_path: pathlib.Path) -> None:
+        env, agent_dir = self._env(tmp_path)
+        agent_dir.mkdir(parents=True)
+        stale = json.dumps({"shellPath": str(tmp_path / "gone" / "pwsh.exe")})
+        (agent_dir / "settings.json").write_text(stale, encoding="utf-8")
+        fresh = tmp_path / "powershell.exe"
+        fresh.write_text("", encoding="utf-8")
+        r = mw_common.ensure_pi_shell_path(env=env, fix=False, detect=lambda: str(fresh))
+        assert r["status"] == "broken"
+        assert (agent_dir / "settings.json").read_text(encoding="utf-8") == stale
+
+    def test_never_writes_malformed_settings(self, tmp_path: pathlib.Path) -> None:
+        env, agent_dir = self._env(tmp_path)
+        agent_dir.mkdir(parents=True)
+        (agent_dir / "settings.json").write_text("{ not json", encoding="utf-8")
+        fresh = tmp_path / "powershell.exe"
+        fresh.write_text("", encoding="utf-8")
+        r = mw_common.ensure_pi_shell_path(env=env, fix=True, detect=lambda: str(fresh))
+        assert r["status"] == "unreadable"
+        assert (agent_dir / "settings.json").read_text(encoding="utf-8") == "{ not json"
+
+    def test_default_detect_respects_platform_gate(self, tmp_path: pathlib.Path) -> None:
+        # Default detector: Windows probes PATH for pwsh/powershell; other
+        # platforms short-circuit to not-applicable without touching anything.
+        env, agent_dir = self._env(tmp_path)
+        r = mw_common.ensure_pi_shell_path(env=env, fix=False)
+        if os.name != "nt":
+            assert r["status"] == "not-applicable"
+            assert not agent_dir.exists()
+        else:
+            assert r["status"] in ("ok", "missing", "broken", "unreadable")
+            assert not r["detected"] or pathlib.Path(r["detected"]).is_file()
 
 
 # ── M4: update_index.py claim protocol alignment (mw-dispatch-flow-fixes) ────

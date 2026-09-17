@@ -342,6 +342,146 @@ def assert_not_protected_agent_config(
         )
 
 
+# --- pi shellPath auto-fill (fresh-machine shell bootstrap) -------------------
+#
+# Why: pi resolves the bash tool's shell per call as user-shellPath ->
+# working WSL bash -> PowerShell -> error. A fresh machine has no shellPath
+# (settings.json is user-owned; the agent tool layer is hard-blocked from
+# writing it). When WSL bash is installed and working, pi picks it — and the
+# Windows-side python the user bootstrapped with is invisible inside WSL, so
+# the PM agent's `python .../advance_phase.py` path dies ("no shell").
+# Pinning PowerShell makes the shell deterministic and consistent with that
+# python.
+#
+# Policy exception (see assert_not_protected_agent_config): settings.json is
+# a protected cross-window file, but these helpers run ONLY from explicit
+# user-invoked commands (mw setup / bootstrap step 5 / doctor --fix) in a
+# plain terminal — the sanctioned context for machine config. The write is
+# an additive merge: fill only a missing/empty shellPath, replace only a
+# stale one (file gone, e.g. settings copied from another machine), never
+# touch any other key, never write a malformed file.
+
+def detect_pi_shell_path() -> str | None:
+    """Absolute PowerShell path to pin as pi's shellPath on Windows.
+
+    Preference mirrors pi's getPowerShellConfig: pwsh.exe (7+) before the
+    built-in powershell.exe. None on non-Windows (pi's Unix resolution —
+    /bin/bash -> PATH bash -> sh — never fails, nothing to pin) and when no
+    PowerShell is found."""
+    if os.name != "nt":
+        return None
+    for name in ("pwsh.exe", "powershell.exe"):
+        found = shutil.which(name)
+        if found and pathlib.Path(found).is_file():
+            return str(pathlib.Path(found))
+    return None
+
+
+def pi_settings_path(env: Mapping[str, str] | None = None) -> pathlib.Path:
+    """pi's settings.json inside the effective agent config dir."""
+    return agent_config_dir(env) / "settings.json"
+
+
+def _write_pi_settings(settings: pathlib.Path, data: dict) -> None:
+    """Merge-write pi settings.json (2-space indent, trailing newline).
+    Parent dir created when missing (fresh machine, no ~/.pi/agent yet)."""
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    tmp = settings.with_name(settings.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, settings)
+
+
+# ensure_pi_shell_path result statuses (doctor section contract, mirrored by
+# the TS DoctorJson.pi_shell): ok / filled / replaced / missing / broken /
+# unreadable / not-applicable.
+def ensure_pi_shell_path(
+    env: Mapping[str, str] | None = None,
+    fix: bool = False,
+    detect=None,
+) -> dict:
+    """Check (and with fix=True, fill) pi's settings.json shellPath.
+
+    Returns {"status", "settings", "shell_path", "detected", "detail"}:
+      ok              configured and the shell file exists (or non-Windows)
+      not-applicable  non-Windows platform — nothing to pin
+      filled          fix wrote shellPath into a settings.json that lacked it
+      replaced        fix replaced a stale shellPath (file missing on disk)
+      missing         not configured and not fixed (no fix, or nothing detected)
+      broken          configured but the shell file is gone and not fixed
+      unreadable      settings.json exists but is malformed — NEVER written
+
+    `detect` is injectable for cross-platform tests; it defaults to
+    detect_pi_shell_path (Windows-only)."""
+    settings = pi_settings_path(env)
+    detected = (detect or detect_pi_shell_path)()
+    result: dict = {
+        "settings": str(settings),
+        "shell_path": None,
+        "detected": detected,
+        "detail": "",
+    }
+    if detect is None and os.name != "nt":
+        result["status"] = "not-applicable"
+        result["detail"] = "unix shell resolution (/bin/bash -> PATH bash -> sh) never fails"
+        return result
+
+    if settings.is_file():
+        try:
+            data = json.loads(settings.read_text(encoding="utf-8-sig"))
+            if not isinstance(data, dict):
+                raise ValueError("not a JSON object")
+        except (OSError, ValueError) as exc:
+            result["status"] = "unreadable"
+            result["detail"] = (
+                f"{settings}: {exc} — fix by hand; this tool never rewrites a malformed file"
+            )
+            return result
+    else:
+        data = {}
+
+    current = data.get("shellPath")
+    current = current.strip() if isinstance(current, str) else ""
+    current = current or None
+    result["shell_path"] = current
+    if current and pathlib.Path(os.path.expanduser(current)).is_file():
+        result["status"] = "ok"
+        result["detail"] = "shellPath configured"
+        return result
+
+    if current:
+        # Stale: file gone (settings copied from another machine) — pi's
+        # getShellConfig throws 'Custom shell path not found'; bash tool dead.
+        if fix and detected:
+            data["shellPath"] = detected
+            _write_pi_settings(settings, data)
+            result["status"] = "replaced"
+            result["shell_path"] = detected
+            result["detail"] = f"stale shellPath '{current}' replaced with {detected}"
+        else:
+            result["status"] = "broken"
+            result["detail"] = (
+                f"shellPath '{current}' does not exist — the bash tool fails "
+                "('Custom shell path not found')"
+            )
+        return result
+
+    # Not configured.
+    if fix and detected:
+        data["shellPath"] = detected
+        _write_pi_settings(settings, data)
+        result["status"] = "filled"
+        result["shell_path"] = detected
+        result["detail"] = f"shellPath filled with {detected}"
+    else:
+        result["status"] = "missing"
+        result["detail"] = "shellPath not configured" + (
+            f" — detected {detected}; run 'mw setup' or 'mw.py doctor --fix' to pin it"
+            if detected
+            else " — no PowerShell detected; install one or set it by hand"
+        )
+    return result
+
+
 # 鈹€鈹€ Route resolution 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def route_for(config: dict, cli: str, provider: str) -> dict:
@@ -1028,6 +1168,20 @@ def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
         suggestions.append(
             "extension bundle older than source - run '/mw build' or 'mw.py build --install'"
         )
+    pi_shell = report.get("pi_shell") or {}
+    if pi_shell.get("status") == "broken":
+        issues.append(
+            "pi settings.json shellPath points to a missing file - the bash "
+            "tool fails ('Custom shell path not found'); run 'mw.py doctor --fix' "
+            "to re-pin it"
+        )
+    elif pi_shell.get("status") == "unreadable":
+        suggestions.append(f"pi settings.json unreadable: {pi_shell.get('detail')}")
+    elif pi_shell.get("status") == "missing":
+        suggestions.append(
+            "pi shellPath not pinned - WSL bash may shadow the Windows python; "
+            "run 'mw setup' or 'mw.py doctor --fix' to pin PowerShell"
+        )
     if report["orphan_proxy"]["detected"]:
         ports = ", ".join(str(p["port"]) for p in report["orphan_proxy"]["ports"])
         suggestions.append(
@@ -1076,6 +1230,12 @@ def doctor_report(
     report["credentials"] = route_precheck(config, os.environ)
     report["bundle"] = _doctor_bundle()
     report["target"] = _doctor_target(project_dir)
+    report["pi_shell"] = ensure_pi_shell_path(env=os.environ, fix=fix)
+    if fix and report["pi_shell"].get("status") in ("filled", "replaced"):
+        report["fix"]["applied"].append(
+            f"pi settings.json shellPath {report['pi_shell']['status']}: "
+            f"{report['pi_shell']['shell_path']}"
+        )
     issues, suggestions = _doctor_issues(report)
     report["summary"] = {"healthy": not issues, "issues": issues, "suggestions": suggestions}
     return report
@@ -1161,6 +1321,16 @@ def format_doctor_text(report: dict) -> str:
             )
         else:
             lines.append("conductor: not running")
+    # pi shellPath row (fresh-machine shell bootstrap)
+    pi_shell = report.get("pi_shell")
+    if pi_shell is not None:
+        status = pi_shell.get("status")
+        if status == "ok":
+            lines.append(f"pi_shell: {pi_shell.get('shell_path')}")
+        elif status == "not-applicable":
+            lines.append("pi_shell: not applicable (non-Windows)")
+        else:
+            lines.append(f"pi_shell: {status} — {pi_shell.get('detail')}")
     for r in report["credentials"]["routes"]:
         state = "available (" + _source_desc(r["source"]) + ")" if r["available"] else "missing (" + str(r["missing"]) + ")"
         lines.append(f"credentials: {r['route']} {state}")
