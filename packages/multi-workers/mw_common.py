@@ -683,6 +683,41 @@ def _doctor_orphan(service: dict, proxy: list[dict]) -> dict:
     return {"detected": bool(orphans), "ports": orphans}
 
 
+def read_log_tail(path: pathlib.Path, lines: int = 10) -> list[str]:
+    """Last `lines` lines of a UTF-8 text log; empty when missing/unreadable."""
+    try:
+        content = pathlib.Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return content.splitlines()[-lines:]
+
+
+def _doctor_proxy_log(project_dir: pathlib.Path) -> dict:
+    """Crash forensics for .mw/proxy.log. The proxy is an optional child
+    (spawned only when a port-routed provider has credentials), so a leftover
+    traceback is the root cause behind 'port not listening' symptoms and must
+    be surfaced, not just the symptom."""
+    log_path = pathlib.Path(project_dir) / ".mw" / "proxy.log"
+    if not log_path.exists():
+        return {"exists": False, "tail": [], "traceback_count": 0, "last_error": None}
+    lines = read_log_tail(log_path, 400)
+    tb_idx = [i for i, l in enumerate(lines) if l.startswith("Traceback (most recent call last)")]
+    last_error = None
+    if tb_idx:
+        # Exception message = first NON-INDENTED non-empty line after the last
+        # traceback header (frame lines are indented; the message sits at column 0).
+        for l in lines[tb_idx[-1] + 1 :]:
+            if l.strip() and not l[0].isspace():
+                last_error = l.strip()
+                break
+    return {
+        "exists": True,
+        "tail": lines[-10:],
+        "traceback_count": len(tb_idx),
+        "last_error": last_error,
+    }
+
+
 def _doctor_launcher_log(project_dir: pathlib.Path) -> dict:
     log_path = pathlib.Path(project_dir) / ".mw" / "launcher.log"
     if not log_path.exists():
@@ -962,6 +997,15 @@ def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
     suggestions: list[str] = []
     if not report["service"]["running"]:
         issues.append("mw service not running (workers will not be dispatched)")
+    plog = report.get("proxy_log") or {}
+    if plog.get("last_error"):
+        crash = (
+            f"proxy.log records {plog['traceback_count']} crash(es), last: {plog['last_error']}"
+        )
+        if not report["service"]["running"]:
+            issues.append(crash)
+        else:
+            suggestions.append(crash)
     if report["queue"]["stale_count"]:
         issues.append(
             f"{report['queue']['stale_count']} stale queue entries (task.md missing) - "
@@ -1012,7 +1056,7 @@ def doctor_report(
 ) -> dict:
     """Full diagnostic snapshot. Local-only checks (no network), <5s.
 
-    Sections: service, proxy, orphan_proxy, launcher_log, queue,
+    Sections: service, proxy, proxy_log, orphan_proxy, launcher_log, queue,
     worker_liveness, credentials, bundle (+ fix when fix=True), summary.
     healthy=True iff no issues; worker_liveness is informational and never
     flips healthy/exit codes."""
@@ -1024,6 +1068,7 @@ def doctor_report(
         report["fix"] = {"applied": doctor_fix(project_dir)}
     report["service"] = _doctor_service(project_dir)
     report["proxy"] = _doctor_proxy(config)
+    report["proxy_log"] = _doctor_proxy_log(project_dir)
     report["orphan_proxy"] = _doctor_orphan(report["service"], report["proxy"])
     report["launcher_log"] = _doctor_launcher_log(project_dir)
     report["queue"] = _doctor_queue(project_dir)
@@ -1045,6 +1090,16 @@ def format_doctor_text(report: dict) -> str:
     )
     for p in report["proxy"]:
         lines.append(f"proxy: {p['route']} port {p['port']} {'LISTENING' if p['listening'] else 'not listening'}")
+    avail_routes = {
+        r["route"] for r in report.get("credentials", {}).get("routes", []) if r.get("available")
+    }
+    if report["proxy"] and not any(p["route"] in avail_routes for p in report["proxy"]):
+        lines.append("proxy: disabled (no proxy-routed credentials; direct routes only)")
+    plog = report.get("proxy_log") or {}
+    if plog.get("last_error"):
+        lines.append(f"proxy_log: {plog['traceback_count']} crash(es), last: {plog['last_error']}")
+    else:
+        lines.append("proxy_log: ok" if plog.get("exists") else "proxy_log: no log file")
     orphan = report["orphan_proxy"]
     if orphan["detected"]:
         ports = ", ".join(

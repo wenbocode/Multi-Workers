@@ -2,7 +2,7 @@
 mw.py — Multi-Workers service manager.
 
 Subcommands:
-  serve  — foreground: start proxy_multi + launcher, block until Ctrl-C/SIGTERM
+  serve  — foreground: start launcher + conductor (proxy only when proxy-routed credentials exist), block until Ctrl-C/SIGTERM
   start  — background: detach and run serve
   stop   — send SIGTERM to running mw serve
   status — check if mw serve is running
@@ -270,10 +270,29 @@ def cmd_serve(args: argparse.Namespace) -> int:
         ]
         if args.deepseek_port:
             proxy_cmd.append(f"--deepseek-port={args.deepseek_port}")
+        # The LLM proxy only serves port-routed providers (claude / claude-cli /
+        # deepseek) and needs the private timi-proxy-cli package; direct routes
+        # (timi, codex-native) never touch it. With no proxy-routed credential
+        # available, skip it entirely instead of dying on the optional
+        # dependency — fresh machines without that package hit
+        # ModuleNotFoundError at import and used to take the whole service down.
+        proxy_routes = [
+            st["route"]
+            for st in precheck["routes"]
+            if st["available"]
+            and (config.get("providers", {}).get(st["route"]) or {}).get("port")
+        ]
         # If another mw instance already has the proxy running on these ports,
         # share it instead of starting a second one (supports multiple pi windows).
         proxy_already_running = _port_is_bound(args.pi_port) and _port_is_bound(args.claude_port)
-        if proxy_already_running:
+        if not proxy_routes:
+            proxy_proc = None
+            print(
+                "[mw serve] no proxy-routed credentials (claude/claude-cli/deepseek)"
+                " - proxy disabled; direct routes only (timi / codex-native)",
+                flush=True,
+            )
+        elif proxy_already_running:
             proxy_proc = None
             print(
                 f"[mw serve] ports {args.pi_port}/{args.claude_port} already bound"
@@ -300,7 +319,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
         launcher_proc = subprocess.Popen(launcher_cmd, stdout=launcher_log, stderr=launcher_log, **spawn_kwargs)  # noqa: S603
 
-        proxy_info = f"proxy={proxy_proc.pid}" if proxy_proc else "proxy=shared"
+        if proxy_proc is not None:
+            proxy_info = f"proxy={proxy_proc.pid}"
+        elif proxy_routes:
+            proxy_info = "proxy=shared"
+        else:
+            proxy_info = "proxy=disabled"
         print(
             f"[mw serve] started (PID {os.getpid()}) — {proxy_info} launcher={launcher_proc.pid}",
             flush=True,
@@ -322,6 +346,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
                 if launcher_proc.poll() is not None:
                     break
                 if proxy_proc is not None and proxy_proc.poll() is not None:
+                    print(
+                        f"[mw serve] FATAL: proxy exited (code {proxy_proc.returncode});"
+                        " .mw/proxy.log tail:",
+                        flush=True,
+                    )
+                    for tail_line in mw_common.read_log_tail(mw_dir / "proxy.log", 15):
+                        print(f"  {tail_line}", flush=True)
                     break
                 # Conductor supervision (D-101): config-driven spawn/terminate,
                 # respawn within 1s on death. A dead conductor does NOT stop serve.

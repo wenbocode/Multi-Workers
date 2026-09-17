@@ -272,7 +272,72 @@ class TestServePartialAvailability:
         assert "route codex-native: missing" in log
         route_lines = [l for l in log.splitlines() if l.startswith("[mw serve] route ")]
         assert len(route_lines) == len(_HERMETIC_CONFIG["providers"]) + 1  # + codex-native
+        # On-demand proxy: only direct-route (timi) credentials exist, so the
+        # launcher is the sole child and the log says why.
+        assert len(spawned) == 1
+        assert "proxy disabled; direct routes only" in log
+
+    def test_proxy_spawned_when_proxy_route_available(
+        self, tmp_path: pathlib.Path, no_test_creds, no_codex, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # claude (port-routed) + timi (direct): the proxy IS needed -> spawned.
+        proj = tmp_path
+        (proj / ".mw").mkdir()
+        providers_file = _write_config(tmp_path)
+        monkeypatch.setenv("TEST_TIMI_API_KEY", "hermetic-key")
+        monkeypatch.setenv("TEST_ANTHROPIC_API_KEY", "hermetic-key")
+
+        spawned: list = []
+        monkeypatch.setattr(mw.subprocess, "Popen", lambda cmd, **kw: spawned.append(cmd) or _FakeProc())
+
+        def fake_sleep(seconds: float) -> None:
+            raise KeyboardInterrupt  # break the supervise loop on first tick
+
+        monkeypatch.setattr(mw.time, "sleep", fake_sleep)
+
+        rc = mw.cmd_serve(_serve_args(proj, providers_file))
+
+        assert rc == 0
         assert len(spawned) == 2  # proxy + launcher children spawned
+        log = (proj / ".mw" / "mw.log").read_text(encoding="utf-8")
+        assert "proxy disabled" not in log
+
+    def test_proxy_death_is_fatal_with_log_tail(
+        self, tmp_path: pathlib.Path, no_test_creds, no_codex, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # When the proxy is needed it stays fatal — but the log now carries the
+        # exit code and the .mw/proxy.log tail (root cause, e.g. the missing
+        # timi_proxy_cli module on machines without the private package).
+        proj = tmp_path
+        (proj / ".mw").mkdir()
+        providers_file = _write_config(tmp_path)
+        monkeypatch.setenv("TEST_ANTHROPIC_API_KEY", "hermetic-key")
+        (proj / ".mw" / "proxy.log").write_text(
+            "Traceback (most recent call last):\n"
+            '  File "proxy_multi.py", line 17, in <module>\n'
+            "    from timi_proxy_cli.config import DEFAULT_MODEL_MAP\n"
+            "ModuleNotFoundError: No module named 'timi_proxy_cli'\n",
+            encoding="utf-8",
+        )
+
+        class _DeadProxy(_FakeProc):
+            returncode = 1
+
+            def poll(self) -> int:
+                return 1
+
+        def fake_popen(cmd, **kw):
+            return _DeadProxy() if "proxy_multi" in str(cmd[1]) else _FakeProc()
+
+        monkeypatch.setattr(mw.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(mw.time, "sleep", lambda s: None)
+
+        rc = mw.cmd_serve(_serve_args(proj, providers_file))
+
+        assert rc == 1
+        log = (proj / ".mw" / "mw.log").read_text(encoding="utf-8")
+        assert "FATAL: proxy exited (code 1)" in log
+        assert "ModuleNotFoundError: No module named 'timi_proxy_cli'" in log
 
     def test_pid_written_before_children_spawned(
         self, tmp_path: pathlib.Path, no_test_creds, no_codex, monkeypatch: pytest.MonkeyPatch,
@@ -341,6 +406,31 @@ class TestDoctorCli:
         assert result.returncode == 1
         report = json.loads(result.stdout)
         assert any("not running" in i for i in report["summary"]["issues"])
+
+    def test_proxy_log_crash_surfaces_root_cause(self, tmp_path: pathlib.Path) -> None:
+        # Service down + proxy.log traceback: the issue must name the actual
+        # root cause (e.g. the missing timi_proxy_cli module), not just the
+        # 'port not listening' symptom.
+        proj = tmp_path
+        (proj / ".mw").mkdir()
+        (proj / ".agenticdoc").mkdir()
+        (proj / ".mw" / "proxy.log").write_text(
+            "Traceback (most recent call last):\n"
+            '  File "proxy_multi.py", line 17, in <module>\n'
+            "ModuleNotFoundError: No module named 'timi_proxy_cli'\n",
+            encoding="utf-8",
+        )
+        result = self._run_doctor(proj)
+        assert result.returncode == 1
+        report = json.loads(result.stdout)
+        assert any(
+            "ModuleNotFoundError: No module named 'timi_proxy_cli'" in i
+            for i in report["summary"]["issues"]
+        )
+        assert report["proxy_log"]["traceback_count"] == 1
+        text = mw_common.format_doctor_text(report)
+        assert "proxy_log: 1 crash(es)" in text
+        assert "proxy: disabled" in text
 
     def test_fix_archives_stale_and_clears_dead_pid(self, tmp_path: pathlib.Path) -> None:
         proj = tmp_path

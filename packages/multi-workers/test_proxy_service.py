@@ -78,6 +78,15 @@ def _popen_factory(*procs: "_FakeProc"):
 # ── VC-012 serve supervision tests ────────────────────────────────────────────
 
 class TestServeSupervision:
+    @pytest.fixture(autouse=True)
+    def _proxy_route_credential(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The proxy only spawns when a port-routed provider has credentials
+        (on-demand proxy). These lifecycle tests supervise the proxy child, so
+        keep the claude route (real providers.json) available; otherwise the
+        proxy is skipped on credential-less machines and the fake Popen queue
+        misaligns."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "hermetic-key")
+
     def test_unexpected_proxy_exit_returns_nonzero(self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
         project_dir = tmp_path / "proj"
         project_dir.mkdir()

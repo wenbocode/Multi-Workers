@@ -25,7 +25,7 @@ Worker 1 (独立 pi 进程)   Worker 2 ...   Worker N
 
 | 组件 | 位置 | 说明 |
 |------|------|------|
-| mw 服务 | `mw.py` + `launcher.py` + `proxy_multi.py` | 后台常驻：LLM 代理、调度器、launcher、看门狗 |
+| mw 服务 | `mw.py` + `launcher.py` + `proxy_multi.py` | 后台常驻：调度器、launcher、看门狗、LLM 代理（可选，见 CLI 参考） |
 | agent-team-loop 扩展 | `../coding-agent/src/extensions/agent-team-loop/` | PM 模式（编排）+ Worker 模式（执行），构建后装到 `~/.pi/agent/extensions/` |
 | AgenticTask 工作流 | `.agenticdoc/` | spec / design / plan / tasks / trace / evidence 与 `_index.parallel` 索引 |
 
@@ -68,7 +68,7 @@ python mw.py <子命令>
 
 | 命令 | 说明 |
 |------|------|
-| `serve` / `start` | 前台 / 后台运行服务。参数：`--project`（必填）、`--pi-port`（默认 7001）、`--claude-port`（7003）、`--deepseek-port`、`--poll-interval`（2s）、`--max-workers`、`--providers` |
+| `serve` / `start` | 前台 / 后台运行服务。参数：`--project`（必填）、`--pi-port`（默认 7001）、`--claude-port`（7003）、`--deepseek-port`、`--poll-interval`（2s）、`--max-workers`、`--providers`。LLM 代理按需启动：仅当 claude/claude-cli/deepseek 代理路由有凭证时才拉起（需私有包 `timi-proxy-cli`）；纯 timi/codex 直连路由不起代理、无该包也能正常服务 |
 | `stop` / `status` | 停止 / 查看服务 |
 | `doctor [--json] [--fix]` | 全链路诊断：服务、代理端口、日志、队列、凭据、bundle、target |
 | `bootstrap` | 新机器一键安装（见上） |
