@@ -155,6 +155,11 @@ contract:
 | `MW_TARGET_GAME` / `MW_TARGET_ENGINE` | 双工作区临时覆盖 |
 | `MW_PY` | 扩展找不到 `mw.py` 时手动指定路径 |
 
+## 待实现（Backlog）
+
+- **直连路由泛化**：`launcher._build_env` 的 timi 直连特判泛化为「providers.json 中无 `port` 的路由 = 直连」，新 provider 照 timi 模式注册原生 provider + 无 port 路由条目即可用，无需 proxy。
+- **proxy 定位收敛**：仅服务「外部 CLI + 协议翻译」场景（claude/deepseek CLI）。需要时将 `timi_proxy_cli` 的最小闭包（proxy.py / logging_utils.py / config.py / models.py / constants.py，约 40KB 纯标准库、零 pip 依赖）vendor 进 packages/multi-workers，消除对私有 editable 包的机器级依赖。
+
 ## 测试
 
 ```bash
