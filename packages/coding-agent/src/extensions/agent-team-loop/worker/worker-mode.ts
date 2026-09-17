@@ -8,6 +8,7 @@ import {
 	appendError,
 	appendGoalCheck,
 	appendHeartbeat,
+	appendModel,
 	appendPhase,
 	appendStart,
 	appendTimeout,
@@ -454,6 +455,14 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	// Task lifecycle start: trace.log gets a machine-parseable [START] anchor
 	// (runtime origin for elapsed computation), worker.log a human status line.
 	appendStart(meta.taskKey, meta.agenticdocRoot, meta.type, phaseTotal);
+	// D-116: record which model runs this task. ExtensionAPI has no model
+	// getter — the resolved id is only readable from an event context, so
+	// capture it at session start (fires before the first turn). A duplicate
+	// line on a later session event is harmless: readers take the last one.
+	pi.on("session_start", (_event, ctx) => {
+		const modelId = ctx.model?.id;
+		if (modelId) appendModel(meta.taskKey, meta.agenticdocRoot, modelId);
+	});
 	writeWorkerLogLine(
 		`[worker] start task=${meta.taskKey} type=${meta.type} phases=${phaseTotal > 0 ? phaseTotal : "-"}`,
 	);

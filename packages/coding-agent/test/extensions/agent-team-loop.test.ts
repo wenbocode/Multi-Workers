@@ -84,6 +84,7 @@ import {
 	appendError,
 	appendGoalCheck,
 	appendHeartbeat,
+	appendModel,
 	appendPhase,
 	appendStart,
 	appendTimeout,
@@ -582,6 +583,33 @@ describe("output-writer writeOutput", () => {
 		expect(old?.elapsedMs).toBeUndefined();
 		expect(old?.lastAction).toBeUndefined();
 		expect(old?.heartbeat?.count).toBe(1);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("D-116: [MODEL] records the model id and readTaskProgress exposes it (old traces stay compatible)", () => {
+		const root = mkdtemp();
+		// Writer side: appendModel writes the machine-parseable record line.
+		const key = "task-model";
+		makeTaskDir(root, key);
+		appendModel(key, root, "glm-5.3");
+		expect(fs.readFileSync(path.join(root, key, "trace.log"), "utf8")).toMatch(/^\[MODEL\] \S+ model=glm-5\.3$/m);
+		// Reader side: [MODEL] exposes the model; pre-D-116 traces without it
+		// keep parsing (undefined).
+		const withModel = makeTaskDir(root, "task-m1");
+		fs.writeFileSync(
+			path.join(withModel, "trace.log"),
+			`[START] ${new Date(Date.now() - 5_000).toISOString()} task=task-m1 type=coding phases=1\n` +
+				`[MODEL] ${new Date(Date.now() - 4_000).toISOString()} model=claude-sonnet-4-5\n`,
+			"utf8",
+		);
+		expect(readTaskProgress(withModel)?.model).toBe("claude-sonnet-4-5");
+		const noModel = makeTaskDir(root, "task-m2");
+		fs.writeFileSync(
+			path.join(noModel, "trace.log"),
+			`[START] ${new Date(Date.now() - 5_000).toISOString()} task=task-m2 type=coding phases=1\n`,
+			"utf8",
+		);
+		expect(readTaskProgress(noModel)?.model).toBeUndefined();
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 });
@@ -2108,6 +2136,50 @@ describe("startWorkerPollLoop summary scoping", () => {
 		expect(live).toMatch(/up 4m/);
 		expect(live).toMatch(/hb \d+s/);
 		expect(live).toContain("· read src/deep/nested/file.ts");
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("D-116: rows carry the worker model badge — trace [START] for running/terminal, queue override for pending", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const is = new IndexStore(root);
+		await activateKey(root, "key-a");
+		// Running: effective model from trace.log [MODEL] (pi-resolved id,
+		// launcher defaults included).
+		await queueTask(root, "key-a", "mdl-live", "running");
+		fs.writeFileSync(
+			path.join(root, "key-a", "workers", "mdl-live", "trace.log"),
+			`[START] ${new Date(Date.now() - 10_000).toISOString()} task=mdl-live type=coding phases=2\n` +
+				`[MODEL] ${new Date(Date.now() - 9_000).toISOString()} model=glm-5.3\n` +
+				`[HEARTBEAT] ${new Date(Date.now() - 5_000).toISOString()} task=mdl-live phase=1/2\n`,
+			"utf8",
+		);
+		// Running with a pre-D-116 trace (no [MODEL] line): no badge.
+		await queueTask(root, "key-a", "mdl-old", "running");
+		fs.writeFileSync(
+			path.join(root, "key-a", "workers", "mdl-old", "trace.log"),
+			`[START] ${new Date(Date.now() - 10_000).toISOString()} task=mdl-old type=coding phases=2\n`,
+			"utf8",
+		);
+		// Pending: dispatch-time --model override from the queue row (no
+		// trace.log yet); a second pending task without one shows no badge.
+		await queueTask(root, "key-a", "mdl-wait", "pending");
+		const waitEntry = store.findByKey("mdl-wait");
+		if (!waitEntry) throw new Error("mdl-wait missing from queue");
+		await store.upsert({ ...waitEntry, model: "claude-sonnet-4-5" });
+		await queueTask(root, "key-a", "mdl-bare", "pending");
+
+		const lines = renderWatchLines(is, store, new AckStore(root), root, "key-a");
+		const live = lines.find((l) => l.includes("mdl-live"));
+		const old = lines.find((l) => l.includes("mdl-old"));
+		const wait = lines.find((l) => l.includes("mdl-wait"));
+		const bare = lines.find((l) => l.includes("mdl-bare"));
+		expect(live).toContain("mdl-live [glm-5.3]");
+		expect(old).toBeDefined();
+		expect(old).not.toMatch(/mdl-old \[/);
+		expect(wait).toContain("mdl-wait [claude-sonnet-4-5]");
+		expect(bare).toBeDefined();
+		expect(bare).not.toMatch(/mdl-bare \[/);
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 

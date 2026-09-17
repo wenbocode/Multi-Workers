@@ -12082,6 +12082,7 @@ var HEARTBEAT_INTERVAL_MS = 3e4;
 var HEARTBEAT_STALE_MS = 9e4;
 var HEARTBEAT_LINE_RE = /^\[HEARTBEAT\] (\S+) task=(\S+)(?: phase=(\S+))?$/;
 var START_LINE_RE = /^\[START\] (\S+) task=\S+ type=\S+ phases=(\S+)$/;
+var MODEL_LINE_RE = /^\[MODEL\] (\S+) model=(\S+)$/;
 var END_LINE_RE = /^\[END\] (\S+) exit=(\d+) elapsed=(\d+)s tools=(\d+) phases=(\S+)$/;
 var TOOL_LINE_RE = /^\[TOOL\] (\S+) (\S+)(?: (.*))?$/;
 var CHECKPOINT_LINE_RE = /^\[CHECKPOINT\] (\S+) elapsed=(\d+)s reads=(\d+) writes=(\d+) phases=(\S+) uniq_targets=(\d+) repeat_top=(\d+) risk=(low|mid|high)$/;
@@ -12110,6 +12111,7 @@ function readTaskProgress(taskDir) {
   let endPhases;
   let lastAction;
   let checkpoint;
+  let model;
   for (const line of content.split("\n")) {
     const hb = HEARTBEAT_LINE_RE.exec(line);
     if (hb) {
@@ -12130,6 +12132,11 @@ function readTaskProgress(taskDir) {
     const start = START_LINE_RE.exec(line);
     if (start) {
       startTs = start[1] ?? "";
+      continue;
+    }
+    const mdl = MODEL_LINE_RE.exec(line);
+    if (mdl) {
+      model = mdl[2] ?? void 0;
       continue;
     }
     const end = END_LINE_RE.exec(line);
@@ -12172,7 +12179,7 @@ function readTaskProgress(taskDir) {
     const end = endTs ? Date.parse(endTs) : Date.now();
     elapsedMs = Math.max(0, end - Date.parse(startTs));
   }
-  return { heartbeat, startTs, endTs, exitCode, endPhases, elapsedMs, lastAction, checkpoint };
+  return { heartbeat, startTs, endTs, exitCode, endPhases, elapsedMs, lastAction, checkpoint, model };
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/index-store.ts
@@ -12683,6 +12690,9 @@ function appendStart(taskKey, agenticdocRoot2, type, phaseTotal) {
     agenticdocRoot2,
     `[START] ${(/* @__PURE__ */ new Date()).toISOString()} task=${taskKey} type=${type} phases=${phaseTotal > 0 ? phaseTotal : "-"}`
   );
+}
+function appendModel(taskKey, agenticdocRoot2, modelId) {
+  appendLifecycleLine(taskKey, agenticdocRoot2, `[MODEL] ${(/* @__PURE__ */ new Date()).toISOString()} model=${modelId}`);
 }
 function appendPhase(taskKey, agenticdocRoot2, state, idx, total, name = "") {
   const tail = state === "start" && name ? ` ${truncLine(name, 60)}` : "";
@@ -13289,8 +13299,10 @@ function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot2, ke
   if (owned.length === 0) return [header, "  (no worker tasks)"];
   const rowLine = (e) => {
     let detail = "";
+    let model = "";
     if (e.status === "running") {
       const prog = readTaskProgress(path12.dirname(e.taskPath));
+      model = prog?.model ?? "";
       const hb = prog?.heartbeat;
       if (hb) {
         const ph = hb.phase === "-" ? "ph -" : `ph ${hb.phase}/${hb.phaseTotal}`;
@@ -13305,10 +13317,14 @@ function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot2, ke
         detail += ` ck${Math.round(ck.elapsedS / 60)}m${ck.risk !== "low" ? ` ${ck.risk}\u26A0` : ""}`;
       }
       if (prog?.lastAction) detail += ` \xB7 ${prog.lastAction}`;
-    } else if (e.status !== "pending") {
+    } else if (e.status === "pending") {
+      model = e.model;
+    } else {
+      model = readTaskProgress(path12.dirname(e.taskPath))?.model ?? "";
       detail = readTerminalDetail(path12.dirname(e.taskPath), e.status);
     }
-    return trunc(`  ${STATUS_GLYPH[e.status]} ${e.taskKey}${detail ? ` \u2014 ${detail}` : ""}`, WATCH_LINE_MAX);
+    const badge2 = model ? ` [${model}]` : "";
+    return trunc(`  ${STATUS_GLYPH[e.status]} ${e.taskKey}${badge2}${detail ? ` \u2014 ${detail}` : ""}`, WATCH_LINE_MAX);
   };
   const newestFirst = (a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
   const live = [
@@ -18340,6 +18356,10 @@ async function workerModeActivate(pi) {
     appendReadScopeRejectionsSection(meta.taskKey, meta.agenticdocRoot, readScopeRejections);
   }
   appendStart(meta.taskKey, meta.agenticdocRoot, meta.type, phaseTotal);
+  pi.on("session_start", (_event, ctx) => {
+    const modelId = ctx.model?.id;
+    if (modelId) appendModel(meta.taskKey, meta.agenticdocRoot, modelId);
+  });
   writeWorkerLogLine(
     `[worker] start task=${meta.taskKey} type=${meta.type} phases=${phaseTotal > 0 ? phaseTotal : "-"}`
   );

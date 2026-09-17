@@ -70,10 +70,15 @@ export interface TaskProgress {
 	/** Last convergence checkpoint, when the task ran past the checkpoint
 	 * time (new bundles; undefined on old bundles / short tasks). */
 	checkpoint: CheckpointInfo | undefined;
+	/** Model id from the [MODEL] line (new bundles) — what the worker is
+	 * actually running, launcher defaults included. Undefined on old bundles
+	 * and when the model was unresolved at session start. */
+	model: string | undefined;
 }
 
 const HEARTBEAT_LINE_RE = /^\[HEARTBEAT\] (\S+) task=(\S+)(?: phase=(\S+))?$/;
 const START_LINE_RE = /^\[START\] (\S+) task=\S+ type=\S+ phases=(\S+)$/;
+const MODEL_LINE_RE = /^\[MODEL\] (\S+) model=(\S+)$/;
 const END_LINE_RE = /^\[END\] (\S+) exit=(\d+) elapsed=(\d+)s tools=(\d+) phases=(\S+)$/;
 const TOOL_LINE_RE = /^\[TOOL\] (\S+) (\S+)(?: (.*))?$/;
 const CHECKPOINT_LINE_RE =
@@ -112,6 +117,7 @@ export function readTaskProgress(taskDir: string): TaskProgress | undefined {
 	let endPhases: string | undefined;
 	let lastAction: string | undefined;
 	let checkpoint: CheckpointInfo | undefined;
+	let model: string | undefined;
 
 	for (const line of content.split("\n")) {
 		const hb = HEARTBEAT_LINE_RE.exec(line);
@@ -133,6 +139,11 @@ export function readTaskProgress(taskDir: string): TaskProgress | undefined {
 		const start = START_LINE_RE.exec(line);
 		if (start) {
 			startTs = start[1] ?? "";
+			continue;
+		}
+		const mdl = MODEL_LINE_RE.exec(line);
+		if (mdl) {
+			model = mdl[2] ?? undefined;
 			continue;
 		}
 		const end = END_LINE_RE.exec(line);
@@ -181,7 +192,7 @@ export function readTaskProgress(taskDir: string): TaskProgress | undefined {
 		elapsedMs = Math.max(0, end - Date.parse(startTs));
 	}
 
-	return { heartbeat, startTs, endTs, exitCode, endPhases, elapsedMs, lastAction, checkpoint };
+	return { heartbeat, startTs, endTs, exitCode, endPhases, elapsedMs, lastAction, checkpoint, model };
 }
 
 /** Parse heartbeat state from a worker task's trace.log (last line wins).

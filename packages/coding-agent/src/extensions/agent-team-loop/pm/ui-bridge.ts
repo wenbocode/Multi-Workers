@@ -476,8 +476,13 @@ export function renderWatchLines(
 
 	// One rendered row per entry; detail per status (live heartbeat vs D-04
 	// terminal sources). Width truncation is uniform (WATCH_LINE_MAX).
+	// D-116: every row carries the worker's model in a [id] badge — running
+	// and terminal rows read the pi-resolved id from trace.log [START]
+	// (launcher defaults included); pending rows fall back to the dispatch-time
+	// override from the queue row (no trace.log yet).
 	const rowLine = (e: WorkerEntry): string => {
 		let detail = "";
+		let model = "";
 		if (e.status === "running") {
 			// Heartbeat-derived live progress (design D-008): phase counter + age
 			// of the last [HEARTBEAT] line, refreshed on every poll tick. Old
@@ -485,6 +490,7 @@ export function renderWatchLines(
 			// [START] adds elapsed runtime ("up 6m") and the last [TOOL] line
 			// names what the worker is currently doing.
 			const prog = readTaskProgress(path.dirname(e.taskPath));
+			model = prog?.model ?? "";
 			const hb = prog?.heartbeat;
 			if (hb) {
 				const ph = hb.phase === "-" ? "ph -" : `ph ${hb.phase}/${hb.phaseTotal}`;
@@ -502,12 +508,18 @@ export function renderWatchLines(
 				detail += ` ck${Math.round(ck.elapsedS / 60)}m${ck.risk !== "low" ? ` ${ck.risk}⚠` : ""}`;
 			}
 			if (prog?.lastAction) detail += ` · ${prog.lastAction}`;
-		} else if (e.status !== "pending") {
+		} else if (e.status === "pending") {
+			// Dispatch-time --model override; the effective id lands in trace.log
+			// [START] once the worker spawns.
+			model = e.model;
+		} else {
 			// Terminal detail per status (D-004): spawn reason / Exit Reason /
 			// Questions / TL;DR with their fallback chains.
+			model = readTaskProgress(path.dirname(e.taskPath))?.model ?? "";
 			detail = readTerminalDetail(path.dirname(e.taskPath), e.status);
 		}
-		return trunc(`  ${STATUS_GLYPH[e.status]} ${e.taskKey}${detail ? ` — ${detail}` : ""}`, WATCH_LINE_MAX);
+		const badge = model ? ` [${model}]` : "";
+		return trunc(`  ${STATUS_GLYPH[e.status]} ${e.taskKey}${badge}${detail ? ` — ${detail}` : ""}`, WATCH_LINE_MAX);
 	};
 
 	const newestFirst = (a: WorkerEntry, b: WorkerEntry): number => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");

@@ -102,6 +102,15 @@ export function appendStart(taskKey: string, agenticdocRoot: string, type: strin
 	);
 }
 
+/** Model record (D-116: worker model visibility): `[MODEL] ts model=<id>` —
+ * the pi-resolved model id captured at session start (ExtensionAPI exposes
+ * the model only via event contexts, so this is written from the worker's
+ * session_start handler, before the first turn). Consumed by the watch
+ * widget's model badge; old bundles simply lack the line. */
+export function appendModel(taskKey: string, agenticdocRoot: string, modelId: string): void {
+	appendLifecycleLine(taskKey, agenticdocRoot, `[MODEL] ${new Date().toISOString()} model=${modelId}`);
+}
+
 /** Phase transition marker: `[PHASE] ts start|done <idx>/<total> [name]`. */
 export function appendPhase(
 	taskKey: string,
