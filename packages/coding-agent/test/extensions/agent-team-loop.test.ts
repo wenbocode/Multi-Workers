@@ -8,7 +8,7 @@
  * tests (T-09).
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -39,6 +39,7 @@ import {
 	readOutputSection,
 	readTerminalDetail,
 	readWorkerLogTail,
+	registerAdvancePhaseTool,
 	registerMwCommands,
 	registerPmKeyCommands,
 	registerPmSaveCommand,
@@ -50,6 +51,7 @@ import {
 	windowClaimId,
 } from "../../src/extensions/agent-team-loop/pm/ui-bridge.ts";
 import { AckStore } from "../../src/extensions/agent-team-loop/shared/ack-store.ts";
+import { agenticScriptsDir, runAgenticScript } from "../../src/extensions/agent-team-loop/shared/agentic-scripts.ts";
 import {
 	HEARTBEAT_INTERVAL_MS,
 	readHeartbeatInfo,
@@ -59,6 +61,7 @@ import { IndexStore, readIndexMdActive } from "../../src/extensions/agent-team-l
 import type { DoctorJson } from "../../src/extensions/agent-team-loop/shared/mw-runner.ts";
 import {
 	mwCodeNewestMtimeMs,
+	PYTHON_EXE,
 	readServeMeta,
 	restartSequence,
 	serveStaleness,
@@ -627,6 +630,118 @@ describe("IndexStore", () => {
 		expect(entry?.status).toBe("active");
 		const raw = fs.readFileSync(path.join(root, "_index.parallel"), "utf8");
 		expect(raw).toContain("| my-key | active | EXECUTE | 123 |");
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+});
+
+// ── AgenticTask framework scripts (shell-free runner) ───────────────────────
+
+/** Python availability probe — the spawn tests below are skipped where the
+ * interpreter is absent (python3-only containers, stripped CI images). */
+const pythonAvailable = (() => {
+	try {
+		return spawnSync(PYTHON_EXE, ["-c", "print(1)"], { encoding: "utf8", timeout: 5000 }).status === 0;
+	} catch {
+		return false;
+	}
+})();
+
+describe("agentic-scripts", () => {
+	it("agenticScriptsDir prefers .claude/scripts, falls back to the skill clone, null when absent", () => {
+		const root = mkdtemp();
+		expect(agenticScriptsDir(root)).toBeNull();
+
+		const claudeScripts = path.join(root, ".claude", "scripts");
+		fs.mkdirSync(claudeScripts, { recursive: true });
+		fs.writeFileSync(path.join(claudeScripts, "advance_phase.py"), "# stub\n", "utf8");
+		expect(agenticScriptsDir(root)).toBe(claudeScripts);
+		fs.rmSync(root, { recursive: true, force: true });
+
+		const root2 = mkdtemp();
+		const cloneScripts = path.join(root2, ".agents", "skills", "agentic-task", "claude", "scripts");
+		fs.mkdirSync(cloneScripts, { recursive: true });
+		fs.writeFileSync(path.join(cloneScripts, "advance_phase.py"), "# stub\n", "utf8");
+		expect(agenticScriptsDir(root2)).toBe(cloneScripts);
+		fs.rmSync(root2, { recursive: true, force: true });
+	});
+
+	it("runAgenticScript fails closed when the framework scripts are missing", () => {
+		const root = mkdtemp();
+		const r = runAgenticScript(root, "advance_phase.py", ["k", "design"]);
+		expect(r.ok).toBe(false);
+		expect(r.output).toContain("framework scripts not found");
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it.skipIf(!pythonAvailable)("runAgenticScript spawns python with list args and captures stdout+stderr", () => {
+		const root = mkdtemp();
+		const scripts = path.join(root, ".claude", "scripts");
+		fs.mkdirSync(scripts, { recursive: true });
+		fs.writeFileSync(
+			path.join(scripts, "advance_phase.py"),
+			"import sys\nprint('ARGV=' + repr(sys.argv[1:]))\nprint('gate-warn', file=sys.stderr)\n",
+			"utf8",
+		);
+		const r = runAgenticScript(root, "advance_phase.py", ["my key", "design"]);
+		expect(r.ok).toBe(true);
+		expect(r.output).toContain("ARGV=['my key', 'design']"); // space survives: list args, no shell
+		expect(r.output).toContain("gate-warn");
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+});
+
+describe("advance_phase tool", () => {
+	it("validates key and target phase without spawning anything", async () => {
+		const { pi, tools } = fakeCmdPi();
+		registerAdvancePhaseTool(pi, path.join(os.tmpdir(), "no-such-project"));
+		const tool = tools.get("advance_phase");
+		if (!tool) throw new Error("advance_phase not registered");
+
+		const badPhase = await tool.execute(
+			"id1",
+			{ key: "k", target_phase: "nope" },
+			undefined,
+			undefined,
+			fakeCmdCtx().ctx,
+		);
+		expect(badPhase.content[0]?.text).toContain("Unknown phase 'nope'");
+
+		const reserved = await tool.execute(
+			"id2",
+			{ key: "_scratch", target_phase: "design" },
+			undefined,
+			undefined,
+			fakeCmdCtx().ctx,
+		);
+		expect(reserved.content[0]?.text).toContain("reserved prefix");
+
+		const missing = await tool.execute("id3", { key: "k", target_phase: "" }, undefined, undefined, fakeCmdCtx().ctx);
+		expect(missing.content[0]?.text).toContain("required");
+	});
+
+	it.skipIf(!pythonAvailable)("runs the gate script shell-free and surfaces its output", async () => {
+		const root = mkdtemp();
+		const scripts = path.join(root, ".claude", "scripts");
+		fs.mkdirSync(scripts, { recursive: true });
+		fs.writeFileSync(
+			path.join(scripts, "advance_phase.py"),
+			"import sys\nprint('GATE OK ' + ' '.join(sys.argv[1:]))\n",
+			"utf8",
+		);
+		const { pi, tools } = fakeCmdPi();
+		registerAdvancePhaseTool(pi, root);
+		const tool = tools.get("advance_phase");
+		if (!tool) throw new Error("advance_phase not registered");
+
+		// Upper-case target is normalized; optional flags pass through in order.
+		const r = await tool.execute(
+			"id",
+			{ key: "my-key", target_phase: "PLAN", summary: "core done" },
+			undefined,
+			undefined,
+			fakeCmdCtx().ctx,
+		);
+		expect(r.content[0]?.text).toContain("GATE OK my-key plan --summary core done");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 });

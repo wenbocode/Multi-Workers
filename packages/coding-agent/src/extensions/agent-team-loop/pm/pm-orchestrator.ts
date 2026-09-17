@@ -24,6 +24,7 @@ import {
 	type PmWatchState,
 	readOutputBody,
 	readSpawnFailure,
+	registerAdvancePhaseTool,
 	registerMwCommands,
 	registerMwTools,
 	registerPmKeyCommands,
@@ -621,6 +622,7 @@ export function pmActivate(pi: ExtensionAPI): void {
 	registerPmSaveCommand(pi, indexStore, workerStore, watch, agenticdocRoot);
 	registerMwCommands(pi, projectDir, workerStore, ackStore);
 	registerMwTools(pi, projectDir);
+	registerAdvancePhaseTool(pi, projectDir);
 	registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch);
 	registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agenticdocRoot);
 	registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch);

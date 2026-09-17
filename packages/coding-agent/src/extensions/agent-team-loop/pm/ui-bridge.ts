@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
 import type { AckStore } from "../shared/ack-store.ts";
+import { runAgenticScript } from "../shared/agentic-scripts.ts";
 import { acquireLock } from "../shared/file-lock.ts";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.ts";
 import { type IndexStore, readIndexMdActive } from "../shared/index-store.ts";
@@ -21,7 +22,7 @@ import {
 } from "../shared/mw-runner.ts";
 import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.ts";
 import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "../shared/phase-docs.ts";
-import { phaseAuditWarnings } from "../shared/pm-state-guard.ts";
+import { PHASE_ORDER, phaseAuditWarnings } from "../shared/pm-state-guard.ts";
 import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 import { headline } from "../worker/output-writer.ts";
 import { dispatchTask } from "./task-dispatcher.ts";
@@ -1053,6 +1054,81 @@ export function registerSwitchKeyTool(
 				],
 				details: undefined,
 			};
+		},
+	});
+}
+
+/** Register the agent-callable advance_phase tool: the shell-free path
+ * through the AgenticTask phase gates. The guard blocks hand-edits of
+ * pm-state.md's '- Phase:' line and points at advance_phase.py; running that
+ * via the bash tool was the only route, so a window whose shell resolution
+ * or in-shell `python` differs (fresh machines: WSL-only bash, Store-stub
+ * python, python3-only Linux) had NO way to advance a phase — it deadlocked
+ * with "no shell, cannot execute advance_phase.py / update_index.py". This
+ * tool spawns the script directly (list args, no shell); gate semantics stay
+ * in the Python script, the single source of truth audit_phase.py replays. */
+export function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: string): void {
+	const ladder = PHASE_ORDER.map((p) => p.toLowerCase());
+	pi.registerTool({
+		name: "advance_phase",
+		label: "advance_phase",
+		description:
+			"Advance an AgenticTask key to the target phase by running the framework gate script (advance_phase.py): checks the phase-gate evidence (spec/design/plan/tasks/execute/done prerequisites), updates pm-state.md, and syncs _index.parallel. Runs the Python script directly without a shell — prefer this over `python .../advance_phase.py` via the bash tool. This is the only sanctioned way to change a key's phase; hand-editing pm-state.md's '- Phase:' line is blocked.",
+		promptGuidelines: [
+			"Change phases only through this tool (or the equivalent python script when the shell works); when the result reports GATE BLOCKED, fix the listed evidence gaps before retrying.",
+		],
+		parameters: Type.Object({
+			key: Type.String({ description: "AgenticTask key to advance (not _scratch)." }),
+			target_phase: Type.String({
+				description: "Target phase (any case): spec | design | plan | tasks | execute | verify | done.",
+			}),
+			summary: Type.Optional(
+				Type.String({
+					description: "One-line closing summary recorded in _project_log.md when advancing to done.",
+				}),
+			),
+			supersedes: Type.Optional(
+				Type.String({
+					description: "Key this one supersedes, recorded in _project_log.md when advancing to done.",
+				}),
+			),
+		}),
+		execute: async (_toolCallId, params, _signal, _onUpdate, _context) => {
+			const { key, target_phase, summary, supersedes } = params as {
+				key: string;
+				target_phase: string;
+				summary?: string;
+				supersedes?: string;
+			};
+			const trimmedKey = key.trim();
+			const target = target_phase.trim().toLowerCase();
+			if (!trimmedKey || !target) {
+				return { content: [{ type: "text", text: "key and target_phase are required." }], details: undefined };
+			}
+			if (trimmedKey.startsWith("_") || trimmedKey.startsWith(".")) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Key '${trimmedKey}' has a reserved prefix and is not a phase-tracked AgenticTask key.`,
+						},
+					],
+					details: undefined,
+				};
+			}
+			if (!ladder.includes(target)) {
+				return {
+					content: [
+						{ type: "text", text: `Unknown phase '${target_phase.trim()}'. Valid: ${ladder.join(" | ")}.` },
+					],
+					details: undefined,
+				};
+			}
+			const args = [trimmedKey, target];
+			if (summary) args.push("--summary", summary);
+			if (supersedes) args.push("--supersedes", supersedes);
+			const result = runAgenticScript(projectDir, "advance_phase.py", args);
+			return { content: [{ type: "text", text: result.output }], details: undefined };
 		},
 	});
 }

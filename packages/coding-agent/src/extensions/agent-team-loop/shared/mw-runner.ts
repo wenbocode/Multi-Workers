@@ -9,7 +9,7 @@ export interface MwStatus {
 	pid: number | null;
 }
 
-const PYTHON_EXE = process.platform === "win32" ? "python" : "python3";
+export const PYTHON_EXE = process.platform === "win32" ? "python" : "python3";
 
 /** pi's global extensions dir — mirrors _global_ext_dir() in mw.py. */
 function globalExtDir(): string {
