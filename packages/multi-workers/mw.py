@@ -1029,6 +1029,25 @@ def _write_mw_py_path() -> None:
     p.write_text(str(pathlib.Path(__file__).resolve()), encoding="utf-8")
 
 
+def _agentictask_update_install() -> tuple[bool, str]:
+    """Install the /update-agentictask convenience extension into pi's global
+    extensions dir. Machine-independent template (agentictask-update.ts ships
+    next to mw.py): mw.py is located at runtime via MW_PY / the .mw-py-path
+    sidecar, so nothing is rendered per machine. Idempotent: skips when the
+    installed copy is identical, overwrites a drifted one. Returns (ok, msg)."""
+    src = pathlib.Path(__file__).parent / "agentictask-update.ts"
+    if not src.is_file():
+        return False, f"agentictask-update template missing: {src}"
+    ext_dir = _global_ext_dir()
+    ext_dir.mkdir(parents=True, exist_ok=True)
+    dst = ext_dir / "agentictask-update.ts"
+    content = src.read_text(encoding="utf-8")
+    if dst.is_file() and dst.read_text(encoding="utf-8") == content:
+        return True, f"agentictask-update extension up-to-date: {dst}"
+    dst.write_text(content, encoding="utf-8")
+    return True, f"agentictask-update extension installed: {dst}"
+
+
 def cmd_build(args: argparse.Namespace) -> int:
     ok, msg = _build_bundle()
     if not ok:
@@ -1041,6 +1060,9 @@ def cmd_build(args: argparse.Namespace) -> int:
         ext_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(_bundle_path()), str(ext_dst))
         _write_mw_py_path()
+        ok_u, msg_u = _agentictask_update_install()
+        print(f"[mw build] {msg_u}" if ok_u else f"[mw build] Warning: {msg_u}",
+              file=None if ok_u else sys.stderr)
         print(f"[mw build] installed globally: {ext_dst}")
         # The npm global `pi` links to packages/coding-agent, so the runtime
         # executes the repo's dist — rebuild it so the built-in agent-team-loop
@@ -1222,6 +1244,12 @@ def cmd_setup(args: argparse.Namespace) -> int:
     shutil.copy2(str(_bundle_path()), str(ext_dst))
     _write_mw_py_path()
     print(f"[mw setup] Extension installed globally: {ext_dst}")
+
+    # (2b) /update-agentictask convenience command (reads the sidecar above;
+    # failure is a warning — the core loop works without it).
+    ok_u, msg_u = _agentictask_update_install()
+    print(f"[mw setup] {msg_u}" if ok_u else f"[mw setup] Warning: {msg_u}",
+          file=None if ok_u else sys.stderr)
 
     # (3) pin pi's shellPath when missing (fresh-machine shell bootstrap):
     # additive merge into ~/.pi/agent/settings.json — PowerShell detected via

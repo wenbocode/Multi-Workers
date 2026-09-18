@@ -465,6 +465,43 @@ class TestStartAndDoctor:
         assert "TIMI_API_KEY is not set" in capsys.readouterr().out
 
 
+class TestAgentictaskUpdateInstall:
+    """_agentictask_update_install: template → pi global extensions dir.
+
+    Isolated via PI_CODING_AGENT_DIR (mw_common.global_ext_dir honors it)."""
+
+    def test_installs_when_absent(self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        agent_dir = tmp_path / "pi-agent"
+        monkeypatch.setenv("PI_CODING_AGENT_DIR", str(agent_dir))
+        ok, msg = mw._agentictask_update_install()
+        assert ok, msg
+        assert "installed" in msg
+        dst = agent_dir / "extensions" / "agentictask-update.ts"
+        assert dst.is_file()
+        template = pathlib.Path(mw.__file__).parent / "agentictask-update.ts"
+        assert dst.read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
+
+    def test_idempotent_when_identical(self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        agent_dir = tmp_path / "pi-agent"
+        monkeypatch.setenv("PI_CODING_AGENT_DIR", str(agent_dir))
+        mw._agentictask_update_install()
+        ok, msg = mw._agentictask_update_install()
+        assert ok, msg
+        assert "up-to-date" in msg
+
+    def test_overwrites_drifted_copy(self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        agent_dir = tmp_path / "pi-agent"
+        monkeypatch.setenv("PI_CODING_AGENT_DIR", str(agent_dir))
+        dst = agent_dir / "extensions" / "agentictask-update.ts"
+        dst.parent.mkdir(parents=True)
+        dst.write_text("// drifted hand-edit (old hardcoded path)\n", encoding="utf-8")
+        ok, msg = mw._agentictask_update_install()
+        assert ok, msg
+        assert "installed" in msg
+        template = pathlib.Path(mw.__file__).parent / "agentictask-update.ts"
+        assert dst.read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
+
+
 class TestVersionHelpers:
     def test_version_tuple(self) -> None:
         assert mw._version_tuple("v22.19.0") == (22, 19, 0)
