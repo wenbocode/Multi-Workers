@@ -10,6 +10,7 @@ export const HEARTBEAT_INTERVAL_MS = 30_000;
 export const HEARTBEAT_STALE_MS = 90_000;
 const HEARTBEAT_LINE_RE = /^\[HEARTBEAT\] (\S+) task=(\S+)(?: phase=(\S+))?$/;
 const START_LINE_RE = /^\[START\] (\S+) task=\S+ type=\S+ phases=(\S+)$/;
+const MODEL_LINE_RE = /^\[MODEL\] (\S+) model=(\S+)$/;
 const END_LINE_RE = /^\[END\] (\S+) exit=(\d+) elapsed=(\d+)s tools=(\d+) phases=(\S+)$/;
 const TOOL_LINE_RE = /^\[TOOL\] (\S+) (\S+)(?: (.*))?$/;
 const CHECKPOINT_LINE_RE = /^\[CHECKPOINT\] (\S+) elapsed=(\d+)s reads=(\d+) writes=(\d+) phases=(\S+) uniq_targets=(\d+) repeat_top=(\d+) risk=(low|mid|high)$/;
@@ -47,6 +48,7 @@ export function readTaskProgress(taskDir) {
     let endPhases;
     let lastAction;
     let checkpoint;
+    let model;
     for (const line of content.split("\n")) {
         const hb = HEARTBEAT_LINE_RE.exec(line);
         if (hb) {
@@ -69,6 +71,11 @@ export function readTaskProgress(taskDir) {
         const start = START_LINE_RE.exec(line);
         if (start) {
             startTs = start[1] ?? "";
+            continue;
+        }
+        const mdl = MODEL_LINE_RE.exec(line);
+        if (mdl) {
+            model = mdl[2] ?? undefined;
             continue;
         }
         const end = END_LINE_RE.exec(line);
@@ -114,7 +121,7 @@ export function readTaskProgress(taskDir) {
         const end = endTs ? Date.parse(endTs) : Date.now();
         elapsedMs = Math.max(0, end - Date.parse(startTs));
     }
-    return { heartbeat, startTs, endTs, exitCode, endPhases, elapsedMs, lastAction, checkpoint };
+    return { heartbeat, startTs, endTs, exitCode, endPhases, elapsedMs, lastAction, checkpoint, model };
 }
 /** Parse heartbeat state from a worker task's trace.log (last line wins).
  * Returns undefined when the file exists but carries no [HEARTBEAT] lines

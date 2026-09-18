@@ -8,12 +8,13 @@ import { runAgenticScript } from "../shared/agentic-scripts.ts";
 import { acquireLock } from "../shared/file-lock.ts";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.ts";
 import { type IndexStore, readIndexMdActive } from "../shared/index-store.ts";
-import type { DoctorJson, TargetMwResult } from "../shared/mw-runner.ts";
+import type { DoctorJson, MwCliResult } from "../shared/mw-runner.ts";
 import {
 	buildMw,
 	doctorMw,
 	getMwStatus,
 	initMw,
+	modelMw,
 	restartMw,
 	serveStaleness,
 	startMw,
@@ -1310,6 +1311,20 @@ export function formatDoctorReport(report: DoctorJson, fix: boolean): string {
 		lines.push(`pi shell: ${piShell.status} — ${piShell.detail ?? ""}`);
 	}
 
+	// Dispatch model defaults row (silent when nothing is configured).
+	const dispatch = report.dispatch;
+	if (dispatch?.exists) {
+		if (dispatch.error) {
+			lines.push(`派发模型: 配置错误 — ${dispatch.error}`);
+		} else {
+			const roles = Object.entries(dispatch.models ?? {})
+				.map(([role, value]) => `${role}=${value}`)
+				.join("; ");
+			const window = dispatch.window_model || "（未记录）";
+			lines.push(`派发模型: ${roles || "未设角色"}; 窗口模型 ${window}`);
+		}
+	}
+
 	if (fix) {
 		const applied = report.fix?.applied;
 		lines.push(Array.isArray(applied) && applied.length > 0 ? `已自动修复: ${applied.join("; ")}` : "无可自动修复项");
@@ -1385,7 +1400,7 @@ export async function runMwTargetCommand(
 	ctx: ExtensionCommandContext,
 	projectDir: string,
 	argsText: string,
-	runner: (projectDir: string, args: string[]) => TargetMwResult = targetMw,
+	runner: (projectDir: string, args: string[]) => MwCliResult = targetMw,
 ): Promise<void> {
 	const parts = splitCommandLine(argsText);
 	const action = parts[0] ?? "";
@@ -1425,6 +1440,62 @@ export async function runMwTargetCommand(
 	);
 }
 
+/** /mw model — dispatch model defaults from the pi window. Thin wrapper over
+ * `mw.py model` (single source of parsing/validation/rendering); the runner is
+ * injectable for tests. set/clear remind when the change takes effect:
+ * worker roles on the next spawn (launcher resolves per spawn, no serve
+ * restart), `main` at the next window start (session_start application). */
+export async function runMwModelCommand(
+	ctx: ExtensionCommandContext,
+	projectDir: string,
+	argsText: string,
+	runner: (projectDir: string, args: string[]) => MwCliResult = modelMw,
+): Promise<void> {
+	const parts = splitCommandLine(argsText);
+	const action = parts[0] ?? "show";
+	if (action === "show") {
+		const r = runner(projectDir, ["show"]);
+		ctx.ui.notify(
+			r.ok ? r.output || "mw model show: ok" : `mw model show failed: ${r.error}`,
+			r.ok ? "info" : "error",
+		);
+		return;
+	}
+	if (action === "set") {
+		const role = parts[1];
+		const value = parts[2];
+		if (!role || !value || parts.length > 3) {
+			ctx.ui.notify(
+				"Usage: /mw model set <role> <prefix/model> — roles: main, coding, review, research (e.g. /mw model set review timi/glm-5.3-air)",
+				"warning",
+			);
+			return;
+		}
+		const r = runner(projectDir, ["set", role, value]);
+		ctx.ui.notify(
+			r.ok
+				? `${r.output}\nWorker roles apply on the next spawn (no serve restart); main applies at the next window start.`
+				: `mw model set failed: ${r.error}`,
+			r.ok ? "info" : "error",
+		);
+		return;
+	}
+	if (action === "clear") {
+		const role = parts[1];
+		if (!role || parts.length > 2) {
+			ctx.ui.notify("Usage: /mw model clear <role|all>", "warning");
+			return;
+		}
+		const r = runner(projectDir, ["clear", role]);
+		ctx.ui.notify(
+			r.ok ? r.output || "mw model clear: ok" : `mw model clear failed: ${r.error}`,
+			r.ok ? "info" : "error",
+		);
+		return;
+	}
+	ctx.ui.notify("Usage: /mw model show | set <role> <prefix/model> | clear <role|all>", "warning");
+}
+
 export function registerMwCommands(
 	pi: ExtensionAPI,
 	projectDir: string,
@@ -1432,7 +1503,7 @@ export function registerMwCommands(
 	ackStore: AckStore,
 ): void {
 	pi.registerCommand("mw", {
-		description: "Control mw: build / init / start / stop / restart / status",
+		description: "Control mw: build / init / start / stop / restart / status / doctor / target / model / ack",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const trimmed = _args.trim();
 			const sub = trimmed.split(/\s+/)[0] ?? "status";
@@ -1534,6 +1605,13 @@ export function registerMwCommands(
 				return;
 			}
 
+			if (sub === "model") {
+				// Dispatch model defaults (mw.py model show/set/clear) — thin wrapper,
+				// Python stays the single source of parsing and validation.
+				await runMwModelCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
+				return;
+			}
+
 			if (sub === "ack") {
 				// Ack terminal worker results (AC-004): <task-key> acks one row,
 				// all acks every unacked terminal row. Running/pending rows are
@@ -1555,7 +1633,7 @@ export function registerMwCommands(
 			}
 
 			ctx.ui.notify(
-				"Usage: /mw build|init|start|stop|status|doctor [fix] | target show|set|clear | ack <task-key>|all",
+				"Usage: /mw build|init|start|stop|status|doctor [fix] | target show|set|clear | model show|set|clear | ack <task-key>|all",
 				"warning",
 			);
 		},

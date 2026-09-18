@@ -77,6 +77,42 @@ python mw.py <子命令>
 | `setup` | 一次性机器初始化：克隆框架 + 全局装扩展 + 自动填充 pi `shellPath`（Windows；幂等，不覆盖已配置值） |
 | `pull-agentictask` / `push-agentictask` | 更新 / 推送 AgenticTask 框架 |
 | `target set/show/clear` | 双工作区配置（见下） |
+| `model set/show/clear` | 派发模型默认值（见下） |
+
+## 派发模型默认值
+
+`mw model set <role> <provider/model>` 配置各角色的默认模型，未显式指定 `model:` 的任务在派发时逐层回退：
+
+```
+task.md model:  >  dispatch.yml [role]  >  当前窗口模型  >  每路由硬编码默认
+（显式指定）        （前缀需匹配路由）     （.mw/window-model）  （pi+timi→glm-5.3、codex→gpt-5.6-sol）
+```
+
+角色：`main`（PM 主窗口，无显式选择时 session_start 套用）、`coding`（coding/phase-writer/repair/roadmap-writer/无类型）、`review`（review/verifier/reviewer）、`research`。配置存于项目级 `.mw/dispatch.yml`（gitignore，随机器本地）。
+
+模型值用 `前缀/模型 id` 命名空间，前缀选择供应渠道：
+
+| 前缀 | 渠道 | 说明 |
+|------|------|------|
+| `timi/` | pi + timi 直连 | 默认路由 |
+| `claude/` | pi + anthropic 直连 | 不走 mw 代理，ANTHROPIC_API_KEY 直连 |
+| `codex/` | pi + openai-codex | 用 codex 自身配置，无需代理凭证 |
+| `deepseek/` | pi + deepseek 直连 | 不走 mw 代理 |
+| `codex_cli/` / `claude_cli/` | CLI 执行器 | 仅匹配对应 cli 的任务 |
+| 裸 id（无前缀） | 任务原路由 | 兼容现有行为 |
+
+前缀生效时覆盖任务的 provider 但**不换 cli**（工具白名单/watchdog/模型徽标是 pi worker-mode 功能）；不兼容或未知前缀的默认值跳过落到下一层，显式 task.md `model:` 值不兼容则报错进 worker.log。未配置时 worker 默认与主窗口模型一致（`.mw/window-model` 由主窗口扩展在 session_start/model_select 时记录）。
+
+```bash
+python mw.py model set --project . coding timi/glm-5.3
+python mw.py model set --project . review timi/glm-5.3-air
+python mw.py model show --project .      # 配置 + 窗口模型 + 各角色实际生效值
+python mw.py model clear --project . review
+```
+
+PM 窗口里也可用 `/mw model`（转发到同一 CLI）：`/mw model show` · `/mw model set <role> <prefix/model>` · `/mw model clear <role|all>`。worker 角色下次 spawn 生效（无需重启 serve）；`main` 角色在窗口下次启动时套用。
+
+`mw doctor` 的 `dispatch` 段展示配置状态；配置文件损坏仅降级为建议（不阻断派发，回退窗口模型/硬编码默认）。
 
 ## 双工作区：代码目录与工作目录分离
 

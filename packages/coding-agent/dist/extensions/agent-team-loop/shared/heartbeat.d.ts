@@ -63,6 +63,10 @@ export interface TaskProgress {
     /** Last convergence checkpoint, when the task ran past the checkpoint
      * time (new bundles; undefined on old bundles / short tasks). */
     checkpoint: CheckpointInfo | undefined;
+    /** Model id from the [MODEL] line (new bundles) — what the worker is
+     * actually running, launcher defaults included. Undefined on old bundles
+     * and when the model was unresolved at session start. */
+    model: string | undefined;
 }
 /** Human-readable age for heartbeat display: "15s", "3m", "2h". Shared by
  * the watch widget's `hb` field and terminal-summary runtime stats. */

@@ -51,7 +51,26 @@ export function writeOutput(opts) {
     else if (opts.exitCode === 130) {
         sections.push(`## Exit Reason\n\nTask was cancelled (exit 130).`);
     }
-    fs.writeFileSync(outputPath, `${sections.join("\n\n")}\n`, "utf8");
+    // D-117 (output.md clobber): task templates direct workers to write
+    // deliverables and machine-readable lines into output.md (VERDICT=/TASKS=
+    // first lines, conductor [VERIFY] rows, L3 verdict sections) — a full
+    // overwrite at exit destroyed them, so terminal readers (PM readback,
+    // readTerminalDetail, conductor regexes) only ever saw the harness
+    // summary. When the file already carries agent content, preserve it
+    // verbatim — its first line keeps the machine-readable contract — and
+    // append the harness sections below a separator; the section parsers
+    // match anywhere in the file. Empty/missing files keep today's format
+    // (the agent never wrote). worker-mode guarantees one writeOutput call
+    // per process (outputWritten guard), so the merge cannot compound.
+    let existing = "";
+    try {
+        existing = fs.readFileSync(outputPath, "utf8");
+    }
+    catch {
+        existing = "";
+    }
+    const body = `${sections.join("\n\n")}\n`;
+    fs.writeFileSync(outputPath, existing.trim() === "" ? body : `${existing.trimEnd()}\n\n---\n\n${body}`, "utf8");
 }
 export function appendTrace(taskKey, agenticdocRoot, line) {
     const dir = outputDir(taskKey, agenticdocRoot);
@@ -75,6 +94,14 @@ function truncLine(s, max) {
 /** Task start marker: `[START] ts task=<key> type=<type> phases=<n|->`. */
 export function appendStart(taskKey, agenticdocRoot, type, phaseTotal) {
     appendLifecycleLine(taskKey, agenticdocRoot, `[START] ${new Date().toISOString()} task=${taskKey} type=${type} phases=${phaseTotal > 0 ? phaseTotal : "-"}`);
+}
+/** Model record (D-116: worker model visibility): `[MODEL] ts model=<id>` —
+ * the pi-resolved model id captured at session start (ExtensionAPI exposes
+ * the model only via event contexts, so this is written from the worker's
+ * session_start handler, before the first turn). Consumed by the watch
+ * widget's model badge; old bundles simply lack the line. */
+export function appendModel(taskKey, agenticdocRoot, modelId) {
+    appendLifecycleLine(taskKey, agenticdocRoot, `[MODEL] ${new Date().toISOString()} model=${modelId}`);
 }
 /** Phase transition marker: `[PHASE] ts start|done <idx>/<total> [name]`. */
 export function appendPhase(taskKey, agenticdocRoot, state, idx, total, name = "") {

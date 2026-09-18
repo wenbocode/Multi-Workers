@@ -26,6 +26,7 @@ import datetime
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -103,6 +104,88 @@ def _stripped_env(config: dict) -> dict[str, str]:
     return env
 
 
+def _resolve_entry_model(
+    entry: dict[str, str], project_dir: pathlib.Path
+) -> tuple[str, str]:
+    """Resolve this spawn's model via the dispatch chain.
+
+    task.md `model:` > .mw/dispatch.yml role default > .mw/window-model > ""
+    (per-cli hardcoded default, applied in _build_command). Returns
+    (model_value, source) with source for diagnostics. A broken dispatch.yml
+    never blocks the spawn — it warns once per spawn on stderr (→ mw.log) and
+    the chain falls through.
+    """
+    config, err = mw_common.load_dispatch_config(project_dir)
+    if err:
+        print(
+            f"[launcher] Warning: {err} — model defaults fall back to the "
+            "window model / per-cli defaults",
+            file=sys.stderr,
+        )
+    task_type, task_model = _read_task_md_fields(entry["task_path"])
+    return mw_common.resolve_dispatch_model(
+        cli=entry["cli"].lower(),
+        task_type=task_type,
+        entry_model=task_model,
+        config_models=config.get("models", {}),
+        window_model=mw_common.read_window_model(project_dir),
+    )
+
+
+def _read_task_md_fields(task_path: str) -> tuple[str, str]:
+    """(type, model) interface lines from a task.md (CRLF-tolerant).
+
+    task.md is the single source of truth for the EXPLICIT per-task model: the
+    queue row's model column is a display transport filled by the TS side, and
+    a conductor orphan reinsert rewrites it to "" — reading task.md here keeps
+    an explicit model: line effective through every path. ('', '') when the
+    file is unreadable (the spawn then fails on the missing file anyway)."""
+    try:
+        content = pathlib.Path(task_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "", ""
+    type_m = re.search(r"^type:[ \t]*(\S+)[ \t\r]*$", content, flags=re.MULTILINE)
+    model_m = re.search(r"^model:[ \t]*(\S+)[ \t\r]*$", content, flags=re.MULTILINE)
+    return (type_m.group(1) if type_m else "", model_m.group(1) if model_m else "")
+
+
+def _effective_entry(entry: dict[str, str], model_value: str) -> dict[str, str]:
+    """Apply a resolved model value to a queue entry.
+
+    A provider prefix (timi/claude/codex/deepseek) overrides the pi entry's
+    provider — the direct connection replaces the original route (this is how
+    an unset role inherits the PM window's model across providers). A *_cli
+    prefix must match the entry cli (the cli itself never changes: tool
+    allowlists / watchdog / [MODEL] badge are pi worker-mode features). Bare
+    ids keep the entry route untouched.
+    """
+    prefix, model_id = mw_common.parse_model_value(model_value)
+    if not prefix:
+        return {**entry, "model": model_value.strip()}
+    if prefix in mw_common.MODEL_PREFIX_TO_PI_PROVIDER:
+        if entry["cli"].lower() != "pi":
+            raise RuntimeError(
+                f"model {model_value!r} needs a pi entry, but the task's cli is "
+                f"{entry['cli']!r} — fix the task.md model: line or the cli"
+            )
+        return {**entry, "model": model_id, "provider": mw_common.MODEL_PREFIX_TO_PI_PROVIDER[prefix]}
+    if prefix in mw_common.CLI_PREFIX_TO_CLI:
+        expected = mw_common.CLI_PREFIX_TO_CLI[prefix]
+        if entry["cli"].lower() != expected:
+            raise RuntimeError(
+                f"model {model_value!r} needs a {expected} entry, but the task's "
+                f"cli is {entry['cli']!r} — fix the task.md model: line or the cli"
+            )
+        # The CLI transport owns its own auth; a stale provider column from
+        # the queue row must not leak into route validation (codex rejects
+        # any provider but ""/"codex").
+        return {**entry, "model": model_id, "provider": ""}
+    raise RuntimeError(
+        f"model {model_value!r} has unknown prefix {prefix!r} "
+        f"(valid: {', '.join(sorted(mw_common.KNOWN_MODEL_PREFIXES))})"
+    )
+
+
 def _build_env(entry: dict[str, str], config: dict) -> dict[str, str]:
     """Build the environment dict for a worker process (AC-002~004, AC-008~010, AC-024)."""
     cli = entry["cli"].lower()
@@ -121,6 +204,38 @@ def _build_env(entry: dict[str, str], config: dict) -> dict[str, str]:
         env["TIMI_API_KEY"] = value
         if "TIMI_BASE_URL" in os.environ:
             env["TIMI_BASE_URL"] = os.environ["TIMI_BASE_URL"]
+        task_path = pathlib.Path(entry["task_path"])
+        env["PI_WORKER_TASK"] = str(task_path.resolve())
+        return env
+
+    # Pi + openai-codex (model prefix codex/...): direct native provider —
+    # codex's own config carries the auth, so only strip proxy credentials
+    # (same isolation policy as the codex CLI branch below).
+    if cli == "pi" and provider == "openai-codex":
+        env = _stripped_env(config)
+        task_path = pathlib.Path(entry["task_path"])
+        env["PI_WORKER_TASK"] = str(task_path.resolve())
+        return env
+
+    # Pi + anthropic / deepseek (model prefixes claude/... deepseek/...):
+    # DIRECT provider connections — no mw proxy base URL. The credential is
+    # injected from the same provider chain the proxy route uses; an explicit
+    # *_BASE_URL in the serve environment passes through (custom gateway).
+    if cli == "pi" and provider in ("anthropic", "deepseek"):
+        credential_name = provider
+        key_env = "ANTHROPIC_API_KEY" if provider == "anthropic" else "DEEPSEEK_API_KEY"
+        base_env = "ANTHROPIC_BASE_URL" if provider == "anthropic" else "DEEPSEEK_BASE_URL"
+        cred = config.get("credentials", {}).get(credential_name)
+        value, _source = mw_common.resolve_credential(cred, os.environ)
+        if value is None:
+            raise RuntimeError(
+                f"{provider} credential is not available for the direct route "
+                f"({mw_common.describe_missing(cred)})."
+            )
+        env = _stripped_env(config)
+        env[key_env] = value
+        if base_env in os.environ:
+            env[base_env] = os.environ[base_env]
         task_path = pathlib.Path(entry["task_path"])
         env["PI_WORKER_TASK"] = str(task_path.resolve())
         return env
@@ -253,16 +368,28 @@ def _resolve_cli(name: str) -> str:
 def _build_command(entry: dict[str, str]) -> list[str]:
     cli = entry["cli"].lower()
     provider = entry.get("provider", "").strip()
-    # Per-task model override (from task.md `model:` or `/worker --model`). Empty →
-    # keep the historical per-cli default. Model is just a CLI flag; the provider /
-    # credential wiring in _build_env is unchanged, so the model must be compatible
-    # with the endpoint that (cli, provider) resolves to.
+    # Model semantics: entry["model"] may carry a resolved prefix from
+    # _effective_entry — a provider prefix has already remapped `provider`
+    # (e.g. claude/x -> anthropic), so the flag below follows it. Empty model
+    # keeps the historical per-cli default. Model is just a CLI flag; the
+    # provider / credential wiring in _build_env is unchanged, so the model
+    # must be compatible with the route that (cli, provider) resolves to.
     model = entry.get("model", "").strip()
     task_path = entry["task_path"]
     starter = _starter_prompt(task_path)
     if cli == "pi":
         if provider == "timi":
             return ["pi", "--provider", "timi", "--model", model or "glm-5.3", "-p", starter]
+        # Direct non-timi providers (anthropic / openai-codex / deepseek, set
+        # via model prefixes): explicit --provider so the flag can never ride
+        # on pi's default-provider resolution.
+        if provider in ("anthropic", "openai-codex", "deepseek"):
+            if not model:
+                raise RuntimeError(
+                    f"pi provider {provider!r} requires an explicit model "
+                    "(no per-route default is hardcoded for direct providers)"
+                )
+            return ["pi", "--provider", provider, "--model", model, "-p", starter]
         # Extension reads task.md via PI_WORKER_TASK; -p passes a short starter
         # pointing at the task file (never the body — see _starter_prompt).
         cmd = ["pi"]
@@ -522,8 +649,13 @@ def _spawn(
     isolated to the task — it can never take down the launcher or mw serve.
     """
     try:
-        env = _build_env(entry, config)
-        cmd = _build_command(entry)
+        model_value, model_source = _resolve_entry_model(entry, project_dir)
+        effective = _effective_entry(entry, model_value)
+        env = _build_env(effective, config)
+        cmd = _build_command(effective)
+        print(
+            f"[launcher] {entry['task_key']}: model={model_value or '(route default)'} source={model_source}",
+        )
         # Resolve the CLI binary to a full path so Windows npm `.cmd` shims are
         # found (CreateProcess only appends `.exe`). See _resolve_cli.
         cmd[0] = _resolve_cli(cmd[0])

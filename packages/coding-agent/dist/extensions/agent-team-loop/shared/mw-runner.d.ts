@@ -2,6 +2,7 @@ export interface MwStatus {
     running: boolean;
     pid: number | null;
 }
+export declare const PYTHON_EXE: string;
 /**
  * Resolve mw.py, in order:
  *   1. MW_PY env override
@@ -167,6 +168,19 @@ export interface DoctorJson {
         source_newest_mtime?: string;
         note?: string;
     };
+    pi_shell?: {
+        status?: string;
+        settings?: string;
+        shell_path?: string | null;
+        detected?: string | null;
+        detail?: string;
+    };
+    dispatch?: {
+        exists?: boolean;
+        models?: Record<string, string>;
+        window_model?: string;
+        error?: string;
+    };
     fix?: {
         applied?: unknown;
     };
@@ -188,18 +202,15 @@ export type DoctorMwResult = {
  * the TS side never re-implements checks). `fix` adds --fix first.
  */
 export declare function doctorMw(projectDir: string, fix?: boolean): DoctorMwResult;
-export type TargetMwResult = {
+export type MwCliResult = {
     ok: true;
     output: string;
 } | {
     ok: false;
     error: string;
 };
-/**
- * Run `mw.py target <args...> --project=<dir>` (dual-workspace config:
- * show / set / clear). The Python side stays the single source of parsing,
- * validation, and rendering — the TS side only forwards and displays.
- * `--project` is appended here so callers never forget the control root.
- */
-export declare function targetMw(projectDir: string, args: string[]): TargetMwResult;
+/** `mw.py target <args...>` — dual-workspace config (show / set / clear). */
+export declare function targetMw(projectDir: string, args: string[]): MwCliResult;
+/** `mw.py model <args...>` — dispatch model defaults (show / set / clear). */
+export declare function modelMw(projectDir: string, args: string[]): MwCliResult;
 //# sourceMappingURL=mw-runner.d.ts.map

@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
 import { registerAutopilotCommands } from "../autopilot/console.ts";
 import { AckStore } from "../shared/ack-store.ts";
+import { registerMainWindowModel } from "../shared/dispatch-models.ts";
 import { formatHeartbeatAge, readTaskProgress } from "../shared/heartbeat.ts";
 import { IndexStore } from "../shared/index-store.ts";
 import { getMwStatus, initMw, serveStaleness, startMw, waitForMwStart } from "../shared/mw-runner.ts";
@@ -630,6 +631,9 @@ export function pmActivate(pi: ExtensionAPI): void {
 	// Autopilot console (T-15): /autopilot status|gates|gate|timeline|enable|
 	// disable|pause|resume|roadmap — stateless, file-derived (D-005).
 	registerAutopilotCommands(pi, projectDir);
+	// Dispatch model chain, main-window side (mw-dispatch-models): record this
+	// window's model for worker inheritance and apply a configured `main` role.
+	registerMainWindowModel(pi);
 
 	// Hard gate: pm-state.md's '- Phase:' / '- Claim-Id:' interface lines are
 	// script-owned (advance_phase.py / update_index.py). Hand-editing them is

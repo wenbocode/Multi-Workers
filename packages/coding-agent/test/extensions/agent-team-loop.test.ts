@@ -12,6 +12,7 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { Model } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../src/core/extensions/types.ts";
 import { activate } from "../../src/extensions/agent-team-loop/index.ts";
@@ -46,12 +47,23 @@ import {
 	registerSwitchKeyTool,
 	registerWorkerTools,
 	renderWatchLines,
+	runMwModelCommand,
 	runMwTargetCommand,
 	splitCommandLine,
 	windowClaimId,
 } from "../../src/extensions/agent-team-loop/pm/ui-bridge.ts";
 import { AckStore } from "../../src/extensions/agent-team-loop/shared/ack-store.ts";
 import { agenticScriptsDir, runAgenticScript } from "../../src/extensions/agent-team-loop/shared/agentic-scripts.ts";
+import {
+	applyMainModelConfig,
+	PREFIX_TO_PROVIDER_ID,
+	PROVIDER_ID_TO_PREFIX,
+	parseModelValue,
+	readMainModelConfig,
+	recordWindowModel,
+	settingsDefaultModel,
+	windowModelPath,
+} from "../../src/extensions/agent-team-loop/shared/dispatch-models.ts";
 import {
 	HEARTBEAT_INTERVAL_MS,
 	readHeartbeatInfo,
@@ -4276,5 +4288,269 @@ describe("/mw target (dual-workspace config)", () => {
 		]);
 		expect(splitCommandLine("")).toEqual([]);
 		expect(splitCommandLine('   "a b"   ')).toEqual(["a b"]);
+	});
+});
+
+describe("/mw model (dispatch model defaults)", () => {
+	it("show forwards to mw.py model show with the control root as --project", async () => {
+		const calls: Array<[string, string[]]> = [];
+		const ctx = fakeCmdCtx();
+		await runMwModelCommand(ctx.ctx, "/proj", "show", (projectDir, args) => {
+			calls.push([projectDir, args]);
+			return { ok: true, output: "config: /proj/.mw/dispatch.yml\nwindow model: timi/glm-5.3" };
+		});
+		expect(calls).toEqual([["/proj", ["show"]]]);
+		expect(ctx.notifications.some((n) => n.includes("window model"))).toBe(true);
+	});
+
+	it("bare /mw model defaults to show", async () => {
+		const calls: Array<[string, string[]]> = [];
+		const ctx = fakeCmdCtx();
+		await runMwModelCommand(ctx.ctx, "/proj", "", (projectDir, args) => {
+			calls.push([projectDir, args]);
+			return { ok: true, output: "" };
+		});
+		expect(calls).toEqual([["/proj", ["show"]]]);
+	});
+
+	it("set forwards role and value, reminding when it takes effect", async () => {
+		const calls: Array<[string, string[]]> = [];
+		const ctx = fakeCmdCtx();
+		await runMwModelCommand(ctx.ctx, "/proj", "set review timi/glm-5.3-air", (projectDir, args) => {
+			calls.push([projectDir, args]);
+			return { ok: true, output: "[mw model set] review = timi/glm-5.3-air → /proj/.mw/dispatch.yml" };
+		});
+		expect(calls).toEqual([["/proj", ["set", "review", "timi/glm-5.3-air"]]]);
+		// The next-spawn / next-window-start reminder rides along on success.
+		expect(ctx.notifications.some((n) => n.includes("next spawn"))).toBe(true);
+	});
+
+	it("set with a missing role or value shows usage and runs nothing", async () => {
+		let ran = false;
+		const ctx = fakeCmdCtx();
+		await runMwModelCommand(ctx.ctx, "/proj", "set review", () => {
+			ran = true;
+			return { ok: true, output: "" };
+		});
+		expect(ran).toBe(false);
+		expect(ctx.notifications.some((n) => n.startsWith("Usage: /mw model set"))).toBe(true);
+	});
+
+	it("clear requires an explicit role or all", async () => {
+		let ran = false;
+		const ctx = fakeCmdCtx();
+		await runMwModelCommand(ctx.ctx, "/proj", "clear", () => {
+			ran = true;
+			return { ok: true, output: "" };
+		});
+		expect(ran).toBe(false);
+		expect(ctx.notifications.some((n) => n.startsWith("Usage: /mw model clear"))).toBe(true);
+
+		const calls: Array<[string, string[]]> = [];
+		await runMwModelCommand(ctx.ctx, "/proj", "clear all", (projectDir, args) => {
+			calls.push([projectDir, args]);
+			return { ok: true, output: "[mw model clear] removed all roles" };
+		});
+		expect(calls).toEqual([["/proj", ["clear", "all"]]]);
+	});
+
+	it("unknown action shows the general usage", async () => {
+		const ctx = fakeCmdCtx();
+		await runMwModelCommand(ctx.ctx, "/proj", "frobnicate", () => ({ ok: true, output: "" }));
+		expect(ctx.notifications.some((n) => n.startsWith("Usage: /mw model show"))).toBe(true);
+	});
+
+	it("runner failure notifies an error", async () => {
+		const ctx = fakeCmdCtx();
+		await runMwModelCommand(ctx.ctx, "/proj", "set review nope/x", () => ({
+			ok: false,
+			error: "[mw model set] Error: unknown prefix 'nope'",
+		}));
+		expect(ctx.notifications.some((n) => n.includes("mw model set failed") && n.includes("unknown prefix"))).toBe(
+			true,
+		);
+	});
+
+	it("the /mw slash command routes the model subcommand (missing-wiring regression)", async () => {
+		const root = mkdtemp();
+		const { pi, commands } = fakeCmdPi();
+		registerMwCommands(pi, root, new WorkerStore(root), new AckStore(root));
+		const handler = commands.get("mw");
+		if (!handler) throw new Error("mw command not registered");
+		const { ctx, notifications } = fakeCmdCtx();
+
+		// Before the wiring, "model" fell through to the general /mw usage line.
+		await handler("model set", ctx);
+		expect(notifications.some((n) => n.startsWith("Usage: /mw model set"))).toBe(true);
+		expect(notifications.some((n) => n.startsWith("Usage: /mw build"))).toBe(false);
+
+		await handler("model frobnicate", ctx);
+		expect(notifications.some((n) => n.startsWith("Usage: /mw model show"))).toBe(true);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+});
+
+// ── Dispatch model config (mw-dispatch-models) ───────────────────────────
+
+describe("dispatch model config", () => {
+	// Mirror of mw_common.MODEL_PREFIX_TO_PI_PROVIDER (inverse direction).
+	// The Python-side lock lives in test_dispatch_models.py — keep both tables
+	// equal when a provider joins the namespace.
+	const PY_PREFIX_MAP: Record<string, string> = {
+		timi: "timi",
+		anthropic: "claude",
+		"openai-codex": "codex",
+		deepseek: "deepseek",
+	};
+
+	it("PROVIDER_ID_TO_PREFIX stays in sync with the Python map", () => {
+		expect(PROVIDER_ID_TO_PREFIX).toEqual(PY_PREFIX_MAP);
+		for (const [provider, prefix] of Object.entries(PY_PREFIX_MAP)) {
+			expect(PREFIX_TO_PROVIDER_ID[prefix]).toBe(provider);
+		}
+	});
+
+	it("parseModelValue splits prefix and bare values", () => {
+		expect(parseModelValue("timi/glm-5.3")).toEqual({ prefix: "timi", modelId: "glm-5.3" });
+		expect(parseModelValue("codex_cli/gpt-5.6-sol")).toEqual({ prefix: "codex_cli", modelId: "gpt-5.6-sol" });
+		expect(parseModelValue("glm-5.3")).toEqual({ prefix: "", modelId: "glm-5.3" });
+	});
+
+	it("recordWindowModel writes prefix/model only in framework projects", () => {
+		const root = mkdtemp();
+		const model = { provider: "anthropic", id: "claude-sonnet-5" } as unknown as Model<any>;
+		// No .agenticdoc → no write, no .mw dir (the extension is global; random
+		// projects must stay untouched).
+		recordWindowModel(root, model);
+		expect(fs.existsSync(path.join(root, ".mw"))).toBe(false);
+
+		fs.mkdirSync(path.join(root, ".agenticdoc"));
+		recordWindowModel(root, model);
+		expect(fs.readFileSync(windowModelPath(root), "utf8")).toBe("claude/claude-sonnet-5\n");
+
+		// Unmapped provider (e.g. openrouter) is inert on the Python side → skip.
+		recordWindowModel(root, { provider: "openrouter", id: "x" } as unknown as Model<any>);
+		expect(fs.readFileSync(windowModelPath(root), "utf8")).toBe("claude/claude-sonnet-5\n");
+	});
+
+	it("readMainModelConfig parses the mw-model-owned format", () => {
+		const root = mkdtemp();
+		expect(readMainModelConfig(root)).toBeNull();
+		fs.mkdirSync(path.join(root, ".mw"), { recursive: true });
+		fs.writeFileSync(
+			path.join(root, ".mw", "dispatch.yml"),
+			"models:\n  coding: timi/glm-5.3\n  main: timi/glm-5.3\n  review: timi/glm-5.3-air\n",
+			"utf8",
+		);
+		expect(readMainModelConfig(root)).toBe("timi/glm-5.3");
+		fs.writeFileSync(path.join(root, ".mw", "dispatch.yml"), "models:\n  coding: timi/glm-5.3\n", "utf8");
+		expect(readMainModelConfig(root)).toBeNull();
+	});
+
+	it("settingsDefaultModel reads the agent dir settings", () => {
+		const agentDir = mkdtemp();
+		vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+		try {
+			expect(settingsDefaultModel()).toBeNull();
+			fs.writeFileSync(path.join(agentDir, "settings.json"), '{"defaultModel": "claude-sonnet-4-20250514"}', "utf8");
+			expect(settingsDefaultModel()).toBe("claude-sonnet-4-20250514");
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
+	it("applyMainModelConfig: explicit user choices always win", async () => {
+		const root = mkdtemp();
+		fs.mkdirSync(path.join(root, ".agenticdoc"));
+		fs.mkdirSync(path.join(root, ".mw"), { recursive: true });
+		fs.writeFileSync(path.join(root, ".mw", "dispatch.yml"), "models:\n  main: timi/glm-5.3\n", "utf8");
+		const model = { provider: "timi", id: "glm-5.3" } as unknown as Model<any>;
+		const setModel = vi.fn(async () => true);
+		const notifications: string[] = [];
+		const pi = { setModel } as unknown as ExtensionAPI;
+		const mkCtx = (): ExtensionContext =>
+			({
+				cwd: root,
+				model: undefined,
+				modelRegistry: {
+					find: (p: string, id: string) => (p === "timi" && id === "glm-5.3" ? model : undefined),
+				},
+				ui: { notify: (m: string) => notifications.push(m) },
+			}) as unknown as ExtensionContext;
+
+		const argv = process.argv;
+		try {
+			// No flag, no settings default → applies.
+			vi.stubEnv("PI_CODING_AGENT_DIR", mkdtemp()); // no settings.json there
+			await applyMainModelConfig(pi, mkCtx());
+			expect(setModel).toHaveBeenCalledTimes(1);
+			expect(setModel).toHaveBeenCalledWith(model);
+			expect(notifications.some((n) => n.includes("dispatch.yml main"))).toBe(true);
+
+			// settings.json defaultModel wins → no application.
+			const agentDir = mkdtemp();
+			fs.writeFileSync(path.join(agentDir, "settings.json"), '{"defaultModel": "x"}', "utf8");
+			vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+			setModel.mockClear();
+			await applyMainModelConfig(pi, mkCtx());
+			expect(setModel).not.toHaveBeenCalled();
+
+			// --model flag wins → no application.
+			vi.stubEnv("PI_CODING_AGENT_DIR", mkdtemp());
+			process.argv = ["pi", "--model", "glm-4"];
+			await applyMainModelConfig(pi, mkCtx());
+			expect(setModel).not.toHaveBeenCalled();
+		} finally {
+			vi.unstubAllEnvs();
+			process.argv = argv;
+		}
+	});
+
+	it("applyMainModelConfig: unknown model notifies and leaves the window alone", async () => {
+		const root = mkdtemp();
+		fs.mkdirSync(path.join(root, ".mw"), { recursive: true });
+		fs.writeFileSync(path.join(root, ".mw", "dispatch.yml"), "models:\n  main: timi/nope\n", "utf8");
+		const setModel = vi.fn(async () => true);
+		const notifications: string[] = [];
+		const pi = { setModel } as unknown as ExtensionAPI;
+		const ctx = {
+			cwd: root,
+			modelRegistry: { find: () => undefined },
+			ui: { notify: (m: string) => notifications.push(m) },
+		} as unknown as ExtensionContext;
+		vi.stubEnv("PI_CODING_AGENT_DIR", mkdtemp());
+		try {
+			await applyMainModelConfig(pi, ctx);
+		} finally {
+			vi.unstubAllEnvs();
+		}
+		expect(setModel).not.toHaveBeenCalled();
+		expect(notifications.some((n) => n.includes("not found"))).toBe(true);
+	});
+
+	it("formatDoctorReport renders the dispatch row (silent when unset)", () => {
+		const base: DoctorJson = {
+			service: { running: true, pid: 1 },
+			proxy: [],
+			orphan_proxy: { detected: false, ports: [] },
+			launcher_log: { exists: false, tail: [], error_count: 0, fatal: false },
+			queue: { non_terminal: [], stale_count: 0, archived_total: 0 },
+			credentials: { routes: [] },
+			bundle: { available: true, stale: false },
+			summary: { healthy: true, issues: [], suggestions: [] },
+		};
+		expect(formatDoctorReport(base, false)).not.toContain("派发模型");
+		const withDispatch: DoctorJson = {
+			...base,
+			dispatch: { exists: true, models: { coding: "timi/glm-5.3" }, window_model: "claude/claude-sonnet-5" },
+		};
+		expect(formatDoctorReport(withDispatch, false)).toContain(
+			"派发模型: coding=timi/glm-5.3; 窗口模型 claude/claude-sonnet-5",
+		);
+		const broken: DoctorJson = {
+			...base,
+			dispatch: { exists: true, models: {}, window_model: "", error: "dispatch.yml unreadable: boom" },
+		};
+		expect(formatDoctorReport(broken, false)).toContain("派发模型: 配置错误 — dispatch.yml unreadable: boom");
 	});
 });

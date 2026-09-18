@@ -670,6 +670,123 @@ def cmd_target(args: argparse.Namespace) -> int:
     return _target_show(project_dir)
 
 
+# ── Subcommand: model (dispatch model defaults) ──────────────────────────────
+
+def _model_write(project_dir: pathlib.Path, models: dict[str, str]) -> None:
+    """Write .mw/dispatch.yml from a complete role→value mapping."""
+    import yaml
+
+    path = mw_common.dispatch_config_path(project_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {"models": models} if models else {}
+    path.write_text(
+        yaml.safe_dump(data, allow_unicode=True, default_flow_style=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def cmd_model(args: argparse.Namespace) -> int:
+    """Dispatch model defaults: per-role models used when a task carries no
+    explicit `model:` (mw-dispatch-models). Resolution order per spawn:
+    task.md model: > dispatch.yml role > current window model > per-cli default."""
+    project_dir = pathlib.Path(args.project).resolve()
+    action = args.model_action
+
+    if action == "set":
+        role, value = args.role, args.value.strip()
+        if role not in mw_common.DISPATCH_ROLES:
+            print(
+                f"[mw model set] Error: unknown role {role!r} "
+                f"(valid: {', '.join(mw_common.DISPATCH_ROLES)})",
+                file=sys.stderr,
+            )
+            return 1
+        prefix, model_id = mw_common.parse_model_value(value)
+        if not prefix or not model_id:
+            print(
+                f"[mw model set] Error: value must be 'prefix/model' "
+                f"(e.g. timi/glm-5.3), got {value!r}",
+                file=sys.stderr,
+            )
+            return 1
+        if prefix not in mw_common.KNOWN_MODEL_PREFIXES:
+            print(
+                f"[mw model set] Error: unknown prefix {prefix!r} "
+                f"(valid: {', '.join(sorted(mw_common.KNOWN_MODEL_PREFIXES))})",
+                file=sys.stderr,
+            )
+            return 1
+        existing, err = mw_common.load_dispatch_config(project_dir)
+        if err:
+            print(
+                f"[mw model set] Error: existing dispatch.yml is unusable ({err}) — "
+                "fix or remove it before writing",
+                file=sys.stderr,
+            )
+            return 1
+        models = dict(existing.get("models", {}))
+        models[role] = value
+        _model_write(project_dir, models)
+        print(f"[mw model set] {role} = {value} → {mw_common.dispatch_config_path(project_dir)}")
+        return 0
+
+    if action == "clear":
+        role = args.role
+        existing, err = mw_common.load_dispatch_config(project_dir)
+        if err:
+            print(f"[mw model clear] Error: {err}", file=sys.stderr)
+            return 1
+        models = dict(existing.get("models", {}))
+        if role == "all":
+            if not models:
+                print("[mw model clear] nothing configured")
+                return 0
+            _model_write(project_dir, {})
+            print(f"[mw model clear] removed all roles → {mw_common.dispatch_config_path(project_dir)}")
+            return 0
+        if role not in mw_common.DISPATCH_ROLES:
+            print(
+                f"[mw model clear] Error: unknown role {role!r} "
+                f"(valid: {', '.join(mw_common.DISPATCH_ROLES)} or 'all')",
+                file=sys.stderr,
+            )
+            return 1
+        if role not in models:
+            print(f"[mw model clear] {role} is not configured")
+            return 0
+        del models[role]
+        _model_write(project_dir, models)
+        print(f"[mw model clear] removed {role} → {mw_common.dispatch_config_path(project_dir)}")
+        return 0
+
+    # show
+    existing, err = mw_common.load_dispatch_config(project_dir)
+    path = mw_common.dispatch_config_path(project_dir)
+    print(f"config: {path}{' (missing — nothing configured)' if not path.exists() else ''}")
+    if err:
+        print(f"Error: {err}")
+        return 1
+    window = mw_common.read_window_model(project_dir)
+    print(f"window model: {window or '(none recorded)'}")
+    for role in mw_common.DISPATCH_ROLES:
+        configured = existing.get("models", {}).get(role, "")
+        if configured:
+            print(f"{role}: {configured}")
+            continue
+        # Effective preview on the default worker route (pi+timi): the first
+        # compatible layer of the chain after the role config.
+        value, source = mw_common.resolve_dispatch_model(
+            cli="pi",
+            task_type=role if role != "main" else "coding",
+            entry_model="",
+            config_models={},  # this role is unset — show what lies beneath
+            window_model=window,
+        )
+        effective = value or "(route default: glm-5.3 for pi+timi, gpt-5.6-sol for codex)"
+        print(f"{role}: (unset) → {effective} [{source}]")
+    return 0
+
+
 # ── Subcommand: pull-agentictask ───────────────────────────────────────────────
 
 def _git_short_commit(repo: pathlib.Path) -> str:
@@ -1661,6 +1778,24 @@ def _parse_args() -> argparse.Namespace:
         p = target_sub.add_parser(action, help="Delete target.yml (back to single)" if action == "clear" else "Print the resolved config")
         p.add_argument("--project", required=True, help="Control workspace directory")
 
+    model_p = sub.add_parser(
+        "model",
+        help="Dispatch model defaults: per-role models used when a task carries no explicit model",
+    )
+    model_sub = model_p.add_subparsers(dest="model_action", required=True)
+    model_set_p = model_sub.add_parser("set", help="Set a role default (e.g. mw model set review timi/glm-5.3-air)")
+    model_set_p.add_argument("--project", required=True, help="Project directory")
+    model_set_p.add_argument("role", choices=mw_common.DISPATCH_ROLES, metavar="ROLE",
+                             help=f"One of: {', '.join(mw_common.DISPATCH_ROLES)}")
+    model_set_p.add_argument("value", metavar="PROVIDER/MODEL",
+                             help="Model with provider prefix (e.g. timi/glm-5.3, claude/claude-sonnet-5, codex_cli/gpt-5.6-sol)")
+    model_clear_p = model_sub.add_parser("clear", help="Remove one role (or 'all')")
+    model_clear_p.add_argument("--project", required=True, help="Project directory")
+    model_clear_p.add_argument("role", metavar="ROLE|all",
+                               help=f"One of: {', '.join(mw_common.DISPATCH_ROLES)} — or 'all'")
+    model_show_p = model_sub.add_parser("show", help="Print the configured roles and the effective resolution")
+    model_show_p.add_argument("--project", required=True, help="Project directory")
+
     init_p = sub.add_parser("init", help="Initialize project and install Extension + framework")
     init_p.add_argument("--project", required=True)
     init_p.add_argument("--no-framework", action="store_true",
@@ -1737,6 +1872,7 @@ if __name__ == "__main__":
         "status": cmd_status,
         "doctor": cmd_doctor,
         "target": cmd_target,
+        "model": cmd_model,
         "init": cmd_init,
         "pull-agentictask": cmd_pull_agentictask,
         "push-agentictask": cmd_push_agentictask,

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { registerAutopilotCommands } from "../autopilot/console.js";
 import { AckStore } from "../shared/ack-store.js";
+import { registerMainWindowModel } from "../shared/dispatch-models.js";
 import { formatHeartbeatAge, readTaskProgress } from "../shared/heartbeat.js";
 import { IndexStore } from "../shared/index-store.js";
 import { getMwStatus, initMw, serveStaleness, startMw, waitForMwStart } from "../shared/mw-runner.js";
@@ -11,7 +12,7 @@ import { registerPmStateGuard } from "../shared/pm-state-guard.js";
 import { WorkerStore } from "../shared/worker-store.js";
 import { isGoalEstablished, readGoal } from "./goal-reader.js";
 import { dispatchTask } from "./task-dispatcher.js";
-import { applyWatchWidget, claimState, deliverPmAlert, deliverWorkerResult, displaySummary, makeScopedDocGateNotifier, ownerKeyOf, readOutputBody, readSpawnFailure, registerMwCommands, registerMwTools, registerPmKeyCommands, registerPmSaveCommand, registerSwitchKeyTool, registerWatchCommand, registerWorkerCommands, registerWorkerTools, renderWatchLines, setWatchWidget, takeOverKey, WATCH_ENTRY_TYPE, windowClaimId, } from "./ui-bridge.js";
+import { applyWatchWidget, claimState, deliverPmAlert, deliverWorkerResult, displaySummary, makeScopedDocGateNotifier, ownerKeyOf, readOutputBody, readSpawnFailure, registerAdvancePhaseTool, registerMwCommands, registerMwTools, registerPmKeyCommands, registerPmSaveCommand, registerSwitchKeyTool, registerWatchCommand, registerWorkerCommands, registerWorkerTools, renderWatchLines, setWatchWidget, takeOverKey, WATCH_ENTRY_TYPE, windowClaimId, } from "./ui-bridge.js";
 const POLL_INTERVAL_MS = 4000; // < 5s per AC-001
 function isTerminal(status) {
     return status === "done" || status === "failed" || status === "needs-clarification";
@@ -485,6 +486,7 @@ export function pmActivate(pi) {
     registerPmSaveCommand(pi, indexStore, workerStore, watch, agenticdocRoot);
     registerMwCommands(pi, projectDir, workerStore, ackStore);
     registerMwTools(pi, projectDir);
+    registerAdvancePhaseTool(pi, projectDir);
     registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch);
     registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agenticdocRoot);
     registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch);
@@ -492,6 +494,9 @@ export function pmActivate(pi) {
     // Autopilot console (T-15): /autopilot status|gates|gate|timeline|enable|
     // disable|pause|resume|roadmap — stateless, file-derived (D-005).
     registerAutopilotCommands(pi, projectDir);
+    // Dispatch model chain, main-window side (mw-dispatch-models): record this
+    // window's model for worker inheritance and apply a configured `main` role.
+    registerMainWindowModel(pi);
     // Hard gate: pm-state.md's '- Phase:' / '- Claim-Id:' interface lines are
     // script-owned (advance_phase.py / update_index.py). Hand-editing them is
     // how phase gates get bypassed (mw-worker-timeout-convergence: pm-state

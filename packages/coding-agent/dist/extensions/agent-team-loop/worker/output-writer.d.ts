@@ -20,6 +20,12 @@ export declare function writeOutput(opts: WriteOutputOpts): void;
 export declare function appendTrace(taskKey: string, agenticdocRoot: string, line: string): void;
 /** Task start marker: `[START] ts task=<key> type=<type> phases=<n|->`. */
 export declare function appendStart(taskKey: string, agenticdocRoot: string, type: string, phaseTotal: number): void;
+/** Model record (D-116: worker model visibility): `[MODEL] ts model=<id>` —
+ * the pi-resolved model id captured at session start (ExtensionAPI exposes
+ * the model only via event contexts, so this is written from the worker's
+ * session_start handler, before the first turn). Consumed by the watch
+ * widget's model badge; old bundles simply lack the line. */
+export declare function appendModel(taskKey: string, agenticdocRoot: string, modelId: string): void;
 /** Phase transition marker: `[PHASE] ts start|done <idx>/<total> [name]`. */
 export declare function appendPhase(taskKey: string, agenticdocRoot: string, state: "start" | "done", idx: number, total: number, name?: string): void;
 /** Tool action marker: `[TOOL] ts <tool> [target]` — the file/command a tool

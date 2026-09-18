@@ -1,4 +1,6 @@
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
+/** Phase ladder, matching advance_phase.py's PHASES (upper-case for compare). */
+export declare const PHASE_ORDER: readonly ["SPEC", "DESIGN", "PLAN", "TASKS", "EXECUTE", "VERIFY", "DONE"];
 export declare const PHASE_GUARD_HINT: string;
 /**
  * Detect a write/edit tool call that would create, change, or remove a

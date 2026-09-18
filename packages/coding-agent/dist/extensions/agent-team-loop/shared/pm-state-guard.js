@@ -20,10 +20,11 @@ import { readPhaseDocs } from "./phase-docs.js";
 const INTERFACE_LINE = /^- (Phase|Claim-Id):/m;
 const PHASE_LINE = /^- Phase:\s*(.+?)\s*$/m;
 /** Phase ladder, matching advance_phase.py's PHASES (upper-case for compare). */
-const PHASE_ORDER = ["SPEC", "DESIGN", "PLAN", "TASKS", "EXECUTE", "VERIFY", "DONE"];
+export const PHASE_ORDER = ["SPEC", "DESIGN", "PLAN", "TASKS", "EXECUTE", "VERIFY", "DONE"];
 export const PHASE_GUARD_HINT = "pm-state.md's '- Phase:' and '- Claim-Id:' lines are machine interfaces owned by the framework " +
     "scripts (advance_phase.py / update_index.py); hand-editing them bypasses the phase gates. " +
-    "To change phase, run: python <framework>/scripts/advance_phase.py <key> <target-phase> " +
+    "To change phase, call the advance_phase tool (shell-free) or run: " +
+    "python <framework>/scripts/advance_phase.py <key> <target-phase> " +
     "(gates are checked, pm-state and _index.parallel stay in sync). To update the rest of " +
     "pm-state.md (logs, ledgers, decisions), keep the interface lines byte-identical.";
 function interfaceLines(content) {

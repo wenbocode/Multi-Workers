@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the agent-team-loop side of dispatch model defaults (mw-dispatch-models): non-worker windows record their current model to `.mw/window-model` (namespace `prefix/model-id`, e.g. `claude/claude-sonnet-5`; mapped from the session's provider id — `anthropic`→`claude`, `openai-codex`→`codex`) on `session_start`/`model_select`, so the Python launcher's inheritance chain can spawn workers on the same model the PM window runs; a configured `main` role in `.mw/dispatch.yml` is applied to the window via `setModel` when the user made no explicit choice (no `--model` flag, no settings `defaultModel`), with explicit choices always winning. Gated on `.agenticdoc` so globally-installed extension copies never touch unrelated projects; worker windows never write the file. `/mw doctor` renders the new `dispatch` section (roles + window model, silent when nothing is configured). The prefix map is parity-locked against the Python side (`mw_common.MODEL_PREFIX_TO_PI_PROVIDER`).
+- Added `/mw model` to the `/mw` slash command (thin wrapper over `mw.py model show|set|clear`, same pattern as `/mw target`; Python stays the single source of parsing and validation). Previously the subcommand only existed as a CLI — `/mw model ...` in a pi window fell through to the general usage line and never wrote `.mw/dispatch.yml`. Successful `set`/`clear` remind when the change applies: worker roles on the next spawn (no serve restart), `main` at the next window start.
+
 ### Breaking Changes
 
 - Changed JSON and RPC `message_update` events to emit only `assistantMessageEvent` deltas, removing the cumulative `message` and `assistantMessageEvent.partial` fields that caused quadratic output growth. Clients that need partial messages must assemble deltas between `message_start` and `message_end`; the latter remains authoritative ([#7290](https://github.com/earendil-works/pi/issues/7290)).

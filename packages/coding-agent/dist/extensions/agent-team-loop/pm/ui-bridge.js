@@ -2,13 +2,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Type } from "typebox";
+import { runAgenticScript } from "../shared/agentic-scripts.js";
 import { acquireLock } from "../shared/file-lock.js";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.js";
 import { readIndexMdActive } from "../shared/index-store.js";
-import { buildMw, doctorMw, getMwStatus, initMw, restartMw, serveStaleness, startMw, stopMw, targetMw, } from "../shared/mw-runner.js";
+import { buildMw, doctorMw, getMwStatus, initMw, modelMw, restartMw, serveStaleness, startMw, stopMw, targetMw, } from "../shared/mw-runner.js";
 import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.js";
 import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "../shared/phase-docs.js";
-import { phaseAuditWarnings } from "../shared/pm-state-guard.js";
+import { PHASE_ORDER, phaseAuditWarnings } from "../shared/pm-state-guard.js";
 import { headline } from "../worker/output-writer.js";
 import { dispatchTask } from "./task-dispatcher.js";
 /** Owner key for a worker task — this window's own claim first, the shared
@@ -390,8 +391,13 @@ export function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRo
         return [header, "  (no worker tasks)"];
     // One rendered row per entry; detail per status (live heartbeat vs D-04
     // terminal sources). Width truncation is uniform (WATCH_LINE_MAX).
+    // D-116: every row carries the worker's model in a [id] badge — running
+    // and terminal rows read the pi-resolved id from trace.log [START]
+    // (launcher defaults included); pending rows fall back to the dispatch-time
+    // override from the queue row (no trace.log yet).
     const rowLine = (e) => {
         let detail = "";
+        let model = "";
         if (e.status === "running") {
             // Heartbeat-derived live progress (design D-008): phase counter + age
             // of the last [HEARTBEAT] line, refreshed on every poll tick. Old
@@ -399,6 +405,7 @@ export function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRo
             // [START] adds elapsed runtime ("up 6m") and the last [TOOL] line
             // names what the worker is currently doing.
             const prog = readTaskProgress(path.dirname(e.taskPath));
+            model = prog?.model ?? "";
             const hb = prog?.heartbeat;
             if (hb) {
                 const ph = hb.phase === "-" ? "ph -" : `ph ${hb.phase}/${hb.phaseTotal}`;
@@ -419,12 +426,19 @@ export function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRo
             if (prog?.lastAction)
                 detail += ` · ${prog.lastAction}`;
         }
-        else if (e.status !== "pending") {
+        else if (e.status === "pending") {
+            // Dispatch-time --model override; the effective id lands in trace.log
+            // [START] once the worker spawns.
+            model = e.model;
+        }
+        else {
             // Terminal detail per status (D-004): spawn reason / Exit Reason /
             // Questions / TL;DR with their fallback chains.
+            model = readTaskProgress(path.dirname(e.taskPath))?.model ?? "";
             detail = readTerminalDetail(path.dirname(e.taskPath), e.status);
         }
-        return trunc(`  ${STATUS_GLYPH[e.status]} ${e.taskKey}${detail ? ` — ${detail}` : ""}`, WATCH_LINE_MAX);
+        const badge = model ? ` [${model}]` : "";
+        return trunc(`  ${STATUS_GLYPH[e.status]} ${e.taskKey}${badge}${detail ? ` — ${detail}` : ""}`, WATCH_LINE_MAX);
     };
     const newestFirst = (a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
     const live = [
@@ -867,6 +881,86 @@ export function registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agent
         },
     });
 }
+/** Register the agent-callable advance_phase tool: the shell-free path
+ * through the AgenticTask phase gates. The guard blocks hand-edits of
+ * pm-state.md's '- Phase:' line and points at advance_phase.py; running that
+ * via the bash tool was the only route, so a window whose shell resolution
+ * or in-shell `python` differs (fresh machines: WSL-only bash, Store-stub
+ * python, python3-only Linux) had NO way to advance a phase — it deadlocked
+ * with "no shell, cannot execute advance_phase.py / update_index.py". This
+ * tool spawns the script directly (list args, no shell); gate semantics stay
+ * in the Python script, the single source of truth audit_phase.py replays. */
+export function registerAdvancePhaseTool(pi, projectDir) {
+    const ladder = PHASE_ORDER.map((p) => p.toLowerCase());
+    pi.registerTool({
+        name: "advance_phase",
+        label: "advance_phase",
+        description: "Advance an AgenticTask key to the target phase by running the framework gate script (advance_phase.py): checks the phase-gate evidence (spec/design/plan/tasks/execute/done prerequisites), updates pm-state.md, and syncs _index.parallel. Runs the Python script directly without a shell — prefer this over `python .../advance_phase.py` via the bash tool. This is the only sanctioned way to change a key's phase; hand-editing pm-state.md's '- Phase:' line is blocked.",
+        promptGuidelines: [
+            "Change phases only through this tool (or the equivalent python script when the shell works); when the result reports GATE BLOCKED, fix the listed evidence gaps before retrying.",
+        ],
+        parameters: Type.Object({
+            key: Type.String({ description: "AgenticTask key to advance (not _scratch)." }),
+            target_phase: Type.String({
+                description: "Target phase (any case): spec | design | plan | tasks | execute | verify | done.",
+            }),
+            summary: Type.Optional(Type.String({
+                description: "Required when target_phase is done: one-line closing summary (what was added/changed + impact surface) recorded in _project_log.md as the cross-key summary row.",
+            })),
+            supersedes: Type.Optional(Type.String({
+                description: "Key this one supersedes, recorded in _project_log.md when advancing to done.",
+            })),
+        }),
+        execute: async (_toolCallId, params, _signal, _onUpdate, _context) => {
+            const { key, target_phase, summary, supersedes } = params;
+            const trimmedKey = key.trim();
+            const target = target_phase.trim().toLowerCase();
+            if (!trimmedKey || !target) {
+                return { content: [{ type: "text", text: "key and target_phase are required." }], details: undefined };
+            }
+            if (trimmedKey.startsWith("_") || trimmedKey.startsWith(".")) {
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: `Key '${trimmedKey}' has a reserved prefix and is not a phase-tracked AgenticTask key.`,
+                        },
+                    ],
+                    details: undefined,
+                };
+            }
+            if (!ladder.includes(target)) {
+                return {
+                    content: [
+                        { type: "text", text: `Unknown phase '${target_phase.trim()}'. Valid: ${ladder.join(" | ")}.` },
+                    ],
+                    details: undefined,
+                };
+            }
+            // done 汇总契约（advance_phase.py 同步校验，exit 2）：--summary 是
+            // _project_log.md 汇总列唯一数据源，缺失不允许推进。工具层先拦，
+            // 错误信息比脚本退出码可读。
+            if (target === "done" && !(summary ?? "").trim()) {
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: "Advancing to done requires a non-empty summary — one line on what was added/changed and the impact surface (written to _project_log.md as the cross-key summary row).",
+                        },
+                    ],
+                    details: undefined,
+                };
+            }
+            const args = [trimmedKey, target];
+            if (summary)
+                args.push("--summary", summary);
+            if (supersedes)
+                args.push("--supersedes", supersedes);
+            const result = runAgenticScript(projectDir, "advance_phase.py", args);
+            return { content: [{ type: "text", text: result.output }], details: undefined };
+        },
+    });
+}
 /**
  * Spawn a worker directly from the pi window.
  * Usage: /worker <claude|codex|pi> [--model <id>] <task description>
@@ -978,6 +1072,29 @@ export function formatDoctorReport(report, fix) {
     if (bundle?.available) {
         lines.push(bundle.stale ? "扩展 bundle: 源码较新，建议 /mw build 重建" : "扩展 bundle: 最新");
     }
+    // pi shellPath row (fresh-machine shell bootstrap; non-Windows reports
+    // not-applicable and stays silent here).
+    const piShell = report.pi_shell;
+    if (piShell?.status === "ok") {
+        lines.push(`pi shell: ${piShell.shell_path ?? "?"}`);
+    }
+    else if (piShell?.status && piShell.status !== "not-applicable") {
+        lines.push(`pi shell: ${piShell.status} — ${piShell.detail ?? ""}`);
+    }
+    // Dispatch model defaults row (silent when nothing is configured).
+    const dispatch = report.dispatch;
+    if (dispatch?.exists) {
+        if (dispatch.error) {
+            lines.push(`派发模型: 配置错误 — ${dispatch.error}`);
+        }
+        else {
+            const roles = Object.entries(dispatch.models ?? {})
+                .map(([role, value]) => `${role}=${value}`)
+                .join("; ");
+            const window = dispatch.window_model || "（未记录）";
+            lines.push(`派发模型: ${roles || "未设角色"}; 窗口模型 ${window}`);
+        }
+    }
     if (fix) {
         const applied = report.fix?.applied;
         lines.push(Array.isArray(applied) && applied.length > 0 ? `已自动修复: ${applied.join("; ")}` : "无可自动修复项");
@@ -1074,9 +1191,47 @@ export async function runMwTargetCommand(ctx, projectDir, argsText, runner = tar
     }
     ctx.ui.notify("Usage: /mw target show | set --game <dir> [--engine <dir>] [--vcs git|p4|none] [--uproject <file>] | clear", "warning");
 }
+/** /mw model — dispatch model defaults from the pi window. Thin wrapper over
+ * `mw.py model` (single source of parsing/validation/rendering); the runner is
+ * injectable for tests. set/clear remind when the change takes effect:
+ * worker roles on the next spawn (launcher resolves per spawn, no serve
+ * restart), `main` at the next window start (session_start application). */
+export async function runMwModelCommand(ctx, projectDir, argsText, runner = modelMw) {
+    const parts = splitCommandLine(argsText);
+    const action = parts[0] ?? "show";
+    if (action === "show") {
+        const r = runner(projectDir, ["show"]);
+        ctx.ui.notify(r.ok ? r.output || "mw model show: ok" : `mw model show failed: ${r.error}`, r.ok ? "info" : "error");
+        return;
+    }
+    if (action === "set") {
+        const role = parts[1];
+        const value = parts[2];
+        if (!role || !value || parts.length > 3) {
+            ctx.ui.notify("Usage: /mw model set <role> <prefix/model> — roles: main, coding, review, research (e.g. /mw model set review timi/glm-5.3-air)", "warning");
+            return;
+        }
+        const r = runner(projectDir, ["set", role, value]);
+        ctx.ui.notify(r.ok
+            ? `${r.output}\nWorker roles apply on the next spawn (no serve restart); main applies at the next window start.`
+            : `mw model set failed: ${r.error}`, r.ok ? "info" : "error");
+        return;
+    }
+    if (action === "clear") {
+        const role = parts[1];
+        if (!role || parts.length > 2) {
+            ctx.ui.notify("Usage: /mw model clear <role|all>", "warning");
+            return;
+        }
+        const r = runner(projectDir, ["clear", role]);
+        ctx.ui.notify(r.ok ? r.output || "mw model clear: ok" : `mw model clear failed: ${r.error}`, r.ok ? "info" : "error");
+        return;
+    }
+    ctx.ui.notify("Usage: /mw model show | set <role> <prefix/model> | clear <role|all>", "warning");
+}
 export function registerMwCommands(pi, projectDir, workerStore, ackStore) {
     pi.registerCommand("mw", {
-        description: "Control mw: build / init / start / stop / restart / status",
+        description: "Control mw: build / init / start / stop / restart / status / doctor / target / model / ack",
         handler: async (_args, ctx) => {
             const trimmed = _args.trim();
             const sub = trimmed.split(/\s+/)[0] ?? "status";
@@ -1165,6 +1320,12 @@ export function registerMwCommands(pi, projectDir, workerStore, ackStore) {
                 await runMwTargetCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
                 return;
             }
+            if (sub === "model") {
+                // Dispatch model defaults (mw.py model show/set/clear) — thin wrapper,
+                // Python stays the single source of parsing and validation.
+                await runMwModelCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
+                return;
+            }
             if (sub === "ack") {
                 // Ack terminal worker results (AC-004): <task-key> acks one row,
                 // all acks every unacked terminal row. Running/pending rows are
@@ -1185,7 +1346,7 @@ export function registerMwCommands(pi, projectDir, workerStore, ackStore) {
                 }
                 return;
             }
-            ctx.ui.notify("Usage: /mw build|init|start|stop|status|doctor [fix] | target show|set|clear | ack <task-key>|all", "warning");
+            ctx.ui.notify("Usage: /mw build|init|start|stop|status|doctor [fix] | target show|set|clear | model show|set|clear | ack <task-key>|all", "warning");
         },
     });
 }

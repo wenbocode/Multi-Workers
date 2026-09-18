@@ -374,6 +374,12 @@ export interface DoctorJson {
 		detected?: string | null;
 		detail?: string;
 	};
+	dispatch?: {
+		exists?: boolean;
+		models?: Record<string, string>;
+		window_model?: string;
+		error?: string;
+	};
 	fix?: { applied?: unknown };
 	summary?: { healthy?: boolean; issues?: unknown; suggestions?: unknown };
 }
@@ -406,29 +412,39 @@ export function doctorMw(projectDir: string, fix = false): DoctorMwResult {
 	}
 }
 
-export type TargetMwResult = { ok: true; output: string } | { ok: false; error: string };
+export type MwCliResult = { ok: true; output: string } | { ok: false; error: string };
 
 /**
- * Run `mw.py target <args...> --project=<dir>` (dual-workspace config:
- * show / set / clear). The Python side stays the single source of parsing,
+ * Run `mw.py <sub> <args...> --project=<dir>` for the config subcommands
+ * (target / model). The Python side stays the single source of parsing,
  * validation, and rendering — the TS side only forwards and displays.
  * `--project` is appended here so callers never forget the control root.
  */
-export function targetMw(projectDir: string, args: string[]): TargetMwResult {
+function runMwCli(sub: string, projectDir: string, args: string[]): MwCliResult {
 	const mwPy = findMwPy();
 	if (!mwPy) return { ok: false, error: "Could not find mw.py — set MW_PY env var." };
-	const result = spawnSync(PYTHON_EXE, [mwPy, "target", ...args, `--project=${projectDir}`], {
+	const result = spawnSync(PYTHON_EXE, [mwPy, sub, ...args, `--project=${projectDir}`], {
 		encoding: "utf8",
 		timeout: 30_000,
 	});
 	if (result.error) {
 		return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
 	}
-	// mw.py target prints its formatted lines to stdout and failures to stderr
-	// with a nonzero exit; surface both through one text channel.
+	// mw.py config subcommands print their formatted lines to stdout and
+	// failures to stderr with a nonzero exit; surface both through one text channel.
 	const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
 	if (result.status !== 0) {
-		return { ok: false, error: output || `mw target exited with code ${result.status}` };
+		return { ok: false, error: output || `mw ${sub} exited with code ${result.status}` };
 	}
 	return { ok: true, output };
+}
+
+/** `mw.py target <args...>` — dual-workspace config (show / set / clear). */
+export function targetMw(projectDir: string, args: string[]): MwCliResult {
+	return runMwCli("target", projectDir, args);
+}
+
+/** `mw.py model <args...>` — dispatch model defaults (show / set / clear). */
+export function modelMw(projectDir: string, args: string[]): MwCliResult {
+	return runMwCli("model", projectDir, args);
 }

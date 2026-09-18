@@ -95,6 +95,48 @@ _DEFAULT_CONFIG: dict = {
 # (oauth token), matching the pre-schema launcher behavior and dispatch-table.md.
 CLI_DEFAULT_PROVIDER: dict[str, str] = {"pi": "claude", "claude": "claude-cli"}
 
+# ── Dispatch model config (.mw/dispatch.yml) ─────────────────────────────
+#
+# Model values are `prefix/model-id` (e.g. timi/glm-5.3). The prefix is the
+# USER-facing serving-channel namespace — deliberately NOT raw pi provider
+# ids — and splits into two families:
+#   * provider prefixes (direct connections, pi entries only):
+#       timi -> pi provider "timi"
+#       claude -> pi provider "anthropic"        (direct, no mw proxy)
+#       codex -> pi provider "openai-codex"      (codex' own config)
+#       deepseek -> pi provider "deepseek"       (direct, no mw proxy)
+#   * CLI prefixes (executor transports, must match the entry cli):
+#       codex_cli -> codex exec, claude_cli -> claude CLI
+# A bare model id (no prefix) keeps the entry's own (cli, provider) route.
+# The TS side (agent-team-loop shared/dispatch-models.ts) mirrors
+# PROVIDER_ID_TO_PREFIX; keep both maps in sync.
+MODEL_PREFIX_TO_PI_PROVIDER: dict[str, str] = {
+    "timi": "timi",
+    "claude": "anthropic",
+    "codex": "openai-codex",
+    "deepseek": "deepseek",
+}
+PROVIDER_ID_TO_PREFIX: dict[str, str] = {v: k for k, v in MODEL_PREFIX_TO_PI_PROVIDER.items()}
+CLI_PREFIX_TO_CLI: dict[str, str] = {
+    "codex_cli": "codex",
+    "claude_cli": "claude",
+}
+KNOWN_MODEL_PREFIXES = frozenset(MODEL_PREFIX_TO_PI_PROVIDER) | frozenset(CLI_PREFIX_TO_CLI)
+
+# Configurable roles (mw model set <role>): main = the PM window itself;
+# the rest map dispatch task types onto semantic buckets.
+DISPATCH_ROLES = ("main", "coding", "review", "research")
+TASK_TYPE_TO_ROLE: dict[str, str] = {
+    "coding": "coding",
+    "phase-writer": "coding",
+    "repair": "coding",
+    "roadmap-writer": "coding",
+    "review": "review",
+    "verifier": "review",
+    "reviewer": "review",
+    "research": "research",
+}
+
 STALE_FILE_NAME = "_workers.stale.parallel"
 STALE_REASON = "task.md not found"
 
@@ -144,6 +186,116 @@ def load_providers(path: pathlib.Path | None) -> dict:
         else:
             providers[name] = dict(cfg)
     return {"credentials": credentials, "providers": providers}
+
+
+# ── Dispatch model config (.mw/dispatch.yml + .mw/window-model) ───────────
+
+def dispatch_config_path(project_root: pathlib.Path) -> pathlib.Path:
+    return project_root / ".mw" / "dispatch.yml"
+
+
+def window_model_path(project_root: pathlib.Path) -> pathlib.Path:
+    return project_root / ".mw" / "window-model"
+
+
+def load_dispatch_config(project_root: pathlib.Path) -> tuple[dict, str | None]:
+    """Load .mw/dispatch.yml -> (config, error).
+
+    config is {"models": {role: "prefix/model"}}; a missing file is ({}, None)
+    (nothing configured). Any parse/validation problem returns ({}, message):
+    model defaults are a convenience and must never block dispatching — the
+    launcher falls through to the window model / per-cli defaults and doctor
+    surfaces the error.
+    """
+    path = dispatch_config_path(project_root)
+    if not path.exists():
+        return {}, None
+    import yaml  # PyYAML: implicit dep for target.yml (mw-dual-workspace D-010)
+
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        return {}, f"dispatch.yml unreadable: {exc}"
+    if data is None:
+        return {}, None
+    if not isinstance(data, dict):
+        return {}, "dispatch.yml must be a mapping at top level"
+    models = data.get("models", {})
+    if not isinstance(models, dict):
+        return {}, "dispatch.yml 'models' must be a mapping"
+    cleaned: dict[str, str] = {}
+    for role, value in models.items():
+        if role not in DISPATCH_ROLES:
+            return {}, f"dispatch.yml models has unknown role {role!r} (valid: {', '.join(DISPATCH_ROLES)})"
+        if not isinstance(value, str) or not value.strip():
+            return {}, f"dispatch.yml models.{role} must be a non-empty string"
+        cleaned[role] = value.strip()
+    return {"models": cleaned}, None
+
+
+def read_window_model(project_root: pathlib.Path) -> str:
+    """Last model recorded by a non-worker pi window (.mw/window-model,
+    'prefix/model-id', last writer wins). '' when absent/unreadable."""
+    try:
+        first = window_model_path(project_root).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    return first[0].strip() if first else ""
+
+
+def parse_model_value(value: str) -> tuple[str, str]:
+    """'timi/glm-5.3' -> ('timi', 'glm-5.3'); 'glm-5.3' -> ('', 'glm-5.3')."""
+    value = value.strip()
+    if "/" not in value:
+        return "", value
+    prefix, _, model_id = value.partition("/")
+    return prefix.strip(), model_id.strip()
+
+
+def model_value_compatible(cli: str, value: str) -> bool:
+    """Can `value` be applied to a queue entry with this cli?
+
+    Bare ids are route-native (always compatible). Provider prefixes only
+    apply to pi entries; *_cli prefixes only to their matching CLI. Unknown
+    prefixes (e.g. a window-model recorded from an unmapped provider) are
+    incompatible so resolution falls through to the next layer.
+    """
+    prefix, _model = parse_model_value(value)
+    if not prefix:
+        return True
+    if prefix in MODEL_PREFIX_TO_PI_PROVIDER:
+        return cli == "pi"
+    if prefix in CLI_PREFIX_TO_CLI:
+        return cli == CLI_PREFIX_TO_CLI[prefix]
+    return False
+
+
+def resolve_dispatch_model(
+    *,
+    cli: str,
+    task_type: str,
+    entry_model: str,
+    config_models: dict,
+    window_model: str,
+) -> tuple[str, str]:
+    """Resolve the model for one spawn: (value, source).
+
+    Chain: task.md `model:` (explicit, returned as-is) > dispatch.yml role
+    default > current window model > "" (per-cli hardcoded default).
+    The implicit layers (config/window) skip values incompatible with the
+    entry cli (see model_value_compatible); the explicit entry model is NOT
+    filtered here — the launcher fails it loudly instead of silently
+    re-routing (an explicit codex_cli/... on a pi task is a caller bug).
+    """
+    if entry_model.strip():
+        return entry_model.strip(), "task"
+    role = TASK_TYPE_TO_ROLE.get(task_type, "coding")
+    candidate = config_models.get(role, "").strip()
+    if candidate and model_value_compatible(cli, candidate):
+        return candidate, f"config:{role}"
+    if window_model.strip() and model_value_compatible(cli, window_model):
+        return window_model.strip(), "window"
+    return "", "default"
 
 
 # 鈹€鈹€ Credential resolution 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -394,6 +546,26 @@ def _write_pi_settings(settings: pathlib.Path, data: dict) -> None:
 # ensure_pi_shell_path result statuses (doctor section contract, mirrored by
 # the TS DoctorJson.pi_shell): ok / filled / replaced / missing / broken /
 # unreadable / not-applicable.
+def _doctor_dispatch(project_dir: pathlib.Path) -> dict:
+    """Dispatch model config section (mw-dispatch-models).
+
+    A missing .mw/dispatch.yml is silent (nothing configured — the chain just
+    falls through to the window model / per-cli defaults). A broken file is a
+    suggestion, never an issue: model defaults are a convenience and must not
+    flag the chain unhealthy.
+    """
+    path = dispatch_config_path(project_dir)
+    section: dict = {"exists": path.exists()}
+    if not path.exists():
+        return section
+    config, err = load_dispatch_config(project_dir)
+    section["models"] = config.get("models", {})
+    section["window_model"] = read_window_model(project_dir)
+    if err:
+        section["error"] = err
+    return section
+
+
 def ensure_pi_shell_path(
     env: Mapping[str, str] | None = None,
     fix: bool = False,
@@ -1182,6 +1354,12 @@ def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
             "pi shellPath not pinned - WSL bash may shadow the Windows python; "
             "run 'mw setup' or 'mw.py doctor --fix' to pin PowerShell"
         )
+    dispatch = report.get("dispatch") or {}
+    if dispatch.get("error"):
+        suggestions.append(
+            f"dispatch.yml unusable ({dispatch['error']}) - model defaults are "
+            "ignored; fix or remove .mw/dispatch.yml"
+        )
     if report["orphan_proxy"]["detected"]:
         ports = ", ".join(str(p["port"]) for p in report["orphan_proxy"]["ports"])
         suggestions.append(
@@ -1230,6 +1408,7 @@ def doctor_report(
     report["credentials"] = route_precheck(config, os.environ)
     report["bundle"] = _doctor_bundle()
     report["target"] = _doctor_target(project_dir)
+    report["dispatch"] = _doctor_dispatch(project_dir)
     report["pi_shell"] = ensure_pi_shell_path(env=os.environ, fix=fix)
     if fix and report["pi_shell"].get("status") in ("filled", "replaced"):
         report["fix"]["applied"].append(
@@ -1331,6 +1510,17 @@ def format_doctor_text(report: dict) -> str:
             lines.append("pi_shell: not applicable (non-Windows)")
         else:
             lines.append(f"pi_shell: {status} — {pi_shell.get('detail')}")
+    # dispatch model config row (silent when nothing is configured)
+    dispatch = report.get("dispatch")
+    if dispatch is not None and dispatch.get("exists"):
+        if dispatch.get("error"):
+            lines.append(f"dispatch: ERROR — {dispatch['error']}")
+        else:
+            roles = ", ".join(
+                f"{role}={value}" for role, value in sorted((dispatch.get("models") or {}).items())
+            ) or "no roles set"
+            window = dispatch.get("window_model") or "(none recorded)"
+            lines.append(f"dispatch: {roles}; window model {window}")
     for r in report["credentials"]["routes"]:
         state = "available (" + _source_desc(r["source"]) + ")" if r["available"] else "missing (" + str(r["missing"]) + ")"
         lines.append(f"credentials: {r['route']} {state}")
