@@ -96,6 +96,7 @@
 
 ### Fixed
 
+- Fixed the agent-team-loop `advance_phase` tool accepting `done` without a summary: it now requires a non-empty `summary` when advancing to `done` (validated before spawning the script, mirroring the framework-side `--summary` contract). The summary is the sole source of the `_project_log.md` cross-key aggregation row — the framework script also rejects `done` without it (exit 2) — so the empty-`—`-column aggregation bug is closed at both layers.
 - Fixed the agent-team-loop worker harness clobbering agent-written `output.md` at terminal state (D-117): `writeOutput` fully overwrote the file with its TL;DR/summary format, destroying machine-readable first lines (`VERDICT=`/`TASKS=`), conductor `[VERIFY]` rows, and L3 verdict sections that task templates direct workers to write there — terminal readers (PM readback, watch-widget terminal details, conductor gates) only ever saw the harness summary. Existing agent content is now preserved verbatim above a `---` separator with the harness sections appended below (section parsers match anywhere in the file); empty/missing files keep the harness-only format, and the one-write-per-process guard keeps the merge from compounding.
 - Fixed project-level nested provider retry settings replacing unmodified global provider retry settings ([#7572](https://github.com/earendil-works/pi/issues/7572)).
 - Fixed inherited GitHub Copilot Grok 4.5 requests to use the supported Responses API ([#7560](https://github.com/earendil-works/pi/issues/7560)).

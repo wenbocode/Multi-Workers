@@ -13761,7 +13761,7 @@ function registerAdvancePhaseTool(pi, projectDir) {
       }),
       summary: typebox_exports.Optional(
         typebox_exports.String({
-          description: "One-line closing summary recorded in _project_log.md when advancing to done."
+          description: "Required when target_phase is done: one-line closing summary (what was added/changed + impact surface) recorded in _project_log.md as the cross-key summary row."
         })
       ),
       supersedes: typebox_exports.Optional(
@@ -13792,6 +13792,17 @@ function registerAdvancePhaseTool(pi, projectDir) {
         return {
           content: [
             { type: "text", text: `Unknown phase '${target_phase.trim()}'. Valid: ${ladder.join(" | ")}.` }
+          ],
+          details: void 0
+        };
+      }
+      if (target === "done" && !(summary ?? "").trim()) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Advancing to done requires a non-empty summary \u2014 one line on what was added/changed and the impact surface (written to _project_log.md as the cross-key summary row)."
+            }
           ],
           details: void 0
         };

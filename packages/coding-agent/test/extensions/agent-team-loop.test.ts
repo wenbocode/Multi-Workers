@@ -792,6 +792,26 @@ describe("advance_phase tool", () => {
 
 		const missing = await tool.execute("id3", { key: "k", target_phase: "" }, undefined, undefined, fakeCmdCtx().ctx);
 		expect(missing.content[0]?.text).toContain("required");
+
+		// done 汇总契约：缺 summary 在工具层先拦，不 spawn。
+		const noSummary = await tool.execute(
+			"id4",
+			{ key: "k", target_phase: "done" },
+			undefined,
+			undefined,
+			fakeCmdCtx().ctx,
+		);
+		expect(noSummary.content[0]?.text).toContain("requires a non-empty summary");
+
+		// 非 done 阶段不要求 summary。
+		const nonDone = await tool.execute(
+			"id5",
+			{ key: "k", target_phase: "verify" },
+			undefined,
+			undefined,
+			fakeCmdCtx().ctx,
+		);
+		expect((nonDone.content[0]?.text ?? "").includes("summary")).toBe(false);
 	});
 
 	it.skipIf(!pythonAvailable)("runs the gate script shell-free and surfaces its output", async () => {

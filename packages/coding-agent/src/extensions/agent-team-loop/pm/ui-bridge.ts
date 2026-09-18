@@ -1096,7 +1096,8 @@ export function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: string): 
 			}),
 			summary: Type.Optional(
 				Type.String({
-					description: "One-line closing summary recorded in _project_log.md when advancing to done.",
+					description:
+						"Required when target_phase is done: one-line closing summary (what was added/changed + impact surface) recorded in _project_log.md as the cross-key summary row.",
 				}),
 			),
 			supersedes: Type.Optional(
@@ -1136,6 +1137,21 @@ export function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: string): 
 					details: undefined,
 				};
 			}
+			// done 汇总契约（advance_phase.py 同步校验，exit 2）：--summary 是
+			// _project_log.md 汇总列唯一数据源，缺失不允许推进。工具层先拦，
+			// 错误信息比脚本退出码可读。
+			if (target === "done" && !(summary ?? "").trim()) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Advancing to done requires a non-empty summary — one line on what was added/changed and the impact surface (written to _project_log.md as the cross-key summary row).",
+						},
+					],
+					details: undefined,
+				};
+			}
+
 			const args = [trimmedKey, target];
 			if (summary) args.push("--summary", summary);
 			if (supersedes) args.push("--supersedes", supersedes);
