@@ -398,6 +398,53 @@ describe("output-writer writeOutput", () => {
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
+	it("D-117: agent-written output.md is preserved, harness sections appended below a separator", () => {
+		const root = mkdtemp();
+		const key = "task-merge";
+		makeTaskDir(root, key);
+		// The agent wrote a machine-readable first line + a body during the task
+		// (dispatch-template contract; conductor [VERIFY]/L3 sections alike).
+		const agentBody = "VERDICT=pass TASKS=2/2\n\n## Report\n\nfound no blockers\n";
+		fs.writeFileSync(path.join(root, key, "output.md"), agentBody, "utf8");
+		writeOutput({
+			taskKey: key,
+			agenticdocRoot: root,
+			exitCode: 0,
+			summary: "Done",
+			exitReason: "OK",
+		});
+		const out = fs.readFileSync(path.join(root, key, "output.md"), "utf8");
+		// First line keeps the machine-readable contract.
+		expect(out.split("\n")[0]).toBe("VERDICT=pass TASKS=2/2");
+		expect(out).toContain("## Report\n\nfound no blockers");
+		// Harness sections appended after a separator, still parseable.
+		expect(out).toContain("\n---\n\n## TL;DR");
+		expect(out).toContain("## Exit Reason\n\nOK");
+		// Agent body above the separator, harness below it.
+		expect(out.indexOf("## Report")).toBeLessThan(out.indexOf("---"));
+		expect(out.indexOf("## Summary")).toBeGreaterThan(out.indexOf("---"));
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("D-117: empty or missing output.md keeps the harness-only format", () => {
+		const root = mkdtemp();
+		const key = "task-empty";
+		makeTaskDir(root, key);
+		// Whitespace-only file counts as "the agent never wrote".
+		fs.writeFileSync(path.join(root, key, "output.md"), "   \n\n", "utf8");
+		writeOutput({ taskKey: key, agenticdocRoot: root, exitCode: 0, summary: "Done" });
+		const out = fs.readFileSync(path.join(root, key, "output.md"), "utf8");
+		expect(out.startsWith("## TL;DR")).toBe(true);
+		expect(out).not.toContain("---\n\n## TL;DR");
+		// Missing file: plain harness format (refusal/failure paths).
+		const key2 = "task-missing";
+		makeTaskDir(root, key2);
+		writeOutput({ taskKey: key2, agenticdocRoot: root, exitCode: 1, summary: "Err", exitReason: "bad" });
+		const out2 = fs.readFileSync(path.join(root, key2, "output.md"), "utf8");
+		expect(out2.startsWith("## TL;DR")).toBe(true);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
 	it("appendTrace and appendGoalCheck write trace markers", () => {
 		const root = mkdtemp();
 		const key = "task-trace";

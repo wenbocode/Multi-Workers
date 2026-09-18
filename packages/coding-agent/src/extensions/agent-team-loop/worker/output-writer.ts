@@ -67,7 +67,25 @@ export function writeOutput(opts: WriteOutputOpts): void {
 		sections.push(`## Exit Reason\n\nTask was cancelled (exit 130).`);
 	}
 
-	fs.writeFileSync(outputPath, `${sections.join("\n\n")}\n`, "utf8");
+	// D-117 (output.md clobber): task templates direct workers to write
+	// deliverables and machine-readable lines into output.md (VERDICT=/TASKS=
+	// first lines, conductor [VERIFY] rows, L3 verdict sections) — a full
+	// overwrite at exit destroyed them, so terminal readers (PM readback,
+	// readTerminalDetail, conductor regexes) only ever saw the harness
+	// summary. When the file already carries agent content, preserve it
+	// verbatim — its first line keeps the machine-readable contract — and
+	// append the harness sections below a separator; the section parsers
+	// match anywhere in the file. Empty/missing files keep today's format
+	// (the agent never wrote). worker-mode guarantees one writeOutput call
+	// per process (outputWritten guard), so the merge cannot compound.
+	let existing = "";
+	try {
+		existing = fs.readFileSync(outputPath, "utf8");
+	} catch {
+		existing = "";
+	}
+	const body = `${sections.join("\n\n")}\n`;
+	fs.writeFileSync(outputPath, existing.trim() === "" ? body : `${existing.trimEnd()}\n\n---\n\n${body}`, "utf8");
 }
 
 export function appendTrace(taskKey: string, agenticdocRoot: string, line: string): void {

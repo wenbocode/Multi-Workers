@@ -12664,8 +12664,19 @@ ${opts.questions || "(no questions provided)"}`);
 
 Task was cancelled (exit 130).`);
   }
-  fs9.writeFileSync(outputPath, `${sections.join("\n\n")}
-`, "utf8");
+  let existing = "";
+  try {
+    existing = fs9.readFileSync(outputPath, "utf8");
+  } catch {
+    existing = "";
+  }
+  const body = `${sections.join("\n\n")}
+`;
+  fs9.writeFileSync(outputPath, existing.trim() === "" ? body : `${existing.trimEnd()}
+
+---
+
+${body}`, "utf8");
 }
 function appendTrace(taskKey, agenticdocRoot2, line) {
   const dir = outputDir(taskKey, agenticdocRoot2);

@@ -96,6 +96,7 @@
 
 ### Fixed
 
+- Fixed the agent-team-loop worker harness clobbering agent-written `output.md` at terminal state (D-117): `writeOutput` fully overwrote the file with its TL;DR/summary format, destroying machine-readable first lines (`VERDICT=`/`TASKS=`), conductor `[VERIFY]` rows, and L3 verdict sections that task templates direct workers to write there — terminal readers (PM readback, watch-widget terminal details, conductor gates) only ever saw the harness summary. Existing agent content is now preserved verbatim above a `---` separator with the harness sections appended below (section parsers match anywhere in the file); empty/missing files keep the harness-only format, and the one-write-per-process guard keeps the merge from compounding.
 - Fixed project-level nested provider retry settings replacing unmodified global provider retry settings ([#7572](https://github.com/earendil-works/pi/issues/7572)).
 - Fixed inherited GitHub Copilot Grok 4.5 requests to use the supported Responses API ([#7560](https://github.com/earendil-works/pi/issues/7560)).
 - Fixed fullscreen shutdown leaking terminal capability-query replies into the parent shell prompt.
