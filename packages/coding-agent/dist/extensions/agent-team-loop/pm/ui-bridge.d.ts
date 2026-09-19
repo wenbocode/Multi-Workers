@@ -208,6 +208,24 @@ export declare function parseTargetSetFlags(parts: string[]): TargetSetFlags | n
  * is injectable for tests. set/clear remind that dual mode applies on the
  * NEXT worker spawn — no serve restart needed (launcher resolves per spawn). */
 export declare function runMwTargetCommand(ctx: ExtensionCommandContext, projectDir: string, argsText: string, runner?: (projectDir: string, args: string[]) => MwCliResult): Promise<void>;
+/** Parsed /mw partition set flags. `roots` keeps the raw NAME=DIR values in
+ * command-line order (repeatable flag — order is forwarded verbatim). */
+export interface PartitionSetFlags {
+    parent: string;
+    partition?: string;
+    vcs?: string;
+    roots: string[];
+}
+/** Parse the flag tail of `/mw partition set`. null when --parent is missing
+ * or a known flag has no value (unknown flags are ignored — mw.py validates). */
+export declare function parsePartitionSetFlags(parts: string[]): PartitionSetFlags | null;
+/** /mw partition — partition-workspace config from the pi window (mw-target-
+ * partition D-010). Thin wrapper over `mw.py partition` (single source of
+ * parsing/validation/rendering — the same entry point a direct CLI run hits,
+ * so identical args ⇒ identical target.yml bytes); the runner is injectable
+ * for tests. set/on remind that the mode applies on the NEXT worker spawn —
+ * no serve restart needed (launcher resolves per spawn). */
+export declare function runMwPartitionCommand(ctx: ExtensionCommandContext, projectDir: string, argsText: string, runner?: (projectDir: string, args: string[]) => MwCliResult): Promise<void>;
 /** /mw model — dispatch model defaults from the pi window. Thin wrapper over
  * `mw.py model` (single source of parsing/validation/rendering); the runner is
  * injectable for tests. set/clear remind when the change takes effect:

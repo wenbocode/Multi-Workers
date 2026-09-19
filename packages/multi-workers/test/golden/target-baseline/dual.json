@@ -1,0 +1,68 @@
+{
+  "sample": "dual",
+  "a_projection": {
+    "mode": "dual",
+    "control_root": "<CTRL>",
+    "game_root": "<CTRL>\\game",
+    "engine_root": "<CTRL>\\engine",
+    "vcs": "git",
+    "uproject": "MyGame.uproject",
+    "toolchain": {
+      "build_editor": "\"{engine}/Engine/Build/BatchFiles/Build.bat\" MyGameEditor Win64 Development -project=\"{uproject}\"",
+      "regen": "python {game}/Tools/regen.py --engine {engine}"
+    },
+    "ignore": {
+      "deny_globs": [
+        "**/*.uasset",
+        "**/DerivedDataCache/**"
+      ]
+    },
+    "contract": {
+      "forbidden_paths": [
+        "**/Generated/*"
+      ],
+      "conventions": "Line one of the conventions.\nLine two of the conventions.\n",
+      "docs": [
+        "docs/contract-notes.md"
+      ]
+    },
+    "source": "target-yml"
+  },
+  "b_worker_cwd": "<CTRL>\\game",
+  "c_expand_read_scope": [
+    "<CTRL>\\game\\src",
+    "<CTRL>\\game\\Docs",
+    "<CTRL>\\Content",
+    "<CTRL>"
+  ],
+  "e_target_show_stdout": "[mw target] mode: dual (source: target-yml)\r\n[mw target] control root: <CTRL>\r\n[mw target] game root:    <CTRL>\\game\r\n[mw target] engine root:  <CTRL>\\engine\r\n[mw target] vcs: git  uproject: MyGame.uproject\r\n[mw target] toolchain commands: build_editor, regen\r\n[mw target]   build_editor: \"<CTRL>\\engine/Engine/Build/BatchFiles/Build.bat\" MyGameEditor Win64 Development -project=\"<CTRL>\\game\\MyGame.uproject\"\r\n[mw target]   regen: python <CTRL>\\game/Tools/regen.py --engine <CTRL>\\engine\r\n[mw target] deny_globs: 2 rule(s)\r\n",
+  "f_doctor_target": {
+    "yaml_available": true,
+    "config": {
+      "mode": "dual",
+      "source": "target-yml",
+      "game_root": "<CTRL>\\game",
+      "engine_root": "<CTRL>\\engine",
+      "vcs": "git",
+      "uproject": "MyGame.uproject"
+    },
+    "checks": [
+      {
+        "name": "game_root",
+        "ok": true,
+        "detail": "<CTRL>\\game"
+      },
+      {
+        "name": "engine_root",
+        "ok": true,
+        "detail": "<CTRL>\\engine"
+      },
+      {
+        "name": "uproject",
+        "ok": true,
+        "detail": "<CTRL>\\game\\MyGame.uproject"
+      }
+    ],
+    "probe_cache": "probed"
+  }
+}

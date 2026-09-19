@@ -1,0 +1,4 @@
+active: partition
+partition:
+  parent: ../same
+  partition: ../same

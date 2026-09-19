@@ -1,0 +1,7 @@
+active: partition
+partition:
+  parent: ../p
+  partition: ./q
+  roots:
+    sdk:
+      a: b

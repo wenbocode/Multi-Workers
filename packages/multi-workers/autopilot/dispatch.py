@@ -146,16 +146,22 @@ def render_task_md(
 def _expand_read_scope(
     scope: list[str], config: dict, project_root: pathlib.Path
 ) -> list[str]:
-    """D-007: dual mode anchors relative entries against the game root
-    (worker cwd) and appends the control root (D-005: profile authorization —
-    the worker must be able to read target.yml / task context files).
-    Single mode: scope passes through unchanged — relative entries anchor
-    cwd = the (single) control root, so expansion would only churn output."""
-    if config["mode"] != "dual" or not scope:
+    """D-007 (mw-dual-workspace) + D-006 (mw-target-partition): dual mode
+    anchors relative entries against the game root and partition mode
+    against the partition root (the worker cwd in both), then appends the
+    control root when absent (D-005: profile authorization — the worker
+    must be able to read target.yml / task context files; never appended to
+    an empty scope — that would create containment the dispatch never asked
+    for). The parent root is NEVER appended by virtue of parentness: only
+    explicitly listed entries reach it (AC-008 red line). Single mode:
+    scope passes through unchanged — relative entries anchor cwd = the
+    (single) control root, so expansion would only churn output."""
+    mode = config["mode"]
+    if mode not in ("dual", "partition") or not scope:
         return scope
-    game = pathlib.Path(config["game_root"])
+    anchor = pathlib.Path(config["game_root"] if mode == "dual" else config["partition_root"])
     expanded = [
-        item if pathlib.Path(item).is_absolute() else str((game / item).resolve())
+        item if pathlib.Path(item).is_absolute() else str((anchor / item).resolve())
         for item in scope
     ]
     # Only widen an ALREADY-configured containment: appending the control
@@ -259,31 +265,56 @@ def dispatch(
         )
 
     # Workspace-profile injection (mw-dual-workspace D-005/D-007): the
-    # resolved config drives scope expansion + deny_globs defaults.
+    # resolved config drives scope expansion + deny_globs defaults. The
+    # unusable-config message is shape-dynamic (mw-target-partition D-007):
+    # v1/no-file keeps the historical text, a v2 file names its active mode.
     try:
         config = mw_common.load_target_config(project_root)
     except mw_common.TargetConfigError as exc:
         return reject(
             "target-config-unusable",
-            f"target.yml is unusable ({exc.kind}): {exc}",
+            mw_common.describe_target_error(exc, project_root),
             ev="target-config-rejected",
         )
     scope = _expand_read_scope(scope, config, project_root)
     globs = _resolve_deny_globs(config, deny_globs)
+
+    # mw-target-partition FIX-1 (AC-007/AC-020): the TS dispatcher skips
+    # origin: conductor tasks (D-104), so the conductor must inject the v2
+    # profile block itself — without it the launcher sees an un-profiled
+    # task, and an active-mode switch between dispatch and spawn silently
+    # moves the spawn cwd past the tear check. The block mirrors
+    # mw_common.render_partition_profile_md (the TS renderPartitionProfileBlock
+    # line protocol); dual/single keep the historical no-injection shape
+    # (AC-016d zero change). Rendered BEFORE any task-dir side effect so a
+    # fail-closed render (undefined placeholder) rejects the dispatch with
+    # nothing written and nothing queued; ignore_enforced mirrors the TS
+    # ownDenyGlobs rule — the firewall section renders only when the task
+    # carries no deny_globs of its own (an explicit list, including empty,
+    # wins and skips it).
+    content = render_task_md(
+        task_type, prompt, loop=loop, attempt=attempt, read_scope=scope,
+        deny_globs=globs, model=model,
+    )
+    if config["mode"] == "partition":
+        try:
+            profile = mw_common.render_partition_profile_md(
+                config, ignore_enforced=deny_globs is None
+            )
+        except mw_common.TargetConfigError as exc:
+            return reject(
+                "target-config-unusable",
+                mw_common.describe_target_error(exc, project_root),
+                ev="target-config-rejected",
+            )
+        content = content.rstrip() + "\n\n" + profile + "\n"
 
     # 1. task.md (before the queue row — the crash gap is the orphan shape
     #    that reconciliation heals; see module docstring / D-102).
     task_dir = project_root / ".agenticdoc" / owner / "workers" / task_key
     task_dir.mkdir(parents=True, exist_ok=True)
     task_md = task_dir / "task.md"
-    task_md.write_text(
-        render_task_md(
-            task_type, prompt, loop=loop, attempt=attempt, read_scope=scope,
-            deny_globs=globs, model=model,
-        ),
-        encoding="utf-8",
-        newline="\n",
-    )
+    task_md.write_text(content, encoding="utf-8", newline="\n")
 
     # 2. queue row under workers.lock — upsert by task_key: replace the
     #    first existing row (a retry requeues the same identity; matches the

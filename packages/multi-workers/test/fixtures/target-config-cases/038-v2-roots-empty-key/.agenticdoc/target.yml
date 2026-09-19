@@ -1,0 +1,6 @@
+active: partition
+partition:
+  parent: ../p
+  partition: ./q
+  roots:
+    "": ../g

@@ -1,0 +1,7 @@
+active: single
+dual:
+  game: ./game
+  parent: ../oops
+partition:
+  parent: ../p
+  partition: ./q

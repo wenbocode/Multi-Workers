@@ -1,0 +1,10 @@
+{
+  "description": "v2 partition block missing the parent field (env does not fill it)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "parent"
+    ]
+  }
+}

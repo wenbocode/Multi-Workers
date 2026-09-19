@@ -1,0 +1,11 @@
+{
+  "description": "v2 top-level whitelist: only active/dual/partition allowed (AC-003c)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "vcs",
+      "top-level"
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "description": "partition toolchain with {game}: undefined placeholder → missing-field (AC-004)",
+  "env": {},
+  "expect": {
+    "mode": "partition",
+    "source": "target-yml",
+    "parent_root_rel": "../p",
+    "partition_root_rel": "q"
+  },
+  "render_error": {
+    "command": "build",
+    "kind": "missing-field",
+    "contains": [
+      "{game}",
+      "make"
+    ]
+  }
+}

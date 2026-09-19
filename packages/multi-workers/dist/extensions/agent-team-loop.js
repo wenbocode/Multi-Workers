@@ -51,9 +51,9 @@ var require_identity = __commonJS({
     var NODE_TYPE = /* @__PURE__ */ Symbol.for("yaml.node.type");
     var isAlias = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === ALIAS;
     var isDocument = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === DOC;
-    var isMap = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === MAP;
+    var isMap2 = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === MAP;
     var isPair = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === PAIR;
-    var isScalar = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === SCALAR;
+    var isScalar2 = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === SCALAR;
     var isSeq = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === SEQ;
     function isCollection(node) {
       if (node && typeof node === "object")
@@ -75,7 +75,7 @@ var require_identity = __commonJS({
         }
       return false;
     }
-    var hasAnchor = (node) => (isScalar(node) || isCollection(node)) && !!node.anchor;
+    var hasAnchor = (node) => (isScalar2(node) || isCollection(node)) && !!node.anchor;
     exports.ALIAS = ALIAS;
     exports.DOC = DOC;
     exports.MAP = MAP;
@@ -87,10 +87,10 @@ var require_identity = __commonJS({
     exports.isAlias = isAlias;
     exports.isCollection = isCollection;
     exports.isDocument = isDocument;
-    exports.isMap = isMap;
+    exports.isMap = isMap2;
     exports.isNode = isNode;
     exports.isPair = isPair;
-    exports.isScalar = isScalar;
+    exports.isScalar = isScalar2;
     exports.isSeq = isSeq;
   }
 });
@@ -115,17 +115,17 @@ var require_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    function visit_(key, node, visitor, path25) {
-      const ctrl = callVisitor(key, node, visitor, path25);
+    function visit_(key, node, visitor, path26) {
+      const ctrl = callVisitor(key, node, visitor, path26);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path25, ctrl);
-        return visit_(key, ctrl, visitor, path25);
+        replaceNode(key, path26, ctrl);
+        return visit_(key, ctrl, visitor, path26);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path25 = Object.freeze(path25.concat(node));
+          path26 = Object.freeze(path26.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = visit_(i, node.items[i], visitor, path25);
+            const ci = visit_(i, node.items[i], visitor, path26);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -136,13 +136,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path25 = Object.freeze(path25.concat(node));
-          const ck = visit_("key", node.key, visitor, path25);
+          path26 = Object.freeze(path26.concat(node));
+          const ck = visit_("key", node.key, visitor, path26);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = visit_("value", node.value, visitor, path25);
+          const cv = visit_("value", node.value, visitor, path26);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -163,17 +163,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node, visitor, path25) {
-      const ctrl = await callVisitor(key, node, visitor, path25);
+    async function visitAsync_(key, node, visitor, path26) {
+      const ctrl = await callVisitor(key, node, visitor, path26);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path25, ctrl);
-        return visitAsync_(key, ctrl, visitor, path25);
+        replaceNode(key, path26, ctrl);
+        return visitAsync_(key, ctrl, visitor, path26);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path25 = Object.freeze(path25.concat(node));
+          path26 = Object.freeze(path26.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = await visitAsync_(i, node.items[i], visitor, path25);
+            const ci = await visitAsync_(i, node.items[i], visitor, path26);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -184,13 +184,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path25 = Object.freeze(path25.concat(node));
-          const ck = await visitAsync_("key", node.key, visitor, path25);
+          path26 = Object.freeze(path26.concat(node));
+          const ck = await visitAsync_("key", node.key, visitor, path26);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = await visitAsync_("value", node.value, visitor, path25);
+          const cv = await visitAsync_("value", node.value, visitor, path26);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -217,23 +217,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node, visitor, path25) {
+    function callVisitor(key, node, visitor, path26) {
       if (typeof visitor === "function")
-        return visitor(key, node, path25);
+        return visitor(key, node, path26);
       if (identity.isMap(node))
-        return visitor.Map?.(key, node, path25);
+        return visitor.Map?.(key, node, path26);
       if (identity.isSeq(node))
-        return visitor.Seq?.(key, node, path25);
+        return visitor.Seq?.(key, node, path26);
       if (identity.isPair(node))
-        return visitor.Pair?.(key, node, path25);
+        return visitor.Pair?.(key, node, path26);
       if (identity.isScalar(node))
-        return visitor.Scalar?.(key, node, path25);
+        return visitor.Scalar?.(key, node, path26);
       if (identity.isAlias(node))
-        return visitor.Alias?.(key, node, path25);
+        return visitor.Alias?.(key, node, path26);
       return void 0;
     }
-    function replaceNode(key, path25, node) {
-      const parent = path25[path25.length - 1];
+    function replaceNode(key, path26, node) {
+      const parent = path26[path26.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node;
       } else if (identity.isPair(parent)) {
@@ -843,10 +843,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path25, value) {
+    function collectionFromPath(schema, path26, value) {
       let v = value;
-      for (let i = path25.length - 1; i >= 0; --i) {
-        const k = path25[i];
+      for (let i = path26.length - 1; i >= 0; --i) {
+        const k = path26[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -865,7 +865,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path25) => path25 == null || typeof path25 === "object" && !!path25[Symbol.iterator]().next().done;
+    var isEmptyPath = (path26) => path26 == null || typeof path26 === "object" && !!path26[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -895,11 +895,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path25, value) {
-        if (isEmptyPath(path25))
+      addIn(path26, value) {
+        if (isEmptyPath(path26))
           this.add(value);
         else {
-          const [key, ...rest] = path25;
+          const [key, ...rest] = path26;
           const node = this.get(key, true);
           if (identity.isCollection(node))
             node.addIn(rest, value);
@@ -913,8 +913,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path25) {
-        const [key, ...rest] = path25;
+      deleteIn(path26) {
+        const [key, ...rest] = path26;
         if (rest.length === 0)
           return this.delete(key);
         const node = this.get(key, true);
@@ -928,8 +928,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path25, keepScalar) {
-        const [key, ...rest] = path25;
+      getIn(path26, keepScalar) {
+        const [key, ...rest] = path26;
         const node = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node) ? node.value : node;
@@ -947,8 +947,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path25) {
-        const [key, ...rest] = path25;
+      hasIn(path26) {
+        const [key, ...rest] = path26;
         if (rest.length === 0)
           return this.has(key);
         const node = this.get(key, true);
@@ -958,8 +958,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path25, value) {
-        const [key, ...rest] = path25;
+      setIn(path26, value) {
+        const [key, ...rest] = path26;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -3474,9 +3474,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path25, value) {
+      addIn(path26, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path25, value);
+          this.contents.addIn(path26, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -3551,14 +3551,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path25) {
-        if (Collection.isEmptyPath(path25)) {
+      deleteIn(path26) {
+        if (Collection.isEmptyPath(path26)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path25) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path26) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -3573,10 +3573,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path25, keepScalar) {
-        if (Collection.isEmptyPath(path25))
+      getIn(path26, keepScalar) {
+        if (Collection.isEmptyPath(path26))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path25, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path26, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -3587,10 +3587,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path25) {
-        if (Collection.isEmptyPath(path25))
+      hasIn(path26) {
+        if (Collection.isEmptyPath(path26))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path25) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path26) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -3607,13 +3607,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path25, value) {
-        if (Collection.isEmptyPath(path25)) {
+      setIn(path26, value) {
+        if (Collection.isEmptyPath(path26)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path25), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path26), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path25, value);
+          this.contents.setIn(path26, value);
         }
       }
       /**
@@ -3999,10 +3999,10 @@ var require_resolve_block_map = __commonJS({
       let offset = bm.offset;
       let commentEnd = null;
       for (const collItem of bm.items) {
-        const { start, key, sep: sep7, value } = collItem;
+        const { start, key, sep: sep10, value } = collItem;
         const keyProps = resolveProps.resolveProps(start, {
           indicator: "explicit-key-ind",
-          next: key ?? sep7?.[0],
+          next: key ?? sep10?.[0],
           offset,
           onError,
           parentIndent: bm.indent,
@@ -4016,7 +4016,7 @@ var require_resolve_block_map = __commonJS({
             else if ("indent" in key && key.indent !== bm.indent)
               onError(offset, "BAD_INDENT", startColMsg);
           }
-          if (!keyProps.anchor && !keyProps.tag && !sep7) {
+          if (!keyProps.anchor && !keyProps.tag && !sep10) {
             commentEnd = keyProps.end;
             if (keyProps.comment) {
               if (map.comment)
@@ -4040,7 +4040,7 @@ var require_resolve_block_map = __commonJS({
         ctx.atKey = false;
         if (utilMapIncludes.mapIncludes(ctx, map.items, keyNode))
           onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-        const valueProps = resolveProps.resolveProps(sep7 ?? [], {
+        const valueProps = resolveProps.resolveProps(sep10 ?? [], {
           indicator: "map-value-ind",
           next: value,
           offset: keyNode.range[2],
@@ -4056,7 +4056,7 @@ var require_resolve_block_map = __commonJS({
             if (ctx.options.strict && keyProps.start < valueProps.found.offset - 1024)
               onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key");
           }
-          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : composeEmptyNode(ctx, offset, sep7, null, valueProps, onError);
+          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : composeEmptyNode(ctx, offset, sep10, null, valueProps, onError);
           if (ctx.schema.compat)
             utilFlowIndentCheck.flowIndentCheck(bm.indent, value, onError);
           offset = valueNode.range[2];
@@ -4147,7 +4147,7 @@ var require_resolve_end = __commonJS({
       let comment = "";
       if (end) {
         let hasSpace = false;
-        let sep7 = "";
+        let sep10 = "";
         for (const token of end) {
           const { source, type } = token;
           switch (type) {
@@ -4161,13 +4161,13 @@ var require_resolve_end = __commonJS({
               if (!comment)
                 comment = cb;
               else
-                comment += sep7 + cb;
-              sep7 = "";
+                comment += sep10 + cb;
+              sep10 = "";
               break;
             }
             case "newline":
               if (comment)
-                sep7 += source;
+                sep10 += source;
               hasSpace = true;
               break;
             default:
@@ -4197,9 +4197,9 @@ var require_resolve_flow_collection = __commonJS({
     var blockMsg = "Block collections are not allowed within flow collections";
     var isBlock = (token) => token && (token.type === "block-map" || token.type === "block-seq");
     function resolveFlowCollection({ composeNode, composeEmptyNode }, ctx, fc, onError, tag) {
-      const isMap = fc.start.source === "{";
-      const fcName = isMap ? "flow map" : "flow sequence";
-      const NodeClass = tag?.nodeClass ?? (isMap ? YAMLMap.YAMLMap : YAMLSeq.YAMLSeq);
+      const isMap2 = fc.start.source === "{";
+      const fcName = isMap2 ? "flow map" : "flow sequence";
+      const NodeClass = tag?.nodeClass ?? (isMap2 ? YAMLMap.YAMLMap : YAMLSeq.YAMLSeq);
       const coll = new NodeClass(ctx.schema);
       coll.flow = true;
       const atRoot = ctx.atRoot;
@@ -4210,18 +4210,18 @@ var require_resolve_flow_collection = __commonJS({
       let offset = fc.offset + fc.start.source.length;
       for (let i = 0; i < fc.items.length; ++i) {
         const collItem = fc.items[i];
-        const { start, key, sep: sep7, value } = collItem;
+        const { start, key, sep: sep10, value } = collItem;
         const props = resolveProps.resolveProps(start, {
           flow: fcName,
           indicator: "explicit-key-ind",
-          next: key ?? sep7?.[0],
+          next: key ?? sep10?.[0],
           offset,
           onError,
           parentIndent: fc.indent,
           startOnNewline: false
         });
         if (!props.found) {
-          if (!props.anchor && !props.tag && !sep7 && !value) {
+          if (!props.anchor && !props.tag && !sep10 && !value) {
             if (i === 0 && props.comma)
               onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
             else if (i < fc.items.length - 1)
@@ -4235,7 +4235,7 @@ var require_resolve_flow_collection = __commonJS({
             offset = props.end;
             continue;
           }
-          if (!isMap && ctx.options.strict && utilContainsNewline.containsNewline(key))
+          if (!isMap2 && ctx.options.strict && utilContainsNewline.containsNewline(key))
             onError(
               key,
               // checked by containsNewline()
@@ -4275,8 +4275,8 @@ var require_resolve_flow_collection = __commonJS({
             }
           }
         }
-        if (!isMap && !sep7 && !props.found) {
-          const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep7, null, props, onError);
+        if (!isMap2 && !sep10 && !props.found) {
+          const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep10, null, props, onError);
           coll.items.push(valueNode);
           offset = valueNode.range[2];
           if (isBlock(value))
@@ -4288,7 +4288,7 @@ var require_resolve_flow_collection = __commonJS({
           if (isBlock(key))
             onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg);
           ctx.atKey = false;
-          const valueProps = resolveProps.resolveProps(sep7 ?? [], {
+          const valueProps = resolveProps.resolveProps(sep10 ?? [], {
             flow: fcName,
             indicator: "map-value-ind",
             next: value,
@@ -4298,9 +4298,9 @@ var require_resolve_flow_collection = __commonJS({
             startOnNewline: false
           });
           if (valueProps.found) {
-            if (!isMap && !props.found && ctx.options.strict) {
-              if (sep7)
-                for (const st of sep7) {
+            if (!isMap2 && !props.found && ctx.options.strict) {
+              if (sep10)
+                for (const st of sep10) {
                   if (st === valueProps.found)
                     break;
                   if (st.type === "newline") {
@@ -4317,7 +4317,7 @@ var require_resolve_flow_collection = __commonJS({
             else
               onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`);
           }
-          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode(ctx, valueProps.end, sep7, null, valueProps, onError) : null;
+          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode(ctx, valueProps.end, sep10, null, valueProps, onError) : null;
           if (valueNode) {
             if (isBlock(value))
               onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
@@ -4330,7 +4330,7 @@ var require_resolve_flow_collection = __commonJS({
           const pair = new Pair.Pair(keyNode, valueNode);
           if (ctx.options.keepSourceTokens)
             pair.srcToken = collItem;
-          if (isMap) {
+          if (isMap2) {
             const map = coll;
             if (utilMapIncludes.mapIncludes(ctx, map.items, keyNode))
               onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
@@ -4346,7 +4346,7 @@ var require_resolve_flow_collection = __commonJS({
           offset = valueNode ? valueNode.range[2] : valueProps.end;
         }
       }
-      const expectedEnd = isMap ? "}" : "]";
+      const expectedEnd = isMap2 ? "}" : "]";
       const [ce, ...ee] = fc.end;
       let cePos = offset;
       if (ce?.source === expectedEnd)
@@ -4497,7 +4497,7 @@ var require_resolve_block_scalar = __commonJS({
           chompStart = i + 1;
       }
       let value = "";
-      let sep7 = "";
+      let sep10 = "";
       let prevMoreIndented = false;
       for (let i = 0; i < contentStart; ++i)
         value += lines[i][0].slice(trimIndent) + "\n";
@@ -4514,24 +4514,24 @@ var require_resolve_block_scalar = __commonJS({
           indent = "";
         }
         if (type === Scalar.Scalar.BLOCK_LITERAL) {
-          value += sep7 + indent.slice(trimIndent) + content;
-          sep7 = "\n";
+          value += sep10 + indent.slice(trimIndent) + content;
+          sep10 = "\n";
         } else if (indent.length > trimIndent || content[0] === "	") {
-          if (sep7 === " ")
-            sep7 = "\n";
-          else if (!prevMoreIndented && sep7 === "\n")
-            sep7 = "\n\n";
-          value += sep7 + indent.slice(trimIndent) + content;
-          sep7 = "\n";
+          if (sep10 === " ")
+            sep10 = "\n";
+          else if (!prevMoreIndented && sep10 === "\n")
+            sep10 = "\n\n";
+          value += sep10 + indent.slice(trimIndent) + content;
+          sep10 = "\n";
           prevMoreIndented = true;
         } else if (content === "") {
-          if (sep7 === "\n")
+          if (sep10 === "\n")
             value += "\n";
           else
-            sep7 = "\n";
+            sep10 = "\n";
         } else {
-          value += sep7 + content;
-          sep7 = " ";
+          value += sep10 + content;
+          sep10 = " ";
           prevMoreIndented = false;
         }
       }
@@ -4713,25 +4713,25 @@ var require_resolve_flow_scalar = __commonJS({
       if (!match2)
         return source;
       let res = match2[1];
-      let sep7 = " ";
+      let sep10 = " ";
       let pos = first.lastIndex;
       line.lastIndex = pos;
       while (match2 = line.exec(source)) {
         if (match2[1] === "") {
-          if (sep7 === "\n")
-            res += sep7;
+          if (sep10 === "\n")
+            res += sep10;
           else
-            sep7 = "\n";
+            sep10 = "\n";
         } else {
-          res += sep7 + match2[1];
-          sep7 = " ";
+          res += sep10 + match2[1];
+          sep10 = " ";
         }
         pos = line.lastIndex;
       }
       const last = /[ \t]*(.*)/sy;
       last.lastIndex = pos;
       match2 = last.exec(source);
-      return res + sep7 + (match2?.[1] ?? "");
+      return res + sep10 + (match2?.[1] ?? "");
     }
     function doubleQuotedValue(source, onError) {
       let res = "";
@@ -5541,14 +5541,14 @@ var require_cst_stringify = __commonJS({
         }
       }
     }
-    function stringifyItem({ start, key, sep: sep7, value }) {
+    function stringifyItem({ start, key, sep: sep10, value }) {
       let res = "";
       for (const st of start)
         res += st.source;
       if (key)
         res += stringifyToken(key);
-      if (sep7)
-        for (const st of sep7)
+      if (sep10)
+        for (const st of sep10)
           res += st.source;
       if (value)
         res += stringifyToken(value);
@@ -5573,9 +5573,9 @@ var require_cst_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    visit.itemAtPath = (cst, path25) => {
+    visit.itemAtPath = (cst, path26) => {
       let item = cst;
-      for (const [field, index] of path25) {
+      for (const [field, index] of path26) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -5584,23 +5584,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit.parentCollection = (cst, path25) => {
-      const parent = visit.itemAtPath(cst, path25.slice(0, -1));
-      const field = path25[path25.length - 1][0];
+    visit.parentCollection = (cst, path26) => {
+      const parent = visit.itemAtPath(cst, path26.slice(0, -1));
+      const field = path26[path26.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path25, item, visitor) {
-      let ctrl = visitor(item, path25);
+    function _visit(path26, item, visitor) {
+      let ctrl = visitor(item, path26);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path25.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path26.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -5611,10 +5611,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path25);
+            ctrl = ctrl(item, path26);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path25) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path26) : ctrl;
     }
     exports.visit = visit;
   }
@@ -5632,7 +5632,7 @@ var require_cst = __commonJS({
     var FLOW_END = "";
     var SCALAR = "";
     var isCollection = (token) => !!token && "items" in token;
-    var isScalar = (token) => !!token && (token.type === "scalar" || token.type === "single-quoted-scalar" || token.type === "double-quoted-scalar" || token.type === "block-scalar");
+    var isScalar2 = (token) => !!token && (token.type === "scalar" || token.type === "single-quoted-scalar" || token.type === "double-quoted-scalar" || token.type === "block-scalar");
     function prettyToken(token) {
       switch (token) {
         case BOM:
@@ -5716,7 +5716,7 @@ var require_cst = __commonJS({
     exports.FLOW_END = FLOW_END;
     exports.SCALAR = SCALAR;
     exports.isCollection = isCollection;
-    exports.isScalar = isScalar;
+    exports.isScalar = isScalar2;
     exports.prettyToken = prettyToken;
     exports.tokenType = tokenType;
   }
@@ -6715,18 +6715,18 @@ var require_parser = __commonJS({
         if (this.type === "map-value-ind") {
           const prev = getPrevProps(this.peek(2));
           const start = getFirstKeyStartProps(prev);
-          let sep7;
+          let sep10;
           if (scalar.end) {
-            sep7 = scalar.end;
-            sep7.push(this.sourceToken);
+            sep10 = scalar.end;
+            sep10.push(this.sourceToken);
             delete scalar.end;
           } else
-            sep7 = [this.sourceToken];
+            sep10 = [this.sourceToken];
           const map = {
             type: "block-map",
             offset: scalar.offset,
             indent: scalar.indent,
-            items: [{ start, key: scalar, sep: sep7 }]
+            items: [{ start, key: scalar, sep: sep10 }]
           };
           this.onKeyLine = true;
           this.stack[this.stack.length - 1] = map;
@@ -6879,15 +6879,15 @@ var require_parser = __commonJS({
                 } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
                   const start2 = getFirstKeyStartProps(it.start);
                   const key = it.key;
-                  const sep7 = it.sep;
-                  sep7.push(this.sourceToken);
+                  const sep10 = it.sep;
+                  sep10.push(this.sourceToken);
                   delete it.key;
                   delete it.sep;
                   this.stack.push({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start: start2, key, sep: sep7 }]
+                    items: [{ start: start2, key, sep: sep10 }]
                   });
                 } else if (start.length > 0) {
                   it.sep = it.sep.concat(start, this.sourceToken);
@@ -7081,13 +7081,13 @@ var require_parser = __commonJS({
             const prev = getPrevProps(parent);
             const start = getFirstKeyStartProps(prev);
             fixFlowSeqItems(fc);
-            const sep7 = fc.end.splice(1, fc.end.length);
-            sep7.push(this.sourceToken);
+            const sep10 = fc.end.splice(1, fc.end.length);
+            sep10.push(this.sourceToken);
             const map = {
               type: "block-map",
               offset: fc.offset,
               indent: fc.indent,
-              items: [{ start, key: fc, sep: sep7 }]
+              items: [{ start, key: fc, sep: sep10 }]
             };
             this.onKeyLine = true;
             this.stack[this.stack.length - 1] = map;
@@ -7246,7 +7246,7 @@ var require_public_api = __commonJS({
         return docs;
       return Object.assign([], { empty: true }, composer$1.streamInfo());
     }
-    function parseDocument(source, options = {}) {
+    function parseDocument2(source, options = {}) {
       const { lineCounter: lineCounter2, prettyErrors } = parseOptions(options);
       const parser$1 = new parser.Parser(lineCounter2?.addNewLine);
       const composer$1 = new composer.Composer(options);
@@ -7272,7 +7272,7 @@ var require_public_api = __commonJS({
       } else if (options === void 0 && reviver && typeof reviver === "object") {
         options = reviver;
       }
-      const doc = parseDocument(src, options);
+      const doc = parseDocument2(src, options);
       if (!doc)
         return null;
       doc.warnings.forEach((warning) => log.warn(doc.options.logLevel, warning));
@@ -7308,7 +7308,7 @@ var require_public_api = __commonJS({
     }
     exports.parse = parse2;
     exports.parseAllDocuments = parseAllDocuments;
-    exports.parseDocument = parseDocument;
+    exports.parseDocument = parseDocument2;
     exports.stringify = stringify;
   }
 });
@@ -7362,6 +7362,503 @@ var require_dist = __commonJS({
     exports.stringify = publicApi.stringify;
     exports.visit = visit.visit;
     exports.visitAsync = visit.visitAsync;
+  }
+});
+
+// node_modules/isexe/windows.js
+var require_windows = __commonJS({
+  "node_modules/isexe/windows.js"(exports, module) {
+    module.exports = isexe;
+    isexe.sync = sync;
+    var fs24 = __require("fs");
+    function checkPathExt(path26, options) {
+      var pathext = options.pathExt !== void 0 ? options.pathExt : process.env.PATHEXT;
+      if (!pathext) {
+        return true;
+      }
+      pathext = pathext.split(";");
+      if (pathext.indexOf("") !== -1) {
+        return true;
+      }
+      for (var i = 0; i < pathext.length; i++) {
+        var p = pathext[i].toLowerCase();
+        if (p && path26.substr(-p.length).toLowerCase() === p) {
+          return true;
+        }
+      }
+      return false;
+    }
+    function checkStat(stat, path26, options) {
+      if (!stat.isSymbolicLink() && !stat.isFile()) {
+        return false;
+      }
+      return checkPathExt(path26, options);
+    }
+    function isexe(path26, options, cb) {
+      fs24.stat(path26, function(er, stat) {
+        cb(er, er ? false : checkStat(stat, path26, options));
+      });
+    }
+    function sync(path26, options) {
+      return checkStat(fs24.statSync(path26), path26, options);
+    }
+  }
+});
+
+// node_modules/isexe/mode.js
+var require_mode = __commonJS({
+  "node_modules/isexe/mode.js"(exports, module) {
+    module.exports = isexe;
+    isexe.sync = sync;
+    var fs24 = __require("fs");
+    function isexe(path26, options, cb) {
+      fs24.stat(path26, function(er, stat) {
+        cb(er, er ? false : checkStat(stat, options));
+      });
+    }
+    function sync(path26, options) {
+      return checkStat(fs24.statSync(path26), options);
+    }
+    function checkStat(stat, options) {
+      return stat.isFile() && checkMode(stat, options);
+    }
+    function checkMode(stat, options) {
+      var mod = stat.mode;
+      var uid = stat.uid;
+      var gid = stat.gid;
+      var myUid = options.uid !== void 0 ? options.uid : process.getuid && process.getuid();
+      var myGid = options.gid !== void 0 ? options.gid : process.getgid && process.getgid();
+      var u = parseInt("100", 8);
+      var g = parseInt("010", 8);
+      var o = parseInt("001", 8);
+      var ug = u | g;
+      var ret = mod & o || mod & g && gid === myGid || mod & u && uid === myUid || mod & ug && myUid === 0;
+      return ret;
+    }
+  }
+});
+
+// node_modules/isexe/index.js
+var require_isexe = __commonJS({
+  "node_modules/isexe/index.js"(exports, module) {
+    var fs24 = __require("fs");
+    var core;
+    if (process.platform === "win32" || global.TESTING_WINDOWS) {
+      core = require_windows();
+    } else {
+      core = require_mode();
+    }
+    module.exports = isexe;
+    isexe.sync = sync;
+    function isexe(path26, options, cb) {
+      if (typeof options === "function") {
+        cb = options;
+        options = {};
+      }
+      if (!cb) {
+        if (typeof Promise !== "function") {
+          throw new TypeError("callback not provided");
+        }
+        return new Promise(function(resolve11, reject) {
+          isexe(path26, options || {}, function(er, is) {
+            if (er) {
+              reject(er);
+            } else {
+              resolve11(is);
+            }
+          });
+        });
+      }
+      core(path26, options || {}, function(er, is) {
+        if (er) {
+          if (er.code === "EACCES" || options && options.ignoreErrors) {
+            er = null;
+            is = false;
+          }
+        }
+        cb(er, is);
+      });
+    }
+    function sync(path26, options) {
+      try {
+        return core.sync(path26, options || {});
+      } catch (er) {
+        if (options && options.ignoreErrors || er.code === "EACCES") {
+          return false;
+        } else {
+          throw er;
+        }
+      }
+    }
+  }
+});
+
+// node_modules/which/which.js
+var require_which = __commonJS({
+  "node_modules/which/which.js"(exports, module) {
+    var isWindows = process.platform === "win32" || process.env.OSTYPE === "cygwin" || process.env.OSTYPE === "msys";
+    var path26 = __require("path");
+    var COLON = isWindows ? ";" : ":";
+    var isexe = require_isexe();
+    var getNotFoundError = (cmd) => Object.assign(new Error(`not found: ${cmd}`), { code: "ENOENT" });
+    var getPathInfo = (cmd, opt) => {
+      const colon = opt.colon || COLON;
+      const pathEnv = cmd.match(/\//) || isWindows && cmd.match(/\\/) ? [""] : [
+        // windows always checks the cwd first
+        ...isWindows ? [process.cwd()] : [],
+        ...(opt.path || process.env.PATH || /* istanbul ignore next: very unusual */
+        "").split(colon)
+      ];
+      const pathExtExe = isWindows ? opt.pathExt || process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM" : "";
+      const pathExt = isWindows ? pathExtExe.split(colon) : [""];
+      if (isWindows) {
+        if (cmd.indexOf(".") !== -1 && pathExt[0] !== "")
+          pathExt.unshift("");
+      }
+      return {
+        pathEnv,
+        pathExt,
+        pathExtExe
+      };
+    };
+    var which = (cmd, opt, cb) => {
+      if (typeof opt === "function") {
+        cb = opt;
+        opt = {};
+      }
+      if (!opt)
+        opt = {};
+      const { pathEnv, pathExt, pathExtExe } = getPathInfo(cmd, opt);
+      const found = [];
+      const step = (i) => new Promise((resolve11, reject) => {
+        if (i === pathEnv.length)
+          return opt.all && found.length ? resolve11(found) : reject(getNotFoundError(cmd));
+        const ppRaw = pathEnv[i];
+        const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
+        const pCmd = path26.join(pathPart, cmd);
+        const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
+        resolve11(subStep(p, i, 0));
+      });
+      const subStep = (p, i, ii) => new Promise((resolve11, reject) => {
+        if (ii === pathExt.length)
+          return resolve11(step(i + 1));
+        const ext2 = pathExt[ii];
+        isexe(p + ext2, { pathExt: pathExtExe }, (er, is) => {
+          if (!er && is) {
+            if (opt.all)
+              found.push(p + ext2);
+            else
+              return resolve11(p + ext2);
+          }
+          return resolve11(subStep(p, i, ii + 1));
+        });
+      });
+      return cb ? step(0).then((res) => cb(null, res), cb) : step(0);
+    };
+    var whichSync = (cmd, opt) => {
+      opt = opt || {};
+      const { pathEnv, pathExt, pathExtExe } = getPathInfo(cmd, opt);
+      const found = [];
+      for (let i = 0; i < pathEnv.length; i++) {
+        const ppRaw = pathEnv[i];
+        const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
+        const pCmd = path26.join(pathPart, cmd);
+        const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
+        for (let j = 0; j < pathExt.length; j++) {
+          const cur = p + pathExt[j];
+          try {
+            const is = isexe.sync(cur, { pathExt: pathExtExe });
+            if (is) {
+              if (opt.all)
+                found.push(cur);
+              else
+                return cur;
+            }
+          } catch (ex) {
+          }
+        }
+      }
+      if (opt.all && found.length)
+        return found;
+      if (opt.nothrow)
+        return null;
+      throw getNotFoundError(cmd);
+    };
+    module.exports = which;
+    which.sync = whichSync;
+  }
+});
+
+// node_modules/path-key/index.js
+var require_path_key = __commonJS({
+  "node_modules/path-key/index.js"(exports, module) {
+    "use strict";
+    var pathKey = (options = {}) => {
+      const environment = options.env || process.env;
+      const platform = options.platform || process.platform;
+      if (platform !== "win32") {
+        return "PATH";
+      }
+      return Object.keys(environment).reverse().find((key) => key.toUpperCase() === "PATH") || "Path";
+    };
+    module.exports = pathKey;
+    module.exports.default = pathKey;
+  }
+});
+
+// node_modules/cross-spawn/lib/util/resolveCommand.js
+var require_resolveCommand = __commonJS({
+  "node_modules/cross-spawn/lib/util/resolveCommand.js"(exports, module) {
+    "use strict";
+    var path26 = __require("path");
+    var which = require_which();
+    var getPathKey = require_path_key();
+    function resolveCommandAttempt(parsed, withoutPathExt) {
+      const env = parsed.options.env || process.env;
+      const cwd = process.cwd();
+      const hasCustomCwd = parsed.options.cwd != null;
+      const shouldSwitchCwd = hasCustomCwd && process.chdir !== void 0 && !process.chdir.disabled;
+      if (shouldSwitchCwd) {
+        try {
+          process.chdir(parsed.options.cwd);
+        } catch (err) {
+        }
+      }
+      let resolved;
+      try {
+        resolved = which.sync(parsed.command, {
+          path: env[getPathKey({ env })],
+          pathExt: withoutPathExt ? path26.delimiter : void 0
+        });
+      } catch (e) {
+      } finally {
+        if (shouldSwitchCwd) {
+          process.chdir(cwd);
+        }
+      }
+      if (resolved) {
+        resolved = path26.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
+      }
+      return resolved;
+    }
+    function resolveCommand(parsed) {
+      return resolveCommandAttempt(parsed) || resolveCommandAttempt(parsed, true);
+    }
+    module.exports = resolveCommand;
+  }
+});
+
+// node_modules/cross-spawn/lib/util/escape.js
+var require_escape = __commonJS({
+  "node_modules/cross-spawn/lib/util/escape.js"(exports, module) {
+    "use strict";
+    var metaCharsRegExp = /([()\][%!^"`<>&|;, *?])/g;
+    function escapeCommand(arg) {
+      arg = arg.replace(metaCharsRegExp, "^$1");
+      return arg;
+    }
+    function escapeArgument(arg, doubleEscapeMetaChars) {
+      arg = `${arg}`;
+      arg = arg.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"');
+      arg = arg.replace(/(?=(\\+?)?)\1$/, "$1$1");
+      arg = `"${arg}"`;
+      arg = arg.replace(metaCharsRegExp, "^$1");
+      if (doubleEscapeMetaChars) {
+        arg = arg.replace(metaCharsRegExp, "^$1");
+      }
+      return arg;
+    }
+    module.exports.command = escapeCommand;
+    module.exports.argument = escapeArgument;
+  }
+});
+
+// node_modules/shebang-regex/index.js
+var require_shebang_regex = __commonJS({
+  "node_modules/shebang-regex/index.js"(exports, module) {
+    "use strict";
+    module.exports = /^#!(.*)/;
+  }
+});
+
+// node_modules/shebang-command/index.js
+var require_shebang_command = __commonJS({
+  "node_modules/shebang-command/index.js"(exports, module) {
+    "use strict";
+    var shebangRegex = require_shebang_regex();
+    module.exports = (string = "") => {
+      const match2 = string.match(shebangRegex);
+      if (!match2) {
+        return null;
+      }
+      const [path26, argument] = match2[0].replace(/#! ?/, "").split(" ");
+      const binary = path26.split("/").pop();
+      if (binary === "env") {
+        return argument;
+      }
+      return argument ? `${binary} ${argument}` : binary;
+    };
+  }
+});
+
+// node_modules/cross-spawn/lib/util/readShebang.js
+var require_readShebang = __commonJS({
+  "node_modules/cross-spawn/lib/util/readShebang.js"(exports, module) {
+    "use strict";
+    var fs24 = __require("fs");
+    var shebangCommand = require_shebang_command();
+    function readShebang(command) {
+      const size = 150;
+      const buffer = Buffer.alloc(size);
+      let fd;
+      try {
+        fd = fs24.openSync(command, "r");
+        fs24.readSync(fd, buffer, 0, size, 0);
+        fs24.closeSync(fd);
+      } catch (e) {
+      }
+      return shebangCommand(buffer.toString());
+    }
+    module.exports = readShebang;
+  }
+});
+
+// node_modules/cross-spawn/lib/parse.js
+var require_parse = __commonJS({
+  "node_modules/cross-spawn/lib/parse.js"(exports, module) {
+    "use strict";
+    var path26 = __require("path");
+    var resolveCommand = require_resolveCommand();
+    var escape2 = require_escape();
+    var readShebang = require_readShebang();
+    var isWin = process.platform === "win32";
+    var isExecutableRegExp = /\.(?:com|exe)$/i;
+    var isCmdShimRegExp = /node_modules[\\/].bin[\\/][^\\/]+\.cmd$/i;
+    function detectShebang(parsed) {
+      parsed.file = resolveCommand(parsed);
+      const shebang = parsed.file && readShebang(parsed.file);
+      if (shebang) {
+        parsed.args.unshift(parsed.file);
+        parsed.command = shebang;
+        return resolveCommand(parsed);
+      }
+      return parsed.file;
+    }
+    function parseNonShell(parsed) {
+      if (!isWin) {
+        return parsed;
+      }
+      const commandFile = detectShebang(parsed);
+      const needsShell = !isExecutableRegExp.test(commandFile);
+      if (parsed.options.forceShell || needsShell) {
+        const needsDoubleEscapeMetaChars = isCmdShimRegExp.test(commandFile);
+        parsed.command = path26.normalize(parsed.command);
+        parsed.command = escape2.command(parsed.command);
+        parsed.args = parsed.args.map((arg) => escape2.argument(arg, needsDoubleEscapeMetaChars));
+        const shellCommand = [parsed.command].concat(parsed.args).join(" ");
+        parsed.args = ["/d", "/s", "/c", `"${shellCommand}"`];
+        parsed.command = process.env.comspec || "cmd.exe";
+        parsed.options.windowsVerbatimArguments = true;
+      }
+      return parsed;
+    }
+    function parse2(command, args, options) {
+      if (args && !Array.isArray(args)) {
+        options = args;
+        args = null;
+      }
+      args = args ? args.slice(0) : [];
+      options = Object.assign({}, options);
+      const parsed = {
+        command,
+        args,
+        options,
+        file: void 0,
+        original: {
+          command,
+          args
+        }
+      };
+      return options.shell ? parsed : parseNonShell(parsed);
+    }
+    module.exports = parse2;
+  }
+});
+
+// node_modules/cross-spawn/lib/enoent.js
+var require_enoent = __commonJS({
+  "node_modules/cross-spawn/lib/enoent.js"(exports, module) {
+    "use strict";
+    var isWin = process.platform === "win32";
+    function notFoundError(original, syscall) {
+      return Object.assign(new Error(`${syscall} ${original.command} ENOENT`), {
+        code: "ENOENT",
+        errno: "ENOENT",
+        syscall: `${syscall} ${original.command}`,
+        path: original.command,
+        spawnargs: original.args
+      });
+    }
+    function hookChildProcess(cp, parsed) {
+      if (!isWin) {
+        return;
+      }
+      const originalEmit = cp.emit;
+      cp.emit = function(name, arg1) {
+        if (name === "exit") {
+          const err = verifyENOENT(arg1, parsed);
+          if (err) {
+            return originalEmit.call(cp, "error", err);
+          }
+        }
+        return originalEmit.apply(cp, arguments);
+      };
+    }
+    function verifyENOENT(status, parsed) {
+      if (isWin && status === 1 && !parsed.file) {
+        return notFoundError(parsed.original, "spawn");
+      }
+      return null;
+    }
+    function verifyENOENTSync(status, parsed) {
+      if (isWin && status === 1 && !parsed.file) {
+        return notFoundError(parsed.original, "spawnSync");
+      }
+      return null;
+    }
+    module.exports = {
+      hookChildProcess,
+      verifyENOENT,
+      verifyENOENTSync,
+      notFoundError
+    };
+  }
+});
+
+// node_modules/cross-spawn/index.js
+var require_cross_spawn = __commonJS({
+  "node_modules/cross-spawn/index.js"(exports, module) {
+    "use strict";
+    var cp = __require("child_process");
+    var parse2 = require_parse();
+    var enoent = require_enoent();
+    function spawn3(command, args, options) {
+      const parsed = parse2(command, args, options);
+      const spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
+      enoent.hookChildProcess(spawned, parsed);
+      return spawned;
+    }
+    function spawnSync4(command, args, options) {
+      const parsed = parse2(command, args, options);
+      const result = cp.spawnSync(parsed.command, parsed.args, parsed.options);
+      result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
+      return result;
+    }
+    module.exports = spawn3;
+    module.exports.spawn = spawn3;
+    module.exports.sync = spawnSync4;
+    module.exports._parse = parse2;
+    module.exports._enoent = enoent;
   }
 });
 
@@ -11858,7 +12355,7 @@ async function waitForStart(statusFn, timeoutMs, stableMs, pollMs = 250) {
     } else {
       stableSince = null;
     }
-    await new Promise((resolve10) => setTimeout(resolve10, pollMs));
+    await new Promise((resolve11) => setTimeout(resolve11, pollMs));
   }
   return statusFn().running;
 }
@@ -11936,7 +12433,7 @@ async function restartSequence(isRunning, requestStop, start, waitUp, timeoutMs,
     requestStop();
     const deadline = Date.now() + timeoutMs;
     while (isRunning() && Date.now() < deadline) {
-      await new Promise((resolve10) => setTimeout(resolve10, pollMs));
+      await new Promise((resolve11) => setTimeout(resolve11, pollMs));
     }
     if (isRunning()) return "stop-failed";
   }
@@ -11993,6 +12490,9 @@ function runMwCli(sub, projectDir, args) {
 }
 function targetMw(projectDir, args) {
   return runMwCli("target", projectDir, args);
+}
+function partitionMw(projectDir, args) {
+  return runMwCli("partition", projectDir, args);
 }
 function modelMw(projectDir, args) {
   return runMwCli("model", projectDir, args);
@@ -12078,7 +12578,7 @@ async function acquireLock(lockPath, opts = {}) {
   throw new Error(`Could not acquire lock at ${lockPath}`);
 }
 function sleep(ms) {
-  return new Promise((resolve10) => setTimeout(resolve10, ms));
+  return new Promise((resolve11) => setTimeout(resolve11, ms));
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/heartbeat.ts
@@ -12782,6 +13282,8 @@ import * as fs10 from "node:fs";
 import * as path10 from "node:path";
 var ENV_TARGET_GAME = "MW_TARGET_GAME";
 var ENV_TARGET_ENGINE = "MW_TARGET_ENGINE";
+var ENV_PARTITION_PARENT = "MW_PARTITION_PARENT";
+var ENV_PARTITION_ROOT = "MW_PARTITION_ROOT";
 var TargetConfigError = class extends Error {
   constructor(kind, message) {
     super(message);
@@ -12814,7 +13316,19 @@ function normalizeRoot(raw, controlRoot) {
   try {
     return fs10.realpathSync.native(resolved);
   } catch {
-    return resolved;
+    let dir = resolved;
+    const tail = [];
+    for (; ; ) {
+      const parent = path10.dirname(dir);
+      if (parent === dir) return resolved;
+      try {
+        const real = fs10.realpathSync.native(dir);
+        return tail.length === 0 ? real : path10.join(real, ...tail);
+      } catch {
+        tail.unshift(path10.basename(dir));
+        dir = parent;
+      }
+    }
   }
 }
 function targetYmlPath(controlRoot) {
@@ -12874,16 +13388,213 @@ function readTargetYml(controlRoot) {
       `target.yml is not valid YAML (${targetYmlPath(controlRoot)}): ${err instanceof Error ? err.message : String(err)}`
     );
   }
-  if (parsed === void 0 || parsed === null) return {};
+  if (parsed === void 0 || parsed === null) {
+    if (text.trim() === "" || text.replace(/^\uFEFF/, "").trim() === "") return {};
+    fail("invalid-config", "target.yml: top level must be a mapping");
+  }
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
     fail("invalid-config", "target.yml: top level must be a mapping");
   }
   return parsed;
 }
-function resolveWorkspaceConfig(controlRoot) {
-  const raw = readTargetYml(controlRoot);
-  const envGame = process.env[ENV_TARGET_GAME]?.trim() || null;
-  const envEngine = process.env[ENV_TARGET_ENGINE]?.trim() || null;
+var V1_SHAPE_KEYS = ["mode", "game", "engine", "uproject"];
+var V2_TOP_KEYS = /* @__PURE__ */ new Set(["active", "dual", "partition"]);
+var DUAL_BLOCK_KEYS = /* @__PURE__ */ new Set(["game", "engine", "vcs", "uproject", "toolchain", "ignore", "contract"]);
+var PARTITION_BLOCK_KEYS = /* @__PURE__ */ new Set(["parent", "partition", "vcs", "roots", "toolchain", "ignore", "contract"]);
+var ROOTS_RESERVED = /* @__PURE__ */ new Set(["parent", "partition", "game", "engine", "uproject"]);
+var ROOTS_NAME_RE = /^[A-Za-z0-9_-]+$/;
+function detectShape(raw, fileExists) {
+  if (!fileExists) return "none";
+  if ("active" in raw) {
+    const mixed = V1_SHAPE_KEYS.filter((k) => k in raw);
+    if (mixed.length > 0) {
+      fail(
+        "invalid-config",
+        `target.yml: mixed format \u2014 'active:' key (v2) together with v1 top-level field(s) ${mixed.join(
+          ", "
+        )}; use either v2 (active + mode blocks) or v1 (flat fields), not both`
+      );
+    }
+    return "v2";
+  }
+  return "v1";
+}
+function decideActiveMode(input) {
+  const ep = [];
+  if (input.envPartitionParent !== null) ep.push(ENV_PARTITION_PARENT);
+  if (input.envPartitionRoot !== null) ep.push(ENV_PARTITION_ROOT);
+  const et = [];
+  if (input.envTargetGame !== null) et.push(ENV_TARGET_GAME);
+  if (input.envTargetEngine !== null) et.push(ENV_TARGET_ENGINE);
+  if (input.fileShape === "v2") {
+    const active = input.active;
+    if (active === null || active !== "single" && active !== "dual" && active !== "partition") {
+      fail(
+        "invalid-config",
+        `target.yml: 'active' must be one of 'single', 'dual', 'partition', got ${active === null ? "null" : `'${active}'`}`
+      );
+    }
+    if (active === "dual" && ep.length > 0) {
+      fail(
+        "invalid-config",
+        `cross env: ${ep.join(", ")} must not be set when active is 'dual' (dual mode uses MW_TARGET_GAME/MW_TARGET_ENGINE)`
+      );
+    }
+    if (active === "partition" && et.length > 0) {
+      fail(
+        "invalid-config",
+        `cross env: ${et.join(", ")} must not be set when active is 'partition' (partition mode uses MW_PARTITION_PARENT/MW_PARTITION_ROOT)`
+      );
+    }
+    if (active === "single" && ep.length + et.length > 0) {
+      fail("invalid-config", `cross env: ${[...ep, ...et].join(", ")} must not be set when active is 'single'`);
+    }
+    if (active === "single") return { mode: "single", block: null };
+    return { mode: active, block: active };
+  }
+  if (input.fileShape === "v1") {
+    if (ep.length > 0) {
+      fail(
+        "invalid-config",
+        `cross env: ${ep.join(", ")} requires a v2 target.yml with 'active: partition' (v1 format has no partition mode)`
+      );
+    }
+    return { mode: "legacy", block: null };
+  }
+  if (ep.length > 0 && et.length > 0) {
+    fail(
+      "invalid-config",
+      `cross env: ${ep.join(", ")} and ${et.join(", ")} are mutually exclusive (partition env vs dual env); set only one family`
+    );
+  }
+  if (ep.length === 2) return { mode: "partition", block: null };
+  if (ep.length === 1) {
+    const missing = input.envPartitionRoot === null ? ENV_PARTITION_ROOT : ENV_PARTITION_PARENT;
+    fail(
+      "invalid-config",
+      `incomplete partition env activation: ${missing} is not set (partition env requires both MW_PARTITION_PARENT and MW_PARTITION_ROOT)`
+    );
+  }
+  return { mode: "legacy", block: null };
+}
+function checkV2TopWhitelist(raw) {
+  const extra = Object.keys(raw).filter((k) => !V2_TOP_KEYS.has(k));
+  if (extra.length > 0) {
+    fail(
+      "invalid-config",
+      `target.yml: unexpected top-level key(s) in v2 format: ${extra.join(", ")} (allowed: active, dual, partition)`
+    );
+  }
+}
+function v2Block(raw, name) {
+  if (!(name in raw) || raw[name] === null || raw[name] === void 0) {
+    fail("invalid-config", `target.yml: active '${name}' but the '${name}' block is missing`);
+  }
+  const block = raw[name];
+  if (typeof block !== "object" || Array.isArray(block)) {
+    fail("invalid-config", `target.yml: the '${name}' block must be a mapping`);
+  }
+  return block;
+}
+function checkBlockKeys(block, name, allowed) {
+  const extra = Object.keys(block).filter((k) => !allowed.has(k));
+  if (extra.length > 0) {
+    fail("invalid-config", `target.yml: unexpected key(s) in the '${name}' block: ${extra.join(", ")}`);
+  }
+}
+function checkRootsKeyTypes(rootsAst) {
+  for (const pair of rootsAst.items) {
+    if (!(0, import_yaml.isScalar)(pair.key) || typeof pair.key.value !== "string") {
+      fail("invalid-config", "target.yml: roots keys must be strings");
+    }
+  }
+}
+function readRootsAst(controlRoot) {
+  const file = targetYmlPath(controlRoot);
+  let text;
+  try {
+    text = fs10.readFileSync(file, "utf-8");
+  } catch {
+    return null;
+  }
+  const node = (0, import_yaml.parseDocument)(text).getIn(["partition", "roots"], true);
+  return (0, import_yaml.isMap)(node) ? node : null;
+}
+function parseRoots(value, controlRoot, rootsAst) {
+  if (value === void 0 || value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) {
+    fail("invalid-config", "target.yml: partition field 'roots' must be a mapping of name to path");
+  }
+  if (rootsAst !== null) checkRootsKeyTypes(rootsAst);
+  const out = {};
+  for (const [name, rawPath] of Object.entries(value)) {
+    if (name === "" || !ROOTS_NAME_RE.test(name) || ROOTS_RESERVED.has(name)) {
+      fail(
+        "invalid-config",
+        `target.yml: roots key '${name}' is invalid (must match [A-Za-z0-9_-]+ and must not be a reserved name: parent, partition, game, engine, uproject)`
+      );
+    }
+    if (typeof rawPath !== "string" || rawPath.trim() === "") {
+      fail("invalid-config", `target.yml: roots.${name} must be a non-empty string`);
+    }
+    out[name] = normalizeRoot(rawPath, controlRoot);
+  }
+  return out;
+}
+function relationNorm(p) {
+  const normalized = path10.normalize(p);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+function checkRootRelation(parentRoot, partitionRoot) {
+  const a = relationNorm(parentRoot);
+  const b = relationNorm(partitionRoot);
+  if (a === b || a.startsWith(b + path10.sep) || b.startsWith(a + path10.sep)) {
+    fail(
+      "invalid-config",
+      `target.yml: partition root relation is invalid \u2014 parent (${parentRoot}) and partition (${partitionRoot}) must not be equal or nested`
+    );
+  }
+}
+function loadPartitionConfig(controlRoot, controlNorm, block, envParent, envPartition, rootsAst) {
+  let parentRaw = block === null ? null : block.parent;
+  let partitionRaw = block === null ? null : block.partition;
+  if (envParent !== null) parentRaw = envParent;
+  if (envPartition !== null) partitionRaw = envPartition;
+  if (parentRaw === null || parentRaw === void 0) {
+    fail(
+      "invalid-config",
+      "target.yml: partition mode requires field 'parent' (partition block or env MW_PARTITION_PARENT)"
+    );
+  }
+  if (partitionRaw === null || partitionRaw === void 0) {
+    fail(
+      "invalid-config",
+      "target.yml: partition mode requires field 'partition' (partition block or env MW_PARTITION_ROOT)"
+    );
+  }
+  const parent = requireString(parentRaw, "parent");
+  const partition = requireString(partitionRaw, "partition");
+  const parentRoot = normalizeRoot(parent, controlRoot);
+  const partitionRoot = normalizeRoot(partition, controlRoot);
+  const roots = parseRoots(block === null ? null : block.roots, controlRoot, rootsAst);
+  checkRootRelation(parentRoot, partitionRoot);
+  return {
+    mode: "partition",
+    controlRoot: controlNorm,
+    gameRoot: null,
+    engineRoot: null,
+    parentRoot,
+    partitionRoot,
+    roots,
+    vcs: optionalString(block === null ? null : block.vcs, "vcs"),
+    uproject: null,
+    toolchain: parseToolchain(block === null ? null : block.toolchain),
+    ignore: parseIgnore(block === null ? null : block.ignore),
+    contract: parseContract(block === null ? null : block.contract),
+    source: envParent !== null || envPartition !== null ? "env" : "target-yml"
+  };
+}
+function resolveLegacyConfig(controlRoot, raw, envGame, envEngine) {
   const fileMode = raw.mode === void 0 ? null : requireString(raw.mode, "mode");
   if (fileMode !== null && fileMode !== "dual" && fileMode !== "single") {
     fail("invalid-config", `target.yml: 'mode' must be 'dual' or 'single', got '${fileMode}'`);
@@ -12913,6 +13624,9 @@ function resolveWorkspaceConfig(controlRoot) {
     controlRoot: normalizeRoot(controlRoot, controlRoot),
     gameRoot,
     engineRoot: engineRaw === null ? null : normalizeRoot(engineRaw, controlRoot),
+    parentRoot: null,
+    partitionRoot: null,
+    roots: null,
     vcs: optionalString(raw.vcs, "vcs"),
     uproject: optionalString(raw.uproject, "uproject"),
     toolchain: parseToolchain(raw.toolchain),
@@ -12920,6 +13634,78 @@ function resolveWorkspaceConfig(controlRoot) {
     contract: parseContract(raw.contract),
     source: envGame !== null ? "env" : gameRaw !== null || fileMode !== null ? "target-yml" : "default"
   };
+}
+function resolveWorkspaceConfig(controlRoot) {
+  const fileExists = fs10.existsSync(targetYmlPath(controlRoot));
+  const raw = readTargetYml(controlRoot);
+  const envGame = process.env[ENV_TARGET_GAME]?.trim() || null;
+  const envEngine = process.env[ENV_TARGET_ENGINE]?.trim() || null;
+  const envParent = process.env[ENV_PARTITION_PARENT]?.trim() || null;
+  const envPartition = process.env[ENV_PARTITION_ROOT]?.trim() || null;
+  const fileShape = detectShape(raw, fileExists);
+  let active = null;
+  if (fileShape === "v2") {
+    const value = raw.active;
+    active = typeof value === "string" ? value : value === null || value === void 0 ? null : String(value);
+  }
+  const decision = decideActiveMode({
+    fileShape,
+    active,
+    envPartitionParent: envParent,
+    envPartitionRoot: envPartition,
+    envTargetGame: envGame,
+    envTargetEngine: envEngine
+  });
+  if (decision.mode === "legacy") {
+    return resolveLegacyConfig(controlRoot, raw, envGame, envEngine);
+  }
+  const controlNorm = normalizeRoot(controlRoot, controlRoot);
+  if (decision.mode === "single") {
+    checkV2TopWhitelist(raw);
+    return {
+      mode: "single",
+      controlRoot: controlNorm,
+      gameRoot: controlNorm,
+      engineRoot: null,
+      parentRoot: null,
+      partitionRoot: null,
+      roots: null,
+      vcs: null,
+      uproject: null,
+      toolchain: {},
+      ignore: { deny_globs: [] },
+      contract: { forbidden_paths: [], conventions: null, docs: [] },
+      source: "target-yml"
+    };
+  }
+  if (decision.mode === "dual") {
+    const block = v2Block(raw, "dual");
+    checkV2TopWhitelist(raw);
+    checkBlockKeys(block, "dual", DUAL_BLOCK_KEYS);
+    const config = resolveLegacyConfig(
+      controlRoot,
+      {
+        mode: "dual",
+        game: block.game,
+        engine: block.engine,
+        vcs: block.vcs,
+        uproject: block.uproject,
+        toolchain: block.toolchain,
+        ignore: block.ignore,
+        contract: block.contract
+      },
+      envGame,
+      envEngine
+    );
+    return config;
+  }
+  if (fileShape === "v2") {
+    const block = v2Block(raw, "partition");
+    checkV2TopWhitelist(raw);
+    checkBlockKeys(block, "partition", PARTITION_BLOCK_KEYS);
+    return loadPartitionConfig(controlRoot, controlNorm, block, envParent, envPartition, readRootsAst(controlRoot));
+  }
+  return loadPartitionConfig(controlRoot, controlNorm, null, envParent, envPartition, null);
 }
 function discoverUproject(gameRoot, explicit) {
   if (explicit !== null && explicit !== void 0) {
@@ -12948,9 +13734,16 @@ function discoverUproject(gameRoot, explicit) {
   return path10.join(gameRoot, matches[0]);
 }
 function renderToolchainCommand(command, config) {
+  if (config.mode === "partition") {
+    return renderPartitionCommand(command, config);
+  }
+  const gameRoot = config.gameRoot;
+  if (gameRoot === null) {
+    fail("missing-field", `toolchain command requires a game root but none is configured: ${command}`);
+  }
   let out = command;
   if (out.includes("{game}")) {
-    out = out.split("{game}").join(config.gameRoot);
+    out = out.split("{game}").join(gameRoot);
   }
   if (out.includes("{engine}")) {
     if (config.engineRoot === null) {
@@ -12962,14 +13755,40 @@ function renderToolchainCommand(command, config) {
     out = out.split("{engine}").join(config.engineRoot);
   }
   if (out.includes("{uproject}")) {
-    const uproject = discoverUproject(config.gameRoot, config.uproject);
+    const uproject = discoverUproject(gameRoot, config.uproject);
     out = out.split("{uproject}").join(uproject);
+  }
+  return out;
+}
+var TOKEN_RE = /\{([A-Za-z0-9_-]+)\}/;
+function renderPartitionCommand(command, config) {
+  let out = command;
+  if (config.parentRoot !== null) {
+    out = out.split("{parent}").join(config.parentRoot);
+  }
+  if (config.partitionRoot !== null) {
+    out = out.split("{partition}").join(config.partitionRoot);
+  }
+  const roots = config.roots ?? {};
+  for (const [name, root] of Object.entries(roots)) {
+    out = out.split(`{${name}}`).join(root);
+  }
+  const leftover = TOKEN_RE.exec(out);
+  if (leftover !== null) {
+    const defined = ["{parent}", "{partition}", ...[...Object.keys(roots)].sort().map((n) => `{${n}}`)];
+    fail(
+      "missing-field",
+      `toolchain command references undefined placeholder '${leftover[0]}' (partition mode defines: ${defined.join(
+        ", "
+      )}): ${command}`
+    );
   }
   return out;
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts
 var PROFILE_MARK = "<!-- mw-profile: v1 -->";
+var PROFILE_MARK_V2 = "<!-- mw-profile: v2 -->";
 function hasProfileContent(config) {
   return config.mode === "dual" || Object.keys(config.toolchain).length > 0 || config.ignore.deny_globs.length > 0 || config.contract.forbidden_paths.length > 0 || config.contract.conventions !== null || config.contract.docs.length > 0;
 }
@@ -12983,6 +13802,68 @@ function renderProfileBlock(config, ignoreEnforced) {
     lines.push(`Control workspace: ${config.controlRoot}`);
     lines.push(`Game root: ${config.gameRoot}`);
     if (config.engineRoot !== null) lines.push(`Engine root: ${config.engineRoot}`);
+  }
+  const toolNames = Object.keys(config.toolchain);
+  if (toolNames.length > 0) {
+    lines.push("Toolchain commands (placeholders resolved):");
+    for (const name of toolNames) {
+      lines.push(`- ${name}: ${renderToolchainCommand(config.toolchain[name], config)}`);
+    }
+  }
+  if (ignoreEnforced && config.ignore.deny_globs.length > 0) {
+    lines.push("Context firewall (deny globs, enforced by the read-scope layer):");
+    for (const glob of config.ignore.deny_globs) lines.push(`- ${glob}`);
+  }
+  const contract = config.contract;
+  if (contract.forbidden_paths.length > 0 || contract.conventions !== null || contract.docs.length > 0) {
+    lines.push("Contract:");
+    if (contract.forbidden_paths.length > 0) {
+      lines.push(`- forbidden paths: ${contract.forbidden_paths.join(", ")}`);
+    }
+    if (contract.conventions !== null) {
+      lines.push("- conventions:");
+      for (const line of contract.conventions.split("\n")) lines.push(`  ${line}`);
+    }
+    if (contract.docs.length > 0) {
+      lines.push("- docs (references, not inlined):");
+      for (const doc of contract.docs) lines.push(`  - ${path11.resolve(config.controlRoot, doc)}`);
+    }
+  }
+  return lines.join("\n");
+}
+function findProfileBlock(content) {
+  const v1 = content.indexOf(PROFILE_MARK);
+  const v2 = content.indexOf(PROFILE_MARK_V2);
+  if (v1 === -1 && v2 === -1) return null;
+  if (v2 === -1) return v1;
+  if (v1 === -1) return v2;
+  return Math.min(v1, v2);
+}
+function blockIsFresh(existingText, config) {
+  if (config.mode === "partition") {
+    return existingText === `${renderPartitionProfileBlock(config, true)}
+` || existingText === `${renderPartitionProfileBlock(config, false)}
+`;
+  }
+  if (!hasProfileContent(config)) return false;
+  return existingText === `${renderProfileBlock(config, true)}
+` || existingText === `${renderProfileBlock(config, false)}
+`;
+}
+function renderPartitionProfileBlock(config, ignoreEnforced) {
+  const lines = [
+    PROFILE_MARK_V2,
+    `[mw] mode: ${config.mode}`,
+    "[mw] Workspace profile (target.yml essentials, injected at dispatch;",
+    `full file: ${path11.join(config.controlRoot, ".agenticdoc", "target.yml")})`,
+    `Control workspace: ${config.controlRoot}`,
+    `Parent root: ${config.parentRoot}`,
+    `Partition root (worker cwd): ${config.partitionRoot}`
+  ];
+  const roots = config.roots ?? {};
+  if (Object.keys(roots).length > 0) {
+    lines.push("Named roots:");
+    for (const [name, root] of Object.entries(roots)) lines.push(`- ${name}: ${root}`);
   }
   const toolNames = Object.keys(config.toolchain);
   if (toolNames.length > 0) {
@@ -13037,13 +13918,20 @@ function injectWorkspaceProfile(taskPath) {
     );
     return;
   }
-  if (original.includes(PROFILE_MARK)) return;
-  let out = original;
+  const existing = findProfileBlock(original);
   const ownDenyGlobs = /^deny_globs:/m.test(original);
+  if (existing !== null && blockIsFresh(original.slice(existing).replace(/\s+$/, "\n"), config)) {
+    return;
+  }
+  let out = existing !== null ? original.slice(0, existing).replace(/\s+$/, "\n") : original;
   if (config.ignore.deny_globs.length > 0 && !ownDenyGlobs) {
     out = insertDenyGlobs(out, config.ignore.deny_globs);
   }
-  if (hasProfileContent(config)) {
+  if (config.mode === "partition") {
+    out = `${out.replace(/\s+$/, "\n")}
+${renderPartitionProfileBlock(config, !ownDenyGlobs)}
+`;
+  } else if (hasProfileContent(config)) {
     out = `${out.replace(/\s+$/, "\n")}
 ${renderProfileBlock(config, !ownDenyGlobs)}
 `;
@@ -13240,10 +14128,10 @@ function firstLine(body) {
 }
 function readTerminalDetail(taskDir, status) {
   if (status === "failed") {
-    const spawn2 = readSpawnFailure(taskDir);
-    if (spawn2 !== void 0) {
-      const reason = spawn2.match(/^\[launcher\] spawn failed \([^)]*\):\s*(.*)$/);
-      return (reason?.[1] ?? spawn2).trim();
+    const spawn3 = readSpawnFailure(taskDir);
+    if (spawn3 !== void 0) {
+      const reason = spawn3.match(/^\[launcher\] spawn failed \([^)]*\):\s*(.*)$/);
+      return (reason?.[1] ?? spawn3).trim();
     }
     return firstLine(readOutputSection(taskDir, "Exit Reason")) ?? "";
   }
@@ -13999,7 +14887,7 @@ function parseTargetSetFlags(parts) {
 async function runMwTargetCommand(ctx, projectDir, argsText, runner = targetMw) {
   const parts = splitCommandLine(argsText);
   const action = parts[0] ?? "";
-  if (action === "show" || action === "clear") {
+  if (action === "show" || action === "clear" || action === "on" || action === "off") {
     const r = runner(projectDir, [action]);
     ctx.ui.notify(
       r.ok ? r.output || `mw target ${action}: ok` : `mw target ${action} failed: ${r.error}`,
@@ -14029,7 +14917,61 @@ Dual mode takes effect on the next worker spawn (no serve restart needed).` : `m
     return;
   }
   ctx.ui.notify(
-    "Usage: /mw target show | set --game <dir> [--engine <dir>] [--vcs git|p4|none] [--uproject <file>] | clear",
+    "Usage: /mw target show | set --game <dir> [--engine <dir>] [--vcs git|p4|none] [--uproject <file>] | clear | on | off",
+    "warning"
+  );
+}
+function parsePartitionSetFlags(parts) {
+  const flags = { parent: "", roots: [] };
+  for (let i = 0; i < parts.length; i++) {
+    const m = /^(--parent|--partition|--vcs|--root)$/.exec(parts[i]);
+    if (!m) continue;
+    const value = parts[i + 1];
+    if (value === void 0 || value.startsWith("--")) return null;
+    if (m[1] === "--root") {
+      flags.roots.push(value);
+    } else {
+      flags[m[1].slice(2)] = value;
+    }
+    i++;
+  }
+  if (!flags.parent) return null;
+  return flags;
+}
+async function runMwPartitionCommand(ctx, projectDir, argsText, runner = partitionMw) {
+  const parts = splitCommandLine(argsText);
+  const action = parts[0] ?? "";
+  if (action === "show" || action === "clear" || action === "on" || action === "off") {
+    const r = runner(projectDir, [action]);
+    ctx.ui.notify(
+      r.ok ? r.output || `mw partition ${action}: ok` : `mw partition ${action} failed: ${r.error}`,
+      r.ok ? "info" : "error"
+    );
+    return;
+  }
+  if (action === "set") {
+    const flags = parsePartitionSetFlags(parts.slice(1));
+    if (!flags) {
+      ctx.ui.notify(
+        "Usage: /mw partition set --parent <dir> [--partition <dir>] [--root name=<dir> ...] [--vcs git|p4|none] \u2014 quote paths containing spaces",
+        "warning"
+      );
+      return;
+    }
+    const args = ["set", `--parent=${flags.parent}`];
+    if (flags.partition !== void 0) args.push(`--partition=${flags.partition}`);
+    if (flags.vcs !== void 0) args.push(`--vcs=${flags.vcs}`);
+    for (const root of flags.roots) args.push(`--root=${root}`);
+    const r = runner(projectDir, args);
+    ctx.ui.notify(
+      r.ok ? `${r.output}
+Partition mode takes effect on the next worker spawn (no serve restart needed).` : `mw partition set failed: ${r.error}`,
+      r.ok ? "info" : "error"
+    );
+    return;
+  }
+  ctx.ui.notify(
+    "Usage: /mw partition show | set --parent <dir> [--partition <dir>] [--root name=<dir> ...] [--vcs git|p4|none] | clear | on | off",
     "warning"
   );
 }
@@ -14079,7 +15021,7 @@ Worker roles apply on the next spawn (no serve restart); main applies at the nex
 }
 function registerMwCommands(pi, projectDir, workerStore, ackStore) {
   pi.registerCommand("mw", {
-    description: "Control mw: build / init / start / stop / restart / status / doctor / target / model / ack",
+    description: "Control mw: build / init / start / stop / restart / status / doctor / target / partition / model / ack",
     handler: async (_args, ctx) => {
       const trimmed = _args.trim();
       const sub = trimmed.split(/\s+/)[0] ?? "status";
@@ -14169,6 +15111,10 @@ ${r.output}`, "info");
         await runMwTargetCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
         return;
       }
+      if (sub === "partition") {
+        await runMwPartitionCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
+        return;
+      }
       if (sub === "model") {
         await runMwModelCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
         return;
@@ -14190,7 +15136,7 @@ ${r.output}`, "info");
         return;
       }
       ctx.ui.notify(
-        "Usage: /mw build|init|start|stop|status|doctor [fix] | target show|set|clear | model show|set|clear | ack <task-key>|all",
+        "Usage: /mw build|init|start|stop|status|doctor [fix] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | ack <task-key>|all",
         "warning"
       );
     }
@@ -16322,11 +17268,126 @@ function registerProtectedConfigGuard(pi) {
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts
 import * as fs23 from "node:fs";
-import * as path24 from "node:path";
+import * as path25 from "node:path";
+
+// packages/coding-agent/src/utils/shell.ts
+import { existsSync as existsSync14 } from "node:fs";
+import * as path21 from "node:path";
+import { delimiter } from "node:path";
+import { spawn as spawn2, spawnSync as spawnSync3 } from "child_process";
+
+// packages/coding-agent/src/config.ts
+import { accessSync, constants, existsSync as existsSync13, readFileSync as readFileSync18, realpathSync as realpathSync3 } from "fs";
+import { basename as basename3, dirname as dirname9, join as join21, resolve as resolve8, sep as sep7, win32 } from "path";
+import { fileURLToPath as fileURLToPath3 } from "url";
+
+// packages/coding-agent/src/utils/child-process.ts
+var import_cross_spawn = __toESM(require_cross_spawn(), 1);
+import {
+  spawn as nodeSpawn,
+  spawnSync as nodeSpawnSync
+} from "node:child_process";
+
+// packages/coding-agent/src/utils/paths.ts
+import { realpathSync as realpathSync2, statSync as statSync6 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { isAbsolute as isAbsolute3, join as join20, resolve as nodeResolvePath, relative as relative4, sep as sep6 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+var UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+function normalizePath(input, options = {}) {
+  let normalized = options.trim ? input.trim() : input;
+  if (options.normalizeUnicodeSpaces) {
+    normalized = normalized.replace(UNICODE_SPACES, " ");
+  }
+  if (options.stripAtPrefix && normalized.startsWith("@")) {
+    normalized = normalized.slice(1);
+  }
+  if (options.expandTilde ?? true) {
+    const home = options.homeDir ?? homedir4();
+    if (normalized === "~") return home;
+    if (normalized.startsWith("~/") || process.platform === "win32" && normalized.startsWith("~\\")) {
+      return join20(home, normalized.slice(2));
+    }
+  }
+  if (/^file:\/\//.test(normalized)) {
+    return fileURLToPath2(normalized);
+  }
+  return normalized;
+}
+
+// packages/coding-agent/src/config.ts
+var __filename = fileURLToPath3(import.meta.url);
+var __dirname = dirname9(__filename);
+var isBunBinary = import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN") || import.meta.url.includes("%7EBUN");
+var isBunRuntime = !!process.versions.bun;
+function getPackageDir() {
+  const envDir = process.env.PI_PACKAGE_DIR;
+  if (envDir) {
+    return normalizePath(envDir);
+  }
+  if (isBunBinary) {
+    return dirname9(process.execPath);
+  }
+  let dir = __dirname;
+  while (dir !== dirname9(dir)) {
+    if (existsSync13(join21(dir, "package.json"))) {
+      return dir;
+    }
+    dir = dirname9(dir);
+  }
+  return __dirname;
+}
+function getPackageJsonPath() {
+  return join21(getPackageDir(), "package.json");
+}
+var pkg = {};
+try {
+  pkg = JSON.parse(readFileSync18(getPackageJsonPath(), "utf-8"));
+} catch (e) {
+  const err = e;
+  if (err.code !== "ENOENT") throw e;
+}
+var piConfigName = pkg.piConfig?.name;
+var PACKAGE_NAME = pkg.name || "@earendil-works/pi-coding-agent";
+var APP_NAME = piConfigName || "pi";
+var CONFIG_DIR_NAME = pkg.piConfig?.configDir || ".pi";
+var VERSION = pkg.version || "0.0.0";
+var ENV_AGENT_DIR2 = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
+var ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
+
+// packages/coding-agent/src/utils/shell.ts
+var trackedDetachedChildPids = /* @__PURE__ */ new Set();
+function killTrackedDetachedChildren() {
+  for (const pid of trackedDetachedChildPids) {
+    killProcessTree(pid);
+  }
+  trackedDetachedChildPids.clear();
+}
+function killProcessTree(pid) {
+  if (process.platform === "win32") {
+    try {
+      spawn2("taskkill", ["/F", "/T", "/PID", String(pid)], {
+        stdio: "ignore",
+        detached: true,
+        windowsHide: true
+      });
+    } catch {
+    }
+  } else {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+      }
+    }
+  }
+}
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/phase-runner.ts
 import * as fs21 from "node:fs";
-import * as path21 from "node:path";
+import * as path22 from "node:path";
 function goalMtime(agenticdocRoot2) {
   const goalPathResolved = goalPath(agenticdocRoot2);
   try {
@@ -16336,18 +17397,18 @@ function goalMtime(agenticdocRoot2) {
   }
 }
 function writePhaseFile(taskKey, agenticdocRoot2, phaseIndex, summary) {
-  const progressDir = path21.join(agenticdocRoot2, taskKey, "progress");
+  const progressDir = path22.join(agenticdocRoot2, taskKey, "progress");
   fs21.mkdirSync(progressDir, { recursive: true });
   const content = `# Phase ${phaseIndex + 1}
 
 ${summary || "(phase complete)"}
 `;
-  fs21.writeFileSync(path21.join(progressDir, `phase-${phaseIndex + 1}.md`), content, "utf8");
+  fs21.writeFileSync(path22.join(progressDir, `phase-${phaseIndex + 1}.md`), content, "utf8");
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/read-scope.ts
 import * as fs22 from "node:fs";
-import * as path23 from "node:path";
+import * as path24 from "node:path";
 
 // node_modules/balanced-match/dist/esm/index.js
 var balanced = (a, b, str) => {
@@ -17454,12 +18515,12 @@ var qmarksTestNoExtDot = ([$0]) => {
   return (f) => f.length === len && f !== "." && f !== "..";
 };
 var defaultPlatform = typeof process === "object" && process ? typeof process.env === "object" && process.env && process.env.__MINIMATCH_TESTING_PLATFORM__ || process.platform : "posix";
-var path22 = {
+var path23 = {
   win32: { sep: "\\" },
   posix: { sep: "/" }
 };
-var sep5 = defaultPlatform === "win32" ? path22.win32.sep : path22.posix.sep;
-minimatch.sep = sep5;
+var sep8 = defaultPlatform === "win32" ? path23.win32.sep : path23.posix.sep;
+minimatch.sep = sep8;
 var GLOBSTAR = /* @__PURE__ */ Symbol("globstar **");
 minimatch.GLOBSTAR = GLOBSTAR;
 var qmark2 = "[^/]";
@@ -18211,19 +19272,19 @@ var IS_WIN322 = process.platform === "win32";
 function isSameOrUnder(prefix, candidate) {
   const a = IS_WIN322 ? prefix.toLowerCase() : prefix;
   const c = IS_WIN322 ? candidate.toLowerCase() : candidate;
-  return c === a || c.startsWith(`${a}${path23.sep}`);
+  return c === a || c.startsWith(`${a}${path24.sep}`);
 }
 function normalizeForCompare(projectRoot, p) {
-  const abs = path23.resolve(projectRoot, p);
+  const abs = path24.resolve(projectRoot, p);
   let cur = abs;
   const tail = [];
   for (; ; ) {
     try {
-      return path23.join(fs22.realpathSync(cur), ...tail);
+      return path24.join(fs22.realpathSync(cur), ...tail);
     } catch {
-      const parent = path23.dirname(cur);
+      const parent = path24.dirname(cur);
       if (parent === cur) return abs;
-      tail.unshift(path23.basename(cur));
+      tail.unshift(path24.basename(cur));
       cur = parent;
     }
   }
@@ -18242,7 +19303,7 @@ function defaultStatSize(absolutePath) {
 function matchedDenyGlob(projectRoot, denyGlobs, rawPath) {
   if (denyGlobs.length === 0) return null;
   const abs = normalizeForCompare(projectRoot, rawPath);
-  const rel = path23.relative(projectRoot, abs).replaceAll("\\", "/");
+  const rel = path24.relative(projectRoot, abs).replaceAll("\\", "/");
   for (const glob of denyGlobs) {
     if (minimatch(abs, glob) || minimatch(rel, glob)) return glob;
     if (glob.endsWith("/**")) {
@@ -18280,7 +19341,7 @@ function checkReadScopeCall(projectRoot, config, state, tool, rawPath, statSize 
   }
   let chargedBytes = 0;
   if (tool === "read") {
-    chargedBytes = statSize(path23.resolve(projectRoot, rawPath));
+    chargedBytes = statSize(path24.resolve(projectRoot, rawPath));
     if (state.bytesRead + chargedBytes > config.byteCap) {
       return {
         allowed: false,
@@ -18429,9 +19490,9 @@ function parseTaskMd(taskPath) {
       }
     }
   }
-  const agenticdocRoot2 = path24.dirname(path24.dirname(taskPath));
-  const taskKey = path24.basename(path24.dirname(taskPath));
-  const trueAgenticdocRoot = path24.dirname(path24.dirname(agenticdocRoot2));
+  const agenticdocRoot2 = path25.dirname(path25.dirname(taskPath));
+  const taskKey = path25.basename(path25.dirname(taskPath));
+  const trueAgenticdocRoot = path25.dirname(path25.dirname(agenticdocRoot2));
   return {
     type: taskType,
     phases: phases.length > 0 ? phases : void 0,
@@ -18467,9 +19528,9 @@ function writeWorkerLogLine(line) {
 }
 function appendStartPidLine(taskKey, agenticdocRoot2) {
   try {
-    const dir = path24.resolve(agenticdocRoot2, taskKey);
+    const dir = path25.resolve(agenticdocRoot2, taskKey);
     fs23.mkdirSync(dir, { recursive: true });
-    fs23.appendFileSync(path24.join(dir, "trace.log"), `[START] pid=${process.pid}
+    fs23.appendFileSync(path25.join(dir, "trace.log"), `[START] pid=${process.pid}
 `, "utf8");
   } catch {
   }
@@ -18487,10 +19548,10 @@ function dispatchRefusal(meta) {
 }
 function appendReadScopeTraceLine(taskKey, agenticdocRoot2, r) {
   try {
-    const dir = path24.resolve(agenticdocRoot2, taskKey);
+    const dir = path25.resolve(agenticdocRoot2, taskKey);
     fs23.mkdirSync(dir, { recursive: true });
     fs23.appendFileSync(
-      path24.join(dir, "trace.log"),
+      path25.join(dir, "trace.log"),
       `[READ_SCOPE] ${r.ts} blocked path=${r.path} rule=${r.rule} tool=${r.tool}
 `,
       "utf8"
@@ -18501,13 +19562,13 @@ function appendReadScopeTraceLine(taskKey, agenticdocRoot2, r) {
 function appendReadScopeRejectionsSection(taskKey, agenticdocRoot2, rejections) {
   if (rejections.length === 0) return;
   try {
-    const dir = path24.resolve(agenticdocRoot2, taskKey);
+    const dir = path25.resolve(agenticdocRoot2, taskKey);
     fs23.mkdirSync(dir, { recursive: true });
     const lines = ["## Read Scope Rejections", "", "| tool | rule | path | ts |", "| ---- | ---- | ---- | ---- |"];
     for (const r of rejections) {
       lines.push(`| ${r.tool} | ${r.rule} | ${r.path.replaceAll("|", "\\|")} | ${r.ts} |`);
     }
-    fs23.appendFileSync(path24.join(dir, "output.md"), `
+    fs23.appendFileSync(path25.join(dir, "output.md"), `
 ${lines.join("\n")}
 `, "utf8");
   } catch {
@@ -18518,8 +19579,9 @@ async function workerModeActivate(pi) {
   if (!taskPathEnv) {
     return;
   }
-  const taskPath = path24.resolve(taskPathEnv);
+  const taskPath = path25.resolve(taskPathEnv);
   if (!fs23.existsSync(taskPath)) {
+    killTrackedDetachedChildren();
     process.exit(1);
   }
   const meta = parseTaskMd(taskPath);
@@ -18537,6 +19599,7 @@ async function workerModeActivate(pi) {
       exitReason: refusal
     });
     writeWorkerLogLine(`[worker] refused task=${meta.taskKey} type=${meta.type}: ${refusal}`);
+    killTrackedDetachedChildren();
     process.exit(1);
   }
   const readScopeConfig = readScopeConfigFromMeta(meta);
@@ -18556,6 +19619,7 @@ async function workerModeActivate(pi) {
   );
   let outputWritten = false;
   process.on("exit", () => {
+    killTrackedDetachedChildren();
     if (outputWritten) return;
     try {
       writeOutputGuarded({
@@ -18697,6 +19761,7 @@ async function workerModeActivate(pi) {
     });
     recordEnd(1);
     outputWritten = true;
+    killTrackedDetachedChildren();
     process.exit(1);
   }
   function writeCheckpoint() {
@@ -18722,11 +19787,11 @@ async function workerModeActivate(pi) {
       risk
     });
     lastCheckpoint = { risk, reads: readCount, writes: writeCount, phases: phasesStr };
-    const taskDir = path24.dirname(taskPath);
+    const taskDir = path25.dirname(taskPath);
     pi.sendUserMessage(
       `[mw checkpoint] \u8FD0\u884C ${formatHeartbeatAge(elapsedMs)}\uFF08\u603B\u9884\u7B97 ${formatHeartbeatAge(
         budgetMs
-      )}\uFF09\u3002\u8BF7\u7ACB\u5373\u81EA\u8BC4\u6536\u655B\u6027\uFF0C\u628A\u4E00\u884C\u8FFD\u52A0\u5230 ${path24.join(taskDir, "progress.md")}\uFF1ACKPT ${Math.round(
+      )}\uFF09\u3002\u8BF7\u7ACB\u5373\u81EA\u8BC4\u6536\u655B\u6027\uFF0C\u628A\u4E00\u884C\u8FFD\u52A0\u5230 ${path25.join(taskDir, "progress.md")}\uFF1ACKPT ${Math.round(
         elapsedMs / 6e4
       )}m converging=yes|no eta\u2248<X>m <\u4E00\u53E5\u8BDD\u7406\u7531>\u3002\u82E5\u4E0D\u6536\u655B\uFF1A\u7ACB\u5373\u6536\u7A84\u8303\u56F4\uFF0C\u4F18\u5148\u4FDD\u8BC1\u5DF2\u5B8C\u6210\u90E8\u5206\u53EF\u4EA4\u4ED8\uFF0C\u4E0D\u8981\u5C55\u5F00\u65B0\u5DE5\u4F5C\u3002`,
       { deliverAs: "followUp" }
@@ -18850,6 +19915,7 @@ async function workerModeActivate(pi) {
       });
       recordEnd(1);
       outputWritten = true;
+      killTrackedDetachedChildren();
       process.exit(1);
     }
   });

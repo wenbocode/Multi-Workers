@@ -1,0 +1,11 @@
+{
+  "description": "v2 active dual without a dual block (partition block parked): missing block name (rule row 4)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "dual",
+      "missing"
+    ]
+  }
+}

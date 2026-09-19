@@ -1,0 +1,7 @@
+active: dual
+dual:
+  game: ./game
+  engine: ./engine
+  vcs: p4
+  toolchain:
+    build: 'Build.bat {game} {engine}'

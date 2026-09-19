@@ -1,0 +1,11 @@
+{
+  "description": "unquoted numeric/boolean roots keys are rejected as non-string keys (FIX-5, AC-003f parity: the yaml package objectifies them as '123'/'true' but the AST keeps the int/bool type)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "roots",
+      "must be strings"
+    ]
+  }
+}

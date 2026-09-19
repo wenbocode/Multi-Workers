@@ -48,6 +48,7 @@ import {
 	registerWorkerTools,
 	renderWatchLines,
 	runMwModelCommand,
+	runMwPartitionCommand,
 	runMwTargetCommand,
 	splitCommandLine,
 	windowClaimId,
@@ -4288,6 +4289,99 @@ describe("/mw target (dual-workspace config)", () => {
 		]);
 		expect(splitCommandLine("")).toEqual([]);
 		expect(splitCommandLine('   "a b"   ')).toEqual(["a b"]);
+	});
+});
+
+describe("/mw partition (partition-workspace config)", () => {
+	it("show/clear/on/off forward to mw.py partition with the control root as --project", async () => {
+		const calls: Array<[string, string[]]> = [];
+		const ctx = fakeCmdCtx();
+		for (const action of ["show", "clear", "on", "off"] as const) {
+			await runMwPartitionCommand(ctx.ctx, "/proj", action, (projectDir, args) => {
+				calls.push([projectDir, args]);
+				return { ok: true, output: "[mw partition] mode: partition (source: target-yml)" };
+			});
+		}
+		expect(calls).toEqual([
+			["/proj", ["show"]],
+			["/proj", ["clear"]],
+			["/proj", ["on"]],
+			["/proj", ["off"]],
+		]);
+		expect(ctx.notifications.some((n) => n.includes("mode: partition"))).toBe(true);
+	});
+
+	it("set parses quoted paths and repeated --root, forwarding the CLI flag grammar in order", async () => {
+		// Arg-sequence parity with `mw.py partition set` (AC-012): the flags are
+		// exactly --parent/--partition/--vcs/--root (repeatable); the forwarded
+		// sequence hits the same mw.py entry point a direct CLI run would, so
+		// identical args ⇒ identical target.yml bytes (byte determinism is
+		// asserted on the Python side — test_mw_partition.py).
+		const calls: Array<[string, string[]]> = [];
+		const ctx = fakeCmdCtx();
+		await runMwPartitionCommand(
+			ctx.ctx,
+			"/proj",
+			'set --parent "D:\\Big Project" --partition D:\\combat --root sdk=D:\\SDK --root tools=D:\\Tools --vcs git',
+			(projectDir, args) => {
+				calls.push([projectDir, args]);
+				return { ok: true, output: "[mw partition] mode: partition" };
+			},
+		);
+		expect(calls).toEqual([
+			[
+				"/proj",
+				[
+					"set",
+					"--parent=D:\\Big Project",
+					"--partition=D:\\combat",
+					"--vcs=git",
+					"--root=sdk=D:\\SDK",
+					"--root=tools=D:\\Tools",
+				],
+			],
+		]);
+		// The next-spawn reminder rides along on success.
+		expect(ctx.notifications.some((n) => n.includes("next worker spawn"))).toBe(true);
+	});
+
+	it("set without --parent shows usage and runs nothing", async () => {
+		let ran = false;
+		const ctx = fakeCmdCtx();
+		await runMwPartitionCommand(ctx.ctx, "/proj", "set --partition D:\\combat", () => {
+			ran = true;
+			return { ok: true, output: "" };
+		});
+		expect(ran).toBe(false);
+		expect(ctx.notifications.some((n) => n.startsWith("Usage: /mw partition set"))).toBe(true);
+	});
+
+	it("set with a flag missing its value shows usage and runs nothing", async () => {
+		let ran = false;
+		const ctx = fakeCmdCtx();
+		await runMwPartitionCommand(ctx.ctx, "/proj", "set --parent D:\\p --vcs", () => {
+			ran = true;
+			return { ok: true, output: "" };
+		});
+		expect(ran).toBe(false);
+		expect(ctx.notifications.some((n) => n.startsWith("Usage: /mw partition set"))).toBe(true);
+	});
+
+	it("unknown verb shows the general usage", async () => {
+		const ctx = fakeCmdCtx();
+		await runMwPartitionCommand(ctx.ctx, "/proj", "frobnicate", () => ({ ok: true, output: "" }));
+		expect(ctx.notifications.some((n) => n.startsWith("Usage: /mw partition show"))).toBe(true);
+	});
+
+	it("runner failure notifies an error", async () => {
+		const ctx = fakeCmdCtx();
+		await runMwPartitionCommand(ctx.ctx, "/proj", "on", () => ({
+			ok: false,
+			error: "[mw partition on] Error: no partition block — run `mw partition set ...` first",
+		}));
+		expect(
+			ctx.notifications.some((n) => n.includes("mw partition on failed") && n.includes("no partition block")),
+		).toBe(true);
 	});
 });
 

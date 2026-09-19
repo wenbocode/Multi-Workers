@@ -1,0 +1,11 @@
+{
+  "description": "roots directly carrying a list (no name -> path mapping) is invalid-config on both sides — partition field 'roots' must be a mapping of name to path (mw-target-partition FIX-12; distinct from 043's non-string entry value)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "roots",
+      "must be a mapping of name to path"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "description": "parent and partition equal is a root-relation violation (AC-003g)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "relation",
+      "nested"
+    ]
+  }
+}

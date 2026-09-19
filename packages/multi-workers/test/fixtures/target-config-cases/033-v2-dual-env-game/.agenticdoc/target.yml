@@ -1,0 +1,4 @@
+active: dual
+dual:
+  game: ./game
+  engine: ./engine

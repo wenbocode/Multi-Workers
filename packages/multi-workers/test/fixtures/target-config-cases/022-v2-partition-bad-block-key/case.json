@@ -1,0 +1,11 @@
+{
+  "description": "partition block whitelist: game/engine/uproject/mode are rejected (AC-003d)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "partition",
+      "game"
+    ]
+  }
+}

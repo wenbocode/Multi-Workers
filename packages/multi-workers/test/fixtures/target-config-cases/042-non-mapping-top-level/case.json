@@ -1,0 +1,10 @@
+{
+  "description": "a parseable but non-mapping top level (list) is invalid-config on both sides, never an empty v1 (FIX-7)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "top level must be a mapping"
+    ]
+  }
+}

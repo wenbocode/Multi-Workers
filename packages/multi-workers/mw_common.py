@@ -1479,9 +1479,18 @@ def format_doctor_text(report: dict) -> str:
             lines.append(f"target: ERROR {err['kind']}: {err['message']}")
         else:
             cfg = target["config"]
-            roots = f"game={cfg['game_root']}"
-            if cfg["engine_root"]:
-                roots += f" engine={cfg['engine_root']}"
+            if cfg["mode"] == "partition":
+                # mw-target-partition: parent/partition replace the game row
+                # (game_root is null in partition mode); dual/single rows are
+                # untouched (AC-016e text parity).
+                roots = f"parent={cfg['parent_root']} partition={cfg['partition_root']}"
+                named = cfg.get("roots") or {}
+                if named:
+                    roots += " roots=" + ",".join(f"{k}:{v}" for k, v in named.items())
+            else:
+                roots = f"game={cfg['game_root']}"
+                if cfg["engine_root"]:
+                    roots += f" engine={cfg['engine_root']}"
             lines.append(f"target: {cfg['mode']} (source {cfg['source']}) {roots}")
             checks = target.get("checks")
             if checks:
@@ -1555,6 +1564,10 @@ def format_doctor_text(report: dict) -> str:
 
 ENV_TARGET_GAME = "MW_TARGET_GAME"
 ENV_TARGET_ENGINE = "MW_TARGET_ENGINE"
+# mw-target-partition env overrides (spec §1.5 EP family; only honored when
+# partition is the active mode — cross-family env is a rule-table row 3 error).
+ENV_PARTITION_PARENT = "MW_PARTITION_PARENT"
+ENV_PARTITION_ROOT = "MW_PARTITION_ROOT"
 
 # Error kinds — the parity contract. Both sides raise these exact tokens.
 _TARGET_KINDS = (
@@ -1630,7 +1643,14 @@ def _tc_read_target_yml(control_root: str) -> dict:
     except yaml.YAMLError as e:  # type: ignore[union-attr]
         _tc_fail("invalid-yaml", f"target.yml is not valid YAML ({path}): {e}")
     if parsed is None:
-        return {}
+        # mw-target-partition FIX-10: a non-blank document that parses to
+        # YAML null (`null` / `~`) is a non-mapping top level — fail closed
+        # like the list/scalar shapes. Only a blank file (0 bytes, pure
+        # whitespace, or a leading UTF-8 BOM with no content — the degenerate
+        # Windows-editor shape) keeps the historical no-config shape (single).
+        if text.strip() == "" or text.lstrip("\ufeff").strip() == "":
+            return {}
+        _tc_fail("invalid-config", "target.yml: top level must be a mapping")
     if not isinstance(parsed, dict):
         _tc_fail("invalid-config", "target.yml: top level must be a mapping")
     return parsed
@@ -1672,25 +1692,261 @@ def _tc_parse_contract(value: object) -> dict:
     }
 
 
-def load_target_config(
-    control_root: pathlib.Path | str,
-    env: Mapping[str, str] | None = None,
+# ── v2 single-file format (mw-target-partition spec §1.3/§1.5, design
+# D-001..D-004) ──────────────────────────────────────────────────────────────
+
+# Rule-table row 1: a v2 file (top-level `active:`) must not carry v1 flat
+# fields alongside.
+_V1_SHAPE_KEYS = ("mode", "game", "engine", "uproject")
+# v2 top-level whitelist (AC-003(c)).
+_V2_TOP_KEYS = frozenset(("active", "dual", "partition"))
+# Mode-block whitelists (AC-003(d)/(e)).
+_DUAL_BLOCK_KEYS = frozenset(("game", "engine", "vcs", "uproject", "toolchain", "ignore", "contract"))
+_PARTITION_BLOCK_KEYS = frozenset(("parent", "partition", "vcs", "roots", "toolchain", "ignore", "contract"))
+# roots key constraints (AC-003(f)).
+_ROOTS_RESERVED = frozenset(("parent", "partition", "game", "engine", "uproject"))
+_ROOTS_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# Placeholder-shaped token in a partition toolchain command (AC-004).
+_TOKEN_RE = re.compile(r"\{([A-Za-z0-9_-]+)\}")
+
+
+def _tc_detect_shape(raw: dict, file_exists: bool) -> str:
+    """File-shape judgment (design D-001) + rule-table row 1: "none" when no
+    target.yml exists, "v2" when the top level has an `active:` key (a v1
+    flat field alongside raises the mixed-format error), else "v1"."""
+    if not file_exists:
+        return "none"
+    if "active" in raw:
+        mixed = [k for k in _V1_SHAPE_KEYS if k in raw]
+        if mixed:
+            _tc_fail(
+                "invalid-config",
+                "target.yml: mixed format — 'active:' key (v2) together with v1 top-level "
+                f"field(s) {', '.join(mixed)}; use either v2 (active + mode blocks) or "
+                "v1 (flat fields), not both",
+            )
+        return "v2"
+    return "v1"
+
+
+def _decide_active_mode(
+    file_shape: str,
+    active: str | None,
+    env_partition_parent: str | None,
+    env_partition_root: str | None,
+    env_target_game: str | None,
+    env_target_engine: str | None,
 ) -> dict:
-    """Resolve the dual-workspace config for a control root.
+    """Spec §1.5 rule-table decision, rows 2-12 (row order is priority).
 
-    Precedence: MW_TARGET_GAME/MW_TARGET_ENGINE env > target.yml > single
-    fallback (game_root === control_root). Raises TargetConfigError on
-    contradictory or unusable configuration (fail-closed, never a silent
-    single fallback). Mirrors resolveWorkspaceConfig() in target-config.ts.
-    """
-    control_root = str(control_root)
-    if env is None:
-        env = os.environ
-    raw = _tc_read_target_yml(control_root)
+    Rows 1 and 4 are not expressible from these inputs and are enforced by
+    the caller: row 1 (mixed format) in _tc_detect_shape, row 4 (active
+    names a mode whose block is missing) when the caller parses the block
+    this function points at.
 
-    env_game = (env.get(ENV_TARGET_GAME) or "").strip() or None
-    env_engine = (env.get(ENV_TARGET_ENGINE) or "").strip() or None
+    Returns {"mode": ..., "block": ...}: mode is the workspace mode for v2
+    shapes, or "legacy" for rows 8/11/12 (the caller runs the pre-partition
+    v1/env resolution unchanged); block names the v2 mode block to parse
+    (rows 6/7) or None. Raises TargetConfigError(invalid-config) for rows
+    2/3/10 with the table's message elements (illegal active value + enum /
+    conflicting env names / missing env name)."""
+    ep: list[str] = []
+    if env_partition_parent is not None:
+        ep.append(ENV_PARTITION_PARENT)
+    if env_partition_root is not None:
+        ep.append(ENV_PARTITION_ROOT)
+    et: list[str] = []
+    if env_target_game is not None:
+        et.append(ENV_TARGET_GAME)
+    if env_target_engine is not None:
+        et.append(ENV_TARGET_ENGINE)
 
+    if file_shape == "v2":
+        if active is None or active not in ("single", "dual", "partition"):  # row 2
+            shown = "null" if active is None else f"'{active}'"
+            _tc_fail(
+                "invalid-config",
+                f"target.yml: 'active' must be one of 'single', 'dual', 'partition', got {shown}",
+            )
+        if active == "dual" and ep:  # row 3
+            _tc_fail(
+                "invalid-config",
+                f"cross env: {', '.join(ep)} must not be set when active is 'dual' "
+                "(dual mode uses MW_TARGET_GAME/MW_TARGET_ENGINE)",
+            )
+        if active == "partition" and et:  # row 3
+            _tc_fail(
+                "invalid-config",
+                f"cross env: {', '.join(et)} must not be set when active is 'partition' "
+                "(partition mode uses MW_PARTITION_PARENT/MW_PARTITION_ROOT)",
+            )
+        if active == "single" and (ep or et):  # row 3
+            _tc_fail(
+                "invalid-config",
+                f"cross env: {', '.join(ep + et)} must not be set when active is 'single'",
+            )
+        if active == "single":  # row 5
+            return {"mode": "single", "block": None}
+        return {"mode": active, "block": active}  # rows 6/7
+    if file_shape == "v1":
+        if ep:  # row 3 (v1 clause)
+            _tc_fail(
+                "invalid-config",
+                f"cross env: {', '.join(ep)} requires a v2 target.yml with "
+                "'active: partition' (v1 format has no partition mode)",
+            )
+        return {"mode": "legacy", "block": None}  # row 8
+    # file_shape == "none"
+    if ep and et:  # row 3 (no-file clause)
+        _tc_fail(
+            "invalid-config",
+            f"cross env: {', '.join(ep)} and {', '.join(et)} are mutually exclusive "
+            "(partition env vs dual env); set only one family",
+        )
+    if len(ep) == 2:  # row 9
+        return {"mode": "partition", "block": None}
+    if len(ep) == 1:  # row 10
+        missing = ENV_PARTITION_ROOT if env_partition_root is None else ENV_PARTITION_PARENT
+        _tc_fail(
+            "invalid-config",
+            f"incomplete partition env activation: {missing} is not set "
+            "(partition env requires both MW_PARTITION_PARENT and MW_PARTITION_ROOT)",
+        )
+    return {"mode": "legacy", "block": None}  # rows 11/12
+
+
+def _tc_check_v2_top_whitelist(raw: dict) -> None:
+    """AC-003(c): the v2 top level allows exactly active/dual/partition."""
+    extra = [str(k) for k in raw if k not in _V2_TOP_KEYS]
+    if extra:
+        _tc_fail(
+            "invalid-config",
+            f"target.yml: unexpected top-level key(s) in v2 format: {', '.join(extra)} "
+            "(allowed: active, dual, partition)",
+        )
+
+
+def _tc_v2_block(raw: dict, name: str) -> dict:
+    """Rule-table row 4: active names a mode whose block must exist."""
+    if name not in raw or raw.get(name) is None:
+        _tc_fail("invalid-config", f"target.yml: active '{name}' but the '{name}' block is missing")
+    block = raw[name]
+    if not isinstance(block, dict):
+        _tc_fail("invalid-config", f"target.yml: the '{name}' block must be a mapping")
+    return block
+
+
+def _tc_check_block_keys(block: dict, name: str, allowed: frozenset) -> None:
+    """AC-003(d)/(e): mode-block whitelists (fields of the other mode — or
+    any unknown key — inside a block are a structural error)."""
+    extra = [str(k) for k in block if k not in allowed]
+    if extra:
+        _tc_fail(
+            "invalid-config",
+            f"target.yml: unexpected key(s) in the '{name}' block: {', '.join(extra)}",
+        )
+
+
+def _tc_parse_roots(value: object, control_root: str) -> dict[str, str]:
+    """partition.roots (AC-001/AC-003(f)): name -> normalized path; names
+    must match [A-Za-z0-9_-]+ and avoid the reserved names; relative paths
+    anchor to the control root (same rule as game/engine)."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        _tc_fail("invalid-config", "target.yml: partition field 'roots' must be a mapping of name to path")
+    out: dict[str, str] = {}
+    for name, raw_path in value.items():
+        if not isinstance(name, str):
+            _tc_fail("invalid-config", "target.yml: roots keys must be strings")
+        if name == "" or _ROOTS_NAME_RE.match(name) is None or name in _ROOTS_RESERVED:
+            _tc_fail(
+                "invalid-config",
+                f"target.yml: roots key '{name}' is invalid (must match [A-Za-z0-9_-]+ and "
+                "must not be a reserved name: parent, partition, game, engine, uproject)",
+            )
+        if not isinstance(raw_path, str) or raw_path.strip() == "":
+            _tc_fail("invalid-config", f"target.yml: roots.{name} must be a non-empty string")
+        out[name] = _tc_normalize_root(raw_path, control_root)
+    return out
+
+
+def _tc_check_root_relation(parent_root: str, partition_root: str) -> None:
+    """AC-003(g): parent and partition must be distinct and non-nested
+    (compared on the normalized roots, case-insensitive on Windows)."""
+    a = os.path.normcase(os.path.normpath(parent_root))
+    b = os.path.normcase(os.path.normpath(partition_root))
+    if a == b or a.startswith(b + os.sep) or b.startswith(a + os.sep):
+        _tc_fail(
+            "invalid-config",
+            f"target.yml: partition root relation is invalid — parent ({parent_root}) and "
+            f"partition ({partition_root}) must not be equal or nested",
+        )
+
+
+def _load_partition_config(
+    control_root: str,
+    control_norm: str,
+    parent_raw: object,
+    partition_raw: object,
+    env_parent: str | None,
+    env_partition: str | None,
+    roots_raw: object,
+    vcs_raw: object,
+    toolchain_raw: object,
+    ignore_raw: object,
+    contract_raw: object,
+) -> dict:
+    """Partition-mode assembly (rule-table rows 7/9): EP overlay over the
+    block fields, required-field checks, roots + root-relation validation
+    (field layer, applied after the row hit)."""
+    if env_parent is not None:
+        parent_raw = env_parent
+    if env_partition is not None:
+        partition_raw = env_partition
+    if parent_raw is None:
+        _tc_fail(
+            "invalid-config",
+            "target.yml: partition mode requires field 'parent' "
+            "(partition block or env MW_PARTITION_PARENT)",
+        )
+    if partition_raw is None:
+        _tc_fail(
+            "invalid-config",
+            "target.yml: partition mode requires field 'partition' "
+            "(partition block or env MW_PARTITION_ROOT)",
+        )
+    parent = _tc_require_string(parent_raw, "parent")
+    partition = _tc_require_string(partition_raw, "partition")
+    parent_root = _tc_normalize_root(parent, control_root)
+    partition_root = _tc_normalize_root(partition, control_root)
+    roots = _tc_parse_roots(roots_raw, control_root)
+    _tc_check_root_relation(parent_root, partition_root)
+    return {
+        "mode": "partition",
+        "control_root": control_norm,
+        "game_root": None,
+        "engine_root": None,
+        "parent_root": parent_root,
+        "partition_root": partition_root,
+        "roots": roots,
+        "vcs": _tc_optional_string(vcs_raw, "vcs"),
+        "uproject": None,
+        "toolchain": _tc_parse_toolchain(toolchain_raw),
+        "ignore": _tc_parse_ignore(ignore_raw),
+        "contract": _tc_parse_contract(contract_raw),
+        "source": "env" if (env_parent is not None or env_partition is not None) else "target-yml",
+    }
+
+
+def _load_legacy_config(
+    control_root: str,
+    raw: dict,
+    env_game: str | None,
+    env_engine: str | None,
+) -> dict:
+    """v1 / no-file resolution — the pre-partition logic, byte-identical
+    (spec §1.5 rows 8/11/12; AC-013 zero-regression)."""
     file_mode = _tc_optional_string(raw.get("mode"), "mode")
     if file_mode is not None and file_mode not in ("dual", "single"):
         _tc_fail("invalid-config", f"target.yml: 'mode' must be 'dual' or 'single', got '{file_mode}'")
@@ -1736,6 +1992,149 @@ def load_target_config(
     }
 
 
+def load_target_config(
+    control_root: pathlib.Path | str,
+    env: Mapping[str, str] | None = None,
+) -> dict:
+    """Resolve the workspace config for a control root (single choke point,
+    mw-target-partition design D-001; mirrors resolveWorkspaceConfig()).
+
+    Shape first (spec §1.5): no target.yml -> none; top-level `active:` key
+    -> v2 (v1 flat fields alongside raise the mixed-format error, row 1);
+    else v1. _decide_active_mode then applies rows 2-12 and dispatches:
+    legacy (v1/env semantics, byte-identical to the pre-partition resolver
+    — rows 8/11/12), v2 single (blocks parked, row 5), v2 dual (block fields
+    + MW_TARGET_GAME/MW_TARGET_ENGINE overlay, row 6), or partition
+    (block/env fields + MW_PARTITION_PARENT/MW_PARTITION_ROOT overlay,
+    rows 7/9). Raises TargetConfigError on contradictory or unusable
+    configuration (fail-closed, never a silent single fallback)."""
+    control_root = str(control_root)
+    if env is None:
+        env = os.environ
+    raw = _tc_read_target_yml(control_root)
+    file_exists = target_yml_path(control_root).exists()
+
+    env_game = (env.get(ENV_TARGET_GAME) or "").strip() or None
+    env_engine = (env.get(ENV_TARGET_ENGINE) or "").strip() or None
+    env_parent = (env.get(ENV_PARTITION_PARENT) or "").strip() or None
+    env_partition = (env.get(ENV_PARTITION_ROOT) or "").strip() or None
+
+    file_shape = _tc_detect_shape(raw, file_exists)
+    active: str | None = None
+    if file_shape == "v2":
+        active_raw = raw.get("active")
+        if isinstance(active_raw, str):
+            active = active_raw
+        elif active_raw is not None:
+            active = str(active_raw)
+
+    decision = _decide_active_mode(file_shape, active, env_parent, env_partition, env_game, env_engine)
+
+    if decision["mode"] == "legacy":
+        config = _load_legacy_config(control_root, raw, env_game, env_engine)
+        config["parent_root"] = None
+        config["partition_root"] = None
+        config["roots"] = None
+        return config
+
+    control_norm = _tc_normalize_root(control_root, control_root)
+
+    if decision["mode"] == "single":
+        # Row 5: mode blocks are parked (not parsed, not validated); the
+        # top-level whitelist still applies (AC-003(c)).
+        _tc_check_v2_top_whitelist(raw)
+        return {
+            "mode": "single",
+            "control_root": control_norm,
+            "game_root": control_norm,
+            "engine_root": None,
+            "parent_root": None,
+            "partition_root": None,
+            "roots": None,
+            "vcs": None,
+            "uproject": None,
+            "toolchain": {},
+            "ignore": {"deny_globs": []},
+            "contract": {"forbidden_paths": [], "conventions": None, "docs": []},
+            "source": "target-yml",
+        }
+
+    if decision["mode"] == "dual":
+        # Row 6: fields from the dual block; the ET overlay keeps the legacy
+        # precedence rules (env > block).
+        block = _tc_v2_block(raw, "dual")  # row 4
+        _tc_check_v2_top_whitelist(raw)
+        _tc_check_block_keys(block, "dual", _DUAL_BLOCK_KEYS)
+        config = _load_legacy_config(
+            control_root,
+            {
+                "mode": "dual",
+                "game": block.get("game"),
+                "engine": block.get("engine"),
+                "vcs": block.get("vcs"),
+                "uproject": block.get("uproject"),
+                "toolchain": block.get("toolchain"),
+                "ignore": block.get("ignore"),
+                "contract": block.get("contract"),
+            },
+            env_game,
+            env_engine,
+        )
+        config["parent_root"] = None
+        config["partition_root"] = None
+        config["roots"] = None
+        return config
+
+    # decision["mode"] == "partition"
+    if file_shape == "v2":
+        # Row 7: fields from the partition block, EP overlay on top.
+        block = _tc_v2_block(raw, "partition")  # row 4
+        _tc_check_v2_top_whitelist(raw)
+        _tc_check_block_keys(block, "partition", _PARTITION_BLOCK_KEYS)
+        return _load_partition_config(
+            control_root,
+            control_norm,
+            block.get("parent"),
+            block.get("partition"),
+            env_parent,
+            env_partition,
+            block.get("roots"),
+            block.get("vcs"),
+            block.get("toolchain"),
+            block.get("ignore"),
+            block.get("contract"),
+        )
+    # Row 9: partition activated purely by env (no file).
+    return _load_partition_config(
+        control_root, control_norm, None, None, env_parent, env_partition, None, None, None, None, None
+    )
+
+
+def describe_target_error(exc: TargetConfigError, control_root: pathlib.Path | str) -> str:
+    """Dynamic unusable-config description (mw-target-partition D-007): the
+    historical 'target.yml is unusable' wrapper is kept byte-identical for
+    v1 files and no-file workspaces; a v2 file (top-level `active:`) names
+    its active value so the refusal says which mode was being resolved.
+    Shared by launcher (_worker_cwd) and autopilot/dispatch (dispatch) so
+    both call sites stay in lockstep (the literal carries no test
+    assertions)."""
+    control_root = str(control_root)
+    try:
+        raw = _tc_read_target_yml(control_root)
+    except TargetConfigError:
+        raw = None
+    if raw is not None and "active" in raw:
+        active_raw = raw.get("active")
+        if isinstance(active_raw, str):
+            active = active_raw
+        elif active_raw is None:
+            active = "null"
+        else:
+            active = str(active_raw)
+        return f"target.yml is unusable (active: {active}) ({exc.kind}): {exc}"
+    return f"target.yml is unusable ({exc.kind}): {exc}"
+
+
 def discover_uproject(game_root: str, explicit: str | None = None) -> str:
     """Resolve {uproject} (D-014): explicit field wins (must exist on disk);
     otherwise exactly one *.uproject under the game root. 0 or many is an
@@ -1760,9 +2159,16 @@ def discover_uproject(game_root: str, explicit: str | None = None) -> str:
 
 
 def render_toolchain_command(command: str, config: dict) -> str:
-    """Render one toolchain command template (AC-004, fail-closed). Replaces
-    {game}/{engine}/{uproject}; a token whose root is unconfigured raises
-    with the field name and the original command — no game-root fallback."""
+    """Render one toolchain command template (AC-004, fail-closed) with the
+    token set dispatched by mode (design D-002): partition replaces
+    {parent}/{partition}/{<root name>} and any other placeholder-shaped
+    token (including {game}/{engine}/{uproject}) raises missing-field with
+    the token and the original command; dual/single keep the current
+    {game}/{engine}/{uproject} replacement — a token whose root is
+    unconfigured raises with the field name and the original command, no
+    game-root fallback."""
+    if config["mode"] == "partition":
+        return _render_partition_command(command, config)
     out = command
     if "{game}" in out:
         out = out.replace("{game}", config["game_root"])
@@ -1780,16 +2186,127 @@ def render_toolchain_command(command: str, config: dict) -> str:
     return out
 
 
+def _render_partition_command(command: str, config: dict) -> str:
+    """partition-mode token set (AC-004): {parent}/{partition}/{<root name>};
+    any leftover placeholder-shaped token is an undefined placeholder."""
+    out = command
+    if config["parent_root"] is not None:
+        out = out.replace("{parent}", config["parent_root"])
+    if config["partition_root"] is not None:
+        out = out.replace("{partition}", config["partition_root"])
+    roots = config.get("roots") or {}
+    for name, root_path in roots.items():
+        out = out.replace("{" + name + "}", root_path)
+    leftover = _TOKEN_RE.search(out)
+    if leftover is not None:
+        defined = ["{parent}", "{partition}"] + ["{" + n + "}" for n in sorted(roots)]
+        _tc_fail(
+            "missing-field",
+            f"toolchain command references undefined placeholder '{leftover.group(0)}' "
+            f"(partition mode defines: {', '.join(defined)}): {command}",
+        )
+    return out
+
+
 def toolchain_probe_path(project_dir: pathlib.Path | str) -> pathlib.Path:
     """Machine-local toolchain probe cache (mw-dual-workspace D-013)."""
     return pathlib.Path(project_dir) / ".mw" / "toolchain.json"
 
 
+# ── Workspace-profile rendering (mw-target-partition AC-007/FIX-1) ─────────────
+
+PROFILE_MARK_V2 = "<!-- mw-profile: v2 -->"
+
+
+def render_partition_profile_md(config: dict, ignore_enforced: bool = True) -> str:
+    """Render the partition workspace-profile block (AC-007) — the line
+    protocol twin of the TS renderPartitionProfileBlock (task-dispatcher.ts):
+    v2 marker + explicit mode line, then the same essentials shape the
+    PM-side dispatcher writes, so a task.md carries the same profile block
+    regardless of which side dispatched it (the TS dispatcher skips
+    origin: conductor tasks, so the conductor must inject its own).
+
+    ignore_enforced=False (the task carries its own deny_globs list) skips
+    the firewall section — same rule as the TS render. Fail-closed (AC-004):
+    an undefined toolchain placeholder raises TargetConfigError(missing-
+    field) — the caller refuses the dispatch, never a half-rendered block."""
+    lines = [
+        PROFILE_MARK_V2,
+        f"[mw] mode: {config['mode']}",
+        "[mw] Workspace profile (target.yml essentials, injected at dispatch;",
+        f"full file: {os.path.join(config['control_root'], '.agenticdoc', 'target.yml')})",
+        f"Control workspace: {config['control_root']}",
+        f"Parent root: {config['parent_root']}",
+        f"Partition root (worker cwd): {config['partition_root']}",
+    ]
+    roots = config.get("roots") or {}
+    if roots:
+        lines.append("Named roots:")
+        for name, root_path in roots.items():
+            lines.append(f"- {name}: {root_path}")
+    toolchain = config.get("toolchain") or {}
+    if toolchain:
+        lines.append("Toolchain commands (placeholders resolved):")
+        for name, command in toolchain.items():
+            lines.append(f"- {name}: {render_toolchain_command(command, config)}")
+    if ignore_enforced and (config.get("ignore") or {}).get("deny_globs"):
+        lines.append("Context firewall (deny globs, enforced by the read-scope layer):")
+        for glob in config["ignore"]["deny_globs"]:
+            lines.append(f"- {glob}")
+    contract = config.get("contract") or {}
+    forbidden = contract.get("forbidden_paths") or []
+    conventions = contract.get("conventions")
+    docs = contract.get("docs") or []
+    if forbidden or conventions is not None or docs:
+        lines.append("Contract:")
+        if forbidden:
+            lines.append(f"- forbidden paths: {', '.join(forbidden)}")
+        if conventions is not None:
+            lines.append("- conventions:")
+            for line in conventions.split("\n"):
+                lines.append(f"  {line}")
+        if docs:
+            lines.append("- docs (references, not inlined):")
+            for doc in docs:
+                lines.append(f"  - {os.path.normpath(os.path.join(config['control_root'], doc))}")
+    return "\n".join(lines)
+
+
+def _probe_fingerprint(config: dict) -> str:
+    """Resolved-config fingerprint for the probe cache (mw-target-partition
+    D-009): active mode + the sorted set of normalized roots (game/engine/
+    parent/partition/named). An active-key switch or an env override change
+    moves the fingerprint even when target.yml's mtime did not, forcing a
+    re-probe; identical resolutions serialize identically (sorted)."""
+    roots: dict[str, str | None] = {
+        "game": config["game_root"],
+        "engine": config["engine_root"],
+        "parent": config["parent_root"],
+        "partition": config["partition_root"],
+    }
+    for root_name, root_path in (config.get("roots") or {}).items():
+        roots[f"root:{root_name}"] = root_path
+    return json.dumps({"mode": config["mode"], "roots": sorted(roots.items())}, sort_keys=True)
+
+
 def probe_target_toolchain(config: dict) -> list[dict]:
     """Machine-level checks on a resolved target config (D-013): root
     readability, engine presence, {uproject} resolvability. Pure — the cache
-    layer in _doctor_target decides whether to run them."""
+    layer in _doctor_target decides whether to run them. Partition mode
+    (mw-target-partition AC-009): parent/partition/named-root reachability
+    (isdir) — no engine/uproject check (partition carries neither)."""
     checks: list[dict] = []
+    if config["mode"] == "partition":
+        for name, root_path in (
+            ("parent_root", config["parent_root"]),
+            ("partition_root", config["partition_root"]),
+        ):
+            checks.append({"name": name, "ok": os.path.isdir(root_path), "detail": root_path})
+        for root_name, root_path in (config.get("roots") or {}).items():
+            checks.append(
+                {"name": f"root:{root_name}", "ok": os.path.isdir(root_path), "detail": root_path}
+            )
+        return checks
     game = config["game_root"]
     checks.append({"name": "game_root", "ok": os.path.isdir(game), "detail": game})
     if config["engine_root"] is not None:
@@ -1808,13 +2325,17 @@ def probe_target_toolchain(config: dict) -> list[dict]:
 
 
 def _doctor_target(project_dir: pathlib.Path) -> dict:
-    """Target config + cached toolchain probe section (mw-dual-workspace D-013).
+    """Target config + cached toolchain probe section (mw-dual-workspace D-013;
+    mw-target-partition D-009).
 
     Probe results persist to .mw/toolchain.json and are reused while fresh
-    (target.yml not newer than the probe timestamp) — the machine property
-    rarely changes once the project is set up. Config load errors and failed
-    probe checks become doctor issues; a single-mode default (no target.yml)
-    has nothing to probe."""
+    — resolved-config fingerprint (active mode + normalized root set, so an
+    active switch or env override invalidates) AND target.yml not newer
+    than the probe timestamp — the machine property rarely changes once the
+    project is set up. A cache without a fingerprint (pre-partition format)
+    is stale once and re-probes (idempotent afterwards). Config load errors
+    and failed probe checks become doctor issues; a single-mode default (no
+    target.yml) has nothing to probe."""
     yml = target_yml_path(project_dir)
     section: dict = {"yaml_available": yaml is not None}
     try:
@@ -1831,19 +2352,31 @@ def _doctor_target(project_dir: pathlib.Path) -> dict:
         "vcs": config["vcs"],
         "uproject": config["uproject"],
     }
+    if config["mode"] == "partition":
+        # AC-018(c): partition-only keys — dual/single/v1 sections keep the
+        # exact key set (AC-016e golden).
+        section["config"]["parent_root"] = config["parent_root"]
+        section["config"]["partition_root"] = config["partition_root"]
+        section["config"]["roots"] = config["roots"]
     if config["source"] == "default":
         section["checks"] = None
         return section
 
     cache = toolchain_probe_path(project_dir)
     yml_mtime = yml.stat().st_mtime if yml.exists() else 0.0
+    fingerprint = _probe_fingerprint(config)
     cached: dict | None = None
     if cache.exists():
         try:
             cached = json.loads(cache.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             cached = None
-    if cached is not None and isinstance(cached.get("checks"), list) and cached.get("probed_at_epoch", 0.0) >= yml_mtime:
+    if (
+        cached is not None
+        and isinstance(cached.get("checks"), list)
+        and cached.get("fingerprint") == fingerprint
+        and cached.get("probed_at_epoch", 0.0) >= yml_mtime
+    ):
         section["checks"] = cached["checks"]
         section["probe_cache"] = "fresh"
         return section
@@ -1855,7 +2388,12 @@ def _doctor_target(project_dir: pathlib.Path) -> dict:
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(
             json.dumps(
-                {"probed_at": iso_now(), "probed_at_epoch": time.time(), "checks": checks},
+                {
+                    "probed_at": iso_now(),
+                    "probed_at_epoch": time.time(),
+                    "fingerprint": fingerprint,
+                    "checks": checks,
+                },
                 indent=2,
             )
             + "\n",

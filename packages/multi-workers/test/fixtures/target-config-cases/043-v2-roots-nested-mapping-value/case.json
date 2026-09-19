@@ -1,0 +1,11 @@
+{
+  "description": "a roots entry whose value is a nested mapping (roots.sdk: {a: b}) is invalid-config on both sides — a root path must be a non-empty string (mw-target-partition FIX-12; the same non-string-value branch also rejects list entry values, which share this message)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "roots.sdk",
+      "must be a non-empty string"
+    ]
+  }
+}

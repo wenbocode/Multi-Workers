@@ -36,6 +36,11 @@ function writeTargetYml(controlRoot: string, content: string): void {
 	fs.writeFileSync(targetYmlPath(controlRoot), content, "utf-8");
 }
 
+function writeTargetYmlBytes(controlRoot: string, content: Uint8Array): void {
+	fs.mkdirSync(path.join(controlRoot, ".agenticdoc"), { recursive: true });
+	fs.writeFileSync(targetYmlPath(controlRoot), content);
+}
+
 /** mkdir a fixture dir and return its realpath (matches normalizeRoot). */
 function mkgame(name: string): string {
 	const dir = mkdtemp(name);
@@ -281,6 +286,38 @@ describe("fail-closed target.yml validation", () => {
 	});
 });
 
+// ── FIX-10: YAML null top level / blank files (mw-target-partition) ──────────
+
+describe("FIX-10 null/blank top level", () => {
+	it("a non-blank document that parses to YAML null fails closed", () => {
+		const controlRoot = mkgame("atl-tc-null-");
+		writeTargetYml(controlRoot, "null\n");
+		expectTargetError(() => resolveWorkspaceConfig(controlRoot), "invalid-config", "top level must be a mapping");
+		writeTargetYml(controlRoot, "~\n");
+		expectTargetError(() => resolveWorkspaceConfig(controlRoot), "invalid-config", "top level must be a mapping");
+	});
+
+	it("a blank file (0 bytes, pure whitespace, or a BOM-only file) keeps the historical single/default", () => {
+		const controlRoot = mkgame("atl-tc-blank-");
+		writeTargetYml(controlRoot, "");
+		let config = resolveWorkspaceConfig(controlRoot);
+		expect(config.mode).toBe("single");
+		expect(config.source).toBe("default");
+		expect(config.gameRoot).toBe(config.controlRoot);
+		writeTargetYml(controlRoot, " \n \n");
+		config = resolveWorkspaceConfig(controlRoot);
+		expect(config.mode).toBe("single");
+		expect(config.source).toBe("default");
+		expect(config.gameRoot).toBe(config.controlRoot);
+		// a UTF-8 BOM with no content is the degenerate Windows-editor empty
+		// file — same historical no-config shape (PM follow-up to FIX-10).
+		writeTargetYmlBytes(controlRoot, Uint8Array.of(0xef, 0xbb, 0xbf));
+		config = resolveWorkspaceConfig(controlRoot);
+		expect(config.mode).toBe("single");
+		expect(config.source).toBe("default");
+	});
+});
+
 // ── Shared parity fixtures (T-17 lock; same case set as packages/multi-workers
 // test_common_target_config.py — cross-package by design: the fixtures ARE the
 // parity contract between resolveWorkspaceConfig and load_target_config) ──────
@@ -298,9 +335,17 @@ interface FixtureCase {
 		source: WorkspaceConfigSource;
 		game_root_equals_control?: boolean;
 		game_root_rel?: string;
+		game_root_null?: boolean;
 		engine_root_rel?: string;
 		engine_root_null?: boolean;
-		vcs?: string;
+		// mw-target-partition v2 fields (T-03).
+		parent_root_rel?: string;
+		partition_root_rel?: string;
+		parent_root_null?: boolean;
+		roots?: Record<string, string>;
+		roots_empty?: boolean;
+		roots_null?: boolean;
+		vcs?: string | null;
 		uproject_explicit?: string;
 		deny_globs?: string[];
 		conventions_contains?: string[];
@@ -313,12 +358,42 @@ interface FixtureCase {
 function substitute(template: string, config: ReturnType<typeof resolveWorkspaceConfig>): string {
 	let out = template;
 	out = out.split("{control_root}").join(config.controlRoot);
-	out = out.split("{game_root}").join(config.gameRoot);
+	out = out.split("{game_root}").join(config.gameRoot ?? "");
 	out = out.split("{engine_root}").join(config.engineRoot ?? "");
+	out = out.split("{parent_root}").join(config.parentRoot ?? "");
+	out = out.split("{partition_root}").join(config.partitionRoot ?? "");
+	for (const [name, root] of Object.entries(config.roots ?? {})) {
+		out = out.split(`{${name}}`).join(root);
+	}
 	if (out.includes("{uproject}")) {
-		out = out.split("{uproject}").join(discoverUproject(config.gameRoot, config.uproject));
+		out = out.split("{uproject}").join(discoverUproject(config.gameRoot as string, config.uproject));
 	}
 	return out;
+}
+
+/** Expected normalized root: realpath when the path exists; a missing
+ * tail canonicalizes the longest existing prefix — mirrors normalizeRoot()
+ * (and Python's Path.resolve(strict=False)) so fixture roots that
+ * legitimately do not exist (partition parents etc.) compare exactly. */
+function expectRoot(controlRoot: string, rel: string): string {
+	const resolved = path.resolve(controlRoot, rel);
+	try {
+		return fs.realpathSync.native(resolved);
+	} catch {
+		let dir = resolved;
+		const tail: string[] = [];
+		for (;;) {
+			const parent = path.dirname(dir);
+			if (parent === dir) return resolved;
+			try {
+				const real = fs.realpathSync.native(dir);
+				return tail.length === 0 ? real : path.join(real, ...tail);
+			} catch {
+				tail.unshift(path.basename(dir));
+				dir = parent;
+			}
+		}
+	}
 }
 
 function runFixtureCase(caseDir: string, tmp: string): void {
@@ -348,13 +423,37 @@ function runFixtureCase(caseDir: string, tmp: string): void {
 		expect(config.gameRoot).toBe(config.controlRoot);
 	}
 	if (expected?.game_root_rel !== undefined) {
-		expect(config.gameRoot).toBe(fs.realpathSync.native(path.join(controlRoot, expected.game_root_rel)));
+		expect(config.gameRoot).toBe(expectRoot(controlRoot, expected.game_root_rel));
+	}
+	if (expected?.game_root_null) {
+		expect(config.gameRoot).toBeNull();
 	}
 	if (expected?.engine_root_rel !== undefined) {
-		expect(config.engineRoot).toBe(fs.realpathSync.native(path.join(controlRoot, expected.engine_root_rel)));
+		expect(config.engineRoot).toBe(expectRoot(controlRoot, expected.engine_root_rel));
 	}
 	if (expected?.engine_root_null) {
 		expect(config.engineRoot).toBeNull();
+	}
+	// mw-target-partition v2 fields (T-03).
+	if (expected?.parent_root_rel !== undefined) {
+		expect(config.parentRoot).toBe(expectRoot(controlRoot, expected.parent_root_rel));
+	}
+	if (expected?.partition_root_rel !== undefined) {
+		expect(config.partitionRoot).toBe(expectRoot(controlRoot, expected.partition_root_rel));
+	}
+	if (expected?.parent_root_null) {
+		expect(config.parentRoot).toBeNull();
+	}
+	if (expected?.roots !== undefined) {
+		for (const [name, rel] of Object.entries(expected.roots)) {
+			expect(config.roots?.[name]).toBe(expectRoot(controlRoot, rel));
+		}
+	}
+	if (expected?.roots_empty) {
+		expect(config.roots).toEqual({});
+	}
+	if (expected?.roots_null) {
+		expect(config.roots).toBeNull();
 	}
 	if (expected?.vcs !== undefined) {
 		expect(config.vcs).toBe(expected.vcs);

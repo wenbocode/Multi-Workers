@@ -1,0 +1,25 @@
+{
+  "sample": "single",
+  "a_projection": {
+    "mode": "single",
+    "controlRoot": "<CTRL>",
+    "gameRoot": "<CTRL>",
+    "engineRoot": null,
+    "vcs": null,
+    "uproject": null,
+    "toolchain": {},
+    "ignore": {
+      "deny_globs": []
+    },
+    "contract": {
+      "forbidden_paths": [],
+      "conventions": null,
+      "docs": []
+    },
+    "source": "default"
+  },
+  "d_profile_block": null,
+  "render_toolchain": {
+    "echo {game}": "echo <CTRL>"
+  }
+}

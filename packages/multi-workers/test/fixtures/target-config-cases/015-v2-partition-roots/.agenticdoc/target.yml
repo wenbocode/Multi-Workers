@@ -1,0 +1,16 @@
+active: partition
+partition:
+  parent: ../parentproj
+  partition: .
+  vcs: git
+  roots:
+    sdk: ./sdk
+    build-tools: ../shared-tools
+  toolchain:
+    build: 'make -P {parent} -W {partition} --sdk {sdk} --bt {build-tools}'
+  ignore:
+    deny_globs:
+      - "**/Binaries/**"
+  contract:
+    docs:
+      - docs/notes.md

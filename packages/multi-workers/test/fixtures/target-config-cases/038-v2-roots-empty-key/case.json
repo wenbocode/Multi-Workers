@@ -1,0 +1,10 @@
+{
+  "description": "empty roots key is rejected (AC-003f)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "roots"
+    ]
+  }
+}

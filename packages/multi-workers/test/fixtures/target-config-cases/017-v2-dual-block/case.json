@@ -1,0 +1,16 @@
+{
+  "description": "v2 active dual: fields from the dual block; {game}/{engine} render unchanged",
+  "env": {},
+  "expect": {
+    "mode": "dual",
+    "source": "target-yml",
+    "game_root_rel": "game",
+    "engine_root_rel": "engine",
+    "parent_root_null": true,
+    "roots_null": true,
+    "vcs": "p4"
+  },
+  "render": {
+    "build": "Build.bat {game_root} {engine_root}"
+  }
+}

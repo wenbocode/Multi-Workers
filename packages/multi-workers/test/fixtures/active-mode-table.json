@@ -1,0 +1,2320 @@
+{
+  "description": "mw-target-partition spec §1.5 rule table, parameterized full enumeration (file shape × active value × EP/ET state) for _decide_active_mode / decideActiveMode. Rows 2-12 live here; row 1 (mixed format) and row 4 (missing mode block) need file content and are covered by the target-config-cases fixtures + entry unit tests. Shared TS/Py parity table (AC-017).",
+  "cases": [
+    {
+      "id": "row05-v2-asingle-ep0-et0",
+      "row": 5,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "mode": "single",
+        "block": null
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep0-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_GAME",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep0-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_ENGINE",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep0-et2",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_GAME",
+            "MW_TARGET_ENGINE",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep1-et0",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep1-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_TARGET_GAME",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep1-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_TARGET_ENGINE",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep1-et2",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_TARGET_GAME",
+            "MW_TARGET_ENGINE",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep1-et0",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep1-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT",
+            "MW_TARGET_GAME",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep1-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT",
+            "MW_TARGET_ENGINE",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep1-et2",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT",
+            "MW_TARGET_GAME",
+            "MW_TARGET_ENGINE",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep2-et0",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep2-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT",
+            "MW_TARGET_GAME",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep2-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT",
+            "MW_TARGET_ENGINE",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-asingle-ep2-et2",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "single",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT",
+            "MW_TARGET_GAME",
+            "MW_TARGET_ENGINE",
+            "single"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row06-v2-adual-ep0-et0",
+      "row": 6,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "mode": "dual",
+        "block": "dual"
+      }
+    },
+    {
+      "id": "row06-v2-adual-ep0-et1",
+      "row": 6,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "mode": "dual",
+        "block": "dual"
+      }
+    },
+    {
+      "id": "row06-v2-adual-ep0-et1",
+      "row": 6,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "mode": "dual",
+        "block": "dual"
+      }
+    },
+    {
+      "id": "row06-v2-adual-ep0-et2",
+      "row": 6,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "mode": "dual",
+        "block": "dual"
+      }
+    },
+    {
+      "id": "row03-v2-adual-ep1-et0",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "dual"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-adual-ep1-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "dual"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-adual-ep1-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "dual"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-adual-ep1-et2",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "dual"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-adual-ep1-et0",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT",
+            "dual"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-adual-ep1-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT",
+            "dual"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-adual-ep1-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT",
+            "dual"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-adual-ep1-et2",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT",
+            "dual"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-adual-ep2-et0",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT",
+            "dual"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-adual-ep2-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT",
+            "dual"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-adual-ep2-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT",
+            "dual"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-adual-ep2-et2",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "dual",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT",
+            "dual"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row07-v2-apartition-ep0-et0",
+      "row": 7,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "mode": "partition",
+        "block": "partition"
+      }
+    },
+    {
+      "id": "row03-v2-apartition-ep0-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_GAME",
+            "partition"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-apartition-ep0-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_ENGINE",
+            "partition"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-apartition-ep0-et2",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_GAME",
+            "MW_TARGET_ENGINE",
+            "partition"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row07-v2-apartition-ep1-et0",
+      "row": 7,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "mode": "partition",
+        "block": "partition"
+      }
+    },
+    {
+      "id": "row03-v2-apartition-ep1-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_GAME",
+            "partition"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-apartition-ep1-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_ENGINE",
+            "partition"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-apartition-ep1-et2",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_GAME",
+            "MW_TARGET_ENGINE",
+            "partition"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row07-v2-apartition-ep1-et0",
+      "row": 7,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "mode": "partition",
+        "block": "partition"
+      }
+    },
+    {
+      "id": "row03-v2-apartition-ep1-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_GAME",
+            "partition"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-apartition-ep1-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_ENGINE",
+            "partition"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-apartition-ep1-et2",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_GAME",
+            "MW_TARGET_ENGINE",
+            "partition"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row07-v2-apartition-ep2-et0",
+      "row": 7,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "mode": "partition",
+        "block": "partition"
+      }
+    },
+    {
+      "id": "row03-v2-apartition-ep2-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_GAME",
+            "partition"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-apartition-ep2-et1",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_ENGINE",
+            "partition"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v2-apartition-ep2-et2",
+      "row": 3,
+      "file_shape": "v2",
+      "active": "partition",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_TARGET_GAME",
+            "MW_TARGET_ENGINE",
+            "partition"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep0-et0",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep0-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep0-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep0-et2",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep1-et0",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep1-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep1-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep1-et2",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep1-et0",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep1-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep1-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep1-et2",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep2-et0",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep2-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep2-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-abogus-ep2-et2",
+      "row": 2,
+      "file_shape": "v2",
+      "active": "bogus",
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "bogus"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep0-et0",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep0-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep0-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep0-et2",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep1-et0",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep1-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep1-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep1-et2",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep1-et0",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep1-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep1-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep1-et2",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep2-et0",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep2-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep2-et1",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row02-v2-anull-ep2-et2",
+      "row": 2,
+      "file_shape": "v2",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "active",
+            "single",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row08-v1-anull-ep0-et0",
+      "row": 8,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "mode": "legacy",
+        "block": null
+      }
+    },
+    {
+      "id": "row08-v1-anull-ep0-et1",
+      "row": 8,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "mode": "legacy",
+        "block": null
+      }
+    },
+    {
+      "id": "row08-v1-anull-ep0-et1",
+      "row": 8,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "mode": "legacy",
+        "block": null
+      }
+    },
+    {
+      "id": "row08-v1-anull-ep0-et2",
+      "row": 8,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "mode": "legacy",
+        "block": null
+      }
+    },
+    {
+      "id": "row03-v1-anull-ep1-et0",
+      "row": 3,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v1-anull-ep1-et1",
+      "row": 3,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v1-anull-ep1-et1",
+      "row": 3,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v1-anull-ep1-et2",
+      "row": 3,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v1-anull-ep1-et0",
+      "row": 3,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v1-anull-ep1-et1",
+      "row": 3,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v1-anull-ep1-et1",
+      "row": 3,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v1-anull-ep1-et2",
+      "row": 3,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v1-anull-ep2-et0",
+      "row": 3,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v1-anull-ep2-et1",
+      "row": 3,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v1-anull-ep2-et1",
+      "row": 3,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-v1-anull-ep2-et2",
+      "row": 3,
+      "file_shape": "v1",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row12-none-anull-ep0-et0",
+      "row": 12,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "mode": "legacy",
+        "block": null
+      }
+    },
+    {
+      "id": "row11-none-anull-ep0-et1",
+      "row": 11,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "mode": "legacy",
+        "block": null
+      }
+    },
+    {
+      "id": "row11-none-anull-ep0-et1",
+      "row": 11,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "mode": "legacy",
+        "block": null
+      }
+    },
+    {
+      "id": "row11-none-anull-ep0-et2",
+      "row": 11,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "mode": "legacy",
+        "block": null
+      }
+    },
+    {
+      "id": "row10-none-anull-ep1-et0",
+      "row": 10,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-none-anull-ep1-et1",
+      "row": 3,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_TARGET_GAME"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-none-anull-ep1-et1",
+      "row": 3,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_TARGET_ENGINE"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-none-anull-ep1-et2",
+      "row": 3,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": null,
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_TARGET_GAME",
+            "MW_TARGET_ENGINE"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row10-none-anull-ep1-et0",
+      "row": 10,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-none-anull-ep1-et1",
+      "row": 3,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT",
+            "MW_TARGET_GAME"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-none-anull-ep1-et1",
+      "row": 3,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT",
+            "MW_TARGET_ENGINE"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-none-anull-ep1-et2",
+      "row": 3,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": null,
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_ROOT",
+            "MW_TARGET_GAME",
+            "MW_TARGET_ENGINE"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row09-none-anull-ep2-et0",
+      "row": 9,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "mode": "partition",
+        "block": null
+      }
+    },
+    {
+      "id": "row03-none-anull-ep2-et1",
+      "row": 3,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": null
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT",
+            "MW_TARGET_GAME"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-none-anull-ep2-et1",
+      "row": 3,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": null,
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT",
+            "MW_TARGET_ENGINE"
+          ]
+        }
+      }
+    },
+    {
+      "id": "row03-none-anull-ep2-et2",
+      "row": 3,
+      "file_shape": "none",
+      "active": null,
+      "env": {
+        "MW_PARTITION_PARENT": "../parentproj",
+        "MW_PARTITION_ROOT": "./frag",
+        "MW_TARGET_GAME": "./game",
+        "MW_TARGET_ENGINE": "./engine"
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid-config",
+          "contains": [
+            "MW_PARTITION_PARENT",
+            "MW_PARTITION_ROOT",
+            "MW_TARGET_GAME",
+            "MW_TARGET_ENGINE"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+active: partition
+partition:
+  parent: ../p
+  partition: ./q
+  game: ./game

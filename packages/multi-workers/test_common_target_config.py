@@ -34,8 +34,12 @@ _FIXTURES = pathlib.Path(__file__).parent / "test" / "fixtures" / "target-config
 def _substitute(template: str, config: dict) -> str:
     out = template
     out = out.replace("{control_root}", config["control_root"])
-    out = out.replace("{game_root}", config["game_root"])
+    out = out.replace("{game_root}", config["game_root"] or "")
     out = out.replace("{engine_root}", config["engine_root"] or "")
+    out = out.replace("{parent_root}", config["parent_root"] or "")
+    out = out.replace("{partition_root}", config["partition_root"] or "")
+    for name, root_path in (config.get("roots") or {}).items():
+        out = out.replace("{" + name + "}", root_path)
     if "{uproject}" in out:
         out = out.replace("{uproject}", discover_uproject(config["game_root"], config.get("uproject")))
     return out
@@ -75,11 +79,33 @@ def _run_case(case_dir: pathlib.Path, tmp_path: pathlib.Path) -> None:
     if "game_root_rel" in expected:
         want = str((control_root / expected["game_root_rel"]).resolve())
         assert config["game_root"] == want, f"{case_dir.name}: {config['game_root']} != {want}"
+    if expected.get("game_root_null"):
+        assert config["game_root"] is None, case_dir.name
     if "engine_root_rel" in expected:
         want = str((control_root / expected["engine_root_rel"]).resolve())
         assert config["engine_root"] == want, case_dir.name
     if expected.get("engine_root_null"):
         assert config["engine_root"] is None, case_dir.name
+    # mw-target-partition v2 fields (T-03): partition roots and the null
+    # shape of the legacy fields outside partition mode.
+    if "parent_root_rel" in expected:
+        want = str((control_root / expected["parent_root_rel"]).resolve())
+        assert config["parent_root"] == want, f"{case_dir.name}: {config['parent_root']} != {want}"
+    if "partition_root_rel" in expected:
+        want = str((control_root / expected["partition_root_rel"]).resolve())
+        assert config["partition_root"] == want, f"{case_dir.name}: {config['partition_root']} != {want}"
+    if expected.get("parent_root_null"):
+        assert config["parent_root"] is None, case_dir.name
+    if "roots" in expected:
+        for name, rel in expected["roots"].items():
+            want = str((control_root / rel).resolve())
+            assert config["roots"][name] == want, (
+                f"{case_dir.name}: roots.{name}: {config['roots'][name]} != {want}"
+            )
+    if expected.get("roots_empty"):
+        assert config["roots"] == {}, case_dir.name
+    if expected.get("roots_null"):
+        assert config["roots"] is None, case_dir.name
     if "vcs" in expected:
         assert config["vcs"] == expected["vcs"], case_dir.name
     if "uproject_explicit" in expected:

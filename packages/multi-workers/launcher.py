@@ -514,6 +514,118 @@ def _reconcile_orphans(
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
+# ── Workspace-profile tear check (mw-target-partition D-007/D-013, AC-020) ────
+
+_PROFILE_MARK_V1 = "<!-- mw-profile: v1 -->"
+_PROFILE_MARK_V2 = "<!-- mw-profile: v2 -->"
+_PROFILE_MODE_RE = re.compile(r"^\[mw\] mode: (single|dual|partition)[ \t]*$", re.MULTILINE)
+# The legacy (v1-marker) renderer emits this line only for dual injections
+# — it is what separates dual from single-injected v1 blocks (which carry
+# no mode line at all).
+_V1_DUAL_LINE_RE = re.compile(r"^Game root: ", re.MULTILINE)
+# Block-head window (mw-target-partition FIX-11): the mode line must sit
+# within the first _PROFILE_HEAD_WINDOW lines after the marker line —
+# blank and comment lines (`<!-- ... -->` / `#`) are tolerated inside the
+# window, but a mode line beyond it means an orphaned marker (malformed).
+_PROFILE_HEAD_WINDOW = 8
+
+
+def _task_profile_mode(task_path: str) -> str | None:
+    """Workspace mode recorded in a task.md profile block (D-013): a v2
+    marker carries an explicit `[mw] mode: X` line; a v1 marker carries no
+    mode line — the legacy renderer emits the `Game root:` line only for
+    dual injections, which separates dual from single-injected v1 blocks
+    (reading every v1 block as dual would fail-closed legit single+sections
+    tasks, an injecting dispatch shape that predates partition). No marker
+    at all = no profile block (legal — nothing to compare).
+
+    mw-target-partition FIX-3 (fail-closed): a v2 marker whose block head
+    (the first non-blank, non-comment line after the marker line) is not a
+    parseable mode line is a MALFORMED block, not "no profile" — returning
+    None here would let the spawn pass as un-profiled and silently re-cwd
+    on an active switch. Raises RuntimeError ("profile malformed") instead;
+    the head-only search also keeps a stray `[mw] mode:` anywhere else in
+    the file from masking a malformed block.
+
+    mw-target-partition FIX-11 (tolerance): blank lines and comment lines
+    (starting with `<!--` or `#`) between the marker and the mode line are
+    skipped, but only within the block-head window (the first
+    _PROFILE_HEAD_WINDOW lines after the marker) — the generators never
+    emit that shape today, yet a hand-annotated block stays parseable; a
+    head that overflows the window is still malformed (never an
+    un-profiled pass)."""
+    try:
+        content = pathlib.Path(task_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    v2 = content.find(_PROFILE_MARK_V2)
+    if v2 != -1:
+        after_marker = content[v2 + len(_PROFILE_MARK_V2) :]
+        rest_of_marker_line = after_marker.split("\n", 1)
+        head = rest_of_marker_line[1] if len(rest_of_marker_line) > 1 else ""
+        mode_line: str | None = None
+        for line in head.split("\n")[:_PROFILE_HEAD_WINDOW]:
+            stripped = line.strip()
+            if stripped == "" or stripped.startswith(("<!--", "#")):
+                continue
+            mode_line = line
+            break
+        m = _PROFILE_MODE_RE.match(mode_line) if mode_line is not None else None
+        if m is None:
+            raise RuntimeError(
+                "task.md v2 profile malformed (expected '[mw] mode: <single|dual|partition>' "
+                "as the first line after the '<!-- mw-profile: v2 -->' marker) — "
+                "spawn refused; re-dispatch the task"
+            )
+        return m.group(1)
+    v1 = content.find(_PROFILE_MARK_V1)
+    if v1 != -1:
+        return "dual" if _V1_DUAL_LINE_RE.search(content, v1) is not None else "single"
+    return None
+
+
+def _record_trace_line(entry: dict[str, str], line: str) -> None:
+    """Append a launcher-side lifecycle line to the task's trace.log.
+
+    A config-torn refusal (AC-020) never spawns a worker, so trace.log —
+    the file the PM reads for worker state — must still carry the terminal
+    evidence. A plain `[LAUNCHER]` line is inert to the [START]/[END]/
+    [HEARTBEAT] parsers (mw_common / autopilot.state)."""
+    try:
+        trace = pathlib.Path(entry["task_path"]).parent / "trace.log"
+        trace.parent.mkdir(parents=True, exist_ok=True)
+        with trace.open("a", encoding="utf-8") as fh:
+            fh.write(f"{line}\n")
+    except OSError:
+        pass  # best-effort; worker.log and the queue row still carry the reason
+
+
+def _check_config_tear(entry: dict[str, str], config: dict) -> None:
+    """AC-020 (fail-closed): the task.md profile block records the workspace
+    mode at dispatch time. If the active mode was switched before spawn, the
+    recorded profile (roots, toolchain renders) is stale and the spawn cwd
+    would silently move (partition root <-> game root <-> control root) —
+    refuse the spawn, mark the task failed with 'config torn' + both mode
+    names, and leave the evidence in trace.log (D-013). No profile block =
+    no recorded mode = nothing to compare (pre-partition tasks stay legal)."""
+    recorded = None
+    try:
+        recorded = _task_profile_mode(entry["task_path"])
+    except RuntimeError as exc:
+        # FIX-3: malformed v2 block — same terminal evidence as a tear.
+        _record_trace_line(entry, f"[LAUNCHER] {mw_common.iso_now()} {exc}")
+        raise
+    if recorded is None or recorded == config["mode"]:
+        return
+    reason = (
+        f"config torn: task.md profile mode '{recorded}' != active mode "
+        f"'{config['mode']}' (target.yml active switched after dispatch) — "
+        "spawn refused; re-dispatch the task"
+    )
+    _record_trace_line(entry, f"[LAUNCHER] {mw_common.iso_now()} {reason}")
+    raise RuntimeError(reason)
+
+
 def _poll_once(
     project_dir: pathlib.Path,
     config: dict,
@@ -622,17 +734,30 @@ def run(
         time.sleep(poll_interval)
 
 
-def _worker_cwd(project_dir: pathlib.Path) -> pathlib.Path:
-    """Dual-workspace spawn root (mw-dual-workspace D-001): worker cwd is the
-    game root in dual mode, the control workspace in single mode. Fail closed:
-    an unusable target.yml refuses the spawn (recorded per-task by _spawn's
-    isolation handler) instead of silently falling back to the control root."""
+def _worker_target_config(project_dir: pathlib.Path) -> dict:
+    """Load the spawn-gating target config (mw-target-partition D-007): the
+    error wrapper is shape-dynamic (mw_common.describe_target_error — v1/no
+    file keeps the historical 'target.yml is unusable' text, a v2 file
+    names its active mode)."""
     try:
-        config = mw_common.load_target_config(project_dir)
+        return mw_common.load_target_config(project_dir)
     except mw_common.TargetConfigError as e:
-        raise RuntimeError(f"target.yml is unusable ({e.kind}): {e}") from None
-    if config["mode"] == "dual":
-        return pathlib.Path(config["game_root"])
+        raise RuntimeError(mw_common.describe_target_error(e, project_dir)) from None
+
+
+def _worker_cwd(project_dir: pathlib.Path, config: dict | None = None) -> pathlib.Path:
+    """Workspace spawn root (mw-dual-workspace D-001; mw-target-partition
+    D-007): worker cwd is the game root in dual mode, the partition root in
+    partition mode, the control workspace in single mode. Fail closed: an
+    unusable target.yml refuses the spawn (recorded per-task by _spawn's
+    isolation handler) instead of silently falling back to the control
+    root. Callers that already resolved the config (the tear check in
+    _spawn) pass it through — one load per spawn."""
+    cfg = config if config is not None else _worker_target_config(project_dir)
+    if cfg["mode"] == "dual":
+        return pathlib.Path(cfg["game_root"])
+    if cfg["mode"] == "partition":
+        return pathlib.Path(cfg["partition_root"])
     return project_dir
 
 
@@ -649,6 +774,12 @@ def _spawn(
     isolated to the task — it can never take down the launcher or mw serve.
     """
     try:
+        # Spawn gate (mw-target-partition D-007): the target config decides
+        # both the tear check (AC-020) and the cwd — loaded once, before any
+        # per-task side effect, so a torn/broken config never reaches
+        # model/env/command building.
+        target_config = _worker_target_config(project_dir)
+        _check_config_tear(entry, target_config)
         model_value, model_source = _resolve_entry_model(entry, project_dir)
         effective = _effective_entry(entry, model_value)
         env = _build_env(effective, config)
@@ -666,10 +797,11 @@ def _spawn(
         except OSError:
             log_file = None
         # subprocess.Popen with list args (no shell=True — AC-023); cwd is the
-        # game root in dual mode, else the control workspace (D-001) — relative
-        # tool paths stay anchored to the target project.
+        # game root in dual mode / the partition root in partition mode, else
+        # the control workspace (D-001/D-007) — relative tool paths stay
+        # anchored to the target project.
         spawn_kwargs: dict = {
-            "env": env, "cwd": str(_worker_cwd(project_dir)),
+            "env": env, "cwd": str(_worker_cwd(project_dir, target_config)),
             "stdout": log_file if log_file is not None else subprocess.DEVNULL,
             "stderr": subprocess.STDOUT if log_file is not None else subprocess.DEVNULL,
         }

@@ -1,0 +1,13 @@
+{
+  "description": "v2 active dual + partition env: cross env rejected (rule row 3)",
+  "env": {
+    "MW_PARTITION_PARENT": "../p"
+  },
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "MW_PARTITION_PARENT",
+      "dual"
+    ]
+  }
+}

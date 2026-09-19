@@ -209,8 +209,10 @@ export type MwCliResult = {
     ok: false;
     error: string;
 };
-/** `mw.py target <args...>` — dual-workspace config (show / set / clear). */
+/** `mw.py target <args...>` — dual-workspace config (show / set / clear / on / off). */
 export declare function targetMw(projectDir: string, args: string[]): MwCliResult;
+/** `mw.py partition <args...>` — partition-workspace config (set / show / clear / on / off). */
+export declare function partitionMw(projectDir: string, args: string[]): MwCliResult;
 /** `mw.py model <args...>` — dispatch model defaults (show / set / clear). */
 export declare function modelMw(projectDir: string, args: string[]): MwCliResult;
 //# sourceMappingURL=mw-runner.d.ts.map

@@ -1,0 +1,5 @@
+active: partition
+vcs: git
+partition:
+  parent: ../p
+  partition: ./q

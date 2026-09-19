@@ -1,0 +1,12 @@
+{
+  "description": "no file + only one partition env var: incomplete activation names the missing env (rule row 10)",
+  "env": {
+    "MW_PARTITION_PARENT": "../parentproj"
+  },
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "MW_PARTITION_ROOT"
+    ]
+  }
+}

@@ -6,7 +6,7 @@ import { runAgenticScript } from "../shared/agentic-scripts.js";
 import { acquireLock } from "../shared/file-lock.js";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.js";
 import { readIndexMdActive } from "../shared/index-store.js";
-import { buildMw, doctorMw, getMwStatus, initMw, modelMw, restartMw, serveStaleness, startMw, stopMw, targetMw, } from "../shared/mw-runner.js";
+import { buildMw, doctorMw, getMwStatus, initMw, modelMw, partitionMw, restartMw, serveStaleness, startMw, stopMw, targetMw, } from "../shared/mw-runner.js";
 import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.js";
 import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "../shared/phase-docs.js";
 import { PHASE_ORDER, phaseAuditWarnings } from "../shared/pm-state-guard.js";
@@ -1165,7 +1165,7 @@ export function parseTargetSetFlags(parts) {
 export async function runMwTargetCommand(ctx, projectDir, argsText, runner = targetMw) {
     const parts = splitCommandLine(argsText);
     const action = parts[0] ?? "";
-    if (action === "show" || action === "clear") {
+    if (action === "show" || action === "clear" || action === "on" || action === "off") {
         const r = runner(projectDir, [action]);
         ctx.ui.notify(r.ok ? r.output || `mw target ${action}: ok` : `mw target ${action} failed: ${r.error}`, r.ok ? "info" : "error");
         return;
@@ -1189,7 +1189,65 @@ export async function runMwTargetCommand(ctx, projectDir, argsText, runner = tar
             : `mw target set failed: ${r.error}`, r.ok ? "info" : "error");
         return;
     }
-    ctx.ui.notify("Usage: /mw target show | set --game <dir> [--engine <dir>] [--vcs git|p4|none] [--uproject <file>] | clear", "warning");
+    ctx.ui.notify("Usage: /mw target show | set --game <dir> [--engine <dir>] [--vcs git|p4|none] [--uproject <file>] | clear | on | off", "warning");
+}
+/** Parse the flag tail of `/mw partition set`. null when --parent is missing
+ * or a known flag has no value (unknown flags are ignored — mw.py validates). */
+export function parsePartitionSetFlags(parts) {
+    const flags = { parent: "", roots: [] };
+    for (let i = 0; i < parts.length; i++) {
+        const m = /^(--parent|--partition|--vcs|--root)$/.exec(parts[i]);
+        if (!m)
+            continue;
+        const value = parts[i + 1];
+        if (value === undefined || value.startsWith("--"))
+            return null;
+        if (m[1] === "--root") {
+            flags.roots.push(value);
+        }
+        else {
+            flags[m[1].slice(2)] = value;
+        }
+        i++;
+    }
+    if (!flags.parent)
+        return null;
+    return flags;
+}
+/** /mw partition — partition-workspace config from the pi window (mw-target-
+ * partition D-010). Thin wrapper over `mw.py partition` (single source of
+ * parsing/validation/rendering — the same entry point a direct CLI run hits,
+ * so identical args ⇒ identical target.yml bytes); the runner is injectable
+ * for tests. set/on remind that the mode applies on the NEXT worker spawn —
+ * no serve restart needed (launcher resolves per spawn). */
+export async function runMwPartitionCommand(ctx, projectDir, argsText, runner = partitionMw) {
+    const parts = splitCommandLine(argsText);
+    const action = parts[0] ?? "";
+    if (action === "show" || action === "clear" || action === "on" || action === "off") {
+        const r = runner(projectDir, [action]);
+        ctx.ui.notify(r.ok ? r.output || `mw partition ${action}: ok` : `mw partition ${action} failed: ${r.error}`, r.ok ? "info" : "error");
+        return;
+    }
+    if (action === "set") {
+        const flags = parsePartitionSetFlags(parts.slice(1));
+        if (!flags) {
+            ctx.ui.notify("Usage: /mw partition set --parent <dir> [--partition <dir>] [--root name=<dir> ...] [--vcs git|p4|none] — quote paths containing spaces", "warning");
+            return;
+        }
+        const args = ["set", `--parent=${flags.parent}`];
+        if (flags.partition !== undefined)
+            args.push(`--partition=${flags.partition}`);
+        if (flags.vcs !== undefined)
+            args.push(`--vcs=${flags.vcs}`);
+        for (const root of flags.roots)
+            args.push(`--root=${root}`);
+        const r = runner(projectDir, args);
+        ctx.ui.notify(r.ok
+            ? `${r.output}\nPartition mode takes effect on the next worker spawn (no serve restart needed).`
+            : `mw partition set failed: ${r.error}`, r.ok ? "info" : "error");
+        return;
+    }
+    ctx.ui.notify("Usage: /mw partition show | set --parent <dir> [--partition <dir>] [--root name=<dir> ...] [--vcs git|p4|none] | clear | on | off", "warning");
 }
 /** /mw model — dispatch model defaults from the pi window. Thin wrapper over
  * `mw.py model` (single source of parsing/validation/rendering); the runner is
@@ -1231,7 +1289,7 @@ export async function runMwModelCommand(ctx, projectDir, argsText, runner = mode
 }
 export function registerMwCommands(pi, projectDir, workerStore, ackStore) {
     pi.registerCommand("mw", {
-        description: "Control mw: build / init / start / stop / restart / status / doctor / target / model / ack",
+        description: "Control mw: build / init / start / stop / restart / status / doctor / target / partition / model / ack",
         handler: async (_args, ctx) => {
             const trimmed = _args.trim();
             const sub = trimmed.split(/\s+/)[0] ?? "status";
@@ -1315,9 +1373,15 @@ export function registerMwCommands(pi, projectDir, workerStore, ackStore) {
                 return;
             }
             if (sub === "target") {
-                // Dual-workspace config (mw.py target show/set/clear) — thin wrapper,
-                // Python stays the single source of parsing and validation.
+                // Dual-workspace config (mw.py target show/set/clear/on/off) — thin
+                // wrapper, Python stays the single source of parsing and validation.
                 await runMwTargetCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
+                return;
+            }
+            if (sub === "partition") {
+                // Partition-workspace config (mw.py partition set/show/clear/on/off) —
+                // thin wrapper, Python stays the single source of parsing and validation.
+                await runMwPartitionCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
                 return;
             }
             if (sub === "model") {
@@ -1346,7 +1410,7 @@ export function registerMwCommands(pi, projectDir, workerStore, ackStore) {
                 }
                 return;
             }
-            ctx.ui.notify("Usage: /mw build|init|start|stop|status|doctor [fix] | target show|set|clear | model show|set|clear | ack <task-key>|all", "warning");
+            ctx.ui.notify("Usage: /mw build|init|start|stop|status|doctor [fix] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | ack <task-key>|all", "warning");
         },
     });
 }

@@ -1,0 +1,4 @@
+active: dual
+partition:
+  parent: ../p
+  partition: ./q

@@ -608,12 +608,52 @@ def _target_set(project_dir: pathlib.Path, args: argparse.Namespace) -> int:
     yml.parent.mkdir(parents=True, exist_ok=True)
     if yml.exists():
         text = yml.read_text(encoding="utf-8")
-        text = _apply_bootstrap_line(text, "mode", "dual")
-        text = _apply_bootstrap_line(text, "game", _yml_scalar(str(game)))
-        text = _apply_bootstrap_line(text, "engine", engine)
-        text = _apply_bootstrap_line(text, "vcs", f"{vcs}" if vcs is not None else None)
-        text = _apply_bootstrap_line(text, "uproject", uproject)
-        yml.write_text(text, encoding="utf-8")
+        try:
+            raw = _try_parse_yml(text)
+        except mw_common.TargetConfigError as e:
+            # FIX-7: a parseable but non-mapping file is never an empty v1 —
+            # refuse instead of migrating/rewriting on top of it.
+            print(f"[mw target set] Error ({e.kind}): {e}", file=sys.stderr)
+            return 1
+        if raw is not None and _yml_shape(raw) == "v2":
+            # v2 file: the dual block is the target of the bootstrap write and
+            # `active` flips to dual (new branch, design D-008; the v1 flat
+            # write below is byte-identical to the historical one — AC-013).
+            exact = _read_yml_exact(yml)
+            if raw.get("dual") is not None and not _block_layout_ok(exact, "dual"):
+                print(
+                    f"[mw target set] Error: {_FLOW_LAYOUT_MSG.format(block='dual')}",
+                    file=sys.stderr,
+                )
+                return 1
+            exact = _apply_bootstrap_line(exact, "active", "dual")
+            exact = _apply_mode_block(
+                exact,
+                "dual",
+                [
+                    ("game", _yml_scalar(str(game))),
+                    ("engine", engine),
+                    ("vcs", f"{vcs}" if vcs is not None else None),
+                    ("uproject", uproject),
+                ],
+                None,
+            )
+            try:
+                _atomic_write_yml(yml, exact)
+            except OSError as e:
+                print(f"[mw target set] Error: writing {yml} failed: {e}", file=sys.stderr)
+                return 1
+        elif raw is not None and _yml_shape(raw) == "mixed":
+            print(f"[mw target set] Error: {_MIXED_FORMAT_MSG}", file=sys.stderr)
+            return 1
+        else:
+            # v1 (or unparseable) file: the historical flat line write, unchanged
+            text = _apply_bootstrap_line(text, "mode", "dual")
+            text = _apply_bootstrap_line(text, "game", _yml_scalar(str(game)))
+            text = _apply_bootstrap_line(text, "engine", engine)
+            text = _apply_bootstrap_line(text, "vcs", f"{vcs}" if vcs is not None else None)
+            text = _apply_bootstrap_line(text, "uproject", uproject)
+            yml.write_text(text, encoding="utf-8")
     else:
         yml.write_text(
             _target_template(_yml_scalar(str(game)), engine, vcs, uproject),
@@ -630,12 +670,75 @@ def _target_set(project_dir: pathlib.Path, args: argparse.Namespace) -> int:
 
 
 def _target_clear(project_dir: pathlib.Path) -> int:
+    """`mw target clear` (mw-target-partition FIX-6): a v1 file keeps the
+    historical whole-file unlink (zero change); a v2 file clears only the
+    dual block — active: dual → single, a parked partition block survives,
+    and the file is deleted only when no mode block remains (symmetric to
+    `mw partition clear`, AC-011)."""
     yml = mw_common.target_yml_path(project_dir)
     if not yml.exists():
         print("[mw target clear] no target.yml — already single mode")
         return 0
-    yml.unlink()
-    print(f"[mw target clear] removed {yml} — mode resolves to single")
+    exact = _read_yml_exact(yml)
+    try:
+        raw = _try_parse_yml(exact)
+    except mw_common.TargetConfigError as e:
+        print(f"[mw target clear] Error ({e.kind}): {e}", file=sys.stderr)
+        return 1
+    if raw is None:
+        print(
+            "[mw target clear] Error: target.yml is not valid YAML — fix or remove it first",
+            file=sys.stderr,
+        )
+        return 1
+    shape = _yml_shape(raw)
+    if shape == "mixed":
+        print(f"[mw target clear] Error: {_MIXED_FORMAT_MSG}", file=sys.stderr)
+        return 1
+    if shape != "v2":
+        # v1 flat file: the historical behavior — remove the whole file
+        try:
+            yml.unlink()
+        except OSError as e:
+            print(f"[mw target clear] Error: removing {yml} failed: {e}", file=sys.stderr)
+            return 1
+        print(f"[mw target clear] removed {yml} — mode resolves to single")
+        return 0
+    if not isinstance(raw.get("dual"), dict):
+        print("[mw target clear] no dual block — nothing to clear")
+        return 0
+    lines = exact.splitlines(keepends=True)
+    header_idx = _find_block_header(lines, "dual")
+    if header_idx is None:
+        print(f"[mw target clear] Error: {_FLOW_LAYOUT_MSG.format(block='dual')}", file=sys.stderr)
+        return 1
+    end = _block_end(lines, header_idx)
+    start = header_idx
+    if start > 0 and lines[start - 1].strip() == "":
+        start -= 1  # the separator blank line appended with the block
+    del lines[start:end]
+    text = "".join(lines)
+    was_active = raw.get("active") == "dual"
+    if was_active:
+        text = _apply_bootstrap_line(text, "active", "single")
+    if not isinstance(raw.get("partition"), dict):
+        # no mode block remains — the file carries no mode config anymore
+        try:
+            yml.unlink()
+        except OSError as e:
+            print(f"[mw target clear] Error: removing {yml} failed: {e}", file=sys.stderr)
+            return 1
+        print(f"[mw target clear] removed dual block; no mode blocks remain — deleted {yml}")
+        return 0
+    try:
+        _atomic_write_yml(yml, text)
+    except OSError as e:
+        print(f"[mw target clear] Error: writing {yml} failed: {e}", file=sys.stderr)
+        return 1
+    if was_active:
+        print("[mw target clear] removed dual block, active: single (partition block kept)")
+    else:
+        print(f"[mw target clear] removed parked dual block (active stays {raw.get('active')})")
     return 0
 
 
@@ -644,6 +747,14 @@ def _target_show(project_dir: pathlib.Path) -> int:
         config = mw_common.load_target_config(project_dir)
     except mw_common.TargetConfigError as e:
         print(f"[mw target show] Error ({e.kind}): {e}", file=sys.stderr)
+        return 1
+    if config["mode"] == "partition":
+        # AC-018a: the partition family owns the view while partition is active
+        print(
+            "[mw target show] Error: active mode is partition — use `mw partition show` "
+            "(partition fields are not part of the target/dual view)",
+            file=sys.stderr,
+        )
         return 1
     _print_target_summary(config)
     render_failed = False
@@ -659,15 +770,924 @@ def _target_show(project_dir: pathlib.Path) -> int:
     return 1 if render_failed else 0
 
 
+def _target_on(project_dir: pathlib.Path) -> int:
+    """`mw target on` (AC-023, symmetric to `mw partition on`): v2 file with a
+    usable dual block → active: dual. v1 files are rejected with the
+    migration hint (on/off require v2; `mw partition set` is the migration
+    path — `mw target set` keeps writing v1 on v1 files, AC-013)."""
+    yml = mw_common.target_yml_path(project_dir)
+    if not yml.exists():
+        print(
+            "[mw target on] Error: no target.yml — run `mw target set --game <dir> ...` first",
+            file=sys.stderr,
+        )
+        return 1
+    exact = _read_yml_exact(yml)
+    try:
+        raw = _try_parse_yml(exact)
+    except mw_common.TargetConfigError as e:
+        print(f"[mw target on] Error ({e.kind}): {e}", file=sys.stderr)
+        return 1
+    if raw is None:
+        print(
+            "[mw target on] Error: target.yml is not valid YAML — fix or remove it first",
+            file=sys.stderr,
+        )
+        return 1
+    shape = _yml_shape(raw)
+    if shape == "mixed":
+        print(f"[mw target on] Error: {_MIXED_FORMAT_MSG}", file=sys.stderr)
+        return 1
+    if shape == "v1":
+        print(
+            "[mw target on] Error: target.yml is v1 format — on/off require v2; run "
+            "`mw partition set ...` (it migrates v1 to v2 with a .bak backup)",
+            file=sys.stderr,
+        )
+        return 1
+    block = raw.get("dual")
+    if not isinstance(block, dict) or block.get("game") is None:
+        print(
+            "[mw target on] Error: no usable dual block (game root missing) — run "
+            "`mw target set --game <dir> ...` first",
+            file=sys.stderr,
+        )
+        return 1
+    if not _block_layout_ok(exact, "dual"):
+        print(f"[mw target on] Error: {_FLOW_LAYOUT_MSG.format(block='dual')}", file=sys.stderr)
+        return 1
+    text = _apply_bootstrap_line(exact, "active", "dual")
+    try:
+        _atomic_write_yml(yml, text)
+    except OSError as e:
+        print(f"[mw target on] Error: writing {yml} failed: {e}", file=sys.stderr)
+        return 1
+    try:
+        mw_common.load_target_config(project_dir)
+    except mw_common.TargetConfigError as e:
+        print(
+            f"[mw target on] Warning: active is now dual but the config resolves with "
+            f"an error ({e.kind}): {e}",
+            file=sys.stderr,
+        )
+        return 1
+    print("[mw target on] active: dual (takes effect on the next worker spawn; no serve restart needed)")
+    return 0
+
+
+def _target_off(project_dir: pathlib.Path) -> int:
+    """`mw target off` (AC-023, symmetric to `mw partition off`): active dual →
+    active single, dual block kept. Everything else is an idempotent no-op
+    (exit 0) except v1 files, which carry the migration hint (AC-023)."""
+    yml = mw_common.target_yml_path(project_dir)
+    if not yml.exists():
+        print("[mw target off] dual mode is not active (no target.yml) — nothing to do")
+        return 0
+    exact = _read_yml_exact(yml)
+    try:
+        raw = _try_parse_yml(exact)
+    except mw_common.TargetConfigError as e:
+        print(f"[mw target off] Error ({e.kind}): {e}", file=sys.stderr)
+        return 1
+    if raw is None:
+        print(
+            "[mw target off] Error: target.yml is not valid YAML — fix or remove it first",
+            file=sys.stderr,
+        )
+        return 1
+    shape = _yml_shape(raw)
+    if shape == "mixed":
+        print(f"[mw target off] Error: {_MIXED_FORMAT_MSG}", file=sys.stderr)
+        return 1
+    if shape == "v1":
+        print(
+            "[mw target off] Error: target.yml is v1 format — on/off require v2; run "
+            "`mw partition set ...` (it migrates v1 to v2 with a .bak backup)",
+            file=sys.stderr,
+        )
+        return 1
+    if raw.get("active") != "dual":
+        print(f"[mw target off] dual mode is not active (active: {raw.get('active')}) — nothing to do")
+        return 0
+    text = _apply_bootstrap_line(exact, "active", "single")
+    try:
+        _atomic_write_yml(yml, text)
+    except OSError as e:
+        print(f"[mw target off] Error: writing {yml} failed: {e}", file=sys.stderr)
+        return 1
+    print("[mw target off] active: single (dual block kept; takes effect on the next worker spawn)")
+    return 0
+
+
 def cmd_target(args: argparse.Namespace) -> int:
     """Dual-workspace target config: set bootstrap fields / clear / show the
-    resolved view (mw-dual-workspace AC-005, D-011)."""
+    resolved view (mw-dual-workspace AC-005, D-011) + on/off mode switching
+    (mw-target-partition AC-023)."""
     project_dir = pathlib.Path(args.project).resolve()
     if args.target_action == "set":
         return _target_set(project_dir, args)
     if args.target_action == "clear":
         return _target_clear(project_dir)
+    if args.target_action == "on":
+        return _target_on(project_dir)
+    if args.target_action == "off":
+        return _target_off(project_dir)
     return _target_show(project_dir)
+
+
+# ── Subcommand: partition (large-project split, mw-target-partition) ────────
+
+_PARTITION_RESERVED_ROOT_NAMES = frozenset(("parent", "partition", "game", "engine", "uproject"))
+_PARTITION_ROOT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_PARTITION_ENV_FAMILY = (
+    mw_common.ENV_PARTITION_PARENT,
+    mw_common.ENV_PARTITION_ROOT,
+    mw_common.ENV_TARGET_GAME,
+    mw_common.ENV_TARGET_ENGINE,
+)
+_V1_FLAT_KEYS = ("mode", "game", "engine", "uproject")
+_MIXED_FORMAT_MSG = (
+    "target.yml is mixed format (v2 'active:' key together with v1 flat fields) "
+    "— resolve the file to one format first"
+)
+_FLOW_LAYOUT_MSG = (
+    "the {block} block uses an unsupported layout (flow style?) — "
+    "rewrite it in block style first"
+)
+
+
+def _read_yml_exact(path: pathlib.Path) -> str:
+    """Read target.yml without newline translation — the block-level editor
+    (D-008) preserves hand-maintained lines byte-for-byte, so the file's real
+    endings must survive the read/write round trip."""
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def _try_parse_yml(text: str) -> dict | None:
+    """yaml.safe_load without the resolver's validation. None when the file
+    is not parseable (callers fail closed); a parseable but non-mapping
+    document (list / scalar top level) raises TargetConfigError(invalid-
+    config) with the resolver's message instead of counting as an empty
+    mapping — mw-target-partition FIX-7: the CLI writers must refuse a
+    malformed file (no silent v1 migration / rewrite on top of it)."""
+    import yaml
+
+    try:
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(raw, dict):
+        raise mw_common.TargetConfigError(
+            "invalid-config", "target.yml: top level must be a mapping"
+        )
+    return raw
+
+
+def _yml_shape(raw: dict) -> str:
+    """File shape for the writers: 'v2' (top-level `active:`), 'v1' (flat
+    fields), or 'mixed' (active + v1 flat fields — rejected, never written)."""
+    if "active" in raw:
+        if any(k in raw for k in _V1_FLAT_KEYS):
+            return "mixed"
+        return "v2"
+    return "v1"
+
+
+def _atomic_write_yml(yml: pathlib.Path, text: str) -> None:
+    """Atomic target.yml write: temp file + os.replace (spec §2.3 — a crash
+    mid-write never truncates the config; concurrent sets serialize on the
+    final rename). Endings are written verbatim (no translation)."""
+    yml.parent.mkdir(parents=True, exist_ok=True)
+    tmp = yml.with_name(yml.name + f".tmp{os.getpid()}")
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        os.replace(tmp, yml)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
+def _dominant_ending(text: str) -> str:
+    return "\r\n" if "\r\n" in text else "\n"
+
+
+def _line_ending(line: str) -> str:
+    if line.endswith("\r\n"):
+        return "\r\n"
+    if line.endswith("\n"):
+        return "\n"
+    return ""
+
+
+def _find_block_header(lines: list[str], block_key: str) -> int | None:
+    """Index of the top-level `block_key:` mapping header line, or None."""
+    pattern = re.compile(rf"^{re.escape(block_key)}\s*:\s*(#.*)?(\r?\n)?$")
+    for i, line in enumerate(lines):
+        if pattern.match(line):
+            return i
+    return None
+
+
+def _block_end(lines: list[str], start: int) -> int:
+    """First index after the block whose header sits at `start`: content is
+    every indented line plus blank runs followed by more indented lines."""
+    j = start + 1
+    while j < len(lines):
+        line = lines[j]
+        if line.strip() == "":
+            k = j + 1
+            while k < len(lines) and lines[k].strip() == "":
+                k += 1
+            if k < len(lines) and lines[k][:1] in (" ", "\t"):
+                j = k
+                continue
+            return j
+        if line[:1] not in (" ", "\t"):
+            return j
+        j += 1
+    return j
+
+
+def _block_layout_ok(text: str, block_key: str) -> bool:
+    """The line-level block editor needs a `block_key:` mapping header at
+    column 0; a flow-style block (or a scalar value) is an unsupported layout
+    — reject instead of appending a duplicate key."""
+    return _find_block_header(text.splitlines(keepends=True), block_key) is not None
+
+
+def _edit_block_scalar(
+    body: list[str],
+    key: str,
+    value: str | None,
+    scalar_keys: tuple[str, ...],
+    ending: str,
+) -> list[str]:
+    """Line-level edit of one 2-space-indented bootstrap scalar inside a mode
+    block: replace in place (comments and every other line untouched), drop
+    the line when value is None (omitted fields are not persisted), insert
+    after the last bootstrap scalar (else at the top of the block body).
+    Mirrors _apply_bootstrap_line's contract at depth 1 (design D-008)."""
+    pattern = re.compile(rf"^  {re.escape(key)}\s*:")
+    out: list[str] = []
+    replaced = False
+    for line in body:
+        if pattern.match(line):
+            if value is not None:
+                out.append(f"  {key}: {value}{_line_ending(line) or ending}")
+            replaced = True
+        else:
+            out.append(line)
+    if value is not None and not replaced:
+        scalar_re = re.compile(rf"^  ({'|'.join(re.escape(k) for k in scalar_keys)})\s*:")
+        idx = 0
+        for i, line in enumerate(out):
+            if scalar_re.match(line):
+                idx = i + 1
+        out.insert(idx, f"  {key}: {value}{ending}")
+    return out
+
+
+def _edit_block_roots(
+    body: list[str],
+    roots: list[tuple[str, str]],
+    scalar_keys: tuple[str, ...],
+    ending: str,
+) -> list[str]:
+    """Whole-section rewrite of the 2-space `roots:` mapping inside a mode
+    block (design D-008): the located section (header + its indented body) is
+    replaced as a unit; an empty list drops the section (--root not given).
+    Blank lines trailing the section stay outside the replaced range."""
+    idx: int | None = None
+    for i, line in enumerate(body):
+        if re.match(r"^  roots\s*:", line):
+            idx = i
+            break
+    section: list[str] = []
+    if roots:
+        section.append(f"  roots:{ending}")
+        for name, value in roots:
+            section.append(f"    {name}: {value}{ending}")
+    if idx is None:
+        if not section:
+            return body
+        scalar_re = re.compile(rf"^  ({'|'.join(re.escape(k) for k in scalar_keys)})\s*:")
+        insert_at = 0
+        for i, line in enumerate(body):
+            if scalar_re.match(line):
+                insert_at = i + 1
+        return body[:insert_at] + section + body[insert_at:]
+    # Section extent: the `  roots:` line plus following blank or 4+-indented
+    # lines (entries are written at 4-space indent; 2-space content belongs
+    # to the surrounding block).
+    j = idx + 1
+    while j < len(body):
+        line = body[j]
+        if line.strip() == "":
+            k = j
+            while k < len(body) and body[k].strip() == "":
+                k += 1
+            if k < len(body) and body[k][:1] == " " and len(body[k]) - len(body[k].lstrip()) >= 4:
+                j = k
+                continue
+            break
+        if line[:1] == " " and len(line) - len(line.lstrip()) >= 4:
+            j += 1
+            continue
+        break
+    while j > idx + 1 and body[j - 1].strip() == "":
+        j -= 1
+    return body[:idx] + section + body[j:]
+
+
+def _apply_mode_block(
+    text: str,
+    block_key: str,
+    scalars: list[tuple[str, str | None]],
+    roots: list[tuple[str, str]] | None,
+) -> str:
+    """Block-level edit of one v2 mode block (design D-008): bootstrap
+    scalars are line-edited (comments preserved), the roots mapping is
+    rewritten as a whole section, and every other line of the block — the
+    hand-maintained toolchain/ignore/contract profiles and their comments —
+    is preserved byte-for-byte. The block is appended (after a blank
+    separator) when missing; roots=None skips roots handling entirely."""
+    ending = _dominant_ending(text)
+    scalar_keys = tuple(key for key, _ in scalars)
+    lines = text.splitlines(keepends=True)
+    header_idx = _find_block_header(lines, block_key)
+    if header_idx is None:
+        block: list[str] = [f"{block_key}:{ending}"]
+        for key, value in scalars:
+            if value is not None:
+                block.append(f"  {key}: {value}{ending}")
+        if roots:
+            block.append(f"  roots:{ending}")
+            for name, value in roots:
+                block.append(f"    {name}: {value}{ending}")
+        out = list(lines)
+        if out and not out[-1].endswith("\n"):
+            out[-1] = out[-1] + ending
+        if any(line.strip() for line in out):
+            out.append(ending)
+        out.extend(block)
+        return "".join(out)
+    end = _block_end(lines, header_idx)
+    body = lines[header_idx + 1 : end]
+    for key, value in scalars:
+        body = _edit_block_scalar(body, key, value, scalar_keys, ending)
+    if roots is not None:
+        body = _edit_block_roots(body, roots, scalar_keys, ending)
+    lines[header_idx + 1 : end] = body
+    return "".join(lines)
+
+
+def _migrate_v1_text(text: str) -> str:
+    """One-shot v1 → v2 migration (design D-008): every v1 field — bootstrap
+    scalars and the hand-maintained toolchain/ignore/contract profiles —
+    moves into a v2 dual block; `active` mirrors the v1 resolution (dual when
+    a game root existed, else single). Layout may change (yaml generator);
+    field content is preserved (AC-022 asserts the content level).
+
+    mw-target-partition FIX-7: a non-mapping document raises instead of
+    migrating as an empty config (the caller's _try_parse_yml gate makes
+    this unreachable in practice — kept fail-closed for direct callers)."""
+    import yaml
+
+    raw = yaml.safe_load(text)
+    if not isinstance(raw, dict):
+        raise mw_common.TargetConfigError(
+            "invalid-config", "target.yml: top level must be a mapping"
+        )
+    active = "dual" if raw.get("game") is not None else "single"
+    dual: dict = {}
+    for key in ("game", "engine", "vcs", "uproject", "toolchain", "ignore", "contract"):
+        value = raw.get(key)
+        if value is not None:
+            dual[key] = value
+    data: dict = {"active": active}
+    if dual:
+        data["dual"] = dual
+    header = (
+        "# Workspace target config (v2 — migrated from the v1 flat format by `mw partition set`).\n"
+        "# 'active' selects the mode (single | dual | partition); mode blocks carry bootstrap\n"
+        "# fields plus hand-maintained profiles. Backup of the v1 file: target.yml.bak.\n"
+    )
+    return header + yaml.safe_dump(
+        data, allow_unicode=True, default_flow_style=False, sort_keys=False
+    )
+
+
+def _partition_template(
+    parent: str,
+    partition: str,
+    vcs: str | None,
+    roots: list[tuple[str, str]],
+) -> str:
+    """Fresh v2 target.yml for a control root with no file yet: active
+    partition + the partition block (bootstrap + roots as given — omitted
+    fields are not persisted) + comment scaffolding for the hand-maintained
+    profiles (mirrors _target_template)."""
+    lines = [
+        "# Workspace target config (mw partition set). 'active' selects the mode",
+        "# (single | dual | partition); mode blocks carry bootstrap fields plus",
+        "# hand-maintained profiles (mw-target-partition design D-008).",
+        "active: partition",
+        "partition:",
+        f"  parent: {parent}",
+        f"  partition: {partition}",
+    ]
+    if vcs is not None:
+        lines.append(f"  vcs: {vcs}")
+    if roots:
+        lines.append("  roots:")
+        for name, value in roots:
+            lines.append(f"    {name}: {value}")
+    lines += [
+        "  toolchain:",
+        "  # command templates with {parent}/{partition}/{root name} placeholders, e.g.",
+        "  # build: 'build.bat {partition} {sdk}'",
+        "",
+        "  ignore:",
+        "  # L1 deny globs for read/ls/find/grep (absolute or partition-root-relative",
+        "  # minimatch basis). Uncomment and extend:",
+        "  # deny_globs:",
+        "  #   - \"**/DerivedDataCache/**\"",
+        "",
+        "  contract:",
+        "  # forbidden_paths: []",
+        "  # conventions: |",
+        "  #   project conventions injected into every dispatched task.md",
+        "  # docs: []",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _print_partition_summary(config: dict) -> None:
+    print(f"[mw partition] mode: {config['mode']} (source: {config['source']})")
+    print(f"[mw partition] control root: {config['control_root']}")
+    print(f"[mw partition] parent root: {config['parent_root'] or '-'}")
+    print(f"[mw partition] partition root: {config['partition_root'] or '-'}")
+    roots = config.get("roots") or {}
+    for name in sorted(roots):
+        print(f"[mw partition] root {name}: {roots[name]}")
+    print(f"[mw partition] vcs: {config['vcs'] or '-'}")
+    if config["toolchain"]:
+        print(f"[mw partition] toolchain commands: {', '.join(sorted(config['toolchain']))}")
+
+
+def _partition_env_conflict() -> list[str]:
+    """Set vars across the two families (MW_PARTITION_* / MW_TARGET_*); a
+    blank value counts as unset (same normalization as the resolver)."""
+    conflicts: list[str] = []
+    for name in _PARTITION_ENV_FAMILY:
+        value = os.environ.get(name)
+        if value is not None and value.strip() != "":
+            conflicts.append(name)
+    return conflicts
+
+
+def _parse_root_args(root_args: list[str] | None) -> list[tuple[str, str]]:
+    """--root NAME=DIR values: split on the first '=', validate the name
+    (^[A-Za-z0-9_-]+$, not a reserved name), reject duplicates. Raises
+    ValueError with the reason (the caller prints stderr + exit 1)."""
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for item in root_args or []:
+        name, sep, value = item.partition("=")
+        if not sep or not name or value.strip() == "":
+            raise ValueError(f"--root expects NAME=DIR, got {item!r}")
+        if _PARTITION_ROOT_NAME_RE.match(name) is None or name in _PARTITION_RESERVED_ROOT_NAMES:
+            raise ValueError(
+                f"--root name '{name}' is invalid (must match [A-Za-z0-9_-]+ and must not "
+                "be a reserved name: parent, partition, game, engine, uproject)"
+            )
+        if name in seen:
+            raise ValueError(f"--root name '{name}' given more than once")
+        seen.add(name)
+        out.append((name, value))
+    return out
+
+
+def _resolve_cli_path(project_dir: pathlib.Path, value: str) -> pathlib.Path:
+    """CLI path: relative values anchor to the control root (spec §2.1)."""
+    p = pathlib.Path(value)
+    if not p.is_absolute():
+        p = project_dir / p
+    return p.resolve()
+
+
+def _partition_set(project_dir: pathlib.Path, args: argparse.Namespace) -> int:
+    # (1) cross-family env guard: a live env override could silently disagree
+    # with the written file — reject before touching anything (file,
+    # migration, .bak all untouched).
+    conflicts = _partition_env_conflict()
+    if conflicts:
+        print(
+            "[mw partition set] Error: cross env: "
+            f"{', '.join(conflicts)} is set — unset MW_PARTITION_* / MW_TARGET_* before "
+            "writing target.yml (env overrides are read-only activations, never persisted)",
+            file=sys.stderr,
+        )
+        return 1
+
+    # (2) argument validation
+    if not args.parent:
+        print(
+            "[mw partition set] Error: --parent is required "
+            "(the parent project root — read-only context for the partition)",
+            file=sys.stderr,
+        )
+        return 1
+    parent = _resolve_cli_path(project_dir, args.parent)
+    partition = (
+        _resolve_cli_path(project_dir, args.partition)
+        if args.partition is not None
+        else project_dir.resolve()
+    )
+    try:
+        roots = _parse_root_args(args.root)
+    except ValueError as e:
+        print(f"[mw partition set] Error: {e}", file=sys.stderr)
+        return 1
+    vcs = args.vcs
+
+    # (3) path existence (parent / explicit partition / named roots)
+    if not parent.is_dir():
+        print(f"[mw partition set] Error: parent root not found: {parent}", file=sys.stderr)
+        return 1
+    if args.partition is not None and not partition.is_dir():
+        print(f"[mw partition set] Error: partition root not found: {partition}", file=sys.stderr)
+        return 1
+    root_values: list[tuple[str, str]] = []
+    for name, raw_path in roots:
+        root_path = _resolve_cli_path(project_dir, raw_path)
+        if not root_path.is_dir():
+            print(f"[mw partition set] Error: root '{name}' not found: {root_path}", file=sys.stderr)
+            return 1
+        root_values.append((name, _yml_scalar(str(root_path))))
+
+    # (4) root relation: parent and partition distinct, non-nested (realpath)
+    a = os.path.normcase(os.path.normpath(str(parent)))
+    b = os.path.normcase(os.path.normpath(str(partition)))
+    if a == b or a.startswith(b + os.sep) or b.startswith(a + os.sep):
+        print(
+            "[mw partition set] Error: root relation is invalid — parent "
+            f"({parent}) and partition ({partition}) must not be equal or nested",
+            file=sys.stderr,
+        )
+        return 1
+
+    yml = mw_common.target_yml_path(project_dir)
+    migrated = False
+    if yml.exists():
+        exact = _read_yml_exact(yml)
+        try:
+            raw = _try_parse_yml(exact)
+        except mw_common.TargetConfigError as e:
+            # FIX-7: a parseable but non-mapping file is never an empty v1 —
+            # refuse before any .bak / migration touches the disk.
+            print(f"[mw partition set] Error ({e.kind}): {e}", file=sys.stderr)
+            return 1
+        if raw is None:
+            print(
+                "[mw partition set] Error: target.yml is not valid YAML — fix or remove it first",
+                file=sys.stderr,
+            )
+            return 1
+        shape = _yml_shape(raw)
+        if shape == "mixed":
+            print(f"[mw partition set] Error: {_MIXED_FORMAT_MSG}", file=sys.stderr)
+            return 1
+        if shape == "v2" and raw.get("partition") is not None and not _block_layout_ok(exact, "partition"):
+            print(
+                f"[mw partition set] Error: {_FLOW_LAYOUT_MSG.format(block='partition')}",
+                file=sys.stderr,
+            )
+            return 1
+        if shape == "v1":
+            # (5a) one-shot v1 → v2 migration: the .bak is written from the
+            # original bytes BEFORE the new content lands — a failure between
+            # the two leaves the original file and the backup intact. FIX-8:
+            # the backup itself is a unique temp file + os.replace (same
+            # atomicity as the main write — a crash never truncates .bak).
+            bak = yml.with_name(yml.name + ".bak")
+            tmp = bak.with_name(bak.name + f".tmp{os.getpid()}")
+            try:
+                shutil.copyfile(str(yml), str(tmp))
+                os.replace(tmp, bak)
+            except OSError as e:
+                print(f"[mw partition set] Error: writing backup {bak} failed: {e}", file=sys.stderr)
+                return 1
+            finally:
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+            migrated = True
+            try:
+                exact = _migrate_v1_text(exact)
+            except mw_common.TargetConfigError as e:
+                print(f"[mw partition set] Error ({e.kind}): {e}", file=sys.stderr)
+                return 1
+    else:
+        exact = _partition_template(
+            _yml_scalar(str(parent)), _yml_scalar(str(partition)), vcs, root_values
+        )
+
+    # (5b) block-level write: active → partition; partition block bootstrap
+    # scalars line-edited (comments kept), roots rewritten as a whole section;
+    # omitted fields are not persisted (vcs/roots dropped when not given).
+    exact = _apply_bootstrap_line(exact, "active", "partition")
+    exact = _apply_mode_block(
+        exact,
+        "partition",
+        [
+            ("parent", _yml_scalar(str(parent))),
+            ("partition", _yml_scalar(str(partition))),
+            ("vcs", vcs),
+        ],
+        root_values,
+    )
+    try:
+        _atomic_write_yml(yml, exact)
+    except OSError as e:
+        print(f"[mw partition set] Error: writing {yml} failed: {e}", file=sys.stderr)
+        return 1
+    if migrated:
+        print(
+            "[mw partition set] migrated v1 target.yml to v2 (all v1 fields moved into the "
+            f"dual block); backup: {yml.with_name(yml.name + '.bak')}"
+        )
+    try:
+        config = mw_common.load_target_config(project_dir)
+    except mw_common.TargetConfigError as e:
+        # Bootstrap fields are written; a hand-maintained section is broken.
+        print(
+            f"[mw partition set] Warning: config resolves with an error ({e.kind}): {e}",
+            file=sys.stderr,
+        )
+        return 1
+    _print_partition_summary(config)
+    return 0
+
+
+def _partition_show(project_dir: pathlib.Path) -> int:
+    try:
+        config = mw_common.load_target_config(project_dir)
+    except mw_common.TargetConfigError as e:
+        print(f"[mw partition show] Error ({e.kind}): {e}", file=sys.stderr)
+        return 1
+    yml = mw_common.target_yml_path(project_dir)
+    if config["mode"] != "partition":
+        # mw-target-partition FIX-4 (AC-018a): no special case for a missing
+        # file — active is not partition, so the command exits 1 naming the
+        # current mode and the switch commands (on/set), exactly like every
+        # other non-partition shape.
+        if yml.exists():
+            try:
+                raw = _try_parse_yml(_read_yml_exact(yml))
+            except mw_common.TargetConfigError as e:
+                print(f"[mw partition show] Error ({e.kind}): {e}", file=sys.stderr)
+                return 1
+            raw = raw or {}
+            if _yml_shape(raw) == "v1":
+                where = "target.yml is v1 format (no partition mode)"
+                hint = (
+                    "run `mw partition set --parent <dir> --partition <dir>` — it migrates "
+                    "v1 to v2 (with a target.yml.bak backup)"
+                )
+            else:
+                where = f"active mode is '{raw.get('active')}'"
+                hint = (
+                    "run `mw partition on` (after `mw partition set`), or "
+                    "`mw partition set --parent <dir> --partition <dir>` to reconfigure"
+                )
+        elif config["source"] == "env":
+            where = f"{config['mode']} mode via env"
+            hint = "run `mw partition set --parent <dir> --partition <dir>` first"
+        else:
+            where = f"active mode is '{config['mode']}' (no target.yml)"
+            hint = "run `mw partition set --parent <dir> --partition <dir>` first"
+        print(
+            f"[mw partition show] Error: partition mode is not active ({where}) — {hint}",
+            file=sys.stderr,
+        )
+        return 1
+    _print_partition_summary(config)
+    render_failed = False
+    for name, command in sorted(config["toolchain"].items()):
+        try:
+            rendered = mw_common.render_toolchain_command(command, config)
+            print(f"[mw partition]   {name}: {rendered}")
+        except mw_common.TargetConfigError as e:
+            render_failed = True
+            print(f"[mw partition]   {name}: ERROR ({e.kind}): {e}", file=sys.stderr)
+    if config["ignore"]["deny_globs"]:
+        print(f"[mw partition] deny_globs: {len(config['ignore']['deny_globs'])} rule(s)")
+    return 1 if render_failed else 0
+
+
+def _partition_clear(project_dir: pathlib.Path) -> int:
+    conflicts = _partition_env_conflict()
+    if conflicts:
+        print(
+            "[mw partition clear] Error: cross env: "
+            f"{', '.join(conflicts)} is set — unset MW_PARTITION_* / MW_TARGET_* before "
+            "changing target.yml",
+            file=sys.stderr,
+        )
+        return 1
+    yml = mw_common.target_yml_path(project_dir)
+    if not yml.exists():
+        print("[mw partition clear] no partition block — nothing to clear")
+        return 0
+    exact = _read_yml_exact(yml)
+    try:
+        raw = _try_parse_yml(exact)
+    except mw_common.TargetConfigError as e:
+        print(f"[mw partition clear] Error ({e.kind}): {e}", file=sys.stderr)
+        return 1
+    if raw is None:
+        print(
+            "[mw partition clear] Error: target.yml is not valid YAML — fix or remove it first",
+            file=sys.stderr,
+        )
+        return 1
+    shape = _yml_shape(raw)
+    if shape == "mixed":
+        print(f"[mw partition clear] Error: {_MIXED_FORMAT_MSG}", file=sys.stderr)
+        return 1
+    if shape != "v2" or not isinstance(raw.get("partition"), dict):
+        # v1 flat file or a v2 without the block: nothing to remove
+        print("[mw partition clear] no partition block — nothing to clear")
+        return 0
+    lines = exact.splitlines(keepends=True)
+    header_idx = _find_block_header(lines, "partition")
+    if header_idx is None:
+        print(
+            f"[mw partition clear] Error: {_FLOW_LAYOUT_MSG.format(block='partition')}",
+            file=sys.stderr,
+        )
+        return 1
+    end = _block_end(lines, header_idx)
+    start = header_idx
+    if start > 0 and lines[start - 1].strip() == "":
+        start -= 1  # the separator blank line appended with the block
+    del lines[start:end]
+    text = "".join(lines)
+    was_active = raw.get("active") == "partition"
+    if was_active:
+        text = _apply_bootstrap_line(text, "active", "single")
+    if not isinstance(raw.get("dual"), dict):
+        # no mode block remains — the file carries no mode config anymore
+        try:
+            yml.unlink()
+        except OSError as e:
+            print(f"[mw partition clear] Error: removing {yml} failed: {e}", file=sys.stderr)
+            return 1
+        print(f"[mw partition clear] removed partition block; no mode blocks remain — deleted {yml}")
+        return 0
+    try:
+        _atomic_write_yml(yml, text)
+    except OSError as e:
+        print(f"[mw partition clear] Error: writing {yml} failed: {e}", file=sys.stderr)
+        return 1
+    if was_active:
+        print("[mw partition clear] removed partition block, active: single (dual block kept)")
+    else:
+        print(f"[mw partition clear] removed parked partition block (active stays {raw.get('active')})")
+    return 0
+
+
+def _partition_on(project_dir: pathlib.Path) -> int:
+    yml = mw_common.target_yml_path(project_dir)
+    if not yml.exists():
+        print(
+            "[mw partition on] Error: no target.yml — run "
+            "`mw partition set --parent <dir> --partition <dir>` first",
+            file=sys.stderr,
+        )
+        return 1
+    exact = _read_yml_exact(yml)
+    try:
+        raw = _try_parse_yml(exact)
+    except mw_common.TargetConfigError as e:
+        print(f"[mw partition on] Error ({e.kind}): {e}", file=sys.stderr)
+        return 1
+    if raw is None:
+        print(
+            "[mw partition on] Error: target.yml is not valid YAML — fix or remove it first",
+            file=sys.stderr,
+        )
+        return 1
+    shape = _yml_shape(raw)
+    if shape == "mixed":
+        print(f"[mw partition on] Error: {_MIXED_FORMAT_MSG}", file=sys.stderr)
+        return 1
+    if shape == "v1":
+        print(
+            "[mw partition on] Error: target.yml is v1 format — on/off require v2; run "
+            "`mw partition set ...` (it migrates v1 to v2 with a .bak backup)",
+            file=sys.stderr,
+        )
+        return 1
+    block = raw.get("partition")
+    if not isinstance(block, dict):
+        print(
+            "[mw partition on] Error: no partition block — run "
+            "`mw partition set --parent <dir> --partition <dir>` first",
+            file=sys.stderr,
+        )
+        return 1
+    missing = [k for k in ("parent", "partition") if block.get(k) is None]
+    if missing:
+        print(
+            f"[mw partition on] Error: the partition block is missing field(s) {', '.join(missing)} "
+            "— run `mw partition set ...` first",
+            file=sys.stderr,
+        )
+        return 1
+    if not _block_layout_ok(exact, "partition"):
+        print(f"[mw partition on] Error: {_FLOW_LAYOUT_MSG.format(block='partition')}", file=sys.stderr)
+        return 1
+    text = _apply_bootstrap_line(exact, "active", "partition")
+    try:
+        _atomic_write_yml(yml, text)
+    except OSError as e:
+        print(f"[mw partition on] Error: writing {yml} failed: {e}", file=sys.stderr)
+        return 1
+    try:
+        mw_common.load_target_config(project_dir)
+    except mw_common.TargetConfigError as e:
+        print(
+            "[mw partition on] Warning: active is now partition but the config resolves with "
+            f"an error ({e.kind}): {e}",
+            file=sys.stderr,
+        )
+        return 1
+    print("[mw partition on] active: partition (takes effect on the next worker spawn; no serve restart needed)")
+    return 0
+
+
+def _partition_off(project_dir: pathlib.Path) -> int:
+    yml = mw_common.target_yml_path(project_dir)
+    if not yml.exists():
+        print("[mw partition off] partition mode is not active (no target.yml) — nothing to do")
+        return 0
+    exact = _read_yml_exact(yml)
+    try:
+        raw = _try_parse_yml(exact)
+    except mw_common.TargetConfigError as e:
+        print(f"[mw partition off] Error ({e.kind}): {e}", file=sys.stderr)
+        return 1
+    if raw is None:
+        print(
+            "[mw partition off] Error: target.yml is not valid YAML — fix or remove it first",
+            file=sys.stderr,
+        )
+        return 1
+    shape = _yml_shape(raw)
+    if shape == "mixed":
+        print(f"[mw partition off] Error: {_MIXED_FORMAT_MSG}", file=sys.stderr)
+        return 1
+    if shape == "v1":
+        print(
+            "[mw partition off] Error: target.yml is v1 format — on/off require v2; run "
+            "`mw partition set ...` (it migrates v1 to v2 with a .bak backup)",
+            file=sys.stderr,
+        )
+        return 1
+    if raw.get("active") != "partition":
+        print(f"[mw partition off] partition mode is not active (active: {raw.get('active')}) — nothing to do")
+        return 0
+    text = _apply_bootstrap_line(exact, "active", "single")
+    try:
+        _atomic_write_yml(yml, text)
+    except OSError as e:
+        print(f"[mw partition off] Error: writing {yml} failed: {e}", file=sys.stderr)
+        return 1
+    print("[mw partition off] active: single (partition block kept; takes effect on the next worker spawn)")
+    return 0
+
+
+def cmd_partition(args: argparse.Namespace) -> int:
+    """Partition-workspace target config (mw-target-partition): set (v1 → v2
+    migration + partition block write) / show / clear / on / off."""
+    project_dir = pathlib.Path(args.project).resolve()
+    if args.partition_action == "set":
+        return _partition_set(project_dir, args)
+    if args.partition_action == "clear":
+        return _partition_clear(project_dir)
+    if args.partition_action == "on":
+        return _partition_on(project_dir)
+    if args.partition_action == "off":
+        return _partition_off(project_dir)
+    return _partition_show(project_dir)
 
 
 # ── Subcommand: model (dispatch model defaults) ──────────────────────────────
@@ -1774,8 +2794,41 @@ def _parse_args() -> argparse.Namespace:
                               help="Target VCS (informational, optional)")
     target_set_p.add_argument("--uproject", default=None, metavar="FILE",
                               help="Explicit .uproject (game-relative or absolute; default: unique discovery)")
-    for action in ("clear", "show"):
-        p = target_sub.add_parser(action, help="Delete target.yml (back to single)" if action == "clear" else "Print the resolved config")
+    for action in ("clear", "show", "on", "off"):
+        help_text = (
+            "Delete target.yml (back to single)" if action == "clear"
+            else "Print the resolved config" if action == "show"
+            else "Switch active mode to dual (v2 files; the dual block must exist)" if action == "on"
+            else "Park dual mode: active → single, dual block kept (v2 files)"
+        )
+        p = target_sub.add_parser(action, help=help_text)
+        p.add_argument("--project", required=True, help="Control workspace directory")
+
+    partition_p = sub.add_parser(
+        "partition",
+        help="Partition-workspace target config: split a big project into an independent partition dir",
+    )
+    partition_sub = partition_p.add_subparsers(dest="partition_action", required=True)
+    partition_set_p = partition_sub.add_parser(
+        "set", help="Configure + activate the partition block (migrates a v1 target.yml to v2)"
+    )
+    partition_set_p.add_argument("--project", required=True, help="Control workspace directory")
+    partition_set_p.add_argument("--parent", default=None, metavar="DIR",
+                                 help="Parent project root (required; read-only context for the partition)")
+    partition_set_p.add_argument("--partition", default=None, metavar="DIR",
+                                 help="Independent partition directory = worker cwd (default: the control root)")
+    partition_set_p.add_argument("--root", action="append", default=None, metavar="NAME=DIR",
+                                 help="Named additional root (repeatable; name must match [A-Za-z0-9_-]+)")
+    partition_set_p.add_argument("--vcs", default=None, choices=("git", "p4", "none"),
+                                 help="Target VCS (informational, optional)")
+    for action in ("show", "clear", "on", "off"):
+        help_text = {
+            "show": "Print the resolved partition view",
+            "clear": "Remove the partition block (delete target.yml when no mode block remains)",
+            "on": "Switch active mode to partition (v2 files; the partition block must exist)",
+            "off": "Park partition mode: active → single, partition block kept (v2 files)",
+        }[action]
+        p = partition_sub.add_parser(action, help=help_text)
         p.add_argument("--project", required=True, help="Control workspace directory")
 
     model_p = sub.add_parser(
@@ -1872,6 +2925,7 @@ if __name__ == "__main__":
         "status": cmd_status,
         "doctor": cmd_doctor,
         "target": cmd_target,
+        "partition": cmd_partition,
         "model": cmd_model,
         "init": cmd_init,
         "pull-agentictask": cmd_pull_agentictask,

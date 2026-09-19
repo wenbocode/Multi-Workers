@@ -1,0 +1,11 @@
+{
+  "description": "roots key with characters outside [A-Za-z0-9_-] is rejected (AC-003f)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "roots",
+      "my root"
+    ]
+  }
+}

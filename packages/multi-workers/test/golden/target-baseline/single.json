@@ -1,0 +1,40 @@
+{
+  "sample": "single",
+  "a_projection": {
+    "mode": "single",
+    "control_root": "<CTRL>",
+    "game_root": "<CTRL>",
+    "engine_root": null,
+    "vcs": null,
+    "uproject": null,
+    "toolchain": {},
+    "ignore": {
+      "deny_globs": []
+    },
+    "contract": {
+      "forbidden_paths": [],
+      "conventions": null,
+      "docs": []
+    },
+    "source": "default"
+  },
+  "b_worker_cwd": "<CTRL>",
+  "c_expand_read_scope": [
+    "src/",
+    "Docs/",
+    "<CTRL>\\Content"
+  ],
+  "e_target_show_stdout": "[mw target] mode: single (source: default)\r\n[mw target] control root: <CTRL>\r\n[mw target] game root:    <CTRL>\r\n[mw target] engine root:  -\r\n[mw target] vcs: -  uproject: -\r\n",
+  "f_doctor_target": {
+    "yaml_available": true,
+    "config": {
+      "mode": "single",
+      "source": "default",
+      "game_root": "<CTRL>",
+      "engine_root": null,
+      "vcs": null,
+      "uproject": null
+    },
+    "checks": null
+  }
+}

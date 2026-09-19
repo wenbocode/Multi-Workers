@@ -1,0 +1,15 @@
+{
+  "description": "EP override: MW_PARTITION_PARENT wins over the block, source=env (AC-005)",
+  "env": {
+    "MW_PARTITION_PARENT": "../envparent"
+  },
+  "expect": {
+    "mode": "partition",
+    "source": "env",
+    "parent_root_rel": "../envparent",
+    "partition_root_rel": "frag",
+    "roots": {
+      "sdk": "sdk"
+    }
+  }
+}

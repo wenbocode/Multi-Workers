@@ -348,9 +348,13 @@ function runMwCli(sub, projectDir, args) {
     }
     return { ok: true, output };
 }
-/** `mw.py target <args...>` — dual-workspace config (show / set / clear). */
+/** `mw.py target <args...>` — dual-workspace config (show / set / clear / on / off). */
 export function targetMw(projectDir, args) {
     return runMwCli("target", projectDir, args);
+}
+/** `mw.py partition <args...>` — partition-workspace config (set / show / clear / on / off). */
+export function partitionMw(projectDir, args) {
+    return runMwCli("partition", projectDir, args);
 }
 /** `mw.py model <args...>` — dispatch model defaults (show / set / clear). */
 export function modelMw(projectDir, args) {

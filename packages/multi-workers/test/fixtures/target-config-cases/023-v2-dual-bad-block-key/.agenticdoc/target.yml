@@ -1,0 +1,5 @@
+active: dual
+dual:
+  game: ./game
+  roots:
+    sdk: ../sdk
