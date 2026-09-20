@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { killTrackedDetachedChildren } from "../../../utils/shell.js";
 import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.js";
 import { appendCheckpoint, appendEnd, appendError, appendGoalCheck, appendHeartbeat, appendModel, appendPhase, appendStart, appendTimeout, appendTool, appendToolError, appendTrace, writeOutput, } from "./output-writer.js";
 import { goalMtime, writePhaseFile } from "./phase-runner.js";
@@ -325,6 +326,7 @@ export async function workerModeActivate(pi) {
     }
     const taskPath = path.resolve(taskPathEnv);
     if (!fs.existsSync(taskPath)) {
+        killTrackedDetachedChildren();
         process.exit(1);
     }
     const meta = parseTaskMd(taskPath);
@@ -348,6 +350,7 @@ export async function workerModeActivate(pi) {
             exitReason: refusal,
         });
         writeWorkerLogLine(`[worker] refused task=${meta.taskKey} type=${meta.type}: ${refusal}`);
+        killTrackedDetachedChildren();
         process.exit(1);
     }
     // Read-scope enforcement (D-106/AC-009): active only when task.md carries
@@ -380,6 +383,19 @@ export async function workerModeActivate(pi) {
     // exit hook writes a minimal failure output so the PM never sees silence.
     let outputWritten = false;
     process.on("exit", () => {
+        // Hard-crash backstop: an exit path that bypassed the explicit kills
+        // below (uncaught exception, unexpected process.exit) must not leak the
+        // bash tool's in-flight child trees as orphans (2026-09-19 incident:
+        // idle-killed worker left a spinning probe at 151 GB WS).
+        // Isolated so a future throwing change in the kill path can never
+        // skip the fallback output write below (currently throw-free: both
+        // killProcessTree branches swallow their own errors).
+        try {
+            killTrackedDetachedChildren();
+        }
+        catch {
+            // Best-effort during exit — nothing else we can do.
+        }
         if (outputWritten)
             return;
         try {
@@ -566,6 +582,12 @@ export async function workerModeActivate(pi) {
         });
         recordEnd(1);
         outputWritten = true;
+        // Kill the bash tool's in-flight child trees before exiting: the
+        // watchdog fires while a tool call can still be hung (spinning probe,
+        // dead API call mid-command) and Windows descendants survive the
+        // parent. Fire-and-forget (detached taskkill / kill(-pgid)); every
+        // write above is already synchronous.
+        killTrackedDetachedChildren();
         process.exit(1);
     }
     /** Machine convergence evidence for the checkpoint line (AC-004). Risk is
@@ -735,6 +757,7 @@ export async function workerModeActivate(pi) {
             });
             recordEnd(1);
             outputWritten = true;
+            killTrackedDetachedChildren();
             process.exit(1);
         }
     });
