@@ -152,7 +152,7 @@ def _read_task_md_fields(task_path: str) -> tuple[str, str]:
 def _effective_entry(entry: dict[str, str], model_value: str) -> dict[str, str]:
     """Apply a resolved model value to a queue entry.
 
-    A provider prefix (timi/claude/codex/deepseek) overrides the pi entry's
+    A provider prefix (timi/claude/codex/deepseek/zai) overrides the pi entry's
     provider — the direct connection replaces the original route (this is how
     an unset role inherits the PM window's model across providers). A *_cli
     prefix must match the entry cli (the cli itself never changes: tool
@@ -204,6 +204,24 @@ def _build_env(entry: dict[str, str], config: dict) -> dict[str, str]:
         env["TIMI_API_KEY"] = value
         if "TIMI_BASE_URL" in os.environ:
             env["TIMI_BASE_URL"] = os.environ["TIMI_BASE_URL"]
+        task_path = pathlib.Path(entry["task_path"])
+        env["PI_WORKER_TASK"] = str(task_path.resolve())
+        return env
+
+    # Pi + zai-coding-cn (model prefix zai/...): direct provider connection,
+    # same shape as the timi branch. Source chain: env ZAI_CODING_CN_API_KEY
+    # → pi's own ~/.pi/agent/auth.json (field zai-coding-cn.key). No base URL
+    # passthrough: the pi provider pins the coding endpoint.
+    if cli == "pi" and provider == "zai-coding-cn":
+        cred = config.get("credentials", {}).get("zai-coding-cn")
+        value, _source = mw_common.resolve_credential(cred, os.environ)
+        if value is None:
+            raise RuntimeError(
+                f"zai-coding-cn credential is not available "
+                f"({mw_common.describe_missing(cred)})."
+            )
+        env = _stripped_env(config)
+        env["ZAI_CODING_CN_API_KEY"] = value
         task_path = pathlib.Path(entry["task_path"])
         env["PI_WORKER_TASK"] = str(task_path.resolve())
         return env
@@ -380,10 +398,10 @@ def _build_command(entry: dict[str, str]) -> list[str]:
     if cli == "pi":
         if provider == "timi":
             return ["pi", "--provider", "timi", "--model", model or "glm-5.3", "-p", starter]
-        # Direct non-timi providers (anthropic / openai-codex / deepseek, set
-        # via model prefixes): explicit --provider so the flag can never ride
-        # on pi's default-provider resolution.
-        if provider in ("anthropic", "openai-codex", "deepseek"):
+        # Direct non-timi providers (anthropic / openai-codex / deepseek /
+        # zai-coding-cn, set via model prefixes): explicit --provider so the
+        # flag can never ride on pi's default-provider resolution.
+        if provider in ("anthropic", "openai-codex", "deepseek", "zai-coding-cn"):
             if not model:
                 raise RuntimeError(
                     f"pi provider {provider!r} requires an explicit model "
@@ -786,6 +804,7 @@ def _spawn(
         cmd = _build_command(effective)
         print(
             f"[launcher] {entry['task_key']}: model={model_value or '(route default)'} source={model_source}",
+            flush=True,
         )
         # Resolve the CLI binary to a full path so Windows npm `.cmd` shims are
         # found (CreateProcess only appends `.exe`). See _resolve_cli.

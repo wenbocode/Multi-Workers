@@ -14,6 +14,12 @@
         { "env": "TIMI_API_KEY" },
         { "file": "~/.pi/agent/auth.json", "format": "json", "field": "timi.key" }
       ]
+    },
+    "zai-coding-cn": {
+      "sources": [
+        { "env": "ZAI_CODING_CN_API_KEY" },
+        { "file": "~/.pi/agent/auth.json", "format": "json", "field": "zai-coding-cn.key" }
+      ]
     }
   },
   "providers": {
@@ -38,6 +44,10 @@
     "timi": {
       "api_key_env": "TIMI_API_KEY",
       "credential": "timi"
+    },
+    "zai-coding-cn": {
+      "api_key_env": "ZAI_CODING_CN_API_KEY",
+      "credential": "zai-coding-cn"
     }
   }
 }

@@ -134,6 +134,7 @@ class TestParseAndCompat:
         "anthropic": "claude",
         "openai-codex": "codex",
         "deepseek": "deepseek",
+        "zai-coding-cn": "zai",
     }
 
     def test_prefix_map_matches_ts_mirror(self) -> None:

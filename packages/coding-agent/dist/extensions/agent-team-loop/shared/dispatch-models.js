@@ -8,6 +8,7 @@
 //   claude   -> pi provider "anthropic"     (direct, no mw proxy)
 //   codex    -> pi provider "openai-codex"  (codex' own config)
 //   deepseek -> pi provider "deepseek"      (direct, no mw proxy)
+//   zai      -> pi provider "zai-coding-cn" (direct, no mw proxy)
 //   codex_cli / claude_cli                  (CLI executors, spawn-side only)
 //
 // The Python side owns resolution (mw_common.MODEL_PREFIX_TO_PI_PROVIDER +
@@ -26,6 +27,7 @@ export const PROVIDER_ID_TO_PREFIX = {
     anthropic: "claude",
     "openai-codex": "codex",
     deepseek: "deepseek",
+    "zai-coding-cn": "zai",
 };
 /** User-facing prefix -> pi provider id (inverse of PROVIDER_ID_TO_PREFIX). */
 export const PREFIX_TO_PROVIDER_ID = Object.fromEntries(Object.entries(PROVIDER_ID_TO_PREFIX).map(([provider, prefix]) => [prefix, provider]));

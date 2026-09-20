@@ -103,6 +103,14 @@ export declare function matchedDenyGlob(projectRoot: string, denyGlobs: string[]
  * actually reads).
  */
 export declare function checkReadScopeCall(projectRoot: string, config: ReadScopeConfig, state: ReadScopeState, tool: string, rawPath: string, statSize?: (absolutePath: string) => number): ReadScopeVerdict;
+export declare function parentRootFromTaskContent(content: string): string | null;
+/** Append parentRoot to the scope entries of a built ReadScopeConfig
+ * (mw-partition-parent-extended AC-002/D-003). No-op — returning the input
+ * config unchanged — when the config is undefined (task carries neither
+ * read_scope nor deny_globs), when scope is null (deny-only mode: no
+ * containment to widen) or empty (the fail-closed all-block form: never
+ * manufacture containment the dispatch never declared). */
+export declare function applyParentRootUnion(config: ReadScopeConfig | undefined, parentRoot: string | null): ReadScopeConfig | undefined;
 /** Build the enforcement config from parsed task.md meta. Undefined when
  * the task carries neither read_scope nor deny_globs: interception disabled
  * (AC-012 red line — manual/legacy tasks behave exactly as before). A task

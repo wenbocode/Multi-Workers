@@ -16603,7 +16603,8 @@ var PROVIDER_ID_TO_PREFIX = {
   timi: "timi",
   anthropic: "claude",
   "openai-codex": "codex",
-  deepseek: "deepseek"
+  deepseek: "deepseek",
+  "zai-coding-cn": "zai"
 };
 var PREFIX_TO_PROVIDER_ID = Object.fromEntries(
   Object.entries(PROVIDER_ID_TO_PREFIX).map(([provider, prefix]) => [prefix, provider])

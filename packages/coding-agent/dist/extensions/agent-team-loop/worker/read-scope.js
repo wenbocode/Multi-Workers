@@ -154,6 +154,37 @@ export function checkReadScopeCall(projectRoot, config, state, tool, rawPath, st
     }
     return { allowed: true, chargedBytes };
 }
+/** Partition extended-workspace union (mw-partition-parent-extended
+ * AC-002/D-004): the Parent root line of a task.md v2 profile block.
+ * Gated on the profile mode line — the same line shape the launcher tear
+ * check anchors on (`^[mw] mode: partition$`, MULTILINE over the whole
+ * file, no head window). The `Parent root` prefix matches BOTH the old
+ * and the annotated label, so tasks dispatched before the label change
+ * keep their union across an upgrade. Returns null when not applicable. */
+const PARTITION_MODE_LINE_RE = /^\[mw\] mode: partition[ \t]*$/m;
+const PARENT_ROOT_LINE_RE = /^Parent root[^:\n]*:[ \t]*(.+)$/m;
+export function parentRootFromTaskContent(content) {
+    if (!PARTITION_MODE_LINE_RE.test(content))
+        return null;
+    const match = PARENT_ROOT_LINE_RE.exec(content);
+    if (match === null)
+        return null;
+    const parentRoot = match[1]?.trim();
+    return parentRoot && parentRoot.length > 0 ? parentRoot : null;
+}
+/** Append parentRoot to the scope entries of a built ReadScopeConfig
+ * (mw-partition-parent-extended AC-002/D-003). No-op — returning the input
+ * config unchanged — when the config is undefined (task carries neither
+ * read_scope nor deny_globs), when scope is null (deny-only mode: no
+ * containment to widen) or empty (the fail-closed all-block form: never
+ * manufacture containment the dispatch never declared). */
+export function applyParentRootUnion(config, parentRoot) {
+    if (config === undefined || parentRoot === null)
+        return config;
+    if (config.scope === null || config.scope.length === 0)
+        return config;
+    return { ...config, scope: [...config.scope, parentRoot] };
+}
 /** Build the enforcement config from parsed task.md meta. Undefined when
  * the task carries neither read_scope nor deny_globs: interception disabled
  * (AC-012 red line — manual/legacy tasks behave exactly as before). A task

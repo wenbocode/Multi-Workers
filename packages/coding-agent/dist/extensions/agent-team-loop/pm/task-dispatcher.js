@@ -127,7 +127,7 @@ function renderPartitionProfileBlock(config, ignoreEnforced) {
         "[mw] Workspace profile (target.yml essentials, injected at dispatch;",
         `full file: ${path.join(config.controlRoot, ".agenticdoc", "target.yml")})`,
         `Control workspace: ${config.controlRoot}`,
-        `Parent root: ${config.parentRoot}`,
+        `Parent root (extended workspace, writable): ${config.parentRoot}`,
         `Partition root (worker cwd): ${config.partitionRoot}`,
     ];
     const roots = config.roots ?? {};

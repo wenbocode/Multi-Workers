@@ -21,6 +21,7 @@ import mw_common
 from launcher import (
     _build_command,
     _build_env,
+    _effective_entry,
     _load_providers,
     _parse_workers_file,
     _poll_once,
@@ -39,6 +40,7 @@ _HERMETIC_CONFIG = {
         "anthropic-auth": {"sources": [{"env": "ANTHROPIC_AUTH_TOKEN"}]},
         "deepseek": {"sources": [{"env": "DEEPSEEK_API_KEY"}]},
         "timi": {"sources": [{"env": "TIMI_API_KEY"}]},
+        "zai-coding-cn": {"sources": [{"env": "ZAI_CODING_CN_API_KEY"}]},
     },
     "providers": {
         "claude": {
@@ -54,6 +56,7 @@ _HERMETIC_CONFIG = {
             "api_key_env": "DEEPSEEK_API_KEY", "credential": "deepseek",
         },
         "timi": {"api_key_env": "TIMI_API_KEY", "credential": "timi"},
+        "zai-coding-cn": {"api_key_env": "ZAI_CODING_CN_API_KEY", "credential": "zai-coding-cn"},
     },
 }
 
@@ -154,6 +157,87 @@ class TestPiTimiRouting:
         entry = {"cli": "pi", "provider": "timi", "task_path": str(task_file)}
         with pytest.raises(RuntimeError, match="TIMI_API_KEY"):
             _build_env(entry, providers)
+
+
+# ── Pi + zai-coding-cn (model prefix zai/...) ─────────────────────────────
+
+class TestPiZaiRouting:
+    def test_command(self, task_file):
+        entry = {"cli": "pi", "provider": "zai-coding-cn", "task_path": str(task_file), "model": "glm-5.3"}
+        cmd = _build_command(entry)
+        starter = _starter_prompt(str(task_file))
+        assert cmd == ["pi", "--provider", "zai-coding-cn", "--model", "glm-5.3", "-p", starter]
+
+    def test_command_requires_explicit_model(self, task_file):
+        # VC-009: no per-route default for direct non-timi providers.
+        entry = {"cli": "pi", "provider": "zai-coding-cn", "task_path": str(task_file), "model": ""}
+        with pytest.raises(RuntimeError, match="explicit model"):
+            _build_command(entry)
+
+    def test_env_env_source(self, task_file, providers, monkeypatch):
+        # VC-001: direct injection, no localhost proxy URL anywhere.
+        monkeypatch.setenv("ZAI_CODING_CN_API_KEY", "test-zai-key")
+        entry = {"cli": "pi", "provider": "zai-coding-cn", "task_path": str(task_file)}
+        env = _build_env(entry, providers)
+        assert env["ZAI_CODING_CN_API_KEY"] == "test-zai-key"
+        assert env["PI_WORKER_TASK"] == str(task_file.resolve())
+        assert not any("localhost" in str(v) for v in env.values())
+
+    def test_env_file_source(self, task_file, tmp_path, monkeypatch):
+        # VC-001: auth.json file source (isolated HOME).
+        pi_dir = tmp_path / "home" / ".pi" / "agent"
+        pi_dir.mkdir(parents=True)
+        (pi_dir / "auth.json").write_text(
+            json.dumps({"zai-coding-cn": {"type": "api_key", "key": "file-key"}}), encoding="utf-8"
+        )
+        monkeypatch.setenv("USERPROFILE" if sys.platform == "win32" else "HOME", str(tmp_path / "home"))
+        monkeypatch.delenv("ZAI_CODING_CN_API_KEY", raising=False)
+        config = {
+            "credentials": {"zai-coding-cn": {"sources": [
+                {"env": "ZAI_CODING_CN_API_KEY"},
+                {"file": "~/.pi/agent/auth.json", "format": "json", "field": "zai-coding-cn.key"},
+            ]}},
+            "providers": {"zai-coding-cn": {"api_key_env": "ZAI_CODING_CN_API_KEY", "credential": "zai-coding-cn"}},
+        }
+        entry = {"cli": "pi", "provider": "zai-coding-cn", "task_path": str(task_file)}
+        env = _build_env(entry, config)
+        assert env["ZAI_CODING_CN_API_KEY"] == "file-key"
+
+    def test_env_missing_raises(self, task_file, providers, monkeypatch):
+        # VC-002: both sources missing → RuntimeError naming the route + env var.
+        monkeypatch.delenv("ZAI_CODING_CN_API_KEY", raising=False)
+        entry = {"cli": "pi", "provider": "zai-coding-cn", "task_path": str(task_file)}
+        with pytest.raises(RuntimeError, match="zai-coding-cn"):
+            _build_env(entry, providers)
+
+    def test_env_isolated_from_other_credentials(self, task_file, providers, monkeypatch):
+        # VC-003: a zai worker never sees other providers' credentials.
+        monkeypatch.setenv("ZAI_CODING_CN_API_KEY", "test-zai-key")
+        for leaked in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "DEEPSEEK_API_KEY", "TIMI_API_KEY"):
+            monkeypatch.setenv(leaked, f"{leaked}-value")
+        entry = {"cli": "pi", "provider": "zai-coding-cn", "task_path": str(task_file)}
+        env = _build_env(entry, providers)
+        for leaked in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "DEEPSEEK_API_KEY", "TIMI_API_KEY"):
+            assert leaked not in env
+
+    def test_zai_prefix_maps_provider(self, task_file):
+        # F2 / VC-010 (py side): zai/glm-5.3 remaps a pi entry to zai-coding-cn.
+        entry = {"cli": "pi", "provider": "timi", "task_path": str(task_file), "model": ""}
+        effective = _effective_entry(entry, "zai/glm-5.3")
+        assert effective["provider"] == "zai-coding-cn"
+        assert effective["model"] == "glm-5.3"
+
+    def test_default_route_stays_timi(self, task_file, providers, monkeypatch):
+        # VC-006: window-model timi/glm-5.3 with no task model keeps the timi
+        # route; the zai credential never leaks into it.
+        monkeypatch.setenv("TIMI_API_KEY", "test-timi-key")
+        monkeypatch.setenv("ZAI_CODING_CN_API_KEY", "test-zai-key")
+        entry = {"cli": "pi", "provider": "timi", "task_path": str(task_file)}
+        effective = _effective_entry(entry, "timi/glm-5.3")
+        assert effective["provider"] == "timi"
+        env = _build_env(effective, providers)
+        assert env["TIMI_API_KEY"] == "test-timi-key"
+        assert "ZAI_CODING_CN_API_KEY" not in env
 
 
 # ── VC-009: Pi + empty provider ───────────────────────────────────────────────

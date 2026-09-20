@@ -4495,6 +4495,7 @@ describe("dispatch model config", () => {
 		anthropic: "claude",
 		"openai-codex": "codex",
 		deepseek: "deepseek",
+		"zai-coding-cn": "zai",
 	};
 
 	it("PROVIDER_ID_TO_PREFIX stays in sync with the Python map", () => {

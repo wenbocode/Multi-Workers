@@ -43,11 +43,19 @@ _REPO_PROVIDERS = pathlib.Path(__file__).parent / "providers.json"
 class TestLoadProviders:
     def test_shipped_schema_loads(self):
         config = load_providers(_REPO_PROVIDERS)
-        assert set(config["credentials"]) == {"anthropic", "anthropic-auth", "deepseek", "timi"}
-        assert set(config["providers"]) == {"claude", "claude-cli", "deepseek", "timi"}
+        assert set(config["credentials"]) == {
+            "anthropic", "anthropic-auth", "deepseek", "timi", "zai-coding-cn"
+        }
+        assert set(config["providers"]) == {
+            "claude", "claude-cli", "deepseek", "timi", "zai-coding-cn"
+        }
         timi = config["providers"]["timi"]
         assert "port" not in timi
         assert timi["credential"] == "timi"
+        zai = config["providers"]["zai-coding-cn"]
+        assert "port" not in zai
+        assert zai["credential"] == "zai-coding-cn"
+        assert zai["api_key_env"] == "ZAI_CODING_CN_API_KEY"
 
     def test_missing_file_falls_back_to_defaults(self, tmp_path):
         config = load_providers(tmp_path / "nope.json")
@@ -218,6 +226,37 @@ class TestRoutePrecheck:
         assert routes["timi"]["source"] == {"kind": "env", "name": "TIMI_API_KEY"}
         assert routes["claude"]["available"] is False
         assert result["all_missing"] is False
+
+    def test_zai_coding_cn_route_flip(self, tmp_path, monkeypatch):
+        # VC-004: zai-coding-cn must appear in route_precheck and its
+        # availability must flip with the credential chain.
+        empty_home = tmp_path / "empty-home"
+        empty_home.mkdir()
+        monkeypatch.setenv("USERPROFILE" if sys.platform == "win32" else "HOME", str(empty_home))
+        config = load_providers(_REPO_PROVIDERS)
+
+        missing = {r["route"]: r for r in route_precheck(config, {})["routes"]}
+        assert "zai-coding-cn" in missing
+        assert missing["zai-coding-cn"]["available"] is False
+        assert "ZAI_CODING_CN_API_KEY" in missing["zai-coding-cn"]["missing"]
+
+        env_hit = {r["route"]: r for r in route_precheck(config, {"ZAI_CODING_CN_API_KEY": "k"})["routes"]}
+        assert env_hit["zai-coding-cn"]["available"] is True
+        assert env_hit["zai-coding-cn"]["source"] == {"kind": "env", "name": "ZAI_CODING_CN_API_KEY"}
+
+    def test_zai_coding_cn_file_source(self, tmp_path, monkeypatch):
+        # VC-004: the auth.json file source declares zai-coding-cn.key.
+        monkeypatch.delenv("ZAI_CODING_CN_API_KEY", raising=False)
+        pi_dir = tmp_path / "home" / ".pi" / "agent"
+        pi_dir.mkdir(parents=True)
+        (pi_dir / "auth.json").write_text(
+            json.dumps({"zai-coding-cn": {"type": "api_key", "key": "k"}}), encoding="utf-8"
+        )
+        monkeypatch.setenv("USERPROFILE" if sys.platform == "win32" else "HOME", str(tmp_path / "home"))
+        config = load_providers(_REPO_PROVIDERS)
+        routes = {r["route"]: r for r in route_precheck(config, {})["routes"]}
+        assert routes["zai-coding-cn"]["available"] is True
+        assert routes["zai-coding-cn"]["source"]["kind"] == "file"
 
     def test_file_source_counts_as_available(self, tmp_path, monkeypatch):
         # Provide the exact file source declared for timi (pi's own auth.json)

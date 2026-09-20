@@ -31,6 +31,7 @@ _HERMETIC_CONFIG = {
         "anthropic-auth": {"sources": [{"env": "TEST_ANTHROPIC_AUTH_TOKEN"}]},
         "deepseek": {"sources": [{"env": "TEST_DEEPSEEK_API_KEY"}]},
         "timi": {"sources": [{"env": "TEST_TIMI_API_KEY"}]},
+        "zai-coding-cn": {"sources": [{"env": "TEST_ZAI_CODING_CN_API_KEY"}]},
     },
     "providers": {
         "claude": {
@@ -46,12 +47,13 @@ _HERMETIC_CONFIG = {
             "api_key_env": "TEST_DEEPSEEK_API_KEY", "credential": "deepseek",
         },
         "timi": {"api_key_env": "TEST_TIMI_API_KEY", "credential": "timi"},
+        "zai-coding-cn": {"api_key_env": "TEST_ZAI_CODING_CN_API_KEY", "credential": "zai-coding-cn"},
     },
 }
 
 _TEST_CRED_VARS = [
     "TEST_ANTHROPIC_API_KEY", "TEST_ANTHROPIC_AUTH_TOKEN",
-    "TEST_DEEPSEEK_API_KEY", "TEST_TIMI_API_KEY",
+    "TEST_DEEPSEEK_API_KEY", "TEST_TIMI_API_KEY", "TEST_ZAI_CODING_CN_API_KEY",
 ]
 
 
@@ -303,6 +305,34 @@ class TestServePartialAvailability:
         assert len(spawned) == 2  # proxy + launcher children spawned
         log = (proj / ".mw" / "mw.log").read_text(encoding="utf-8")
         assert "proxy disabled" not in log
+
+    def test_no_proxy_when_only_direct_routes_credentialed(
+        self, tmp_path: pathlib.Path, no_test_creds, no_codex, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # VC-008: only portless routes (timi / zai-coding-cn) have credentials
+        # -> no proxy is spawned; the direct-only notice is logged.
+        proj = tmp_path
+        (proj / ".mw").mkdir()
+        providers_file = _write_config(tmp_path)
+        monkeypatch.setenv("TEST_TIMI_API_KEY", "hermetic-key")
+        monkeypatch.setenv("TEST_ZAI_CODING_CN_API_KEY", "hermetic-key")
+
+        spawned: list = []
+        monkeypatch.setattr(mw.subprocess, "Popen", lambda cmd, **kw: spawned.append(cmd) or _FakeProc())
+
+        def fake_sleep(seconds: float) -> None:
+            raise KeyboardInterrupt  # break the supervise loop on first tick
+
+        monkeypatch.setattr(mw.time, "sleep", fake_sleep)
+
+        rc = mw.cmd_serve(_serve_args(proj, providers_file))
+
+        assert rc == 0
+        assert spawned, "expected at least the launcher child"
+        assert all("proxy_multi" not in " ".join(str(c) for c in cmd) for cmd in spawned)
+        log = (proj / ".mw" / "mw.log").read_text(encoding="utf-8")
+        assert "proxy disabled" in log
+        assert "zai-coding-cn" in log
 
     def test_proxy_death_is_fatal_with_log_tail(
         self, tmp_path: pathlib.Path, no_test_creds, no_codex, monkeypatch: pytest.MonkeyPatch,

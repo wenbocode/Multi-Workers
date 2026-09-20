@@ -39,6 +39,14 @@ def _timi_available() -> bool:
     return value is not None
 
 
+def _zai_available() -> bool:
+    config = mw_common.load_providers(_REPO_PROVIDERS)
+    value, _source = mw_common.resolve_credential(
+        config["credentials"].get("zai-coding-cn"), os.environ
+    )
+    return value is not None
+
+
 @pytest.fixture()
 def proj(tmp_path: pathlib.Path) -> pathlib.Path:
     (tmp_path / ".agenticdoc").mkdir()
@@ -71,7 +79,9 @@ def launcher_proc(proj: pathlib.Path):
             proc.kill()
 
 
-def _make_task(proj: pathlib.Path, key: str, prompt: str) -> pathlib.Path:
+def _make_task(
+    proj: pathlib.Path, key: str, prompt: str, model: str = ""
+) -> pathlib.Path:
     # Keyed layout contract (launcher._validate_task_path): tasks live under
     # .agenticdoc/{owner}/workers/<task_key>/ or .agenticdoc/_scratch/workers/.
     # The .agenticdoc root belongs to AgenticTask keys and is rejected.
@@ -81,7 +91,10 @@ def _make_task(proj: pathlib.Path, key: str, prompt: str) -> pathlib.Path:
     # Multiline on purpose: the -p argument is flattened by the launcher, and
     # the reply proves the full prompt actually reached the model (Windows
     # .cmd shims truncate multiline args at the first newline otherwise).
-    task_md.write_text(f"type: coding\n\n{prompt}\n", encoding="utf-8")
+    # The optional `model:` interface line is the explicit per-task route —
+    # the queue row stays on the PM default (provider timi, model "").
+    model_line = f"model: {model}\n" if model else ""
+    task_md.write_text(f"type: coding\n{model_line}\n{prompt}\n", encoding="utf-8")
     now = mw_common.iso_now()
     row = mw_common.serialize_entry({
         "task_key": key, "status": "pending", "cli": "pi", "provider": "timi",
@@ -141,3 +154,53 @@ class TestRealTimiDispatch:
         trace = task_dir / "trace.log"
         if trace.exists():
             assert "[FLOW]" in trace.read_text(encoding="utf-8", errors="replace")
+
+
+class TestRealZaiDispatch:
+    """L2 e2e: real pi CLI + real zai-coding-cn LLM via the zai/ prefix
+    (mw-provider-routing AC-005 / VC-005)."""
+
+    def test_say_exactly_ok_full_chain(self, proj: pathlib.Path, launcher_proc) -> None:
+        if not _zai_available():
+            pytest.skip("no zai-coding-cn credentials (env ZAI_CODING_CN_API_KEY or auth.json)")
+
+        prompt = "Ignore the type and model lines above.\nYour entire reply must be exactly: ok"
+        _make_task(proj, "e2e-zai-ok", prompt, model="zai/glm-5.3")
+
+        deadline = time.monotonic() + 180
+        status = None
+        while time.monotonic() < deadline:
+            status = _status(proj, "e2e-zai-ok")
+            if status in ("done", "failed", "needs-clarification"):
+                break
+            time.sleep(1.0)
+
+        task_dir = proj / ".agenticdoc" / "_scratch" / "workers" / "e2e-zai-ok"
+        worker_log = task_dir / "worker.log"
+        tail = worker_log.read_text(encoding="utf-8", errors="replace")[-2000:] if worker_log.exists() else "(no worker.log)"
+        if status is None or status not in ("done", "failed", "needs-clarification"):
+            pytest.fail(
+                "task did not reach a terminal state within 180s — environment "
+                f"unavailable? (status={status})\nworker.log tail:\n{tail}"
+            )
+
+        assert status == "done", f"status={status}; worker.log tail:\n{tail}"
+
+        # The zai/ prefix reached the spawn: launcher log shows the resolved
+        # model value and its source.
+        launcher_log = (proj / "launcher-out.log").read_text(encoding="utf-8", errors="replace")
+        assert "model=zai/glm-5.3" in launcher_log
+        assert "source=task" in launcher_log
+
+        # A real model roundtrip happened: output.md carries the reply.
+        output_md = task_dir / "output.md"
+        assert output_md.exists(), "worker finished but wrote no output.md"
+        content = output_md.read_text(encoding="utf-8")
+        assert "## Summary" in content
+        assert "ok" in content.lower()
+
+        # The worker ran glm-5.3 (trace [MODEL] lifecycle line).
+        trace = task_dir / "trace.log"
+        if trace.exists():
+            trace_text = trace.read_text(encoding="utf-8", errors="replace")
+            assert "model=glm-5.3" in trace_text
