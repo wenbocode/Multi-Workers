@@ -22,7 +22,9 @@ import {
 import type { TaskPhase } from "./phase-runner.ts";
 import { goalMtime, writePhaseFile } from "./phase-runner.ts";
 import {
+	applyParentRootUnion,
 	checkReadScopeCall,
+	parentRootFromTaskContent,
 	type ReadScopeConfig,
 	type ReadScopeRejection,
 	type ReadScopeState,
@@ -446,7 +448,14 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	// read_scope — otherwise zero interception (AC-012 red line). Rejections
 	// accumulate in memory and are written to output.md on every exit path via
 	// writeOutputGuarded (the output-writer remains the unified write-out point).
-	const readScopeConfig: ReadScopeConfig | undefined = readScopeConfigFromMeta(meta);
+	// Partition extended-workspace union (mw-partition-parent-extended AC-002):
+	// the profile block's Parent root joins the allowed scope — parent is a
+	// directly developed extension of the workspace, not read-only context.
+	// No-op for empty (fail-closed) / deny-only scopes and non-partition tasks.
+	const readScopeConfig: ReadScopeConfig | undefined = applyParentRootUnion(
+		readScopeConfigFromMeta(meta),
+		parentRootFromTaskContent(fs.readFileSync(taskPath, "utf8")),
+	);
 	const readScopeState: ReadScopeState = { allowedCalls: 0, bytesRead: 0 };
 	const readScopeRejections: ReadScopeRejection[] = [];
 

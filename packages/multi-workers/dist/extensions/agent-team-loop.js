@@ -13857,7 +13857,7 @@ function renderPartitionProfileBlock(config, ignoreEnforced) {
     "[mw] Workspace profile (target.yml essentials, injected at dispatch;",
     `full file: ${path11.join(config.controlRoot, ".agenticdoc", "target.yml")})`,
     `Control workspace: ${config.controlRoot}`,
-    `Parent root: ${config.parentRoot}`,
+    `Parent root (extended workspace, writable): ${config.parentRoot}`,
     `Partition root (worker cwd): ${config.partitionRoot}`
   ];
   const roots = config.roots ?? {};
@@ -19353,6 +19353,20 @@ function checkReadScopeCall(projectRoot, config, state, tool, rawPath, statSize 
   }
   return { allowed: true, chargedBytes };
 }
+var PARTITION_MODE_LINE_RE = /^\[mw\] mode: partition[ \t]*$/m;
+var PARENT_ROOT_LINE_RE = /^Parent root[^:\n]*:[ \t]*(.+)$/m;
+function parentRootFromTaskContent(content) {
+  if (!PARTITION_MODE_LINE_RE.test(content)) return null;
+  const match2 = PARENT_ROOT_LINE_RE.exec(content);
+  if (match2 === null) return null;
+  const parentRoot = match2[1]?.trim();
+  return parentRoot && parentRoot.length > 0 ? parentRoot : null;
+}
+function applyParentRootUnion(config, parentRoot) {
+  if (config === void 0 || parentRoot === null) return config;
+  if (config.scope === null || config.scope.length === 0) return config;
+  return { ...config, scope: [...config.scope, parentRoot] };
+}
 function readScopeConfigFromMeta(meta) {
   if (meta.readScope === void 0 && meta.denyGlobs === void 0) return void 0;
   return {
@@ -19602,7 +19616,10 @@ async function workerModeActivate(pi) {
     killTrackedDetachedChildren();
     process.exit(1);
   }
-  const readScopeConfig = readScopeConfigFromMeta(meta);
+  const readScopeConfig = applyParentRootUnion(
+    readScopeConfigFromMeta(meta),
+    parentRootFromTaskContent(fs23.readFileSync(taskPath, "utf8"))
+  );
   const readScopeState = { allowedCalls: 0, bytesRead: 0 };
   const readScopeRejections = [];
   function writeOutputGuarded(opts) {
@@ -19619,7 +19636,10 @@ async function workerModeActivate(pi) {
   );
   let outputWritten = false;
   process.on("exit", () => {
-    killTrackedDetachedChildren();
+    try {
+      killTrackedDetachedChildren();
+    } catch {
+    }
     if (outputWritten) return;
     try {
       writeOutputGuarded({

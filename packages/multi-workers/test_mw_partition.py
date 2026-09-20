@@ -185,7 +185,7 @@ def test_set_roots_and_vcs_persisted_and_relative_anchored(tmp_path: pathlib.Pat
 # ── set: rejection paths (file untouched, no .bak, no migration) ─────────────
 
 
-def test_set_missing_parent_rejected(tmp_path: pathlib.Path) -> None:
+def test_set_missing_parent_rejected(tmp_path: pathlib.Path, capsys) -> None:
     project = tmp_path / "control"
     project.mkdir()
     rc = mw.cmd_partition(
@@ -196,7 +196,13 @@ def test_set_missing_parent_rejected(tmp_path: pathlib.Path) -> None:
     )
     assert rc == 1
     assert not _yml(project).exists()
+    # mw-partition-parent-extended AC-005: the wording names the extended
+    # writable workspace, never a read-only context.
+    err = capsys.readouterr().err
+    assert "read-only" not in err
+    assert "extended writable workspace" in err
     print("[VERIFY] VC-011: exit=1 missing-parent, file=unchanged")
+    print("[VERIFY] VC-008: read_only_residual=0, wording=extended-writable-workspace")
 
 
 @pytest.mark.parametrize(

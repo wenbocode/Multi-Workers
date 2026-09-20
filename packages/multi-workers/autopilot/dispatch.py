@@ -146,16 +146,19 @@ def render_task_md(
 def _expand_read_scope(
     scope: list[str], config: dict, project_root: pathlib.Path
 ) -> list[str]:
-    """D-007 (mw-dual-workspace) + D-006 (mw-target-partition): dual mode
-    anchors relative entries against the game root and partition mode
-    against the partition root (the worker cwd in both), then appends the
-    control root when absent (D-005: profile authorization — the worker
-    must be able to read target.yml / task context files; never appended to
-    an empty scope — that would create containment the dispatch never asked
-    for). The parent root is NEVER appended by virtue of parentness: only
-    explicitly listed entries reach it (AC-008 red line). Single mode:
-    scope passes through unchanged — relative entries anchor cwd = the
-    (single) control root, so expansion would only churn output."""
+    """D-007 (mw-dual-workspace) + D-006 (mw-target-partition) + AC-001
+    (mw-partition-parent-extended): dual mode anchors relative entries
+    against the game root and partition mode against the partition root
+    (the worker cwd in both), then appends the control root when absent
+    (D-005: profile authorization — the worker must be able to read
+    target.yml / task context files; never appended to an empty scope —
+    that would create containment the dispatch never asked for). The
+    parent root IS appended in partition mode: parent is the extended
+    writable workspace (mw-partition-parent-extended AC-001 — the carved-
+    out functionality lives in the parent and is developed directly),
+    with the same absent-only append + normcase dedup as the control root.
+    Single mode: scope passes through unchanged — relative entries anchor
+    cwd = the (single) control root, so expansion would only churn output."""
     mode = config["mode"]
     if mode not in ("dual", "partition") or not scope:
         return scope
@@ -170,6 +173,15 @@ def _expand_read_scope(
     control = str(project_root.resolve())
     if all(os.path.normcase(s) != os.path.normcase(control) for s in expanded):
         expanded.append(control)
+    if mode == "partition":
+        # Extended workspace (AC-001): the parent root joins the containment
+        # with the same absent-only append + normcase dedup as the control
+        # root. Order: [...entries, control, parent].
+        parent = config.get("parent_root")
+        if parent:
+            parent_abs = str(pathlib.Path(parent).resolve())
+            if all(os.path.normcase(s) != os.path.normcase(parent_abs) for s in expanded):
+                expanded.append(parent_abs)
     return expanded
 
 

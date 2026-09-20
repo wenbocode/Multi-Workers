@@ -342,7 +342,7 @@ describe("partition profile injection (mw-target-partition AC-007/AC-019)", () =
 		expect(text).toContain("<!-- mw-profile: v2 -->\n[mw] mode: partition");
 		expect(text.split("<!-- mw-profile:").length - 1).toBe(1); // single block
 		// Roots (realpath-normalized) replace the dual game/engine lines.
-		expect(text).toContain(`Parent root: ${dirs.parent}`);
+		expect(text).toContain(`Parent root (extended workspace, writable): ${dirs.parent}`);
 		expect(text).toContain(`Partition root (worker cwd): ${dirs.partition}`);
 		expect(text).toContain(`- sdk: ${dirs.sdk}`);
 		expect(text).not.toContain("Game root:");

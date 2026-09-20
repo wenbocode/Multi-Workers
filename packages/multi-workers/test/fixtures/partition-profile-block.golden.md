@@ -3,7 +3,7 @@
 [mw] Workspace profile (target.yml essentials, injected at dispatch;
 full file: <CTRL>\.agenticdoc\target.yml)
 Control workspace: <CTRL>
-Parent root: <CTRL>\parent
+Parent root (extended workspace, writable): <CTRL>\parent
 Partition root (worker cwd): <CTRL>\shard
 Named roots:
 - sdk: <CTRL>\sdk

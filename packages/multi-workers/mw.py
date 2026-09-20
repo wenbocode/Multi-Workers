@@ -272,9 +272,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
             proxy_cmd.append(f"--deepseek-port={args.deepseek_port}")
         # The LLM proxy only serves port-routed providers (claude / claude-cli /
         # deepseek) and needs the private timi-proxy-cli package; direct routes
-        # (timi, codex-native) never touch it. With no proxy-routed credential
-        # available, skip it entirely instead of dying on the optional
-        # dependency — fresh machines without that package hit
+        # (timi, zai-coding-cn, codex-native) never touch it. With no
+        # proxy-routed credential available, skip it entirely instead of dying
+        # on the optional dependency — fresh machines without that package hit
         # ModuleNotFoundError at import and used to take the whole service down.
         proxy_routes = [
             st["route"]
@@ -289,7 +289,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             proxy_proc = None
             print(
                 "[mw serve] no proxy-routed credentials (claude/claude-cli/deepseek)"
-                " - proxy disabled; direct routes only (timi / codex-native)",
+                " - proxy disabled; direct routes only (timi / zai-coding-cn / codex-native)",
                 flush=True,
             )
         elif proxy_already_running:
@@ -1299,7 +1299,7 @@ def _partition_set(project_dir: pathlib.Path, args: argparse.Namespace) -> int:
     if not args.parent:
         print(
             "[mw partition set] Error: --parent is required "
-            "(the parent project root — read-only context for the partition)",
+            "(the parent project root — extended writable workspace for the partition)",
             file=sys.stderr,
         )
         return 1
@@ -2814,7 +2814,7 @@ def _parse_args() -> argparse.Namespace:
     )
     partition_set_p.add_argument("--project", required=True, help="Control workspace directory")
     partition_set_p.add_argument("--parent", default=None, metavar="DIR",
-                                 help="Parent project root (required; read-only context for the partition)")
+                                 help="Parent project root (required; extended writable workspace for the partition)")
     partition_set_p.add_argument("--partition", default=None, metavar="DIR",
                                  help="Independent partition directory = worker cwd (default: the control root)")
     partition_set_p.add_argument("--root", action="append", default=None, metavar="NAME=DIR",

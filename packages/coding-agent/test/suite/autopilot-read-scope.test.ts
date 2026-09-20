@@ -20,12 +20,14 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import {
+	applyParentRootUnion,
 	checkReadScopeCall,
 	DEFAULT_READ_BYTE_CAP,
 	DEFAULT_READ_FILE_CAP,
 	isSameOrUnder,
 	isWithinScope,
 	normalizeForCompare,
+	parentRootFromTaskContent,
 	type ReadScopeState,
 	readScopeConfigFromMeta,
 } from "../../src/extensions/agent-team-loop/worker/read-scope.ts";
@@ -674,5 +676,152 @@ describe("worker-mode read_scope wiring (AC-009)", () => {
 			delete process.env.PI_WORKER_TASK;
 		}
 		fs.rmSync(root, { recursive: true, force: true });
+	});
+});
+
+// ── Partition extended-workspace union (mw-partition-parent-extended) ────────
+
+describe("partition parent-root union (mw-partition-parent-extended)", () => {
+	const PROFILE_BODY_OLD_LABEL = (parent: string, partition: string) =>
+		`<!-- mw-profile: v2 -->\n[mw] mode: partition\n[mw] Workspace profile (target.yml essentials, injected at dispatch;\nfull file: ${partition}\\.agenticdoc\\target.yml)\nControl workspace: ${partition}\nParent root: ${parent}\nPartition root (worker cwd): ${partition}\n`;
+	const PROFILE_BODY_NEW_LABEL = (parent: string, partition: string) =>
+		PROFILE_BODY_OLD_LABEL(parent, partition).replace(
+			`Parent root: ${parent}`,
+			`Parent root (extended workspace, writable): ${parent}`,
+		);
+
+	it("VC-002: parentRootFromTaskContent parses old and annotated labels, gates on the mode line", () => {
+		const oldLabel = PROFILE_BODY_OLD_LABEL("P:/parent", "P:/shard");
+		expect(parentRootFromTaskContent(oldLabel)).toBe("P:/parent");
+		const newLabel = PROFILE_BODY_NEW_LABEL("P:/parent", "P:/shard");
+		expect(parentRootFromTaskContent(newLabel)).toBe("P:/parent");
+		// No mode line → null even with a Parent root line present.
+		expect(parentRootFromTaskContent(`Parent root: P:/parent\n`)).toBeNull();
+		// Non-partition mode line → null.
+		expect(parentRootFromTaskContent(`[mw] mode: dual\nParent root: P:/parent\n`)).toBeNull();
+		// Mode line but no Parent root line → null.
+		expect(parentRootFromTaskContent(`[mw] mode: partition\nPartition root: P:/shard\n`)).toBeNull();
+		console.log("[VERIFY] VC-002: parentRoot=P (old+new label), null (no mode/no line/dual)");
+	});
+
+	it("VC-003: applyParentRootUnion appends only to a non-empty scope, never to empty/deny-only/undefined", () => {
+		const scoped = readScopeConfigFromMeta({ readScope: ["src/"], denyGlobs: [] })!;
+		const unioned = applyParentRootUnion(scoped, "P:/parent");
+		expect(unioned).not.toBe(scoped);
+		expect(unioned?.scope).toEqual(["src/", "P:/parent"]);
+		expect(unioned?.denyGlobs).toEqual(scoped.denyGlobs);
+		expect(unioned?.fileCap).toBe(scoped.fileCap);
+		// undefined config (no read_scope/deny_globs at all).
+		expect(applyParentRootUnion(undefined, "P:/parent")).toBeUndefined();
+		// Deny-only (scope=null) and the fail-closed empty form stay untouched —
+		// same reference back, never a manufactured containment.
+		const denyOnly = readScopeConfigFromMeta({ denyGlobs: ["**/x"] })!;
+		expect(applyParentRootUnion(denyOnly, "P:/parent")).toBe(denyOnly);
+		const emptyScope = readScopeConfigFromMeta({ readScope: [] })!;
+		expect(applyParentRootUnion(emptyScope, "P:/parent")).toBe(emptyScope);
+		// parentRoot null → unchanged.
+		expect(applyParentRootUnion(scoped, null)).toBe(scoped);
+		console.log("[VERIFY] VC-003: union=appended (non-empty scope), unchanged (undefined/null/empty)");
+	});
+
+	it("VC-004/VC-006: wiring — parent reads allowed via union, writes never intercepted, outside still blocked", async () => {
+		const root = mkdtemp();
+		const parent = mkdtemp();
+		fs.mkdirSync(path.join(root, "allowed"), { recursive: true });
+		fs.mkdirSync(path.join(parent, "combat"), { recursive: true });
+		fs.writeFileSync(path.join(root, "allowed", "file.txt"), "in scope", "utf8");
+		fs.writeFileSync(path.join(parent, "combat", "existing.cpp"), "parent code", "utf8");
+		fs.writeFileSync(path.join(root, "secret.txt"), "out of scope", "utf8");
+
+		const cwd = process.cwd();
+		process.chdir(root);
+		try {
+			// Local variant of startScopedWorker carrying the v2 profile body
+			// (old label form — the union must keep working across the label change).
+			const taskDir = path.join(root, "goal-autopilot", "workers", "mwppe-union");
+			fs.mkdirSync(taskDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(taskDir, "task.md"),
+				`---\ntype: coding\nread_scope:\n  - allowed\n---\n\n${PROFILE_BODY_OLD_LABEL(parent, root)}`,
+				"utf8",
+			);
+			process.env.PI_WORKER_TASK = path.join(taskDir, "task.md");
+			const worker = fakeWorkerPi();
+			await workerModeActivate(worker.pi);
+			expect(worker.interceptorCount()).toBe(1);
+
+			// In-scope read passes.
+			expect(worker.toolCall("read", { path: "allowed/file.txt" })).toBeUndefined();
+			// Parent read passes via the union (extended workspace).
+			expect(worker.toolCall("read", { path: path.join(parent, "combat", "existing.cpp") })).toBeUndefined();
+			// Out-of-scope (non-parent) read still blocks.
+			const blocked = worker.toolCall("read", { path: "secret.txt" });
+			expect(blocked?.block).toBe(true);
+			expect(blocked?.reason).toContain("rule=scope");
+
+			// Writes into the parent are never intercepted (AC-004): write/edit/bash.
+			expect(
+				worker.toolCall("write", { path: path.join(parent, "combat", "new.cpp"), content: "x" }),
+			).toBeUndefined();
+			expect(worker.toolCall("edit", { path: path.join(parent, "combat", "existing.cpp") })).toBeUndefined();
+			expect(
+				worker.toolCall("bash", { command: `type "${path.join(parent, "combat", "existing.cpp")}"` }),
+			).toBeUndefined();
+
+			worker.emit("agent_end", { messages: [] });
+			worker.emit("agent_settled");
+			const output = fs.readFileSync(path.join(taskDir, "output.md"), "utf8");
+			expect(output).toContain("## Read Scope Rejections");
+			expect(output).not.toContain("new.cpp");
+			expect(output).not.toContain("existing.cpp");
+			console.log("[VERIFY] VC-004: parent_read=allowed, outside=blocked; VC-006: write/edit/bash=unintercepted");
+		} finally {
+			process.chdir(cwd);
+			delete process.env.PI_WORKER_TASK;
+		}
+		fs.rmSync(root, { recursive: true, force: true });
+		fs.rmSync(parent, { recursive: true, force: true });
+	});
+
+	it("VC-005: deny globs still win over the parent union (rule=deny-glob)", async () => {
+		const root = mkdtemp();
+		const parent = mkdtemp();
+		fs.mkdirSync(path.join(parent, "DerivedDataCache", "a"), { recursive: true });
+		fs.mkdirSync(path.join(parent, "combat"), { recursive: true });
+		fs.writeFileSync(path.join(parent, "DerivedDataCache", "a", "b"), "x", "utf8");
+		fs.writeFileSync(path.join(parent, "combat", "ok.cpp"), "x", "utf8");
+
+		const cwd = process.cwd();
+		process.chdir(root);
+		try {
+			const taskDir = path.join(root, "goal-autopilot", "workers", "mwppe-deny");
+			fs.mkdirSync(taskDir, { recursive: true });
+			// Annotated label form through the wiring (post-T-03 shape).
+			fs.writeFileSync(
+				path.join(taskDir, "task.md"),
+				`---\ntype: coding\nread_scope:\n  - .\ndeny_globs:\n  - '**/DerivedDataCache/**'\n---\n\n${PROFILE_BODY_NEW_LABEL(parent, root)}`,
+				"utf8",
+			);
+			process.env.PI_WORKER_TASK = path.join(taskDir, "task.md");
+			const worker = fakeWorkerPi();
+			await workerModeActivate(worker.pi);
+			expect(worker.interceptorCount()).toBe(1);
+
+			// Parent path matching a deny glob blocks even though the parent root
+			// is in the allowed scope (deny first).
+			const blocked = worker.toolCall("read", {
+				path: path.join(parent, "DerivedDataCache", "a", "b"),
+			});
+			expect(blocked?.block).toBe(true);
+			expect(blocked?.reason).toContain("rule=deny-glob");
+			// Non-denied parent path still passes via the union.
+			expect(worker.toolCall("read", { path: path.join(parent, "combat", "ok.cpp") })).toBeUndefined();
+			console.log("[VERIFY] VC-005: parent_deny=blocked (rule=deny-glob), parent_ok=allowed");
+		} finally {
+			process.chdir(cwd);
+			delete process.env.PI_WORKER_TASK;
+		}
+		fs.rmSync(root, { recursive: true, force: true });
+		fs.rmSync(parent, { recursive: true, force: true });
 	});
 });

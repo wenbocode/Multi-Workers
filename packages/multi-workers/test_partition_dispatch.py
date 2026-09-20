@@ -89,7 +89,7 @@ Do the partition work.
 [mw] Workspace profile (target.yml essentials, injected at dispatch;
 full file: {control}/.agenticdoc/target.yml)
 Control workspace: {control}
-Parent root: {parent}
+Parent root (extended workspace, writable): {parent}
 Partition root (worker cwd): {partition}
 """
 
@@ -470,7 +470,7 @@ class TestConductorProfileInjection:
         assert "[mw] mode: partition" in text
         # line protocol mirrors the TS renderPartitionProfileBlock
         assert f"Control workspace: {control.resolve()}" in text
-        assert f"Parent root: {parent.resolve()}" in text
+        assert f"Parent root (extended workspace, writable): {parent.resolve()}" in text
         assert f"Partition root (worker cwd): {partition.resolve()}" in text
         assert f"- sdk: {sdk.resolve()}" in text
         assert f"- build: make -C {partition.resolve()} SDK={sdk.resolve()}" in text
@@ -613,11 +613,34 @@ class TestExpandReadScopePartition:
             str((partition / "docs" / "readme.md").resolve()),
             str(outside),
             str(control.resolve()),  # control appended (was absent)
+            str(parent.resolve()),  # parent appended: extended workspace (AC-001)
         ]
-        # AC-008 red line: the parent root never appears by virtue of
-        # parentness (three distinct roots).
-        assert str(parent.resolve()) not in expanded
-        print(f"[VERIFY] VC-008: scope={expanded}")
+        print(f"[VERIFY] VC-001: expanded=[entries, control, parent], legacy=unchanged")
+
+    def test_partition_parent_dedup(self, tmp_path: pathlib.Path) -> None:
+        """AC-001 dedup: an explicitly listed parent (or a parent equal to
+        the control root) is not appended a second time."""
+        control, parent, partition = _write_partition_yml(tmp_path)
+        config = mw_common.load_target_config(control)
+        # (a) parent already listed as an explicit entry
+        expanded = _expand_read_scope([str(parent)], config, control)
+        assert expanded.count(str(parent.resolve())) == 1
+        assert expanded == [str(parent.resolve()), str(control.resolve())]
+        # (b) parent == control root (legal: only parent/partition nesting is
+        # rejected; a partition elsewhere with parent == control must not
+        # duplicate)
+        yml = control / ".agenticdoc" / "target.yml"
+        yml.write_text(
+            f"active: partition\npartition:\n  parent: '{control}'\n  partition: '{partition}'\n",
+            encoding="utf-8",
+        )
+        config = mw_common.load_target_config(control)
+        expanded = _expand_read_scope(["src/"], config, control)
+        assert expanded == [
+            str((partition / "src").resolve()),
+            str(control.resolve()),  # control appended; parent == control → no duplicate
+        ]
+        print("[VERIFY] VC-001: dedup=pass")
 
     def test_partition_no_duplicate_control(self, tmp_path: pathlib.Path) -> None:
         control, _, partition = _write_partition_yml(tmp_path)

@@ -72,6 +72,10 @@ _DEFAULT_CONFIG: dict = {
             {"env": "TIMI_API_KEY"},
             {"file": "~/.pi/agent/auth.json", "format": "json", "field": "timi.key"},
         ]},
+        "zai-coding-cn": {"sources": [
+            {"env": "ZAI_CODING_CN_API_KEY"},
+            {"file": "~/.pi/agent/auth.json", "format": "json", "field": "zai-coding-cn.key"},
+        ]},
     },
     "providers": {
         "claude": {
@@ -87,6 +91,7 @@ _DEFAULT_CONFIG: dict = {
             "api_key_env": "DEEPSEEK_API_KEY", "credential": "deepseek",
         },
         "timi": {"api_key_env": "TIMI_API_KEY", "credential": "timi"},
+        "zai-coding-cn": {"api_key_env": "ZAI_CODING_CN_API_KEY", "credential": "zai-coding-cn"},
     },
 }
 
@@ -105,6 +110,7 @@ CLI_DEFAULT_PROVIDER: dict[str, str] = {"pi": "claude", "claude": "claude-cli"}
 #       claude -> pi provider "anthropic"        (direct, no mw proxy)
 #       codex -> pi provider "openai-codex"      (codex' own config)
 #       deepseek -> pi provider "deepseek"       (direct, no mw proxy)
+#       zai -> pi provider "zai-coding-cn"       (direct, no mw proxy)
 #   * CLI prefixes (executor transports, must match the entry cli):
 #       codex_cli -> codex exec, claude_cli -> claude CLI
 # A bare model id (no prefix) keeps the entry's own (cli, provider) route.
@@ -115,6 +121,7 @@ MODEL_PREFIX_TO_PI_PROVIDER: dict[str, str] = {
     "claude": "anthropic",
     "codex": "openai-codex",
     "deepseek": "deepseek",
+    "zai": "zai-coding-cn",
 }
 PROVIDER_ID_TO_PREFIX: dict[str, str] = {v: k for k, v in MODEL_PREFIX_TO_PI_PROVIDER.items()}
 CLI_PREFIX_TO_CLI: dict[str, str] = {
@@ -2236,7 +2243,7 @@ def render_partition_profile_md(config: dict, ignore_enforced: bool = True) -> s
         "[mw] Workspace profile (target.yml essentials, injected at dispatch;",
         f"full file: {os.path.join(config['control_root'], '.agenticdoc', 'target.yml')})",
         f"Control workspace: {config['control_root']}",
-        f"Parent root: {config['parent_root']}",
+        f"Parent root (extended workspace, writable): {config['parent_root']}",
         f"Partition root (worker cwd): {config['partition_root']}",
     ]
     roots = config.get("roots") or {}
