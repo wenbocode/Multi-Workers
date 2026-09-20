@@ -2302,9 +2302,17 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
-		// Process Kimi For Coding models
-		if (data["kimi-for-coding"]?.models) {
-			const kimiModels = data["kimi-for-coding"].models as Record<string, ModelsDevModel>;
+		// Process Kimi For Coding models. models.dev renamed the Kimi Coding
+		// subscription entry from "kimi-for-coding" to "kimi-code-plan-global" /
+		// "kimi-code-plan-cn" (2026-09, model list unchanged). Prefer the global
+		// entry; fall back to the cn mirror and the legacy key so older catalog
+		// snapshots still generate.
+		const kimiSource =
+			data["kimi-code-plan-global"]?.models ??
+			data["kimi-code-plan-cn"]?.models ??
+			data["kimi-for-coding"]?.models;
+		if (kimiSource) {
+			const kimiModels = kimiSource as Record<string, ModelsDevModel>;
 			const hasCanonicalModel = Object.prototype.hasOwnProperty.call(kimiModels, "kimi-for-coding");
 
 			const kimiAliases = new Set(["k2p5", "k2p6", "k2p7"]);
