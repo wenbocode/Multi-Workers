@@ -20,3 +20,14 @@
   2. 需要改凭据：关闭 pi 窗口后在普通终端编辑，或用 `pi /login`（core 流程，不在拦截范围）。
   3. 读不受限；worker 模式被拦截时向任务 trace.log 落 `[PROTECTED_CONFIG]` 行（PM watch 实时可见）。
 - 关联：2026-09-15 事故（全窗口凭据丢失，多窗口死机）；guard 落地与验证见 mw-protected-config-guard/mini-spec.md。
+
+## P-003 `open(p, "w")` 先截断后求值——写/改文件静默清零（2026-09-21，PM 自身缺陷登记 #50）
+
+- 现象：PM 用 `io.open(p, "w")` 改脚本时，内层表达式（替换/序列化）抛错 → 文件已被截断成 0 B；而空 .py 文件 `py_compile` 仍通过 ⇒ 复验一度「静默成功」。
+- 根因：Python `open(path, "w")` 在 open 时立即截断文件，而 `f.write(expr)` 的实参在截断之后才求值；表达式抛异常时文件已是 0 B。空文件是合法空模块，只看 `py_compile`/退出码的复验无法发现内容丢失（假阳性）。
+- 硬规则（规避）：
+  1. 程序化改写一律「先算后写」：把最终内容完整算进变量，再 `pathlib.Path.write_text(content, encoding="utf-8")` —— 实参先求值再开文件，异常时原文件不动。框架生产代码已全部此风格（advance_phase.py / update_index.py / conductor.py 等，2026-09-21 审计确认）。
+  2. 需要防半写/并发读时用「临时文件 + `os.replace` 原子改名」（`mw_common._write_workers_file`、mw.py `_atomic_write_yml` 即此法；autopilot/dispatch.py 队列写入已于 2026-09-21 对齐，序列化生成器不再在截断后求值）。
+  3. ad-hoc 一次性脚本同样遵守；确实要原地改且无版本控制兑底时，先 `shutil.copy2` 备份。
+  4. 复验禁止只看 `py_compile` / 退出码：必须断言文件非空 + 关键内容锚点（grep 关键行）。
+- 关联：PM 自身缺陷登记 #47~#52（2026-09-21，另一窗口引述；登记原文不在本仓）；#50 为本条来源，涉事脚本已由当事 PM 重写。

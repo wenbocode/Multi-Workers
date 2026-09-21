@@ -364,8 +364,11 @@ def dispatch(
             existing.append(row)
         else:
             existing[idx] = row
-        with wpath.open("w", encoding="utf-8", newline="\n") as fh:
-            fh.write("".join(mw_common.serialize_entry(e) + "\n" for e in existing))
+        # Queue write goes through mw_common._write_workers_file (content
+        # fully precomputed, then tmp + os.replace): a serialization error
+        # must never truncate _workers.parallel — open("w") truncates before
+        # the write expression is evaluated (pitfalls P-003 / PM defect #50).
+        mw_common._write_workers_file(wpath, existing)
     except OSError as exc:
         return DispatchResult(
             ok=False,
