@@ -3,8 +3,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
+import type { ModelRegistry } from "../../../core/model-registry.ts";
 import type { AckStore } from "../shared/ack-store.ts";
 import { runAgenticScript } from "../shared/agentic-scripts.ts";
+import { DISPATCHABLE_TYPES, readRoleModel, roleForTaskType, validateModelValue } from "../shared/dispatch-models.ts";
 import { acquireLock } from "../shared/file-lock.ts";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.ts";
 import { type IndexStore, readIndexMdActive } from "../shared/index-store.ts";
@@ -21,6 +23,7 @@ import {
 	startMw,
 	stopMw,
 	targetMw,
+	updateEnvMw,
 } from "../shared/mw-runner.ts";
 import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.ts";
 import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "../shared/phase-docs.ts";
@@ -822,6 +825,105 @@ export function registerMwTools(pi: ExtensionAPI, projectDir: string): void {
 	});
 }
 
+/** Resolve the task type for one dispatch: an explicit value must be one of
+ * DISPATCHABLE_TYPES, an omitted one keeps the legacy cli-derived mapping
+ * (pi -> coding, claude -> review, codex -> codex) so pre-existing dispatches
+ * stay byte-identical. */
+export function resolveDispatchType(
+	cli: string,
+	requested: string,
+): { ok: true; type: string } | { ok: false; message: string } {
+	const trimmed = requested.trim();
+	if (!trimmed) {
+		const legacy = cli === "codex" ? "codex" : cli === "claude" ? "review" : "coding";
+		return { ok: true, type: legacy };
+	}
+	if (!(DISPATCHABLE_TYPES as readonly string[]).includes(trimmed)) {
+		return {
+			ok: false,
+			message: `Invalid type '${trimmed}'. Must be one of: ${DISPATCHABLE_TYPES.join(", ")}.`,
+		};
+	}
+	return { ok: true, type: trimmed };
+}
+
+/** Collapse a model-override reason to the single line a task.md frontmatter
+ * entry can hold (design D-003). */
+function oneLineReason(raw: string): string {
+	return raw.replace(/\s*\r?\n\s*/g, " ").trim();
+}
+
+/** Build the task.md frontmatter (type / model / model-reason) for one dispatch
+ * and the echo line that tells the PM which layer supplies the model
+ * (design D-001~D-007). Shared by the dispatch_worker tool and /worker so the
+ * two entries can never drift.
+ *
+ * Refusals (no task file must be written): an unknown model id for a pi route
+ * (validateModelValue), and an override of a configured dispatch.yml role
+ * default without a reason. */
+export function planDispatchFrontmatter(input: {
+	cwd: string;
+	cli: string;
+	provider: string;
+	taskType: string;
+	model: string;
+	modelReason: string;
+	registry: ModelRegistry | undefined;
+}): { ok: true; frontmatter: string; echo: string } | { ok: false; message: string } {
+	const role = roleForTaskType(input.taskType);
+	const configured = readRoleModel(input.cwd, role) ?? "";
+	const requested = input.model.trim();
+	const reason = oneLineReason(input.modelReason);
+
+	// The value that will actually run: an explicit request wins, else the
+	// configured role default (which the launcher would pick next). Either way
+	// it must name a model the pi route can resolve.
+	const effective = requested || configured;
+	if (effective) {
+		const validation = validateModelValue(input.registry, input.cli, input.provider, effective);
+		if (!validation.ok) return { ok: false, message: validation.message };
+	}
+
+	if (!requested) {
+		return {
+			ok: true,
+			frontmatter: `type: ${input.taskType}\n`,
+			echo: configured
+				? `model: dispatch.yml ${role}=${configured}`
+				: `model: route default (no dispatch.yml ${role} default)`,
+		};
+	}
+
+	// Requested value equals the configured default: leave the line out so the
+	// config stays the single source of truth (a later config change applies).
+	if (configured && requested === configured) {
+		return {
+			ok: true,
+			frontmatter: `type: ${input.taskType}\n`,
+			echo: `model: dispatch.yml ${role}=${configured} (requested value matches the configured default; not pinned)`,
+		};
+	}
+
+	if (configured && !reason) {
+		return {
+			ok: false,
+			message:
+				`Model override for role '${role}' needs model_reason: dispatch.yml ${role}=${configured}, requested=${requested}. ` +
+				"Omit the model to use the configured default, or re-dispatch with model_reason explaining the deviation.",
+		};
+	}
+
+	const lines = [`type: ${input.taskType}`, `model: ${requested}`];
+	if (reason) lines.push(`model-reason: ${reason}`);
+	return {
+		ok: true,
+		frontmatter: `${lines.join("\n")}\n`,
+		echo: configured
+			? `model override: role default ${role}=${configured} -> ${requested} (reason: ${reason})`
+			: `model: ${requested} (no dispatch.yml ${role} default)`,
+	};
+}
+
 /**
  * Register agent-callable tools for worker dispatch and task listing.
  * These complement the slash commands in registerWorkerCommands.
@@ -833,6 +935,7 @@ export function registerWorkerTools(
 	indexStore: IndexStore,
 	agenticdocRoot: string,
 	watch: PmWatchState,
+	projectDir: string = path.dirname(agenticdocRoot),
 ): void {
 	// dispatch_worker: create a task.md and immediately dispatch it to the worker queue.
 	pi.registerTool({
@@ -856,7 +959,20 @@ export function registerWorkerTools(
 			),
 			model: Type.Optional(
 				Type.String({
-					description: "Optional model override for this worker (e.g. 'claude-sonnet-4-5').",
+					description:
+						"Optional model override for this worker (e.g. 'timi/gpt-5.6-sol'). Deviating from the configured .mw/dispatch.yml role default requires model_reason; a value equal to that default is not pinned (the config stays the source of truth).",
+				}),
+			),
+			model_reason: Type.Optional(
+				Type.String({
+					description:
+						"Why this task deviates from the .mw/dispatch.yml role default. Required when model is set and the role has a configured default with a different value; recorded in task.md as model-reason.",
+				}),
+			),
+			type: Type.Optional(
+				Type.String({
+					description:
+						"Task type: 'coding' | 'review' | 'research'. Selects the dispatch.yml role (and the worker tool allowlist). Default: derived from cli (pi -> coding, claude -> review, codex -> codex).",
 				}),
 			),
 			key: Type.Optional(
@@ -872,12 +988,16 @@ export function registerWorkerTools(
 				description,
 				cli = "pi",
 				model,
+				model_reason,
+				type,
 				key,
 			} = params as {
 				task_key: string;
 				description: string;
 				cli?: string;
 				model?: string;
+				model_reason?: string;
+				type?: string;
 				key?: string;
 			};
 			const ownerKey = resolveOwnerKeyWithSync(pi, indexStore, watch, key, agenticdocRoot);
@@ -889,6 +1009,15 @@ export function registerWorkerTools(
 					details: undefined,
 				};
 			}
+
+			// Task type is declarable (mw-dispatch-role-escape): without it a pi
+			// worker could never reach the review/research dispatch.yml role or tool
+			// allowlist, which is what forced hand-written model overrides.
+			const typeResolution = resolveDispatchType(cli, type ?? "");
+			if (!typeResolution.ok) {
+				return { content: [{ type: "text", text: typeResolution.message }], details: undefined };
+			}
+			const provider = cli === "pi" ? "timi" : "";
 
 			// Docs gate: real keys need spec + design + research evidence before any
 			// worker runs (advance_phase.py gate semantics, enforced mechanically).
@@ -922,13 +1051,26 @@ export function registerWorkerTools(
 				};
 			}
 
-			const typeField = cli === "codex" ? "codex" : cli === "claude" ? "review" : "coding";
-			const provider = cli === "pi" ? "timi" : "";
+			const typeField = typeResolution.type;
+
+			// Model plan: validate the effective value and enforce the override
+			// reason BEFORE any filesystem write (a refusal must leave no task dir).
+			const modelPlan = planDispatchFrontmatter({
+				cwd: projectDir,
+				cli,
+				provider,
+				taskType: typeField,
+				model: model ?? "",
+				modelReason: model_reason ?? "",
+				registry: _context?.modelRegistry,
+			});
+			if (!modelPlan.ok) {
+				return { content: [{ type: "text", text: modelPlan.message }], details: undefined };
+			}
 
 			fs.mkdirSync(taskDir, { recursive: true });
 			const taskMdPath = path.join(taskDir, "task.md");
-			const frontmatter = model ? `type: ${typeField}\nmodel: ${model}\n` : `type: ${typeField}\n`;
-			fs.writeFileSync(taskMdPath, `${frontmatter}\n${description}\n`, "utf8");
+			fs.writeFileSync(taskMdPath, `${modelPlan.frontmatter}\n${description}\n`, "utf8");
 
 			await dispatchTask(
 				{ taskKey: task_key, status: "pending", cli, provider, model: model ?? "", taskPath: taskMdPath },
@@ -939,7 +1081,7 @@ export function registerWorkerTools(
 				content: [
 					{
 						type: "text",
-						text: `Dispatched worker '${task_key}' (type: ${cli}${model ? `, model: ${model}` : ""}) under key '${ownerKey}'. Task file: ${taskMdPath}. Check mw_status to confirm the service is running.`,
+						text: `Dispatched worker '${task_key}' (type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}) under key '${ownerKey}'. Task file: ${taskMdPath}. Check mw_status to confirm the service is running.`,
 					},
 				],
 				details: undefined,
@@ -1165,7 +1307,7 @@ export function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: string): 
 
 /**
  * Spawn a worker directly from the pi window.
- * Usage: /worker <claude|codex|pi> [--model <id>] <task description>
+ * Usage: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] [--key <name>] <desc>
  */
 export function registerWorkerCommands(
 	pi: ExtensionAPI,
@@ -1173,35 +1315,35 @@ export function registerWorkerCommands(
 	indexStore: IndexStore,
 	agenticdocRoot: string,
 	watch: PmWatchState,
+	projectDir: string = path.dirname(agenticdocRoot),
 ): void {
-	const USAGE = "Usage: /worker <claude|codex|pi> [--model <id>] [--key <name>] <task description>";
+	const USAGE =
+		"Usage: /worker <claude|codex|pi> [--type coding|review|research] [--model <id>] [--reason <text>] [--key <name>] <task description>";
 	pi.registerCommand("worker", {
-		description: "Spawn a worker: /worker <claude|codex|pi> [--model <id>] <task description>",
+		description:
+			"Spawn a worker: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] <task description>",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const parts = args.trim().split(/\s+/);
 			const cli = (parts[0] ?? "").toLowerCase();
 
-			// Optional `--model <id>` and `--key <name>` flags right after the cli;
-			// everything else is the description.
+			// Optional flags right after the cli; everything else is the description.
 			let idx = 1;
 			let model = "";
+			let modelReason = "";
+			let typeArg = "";
 			let keyArg = "";
-			while (parts[idx] === "--model" || parts[idx] === "--key") {
-				if (parts[idx] === "--model") {
-					model = parts[idx + 1] ?? "";
-					idx += 2;
-					if (!model) {
-						ctx.ui.notify(USAGE, "warning");
-						return;
-					}
-				} else {
-					keyArg = parts[idx + 1] ?? "";
-					idx += 2;
-					if (!keyArg) {
-						ctx.ui.notify(USAGE, "warning");
-						return;
-					}
+			while (["--model", "--type", "--reason", "--key"].includes(parts[idx] ?? "")) {
+				const flag = parts[idx];
+				const value = parts[idx + 1] ?? "";
+				idx += 2;
+				if (!value) {
+					ctx.ui.notify(USAGE, "warning");
+					return;
 				}
+				if (flag === "--model") model = value;
+				else if (flag === "--type") typeArg = value;
+				else if (flag === "--reason") modelReason = value;
+				else keyArg = value;
 			}
 			const description = parts.slice(idx).join(" ");
 
@@ -1215,12 +1357,17 @@ export function registerWorkerCommands(
 				return;
 			}
 
-			// Map CLI to task.md type field (must match pickWorkerRoute mapping)
-			const typeField = cli === "codex" ? "codex" : cli === "claude" ? "review" : "coding";
+			// Task type: declarable, else the legacy cli-derived mapping.
+			const typeResolution = resolveDispatchType(cli, typeArg);
+			if (!typeResolution.ok) {
+				ctx.ui.notify(typeResolution.message, "warning");
+				return;
+			}
+			const typeField = typeResolution.type;
 			const provider = cli === "pi" ? "timi" : "";
 
 			// Create task directory and task.md under {ownerKey}/workers/ (persist
-			// model: so it's visible + re-parseable)
+			// type/model/model-reason so they are visible + re-parseable)
 			const taskKey = `manual-${Date.now()}`;
 			const ownerKey = resolveOwnerKeyWithSync(pi, indexStore, watch, keyArg, agenticdocRoot);
 			const docGaps = dispatchDocGaps(agenticdocRoot, ownerKey);
@@ -1231,17 +1378,30 @@ export function registerWorkerCommands(
 				);
 				return;
 			}
+			// Model plan before any write: a refusal must leave no task dir.
+			const modelPlan = planDispatchFrontmatter({
+				cwd: projectDir,
+				cli,
+				provider,
+				taskType: typeField,
+				model,
+				modelReason,
+				registry: ctx.modelRegistry,
+			});
+			if (!modelPlan.ok) {
+				ctx.ui.notify(modelPlan.message, "warning");
+				return;
+			}
 			const taskDir = workerTaskDir(agenticdocRoot, ownerKey, taskKey);
 			fs.mkdirSync(taskDir, { recursive: true });
 			const taskMdPath = path.join(taskDir, "task.md");
-			const frontmatter = model ? `type: ${typeField}\nmodel: ${model}\n` : `type: ${typeField}\n`;
-			fs.writeFileSync(taskMdPath, `${frontmatter}\n${description}\n`, "utf8");
+			fs.writeFileSync(taskMdPath, `${modelPlan.frontmatter}\n${description}\n`, "utf8");
 
 			// Dispatch directly to _workers.parallel
 			await dispatchTask({ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath }, workerStore);
 
 			ctx.ui.notify(
-				`Dispatched ${cli} worker (${taskKey}) under key '${ownerKey}'${model ? ` [model: ${model}]` : ""}.`,
+				`Dispatched ${cli} worker (${taskKey}) under key '${ownerKey}' [type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}].`,
 				"info",
 			);
 		},
@@ -1546,9 +1706,18 @@ export async function runMwModelCommand(
 		const value = parts[2];
 		if (!role || !value || parts.length > 3) {
 			ctx.ui.notify(
-				"Usage: /mw model set <role> <prefix/model> — roles: main, coding, review, research (e.g. /mw model set review timi/glm-5.3-air)",
+				"Usage: /mw model set <role> <prefix/model> — roles: main, coding, review, research (e.g. /mw model set review timi/gpt-5.6-sol)",
 				"warning",
 			);
+			return;
+		}
+		// Earliest catch for a bad id (design D-010): a prefixed value names its
+		// own route, so the registry can check it before Python writes the file
+		// (a bare id keeps the task's route — not checkable here). Python stays
+		// the single source for role/schema validation.
+		const validation = validateModelValue(ctx.modelRegistry, "pi", "", value);
+		if (!validation.ok) {
+			ctx.ui.notify(validation.message, "error");
 			return;
 		}
 		const r = runner(projectDir, ["set", role, value]);
@@ -1584,7 +1753,7 @@ export function registerMwCommands(
 ): void {
 	pi.registerCommand("mw", {
 		description:
-			"Control mw: build / init / start / stop / restart / status / doctor / target / partition / model / ack",
+			"Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / ack",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const trimmed = _args.trim();
 			const sub = trimmed.split(/\s+/)[0] ?? "status";
@@ -1618,6 +1787,22 @@ export function registerMwCommands(
 				} else {
 					ctx.ui.notify(`mw doctor 执行失败: ${r.error}`, "error");
 				}
+				return;
+			}
+
+			if (sub === "update") {
+				// Incremental self-check over the update anchors (UPDATE.md §1):
+				// bundle / pi dist / serve / framework propagation. Python stays
+				// the single source of the checks; --apply runs the safe fixes.
+				const apply = _args.trim().split(/\s+/)[1]?.toLowerCase() === "--apply";
+				ctx.ui.notify(
+					apply
+						? "mw update-env --apply running (bundle/dist rebuild + reinstall can take a minute)…"
+						: "mw update-env checking anchors…",
+					"info",
+				);
+				const r = updateEnvMw(projectDir, apply);
+				ctx.ui.notify(r.ok ? r.output : `mw update-env 执行失败: ${r.error}`, r.ok ? "info" : "error");
 				return;
 			}
 
@@ -1721,7 +1906,7 @@ export function registerMwCommands(
 			}
 
 			ctx.ui.notify(
-				"Usage: /mw build|init|start|stop|status|doctor [fix] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | ack <task-key>|all",
+				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | ack <task-key>|all",
 				"warning",
 			);
 		},

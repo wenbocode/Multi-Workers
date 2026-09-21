@@ -15,6 +15,7 @@ import * as path from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ModelRegistry } from "../../src/core/model-registry.ts";
 import { activate } from "../../src/extensions/agent-team-loop/index.ts";
 import {
 	autoTakeOverFromDoc,
@@ -45,8 +46,10 @@ import {
 	registerPmKeyCommands,
 	registerPmSaveCommand,
 	registerSwitchKeyTool,
+	registerWorkerCommands,
 	registerWorkerTools,
 	renderWatchLines,
+	resolveDispatchType,
 	runMwModelCommand,
 	runMwPartitionCommand,
 	runMwTargetCommand,
@@ -57,12 +60,16 @@ import { AckStore } from "../../src/extensions/agent-team-loop/shared/ack-store.
 import { agenticScriptsDir, runAgenticScript } from "../../src/extensions/agent-team-loop/shared/agentic-scripts.ts";
 import {
 	applyMainModelConfig,
+	DISPATCH_ROLE_BY_TYPE,
 	PREFIX_TO_PROVIDER_ID,
 	PROVIDER_ID_TO_PREFIX,
 	parseModelValue,
 	readMainModelConfig,
+	readRoleModel,
 	recordWindowModel,
+	roleForTaskType,
 	settingsDefaultModel,
+	validateModelValue,
 	windowModelPath,
 } from "../../src/extensions/agent-team-loop/shared/dispatch-models.ts";
 import {
@@ -71,7 +78,7 @@ import {
 	readTaskProgress,
 } from "../../src/extensions/agent-team-loop/shared/heartbeat.ts";
 import { IndexStore, readIndexMdActive } from "../../src/extensions/agent-team-loop/shared/index-store.ts";
-import type { DoctorJson } from "../../src/extensions/agent-team-loop/shared/mw-runner.ts";
+import type { DoctorJson, MwCliResult } from "../../src/extensions/agent-team-loop/shared/mw-runner.ts";
 import {
 	mwCodeNewestMtimeMs,
 	PYTHON_EXE,
@@ -4647,5 +4654,304 @@ describe("dispatch model config", () => {
 			dispatch: { exists: true, models: {}, window_model: "", error: "dispatch.yml unreadable: boom" },
 		};
 		expect(formatDoctorReport(broken, false)).toContain("派发模型: 配置错误 — dispatch.yml unreadable: boom");
+	});
+});
+
+describe("dispatch role + model override gate (mw-dispatch-role-escape)", () => {
+	function fakeRegistry(entries: Array<{ provider: string; id: string }>): ModelRegistry {
+		const models = entries.map((e) => ({ ...e }) as unknown as Model<any>);
+		return {
+			getAll: () => models,
+			find: (provider: string, modelId: string) => models.find((m) => m.provider === provider && m.id === modelId),
+		} as unknown as ModelRegistry;
+	}
+
+	const TIMI = (): ModelRegistry =>
+		fakeRegistry([
+			{ provider: "timi", id: "gpt-5.6-sol" },
+			{ provider: "timi", id: "gpt-5.6-luna" },
+			{ provider: "timi", id: "deepseek-v4.1-flash" },
+		]);
+
+	function writeDispatchYml(root: string, body: string): void {
+		fs.mkdirSync(path.join(root, ".mw"), { recursive: true });
+		fs.writeFileSync(path.join(root, ".mw", "dispatch.yml"), body, "utf8");
+	}
+
+	/** dispatch_worker fixture: documented key "k" claimed by this window. */
+	async function setupTool(dispatchYml?: string): Promise<{
+		root: string;
+		execute: (params: Record<string, unknown>, registry?: ModelRegistry) => Promise<string>;
+	}> {
+		const root = mkdtemp();
+		const ws = new WorkerStore(root);
+		const is = new IndexStore(root);
+		if (dispatchYml !== undefined) writeDispatchYml(root, dispatchYml);
+		const { pi, tools } = fakeCmdPi();
+		writePhaseDocs(root, "k");
+		await seedKey(root, "k", windowClaimId());
+		registerWorkerTools(pi, ws, new AckStore(root), is, root, { key: "k" }, root);
+		const tool = tools.get("dispatch_worker");
+		if (!tool) throw new Error("dispatch_worker not registered");
+		return {
+			root,
+			execute: async (params, registry) => {
+				const ctx =
+					registry === undefined
+						? fakeCmdCtx().ctx
+						: ({ ...fakeCmdCtx().ctx, modelRegistry: registry } as unknown as ExtensionContext);
+				return (await tool.execute("id", params, undefined, undefined, ctx)).content[0]?.text ?? "";
+			},
+		};
+	}
+
+	/** /worker command fixture (same documented + claimed key). */
+	async function setupCommand(dispatchYml?: string): Promise<{
+		root: string;
+		run: (args: string, registry?: ModelRegistry) => Promise<string[]>;
+	}> {
+		const root = mkdtemp();
+		const ws = new WorkerStore(root);
+		const is = new IndexStore(root);
+		if (dispatchYml !== undefined) writeDispatchYml(root, dispatchYml);
+		const { pi, commands } = fakeCmdPi();
+		writePhaseDocs(root, "k");
+		await seedKey(root, "k", windowClaimId());
+		registerWorkerCommands(pi, ws, is, root, { key: "k" }, root);
+		const handler = commands.get("worker");
+		if (!handler) throw new Error("/worker not registered");
+		return {
+			root,
+			run: async (args, registry) => {
+				const { ctx, notifications } = fakeCmdCtx();
+				const withRegistry =
+					registry === undefined
+						? ctx
+						: ({ ...ctx, modelRegistry: registry } as unknown as ExtensionCommandContext);
+				await handler(args, withRegistry);
+				return notifications;
+			},
+		};
+	}
+
+	function taskMdOf(root: string, taskKey: string): string {
+		return fs.readFileSync(path.join(root, "k", "workers", taskKey, "task.md"), "utf8");
+	}
+
+	function workerDirExists(root: string, taskKey: string): boolean {
+		return fs.existsSync(path.join(root, "k", "workers", taskKey));
+	}
+
+	it("VC-001: dispatch_worker declares type, keeps legacy defaults, refuses an unknown type", async () => {
+		const declared = await setupTool();
+		const r1 = await declared.execute({ task_key: "t1", description: "work", type: "review" });
+		expect(taskMdOf(declared.root, "t1").startsWith("type: review\n")).toBe(true);
+		expect(r1).toContain("type: review, role: review");
+		fs.rmSync(declared.root, { recursive: true, force: true });
+
+		const legacyPi = await setupTool();
+		await legacyPi.execute({ task_key: "t1", description: "work" });
+		expect(taskMdOf(legacyPi.root, "t1").startsWith("type: coding\n")).toBe(true);
+		fs.rmSync(legacyPi.root, { recursive: true, force: true });
+
+		const legacyCodex = await setupTool();
+		await legacyCodex.execute({ task_key: "t1", description: "work", cli: "codex" });
+		expect(taskMdOf(legacyCodex.root, "t1").startsWith("type: codex\n")).toBe(true);
+		fs.rmSync(legacyCodex.root, { recursive: true, force: true });
+
+		const bad = await setupTool();
+		const r4 = await bad.execute({ task_key: "t1", description: "work", type: "deploy" });
+		expect(r4).toContain("Invalid type 'deploy'");
+		expect(r4).toContain("coding, review, research");
+		expect(workerDirExists(bad.root, "t1")).toBe(false);
+		expect(fs.existsSync(path.join(bad.root, "_workers.parallel"))).toBe(false);
+		fs.rmSync(bad.root, { recursive: true, force: true });
+	});
+
+	it("VC-002: /worker --type reaches the review role and echoes it; unknown type is refused", async () => {
+		const declared = await setupCommand();
+		const notes = await declared.run("pi --type review --key k review the diff");
+		const workers = fs.readdirSync(path.join(declared.root, "k", "workers"));
+		expect(workers).toHaveLength(1);
+		const taskKey = workers[0] as string;
+		expect(taskMdOf(declared.root, taskKey).startsWith("type: review\n")).toBe(true);
+		expect(notes.join("\n")).toContain("[type: review, role: review,");
+		fs.rmSync(declared.root, { recursive: true, force: true });
+
+		const bad = await setupCommand();
+		const badNotes = await bad.run("pi --type deploy --key k do work");
+		expect(badNotes.join("\n")).toContain("Invalid type 'deploy'");
+		expect(fs.existsSync(path.join(bad.root, "k", "workers"))).toBe(false);
+		fs.rmSync(bad.root, { recursive: true, force: true });
+	});
+
+	it("VC-003: an override of a configured role default requires model_reason and is recorded", async () => {
+		const yml = "models:\n  review: timi/gpt-5.6-sol\n";
+		const missing = await setupTool(yml);
+		const refused = await missing.execute({
+			task_key: "t1",
+			description: "work",
+			type: "review",
+			model: "timi/gpt-5.6-luna",
+		});
+		expect(refused).toContain("needs model_reason");
+		expect(refused).toContain("review=timi/gpt-5.6-sol");
+		expect(workerDirExists(missing.root, "t1")).toBe(false);
+		fs.rmSync(missing.root, { recursive: true, force: true });
+
+		const withReason = await setupTool(yml);
+		const accepted = await withReason.execute({
+			task_key: "t1",
+			description: "work",
+			type: "review",
+			model: "timi/gpt-5.6-luna",
+			model_reason: "luna has the longer context this diff needs",
+		});
+		const md = taskMdOf(withReason.root, "t1");
+		expect(md).toContain("model: timi/gpt-5.6-luna\n");
+		expect(md).toContain("model-reason: luna has the longer context this diff needs\n");
+		expect(accepted).toContain("model override: role default review=timi/gpt-5.6-sol -> timi/gpt-5.6-luna");
+		fs.rmSync(withReason.root, { recursive: true, force: true });
+
+		const multiline = await setupTool(yml);
+		await multiline.execute({
+			task_key: "t1",
+			description: "work",
+			type: "review",
+			model: "timi/gpt-5.6-luna",
+			model_reason: "line one\nline two",
+		});
+		expect(taskMdOf(multiline.root, "t1")).toContain("model-reason: line one line two\n");
+		fs.rmSync(multiline.root, { recursive: true, force: true });
+	});
+
+	it("VC-004: a request equal to the configured default is not pinned in task.md", async () => {
+		const root = await setupTool("models:\n  coding: timi/deepseek-v4.1-flash\n");
+		const r = await root.execute({
+			task_key: "t1",
+			description: "work",
+			model: "timi/deepseek-v4.1-flash",
+		});
+		const md = taskMdOf(root.root, "t1");
+		expect(md.startsWith("type: coding\n")).toBe(true);
+		expect(md).not.toContain("model:");
+		expect(r).toContain("requested value matches the configured default");
+		fs.rmSync(root.root, { recursive: true, force: true });
+	});
+
+	it("VC-005: validateModelValue rejects unknown ids and unknown prefixes only", () => {
+		const registry = TIMI();
+		expect(validateModelValue(registry, "pi", "timi", "timi/gpt-5.6.sol").ok).toBe(false);
+		expect(validateModelValue(registry, "pi", "timi", "timi/gpt-5.6.sol").message).toContain(
+			"not found for provider 'timi'",
+		);
+		expect(validateModelValue(registry, "pi", "timi", "timi/gpt-5.6-sol").ok).toBe(true);
+		expect(validateModelValue(registry, "pi", "timi", "gpt-5.6-sol").ok).toBe(true);
+		expect(validateModelValue(registry, "pi", "nope", "gpt-5.6-sol").ok).toBe(true);
+		expect(validateModelValue(registry, "pi", "timi", "openrouter/gpt-5.6-sol").ok).toBe(false);
+		expect(validateModelValue(registry, "pi", "timi", "openrouter/gpt-5.6-sol").message).toContain("unknown prefix");
+		expect(validateModelValue(registry, "pi", "timi", "codex_cli/gpt-5.6-sol").ok).toBe(true);
+		expect(validateModelValue(registry, "codex", "timi", "gpt-5.6.sol").ok).toBe(true);
+		expect(validateModelValue(undefined, "pi", "timi", "timi/gpt-5.6.sol").ok).toBe(true);
+		expect(validateModelValue(registry, "pi", "timi", "").ok).toBe(true);
+	});
+
+	it("VC-006: an unresolvable configured role default fails closed; an explicit model is the escape hatch", async () => {
+		const yml = "models:\n  coding: timi/gpt-5.6.sol\n";
+		const blocked = await setupTool(yml);
+		const refused = await blocked.execute({ task_key: "t1", description: "work" }, TIMI());
+		expect(refused).toContain("not found for provider 'timi'");
+		expect(workerDirExists(blocked.root, "t1")).toBe(false);
+		fs.rmSync(blocked.root, { recursive: true, force: true });
+
+		const escaped = await setupTool(yml);
+		const ok = await escaped.execute(
+			{
+				task_key: "t1",
+				description: "work",
+				model: "timi/gpt-5.6-sol",
+				model_reason: "config value is a typo; tracker ticket INF-42",
+			},
+			TIMI(),
+		);
+		expect(ok).toContain("model override");
+		expect(taskMdOf(escaped.root, "t1")).toContain("model: timi/gpt-5.6-sol\n");
+		fs.rmSync(escaped.root, { recursive: true, force: true });
+	});
+
+	it("VC-007: readRoleModel parses per-role values and readMainModelConfig is unchanged", () => {
+		const root = mkdtemp();
+		expect(readRoleModel(root, "review")).toBeNull();
+		writeDispatchYml(
+			root,
+			"models:\n  coding: timi/deepseek-v4.1-flash\n  main: timi/glm-5.3\n  review: timi/gpt-5.6-sol\n",
+		);
+		expect(readRoleModel(root, "coding")).toBe("timi/deepseek-v4.1-flash");
+		expect(readRoleModel(root, "review")).toBe("timi/gpt-5.6-sol");
+		expect(readRoleModel(root, "research")).toBeNull();
+		expect(readRoleModel(root, "main")).toBe(readMainModelConfig(root));
+		expect(roleForTaskType("verifier")).toBe("review");
+		expect(roleForTaskType("unknown-type")).toBe("coding");
+		expect(DISPATCH_ROLE_BY_TYPE.review).toBe("review");
+		expect(resolveDispatchType("pi", "")).toEqual({ ok: true, type: "coding" });
+		expect(resolveDispatchType("claude", "")).toEqual({ ok: true, type: "review" });
+		expect(resolveDispatchType("pi", "research")).toEqual({ ok: true, type: "research" });
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("VC-008: /mw model set validates a prefixed id before writing", async () => {
+		const root = mkdtemp();
+		const calls: string[][] = [];
+		const runner = (_projectDir: string, args: string[]): MwCliResult => {
+			calls.push(args);
+			return { ok: true, output: "ok" };
+		};
+		const bad = fakeCmdCtx();
+		await runMwModelCommand(
+			{ ...bad.ctx, modelRegistry: TIMI() } as unknown as ExtensionCommandContext,
+			root,
+			"set review timi/gpt-5.6.sol",
+			runner,
+		);
+		expect(calls).toHaveLength(0);
+		expect(bad.notifications.join("\n")).toContain("not found for provider 'timi'");
+
+		const good = fakeCmdCtx();
+		await runMwModelCommand(
+			{ ...good.ctx, modelRegistry: TIMI() } as unknown as ExtensionCommandContext,
+			root,
+			"set review timi/gpt-5.6-sol",
+			runner,
+		);
+		expect(calls).toEqual([["set", "review", "timi/gpt-5.6-sol"]]);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("VC-013: a BOM-prefixed dispatch.yml is read like PyYAML reads it", async () => {
+		const bomYml = "\uFEFFmodels:\n  review: timi/gpt-5.6-sol\n";
+		const reader = mkdtemp();
+		writeDispatchYml(reader, bomYml);
+		expect(readRoleModel(reader, "review")).toBe("timi/gpt-5.6-sol");
+		fs.rmSync(reader, { recursive: true, force: true });
+
+		// The gate must see the configured default through a BOM too, otherwise a
+		// hand-edited file silently disabled the reason requirement.
+		const gated = await setupTool(bomYml);
+		const refused = await gated.execute({
+			task_key: "t1",
+			description: "work",
+			type: "review",
+			model: "timi/gpt-5.6-luna",
+		});
+		expect(refused).toContain("needs model_reason");
+		expect(workerDirExists(gated.root, "t1")).toBe(false);
+		fs.rmSync(gated.root, { recursive: true, force: true });
+	});
+
+	it("VC-010: a legacy dispatch (no type/model) writes byte-identical frontmatter", async () => {
+		const legacy = await setupTool();
+		await legacy.execute({ task_key: "t1", description: "work" });
+		expect(taskMdOf(legacy.root, "t1")).toBe("type: coding\n\nwork\n");
+		fs.rmSync(legacy.root, { recursive: true, force: true });
 	});
 });

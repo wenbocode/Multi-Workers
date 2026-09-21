@@ -124,8 +124,34 @@ class TestLoadDispatchConfig:
         config, err = mw_common.load_dispatch_config(tmp_path)
         assert config == {} and err and "villain" in err
 
+    def test_bom_prefixed_file_reads_like_the_ts_reader(self, tmp_path: pathlib.Path) -> None:
+        # A BOM (Windows PowerShell `Set-Content -Encoding utf8`, some editors)
+        # must not hide the roles: PyYAML strips it, and the TS reader does too.
+        (tmp_path / ".mw").mkdir()
+        (tmp_path / ".mw" / "dispatch.yml").write_text(
+            "models:\n  review: timi/gpt-5.6-sol\n", encoding="utf-8-sig")
+        config, err = mw_common.load_dispatch_config(tmp_path)
+        assert err is None
+        assert config["models"] == {"review": "timi/gpt-5.6-sol"}
+
 
 class TestParseAndCompat:
+    # Mirror of the TS-side DISPATCH_ROLE_BY_TYPE (agent-team-loop
+    # shared/dispatch-models.ts). Both sides hardcode the literal; a drift in
+    # either map fails here.
+    _TS_ROLE_BY_TYPE = {
+        "coding": "coding",
+        "phase-writer": "coding",
+        "repair": "coding",
+        "roadmap-writer": "coding",
+        "review": "review",
+        "verifier": "review",
+        "reviewer": "review",
+        "research": "research",
+    }
+
+    def test_role_map_matches_ts_mirror(self) -> None:
+        assert mw_common.TASK_TYPE_TO_ROLE == self._TS_ROLE_BY_TYPE
     # Mirror of the TS-side PY_PREFIX_MAP (agent-team-loop.test.ts "dispatch
     # model config"): both maps must stay equal when a provider joins the
     # namespace — this is the Python half of the parity lock.
@@ -267,6 +293,68 @@ class TestLauncherResolution:
         entry = _entry(task, provider="timi")
         eff = launcher._effective_entry(entry, "glm-5.3")
         assert (eff["provider"], eff["model"]) == ("timi", "glm-5.3")
+
+
+class TestModelOverrideEvidence:
+    """mw-dispatch-role-escape AC-009/VC-009: a task.md `model:` that beats a
+    configured role default leaves a greppable launcher.log line, and the
+    spawn still uses the explicit value."""
+
+    class _FakeProc:
+        pid = 4242
+        returncode = None
+
+    def test_note_only_for_a_deviating_task_model(self, tmp_path: pathlib.Path) -> None:
+        root = _project(
+            tmp_path,
+            task_body="type: coding\nmodel: timi/gpt-5.6-sol\ndo\n",
+            dispatch_yml="models:\n  coding: timi/deepseek-v4.1-flash\n",
+        )
+        task = root / ".agenticdoc" / "k" / "workers" / "t1" / "task.md"
+        entry = _entry(task)
+        note = launcher._model_override_note(entry, root, "timi/gpt-5.6-sol", "task")
+        assert "model-override task=timi/gpt-5.6-sol config:coding=timi/deepseek-v4.1-flash" in note
+
+        # Equal to the role default, non-task source, or no config: silent.
+        assert launcher._model_override_note(entry, root, "timi/deepseek-v4.1-flash", "task") == ""
+        assert launcher._model_override_note(entry, root, "timi/gpt-5.6-sol", "config:coding") == ""
+        bare = _project(tmp_path / "bare", task_body="type: coding\nmodel: timi/gpt-5.6-sol\ndo\n")
+        bare_entry = _entry(bare / ".agenticdoc" / "k" / "workers" / "t1" / "task.md")
+        assert launcher._model_override_note(bare_entry, bare, "timi/gpt-5.6-sol", "task") == ""
+
+        # A review task compares against the review role, not coding.
+        review = _project(
+            tmp_path / "rev",
+            task_body="type: review\nmodel: timi/gpt-5.6-sol\ndo\n",
+            dispatch_yml="models:\n  coding: timi/deepseek-v4.1-flash\n  review: timi/gpt-5.6-luna\n",
+        )
+        review_entry = _entry(review / ".agenticdoc" / "k" / "workers" / "t1" / "task.md")
+        review_note = launcher._model_override_note(review_entry, review, "timi/gpt-5.6-sol", "task")
+        assert "config:review=timi/gpt-5.6-luna" in review_note
+
+    def test_spawn_prints_the_override_and_keeps_the_explicit_model(
+        self, tmp_path: pathlib.Path, creds: dict, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        root = _project(
+            tmp_path,
+            task_body="type: coding\nmodel: timi/gpt-5.6-sol\ndo\n",
+            dispatch_yml="models:\n  coding: timi/deepseek-v4.1-flash\n",
+        )
+        monkeypatch.setattr(launcher.shutil, "which", lambda name: str(tmp_path / "pi.CMD"))
+        captured: dict = {}
+
+        def fake_popen(cmd, **kwargs):  # noqa: ANN001, ANN202
+            captured["cmd"] = cmd
+            return TestModelOverrideEvidence._FakeProc()
+
+        monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
+        entry = _entry(root / ".agenticdoc" / "k" / "workers" / "t1" / "task.md")
+        launcher._spawn(entry, root, creds, {})
+        out = capsys.readouterr().out
+        assert "source=task" in out
+        assert "model-override task=timi/gpt-5.6-sol config:coding=timi/deepseek-v4.1-flash" in out
+        assert "gpt-5.6-sol" in captured["cmd"]  # explicit value still wins
 
 
 class TestDirectProviderSpawn:

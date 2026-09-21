@@ -624,9 +624,9 @@ export function pmActivate(pi: ExtensionAPI): void {
 	registerMwCommands(pi, projectDir, workerStore, ackStore);
 	registerMwTools(pi, projectDir);
 	registerAdvancePhaseTool(pi, projectDir);
-	registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch);
+	registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, projectDir);
 	registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agenticdocRoot);
-	registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch);
+	registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch, projectDir);
 	registerWatchCommand(pi, watch, refreshWatch, indexStore);
 	// Autopilot console (T-15): /autopilot status|gates|gate|timeline|enable|
 	// disable|pause|resume|roadmap — stateless, file-derived (D-005).

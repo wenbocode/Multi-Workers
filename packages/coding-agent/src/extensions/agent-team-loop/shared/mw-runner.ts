@@ -234,7 +234,10 @@ export function mwCodeNewestMtimeMs(mwPyOverride?: string): number | null {
 		}
 		for (const e of entries) {
 			if (e.isDirectory()) {
-				if (e.name === "__pycache__" || e.name === "dist") continue;
+				// .tmp holds the AgenticTask framework cache — not serve runtime
+				// code. A cache pull must not turn a healthy serve stale (parity
+				// with the Python side's _mw_code_newest_mtime skip set).
+				if (e.name === "__pycache__" || e.name === "dist" || e.name === ".tmp") continue;
 				walk(path.join(dir, e.name));
 				continue;
 			}
@@ -420,12 +423,12 @@ export type MwCliResult = { ok: true; output: string } | { ok: false; error: str
  * validation, and rendering — the TS side only forwards and displays.
  * `--project` is appended here so callers never forget the control root.
  */
-function runMwCli(sub: string, projectDir: string, args: string[]): MwCliResult {
+function runMwCli(sub: string, projectDir: string, args: string[], timeoutMs = 30_000): MwCliResult {
 	const mwPy = findMwPy();
 	if (!mwPy) return { ok: false, error: "Could not find mw.py — set MW_PY env var." };
 	const result = spawnSync(PYTHON_EXE, [mwPy, sub, ...args, `--project=${projectDir}`], {
 		encoding: "utf8",
-		timeout: 30_000,
+		timeout: timeoutMs,
 	});
 	if (result.error) {
 		return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
@@ -452,4 +455,26 @@ export function partitionMw(projectDir: string, args: string[]): MwCliResult {
 /** `mw.py model <args...>` — dispatch model defaults (show / set / clear). */
 export function modelMw(projectDir: string, args: string[]): MwCliResult {
 	return runMwCli("model", projectDir, args);
+}
+
+/**
+ * `mw.py update-env [--apply]` — incremental self-check over the update
+ * anchors (UPDATE.md §1). Like doctor, exit 1 means "findings", not failure:
+ * any stdout is still the report. --apply may rebuild the bundle + pi dist
+ * and reinstall the framework, so the timeout is minutes, not seconds.
+ */
+export function updateEnvMw(projectDir: string, apply: boolean): MwCliResult {
+	const mwPy = findMwPy();
+	if (!mwPy) return { ok: false, error: "Could not find mw.py — set MW_PY env var." };
+	const args = [mwPy, "update-env", `--project=${projectDir}`];
+	if (apply) args.push("--apply");
+	const result = spawnSync(PYTHON_EXE, args, { encoding: "utf8", timeout: 600_000 });
+	if (result.error) {
+		return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
+	}
+	const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+	if (!output) {
+		return { ok: false, error: `mw update-env exited with code ${result.status}` };
+	}
+	return { ok: true, output };
 }

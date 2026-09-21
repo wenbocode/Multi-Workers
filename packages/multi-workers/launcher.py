@@ -149,6 +149,32 @@ def _read_task_md_fields(task_path: str) -> tuple[str, str]:
     return (type_m.group(1) if type_m else "", model_m.group(1) if model_m else "")
 
 
+def _model_override_note(
+    entry: dict[str, str], project_dir: pathlib.Path, model_value: str, model_source: str
+) -> str:
+    """One launcher.log line when a task.md `model:` beats a configured role
+    default (mw-dispatch-role-escape D-008/AC-009).
+
+    Evidence only: the spawn keeps using the explicit value (the resolution
+    chain is unchanged). Without this line the deviation is invisible — the
+    only trace of it was the generic `source=task` in the spawn line."""
+    if model_source != "task":
+        return ""
+    task_type, _task_model = _read_task_md_fields(entry["task_path"])
+    role = mw_common.TASK_TYPE_TO_ROLE.get(task_type, "coding")
+    config, err = mw_common.load_dispatch_config(project_dir)
+    if err:
+        return ""
+    configured = str(config.get("models", {}).get(role, "")).strip()
+    requested = model_value.strip()
+    if not configured or configured == requested:
+        return ""
+    return (
+        f"[launcher] {entry['task_key']}: model-override "
+        f"task={requested} config:{role}={configured}"
+    )
+
+
 def _effective_entry(entry: dict[str, str], model_value: str) -> dict[str, str]:
     """Apply a resolved model value to a queue entry.
 
@@ -806,6 +832,9 @@ def _spawn(
             f"[launcher] {entry['task_key']}: model={model_value or '(route default)'} source={model_source}",
             flush=True,
         )
+        override_note = _model_override_note(entry, project_dir, model_value, model_source)
+        if override_note:
+            print(override_note, flush=True)
         # Resolve the CLI binary to a full path so Windows npm `.cmd` shims are
         # found (CreateProcess only appends `.exe`). See _resolve_cli.
         cmd[0] = _resolve_cli(cmd[0])
