@@ -62,6 +62,8 @@ python packages/multi-workers/mw.py bootstrap --project .
 
 ## CLI 参考
 
+更新方式总览（版本锚点自检 + 指令矩阵 + 场景最小动作）：见 [UPDATE.md](./UPDATE.md)。
+
 ```bash
 python mw.py <子命令>
 ```
@@ -76,6 +78,7 @@ python mw.py <子命令>
 | `build [--install]` | esbuild 重建扩展 bundle（无 bash 依赖、cwd 无关）；`--install` 同时装到全局扩展目录并重建 pi dist |
 | `setup` | 一次性机器初始化：克隆框架 + 全局装扩展 + 自动填充 pi `shellPath`（Windows；幂等，不覆盖已配置值） |
 | `pull-agentictask` / `push-agentictask` | 更新 / 推送 AgenticTask 框架 |
+| `update-env [--apply] [--json] [--fetch]` | 增量自检（UPDATE.md 锚点：bundle/dist/serve/框架传播）；`--apply` 执行安全修复后复查 |
 | `target set/show/clear` | 双工作区配置（见下） |
 | `model set/show/clear` | 派发模型默认值（见下） |
 
@@ -113,6 +116,15 @@ python mw.py model clear --project . review
 PM 窗口里也可用 `/mw model`（转发到同一 CLI）：`/mw model show` · `/mw model set <role> <prefix/model>` · `/mw model clear <role|all>`。worker 角色下次 spawn 生效（无需重启 serve）；`main` 角色在窗口下次启动时套用。
 
 `mw doctor` 的 `dispatch` 段展示配置状态；配置文件损坏仅降级为建议（不阻断派发，回退窗口模型/硬编码默认）。
+
+### 派工类型与模型覆盖门禁（mw-dispatch-role-escape）
+
+`dispatch_worker` 工具与 `/worker` 命令都可显式声明任务类型，直接选择对应的 dispatch.yml role 与 worker 工具白名单：
+
+- `type: coding | review | research`（工具参数 `type`，命令 `--type`；省略时按 cli 推导：pi→coding、claude→review、codex→codex）。此前 pi 任务恒为 `coding`，`review`/`research` 档对 pi 不可达——只能靠手填 `model:` 绕过策略。
+- 覆盖 role 默认值必须给出理由：`model_reason`（工具）/ `--reason`（命令），记录为 task.md 的 `model-reason:` 单行；缺理由直接拒绝派发（不建目录、不写队列行）。请求值与 role 默认值相同时不写 `model:` 行（配置保持唯一事实来源，改配置即生效）。
+- pi 路由的模型值（显式值或本次生效的 role 默认值）在派发时对照 pi 模型表校验：不在表内（如 `timi/gpt-5.6.sol`）直接拒绝，避免 pi 把它静默当作 custom model id 使用。`codex_cli/`/`claude_cli/` 前缀与 cli ≠ pi 的任务跳过校验；模型表缺少该 provider 时不判错；逃生口是显式 `model` + 理由。
+- launcher 在 task.md 显式值偏离 role 默认值时，于原有 `source=task` 行后追加 `[launcher] <key>: model-override task=<X> config:<role>=<Y>` 到 launcher.log（仅证据，解析顺序与派发行为不变）。
 
 ## 双工作区：代码目录与工作目录分离
 
@@ -177,7 +189,7 @@ contract:
 | `/pm-save` | 会话快照写入 `pm-state.md` |
 | `/mw-watch` | 切换 Worker 进度看板 widget |
 | `/worker <claude\|codex\|pi> [--model <id>] <任务描述>` | 派发一个 worker |
-| `/mw build \| init \| start \| stop \| status \| doctor [fix]` | 服务与 bundle 管理 |
+| `/mw build \| init \| start \| stop \| status \| doctor [fix] \| update [--apply]` | 服务与 bundle 管理（update = 锚点自检，见 [UPDATE.md](./UPDATE.md)） |
 | `/mw target show \| set \| clear` | 双工作区配置（见上） |
 | `/mw ack <task-key> \| all` | 确认终态 worker 结果 |
 

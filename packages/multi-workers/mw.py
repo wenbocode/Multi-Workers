@@ -11,6 +11,7 @@ Subcommands:
   push-agentictask — commit+push local framework changes back to the remote repo
   setup  — one-time machine bootstrap: clone framework + install extension globally
   bootstrap — fresh-machine one-shot: prereqs → npm ci → build → link pi → setup → init → start → doctor
+  update-env — incremental self-check over the update anchors (UPDATE.md); --apply runs the safe fixes
 """
 
 from __future__ import annotations
@@ -437,20 +438,32 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 # ── Subcommand: stop ─────────────────────────────────────────────────────────
 
-def cmd_stop(args: argparse.Namespace) -> int:
-    project_dir = pathlib.Path(args.project).resolve()
+def _stop_serve(project_dir: pathlib.Path) -> bool:
+    """Graceful stop: stop-request, then wait up to 30s for serve to exit.
+    True when stopped (or not running in the first place). Shared by cmd_stop
+    and update-env --apply."""
     pid_path = _pid_path(project_dir)
     pid = _check_pid(pid_path)
     if pid is None:
-        print("[mw stop] not running (no PID or process not found)")
-        return 0
+        return True
     _write_stop_request(project_dir)
     # Wait up to 30s for serve to exit (no force-kill)
     for _ in range(60):
         time.sleep(0.5)
         if _check_pid(pid_path) is None:
-            print(f"[mw stop] stopped PID {pid}")
-            return 0
+            return True
+    return False
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    project_dir = pathlib.Path(args.project).resolve()
+    pid = _check_pid(_pid_path(project_dir))
+    if pid is None:
+        print("[mw stop] not running (no PID or process not found)")
+        return 0
+    if _stop_serve(project_dir):
+        print(f"[mw stop] stopped PID {pid}")
+        return 0
     print(f"[mw stop] warning: process {pid} did not exit in 30s")
     return 1
 
@@ -2185,6 +2198,32 @@ def _agentictask_update_install() -> tuple[bool, str]:
     return True, f"agentictask-update extension installed: {dst}"
 
 
+def _deploy_bundle(no_dist: bool) -> int:
+    """Install the freshly built bundle globally: bundle copy + .mw-py-path
+    sidecar + /update-agentictask command + pi dist rebuild. Shared by
+    `mw build --install` and `mw update-env --apply`. Returns exit code."""
+    ext_dst = _global_ext_dir() / "agent-team-loop.js"
+    ext_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(_bundle_path()), str(ext_dst))
+    _write_mw_py_path()
+    ok_u, msg_u = _agentictask_update_install()
+    print(f"[mw build] {msg_u}" if ok_u else f"[mw build] Warning: {msg_u}",
+          file=None if ok_u else sys.stderr)
+    print(f"[mw build] installed globally: {ext_dst}")
+    # The npm global `pi` links to packages/coding-agent, so the runtime
+    # executes the repo's dist — rebuild it so the built-in agent-team-loop
+    # copy and any pi-core changes reach the runtime (opt out: --no-dist).
+    if no_dist:
+        print("[mw build] dist rebuild skipped (--no-dist)")
+        return 0
+    dok, dmsg = _rebuild_pi_dist()
+    if not dok:
+        print(f"[mw build] Error: {dmsg}", file=sys.stderr)
+        return 1
+    print(f"[mw build] {dmsg}: {_repo_root() / 'packages' / 'coding-agent' / 'dist'}")
+    return 0
+
+
 def cmd_build(args: argparse.Namespace) -> int:
     ok, msg = _build_bundle()
     if not ok:
@@ -2193,26 +2232,10 @@ def cmd_build(args: argparse.Namespace) -> int:
     print(f"[mw build] {msg}")
     print(f"[mw build] bundle: {_bundle_path()}")
     if args.install:
-        ext_dst = _global_ext_dir() / "agent-team-loop.js"
-        ext_dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(_bundle_path()), str(ext_dst))
-        _write_mw_py_path()
-        ok_u, msg_u = _agentictask_update_install()
-        print(f"[mw build] {msg_u}" if ok_u else f"[mw build] Warning: {msg_u}",
-              file=None if ok_u else sys.stderr)
-        print(f"[mw build] installed globally: {ext_dst}")
-        # The npm global `pi` links to packages/coding-agent, so the runtime
-        # executes the repo's dist — rebuild it so the built-in agent-team-loop
-        # copy and any pi-core changes reach the runtime (opt out: --no-dist).
-        if args.no_dist:
-            print("[mw build] dist rebuild skipped (--no-dist)")
-        else:
-            dok, dmsg = _rebuild_pi_dist()
-            if not dok:
-                print(f"[mw build] Error: {dmsg}", file=sys.stderr)
-                return 1
-            print(f"[mw build] {dmsg}: {_repo_root() / 'packages' / 'coding-agent' / 'dist'}")
-        print("[mw build] Restart open pi windows to load the new bundle and dist.")
+        rc = _deploy_bundle(no_dist=args.no_dist)
+        if rc == 0:
+            print("[mw build] Restart open pi windows to load the new bundle and dist.")
+        return rc
     return 0
 
 
@@ -2747,6 +2770,458 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+# ── Subcommand: update-env (UPDATE.md §3/§4 as a tool) ─────────────────────
+
+# Adapter dirs install.py copies from <framework>/claude/ into <project>/.claude/
+# (mirror of CLAUDE_DIRS in the framework's install.py / diff-installed.py).
+_CLAUDE_ADAPTER_DIRS = ("commands", "agents", "skills", "scripts")
+_UPDATE_ENV_SKIP_DIRS = ("__pycache__", "dist", ".tmp")
+_UPDATE_ENV_MARKS = {"ok": "  ok ", "stale": "STALE", "warn": "WARN ", "info": "info ", "skip": "skip "}
+
+
+def _ts(mtime: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
+
+
+def _newest_file_mtime(root: pathlib.Path) -> float | None:
+    """Newest file mtime under root (seconds), or None when it holds no files."""
+    newest: float | None = None
+    for f in root.rglob("*"):
+        if not f.is_file():
+            continue
+        m = f.stat().st_mtime
+        newest = m if newest is None else max(newest, m)
+    return newest
+
+
+def _mw_code_newest_mtime() -> float | None:
+    """Staleness baseline for a running serve — the Python mirror of the TS
+    side's mwCodeNewestMtimeMs: only runtime code (*.py|*.json), skipping
+    __pycache__/dist/.tmp and test_*/_* files. .tmp is excluded on both sides:
+    it is the framework cache, not serve runtime code (a cache pull must not
+    turn a healthy serve stale)."""
+    newest: float | None = None
+    for f in _SCRIPT_DIR.rglob("*"):
+        if not f.is_file():
+            continue
+        if any(part in _UPDATE_ENV_SKIP_DIRS for part in f.relative_to(_SCRIPT_DIR).parts[:-1]):
+            continue
+        if f.suffix not in (".py", ".json"):
+            continue
+        if f.name.startswith("test_") or f.name.startswith("_"):
+            continue
+        m = f.stat().st_mtime
+        newest = m if newest is None else max(newest, m)
+    return newest
+
+
+def _update_git_counts(repo: pathlib.Path) -> dict | None:
+    """(behind, ahead) of HEAD vs origin/<default branch> using LOCAL refs —
+    no network. None when the repo or the origin ref is unavailable."""
+    if not (repo / ".git").exists():
+        return None
+
+    def _count(rev: str) -> int | None:
+        r = _git(["rev-list", "--count", rev], cwd=repo)
+        if r.returncode != 0:
+            return None
+        try:
+            return int(r.stdout.strip())
+        except ValueError:
+            return None
+
+    origin_ref = f"origin/{_DEFAULT_AGENTICTASK_BRANCH}"
+    behind = _count(f"HEAD..{origin_ref}")
+    ahead = _count(f"{origin_ref}..HEAD")
+    if behind is None or ahead is None:
+        return None
+    return {"behind": behind, "ahead": ahead}
+
+
+def _git_dirty(repo: pathlib.Path) -> tuple[int, int]:
+    """(tracked_changes, untracked_files) via git status --porcelain.
+    Tracked changes are real uncommitted state installs would propagate;
+    untracked strays are only reported, never flagged."""
+    r = _git(["status", "--porcelain"], cwd=repo)
+    if r.returncode != 0:
+        return (0, 0)
+    lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    tracked = sum(1 for ln in lines if not ln.startswith("??"))
+    return (tracked, len(lines) - tracked)
+
+
+def _git_head_short(repo: pathlib.Path) -> str | None:
+    r = _git(["rev-parse", "--short", "HEAD"], cwd=repo)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def _claude_adapter_drift(project_dir: pathlib.Path, source: pathlib.Path) -> int:
+    """Count of files that differ or are missing on either side between
+    <source>/claude/{commands,agents,skills,scripts} and <project>/.claude/
+    (mirror of diff-installed.py's comparison; __pycache__/.pyc ignored)."""
+    diff = 0
+    for sub in _CLAUDE_ADAPTER_DIRS:
+        src_root = source / "claude" / sub
+        dst_root = project_dir / ".claude" / sub
+        rels: set[str] = set()
+        for root in (src_root, dst_root):
+            if not root.is_dir():
+                continue
+            for p in root.rglob("*"):
+                if not p.is_file():
+                    continue
+                rel = p.relative_to(root)
+                if "__pycache__" in rel.parts or p.suffix in (".pyc", ".pyo"):
+                    continue
+                rels.add(rel.as_posix())
+        for rel in sorted(rels):
+            s, d = src_root / rel, dst_root / rel
+            if not s.is_file() or not d.is_file() or s.read_bytes() != d.read_bytes():
+                diff += 1
+    return diff
+
+
+def _read_framework_manifest(project_dir: pathlib.Path) -> dict[str, str]:
+    """Parse <project>/.agentic-framework key=value lines (written by install.py)."""
+    manifest: dict[str, str] = {}
+    p = project_dir / ".agentic-framework"
+    if not p.is_file():
+        return manifest
+    for line in p.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            manifest[key.strip()] = value.strip()
+    return manifest
+
+
+def _resolve_framework_source_readonly() -> pathlib.Path | None:
+    """Source resolution for checks — unlike _resolve_framework_source this
+    never auto-clones (no network, no prints): checkout repo > .tmp cache."""
+    checkout = _checkout_framework_dir()
+    if (checkout / "install.py").is_file():
+        return checkout
+    if (_TMP_AGENTICTASK / "install.py").is_file():
+        return _TMP_AGENTICTASK
+    return None
+
+
+def _check_update_env(project_dir: pathlib.Path) -> dict:
+    """All anchor checks from UPDATE.md §1 (A1-A8 + legacy patterns) as a
+    machine-readable report. Pure reads — no network, no side effects."""
+    checks: list[dict] = []
+
+    def add(cid: str, layer: str, status: str, detail: str, fix: str = "", *, auto: bool = False) -> None:
+        checks.append({"id": cid, "layer": layer, "status": status,
+                       "detail": detail, "fix": fix, "auto": auto})
+
+    initialized = (project_dir / ".agenticdoc").is_dir()
+    source = _resolve_framework_source_readonly()
+
+    # ── machine layer ──
+
+    # A1 extension bundle (same comparison as doctor's bundle section)
+    b = mw_common._doctor_bundle()
+    if not b.get("available"):
+        add("bundle", "machine", "warn", f"全局扩展 bundle 缺失: {b.get('note', '')}",
+            "python mw.py setup（manual）")
+    elif b.get("stale") is None:
+        add("bundle", "machine", "info",
+            f"bundle {b.get('global_bundle_mtime', '?')}（源不可比: {b.get('note', '')}）")
+    elif b["stale"]:
+        add("bundle", "machine", "stale",
+            f"全局 bundle {b['global_bundle_mtime']} 早于源码 {b['source_newest_mtime']}",
+            "重建+全局重装 bundle，随后重启 pi 窗口", auto=True)
+    else:
+        add("bundle", "machine", "ok",
+            f"bundle {b['global_bundle_mtime']} ≥ 源码最新 {b['source_newest_mtime']}")
+
+    # A2 pi dist (coarse mtime heuristic; the npm-linked global pi runs from here)
+    dist_dir = _repo_root() / "packages" / "coding-agent" / "dist"
+    src_dir = _repo_root() / "packages" / "coding-agent" / "src"
+    if dist_dir.is_dir() and src_dir.is_dir():
+        dist_new = _newest_file_mtime(dist_dir)
+        src_new = _newest_file_mtime(src_dir)
+        if dist_new is None or src_new is None:
+            add("pi-dist", "machine", "info", "dist 或 src 为空，跳过比较")
+        elif src_new > dist_new + 2.0:
+            add("pi-dist", "machine", "stale",
+                f"dist {_ts(dist_new)} 早于 src {_ts(src_new)}（粗粒度启发式）",
+                "mw build --install（含 dist 重建），随后重启 pi 窗口", auto=True)
+        else:
+            add("pi-dist", "machine", "ok", f"dist {_ts(dist_new)} ≥ src 最新 {_ts(src_new)}")
+    else:
+        add("pi-dist", "machine", "skip", "无 dist/src（非完整检出）")
+
+    # A4 framework source repo (the live working repo on a dev machine)
+    checkout = _checkout_framework_dir()
+    if (checkout / "install.py").is_file():
+        tracked, untracked = _git_dirty(checkout)
+        counts = _update_git_counts(checkout)
+        unpushed = counts["ahead"] if counts else 0
+        parts = []
+        if unpushed:
+            parts.append(f"未推送 commit ×{unpushed}")
+        if tracked:
+            parts.append(f"未提交变更 ×{tracked}")
+        if untracked:
+            parts.append(f"未跟踪文件 ×{untracked}")
+        if unpushed or tracked:
+            add("framework-source", "machine", "warn",
+                "；".join(parts) + " — 本机安装会携带未发布状态，他机/克隆需 push 后才可同步",
+                "git commit + push（发布）")
+        else:
+            extra = f"，未跟踪文件 ×{untracked}" if untracked else ""
+            add("framework-source", "machine", "ok",
+                f"干净且已推送（HEAD {_git_head_short(checkout) or '?'}）{extra}")
+    else:
+        add("framework-source", "machine", "skip", "检出仓无框架目录（源解析落到 .tmp 缓存）")
+
+    # A5 .tmp framework cache (bootstrap fallback source)
+    if (_TMP_AGENTICTASK / ".git").exists():
+        counts = _update_git_counts(_TMP_AGENTICTASK)
+        if counts is None:
+            add("tmp-cache", "machine", "warn", "缓存无 origin/master 引用（未 fetch 或非克隆）",
+                "python mw.py pull-agentictask")
+        elif counts["behind"] > 0 and counts["ahead"] == 0:
+            add("tmp-cache", "machine", "stale",
+                f".tmp 缓存落后 origin/{_DEFAULT_AGENTICTASK_BRANCH} {counts['behind']} commit",
+                "python mw.py pull-agentictask", auto=True)
+        elif counts["ahead"] > 0:
+            add("tmp-cache", "machine", "warn",
+                f".tmp 缓存领先 origin {counts['ahead']} commit（本地发散）",
+                "mw push-agentictask 发布，或 pull-agentictask --force 对齐")
+        else:
+            add("tmp-cache", "machine", "ok", "与 origin 一致")
+    else:
+        add("tmp-cache", "machine", "skip", ".tmp 缓存不存在（init 按需自动克隆）")
+
+    # ── project layer ──
+
+    # A3 serve staleness (mirror of the extension's STALE CODE banner)
+    pid = _check_pid(_pid_path(project_dir))
+    if pid is None:
+        hint = "打开 pi 窗口自动启动，或 python mw.py start" if initialized else "项目未初始化"
+        add("serve", "project", "info", "serve 未运行（PID 文件缺失或进程不在）", hint)
+    else:
+        meta_p = _serve_meta_path(project_dir)
+        started_ms: float | None = None
+        if meta_p.is_file():
+            try:
+                started_ms = float(json.loads(meta_p.read_text(encoding="utf-8")).get("started_at_ms", 0)) or None
+            except (json.JSONDecodeError, OSError):
+                started_ms = None
+        if started_ms is None:
+            try:
+                started_ms = (meta_p if meta_p.exists() else _pid_path(project_dir)).stat().st_mtime * 1000
+            except OSError:
+                started_ms = None
+        code_mtime = _mw_code_newest_mtime()
+        if started_ms is None or code_mtime is None:
+            add("serve", "project", "info", f"运行中 (PID {pid})；无法比较代码时间")
+        elif code_mtime * 1000 > started_ms + 2000:
+            add("serve", "project", "stale",
+                f"serve 启动 {_ts(started_ms / 1000)} 早于 mw 代码 {_ts(code_mtime)}（PID {pid}）",
+                "重启 serve（在飞 worker 由新 launcher 收养）", auto=True)
+        else:
+            add("serve", "project", "ok", f"运行中 (PID {pid})，代码新鲜")
+
+    if not initialized:
+        add("project", "project", "info", "项目未初始化（无 .agenticdoc）",
+            "python mw.py init --project <dir>")
+    else:
+        # A6 skill clone
+        clone = project_dir / ".agents" / "skills" / "agentic-task"
+        if not (clone / "install.py").is_file():
+            add("skill-clone", "project", "stale", "skill 克隆缺失", "框架重装（install.py）", auto=True)
+        else:
+            counts = _update_git_counts(clone)
+            if counts is None:
+                add("skill-clone", "project", "warn", "克隆无 origin/master 引用，无法比较",
+                    "手动检查 git 状态")
+            elif counts["ahead"] > 0:
+                add("skill-clone", "project", "warn",
+                    f"克隆领先 origin {counts['ahead']} commit（项目侧改动）",
+                    "sync_framework.py from-install 发布，或 git push")
+            elif counts["behind"] > 0:
+                add("skill-clone", "project", "stale",
+                    f"克隆落后 origin/{_DEFAULT_AGENTICTASK_BRANCH} {counts['behind']} commit",
+                    "框架重装（pull --ff-only）", auto=True)
+            else:
+                add("skill-clone", "project", "ok", "与 origin 一致")
+
+        # A7 .claude adapters + A8 manifest — both against the resolved source
+        if source is None:
+            add("claude-adapters", "project", "warn",
+                "无法解析框架源（checkout 与 .tmp 均无 install.py）",
+                "python mw.py pull-agentictask")
+            add("manifest", "project", "skip", "无源可比")
+        else:
+            drift = _claude_adapter_drift(project_dir, source)
+            if drift:
+                add("claude-adapters", "project", "stale",
+                    f".claude 适配器与框架源差异 {drift} 个文件", "框架重装（复制 claude/）", auto=True)
+            else:
+                add("claude-adapters", "project", "ok", ".claude 适配器与框架源一致")
+            manifest = _read_framework_manifest(project_dir)
+            installed_commit = manifest.get("commit", "")
+            source_head = _git_head_short(source)
+            if not installed_commit:
+                add("manifest", "project", "stale", ".agentic-framework 缺失或无 commit=",
+                    "框架重装", auto=True)
+            elif source_head and installed_commit != source_head:
+                add("manifest", "project", "stale",
+                    f"安装于 {installed_commit}，源 HEAD {source_head}", "框架重装", auto=True)
+            else:
+                add("manifest", "project", "ok",
+                    f"安装时间点 = 源 HEAD（{installed_commit or '?'}）")
+
+        # S4 legacy patterns layout (pre-efe1e44)
+        legacy = [d for d in (project_dir / ".agenticdoc").glob("*/patterns") if d.is_dir()]
+        if legacy:
+            add("legacy-patterns", "project", "warn",
+                f"检测到旧版 <key>/patterns 布局 ×{len(legacy)}（pre-efe1e44）",
+                "python .agents/skills/agentic-task/scripts/migrate_patterns.py --dry-run")
+        else:
+            add("legacy-patterns", "project", "ok", "无旧版 patterns 布局")
+
+    summary = {
+        "ok": sum(1 for c in checks if c["status"] == "ok"),
+        "stale": sum(1 for c in checks if c["status"] == "stale"),
+        "warn": sum(1 for c in checks if c["status"] == "warn"),
+        "healthy": all(c["status"] in ("ok", "info", "skip") for c in checks),
+    }
+    return {
+        "project": str(project_dir),
+        "framework_source": str(source) if source else None,
+        "checks": checks,
+        "summary": summary,
+    }
+
+
+def _apply_update_env(project_dir: pathlib.Path, report: dict) -> tuple[list[str], list[str]]:
+    """Execute the auto-fixable checks in dependency order (UPDATE.md §4):
+    bundle/dist rebuild → cache pull → framework reinstall → serve restart.
+    Returns (applied, manual_notes). Window-side actions (/reload, restarting
+    pi) stay manual — a CLI cannot touch live pi processes."""
+    applied: list[str] = []
+    manual: list[str] = []
+    by_id = {c["id"]: c for c in report["checks"]}
+
+    def stale(cid: str) -> bool:
+        c = by_id.get(cid)
+        return bool(c) and c["status"] == "stale" and c.get("auto")
+
+    # S1: bundle + pi dist
+    if stale("bundle") or stale("pi-dist"):
+        rc = _deploy_bundle(no_dist=False)
+        if rc == 0:
+            applied.append("bundle+dist 重建并全局重装")
+            manual.append("重启 pi 窗口以加载新 bundle/dist")
+        else:
+            manual.append("mw build --install 失败 — 手动排查后重试")
+
+    # .tmp cache (before framework reinstall — the cache may be its source)
+    if stale("tmp-cache"):
+        ok, msg = _pull_agentictask(_DEFAULT_AGENTICTASK_REMOTE, force=False,
+                                    branch=_DEFAULT_AGENTICTASK_BRANCH)
+        if ok:
+            applied.append(f".tmp 缓存更新: {msg}")
+        else:
+            manual.append(f".tmp 缓存更新失败: {msg}")
+
+    # S3: framework reinstall (skill clone / .claude adapters / manifest).
+    # Source resolution happens HERE so a cache pulled in the previous step
+    # is already visible; the live checkout (when present) still wins.
+    if any(stale(cid) for cid in ("skill-clone", "claude-adapters", "manifest")):
+        source = _resolve_framework_source_readonly()
+        if source is None:
+            manual.append("框架重装跳过：无可用源 — 先 python mw.py pull-agentictask")
+        else:
+            ok, msg = _install_framework(project_dir, source=source)
+            if ok:
+                applied.append(f"框架重装: {msg}")
+                manual.append("各 pi 窗口运行 /reload 刷新 skill 摘要与 goal 门禁")
+            else:
+                manual.append(f"框架重装失败: {msg}")
+
+    # S2: serve restart — last, so the restarted serve is the freshest state
+    if stale("serve"):
+        if _stop_serve(project_dir):
+            cmd_start(argparse.Namespace(
+                project=str(project_dir), pi_port=7001, claude_port=7003,
+                deepseek_port=None, poll_interval=5, max_workers=None, providers=None))
+            applied.append("serve 已重启（在飞 worker 由新 launcher 收养）")
+        else:
+            manual.append("serve 30s 内未退出 — 手动 /mw restart 或 /mw doctor")
+
+    return applied, manual
+
+
+def _format_update_env_text(report: dict) -> str:
+    lines = [f"[mw update-env] project: {report['project']}"]
+    if report.get("framework_source"):
+        lines.append(f"[mw update-env] 框架源: {report['framework_source']}")
+    lines.append("(远端比较基于本地 origin 引用 — 加 --fetch 先刷新)")
+    layer = None
+    for c in report["checks"]:
+        if c["layer"] != layer:
+            layer = c["layer"]
+            lines.append(f"— {'机器层' if layer == 'machine' else '项目层'} —")
+        mark = _UPDATE_ENV_MARKS.get(c["status"], c["status"])
+        lines.append(f"  [{mark}] {c['id']:<18} {c['detail']}")
+        if c["fix"] and c["status"] != "ok":
+            auto_tag = " [auto]" if c.get("auto") else ""
+            lines.append(f"       ↳{auto_tag} {c['fix']}")
+    s = report["summary"]
+    lines.append(f"— 汇总: {s['ok']} ok / {s['stale']} stale / {s['warn']} warn — "
+                 f"{'healthy' if s['healthy'] else '需要动作'}")
+    if report.get("applied"):
+        lines.append("— 已执行（--apply）—")
+        lines.extend(f"  ✓ {a}" for a in report["applied"])
+    if report.get("manual"):
+        lines.append("— 待人工 —")
+        lines.extend(f"  • {m}" for m in report["manual"])
+    if not report.get("applied") and s["stale"]:
+        lines.append("提示: python mw.py update-env --apply 可自动执行 [auto] 项")
+    return "\n".join(lines)
+
+
+def cmd_update_env(args: argparse.Namespace) -> int:
+    """Incremental self-check over the update anchors (UPDATE.md §3/§4).
+
+    Read-only by default: prints each anchor's state + the minimal action.
+    --apply executes the auto-fixable ones (build/install/pull/reinstall/serve
+    restart) and re-checks; window-side reloads stay manual. Exit 0 = healthy
+    (nothing stale/warn), 1 = attention needed — like doctor."""
+    project_dir = pathlib.Path(args.project).resolve()
+
+    if args.fetch:
+        for repo in (_TMP_AGENTICTASK, project_dir / ".agents" / "skills" / "agentic-task"):
+            if (repo / ".git").exists():
+                r = _git(["fetch", "origin"], cwd=repo)
+                state = "ok" if r.returncode == 0 else (r.stderr or r.stdout).strip()[:120]
+                print(f"[mw update-env] fetch {repo}: {state}")
+
+    report = _check_update_env(project_dir)
+    applied: list[str] = []
+    manual_notes: list[str] = []
+    if args.apply:
+        applied, manual_notes = _apply_update_env(project_dir, report)
+        report = _check_update_env(project_dir)  # verify against fresh anchors
+
+    report["applied"] = applied
+    report["manual"] = manual_notes + [
+        f"[{c['id']}] {c['fix']}" for c in report["checks"]
+        if c["status"] in ("stale", "warn") and c["fix"]
+    ]
+
+    if args.json:
+        print(json.dumps(report, indent=2, default=str, ensure_ascii=False))
+    else:
+        print(_format_update_env_text(report))
+    return 0 if report["summary"]["healthy"] else 1
+
+
 def _add_serve_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--project", required=True, help="Project directory")
     parser.add_argument("--pi-port", type=int, default=7001)
@@ -2913,6 +3388,20 @@ def _parse_args() -> argparse.Namespace:
                          help="Skip rebuilding packages/coding-agent/dist (the npm-link pi runtime); "
                               "by default --install also rebuilds it")
 
+    update_env_p = sub.add_parser(
+        "update-env",
+        help="Incremental self-check over the update anchors (UPDATE.md): bundle/dist/serve/"
+             "framework propagation; --apply runs the safe fixes",
+    )
+    update_env_p.add_argument("--project", required=True)
+    update_env_p.add_argument("--apply", action="store_true",
+                              help="Execute the auto-fixable actions (build+install, cache pull, "
+                                   "framework reinstall, serve restart) then re-check")
+    update_env_p.add_argument("--json", action="store_true", help="Emit the JSON report")
+    update_env_p.add_argument("--fetch", action="store_true",
+                              help="git fetch origin in the framework cache + skill clone first "
+                                   "(refresh the origin refs the behind/ahead counts use)")
+
     return parser.parse_args()
 
 
@@ -2933,5 +3422,6 @@ if __name__ == "__main__":
         "setup": cmd_setup,
         "build": cmd_build,
         "bootstrap": cmd_bootstrap,
+        "update-env": cmd_update_env,
     }
     sys.exit(dispatch[args.subcommand](args))

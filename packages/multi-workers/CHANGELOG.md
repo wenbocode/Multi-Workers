@@ -20,6 +20,8 @@
 
 - Added a launcher model-override evidence line (mw-dispatch-role-escape): when a task.md `model:` beats a configured `.mw/dispatch.yml` role default, the spawn prints `[launcher] <task_key>: model-override task=<X> config:<role>=<Y>` after the existing `source=task` line. The resolution chain and spawn behavior are unchanged (the explicit value still wins) - the deviation is now greppable in `launcher.log` instead of invisible.
 
+- Added `mw update-env [--apply] [--json] [--fetch]`: incremental self-check over the update anchors documented in `UPDATE.md` (global bundle vs source mtime, pi dist vs src, running serve vs mw code mtime, framework source repo push state, .tmp cache and project skill-clone behind/ahead vs origin, `.claude` adapter drift, `.agentic-framework` install commit, legacy patterns layout). Report-only by default (ok/stale/warn with [auto] markers; exit code mirrors doctor: 0 healthy / 1 findings); `--apply` executes the safe fixes in dependency order — bundle+dist rebuild and global install, cache pull, framework reinstall, serve restart — then re-checks; push, pi window restarts and `/reload` stay listed as manual steps; `--fetch` refreshes the origin refs the behind/ahead counts read; `--json` is machine-readable. `cmd_build --install`'s block and `cmd_stop` are extracted into the reusable `_deploy_bundle`/`_stop_serve` (shared with update-env). 15 hermetic tests in `test_update_env.py`.
+
 ### Changed
 
 - Changed the `/worker` slash command to accept `--type coding|review|research` and `--reason <text>`, matching the `dispatch_worker` tool surface; a configured role value that pi's model table cannot resolve is now refused at dispatch (see README 派工类型与模型覆盖门禁) instead of being sent as a custom model id.

@@ -13,6 +13,8 @@
 
 - Added `readRoleModel(cwd, role)` to the dispatch model module (the hand-written `.mw/dispatch.yml` reader generalized from `readMainModelConfig`, bundle stays yaml-free), `DISPATCH_ROLE_BY_TYPE` (mirror of `mw_common.TASK_TYPE_TO_ROLE`, unknown type -> coding) and `validateModelValue(registry, cli, taskProvider, value)`.
 
+- Added `/mw update [--apply]` (agent-team-loop): thin forward to `mw.py update-env`, the incremental update self-check over the anchors documented in `packages/multi-workers/UPDATE.md` (bundle/dist/serve staleness, framework propagation). Like doctor, exit 1 means findings — the report is still shown; `--apply` allows the long path (bundle/dist rebuild + framework reinstall, 10-minute spawn timeout). `mwCodeNewestMtimeMs` now skips `.tmp` (the framework cache is not serve runtime code), matching the Python mirror `_mw_code_newest_mtime`.
+
 ### Changed
 
 - Changed the model override contract (mw-dispatch-role-escape): a `model` whose `.mw/dispatch.yml` role default differs now requires `model_reason`, recorded as a single-line `model-reason:` in task.md; missing it refuses the dispatch (no task dir, no queue row). A request equal to the configured default is not pinned - no `model:` line is written, so the config stays the source of truth. The effective value (explicit or the configured role default) is checked against `ctx.modelRegistry` for pi routes: an id the route cannot resolve (`timi/gpt-5.6.sol`) is refused at dispatch instead of silently becoming a pi custom model id. CLI-executor prefixes (`codex_cli/`/`claude_cli/`), non-pi tasks, a missing registry, and a provider absent from the registry are all left unchecked. `/mw model set` validates a prefixed value before Python writes the file.
