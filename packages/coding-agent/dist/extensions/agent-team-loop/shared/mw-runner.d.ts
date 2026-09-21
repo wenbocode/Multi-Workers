@@ -215,4 +215,11 @@ export declare function targetMw(projectDir: string, args: string[]): MwCliResul
 export declare function partitionMw(projectDir: string, args: string[]): MwCliResult;
 /** `mw.py model <args...>` — dispatch model defaults (show / set / clear). */
 export declare function modelMw(projectDir: string, args: string[]): MwCliResult;
+/**
+ * `mw.py update-env [--apply]` — incremental self-check over the update
+ * anchors (UPDATE.md §1). Like doctor, exit 1 means "findings", not failure:
+ * any stdout is still the report. --apply may rebuild the bundle + pi dist
+ * and reinstall the framework, so the timeout is minutes, not seconds.
+ */
+export declare function updateEnvMw(projectDir: string, apply: boolean): MwCliResult;
 //# sourceMappingURL=mw-runner.d.ts.map

@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
+import type { ModelRegistry } from "../../../core/model-registry.ts";
 import type { AckStore } from "../shared/ack-store.ts";
 import { type IndexStore } from "../shared/index-store.ts";
 import type { DoctorJson, MwCliResult } from "../shared/mw-runner.ts";
@@ -162,11 +163,46 @@ export declare function registerPmSaveCommand(pi: ExtensionAPI, indexStore: Inde
  */
 export declare function registerWatchCommand(pi: ExtensionAPI, watch: PmWatchState, refreshWatch: (ctx: ExtensionContext) => void, indexStore: IndexStore): void;
 export declare function registerMwTools(pi: ExtensionAPI, projectDir: string): void;
+/** Resolve the task type for one dispatch: an explicit value must be one of
+ * DISPATCHABLE_TYPES, an omitted one keeps the legacy cli-derived mapping
+ * (pi -> coding, claude -> review, codex -> codex) so pre-existing dispatches
+ * stay byte-identical. */
+export declare function resolveDispatchType(cli: string, requested: string): {
+    ok: true;
+    type: string;
+} | {
+    ok: false;
+    message: string;
+};
+/** Build the task.md frontmatter (type / model / model-reason) for one dispatch
+ * and the echo line that tells the PM which layer supplies the model
+ * (design D-001~D-007). Shared by the dispatch_worker tool and /worker so the
+ * two entries can never drift.
+ *
+ * Refusals (no task file must be written): an unknown model id for a pi route
+ * (validateModelValue), and an override of a configured dispatch.yml role
+ * default without a reason. */
+export declare function planDispatchFrontmatter(input: {
+    cwd: string;
+    cli: string;
+    provider: string;
+    taskType: string;
+    model: string;
+    modelReason: string;
+    registry: ModelRegistry | undefined;
+}): {
+    ok: true;
+    frontmatter: string;
+    echo: string;
+} | {
+    ok: false;
+    message: string;
+};
 /**
  * Register agent-callable tools for worker dispatch and task listing.
  * These complement the slash commands in registerWorkerCommands.
  */
-export declare function registerWorkerTools(pi: ExtensionAPI, workerStore: WorkerStore, ackStore: AckStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState): void;
+export declare function registerWorkerTools(pi: ExtensionAPI, workerStore: WorkerStore, ackStore: AckStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, projectDir?: string): void;
 /** Register the agent-callable switch_key tool: same takeover as
  * /pm-key switch, callable mid-conversation. Tool description + prompt
  * guidelines teach the agent when to call it (explicit user request, or
@@ -184,9 +220,9 @@ export declare function registerSwitchKeyTool(pi: ExtensionAPI, indexStore: Inde
 export declare function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: string): void;
 /**
  * Spawn a worker directly from the pi window.
- * Usage: /worker <claude|codex|pi> [--model <id>] <task description>
+ * Usage: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] [--key <name>] <desc>
  */
-export declare function registerWorkerCommands(pi: ExtensionAPI, workerStore: WorkerStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState): void;
+export declare function registerWorkerCommands(pi: ExtensionAPI, workerStore: WorkerStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, projectDir?: string): void;
 /** Format a doctor JSON report as a readable Chinese summary (same data as
  * the CLI text output — the TS side never re-implements checks, AC-007). */
 export declare function formatDoctorReport(report: DoctorJson, fix: boolean): string;

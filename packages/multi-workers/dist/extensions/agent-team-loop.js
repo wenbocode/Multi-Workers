@@ -7867,12 +7867,12 @@ import * as fs19 from "node:fs";
 import * as path19 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/autopilot/console.ts
-import * as path16 from "node:path";
+import * as path17 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
-import * as fs12 from "node:fs";
-import * as os2 from "node:os";
-import * as path12 from "node:path";
+import * as fs13 from "node:fs";
+import * as os3 from "node:os";
+import * as path13 from "node:path";
 
 // node_modules/typebox/build/system/memory/memory.mjs
 var memory_exports = {};
@@ -12394,7 +12394,7 @@ function mwCodeNewestMtimeMs(mwPyOverride) {
     }
     for (const e of entries) {
       if (e.isDirectory()) {
-        if (e.name === "__pycache__" || e.name === "dist") continue;
+        if (e.name === "__pycache__" || e.name === "dist" || e.name === ".tmp") continue;
         walk(path.join(dir, e.name));
         continue;
       }
@@ -12472,12 +12472,12 @@ function doctorMw(projectDir, fix = false) {
     return { ok: false, error: `mw doctor returned non-JSON output: ${String(err)}` };
   }
 }
-function runMwCli(sub, projectDir, args) {
+function runMwCli(sub, projectDir, args, timeoutMs = 3e4) {
   const mwPy = findMwPy();
   if (!mwPy) return { ok: false, error: "Could not find mw.py \u2014 set MW_PY env var." };
   const result = spawnSync(PYTHON_EXE, [mwPy, sub, ...args, `--project=${projectDir}`], {
     encoding: "utf8",
-    timeout: 3e4
+    timeout: timeoutMs
   });
   if (result.error) {
     return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
@@ -12496,6 +12496,21 @@ function partitionMw(projectDir, args) {
 }
 function modelMw(projectDir, args) {
   return runMwCli("model", projectDir, args);
+}
+function updateEnvMw(projectDir, apply) {
+  const mwPy = findMwPy();
+  if (!mwPy) return { ok: false, error: "Could not find mw.py \u2014 set MW_PY env var." };
+  const args = [mwPy, "update-env", `--project=${projectDir}`];
+  if (apply) args.push("--apply");
+  const result = spawnSync(PYTHON_EXE, args, { encoding: "utf8", timeout: 6e5 });
+  if (result.error) {
+    return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
+  }
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+  if (!output) {
+    return { ok: false, error: `mw update-env exited with code ${result.status}` };
+  }
+  return { ok: true, output };
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/agentic-scripts.ts
@@ -12546,23 +12561,168 @@ function runAgenticScript(projectDir, scriptName, args, timeoutMs = 3e4) {
   return { ok: true, output: output || "(no output)" };
 }
 
-// packages/coding-agent/src/extensions/agent-team-loop/shared/file-lock.ts
+// packages/coding-agent/src/extensions/agent-team-loop/shared/dispatch-models.ts
 import * as fs3 from "node:fs";
+import * as os2 from "node:os";
 import * as path3 from "node:path";
+var PROVIDER_ID_TO_PREFIX = {
+  timi: "timi",
+  anthropic: "claude",
+  "openai-codex": "codex",
+  deepseek: "deepseek",
+  "zai-coding-cn": "zai"
+};
+var PREFIX_TO_PROVIDER_ID = Object.fromEntries(
+  Object.entries(PROVIDER_ID_TO_PREFIX).map(([provider, prefix]) => [prefix, provider])
+);
+function parseModelValue(value) {
+  const idx = value.indexOf("/");
+  if (idx < 0) return { prefix: "", modelId: value.trim() };
+  return { prefix: value.slice(0, idx).trim(), modelId: value.slice(idx + 1).trim() };
+}
+function windowModelPath(cwd) {
+  return path3.join(cwd, ".mw", "window-model");
+}
+var DISPATCH_ROLE_BY_TYPE = {
+  coding: "coding",
+  "phase-writer": "coding",
+  repair: "coding",
+  "roadmap-writer": "coding",
+  review: "review",
+  verifier: "review",
+  reviewer: "review",
+  research: "research"
+};
+var DISPATCHABLE_TYPES = ["coding", "review", "research"];
+function roleForTaskType(taskType) {
+  return DISPATCH_ROLE_BY_TYPE[taskType] ?? "coding";
+}
+var CLI_EXECUTOR_PREFIXES = ["codex_cli", "claude_cli"];
+function dispatchYmlPath(cwd) {
+  return path3.join(cwd, ".mw", "dispatch.yml");
+}
+function isFrameworkProject(cwd) {
+  return fs3.existsSync(path3.join(cwd, ".agenticdoc"));
+}
+function recordWindowModel(cwd, model) {
+  if (!model || !isFrameworkProject(cwd)) return;
+  const prefix = PROVIDER_ID_TO_PREFIX[model.provider];
+  if (!prefix) return;
+  try {
+    fs3.mkdirSync(path3.join(cwd, ".mw"), { recursive: true });
+    fs3.writeFileSync(windowModelPath(cwd), `${prefix}/${model.id}
+`, "utf8");
+  } catch {
+  }
+}
+function readRoleModel(cwd, role) {
+  let text;
+  try {
+    text = fs3.readFileSync(dispatchYmlPath(cwd), "utf8");
+  } catch {
+    return null;
+  }
+  if (text.charCodeAt(0) === 65279) text = text.slice(1);
+  let inModels = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (/^models:\s*$/.test(line)) {
+      inModels = true;
+      continue;
+    }
+    if (inModels) {
+      if (line && !/^\s/.test(line)) break;
+      const m = /^\s+([A-Za-z0-9_-]+):\s*(\S+)\s*$/.exec(line);
+      if (m && m[1] === role) return m[2];
+    }
+  }
+  return null;
+}
+function readMainModelConfig(cwd) {
+  return readRoleModel(cwd, "main");
+}
+function validateModelValue(registry, cli, taskProvider, value) {
+  const trimmed = value.trim();
+  if (!trimmed || !registry || cli.toLowerCase() !== "pi") return { ok: true, message: "" };
+  const { prefix, modelId } = parseModelValue(trimmed);
+  if (!modelId) return { ok: false, message: `Model value '${trimmed}' carries no model id.` };
+  if (CLI_EXECUTOR_PREFIXES.includes(prefix)) return { ok: true, message: "" };
+  const provider = prefix ? PREFIX_TO_PROVIDER_ID[prefix] : taskProvider.trim();
+  if (prefix && !provider) {
+    const known = [...Object.keys(PREFIX_TO_PROVIDER_ID), ...CLI_EXECUTOR_PREFIXES].sort().join(", ");
+    return { ok: false, message: `Model value '${trimmed}' has unknown prefix '${prefix}' (valid: ${known}).` };
+  }
+  if (!provider) return { ok: true, message: "" };
+  const ids = registry.getAll().filter((m) => m.provider === provider).map((m) => m.id);
+  if (ids.length === 0) return { ok: true, message: "" };
+  if (registry.find(provider, modelId)) return { ok: true, message: "" };
+  const candidates = [...new Set(ids)].sort().slice(0, 5).join(", ");
+  return {
+    ok: false,
+    message: `Model '${trimmed}' not found for provider '${provider}' (known ids include: ${candidates}). Use /mw model set <role> ${trimmed} with a valid id, or omit the model to inherit the configured role default.`
+  };
+}
+function settingsDefaultModel() {
+  const base = process.env.PI_CODING_AGENT_DIR ?? path3.join(os2.homedir(), ".pi", "agent");
+  try {
+    const settings2 = JSON.parse(fs3.readFileSync(path3.join(base, "settings.json"), "utf8"));
+    return typeof settings2.defaultModel === "string" && settings2.defaultModel ? settings2.defaultModel : null;
+  } catch {
+    return null;
+  }
+}
+function hasCliModelFlag() {
+  return process.argv.some((a) => a === "--model" || a.startsWith("--model="));
+}
+async function applyMainModelConfig(pi, ctx) {
+  if (hasCliModelFlag() || settingsDefaultModel()) return;
+  const value = readMainModelConfig(ctx.cwd);
+  if (!value) return;
+  const { prefix, modelId } = parseModelValue(value);
+  if (!prefix || !modelId) return;
+  const provider = PREFIX_TO_PROVIDER_ID[prefix];
+  if (!provider) return;
+  const model = ctx.modelRegistry.find(provider, modelId);
+  if (!model) {
+    ctx.ui.notify(
+      `dispatch.yml main=${value} not found in the model registry \u2014 leaving the window model unchanged`,
+      "error"
+    );
+    return;
+  }
+  if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) return;
+  const ok = await pi.setModel(model);
+  if (ok) {
+    ctx.ui.notify(`model set to ${value} (dispatch.yml main)`, "info");
+  }
+}
+function registerMainWindowModel(pi) {
+  pi.on("session_start", (_event, ctx) => {
+    recordWindowModel(ctx.cwd, ctx.model);
+    void applyMainModelConfig(pi, ctx);
+  });
+  pi.on("model_select", (event) => {
+    recordWindowModel(process.cwd(), event.model);
+  });
+}
+
+// packages/coding-agent/src/extensions/agent-team-loop/shared/file-lock.ts
+import * as fs4 from "node:fs";
+import * as path4 from "node:path";
 async function acquireLock(lockPath, opts = {}) {
   const retries = opts.retries ?? 10;
   const baseDelayMs = opts.baseDelayMs ?? 50;
-  const dir = path3.dirname(lockPath);
-  if (!fs3.existsSync(dir)) {
-    fs3.mkdirSync(dir, { recursive: true });
+  const dir = path4.dirname(lockPath);
+  if (!fs4.existsSync(dir)) {
+    fs4.mkdirSync(dir, { recursive: true });
   }
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const fd = fs3.openSync(lockPath, "wx");
-      fs3.closeSync(fd);
+      const fd = fs4.openSync(lockPath, "wx");
+      fs4.closeSync(fd);
       return () => {
         try {
-          fs3.unlinkSync(lockPath);
+          fs4.unlinkSync(lockPath);
         } catch {
         }
       };
@@ -12582,8 +12742,8 @@ function sleep(ms) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/heartbeat.ts
-import * as fs4 from "node:fs";
-import * as path4 from "node:path";
+import * as fs5 from "node:fs";
+import * as path5 from "node:path";
 var HEARTBEAT_INTERVAL_MS = 3e4;
 var HEARTBEAT_STALE_MS = 9e4;
 var HEARTBEAT_LINE_RE = /^\[HEARTBEAT\] (\S+) task=(\S+)(?: phase=(\S+))?$/;
@@ -12602,7 +12762,7 @@ function formatHeartbeatAge(ms) {
 function readTaskProgress(taskDir) {
   let content;
   try {
-    content = fs4.readFileSync(path4.join(taskDir, "trace.log"), "utf8");
+    content = fs5.readFileSync(path5.join(taskDir, "trace.log"), "utf8");
   } catch {
     return void 0;
   }
@@ -12689,8 +12849,8 @@ function readTaskProgress(taskDir) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/index-store.ts
-import * as fs5 from "node:fs";
-import * as path5 from "node:path";
+import * as fs6 from "node:fs";
+import * as path6 from "node:path";
 var INDEX_COLS = 7;
 function parseIndexLine(line) {
   const trimmed = line.trim();
@@ -12719,12 +12879,12 @@ function serializeIndexLine(entry) {
 }
 var IndexStore = class {
   constructor(agenticdocRoot2) {
-    this.filePath = path5.join(agenticdocRoot2, "_index.parallel");
-    this.lockPath = path5.join(agenticdocRoot2, "..", ".mw", "index.lock");
+    this.filePath = path6.join(agenticdocRoot2, "_index.parallel");
+    this.lockPath = path6.join(agenticdocRoot2, "..", ".mw", "index.lock");
   }
   readAll() {
-    if (!fs5.existsSync(this.filePath)) return [];
-    const lines = fs5.readFileSync(this.filePath, "utf8").split("\n");
+    if (!fs6.existsSync(this.filePath)) return [];
+    const lines = fs6.readFileSync(this.filePath, "utf8").split("\n");
     return lines.map(parseIndexLine).filter((e) => e !== void 0);
   }
   async upsert(entry) {
@@ -12788,8 +12948,8 @@ var IndexStore = class {
    * lines. Callers must hold the index lock. */
   writeRows(rows) {
     let header = "";
-    if (fs5.existsSync(this.filePath)) {
-      const raw = fs5.readFileSync(this.filePath, "utf8");
+    if (fs6.existsSync(this.filePath)) {
+      const raw = fs6.readFileSync(this.filePath, "utf8");
       const headerLines = [];
       for (const l of raw.split("\n")) {
         const t = l.trim();
@@ -12807,8 +12967,8 @@ var IndexStore = class {
     const content = `${header}${rows.map(serializeIndexLine).join("\n")}
 `;
     const tmpPath = `${this.filePath}.tmp`;
-    fs5.writeFileSync(tmpPath, content, "utf8");
-    fs5.renameSync(tmpPath, this.filePath);
+    fs6.writeFileSync(tmpPath, content, "utf8");
+    fs6.renameSync(tmpPath, this.filePath);
   }
   findByKey(key) {
     return this.readAll().find((e) => e.key === key);
@@ -12839,9 +12999,9 @@ var IndexStore = class {
   }
 };
 function readIndexMdActive(agenticdocRoot2) {
-  const mdPath = path5.join(agenticdocRoot2, "_index.md");
-  if (!fs5.existsSync(mdPath)) return void 0;
-  for (const line of fs5.readFileSync(mdPath, "utf8").split("\n")) {
+  const mdPath = path6.join(agenticdocRoot2, "_index.md");
+  if (!fs6.existsSync(mdPath)) return void 0;
+  for (const line of fs6.readFileSync(mdPath, "utf8").split("\n")) {
     const m = /^active:\s*(\S+)/u.exec(line.trim());
     if (m) return m[1];
   }
@@ -12849,35 +13009,35 @@ function readIndexMdActive(agenticdocRoot2) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/paths.ts
-import * as path6 from "node:path";
+import * as path7 from "node:path";
 var AGENTICDOC_DIR = ".agenticdoc";
 var GOAL_FILE = "goal.md";
 var SCRATCH_WORKERS_KEY = "_scratch";
 var WORKERS_DIR = "workers";
 function agenticdocRoot(projectDir) {
-  return path6.join(projectDir, AGENTICDOC_DIR);
+  return path7.join(projectDir, AGENTICDOC_DIR);
 }
 function goalPath(agenticdocRoot2) {
-  return path6.join(agenticdocRoot2, GOAL_FILE);
+  return path7.join(agenticdocRoot2, GOAL_FILE);
 }
 function workersDirFor(agenticdocRoot2, ownerKey) {
-  return path6.join(agenticdocRoot2, ownerKey, WORKERS_DIR);
+  return path7.join(agenticdocRoot2, ownerKey, WORKERS_DIR);
 }
 function workerTaskDir(agenticdocRoot2, ownerKey, taskKey) {
-  return path6.join(workersDirFor(agenticdocRoot2, ownerKey), taskKey);
+  return path7.join(workersDirFor(agenticdocRoot2, ownerKey), taskKey);
 }
 function controlRootFromTaskPath(taskPath) {
-  const workersDir = path6.dirname(path6.dirname(taskPath));
-  const agenticdocRoot2 = path6.dirname(path6.dirname(workersDir));
-  return path6.dirname(agenticdocRoot2);
+  const workersDir = path7.dirname(path7.dirname(taskPath));
+  const agenticdocRoot2 = path7.dirname(path7.dirname(workersDir));
+  return path7.dirname(agenticdocRoot2);
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/phase-docs.ts
-import * as fs7 from "node:fs";
-import * as path7 from "node:path";
+import * as fs8 from "node:fs";
+import * as path8 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/goal-reader.ts
-import * as fs6 from "node:fs";
+import * as fs7 from "node:fs";
 function parseStatus(content) {
   const m = content.match(/^\s*>?\s*status:\s*(\w+)/im);
   if (!m) return "unknown";
@@ -12902,9 +13062,9 @@ function parseGoalMd(content) {
 }
 function readGoal(agenticdocRoot2) {
   const resolved = goalPath(agenticdocRoot2);
-  if (!fs6.existsSync(resolved)) return null;
+  if (!fs7.existsSync(resolved)) return null;
   try {
-    return parseGoalMd(fs6.readFileSync(resolved, "utf8"));
+    return parseGoalMd(fs7.readFileSync(resolved, "utf8"));
   } catch {
     return null;
   }
@@ -12920,14 +13080,14 @@ function isGoalEstablished(goal) {
 var MIN_PHASE_DOC_BYTES = 500;
 function fileAtLeast(file, minBytes) {
   try {
-    return fs7.statSync(file).size >= minBytes;
+    return fs8.statSync(file).size >= minBytes;
   } catch {
     return false;
   }
 }
 function countNotes(dir, prefix) {
   try {
-    return fs7.readdirSync(dir).filter((n) => n.startsWith(prefix) && n.endsWith(".md")).length;
+    return fs8.readdirSync(dir).filter((n) => n.startsWith(prefix) && n.endsWith(".md")).length;
   } catch {
     return 0;
   }
@@ -12956,20 +13116,20 @@ function hasSectionWith(text, headingKws, mustContain) {
 }
 function readSpecContent(keyDir) {
   try {
-    return fs7.readFileSync(path7.join(keyDir, "spec.md"), "utf8");
+    return fs8.readFileSync(path8.join(keyDir, "spec.md"), "utf8");
   } catch {
     return void 0;
   }
 }
 function readPhaseDocs(agenticdocRoot2, key) {
-  const keyDir = path7.join(agenticdocRoot2, key);
+  const keyDir = path8.join(agenticdocRoot2, key);
   const specContent = readSpecContent(keyDir);
   const goalEstablished = isGoalEstablished(readGoal(agenticdocRoot2));
   return {
-    spec: fileAtLeast(path7.join(keyDir, "spec.md"), MIN_PHASE_DOC_BYTES),
-    design: fileAtLeast(path7.join(keyDir, "design.md"), MIN_PHASE_DOC_BYTES),
-    specEvidence: countNotes(path7.join(keyDir, "evidence", "research"), "spec-"),
-    designEvidence: countNotes(path7.join(keyDir, "evidence", "research"), "design-"),
+    spec: fileAtLeast(path8.join(keyDir, "spec.md"), MIN_PHASE_DOC_BYTES),
+    design: fileAtLeast(path8.join(keyDir, "design.md"), MIN_PHASE_DOC_BYTES),
+    specEvidence: countNotes(path8.join(keyDir, "evidence", "research"), "spec-"),
+    designEvidence: countNotes(path8.join(keyDir, "evidence", "research"), "design-"),
     specS0: !goalEstablished || hasSectionWith(specContent ?? "", ["\xA70", "Goal Alignment"], "\u9884\u671F\u6536\u76CA"),
     specAC: /AC-\d{3}/.test(specContent ?? "")
   };
@@ -12998,8 +13158,8 @@ function dispatchDocGaps(agenticdocRoot2, key) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/pm-state-guard.ts
-import * as fs8 from "node:fs";
-import * as path8 from "node:path";
+import * as fs9 from "node:fs";
+import * as path9 from "node:path";
 var INTERFACE_LINE = /^- (Phase|Claim-Id):/m;
 var PHASE_LINE = /^- Phase:\s*(.+?)\s*$/m;
 var PHASE_ORDER = ["SPEC", "DESIGN", "PLAN", "TASKS", "EXECUTE", "VERIFY", "DONE"];
@@ -13011,13 +13171,13 @@ function pmStateTarget(toolName, args, projectDir, agenticdocRoot2) {
   if (toolName !== "write" && toolName !== "edit") return void 0;
   const filePath = args?.path;
   if (typeof filePath !== "string" || filePath === "") return void 0;
-  const rel = path8.relative(path8.resolve(agenticdocRoot2), path8.resolve(projectDir, filePath));
-  if (rel.startsWith("..") || path8.isAbsolute(rel)) return void 0;
-  const parts = rel.split(path8.sep);
+  const rel = path9.relative(path9.resolve(agenticdocRoot2), path9.resolve(projectDir, filePath));
+  if (rel.startsWith("..") || path9.isAbsolute(rel)) return void 0;
+  const parts = rel.split(path9.sep);
   if (parts.length !== 2 || parts[1] !== "pm-state.md") return void 0;
   const key = parts[0] ?? "";
   if (!key || key.startsWith("_") || key.startsWith(".")) return void 0;
-  return { key, absPath: path8.resolve(projectDir, filePath) };
+  return { key, absPath: path9.resolve(projectDir, filePath) };
 }
 function pmStateInterfaceViolation(toolName, args, projectDir, agenticdocRoot2, readFile = defaultReadFile) {
   const target = pmStateTarget(toolName, args, projectDir, agenticdocRoot2);
@@ -13044,7 +13204,7 @@ function pmStateInterfaceViolation(toolName, args, projectDir, agenticdocRoot2, 
 }
 function defaultReadFile(abs) {
   try {
-    return fs8.readFileSync(abs, "utf8");
+    return fs9.readFileSync(abs, "utf8");
   } catch {
     return void 0;
   }
@@ -13058,7 +13218,7 @@ function registerPmStateGuard(pi, projectDir, agenticdocRoot2) {
 }
 function readPmStatePhase(agenticdocRoot2, key) {
   try {
-    const content = fs8.readFileSync(path8.join(agenticdocRoot2, key, "pm-state.md"), "utf8");
+    const content = fs9.readFileSync(path9.join(agenticdocRoot2, key, "pm-state.md"), "utf8");
     const m = PHASE_LINE.exec(content);
     return m?.[1];
   } catch {
@@ -13103,7 +13263,7 @@ function phaseAuditWarnings(agenticdocRoot2, key, indexPhase) {
   }
   if (rank >= PHASE_ORDER.indexOf("EXECUTE")) {
     try {
-      const n = fs8.readdirSync(path8.join(agenticdocRoot2, key, "tasks")).filter((f) => f.endsWith(".md")).length;
+      const n = fs9.readdirSync(path9.join(agenticdocRoot2, key, "tasks")).filter((f) => f.endsWith(".md")).length;
       if (n < 1) warnings.push("[audit] execute gate: tasks/ has no .md files.");
     } catch {
       warnings.push(
@@ -13115,12 +13275,12 @@ function phaseAuditWarnings(agenticdocRoot2, key, indexPhase) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/output-writer.ts
-import * as fs9 from "node:fs";
-import * as path9 from "node:path";
+import * as fs10 from "node:fs";
+import * as path10 from "node:path";
 function outputDir(taskKey, agenticdocRoot2) {
-  const resolved = path9.resolve(agenticdocRoot2, taskKey);
-  const root = path9.resolve(agenticdocRoot2);
-  if (!resolved.startsWith(`${root}${path9.sep}`) && resolved !== root) {
+  const resolved = path10.resolve(agenticdocRoot2, taskKey);
+  const root = path10.resolve(agenticdocRoot2);
+  if (!resolved.startsWith(`${root}${path10.sep}`) && resolved !== root) {
     throw new Error(`Invalid taskKey: path traversal detected in "${taskKey}"`);
   }
   return resolved;
@@ -13137,8 +13297,8 @@ function headline(summary) {
 }
 function writeOutput(opts) {
   const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
-  fs9.mkdirSync(dir, { recursive: true });
-  const outputPath = path9.join(dir, "output.md");
+  fs10.mkdirSync(dir, { recursive: true });
+  const outputPath = path10.join(dir, "output.md");
   const sections = [];
   sections.push(`## TL;DR
 
@@ -13172,13 +13332,13 @@ Task was cancelled (exit 130).`);
   }
   let existing = "";
   try {
-    existing = fs9.readFileSync(outputPath, "utf8");
+    existing = fs10.readFileSync(outputPath, "utf8");
   } catch {
     existing = "";
   }
   const body = `${sections.join("\n\n")}
 `;
-  fs9.writeFileSync(outputPath, existing.trim() === "" ? body : `${existing.trimEnd()}
+  fs10.writeFileSync(outputPath, existing.trim() === "" ? body : `${existing.trimEnd()}
 
 ---
 
@@ -13186,16 +13346,16 @@ ${body}`, "utf8");
 }
 function appendTrace(taskKey, agenticdocRoot2, line) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs9.mkdirSync(dir, { recursive: true });
-  const tracePath = path9.join(dir, "trace.log");
+  fs10.mkdirSync(dir, { recursive: true });
+  const tracePath = path10.join(dir, "trace.log");
   const ts = (/* @__PURE__ */ new Date()).toISOString();
-  fs9.appendFileSync(tracePath, `[FLOW] ${ts} ${line}
+  fs10.appendFileSync(tracePath, `[FLOW] ${ts} ${line}
 `, "utf8");
 }
 function appendLifecycleLine(taskKey, agenticdocRoot2, line) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs9.mkdirSync(dir, { recursive: true });
-  fs9.appendFileSync(path9.join(dir, "trace.log"), `${line}
+  fs10.mkdirSync(dir, { recursive: true });
+  fs10.appendFileSync(path10.join(dir, "trace.log"), `${line}
 `, "utf8");
 }
 function truncLine(s, max) {
@@ -13258,28 +13418,28 @@ function appendEnd(taskKey, agenticdocRoot2, opts) {
 }
 function appendGoalCheck(taskKey, agenticdocRoot2, phaseNum, goalMtimeMs) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs9.mkdirSync(dir, { recursive: true });
-  const tracePath = path9.join(dir, "trace.log");
-  fs9.appendFileSync(tracePath, `[GOAL_CHECK] phase=${phaseNum} goal_mtime=${goalMtimeMs}
+  fs10.mkdirSync(dir, { recursive: true });
+  const tracePath = path10.join(dir, "trace.log");
+  fs10.appendFileSync(tracePath, `[GOAL_CHECK] phase=${phaseNum} goal_mtime=${goalMtimeMs}
 `, "utf8");
 }
 function appendHeartbeat(taskKey, agenticdocRoot2, phase) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs9.mkdirSync(dir, { recursive: true });
-  const tracePath = path9.join(dir, "trace.log");
+  fs10.mkdirSync(dir, { recursive: true });
+  const tracePath = path10.join(dir, "trace.log");
   const ts = (/* @__PURE__ */ new Date()).toISOString();
-  fs9.appendFileSync(tracePath, `[HEARTBEAT] ${ts} task=${taskKey} phase=${phase}
+  fs10.appendFileSync(tracePath, `[HEARTBEAT] ${ts} task=${taskKey} phase=${phase}
 `, "utf8");
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts
-import * as fs11 from "node:fs";
-import * as path11 from "node:path";
+import * as fs12 from "node:fs";
+import * as path12 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/target-config.ts
 var import_yaml = __toESM(require_dist(), 1);
-import * as fs10 from "node:fs";
-import * as path10 from "node:path";
+import * as fs11 from "node:fs";
+import * as path11 from "node:path";
 var ENV_TARGET_GAME = "MW_TARGET_GAME";
 var ENV_TARGET_ENGINE = "MW_TARGET_ENGINE";
 var ENV_PARTITION_PARENT = "MW_PARTITION_PARENT";
@@ -13312,27 +13472,27 @@ function stringArray(value, field) {
   return value;
 }
 function normalizeRoot(raw, controlRoot) {
-  const resolved = path10.resolve(controlRoot, raw);
+  const resolved = path11.resolve(controlRoot, raw);
   try {
-    return fs10.realpathSync.native(resolved);
+    return fs11.realpathSync.native(resolved);
   } catch {
     let dir = resolved;
     const tail = [];
     for (; ; ) {
-      const parent = path10.dirname(dir);
+      const parent = path11.dirname(dir);
       if (parent === dir) return resolved;
       try {
-        const real = fs10.realpathSync.native(dir);
-        return tail.length === 0 ? real : path10.join(real, ...tail);
+        const real = fs11.realpathSync.native(dir);
+        return tail.length === 0 ? real : path11.join(real, ...tail);
       } catch {
-        tail.unshift(path10.basename(dir));
+        tail.unshift(path11.basename(dir));
         dir = parent;
       }
     }
   }
 }
 function targetYmlPath(controlRoot) {
-  return path10.join(controlRoot, ".agenticdoc", TARGET_YML);
+  return path11.join(controlRoot, ".agenticdoc", TARGET_YML);
 }
 function parseToolchain(value) {
   if (value === void 0 || value === null) return {};
@@ -13375,7 +13535,7 @@ function readTargetYml(controlRoot) {
   const file = targetYmlPath(controlRoot);
   let text;
   try {
-    text = fs10.readFileSync(file, "utf-8");
+    text = fs11.readFileSync(file, "utf-8");
   } catch {
     return {};
   }
@@ -13513,7 +13673,7 @@ function readRootsAst(controlRoot) {
   const file = targetYmlPath(controlRoot);
   let text;
   try {
-    text = fs10.readFileSync(file, "utf-8");
+    text = fs11.readFileSync(file, "utf-8");
   } catch {
     return null;
   }
@@ -13542,13 +13702,13 @@ function parseRoots(value, controlRoot, rootsAst) {
   return out;
 }
 function relationNorm(p) {
-  const normalized = path10.normalize(p);
+  const normalized = path11.normalize(p);
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 function checkRootRelation(parentRoot, partitionRoot) {
   const a = relationNorm(parentRoot);
   const b = relationNorm(partitionRoot);
-  if (a === b || a.startsWith(b + path10.sep) || b.startsWith(a + path10.sep)) {
+  if (a === b || a.startsWith(b + path11.sep) || b.startsWith(a + path11.sep)) {
     fail(
       "invalid-config",
       `target.yml: partition root relation is invalid \u2014 parent (${parentRoot}) and partition (${partitionRoot}) must not be equal or nested`
@@ -13636,7 +13796,7 @@ function resolveLegacyConfig(controlRoot, raw, envGame, envEngine) {
   };
 }
 function resolveWorkspaceConfig(controlRoot) {
-  const fileExists = fs10.existsSync(targetYmlPath(controlRoot));
+  const fileExists = fs11.existsSync(targetYmlPath(controlRoot));
   const raw = readTargetYml(controlRoot);
   const envGame = process.env[ENV_TARGET_GAME]?.trim() || null;
   const envEngine = process.env[ENV_TARGET_ENGINE]?.trim() || null;
@@ -13709,15 +13869,15 @@ function resolveWorkspaceConfig(controlRoot) {
 }
 function discoverUproject(gameRoot, explicit) {
   if (explicit !== null && explicit !== void 0) {
-    const p = path10.resolve(gameRoot, explicit);
-    if (!fs10.existsSync(p)) {
+    const p = path11.resolve(gameRoot, explicit);
+    if (!fs11.existsSync(p)) {
       fail("uproject-not-found", `explicit uproject '${explicit}' not found under game root ${gameRoot}`);
     }
     return p;
   }
   let entries;
   try {
-    entries = fs10.readdirSync(gameRoot);
+    entries = fs11.readdirSync(gameRoot);
   } catch (err) {
     fail(
       "invalid-config",
@@ -13731,7 +13891,7 @@ function discoverUproject(gameRoot, explicit) {
       `expected exactly one *.uproject under game root ${gameRoot}, found ${matches.length}` + (matches.length > 1 ? ` (${matches.join(", ")})` : "")
     );
   }
-  return path10.join(gameRoot, matches[0]);
+  return path11.join(gameRoot, matches[0]);
 }
 function renderToolchainCommand(command, config) {
   if (config.mode === "partition") {
@@ -13796,7 +13956,7 @@ function renderProfileBlock(config, ignoreEnforced) {
   const lines = [
     PROFILE_MARK,
     "[mw] Workspace profile (target.yml essentials, injected at dispatch;",
-    `full file: ${path11.join(config.controlRoot, ".agenticdoc", "target.yml")})`
+    `full file: ${path12.join(config.controlRoot, ".agenticdoc", "target.yml")})`
   ];
   if (config.mode === "dual") {
     lines.push(`Control workspace: ${config.controlRoot}`);
@@ -13826,7 +13986,7 @@ function renderProfileBlock(config, ignoreEnforced) {
     }
     if (contract.docs.length > 0) {
       lines.push("- docs (references, not inlined):");
-      for (const doc of contract.docs) lines.push(`  - ${path11.resolve(config.controlRoot, doc)}`);
+      for (const doc of contract.docs) lines.push(`  - ${path12.resolve(config.controlRoot, doc)}`);
     }
   }
   return lines.join("\n");
@@ -13855,7 +14015,7 @@ function renderPartitionProfileBlock(config, ignoreEnforced) {
     PROFILE_MARK_V2,
     `[mw] mode: ${config.mode}`,
     "[mw] Workspace profile (target.yml essentials, injected at dispatch;",
-    `full file: ${path11.join(config.controlRoot, ".agenticdoc", "target.yml")})`,
+    `full file: ${path12.join(config.controlRoot, ".agenticdoc", "target.yml")})`,
     `Control workspace: ${config.controlRoot}`,
     `Parent root (extended workspace, writable): ${config.parentRoot}`,
     `Partition root (worker cwd): ${config.partitionRoot}`
@@ -13888,7 +14048,7 @@ function renderPartitionProfileBlock(config, ignoreEnforced) {
     }
     if (contract.docs.length > 0) {
       lines.push("- docs (references, not inlined):");
-      for (const doc of contract.docs) lines.push(`  - ${path11.resolve(config.controlRoot, doc)}`);
+      for (const doc of contract.docs) lines.push(`  - ${path12.resolve(config.controlRoot, doc)}`);
     }
   }
   return lines.join("\n");
@@ -13911,7 +14071,7 @@ function injectWorkspaceProfile(taskPath) {
   const config = resolveWorkspaceConfig(controlRoot);
   let original;
   try {
-    original = fs11.readFileSync(taskPath, "utf8");
+    original = fs12.readFileSync(taskPath, "utf8");
   } catch (err) {
     console.error(
       `[mw] profile injection skipped for ${taskPath}: ${err instanceof Error ? err.message : String(err)}`
@@ -13936,7 +14096,7 @@ ${renderPartitionProfileBlock(config, !ownDenyGlobs)}
 ${renderProfileBlock(config, !ownDenyGlobs)}
 `;
   }
-  if (out !== original) fs11.writeFileSync(taskPath, out, "utf8");
+  if (out !== original) fs12.writeFileSync(taskPath, out, "utf8");
 }
 async function dispatchTask(entry, store) {
   injectWorkspaceProfile(entry.taskPath);
@@ -14010,7 +14170,7 @@ function deliverWorkerResult(pi, summary) {
 }
 var WATCH_ENTRY_TYPE = "agent-team-loop:watch";
 function windowClaimId() {
-  return `${os2.hostname()}:${process.pid}`;
+  return `${os3.hostname()}:${process.pid}`;
 }
 function parseClaim(claimId) {
   const m = claimId.match(/^([^:]+):(\d+)$/);
@@ -14032,7 +14192,7 @@ function claimState(claimId, self) {
   if (!trimmed || trimmed === self) return "free";
   const c = parseClaim(trimmed);
   if (!c) return "free";
-  if (c.host !== os2.hostname()) return "held-live";
+  if (c.host !== os3.hostname()) return "held-live";
   return isPidAlive(c.pid) ? "held-live" : "held-stale";
 }
 async function takeOverKey(indexStore, key, force, agenticdocRoot2) {
@@ -14055,13 +14215,13 @@ function trunc(s, max) {
   return s.length <= max ? s : `${s.slice(0, max - 1)}\u2026`;
 }
 function ownerKeyOf(entry, agenticdocRoot2) {
-  const rel = path12.relative(agenticdocRoot2, path12.normalize(entry.taskPath));
-  return rel.split(path12.sep)[0] ?? "";
+  const rel = path13.relative(agenticdocRoot2, path13.normalize(entry.taskPath));
+  return rel.split(path13.sep)[0] ?? "";
 }
 function readOutputSection(taskDir, section) {
   let content;
   try {
-    content = fs12.readFileSync(path12.join(taskDir, "output.md"), "utf8");
+    content = fs13.readFileSync(path13.join(taskDir, "output.md"), "utf8");
   } catch {
     return void 0;
   }
@@ -14075,10 +14235,10 @@ function readOutputSummary(taskDir) {
 }
 var OUTPUT_READBACK_MAX = 2e4;
 function readOutputBody(taskDir) {
-  const outputPath = path12.join(taskDir, "output.md");
+  const outputPath = path13.join(taskDir, "output.md");
   let content;
   try {
-    content = fs12.readFileSync(outputPath, "utf8").trim();
+    content = fs13.readFileSync(outputPath, "utf8").trim();
   } catch {
     return void 0;
   }
@@ -14089,11 +14249,11 @@ function readOutputBody(taskDir) {
 \u2026(truncated \u2014 full report: ${outputPath})`;
 }
 function readSpawnFailure(taskDir) {
-  const logPath = path12.join(taskDir, "worker.log");
+  const logPath = path13.join(taskDir, "worker.log");
   try {
-    const stat = fs12.statSync(logPath);
+    const stat = fs13.statSync(logPath);
     if (stat.size > 64 * 1024) return void 0;
-    const lines = fs12.readFileSync(logPath, "utf8").split("\n");
+    const lines = fs13.readFileSync(logPath, "utf8").split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (line.startsWith("[launcher] spawn failed")) return line;
@@ -14106,9 +14266,9 @@ function readSpawnFailure(taskDir) {
 var WORKER_LOG_TAIL_MAX = 256 * 1024;
 function readWorkerLogTail(taskDir) {
   try {
-    const stat = fs12.statSync(path12.join(taskDir, "worker.log"));
+    const stat = fs13.statSync(path13.join(taskDir, "worker.log"));
     if (stat.size > WORKER_LOG_TAIL_MAX) return void 0;
-    const lines = fs12.readFileSync(path12.join(taskDir, "worker.log"), "utf8").split("\n");
+    const lines = fs13.readFileSync(path13.join(taskDir, "worker.log"), "utf8").split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (line !== "") return line;
@@ -14206,7 +14366,7 @@ function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot2, ke
     let detail = "";
     let model = "";
     if (e.status === "running") {
-      const prog = readTaskProgress(path12.dirname(e.taskPath));
+      const prog = readTaskProgress(path13.dirname(e.taskPath));
       model = prog?.model ?? "";
       const hb = prog?.heartbeat;
       if (hb) {
@@ -14225,8 +14385,8 @@ function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot2, ke
     } else if (e.status === "pending") {
       model = e.model;
     } else {
-      model = readTaskProgress(path12.dirname(e.taskPath))?.model ?? "";
-      detail = readTerminalDetail(path12.dirname(e.taskPath), e.status);
+      model = readTaskProgress(path13.dirname(e.taskPath))?.model ?? "";
+      detail = readTerminalDetail(path13.dirname(e.taskPath), e.status);
     }
     const badge2 = model ? ` [${model}]` : "";
     return trunc(`  ${STATUS_GLYPH[e.status]} ${e.taskKey}${badge2}${detail ? ` \u2014 ${detail}` : ""}`, WATCH_LINE_MAX);
@@ -14332,8 +14492,8 @@ function registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agenticdocRo
   });
 }
 async function writeSessionSnapshot(agenticdocRoot2, key, lines) {
-  const statePath = path12.join(agenticdocRoot2, key, "pm-state.md");
-  const content = fs12.existsSync(statePath) ? fs12.readFileSync(statePath, "utf8") : `# PM State: ${key}
+  const statePath = path13.join(agenticdocRoot2, key, "pm-state.md");
+  const content = fs13.existsSync(statePath) ? fs13.readFileSync(statePath, "utf8") : `# PM State: ${key}
 
 ## Notes
 `;
@@ -14350,12 +14510,12 @@ ${section}`) : `${content.trimEnd()}
 ## Notes
 
 ${section}`;
-  fs12.mkdirSync(path12.dirname(statePath), { recursive: true });
+  fs13.mkdirSync(path13.dirname(statePath), { recursive: true });
   const release = await acquireLock(`${statePath}.lock`);
   try {
     const tmpPath = `${statePath}.tmp`;
-    fs12.writeFileSync(tmpPath, next, "utf8");
-    fs12.renameSync(tmpPath, statePath);
+    fs13.writeFileSync(tmpPath, next, "utf8");
+    fs13.renameSync(tmpPath, statePath);
   } finally {
     release();
   }
@@ -14389,7 +14549,7 @@ function registerPmSaveCommand(pi, indexStore, workerStore, watch, agenticdocRoo
       lines.push("(agent: fill in below \u2014 \u5F53\u524D\u5DE5\u4F5C\u8109\u7EDC / \u5173\u952E\u51B3\u7B56 / \u8FDB\u884C\u4E2D / \u4E0B\u4E00\u6B65)");
       const statePath = await writeSessionSnapshot(agenticdocRoot2, key, lines);
       ctx.ui.notify(
-        `Saved session snapshot to ${path12.relative(agenticdocRoot2, statePath)} \u2014 asking the agent to fill in the working context.`,
+        `Saved session snapshot to ${path13.relative(agenticdocRoot2, statePath)} \u2014 asking the agent to fill in the working context.`,
         "info"
       );
       pi.sendUserMessage(
@@ -14447,7 +14607,65 @@ function registerMwTools(pi, projectDir) {
     }
   });
 }
-function registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot2, watch) {
+function resolveDispatchType(cli, requested) {
+  const trimmed = requested.trim();
+  if (!trimmed) {
+    const legacy = cli === "codex" ? "codex" : cli === "claude" ? "review" : "coding";
+    return { ok: true, type: legacy };
+  }
+  if (!DISPATCHABLE_TYPES.includes(trimmed)) {
+    return {
+      ok: false,
+      message: `Invalid type '${trimmed}'. Must be one of: ${DISPATCHABLE_TYPES.join(", ")}.`
+    };
+  }
+  return { ok: true, type: trimmed };
+}
+function oneLineReason(raw) {
+  return raw.replace(/\s*\r?\n\s*/g, " ").trim();
+}
+function planDispatchFrontmatter(input) {
+  const role = roleForTaskType(input.taskType);
+  const configured = readRoleModel(input.cwd, role) ?? "";
+  const requested = input.model.trim();
+  const reason = oneLineReason(input.modelReason);
+  const effective = requested || configured;
+  if (effective) {
+    const validation = validateModelValue(input.registry, input.cli, input.provider, effective);
+    if (!validation.ok) return { ok: false, message: validation.message };
+  }
+  if (!requested) {
+    return {
+      ok: true,
+      frontmatter: `type: ${input.taskType}
+`,
+      echo: configured ? `model: dispatch.yml ${role}=${configured}` : `model: route default (no dispatch.yml ${role} default)`
+    };
+  }
+  if (configured && requested === configured) {
+    return {
+      ok: true,
+      frontmatter: `type: ${input.taskType}
+`,
+      echo: `model: dispatch.yml ${role}=${configured} (requested value matches the configured default; not pinned)`
+    };
+  }
+  if (configured && !reason) {
+    return {
+      ok: false,
+      message: `Model override for role '${role}' needs model_reason: dispatch.yml ${role}=${configured}, requested=${requested}. Omit the model to use the configured default, or re-dispatch with model_reason explaining the deviation.`
+    };
+  }
+  const lines = [`type: ${input.taskType}`, `model: ${requested}`];
+  if (reason) lines.push(`model-reason: ${reason}`);
+  return {
+    ok: true,
+    frontmatter: `${lines.join("\n")}
+`,
+    echo: configured ? `model override: role default ${role}=${configured} -> ${requested} (reason: ${reason})` : `model: ${requested} (no dispatch.yml ${role} default)`
+  };
+}
+function registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot2, watch, projectDir = path13.dirname(agenticdocRoot2)) {
   pi.registerTool({
     name: "dispatch_worker",
     label: "dispatch_worker",
@@ -14466,7 +14684,17 @@ function registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRo
       ),
       model: typebox_exports.Optional(
         typebox_exports.String({
-          description: "Optional model override for this worker (e.g. 'claude-sonnet-4-5')."
+          description: "Optional model override for this worker (e.g. 'timi/gpt-5.6-sol'). Deviating from the configured .mw/dispatch.yml role default requires model_reason; a value equal to that default is not pinned (the config stays the source of truth)."
+        })
+      ),
+      model_reason: typebox_exports.Optional(
+        typebox_exports.String({
+          description: "Why this task deviates from the .mw/dispatch.yml role default. Required when model is set and the role has a configured default with a different value; recorded in task.md as model-reason."
+        })
+      ),
+      type: typebox_exports.Optional(
+        typebox_exports.String({
+          description: "Task type: 'coding' | 'review' | 'research'. Selects the dispatch.yml role (and the worker tool allowlist). Default: derived from cli (pi -> coding, claude -> review, codex -> codex)."
         })
       ),
       key: typebox_exports.Optional(
@@ -14481,6 +14709,8 @@ function registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRo
         description,
         cli = "pi",
         model,
+        model_reason,
+        type,
         key
       } = params;
       const ownerKey = resolveOwnerKeyWithSync(pi, indexStore, watch, key, agenticdocRoot2);
@@ -14491,6 +14721,11 @@ function registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRo
           details: void 0
         };
       }
+      const typeResolution = resolveDispatchType(cli, type ?? "");
+      if (!typeResolution.ok) {
+        return { content: [{ type: "text", text: typeResolution.message }], details: void 0 };
+      }
+      const provider = cli === "pi" ? "timi" : "";
       const docGaps = dispatchDocGaps(agenticdocRoot2, ownerKey);
       if (docGaps.length > 0) {
         return {
@@ -14506,7 +14741,7 @@ ${DOC_GATE_HINT}`
         };
       }
       const taskDir = workerTaskDir(agenticdocRoot2, ownerKey, task_key);
-      if (fs12.existsSync(taskDir)) {
+      if (fs13.existsSync(taskDir)) {
         return {
           content: [
             {
@@ -14517,15 +14752,22 @@ ${DOC_GATE_HINT}`
           details: void 0
         };
       }
-      const typeField = cli === "codex" ? "codex" : cli === "claude" ? "review" : "coding";
-      const provider = cli === "pi" ? "timi" : "";
-      fs12.mkdirSync(taskDir, { recursive: true });
-      const taskMdPath = path12.join(taskDir, "task.md");
-      const frontmatter = model ? `type: ${typeField}
-model: ${model}
-` : `type: ${typeField}
-`;
-      fs12.writeFileSync(taskMdPath, `${frontmatter}
+      const typeField = typeResolution.type;
+      const modelPlan = planDispatchFrontmatter({
+        cwd: projectDir,
+        cli,
+        provider,
+        taskType: typeField,
+        model: model ?? "",
+        modelReason: model_reason ?? "",
+        registry: _context?.modelRegistry
+      });
+      if (!modelPlan.ok) {
+        return { content: [{ type: "text", text: modelPlan.message }], details: void 0 };
+      }
+      fs13.mkdirSync(taskDir, { recursive: true });
+      const taskMdPath = path13.join(taskDir, "task.md");
+      fs13.writeFileSync(taskMdPath, `${modelPlan.frontmatter}
 ${description}
 `, "utf8");
       await dispatchTask(
@@ -14536,7 +14778,7 @@ ${description}
         content: [
           {
             type: "text",
-            text: `Dispatched worker '${task_key}' (type: ${cli}${model ? `, model: ${model}` : ""}) under key '${ownerKey}'. Task file: ${taskMdPath}. Check mw_status to confirm the service is running.`
+            text: `Dispatched worker '${task_key}' (type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}) under key '${ownerKey}'. Task file: ${taskMdPath}. Check mw_status to confirm the service is running.`
           }
         ],
         details: void 0
@@ -14709,32 +14951,30 @@ function registerAdvancePhaseTool(pi, projectDir) {
     }
   });
 }
-function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, watch) {
-  const USAGE2 = "Usage: /worker <claude|codex|pi> [--model <id>] [--key <name>] <task description>";
+function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, watch, projectDir = path13.dirname(agenticdocRoot2)) {
+  const USAGE2 = "Usage: /worker <claude|codex|pi> [--type coding|review|research] [--model <id>] [--reason <text>] [--key <name>] <task description>";
   pi.registerCommand("worker", {
-    description: "Spawn a worker: /worker <claude|codex|pi> [--model <id>] <task description>",
+    description: "Spawn a worker: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] <task description>",
     handler: async (args, ctx) => {
       const parts = args.trim().split(/\s+/);
       const cli = (parts[0] ?? "").toLowerCase();
       let idx = 1;
       let model = "";
+      let modelReason = "";
+      let typeArg = "";
       let keyArg = "";
-      while (parts[idx] === "--model" || parts[idx] === "--key") {
-        if (parts[idx] === "--model") {
-          model = parts[idx + 1] ?? "";
-          idx += 2;
-          if (!model) {
-            ctx.ui.notify(USAGE2, "warning");
-            return;
-          }
-        } else {
-          keyArg = parts[idx + 1] ?? "";
-          idx += 2;
-          if (!keyArg) {
-            ctx.ui.notify(USAGE2, "warning");
-            return;
-          }
+      while (["--model", "--type", "--reason", "--key"].includes(parts[idx] ?? "")) {
+        const flag = parts[idx];
+        const value = parts[idx + 1] ?? "";
+        idx += 2;
+        if (!value) {
+          ctx.ui.notify(USAGE2, "warning");
+          return;
         }
+        if (flag === "--model") model = value;
+        else if (flag === "--type") typeArg = value;
+        else if (flag === "--reason") modelReason = value;
+        else keyArg = value;
       }
       const description = parts.slice(idx).join(" ");
       const validCli = ["claude", "codex", "pi"];
@@ -14746,7 +14986,12 @@ function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, wa
         ctx.ui.notify("Task description is required.", "warning");
         return;
       }
-      const typeField = cli === "codex" ? "codex" : cli === "claude" ? "review" : "coding";
+      const typeResolution = resolveDispatchType(cli, typeArg);
+      if (!typeResolution.ok) {
+        ctx.ui.notify(typeResolution.message, "warning");
+        return;
+      }
+      const typeField = typeResolution.type;
       const provider = cli === "pi" ? "timi" : "";
       const taskKey = `manual-${Date.now()}`;
       const ownerKey = resolveOwnerKeyWithSync(pi, indexStore, watch, keyArg, agenticdocRoot2);
@@ -14758,19 +15003,28 @@ function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, wa
         );
         return;
       }
+      const modelPlan = planDispatchFrontmatter({
+        cwd: projectDir,
+        cli,
+        provider,
+        taskType: typeField,
+        model,
+        modelReason,
+        registry: ctx.modelRegistry
+      });
+      if (!modelPlan.ok) {
+        ctx.ui.notify(modelPlan.message, "warning");
+        return;
+      }
       const taskDir = workerTaskDir(agenticdocRoot2, ownerKey, taskKey);
-      fs12.mkdirSync(taskDir, { recursive: true });
-      const taskMdPath = path12.join(taskDir, "task.md");
-      const frontmatter = model ? `type: ${typeField}
-model: ${model}
-` : `type: ${typeField}
-`;
-      fs12.writeFileSync(taskMdPath, `${frontmatter}
+      fs13.mkdirSync(taskDir, { recursive: true });
+      const taskMdPath = path13.join(taskDir, "task.md");
+      fs13.writeFileSync(taskMdPath, `${modelPlan.frontmatter}
 ${description}
 `, "utf8");
       await dispatchTask({ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath }, workerStore);
       ctx.ui.notify(
-        `Dispatched ${cli} worker (${taskKey}) under key '${ownerKey}'${model ? ` [model: ${model}]` : ""}.`,
+        `Dispatched ${cli} worker (${taskKey}) under key '${ownerKey}' [type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}].`,
         "info"
       );
     }
@@ -14991,9 +15245,14 @@ async function runMwModelCommand(ctx, projectDir, argsText, runner = modelMw) {
     const value = parts[2];
     if (!role || !value || parts.length > 3) {
       ctx.ui.notify(
-        "Usage: /mw model set <role> <prefix/model> \u2014 roles: main, coding, review, research (e.g. /mw model set review timi/glm-5.3-air)",
+        "Usage: /mw model set <role> <prefix/model> \u2014 roles: main, coding, review, research (e.g. /mw model set review timi/gpt-5.6-sol)",
         "warning"
       );
+      return;
+    }
+    const validation = validateModelValue(ctx.modelRegistry, "pi", "", value);
+    if (!validation.ok) {
+      ctx.ui.notify(validation.message, "error");
       return;
     }
     const r = runner(projectDir, ["set", role, value]);
@@ -15021,7 +15280,7 @@ Worker roles apply on the next spawn (no serve restart); main applies at the nex
 }
 function registerMwCommands(pi, projectDir, workerStore, ackStore) {
   pi.registerCommand("mw", {
-    description: "Control mw: build / init / start / stop / restart / status / doctor / target / partition / model / ack",
+    description: "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / ack",
     handler: async (_args, ctx) => {
       const trimmed = _args.trim();
       const sub = trimmed.split(/\s+/)[0] ?? "status";
@@ -15053,6 +15312,16 @@ ${r.output}`, "info");
         } else {
           ctx.ui.notify(`mw doctor \u6267\u884C\u5931\u8D25: ${r.error}`, "error");
         }
+        return;
+      }
+      if (sub === "update") {
+        const apply = _args.trim().split(/\s+/)[1]?.toLowerCase() === "--apply";
+        ctx.ui.notify(
+          apply ? "mw update-env --apply running (bundle/dist rebuild + reinstall can take a minute)\u2026" : "mw update-env checking anchors\u2026",
+          "info"
+        );
+        const r = updateEnvMw(projectDir, apply);
+        ctx.ui.notify(r.ok ? r.output : `mw update-env \u6267\u884C\u5931\u8D25: ${r.error}`, r.ok ? "info" : "error");
         return;
       }
       if (sub === "status") {
@@ -15136,7 +15405,7 @@ ${r.output}`, "info");
         return;
       }
       ctx.ui.notify(
-        "Usage: /mw build|init|start|stop|status|doctor [fix] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | ack <task-key>|all",
+        "Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | ack <task-key>|all",
         "warning"
       );
     }
@@ -15144,7 +15413,7 @@ ${r.output}`, "info");
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/autopilot/gate-writer.ts
-import * as fs13 from "node:fs";
+import * as fs14 from "node:fs";
 var GATE_FIELD_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
 var ANSWER_FIELDS = ["status", "answered_at", "answered_by", "note"];
 var PLAIN_SCALAR_RE = /^[A-Za-z0-9][A-Za-z0-9_./:+@()-]*$/;
@@ -15229,7 +15498,7 @@ async function answerGate(opts) {
   try {
     let content;
     try {
-      content = fs13.readFileSync(opts.gateFile, "utf8");
+      content = fs14.readFileSync(opts.gateFile, "utf8");
     } catch (err) {
       return { ok: false, error: `gate file not readable: ${opts.gateFile} (${String(err)})` };
     }
@@ -15237,8 +15506,8 @@ async function answerGate(opts) {
     if (!rewritten.ok) return { ok: false, error: rewritten.error };
     try {
       const tmp = `${opts.gateFile}.tmp`;
-      fs13.writeFileSync(tmp, rewritten.content, "utf8");
-      fs13.renameSync(tmp, opts.gateFile);
+      fs14.writeFileSync(tmp, rewritten.content, "utf8");
+      fs14.renameSync(tmp, opts.gateFile);
     } catch (err) {
       return { ok: false, error: `cannot write ${opts.gateFile}: ${String(err)}` };
     }
@@ -15249,12 +15518,12 @@ async function answerGate(opts) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/autopilot/monitor.ts
-import * as fs16 from "node:fs";
-import * as path15 from "node:path";
+import * as fs17 from "node:fs";
+import * as path16 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/worker-store.ts
-import * as fs14 from "node:fs";
-import * as path13 from "node:path";
+import * as fs15 from "node:fs";
+import * as path14 from "node:path";
 var WORKER_COLS = 8;
 function parseWorkerLine(line) {
   const parts = line.split("|");
@@ -15286,12 +15555,12 @@ function serializeWorkerLine(entry) {
 }
 var WorkerStore = class {
   constructor(agenticdocRoot2) {
-    this.filePath = path13.join(agenticdocRoot2, "_workers.parallel");
-    this.lockPath = path13.join(agenticdocRoot2, "..", ".mw", "workers.lock");
+    this.filePath = path14.join(agenticdocRoot2, "_workers.parallel");
+    this.lockPath = path14.join(agenticdocRoot2, "..", ".mw", "workers.lock");
   }
   readAll() {
-    if (!fs14.existsSync(this.filePath)) return [];
-    const lines = fs14.readFileSync(this.filePath, "utf8").split("\n");
+    if (!fs15.existsSync(this.filePath)) return [];
+    const lines = fs15.readFileSync(this.filePath, "utf8").split("\n");
     return lines.map(parseWorkerLine).filter((e) => e !== void 0);
   }
   async upsert(entry) {
@@ -15307,8 +15576,8 @@ var WorkerStore = class {
       const content = `${existing.map(serializeWorkerLine).join("\n")}
 `;
       const tmpPath = `${this.filePath}.tmp`;
-      fs14.writeFileSync(tmpPath, content, "utf8");
-      fs14.renameSync(tmpPath, this.filePath);
+      fs15.writeFileSync(tmpPath, content, "utf8");
+      fs15.renameSync(tmpPath, this.filePath);
     } finally {
       release();
     }
@@ -15319,25 +15588,25 @@ var WorkerStore = class {
 };
 
 // packages/coding-agent/src/extensions/agent-team-loop/autopilot/status-model.ts
-import * as fs15 from "node:fs";
-import * as path14 from "node:path";
+import * as fs16 from "node:fs";
+import * as path15 from "node:path";
 function autopilotDir(projectDir) {
-  return path14.join(projectDir, ".agenticdoc", "_autopilot");
+  return path15.join(projectDir, ".agenticdoc", "_autopilot");
 }
 function roadmapPath(projectDir) {
-  return path14.join(autopilotDir(projectDir), "_roadmap.md");
+  return path15.join(autopilotDir(projectDir), "_roadmap.md");
 }
 function gatesDir(projectDir) {
-  return path14.join(autopilotDir(projectDir), "gates");
+  return path15.join(autopilotDir(projectDir), "gates");
 }
 function timelinePath(projectDir) {
-  return path14.join(autopilotDir(projectDir), "timeline.jsonl");
+  return path15.join(autopilotDir(projectDir), "timeline.jsonl");
 }
 function configPath(projectDir) {
-  return path14.join(autopilotDir(projectDir), "config.json");
+  return path15.join(autopilotDir(projectDir), "config.json");
 }
 function gatesLockPath(projectDir) {
-  return path14.join(projectDir, ".mw", "gates.lock");
+  return path15.join(projectDir, ".mw", "gates.lock");
 }
 var DEFAULT_CONFIG = {
   enabled: false,
@@ -15388,7 +15657,7 @@ function readConfig(projectDir) {
   const file = configPath(projectDir);
   let raw;
   try {
-    raw = fs15.readFileSync(file, "utf8");
+    raw = fs16.readFileSync(file, "utf8");
   } catch (err) {
     if (err.code === "ENOENT") return { ok: true, config: { ...DEFAULT_CONFIG } };
     return { ok: false, error: `cannot read ${file}: ${String(err)}` };
@@ -15431,11 +15700,11 @@ function saveConfig(projectDir, config) {
   };
   const file = configPath(projectDir);
   try {
-    fs15.mkdirSync(path14.dirname(file), { recursive: true });
+    fs16.mkdirSync(path15.dirname(file), { recursive: true });
     const tmp = `${file}.tmp`;
-    fs15.writeFileSync(tmp, `${JSON.stringify(ordered, null, 2)}
+    fs16.writeFileSync(tmp, `${JSON.stringify(ordered, null, 2)}
 `, "utf8");
-    fs15.renameSync(tmp, file);
+    fs16.renameSync(tmp, file);
   } catch (err) {
     return { ok: false, error: `cannot write ${file}: ${String(err)}` };
   }
@@ -15624,7 +15893,7 @@ function readRoadmap(projectDir) {
   const file = roadmapPath(projectDir);
   let text;
   try {
-    text = fs15.readFileSync(file, "utf8");
+    text = fs16.readFileSync(file, "utf8");
   } catch {
     return { ok: false, error: `roadmap file not found: ${file}` };
   }
@@ -15777,17 +16046,17 @@ function listGates(projectDir) {
   const found = [];
   let entries;
   try {
-    entries = fs15.readdirSync(dir, { withFileTypes: true });
+    entries = fs16.readdirSync(dir, { withFileTypes: true });
   } catch {
     return { gates: [], errors: [] };
   }
   for (const entry of entries) {
     const m = GATE_FILE_RE.exec(entry.name);
     if (m === null || !entry.isFile()) continue;
-    const file = path14.join(dir, entry.name);
+    const file = path15.join(dir, entry.name);
     let text;
     try {
-      text = fs15.readFileSync(file, "utf8");
+      text = fs16.readFileSync(file, "utf8");
     } catch (err) {
       errors.push(`${file}: ${String(err)}`);
       continue;
@@ -15829,11 +16098,11 @@ function nonBeatFilter() {
   return filter2;
 }
 function rotationChain(timelinePath2) {
-  const dir = path14.dirname(timelinePath2);
-  const prefix = `${path14.basename(timelinePath2)}.`;
+  const dir = path15.dirname(timelinePath2);
+  const prefix = `${path15.basename(timelinePath2)}.`;
   let entries;
   try {
-    entries = fs15.readdirSync(dir, { withFileTypes: true });
+    entries = fs16.readdirSync(dir, { withFileTypes: true });
   } catch {
     return [];
   }
@@ -15842,7 +16111,7 @@ function rotationChain(timelinePath2) {
     if (!entry.name.startsWith(prefix)) continue;
     const suffix = entry.name.slice(prefix.length);
     if (/^\d+$/.test(suffix) && entry.isFile()) {
-      found.push({ gen: Number(suffix), file: path14.join(dir, entry.name) });
+      found.push({ gen: Number(suffix), file: path15.join(dir, entry.name) });
     }
   }
   found.sort((a, b) => b.gen - a.gen);
@@ -15851,7 +16120,7 @@ function rotationChain(timelinePath2) {
 function readTimelineEvents(file) {
   let data;
   try {
-    data = fs15.readFileSync(file);
+    data = fs16.readFileSync(file);
   } catch {
     return { events: [], skipped: 0 };
   }
@@ -15924,7 +16193,7 @@ var TASK_FM_LINE_RE = /^([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*?)[ \t]*$/;
 function parseTaskLabels(taskMdPath) {
   let text;
   try {
-    text = fs15.readFileSync(taskMdPath, "utf8");
+    text = fs16.readFileSync(taskMdPath, "utf8");
   } catch {
     return /* @__PURE__ */ new Map();
   }
@@ -15945,13 +16214,13 @@ function usedRounds(workersDirs) {
   for (const workersDir of workersDirs) {
     let entries;
     try {
-      entries = fs15.readdirSync(workersDir, { withFileTypes: true });
+      entries = fs16.readdirSync(workersDir, { withFileTypes: true });
     } catch {
       continue;
     }
     const names = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
     for (const name of names) {
-      const labels = parseTaskLabels(path14.join(workersDir, name, "task.md"));
+      const labels = parseTaskLabels(path15.join(workersDir, name, "task.md"));
       const loop = labels.get("loop");
       if (loop === void 0 || loop === "") continue;
       const attempt = (labels.get("attempt") ?? "").trim();
@@ -16003,12 +16272,12 @@ function deriveStatusModel(projectDir) {
     warnings.push(roadmap.error);
   }
   const stage = currentStage(roadmap.ok ? roadmap.stages : []);
-  const agenticdoc = path14.join(projectDir, ".agenticdoc");
+  const agenticdoc = path15.join(projectDir, ".agenticdoc");
   const phaseByKey = new Map(new IndexStore(agenticdoc).readAll().map((e) => [e.key, e.phase]));
   const keys = [];
   if (stage !== void 0) {
     for (const row of stage.keys) {
-      const perLoop = usedRounds([path14.join(agenticdoc, row.key, "workers")]);
+      const perLoop = usedRounds([path15.join(agenticdoc, row.key, "workers")]);
       keys.push({
         key: row.key,
         phase: phaseByKey.get(row.key) ?? "\u2014",
@@ -16079,7 +16348,7 @@ var MONITOR_LINE_MAX = 110;
 function scanPendingGate(file) {
   let text;
   try {
-    text = fs16.readFileSync(file, "utf8");
+    text = fs17.readFileSync(file, "utf8");
   } catch {
     return null;
   }
@@ -16112,7 +16381,7 @@ function readMonitorState(projectDir, nowMs) {
     let startedAtMs = readServeMeta(projectDir)?.startedAtMs ?? null;
     if (startedAtMs === null) {
       try {
-        startedAtMs = fs16.statSync(path15.join(projectDir, ".mw", "mw.pid")).mtimeMs;
+        startedAtMs = fs17.statSync(path16.join(projectDir, ".mw", "mw.pid")).mtimeMs;
       } catch {
         startedAtMs = null;
       }
@@ -16128,7 +16397,7 @@ function readMonitorState(projectDir, nowMs) {
   let conductorPid = null;
   let conductorAlive = false;
   try {
-    const raw = fs16.readFileSync(path15.join(projectDir, ".mw", "conductor.pid"), "utf8").trim();
+    const raw = fs17.readFileSync(path16.join(projectDir, ".mw", "conductor.pid"), "utf8").trim();
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isNaN(parsed)) {
       conductorPid = parsed;
@@ -16144,7 +16413,7 @@ function readMonitorState(projectDir, nowMs) {
   let everEnabled = false;
   let enabled = false;
   let paused = false;
-  if (fs16.existsSync(configPath(projectDir))) {
+  if (fs17.existsSync(configPath(projectDir))) {
     const cfg = readConfig(projectDir);
     if (cfg.ok) {
       everEnabled = true;
@@ -16154,7 +16423,7 @@ function readMonitorState(projectDir, nowMs) {
   }
   const conductor = { pid: conductorPid, alive: conductorAlive, enabled, paused, everEnabled };
   const workers = [];
-  for (const entry of new WorkerStore(path15.join(projectDir, ".agenticdoc")).readAll()) {
+  for (const entry of new WorkerStore(path16.join(projectDir, ".agenticdoc")).readAll()) {
     if (entry.status !== "running") continue;
     const dispatched = Date.parse(entry.dispatchedAt);
     if (Number.isNaN(dispatched)) continue;
@@ -16164,9 +16433,9 @@ function readMonitorState(projectDir, nowMs) {
   const gates = [];
   try {
     const dir = gatesDir(projectDir);
-    for (const entry of fs16.readdirSync(dir, { withFileTypes: true })) {
+    for (const entry of fs17.readdirSync(dir, { withFileTypes: true })) {
       if (!entry.isFile() || !/^gate-\d+\.md$/.test(entry.name)) continue;
-      const gate = scanPendingGate(path15.join(dir, entry.name));
+      const gate = scanPendingGate(path16.join(dir, entry.name));
       if (gate !== null) gates.push(gate);
     }
   } catch {
@@ -16370,7 +16639,7 @@ async function cmdGate(ctx, projectDir, rest) {
   if (noteIdx >= 0)
     note = rest.slice(noteIdx + 1).join(" ").trim() || void 0;
   const result = await answerGate({
-    gateFile: path16.join(gatesDir(projectDir), `${id}.md`),
+    gateFile: path17.join(gatesDir(projectDir), `${id}.md`),
     lockFile: gatesLockPath(projectDir),
     decision,
     note,
@@ -16530,19 +16799,19 @@ function cmdRoadmap(ctx, projectDir) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/ack-store.ts
-import * as fs17 from "node:fs";
-import * as path17 from "node:path";
+import * as fs18 from "node:fs";
+import * as path18 from "node:path";
 var AckStore = class {
   constructor(agenticdocRoot2) {
-    this.filePath = path17.join(agenticdocRoot2, "_workers.acked");
-    this.lockPath = path17.join(agenticdocRoot2, "..", ".mw", "workers.lock");
+    this.filePath = path18.join(agenticdocRoot2, "_workers.acked");
+    this.lockPath = path18.join(agenticdocRoot2, "..", ".mw", "workers.lock");
   }
   /** taskKey -> ackedAt (UTC ISO). Missing file yields an empty map; `#`
    * comment lines and malformed rows are skipped. */
   readAll() {
     const result = /* @__PURE__ */ new Map();
-    if (!fs17.existsSync(this.filePath)) return result;
-    const lines = fs17.readFileSync(this.filePath, "utf8").split("\n");
+    if (!fs18.existsSync(this.filePath)) return result;
+    const lines = fs18.readFileSync(this.filePath, "utf8").split("\n");
     for (const line of lines) {
       const entry = parseAckLine(line);
       if (entry === void 0) continue;
@@ -16575,8 +16844,8 @@ var AckStore = class {
       const content = `${[...merged].map(([key, ts]) => `${key} | ${ts}`).join("\n")}
 `;
       const tmpPath = `${this.filePath}.tmp`;
-      fs17.writeFileSync(tmpPath, content, "utf8");
-      fs17.renameSync(tmpPath, this.filePath);
+      fs18.writeFileSync(tmpPath, content, "utf8");
+      fs18.renameSync(tmpPath, this.filePath);
     } finally {
       release();
     }
@@ -16593,111 +16862,6 @@ function parseAckLine(line) {
 }
 function isValidTaskKey(taskKey) {
   return taskKey.length > 0 && !taskKey.includes("|") && taskKey.trim().length > 0;
-}
-
-// packages/coding-agent/src/extensions/agent-team-loop/shared/dispatch-models.ts
-import * as fs18 from "node:fs";
-import * as os3 from "node:os";
-import * as path18 from "node:path";
-var PROVIDER_ID_TO_PREFIX = {
-  timi: "timi",
-  anthropic: "claude",
-  "openai-codex": "codex",
-  deepseek: "deepseek",
-  "zai-coding-cn": "zai"
-};
-var PREFIX_TO_PROVIDER_ID = Object.fromEntries(
-  Object.entries(PROVIDER_ID_TO_PREFIX).map(([provider, prefix]) => [prefix, provider])
-);
-function parseModelValue(value) {
-  const idx = value.indexOf("/");
-  if (idx < 0) return { prefix: "", modelId: value.trim() };
-  return { prefix: value.slice(0, idx).trim(), modelId: value.slice(idx + 1).trim() };
-}
-function windowModelPath(cwd) {
-  return path18.join(cwd, ".mw", "window-model");
-}
-function dispatchYmlPath(cwd) {
-  return path18.join(cwd, ".mw", "dispatch.yml");
-}
-function isFrameworkProject(cwd) {
-  return fs18.existsSync(path18.join(cwd, ".agenticdoc"));
-}
-function recordWindowModel(cwd, model) {
-  if (!model || !isFrameworkProject(cwd)) return;
-  const prefix = PROVIDER_ID_TO_PREFIX[model.provider];
-  if (!prefix) return;
-  try {
-    fs18.mkdirSync(path18.join(cwd, ".mw"), { recursive: true });
-    fs18.writeFileSync(windowModelPath(cwd), `${prefix}/${model.id}
-`, "utf8");
-  } catch {
-  }
-}
-function readMainModelConfig(cwd) {
-  let text;
-  try {
-    text = fs18.readFileSync(dispatchYmlPath(cwd), "utf8");
-  } catch {
-    return null;
-  }
-  let inModels = false;
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trimEnd();
-    if (/^models:\s*$/.test(line)) {
-      inModels = true;
-      continue;
-    }
-    if (inModels) {
-      if (line && !/^\s/.test(line)) break;
-      const m = /^\s+main:\s*(\S+)\s*$/.exec(line);
-      if (m) return m[1];
-    }
-  }
-  return null;
-}
-function settingsDefaultModel() {
-  const base = process.env.PI_CODING_AGENT_DIR ?? path18.join(os3.homedir(), ".pi", "agent");
-  try {
-    const settings2 = JSON.parse(fs18.readFileSync(path18.join(base, "settings.json"), "utf8"));
-    return typeof settings2.defaultModel === "string" && settings2.defaultModel ? settings2.defaultModel : null;
-  } catch {
-    return null;
-  }
-}
-function hasCliModelFlag() {
-  return process.argv.some((a) => a === "--model" || a.startsWith("--model="));
-}
-async function applyMainModelConfig(pi, ctx) {
-  if (hasCliModelFlag() || settingsDefaultModel()) return;
-  const value = readMainModelConfig(ctx.cwd);
-  if (!value) return;
-  const { prefix, modelId } = parseModelValue(value);
-  if (!prefix || !modelId) return;
-  const provider = PREFIX_TO_PROVIDER_ID[prefix];
-  if (!provider) return;
-  const model = ctx.modelRegistry.find(provider, modelId);
-  if (!model) {
-    ctx.ui.notify(
-      `dispatch.yml main=${value} not found in the model registry \u2014 leaving the window model unchanged`,
-      "error"
-    );
-    return;
-  }
-  if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) return;
-  const ok = await pi.setModel(model);
-  if (ok) {
-    ctx.ui.notify(`model set to ${value} (dispatch.yml main)`, "info");
-  }
-}
-function registerMainWindowModel(pi) {
-  pi.on("session_start", (_event, ctx) => {
-    recordWindowModel(ctx.cwd, ctx.model);
-    void applyMainModelConfig(pi, ctx);
-  });
-  pi.on("model_select", (event) => {
-    recordWindowModel(process.cwd(), event.model);
-  });
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts
@@ -17030,9 +17194,9 @@ function pmActivate(pi) {
   registerMwCommands(pi, projectDir, workerStore, ackStore);
   registerMwTools(pi, projectDir);
   registerAdvancePhaseTool(pi, projectDir);
-  registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot2, watch);
+  registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot2, watch, projectDir);
   registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agenticdocRoot2);
-  registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, watch);
+  registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, watch, projectDir);
   registerWatchCommand(pi, watch, refreshWatch, indexStore);
   registerAutopilotCommands(pi, projectDir);
   registerMainWindowModel(pi);
