@@ -8,6 +8,7 @@ real project or the real framework install.
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import time
 
@@ -184,7 +185,8 @@ def _stub_framework(project_root: pathlib.Path, *, via_marker: bool) -> pathlib.
     scripts.mkdir(exist_ok=True)
     (scripts / "detect_root.py").write_text(
         "import json, sys\n"
-        f"print(json.dumps({{'PLATFORM_DIR': {str(plat)!r}, 'method': 'stub'}}))\n",
+        f"print(json.dumps({{'PLATFORM_DIR': {str(plat)!r}, "
+        f"'PROJECT_ROOT': {str(project_root)!r}, 'method': 'stub'}}))\n",
         encoding="utf-8",
     )
     # Stub advance: echoes argv as repr (proves list-form args, no shell
@@ -257,3 +259,71 @@ def test_marker_pointing_at_missing_repo_falls_back(tmp_path: pathlib.Path) -> N
     _stub_framework(tmp_path, via_marker=False)
     platform = adv.locate_platform_dir(tmp_path)
     assert platform == tmp_path / ".agents" / "skills" / "agentic-task"
+
+
+def _bad_framework(project_root: pathlib.Path) -> pathlib.Path:
+    """A framework whose detect_root reports a *different* project root."""
+    bad = project_root / "badfw"
+    (bad / "scripts").mkdir(parents=True, exist_ok=True)
+    (bad / "scripts" / "advance_phase.py").write_text("", encoding="utf-8")
+    (bad / "scripts" / "detect_root.py").write_text(
+        "import json\n"
+        "print(json.dumps({'PLATFORM_DIR': %r, 'PROJECT_ROOT': %r}))\n"
+        % (str(bad), str(project_root / "somewhere-else")),
+        encoding="utf-8",
+    )
+    return bad
+
+
+def test_inconsistent_marker_candidate_falls_back_to_consistent_layout(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Marker repo that resolves to another project must be skipped; the
+    standard in-project layout still resolves."""
+    adv.invalidate_script_cache()
+    (tmp_path / ".agenticdoc").mkdir()
+    bad = _bad_framework(tmp_path)
+    (tmp_path / ".agentic-framework").write_text(f"repo={bad}\n", encoding="utf-8")
+    good = _stub_framework(tmp_path, via_marker=False)
+    assert adv.locate_platform_dir(tmp_path) == good
+    _verify("VC-027", inconsistent_marker_skipped=true_str(True))
+
+
+def test_no_consistent_candidate_fails_loud(tmp_path: pathlib.Path) -> None:
+    """No candidate resolves to this project -> AdvanceError, never a silent
+    wrong-repo write (the 2026-09-22 autopilot blocker)."""
+    adv.invalidate_script_cache()
+    (tmp_path / ".agenticdoc").mkdir()
+    bad = _bad_framework(tmp_path)
+    (tmp_path / ".agentic-framework").write_text(f"repo={bad}\n", encoding="utf-8")
+    with pytest.raises(adv.AdvanceError) as excinfo:
+        adv.locate_platform_dir(tmp_path)
+    assert "resolves to this project's root" in str(excinfo.value)
+    code, out, err = adv.advance("k", "design", tmp_path)
+    assert code == 1 and out == ""
+    assert "resolves to this project's root" in err
+    _verify("VC-027", fail_loud=1, readable=true_str("?" not in err))
+
+
+def test_python_utf8_flag_passed_to_children(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both the detect_root probe and the advance call force UTF-8 stdio
+    (cp936 Chinese diagnostics otherwise decode to '?')."""
+    adv.invalidate_script_cache()
+    (tmp_path / ".agenticdoc").mkdir()
+    _stub_framework(tmp_path, via_marker=False)
+    calls: list[list[str]] = []
+    real_run = subprocess.run
+
+    def spy(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(list(cmd))
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(adv.subprocess, "run", spy)
+    code, _out, _err = adv.advance("k", "verify", tmp_path)
+    assert code == 0
+    assert calls, "expected detect_root + advance subprocess calls"
+    for cmd in calls:
+        assert cmd[1:3] == ["-X", "utf8"], cmd
+    _verify("VC-027", utf8_flags=len(calls), argv_flags=true_str(True))

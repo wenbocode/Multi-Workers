@@ -62,7 +62,9 @@ export function runAgenticScript(
 	if (!fs.existsSync(script)) {
 		return { ok: false, output: `Framework script not found: ${script}` };
 	}
-	const result = spawnSync(PYTHON_EXE, [script, ...args], {
+	// -X utf8: framework gate scripts print Chinese diagnostics; a Windows
+	// console default (cp936) read back as utf8 would turn them into '?'.
+	const result = spawnSync(PYTHON_EXE, ["-X", "utf8", script, ...args], {
 		cwd: projectDir,
 		encoding: "utf8",
 		timeout: timeoutMs,

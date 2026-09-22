@@ -60,7 +60,8 @@ def _fake_framework(tmp_path: pathlib.Path) -> pathlib.Path:
     detect = fw / "scripts" / "detect_root.py"
     detect.write_text(
         "import json\n"
-        f"print(json.dumps({{'PLATFORM_DIR': {json.dumps(str(fw))}}}))\n",
+        f"print(json.dumps({{'PLATFORM_DIR': {json.dumps(str(fw))}, "
+        f"'PROJECT_ROOT': {json.dumps(str(tmp_path))}}}))\n",
         encoding="utf-8",
     )
     (tmp_path / ".agentic-framework").write_text(f"repo={fw}\n", encoding="utf-8")

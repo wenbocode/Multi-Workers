@@ -35,6 +35,10 @@ class AdvanceError(Exception):
 
 _ADVANCE_TIMEOUT_SEC = 120
 _SCRIPTS = pathlib.Path("scripts")
+# Force UTF-8 stdio in the child interpreter: the framework prints Chinese gate
+# diagnostics, and a Windows console default (cp936) decoded as UTF-8 turns the
+# whole failure report into '?'.
+_PYTHON_FLAGS = ("-X", "utf8")
 # project root (resolved) -> advance_phase.py path. Only successes are cached;
 # a deleted script is re-detected on the next call.
 _script_cache: dict[str, pathlib.Path] = {}
@@ -57,31 +61,36 @@ def _marker_repo(project_root: pathlib.Path) -> pathlib.Path | None:
     return None
 
 
-def locate_platform_dir(project_root: pathlib.Path) -> pathlib.Path:
-    """Framework platform dir (contains scripts/advance_phase.py).
-
-    Raises AdvanceError when the framework is not installed for this project."""
-    project_root = pathlib.Path(project_root)
-    candidates: list[pathlib.Path] = []
+def _candidates(project_root: pathlib.Path) -> list[pathlib.Path]:
+    """Framework platform-dir candidates, in probe order, de-duplicated."""
     marker = _marker_repo(project_root)
-    if marker is not None:
-        candidates.append(marker)
-    candidates.append(project_root / ".agents" / "skills" / "agentic-task")
-    detect: pathlib.Path | None = None
-    for candidate in candidates:
-        script = candidate / _SCRIPTS / "detect_root.py"
-        if script.is_file():
-            detect = script
-            break
-    if detect is None:
-        raise AdvanceError(
-            "AgenticTask framework not installed: no scripts/detect_root.py under "
-            "the .agentic-framework repo path or .agents/skills/agentic-task "
-            f"(project root: {project_root}). Run 'mw init' first."
-        )
+    raw = [marker, pathlib.Path(project_root) / ".agents" / "skills" / "agentic-task"]
+    out: list[pathlib.Path] = []
+    seen: list[pathlib.Path] = []
+    for candidate in raw:
+        if candidate is None:
+            continue
+        resolved = pathlib.Path(candidate).resolve()
+        if resolved in seen:
+            continue
+        seen.append(resolved)
+        out.append(pathlib.Path(candidate))
+    return out
+
+
+def _probe_detect_root(
+    candidate: pathlib.Path, project_root: pathlib.Path
+) -> tuple[pathlib.Path | None, str]:
+    """Run one candidate's ``detect_root.py --json`` (cwd = project root).
+
+    Returns ``(platform_dir, "")`` when the candidate reports this project as
+    its root, else ``(None, reason)`` for the fail-loud report."""
+    detect = candidate / _SCRIPTS / "detect_root.py"
+    if not detect.is_file():
+        return None, f"{candidate}: no scripts/detect_root.py"
     try:
         proc = subprocess.run(
-            [sys.executable, str(detect), "--json"],
+            [sys.executable, *_PYTHON_FLAGS, str(detect), "--json"],
             cwd=str(project_root),
             capture_output=True,
             text=True,
@@ -90,18 +99,51 @@ def locate_platform_dir(project_root: pathlib.Path) -> pathlib.Path:
             timeout=30,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise AdvanceError(f"detect_root.py could not run: {exc}") from exc
+        return None, f"{candidate}: detect_root.py could not run ({exc})"
     if proc.returncode != 0:
-        raise AdvanceError(
-            f"detect_root.py failed (exit {proc.returncode}): {(proc.stderr or '').strip()}"
-        )
+        tail = (proc.stderr or "").strip()
+        return None, f"{candidate}: detect_root.py failed (exit {proc.returncode}) {tail}"
     try:
-        platform_dir = pathlib.Path(json.loads(proc.stdout)["PLATFORM_DIR"])
+        info = json.loads(proc.stdout)
+        platform_dir = pathlib.Path(info["PLATFORM_DIR"])
+        reported = pathlib.Path(info["PROJECT_ROOT"])
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise AdvanceError(f"detect_root.py output not parseable: {exc}") from exc
+        return None, f"{candidate}: detect_root.py output not parseable ({exc})"
+    if reported.resolve() != pathlib.Path(project_root).resolve():
+        return None, f"{candidate}: PROJECT_ROOT={reported} does not match {project_root}"
     if not (platform_dir / _SCRIPTS / "advance_phase.py").is_file():
-        raise AdvanceError(f"advance_phase.py not found under platform dir {platform_dir}")
-    return platform_dir
+        return None, f"{candidate}: {platform_dir} has no scripts/advance_phase.py"
+    return platform_dir, ""
+
+
+def locate_platform_dir(project_root: pathlib.Path) -> pathlib.Path:
+    """Framework platform dir (contains scripts/advance_phase.py).
+
+    A candidate is adopted only when its ``detect_root.py --json`` reports
+    ``PROJECT_ROOT`` equal to *project_root*. The marker repo may legitimately
+    live outside the project, but a framework whose own root resolution points
+    at a *different* AgenticTask project must never be used: phase gates would
+    silently write key state into the wrong repository (the autopilot
+    phase-advance blocker, 2026-09-22).
+
+    Raises AdvanceError when no candidate is consistent."""
+    project_root = pathlib.Path(project_root)
+    candidates = _candidates(project_root)
+    if not any((c / _SCRIPTS / "detect_root.py").is_file() for c in candidates):
+        raise AdvanceError(
+            "AgenticTask framework not installed: no scripts/detect_root.py under "
+            "the .agentic-framework repo path or .agents/skills/agentic-task "
+            f"(project root: {project_root}). Run 'mw init' first."
+        )
+    problems: list[str] = []
+    for candidate in candidates:
+        platform_dir, problem = _probe_detect_root(candidate, project_root)
+        if platform_dir is not None:
+            return platform_dir
+        problems.append(problem)
+    raise AdvanceError(
+        "no framework candidate resolves to this project's root:\n  " + "\n  ".join(problems)
+    )
 
 
 def advance_script(project_root: pathlib.Path) -> pathlib.Path:
@@ -132,7 +174,7 @@ def advance(
         script = advance_script(project_root)
     except AdvanceError as exc:
         return 1, "", f"[advance] {exc}"
-    cmd = [sys.executable, str(script), key, phase]
+    cmd = [sys.executable, *_PYTHON_FLAGS, str(script), key, phase]
     if summary is not None:
         cmd += ["--summary", summary]
     try:
