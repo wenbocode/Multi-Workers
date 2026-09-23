@@ -25,7 +25,7 @@ PM 模式窗口（`PI_WORKER_TASK` 未设置）的每一次 agent run，系统�
 
 ## 遗留
 
-1. **L2 端到端验证欠债（1 项）**：真实 PM 窗口的系统提示是否含协议文本，未在本会话验证（无头环境无法构造真实 TUI 轮次）。去向：`mw build --install` + 重启窗口后人工确认一次（可选：让 PM 自述"我是怎么做并行性分析的"）。属可接受欠债，非阻塞。
+1. **L2 端到端验证（已关闭）**：2026-09-23 14:49 用全新进程 `pi -p "...第 4 条是什么？"`（PM 模式，加载新 bundle+dist）验证，模型原样复述出「相位文档（spec.md / design.md）由 PM 自己串行写，不派 worker」——证明协议确实进了系统提示。原欠债记录见 `evidence/quality-gate-report-2026-09-22T2152.md`（已同步更新为充分）。
 2. **协议文本的框架侧落点未做**：`core/pm-mind.md` Phase 1 的「按依赖顺序排列 stage，不可并行的串行」与 `core/workflows/requirements.md` Step 3.6 / `system-design.md` step 5（当前写法是 PM 自己产出 research note，未提批量派发）仍是并行的反面。去向：立新 key（跨仓库 AgenticTask，需 push/install），本 key 不含。
 3. **无动态内容与开关**：不做"空闲并行槽位数"提示、不做注入开关。去向：有真实需求时立新 key。
 4. **项目侧零配置**：未改 `AGENTS.md` / `.pi/APPEND_SYSTEM.md`。去向：若希望非 mw 项目或纯文档层面也生效，自行追加一句（不需要 key）。

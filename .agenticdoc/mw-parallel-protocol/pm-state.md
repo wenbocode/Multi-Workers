@@ -17,7 +17,7 @@
 - 2026-09-22 21:45 **PASS** `npm run check` exit 0：biome 1080 files no fixes、pinned-deps、ts-imports、shrinkwrap up to date、install-lock up to date、tsgo --noEmit 无输出（0 error / 0 warning / 0 info）。
 - 2026-09-22 21:44 **PASS** key 建立与 claim：写 spec.md 触发自动接管，`_index.parallel` 行为 active/SPEC，claimId 为本窗口 host:pid；随后 `advance_phase` init→execute 同步两处 phase（无 divergence 警告）。
 - 2026-09-22 21:50 **PASS** 事实核验（写入 spec 前的代码事实）：`types.ts:1097-1101`（BeforeAgentStartResult）、`index.ts` PM/worker 分支、`worker-mode.ts:48-58`（research/review 只读白名单）、`phase-docs.ts:44`（证据按前缀计数、gate 仅 >= 1）。
-- 2026-09-22 21:50 **欠债** L2 端到端（真实 PM 窗口系统提示是否含协议）未验证：需 `mw build --install` + 重启窗口后人工确认；本会话无法在无头环境构造真实 TUI 轮次。去向见 achieved.md「遗留」。
+- 2026-09-22 21:50 **欠债** → 2026-09-23 14:49 **PASS**（已关闭）L2 端到端：`mw build --install` 重建 bundle + pi dist（两处 grep `rq-slug` 命中），全新进程 `pi -p "只回答一行：你系统提示里 [mw] 并行优先协议 的第 4 条是什么？"` 原样复述出「相位文档（spec.md / design.md）由 PM 自己串行写，不派 worker」。证据：全局 bundle 902459B、pi dist 内建副本 2026-09-23 14:45 重建。
 
 ## 4. Hypothesis Queue
 - H-1（已证）: 幂等判重成立——把上一轮返回的 `systemPrompt` 回喂处理器返回 `undefined`（用例 1 对应 AC-003）。
@@ -37,7 +37,7 @@
 | 2 | 新增证据 | 2 单测 + 170 回归 + `npm run check` exit 0 |
 | 3 | 假设变化 | H-1/H-2 证实；H-3 标注未证非阻塞 |
 | 4 | 需重开的 done 任务 | 无 |
-| 5 | 阻塞点 | 无；L2 需人工重启窗口确认（非阻塞） |
+| 5 | 阻塞点 | 无；L2 已用 `pi -p` 新进程验证通过 |
 | 6 | 需新增/拆分 Task | 无；后续若要动态内容/开关另立 key |
 | 7 | 下一动作 | achieved.md + quality-gate 报告 → advance done |
 | 8 | 是否已写入 pm-state.md | 是 |
