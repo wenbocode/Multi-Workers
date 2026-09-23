@@ -17,7 +17,7 @@
  */
 import * as path from "node:path";
 import { Type } from "typebox";
-import { toolsForType } from "../worker/worker-mode.js";
+import { activeToolsForType } from "../worker/worker-mode.js";
 import { capabilityError, loadPathRoots, mergeToolResponses, normalizeResults, ragToolCalls, } from "./adapter.js";
 import { RAG_HEARTBEAT_INTERVAL_MS, withHeartbeat } from "./budget.js";
 import { callCli } from "./cli-bridge.js";
@@ -251,12 +251,12 @@ export function ragToolNamesForType(rt, type) {
  */
 export function applyRagTools(pi, rt, type) {
     if (rt === null) {
-        pi.setActiveTools(toolsForType(type));
+        pi.setActiveTools(activeToolsForType(type));
         return;
     }
     if (type === "rag-research")
         ensureRagChatTool(pi, rt);
-    pi.setActiveTools([...new Set([...toolsForType(type), ...ragToolNamesForType(rt, type)])]);
+    pi.setActiveTools([...new Set([...activeToolsForType(type), ...ragToolNamesForType(rt, type)])]);
 }
 /**
  * RAG dispatch pre-check (VC-003): load the merged config and reject an

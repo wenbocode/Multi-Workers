@@ -135,6 +135,26 @@ export function appendTimeout(taskKey, agenticdocRoot, kind, detail) {
 export function appendCheckpoint(taskKey, agenticdocRoot, opts) {
     appendLifecycleLine(taskKey, agenticdocRoot, `[CHECKPOINT] ${new Date().toISOString()} elapsed=${Math.round(opts.elapsedMs / 1000)}s reads=${opts.reads} writes=${opts.writes} phases=${opts.phases} uniq_targets=${opts.uniqTargets} repeat_top=${opts.repeatTop} risk=${opts.risk}`);
 }
+/** Machine checkpoint line (design D-105) written into a worker's progress.md
+ * for read-only roles that have no write tool: `CKPT <n>m [machine]
+ * ts=<ISO-8601> reads=<n> writes=<n> phases=<d>/<t> repeat_top=<k>
+ * risk=<low|mid|high>`. Exactly one line with no trailing newline — the caller
+ * (appendProgressLine) owns the newline so the file stays pure-append. The
+ * `[machine]` marker keeps it distinguishable from agent self-assessed CKPT
+ * lines in the same file (AC-002/AC-003). */
+export function formatMachineCheckpoint(opts) {
+    return `CKPT ${Math.round(opts.elapsedMs / 60000)}m [machine] ts=${new Date().toISOString()} reads=${opts.reads} writes=${opts.writes} phases=${opts.phases} repeat_top=${opts.repeatTop} risk=${opts.risk}`;
+}
+/** Append one pre-formatted progress line to `<taskKey>/progress.md`
+ * (design D-107). Pure append: never reads or truncates existing content, so
+ * PM-authored or worker self-assessed lines are preserved byte-for-byte
+ * (AC-002) and the P-003 truncate-before-evaluate failure mode cannot occur.
+ * Reuses outputDir(), so taskKey path traversal keeps being rejected. */
+export function appendProgressLine(taskKey, agenticdocRoot, line) {
+    const dir = outputDir(taskKey, agenticdocRoot);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, "progress.md"), `${line}\n`, "utf8");
+}
 /** Unexpected worker error marker: `[ERROR] ts <first line>`. */
 export function appendError(taskKey, agenticdocRoot, message) {
     appendLifecycleLine(taskKey, agenticdocRoot, `[ERROR] ${new Date().toISOString()} ${truncLine(message.split("\n")[0] ?? "", 160)}`);

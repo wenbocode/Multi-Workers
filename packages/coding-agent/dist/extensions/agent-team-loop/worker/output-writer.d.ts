@@ -57,6 +57,29 @@ export interface CheckpointTraceOpts {
  * judge convergence vs divergence. Mirrored by CHECKPOINT_LINE_RE in
  * shared/heartbeat.ts. */
 export declare function appendCheckpoint(taskKey: string, agenticdocRoot: string, opts: CheckpointTraceOpts): void;
+export interface MachineCheckpointOpts {
+    elapsedMs: number;
+    reads: number;
+    writes: number;
+    /** "<done>/<total>" for phased tasks, "-" for phaseless. */
+    phases: string;
+    repeatTop: number;
+    risk: "low" | "mid" | "high";
+}
+/** Machine checkpoint line (design D-105) written into a worker's progress.md
+ * for read-only roles that have no write tool: `CKPT <n>m [machine]
+ * ts=<ISO-8601> reads=<n> writes=<n> phases=<d>/<t> repeat_top=<k>
+ * risk=<low|mid|high>`. Exactly one line with no trailing newline — the caller
+ * (appendProgressLine) owns the newline so the file stays pure-append. The
+ * `[machine]` marker keeps it distinguishable from agent self-assessed CKPT
+ * lines in the same file (AC-002/AC-003). */
+export declare function formatMachineCheckpoint(opts: MachineCheckpointOpts): string;
+/** Append one pre-formatted progress line to `<taskKey>/progress.md`
+ * (design D-107). Pure append: never reads or truncates existing content, so
+ * PM-authored or worker self-assessed lines are preserved byte-for-byte
+ * (AC-002) and the P-003 truncate-before-evaluate failure mode cannot occur.
+ * Reuses outputDir(), so taskKey path traversal keeps being rejected. */
+export declare function appendProgressLine(taskKey: string, agenticdocRoot: string, line: string): void;
 /** Unexpected worker error marker: `[ERROR] ts <first line>`. */
 export declare function appendError(taskKey: string, agenticdocRoot: string, message: string): void;
 export interface EndTraceOpts {

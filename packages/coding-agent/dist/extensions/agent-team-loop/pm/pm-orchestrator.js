@@ -421,7 +421,7 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
                 deliverPmAlert(pi, `[mw] 发散风险：worker '${entry.taskKey}' 检查点 risk=${ck.risk}` +
                     `（elapsed ${Math.round(ck.elapsedS / 60)}m，reads=${ck.reads} writes=${ck.writes}，phases=${ck.phases}，` +
                     `重复读 top=${ck.repeatTop}）。机器判据仅供参考——请结合本 key 最全上下文判断：继续等待 / steer 收窄范围 / 终止并分拆重派 / PM 直执。` +
-                    `证据：${path.join(taskDir, "trace.log")}（[CHECKPOINT] 行）与 ${path.join(taskDir, "progress.md")}（worker 自评）。`);
+                    `证据：${path.join(taskDir, "trace.log")}（[CHECKPOINT] 行）与 ${path.join(taskDir, "progress.md")}（自评行；无写工具角色另含框架机器行）。`);
             }
             for (const entry of entries) {
                 if (notified.has(entry.taskKey) || !isTerminal(entry.status))

@@ -2,6 +2,26 @@ import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import { type RagRuntime } from "../rag/tools.ts";
 import type { TaskPhase } from "./phase-runner.ts";
 export declare function toolsForType(taskType: string): string[];
+/** `toolsForType` plus the narrow write channel for roles with no write/edit
+ * tool (D-104/D-106). The allowlist table and `toolsForType` stay byte for
+ * byte unchanged (Python parity lock, direct test imports); the writeless
+ * extra lives only here. Write roles get the base array untouched, read-only
+ * roles get a copy with `worker_file` appended. */
+export declare function activeToolsForType(taskType: string): string[];
+/** Checkpoint self-assessment steer text, split by role (D-104/VC-004).
+ * - `hasWriteTools === true`: the pre-change wording byte for byte — the
+ *   agent appends its own CKPT line to progress.md with its write tool.
+ * - `hasWriteTools === false`: never tells the agent to append to a file it
+ *   cannot write. The machine evidence is already on disk (framework-written),
+ *   and the self-assessment goes through the narrow tool or the reply.
+ * `deliverAs` stays `followUp` for both branches (decided by the caller). */
+export declare function checkpointSteerText(opts: {
+    elapsedMs: number;
+    budgetMs: number;
+    progressPath: string;
+    hasWriteTools: boolean;
+    narrowTool: string;
+}): string;
 /** Default wall budget. The old 30m value killed healthy tasks (OverCode
  * cpr-004/005: actively working 28s/9s before the kill); 60m covers every
  * observed successful run (7–14m) with margin for generation-heavy tasks. */
