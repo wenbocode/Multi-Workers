@@ -68,7 +68,7 @@
 
 | ID | 内容 | 去向 |
 |----|------|------|
-| R-1 | 框架仓库：claim stub 缺 `- Updated:`/`- Next Action:`；索引 Phase `—` 与 pm-state `init` 占位不一致 | 另案（`.agents/skills/agentic-task` clone 提交+推送） |
+| R-1 | 框架仓库：claim 桩缺 `- Updated:`/`- Next Action:` → **非缺陷**（`advance_phase.py` 有显式桩升级路径）；索引 Phase `—`/`SPEC` 与 pm-state 桩 `init` 的 pending 等价性 | ✅ 已闭合（框架仓库 `d0834ae`：VC-030 + AG-008 + 文档，已推送） |
 | R-2 | 新 key 首次 claim（pm-state 尚未创建）仍回一条 `pm-state.md missing` warning | 接受不处理（下次 claim/takeover 收敛） |
 | R-3 | `phaseDocGaps` 的 tier 缺省为 `design`（新调用点遗忘传参会静默回到六项全查） | 记入 `_pitfalls.md` 待办式建议；既有单参调用清零后改必填 |
 | R-4 | `test/extensions-runner.test.ts` 4 个 hook 超时 | 归入 Windows 环境基线，不在本 key 处理 |

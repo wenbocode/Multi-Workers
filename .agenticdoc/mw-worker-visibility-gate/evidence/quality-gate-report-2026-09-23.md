@@ -73,7 +73,7 @@
 13/13 AC 与 VC 均具备可机械判定的证据（其中 VC-013 经一次措辞修订后成立），3 个变异反例双向成立，回归面无本 key 引入的失败。**质量门禁通过**，可进入 `done`。
 
 遗留项（接受不处理 / 另案）：
-- R-1（框架仓库）：`update_index.py claim` 的 stub 缺 `- Updated:`/`- Next Action:`，首次 `advance_phase` 会先撞 template drift 再升级模板；新行 Phase 列 `—` 与 pm-state `init` 两个占位符不一致（本 key 用 AC-004 让它等价，但不消除分叉）。需在 `.agents/skills/agentic-task`（另一 git 仓库 clone）提交并推送。
+- R-1（框架仓库）：`update_index.py claim` 的桩只有三行接口行——`advance_phase.py:313-341` 有**显式**升级路径把它补成完整 7 段模板并保留 Claim-Id，**非缺陷**（本 key 早先的记录已更正）；新行索引 Phase `—`（python claim）/`SPEC`（TS `IndexStore.claim`）与 pm-state 桩 `init` 的 pending 等价性，已在框架仓库用测试钉住（`d0834ae`：`test_update_index.py` VC-030 + `test_audit_phase.py` AG-008 + 两处文档注释，`scripts/`/`core/scripts/`/`claude/scripts/` 三镜像逐字节相同，21 项测试全绿，已推送 `origin/master`）。残留：其他项目（如 OverCode）的 `.agents/skills/agentic-task` clone 仍是旧提交，需各自 `git pull` 或重跑 `install.py` 才会带上。
 - R-2：D-111 只在"pm-state 存在但缺 Claim-Id 行"时插行；**新 key 首次 claim 时 pm-state 尚不存在**，此时仍回一条 `pm-state.md missing` warning（有意为之：镜像未建立）。`advance_phase` 建好文件后，下一次 claim/takeover 会插行收敛。
 - R-3（API 形状）：`phaseDocGaps(status, tier?)` 的 tier 缺省为 `design`（为保住既有 9 处单参调用）。未来新增调用点若忘记传 tier，会静默回到"六项全查"。建议在既有单参调用清零后把参数改为必填。
 - R-4（环境基线）：`test/extensions-runner.test.ts` 的 4 个 hook 超时失败与本次改动无关（该文件零引用本 key 模块），归入 Windows 基线，不在本 key 处理。

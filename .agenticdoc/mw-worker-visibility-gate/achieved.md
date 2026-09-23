@@ -48,7 +48,7 @@
 
 | ID | 内容 | 去向 |
 |----|------|------|
-| R-1 | 框架仓库（`.agents/skills/agentic-task` clone）：claim stub 缺 `- Updated:`/`- Next Action:`（首次 advance 先撞 template drift 再升级）；新 key 索引行 Phase 写 `—` 而 pm-state 写 `init`（本 key 用 AC-004 让门禁等价处理，但不消除分叉） | 另案：在该 clone 内提交并推送（跨仓库，需用户确认） |
+| R-1 | 框架仓库（`.agents/skills/agentic-task`）：claim 桩只有 Key/Claim-Id/Phase 三行——`advance_phase.py:313-341` 有**显式**升级路径把它补成 7 段模板（保留 Claim-Id），**非缺陷**（此前记录有误，已核实）；索引 Phase 列的 `—`（python claim）/`SPEC`（TS `IndexStore.claim`）与 pm-state 桩的 `init` 是"尚未开始"的三种写法，audit 以 pending 短路（`SPEC` 刻意不 pending，因为真的 SPEC 必须查门禁）——**已用测试钉住** | ✅ 已闭合 2026-09-23（框架仓库 `d0834ae`，VC-030 + AG-008 + 两处文档说明，三个镜像同步，已推送 origin/master） |
 | R-2 | 新 key 首次 claim 时 pm-state 尚未存在 → 仍回一条 `pm-state.md missing` warning（镜像未建立，非分叉） | 接受不处理（`advance_phase` 建文件后，下次 claim/takeover 会插行收敛） |
 | R-3 | `phaseDocGaps` 的 tier 缺省 `design`：未来新增调用点若忘记传相位，会静默退回"六项全查"（比 spec 层更严，可能复现本 key 修的问题） | 记入 `_pitfalls.md` 建议项；既有单参调用清零后把 tier 改为必填 |
 | R-4 | `test/extensions-runner.test.ts` 4 个 hook 超时（Windows 环境基线，该文件零引用本 key 模块） | 归入既有环境基线，不处理 |
