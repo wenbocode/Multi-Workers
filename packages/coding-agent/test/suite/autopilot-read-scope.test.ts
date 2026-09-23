@@ -414,6 +414,7 @@ function fakeWorkerPi(): FakeWorker {
 		},
 		sendUserMessage: () => {},
 		setActiveTools: () => {},
+		registerTool: () => {},
 	};
 	return {
 		pi: pi as unknown as ExtensionAPI,

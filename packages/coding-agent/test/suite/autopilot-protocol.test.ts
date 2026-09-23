@@ -32,6 +32,7 @@ import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { dispatchNewTasks } from "../../src/extensions/agent-team-loop/pm/pm-orchestrator.ts";
 import { WorkerStore } from "../../src/extensions/agent-team-loop/shared/worker-store.ts";
 import { goalMtime } from "../../src/extensions/agent-team-loop/worker/phase-runner.ts";
+import { WORKER_FILE_TOOL } from "../../src/extensions/agent-team-loop/worker/worker-file-tool.ts";
 import { parseTaskMd, workerModeActivate } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
 
 function mkdtemp(): string {
@@ -203,6 +204,7 @@ function fakeWorkerPi(): FakeWorker {
 		setActiveTools: (t: string[]) => {
 			tools.push([...t]);
 		},
+		registerTool: () => {},
 	};
 	return {
 		pi: pi as unknown as ExtensionAPI,
@@ -238,8 +240,15 @@ describe("typed tool allowlists (D-107 / VC-023)", () => {
 		const cases: Array<{ type: string; expected: string[]; extra?: string[] }> = [
 			{ type: "roadmap-writer", expected: PY_REGISTRY["roadmap-writer"] },
 			{ type: "phase-writer", expected: PY_REGISTRY["phase-writer"] },
-			{ type: "verifier", expected: PY_REGISTRY.verifier, extra: ["read_scope:", "  - .agenticdoc/goal.md"] },
-			{ type: "reviewer", expected: PY_REGISTRY.reviewer },
+			// Read-only types additionally carry the narrow write channel
+			// (D-101/D-104/D-106): the Python REGISTRY tuples stay unchanged, so
+			// the parity assertion is the Python set plus the TS-only worker_file.
+			{
+				type: "verifier",
+				expected: [...PY_REGISTRY.verifier, WORKER_FILE_TOOL],
+				extra: ["read_scope:", "  - .agenticdoc/goal.md"],
+			},
+			{ type: "reviewer", expected: [...PY_REGISTRY.reviewer, WORKER_FILE_TOOL] },
 			{ type: "repair", expected: PY_REGISTRY.repair },
 		];
 		try {
@@ -335,8 +344,12 @@ describe("typed tool allowlists (D-107 / VC-023)", () => {
 		try {
 			const cases: Array<{ taskKey: string; md: string; expected: string[] }> = [
 				{ taskKey: "m-coding", md: "type: coding\n\nwork\n", expected: PY_CODING_TOOLS },
-				{ taskKey: "m-review", md: "type: review\n\nwork\n", expected: PY_REVIEW_TOOLS },
-				{ taskKey: "m-research", md: "type: research\n\nwork\n", expected: ["read", "find", "grep", "ls", "bash"] },
+				{ taskKey: "m-review", md: "type: review\n\nwork\n", expected: [...PY_REVIEW_TOOLS, WORKER_FILE_TOOL] },
+				{
+					taskKey: "m-research",
+					md: "type: research\n\nwork\n",
+					expected: ["read", "find", "grep", "ls", "bash", WORKER_FILE_TOOL],
+				},
 				// GC-8 verbatim: the manual fallback path stays for unknown types.
 				{ taskKey: "m-unknown", md: "type: mystery-type\n\nwork\n", expected: PY_CODING_TOOLS },
 			];
@@ -353,7 +366,7 @@ describe("typed tool allowlists (D-107 / VC-023)", () => {
 			// contract for unmarked tasks is unchanged).
 			const { worker } = await activateWorker(root, "goal-ap", "m-verifier", "type: verifier\n\nwork\n");
 			worker.emit("before_agent_start");
-			expect(worker.activeTools()).toEqual(PY_REVIEW_TOOLS);
+			expect(worker.activeTools()).toEqual([...PY_REVIEW_TOOLS, WORKER_FILE_TOOL]);
 			expect(exitSpy).not.toHaveBeenCalled();
 		} finally {
 			exitSpy.mockRestore();

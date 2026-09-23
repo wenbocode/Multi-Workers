@@ -19,7 +19,7 @@
 import * as path from "node:path";
 import { type TSchema, Type } from "typebox";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
-import { toolsForType } from "../worker/worker-mode.ts";
+import { activeToolsForType } from "../worker/worker-mode.ts";
 import {
 	capabilityError,
 	loadPathRoots,
@@ -399,11 +399,11 @@ export function ragToolNamesForType(rt: RagRuntime, type: string): string[] {
  */
 export function applyRagTools(pi: ExtensionAPI, rt: RagRuntime | null, type: string): void {
 	if (rt === null) {
-		pi.setActiveTools(toolsForType(type));
+		pi.setActiveTools(activeToolsForType(type));
 		return;
 	}
 	if (type === "rag-research") ensureRagChatTool(pi, rt);
-	pi.setActiveTools([...new Set([...toolsForType(type), ...ragToolNamesForType(rt, type)])]);
+	pi.setActiveTools([...new Set([...activeToolsForType(type), ...ragToolNamesForType(rt, type)])]);
 }
 
 /**
