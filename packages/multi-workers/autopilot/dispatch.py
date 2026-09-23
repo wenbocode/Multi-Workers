@@ -43,6 +43,7 @@ if str(_PARENT) not in sys.path:
 
 import mw_common  # noqa: E402  (path bootstrapped above)
 
+from autopilot import config as autopilot_config  # noqa: E402
 from autopilot import timeline as timeline_mod  # noqa: E402
 
 # ── Typed registry (D-107) ────────────────────────────────────────────────────
@@ -199,6 +200,46 @@ def _inject_rag_block(
     return _strip_rag_block(content).rstrip() + "\n\n" + block + "\n"
 
 
+def _read_scope_caps(project_root: pathlib.Path) -> tuple[int | None, int | None]:
+    """``l2_read_file_cap`` / ``l2_read_byte_cap`` for the rendered task.md.
+
+    Until 2026-09-23 these two fields were dead config: config.py parsed and
+    validated them, but no Python renderer ever emitted them, so every
+    conductor-dispatched worker fell back to the harness default
+    (``DEFAULT_READ_FILE_CAP`` = 8 files / 65536 B). The cap only activates
+    for tasks that carry ``read_scope`` (worker-mode.ts: zero interception
+    otherwise) — i.e. exactly the verifiers, where read_scope is mandatory
+    (D-106). Measured consequence (FeatureMigrator gui-contract-surface /
+    gui-shell-spike, 2026-09-23): both L3 reviewers spent all 8 allowed
+    read/ls/find/grep calls on context loading, could not read a single
+    EXECUTE evidence file, and returned fail-closed ``below`` verdicts
+    (0/23 and 0/31 verification criteria assertable) — structurally
+    unverifiable keys, not product failures.
+
+    A missing config file keeps ``(None, None)`` → task.md byte-identical to
+    the pre-fix renderer (config.py's own contract: absent file = defaults,
+    zero footprint, and the worker default is the same 8/65536). The cap
+    *default* values are owned by the TS harness
+    (``read-scope.ts::DEFAULT_READ_*``): the Python side deliberately defines
+    no fallback constant of its own (D-002 / GC-4: single source).
+    """
+    try:
+        if not autopilot_config.config_path(project_root).exists():
+            return None, None
+        cfg = autopilot_config.load_config(project_root)
+    except Exception:  # invalid/unreadable config must not break dispatching
+        return None, None
+    caps: list[int | None] = []
+    for field in ("l2_read_file_cap", "l2_read_byte_cap"):
+        value = cfg.get(field)
+        caps.append(
+            int(value)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0
+            else None
+        )
+    return caps[0], caps[1]
+
+
 def render_task_md(
     task_type: str,
     prompt: str,
@@ -207,6 +248,8 @@ def render_task_md(
     attempt: int,
     read_scope: Sequence[str] = (),
     deny_globs: Sequence[str] = (),
+    read_file_cap: int | None = None,
+    read_byte_cap: int | None = None,
     model: str = "",
     phase: str = "",
     profile_block: str | None = None,
@@ -233,6 +276,11 @@ def render_task_md(
     dispatcher. ``rag_config`` is `mw_common.load_rag_config`'s output; an
     absent/empty config appends nothing. Re-rendering is idempotent: an
     existing `mw-rag: v1` block is replaced wholesale (same marker/anchor).
+
+    ``read_file_cap`` / ``read_byte_cap`` (read-scope budgets, see
+    :func:`_read_scope_caps`) render only when supplied — ``None`` (absent
+    config, legacy callers, direct unit tests) leaves the output
+    byte-identical to the pre-fix renderer.
     """
     lines = [
         "---",
@@ -250,6 +298,10 @@ def render_task_md(
     if read_scope:
         lines.append("read_scope:")
         lines.extend(f"  - {item}" for item in read_scope)
+    if read_file_cap is not None:
+        lines.append(f"l2_read_file_cap: {int(read_file_cap)}")
+    if read_byte_cap is not None:
+        lines.append(f"l2_read_byte_cap: {int(read_byte_cap)}")
     if deny_globs:
         lines.append("deny_globs:")
         lines.extend(f"  - '{item}'" for item in deny_globs)
@@ -448,11 +500,14 @@ def dispatch(
                 mw_common.describe_target_error(exc, project_root),
                 ev="target-config-rejected",
             )
+    read_file_cap, read_byte_cap = _read_scope_caps(project_root)
     content = render_task_md(
         task_type, prompt, loop=loop, attempt=attempt, read_scope=scope,
         deny_globs=globs, model=model, phase=_owner_phase(project_root, owner),
         profile_block=profile_block,
         rag_config=rag_config,
+        read_file_cap=read_file_cap,
+        read_byte_cap=read_byte_cap,
     )
 
     # 1. task.md (before the queue row — the crash gap is the orphan shape
