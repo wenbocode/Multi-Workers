@@ -62,6 +62,7 @@ export const DEFAULT_CONFIG = {
     worker_timeout_min: 30,
     l2_read_file_cap: 8,
     l2_read_byte_cap: 65536,
+    advance_stall_ticks: 5,
 };
 const BOOL_FIELDS = ["enabled", "paused"];
 /** field → [min, max|null] — identical to config.py _INT_RANGES. */
@@ -72,6 +73,7 @@ const INT_RANGES = {
     worker_timeout_min: [1, null],
     l2_read_file_cap: [1, null],
     l2_read_byte_cap: [1, null],
+    advance_stall_ticks: [1, 50],
 };
 /** Validate a raw config object exactly like config.py validate_config:
  * unknown fields and out-of-range values fail closed, naming every offender.
@@ -151,6 +153,7 @@ export function readConfig(projectDir) {
         worker_timeout_min: intOf("worker_timeout_min"),
         l2_read_file_cap: intOf("l2_read_file_cap"),
         l2_read_byte_cap: intOf("l2_read_byte_cap"),
+        advance_stall_ticks: intOf("advance_stall_ticks"),
     };
     return { ok: true, config: merged };
 }
@@ -171,6 +174,7 @@ export function saveConfig(projectDir, config) {
         worker_timeout_min: config.worker_timeout_min,
         l2_read_file_cap: config.l2_read_file_cap,
         l2_read_byte_cap: config.l2_read_byte_cap,
+        advance_stall_ticks: config.advance_stall_ticks,
     };
     const file = configPath(projectDir);
     try {
@@ -609,6 +613,8 @@ export const EVENT_TYPES = new Set([
     "goal-snapshot",
     "type-rejected",
     "reconcile",
+    "resume",
+    "l3-no-verdict",
 ]);
 export const BEAT_EV = "beat";
 /** The default timeline view's include-set: every event type except beats. */

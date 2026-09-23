@@ -46,6 +46,10 @@ export interface AutopilotConfig {
     worker_timeout_min: number;
     l2_read_file_cap: number;
     l2_read_byte_cap: number;
+    /** Consecutive same-edge advance failures before the key is marked
+     * stalled (mw-autopilot-stall-feedback AC-003). Optional in the file —
+     * absent falls back to the default. */
+    advance_stall_ticks: number;
 }
 export declare const DEFAULT_CONFIG: AutopilotConfig;
 /** Validate a raw config object exactly like config.py validate_config:

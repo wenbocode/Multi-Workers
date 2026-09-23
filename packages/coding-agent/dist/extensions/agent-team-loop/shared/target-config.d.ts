@@ -89,6 +89,13 @@ export interface WorkspaceConfig {
 }
 /** Resolve the target.yml path for a control root (exported for tests). */
 export declare function targetYmlPath(controlRoot: string): string;
+/**
+ * Read the raw `.agenticdoc/target.yml` mapping for a control root. Exported
+ * for rag/config.ts (T-01, mw-rag-integration) so the RAG layer reuses this
+ * single target.yml reader instead of adding a second parser (P-003); no
+ * semantic change to the resolver.
+ */
+export declare function rawTargetYml(controlRoot: string): Record<string, unknown>;
 /** decideActiveMode result: the workspace mode for v2 shapes, or "legacy"
  * (rows 8/11/12) telling the caller to run the pre-partition v1/env
  * resolution unchanged; block names the v2 mode block to parse (rows 6/7)

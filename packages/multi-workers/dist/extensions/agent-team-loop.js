@@ -13110,6 +13110,10 @@ function requireString2(value, field) {
 function optionalString2(value, field) {
   return value === void 0 || value === null ? null : requireString2(value, field);
 }
+function optionalTrimmedString(value, field) {
+  const raw = optionalString2(value, field);
+  return raw === null ? null : raw.trim();
+}
 function optionalBoolean(value, field, fallback) {
   if (value === void 0 || value === null) return fallback;
   if (typeof value !== "boolean") fail2("invalid-shape", `rag config: field '${field}' must be a boolean`);
@@ -13168,18 +13172,18 @@ function nestedBlockValue(value, field, name) {
 }
 function parseMcp(raw, name) {
   if (raw === null) return null;
-  const url = optionalString2(raw.url, `server '${name}'.mcp.url`);
+  const url = optionalTrimmedString(raw.url, `server '${name}'.mcp.url`);
   if (url === null) fail2("mcp-missing-url", `rag server '${name}': mcp.url is required`);
   return {
     url,
-    tokenEnv: optionalString2(raw.token_env, `server '${name}'.mcp.token_env`),
+    tokenEnv: optionalTrimmedString(raw.token_env, `server '${name}'.mcp.token_env`),
     timeoutMs: optionalNumber(raw.timeout_ms, `server '${name}'.mcp.timeout_ms`, DEFAULT_RAG_TIMEOUT_MS)
   };
 }
 function parseSkill(raw, name) {
   if (raw === null) return null;
-  const dir = requireString2(raw.dir, `server '${name}'.skill.dir`);
-  const cliEntry = optionalString2(raw.cli_entry, `server '${name}'.skill.cli_entry`);
+  const dir = optionalTrimmedString(raw.dir, `server '${name}'.skill.dir`);
+  const cliEntry = optionalTrimmedString(raw.cli_entry, `server '${name}'.skill.cli_entry`);
   if (cliEntry === null) fail2("skill-missing-cli", `rag server '${name}': skill.cli_entry is required`);
   return {
     dir,
@@ -17943,10 +17947,13 @@ async function mcpCall(runtime, server, entry, tool, args, signal, onUpdate, log
     onUpdate
   });
 }
+function resolveCliDir(controlRoot, dir) {
+  return dir === null ? controlRoot : path16.resolve(controlRoot, dir);
+}
 async function cliCall(runtime, entry, tool, args, signal, onUpdate) {
   const skill = entry.skill;
   if (skill === null) throw new Error(`rag server has no skill block for tool ${tool}`);
-  const dir = path16.resolve(runtime.controlRoot, skill.dir);
+  const dir = resolveCliDir(runtime.controlRoot, skill.dir);
   return await callCli({ dir, cliEntry: skill.cliEntry, timeoutMs: skill.timeoutMs }, tool, args, {
     signal: signal ?? new AbortController().signal,
     env: process.env,
@@ -18190,21 +18197,24 @@ function doctorMw(projectDir, fix = false) {
     return { ok: false, error: `mw doctor returned non-JSON output: ${String(err)}` };
   }
 }
-function runMwCli(sub, projectDir, args, timeoutMs = 3e4) {
+function runMwCliRaw(sub, projectDir, args, timeoutMs = 3e4) {
   const mwPy = findMwPy();
-  if (!mwPy) return { ok: false, error: "Could not find mw.py \u2014 set MW_PY env var." };
+  if (!mwPy) return { code: -1, output: "", spawnError: "Could not find mw.py \u2014 set MW_PY env var." };
   const result = spawnSync2(PYTHON_EXE, [mwPy, sub, ...args, `--project=${projectDir}`], {
     encoding: "utf8",
     timeout: timeoutMs
   });
   if (result.error) {
-    return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
+    return { code: -1, output: "", spawnError: `Failed to spawn mw.py: ${result.error.message}` };
   }
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-  if (result.status !== 0) {
-    return { ok: false, error: output || `mw ${sub} exited with code ${result.status}` };
-  }
-  return { ok: true, output };
+  return { code: result.status ?? -1, output };
+}
+function runMwCli(sub, projectDir, args, timeoutMs = 3e4) {
+  const raw = runMwCliRaw(sub, projectDir, args, timeoutMs);
+  if (raw.spawnError !== void 0) return { ok: false, error: raw.spawnError };
+  if (raw.code !== 0) return { ok: false, error: raw.output || `mw ${sub} exited with code ${raw.code}` };
+  return { ok: true, output: raw.output };
 }
 function targetMw(projectDir, args) {
   return runMwCli("target", projectDir, args);
@@ -18214,6 +18224,12 @@ function partitionMw(projectDir, args) {
 }
 function modelMw(projectDir, args) {
   return runMwCli("model", projectDir, args);
+}
+var RAG_SUBCOMMANDS = ["list", "probe", "audit", "sync", "init"];
+function ragMw(projectDir, args) {
+  const raw = runMwCliRaw("rag", projectDir, args);
+  if (raw.spawnError !== void 0) return { ok: false, code: raw.code, output: raw.spawnError };
+  return { ok: raw.code === 0, code: raw.code, output: raw.output };
 }
 function updateEnvMw(projectDir, apply) {
   const mwPy = findMwPy();
@@ -19944,6 +19960,22 @@ ${description}
     }
   });
 }
+function formatRagDoctorLine(rag) {
+  if (rag.error) return `rag: ERROR - ${rag.error}`;
+  const enabled = rag.enabled ?? [];
+  const skillStatus = rag.skill?.status ?? "unknown";
+  if (enabled.length === 0) return `rag: not enabled (skill ${skillStatus})`;
+  const probe = rag.probe ?? {};
+  const state = Object.keys(probe).sort().map((name) => `${name}=${probe[name]?.reachable ? "reachable" : "unreachable"}`).join(", ");
+  const fingerprint = (rag.fingerprint ?? "").slice(0, 12);
+  const rawRequired = rag.required_missing ?? 0;
+  const requiredMissing = Number.isFinite(rawRequired) ? Math.trunc(rawRequired) : 0;
+  const required = requiredMissing ? `; required_missing=${requiredMissing}` : "";
+  return `rag: enabled=${enabled.join(", ")}; probe=${state}; fingerprint=${fingerprint}; skill=${skillStatus}${required}`;
+}
+function shouldShowRagDoctorRow(rag) {
+  return rag !== void 0 && (rag.exists === true || (rag.enabled?.length ?? 0) > 0);
+}
 function formatDoctorReport(report, fix) {
   const lines = [];
   const svc = report.service;
@@ -20001,6 +20033,7 @@ function formatDoctorReport(report, fix) {
       lines.push(`\u6D3E\u53D1\u6A21\u578B: ${roles || "\u672A\u8BBE\u89D2\u8272"}; \u7A97\u53E3\u6A21\u578B ${window}`);
     }
   }
+  if (shouldShowRagDoctorRow(report.rag)) lines.push(formatRagDoctorLine(report.rag));
   if (fix) {
     const applied = report.fix?.applied;
     lines.push(Array.isArray(applied) && applied.length > 0 ? `\u5DF2\u81EA\u52A8\u4FEE\u590D: ${applied.join("; ")}` : "\u65E0\u53EF\u81EA\u52A8\u4FEE\u590D\u9879");
@@ -20192,9 +20225,40 @@ Worker roles apply on the next spawn (no serve restart); main applies at the nex
   }
   ctx.ui.notify("Usage: /mw model show | set <role> <prefix/model> | clear <role|all>", "warning");
 }
+var MW_COMMAND_DESCRIPTION = "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / ack";
+var RAG_OUTPUT_MAX_LINES = 30;
+var RAG_FULL_OUTPUT_HINT = "\u5B8C\u6574\u8F93\u51FA\uFF1Apython mw.py rag <sub> --project <dir>";
+function parseRagArgs(raw) {
+  const usage = `Usage: /mw rag <sub> [args...] \u2014 sub: ${RAG_SUBCOMMANDS.join(
+    " | "
+  )}. Arguments are forwarded to mw.py rag verbatim.`;
+  const parts = splitCommandLine(raw);
+  const sub = parts[0] ?? "";
+  if (!RAG_SUBCOMMANDS.includes(sub)) return { usage };
+  return { sub, rest: parts.slice(1) };
+}
+function formatRagOutput(output, code) {
+  const level = code === 0 ? "info" : code === 1 ? "warning" : "error";
+  const text = output.replace(/\r\n/g, "\n").trim();
+  if (text === "") return { text: code === 0 ? "mw rag: ok" : `mw rag exited with code ${code}`, level };
+  const lines = text.split("\n");
+  if (lines.length <= RAG_OUTPUT_MAX_LINES) return { text, level };
+  return { text: `${lines.slice(0, RAG_OUTPUT_MAX_LINES).join("\n")}
+\u2026 ${RAG_FULL_OUTPUT_HINT}`, level };
+}
+async function runMwRagCommand(ctx, projectDir, raw, runner = ragMw) {
+  const parsed = parseRagArgs(raw);
+  if ("usage" in parsed) {
+    ctx.ui.notify(parsed.usage, "warning");
+    return;
+  }
+  const result = runner(projectDir, [parsed.sub, ...parsed.rest]);
+  const formatted = formatRagOutput(result.output, result.code);
+  ctx.ui.notify(formatted.text, formatted.level);
+}
 function registerMwCommands(pi, projectDir, workerStore, ackStore) {
   pi.registerCommand("mw", {
-    description: "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / ack",
+    description: MW_COMMAND_DESCRIPTION,
     handler: async (_args, ctx) => {
       const trimmed = _args.trim();
       const sub = trimmed.split(/\s+/)[0] ?? "status";
@@ -20302,6 +20366,10 @@ ${r.output}`, "info");
         await runMwModelCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
         return;
       }
+      if (sub === "rag") {
+        await runMwRagCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
+        return;
+      }
       if (sub === "ack") {
         const target = _args.trim().split(/\s+/)[1] ?? "";
         if (!target) {
@@ -20319,7 +20387,7 @@ ${r.output}`, "info");
         return;
       }
       ctx.ui.notify(
-        "Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | ack <task-key>|all",
+        "Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | rag <sub> | ack <task-key>|all",
         "warning"
       );
     }
@@ -20530,7 +20598,8 @@ var DEFAULT_CONFIG = {
   round_budget: 2,
   worker_timeout_min: 30,
   l2_read_file_cap: 8,
-  l2_read_byte_cap: 65536
+  l2_read_byte_cap: 65536,
+  advance_stall_ticks: 5
 };
 var BOOL_FIELDS = ["enabled", "paused"];
 var INT_RANGES = {
@@ -20539,7 +20608,8 @@ var INT_RANGES = {
   round_budget: [1, null],
   worker_timeout_min: [1, null],
   l2_read_file_cap: [1, null],
-  l2_read_byte_cap: [1, null]
+  l2_read_byte_cap: [1, null],
+  advance_stall_ticks: [1, 50]
 };
 function validateConfigData(data) {
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
@@ -20595,7 +20665,8 @@ function readConfig(projectDir) {
     round_budget: intOf("round_budget"),
     worker_timeout_min: intOf("worker_timeout_min"),
     l2_read_file_cap: intOf("l2_read_file_cap"),
-    l2_read_byte_cap: intOf("l2_read_byte_cap")
+    l2_read_byte_cap: intOf("l2_read_byte_cap"),
+    advance_stall_ticks: intOf("advance_stall_ticks")
   };
   return { ok: true, config: merged };
 }
@@ -20610,7 +20681,8 @@ function saveConfig(projectDir, config) {
     round_budget: config.round_budget,
     worker_timeout_min: config.worker_timeout_min,
     l2_read_file_cap: config.l2_read_file_cap,
-    l2_read_byte_cap: config.l2_read_byte_cap
+    l2_read_byte_cap: config.l2_read_byte_cap,
+    advance_stall_ticks: config.advance_stall_ticks
   };
   const file = configPath(projectDir);
   try {
@@ -21003,7 +21075,9 @@ var EVENT_TYPES = /* @__PURE__ */ new Set([
   "goal-halt",
   "goal-snapshot",
   "type-rejected",
-  "reconcile"
+  "reconcile",
+  "resume",
+  "l3-no-verdict"
 ]);
 var BEAT_EV = "beat";
 function nonBeatFilter() {
@@ -21271,6 +21345,7 @@ function scanPendingGate(file) {
   let id = "";
   let kind = "";
   let stage = null;
+  let key = "";
   let status = "";
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
@@ -21282,10 +21357,11 @@ function scanPendingGate(file) {
     if (name === "id") id = value;
     else if (name === "kind") kind = value;
     else if (name === "status") status = value;
+    else if (name === "key") key = value;
     else if (name === "stage") stage = /^-?\d+$/.test(value) ? Number.parseInt(value, 10) : null;
   }
   if (status !== "pending" || id === "" || kind === "") return null;
-  return { id, kind, stage };
+  return { id, kind, stage, key };
 }
 function readMonitorState(projectDir, nowMs) {
   const status = getMwStatus(projectDir);
@@ -21355,12 +21431,209 @@ function readMonitorState(projectDir, nowMs) {
   } catch {
   }
   gates.sort((a, b) => a.id.localeCompare(b.id));
-  return { serve, conductor, workers, gates };
+  const autopilot = deriveAutopilotPanel(projectDir, nowMs, workers);
+  return { serve, conductor, autopilot, workers, gates };
+}
+function readTimelineTail(file, opts) {
+  const maxBytes = opts?.maxBytes ?? 512 * 1024;
+  const limit = opts?.limit ?? 400;
+  let fd;
+  try {
+    fd = fs25.openSync(file, "r");
+  } catch {
+    return [];
+  }
+  try {
+    const size = fs25.fstatSync(fd).size;
+    if (size <= 0) return [];
+    const start = Math.max(0, size - maxBytes);
+    const buf = Buffer.alloc(size - start);
+    fs25.readSync(fd, buf, 0, buf.length, start);
+    let lines = buf.toString("utf8").split("\n");
+    if (start > 0) lines = lines.slice(1);
+    const events = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed === "") continue;
+      let parsed;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      if (typeof parsed !== "object" || parsed === null) continue;
+      const ev = parsed;
+      if (typeof ev.seq !== "number") continue;
+      events.push({
+        ts: typeof ev.ts === "string" ? ev.ts : "",
+        seq: ev.seq,
+        ev: typeof ev.ev === "string" ? ev.ev : "",
+        key: typeof ev.key === "string" ? ev.key : "-",
+        stage: typeof ev.stage === "number" ? ev.stage : null,
+        detail: typeof ev.detail === "string" ? ev.detail : ""
+      });
+    }
+    return limit > 0 && events.length > limit ? events.slice(-limit) : events;
+  } catch {
+    return [];
+  } finally {
+    fs25.closeSync(fd);
+  }
+}
+var ADVANCE_DETAIL_RE = /^(\S+) exit=(\d+)(?: class=(\S+))?$/;
+var INTERFACE_DRIFT_MARKERS = [
+  "unknown phase",
+  "valid: spec",
+  "phase-line",
+  "phase field",
+  "unsupported framework",
+  "framework version"
+];
+var GATE_BLOCKED_MARKERS = [
+  "gate blocked",
+  "gate fail",
+  "missing:",
+  "missing prerequisite",
+  "\u7F3A\u5C11",
+  "not met",
+  "\u672A\u6EE1\u8DB3"
+];
+var TIMEOUT_ENV_MARKERS = ["timeout", "timed out", "locate", "advanceerror", "no such file", "cannot find"];
+function classifyAdvanceFailure(text) {
+  const low = text.toLowerCase();
+  if (INTERFACE_DRIFT_MARKERS.some((m) => low.includes(m))) return "interface-drift";
+  if (GATE_BLOCKED_MARKERS.some((m) => low.includes(m))) return "gate-blocked";
+  if (TIMEOUT_ENV_MARKERS.some((m) => low.includes(m))) return "timeout-env";
+  return "other";
+}
+function deriveAdvanceStalls(events, nowMs) {
+  const active = /* @__PURE__ */ new Map();
+  const cleared = /* @__PURE__ */ new Set();
+  const pendingError = /* @__PURE__ */ new Map();
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev === void 0) continue;
+    const key = ev.key;
+    if (key === "" || key === "-") continue;
+    if (ev.ev === "config") {
+      if (!pendingError.has(key) && ev.detail.includes("advance")) {
+        pendingError.set(
+          key,
+          ev.detail.slice(ev.detail.indexOf(":") + 1).trim().slice(0, 120)
+        );
+      }
+      continue;
+    }
+    if (ev.ev !== "advance") continue;
+    const m = ADVANCE_DETAIL_RE.exec(ev.detail);
+    if (m === null) continue;
+    const edge = m[1] ?? "";
+    if (cleared.has(`${key}|${edge}`)) continue;
+    const exitCode = Number.parseInt(m[2] ?? "0", 10);
+    if (exitCode === 0) {
+      const activeEntry = active.get(key);
+      if (activeEntry !== void 0 && activeEntry.edge === edge) active.delete(key);
+      cleared.add(`${key}|${edge}`);
+      continue;
+    }
+    const acc = active.get(key);
+    if (acc !== void 0) {
+      if (acc.edge !== edge) continue;
+      acc.count += 1;
+      const cls2 = m[3] ?? classifyAdvanceFailure(acc.lastError);
+      acc.classes[cls2] = (acc.classes[cls2] ?? 0) + 1;
+      continue;
+    }
+    const lastError = pendingError.get(key) ?? "";
+    const cls = m[3] ?? classifyAdvanceFailure(lastError);
+    active.set(key, { edge, count: 1, classes: { [cls]: 1 }, lastError, newestTs: ev.ts });
+  }
+  const stalls = [];
+  for (const [key, acc] of active) {
+    const ranked = Object.entries(acc.classes).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const parsed = Date.parse(acc.newestTs);
+    stalls.push({
+      key,
+      edge: acc.edge,
+      count: acc.count,
+      primaryClass: ranked[0]?.[0] ?? "other",
+      classCounts: acc.classes,
+      lastError: acc.lastError,
+      ageMs: Number.isNaN(parsed) ? null : Math.max(0, nowMs - parsed)
+    });
+  }
+  stalls.sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+  return stalls;
+}
+function defaultIndexPhases(projectDir) {
+  try {
+    const entries = new IndexStore(path28.join(projectDir, ".agenticdoc")).readAll();
+    return new Map(entries.map((e) => [e.key, e.phase]));
+  } catch {
+    return /* @__PURE__ */ new Map();
+  }
+}
+function deriveAutopilotPanel(projectDir, nowMs, workers, deps) {
+  const configResult = (deps?.readConfigFile ?? readConfig)(projectDir);
+  const config = configResult.ok ? configResult.config : null;
+  const roadmap = (deps?.readRoadmapFile ?? readRoadmap)(projectDir);
+  const statusByKey = /* @__PURE__ */ new Map();
+  const depsByKey = /* @__PURE__ */ new Map();
+  if (roadmap.ok) {
+    for (const stage of roadmap.stages) {
+      for (const [key, status] of Object.entries(stage.keyStatus)) statusByKey.set(key, status);
+      for (const row of stage.keys) depsByKey.set(row.key, row.dependsOn);
+    }
+  }
+  const phaseByKey = (deps?.readIndexPhases ?? defaultIndexPhases)(projectDir);
+  const events = (deps?.readTimeline ?? ((file) => readTimelineTail(file)))(timelinePath(projectDir));
+  let tickSeq = null;
+  let tickAgeMs = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev === void 0 || ev.ev !== BEAT_EV) continue;
+    tickSeq = ev.seq;
+    const parsed = Date.parse(ev.ts);
+    tickAgeMs = Number.isNaN(parsed) ? null : Math.max(0, nowMs - parsed);
+    break;
+  }
+  const pollMs = (config?.poll_interval_sec ?? DEFAULT_CONFIG.poll_interval_sec) * 1e3;
+  const staleAfterMs = Math.max(3e4, pollMs * 5);
+  const keys = [];
+  const allKeys = [.../* @__PURE__ */ new Set([...statusByKey.keys(), ...phaseByKey.keys()])].sort();
+  for (const key of allKeys) {
+    keys.push({
+      key,
+      phase: phaseByKey.get(key) ?? "\u2014",
+      status: statusByKey.get(key) ?? "unknown",
+      inFlight: workers.filter((w) => w.taskKey.startsWith(`ap-${key}-`)).length,
+      blockedBy: (depsByKey.get(key) ?? []).filter(
+        (dep) => !["done", "closed-legacy"].includes(statusByKey.get(dep) ?? "")
+      )
+    });
+  }
+  const busyKeys = /* @__PURE__ */ new Set();
+  for (const w of workers) {
+    const owner = allKeys.find((key) => w.taskKey.startsWith(`ap-${key}-`));
+    busyKeys.add(owner ?? w.taskKey);
+  }
+  return {
+    enabled: config?.enabled ?? false,
+    everEnabled: fs25.existsSync(configPath(projectDir)) && configResult.ok,
+    tickSeq,
+    tickAgeMs,
+    tickStale: tickAgeMs !== null && tickAgeMs > staleAfterMs,
+    slotsUsed: busyKeys.size,
+    slotsMax: config?.max_parallel_keys ?? DEFAULT_CONFIG.max_parallel_keys,
+    stallTicks: config?.advance_stall_ticks ?? DEFAULT_CONFIG.advance_stall_ticks,
+    keys,
+    stalls: deriveAdvanceStalls(events, nowMs)
+  };
 }
 function trunc2(s, max) {
   return s.length <= max ? s : `${s.slice(0, max - 1)}\u2026`;
 }
-function formatUptime(ms) {
+function formatDuration(ms) {
   const s = Math.max(0, Math.floor(ms / 1e3));
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
@@ -21383,7 +21656,7 @@ function renderMonitorLines(s) {
     if (detail.length > room) detail = `${detail.slice(0, Math.max(0, room - 1))}\u2026`;
     lines.push(`${head} (${detail})${tail}`);
   } else {
-    const up = s.serve.upMs !== null ? `, up ${formatUptime(s.serve.upMs)}` : "";
+    const up = s.serve.upMs !== null ? `, up ${formatDuration(s.serve.upMs)}` : "";
     lines.push(trunc2(`serve: PID ${s.serve.pid ?? "?"} fresh${up}`, MONITOR_LINE_MAX));
   }
   if (!s.conductor.everEnabled) {
@@ -21394,6 +21667,45 @@ function renderMonitorLines(s) {
     lines.push(`conductor: dead (pid ${s.conductor.pid} stale)`);
   } else {
     lines.push(trunc2(`conductor: not running | ${conductorIntent(s.conductor)}`, MONITOR_LINE_MAX));
+  }
+  if (s.autopilot.enabled) {
+    const a = s.autopilot;
+    const tick = a.tickSeq === null ? "tick: none yet" : `tick seq ${a.tickSeq} (${a.tickAgeMs === null ? "\u2014" : formatDuration(a.tickAgeMs)} ago)`;
+    const stale = a.tickStale ? " STALE (conductor not ticking)" : "";
+    const count2 = (status) => a.keys.filter((k) => k.status === status).length;
+    lines.push(
+      trunc2(
+        `autopilot: ${tick}${stale} | slots ${a.slotsUsed}/${a.slotsMax} | keys ${a.keys.length} (running ${count2("running")}, stalled ${count2("stalled")}, done ${count2("done")}) | stall-ticks ${a.stallTicks}`,
+        MONITOR_LINE_MAX
+      )
+    );
+    const stallByKey = new Map(a.stalls.map((stall) => [stall.key, stall]));
+    const attention = a.keys.filter(
+      (k) => k.status === "stalled" || k.inFlight > 0 || k.blockedBy.length > 0 || stallByKey.has(k.key)
+    );
+    for (const k of attention.slice(0, 6)) {
+      const stall = stallByKey.get(k.key);
+      const bits = [`  \xB7 ${k.key} ${k.phase}/${k.status}`];
+      if (k.inFlight > 0) bits.push(`${k.inFlight} running`);
+      if (stall !== void 0) {
+        const error = stall.lastError === "" ? "" : ` "${stall.lastError}"`;
+        bits.push(
+          `advance ${stall.count}x ${stall.primaryClass} ${stall.ageMs === null ? "\u2014" : formatDuration(stall.ageMs)} ago${error}`
+        );
+      }
+      if (k.blockedBy.length > 0) bits.push(`deps blocked by ${k.blockedBy.join(",")}`);
+      if (k.status === "stalled") {
+        const gate = s.gates.find((g) => g.kind === "stalled" && g.key === k.key);
+        const hint = gate === void 0 ? "-> /autopilot gate <id> approve|reject" : `-> /autopilot gate ${gate.id} approve|reject`;
+        bits.push(gate === void 0 ? hint : `${hint} (resume grants one round)`);
+      }
+      lines.push(trunc2(bits.join(" | "), MONITOR_LINE_MAX));
+    }
+    if (attention.length > 6) lines.push(`  \xB7 +${attention.length - 6} more -> /autopilot status`);
+  } else if (!s.autopilot.everEnabled) {
+    lines.push("autopilot: not enabled (/autopilot enable)");
+  } else {
+    lines.push("autopilot: disabled (config.json enabled=false)");
   }
   if (s.workers.length === 0) {
     lines.push("workers: 0 running");
@@ -21682,17 +21994,36 @@ function cmdMonitor(ctx, projectDir, deps, rest) {
   };
   if (arg === "off" || arg === "" && isMonitorActive()) {
     const stopped = stopMonitor(apply);
+    if (arg === "off") monitorSuppressed = true;
     ctx.ui.notify(
       stopped ? "[autopilot] monitor off \u2014 bottom panel cleared." : "[autopilot] monitor was not running.",
       "info"
     );
     return;
   }
+  monitorSuppressed = false;
   startMonitor(projectDir, apply, { intervalMs: deps.monitorIntervalMs, readState: deps.readMonitorState });
   ctx.ui.notify(
-    "[autopilot] monitor on \u2014 serve/conductor/workers/gates panel below the editor, refreshed every 4s. /autopilot monitor off closes it.",
+    "[autopilot] monitor on \u2014 serve/conductor/autopilot/workers/gates panel below the editor, refreshed every 4s. /autopilot monitor off closes it.",
     "info"
   );
+}
+var monitorSuppressed = false;
+function autoStartMonitor(ctx, projectDir, deps = {}) {
+  if (!ctx.hasUI) return false;
+  if (deps.autoMonitor === false) return false;
+  if (monitorSuppressed) return false;
+  if (isMonitorActive()) return true;
+  const cfg = readConfig(projectDir);
+  if (!cfg.ok || !cfg.config.enabled) return false;
+  startMonitor(
+    projectDir,
+    (lines) => {
+      ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor" });
+    },
+    { intervalMs: deps.monitorIntervalMs, readState: deps.readMonitorState }
+  );
+  return true;
 }
 function cmdRoadmap(ctx, projectDir) {
   const roadmap = readRoadmap(projectDir);
@@ -22182,6 +22513,7 @@ ${PARALLEL_PROTOCOL}` };
   });
   pi.on("session_start", async (_event, ctx) => {
     ui.ctx = ctx;
+    autoStartMonitor(ctx, projectDir);
     await restoreWatch(pi, watch, indexStore, workerStore, ackStore, agenticdocRoot2, ctx);
     const initialized = fs27.existsSync(path31.join(projectDir, ".agenticdoc"));
     if (!initialized) {

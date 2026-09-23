@@ -59,5 +59,21 @@ export interface DispatchScanOptions {
 }
 export declare function dispatchNewTasks(workerStore: WorkerStore, agenticdocRoot: string, opts?: DispatchScanOptions): Promise<void>;
 export declare function startWorkerPollLoop(pi: ExtensionAPI, workerStore: WorkerStore, ackStore: AckStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, ui: PmUiHolder, pollIntervalMs?: number): NodeJS.Timeout;
+/** Marker opening the injected parallel-protocol block, and the idempotency
+ * guard: a handler that already sees it in the chained system prompt must not
+ * append it a second time (two loaded bundle copies would otherwise duplicate
+ * the text on every run). */
+export declare const PARALLEL_PROTOCOL_MARKER = "[mw] \u5E76\u884C\u4F18\u5148\u534F\u8BAE";
+/** Static parallel-first rules appended to the PM window's system prompt once
+ * per agent run (mw-parallel-protocol). Static on purpose: a constant suffix
+ * keeps the system-prompt prefix cacheable, and `before_agent_start` costs no
+ * session tokens (an injected message would accumulate one per run). The two
+ * conflict surfaces are deliberately different: research/review workers are
+ * read-only (worker-mode.ts TOOL_ALLOWLISTS), so research batches in the
+ * spec/design phases parallelize freely and only need a unique note file per
+ * research question; coding workers share files and must be split by
+ * file/module boundary. PM-only by construction: pmActivate() runs only when
+ * PI_WORKER_TASK is unset (index.ts). */
+export declare const PARALLEL_PROTOCOL: string;
 export declare function pmActivate(pi: ExtensionAPI): void;
 //# sourceMappingURL=pm-orchestrator.d.ts.map

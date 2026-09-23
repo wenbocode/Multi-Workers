@@ -18,8 +18,10 @@ export declare function windowModelPath(cwd: string): string;
  * against and justify itself for (keep both sides in sync). */
 export declare const DISPATCH_ROLE_BY_TYPE: Record<string, string>;
 /** The role-level types the PM dispatch surface accepts (`type:` in task.md).
- * Every entry has a tool allowlist entry in worker-mode.ts. */
-export declare const DISPATCHABLE_TYPES: readonly ["coding", "review", "research"];
+ * Every entry has a tool allowlist entry in worker-mode.ts. `rag-research` is
+ * PM-dispatched here; the conductor refuses it on the Python side
+ * (`conductor_dispatchable=False` in autopilot/dispatch.py). */
+export declare const DISPATCHABLE_TYPES: readonly ["coding", "review", "research", "rag-research"];
 /** Role for a declared task type (unknown -> coding, same as the Python chain). */
 export declare function roleForTaskType(taskType: string): string;
 /** Record the current window model for the launcher's inheritance chain

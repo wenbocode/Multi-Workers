@@ -1,5 +1,7 @@
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
+import { type RagRuntime } from "../rag/tools.ts";
 import type { TaskPhase } from "./phase-runner.ts";
+export declare function toolsForType(taskType: string): string[];
 /** Default wall budget. The old 30m value killed healthy tasks (OverCode
  * cpr-004/005: actively working 28s/9s before the kill); 60m covers every
  * observed successful run (7–14m) with margin for generation-heavy tasks. */
@@ -39,6 +41,9 @@ export interface ConvergenceSignals {
 export declare function computeRisk(s: ConvergenceSignals): "low" | "mid" | "high";
 interface TaskMeta {
     type: string;
+    /** task.md `phase:` header (the phase axis of `required = role.require OR
+     * phase.require`, T-14). Distinct from the `phases` framework array below. */
+    phase?: string;
     phases?: TaskPhase[];
     taskKey: string;
     agenticdocRoot: string;
@@ -62,8 +67,39 @@ interface TaskMeta {
     readFileCap?: number;
     /** l2_read_byte_cap frontmatter (positive int), when present. */
     readByteCap?: number;
+    /** task.md `rag_chat_budget:` header (positive int), when present. */
+    ragChatBudget?: number;
+    /** task.md `rag_time_budget_s:` header (positive int seconds), when present. */
+    ragTimeBudgetS?: number;
 }
 export declare function parseTaskMd(taskPath: string): TaskMeta;
+/** task.md `phase:` value, or the literal `unknown` — never a guess. */
+export declare function evidencePhase(phase: string | undefined): string;
+export interface RagRequiredCheck {
+    config: RagRuntime["config"];
+    taskType: string;
+    /** task.md `phase:` value (already normalized via `evidencePhase`). */
+    phase: string;
+    /** The worker's own deliverable text (final assistant reply). */
+    outputText: string;
+    /** Owner key dir (`.agenticdoc/<key>`) — the research-doc location. */
+    keyDir: string;
+    /** Worker task dir (trace.log / output.md live here). */
+    taskDir: string;
+}
+/**
+ * VC-014 (AC-010) worker face: for a *required* role/phase, emit the shared
+ * `rag-required-missing` evidence line and mark output.md when no verifiable
+ * citation was produced. Returns the emitted line, or null on a no-op (not
+ * required, or a citation exists). Zero writes when not required.
+ *
+ * "Verifiable citation" mirrors T-10's audit: a parseable D-004 citation in
+ * the worker's own deliverable, or — for the research role, whose citations
+ * live in `<key>/rag/*.md` — a citation in that key's research doc. The
+ * research-doc report's `ok` is the used-flag and the line is routed through
+ * `researchDocEvidence`, so there is exactly one line builder.
+ */
+export declare function emitRagRequiredMissing(check: RagRequiredCheck): string | null;
 export declare function workerModeActivate(pi: ExtensionAPI): Promise<void>;
 export {};
 //# sourceMappingURL=worker-mode.d.ts.map

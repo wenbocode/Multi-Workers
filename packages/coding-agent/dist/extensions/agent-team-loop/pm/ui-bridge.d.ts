@@ -187,6 +187,9 @@ export declare function planDispatchFrontmatter(input: {
     cli: string;
     provider: string;
     taskType: string;
+    /** Owner key's current phase (T-14): non-empty appends `phase: <P>` right
+     * after `type:`; ""/undefined keeps the pre-T-14 bytes unchanged. */
+    phase?: string;
     model: string;
     modelReason: string;
     registry: ModelRegistry | undefined;
@@ -223,6 +226,23 @@ export declare function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: s
  * Usage: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] [--key <name>] <desc>
  */
 export declare function registerWorkerCommands(pi: ExtensionAPI, workerStore: WorkerStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, projectDir?: string): void;
+/**
+ * Render the RAG row exactly like `mw.py:_format_rag_doctor_line` (D-308): an
+ * `error` wins, an empty `enabled` list yields the not-enabled form, otherwise
+ * `enabled=<a, b>; probe=<name=reachable|unreachable, ...>; fingerprint=<first
+ * 12>; skill=<status>` plus `; required_missing=N` when N > 0. Probe names are
+ * sorted the same way (`sorted(probe.items())`). Pure, so the cross-language
+ * text can be asserted byte-for-byte against the Python line for one JSON.
+ */
+export declare function formatRagDoctorLine(rag: NonNullable<DoctorJson["rag"]>): string;
+/**
+ * `mw.py doctor` prints its RAG row only when `mw.py:523` sees
+ * `rag.exists or rag.enabled`. `_doctor_rag` always returns a dict, so a
+ * presence test alone would add a `not enabled` row to a project with no RAG
+ * config at all. Mirroring that gate keeps the window text equal to the
+ * terminal text in both directions (D-308/AC-304).
+ */
+export declare function shouldShowRagDoctorRow(rag: DoctorJson["rag"]): rag is NonNullable<DoctorJson["rag"]>;
 /** Format a doctor JSON report as a readable Chinese summary (same data as
  * the CLI text output — the TS side never re-implements checks, AC-007). */
 export declare function formatDoctorReport(report: DoctorJson, fix: boolean): string;
@@ -268,5 +288,47 @@ export declare function runMwPartitionCommand(ctx: ExtensionCommandContext, proj
  * worker roles on the next spawn (launcher resolves per spawn, no serve
  * restart), `main` at the next window start (session_start application). */
 export declare function runMwModelCommand(ctx: ExtensionCommandContext, projectDir: string, argsText: string, runner?: (projectDir: string, args: string[]) => MwCliResult): Promise<void>;
+/** /mw command description (exported so the registration test can assert the
+ * RAG branch stays documented — VC-311). */
+export declare const MW_COMMAND_DESCRIPTION = "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / ack";
+/** Lines of `mw rag` output shown before truncation (D-307): the notify channel
+ * is narrow, and `rag list` / `rag audit` outputs can be long. */
+export declare const RAG_OUTPUT_MAX_LINES = 30;
+/** Truncation footer (D-307): hand the user the exact command for the full
+ * output instead of dropping it silently. `<sub>` / `<dir>` stay placeholders —
+ * formatRagOutput only ever sees the output text. */
+export declare const RAG_FULL_OUTPUT_HINT = "\u5B8C\u6574\u8F93\u51FA\uFF1Apython mw.py rag <sub> --project <dir>";
+/**
+ * Parse `/mw rag <raw>` into the subcommand and its verbatim argument tail.
+ * Pure and CLI-free (VC-307): an empty or unknown sub returns the usage text
+ * naming every RAG_SUBCOMMANDS entry, so the caller can reject before any
+ * spawn. Arguments after the sub pass through untouched — Python stays the
+ * single source of argument semantics.
+ */
+export declare function parseRagArgs(raw: string): {
+    sub: string;
+    rest: string[];
+} | {
+    usage: string;
+};
+/**
+ * Map a `mw.py rag` exit code to the notify level and shorten long output
+ * (D-307): 0=info, 1=warning (audit findings are expected), anything else
+ * error. Output over RAG_OUTPUT_MAX_LINES is truncated with the full-command
+ * hint appended so nothing is lost.
+ */
+export declare function formatRagOutput(output: string, code: number): {
+    text: string;
+    level: "info" | "warning" | "error";
+};
+/** /mw rag — thin wrapper over `mw.py rag` (single source of parsing,
+ * validation and rendering); the runner is injectable for tests so the
+ * unknown-sub path can be proven spawn-free (VC-307). The output content is
+ * never parsed — only the exit code selects the notify level. */
+export declare function runMwRagCommand(ctx: ExtensionCommandContext, projectDir: string, raw: string, runner?: (projectDir: string, args: string[]) => {
+    ok: boolean;
+    code: number;
+    output: string;
+}): Promise<void>;
 export declare function registerMwCommands(pi: ExtensionAPI, projectDir: string, workerStore: WorkerStore, ackStore: AckStore): void;
 //# sourceMappingURL=ui-bridge.d.ts.map

@@ -181,6 +181,27 @@ export interface DoctorJson {
         window_model?: string;
         error?: string;
     };
+    /** RAG section (mw.py `_doctor_rag`) — informational, all fields optional
+     * so an older mw.py without the key renders nothing instead of crashing. */
+    rag?: {
+        exists?: boolean;
+        machine_file?: string | null;
+        project_file?: string | null;
+        skill?: {
+            status?: string;
+            [k: string]: unknown;
+        };
+        error?: string;
+        enabled?: string[];
+        default_server?: string | null;
+        fingerprint?: string | null;
+        probe?: Record<string, {
+            reachable?: boolean;
+            transport?: string;
+            error?: string | null;
+        }>;
+        required_missing?: number;
+    };
     fix?: {
         applied?: unknown;
     };
@@ -215,6 +236,22 @@ export declare function targetMw(projectDir: string, args: string[]): MwCliResul
 export declare function partitionMw(projectDir: string, args: string[]): MwCliResult;
 /** `mw.py model <args...>` — dispatch model defaults (show / set / clear). */
 export declare function modelMw(projectDir: string, args: string[]): MwCliResult;
+/** `mw.py rag` subcommands — must mirror mw.py `_RAG_ACTIONS`. Python stays the
+ * single source of argument parsing/validation; this list only decides whether
+ * a call is worth making and renders the usage line. */
+export declare const RAG_SUBCOMMANDS: readonly ["list", "probe", "audit", "sync", "init"];
+export type RagMwResult = {
+    ok: boolean;
+    code: number;
+    output: string;
+};
+/**
+ * `mw.py rag <sub> <args...> --project=<dir>` — the /mw rag thin wrapper.
+ * Keeps the raw exit code so the caller can map 0/1/2 to info/warning/error
+ * (audit exit 1 means "findings", not failure). A missing mw.py becomes error
+ * text carrying the MW_PY hint; `ok` is simply "exit code 0".
+ */
+export declare function ragMw(projectDir: string, args: string[]): RagMwResult;
 /**
  * `mw.py update-env [--apply]` — incremental self-check over the update
  * anchors (UPDATE.md §1). Like doctor, exit 1 means "findings", not failure:

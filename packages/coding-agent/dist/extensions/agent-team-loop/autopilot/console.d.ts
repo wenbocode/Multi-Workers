@@ -32,7 +32,7 @@
  *                                     print mode degrades to a notice)
  *   /autopilot roadmap                stage summary view
  */
-import type { ExtensionAPI } from "../../../core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
 import { type readMonitorState } from "./monitor.ts";
 /** Session entry type persisting this window's timeline watermark (D-109
  * seq/watermark protocol — same mechanism as WATCH_ENTRY_TYPE). */
@@ -49,6 +49,25 @@ export interface AutopilotConsoleDeps {
     readMonitorState?: typeof readMonitorState;
     /** Test seam for the monitor poll interval (default 4000ms). */
     monitorIntervalMs?: number;
+    /** Auto-show the monitor for autopilot-enabled projects on session start
+     * (default true). Set false to opt out (tests / embeddings). */
+    autoMonitor?: boolean;
 }
 export declare function registerAutopilotCommands(pi: ExtensionAPI, projectDir: string, deps?: AutopilotConsoleDeps): void;
+/** Forget the session-level suppression. The test suite uses it so one case's
+ * `/autopilot monitor off` cannot leak into the next (a production session is
+ * one process lifetime; a future session_shutdown hook can call this too). */
+export declare function resetMonitorSuppression(): void;
+/** Show the monitor automatically for autopilot-enabled projects.
+ *
+ * Called from the PM session_start hook, the first place a UI context exists
+ * (registerAutopilotCommands runs at extension load, with no ctx). Feedback for
+ * a stalled key has to be visible without remembering a command to run — the
+ * E2Feature incident ran 2h35m unnoticed because nothing surfaced it.
+ *
+ * Returns true when the panel is showing. Idempotent: an already-active panel
+ * is left alone (and reports true). Guards, in order: no visual UI, the
+ * autoMonitor opt-out, an explicit session-level `/autopilot monitor off`,
+ * and a config that is absent/invalid or `enabled: false`. */
+export declare function autoStartMonitor(ctx: ExtensionContext, projectDir: string, deps?: AutopilotConsoleDeps): boolean;
 //# sourceMappingURL=console.d.ts.map

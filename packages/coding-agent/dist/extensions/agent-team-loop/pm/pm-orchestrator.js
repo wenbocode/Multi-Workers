@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { registerAutopilotCommands } from "../autopilot/console.js";
+import { autoStartMonitor, registerAutopilotCommands } from "../autopilot/console.js";
+import { registerRagTools } from "../rag/tools.js";
 import { AckStore } from "../shared/ack-store.js";
 import { registerMainWindowModel } from "../shared/dispatch-models.js";
 import { formatHeartbeatAge, readTaskProgress } from "../shared/heartbeat.js";
@@ -462,6 +463,30 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
         }
     }, pollIntervalMs);
 }
+/** Marker opening the injected parallel-protocol block, and the idempotency
+ * guard: a handler that already sees it in the chained system prompt must not
+ * append it a second time (two loaded bundle copies would otherwise duplicate
+ * the text on every run). */
+export const PARALLEL_PROTOCOL_MARKER = "[mw] 并行优先协议";
+/** Static parallel-first rules appended to the PM window's system prompt once
+ * per agent run (mw-parallel-protocol). Static on purpose: a constant suffix
+ * keeps the system-prompt prefix cacheable, and `before_agent_start` costs no
+ * session tokens (an injected message would accumulate one per run). The two
+ * conflict surfaces are deliberately different: research/review workers are
+ * read-only (worker-mode.ts TOOL_ALLOWLISTS), so research batches in the
+ * spec/design phases parallelize freely and only need a unique note file per
+ * research question; coding workers share files and must be split by
+ * file/module boundary. PM-only by construction: pmActivate() runs only when
+ * PI_WORKER_TASK is unset (index.ts). */
+export const PARALLEL_PROTOCOL = [
+    `${PARALLEL_PROTOCOL_MARKER}（PM 常驻规则）：`,
+    "1. 拆解任何 phase（spec/design/plan/tasks）之前，先做并行性分析：可并行单元 / 共享资源与文件冲突面 / 必须串行的理由。",
+    "2. spec/design 的调研与证据收集默认全并行：把调研拆成互不重叠的研究问题 RQ-1..N，一次性派发 N 个 type: research worker",
+    "   （只读角色，彼此无文件冲突），每个 RQ 只写唯一的 evidence/research/<phase>-<rq-slug>-<date>.md；禁止两个 worker 写同一文件。",
+    "3. 编码按文件/模块边界并行：同一文件同一时刻只允许一个 worker。",
+    "4. 相位文档（spec.md / design.md）由 PM 自己串行写，不派 worker。",
+    "5. 派发前先看 widget 上的 running worker 数：能并行就不要串行等待；worker 终态回读后立刻补派下一批。",
+].join("\n");
 export function pmActivate(pi) {
     const projectDir = process.cwd();
     const agenticdocRoot = resolveAgenticdocRoot(projectDir);
@@ -490,6 +515,15 @@ export function pmActivate(pi) {
     registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, projectDir);
     registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agenticdocRoot);
     registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch, projectDir);
+    // RAG tool surface (D-002): registration is structural — an empty enabled
+    // set registers nothing and probes nothing. A broken config must not take
+    // the whole PM window down (dispatch is gated separately in ui-bridge).
+    try {
+        registerRagTools(pi, projectDir);
+    }
+    catch (err) {
+        console.error(`[mw] rag tools disabled: ${err instanceof Error ? err.message : String(err)}`);
+    }
     registerWatchCommand(pi, watch, refreshWatch, indexStore);
     // Autopilot console (T-15): /autopilot status|gates|gate|timeline|enable|
     // disable|pause|resume|roadmap — stateless, file-derived (D-005).
@@ -503,6 +537,15 @@ export function pmActivate(pi) {
     // hand-set to EXECUTE while _index.parallel stayed at SPEC), so the edit is
     // blocked at the tool layer and the agent is pointed at the script.
     registerPmStateGuard(pi, projectDir, agenticdocRoot);
+    // Parallel-first protocol (mw-parallel-protocol): append the constant block
+    // to this run's system prompt. Appending (never replacing) preserves what
+    // other extensions chained in before us.
+    pi.on("before_agent_start", (event) => {
+        const base = typeof event.systemPrompt === "string" ? event.systemPrompt : "";
+        if (base.includes(PARALLEL_PROTOCOL_MARKER))
+            return undefined;
+        return { systemPrompt: base === "" ? PARALLEL_PROTOCOL : `${base}\n\n${PARALLEL_PROTOCOL}` };
+    });
     // Start worker status poll loop (setInterval is safe; displaySummary inside fires later)
     const pollHandle = startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, ui);
     // Session teardown stops the loop (review m3): a fresh runtime re-runs
@@ -563,6 +606,10 @@ export function pmActivate(pi) {
     pi.on("session_start", async (_event, ctx) => {
         // Capture the UI context so the poll loop can render the bottom widget.
         ui.ctx = ctx;
+        // Autopilot progress panel: auto-show for enabled projects so a stalled
+        // key is visible without anyone running a command (mw-autopilot-stall-feedback
+        // AC-008). An explicit /autopilot monitor off suppresses it for this session.
+        autoStartMonitor(ctx, projectDir);
         // Resume the watched key this session had before restart/resume.
         await restoreWatch(pi, watch, indexStore, workerStore, ackStore, agenticdocRoot, ctx);
         // Auto-init project if it hasn't been initialized yet. Gate on .agenticdoc

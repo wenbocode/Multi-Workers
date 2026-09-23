@@ -1,4 +1,5 @@
 import { pmActivate } from "./pm/pm-orchestrator.js";
+import { registerImplementationGate } from "./shared/implementation-gate.js";
 import { registerProtectedConfigGuard } from "./shared/protected-config.js";
 import { workerModeActivate } from "./worker/worker-mode.js";
 // Defense against a double-load: if the same bundle is loaded twice in one host
@@ -34,6 +35,15 @@ export async function activate(pi) {
     // register the listener. Hard block on write/edit/bash targeting the
     // protected agent config; reads pass through.
     registerProtectedConfigGuard(pi);
+    // Implementation entry gate (mw-implementation-gate): write/edit/bash
+    // calls targeting code paths under packages/ pass only with an active
+    // AgenticTask key claim for this window, a dispatched worker env
+    // (PI_WORKER_TASK), or a fresh (<=24h) mini-spec fast path; otherwise the
+    // call is blocked with key-creation guidance. Every block and mini-pass
+    // is audited to .agenticdoc/_impl_gate.log (best-effort). Registered in
+    // EVERY mode, same position as the protected-config guard: after the
+    // double-load flag, before the PM/Worker mode branches.
+    registerImplementationGate(pi);
     if (process.env.PI_WORKER_TASK) {
         await workerModeActivate(pi);
     }
