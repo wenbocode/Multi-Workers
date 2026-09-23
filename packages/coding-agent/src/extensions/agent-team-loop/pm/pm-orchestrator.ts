@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
-import { registerAutopilotCommands } from "../autopilot/console.ts";
+import { autoStartMonitor, registerAutopilotCommands } from "../autopilot/console.ts";
 import { AckStore } from "../shared/ack-store.ts";
 import { registerMainWindowModel } from "../shared/dispatch-models.ts";
 import { formatHeartbeatAge, readTaskProgress } from "../shared/heartbeat.ts";
@@ -712,6 +712,10 @@ export function pmActivate(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		// Capture the UI context so the poll loop can render the bottom widget.
 		ui.ctx = ctx;
+		// Autopilot progress panel: auto-show for enabled projects so a stalled
+		// key is visible without anyone running a command (mw-autopilot-stall-feedback
+		// AC-008). An explicit /autopilot monitor off suppresses it for this session.
+		autoStartMonitor(ctx, projectDir);
 		// Resume the watched key this session had before restart/resume.
 		await restoreWatch(pi, watch, indexStore, workerStore, ackStore, agenticdocRoot, ctx);
 		// Auto-init project if it hasn't been initialized yet. Gate on .agenticdoc

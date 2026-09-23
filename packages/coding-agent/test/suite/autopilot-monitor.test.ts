@@ -30,16 +30,29 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../src/core/extensions/types.ts";
-import { registerAutopilotCommands } from "../../src/extensions/agent-team-loop/autopilot/console.ts";
 import {
+	autoStartMonitor,
+	registerAutopilotCommands,
+	resetMonitorSuppression,
+} from "../../src/extensions/agent-team-loop/autopilot/console.ts";
+import {
+	deriveAdvanceStalls,
 	isMonitorActive,
 	MONITOR_WIDGET_ID,
+	type MonitorAutopilot,
 	type MonitorSnapshot,
 	readMonitorState,
+	readTimelineTail,
 	renderMonitorLines,
 	startMonitor,
 	stopMonitor,
 } from "../../src/extensions/agent-team-loop/autopilot/monitor.ts";
+import {
+	DEFAULT_CONFIG,
+	readConfig,
+	type TimelineEvent,
+	validateConfigData,
+} from "../../src/extensions/agent-team-loop/autopilot/status-model.ts";
 import { setWatchWidget } from "../../src/extensions/agent-team-loop/pm/ui-bridge.ts";
 
 function mkdtemp(): string {
@@ -87,7 +100,10 @@ function writeWorkers(root: string, rows: Array<{ key: string; status: string; d
 }
 
 /** A gate file in the gates.py frontmatter shape (line-scan compatible). */
-function writeGate(root: string, g: { id: string; kind: string; stage: number | null; status: string }): void {
+function writeGate(
+	root: string,
+	g: { id: string; kind: string; stage: number | null; status: string; key?: string },
+): void {
 	const dir = path.join(root, ".agenticdoc", "_autopilot", "gates");
 	fs.mkdirSync(dir, { recursive: true });
 	fs.writeFileSync(
@@ -97,7 +113,7 @@ function writeGate(root: string, g: { id: string; kind: string; stage: number | 
 			`id: ${g.id}`,
 			`kind: ${g.kind}`,
 			`stage: ${g.stage === null ? "" : g.stage}`,
-			"key:",
+			`key: ${g.key ?? ""}`,
 			"created_at: 2026-09-11T10:00:00+00:00",
 			"created_by: conductor",
 			"question: 'Proceed?'",
@@ -114,6 +130,25 @@ function writeGate(root: string, g: { id: string; kind: string; stage: number | 
 		].join("\n"),
 		"utf8",
 	);
+}
+
+/** The autopilot section of a snapshot, for the panel tests that only care
+ * about serve/conductor/workers/gates (the dedicated autopilot assertions
+ * build their own via readMonitorState on real files). */
+function stubAutopilot(overrides: Partial<MonitorAutopilot> = {}): MonitorAutopilot {
+	return {
+		enabled: true,
+		everEnabled: true,
+		tickSeq: null,
+		tickAgeMs: null,
+		tickStale: false,
+		slotsUsed: 0,
+		slotsMax: 2,
+		stallTicks: 5,
+		keys: [],
+		stalls: [],
+		...overrides,
+	};
 }
 
 /** sha1 over every file's path + content under the given roots (VC-008). */
@@ -449,6 +484,7 @@ describe("/autopilot monitor command wiring", () => {
 		const paused = renderMonitorLines({
 			serve: { running: false, pid: null, stale: false, staleDetail: "", upMs: null },
 			conductor: { pid: 123, alive: true, enabled: true, paused: true, everEnabled: true },
+			autopilot: stubAutopilot(),
 			workers: [],
 			gates: [],
 		}).join("\n");
@@ -460,11 +496,13 @@ describe("/autopilot monitor command wiring", () => {
 		const never = renderMonitorLines({
 			serve: { running: true, pid: 7, stale: true, staleDetail: "serve started X, mw code changed Y", upMs: 1 },
 			conductor: { pid: null, alive: false, enabled: false, paused: false, everEnabled: false },
+			autopilot: stubAutopilot({ enabled: false, everEnabled: false }),
 			workers: [],
 			gates: [],
 		}).join("\n");
 		expect(never).toContain("serve: PID 7 STALE CODE (serve started X, mw code changed Y) -> /mw restart");
 		expect(never).toContain("conductor: not enabled (/autopilot enable)");
+		expect(never).toContain("autopilot: not enabled (/autopilot enable)");
 
 		// Long staleness detail is capped, never the /mw restart hint.
 		const longDetail = renderMonitorLines({
@@ -476,6 +514,7 @@ describe("/autopilot monitor command wiring", () => {
 				upMs: null,
 			},
 			conductor: { pid: null, alive: false, enabled: false, paused: false, everEnabled: false },
+			autopilot: stubAutopilot({ enabled: false, everEnabled: false }),
 			workers: [],
 			gates: [],
 		});
@@ -489,8 +528,9 @@ describe("/autopilot monitor command wiring", () => {
 			const snapshot: MonitorSnapshot = {
 				serve: { running: true, pid: 27572, stale: false, staleDetail: "", upMs: 7_380_000 },
 				conductor: { pid: 99000, alive: true, enabled: true, paused: false, everEnabled: true },
+				autopilot: stubAutopilot(),
 				workers: [{ taskKey: "ap-x-t01", elapsedMs: 180_000 }],
-				gates: [{ id: "gate-0002", kind: "stage-confirm", stage: 2 }],
+				gates: [{ id: "gate-0002", kind: "stage-confirm", stage: 2, key: "" }],
 			};
 			const { pi, commands } = fakeConsolePi();
 			registerAutopilotCommands(pi, root, {
@@ -569,6 +609,7 @@ describe("VC-010: watch + monitor widgets coexist on one window (distinct ids, n
 		const snapshot: MonitorSnapshot = {
 			serve: { running: true, pid: 27572, stale: false, staleDetail: "", upMs: 240_000 },
 			conductor: { pid: 99000, alive: true, enabled: true, paused: false, everEnabled: true },
+			autopilot: stubAutopilot(),
 			workers: [],
 			gates: [],
 		};
@@ -614,6 +655,400 @@ describe("VC-010: watch + monitor widgets coexist on one window (distinct ids, n
 			expect(new Set(calls.map((c) => c.key)).size).toBe(2);
 		} finally {
 			stopMonitor();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+// ── Autopilot progress section (mw-autopilot-stall-feedback AC-006/AC-007) ────
+
+/** config.json with an arbitrary field set (the canonical key order is up to
+ * saveConfig; only the parse path matters here). */
+function writeConfigJson(root: string, cfg: Record<string, unknown>): void {
+	const dir = path.join(root, ".agenticdoc", "_autopilot");
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, "config.json"), `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+}
+
+/** _roadmap.md with key-status + depends_on (the shape readRoadmap parses). */
+function writeRoadmap(root: string, keys: Array<{ key: string; status: string; dependsOn: string[] }>): void {
+	const dir = path.join(root, ".agenticdoc", "_autopilot");
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(
+		path.join(dir, "_roadmap.md"),
+		[
+			"# Roadmap",
+			"> generated_at: 2026-09-22T00:00:00+00:00",
+			"> goal_mtime: 1",
+			"",
+			"## Stage 1: work",
+			"> goal: ship",
+			"> status: running",
+			`> key-status: ${keys.map((k) => `${k.key}=${k.status}`).join(", ")}`,
+			"### Keys",
+			"| key | role | depends_on |",
+			"|-----|------|-----------|",
+			...keys.map((k) => `| ${k.key} | worker | ${k.dependsOn.length === 0 ? "-" : k.dependsOn.join(",")} |`),
+			"",
+		].join("\n"),
+		"utf8",
+	);
+}
+
+/** _index.parallel rows (7-column IndexStore format). */
+function writeIndex(root: string, rows: Array<{ key: string; phase: string }>): void {
+	const agenticdoc = path.join(root, ".agenticdoc");
+	fs.mkdirSync(agenticdoc, { recursive: true });
+	const lines = rows.map((r) => `| ${r.key} | active | ${r.phase} | free | - | d | 2026-09-22T00:00:00 |`);
+	fs.writeFileSync(path.join(agenticdoc, "_index.parallel"), `${lines.join("\n")}\n`, "utf8");
+}
+
+/** Timeline JSONL from raw event partials (seq assigned by position). */
+function writeTimeline(
+	root: string,
+	events: Array<Partial<{ ts: string; ev: string; key: string; detail: string }>>,
+): void {
+	const dir = path.join(root, ".agenticdoc", "_autopilot");
+	fs.mkdirSync(dir, { recursive: true });
+	const lines = events.map((e, i) =>
+		JSON.stringify({
+			ts: e.ts ?? "2026-09-22T00:00:00+00:00",
+			seq: i + 1,
+			ev: e.ev ?? "beat",
+			key: e.key ?? "-",
+			stage: null,
+			detail: e.detail ?? "",
+		}),
+	);
+	fs.writeFileSync(path.join(dir, "timeline.jsonl"), `${lines.join("\n")}\n`, "utf8");
+}
+
+describe("autopilot monitor auto-show (AC-008)", () => {
+	beforeEach(() => {
+		// the panel's suppression flag is module memory: clear it so a sibling
+		// test's `/autopilot monitor off` does not leak into this case
+		resetMonitorSuppression();
+	});
+
+	it("shows the panel for enabled projects, stays idempotent, and honors an explicit off", async () => {
+		const root = mkdtemp();
+		try {
+			writeConfigJson(root, { enabled: true });
+			const { pi, commands } = fakeConsolePi();
+			registerAutopilotCommands(pi, root, { monitorIntervalMs: 100 });
+			const { ctx, widgets } = fakeCmdCtx(true);
+			expect(isMonitorActive()).toBe(false);
+			expect(autoStartMonitor(ctx, root)).toBe(true);
+			expect(isMonitorActive()).toBe(true);
+			expect(widgets.at(-1)?.key).toBe(MONITOR_WIDGET_ID);
+			expect(widgets.at(-1)?.content?.[0]).toBe("[autopilot monitor]");
+			// idempotent: an active panel is left alone (no extra start)
+			const frames = widgets.length;
+			expect(autoStartMonitor(ctx, root)).toBe(true);
+			expect(widgets.length).toBe(frames);
+			// explicit off suppresses the auto-show for this session...
+			await commands.get("autopilot")?.handler("monitor off", ctx);
+			expect(autoStartMonitor(ctx, root)).toBe(false);
+			// ...until an explicit on clears the suppression again
+			await commands.get("autopilot")?.handler("monitor on", ctx);
+			expect(autoStartMonitor(ctx, root)).toBe(true);
+		} finally {
+			stopMonitor();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not auto-show without a UI, when opted out, or when autopilot is disabled", () => {
+		const root = mkdtemp();
+		try {
+			const { ctx } = fakeCmdCtx(true);
+			// disabled config
+			writeConfigJson(root, { enabled: false });
+			expect(autoStartMonitor(ctx, root)).toBe(false);
+			expect(isMonitorActive()).toBe(false);
+			// enabled, but the embedding opted out
+			writeConfigJson(root, { enabled: true });
+			expect(autoStartMonitor(ctx, root, { autoMonitor: false })).toBe(false);
+			expect(isMonitorActive()).toBe(false);
+			// enabled, but no visual UI (print mode)
+			const { ctx: printCtx } = fakeCmdCtx(false);
+			expect(autoStartMonitor(printCtx, root)).toBe(false);
+			expect(isMonitorActive()).toBe(false);
+			// no config at all → never enabled
+			const empty = mkdtemp();
+			try {
+				expect(autoStartMonitor(ctx, empty)).toBe(false);
+			} finally {
+				fs.rmSync(empty, { recursive: true, force: true });
+			}
+		} finally {
+			stopMonitor();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("autopilot progress section (AC-006/AC-007)", () => {
+	it("derives tick freshness, slots, per-key phase/status and advance stalls from files", () => {
+		const root = mkdtemp();
+		try {
+			const now = Date.parse("2026-09-22T10:00:12+00:00");
+			writeConfigJson(root, {
+				enabled: true,
+				paused: false,
+				poll_interval_sec: 4,
+				max_parallel_keys: 2,
+				advance_stall_ticks: 3,
+			});
+			writeRoadmap(root, [
+				{ key: "feature-params-service", status: "stalled", dependsOn: [] },
+				{ key: "feature-gui-backend", status: "running", dependsOn: ["feature-params-service"] },
+			]);
+			writeIndex(root, [
+				{ key: "feature-params-service", phase: "VERIFY" },
+				{ key: "feature-gui-backend", phase: "EXECUTE" },
+			]);
+			writeWorkers(root, [
+				{
+					key: "ap-feature-params-service-repair-a1",
+					status: "running",
+					dispatchedAt: "2026-09-22T10:00:00+00:00",
+				},
+			]);
+			writeGate(root, {
+				id: "gate-0002",
+				kind: "stalled",
+				stage: null,
+				status: "pending",
+				key: "feature-params-service",
+			});
+			const failureTs = "2026-09-22T10:00:00+00:00";
+			writeTimeline(root, [
+				{ ts: "2026-09-22T09:59:55+00:00", ev: "beat" },
+				{ ts: "2026-09-22T10:00:08+00:00", ev: "beat" },
+				{
+					ts: "2026-09-22T09:59:56+00:00",
+					ev: "advance",
+					key: "feature-params-service",
+					detail: "execute->verify exit=1 class=interface-drift",
+				},
+				{
+					ts: "2026-09-22T09:59:56+00:00",
+					ev: "config",
+					key: "feature-params-service",
+					detail: "advance execute->verify failed: ERROR: unknown phase 'execute（…）'. Valid: spec, design",
+				},
+				{
+					ts: failureTs,
+					ev: "advance",
+					key: "feature-params-service",
+					detail: "execute->verify exit=1 class=interface-drift",
+				},
+				{
+					ts: failureTs,
+					ev: "config",
+					key: "feature-params-service",
+					detail: "advance execute->verify failed: ERROR: unknown phase 'execute（…）'. Valid: spec, design",
+				},
+				{
+					ts: failureTs,
+					ev: "advance",
+					key: "feature-params-service",
+					detail: "execute->verify exit=1 class=interface-drift",
+				},
+				{
+					ts: failureTs,
+					ev: "config",
+					key: "feature-params-service",
+					detail: "advance execute->verify failed: ERROR: unknown phase 'execute（…）'. Valid: spec, design",
+				},
+				{
+					ts: "2026-09-22T10:00:10+00:00",
+					ev: "stalled",
+					key: "feature-params-service",
+					detail: "advance execute->verify 连续 3 次失败",
+				},
+				{
+					ts: "2026-09-22T10:00:10+00:00",
+					ev: "gate-created",
+					key: "feature-params-service",
+					detail: "gate-0002 kind=stalled",
+				},
+			]);
+
+			const before = hashTree([root]);
+			const snap = readMonitorState(root, now);
+			expect(hashTree([root])).toBe(before); // AC-007: strictly read-only
+
+			expect(snap.autopilot.enabled).toBe(true);
+			expect(snap.autopilot.stallTicks).toBe(3);
+			expect(snap.autopilot.tickSeq).toBe(2); // last beat
+			expect(snap.autopilot.tickAgeMs).toBe(4000);
+			expect(snap.autopilot.tickStale).toBe(false);
+			expect(snap.autopilot.slotsUsed).toBe(1);
+			expect(snap.autopilot.slotsMax).toBe(2);
+			const k1 = snap.autopilot.keys.find((k) => k.key === "feature-params-service");
+			expect(k1?.phase).toBe("VERIFY");
+			expect(k1?.status).toBe("stalled");
+			expect(k1?.inFlight).toBe(1);
+			const k2 = snap.autopilot.keys.find((k) => k.key === "feature-gui-backend");
+			expect(k2?.blockedBy).toEqual(["feature-params-service"]);
+			const stall = snap.autopilot.stalls.find((s) => s.key === "feature-params-service");
+			expect(stall?.count).toBe(3);
+			expect(stall?.primaryClass).toBe("interface-drift");
+			expect(stall?.edge).toBe("execute->verify");
+			expect(stall?.lastError).toContain("unknown phase");
+			expect(snap.gates.map((g) => g.key)).toEqual(["feature-params-service"]); // key column parsed
+
+			// render: summary + the stalled key row with the recovery command
+			const panel = renderMonitorLines(snap).join("\n");
+			expect(panel).toContain("autopilot: tick seq 2 (4s ago)");
+			expect(panel).toContain("slots 1/2");
+			expect(panel).toContain("stall-ticks 3");
+			expect(panel).toContain("feature-params-service VERIFY/stalled");
+			expect(panel).toContain("advance 3x interface-drift");
+			expect(panel).toContain("-> /autopilot gate gate-0002 approve|reject");
+			expect(panel).toContain("deps blocked by feature-params-service");
+			for (const line of renderMonitorLines(snap)) expect(line.length).toBeLessThanOrEqual(110);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("flags a stale tick when the conductor stopped beating", () => {
+		const root = mkdtemp();
+		try {
+			const now = Date.parse("2026-09-22T10:10:00+00:00");
+			writeConfigJson(root, { enabled: true });
+			writeRoadmap(root, [{ key: "k1", status: "running", dependsOn: [] }]);
+			writeIndex(root, [{ key: "k1", phase: "EXECUTE" }]);
+			writeTimeline(root, [{ ts: "2026-09-22T10:00:00+00:00", ev: "beat" }]);
+			const snap = readMonitorState(root, now);
+			expect(snap.autopilot.tickAgeMs).toBe(600_000);
+			expect(snap.autopilot.tickStale).toBe(true);
+			expect(renderMonitorLines(snap).join("\n")).toContain("STALE (conductor not ticking)");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("degrades to placeholders for an empty project (no config/roadmap/index/timeline)", () => {
+		const root = mkdtemp();
+		try {
+			const snap = readMonitorState(root, Date.now());
+			expect(snap.autopilot.everEnabled).toBe(false);
+			expect(snap.autopilot.tickSeq).toBeNull();
+			expect(snap.autopilot.keys).toEqual([]);
+			expect(renderMonitorLines(snap).join("\n")).toContain("autopilot: not enabled");
+			// enabled config but no roadmap/index/timeline yet: placeholders, no throw
+			writeConfigJson(root, { enabled: true });
+			const partial = readMonitorState(root, Date.now());
+			expect(partial.autopilot.enabled).toBe(true);
+			expect(partial.autopilot.tickSeq).toBeNull();
+			expect(renderMonitorLines(partial).join("\n")).toContain("tick: none yet");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("stall derivation: success clears the run, other events do not, other edges are ignored", () => {
+		const now = Date.parse("2026-09-22T10:00:00+00:00");
+		const ev = (seq: number, evName: string, detail: string, key = "k1"): TimelineEvent => ({
+			ts: "2026-09-22T10:00:00+00:00",
+			seq,
+			ev: evName,
+			key,
+			stage: null,
+			detail,
+		});
+		const run = deriveAdvanceStalls(
+			[
+				ev(1, "advance", "execute->verify exit=1 class=other"),
+				ev(2, "stalled", "advance execute->verify 连续 2 次失败"),
+				ev(3, "advance", "execute->verify exit=1 class=interface-drift"),
+				ev(4, "config", "advance execute->verify failed: ERROR: unknown phase 'x'"),
+			],
+			now,
+		);
+		expect(run).toHaveLength(1);
+		expect(run[0]?.count).toBe(2); // the `stalled` event does not break the run
+		expect(run[0]?.primaryClass).toBe("interface-drift");
+		expect(run[0]?.lastError).toContain("unknown phase");
+		const cleared = deriveAdvanceStalls(
+			[ev(1, "advance", "execute->verify exit=1 class=other"), ev(2, "advance", "execute->verify exit=0")],
+			now,
+		);
+		expect(cleared).toEqual([]);
+		const otherEdge = deriveAdvanceStalls(
+			[
+				ev(1, "advance", "tasks->execute exit=1 class=other"),
+				ev(2, "advance", "execute->verify exit=1 class=other"),
+			],
+			now,
+		);
+		expect(otherEdge[0]?.edge).toBe("execute->verify");
+		expect(otherEdge[0]?.count).toBe(1);
+		// a success on a *different* edge must not end this run: the conductor
+		// skips a neighbouring boundary's advance, so it keeps counting
+		const crossEdge = deriveAdvanceStalls(
+			[
+				ev(1, "advance", "execute->verify exit=1 class=other"),
+				ev(2, "advance", "tasks->execute exit=0"),
+				ev(3, "advance", "execute->verify exit=1 class=other"),
+			],
+			now,
+		);
+		expect(crossEdge).toHaveLength(1);
+		expect(crossEdge[0]?.edge).toBe("execute->verify");
+		expect(crossEdge[0]?.count).toBe(2);
+		// failures older than this edge's own success never revive
+		const notRevived = deriveAdvanceStalls(
+			[
+				ev(1, "advance", "execute->verify exit=1 class=other"),
+				ev(2, "advance", "execute->verify exit=0"),
+				ev(3, "advance", "execute->verify exit=1 class=other"),
+			],
+			now,
+		);
+		expect(notRevived).toEqual([]);
+	});
+
+	it("timeline tail read is bounded and tolerates torn lines", () => {
+		const root = mkdtemp();
+		try {
+			writeTimeline(root, [
+				{ ev: "beat" },
+				{ ev: "beat" },
+				{ ev: "advance", key: "k1", detail: "execute->verify exit=1 class=other" },
+			]);
+			const file = path.join(root, ".agenticdoc", "_autopilot", "timeline.jsonl");
+			fs.appendFileSync(file, "{torn\n", "utf8");
+			const tail = readTimelineTail(file, { limit: 2 });
+			expect(tail).toHaveLength(2);
+			expect(tail[1]?.ev).toBe("advance");
+			expect(readTimelineTail(path.join(root, "missing.jsonl"))).toEqual([]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("config mirror: advance_stall_ticks validates, defaults, and round-trips", () => {
+		const root = mkdtemp();
+		try {
+			// written by the Python side (which now always emits the field)
+			writeConfigJson(root, { enabled: true, advance_stall_ticks: 7 });
+			const cfg = readConfig(root);
+			expect(cfg.ok).toBe(true);
+			expect(cfg.ok && cfg.config.advance_stall_ticks).toBe(7);
+			expect(DEFAULT_CONFIG.advance_stall_ticks).toBe(5);
+			expect(validateConfigData({ advance_stall_ticks: 0 }).join(";")).toContain("must be >= 1");
+			expect(validateConfigData({ advance_stall_ticks: 51 }).join(";")).toContain("must be <= 50");
+			expect(validateConfigData({ advance_stall_ticks: "5" }).join(";")).toContain("expected integer");
+			// absent field → default (old config files keep working)
+			writeConfigJson(root, { enabled: true });
+			const legacy = readConfig(root);
+			expect(legacy.ok && legacy.config.advance_stall_ticks).toBe(5);
+		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

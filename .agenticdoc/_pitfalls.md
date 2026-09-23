@@ -31,3 +31,20 @@
   3. ad-hoc 一次性脚本同样遵守；确实要原地改且无版本控制兑底时，先 `shutil.copy2` 备份。
   4. 复验禁止只看 `py_compile` / 退出码：必须断言文件非空 + 关键内容锚点（grep 关键行）。
 - 关联：PM 自身缺陷登记 #47~#52（2026-09-21，另一窗口引述；登记原文不在本仓）；#50 为本条来源，涉事脚本已由当事 PM 重写。
+
+## P-009 失败只记一行自由文本、没有预算也没有门禁 = 无界空转（2026-09-22，mw-autopilot-stall-feedback）
+
+- 现象：E2Feature 的 conductor 在 `feature-params-service` 上每 4s 调一次 `advance_phase.py` 并失败，
+  **2242 次 / 2h35m** 全程只往 `timeline.jsonl` 写两行（`advance ... exit=1` + `config "advance ... failed: <错误文本>"`），
+  既无连续失败计数、无退避、无门禁、无状态上报。同一日更早还有 design→plan **3891 次 / 4h25m**
+  与 spec→design 14 次。整条 Stage 1 因为一个 key 的依赖阻塞静默停摆（心跳正常，看起来"在跑"）。
+- 根因：重试路径只把"失败"当成日志事件，**没有把它当成一个需要收敛的状态**；且错误文本是自然语言字段，
+  没有分类，人/面板无法机械判定"这是接口漂移还是门禁未过"。
+- 硬规则（规避）：
+  1. 任何周期性重试回路必须有**有界的失败判据**（连续同 `(key, edge)` 失败数 ≥ 阀值）→ 升级（门禁 + 冻结），并在单测里锁定"达阀值后不再重试"。
+  2. 失败事件必须带**机读分类**（本次：`interface-drift` / `gate-blocked` / `timeout-env` / `other`），人类可读原文另存一个事件，不要二者合一。
+  3. 门禁问句里承诺的处置必须**都实现**：`stalled` 门禁写了"人工介入后重试"，但代码只消费了 `reject`（→ closed-legacy），`approve` 是 no-op——问句在骗人，人工批了也不会恢复。
+  4. worker 崩溃≠裁决失败：`output.md` 缺失时不要推断为 `below`（本次 6 秒 403 被当成"L3 below 2 rounds"，
+     还因此派了一个对着空报告做修复的 repair worker）。
+- 关联：E2Feature 现场 `feature-params-service`（pm-state.md Phase 行被 worker 写成 `EXECUTE（括注）`
+  导致 `advance_phase.py` 解析失败）；框架侧接口漂移另见 mw-autopilot-advance-root（`d106bcfb2`）。

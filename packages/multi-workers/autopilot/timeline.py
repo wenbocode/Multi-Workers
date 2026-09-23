@@ -80,6 +80,8 @@ EVENT_TYPES: frozenset[str] = frozenset({
     "type-rejected",
     "target-config-rejected",
     "reconcile",
+    "resume",
+    "l3-no-verdict",
 })
 
 # `key` value for stage-level/global events (AC-017 erratum: the key field
@@ -431,3 +433,55 @@ def query_events(
         if event["seq"] > mark and (wanted is None or event.get("ev") in wanted)
     ]
     return TimelineQuery(events=events, pruned=pruned, skipped=skipped)
+
+
+def tail_events(
+    path: pathlib.Path,
+    *,
+    max_bytes: int = 512 * 1024,
+    limit: int = 400,
+) -> list[dict]:
+    """Newest parsed events from the *current* file, via a bounded tail read.
+
+    Rotated generations are deliberately not consulted: callers (the advance
+    stall guard, the monitor panel) ask "what just happened", and reading a
+    window at the end of one file keeps that question O(window) instead of
+    O(history) — the live 10MB/21k-line case costs one bounded read.
+
+    Torn/partial lines are skipped; when the window does not start at offset
+    0 its first line is dropped (it is cut mid-record). Returns at most
+    ``limit`` events, oldest → newest. Never raises: an absent or unreadable
+    file yields an empty list.
+    """
+    path = pathlib.Path(path)
+    window = max(4096, int(max_bytes))
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return []
+    if size <= 0:
+        return []
+    offset = max(0, size - window)
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(offset)
+            chunk = fh.read()
+    except OSError:
+        return []
+    lines = chunk.split(b"\n")
+    if offset > 0:
+        lines = lines[1:]
+    events: list[dict] = []
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line.decode("utf-8", errors="replace"))
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and _is_seq(obj.get("seq")):
+            events.append(obj)
+    if limit > 0 and len(events) > limit:
+        events = events[-limit:]
+    return events

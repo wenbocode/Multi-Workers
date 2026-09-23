@@ -34,7 +34,7 @@
  */
 
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext } from "../../../core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
 import { windowClaimId } from "../pm/ui-bridge.ts";
 import { getMwStatus, restartMw, serveStaleness, startMw } from "../shared/mw-runner.ts";
 import { answerGate } from "./gate-writer.ts";
@@ -72,6 +72,9 @@ export interface AutopilotConsoleDeps {
 	readMonitorState?: typeof readMonitorState;
 	/** Test seam for the monitor poll interval (default 4000ms). */
 	monitorIntervalMs?: number;
+	/** Auto-show the monitor for autopilot-enabled projects on session start
+	 * (default true). Set false to opt out (tests / embeddings). */
+	autoMonitor?: boolean;
 }
 
 const USAGE =
@@ -375,18 +378,60 @@ function cmdMonitor(
 	};
 	if (arg === "off" || (arg === "" && isMonitorActive())) {
 		const stopped = stopMonitor(apply);
+		if (arg === "off") monitorSuppressed = true; // stays off for this session
 		ctx.ui.notify(
 			stopped ? "[autopilot] monitor off — bottom panel cleared." : "[autopilot] monitor was not running.",
 			"info",
 		);
 		return;
 	}
+	monitorSuppressed = false;
 	startMonitor(projectDir, apply, { intervalMs: deps.monitorIntervalMs, readState: deps.readMonitorState });
 	ctx.ui.notify(
-		"[autopilot] monitor on — serve/conductor/workers/gates panel below the editor, refreshed every 4s. " +
+		"[autopilot] monitor on — serve/conductor/autopilot/workers/gates panel below the editor, refreshed every 4s. " +
 			"/autopilot monitor off closes it.",
 		"info",
 	);
+}
+
+/** Session-scoped suppression flag for the auto-shown panel (AC-008): memory
+ * only, never persisted — an explicit `/autopilot monitor off` keeps the panel
+ * closed for this session while `/autopilot monitor on` clears it again. */
+let monitorSuppressed = false;
+
+/** Forget the session-level suppression. The test suite uses it so one case's
+ * `/autopilot monitor off` cannot leak into the next (a production session is
+ * one process lifetime; a future session_shutdown hook can call this too). */
+export function resetMonitorSuppression(): void {
+	monitorSuppressed = false;
+}
+
+/** Show the monitor automatically for autopilot-enabled projects.
+ *
+ * Called from the PM session_start hook, the first place a UI context exists
+ * (registerAutopilotCommands runs at extension load, with no ctx). Feedback for
+ * a stalled key has to be visible without remembering a command to run — the
+ * E2Feature incident ran 2h35m unnoticed because nothing surfaced it.
+ *
+ * Returns true when the panel is showing. Idempotent: an already-active panel
+ * is left alone (and reports true). Guards, in order: no visual UI, the
+ * autoMonitor opt-out, an explicit session-level `/autopilot monitor off`,
+ * and a config that is absent/invalid or `enabled: false`. */
+export function autoStartMonitor(ctx: ExtensionContext, projectDir: string, deps: AutopilotConsoleDeps = {}): boolean {
+	if (!ctx.hasUI) return false;
+	if (deps.autoMonitor === false) return false;
+	if (monitorSuppressed) return false;
+	if (isMonitorActive()) return true;
+	const cfg = readConfig(projectDir);
+	if (!cfg.ok || !cfg.config.enabled) return false;
+	startMonitor(
+		projectDir,
+		(lines: string[] | undefined): void => {
+			ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor" });
+		},
+		{ intervalMs: deps.monitorIntervalMs, readState: deps.readMonitorState },
+	);
+	return true;
 }
 
 // ── /autopilot roadmap (summary view) ────────────────────────────────────────

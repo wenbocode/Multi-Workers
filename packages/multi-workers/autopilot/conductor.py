@@ -207,6 +207,9 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
         for k, s in stage.key_status.items():
             status_of[k] = s
 
+    # Stalled keys whose stalled gate was approved → resume (AC-004/AC-013).
+    _apply_stalled_approvals(project_root, st, status_of, stage_of)
+
     # Stalled keys whose stalled gate was rejected → closed-legacy (F7).
     _apply_stalled_rejections(project_root, st, status_of, stage_of)
 
@@ -663,6 +666,162 @@ def _closure_dossier_md(
     return "\n".join(lines) + "\n"
 
 
+# ── Advance convergence guard (failure classes + bounded retry) ─────
+
+# Failure classes (AC-002 / design D-3). Ordered probes, first match wins.
+_INTERFACE_DRIFT_MARKERS = (
+    "unknown phase", "has unknown phase", "valid: spec", "phase-line",
+    "phase field", "unsupported framework", "framework version",
+)
+_GATE_BLOCKED_MARKERS = (
+    "gate blocked", "gate fail", "missing:", "missing prerequisite",
+    "缺少", "not met", "未满足",
+)
+_TIMEOUT_ENV_MARKERS = (
+    "timeout", "timed out", "locate", "advanceerror", "no such file",
+    "cannot find",
+)
+
+
+def _one_line(text: str, limit: int = 160) -> str:
+    """Single-line, length-bounded text for timeline details and gate
+    questions (``gates.create`` rejects multiline questions)."""
+    flat = " ".join(str(text or "").split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def _classify_advance_failure(text: str) -> str:
+    """Classify one advance failure message (design D-3).
+
+    ``interface-drift`` — the phase interface no longer parses (e.g. a
+    pm-state.md Phase line carrying prose); ``gate-blocked`` — the framework
+    gate refused; ``timeout-env`` — timeout / framework not locatable /
+    missing script; ``other`` — anything else, including empty text.
+    """
+    low = str(text or "").lower()
+    if any(marker in low for marker in _INTERFACE_DRIFT_MARKERS):
+        return "interface-drift"
+    if any(marker in low for marker in _GATE_BLOCKED_MARKERS):
+        return "gate-blocked"
+    if any(marker in low for marker in _TIMEOUT_ENV_MARKERS):
+        return "timeout-env"
+    return "other"
+
+
+def _advance_stall_ticks(cfg: dict) -> int:
+    """Consecutive-failure threshold (config ``advance_stall_ticks``)."""
+    try:
+        value = int(cfg.get("advance_stall_ticks", 5))
+    except (TypeError, ValueError):
+        return 5
+    return max(1, value)
+
+
+def _advance_failure_streak(
+    project_root: pathlib.Path, key: str, edge: str
+) -> tuple[int, dict[str, int], str]:
+    """Consecutive ``edge`` failures for ``key`` + class histogram + last
+    error snippet, derived from the timeline tail (design D-1; zero private
+    state, restart-safe).
+
+    Walking newest → oldest: ``beat`` is skipped; a failing ``advance`` event
+    for the same (key, edge) counts; a successful advance of that edge stops
+    the walk; a ``config`` event for the key supplies the error text; any
+    other event for the key (dispatch / stalled / gate / stage …) proves
+    progress and stops the walk. An ``advance`` event of a *different* edge is
+    skipped, so a neighbouring boundary's success neither breaks this streak
+    nor is counted into it. Read failures yield 0/empty — fail-open, so a
+    missed stall degrades to the previous retry behaviour while a false
+    stall would break healthy keys.
+
+    The window is bounded (``timeline.tail_events``: 400 parsed events / 512
+    KiB) but the streak only needs the events since the first failure of the
+    run: a per-tick failure loop writes ≥2 events per tick (the failing
+    ``advance`` + its ``config``), so the threshold-5 default spans ~10 events
+    and ~20 s, two orders of magnitude inside the window. Beats interleaved
+    between the failures (up to 100 per gap) are covered by
+    ``test_beat_flood_does_not_break_streak``; shrinking the window below the
+    threshold's own span would fail that test first, and a genuinely evicted
+    run degrades to fail-open (0) rather than to a false stall.
+    """
+    try:
+        events = timeline.tail_events(timeline.timeline_path(project_root))
+    except OSError:
+        return 0, {}, ""
+    count = 0
+    hist: dict[str, int] = {}
+    snippet = ""
+    error_text = ""
+    for event in reversed(events):
+        if str(event.get("key", "")) != key:
+            continue
+        name = str(event.get("ev", ""))
+        if name == "beat":
+            continue
+        if name == "config":
+            text = str(event.get("detail", ""))
+            if "advance" in text and error_text == "":
+                error_text = text
+                snippet = _one_line(text.split(":", 1)[-1], 120)
+            continue
+        if name == "advance":
+            matched = re.match(
+                r"^(\S+) exit=(\d+)(?: class=(\S+))?$", str(event.get("detail", ""))
+            )
+            if matched is None or matched.group(1) != edge:
+                continue
+            if matched.group(2) == "0":
+                break
+            count += 1
+            cls = matched.group(3) or _classify_advance_failure(error_text)
+            hist[cls] = hist.get(cls, 0) + 1
+            continue
+        break  # other activity for this key → progress, the streak ends
+    if count == 0:
+        return 0, {}, ""  # no failures for this edge: the stray snippet would mislead
+    return count, hist, snippet
+
+
+def _record_advance_result(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    key: str,
+    edge: str,
+    code: int,
+    err: str,
+    cfg: dict,
+) -> None:
+    """Log one advance attempt and bound the retry loop (AC-002/AC-003).
+
+    Success keeps the historical ``"{edge} exit=0"`` detail; failure appends
+    the machine-readable ``class=`` field and the raw error in a separate
+    ``config`` event (human-readable). When the same (key, edge) has now
+    failed ``advance_stall_ticks`` times in a row, the key is marked stalled —
+    the four-artifact path freezes it (``orchestrate`` skips stalled keys), so
+    the loop stops instead of retrying every tick until a human notices.
+    """
+    if code == 0:
+        st.timeline.append("advance", key=key, detail=f"{edge} exit=0")
+        return
+    cls = _classify_advance_failure(err)
+    st.timeline.append("advance", key=key, detail=f"{edge} exit={code} class={cls}")
+    st.timeline.append(
+        "config", key=key, detail=f"advance {edge} failed: {_one_line(err, 200)}"
+    )
+    count, hist, snippet = _advance_failure_streak(project_root, key, edge)
+    if count < _advance_stall_ticks(cfg):
+        return
+    dist = ", ".join(
+        f"{name}x{seen}" for name, seen in sorted(hist.items(), key=lambda item: -item[1])
+    )
+    mark_stalled(
+        project_root, st, key,
+        _one_line(
+            f"advance {edge} 连续 {count} 次失败（class={cls}；{dist}）: {snippet}", 300
+        ),
+    )
+
+
 def _advance_key(
     project_root: pathlib.Path,
     st: ConductorState,
@@ -708,12 +867,10 @@ def _advance_key(
     if not blocking:
         summary = f"autopilot L1 clean at {phase}"
         code, _out, err = advance.advance(key, nxt, project_root, summary=summary)
-        st.timeline.append(
-            "advance", key=key, detail=f"{phase}->{nxt} exit={code}"
+        _record_advance_result(
+            project_root, st, key, f"{phase}->{nxt}", code, err, cfg
         )
-        if code != 0:
-            st.timeline.append("config", key=key, detail=f"advance failed: {err.strip()[:200]}")
-        elif nxt == "done":
+        if code == 0 and nxt == "done":
             _mark_key_done(project_root, st, key, rm_path)
         return False
 
@@ -722,8 +879,10 @@ def _advance_key(
     loop = f"l2:{key}:{edge}"
     used = rounds.get(loop, 0)
     budget = max(1, int(cfg["round_budget"]))
+    # A human-answered stalled gate grants one extra round (AC-013).
+    limit = budget + _resume_credits(project_root, key)
     bonus = _budget_bonus(project_root, loop)
-    allowed = used < budget or (bonus and used < budget + 1)
+    allowed = used < limit or (bonus and used < limit + 1)
 
     fix_key = dispatch.task_key_for(key, f"l2-fix-{edge}-a{used}") if used else None
     if used and not _row_exists(rows, fix_key or ""):
@@ -745,7 +904,7 @@ def _advance_key(
                 project_root, st, key, f"L2 budget gate rejected at {loop}"
             )
             return False
-        if bonus and used >= budget + 1:
+        if bonus and used >= limit + 1:
             mark_stalled(
                 project_root, st, key, f"L2 bonus round exhausted at {loop}"
             )
@@ -753,7 +912,7 @@ def _advance_key(
         if not _gate_open(project_root, "budget-exhausted", loop=loop):
             gate = _create_gate(
                 project_root, st, "budget-exhausted",
-                f"L2 回路 {loop} 已达 {budget} 轮上限且仍有缺口——追加一轮修复，还是标记 stalled？",
+                f"L2 回路 {loop} 已达 {limit} 轮上限且仍有缺口——追加一轮修复，还是标记 stalled？",
                 key=key, refs=[loop],
             )
             if gate is None:
@@ -842,6 +1001,8 @@ def execute_loop(
     if not files:
         return False  # nothing to execute — the tasks→execute gate owns this
     budget = max(1, int(cfg["round_budget"]))
+    # Human approvals of a stalled gate grant one extra attempt each (AC-013).
+    credits = _resume_credits(project_root, key)
     plan = _plan_text(key_dir)
     for stem in _plan_task_order([f.stem for f in files], plan):
         loop = f"exec:{key}:{stem}"
@@ -851,10 +1012,10 @@ def execute_loop(
         if any(_is_in_flight(r) for r in fam):
             return False  # per-key serial: wait for the in-flight task
         used = rounds.get(loop, 0)
-        if used >= budget:
+        if used >= budget + credits:
             mark_stalled(
                 project_root, st, key,
-                f"exec task {stem} exhausted {used}/{budget} attempts",
+                f"exec task {stem} exhausted {used}/{budget + credits} attempts",
             )
             return False
         if plan and stem not in plan:
@@ -878,11 +1039,7 @@ def execute_loop(
     code, _out, err = advance.advance(
         key, "verify", project_root, summary="autopilot EXECUTE tasks complete"
     )
-    st.timeline.append("advance", key=key, detail=f"execute->verify exit={code}")
-    if code != 0:
-        st.timeline.append(
-            "config", key=key, detail=f"advance verify failed: {err.strip()[:200]}"
-        )
+    _record_advance_result(project_root, st, key, "execute->verify", code, err, cfg)
     return False
 
 
@@ -947,6 +1104,36 @@ def _repair_prompt(key: str, attempt: int) -> str:
     )
 
 
+def _l3_round_verdict(
+    project_root: pathlib.Path, rows: list[dict], key: str, attempt: int
+) -> tuple[str, str]:
+    """(verdict, worker status) for one L3 round (AC-012).
+
+    A round whose worker row is terminal-failed never rendered a verdict: the
+    worker harness writes a placeholder ``output.md`` even when the process
+    died (observed live: a reviewer killed by a provider 403 left a 181-byte
+    template), so the status is checked BEFORE the file — repairing against a
+    template and reporting `below` would pin the failure on the wrong layer.
+    Otherwise ``output.md`` is authoritative (D-108): ``meets`` / ``below``
+    exactly as before, and a round with neither a healthy status nor an output
+    file is ``no-verdict`` too.
+    """
+    task_key = dispatch.task_key_for(key, f"l3-a{attempt}")
+    status = next(
+        (str(row.get("status", "")) for row in rows if row.get("task_key") == task_key),
+        "",
+    )
+    if status in ("failed", "needs-clarification"):
+        return "no-verdict", status
+    output = (
+        pathlib.Path(project_root) / ".agenticdoc" / key / "workers"
+        / task_key / "output.md"
+    )
+    if output.is_file():
+        return _parse_l3_output(project_root, key, attempt), status
+    return "no-verdict", status or "no-row"
+
+
 def _verify_loop(
     project_root: pathlib.Path,
     st: ConductorState,
@@ -966,8 +1153,9 @@ def _verify_loop(
     l3_loop = f"l3:{key}"
     # Three loop families share round_budget (spec §2.2 / AC-011):
     # L1↔L2, L3 convergence, task retry. Default 2 preserves AC-010's
-    # 复评总轮数 ≤ 2.
+    # 复评总轮数 ≤ 2. Approved stalled gates add one round each (AC-013).
     l3_budget = max(1, int(cfg["round_budget"]))
+    l3_limit = l3_budget + _resume_credits(project_root, key)
     used = rounds.get(l3_loop, 0)
     l3_report_src = (
         key_dir / "workers" / dispatch.task_key_for(key, f"l3-a{used}")
@@ -985,7 +1173,31 @@ def _verify_loop(
             timeline=st.timeline,
         )
         return result.ok
-    verdict = _parse_l3_output(project_root, key, used)
+    verdict, worker_status = _l3_round_verdict(project_root, rows, key, used)
+    if verdict == "no-verdict":
+        # The reviewer never rendered a verdict (crash / no output). Repairing
+        # against a missing report is pointless and reporting `below` would pin
+        # the real cause on the wrong layer (AC-012).
+        round_key = dispatch.task_key_for(key, f"l3-a{used}")
+        st.timeline.append(
+            "l3-no-verdict", key=key,
+            detail=f"l3-a{used} worker status={worker_status} → re-review",
+        )
+        if used >= l3_limit:
+            _persist_l3_verdict(key_dir, "below", l3_report_src)
+            mark_stalled(
+                project_root, st, key,
+                f"L3 无裁决（worker {worker_status}: {round_key}）达 {used}/{l3_limit} 轮",
+            )
+            return False
+        result = dispatch.dispatch(
+            project_root, key, f"l3-a{used + 1}", "reviewer",
+            _l3_prompt(key, used + 1),
+            loop=l3_loop, attempt=used + 1,
+            read_scope=[f".agenticdoc/{key}", ".agenticdoc/goal.md"],
+            timeline=st.timeline,
+        )
+        return result.ok
     if verdict == "meets":
         l3_output = (
             key_dir / "workers" / dispatch.task_key_for(key, f"l3-a{used}") / "output.md"
@@ -993,11 +1205,11 @@ def _verify_loop(
         if _done_transaction(project_root, st, key, l3_output) != "below":
             return False  # advanced (or gated — retried next tick)
         # meets-but-short achieved draft → same repair path as below
-    if used >= l3_budget:
+    if used >= l3_limit:
         _persist_l3_verdict(key_dir, "below", l3_report_src)
         mark_stalled(
             project_root, st, key,
-            f"L3 below {l3_budget} rounds (budget {l3_budget})",
+            f"L3 below {l3_limit} rounds (budget {l3_budget}, credits {l3_limit - l3_budget})",
         )
         return False
     repair_base = f"repair-a{used}"
@@ -1006,7 +1218,7 @@ def _verify_loop(
         repair_used = rounds.get(f"repair:{key}", 0)
         if any(_is_in_flight(r) for r in fam):
             return False
-        if repair_used >= max(1, int(cfg["round_budget"])):
+        if repair_used >= max(1, int(cfg["round_budget"])) + _resume_credits(project_root, key):
             _persist_l3_verdict(key_dir, "below", l3_report_src)
             mark_stalled(
                 project_root, st, key,
@@ -1145,11 +1357,11 @@ def _done_transaction(
         code, _out, err = advance.advance(
             key, "done", project_root, summary="autopilot L3 meets"
         )
-        st.timeline.append("advance", key=key, detail=f"verify->done exit={code}")
+        _record_advance_result(
+            project_root, st, key, "verify->done", code, err,
+            config.cached_load(project_root),
+        )
         if code != 0:
-            st.timeline.append(
-                "config", key=key, detail=f"advance done failed: {err.strip()[:200]}"
-            )
             return "gated"
         # 6. advance 后验 index：exit 0 后回读 phase 列；失配重跑 set-phase
         ks = state.read_key_states(project_root).get(key)
@@ -1449,6 +1661,83 @@ def _mark_key_done(
             mw_common.release_lock(lock_file(project_root, "roadmap"))
     except (roadmap.RoadmapError, OSError) as exc:
         st.timeline.append("config", key=key, detail=f"key-done mark failed: {exc!r}")
+
+
+def _resume_credits(project_root: pathlib.Path, key: str) -> int:
+    """Extra rounds granted to ``key`` by a human (AC-013).
+
+    One approved ``stalled`` gate grants one extra round on *every* loop that
+    caps this key (L2 boundary, EXECUTE task retry, L3 convergence, L3
+    repair) — the gate is answered once, before the conductor knows which of
+    them caps next, and the panel/gate text says so. The credit is never
+    reusable: each loop's ``used`` counter is monotone (derived from the
+    dispatch rows, which are append-only), so after the extra round is spent
+    the same loop caps again and needs a fresh human decision —
+    ``test_one_credit_is_spent_by_one_round_per_loop`` pins that. The count is
+    re-derived from the gate directory on every call (zero private state), so
+    it survives conductor restarts and cannot drift. Rejecting the gate
+    grants nothing — that path closes the key as closed-legacy instead.
+    """
+    return sum(
+        1
+        for gate in gates.enumerate(gates_dir(project_root))
+        if gate.kind == "stalled" and gate.status == "approved" and gate.key == key
+    )
+
+
+def _apply_stalled_approvals(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    status_of: dict[str, str],
+    stage_of: dict[str, int],
+) -> None:
+    """stalled gate approved → resume the key (AC-004).
+
+    The symmetric half of :func:`_apply_stalled_rejections`: the gate question
+    promises "人工介入后重试", so an approval rewrites key-status
+    ``stalled`` → ``running`` under the roadmap lock, records the durable
+    consumption event (``gate-answered``, the same protocol
+    ``_consumed_gate_ids`` replays) plus a ``resume`` event, and mutates
+    ``status_of`` in place so this same tick's per-key machine already sees
+    the key as runnable. Idempotent by file truth: once key-status is
+    ``running`` a second tick (or a restart) finds nothing to rewrite. The
+    extra round itself comes from :func:`_resume_credits` — one extra round
+    per capped loop, each consumed by that loop's own monotone ``used``
+    counter (see there).
+    """
+    for gate in gates.enumerate(gates_dir(project_root)):
+        if gate.kind != "stalled" or gate.status != "approved":
+            continue
+        key = gate.key
+        if not key or status_of.get(key) != "stalled":
+            continue
+        stage_number = stage_of.get(key)
+        if stage_number is None:
+            continue
+        try:
+            rm_path = roadmap.roadmap_path(project_root)
+            text = rm_path.read_text(encoding="utf-8")
+            new_text = roadmap.update_key_status(text, stage_number, key, "running")
+            if new_text == text:
+                continue  # already resumed (or not present in that stage)
+            acquire_conductor_lock(project_root, "roadmap", st.timeline)
+            try:
+                rm_path.write_text(new_text, encoding="utf-8", newline="\n")
+            finally:
+                mw_common.release_lock(lock_file(project_root, "roadmap"))
+            st.timeline.append(
+                "gate-answered", key=key, detail=f"{gate.id} approved → {key} running"
+            )
+            st.timeline.append(
+                "resume", key=key,
+                detail=(
+                    f"{key} resumed by {gate.id} "
+                    "(one extra round per capped loop)"
+                ),
+            )
+            status_of[key] = "running"
+        except (roadmap.RoadmapError, OSError) as exc:
+            st.timeline.append("config", key=key, detail=f"resume mark failed: {exc!r}")
 
 
 def _apply_stalled_rejections(

@@ -18,6 +18,8 @@ Field set and defaults (D-110):
     worker_timeout_min int     30
     l2_read_file_cap   int     8
     l2_read_byte_cap   int     65536
+    advance_stall_ticks int    5    (1..50; consecutive same-edge advance
+                                    failures before the key is marked stalled)
 
 The mtime cache (:func:`cached_load`) lets ``mw serve`` and the conductor poll
 the config every tick without re-reading and re-parsing the file each second.
@@ -42,6 +44,7 @@ DEFAULT_CONFIG: dict = {
     "worker_timeout_min": 30,
     "l2_read_file_cap": 8,
     "l2_read_byte_cap": 65536,
+    "advance_stall_ticks": 5,
 }
 
 # bool must be rejected before the int rules (bool is an int subclass).
@@ -53,6 +56,7 @@ _INT_RANGES: dict[str, tuple[int, int | None]] = {
     "worker_timeout_min": (1, None),
     "l2_read_file_cap": (1, None),
     "l2_read_byte_cap": (1, None),
+    "advance_stall_ticks": (1, 50),
 }
 
 # resolved path -> (mtime_ns, size, config dict); None entry = file absent.

@@ -73,6 +73,10 @@ export interface AutopilotConfig {
 	worker_timeout_min: number;
 	l2_read_file_cap: number;
 	l2_read_byte_cap: number;
+	/** Consecutive same-edge advance failures before the key is marked
+	 * stalled (mw-autopilot-stall-feedback AC-003). Optional in the file —
+	 * absent falls back to the default. */
+	advance_stall_ticks: number;
 }
 
 export const DEFAULT_CONFIG: AutopilotConfig = {
@@ -84,6 +88,7 @@ export const DEFAULT_CONFIG: AutopilotConfig = {
 	worker_timeout_min: 30,
 	l2_read_file_cap: 8,
 	l2_read_byte_cap: 65536,
+	advance_stall_ticks: 5,
 };
 
 const BOOL_FIELDS = ["enabled", "paused"] as const;
@@ -96,6 +101,7 @@ const INT_RANGES: Record<string, [number, number | null]> = {
 	worker_timeout_min: [1, null],
 	l2_read_file_cap: [1, null],
 	l2_read_byte_cap: [1, null],
+	advance_stall_ticks: [1, 50],
 };
 
 /** Validate a raw config object exactly like config.py validate_config:
@@ -169,7 +175,8 @@ export function readConfig(projectDir: string): ConfigResult {
 			| "round_budget"
 			| "worker_timeout_min"
 			| "l2_read_file_cap"
-			| "l2_read_byte_cap",
+			| "l2_read_byte_cap"
+			| "advance_stall_ticks",
 	): number => (typeof cfg[name] === "number" ? (cfg[name] as number) : DEFAULT_CONFIG[name]);
 	const merged: AutopilotConfig = {
 		enabled: boolOf("enabled"),
@@ -180,6 +187,7 @@ export function readConfig(projectDir: string): ConfigResult {
 		worker_timeout_min: intOf("worker_timeout_min"),
 		l2_read_file_cap: intOf("l2_read_file_cap"),
 		l2_read_byte_cap: intOf("l2_read_byte_cap"),
+		advance_stall_ticks: intOf("advance_stall_ticks"),
 	};
 	return { ok: true, config: merged };
 }
@@ -200,6 +208,7 @@ export function saveConfig(projectDir: string, config: AutopilotConfig): { ok: t
 		worker_timeout_min: config.worker_timeout_min,
 		l2_read_file_cap: config.l2_read_file_cap,
 		l2_read_byte_cap: config.l2_read_byte_cap,
+		advance_stall_ticks: config.advance_stall_ticks,
 	};
 	const file = configPath(projectDir);
 	try {
@@ -681,6 +690,8 @@ export const EVENT_TYPES = new Set([
 	"goal-snapshot",
 	"type-rejected",
 	"reconcile",
+	"resume",
+	"l3-no-verdict",
 ]);
 
 export const BEAT_EV = "beat";

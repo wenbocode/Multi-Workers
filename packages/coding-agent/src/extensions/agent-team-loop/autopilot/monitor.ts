@@ -5,14 +5,18 @@
  * Three responsibilities, one per section below:
  *   1. collect  — readMonitorState: a pure read-only derivation of the
  *      orchestration chain's health (mw serve / conductor / cross-key
- *      running workers / pending gates) from the file family alone. Serve
- *      data comes from mw-runner (getMwStatus/serveStaleness/readServeMeta
+ *      running workers / pending gates / autopilot progress) from the file
+ *      family alone. Serve data comes from mw-runner (getMwStatus/serveStaleness/readServeMeta
  *      — never re-implemented here); workers come from WorkerStore; the
  *      conductor pid gets the same signal-0 liveness check; gates get a
  *      lightweight frontmatter line scan (D-004) keeping only
- *      `status: pending` rows.
+ *      `status: pending` rows; autopilot progress (tick freshness, slots,
+ *      per-key phase/status, advance failure runs) is derived by
+ *      deriveAutopilotPanel from config.json + _roadmap.md +
+ *      _index.parallel + a bounded timeline tail (mw-autopilot-stall-feedback
+ *      AC-006: a stalled key must be visible here, not only in the timeline).
  *   2. render   — renderMonitorLines: a fixed-section panel (header + serve
- *      + conductor + workers + gates, every section always present so the
+ *      + conductor + autopilot + workers + gates, every section always present so the
  *      panel height never flickers), 110-column truncation, the same
  *      English-label style as the watch widget.
  *   3. lifetime — startMonitor/stopMonitor/isMonitorActive: a module-level
@@ -30,9 +34,21 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { IndexStore } from "../shared/index-store.ts";
 import { getMwStatus, readServeMeta, serveStaleness } from "../shared/mw-runner.ts";
 import { WorkerStore } from "../shared/worker-store.ts";
-import { configPath, gatesDir, readConfig } from "./status-model.ts";
+import {
+	BEAT_EV,
+	type ConfigResult,
+	configPath,
+	DEFAULT_CONFIG,
+	gatesDir,
+	type RoadmapResult,
+	readConfig,
+	readRoadmap,
+	type TimelineEvent,
+	timelinePath,
+} from "./status-model.ts";
 
 /** Widget id for the monitor panel (the watch widget is
  * "agent-team-loop-watch" — the two coexist, D-003). */
@@ -74,11 +90,53 @@ export interface MonitorGate {
 	id: string;
 	kind: string;
 	stage: number | null;
+	/** Owning key (empty for stage-level gates) — the stalled-gate recovery
+	 * hint needs it to point at the right key. */
+	key: string;
+}
+
+/** One roadmap key as the autopilot section shows it (AC-006). */
+export interface MonitorKey {
+	key: string;
+	/** Phase from _index.parallel ("—" when the key has no index row yet). */
+	phase: string;
+	/** Roadmap key-status (running|done|stalled|closed-legacy|unknown). */
+	status: string;
+	inFlight: number;
+	/** Deps whose status is not terminal — the reason an idle key waits. */
+	blockedBy: string[];
+}
+
+/** One key's most recent advance failure run (AC-006). */
+export interface MonitorStall {
+	key: string;
+	edge: string;
+	count: number;
+	primaryClass: string;
+	classCounts: Record<string, number>;
+	lastError: string;
+	ageMs: number | null;
+}
+
+/** The autopilot progress section (AC-006/AC-007). */
+export interface MonitorAutopilot {
+	enabled: boolean;
+	everEnabled: boolean;
+	tickSeq: number | null;
+	tickAgeMs: number | null;
+	/** age > max(30s, 5 x poll_interval): the conductor stopped ticking. */
+	tickStale: boolean;
+	slotsUsed: number;
+	slotsMax: number;
+	stallTicks: number;
+	keys: MonitorKey[];
+	stalls: MonitorStall[];
 }
 
 export interface MonitorSnapshot {
 	serve: MonitorServe;
 	conductor: MonitorConductor;
+	autopilot: MonitorAutopilot;
 	workers: MonitorWorker[];
 	gates: MonitorGate[];
 }
@@ -101,6 +159,7 @@ function scanPendingGate(file: string): MonitorGate | null {
 	let id = "";
 	let kind = "";
 	let stage: number | null = null;
+	let key = "";
 	let status = "";
 	for (let i = 1; i < lines.length; i++) {
 		const line = lines[i];
@@ -112,10 +171,11 @@ function scanPendingGate(file: string): MonitorGate | null {
 		if (name === "id") id = value;
 		else if (name === "kind") kind = value;
 		else if (name === "status") status = value;
+		else if (name === "key") key = value;
 		else if (name === "stage") stage = /^-?\d+$/.test(value) ? Number.parseInt(value, 10) : null;
 	}
 	if (status !== "pending" || id === "" || kind === "") return null;
-	return { id, kind, stage };
+	return { id, kind, stage, key };
 }
 
 /** Derive the full monitor snapshot from the file family. Read-only; every
@@ -206,7 +266,264 @@ export function readMonitorState(projectDir: string, nowMs: number): MonitorSnap
 	}
 	gates.sort((a, b) => a.id.localeCompare(b.id));
 
-	return { serve, conductor, workers, gates };
+	const autopilot = deriveAutopilotPanel(projectDir, nowMs, workers);
+
+	return { serve, conductor, autopilot, workers, gates };
+}
+
+// ── Autopilot progress: deriveAutopilotPanel (AC-006/AC-007) ──────────────────
+
+/** Bounded tail read of the current timeline file — the TS mirror of
+ * autopilot/timeline.py tail_events. Rotated generations are deliberately
+ * not consulted (this answers "what just happened") and the window keeps the
+ * panel O(window) instead of O(history) on a multi-megabyte timeline. Torn
+ * lines are skipped. Never throws: an absent/unreadable file yields []. */
+export function readTimelineTail(file: string, opts?: { maxBytes?: number; limit?: number }): TimelineEvent[] {
+	const maxBytes = opts?.maxBytes ?? 512 * 1024;
+	const limit = opts?.limit ?? 400;
+	let fd: number;
+	try {
+		fd = fs.openSync(file, "r");
+	} catch {
+		return [];
+	}
+	try {
+		const size = fs.fstatSync(fd).size;
+		if (size <= 0) return [];
+		const start = Math.max(0, size - maxBytes);
+		const buf = Buffer.alloc(size - start);
+		fs.readSync(fd, buf, 0, buf.length, start);
+		let lines = buf.toString("utf8").split("\n");
+		if (start > 0) lines = lines.slice(1); // the window cut the first line
+		const events: TimelineEvent[] = [];
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (trimmed === "") continue;
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(trimmed);
+			} catch {
+				continue;
+			}
+			if (typeof parsed !== "object" || parsed === null) continue;
+			const ev = parsed as Partial<TimelineEvent>;
+			if (typeof ev.seq !== "number") continue;
+			events.push({
+				ts: typeof ev.ts === "string" ? ev.ts : "",
+				seq: ev.seq,
+				ev: typeof ev.ev === "string" ? ev.ev : "",
+				key: typeof ev.key === "string" ? ev.key : "-",
+				stage: typeof ev.stage === "number" ? ev.stage : null,
+				detail: typeof ev.detail === "string" ? ev.detail : "",
+			});
+		}
+		return limit > 0 && events.length > limit ? events.slice(-limit) : events;
+	} catch {
+		return [];
+	} finally {
+		fs.closeSync(fd);
+	}
+}
+
+/** Event `detail` shape for one advance attempt (conductor
+ * _record_advance_result): `{edge} exit={n}[ class={cls}]`. */
+const ADVANCE_DETAIL_RE = /^(\S+) exit=(\d+)(?: class=(\S+))?$/;
+
+/** Failure classes — markers identical to autopilot/conductor.py
+ * _classify_advance_failure (one contract, two implementations). */
+const INTERFACE_DRIFT_MARKERS = [
+	"unknown phase",
+	"valid: spec",
+	"phase-line",
+	"phase field",
+	"unsupported framework",
+	"framework version",
+];
+const GATE_BLOCKED_MARKERS = [
+	"gate blocked",
+	"gate fail",
+	"missing:",
+	"missing prerequisite",
+	"缺少",
+	"not met",
+	"未满足",
+];
+const TIMEOUT_ENV_MARKERS = ["timeout", "timed out", "locate", "advanceerror", "no such file", "cannot find"];
+
+export function classifyAdvanceFailure(text: string): string {
+	const low = text.toLowerCase();
+	if (INTERFACE_DRIFT_MARKERS.some((m) => low.includes(m))) return "interface-drift";
+	if (GATE_BLOCKED_MARKERS.some((m) => low.includes(m))) return "gate-blocked";
+	if (TIMEOUT_ENV_MARKERS.some((m) => low.includes(m))) return "timeout-env";
+	return "other";
+}
+
+/** One key's most recent advance failure run from the timeline tail.
+ *
+ * Mirrors the conductor's watch on purpose, so the panel never reports
+ * `recovered` while the guard keeps counting: only a successful advance of
+ * the *same* edge ends a run (a neighbouring boundary's success is ignored,
+ * exactly as `conductor._advance_failure_streak` skips it). The one
+ * deliberate difference is the trailing edge — the panel keeps showing the
+ * run that led to a `stalled`/`gate-created` event, which the guard stops at
+ * because it decides whether to freeze the key. */
+export function deriveAdvanceStalls(events: TimelineEvent[], nowMs: number): MonitorStall[] {
+	interface Acc {
+		edge: string;
+		count: number;
+		classes: Record<string, number>;
+		lastError: string;
+		newestTs: string;
+	}
+	const active = new Map<string, Acc>();
+	const cleared = new Set<string>();
+	const pendingError = new Map<string, string>();
+	for (let i = events.length - 1; i >= 0; i--) {
+		const ev = events[i];
+		if (ev === undefined) continue;
+		const key = ev.key;
+		if (key === "" || key === "-") continue;
+		if (ev.ev === "config") {
+			if (!pendingError.has(key) && ev.detail.includes("advance")) {
+				pendingError.set(
+					key,
+					ev.detail
+						.slice(ev.detail.indexOf(":") + 1)
+						.trim()
+						.slice(0, 120),
+				);
+			}
+			continue;
+		}
+		if (ev.ev !== "advance") continue;
+		const m = ADVANCE_DETAIL_RE.exec(ev.detail);
+		if (m === null) continue;
+		const edge = m[1] ?? "";
+		if (cleared.has(`${key}|${edge}`)) continue;
+		const exitCode = Number.parseInt(m[2] ?? "0", 10);
+		if (exitCode === 0) {
+			// Only this edge's own success ends its run (the conductor skips a
+			// different edge's advance entirely); older same-edge failures are
+			// then skipped via `cleared`, so two boundaries never merge.
+			const activeEntry = active.get(key);
+			if (activeEntry !== undefined && activeEntry.edge === edge) active.delete(key);
+			cleared.add(`${key}|${edge}`);
+			continue;
+		}
+		const acc = active.get(key);
+		if (acc !== undefined) {
+			if (acc.edge !== edge) continue; // another boundary's failures
+			acc.count += 1;
+			const cls = m[3] ?? classifyAdvanceFailure(acc.lastError);
+			acc.classes[cls] = (acc.classes[cls] ?? 0) + 1;
+			continue;
+		}
+		const lastError = pendingError.get(key) ?? "";
+		const cls = m[3] ?? classifyAdvanceFailure(lastError);
+		active.set(key, { edge, count: 1, classes: { [cls]: 1 }, lastError, newestTs: ev.ts });
+	}
+	const stalls: MonitorStall[] = [];
+	for (const [key, acc] of active) {
+		const ranked = Object.entries(acc.classes).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+		const parsed = Date.parse(acc.newestTs);
+		stalls.push({
+			key,
+			edge: acc.edge,
+			count: acc.count,
+			primaryClass: ranked[0]?.[0] ?? "other",
+			classCounts: acc.classes,
+			lastError: acc.lastError,
+			ageMs: Number.isNaN(parsed) ? null : Math.max(0, nowMs - parsed),
+		});
+	}
+	stalls.sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+	return stalls;
+}
+
+/** Injection seam for tests (same pattern as startMonitor's readState). */
+export interface AutopilotPanelDeps {
+	readConfigFile?: (projectDir: string) => ConfigResult;
+	readRoadmapFile?: (projectDir: string) => RoadmapResult;
+	readIndexPhases?: (projectDir: string) => Map<string, string>;
+	readTimeline?: (file: string) => TimelineEvent[];
+}
+
+function defaultIndexPhases(projectDir: string): Map<string, string> {
+	try {
+		const entries = new IndexStore(path.join(projectDir, ".agenticdoc")).readAll();
+		return new Map(entries.map((e) => [e.key, e.phase]));
+	} catch {
+		return new Map();
+	}
+}
+
+/** Derive the autopilot section from the file family (AC-007: every source
+ * degrades to a safe default instead of throwing — a half-present project
+ * still renders a full panel). Pure read-only. */
+export function deriveAutopilotPanel(
+	projectDir: string,
+	nowMs: number,
+	workers: MonitorWorker[],
+	deps?: AutopilotPanelDeps,
+): MonitorAutopilot {
+	const configResult = (deps?.readConfigFile ?? readConfig)(projectDir);
+	const config = configResult.ok ? configResult.config : null;
+	const roadmap = (deps?.readRoadmapFile ?? readRoadmap)(projectDir);
+	const statusByKey = new Map<string, string>();
+	const depsByKey = new Map<string, string[]>();
+	if (roadmap.ok) {
+		for (const stage of roadmap.stages) {
+			for (const [key, status] of Object.entries(stage.keyStatus)) statusByKey.set(key, status);
+			for (const row of stage.keys) depsByKey.set(row.key, row.dependsOn);
+		}
+	}
+	const phaseByKey = (deps?.readIndexPhases ?? defaultIndexPhases)(projectDir);
+	const events = (deps?.readTimeline ?? ((file: string) => readTimelineTail(file)))(timelinePath(projectDir));
+
+	let tickSeq: number | null = null;
+	let tickAgeMs: number | null = null;
+	for (let i = events.length - 1; i >= 0; i--) {
+		const ev = events[i];
+		if (ev === undefined || ev.ev !== BEAT_EV) continue;
+		tickSeq = ev.seq;
+		const parsed = Date.parse(ev.ts);
+		tickAgeMs = Number.isNaN(parsed) ? null : Math.max(0, nowMs - parsed);
+		break;
+	}
+	const pollMs = (config?.poll_interval_sec ?? DEFAULT_CONFIG.poll_interval_sec) * 1000;
+	const staleAfterMs = Math.max(30_000, pollMs * 5);
+
+	const keys: MonitorKey[] = [];
+	const allKeys = [...new Set([...statusByKey.keys(), ...phaseByKey.keys()])].sort();
+	for (const key of allKeys) {
+		keys.push({
+			key,
+			phase: phaseByKey.get(key) ?? "—",
+			status: statusByKey.get(key) ?? "unknown",
+			inFlight: workers.filter((w) => w.taskKey.startsWith(`ap-${key}-`)).length,
+			blockedBy: (depsByKey.get(key) ?? []).filter(
+				(dep) => !["done", "closed-legacy"].includes(statusByKey.get(dep) ?? ""),
+			),
+		});
+	}
+	const busyKeys = new Set<string>();
+	for (const w of workers) {
+		const owner = allKeys.find((key) => w.taskKey.startsWith(`ap-${key}-`));
+		busyKeys.add(owner ?? w.taskKey);
+	}
+
+	return {
+		enabled: config?.enabled ?? false,
+		everEnabled: fs.existsSync(configPath(projectDir)) && configResult.ok,
+		tickSeq,
+		tickAgeMs,
+		tickStale: tickAgeMs !== null && tickAgeMs > staleAfterMs,
+		slotsUsed: busyKeys.size,
+		slotsMax: config?.max_parallel_keys ?? DEFAULT_CONFIG.max_parallel_keys,
+		stallTicks: config?.advance_stall_ticks ?? DEFAULT_CONFIG.advance_stall_ticks,
+		keys,
+		stalls: deriveAdvanceStalls(events, nowMs),
+	};
 }
 
 // ── Render: renderMonitorLines (pure) ────────────────────────────────────────
@@ -215,8 +532,8 @@ function trunc(s: string, max: number): string {
 	return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }
 
-/** "45s", "3m", "2h 3m" — coarse serve uptime. */
-function formatUptime(ms: number): string {
+/** "45s", "3m", "2h 3m" — coarse duration (serve uptime, stall age). */
+function formatDuration(ms: number): string {
 	const s = Math.max(0, Math.floor(ms / 1000));
 	if (s < 60) return `${s}s`;
 	const m = Math.floor(s / 60);
@@ -252,7 +569,7 @@ export function renderMonitorLines(s: MonitorSnapshot): string[] {
 		if (detail.length > room) detail = `${detail.slice(0, Math.max(0, room - 1))}…`;
 		lines.push(`${head} (${detail})${tail}`);
 	} else {
-		const up = s.serve.upMs !== null ? `, up ${formatUptime(s.serve.upMs)}` : "";
+		const up = s.serve.upMs !== null ? `, up ${formatDuration(s.serve.upMs)}` : "";
 		lines.push(trunc(`serve: PID ${s.serve.pid ?? "?"} fresh${up}`, MONITOR_LINE_MAX));
 	}
 
@@ -264,6 +581,55 @@ export function renderMonitorLines(s: MonitorSnapshot): string[] {
 		lines.push(`conductor: dead (pid ${s.conductor.pid} stale)`);
 	} else {
 		lines.push(trunc(`conductor: not running | ${conductorIntent(s.conductor)}`, MONITOR_LINE_MAX));
+	}
+
+	if (s.autopilot.enabled) {
+		const a = s.autopilot;
+		const tick =
+			a.tickSeq === null
+				? "tick: none yet"
+				: `tick seq ${a.tickSeq} (${a.tickAgeMs === null ? "—" : formatDuration(a.tickAgeMs)} ago)`;
+		const stale = a.tickStale ? " STALE (conductor not ticking)" : "";
+		const count = (status: string): number => a.keys.filter((k) => k.status === status).length;
+		lines.push(
+			trunc(
+				`autopilot: ${tick}${stale} | slots ${a.slotsUsed}/${a.slotsMax} | ` +
+					`keys ${a.keys.length} (running ${count("running")}, stalled ${count("stalled")}, ` +
+					`done ${count("done")}) | stall-ticks ${a.stallTicks}`,
+				MONITOR_LINE_MAX,
+			),
+		);
+		const stallByKey = new Map(a.stalls.map((stall) => [stall.key, stall]));
+		const attention = a.keys.filter(
+			(k) => k.status === "stalled" || k.inFlight > 0 || k.blockedBy.length > 0 || stallByKey.has(k.key),
+		);
+		for (const k of attention.slice(0, 6)) {
+			const stall = stallByKey.get(k.key);
+			const bits = [`  · ${k.key} ${k.phase}/${k.status}`];
+			if (k.inFlight > 0) bits.push(`${k.inFlight} running`);
+			if (stall !== undefined) {
+				const error = stall.lastError === "" ? "" : ` "${stall.lastError}"`;
+				bits.push(
+					`advance ${stall.count}x ${stall.primaryClass} ` +
+						`${stall.ageMs === null ? "—" : formatDuration(stall.ageMs)} ago${error}`,
+				);
+			}
+			if (k.blockedBy.length > 0) bits.push(`deps blocked by ${k.blockedBy.join(",")}`);
+			if (k.status === "stalled") {
+				const gate = s.gates.find((g) => g.kind === "stalled" && g.key === k.key);
+				const hint =
+					gate === undefined
+						? "-> /autopilot gate <id> approve|reject"
+						: `-> /autopilot gate ${gate.id} approve|reject`;
+				bits.push(gate === undefined ? hint : `${hint} (resume grants one round)`);
+			}
+			lines.push(trunc(bits.join(" | "), MONITOR_LINE_MAX));
+		}
+		if (attention.length > 6) lines.push(`  · +${attention.length - 6} more -> /autopilot status`);
+	} else if (!s.autopilot.everEnabled) {
+		lines.push("autopilot: not enabled (/autopilot enable)");
+	} else {
+		lines.push("autopilot: disabled (config.json enabled=false)");
 	}
 
 	if (s.workers.length === 0) {

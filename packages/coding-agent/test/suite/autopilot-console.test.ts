@@ -988,6 +988,7 @@ describe("/autopilot command set (VC-017 / AC-015 / AC-016 / AC-025)", () => {
 				worker_timeout_min: 30,
 				l2_read_file_cap: 8,
 				l2_read_byte_cap: 65536,
+				advance_stall_ticks: 5,
 			});
 			// Same shape config.py save_config writes: indent-2 + trailing newline.
 			expect(fs.readFileSync(configFile, "utf8").endsWith("}\n")).toBe(true);

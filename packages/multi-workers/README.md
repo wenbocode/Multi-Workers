@@ -193,6 +193,27 @@ contract:
 | `/mw target show \| set \| clear` | 双工作区配置（见上） |
 | `/mw ack <task-key> \| all` | 确认终态 worker 结果 |
 
+## Autopilot 配置与停滞处置（mw-autopilot-stall-feedback）
+
+`.agenticdoc/_autopilot/config.json`（缺失即默认；存在但非法会 fail-closed 报错）：
+
+| 键 | 默认 | 说明 |
+|----|------|------|
+| `enabled` / `paused` | false / false | 总开关；`mw serve` 据此启停 conductor |
+| `poll_interval_sec` | 4 | tick 周期（1..5，受 AC-019 心跳预算限制） |
+| `max_parallel_keys` | 2 | 同时推进的 key 上限 |
+| `round_budget` | 2 | L1↔L2 / L3 复评 / 任务重试共用的轮数上限 |
+| `advance_stall_ticks` | 5 | 同一 `(key, edge)` 的 phase 推进连续失败次数阀值（1..50）；达阼值即把 key 标 `stalled` 并建门禁 |
+| `worker_timeout_min` | 30 | worker 墙钟兜底超时 |
+
+停滞处置：
+
+- 每次失败的 `advance` 事件带分类（`class=interface-drift|gate-blocked|timeout-env|other`），连击从 timeline 尾部重派生（无私有状态），因此 conductor 重启不丢。
+- `approve` 一个 `stalled` 门禁 = 该 key 回到 `running`，且 L2 / EXECUTE / L3 / repair 四个预算点**各放宽一轮**（额度 = 该 key 已批准的 stalled 门禁数）；该额度**不可复用**——每个回路自己的轮次计数是单调的，用掉那一轮后同一回路会再次到顶、需要新的人工决定；`reject` = 既有 `closed-legacy` 语义。
+- `L3 无裁决`：reviewer worker 崩溃（`output.md` 缺失）不再被当成 `below`，而是重派下一轮 L3，停滞原因也写明 worker 状态与 task_key。
+- 新增 timeline 事件类型：`resume`（人工 approve 后恢复）、`l3-no-verdict`（reviewer 未交裁决）。
+- PM 窗口底部监控面板会展示 tick 新鲜度 / 槽位 / 每 key 相位与状态 / 停滞连击与最近错误，并在 `stalled` 行给出 `/autopilot gate <id> approve|reject` 处置命令；面板的连击派生与 conductor 守卫同口径（只有**同一 edge** 的成功才清除，相邻边界的成功既不打断也不计入），唯一差异是面板会保留 `stalled`/`gate-created` 之后的那一轮连击以便展示。
+
 ## 关键环境变量
 
 | 变量 | 说明 |
