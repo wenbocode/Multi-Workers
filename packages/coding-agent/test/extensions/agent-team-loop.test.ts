@@ -2729,7 +2729,7 @@ describe("ack channels (T-07: AC-004/005/006/010/011, VC-004/005/006/010/011)", 
 		await terminalRow(root, "t-fail", "failed");
 		await terminalRow(root, "t-run", "running");
 		const { pi, commands } = fakeCmdPi();
-		registerMwCommands(pi, root, store, ackStore);
+		registerMwCommands(pi, root, store, ackStore, { key: "key-a" }, root);
 		const handler = commands.get("mw");
 		if (!handler) throw new Error("mw command not registered");
 		const { ctx, notifications } = fakeCmdCtx();
@@ -2789,7 +2789,7 @@ describe("ack channels (T-07: AC-004/005/006/010/011, VC-004/005/006/010/011)", 
 		await terminalRow(root, "t-nc", "needs-clarification");
 		await terminalRow(root, "t-run", "running");
 		const { pi, tools } = fakeCmdPi();
-		registerWorkerTools(pi, store, ackStore, new IndexStore(root), root, { key: undefined });
+		registerWorkerTools(pi, store, ackStore, new IndexStore(root), root, { key: "key-a" });
 		const tool = tools.get("ack_worker_result");
 		if (!tool) throw new Error("ack_worker_result not registered");
 
@@ -2856,13 +2856,13 @@ describe("ack channels (T-07: AC-004/005/006/010/011, VC-004/005/006/010/011)", 
 
 		// VC-011: list_tasks output — acked terminal row badged, unacked not.
 		const { pi, tools } = fakeCmdPi();
-		registerWorkerTools(pi, store, ackStore, new IndexStore(root), root, { key: undefined });
+		registerWorkerTools(pi, store, ackStore, new IndexStore(root), root, { key: "key-a" });
 		const list = tools.get("list_tasks");
 		if (!list) throw new Error("list_tasks not registered");
-		const res = await list.execute("id", {}, undefined, undefined, {} as ExtensionContext);
+		const res = await list.execute("id", { scope: "all" }, undefined, undefined, {} as ExtensionContext);
 		const text = res.content[0]?.type === "text" ? res.content[0].text : "";
-		const oldLine = text.split("\n").find((l) => l.startsWith("t-old"));
-		const newLine = text.split("\n").find((l) => l.startsWith("t-new"));
+		const oldLine = text.split("\n").find((l) => l.includes("t-old"));
+		const newLine = text.split("\n").find((l) => l.includes("t-new"));
 		expect(oldLine).toContain("| acked");
 		expect(newLine).not.toContain("acked");
 		console.log("[VERIFY] VC-004: persist=yes, non_terminal_rejected=yes, all=yes");
@@ -2870,6 +2870,138 @@ describe("ack channels (T-07: AC-004/005/006/010/011, VC-004/005/006/010/011)", 
 		console.log("[VERIFY] VC-006: status_unchanged=yes, no_redispatch=yes");
 		console.log("[VERIFY] VC-010: hint=ack_worker_result-present");
 		console.log("[VERIFY] VC-011: badge=acked-present");
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+});
+
+describe("task scope isolation (mw-task-scope-isolation: AC-001..AC-007)", () => {
+	/** Seed a queue row under an arbitrary owner key (root IS the .agenticdoc dir). */
+	async function rowIn(root: string, owner: string, taskKey: string, status: WorkerStatus): Promise<void> {
+		const taskDir = path.join(root, owner, "workers", taskKey);
+		fs.mkdirSync(taskDir, { recursive: true });
+		fs.writeFileSync(path.join(taskDir, "task.md"), "type: coding\n\nwork\n", "utf8");
+		await new WorkerStore(root).upsert({
+			taskKey,
+			status,
+			cli: "pi",
+			provider: "timi",
+			taskPath: path.join(taskDir, "task.md"),
+			dispatchedAt: "",
+			updatedAt: new Date().toISOString(),
+			model: "",
+		});
+	}
+
+	const textOf = (res: { content: Array<{ type: string; text?: string }> }): string =>
+		res.content[0]?.type === "text" ? (res.content[0].text ?? "") : "";
+
+	it("AC-001..AC-004: list_tasks scopes to this window by default, owner column, guidance", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const ackStore = new AckStore(root);
+		await rowIn(root, "key-a", "t-mine", "running");
+		await rowIn(root, "key-b", "t-theirs", "failed");
+		const { pi, tools } = fakeCmdPi();
+		registerWorkerTools(pi, store, ackStore, new IndexStore(root), root, { key: "key-a" });
+		const list = tools.get("list_tasks");
+		if (!list) throw new Error("list_tasks not registered");
+
+		// AC-001: default scope = mine (watched key only), owner prefix on every row.
+		const mine = textOf(await list.execute("id", {}, undefined, undefined, {} as ExtensionContext));
+		expect(mine).toContain("key-a :: t-mine | running | pi");
+		expect(mine).not.toContain("t-theirs");
+
+		// AC-002: scope "all" keeps the whole-project view (both owners).
+		const all = textOf(await list.execute("id", { scope: "all" }, undefined, undefined, {} as ExtensionContext));
+		expect(all).toContain("key-a :: t-mine");
+		expect(all).toContain("key-b :: t-theirs");
+
+		// AC-003: scope "key" filters by owner; a missing/unknown parameter is a
+		// text error, never a silent fallback to the whole project.
+		const one = textOf(
+			await list.execute("id", { scope: "key", key: "key-b" }, undefined, undefined, {} as ExtensionContext),
+		);
+		expect(one).toContain("key-b :: t-theirs");
+		expect(one).not.toContain("t-mine");
+		const missing = textOf(await list.execute("id", { scope: "key" }, undefined, undefined, {} as ExtensionContext));
+		expect(missing).toContain('scope "key" requires key');
+		const bogus = textOf(await list.execute("id", { scope: "nope" }, undefined, undefined, {} as ExtensionContext));
+		expect(bogus).toContain("Unknown scope");
+
+		// AC-004: a window with no watched key and no dispatch gets guidance and
+		// never another window's rows.
+		const { pi: pi2, tools: tools2 } = fakeCmdPi();
+		registerWorkerTools(pi2, store, ackStore, new IndexStore(root), root, { key: undefined });
+		const idle = tools2.get("list_tasks");
+		if (!idle) throw new Error("list_tasks not registered");
+		const idleText = textOf(await idle.execute("id", {}, undefined, undefined, {} as ExtensionContext));
+		expect(idleText).toContain("No tasks found for this window");
+		expect(idleText).toContain("switch_key");
+		expect(idleText).toContain('scope: "all"');
+		expect(idleText).not.toContain("t-mine");
+		expect(idleText).not.toContain("t-theirs");
+		console.log("[VERIFY] AC-001..004: mine_scoped=yes, all=whole_project, key_filter=yes, empty_guidance=yes");
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("AC-005/AC-006: ack is window-scoped; foreign rows are refused and never written", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const ackStore = new AckStore(root);
+		await rowIn(root, "key-a", "a-done", "done");
+		await rowIn(root, "key-b", "b-failed", "failed");
+		const { pi, tools } = fakeCmdPi();
+		registerWorkerTools(pi, store, ackStore, new IndexStore(root), root, { key: "key-a" });
+		const ack = tools.get("ack_worker_result");
+		if (!ack) throw new Error("ack_worker_result not registered");
+
+		// AC-005: "all" covers this window only — the other key's unhandled row
+		// survives (the sidecar is project-level, so this is the whole point).
+		const res = textOf(await ack.execute("id", { task_key: "all" }, undefined, undefined, {} as ExtensionContext));
+		expect(res).toContain("Acked 1 task(s): a-done");
+		const after = new AckStore(root).readAll();
+		expect(after.has("a-done")).toBe(true);
+		expect(after.has("b-failed")).toBe(false);
+
+		// AC-006: naming a foreign row is rejected with the owning key, and the
+		// sidecar stays untouched.
+		const foreign = textOf(
+			await ack.execute("id", { task_key: "b-failed" }, undefined, undefined, {} as ExtensionContext),
+		);
+		expect(foreign).toContain("NOT acked: b-failed");
+		expect(foreign).toContain("owned by key 'key-b'");
+		expect(foreign).toContain("/pm-key switch key-b");
+		expect(new AckStore(root).readAll().has("b-failed")).toBe(false);
+		console.log("[VERIFY] AC-005/006: all_scoped=yes, foreign_rejected=yes, sidecar_untouched=yes");
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("AC-007: an explicit cross-key dispatch stays this window's task", async () => {
+		const root = mkdtemp();
+		const ws = new WorkerStore(root);
+		const is = new IndexStore(root);
+		writePhaseDocs(root, "key-b"); // documented so the dispatch gate passes
+		const { pi, tools } = fakeCmdPi();
+		registerWorkerTools(pi, ws, new AckStore(root), is, root, { key: "key-a" });
+		const dispatch = tools.get("dispatch_worker");
+		const list = tools.get("list_tasks");
+		if (!dispatch || !list) throw new Error("tools not registered");
+
+		const r = await dispatch.execute(
+			"id",
+			{ task_key: "x-task", description: "work", key: "key-b" },
+			undefined,
+			undefined,
+			fakeCmdCtx().ctx,
+		);
+		expect(textOf(r)).toContain("Dispatched worker 'x-task'");
+		expect(fs.existsSync(path.join(root, "key-b", "workers", "x-task", "task.md"))).toBe(true);
+
+		// The owner key is NOT the watched key, yet scope "mine" lists it — the
+		// in-process dispatch record is what keeps it this window's task.
+		const mine = textOf(await list.execute("id", {}, undefined, undefined, {} as ExtensionContext));
+		expect(mine).toContain("key-b :: x-task | pending");
+		console.log("[VERIFY] AC-007: cross_key_dispatch_visible=yes");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 });
@@ -4564,7 +4696,7 @@ describe("/mw model (dispatch model defaults)", () => {
 	it("the /mw slash command routes the model subcommand (missing-wiring regression)", async () => {
 		const root = mkdtemp();
 		const { pi, commands } = fakeCmdPi();
-		registerMwCommands(pi, root, new WorkerStore(root), new AckStore(root));
+		registerMwCommands(pi, root, new WorkerStore(root), new AckStore(root), { key: undefined }, root);
 		const handler = commands.get("mw");
 		if (!handler) throw new Error("mw command not registered");
 		const { ctx, notifications } = fakeCmdCtx();
