@@ -75,8 +75,25 @@ export function readPhaseDocs(agenticdocRoot, key) {
         specAC: /AC-\d{3}/.test(specContent ?? ""),
     };
 }
-/** Missing gate items in gate order; [] = fully documented. */
-export function phaseDocGaps(status) {
+/** Phases whose docs gate includes the design side. */
+const DESIGN_TIER_PHASES = new Set(["DESIGN", "PLAN", "TASKS", "EXECUTE", "VERIFY", "DONE"]);
+/** Normalize a phase string (a pm-state `- Phase:` value or a
+ * caller-supplied phase) into a gate tier. Placeholder and unknown phases —
+ * "init" (the stub `update_index.py claim` writes for new keys), "—" (the
+ * index-row placeholder), ""/whitespace, or any unrecognized value — fall
+ * back to the spec tier so a new key is never held to design-phase
+ * documentation requirements before its design phase even starts
+ * (mw-worker-visibility-gate D-102). Matching is case-insensitive and trims
+ * surrounding whitespace. */
+export function gateTierOf(phase) {
+    return DESIGN_TIER_PHASES.has(phase.trim().toUpperCase()) ? "design" : "spec";
+}
+/** Missing gate items in gate order; [] = fully documented. The `tier` picks
+ * the gate layer: "spec" pushes only the four spec-side items (order
+ * unchanged); "design" pushes all six items in the exact pre-tiering order.
+ * An omitted tier keeps the legacy full (design-layer) check so existing
+ * one-argument callers behave exactly as before. */
+export function phaseDocGaps(status, tier = "design") {
     const gaps = [];
     if (!status.spec)
         gaps.push("spec.md missing or under 500 bytes");
@@ -86,10 +103,12 @@ export function phaseDocGaps(status) {
         gaps.push("spec.md missing a non-empty §0 Goal Alignment section with 预期收益 (goal.md is established)");
     if (!status.specAC)
         gaps.push("spec.md has no numbered acceptance criteria (AC-NNN)");
-    if (!status.design)
-        gaps.push("design.md missing or under 500 bytes");
-    if (status.designEvidence < 1)
-        gaps.push("evidence/research/design-*.md missing (>= 1 research note; a zero-research declaration counts)");
+    if (tier === "design") {
+        if (!status.design)
+            gaps.push("design.md missing or under 500 bytes");
+        if (status.designEvidence < 1)
+            gaps.push("evidence/research/design-*.md missing (>= 1 research note; a zero-research declaration counts)");
+    }
     return gaps;
 }
 /** Compact widget badge for the docs gate, e.g. `S+ D- ev:1/2`. */
@@ -102,13 +121,20 @@ export const DOC_GATE_HINT = "Generate them via the agentic-task requirements/sy
     "(every key decision needs an evidence/research/ note; zero-research still needs a " +
     "declaration note). For throwaway ad-hoc work, dispatch under '_scratch' instead.";
 /** Whether a key may dispatch worker tasks: _scratch is the ad-hoc escape
- * hatch; real AgenticTask keys need the full spec + design + research-evidence
- * chain (the advance_phase.py design/plan gates, checked mechanically here so
- * undocumented work cannot reach the worker queue). Returns the gap list,
- * empty when dispatch is allowed. */
-export function dispatchDocGaps(agenticdocRoot, key) {
+ * hatch; real AgenticTask keys are gated by the phase-derived tier. From
+ * DESIGN onward the full spec + design + research-evidence chain is required
+ * (the advance_phase.py design/plan gates, checked mechanically here so
+ * undocumented work cannot reach the worker queue); at SPEC (or any
+ * placeholder/unknown phase) only the spec-side chain is required, so early
+ * research workers can run under their owner key instead of _scratch.
+ * `phase` is the owner key's current phase (its pm-state `- Phase:` value;
+ * "" when unknown). Omitting `phase` defaults to the spec tier (D-101b) so
+ * call sites that have not been wired to pass a phase yet keep compiling
+ * and behave as the SPEC layer. Returns the gap list, empty when dispatch
+ * is allowed. */
+export function dispatchDocGaps(agenticdocRoot, key, phase) {
     if (key === SCRATCH_WORKERS_KEY)
         return [];
-    return phaseDocGaps(readPhaseDocs(agenticdocRoot, key));
+    return phaseDocGaps(readPhaseDocs(agenticdocRoot, key), gateTierOf(phase ?? ""));
 }
 //# sourceMappingURL=phase-docs.js.map

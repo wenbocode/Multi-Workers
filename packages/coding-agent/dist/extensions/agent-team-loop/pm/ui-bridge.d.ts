@@ -3,6 +3,7 @@ import type { ModelRegistry } from "../../../core/model-registry.ts";
 import type { AckStore } from "../shared/ack-store.ts";
 import { type IndexStore } from "../shared/index-store.ts";
 import type { DoctorJson, MwCliResult } from "../shared/mw-runner.ts";
+import { type PmStateClaimSyncResult } from "../shared/pm-state-claim.ts";
 import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 /** Owner key for a worker task — this window's own claim first, the shared
  * active pointer second. Explicit key wins (deliberate choice — no warning).
@@ -69,6 +70,11 @@ export interface TakeoverResult {
      * claims to have passed. Non-blocking — claiming a broken key to fix it
      * is legitimate; the warnings make the breakage visible immediately. */
     audit: string[];
+    /** Result of mirroring the claim into {key}/pm-state.md's '- Claim-Id:'
+     * line (mw-worker-visibility-gate D-107/D-108); undefined when the claim
+     * itself failed. A failed mirror never flips `ok` — the index row is
+     * authoritative, pm-state.md is only its mirror. */
+    claimSync?: PmStateClaimSyncResult;
 }
 /** Claim a key for this window — shared by /pm-key switch, /pm-key new and
  * the spec-write auto-takeover. Routes through IndexStore.claim so the
@@ -76,6 +82,11 @@ export interface TakeoverResult {
  * lock: racing windows cannot both believe they claimed. Also runs the
  * phase-chain audit on success (audit_phase.py's TS-side mirror). */
 export declare function takeOverKey(indexStore: IndexStore, key: string, force: boolean, agenticdocRoot: string): Promise<TakeoverResult>;
+/** One-line warning for a claim whose pm-state.md mirror sync failed
+ * (D-108): the claim itself succeeded — the index row is authoritative — so
+ * this only makes the divergence visible to the user/agent. "" when the
+ * sync succeeded or never ran (nothing to warn about). */
+export declare function claimSyncWarningText(key: string, sync?: PmStateClaimSyncResult): string;
 /** Owner key of a queue row: the first taskPath segment below the agenticdoc
  * root ({key}/workers/<task>/task.md → key). Legacy root-level rows resolve to
  * their own task key and simply never match a watched key. */
@@ -149,8 +160,13 @@ export declare function ackTasks(workerStore: WorkerStore, ackStore: AckStore, t
  *     (/mw ack), all shown, never folded; header carries the count
  *  3. history — done rows ∪ acked terminal rows, newest-first, capped at
  *     WATCH_HISTORY_MAX with a `+N more` fold line
- * Terminal-row details come from readTerminalDetail (D-004). */
-export declare function renderWatchLines(indexStore: IndexStore, workerStore: WorkerStore, ackStore: AckStore, agenticdocRoot: string, key: string): string[];
+ * Terminal-row details come from readTerminalDetail (D-004).
+ * `extraTaskKeys` (mw-worker-visibility-gate D-105) optionally names tasks
+ * THIS window dispatched that landed under a different key: they render as
+ * ONE aggregate tail line (`  ~ N elsewhere: …`, D-106) instead of rows, so
+ * cross-key work stays visible without drowning the panel. Omitted or empty
+ * keeps the output identical to the pre-aggregate panel (AC-007). */
+export declare function renderWatchLines(indexStore: IndexStore, workerStore: WorkerStore, ackStore: AckStore, agenticdocRoot: string, key: string, extraTaskKeys?: ReadonlySet<string>): string[];
 /** Render (or clear) the bottom watch widget on a UI-capable context. */
 export declare function setWatchWidget(ctx: ExtensionContext, lines: string[] | undefined): void;
 /** Render (or clear) the widget via the session_start-captured context.

@@ -11,6 +11,7 @@ import { readIndexMdActive } from "../shared/index-store.js";
 import { buildMw, doctorMw, getMwStatus, initMw, modelMw, partitionMw, RAG_SUBCOMMANDS, ragMw, restartMw, serveStaleness, startMw, stopMw, targetMw, updateEnvMw, } from "../shared/mw-runner.js";
 import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.js";
 import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "../shared/phase-docs.js";
+import { syncPmStateClaimId } from "../shared/pm-state-claim.js";
 import { PHASE_ORDER, phaseAuditWarnings } from "../shared/pm-state-guard.js";
 import { headline } from "../worker/output-writer.js";
 import { StateManager } from "./state-manager.js";
@@ -152,7 +153,20 @@ export async function takeOverKey(indexStore, key, force, agenticdocRoot) {
     const self = windowClaimId();
     const outcome = await indexStore.claim(key, self, (id) => claimState(id, self) === "held-live", { force });
     const audit = outcome.ok ? phaseAuditWarnings(agenticdocRoot, key, outcome.entry.phase) : [];
-    return { ok: outcome.ok, blockedBy: outcome.blockedBy, claimId: self, created: outcome.created, audit };
+    // Mirror the claim into {key}/pm-state.md's '- Claim-Id:' line (D-108):
+    // every path that flips the index row's Claim column must also sync the
+    // mirror, or the two sources diverge. Failure is non-fatal by design.
+    const claimSync = outcome.ok ? syncPmStateClaimId(agenticdocRoot, key, self) : undefined;
+    return { ok: outcome.ok, blockedBy: outcome.blockedBy, claimId: self, created: outcome.created, audit, claimSync };
+}
+/** One-line warning for a claim whose pm-state.md mirror sync failed
+ * (D-108): the claim itself succeeded — the index row is authoritative — so
+ * this only makes the divergence visible to the user/agent. "" when the
+ * sync succeeded or never ran (nothing to warn about). */
+export function claimSyncWarningText(key, sync) {
+    if (sync?.ok !== false)
+        return "";
+    return `WARNING: claim succeeded but ${key}/pm-state.md was not synced (${sync.reason}). The index row is authoritative.`;
 }
 const WATCH_WIDGET_KEY = "agent-team-loop-watch";
 /** History rows kept in the widget (D-003): done rows and acked terminal
@@ -379,8 +393,13 @@ export async function ackTasks(workerStore, ackStore, targets, scope) {
  *     (/mw ack), all shown, never folded; header carries the count
  *  3. history — done rows ∪ acked terminal rows, newest-first, capped at
  *     WATCH_HISTORY_MAX with a `+N more` fold line
- * Terminal-row details come from readTerminalDetail (D-004). */
-export function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, key) {
+ * Terminal-row details come from readTerminalDetail (D-004).
+ * `extraTaskKeys` (mw-worker-visibility-gate D-105) optionally names tasks
+ * THIS window dispatched that landed under a different key: they render as
+ * ONE aggregate tail line (`  ~ N elsewhere: …`, D-106) instead of rows, so
+ * cross-key work stays visible without drowning the panel. Omitted or empty
+ * keeps the output identical to the pre-aggregate panel (AC-007). */
+export function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, key, extraTaskKeys) {
     const counts = {
         pending: 0,
         running: 0,
@@ -389,7 +408,11 @@ export function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRo
         "needs-clarification": 0,
     };
     const acked = new Set(ackStore.readAll().keys());
-    const owned = workerStore.readAll().filter((e) => ownerKeyOf(e, agenticdocRoot) === key);
+    // One queue read shared by the own-key rows and the cross-key aggregate —
+    // the aggregate must not add a second full readAll() (§9).
+    const all = workerStore.readAll();
+    const owned = all.filter((e) => ownerKeyOf(e, agenticdocRoot) === key);
+    const aggregate = elsewhereAggregateLine(all, extraTaskKeys, key, agenticdocRoot);
     for (const e of owned)
         counts[e.status]++;
     // Unhandled = failed/needs-clarification not yet acked — the PM's explicit
@@ -416,8 +439,9 @@ export function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRo
     if (unhandled.length > 0)
         parts.push(`${unhandled.length} unhandled`);
     const header = `[mw] ${key} | ${phase}${badge ? ` | docs ${badge}` : ""} | ${parts.length > 0 ? parts.join(" / ") : "no workers"}`;
-    if (owned.length === 0)
-        return [header, "  (no worker tasks)"];
+    if (owned.length === 0) {
+        return aggregate === undefined ? [header, "  (no worker tasks)"] : [header, "  (no worker tasks)", aggregate];
+    }
     // One rendered row per entry; detail per status (live heartbeat vs D-04
     // terminal sources). Width truncation is uniform (WATCH_LINE_MAX).
     // D-116: every row carries the worker's model in a [id] badge — running
@@ -484,7 +508,76 @@ export function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRo
         lines.push(rowLine(e));
     if (history.length > WATCH_HISTORY_MAX)
         lines.push(`  ... +${history.length - WATCH_HISTORY_MAX} more`);
+    // The cross-key aggregate is a never-folded tail line (D-106): it rides
+    // after the history fold, never inside it.
+    if (aggregate !== undefined)
+        lines.push(aggregate);
     return lines;
+}
+/** Status order inside one owner group of the aggregate line (D-106): the
+ * fixed sequence running/pending/done/failed/needs-clarification, only
+ * non-zero entries rendered. */
+const AGGREGATE_STATUS_ORDER = ["running", "pending", "done", "failed", "needs-clarification"];
+/** The single cross-key aggregate line for the watch panel (D-105/D-106):
+ * `  ~ <N> elsewhere: <owner>(<c1> running, <c2> failed, …; risk=high:<K>)`.
+ *
+ * `extraTaskKeys` are the task keys THIS window dispatched; rows among them
+ * owned by a DIFFERENT key than the watched one are summarized here instead
+ * of rendered as rows (cross-key rows must not be misread as the watched
+ * key's own output). Returns undefined when `extraTaskKeys` is omitted or
+ * holds no cross-key row — the caller then keeps the pre-aggregate output
+ * line for line (AC-007/VC-007).
+ *
+ * Shape (D-106): one line; owner groups joined with ", " sorted by (row
+ * count desc, owner name asc); per group only non-zero statuses in the fixed
+ * order; `; risk=high:<K>` appended when K >= 1 of the group's running rows
+ * carries a high convergence checkpoint (same readTaskProgress source as the
+ * own-key rows). Over-long lines are truncated to WATCH_LINE_MAX like every
+ * other panel line. Reuses the caller's single workerStore.readAll() result
+ * — no second queue read (§9). */
+function elsewhereAggregateLine(all, extraTaskKeys, watchKey, agenticdocRoot) {
+    if (extraTaskKeys === undefined)
+        return undefined;
+    const elsewhere = all.filter((e) => extraTaskKeys.has(e.taskKey) === true && ownerKeyOf(e, agenticdocRoot) !== watchKey);
+    if (elsewhere.length === 0)
+        return undefined;
+    const groups = new Map();
+    for (const e of elsewhere) {
+        const owner = ownerKeyOf(e, agenticdocRoot);
+        const group = groups.get(owner);
+        if (group === undefined)
+            groups.set(owner, [e]);
+        else
+            group.push(e);
+    }
+    const owners = [...groups.keys()].sort((a, b) => {
+        const byRows = (groups.get(b)?.length ?? 0) - (groups.get(a)?.length ?? 0);
+        return byRows !== 0 ? byRows : a < b ? -1 : a > b ? 1 : 0;
+    });
+    const parts = [];
+    for (const owner of owners) {
+        const group = groups.get(owner) ?? [];
+        const counts = {
+            pending: 0,
+            running: 0,
+            done: 0,
+            failed: 0,
+            "needs-clarification": 0,
+        };
+        for (const e of group)
+            counts[e.status]++;
+        const countText = AGGREGATE_STATUS_ORDER.filter((s) => counts[s] > 0)
+            .map((s) => `${counts[s]} ${s}`)
+            .join(", ");
+        let highRisk = 0;
+        for (const e of group) {
+            if (e.status === "running" && readTaskProgress(path.dirname(e.taskPath))?.checkpoint?.risk === "high") {
+                highRisk++;
+            }
+        }
+        parts.push(`${owner}(${countText}${highRisk > 0 ? `; risk=high:${highRisk}` : ""})`);
+    }
+    return trunc(`  ~ ${elsewhere.length} elsewhere: ${parts.join(", ")}`, WATCH_LINE_MAX);
 }
 /** Render (or clear) the bottom watch widget on a UI-capable context. */
 export function setWatchWidget(ctx, lines) {
@@ -557,6 +650,11 @@ export function registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agent
                 ctx.ui.notify(`Created and claimed key: ${keyName} (${result.claimId})`, "info");
                 if (result.audit.length > 0)
                     ctx.ui.notify(result.audit.join("\n"), "warning");
+                // pm-state.md mirror sync failure is visible but non-fatal (D-108):
+                // the claim itself succeeded; the index row stays authoritative.
+                const createdSyncWarning = claimSyncWarningText(keyName, result.claimSync);
+                if (createdSyncWarning !== "")
+                    ctx.ui.notify(createdSyncWarning, "warning");
                 return;
             }
             if (sub === "switch") {
@@ -579,6 +677,9 @@ export function registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agent
                 ctx.ui.notify(`Took over key: ${keyName} (claim ${result.claimId})`, "info");
                 if (result.audit.length > 0)
                     ctx.ui.notify(result.audit.join("\n"), "warning");
+                const switchSyncWarning = claimSyncWarningText(keyName, result.claimSync);
+                if (switchSyncWarning !== "")
+                    ctx.ui.notify(switchSyncWarning, "warning");
                 return;
             }
             ctx.ui.notify("Usage: /pm-key new|switch|list [key-name] [--force]", "warning");
@@ -871,9 +972,12 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
                 return { content: [{ type: "text", text: typeResolution.message }], details: undefined };
             }
             const provider = cli === "pi" ? "timi" : "";
-            // Docs gate: real keys need spec + design + research evidence before any
-            // worker runs (advance_phase.py gate semantics, enforced mechanically).
-            const docGaps = dispatchDocGaps(agenticdocRoot, ownerKey);
+            // Docs gate, phase-tiered (mw-worker-visibility-gate): the owner key's
+            // CURRENT phase picks the tier — SPEC (or placeholder/unknown) needs the
+            // spec-side chain; from DESIGN onward the full six-item chain. One
+            // phase read, reused by the task.md frontmatter below.
+            const ownerPhase = dispatchPhase(agenticdocRoot, ownerKey);
+            const docGaps = dispatchDocGaps(agenticdocRoot, ownerKey, ownerPhase);
             if (docGaps.length > 0) {
                 return {
                     content: [
@@ -908,7 +1012,7 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
                 cli,
                 provider,
                 taskType: typeField,
-                phase: dispatchPhase(agenticdocRoot, ownerKey),
+                phase: ownerPhase,
                 model: model ?? "",
                 modelReason: model_reason ?? "",
                 registry: _context?.modelRegistry,
@@ -1066,6 +1170,8 @@ export function registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agent
             const auditNote = result.audit.length > 0
                 ? `\n\nPHASE-CHAIN AUDIT WARNINGS for this key (fix before continuing; phase changes go through advance_phase.py only):\n${result.audit.join("\n")}`
                 : "";
+            // pm-state.md mirror sync failure is visible but non-fatal (D-108).
+            const syncNote = claimSyncWarningText(trimmed, result.claimSync);
             return {
                 content: [
                     {
@@ -1073,7 +1179,8 @@ export function registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agent
                         text: `Took over key '${trimmed}' (claim ${result.claimId})` +
                             `${result.created ? " — new key registered in _index.parallel" : ""}. ` +
                             "This window now watches it; the bottom widget shows its live progress. Previously active keys were marked idle." +
-                            auditNote,
+                            auditNote +
+                            (syncNote === "" ? "" : `\n\n${syncNote}`),
                     },
                 ],
                 details: undefined,
@@ -1223,7 +1330,10 @@ export function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRo
             // type/model/model-reason so they are visible + re-parseable)
             const taskKey = `manual-${Date.now()}`;
             const ownerKey = resolveOwnerKeyWithSync(pi, indexStore, watch, keyArg, agenticdocRoot);
-            const docGaps = dispatchDocGaps(agenticdocRoot, ownerKey);
+            // Docs gate, phase-tiered (mw-worker-visibility-gate): same tier rule as
+            // dispatch_worker — one phase read, reused by the frontmatter below.
+            const ownerPhase = dispatchPhase(agenticdocRoot, ownerKey);
+            const docGaps = dispatchDocGaps(agenticdocRoot, ownerKey, ownerPhase);
             if (docGaps.length > 0) {
                 ctx.ui.notify(`Worker dispatch blocked ('${ownerKey}'): ${docGaps.join("; ")}. Generate the phase docs first or dispatch under _scratch.`, "warning");
                 return;
@@ -1234,7 +1344,7 @@ export function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRo
                 cli,
                 provider,
                 taskType: typeField,
-                phase: dispatchPhase(agenticdocRoot, ownerKey),
+                phase: ownerPhase,
                 model,
                 modelReason,
                 registry: ctx.modelRegistry,
