@@ -10,13 +10,16 @@ import { IndexStore } from "../shared/index-store.ts";
 import { getMwStatus, initMw, serveStaleness, startMw, waitForMwStart } from "../shared/mw-runner.ts";
 import { agenticdocRoot as resolveAgenticdocRoot, SCRATCH_WORKERS_KEY } from "../shared/paths.ts";
 import { dispatchDocGaps, readPhaseDocs } from "../shared/phase-docs.ts";
+import { syncPmStateClaimId } from "../shared/pm-state-claim.ts";
 import { registerPmStateGuard } from "../shared/pm-state-guard.ts";
 import { type WorkerEntry, type WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 import { isGoalEstablished, readGoal } from "./goal-reader.ts";
+import { StateManager } from "./state-manager.ts";
 import { dispatchTask } from "./task-dispatcher.ts";
 import {
 	applyWatchWidget,
 	claimState,
+	claimSyncWarningText,
 	deliverPmAlert,
 	deliverWorkerResult,
 	displaySummary,
@@ -304,12 +307,23 @@ export async function restoreWatch(
 						`[mw] key '${key}' is claimed by another window (${outcome.blockedBy}) — watching only.`,
 						"warning",
 					);
+				} else {
+					// This path flips the index row's Claim column too, so the
+					// pm-state.md mirror must be synced as well (D-108). A failed
+					// mirror never reverts the claim — the index row is
+					// authoritative — but the divergence must be visible.
+					const sync = syncPmStateClaimId(agenticdocRoot, key, self);
+					const syncWarning = claimSyncWarningText(key, sync);
+					if (syncWarning !== "") ctx.ui.notify(syncWarning, "warning");
 				}
 			}
 		}
 	}
 
-	setWatchWidget(ctx, renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, key));
+	setWatchWidget(
+		ctx,
+		renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, key, watch.dispatchedTaskKeys),
+	);
 	// Re-stamp the entry so it lands in the (possibly new) session file.
 	pi.appendEntry(WATCH_ENTRY_TYPE, { key, claimed: data.claimed ?? false });
 
@@ -422,11 +436,14 @@ export async function dispatchNewTasks(
 			undispatched.push({ taskKey, taskMdPath });
 		}
 		if (undispatched.length === 0) continue;
-		// Docs gate: real AgenticTask keys must be fully documented (spec + design
-		// + research evidence) before their worker tasks enter the queue. _scratch
-		// is the ad-hoc escape hatch. Report each blocked key at most once.
+		// Docs gate, phase-tiered (mw-worker-visibility-gate D-110): the tier comes
+		// from the SCAN KEY's own phase (its pm-state '- Phase:' line), never from
+		// this window's watch — the background scan and the dispatch_worker tool
+		// entry must not diverge. _scratch is the ad-hoc escape hatch. Report
+		// each blocked key at most once.
 		if (owner.name !== SCRATCH_WORKERS_KEY) {
-			const gaps = dispatchDocGaps(agenticdocRoot, owner.name);
+			const ownerPhase = new StateManager(agenticdocRoot, owner.name).read().phase ?? "";
+			const gaps = dispatchDocGaps(agenticdocRoot, owner.name, ownerPhase);
 			if (gaps.length > 0) {
 				if (!opts.warnedKeys?.has(owner.name)) {
 					// Mark as warned only when the notifier actually broadcast —
@@ -528,7 +545,10 @@ export function startWorkerPollLoop(
 			// Live bottom widget for the watched key (per-window state, NOT the
 			// shared _index.parallel active set — every window decides its own key).
 			if (watch.key) {
-				applyWatchWidget(ui, renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, watch.key));
+				applyWatchWidget(
+					ui,
+					renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, watch.key, watch.dispatchedTaskKeys),
+				);
 				widgetShown = true;
 			} else if (widgetShown) {
 				applyWatchWidget(ui, undefined);
@@ -642,7 +662,10 @@ export function pmActivate(pi: ExtensionAPI): void {
 			setWatchWidget(ctx, undefined);
 			return;
 		}
-		setWatchWidget(ctx, renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, watch.key));
+		setWatchWidget(
+			ctx,
+			renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, watch.key, watch.dispatchedTaskKeys),
+		);
 	};
 
 	// Register commands and tools during loading (safe — not action methods)

@@ -1512,8 +1512,8 @@ describe("dispatchNewTasks keyed workers scan", () => {
 		expect(store.readAll().filter((e) => e.taskKey === "task-u")).toHaveLength(0);
 		expect(gates).toHaveLength(1);
 		expect(gates[0]?.key).toBe("undoc-key");
-		// No goal.md in the fixture → §0 skipped; 5 = spec, spec evidence, AC, design, design evidence.
-		expect(gates[0]?.gaps).toHaveLength(5);
+		// goal.md 不存在 → §0 跳过；相位分层后该 key 无 pm-state → spec 层 = spec.md + spec 证据 + AC = 3
+		expect(gates[0]?.gaps).toHaveLength(3);
 
 		// Second scan: the same key is not reported again.
 		await dispatchNewTasks(store, root, opts);

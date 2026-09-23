@@ -119,3 +119,15 @@
   2. 或直接 `read_bytes().replace(b"\r\n", b"\n")` 复原后再验；补丁后**立刻**跑一次 `git diff --stat` 或字节级 `CRLF` 计数自检；
   3. 判断依据：`<file> CRLF=<n> LF-only=<m>`，源码仓库应 `CRLF=0`（`.md` 记忆文档可能是 CRLF，追加时按主导换行写）。
 - 关联：本坑与 P-005/P-006 同类——「只改一处」的操作却产生了全局 diff，评审与后续 worker 都会误判改动面。
+
+## P-011 claim 身份双写分叉——按 pm-state 判活会误判抢占（2026-09-23，mw-worker-visibility-gate）
+
+- 现象：同一个 key 的 claim 身份在两处出现且值不同：`_index.parallel` 的 Claim 列是 `WENBOZHOU-PC3:<pi 窗口 pid>`，`<key>/pm-state.md` 的 `- Claim-Id:` 却是 `WENBOZHOU-PC3:<python pid>`；`audit_phase` 不报 drift，看上去像无事。
+- 根因：两个写入者各自取 pid——框架的 `update_index.py claim` 写 `now_claim_id()`（短命 python 进程的 `host:os.getpid()`）到两处，而 `switch_key` 重写索引行时用 `windowClaimId()`（pi 窗口进程 pid）只改索引行、不动 pm-state。客观地：
+  - `_index.parallel` 的 Claim 列是**权威**（`shared/implementation-gate.ts` 用它判 live claim，`claimState`/`resolveOwnerKeyWithSync` 用它判 liveness 与所有权）；
+  - `pm-state.md` 的 `- Claim-Id:` 是**镜像**（原本没有读者，所以分叉不会报错）。
+- 硬规则（规避）：
+  1. **两处同值**（两处必须同值）——任何一次 claim/takeover 写完索引行后，必须把同一值同步进 `pm-state.md`（如 `shared/pm-state-claim.ts` 的单行原地替换）；
+  2. **liveness 只能在索引行上判定**——短命 python pid 天然已死，按 pm-state 判活会把活着的 claim 误判为 stale 并允许无 `--force` 抢占；
+  3. 同步 pm-state 失败不能阻断 claim——索引行是权威，镜像失败只回一条 warning；且写入必须单行原地替换 + 换行探测（原文件为 CRLF），不得用 `StateManager.write()` 整体重写（会抹掉 7 段模板）。
+- 关联：P-005（“只有读者没有写者”的同类倒置——这里是“有写者没有读者”）；初次 advance 撞 template drift 也与此相关（claim stub 缺 `- Updated:`，靠 advance_phase 兜底升级）。
