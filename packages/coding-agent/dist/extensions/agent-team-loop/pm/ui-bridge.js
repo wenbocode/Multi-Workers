@@ -178,6 +178,16 @@ export function ownerKeyOf(entry, agenticdocRoot) {
     const rel = path.relative(agenticdocRoot, path.normalize(entry.taskPath));
     return rel.split(path.sep)[0] ?? "";
 }
+/** Does THIS window own the queue row (mw-task-scope-isolation)? True when the
+ * row sits under the watched key, or when this process dispatched the task
+ * (explicit cross-key dispatch, or the global-active fallback — see
+ * resolveOwnerKeyWithSync). Fail-closed: with no watch key and no dispatch
+ * record the row belongs to another window. Shared by list_tasks and both ack
+ * entry points, so what the tools act on matches what the bottom watch widget
+ * shows (it scopes by ownerKeyOf alone). */
+export function ownedByThisWindow(entry, watch, agenticdocRoot) {
+    return ownerKeyOf(entry, agenticdocRoot) === watch.key || watch.dispatchedTaskKeys?.has(entry.taskKey) === true;
+}
 /** Body of a `## <section>` block in output.md (first match), trimmed;
  * undefined when the file or section is missing. Generic reader behind
  * readOutputSummary and the terminal-detail fallback chains (D-004): `##
@@ -314,13 +324,20 @@ function isTerminalStatus(status) {
 /** Shared ack validation + write path behind /mw ack and the ack_worker_result
  * tool (D-002). `"all"` expands to every terminal row not yet acked;
  * individual keys must reference an existing terminal row — running/pending
- * rows are rejected and nothing is written for them (AC-004). */
-export async function ackTasks(workerStore, ackStore, targets) {
+ * rows are rejected and nothing is written for them (AC-004).
+ *
+ * `scope` (mw-task-scope-isolation) narrows the write path to this window: the
+ * ack sidecar is a PROJECT-level file, so without it any window could ack (and
+ * silently clear) another window's unhandled rows. When given, `"all"` only
+ * covers rows this window owns and an explicit foreign key is rejected with the
+ * owning key. Omitted = unscoped (callers that are not a PM window). */
+export async function ackTasks(workerStore, ackStore, targets, scope) {
     const entries = workerStore.readAll();
+    const owns = (e) => scope === undefined || ownedByThisWindow(e, scope.watch, scope.agenticdocRoot);
     if (targets === "all") {
         const alreadyAcked = new Set(ackStore.readAll().keys());
         const keys = entries
-            .filter((e) => isTerminalStatus(e.status) && !alreadyAcked.has(e.taskKey))
+            .filter((e) => owns(e) && isTerminalStatus(e.status) && !alreadyAcked.has(e.taskKey))
             .map((e) => e.taskKey);
         if (keys.length === 0)
             return { acked: [], rejected: [] };
@@ -338,6 +355,15 @@ export async function ackTasks(workerStore, ackStore, targets) {
             rejected.push({
                 key,
                 reason: `not terminal (status: ${entry.status}) — only done/failed/needs-clarification rows can be acked`,
+            });
+        }
+        else if (!owns(entry)) {
+            const owner = scope === undefined ? "?" : ownerKeyOf(entry, scope.agenticdocRoot);
+            const mine = scope?.watch.key ?? "(none)";
+            rejected.push({
+                key,
+                reason: `owned by key '${owner}' — this window owns '${mine}'; ` +
+                    `run /pm-key switch ${owner} to align, or ack it from the window that dispatched it`,
             });
         }
         else {
@@ -894,6 +920,12 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
             const taskMdPath = path.join(taskDir, "task.md");
             fs.writeFileSync(taskMdPath, `${modelPlan.frontmatter}\n${description}\n`, "utf8");
             await dispatchTask({ taskKey: task_key, status: "pending", cli, provider, model: model ?? "", taskPath: taskMdPath }, workerStore);
+            // Record the dispatch on this window's state (mw-task-scope-isolation) so
+            // list_tasks / ack keep owning tasks that did NOT land under the watched
+            // key (explicit cross-key dispatch, or the global-active fallback).
+            if (watch.dispatchedTaskKeys === undefined)
+                watch.dispatchedTaskKeys = new Set();
+            watch.dispatchedTaskKeys.add(task_key);
             return {
                 content: [
                     {
@@ -911,7 +943,7 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
     pi.registerTool({
         name: "ack_worker_result",
         label: "ack_worker_result",
-        description: "Acknowledge a worker's terminal result (done/failed/needs-clarification) after absorbing it: the row moves out of the watch widget's unhandled section into folded history. task_key acks one task; 'all' acks every unacked terminal task.",
+        description: "Acknowledge a worker's terminal result (done/failed/needs-clarification) after absorbing it: the row moves out of the watch widget's unhandled section into folded history. task_key acks one task; 'all' acks every unacked terminal task THIS WINDOW owns (its watched key plus tasks it dispatched) — another window's rows are refused, never silently cleared.",
         promptGuidelines: [
             "After absorbing a terminal worker result (the readback body / output.md), call ack_worker_result with its task_key — or 'all' after a batch — so the widget's unhandled section clears; unacked failed/needs-clarification rows stay listed until acked.",
         ],
@@ -924,7 +956,10 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
             if (!target) {
                 return { content: [{ type: "text", text: "task_key is required (or 'all')." }], details: undefined };
             }
-            const result = await ackTasks(workerStore, ackStore, target === "all" ? "all" : [target]);
+            const result = await ackTasks(workerStore, ackStore, target === "all" ? "all" : [target], {
+                watch,
+                agenticdocRoot,
+            });
             const parts = [];
             if (result.acked.length > 0)
                 parts.push(`Acked ${result.acked.length} task(s): ${result.acked.join(", ")}.`);
@@ -935,24 +970,54 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
             return { content: [{ type: "text", text: parts.join("\n") }], details: undefined };
         },
     });
-    // list_tasks: return all tracked tasks and their current status; terminal
-    // rows carry an `acked` badge when acknowledged (AC-011).
+    // list_tasks: worker queue view, scoped to this window by default
+    // (mw-task-scope-isolation); terminal rows carry an `acked` badge when
+    // acknowledged (AC-011) and every row carries its owning key.
     pi.registerTool({
         name: "list_tasks",
         label: "list_tasks",
-        description: "List all worker tasks in this project with their current status (pending / running / done / failed / needs-clarification). Acked terminal tasks are badged 'acked'.",
-        parameters: Type.Object({}),
-        execute: async (_toolCallId, _params, _signal, _onUpdate, _context) => {
-            const entries = workerStore.readAll();
-            if (entries.length === 0) {
-                return { content: [{ type: "text", text: "No tasks found." }], details: undefined };
-            }
-            const acked = new Set(ackStore.readAll().keys());
-            const lines = entries.map((e) => {
-                const base = `${e.taskKey} | ${e.status} | ${e.cli}${e.model ? ` | model: ${e.model}` : ""}`;
-                return acked.has(e.taskKey) ? `${base} | acked` : base;
+        description: "List worker tasks with their current status (pending / running / done / failed / needs-clarification); every row carries its owning key. " +
+            'scope "mine" (default) lists only this window\'s tasks — its watched key plus tasks it dispatched; scope "key" lists one key (pass key); scope "all" lists the whole project. ' +
+            "Acked terminal tasks are badged 'acked'.",
+        parameters: Type.Object({
+            scope: Type.Optional(Type.String({ description: '"mine" (default, this window) | "key" (with key) | "all" (whole project).' })),
+            key: Type.Optional(Type.String({ description: 'Owner key to list when scope is "key".' })),
+        }),
+        execute: async (_toolCallId, params, _signal, _onUpdate, _context) => {
+            const { scope = "mine", key = "" } = (params ?? {});
+            const reply = (text) => ({
+                content: [{ type: "text", text }],
+                details: undefined,
             });
-            return { content: [{ type: "text", text: lines.join("\n") }], details: undefined };
+            const acked = new Set(ackStore.readAll().keys());
+            const format = (e) => {
+                const base = `${ownerKeyOf(e, agenticdocRoot)} :: ${e.taskKey} | ${e.status} | ${e.cli}` +
+                    `${e.model ? ` | model: ${e.model}` : ""}`;
+                return acked.has(e.taskKey) ? `${base} | acked` : base;
+            };
+            const rows = (entries, emptyText) => entries.length === 0 ? emptyText : entries.map(format).join("\n");
+            if (scope === "all") {
+                return reply(rows(workerStore.readAll(), "No tasks found."));
+            }
+            if (scope === "key") {
+                const wanted = key.trim();
+                if (!wanted) {
+                    return reply('scope "key" requires key — pass the owner key, e.g. { scope: "key", key: "mw-foo" }.');
+                }
+                const entries = workerStore.readAll().filter((e) => ownerKeyOf(e, agenticdocRoot) === wanted);
+                return reply(rows(entries, `No tasks found for key '${wanted}'.`));
+            }
+            if (scope !== "mine") {
+                return reply(`Unknown scope '${scope}'. Use "mine" (this window), "key" (with key), or "all" (whole project).`);
+            }
+            const mine = workerStore.readAll().filter((e) => ownedByThisWindow(e, watch, agenticdocRoot));
+            if (mine.length > 0) {
+                return reply(rows(mine, "No tasks found."));
+            }
+            return reply(`No tasks found for this window (watched key: ${watch.key ?? "(none)"}).\n` +
+                'scope "mine" covers the watched key plus tasks this window dispatched; other windows\' tasks are never listed.\n' +
+                "- switch_key a key to take it over and watch its workers, or\n" +
+                '- list_tasks with scope: "all" to see every key in this project.');
         },
     });
 }
@@ -1551,7 +1616,7 @@ export async function runMwRagCommand(ctx, projectDir, raw, runner = ragMw) {
     const formatted = formatRagOutput(result.output, result.code);
     ctx.ui.notify(formatted.text, formatted.level);
 }
-export function registerMwCommands(pi, projectDir, workerStore, ackStore) {
+export function registerMwCommands(pi, projectDir, workerStore, ackStore, watch, agenticdocRoot) {
     pi.registerCommand("mw", {
         description: MW_COMMAND_DESCRIPTION,
         handler: async (_args, ctx) => {
@@ -1675,14 +1740,20 @@ export function registerMwCommands(pi, projectDir, workerStore, ackStore) {
             }
             if (sub === "ack") {
                 // Ack terminal worker results (AC-004): <task-key> acks one row,
-                // all acks every unacked terminal row. Running/pending rows are
-                // rejected with the reason — nothing is written for them.
+                // all acks every unacked terminal row THIS WINDOW owns
+                // (mw-task-scope-isolation — the sidecar is project-level, so an
+                // unscoped "all" would clear another window's unhandled rows).
+                // Running/pending rows are rejected with the reason — nothing is
+                // written for them; foreign rows are rejected with the owning key.
                 const target = _args.trim().split(/\s+/)[1] ?? "";
                 if (!target) {
                     ctx.ui.notify("Usage: /mw ack <task-key> | all", "warning");
                     return;
                 }
-                const result = await ackTasks(workerStore, ackStore, target === "all" ? "all" : [target]);
+                const result = await ackTasks(workerStore, ackStore, target === "all" ? "all" : [target], {
+                    watch,
+                    agenticdocRoot,
+                });
                 if (result.acked.length > 0) {
                     ctx.ui.notify(`Acked ${result.acked.length} task(s): ${result.acked.join(", ")}`, "info");
                 }

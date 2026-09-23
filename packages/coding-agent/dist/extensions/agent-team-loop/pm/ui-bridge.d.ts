@@ -33,6 +33,14 @@ export declare function deliverWorkerResult(pi: ExtensionAPI, summary: string): 
 export interface PmWatchState {
     /** AgenticTask key this window explicitly executes; undefined = not watching. */
     key: string | undefined;
+    /** Task keys THIS window dispatched in this process (mw-task-scope-isolation).
+     * Optional so callers that only track the watch key keep building the state
+     * as a plain literal. Needed because the owner key is not always the watched
+     * key: an explicit `key:` dispatch is honoured without warning
+     * (resolveOwnerKeyWithSync) and the global-active fallback lands elsewhere
+     * too, yet both are this window's work for list_tasks / ack. Process-local by
+     * design — never persisted, never shared between windows. */
+    dispatchedTaskKeys?: Set<string>;
 }
 export interface PmUiHolder {
     /** Latest ExtensionContext, captured on session_start so background timers
@@ -72,6 +80,14 @@ export declare function takeOverKey(indexStore: IndexStore, key: string, force: 
  * root ({key}/workers/<task>/task.md → key). Legacy root-level rows resolve to
  * their own task key and simply never match a watched key. */
 export declare function ownerKeyOf(entry: WorkerEntry, agenticdocRoot: string): string;
+/** Does THIS window own the queue row (mw-task-scope-isolation)? True when the
+ * row sits under the watched key, or when this process dispatched the task
+ * (explicit cross-key dispatch, or the global-active fallback — see
+ * resolveOwnerKeyWithSync). Fail-closed: with no watch key and no dispatch
+ * record the row belongs to another window. Shared by list_tasks and both ack
+ * entry points, so what the tools act on matches what the bottom watch widget
+ * shows (it scopes by ownerKeyOf alone). */
+export declare function ownedByThisWindow(entry: WorkerEntry, watch: PmWatchState, agenticdocRoot: string): boolean;
 /** Body of a `## <section>` block in output.md (first match), trimmed;
  * undefined when the file or section is missing. Generic reader behind
  * readOutputSummary and the terminal-detail fallback chains (D-004): `##
@@ -110,8 +126,17 @@ export declare function readTerminalDetail(taskDir: string, status: WorkerStatus
 /** Shared ack validation + write path behind /mw ack and the ack_worker_result
  * tool (D-002). `"all"` expands to every terminal row not yet acked;
  * individual keys must reference an existing terminal row — running/pending
- * rows are rejected and nothing is written for them (AC-004). */
-export declare function ackTasks(workerStore: WorkerStore, ackStore: AckStore, targets: string[] | "all"): Promise<{
+ * rows are rejected and nothing is written for them (AC-004).
+ *
+ * `scope` (mw-task-scope-isolation) narrows the write path to this window: the
+ * ack sidecar is a PROJECT-level file, so without it any window could ack (and
+ * silently clear) another window's unhandled rows. When given, `"all"` only
+ * covers rows this window owns and an explicit foreign key is rejected with the
+ * owning key. Omitted = unscoped (callers that are not a PM window). */
+export declare function ackTasks(workerStore: WorkerStore, ackStore: AckStore, targets: string[] | "all", scope?: {
+    watch: PmWatchState;
+    agenticdocRoot: string;
+}): Promise<{
     acked: string[];
     rejected: Array<{
         key: string;
@@ -330,5 +355,5 @@ export declare function runMwRagCommand(ctx: ExtensionCommandContext, projectDir
     code: number;
     output: string;
 }): Promise<void>;
-export declare function registerMwCommands(pi: ExtensionAPI, projectDir: string, workerStore: WorkerStore, ackStore: AckStore): void;
+export declare function registerMwCommands(pi: ExtensionAPI, projectDir: string, workerStore: WorkerStore, ackStore: AckStore, watch: PmWatchState, agenticdocRoot: string): void;
 //# sourceMappingURL=ui-bridge.d.ts.map

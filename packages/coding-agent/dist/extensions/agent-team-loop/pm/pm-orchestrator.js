@@ -509,7 +509,7 @@ export function pmActivate(pi) {
     // Register commands and tools during loading (safe — not action methods)
     registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agenticdocRoot);
     registerPmSaveCommand(pi, indexStore, workerStore, watch, agenticdocRoot);
-    registerMwCommands(pi, projectDir, workerStore, ackStore);
+    registerMwCommands(pi, projectDir, workerStore, ackStore, watch, agenticdocRoot);
     registerMwTools(pi, projectDir);
     registerAdvancePhaseTool(pi, projectDir);
     registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, projectDir);
