@@ -1,0 +1,5 @@
+{
+  "engine": "/tmp/engine-root",
+  "game": "/tmp/game-root",
+  "_README": "role -> absolute local root; keys starting with _ are ignored"
+}

@@ -1,1 +1,1 @@
-active: mw-dual-workspace
+active: mw-worker-tree-kill

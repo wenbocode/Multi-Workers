@@ -1,6 +1,6 @@
 # Task T6: 收尾与提交
 
-- 状态: blocked: pre-commit npm run check fails on the other session in-flight kimi-coding removal (packages/ai only); commit staged set once green
+- 状态: done（根因=models.dev 改名 kimi-coding -> kimi-code-plan-global/cn；修复=生成器新键回退 + 测试模型 id 刷新，提交 57ca0e166；zai 主体提交 a395b0af2）
 - ac_refs: AC-007
 - 来源: plan.md T6
 

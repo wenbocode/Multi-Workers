@@ -25,6 +25,8 @@ import {
 	evidenceReviewNotice,
 	keyFromDocWrite,
 	nudgeGoalUnestablished,
+	PARALLEL_PROTOCOL,
+	PARALLEL_PROTOCOL_MARKER,
 	pmActivate,
 	restoreWatch,
 	startWorkerPollLoop,
@@ -4133,6 +4135,93 @@ describe("pmActivate lifecycle (m3)", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	}, 20000);
+});
+
+describe("pmActivate parallel protocol (mw-parallel-protocol)", () => {
+	/** Fake pi collecting handlers per event name (arrays — several
+	 * registrations may share one event). */
+	function fakePi(): {
+		pi: ExtensionAPI;
+		handlers: Map<string, Array<(event?: unknown) => unknown>>;
+	} {
+		const handlers = new Map<string, Array<(event?: unknown) => unknown>>();
+		const pi = {
+			on: (name: string, handler: (event?: unknown) => unknown) => {
+				const list = handlers.get(name) ?? [];
+				list.push(handler);
+				handlers.set(name, list);
+			},
+			registerCommand: () => {},
+			registerTool: () => {},
+			setActiveTools: () => {},
+			appendEntry: () => {},
+			sendMessage: () => {},
+			sendUserMessage: () => {},
+		} as unknown as ExtensionAPI;
+		return { pi, handlers };
+	}
+
+	it("AC-001..AC-004: appends the protocol every run, exactly once", async () => {
+		const root = mkdtemp();
+		fs.mkdirSync(path.join(root, ".agenticdoc"), { recursive: true });
+		const cwd = process.cwd();
+		process.chdir(root);
+		delete process.env.PI_WORKER_TASK;
+		try {
+			vi.useFakeTimers();
+			const { pi, handlers } = fakePi();
+			pmActivate(pi);
+			const hooks = handlers.get("before_agent_start") ?? [];
+			expect(hooks).toHaveLength(1);
+
+			// AC-001: append-only — the existing system prompt stays the prefix.
+			const first = (await hooks[0]({ systemPrompt: "BASE" })) as { systemPrompt?: string } | undefined;
+			expect(first?.systemPrompt?.startsWith("BASE\n\n")).toBe(true);
+			expect(first?.systemPrompt?.endsWith(PARALLEL_PROTOCOL)).toBe(true);
+
+			// AC-002: the four action classes are actually spelled out.
+			expect(first?.systemPrompt).toContain(PARALLEL_PROTOCOL_MARKER);
+			expect(first?.systemPrompt).toContain("先做并行性分析");
+			expect(first?.systemPrompt).toContain("RQ-1..N");
+			expect(first?.systemPrompt).toContain("evidence/research/<phase>-<rq-slug>-<date>.md");
+			expect(first?.systemPrompt).toContain("同一文件同一时刻只允许一个 worker");
+			expect(first?.systemPrompt).toContain("相位文档");
+
+			// AC-003: idempotent — re-feeding our own output must not append twice.
+			expect(await hooks[0]({ systemPrompt: first?.systemPrompt })).toBeUndefined();
+
+			// AC-004: missing/empty base prompt neither throws nor loses the block.
+			const fromEmpty = (await hooks[0]({})) as { systemPrompt?: string } | undefined;
+			expect(fromEmpty?.systemPrompt).toBe(PARALLEL_PROTOCOL);
+		} finally {
+			vi.useRealTimers();
+			process.chdir(cwd);
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("AC-005: worker mode never injects the protocol", async () => {
+		const root = mkdtemp();
+		const taskDir = path.join(root, "key-a", "workers", "w1");
+		fs.mkdirSync(taskDir, { recursive: true });
+		fs.writeFileSync(path.join(taskDir, "task.md"), "type: coding\n\nwork\n", "utf8");
+		const { pi, handlers } = fakePi();
+		process.env.PI_WORKER_TASK = path.join(taskDir, "task.md");
+		process.env.PI_WORKER_IDLE_MS = "60000";
+		try {
+			await workerModeActivate(pi);
+			const hooks = handlers.get("before_agent_start") ?? [];
+			expect(hooks.length).toBeGreaterThan(0); // worker registers its own per-run hooks
+			for (const hook of hooks) {
+				const out = (await hook({ systemPrompt: "BASE" })) as { systemPrompt?: string } | undefined;
+				expect(out?.systemPrompt ?? "").not.toContain(PARALLEL_PROTOCOL_MARKER);
+			}
+		} finally {
+			delete process.env.PI_WORKER_TASK;
+			delete process.env.PI_WORKER_IDLE_MS;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("activation guard re-arm (double-load + session replacement)", () => {

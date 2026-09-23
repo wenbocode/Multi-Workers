@@ -87,13 +87,21 @@ def _record_reconcile(entry: dict[str, str], reason: str) -> None:
 
 # ── Provider / env helpers ────────────────────────────────────────────────────
 
-def _stripped_env(config: dict) -> dict[str, str]:
+def _stripped_env(config: dict, rag_config: dict | None = None) -> dict[str, str]:
     """Base env for a worker: full inherit minus every declared credential.
 
     Strip set = all env names declared in credential chains + legacy extras +
-    every provider base_url_env (AC-024/AC-025 isolation semantics).
+    every provider base_url_env (AC-024/AC-025 isolation semantics). When a
+    RAG config is supplied, every declared ``mcp.token_env`` NAME is stripped
+    as well (T-07/D-010): this stays the single ``env.pop`` point in
+    production code, and ``inject_rag_env`` re-adds only the enabled subset
+    afterwards. ``rag_config=None`` (or no declared names) keeps the output
+    byte-identical to the pre-RAG launcher.
     """
     env = dict(os.environ)
+    if rag_config is not None:
+        for var in mw_common.rag_token_env_names(rag_config):
+            env.pop(var, None)
     for var in mw_common.credential_env_names(config):
         env.pop(var, None)
     for var in mw_common.EXTRA_CREDENTIAL_VARS:
@@ -212,8 +220,14 @@ def _effective_entry(entry: dict[str, str], model_value: str) -> dict[str, str]:
     )
 
 
-def _build_env(entry: dict[str, str], config: dict) -> dict[str, str]:
-    """Build the environment dict for a worker process (AC-002~004, AC-008~010, AC-024)."""
+def _build_env(
+    entry: dict[str, str], config: dict, rag_config: dict | None = None
+) -> dict[str, str]:
+    """Build the environment dict for a worker process (AC-002~004, AC-008~010, AC-024).
+
+    ``rag_config`` only widens the credential strip set (``_stripped_env``);
+    RAG injection itself is the post-step ``inject_rag_env`` so none of the
+    six return paths below needs to know about RAG (D-010)."""
     cli = entry["cli"].lower()
     provider = entry.get("provider", "").strip()
 
@@ -226,7 +240,7 @@ def _build_env(entry: dict[str, str], config: dict) -> dict[str, str]:
             raise RuntimeError(
                 f"Timi credential is not available ({mw_common.describe_missing(cred)})."
             )
-        env = _stripped_env(config)
+        env = _stripped_env(config, rag_config)
         env["TIMI_API_KEY"] = value
         if "TIMI_BASE_URL" in os.environ:
             env["TIMI_BASE_URL"] = os.environ["TIMI_BASE_URL"]
@@ -246,7 +260,7 @@ def _build_env(entry: dict[str, str], config: dict) -> dict[str, str]:
                 f"zai-coding-cn credential is not available "
                 f"({mw_common.describe_missing(cred)})."
             )
-        env = _stripped_env(config)
+        env = _stripped_env(config, rag_config)
         env["ZAI_CODING_CN_API_KEY"] = value
         task_path = pathlib.Path(entry["task_path"])
         env["PI_WORKER_TASK"] = str(task_path.resolve())
@@ -256,7 +270,7 @@ def _build_env(entry: dict[str, str], config: dict) -> dict[str, str]:
     # codex's own config carries the auth, so only strip proxy credentials
     # (same isolation policy as the codex CLI branch below).
     if cli == "pi" and provider == "openai-codex":
-        env = _stripped_env(config)
+        env = _stripped_env(config, rag_config)
         task_path = pathlib.Path(entry["task_path"])
         env["PI_WORKER_TASK"] = str(task_path.resolve())
         return env
@@ -276,7 +290,7 @@ def _build_env(entry: dict[str, str], config: dict) -> dict[str, str]:
                 f"{provider} credential is not available for the direct route "
                 f"({mw_common.describe_missing(cred)})."
             )
-        env = _stripped_env(config)
+        env = _stripped_env(config, rag_config)
         env[key_env] = value
         if base_env in os.environ:
             env[base_env] = os.environ[base_env]
@@ -290,7 +304,7 @@ def _build_env(entry: dict[str, str], config: dict) -> dict[str, str]:
             raise RuntimeError(
                 f"Codex workers support only an empty provider or 'codex', got {provider!r}"
             )
-        return _stripped_env(config)
+        return _stripped_env(config, rag_config)
 
     # Generic port-based proxy path (pi empty provider, claude, deepseek, ...)
     route = mw_common.route_for(config, cli, provider)
@@ -302,7 +316,7 @@ def _build_env(entry: dict[str, str], config: dict) -> dict[str, str]:
             f"({mw_common.describe_missing(cred)})."
         )
 
-    env = _stripped_env(config)
+    env = _stripped_env(config, rag_config)
     env[route["base_url_env"]] = f"http://localhost:{route['port']}"
     env[route["api_key_env"]] = value
 
@@ -312,6 +326,42 @@ def _build_env(entry: dict[str, str], config: dict) -> dict[str, str]:
         env["PI_WORKER_TASK"] = str(task_path.resolve())
 
     return env
+
+
+def inject_rag_env(
+    env: dict[str, str], entry: dict[str, str], project_dir: pathlib.Path
+) -> None:
+    """Post-step after ``_build_env``: inject the enabled servers' RAG env.
+
+    Values are read from THIS process's environment (the serve environment)
+    and written only into the child ``env`` — the token never reaches
+    task.md / trace.log / worker.log / argv. RAG config that is absent,
+    unreadable or has an empty ``enabled`` list injects NOTHING, so a
+    RAG-less worker's env stays item-for-item identical to the pre-RAG
+    launcher (AC-001/D-010). ``entry`` is accepted for call-site symmetry
+    with the spawn path; nothing here is task-specific yet.
+    """
+    rag_config, _error = mw_common.load_rag_config(project_dir)
+    enabled = [
+        name for name in (rag_config.get("enabled") or [])
+        if isinstance(name, str) and name.strip()
+    ]
+    if not enabled:
+        return
+    servers = rag_config.get("servers") or {}
+    for name in enabled:
+        server = servers.get(name)
+        if not isinstance(server, dict):
+            continue
+        mcp = server.get("mcp")
+        if not isinstance(mcp, dict):
+            continue
+        token_env = mcp.get("token_env")
+        if not isinstance(token_env, str) or not token_env.strip():
+            continue
+        value = os.environ.get(token_env.strip())
+        if value:
+            env[token_env.strip()] = value
 
 
 def _exit_to_status(exit_code: int) -> str:
@@ -670,6 +720,58 @@ def _check_config_tear(entry: dict[str, str], config: dict) -> None:
     raise RuntimeError(reason)
 
 
+_RAG_FINGERPRINT_RE = re.compile(r"^fingerprint=(\S+)[ \t\r]*$", re.MULTILINE)
+
+
+def _task_rag_fingerprint(task_path: str) -> str | None:
+    """Recorded `fingerprint=` inside a task.md mw-rag block.
+
+    None = no block at all (nothing to compare — zero behavior change). An
+    empty string = marker present but no fingerprint line, i.e. a malformed
+    block; the caller fails closed on it (same shape as the profile FIX-3
+    malformed-block refusal).
+    """
+    try:
+        content = pathlib.Path(task_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    idx = content.find(mw_common.RAG_MARKER_V1)
+    if idx == -1:
+        return None
+    match = _RAG_FINGERPRINT_RE.search(content, idx)
+    return match.group(1) if match else ""
+
+
+def check_rag_tear(entry: dict[str, str], project_dir: pathlib.Path) -> None:
+    """VC-022 (fail-closed): the task.md `<!-- mw-rag: v1 -->` block records
+    the RAG static-config fingerprint at dispatch time (design D-009). If the
+    enabled servers' static config (url / token_env NAME / skill / sources /
+    capabilities / roles / phases / budgets) or the path_roots file CONTENT
+    changed before spawn, the worker would silently query a different
+    knowledge base — refuse the spawn with 'config torn (rag)' and leave the
+    [LAUNCHER] evidence in trace.log, exactly like _check_config_tear. No rag
+    block = nothing recorded = nothing to compare (RAG-less tasks stay
+    legal); probe/health state and un-enabled servers never move the
+    fingerprint, so a service restart (or editing a disabled server) does
+    not tear.
+    """
+    recorded = _task_rag_fingerprint(entry["task_path"])
+    if recorded is None:
+        return  # no rag block: zero behavior change
+    rag_config, _error = mw_common.load_rag_config(project_dir)
+    current = mw_common.rag_fingerprint(rag_config)
+    if recorded and recorded == current:
+        return
+    reason = (
+        f"config torn (rag): task.md fingerprint={recorded or '(missing)'} != "
+        f"current {current} (the enabled RAG server config or the path_roots "
+        "file content changed after dispatch) — spawn refused; re-dispatch "
+        "the task"
+    )
+    _record_trace_line(entry, f"[LAUNCHER] {mw_common.iso_now()} {reason}")
+    raise RuntimeError(reason)
+
+
 def _poll_once(
     project_dir: pathlib.Path,
     config: dict,
@@ -824,9 +926,15 @@ def _spawn(
         # model/env/command building.
         target_config = _worker_target_config(project_dir)
         _check_config_tear(entry, target_config)
+        check_rag_tear(entry, project_dir)
         model_value, model_source = _resolve_entry_model(entry, project_dir)
         effective = _effective_entry(entry, model_value)
-        env = _build_env(effective, config)
+        # RAG static-config strip set (T-07/D-010): declared token env NAMES
+        # are removed by _build_env; the enabled subset is re-added by the
+        # post-step so none of _build_env's six return paths needs RAG code.
+        rag_config, _rag_error = mw_common.load_rag_config(project_dir)
+        env = _build_env(effective, config, rag_config)
+        inject_rag_env(env, effective, project_dir)
         cmd = _build_command(effective)
         print(
             f"[launcher] {entry['task_key']}: model={model_value or '(route default)'} source={model_source}",
@@ -888,7 +996,9 @@ def _dry_run(project_dir: pathlib.Path, config: dict) -> None:
     for entry in pending:
         try:
             cmd = _build_command(entry)
-            env = _build_env(entry, config)
+            rag_config, _rag_error = mw_common.load_rag_config(project_dir)
+            env = _build_env(entry, config, rag_config)
+            inject_rag_env(env, entry, project_dir)
         except Exception as exc:  # noqa: BLE001 — report, do not crash
             print(f"[DRY-RUN] {entry['task_key']}: cannot build ({exc})")
             continue

@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
 import type { ModelRegistry } from "../../../core/model-registry.ts";
+import { validateRagEnabled } from "../rag/tools.ts";
 import type { AckStore } from "../shared/ack-store.ts";
 import { runAgenticScript } from "../shared/agentic-scripts.ts";
 import { DISPATCHABLE_TYPES, readRoleModel, roleForTaskType, validateModelValue } from "../shared/dispatch-models.ts";
@@ -18,6 +19,8 @@ import {
 	initMw,
 	modelMw,
 	partitionMw,
+	RAG_SUBCOMMANDS,
+	ragMw,
 	restartMw,
 	serveStaleness,
 	startMw,
@@ -30,6 +33,7 @@ import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "
 import { PHASE_ORDER, phaseAuditWarnings } from "../shared/pm-state-guard.ts";
 import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 import { headline } from "../worker/output-writer.ts";
+import { StateManager } from "./state-manager.ts";
 import { dispatchTask } from "./task-dispatcher.ts";
 
 /** Owner key for a worker task — this window's own claim first, the shared
@@ -853,6 +857,16 @@ function oneLineReason(raw: string): string {
 	return raw.replace(/\s*\r?\n\s*/g, " ").trim();
 }
 
+/** Current phase of the owner key from its pm-state.md `- Phase:` line, or
+ * "" when the owner is `_scratch` / the key has no readable phase. The phase
+ * axis (`required = role.require OR phase.require`, T-14) must never be
+ * guessed, so an unknown phase writes no `phase:` header at all. pm-state.md is
+ * owned by advance_phase.py — read-only here. */
+function dispatchPhase(agenticdocRoot: string, ownerKey: string): string {
+	if (ownerKey === SCRATCH_WORKERS_KEY) return "";
+	return new StateManager(agenticdocRoot, ownerKey).read().phase ?? "";
+}
+
 /** Build the task.md frontmatter (type / model / model-reason) for one dispatch
  * and the echo line that tells the PM which layer supplies the model
  * (design D-001~D-007). Shared by the dispatch_worker tool and /worker so the
@@ -866,6 +880,9 @@ export function planDispatchFrontmatter(input: {
 	cli: string;
 	provider: string;
 	taskType: string;
+	/** Owner key's current phase (T-14): non-empty appends `phase: <P>` right
+	 * after `type:`; ""/undefined keeps the pre-T-14 bytes unchanged. */
+	phase?: string;
 	model: string;
 	modelReason: string;
 	registry: ModelRegistry | undefined;
@@ -874,6 +891,10 @@ export function planDispatchFrontmatter(input: {
 	const configured = readRoleModel(input.cwd, role) ?? "";
 	const requested = input.model.trim();
 	const reason = oneLineReason(input.modelReason);
+	const typeLines =
+		input.phase !== undefined && input.phase.length > 0
+			? `type: ${input.taskType}\nphase: ${input.phase}\n`
+			: `type: ${input.taskType}\n`;
 
 	// The value that will actually run: an explicit request wins, else the
 	// configured role default (which the launcher would pick next). Either way
@@ -887,7 +908,7 @@ export function planDispatchFrontmatter(input: {
 	if (!requested) {
 		return {
 			ok: true,
-			frontmatter: `type: ${input.taskType}\n`,
+			frontmatter: typeLines,
 			echo: configured
 				? `model: dispatch.yml ${role}=${configured}`
 				: `model: route default (no dispatch.yml ${role} default)`,
@@ -899,7 +920,7 @@ export function planDispatchFrontmatter(input: {
 	if (configured && requested === configured) {
 		return {
 			ok: true,
-			frontmatter: `type: ${input.taskType}\n`,
+			frontmatter: typeLines,
 			echo: `model: dispatch.yml ${role}=${configured} (requested value matches the configured default; not pinned)`,
 		};
 	}
@@ -913,7 +934,11 @@ export function planDispatchFrontmatter(input: {
 		};
 	}
 
-	const lines = [`type: ${input.taskType}`, `model: ${requested}`];
+	const lines =
+		input.phase !== undefined && input.phase.length > 0
+			? [`type: ${input.taskType}`, `phase: ${input.phase}`]
+			: [`type: ${input.taskType}`];
+	if (requested) lines.push(`model: ${requested}`);
 	if (reason) lines.push(`model-reason: ${reason}`);
 	return {
 		ok: true,
@@ -1000,6 +1025,13 @@ export function registerWorkerTools(
 				type?: string;
 				key?: string;
 			};
+			// RAG dispatcher gate (VC-003): an unusable rag config (e.g. `enabled`
+			// naming an undefined server) must refuse BEFORE any task.md is created
+			// and before the queue row lands.
+			const ragCheck = validateRagEnabled(projectDir);
+			if (!ragCheck.ok) {
+				return { content: [{ type: "text", text: ragCheck.message }], details: undefined };
+			}
 			const ownerKey = resolveOwnerKeyWithSync(pi, indexStore, watch, key, agenticdocRoot);
 
 			const validCli = ["pi", "claude", "codex"];
@@ -1060,6 +1092,7 @@ export function registerWorkerTools(
 				cli,
 				provider,
 				taskType: typeField,
+				phase: dispatchPhase(agenticdocRoot, ownerKey),
 				model: model ?? "",
 				modelReason: model_reason ?? "",
 				registry: _context?.modelRegistry,
@@ -1366,6 +1399,13 @@ export function registerWorkerCommands(
 			const typeField = typeResolution.type;
 			const provider = cli === "pi" ? "timi" : "";
 
+			// RAG dispatcher gate (VC-003): refuse before creating any task.md.
+			const ragCheck = validateRagEnabled(projectDir);
+			if (!ragCheck.ok) {
+				ctx.ui.notify(ragCheck.message, "warning");
+				return;
+			}
+
 			// Create task directory and task.md under {ownerKey}/workers/ (persist
 			// type/model/model-reason so they are visible + re-parseable)
 			const taskKey = `manual-${Date.now()}`;
@@ -1384,6 +1424,7 @@ export function registerWorkerCommands(
 				cli,
 				provider,
 				taskType: typeField,
+				phase: dispatchPhase(agenticdocRoot, ownerKey),
 				model,
 				modelReason,
 				registry: ctx.modelRegistry,
@@ -1406,6 +1447,42 @@ export function registerWorkerCommands(
 			);
 		},
 	});
+}
+
+/**
+ * Render the RAG row exactly like `mw.py:_format_rag_doctor_line` (D-308): an
+ * `error` wins, an empty `enabled` list yields the not-enabled form, otherwise
+ * `enabled=<a, b>; probe=<name=reachable|unreachable, ...>; fingerprint=<first
+ * 12>; skill=<status>` plus `; required_missing=N` when N > 0. Probe names are
+ * sorted the same way (`sorted(probe.items())`). Pure, so the cross-language
+ * text can be asserted byte-for-byte against the Python line for one JSON.
+ */
+export function formatRagDoctorLine(rag: NonNullable<DoctorJson["rag"]>): string {
+	if (rag.error) return `rag: ERROR - ${rag.error}`;
+	const enabled = rag.enabled ?? [];
+	const skillStatus = rag.skill?.status ?? "unknown";
+	if (enabled.length === 0) return `rag: not enabled (skill ${skillStatus})`;
+	const probe = rag.probe ?? {};
+	const state = Object.keys(probe)
+		.sort()
+		.map((name) => `${name}=${probe[name]?.reachable ? "reachable" : "unreachable"}`)
+		.join(", ");
+	const fingerprint = (rag.fingerprint ?? "").slice(0, 12);
+	const rawRequired = rag.required_missing ?? 0;
+	const requiredMissing = Number.isFinite(rawRequired) ? Math.trunc(rawRequired) : 0;
+	const required = requiredMissing ? `; required_missing=${requiredMissing}` : "";
+	return `rag: enabled=${enabled.join(", ")}; probe=${state}; fingerprint=${fingerprint}; skill=${skillStatus}${required}`;
+}
+
+/**
+ * `mw.py doctor` prints its RAG row only when `mw.py:523` sees
+ * `rag.exists or rag.enabled`. `_doctor_rag` always returns a dict, so a
+ * presence test alone would add a `not enabled` row to a project with no RAG
+ * config at all. Mirroring that gate keeps the window text equal to the
+ * terminal text in both directions (D-308/AC-304).
+ */
+export function shouldShowRagDoctorRow(rag: DoctorJson["rag"]): rag is NonNullable<DoctorJson["rag"]> {
+	return rag !== undefined && (rag.exists === true || (rag.enabled?.length ?? 0) > 0);
 }
 
 /** Format a doctor JSON report as a readable Chinese summary (same data as
@@ -1485,6 +1562,10 @@ export function formatDoctorReport(report: DoctorJson, fix: boolean): string {
 			lines.push(`派发模型: ${roles || "未设角色"}; 窗口模型 ${window}`);
 		}
 	}
+
+	// RAG row (D-308), verbatim like the `mw.py doctor` text line. An older
+	// mw.py without the `rag` key renders nothing here (and never throws).
+	if (shouldShowRagDoctorRow(report.rag)) lines.push(formatRagDoctorLine(report.rag));
 
 	if (fix) {
 		const applied = report.fix?.applied;
@@ -1745,6 +1826,72 @@ export async function runMwModelCommand(
 	ctx.ui.notify("Usage: /mw model show | set <role> <prefix/model> | clear <role|all>", "warning");
 }
 
+/** /mw command description (exported so the registration test can assert the
+ * RAG branch stays documented — VC-311). */
+export const MW_COMMAND_DESCRIPTION =
+	"Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / ack";
+
+/** Lines of `mw rag` output shown before truncation (D-307): the notify channel
+ * is narrow, and `rag list` / `rag audit` outputs can be long. */
+export const RAG_OUTPUT_MAX_LINES = 30;
+
+/** Truncation footer (D-307): hand the user the exact command for the full
+ * output instead of dropping it silently. `<sub>` / `<dir>` stay placeholders —
+ * formatRagOutput only ever sees the output text. */
+export const RAG_FULL_OUTPUT_HINT = "完整输出：python mw.py rag <sub> --project <dir>";
+
+/**
+ * Parse `/mw rag <raw>` into the subcommand and its verbatim argument tail.
+ * Pure and CLI-free (VC-307): an empty or unknown sub returns the usage text
+ * naming every RAG_SUBCOMMANDS entry, so the caller can reject before any
+ * spawn. Arguments after the sub pass through untouched — Python stays the
+ * single source of argument semantics.
+ */
+export function parseRagArgs(raw: string): { sub: string; rest: string[] } | { usage: string } {
+	const usage = `Usage: /mw rag <sub> [args...] — sub: ${RAG_SUBCOMMANDS.join(
+		" | ",
+	)}. Arguments are forwarded to mw.py rag verbatim.`;
+	const parts = splitCommandLine(raw);
+	const sub = parts[0] ?? "";
+	if (!(RAG_SUBCOMMANDS as readonly string[]).includes(sub)) return { usage };
+	return { sub, rest: parts.slice(1) };
+}
+
+/**
+ * Map a `mw.py rag` exit code to the notify level and shorten long output
+ * (D-307): 0=info, 1=warning (audit findings are expected), anything else
+ * error. Output over RAG_OUTPUT_MAX_LINES is truncated with the full-command
+ * hint appended so nothing is lost.
+ */
+export function formatRagOutput(output: string, code: number): { text: string; level: "info" | "warning" | "error" } {
+	const level = code === 0 ? "info" : code === 1 ? "warning" : "error";
+	const text = output.replace(/\r\n/g, "\n").trim();
+	if (text === "") return { text: code === 0 ? "mw rag: ok" : `mw rag exited with code ${code}`, level };
+	const lines = text.split("\n");
+	if (lines.length <= RAG_OUTPUT_MAX_LINES) return { text, level };
+	return { text: `${lines.slice(0, RAG_OUTPUT_MAX_LINES).join("\n")}\n… ${RAG_FULL_OUTPUT_HINT}`, level };
+}
+
+/** /mw rag — thin wrapper over `mw.py rag` (single source of parsing,
+ * validation and rendering); the runner is injectable for tests so the
+ * unknown-sub path can be proven spawn-free (VC-307). The output content is
+ * never parsed — only the exit code selects the notify level. */
+export async function runMwRagCommand(
+	ctx: ExtensionCommandContext,
+	projectDir: string,
+	raw: string,
+	runner: (projectDir: string, args: string[]) => { ok: boolean; code: number; output: string } = ragMw,
+): Promise<void> {
+	const parsed = parseRagArgs(raw);
+	if ("usage" in parsed) {
+		ctx.ui.notify(parsed.usage, "warning");
+		return;
+	}
+	const result = runner(projectDir, [parsed.sub, ...parsed.rest]);
+	const formatted = formatRagOutput(result.output, result.code);
+	ctx.ui.notify(formatted.text, formatted.level);
+}
+
 export function registerMwCommands(
 	pi: ExtensionAPI,
 	projectDir: string,
@@ -1752,8 +1899,7 @@ export function registerMwCommands(
 	ackStore: AckStore,
 ): void {
 	pi.registerCommand("mw", {
-		description:
-			"Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / ack",
+		description: MW_COMMAND_DESCRIPTION,
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const trimmed = _args.trim();
 			const sub = trimmed.split(/\s+/)[0] ?? "status";
@@ -1885,6 +2031,14 @@ export function registerMwCommands(
 				return;
 			}
 
+			if (sub === "rag") {
+				// RAG subcommands (list / probe / audit / sync / init) — thin wrapper,
+				// Python stays the single source of parsing and validation; the exit
+				// code keeps its 0/1/2 meaning (audit 1 = findings, not failure).
+				await runMwRagCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
+				return;
+			}
+
 			if (sub === "ack") {
 				// Ack terminal worker results (AC-004): <task-key> acks one row,
 				// all acks every unacked terminal row. Running/pending rows are
@@ -1906,7 +2060,7 @@ export function registerMwCommands(
 			}
 
 			ctx.ui.notify(
-				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | ack <task-key>|all",
+				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | rag <sub> | ack <task-key>|all",
 				"warning",
 			);
 		},

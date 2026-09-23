@@ -86,3 +86,20 @@ These variables are read by Pi itself:
 | `HTTP_PROXY`, `HTTPS_PROXY` | Proxy outbound HTTP requests |
 
 Provider credentials such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and cloud-provider configuration are listed in [Providers](providers.md#environment-variables-or-auth-file).
+
+## Agent Team Loop RAG Variables
+
+The bundled `agent-team-loop` extension (the `/mw` window commands, worker dispatch, and the `mw.py`
+bridge) reads these variables in addition to the `PI_*` worker variables. They only matter for
+projects that enable RAG in `.agenticdoc/target.yml`; a project without a `rag:` section is
+unaffected (no tools registered, no task.md block, no probe requests, no files written).
+
+| Variable | Description |
+|----------|-------------|
+| `MW_RAG_SERVERS_FILE` | Hard override for the machine-level RAG server config path. When set but missing, the machine layer is empty and there is no fallback to `HOME` (test isolation) |
+| `MW_RAG_SERVERS_HOME` | HOME override for the machine-level config (`<home>/.agents/rag-servers.yml`); checked before `HOME` and `USERPROFILE` |
+| `MW_RAG_PYTHON` | Interpreter override for `transport: skill` servers; defaults to `python` on Windows and `python3` elsewhere |
+
+RAG credentials are never written as values: a server config names a `token_env` variable and the
+`mw serve` launcher injects that value into the worker process environment only. The value must not
+appear in task.md, worker `trace.log`, `output.md`, or evidence files.

@@ -12,11 +12,13 @@ Subcommands:
   setup  — one-time machine bootstrap: clone framework + install extension globally
   bootstrap — fresh-machine one-shot: prereqs → npm ci → build → link pi → setup → init → start → doctor
   update-env — incremental self-check over the update anchors (UPDATE.md); --apply runs the safe fixes
+  ue-toolchain — dual-mode UE toolchain discipline (UE game dev: game repo + engine source repo, MSVC/UBT): run a configured command with evidence, discover UE targets, EOL-normalized hashing
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -26,10 +28,12 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import mw_common
+import rag_templates
 from mw_common import (
     check_pid as _check_pid,
     port_is_bound as _port_is_bound,
@@ -508,10 +512,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # Conductor section (D-101): informational like worker_liveness — a not
     # running conductor (autopilot disabled) is not an issue.
     report["conductor"] = _ap_conductor.conductor_status(project_dir)
+    # RAG section (mw-rag-integration D-010): informational — a broken config
+    # or an unreachable server never flips the healthy verdict.
+    report["rag"] = _doctor_rag(project_dir)
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
         print(mw_common.format_doctor_text(report))
+        rag = report.get("rag") or {}
+        if rag.get("exists") or rag.get("enabled"):
+            print(_format_rag_doctor_line(rag))
     return 0 if report["summary"]["healthy"] else 1
 
 
@@ -564,8 +574,17 @@ def _target_template(game: str, engine: str | None, vcs: str | None, uproject: s
     lines += [
         "",
         "toolchain:",
-        "  # command templates with {game}/{engine}/{uproject} placeholders, e.g.",
-        "  # build_editor: '\"{engine}/Engine/Build/BatchFiles/Build.bat\" ProjEditor Win64 Development -project=\"{uproject}\"'",
+        "  # Dual-mode UE project: command templates with {game}/{engine}/{uproject}",
+        "  # placeholders (UE game repo + engine source repo, MSVC/UBT). PM-side execution",
+        "  # goes through `mw ue-toolchain run <name> [--args \"...\"]`: runs from the control",
+        "  # root, archives cmd.txt / run.log / exit.txt / errors.txt / meta.json (exit",
+        "  # code + error-signature scan + --watch EOL-normalized before/after hashes).",
+        "  # mw exit code = clean exit AND zero signature lines AND zero --watch drift;",
+        "  # error signatures are the MSVC/UE set — the run evidence discipline itself is",
+        "  # toolchain-agnostic. Practice guide (per-project parts: UBT args, modal",
+        "  # windows, fixtures): docs/dual-toolchain-practice-guide.md",
+        "  # build_editor: '\"{engine}/Engine/Build/BatchFiles/Build.bat\" ProjEditor Win64 Development -project=\"{uproject}\" -WaitMutex'",
+        "  # build_local: same template + -NoUBA -MaxParallelActions=16   # no-Horde fallback",
         "",
         "ignore:",
         "  # L1 deny globs for read/ls/find/grep (absolute or game-root-relative",
@@ -906,6 +925,1395 @@ def cmd_target(args: argparse.Namespace) -> int:
     if args.target_action == "off":
         return _target_off(project_dir)
     return _target_show(project_dir)
+
+
+# ── Subcommand: toolchain (dual-mode discipline, practice guide) ───────────
+
+def _toolchain_run_dir(control_root: pathlib.Path, out_parent: pathlib.Path | None, name: str) -> pathlib.Path:
+    """Fresh run directory <stamp>-<name> under --out (default the
+    machine-local .mw/toolchain-runs). Same-second collisions get a -2/-3
+    suffix instead of failing."""
+    parent = out_parent if out_parent is not None else control_root / ".mw" / "toolchain-runs"
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    run_dir = parent / f"{stamp}-{name}"
+    n = 2
+    while run_dir.exists():
+        run_dir = parent / f"{stamp}-{name}-{n}"
+        n += 1
+    run_dir.mkdir(parents=True)
+    return run_dir
+
+
+def _toolchain_load_config(project_dir: pathlib.Path) -> dict | None:
+    """Fail-closed config load for the toolchain subcommands: prints the
+    TargetConfigError and returns None (caller returns exit 1)."""
+    try:
+        return mw_common.load_target_config(project_dir)
+    except mw_common.TargetConfigError as e:
+        print(f"[mw ue-toolchain] Error: target config {e.kind}: {e}", file=sys.stderr)
+        return None
+
+
+def _toolchain_run(args: argparse.Namespace) -> int:
+    """Execute toolchain.<name> from the control root with the practice
+    guide's evidence discipline (§2.2/§2.3/§4.2): verbatim cmd.txt, UTF-8
+    combined run.log (.log extension — quality gates only scan *.log),
+    exit.txt, errors.txt + meta.json (error-signature scan; --watch proves
+    watched sources were not edited while the command ran, EOL-normalized
+    so autocr lf flips are not false drift). Verdict = exit 0 AND zero
+    error lines AND zero drift; anything else exits 1 so scripts can gate
+    on it (differential acceptance compares two runs' errors.txt sets)."""
+    project_dir = pathlib.Path(args.project).resolve()
+    config = _toolchain_load_config(project_dir)
+    if config is None:
+        return 1
+    toolchain = config.get("toolchain") or {}
+    template = toolchain.get(args.name)
+    if template is None:
+        print(
+            f"[mw ue-toolchain] Error: no toolchain command named '{args.name}' "
+            f"(configured: {', '.join(toolchain) or 'none'})",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        command = mw_common.render_toolchain_command(template, config)
+    except mw_common.TargetConfigError as e:
+        print(f"[mw ue-toolchain] Error: {e.kind}: {e}", file=sys.stderr)
+        return 1
+    # forwarded extra args (--args "...") are appended verbatim; a single
+    # string sidesteps argparse's REMAINDER quirk (everything after the name
+    # positional would be swallowed, including --project)
+    if args.args and args.args.strip():
+        command = command + " " + args.args.strip()
+
+    control_root = pathlib.Path(config["control_root"])
+    out_parent = pathlib.Path(args.out).resolve() if args.out else None
+    run_dir = _toolchain_run_dir(control_root, out_parent, args.name)
+
+    watched: list[dict] = []
+    for w in args.watch or []:
+        p = pathlib.Path(w)
+        if not p.is_absolute():
+            p = control_root / p
+        watched.append({
+            "path": str(p),
+            "before": mw_common.sha256_eol_normalized(p) if p.is_file() else None,
+            "after": None,
+        })
+
+    (run_dir / "cmd.txt").write_text(command + "\n", encoding="utf-8", newline="\n")
+    print(f"[mw ue-toolchain] run: {command}")
+    print(f"[mw ue-toolchain] dir: {run_dir}")
+    started = time.time()
+    proc = subprocess.run(command, shell=True, cwd=str(control_root), capture_output=True)
+    seconds = time.time() - started
+    log_text = (proc.stdout or b"").decode("utf-8", errors="replace") + "\n" + \
+        (proc.stderr or b"").decode("utf-8", errors="replace")
+    (run_dir / "run.log").write_text(log_text, encoding="utf-8", newline="\n")
+    (run_dir / "exit.txt").write_text(f"{proc.returncode}\n", encoding="utf-8", newline="\n")
+    error_lines = mw_common.scan_build_error_lines(log_text)
+    (run_dir / "errors.txt").write_text(
+        "".join(line + "\n" for line in error_lines), encoding="utf-8", newline="\n"
+    )
+    for entry in watched:
+        p = pathlib.Path(entry["path"])
+        entry["after"] = mw_common.sha256_eol_normalized(p) if p.is_file() else None
+        entry["drift"] = entry["after"] != entry["before"]
+    drift = [e for e in watched if e["drift"]]
+
+    ok = proc.returncode == 0 and not error_lines and not drift
+    meta = {
+        "name": args.name,
+        "template": template,
+        "command": command,
+        "cwd": str(control_root),
+        "exit_code": proc.returncode,
+        "seconds": round(seconds, 2),
+        "error_line_count": len(error_lines),
+        "watched_drift_count": len(drift),
+        "watched": watched,
+        "ok": ok,
+        "run_dir": str(run_dir),
+    }
+    (run_dir / "meta.json").write_text(
+        json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8", newline="\n"
+    )
+    print(
+        f"[mw ue-toolchain] exit={proc.returncode} seconds={seconds:.1f} "
+        f"error_lines={len(error_lines)} watched_drift={len(drift)}/{len(watched)} "
+        f"— {'OK' if ok else 'ATTENTION'}"
+    )
+    if args.json:
+        print(json.dumps(meta, indent=2, ensure_ascii=False))
+    return 0 if ok else 1
+
+
+def _toolchain_targets(args: argparse.Namespace) -> int:
+    """List UE build target names discovered from <game>/Source/*.Target.cs
+    (practice §2.1: names are read, never guessed)."""
+    project_dir = pathlib.Path(args.project).resolve()
+    config = _toolchain_load_config(project_dir)
+    if config is None:
+        return 1
+    targets = mw_common.discover_build_targets(config["game_root"])
+    if not targets:
+        print(f"[mw ue-toolchain] no *.Target.cs under {config['game_root']}\\Source (non-UE game root?)")
+        return 0
+    for t in targets:
+        print(f"- {t['name']} ({t['kind']}) — {t['file']}")
+    print("[mw ue-toolchain] editor targets end in 'Editor'; use them for incremental editor builds")
+    return 0
+
+
+def _toolchain_hash(args: argparse.Namespace) -> int:
+    """EOL-normalized sha256 (practice §5.5) for freeze/drift checks."""
+    for raw in args.files:
+        p = pathlib.Path(raw)
+        if not p.is_file():
+            print(f"[mw ue-toolchain] Error: not a file: {p}", file=sys.stderr)
+            return 1
+        print(f"{mw_common.sha256_eol_normalized(p)}  {p}")
+    return 0
+
+
+def cmd_toolchain(args: argparse.Namespace) -> int:
+    if args.toolchain_action == "run":
+        return _toolchain_run(args)
+    if args.toolchain_action == "targets":
+        return _toolchain_targets(args)
+    return _toolchain_hash(args)
+
+
+# ── Subcommand: rag (RAG server config + skill sync, mw-rag-integration) ────
+#
+# Verbs (D-010): list / probe / sync (`audit` is added by T-10). `sync` is the
+# ONLY writer of <project>/.pi/skills/mw-rag.md (D-012/AC-017) — the pi session
+# itself never installs or removes it (D-014, zero write surface). `probe` is
+# diagnostic: an unreachable server is reported, never raised and never an
+# exit code (design §4.2, 5s per enabled server, enabled set only).
+
+_RAG_SKILL_SOURCE_RELATIVE = ("skills", "mw-rag", "SKILL.md")
+_RAG_SKILL_INSTALL_RELATIVE = (".pi", "skills", "mw-rag.md")
+_RAG_PROBE_TIMEOUT_S = 5.0
+_RAG_MCP_PROTOCOL_VERSION = "2025-03-26"
+_RAG_CAPABILITY_KEYS = ("graph", "chat", "rewrite")
+
+
+def _rag_skill_source() -> pathlib.Path:
+    """Framework-repo skill source (never resolved through cwd)."""
+    return _SCRIPT_DIR.joinpath(*_RAG_SKILL_SOURCE_RELATIVE)
+
+
+def _rag_skill_target(project_dir: pathlib.Path) -> pathlib.Path:
+    """pi project-level skill slot: <project>/.pi/skills/mw-rag.md."""
+    return pathlib.Path(project_dir).joinpath(*_RAG_SKILL_INSTALL_RELATIVE)
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _sha256_file(path: pathlib.Path) -> str | None:
+    try:
+        return _sha256_bytes(path.read_bytes())
+    except OSError:
+        return None
+
+
+def _rag_enabled(config: dict) -> list[str]:
+    return [
+        name for name in (config.get("enabled") or [])
+        if isinstance(name, str) and name.strip()
+    ]
+
+
+def _rag_skill_state(project_dir: pathlib.Path) -> dict:
+    """Installation status of .pi/skills/mw-rag.md vs the framework source."""
+    source = _rag_skill_source()
+    target = _rag_skill_target(project_dir)
+    source_sha = _sha256_file(source) if source.is_file() else None
+    target_sha = _sha256_file(target) if target.is_file() else None
+    if target_sha is None:
+        status = "absent"
+    elif source_sha is None:
+        status = "source-missing"
+    elif target_sha == source_sha:
+        status = "installed"
+    else:
+        status = "drift"
+    return {
+        "path": str(target),
+        "status": status,
+        "source_sha256": source_sha,
+        "installed_sha256": target_sha,
+    }
+
+
+def _rag_install_skill(project_dir: pathlib.Path) -> int:
+    """Byte-copy the skill source into <project>/.pi/skills/mw-rag.md.
+
+    Temp file + os.replace in the target directory: atomic and byte-identical
+    (AC-017). `.pi/skills` is created only here (an enabled project), and no
+    other file under it is ever touched.
+    """
+    source = _rag_skill_source()
+    if not source.is_file():
+        print(f"[mw rag sync] Error: framework skill source not found: {source}", file=sys.stderr)
+        return 1
+    data = source.read_bytes()
+    digest = _sha256_bytes(data)
+    target = _rag_skill_target(project_dir)
+    if target.is_file() and _sha256_file(target) == digest:
+        print(f"[mw rag sync] unchanged (already installed) {target} sha256={digest}")
+        return 0
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.name + f".tmp{os.getpid()}")
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+    print(f"[mw rag sync] installed {target} sha256={digest}")
+    return 0
+
+
+def _rag_remove_skill(project_dir: pathlib.Path) -> int:
+    """Remove .pi/skills/mw-rag.md when RAG is not enabled. Only that file."""
+    target = _rag_skill_target(project_dir)
+    if not target.exists():
+        print(f"[mw rag sync] unchanged (not enabled, {target} absent)")
+        return 0
+    digest = _sha256_file(target)
+    target.unlink()
+    print(f"[mw rag sync] removed {target} sha256={digest}")
+    return 0
+
+
+def _cmd_rag_sync(args: argparse.Namespace) -> int:
+    project_dir = pathlib.Path(args.project).resolve()
+    config, error = mw_common.load_rag_config(project_dir)
+    if error:
+        print(f"[mw rag sync] Error: {error}", file=sys.stderr)
+        return 1
+    if _rag_enabled(config):
+        return _rag_install_skill(project_dir)
+    return _rag_remove_skill(project_dir)
+
+
+def _rag_format_origins(entry: dict) -> list[tuple[str, object, str]]:
+    """Flatten one merged server entry into (field, value, origin) rows."""
+    origin = entry.get("origin") or {}
+    rows: list[tuple[str, object, str]] = []
+    for path, value in (
+        ("transport", entry.get("transport")),
+        ("adapter", entry.get("adapter")),
+        ("sources", ",".join(entry.get("sources") or [])),
+        ("path_roots_file", entry.get("path_roots_file")),
+    ):
+        rows.append((path, value, str(origin.get(path, "-"))))
+    for block in ("mcp", "skill", "capabilities"):
+        data = entry.get(block)
+        if not isinstance(data, dict):
+            continue
+        for key, value in data.items():
+            path = f"{block}.{key}"
+            rows.append((path, value, str(origin.get(path, "-"))))
+    return rows
+
+
+def _cmd_rag_list(args: argparse.Namespace) -> int:
+    project_dir = pathlib.Path(args.project).resolve()
+    config, error = mw_common.load_rag_config(project_dir)
+    if error:
+        print(f"[mw rag list] Error: {error}", file=sys.stderr)
+        return 1
+    enabled = _rag_enabled(config)
+    if args.json:
+        print(json.dumps(config, indent=2, ensure_ascii=False, default=str))
+        return 0
+    print(f"[mw rag] enabled: {', '.join(enabled) if enabled else '(none)'}")
+    print(f"[mw rag] default server: {config.get('default_server') or '-'}")
+    print(f"[mw rag] fingerprint: {config.get('fingerprint')}")
+    servers = config.get("servers") or {}
+    for name in sorted(servers):
+        mark = "enabled" if name in enabled else "disabled"
+        print(f"[mw rag] server {name} [{mark}]")
+        for field, value, field_origin in _rag_format_origins(servers[name]):
+            print(f"  {field} = {value if value is not None else '-'} [{field_origin}]")
+    return 0
+
+
+def _mcp_post(
+    url: str,
+    payload: dict,
+    *,
+    token: str | None = None,
+    session_id: str | None = None,
+    timeout: float,
+) -> tuple[dict, str | None]:
+    """One JSON-RPC 2.0 POST (design §4.2: stdlib only, no SSE)."""
+    data = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if token:
+        headers["X-MCP-Token"] = token
+    if session_id:
+        headers["Mcp-Session-Id"] = session_id
+    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        body = response.read().decode("utf-8", "replace")
+        returned_session = response.headers.get("Mcp-Session-Id")
+    if not body.strip():
+        return {}, returned_session
+    parsed = json.loads(body)
+    return parsed if isinstance(parsed, dict) else {}, returned_session
+
+
+def _mcp_sources(payload: dict) -> list[str] | None:
+    if not isinstance(payload, dict):
+        return None
+    result = payload.get("result", payload)
+    if isinstance(result, list):
+        return [str(item) for item in result]
+    if isinstance(result, dict):
+        for key in ("sources", "source"):
+            value = result.get(key)
+            if isinstance(value, list):
+                return [str(item) for item in value]
+    return None
+
+
+def _mcp_capabilities(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    result = payload.get("result", payload)
+    if not isinstance(result, dict):
+        return {}
+    caps = result.get("capabilities")
+    if not isinstance(caps, dict):
+        return {}
+    return {key: caps[key] for key in _RAG_CAPABILITY_KEYS if isinstance(caps.get(key), bool)}
+
+
+def _probe_mcp_server(entry: dict, timeout: float) -> dict:
+    """initialize -> Mcp-Session-Id -> list_sources. Raises on connect failure."""
+    mcp = entry.get("mcp") or {}
+    url = mcp.get("url")
+    out: dict = {"reachable": False, "error": None, "session": False, "sources": None}
+    if not url:
+        out["error"] = "mcp.url is missing"
+        return out
+    token = None
+    token_env = mcp.get("token_env")
+    if token_env:
+        token = os.environ.get(str(token_env))
+    init = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": _RAG_MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "mw-rag-probe", "version": "1"},
+        },
+    }
+    _response, session_id = _mcp_post(url, init, token=token, timeout=timeout)
+    out["reachable"] = True
+    out["session"] = bool(session_id)
+    if session_id:
+        try:
+            _mcp_post(
+                url,
+                {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                token=token,
+                session_id=session_id,
+                timeout=timeout,
+            )
+        except Exception:  # noqa: BLE001 - notification is best-effort
+            pass
+    try:
+        listed, _ = _mcp_post(
+            url,
+            {"jsonrpc": "2.0", "id": 2, "method": "list_sources", "params": {}},
+            token=token,
+            session_id=session_id,
+            timeout=timeout,
+        )
+        out["sources"] = _mcp_sources(listed)
+        server_caps = _mcp_capabilities(listed)
+        if server_caps:
+            out["server_capabilities"] = server_caps
+    except Exception as exc:  # noqa: BLE001 - reachable, but the source list is not
+        out["error"] = f"list_sources: {type(exc).__name__}: {exc}"
+    return out
+
+
+def _probe_skill_server(entry: dict, project_dir: pathlib.Path) -> dict:
+    """skill transport: reachable iff the configured skill dir exists."""
+    out: dict = {"reachable": False, "error": None, "session": False, "sources": None}
+    skill = entry.get("skill") or {}
+    raw_dir = skill.get("dir")
+    if not raw_dir:
+        out["error"] = "skill.dir is missing"
+        return out
+    path = pathlib.Path(str(raw_dir))
+    if not path.is_absolute():
+        path = pathlib.Path(project_dir) / path
+    if path.is_dir():
+        out["reachable"] = True
+    else:
+        out["error"] = f"skill.dir not found: {path}"
+    return out
+
+
+def _rag_probe_server(
+    name: str,
+    entry: dict,
+    project_dir: pathlib.Path,
+    timeout: float | None = None,
+) -> dict:
+    """Probe one enabled server; never raises. Capability correction per D-004."""
+    timeout = _RAG_PROBE_TIMEOUT_S if timeout is None else timeout
+    started = time.monotonic()
+    transport = str(entry.get("transport") or "mcp")
+    result: dict = {
+        "server": name,
+        "transport": transport,
+        "reachable": False,
+        "error": None,
+        "session": False,
+        "sources": None,
+    }
+    try:
+        if transport in ("mcp", "both") and isinstance(entry.get("mcp"), dict):
+            result.update(_probe_mcp_server(entry, timeout))
+        elif transport == "skill" and isinstance(entry.get("skill"), dict):
+            result.update(_probe_skill_server(entry, project_dir))
+        else:
+            result["error"] = (
+                f"server '{name}' has no probeable mcp/skill block (transport={transport})"
+            )
+    except Exception as exc:  # noqa: BLE001 - probe failures are diagnostics, not errors
+        result["reachable"] = False
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    declared = {
+        key: bool((entry.get("capabilities") or {}).get(key))
+        for key in _RAG_CAPABILITY_KEYS
+    }
+    server_caps = result.pop("server_capabilities", None) or {}
+    corrected: list[str] = []
+    for key in _RAG_CAPABILITY_KEYS:
+        if key in server_caps and server_caps[key] != declared[key]:
+            declared[key] = server_caps[key]
+            corrected.append(key)
+    result["capabilities"] = declared
+    result["corrected"] = corrected
+    result["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+    return result
+
+
+def _cmd_rag_probe(args: argparse.Namespace) -> int:
+    project_dir = pathlib.Path(args.project).resolve()
+    config, error = mw_common.load_rag_config(project_dir)
+    if error:
+        print(f"[mw rag probe] Error: {error}", file=sys.stderr)
+        return 1
+    enabled = _rag_enabled(config)
+    servers = config.get("servers") or {}
+    results = {
+        name: _rag_probe_server(name, servers.get(name) or {}, project_dir)
+        for name in enabled
+    }
+    if args.json:
+        print(json.dumps(
+            {
+                "enabled": enabled,
+                "fingerprint": config.get("fingerprint"),
+                "servers": results,
+            },
+            indent=2,
+            ensure_ascii=False,
+            default=str,
+        ))
+        return 0
+    if not enabled:
+        print("[mw rag probe] no enabled servers")
+        return 0
+    for name, result in results.items():
+        state = "reachable" if result["reachable"] else "unreachable"
+        detail = f" ({result['error']})" if result.get("error") else ""
+        corrected = f" corrected={','.join(result['corrected'])}" if result["corrected"] else ""
+        print(f"[mw rag probe] {name}: {state}{detail}{corrected}")
+    return 0
+
+
+# ── `mw rag audit`: read-only citation + require cross-check (T-10) ─────────
+#
+# D-008: stdout is the default surface and `--out` is the only file this
+# command is allowed to write; nothing under the project is created, removed
+# or modified (VC-019 writes=0, D-014). `rag_call` rows are read key=value by
+# key (never by position or a whole-line anchor), so extra/new fields can
+# never crash the parser; citations use the D-004 grammar
+# (`server:source:file_path:line`) whose TS implementation is the contract.
+
+_RAG_EVIDENCE_KINDS = (
+    "rag_call",
+    "rag_fallback",
+    "rag-unavailable",
+    "rag-rewrite-degraded",
+    "rag-budget-exceeded",
+    "rag-required-missing",
+)
+# key=value tokens; the audit reads the fields it needs by name.
+_RAG_KV_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(\S+)")
+# D-004 citation extraction. `parse_citation` accepts any file_path (spaces,
+# `::`, Unicode); this *extractor* is stricter because it runs over prose and
+# trace logs: server/source are identifier-shaped and file_path is a single
+# whitespace-free token, so `13:00:53` / `node:internal/...:1517` in a log line
+# cannot masquerade as a citation. Callers additionally require the server to
+# be a configured name.
+_RAG_CITATION_RE = re.compile(
+    r"(?<![\w:./-])([A-Za-z0-9_][A-Za-z0-9_.-]*):([A-Za-z0-9_][A-Za-z0-9_.-]*):"
+    r"(\S*?):([0-9]+)(?=$|[\s)\]\"',;`!?.])"
+)
+_RAG_PATH_DEFAULT_ROLE = "engine"
+
+
+def parse_citation(text: str) -> dict | None:
+    """Parse `server:source:file_path:line` (D-004) -> four fields or None.
+
+    Left: two `:`-free segments (server, source). Right: the final segment is
+    the line (ASCII digits only). Everything in between is file_path verbatim,
+    so `::`, Windows backslashes, spaces and Unicode survive. Mirrors the TS
+    `adapter.ts::parseCitation`.
+    """
+    if not isinstance(text, str):
+        return None
+    first = text.find(":")
+    if first <= 0:
+        return None
+    server = text[:first]
+    rest = text[first + 1:]
+    second = rest.find(":")
+    if second <= 0:
+        return None
+    source = rest[:second]
+    tail = rest[second + 1:]
+    last = tail.rfind(":")
+    if last < 0:
+        return None
+    file_path = tail[:last]
+    line_text = tail[last + 1:]
+    if not file_path or re.fullmatch(r"[0-9]+", line_text) is None:
+        return None
+    return {
+        "server": server,
+        "source": source,
+        "file_path": file_path,
+        "line": int(line_text),
+    }
+
+
+def parse_rag_evidence_line(line: str) -> dict | None:
+    """Parse one trace line -> {"kind", "fields"} by key=value, else None.
+
+    Field lookup is by key, never positional: `rag_call`'s canonical prefix is
+    the six fields `server/tool/via/ms/results/mcp_tool`, but any extra field a
+    later revision adds is simply carried in `fields` (the audit keeps working).
+    """
+    if not isinstance(line, str):
+        return None
+    for kind in _RAG_EVIDENCE_KINDS:
+        if re.search(rf"(?<![A-Za-z0-9_-]){re.escape(kind)}(?![A-Za-z0-9_-])", line):
+            fields: dict[str, str] = {}
+            for key, value in _RAG_KV_RE.findall(line):
+                fields.setdefault(key, value)
+            return {"kind": kind, "fields": fields}
+    return None
+
+
+def _rag_int(value: object) -> int:
+    if isinstance(value, str) and re.fullmatch(r"[0-9]+", value):
+        return int(value)
+    return 0
+
+
+def _rag_read_lines(path: pathlib.Path) -> list[str]:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+
+def _rag_safe_print(text: str) -> None:
+    """Print without dying on a legacy code page (GBK console, mojibake trace)."""
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        text = text.encode(encoding, "replace").decode(encoding, "replace")
+    print(text)
+
+
+def _rag_relpath(path: pathlib.Path, project_dir: pathlib.Path) -> str:
+    try:
+        return pathlib.Path(path).resolve().relative_to(
+            pathlib.Path(project_dir).resolve()
+        ).as_posix()
+    except (OSError, ValueError):
+        return pathlib.Path(path).as_posix()
+
+
+def _rag_load_path_roots(
+    path_roots_file: object, project_dir: pathlib.Path
+) -> tuple[dict | None, str | None]:
+    """Path-roots mapping for one server -> (roots, reason).
+
+    `roots is None` means "cannot cross-check" (unconfigured / missing /
+    malformed), which the audit reports as `unverified` rather than crashing.
+    Mirrors the TS `adapter.ts::loadPathRoots`.
+    """
+    if not isinstance(path_roots_file, str) or not path_roots_file.strip():
+        return None, "path_roots not configured"
+    path = pathlib.Path(path_roots_file)
+    if not path.is_absolute():
+        path = pathlib.Path(project_dir) / path
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return None, f"path_roots file missing: {path}"
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None, f"path_roots file is not valid JSON: {path}"
+    if not isinstance(data, dict):
+        return None, f"path_roots file must be a JSON object: {path}"
+    roots: dict[str, str] = {}
+    for key, value in data.items():
+        if str(key).startswith("_"):
+            continue
+        if not isinstance(value, str) or not value.strip():
+            return None, f"path_roots entry '{key}' must be a non-empty path string"
+        roots[str(key)] = value
+    return roots, None
+
+
+def _rag_resolve_local_path(
+    file_path: str, roots: dict, project_dir: pathlib.Path
+) -> tuple[str | None, bool, str | None]:
+    """Map one `role::rel` (bare rel -> `engine`) onto the local tree.
+
+    Returns (local_path, exists, reason). Unknown role and path traversal are
+    `missing` findings (the reference cannot be resolved), matching T-10.
+    """
+    role = _RAG_PATH_DEFAULT_ROLE
+    relative = file_path
+    separator = file_path.find("::")
+    if separator >= 0:
+        role = file_path[:separator].strip()
+        relative = file_path[separator + 2:]
+    if role not in roots:
+        available = ", ".join(sorted(roots)) or "none"
+        return None, False, f"unknown role '{role}' (available roles: {available})"
+    root = pathlib.Path(roots[role])
+    if not root.is_absolute():
+        root = pathlib.Path(project_dir) / root
+    try:
+        root = root.resolve()
+        normalized = relative.strip().replace("\\", "/").lstrip("/")
+        resolved = (root / normalized).resolve()
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return None, False, f"path traversal escapes role '{role}' root: {file_path}"
+    if resolved.is_file():
+        return str(resolved), True, None
+    return str(resolved), False, "file missing"
+
+
+def _rag_check_citation(
+    citation: str, config: dict, project_dir: pathlib.Path
+) -> dict | None:
+    """Cross-check one citation against the merged config + local tree."""
+    parsed = parse_citation(citation)
+    if parsed is None:
+        return None
+    record: dict = dict(parsed)
+    record["citation"] = citation
+    entry = (config.get("servers") or {}).get(parsed["server"])
+    if not isinstance(entry, dict):
+        record.update(
+            status="unverified", local_path=None, exists=False,
+            reason=f"unknown server '{parsed['server']}'",
+        )
+        return record
+    roots, reason = _rag_load_path_roots(entry.get("path_roots_file"), project_dir)
+    if roots is None:
+        record.update(status="unverified", local_path=None, exists=False, reason=reason)
+        return record
+    local_path, exists, why = _rag_resolve_local_path(
+        parsed["file_path"], roots, project_dir
+    )
+    if exists:
+        record.update(status="ok", local_path=local_path, exists=True, reason=None)
+    else:
+        record.update(status="missing", local_path=local_path, exists=False, reason=why)
+    return record
+
+
+def _rag_extract_citations(line: str, known: set[str]) -> list[str]:
+    """Candidate citations in one text line (configured servers only).
+
+    Backtick spans are parsed as a whole first, which is how the skill writes
+    citations and is the only way a `file_path` containing spaces stays
+    unambiguous. The token regex then picks up bare (unquoted) citations; a
+    server name that is not configured is treated as ordinary prose because
+    `a:b:c:1` is indistinguishable from a timestamp or a module path.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    for span in re.findall(r"`([^`\n]+)`", line):
+        text = span.strip()
+        parsed = parse_citation(text)
+        if parsed is None or parsed["server"] not in known or text in seen:
+            continue
+        seen.add(text)
+        found.append(text)
+    for match in _RAG_CITATION_RE.finditer(line):
+        text = match.group(0)
+        if text in seen or match.group(1) not in known or "\ufffd" in text:
+            continue
+        seen.add(text)
+        found.append(text)
+    return found
+
+
+def _rag_audit_collect_citations(
+    path: pathlib.Path, config: dict, project_dir: pathlib.Path, attrib: dict
+) -> list[dict]:
+    records: list[dict] = []
+    rel = _rag_relpath(path, project_dir)
+    known = {
+        str(name) for name in (config.get("servers") or {})
+        if isinstance(name, str) and name
+    }
+    if not known:
+        return records
+    for lineno, line in enumerate(_rag_read_lines(path), start=1):
+        for text in _rag_extract_citations(line, known):
+            checked = _rag_check_citation(text, config, project_dir)
+            if checked is None:
+                continue
+            record = dict(attrib)
+            record.update(checked)
+            record["file"] = rel
+            record["line_number"] = lineno
+            records.append(record)
+    return records
+
+
+def _rag_audit_doc_citations(
+    rag_dir: pathlib.Path, config: dict, project_dir: pathlib.Path, key_name: str
+) -> list[dict]:
+    """Citations from `<key>/rag/**/*.md` (research docs, D-008)."""
+    if not rag_dir.is_dir():
+        return []
+    records: list[dict] = []
+    for md in sorted(rag_dir.rglob("*.md")):
+        attrib = {
+            "source_kind": "rag-doc",
+            "key": key_name,
+            "task_key": md.stem,
+            "worker": None,
+            "role": "rag-research",
+            "phase": "",
+        }
+        records.extend(_rag_audit_collect_citations(md, config, project_dir, attrib))
+    return records
+
+
+def _rag_audit_collect_calls(
+    trace_path: pathlib.Path, project_dir: pathlib.Path, attrib: dict
+) -> list[dict]:
+    """`rag_call` rows (+ degraded association) from one worker trace.log."""
+    calls: list[dict] = []
+    degraded: set[tuple[str, str]] = set()
+    rel = _rag_relpath(trace_path, project_dir)
+    for lineno, line in enumerate(_rag_read_lines(trace_path), start=1):
+        parsed = parse_rag_evidence_line(line)
+        if parsed is None:
+            continue
+        fields = parsed["fields"]
+        if parsed["kind"] == "rag-rewrite-degraded":
+            degraded.add((fields.get("server", ""), fields.get("tool", "")))
+            continue
+        if parsed["kind"] != "rag_call":
+            continue
+        record = dict(attrib)
+        record.update({
+            "file": rel,
+            "line_number": lineno,
+            "server": fields.get("server", ""),
+            "tool": fields.get("tool", ""),
+            "via": fields.get("via", ""),
+            "ms": _rag_int(fields.get("ms")),
+            "results": _rag_int(fields.get("results")),
+            "mcp_tool": fields.get("mcp_tool"),
+            "degraded": False,
+        })
+        calls.append(record)
+    for record in calls:
+        if (record["server"], record["tool"]) in degraded:
+            record["degraded"] = True
+    return calls
+
+
+def _rag_task_meta(task_path: pathlib.Path) -> dict:
+    """task.md `type:` and `phase:` declarations (missing -> non-empty defaults)."""
+    task_type = ""
+    phase = ""
+    for raw in _rag_read_lines(task_path):
+        line = raw.strip()
+        if not task_type and line.startswith("type:"):
+            task_type = line[len("type:"):].strip()
+        elif not phase and line.startswith("phase:"):
+            phase = line[len("phase:"):].strip()
+    return {"type": task_type, "phase": phase}
+
+
+def _rag_terminal_workers(
+    project_dir: pathlib.Path, agenticdoc: pathlib.Path
+) -> dict[str, list[tuple[str, pathlib.Path, dict]]]:
+    """Terminal `_workers.parallel` rows grouped by key: {key: [(worker, dir, row)]}.
+
+    Non-terminal entries are skipped on purpose: a half-written output.md must
+    never participate in the judgement (D-008).
+    """
+    grouped: dict[str, list[tuple[str, pathlib.Path, dict]]] = {}
+    workers_path = mw_common.workers_path(project_dir)
+    if not workers_path.exists():
+        return grouped
+    for entry in mw_common.parse_workers_file(workers_path):
+        if entry["status"] not in mw_common._TERMINAL_STATUSES:
+            continue
+        task_path = pathlib.Path(entry["task_path"])
+        worker_dir = task_path.parent
+        if not worker_dir.is_dir():
+            continue
+        try:
+            rel = task_path.resolve().relative_to(agenticdoc.resolve())
+        except (OSError, ValueError):
+            continue
+        if len(rel.parts) < 3 or rel.parts[1] != "workers":
+            continue
+        grouped.setdefault(rel.parts[0], []).append((rel.parts[2], worker_dir, entry))
+    return grouped
+
+
+def _rag_audit_project(project_dir: pathlib.Path, key: str | None = None) -> dict:
+    """Read-only audit of one project -> `{calls, citations, missing, unverified,
+    required_missing, ...}` (T-10 / AC-015). Never writes, never goes online.
+
+    Required judgement = `role.require OR phase.require` (union, no exception);
+    "used RAG" = at least one verifiable (locally existing) citation attributable
+    to the task; a bare `rag_call` row is not enough (VC-020).
+    """
+    project = pathlib.Path(project_dir)
+    config, error = mw_common.load_rag_config(project)
+    report: dict = {
+        "project": str(project),
+        "key": key,
+        "enabled": _rag_enabled(config) if not error else [],
+        "calls": [],
+        "citations": [],
+        "missing": [],
+        "unverified": [],
+        "required_missing": [],
+        "error": error,
+    }
+    if error:
+        return report
+    agenticdoc = project / ".agenticdoc"
+    workers = _rag_terminal_workers(project, agenticdoc)
+    if key is not None:
+        key_dirs = [agenticdoc / key] if (agenticdoc / key).is_dir() else []
+    elif agenticdoc.is_dir():
+        key_dirs = sorted(
+            (p for p in agenticdoc.iterdir() if p.is_dir()), key=lambda p: p.name
+        )
+    else:
+        key_dirs = []
+
+    citations: list[dict] = []
+    calls: list[dict] = []
+    required_missing: list[dict] = []
+    for key_dir in key_dirs:
+        key_name = key_dir.name
+        doc_citations = _rag_audit_doc_citations(
+            key_dir / "rag", config, project, key_name
+        )
+        citations.extend(doc_citations)
+        for worker, worker_dir, entry in workers.get(key_name, []):
+            meta = _rag_task_meta(worker_dir / "task.md")
+            task_type = meta["type"]
+            # Unknown/absent `type:` falls back to coding, mirroring
+            # `roleForTaskType` (shared/dispatch-models.ts:78) and
+            # `mw_common.py:303` (T-16 / D-105).
+            role = mw_common.TASK_TYPE_TO_ROLE.get(task_type, "coding")
+            phase = meta["phase"]
+            attrib = {
+                "source_kind": "worker",
+                "key": key_name,
+                "task_key": str(entry.get("task_key") or worker),
+                "worker": worker,
+                "role": role,
+                "phase": phase,
+            }
+            worker_citations: list[dict] = []
+            for name in ("output.md", "trace.log"):
+                path = worker_dir / name
+                if not path.is_file():
+                    continue
+                found = _rag_audit_collect_citations(path, config, project, attrib)
+                worker_citations.extend(found)
+                citations.extend(found)
+            calls.extend(
+                _rag_audit_collect_calls(worker_dir / "trace.log", project, attrib)
+            )
+            if not mw_common._rag_required_for(config, role, phase):
+                continue
+            used = any(record["status"] == "ok" for record in worker_citations)
+            if not used and role == "research":
+                # A rag-research task's citations land in <key>/rag/*.md, not in
+                # its own worker dir (T-09), so the key's docs count for it.
+                used = any(record["status"] == "ok" for record in doc_citations)
+            if used:
+                continue
+            server, _source, _rewrite = mw_common._rag_resolve_defaults(config, role, phase)
+            required_missing.append({
+                "key": key_name,
+                "task_key": str(entry.get("task_key") or worker),
+                "worker": worker,
+                "role": role,
+                "phase": phase,
+                "server": server,
+                "reason": "required role/phase without a verifiable citation",
+            })
+
+    citations.sort(key=lambda c: (
+        c["key"], str(c.get("worker") or ""), c["file"], c["line_number"], c["citation"]
+    ))
+    calls.sort(key=lambda c: (
+        c["key"], str(c.get("worker") or ""), c["line_number"], c["tool"]
+    ))
+    required_missing.sort(key=lambda r: (r["key"], r["worker"], r["role"], r["phase"]))
+    report["citations"] = citations
+    report["calls"] = calls
+    report["missing"] = [c for c in citations if c["status"] == "missing"]
+    report["unverified"] = [c for c in citations if c["status"] == "unverified"]
+    report["required_missing"] = required_missing
+    return report
+
+
+def _rag_audit_where(record: dict) -> str:
+    worker = record.get("worker") or record.get("task_key") or "-"
+    phase = record.get("phase") or "-"
+    return f"{record.get('key')}/{worker}[{record.get('role')}/{phase}]"
+
+
+def _rag_audit_text_lines(report: dict) -> list[str]:
+    enabled = report.get("enabled") or []
+    lines = [
+        f"[mw rag audit] enabled={', '.join(enabled) if enabled else '(none)'} "
+        f"key={report.get('key') or '*'}",
+        f"[mw rag audit] calls={len(report['calls'])} "
+        f"citations={len(report['citations'])} missing={len(report['missing'])} "
+        f"unverified={len(report['unverified'])} "
+        f"required_missing={len(report['required_missing'])}",
+    ]
+    for record in report["missing"]:
+        lines.append(
+            f"[mw rag audit] missing {_rag_audit_where(record)} "
+            f"{record['citation']} -> {record['reason']}"
+        )
+    for record in report["unverified"]:
+        lines.append(
+            f"[mw rag audit] unverified {_rag_audit_where(record)} "
+            f"{record['citation']} -> {record['reason']}"
+        )
+    for record in report["required_missing"]:
+        lines.append(
+            f"[mw rag audit] required-missing {record['key']}/{record['worker']} "
+            f"role={record['role']} phase={record['phase'] or '-'} "
+            f"server={record['server'] or '-'}"
+        )
+    return lines
+
+
+def _cmd_rag_audit(args: argparse.Namespace) -> int:
+    """`mw rag audit`: 0 clean / 1 warning / 2 usage or config error (D-008)."""
+    project = pathlib.Path(args.project)
+    if not project.is_dir():
+        print(f"[mw rag audit] Error: project directory not found: {args.project}", file=sys.stderr)
+        return 2
+    project = project.resolve()
+    key = args.key
+    if key is not None and not (project / ".agenticdoc" / key).is_dir():
+        print(
+            f"[mw rag audit] Error: no such key directory: {project / '.agenticdoc' / key}",
+            file=sys.stderr,
+        )
+        return 2
+    report = _rag_audit_project(project, key=key)
+    if report.get("error"):
+        print(f"[mw rag audit] Error: {report['error']}", file=sys.stderr)
+        return 2
+    payload = json.dumps(report, indent=2, ensure_ascii=False, default=str)
+    if args.out:
+        out_path = pathlib.Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = out_path.with_name(out_path.name + f".tmp{os.getpid()}")
+        try:
+            with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(payload)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, out_path)
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+    if args.json:
+        _rag_safe_print(payload)
+    else:
+        for line in _rag_audit_text_lines(report):
+            _rag_safe_print(line)
+    if report["missing"] or report["unverified"] or report["required_missing"]:
+        return 1
+    return 0
+
+
+# ── Subcommand: rag init (zero-interaction template generator) ──────────────
+#
+# `mw rag init` renders the canonical templates from rag_templates.py and
+# writes them. Discipline (design D-202~D-206): zero interaction (no prompt),
+# project files by default (machine layer only on --machine/--only-machine),
+# never YAML-round-trip target.yml (text-level append/replace so comments and
+# other sections survive), refuse existing targets unless --force, and make
+# --dry-run/--print pure reads (exit 0, zero writes).
+
+_RAG_INIT_SERVER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+def _rag_machine_write_path() -> pathlib.Path | None:
+    """Machine-layer path for `mw rag init --machine`, including the create case.
+
+    `mw_common.machine_rag_servers_path()` returns None when the file does not
+    exist yet, so the same env order is mirrored here for the write target.
+    MW_RAG_SERVERS_HOME wins over HOME so a test hook can never make init touch
+    the user's real HOME.
+    """
+    home = (os.environ.get(mw_common.RAG_ENV_HOME) or "").strip()
+    if home:
+        return pathlib.Path(home) / ".agents" / "rag-servers.yml"
+    existing = mw_common.machine_rag_servers_path()
+    if existing is not None:
+        return existing
+    override = (os.environ.get(mw_common.RAG_ENV_FILE) or "").strip()
+    if override:
+        return pathlib.Path(override)
+    for var in ("HOME", "USERPROFILE"):
+        home = (os.environ.get(var) or "").strip()
+        if home:
+            return pathlib.Path(home) / ".agents" / "rag-servers.yml"
+    return None
+
+
+def _rag_init_target_state(path: pathlib.Path) -> tuple[str, str]:
+    """(state, detail): missing | no-rag | has-rag | unreadable."""
+    if not path.exists():
+        return "missing", "does not exist (will be created)"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return "unreadable", str(exc)
+    if re.search(r"^rag\s*:", text, flags=re.MULTILINE):
+        return "has-rag", "already has a top-level 'rag:' key"
+    return "no-rag", "exists without a top-level 'rag:' key (will be appended)"
+
+
+def _replace_top_level_block(text: str, key: str, new_block: str) -> str:
+    """Replace the top-level `key:` block (from its line to the next top-level
+    key or EOF) with `new_block`, leaving every other byte untouched. Used by
+    `--force` so target.yml's comments and other sections survive (D-204)."""
+    lines = text.splitlines(keepends=True)
+    start = None
+    for i, line in enumerate(lines):
+        if re.match(rf"^{re.escape(key)}\s*:", line):
+            start = i
+            break
+    if start is None:
+        return text
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        line = lines[j]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if line[0] not in (" ", "\t"):
+            end = j
+            break
+    return "".join(lines[:start]) + new_block + "".join(lines[end:])
+
+
+def _cmd_rag_init_print(project_dir: pathlib.Path, servers_text: str, target_text: str) -> None:
+    """Emit the 3-section --print contract (manual parity, T-22)."""
+    for path, text in (
+        (mw_common.rag_servers_path(project_dir), servers_text),
+        (mw_common.target_yml_path(project_dir), target_text),
+        (project_dir / ".mw" / "rag-roots.json", rag_templates.ROOTS_TEMPLATE),
+    ):
+        print(f"# ===== file: {path} =====")
+        sys.stdout.write(text)
+
+
+def _cmd_rag_init(args: argparse.Namespace) -> int:
+    project_dir = pathlib.Path(args.project)
+    if not project_dir.is_dir():
+        print(f"[mw rag init] Error: project directory not found: {args.project}", file=sys.stderr)
+        return 1
+    project_dir = project_dir.resolve()
+    if args.machine and args.only_machine:
+        print("[mw rag init] Error: --machine and --only-machine are mutually exclusive", file=sys.stderr)
+        return 1
+
+    server = (args.server or rag_templates.DEFAULT_SERVER).strip()
+    if not _RAG_INIT_SERVER_RE.match(server):
+        print(
+            f"[mw rag init] Error: invalid --server {server!r} "
+            "(use letters/digits/'.'/'_'/'-', starting alphanumeric)",
+            file=sys.stderr,
+        )
+        return 1
+    url = (args.url or rag_templates.DEFAULT_MCP_URL).strip()
+    token_env = (args.token_env if args.token_env is not None else rag_templates.DEFAULT_TOKEN_ENV).strip()
+    transport = args.transport or "mcp"
+
+    # Step 1: a broken existing config must never abort init (init repairs it);
+    # only an unreadable/absent project dir (checked above) is fatal.
+    config, _error = mw_common.load_rag_config(project_dir)
+    known_servers = set((config.get("servers") or {}).keys())
+
+    servers_text = rag_templates.render_servers_template(
+        server,
+        url,
+        token_env,
+        transport,
+        rag_templates.DEFAULT_SKILL_DIR,
+        rag_templates.DEFAULT_SKILL_CLI_ENTRY,
+        not args.no_roots,
+    )
+    target_text = rag_templates.render_target_rag_template(server, args.enable, args.enable)
+
+    project_servers = mw_common.rag_servers_path(project_dir)
+    target_yml = mw_common.target_yml_path(project_dir)
+    roots_path = project_dir / ".mw" / "rag-roots.json"
+
+    # --print is a pure read (D-205): emit the templates and exit 0 before any
+    # refusal/plan logic can turn it into an error.
+    if args.print_templates:
+        _cmd_rag_init_print(project_dir, servers_text, target_text)
+        return 0
+
+    machine_path = _rag_machine_write_path() if (args.machine or args.only_machine) else None
+
+    plans: list[dict] = []
+    refusals: list[tuple[pathlib.Path, str]] = []
+    report: list[tuple[str, pathlib.Path, str]] = []
+
+    def _plan_servers(path: pathlib.Path, label: str) -> None:
+        if path.exists() and not args.force:
+            refusals.append((path, "already exists (use --force to overwrite)"))
+            report.append(("refuse", path, "already exists (use --force to overwrite)"))
+        else:
+            state = "overwrite" if path.exists() else "write"
+            plans.append({"kind": label, "path": path, "text": servers_text, "state": state})
+            report.append((state, path, "servers template"))
+
+    if not args.only_machine:
+        _plan_servers(project_servers, "servers")
+        target_state, target_detail = _rag_init_target_state(target_yml)
+        if target_state == "unreadable":
+            refusals.append((target_yml, target_detail))
+            report.append(("refuse", target_yml, target_detail))
+        elif target_state == "has-rag" and not args.force:
+            reason = "already has a top-level 'rag:' key (use --force to replace it)"
+            refusals.append((target_yml, reason))
+            report.append(("refuse", target_yml, reason))
+        else:
+            plans.append({"kind": "target", "path": target_yml, "text": target_text, "state": target_state})
+            report.append((target_state, target_yml, target_detail))
+    else:
+        report.append(("skip", project_servers, "--only-machine: project files are not written"))
+        report.append(("skip", target_yml, "--only-machine: project files are not written"))
+        report.append(("skip", roots_path, "--only-machine: project files are not written"))
+
+    if machine_path is not None:
+        _plan_servers(machine_path, "machine-servers")
+
+    if not args.no_roots and not args.only_machine:
+        if roots_path.exists() and not args.force:
+            reason = "already exists (use --force to overwrite)"
+            refusals.append((roots_path, reason))
+            report.append(("refuse", roots_path, reason))
+        else:
+            state = "overwrite" if roots_path.exists() else "write"
+            plans.append({"kind": "roots", "path": roots_path,
+                          "text": rag_templates.ROOTS_TEMPLATE, "state": state})
+            report.append((state, roots_path, "rag-roots.json template"))
+
+    # --enable references the server from target.yml, so it must actually be
+    # declared (freshly written or already present) or the config would break.
+    declared = set(known_servers)
+    for plan in plans:
+        if plan["kind"] in ("servers", "machine-servers"):
+            declared.add(server)
+    if args.enable and server not in declared:
+        reason = f"cannot --enable server {server!r}: not declared in any rag-servers.yml"
+        refusals.append((target_yml, reason))
+        report.append(("refuse", target_yml, reason))
+
+    if args.dry_run:
+        print("[mw rag init] dry-run — no files written")
+        for action, path, detail in report:
+            print(f"[mw rag init] {action:9s} {path}  ({detail})")
+        return 0
+
+    if refusals:
+        for path, reason in refusals:
+            print(f"[mw rag init] Error: refusing to write {path}: {reason}", file=sys.stderr)
+        print("[mw rag init] nothing written. Edit by hand or re-run with --force.", file=sys.stderr)
+        return 1
+
+    try:
+        for plan in plans:
+            kind, path = plan["kind"], plan["path"]
+            if kind != "target":
+                _atomic_write_yml(path, plan["text"])
+                continue
+            if plan["state"] == "missing":
+                _atomic_write_yml(path, plan["text"])
+                continue
+            current = path.read_text(encoding="utf-8")
+            if plan["state"] == "no-rag":
+                base = current if current.endswith("\n") else current + "\n"
+                _atomic_write_yml(path, base + "\n" + plan["text"])
+            else:  # has-rag + --force: replace only that top-level block
+                _atomic_write_yml(path, _replace_top_level_block(current, "rag", plan["text"]))
+    except OSError as exc:
+        print(f"[mw rag init] Error: writing files failed: {exc}", file=sys.stderr)
+        return 1
+
+    for plan in plans:
+        print(f"[mw rag init] wrote {plan['path']}")
+    print("[mw rag init] next steps:")
+    print(f"  1. Edit {project_servers}: set mcp.url and mcp.token_env (env var NAME only).")
+    print(f"  2. Add {server!r} to rag.enabled in {target_yml} (or re-run with --enable).")
+    print("  3. Run `mw rag list --project <dir>`, `mw rag probe`, `mw rag sync`; "
+          "restart `mw serve` so workers pick up the change.")
+    return 0
+
+
+def cmd_rag(args: argparse.Namespace) -> int:
+    return _RAG_ACTIONS[args.rag_action](args)
+
+
+_RAG_ACTIONS = {
+    "init": _cmd_rag_init,
+    "list": _cmd_rag_list,
+    "probe": _cmd_rag_probe,
+    "audit": _cmd_rag_audit,
+    "sync": _cmd_rag_sync,
+}
+
+
+def _doctor_rag(project_dir: pathlib.Path) -> dict:
+    """RAG section for `mw doctor` (shape of mw_common._doctor_dispatch).
+
+    Informational: a broken config or an unreachable server is surfaced, never
+    flagged as a chain issue. Probe runs for the enabled set only, so a project
+    without RAG does no network I/O (D-014).
+    """
+    project_dir = pathlib.Path(project_dir)
+    machine_path = mw_common.machine_rag_servers_path()
+    project_path = mw_common.rag_servers_path(project_dir)
+    section: dict = {
+        "exists": bool(project_path.exists() or machine_path is not None),
+        "machine_file": str(machine_path) if machine_path is not None else None,
+        "project_file": str(project_path) if project_path.exists() else None,
+        "skill": _rag_skill_state(project_dir),
+    }
+    config, error = mw_common.load_rag_config(project_dir)
+    if error:
+        section["error"] = error
+        section["enabled"] = []
+        section["default_server"] = None
+        section["fingerprint"] = None
+        section["probe"] = {}
+        section["required_missing"] = 0
+        return section
+    enabled = _rag_enabled(config)
+    servers = config.get("servers") or {}
+    section["enabled"] = enabled
+    section["default_server"] = config.get("default_server")
+    section["fingerprint"] = config.get("fingerprint")
+    section["probe"] = {
+        name: {
+            "reachable": result["reachable"],
+            "transport": result["transport"],
+            "error": result.get("error"),
+            "corrected": result["corrected"],
+        }
+        for name, result in (
+            (name, _rag_probe_server(name, servers.get(name) or {}, project_dir))
+            for name in enabled
+        )
+    }
+    # Required-but-unused count from the same read-only audit (T-10 item 3).
+    section["required_missing"] = len(
+        (_rag_audit_project(project_dir).get("required_missing") or [])
+    )
+    return section
+
+
+def _format_rag_doctor_line(section: dict) -> str:
+    enabled = section.get("enabled") or []
+    if section.get("error"):
+        return f"rag: ERROR - {section['error']}"
+    if not enabled:
+        skill = section.get("skill") or {}
+        return f"rag: not enabled (skill {skill.get('status', 'unknown')})"
+    probe = section.get("probe") or {}
+    state = ", ".join(
+        f"{name}={'reachable' if item.get('reachable') else 'unreachable'}"
+        for name, item in sorted(probe.items())
+    )
+    fingerprint = (section.get("fingerprint") or "")[:12]
+    skill_status = (section.get("skill") or {}).get("status", "unknown")
+    required_missing = int(section.get("required_missing") or 0)
+    required = f"; required_missing={required_missing}" if required_missing else ""
+    return (
+        f"rag: enabled={', '.join(enabled)}; probe={state}; "
+        f"fingerprint={fingerprint}; skill={skill_status}{required}"
+    )
 
 
 # ── Subcommand: partition (large-project split, mw-target-partition) ────────
@@ -3402,6 +4810,97 @@ def _parse_args() -> argparse.Namespace:
                               help="git fetch origin in the framework cache + skill clone first "
                                    "(refresh the origin refs the behind/ahead counts use)")
 
+    toolchain_p = sub.add_parser(
+        "ue-toolchain",
+        help="Dual-mode UE toolchain discipline (practice guide; UE game dev: game repo + "
+             "engine source repo, MSVC/UBT): run a configured command with evidence "
+             "artifacts, discover UE build targets, EOL-normalized hashing",
+    )
+    toolchain_sub = toolchain_p.add_subparsers(dest="toolchain_action", required=True)
+    tc_run_p = toolchain_sub.add_parser(
+        "run",
+        help="Execute toolchain.<name> from the control root; archives cmd.txt / run.log / "
+             "exit.txt / errors.txt / meta.json under a fresh run dir. Error signatures "
+             "(error C / LNK#### / 'error :') are the MSVC/UE set; the run-evidence "
+             "discipline itself is toolchain-agnostic",
+    )
+    tc_run_p.add_argument("--project", required=True)
+    tc_run_p.add_argument("name", metavar="NAME", help="toolchain.<NAME> command to run")
+    tc_run_p.add_argument("--out", default=None, metavar="DIR",
+                          help="Parent dir for the run dir (default: <control>/.mw/toolchain-runs; "
+                               "point it at key evidence to archive the run)")
+    tc_run_p.add_argument("--watch", action="append", default=None, metavar="PATH",
+                          help="File hashed (EOL-normalized) before/after — drift proves someone "
+                               "edited it while the command ran (repeatable)")
+    tc_run_p.add_argument("--args", default=None, metavar="STR",
+                          help="String appended verbatim to the rendered command. Use the equals "
+                               "form (--args=\"-MaxParallelActions=16\") when the value starts "
+                               "with '-' — argparse rejects it as an unknown flag otherwise")
+    tc_run_p.add_argument("--json", action="store_true", help="Also print meta.json to stdout")
+    tc_targets_p = toolchain_sub.add_parser(
+        "targets", help="List UE build target names from <game>/Source/*.Target.cs (read, never guess)")
+    tc_targets_p.add_argument("--project", required=True)
+    tc_hash_p = toolchain_sub.add_parser(
+        "hash", help="EOL-normalized sha256 (freeze/drift checks that survive CRLF→LF flips)")
+    tc_hash_p.add_argument("files", nargs="+", metavar="FILE")
+
+    rag_p = sub.add_parser(
+        "rag",
+        help="RAG (MCP) knowledge-base config: list the merged server table, probe the "
+             "enabled set, sync the mw-rag skill (explicit install - the pi session never writes it)",
+    )
+    rag_sub = rag_p.add_subparsers(dest="rag_action", required=True)
+    rag_init_p = rag_sub.add_parser(
+        "init", help="Zero-interaction template generator: write commented "
+                     "rag-servers.yml / target.yml rag: / rag-roots.json examples")
+    rag_init_p.add_argument("--project", required=True, help="Control workspace directory")
+    rag_init_p.add_argument("--server", default=None, metavar="NAME",
+                            help=f"Server name to template (default: {rag_templates.DEFAULT_SERVER})")
+    rag_init_p.add_argument("--url", default=None, metavar="URL",
+                            help=f"Example MCP url (default: {rag_templates.DEFAULT_MCP_URL})")
+    rag_init_p.add_argument("--token-env", dest="token_env", default=None, metavar="VAR",
+                            help="Example token env var NAME (default: "
+                                 f"{rag_templates.DEFAULT_TOKEN_ENV})")
+    rag_init_p.add_argument("--transport", choices=("mcp", "skill", "both"), default=None,
+                            help="Which transport block stays active (default: mcp)")
+    rag_init_p.add_argument("--enable", action="store_true",
+                            help="Write enabled: [<server>] (and default_server) instead of enabled: []")
+    rag_init_p.add_argument("--machine", action="store_true",
+                            help="Also write the machine layer ~/.agents/rag-servers.yml")
+    rag_init_p.add_argument("--only-machine", dest="only_machine", action="store_true",
+                            help="Write only the machine layer (skip project files)")
+    rag_init_p.add_argument("--no-roots", dest="no_roots", action="store_true",
+                            help="Do not write <project>/.mw/rag-roots.json (then every citation "
+                                 "audits as unverified)")
+    rag_init_p.add_argument("--force", action="store_true",
+                            help="Overwrite existing files; replace an existing rag: section in place")
+    rag_init_p.add_argument("--dry-run", dest="dry_run", action="store_true",
+                            help="Print the intended writes and exit without changing anything")
+    rag_init_p.add_argument("--print", dest="print_templates", action="store_true",
+                            help="Print the templates to stdout and exit without changing anything")
+    rag_list_p = rag_sub.add_parser(
+        "list", help="Merged per-field server table + origin annotations + enabled set")
+    rag_list_p.add_argument("--project", required=True, help="Control workspace directory")
+    rag_list_p.add_argument("--json", action="store_true", help="Emit the machine-readable config")
+    rag_probe_p = rag_sub.add_parser(
+        "probe", help="Probe each enabled server (5s each; diagnostics only — unreachable servers still "
+                       "exit 0, a config error exits 1)")
+    rag_probe_p.add_argument("--project", required=True, help="Control workspace directory")
+    rag_probe_p.add_argument("--json", action="store_true", help="Emit the per-server probe results")
+    rag_sync_p = rag_sub.add_parser(
+        "sync", help="Install/remove <project>/.pi/skills/mw-rag.md (the only writer of that file)")
+    rag_sync_p.add_argument("--project", required=True, help="Control workspace directory")
+    rag_audit_p = rag_sub.add_parser(
+        "audit", help="Read-only citation/require audit over <key>/rag/*.md and terminal "
+                      "workers' output.md/trace.log (default: stdout only)")
+    rag_audit_p.add_argument("--project", required=True, help="Control workspace directory")
+    rag_audit_p.add_argument("--key", default=None,
+                             help="Limit the scan to one AgenticTask key directory")
+    rag_audit_p.add_argument("--json", action="store_true",
+                             help="Emit the machine-readable audit report")
+    rag_audit_p.add_argument("--out", default=None, metavar="FILE",
+                             help="Write the JSON report to FILE (default: no file is written)")
+
     return parser.parse_args()
 
 
@@ -3423,5 +4922,7 @@ if __name__ == "__main__":
         "build": cmd_build,
         "bootstrap": cmd_bootstrap,
         "update-env": cmd_update_env,
+        "ue-toolchain": cmd_toolchain,
+        "rag": cmd_rag,
     }
     sys.exit(dispatch[args.subcommand](args))

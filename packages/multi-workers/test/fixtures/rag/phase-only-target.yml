@@ -1,0 +1,13 @@
+rag:
+  enabled: [A, B]
+  default_server: B
+  roles:
+    coding:
+      require: true
+  phases:
+    design:
+      server: A
+      source: docs
+  budgets:
+    chat_budget: 2
+    time_budget_s: 900

@@ -216,7 +216,13 @@ function parseContract(value: unknown): TargetContract {
 	};
 }
 
-function readTargetYml(controlRoot: string): Record<string, unknown> {
+/**
+ * Read the raw `.agenticdoc/target.yml` mapping for a control root. Exported
+ * for rag/config.ts (T-01, mw-rag-integration) so the RAG layer reuses this
+ * single target.yml reader instead of adding a second parser (P-003); no
+ * semantic change to the resolver.
+ */
+export function rawTargetYml(controlRoot: string): Record<string, unknown> {
 	const file = targetYmlPath(controlRoot);
 	let text: string;
 	try {
@@ -618,7 +624,7 @@ function resolveLegacyConfig(
  */
 export function resolveWorkspaceConfig(controlRoot: string): WorkspaceConfig {
 	const fileExists = fs.existsSync(targetYmlPath(controlRoot));
-	const raw = readTargetYml(controlRoot);
+	const raw = rawTargetYml(controlRoot);
 
 	const envGame = process.env[ENV_TARGET_GAME]?.trim() || null;
 	const envEngine = process.env[ENV_TARGET_ENGINE]?.trim() || null;

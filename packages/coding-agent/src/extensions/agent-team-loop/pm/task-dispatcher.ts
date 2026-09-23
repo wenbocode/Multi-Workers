@@ -1,5 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { RAG_MARKER_V1, type RagTaskMeta, renderRagBlock } from "../rag/block.ts";
+import { loadRagConfig } from "../rag/config.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
 import { renderToolchainCommand, resolveWorkspaceConfig, type WorkspaceConfig } from "../shared/target-config.ts";
 import type { WorkerEntry, WorkerStore } from "../shared/worker-store.ts";
@@ -90,6 +92,33 @@ function findProfileBlock(content: string): number | null {
 	if (v2 === -1) return v1;
 	if (v1 === -1) return v2;
 	return Math.min(v1, v2);
+}
+
+/** Drop the `<!-- mw-rag: v1 -->` block (marker line to EOF) from a task.md,
+ * collapsing the tail whitespace to a single newline. The RAG block is always
+ * the last block, so this re-anchors the profile boundary cleanly. */
+function stripRagBlock(content: string): string {
+	const index = content.indexOf(RAG_MARKER_V1);
+	if (index === -1) return content;
+	return content.slice(0, index).replace(/\s+$/, "\n");
+}
+
+/** Positive-integer task.md header (`<header>      12`). */
+function headerInt(content: string, header: string): number | undefined {
+	const match = new RegExp(`^${header}[ \\t]*(\\d+)[ \\t]*$`, "m").exec(content);
+	if (match === null) return undefined;
+	const value = Number(match[1]);
+	return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/** Task metadata `renderRagBlock` needs, read from the task.md frontmatter. */
+function parseRagTaskMeta(content: string): RagTaskMeta {
+	return {
+		type: /^type:[ \t]*(.+?)[ \t]*$/m.exec(content)?.[1],
+		phase: /^phase:[ \t]*(.+?)[ \t]*$/m.exec(content)?.[1],
+		chatBudget: headerInt(content, "rag_chat_budget:"),
+		timeBudgetS: headerInt(content, "rag_time_budget_s:"),
+	};
 }
 
 /** AC-019/FIX-2 freshness predicate: an existing block is fresh exactly
@@ -217,28 +246,38 @@ function injectWorkspaceProfile(taskPath: string): void {
 		);
 		return;
 	}
-	const existing = findProfileBlock(original);
-	const ownDenyGlobs = /^deny_globs:/m.test(original);
-	if (existing !== null && blockIsFresh(original.slice(existing).replace(/\s+$/, "\n"), config)) {
-		return; // byte-identical to the current config's render: append-once idempotency (AC-007)
+	// The RAG block is the last block (marker line to EOF), so strip it before
+	// the profile replacement boundary (also marker -> EOF) is computed, then
+	// re-append the freshly rendered block at the very end. This keeps both
+	// blocks idempotent under re-dispatch and drops a stale RAG block when the
+	// project no longer enables RAG (D-009).
+	const base = stripRagBlock(original);
+	const existing = findProfileBlock(base);
+	const ownDenyGlobs = /^deny_globs:/m.test(base);
+	let out = base;
+	const profileFresh = existing !== null && blockIsFresh(base.slice(existing).replace(/\s+$/, "\n"), config);
+	if (!profileFresh) {
+		// Stale block: drop everything from its marker line (AC-019 wholesale
+		// replacement — a mode switch, any same-mode config change, or a switch
+		// to a non-injecting mode (parked single) that restores the pre-injection
+		// bytes); fresh dispatch: anchor at the original content. The tail
+		// collapses to a single newline so the replacement re-anchors cleanly.
+		out = existing !== null ? base.slice(0, existing).replace(/\s+$/, "\n") : base;
+		if (config.ignore.deny_globs.length > 0 && !ownDenyGlobs) {
+			out = insertDenyGlobs(out, config.ignore.deny_globs);
+		}
+		if (config.mode === "partition") {
+			// Partition always injects: the parent/partition roots are the key
+			// facts for a worker whose cwd is the partition root (D-005).
+			out = `${out.replace(/\s+$/, "\n")}\n${renderPartitionProfileBlock(config, !ownDenyGlobs)}\n`;
+		} else if (hasProfileContent(config)) {
+			out = `${out.replace(/\s+$/, "\n")}\n${renderProfileBlock(config, !ownDenyGlobs)}\n`;
+		}
 	}
-
-	// Stale block: drop everything from its marker line (AC-019 wholesale
-	// replacement — a mode switch, any same-mode config change, or a switch
-	// to a non-injecting mode (parked single) that restores the pre-injection
-	// bytes); fresh dispatch: anchor at the original content. The tail
-	// collapses to a single newline so the replacement re-anchors cleanly.
-	let out = existing !== null ? original.slice(0, existing).replace(/\s+$/, "\n") : original;
-	if (config.ignore.deny_globs.length > 0 && !ownDenyGlobs) {
-		out = insertDenyGlobs(out, config.ignore.deny_globs);
-	}
-	if (config.mode === "partition") {
-		// Partition always injects: the parent/partition roots are the key
-		// facts for a worker whose cwd is the partition root (D-005).
-		out = `${out.replace(/\s+$/, "\n")}\n${renderPartitionProfileBlock(config, !ownDenyGlobs)}\n`;
-	} else if (hasProfileContent(config)) {
-		out = `${out.replace(/\s+$/, "\n")}\n${renderProfileBlock(config, !ownDenyGlobs)}\n`;
-	}
+	// Zero-impact when disabled: renderRagBlock returns null and writes not one
+	// byte (D-014/AC-001).
+	const ragBlock = renderRagBlock(loadRagConfig(controlRoot), parseRagTaskMeta(base));
+	if (ragBlock !== null) out = `${out.replace(/\s+$/, "")}\n\n${ragBlock}\n`;
 	if (out !== original) fs.writeFileSync(taskPath, out, "utf8");
 }
 

@@ -2,7 +2,20 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import { killTrackedDetachedChildren } from "../../../utils/shell.ts";
+import { Breaker, Budget } from "../rag/budget.ts";
+import { requiredFor } from "../rag/config.ts";
+import { appendEvidence } from "../rag/evidence.ts";
+import { researchDocEvidence, scanCitations, validateResearchDoc } from "../rag/research-doc.ts";
+import {
+	applyRagTools,
+	RAG_CHAT_BUDGET_HEADER,
+	RAG_TIME_BUDGET_HEADER,
+	type RagRuntime,
+	registerRagTools,
+} from "../rag/tools.ts";
+import { roleForTaskType } from "../shared/dispatch-models.ts";
 import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.ts";
+import { controlRootFromTaskPath } from "../shared/paths.ts";
 import {
 	appendCheckpoint,
 	appendEnd,
@@ -47,6 +60,22 @@ const TOOL_ALLOWLISTS: Record<string, string[]> = {
 	verifier: ["read", "find", "grep", "ls"],
 	reviewer: ["read", "find", "grep", "ls"],
 	repair: ["read", "write", "edit", "bash", "find", "grep", "ls"],
+	// RAG research bucket (mw-rag-integration D-011): renders rag_chat, the only
+	// type allowed to call it. PM/`/worker`-dispatched only — the conductor
+	// refuses it on the Python side (conductor_dispatchable=False).
+	"rag-research": [
+		"read",
+		"find",
+		"grep",
+		"ls",
+		"rag_search",
+		"rag_symbol",
+		"rag_graph",
+		"rag_impact",
+		"rag_sources",
+		"rag_feedback",
+		"rag_chat",
+	],
 	fallback: ["read", "write", "edit", "bash", "find", "grep", "ls"],
 };
 
@@ -57,7 +86,7 @@ function isRegisteredType(taskType: string): boolean {
 	return taskType !== "fallback" && taskType in TOOL_ALLOWLISTS;
 }
 
-function toolsForType(taskType: string): string[] {
+export function toolsForType(taskType: string): string[] {
 	return TOOL_ALLOWLISTS[taskType] ?? TOOL_ALLOWLISTS.fallback ?? [];
 }
 
@@ -139,6 +168,9 @@ export function computeRisk(s: ConvergenceSignals): "low" | "mid" | "high" {
 
 interface TaskMeta {
 	type: string;
+	/** task.md `phase:` header (the phase axis of `required = role.require OR
+	 * phase.require`, T-14). Distinct from the `phases` framework array below. */
+	phase?: string;
 	phases?: TaskPhase[];
 	taskKey: string;
 	agenticdocRoot: string;
@@ -162,6 +194,10 @@ interface TaskMeta {
 	readFileCap?: number;
 	/** l2_read_byte_cap frontmatter (positive int), when present. */
 	readByteCap?: number;
+	/** task.md `rag_chat_budget:` header (positive int), when present. */
+	ragChatBudget?: number;
+	/** task.md `rag_time_budget_s:` header (positive int seconds), when present. */
+	ragTimeBudgetS?: number;
 }
 
 export function parseTaskMd(taskPath: string): TaskMeta {
@@ -169,6 +205,7 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 	const lines = content.split("\n");
 
 	let taskType = "default";
+	let phase: string | undefined;
 	let timeoutMin: number | undefined;
 	let origin: string | undefined;
 	const phases: TaskPhase[] = [];
@@ -180,11 +217,17 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 	let inDenyGlobsList = false;
 	let readFileCap: number | undefined;
 	let readByteCap: number | undefined;
+	let ragChatBudget: number | undefined;
+	let ragTimeBudgetS: number | undefined;
 
 	for (const line of lines) {
 		const trimmed = line.trim();
 		if (trimmed.startsWith("type:")) {
 			taskType = trimmed.slice("type:".length).trim();
+		}
+		if (trimmed.startsWith("phase:")) {
+			const v = trimmed.slice("phase:".length).trim();
+			if (v) phase = v;
 		}
 		if (trimmed.startsWith("timeout:")) {
 			const v = Number(trimmed.slice("timeout:".length).trim());
@@ -233,6 +276,14 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 			const v = Number(trimmed.slice("l2_read_byte_cap:".length).trim());
 			if (Number.isFinite(v) && v > 0) readByteCap = v;
 		}
+		if (trimmed.startsWith(RAG_CHAT_BUDGET_HEADER)) {
+			const v = Number(trimmed.slice(RAG_CHAT_BUDGET_HEADER.length).trim());
+			if (Number.isFinite(v) && v > 0) ragChatBudget = v;
+		}
+		if (trimmed.startsWith(RAG_TIME_BUDGET_HEADER)) {
+			const v = Number(trimmed.slice(RAG_TIME_BUDGET_HEADER.length).trim());
+			if (Number.isFinite(v) && v > 0) ragTimeBudgetS = v;
+		}
 		if (trimmed.startsWith("- name:")) {
 			currentPhase = { name: trimmed.slice("- name:".length).trim(), prompt: "" };
 			phases.push(currentPhase);
@@ -258,6 +309,7 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 
 	return {
 		type: taskType,
+		phase,
 		phases: phases.length > 0 ? phases : undefined,
 		taskKey,
 		agenticdocRoot,
@@ -268,6 +320,8 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 		denyGlobs,
 		readFileCap,
 		readByteCap,
+		ragChatBudget,
+		ragTimeBudgetS,
 	};
 }
 
@@ -403,6 +457,99 @@ function appendReadScopeRejectionsSection(
 	}
 }
 
+// ── VC-014 worker-face emission (T-14) ───────────────────────────────────────
+// `required = role.require OR phase.require` is a warning-only contract
+// (AC-010): a required role/phase that produced no verifiable citation gets one
+// `rag-required-missing` trace line plus a machine-readable output.md marker,
+// and the task still settles done. The line itself comes from T-09's
+// `researchDocEvidence` (the single mechanism T-10's audit shares) — never a
+// second line builder here.
+
+/** task.md `phase:` value, or the literal `unknown` — never a guess. */
+export function evidencePhase(phase: string | undefined): string {
+	return phase !== undefined && phase.length > 0 ? phase : "unknown";
+}
+
+const RAG_UNUSED_MARKER = "RAG 未生效：required but unused";
+
+/** Append `line` once: a re-run/duplicate settle must not double the trace. */
+function appendEvidenceOnce(taskDir: string, line: string): void {
+	try {
+		const tracePath = path.join(path.resolve(taskDir), "trace.log");
+		let existing = "";
+		try {
+			existing = fs.readFileSync(tracePath, "utf8");
+		} catch {
+			// No trace yet — nothing to dedupe against.
+		}
+		if (existing.includes(line)) return;
+	} catch {
+		// Fall through to the append; the writer handles a bad dir best-effort.
+	}
+	appendEvidence(taskDir, line);
+}
+
+/** Append the `## RAG` marker to output.md once. output.md is rewritten on
+ * every exit path, so a re-settle naturally re-adds the marker exactly once. */
+function markOutputRagUnused(taskDir: string): void {
+	try {
+		const outputPath = path.join(path.resolve(taskDir), "output.md");
+		if (!fs.existsSync(outputPath)) return;
+		if (fs.readFileSync(outputPath, "utf8").includes(RAG_UNUSED_MARKER)) return;
+		fs.appendFileSync(outputPath, `\n## RAG\n\n${RAG_UNUSED_MARKER}\n`, "utf8");
+	} catch {
+		// Best-effort at exit — the trace line is the machine gate.
+	}
+}
+
+/** Server for the evidence line: role spec > phase spec > default_server
+ * (mirror of mw_common._rag_resolve_defaults). */
+function ragServerFor(config: RagRuntime["config"], role: string, phase: string): string {
+	return config.roles[role]?.server ?? config.phases[phase]?.server ?? config.defaultServer ?? "";
+}
+
+export interface RagRequiredCheck {
+	config: RagRuntime["config"];
+	taskType: string;
+	/** task.md `phase:` value (already normalized via `evidencePhase`). */
+	phase: string;
+	/** The worker's own deliverable text (final assistant reply). */
+	outputText: string;
+	/** Owner key dir (`.agenticdoc/<key>`) — the research-doc location. */
+	keyDir: string;
+	/** Worker task dir (trace.log / output.md live here). */
+	taskDir: string;
+}
+
+/**
+ * VC-014 (AC-010) worker face: for a *required* role/phase, emit the shared
+ * `rag-required-missing` evidence line and mark output.md when no verifiable
+ * citation was produced. Returns the emitted line, or null on a no-op (not
+ * required, or a citation exists). Zero writes when not required.
+ *
+ * "Verifiable citation" mirrors T-10's audit: a parseable D-004 citation in
+ * the worker's own deliverable, or — for the research role, whose citations
+ * live in `<key>/rag/*.md` — a citation in that key's research doc. The
+ * research-doc report's `ok` is the used-flag and the line is routed through
+ * `researchDocEvidence`, so there is exactly one line builder.
+ */
+export function emitRagRequiredMissing(check: RagRequiredCheck): string | null {
+	const role = roleForTaskType(check.taskType);
+	if (!requiredFor(check.config, role, check.phase)) return null;
+	const report = validateResearchDoc(check.keyDir);
+	const used = scanCitations(check.outputText).length > 0 || (role === "research" && report.citations.length > 0);
+	const line = researchDocEvidence(
+		{ ...report, ok: used },
+		role,
+		check.phase,
+		ragServerFor(check.config, role, check.phase),
+	);
+	if (line === null) return null;
+	appendEvidenceOnce(check.taskDir, line);
+	markOutputRagUnused(check.taskDir);
+	return line;
+}
+
 // ── Main entry ───────────────────────────────────────────────────────────────
 
 export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
@@ -511,10 +658,44 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		}
 	});
 
+	// RAG surface (D-002): registered only when the project enables servers;
+	// disabled projects get no registration and no probe (structural zero impact).
+	// The probe runs here so tool descriptions can carry the unreachable marker
+	// before the first agent turn.
+	let ragRuntime: RagRuntime | null = null;
+	const controlRoot = controlRootFromTaskPath(taskPath);
+	const workerTaskDir = path.dirname(taskPath);
+	try {
+		ragRuntime = registerRagTools(pi, controlRoot, {
+			breaker: new Breaker(),
+			workerTaskDir,
+			role: roleForTaskType(meta.type),
+			phase: meta.phase ?? "",
+		});
+	} catch (err) {
+		writeWorkerLogLine(`[worker] rag disabled: ${err instanceof Error ? err.message : String(err)}`);
+	}
+	if (ragRuntime !== null) {
+		await ragRuntime.ready;
+		ragRuntime.workerTaskDir = workerTaskDir;
+		// T-05: real budget instance. task.md headers win over the project's
+		// `rag.budgets` defaults; the wall guard shares the watchdog wall budget.
+		ragRuntime.budget = new Budget(
+			workerTaskDir,
+			meta.ragChatBudget ?? ragRuntime.config.budgets.chat,
+			(meta.ragTimeBudgetS ?? ragRuntime.config.budgets.timeS) * 1000,
+			{ taskWallMs: resolveBudgetMs(meta.timeoutMin, process.env.PI_WORKER_TIMEOUT_MS) },
+		);
+	}
+
 	// Set tool allowlist once before the first agent run (AC-010)
-	// setActiveTools is an action method — must be deferred to after runner.initialize()
+	// setActiveTools is an action method — must be deferred to after runner.initialize().
+	// `applyRagTools` recomputes the complete expected set on every run, so the
+	// handler stays idempotent across phase/follow-up turns (D-002); a null
+	// runtime reproduces the pre-RAG `setActiveTools(toolsForType(type))` byte
+	// for byte.
 	pi.on("before_agent_start", () => {
-		pi.setActiveTools(toolsForType(meta.type));
+		applyRagTools(pi, ragRuntime, meta.type);
 	});
 
 	// Read-scope interceptor (D-106): read/ls/find/grep share one containment
@@ -834,6 +1015,18 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			verificationSteps: "See task output for details.",
 			exitReason: `Agent settled after ${toolCallCount} tool call(s).`,
 		});
+		// VC-014 (AC-010): warning-only required-but-unused marker. ragRuntime is
+		// null on an RAG-less project, so this is a structural zero-write no-op.
+		if (ragRuntime !== null) {
+			emitRagRequiredMissing({
+				config: ragRuntime.config,
+				taskType: meta.type,
+				phase: evidencePhase(meta.phase),
+				outputText: lastAssistantText,
+				keyDir: path.dirname(meta.agenticdocRoot),
+				taskDir: path.dirname(taskPath),
+			});
+		}
 		recordEnd(0);
 		outputWritten = true;
 	}

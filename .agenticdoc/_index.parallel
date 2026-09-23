@@ -29,5 +29,11 @@
 | mw-dispatch-role-escape | idle | DONE | — | — | Dispatch role reachability + model override gate: declarable task type (review/research on pi), required reason + loud echo for dispatch.yml deviations, model id validation at dispatch | 2026-09-20 20:52 |
 | mw-ue-toolchain | idle | DONE | WENBOZHOU-PC4:70908 |  |  | 2026-09-21T15:23:00.966Z |
 | mw-implementation-gate | idle | DONE | WENBOZHOU-PC4:70908 |  |  | 2026-09-22T03:55:05.355Z |
-| mw-rag-integration | idle | DESIGN | WENBOZHOU-PC4:20256 |  | Configurable RAG(MCP) integration for the AgenticTask workflow: two-layer server table + per-project enablement/role-phase requirements, MCP-native tool surface with citation normalization and 5-layer degradation, rag-research task type + audit (K1+K2) | 2026-09-22T08:29:53.699Z |
-| mw-autopilot-advance-root | active | DONE | WENBOZHOU-PC4:86020 |  |  | 2026-09-22 16:38 |
+| mw-rag-integration | idle | DONE | WENBOZHOU-PC4:20256 |  | Configurable RAG(MCP) integration for the AgenticTask workflow: two-layer server table + per-project enablement/role-phase requirements, MCP-native tool surface with citation normalization and 5-layer degradation, rag-research task type + audit (K1+K2) | 2026-09-22 18:56 |
+| mw-autopilot-advance-root | idle | DONE | WENBOZHOU-PC4:86020 |  |  | 2026-09-22T13:19:25.844Z |
+| mw-rag-integration-fix | idle | DONE | WENBOZHOU-PC4:20256 |  | RAG fix key closing the independent review of mw-rag-integration: role/phase defaults wired into the runtime via a single resolveDefaults per language (explicit > role > phase > default_server), Python rewrite fallback aligned, fixture-grade VC-008 + unreachable-server assertions, VC-018 layer declared L1, README/exit codes from argparse, dead MW_RAG_ENABLED removed | 2026-09-22 22:01 |
+| mw-autopilot-stall-feedback | idle | DONE | WENBOZHOU-PC4:37668 |  |  | 2026-09-23 00:21 |
+| mw-parallel-protocol | idle | DONE | WENBOZHOU-PC4:116360 |  |  | 2026-09-23T03:14:03.371Z |
+| mw-rag-config-guide | idle | DONE | WENBOZHOU-PC4:20256 |  |  | 2026-09-23T04:11:09.260Z |
+| mw-rag-window-parity | active | DONE | WENBOZHOU-PC4:20256 |  |  | 2026-09-23 12:52 |
+| mw-timi-gpt6-astra-rename | idle | SPEC |  |  | Rename timi/gpt-6 model entry to timi/gpt-6-astra (proxy-side model rename; params unchanged) | 2026-09-23 13:05 |

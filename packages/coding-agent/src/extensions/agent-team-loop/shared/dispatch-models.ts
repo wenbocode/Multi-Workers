@@ -64,11 +64,14 @@ export const DISPATCH_ROLE_BY_TYPE: Record<string, string> = {
 	verifier: "review",
 	reviewer: "review",
 	research: "research",
+	"rag-research": "research",
 };
 
 /** The role-level types the PM dispatch surface accepts (`type:` in task.md).
- * Every entry has a tool allowlist entry in worker-mode.ts. */
-export const DISPATCHABLE_TYPES = ["coding", "review", "research"] as const;
+ * Every entry has a tool allowlist entry in worker-mode.ts. `rag-research` is
+ * PM-dispatched here; the conductor refuses it on the Python side
+ * (`conductor_dispatchable=False` in autopilot/dispatch.py). */
+export const DISPATCHABLE_TYPES = ["coding", "review", "research", "rag-research"] as const;
 
 /** Role for a declared task type (unknown -> coding, same as the Python chain). */
 export function roleForTaskType(taskType: string): string {

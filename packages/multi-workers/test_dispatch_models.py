@@ -148,6 +148,7 @@ class TestParseAndCompat:
         "verifier": "review",
         "reviewer": "review",
         "research": "research",
+        "rag-research": "research",
     }
 
     def test_role_map_matches_ts_mirror(self) -> None:

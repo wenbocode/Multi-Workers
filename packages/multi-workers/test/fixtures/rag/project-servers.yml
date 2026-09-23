@@ -1,0 +1,4 @@
+servers:
+  A:
+    mcp:
+      url: http://127.0.0.1:9840/mcp

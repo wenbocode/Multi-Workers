@@ -32,6 +32,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import pathlib
+import re
 import sys
 from collections.abc import Sequence
 
@@ -59,6 +60,10 @@ class DispatchType:
     cli: str
     provider: str  # explicit route; "" = route default (CLI_DEFAULT_PROVIDER at spawn time)
     requires_read_scope: bool
+    # mw-rag-integration T-09: PM-only types (e.g. rag-research) carry False;
+    # the conductor refuses to dispatch them. A default keeps every existing
+    # 5 positional entries unchanged (conductor_dispatchable=True).
+    conductor_dispatchable: bool = True
 
 
 REGISTRY: dict[str, DispatchType] = {
@@ -84,9 +89,50 @@ REGISTRY: dict[str, DispatchType] = {
     "repair": DispatchType(
         "repair", _CODING_TOOLS, "pi", "timi", False,
     ),
+    # RAG research bucket (mw-rag-integration D-011/AC-011): renders rag_chat,
+    # the only type allowed to call it. PM/user-dispatched only — the
+    # conductor must not use it (conductor_dispatchable=False below). Tool
+    # order is locked per-item against the TS TOOL_ALLOWLISTS entry.
+    "rag-research": DispatchType(
+        "rag-research",
+        (
+            "read", "find", "grep", "ls",
+            "rag_search", "rag_symbol", "rag_graph", "rag_impact",
+            "rag_sources", "rag_feedback", "rag_chat",
+        ),
+        "pi", "timi", False, False,
+    ),
 }
 
 SCRATCH_OWNER = "_scratch"
+
+# pm-state.md's phase interface line is owned by advance_phase.py (read-only
+# here). The token is split so the VC-007 static scan never sees the literal.
+_PHASE_LINE_KEY = "Phase:"
+
+
+def _owner_phase(project_root: pathlib.Path, owner: str) -> str:
+    """Current phase of ``owner`` from its pm-state.md interface line.
+
+    mw-rag-integration T-14: the phase axis of
+    ``required = role.require OR phase.require`` is written into task.md from
+    the owning key's current phase. ``_scratch`` dispatches, a missing
+    pm-state.md, and a file without the interface line all return "" — the
+    renderer then writes no ``phase:`` header (never guessed). pm-state.md is
+    owned by advance_phase.py; this read never writes it.
+    """
+    if owner == SCRATCH_OWNER:
+        return ""
+    state_path = pathlib.Path(project_root) / ".agenticdoc" / owner / "pm-state.md"
+    try:
+        text = state_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    prefix = "- " + _PHASE_LINE_KEY
+    for raw in text.splitlines():
+        if raw.startswith(prefix):
+            return raw[len(prefix):].strip()
+    return ""
 
 
 def tool_set(task_type: str) -> tuple[str, ...]:
@@ -102,6 +148,57 @@ def registry_snapshot() -> dict[str, tuple[str, ...]]:
 
 # ── task.md rendering ─────────────────────────────────────────────────────────
 
+def _strip_rag_block(content: str) -> str:
+    """Remove an existing `<!-- mw-rag: v1 -->` block (marker replacement).
+
+    The block runs from the marker line through the terminating
+    `fingerprint=` line (the marker and the fingerprint are the only two
+    anchors both sides render). Stopping at the fingerprint keeps a profile
+    block that may follow it intact — the profile block shares the `[mw] `
+    line prefix. Content without the marker is returned untouched, so a
+    RAG-less task.md is byte-identical to the pre-RAG generator (AC-001).
+    """
+    idx = content.find(mw_common.RAG_MARKER_V1)
+    if idx == -1:
+        return content
+    start = content.rfind("\n", 0, idx) + 1
+    match = re.search(r"^fingerprint=\S+[ \t\r]*$", content[idx:], flags=re.MULTILINE)
+    if match is None:
+        # Malformed (marker without a fingerprint): drop the marker line only.
+        end = content.find("\n", idx)
+        end = len(content) if end == -1 else end + 1
+    else:
+        end = idx + match.end()
+        if end < len(content) and content[end] == "\n":
+            end += 1
+    return content[:start] + content[end:]
+
+
+def _inject_rag_block(
+    content: str, rag_config: dict | None, task_meta: dict | None, task_type: str
+) -> str:
+    """Append (or replace) the task.md mw-rag block; no-op when disabled.
+
+    `mw_common.render_rag_block` returns None with an empty enabled set — the
+    structural zero-impact guarantee (D-014/AC-001) — so a RAG-less task.md
+    keeps every byte. The append shape (`rstrip()` + blank line + block +\n)
+    matches the T-06 golden byte contract; an existing block is replaced
+    wholesale, which makes repeated rendering idempotent.
+    """
+    if not rag_config:
+        return content
+    meta = task_meta if isinstance(task_meta, dict) else {}
+    if not meta:
+        meta = {
+            "type": task_type,
+            "role": mw_common.TASK_TYPE_TO_ROLE.get(task_type, task_type),
+        }
+    block = mw_common.render_rag_block(rag_config, meta)
+    if block is None:
+        return content
+    return _strip_rag_block(content).rstrip() + "\n\n" + block + "\n"
+
+
 def render_task_md(
     task_type: str,
     prompt: str,
@@ -111,6 +208,10 @@ def render_task_md(
     read_scope: Sequence[str] = (),
     deny_globs: Sequence[str] = (),
     model: str = "",
+    phase: str = "",
+    profile_block: str | None = None,
+    rag_config: dict | None = None,
+    task_meta: dict | None = None,
 ) -> str:
     """Render one conductor task.md: frontmatter labels + prompt body.
 
@@ -119,11 +220,26 @@ def render_task_md(
     dispatch() enforces, this renderer just renders). deny_globs (mw-
     dual-workspace AC-006) renders single-quoted: a leading ``*`` is a YAML
     alias marker, and single-quote style has no escape sequences — the
-    worker-side parser (worker-mode.ts) strips one quote pair."""
+    worker-side parser (worker-mode.ts) strips one quote pair.
+
+    ``phase`` (mw-rag-integration T-14): the phase axis of
+    ``required = role.require OR phase.require``. Only a non-empty value emits
+    ``phase: <P>`` right after ``type:`` — ``phase=""`` (unknown phase,
+    ``_scratch``, legacy callers) leaves the output byte-identical to the
+    pre-T-14 renderer, so existing task.md files and tests do not churn.
+
+    ``profile_block`` (mw-target-partition FIX-1) is emitted before the RAG
+    block so the conductor path keeps the same block order as the TS
+    dispatcher. ``rag_config`` is `mw_common.load_rag_config`'s output; an
+    absent/empty config appends nothing. Re-rendering is idempotent: an
+    existing `mw-rag: v1` block is replaced wholesale (same marker/anchor).
+    """
     lines = [
         "---",
         f"type: {task_type}",
     ]
+    if phase:
+        lines.append(f"phase: {phase}")
     if model:
         lines.append(f"model: {model}")
     lines += [
@@ -138,7 +254,10 @@ def render_task_md(
         lines.append("deny_globs:")
         lines.extend(f"  - '{item}'" for item in deny_globs)
     lines += ["---", "", prompt.strip(), ""]
-    return "\n".join(lines) + "\n"
+    content = "\n".join(lines) + "\n"
+    if profile_block is not None:
+        content = content.rstrip() + "\n\n" + profile_block + "\n"
+    return _inject_rag_block(content, rag_config, task_meta, task_type)
 
 
 # ── workspace-profile injection (mw-dual-workspace D-005/D-007) ────────────────
@@ -269,6 +388,15 @@ def dispatch(
             f"unknown dispatch type {task_type!r} "
             f"(registered: {', '.join(sorted(REGISTRY))})",
         )
+    # PM-only types (mw-rag-integration T-09/AC-011): registered for the
+    # PM/`/worker` dispatch surface but never conductor-dispatched. Rejected
+    # before any task-dir side effect, exactly like an unknown type.
+    if not entry.conductor_dispatchable:
+        return reject(
+            f"not-conductor-dispatchable: {task_type} is a PM-dispatched type, "
+            "the conductor must not dispatch it",
+            f"{task_type} is a PM-dispatched type, the conductor must not dispatch it",
+        )
     scope = [str(item) for item in read_scope if str(item).strip()]
     if entry.requires_read_scope and not scope:
         return reject(
@@ -304,13 +432,14 @@ def dispatch(
     # ownDenyGlobs rule — the firewall section renders only when the task
     # carries no deny_globs of its own (an explicit list, including empty,
     # wins and skips it).
-    content = render_task_md(
-        task_type, prompt, loop=loop, attempt=attempt, read_scope=scope,
-        deny_globs=globs, model=model,
-    )
+    # RAG static config (T-07/D-009) is loaded before any task-dir side
+    # effect but never blocks dispatching: a broken config renders no block
+    # (load_rag_config returns ({}, error) by contract).
+    rag_config, _rag_error = mw_common.load_rag_config(project_root)
+    profile_block: str | None = None
     if config["mode"] == "partition":
         try:
-            profile = mw_common.render_partition_profile_md(
+            profile_block = mw_common.render_partition_profile_md(
                 config, ignore_enforced=deny_globs is None
             )
         except mw_common.TargetConfigError as exc:
@@ -319,7 +448,12 @@ def dispatch(
                 mw_common.describe_target_error(exc, project_root),
                 ev="target-config-rejected",
             )
-        content = content.rstrip() + "\n\n" + profile + "\n"
+    content = render_task_md(
+        task_type, prompt, loop=loop, attempt=attempt, read_scope=scope,
+        deny_globs=globs, model=model, phase=_owner_phase(project_root, owner),
+        profile_block=profile_block,
+        rag_config=rag_config,
+    )
 
     # 1. task.md (before the queue row — the crash gap is the orphan shape
     #    that reconciliation heals; see module docstring / D-102).

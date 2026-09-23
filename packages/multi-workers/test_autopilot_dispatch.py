@@ -31,6 +31,7 @@ def true_str(b: bool) -> str:
 def test_registry_types_and_tools() -> None:
     assert set(dispatch.REGISTRY) == {
         "roadmap-writer", "phase-writer", "verifier", "reviewer", "repair",
+        "rag-research",
     }
     assert dispatch.tool_set("roadmap-writer") == (
         "read", "write", "edit", "find", "grep", "ls",
@@ -49,6 +50,12 @@ def test_registry_types_and_tools() -> None:
     assert dispatch.REGISTRY["verifier"].requires_read_scope is True
     assert all(
         not e.requires_read_scope for n, e in dispatch.REGISTRY.items() if n != "verifier"
+    )
+    # mw-rag-integration T-09: the RAG research bucket is registered but
+    # PM-only; the conductor must never dispatch it.
+    assert dispatch.REGISTRY["rag-research"].conductor_dispatchable is False
+    assert all(
+        e.conductor_dispatchable for n, e in dispatch.REGISTRY.items() if n != "rag-research"
     )
     # Unknown type: no tools, never a fallback set.
     assert dispatch.tool_set("coding") == ()

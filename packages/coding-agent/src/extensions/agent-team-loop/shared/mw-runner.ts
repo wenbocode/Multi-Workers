@@ -383,6 +383,20 @@ export interface DoctorJson {
 		window_model?: string;
 		error?: string;
 	};
+	/** RAG section (mw.py `_doctor_rag`) — informational, all fields optional
+	 * so an older mw.py without the key renders nothing instead of crashing. */
+	rag?: {
+		exists?: boolean;
+		machine_file?: string | null;
+		project_file?: string | null;
+		skill?: { status?: string; [k: string]: unknown };
+		error?: string;
+		enabled?: string[];
+		default_server?: string | null;
+		fingerprint?: string | null;
+		probe?: Record<string, { reachable?: boolean; transport?: string; error?: string | null }>;
+		required_missing?: number;
+	};
 	fix?: { applied?: unknown };
 	summary?: { healthy?: boolean; issues?: unknown; suggestions?: unknown };
 }
@@ -417,6 +431,38 @@ export function doctorMw(projectDir: string, fix = false): DoctorMwResult {
 
 export type MwCliResult = { ok: true; output: string } | { ok: false; error: string };
 
+/** Result of a raw `mw.py <sub>` spawn: exit code plus the merged stdout+stderr
+ * text. `spawnError` is set only when the process could not be started at all
+ * (missing mw.py / spawn failure); `code` is -1 in that case and there is no
+ * process exit to report. */
+interface MwCliRawResult {
+	code: number;
+	output: string;
+	spawnError?: string;
+}
+
+/**
+ * Run `mw.py <sub> <args...> --project=<dir>` and report the raw exit code
+ * with the merged stdout+stderr text. The ok/error wrapper below collapses
+ * every nonzero code into an error, which is wrong for `mw.py rag` (exit 1 is
+ * "findings" — an expected warning, exit 2 is a usage/config error).
+ */
+function runMwCliRaw(sub: string, projectDir: string, args: string[], timeoutMs = 30_000): MwCliRawResult {
+	const mwPy = findMwPy();
+	if (!mwPy) return { code: -1, output: "", spawnError: "Could not find mw.py — set MW_PY env var." };
+	const result = spawnSync(PYTHON_EXE, [mwPy, sub, ...args, `--project=${projectDir}`], {
+		encoding: "utf8",
+		timeout: timeoutMs,
+	});
+	if (result.error) {
+		return { code: -1, output: "", spawnError: `Failed to spawn mw.py: ${result.error.message}` };
+	}
+	// mw.py config subcommands print their formatted lines to stdout and
+	// failures to stderr with a nonzero exit; surface both through one text channel.
+	const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+	return { code: result.status ?? -1, output };
+}
+
 /**
  * Run `mw.py <sub> <args...> --project=<dir>` for the config subcommands
  * (target / model). The Python side stays the single source of parsing,
@@ -424,22 +470,10 @@ export type MwCliResult = { ok: true; output: string } | { ok: false; error: str
  * `--project` is appended here so callers never forget the control root.
  */
 function runMwCli(sub: string, projectDir: string, args: string[], timeoutMs = 30_000): MwCliResult {
-	const mwPy = findMwPy();
-	if (!mwPy) return { ok: false, error: "Could not find mw.py — set MW_PY env var." };
-	const result = spawnSync(PYTHON_EXE, [mwPy, sub, ...args, `--project=${projectDir}`], {
-		encoding: "utf8",
-		timeout: timeoutMs,
-	});
-	if (result.error) {
-		return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
-	}
-	// mw.py config subcommands print their formatted lines to stdout and
-	// failures to stderr with a nonzero exit; surface both through one text channel.
-	const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-	if (result.status !== 0) {
-		return { ok: false, error: output || `mw ${sub} exited with code ${result.status}` };
-	}
-	return { ok: true, output };
+	const raw = runMwCliRaw(sub, projectDir, args, timeoutMs);
+	if (raw.spawnError !== undefined) return { ok: false, error: raw.spawnError };
+	if (raw.code !== 0) return { ok: false, error: raw.output || `mw ${sub} exited with code ${raw.code}` };
+	return { ok: true, output: raw.output };
 }
 
 /** `mw.py target <args...>` — dual-workspace config (show / set / clear / on / off). */
@@ -455,6 +489,25 @@ export function partitionMw(projectDir: string, args: string[]): MwCliResult {
 /** `mw.py model <args...>` — dispatch model defaults (show / set / clear). */
 export function modelMw(projectDir: string, args: string[]): MwCliResult {
 	return runMwCli("model", projectDir, args);
+}
+
+/** `mw.py rag` subcommands — must mirror mw.py `_RAG_ACTIONS`. Python stays the
+ * single source of argument parsing/validation; this list only decides whether
+ * a call is worth making and renders the usage line. */
+export const RAG_SUBCOMMANDS = ["list", "probe", "audit", "sync", "init"] as const;
+
+export type RagMwResult = { ok: boolean; code: number; output: string };
+
+/**
+ * `mw.py rag <sub> <args...> --project=<dir>` — the /mw rag thin wrapper.
+ * Keeps the raw exit code so the caller can map 0/1/2 to info/warning/error
+ * (audit exit 1 means "findings", not failure). A missing mw.py becomes error
+ * text carrying the MW_PY hint; `ok` is simply "exit code 0".
+ */
+export function ragMw(projectDir: string, args: string[]): RagMwResult {
+	const raw = runMwCliRaw("rag", projectDir, args);
+	if (raw.spawnError !== undefined) return { ok: false, code: raw.code, output: raw.spawnError };
+	return { ok: raw.code === 0, code: raw.code, output: raw.output };
 }
 
 /**

@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { pmActivate } from "./pm/pm-orchestrator.ts";
+import { registerImplementationGate } from "./shared/implementation-gate.ts";
 import { registerProtectedConfigGuard } from "./shared/protected-config.ts";
 import { workerModeActivate } from "./worker/worker-mode.ts";
 
@@ -38,6 +39,16 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 	// register the listener. Hard block on write/edit/bash targeting the
 	// protected agent config; reads pass through.
 	registerProtectedConfigGuard(pi);
+
+	// Implementation entry gate (mw-implementation-gate): write/edit/bash
+	// calls targeting code paths under packages/ pass only with an active
+	// AgenticTask key claim for this window, a dispatched worker env
+	// (PI_WORKER_TASK), or a fresh (<=24h) mini-spec fast path; otherwise the
+	// call is blocked with key-creation guidance. Every block and mini-pass
+	// is audited to .agenticdoc/_impl_gate.log (best-effort). Registered in
+	// EVERY mode, same position as the protected-config guard: after the
+	// double-load flag, before the PM/Worker mode branches.
+	registerImplementationGate(pi);
 
 	if (process.env.PI_WORKER_TASK) {
 		await workerModeActivate(pi);

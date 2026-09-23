@@ -33,6 +33,7 @@ a config-only change (AC-017).
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import os
 import pathlib
@@ -142,6 +143,9 @@ TASK_TYPE_TO_ROLE: dict[str, str] = {
     "verifier": "review",
     "reviewer": "review",
     "research": "research",
+    # mw-rag-integration T-09: PM-dispatched RAG research bucket, same model
+    # role as research (mirror of TS DISPATCH_ROLE_BY_TYPE).
+    "rag-research": "research",
 }
 
 STALE_FILE_NAME = "_workers.stale.parallel"
@@ -303,6 +307,700 @@ def resolve_dispatch_model(
     if window_model.strip() and model_value_compatible(cli, window_model):
         return window_model.strip(), "window"
     return "", "default"
+
+
+# ── RAG server config (.mw/rag-servers.yml + ~/.agents/rag-servers.yml) ────
+#
+# Two-layer server table (design D-003, T-06): a machine-level file shared
+# across projects plus a project-level override, joined **field by field** —
+# scalars and nested objects merge key by key (project wins per key), array
+# fields (`sources`) are replaced wholesale, and `null` deletes a field.
+# `origin` records `machine`/`project` per evaluated field path. `enabled` /
+# `default_server` / `roles` / `phases` / `budgets` come from target.yml's
+# `rag:` section. Validation problems are returned as an error string (never
+# raised): RAG config is a convenience and must never block dispatching, the
+# same contract as load_dispatch_config.
+#
+# YAML keys are snake_case; the TS reader (rag/config.ts, T-01) maps the
+# table below to camelCase. Both sides assert RAG_FIELD_CAMEL so the two
+# readings cannot drift.
+
+RAG_MARKER_V1 = "<!-- mw-rag: v1 -->"
+RAG_ADAPTER_DEFAULT = "overcode-v1"
+RAG_TRANSPORT_VALUES = ("mcp", "skill", "both")
+RAG_DEFAULT_MCP_TIMEOUT_MS = 180000
+RAG_DEFAULT_SKILL_TIMEOUT_MS = 180000
+RAG_DEFAULT_CHAT_BUDGET = 2
+RAG_DEFAULT_TIME_BUDGET_S = 900
+RAG_CITATION_SYNTAX = "<server>:<source>:<file_path>:<line>"
+# Roles whose default `rewrite` is on when the server declares the capability
+# (design D-004: spec/design/research class).
+RAG_RESEARCH_ROLES = frozenset(("spec", "design", "research", "rag-research"))
+# Phases whose default `rewrite` is on under the same rule (AC-006 "research
+# roles/phases"); mirrors `isResearchPhase` in rag/adapter.ts so both sides
+# resolve the same (server, source, rewrite) triple (T-19 / VC-111).
+RAG_RESEARCH_PHASES = frozenset(("spec", "design"))
+
+# YAML (snake_case) -> TS runtime (camelCase) field mapping (T-01 parity guard).
+RAG_FIELD_CAMEL: dict[str, str] = {
+    "token_env": "tokenEnv",
+    "timeout_ms": "timeoutMs",
+    "cli_entry": "cliEntry",
+    "path_roots_file": "pathRootsFile",
+    "default_server": "defaultServer",
+    "chat_budget": "chatBudget",
+    "time_budget_s": "timeBudgetS",
+}
+
+_RAG_LAYER_TOP_KEYS = ("servers",)
+_RAG_SERVER_FIELDS = (
+    "transport", "adapter", "path_roots_file", "sources", "capabilities", "mcp", "skill",
+)
+_RAG_NESTED_FIELDS: dict[str, tuple[str, ...]] = {
+    "mcp": ("url", "token_env", "timeout_ms"),
+    "skill": ("dir", "cli_entry", "timeout_ms"),
+    "capabilities": ("graph", "chat", "rewrite"),
+}
+_RAG_TARGET_KEYS = ("enabled", "default_server", "roles", "phases", "budgets")
+_RAG_ROLE_KEYS = ("server", "source", "require", "rewrite", "chat_budget", "time_budget_s")
+_RAG_PHASE_KEYS = ("server", "source", "require", "rewrite")
+_RAG_BUDGET_KEYS = ("chat_budget", "time_budget_s")
+RAG_ENV_FILE = "MW_RAG_SERVERS_FILE"
+RAG_ENV_HOME = "MW_RAG_SERVERS_HOME"
+_MISSING = object()
+
+
+def rag_servers_path(project_root: pathlib.Path | str) -> pathlib.Path:
+    """Project-level RAG server table: <root>/.mw/rag-servers.yml."""
+    return pathlib.Path(project_root) / ".mw" / "rag-servers.yml"
+
+
+def machine_rag_servers_path(env: Mapping[str, str] | None = None) -> pathlib.Path | None:
+    """Machine-level RAG server table (design D-013, cross-platform).
+
+    Order: MW_RAG_SERVERS_FILE (whole-file override / test hook) ->
+    MW_RAG_SERVERS_HOME + /.agents/rag-servers.yml -> $HOME -> $USERPROFILE.
+    A candidate that does not exist yields None (that layer is empty); the
+    directory is never created.
+    """
+    env = os.environ if env is None else env
+    override = (env.get(RAG_ENV_FILE) or "").strip()
+    if override:
+        path = pathlib.Path(override)
+        return path if path.exists() else None
+    for var in (RAG_ENV_HOME, "HOME", "USERPROFILE"):
+        home = (env.get(var) or "").strip()
+        if not home:
+            continue
+        path = pathlib.Path(home) / ".agents" / "rag-servers.yml"
+        if path.exists():
+            return path
+    return None
+
+
+def _rag_validate_layer_entry(name: str, raw: object, label: str) -> str | None:
+    if not isinstance(raw, dict):
+        return f"{label}: server '{name}' must be a mapping"
+    extra = [str(k) for k in raw if k not in _RAG_SERVER_FIELDS]
+    if extra:
+        return (
+            f"{label}: server '{name}' has unknown key(s) {', '.join(extra)} "
+            f"(valid: {', '.join(_RAG_SERVER_FIELDS)})"
+        )
+    for block, allowed in _RAG_NESTED_FIELDS.items():
+        value = raw.get(block)
+        if value is None:
+            continue
+        if not isinstance(value, dict):
+            return f"{label}: server '{name}'.{block} must be a mapping"
+        bad = [str(k) for k in value if k not in allowed]
+        if bad:
+            return (
+                f"{label}: server '{name}'.{block} has unknown key(s) {', '.join(bad)} "
+                f"(valid: {', '.join(allowed)})"
+            )
+    return None
+
+
+def _rag_layer_servers(path: pathlib.Path, label: str) -> tuple[dict, str | None]:
+    """Load one rag-servers.yml layer -> ({server: raw}, error)."""
+    import yaml  # PyYAML: implicit dep for target.yml (mw-dual-workspace D-010)
+
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        return {}, f"{label} unreadable: {exc}"
+    if data is None:
+        return {}, None
+    if not isinstance(data, dict):
+        return {}, f"{label} must be a mapping at top level"
+    extra = [str(k) for k in data if k not in _RAG_LAYER_TOP_KEYS]
+    if extra:
+        return {}, f"{label}: unknown key(s) {', '.join(extra)} (valid: servers)"
+    servers = data.get("servers") or {}
+    if not isinstance(servers, dict):
+        return {}, f"{label}: 'servers' must be a mapping of server name to entry"
+    out: dict = {}
+    for name, raw in servers.items():
+        if not isinstance(name, str) or not name.strip():
+            return {}, f"{label}: server names must be non-empty strings"
+        error = _rag_validate_layer_entry(name, raw, label)
+        if error:
+            return {}, error
+        out[name] = raw or {}
+    return out, None
+
+
+def _rag_target_section(project_root: pathlib.Path) -> tuple[dict, str | None]:
+    """target.yml's `rag:` section -> (section, error); missing = empty."""
+    path = target_yml_path(project_root)
+    if not path.exists():
+        return {}, None
+    import yaml  # PyYAML: implicit dep for target.yml (mw-dual-workspace D-010)
+
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        return {}, f"target.yml unreadable: {exc}"
+    if data is None:
+        return {}, None
+    if not isinstance(data, dict):
+        return {}, "target.yml must be a mapping at top level"
+    section = data.get("rag")
+    if section is None:
+        return {}, None
+    if not isinstance(section, dict):
+        return {}, "target.yml 'rag' must be a mapping"
+    extra = [str(k) for k in section if k not in _RAG_TARGET_KEYS]
+    if extra:
+        return {}, (
+            f"target.yml rag: unknown key(s) {', '.join(extra)} "
+            f"(valid: {', '.join(_RAG_TARGET_KEYS)})"
+        )
+    return section, None
+
+
+def _rag_merge_server(name: str, machine_raw: dict, project_raw: dict) -> tuple[dict, dict]:
+    """Per-field merge of one server (design D-003). Verified by VC-024."""
+    origins: dict[str, str] = {}
+    merged: dict = {}
+    for field in _RAG_SERVER_FIELDS:
+        in_machine = field in machine_raw
+        in_project = field in project_raw
+        if not in_machine and not in_project:
+            continue
+        machine_value = machine_raw.get(field) if in_machine else _MISSING
+        project_value = project_raw.get(field) if in_project else _MISSING
+        if in_project and project_value is None:
+            merged[field] = None  # explicit delete
+            origins[field] = "project"
+            continue
+        if in_machine and machine_value is None and not in_project:
+            continue  # a machine-level null deletes nothing
+        if field in _RAG_NESTED_FIELDS:
+            nested: dict = {}
+            if in_machine and machine_value is not _MISSING and machine_value is not None:
+                nested.update(machine_value)
+                for key in machine_value:
+                    origins[f"{field}.{key}"] = "machine"
+            if in_project and isinstance(project_value, dict):
+                for key, value in project_value.items():
+                    if value is None:
+                        nested.pop(key, None)
+                    else:
+                        nested[key] = value
+                    origins[f"{field}.{key}"] = "project"
+            merged[field] = nested if nested else None
+            continue
+        if in_project:
+            merged[field] = project_value
+            origins[field] = "project"
+        else:
+            merged[field] = machine_value
+            origins[field] = "machine"
+    return merged, origins
+
+
+def _rag_finalize_mcp(name: str, raw: object, transport: str) -> tuple[dict | None, str | None]:
+    if raw is None:
+        if transport in ("mcp", "both"):
+            return None, f"rag server '{name}': transport '{transport}' requires mcp.url"
+        return None, None
+    if not isinstance(raw, dict):
+        return None, f"rag server '{name}': mcp must be a mapping"
+    url = raw.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return None, f"rag server '{name}': mcp.url must be a non-empty string"
+    token_env = raw.get("token_env")
+    if token_env is not None and (not isinstance(token_env, str) or not token_env.strip()):
+        return None, f"rag server '{name}': mcp.token_env must be a non-empty string or null"
+    timeout = raw.get("timeout_ms", RAG_DEFAULT_MCP_TIMEOUT_MS)
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
+        return None, f"rag server '{name}': mcp.timeout_ms must be a positive integer"
+    return {
+        "url": url.strip(),
+        "token_env": token_env.strip() if isinstance(token_env, str) else None,
+        "timeout_ms": timeout,
+    }, None
+
+
+def _rag_finalize_skill(name: str, raw: object, transport: str) -> tuple[dict | None, str | None]:
+    if raw is None:
+        if transport in ("skill", "both"):
+            return None, f"rag server '{name}': transport '{transport}' requires skill.cli_entry"
+        return None, None
+    if not isinstance(raw, dict):
+        return None, f"rag server '{name}': skill must be a mapping"
+    cli_entry = raw.get("cli_entry")
+    if not isinstance(cli_entry, str) or not cli_entry.strip():
+        return None, f"rag server '{name}': skill.cli_entry must be a non-empty string"
+    directory = raw.get("dir")
+    if directory is not None and (not isinstance(directory, str) or not directory.strip()):
+        return None, f"rag server '{name}': skill.dir must be a non-empty string or null"
+    timeout = raw.get("timeout_ms", RAG_DEFAULT_SKILL_TIMEOUT_MS)
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
+        return None, f"rag server '{name}': skill.timeout_ms must be a positive integer"
+    return {
+        "dir": directory.strip() if isinstance(directory, str) else None,
+        "cli_entry": cli_entry.strip(),
+        "timeout_ms": timeout,
+    }, None
+
+
+def _rag_finalize_capabilities(name: str, raw: object) -> tuple[dict, str | None]:
+    caps = {"graph": False, "chat": False, "rewrite": False}
+    if isinstance(raw, dict):
+        for key in ("graph", "chat", "rewrite"):
+            if key in raw:
+                value = raw[key]
+                if not isinstance(value, bool):
+                    return caps, f"rag server '{name}': capabilities.{key} must be a boolean"
+                caps[key] = value
+    return caps, None
+
+
+def _rag_path_roots_digest(project_root: pathlib.Path, value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = pathlib.Path(value)
+    if not path.is_absolute():
+        path = project_root / value
+    try:
+        if not path.is_file():
+            return None
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _rag_finalize_server(
+    name: str, merged: dict, origins: dict, project_root: pathlib.Path
+) -> tuple[dict | None, str | None]:
+    transport = merged.get("transport")
+    if transport is None:
+        transport = "mcp"
+    if not isinstance(transport, str) or transport not in RAG_TRANSPORT_VALUES:
+        return None, (
+            f"rag server '{name}': transport must be one of {', '.join(RAG_TRANSPORT_VALUES)}"
+        )
+    adapter = merged.get("adapter")
+    if adapter is None:
+        adapter = RAG_ADAPTER_DEFAULT
+    if adapter != RAG_ADAPTER_DEFAULT:
+        return None, f"rag server '{name}': adapter must be '{RAG_ADAPTER_DEFAULT}'"
+    path_roots_file = merged.get("path_roots_file")
+    if path_roots_file is not None and (
+        not isinstance(path_roots_file, str) or not path_roots_file.strip()
+    ):
+        return None, f"rag server '{name}': path_roots_file must be a non-empty string or null"
+    sources = merged.get("sources")
+    if sources is None:
+        sources = []
+    if not isinstance(sources, list) or any(
+        not isinstance(item, str) or not item.strip() for item in sources
+    ):
+        return None, f"rag server '{name}': sources must be a list of non-empty strings"
+    mcp, error = _rag_finalize_mcp(name, merged.get("mcp"), transport)
+    if error:
+        return None, error
+    skill, error = _rag_finalize_skill(name, merged.get("skill"), transport)
+    if error:
+        return None, error
+    capabilities, error = _rag_finalize_capabilities(name, merged.get("capabilities"))
+    if error:
+        return None, error
+    return {
+        "transport": transport,
+        "adapter": adapter,
+        "path_roots_file": path_roots_file.strip() if isinstance(path_roots_file, str) else None,
+        "path_roots_digest": _rag_path_roots_digest(project_root, path_roots_file),
+        "sources": list(sources),
+        "capabilities": capabilities,
+        "mcp": mcp,
+        "skill": skill,
+        "origin": origins,
+    }, None
+
+
+def _rag_visible(servers: dict) -> str:
+    return ", ".join(sorted(servers)) if servers else "none"
+
+
+def _rag_finalize_specs(
+    label: str, raw: object, servers: dict, allowed: tuple[str, ...]
+) -> tuple[dict | None, str | None]:
+    if raw is None:
+        return {}, None
+    if not isinstance(raw, dict):
+        return None, f"target.yml rag.{label} must be a mapping"
+    out: dict = {}
+    for name, spec in raw.items():
+        if not isinstance(name, str) or not name.strip():
+            return None, f"target.yml rag.{label} keys must be non-empty strings"
+        if spec is None:
+            spec = {}
+        if not isinstance(spec, dict):
+            return None, f"target.yml rag.{label}.{name} must be a mapping"
+        extra = [str(k) for k in spec if k not in allowed]
+        if extra:
+            return None, (
+                f"target.yml rag.{label}.{name} has unknown key(s) {', '.join(extra)} "
+                f"(valid: {', '.join(allowed)})"
+            )
+        cleaned: dict = {}
+        server = spec.get("server")
+        if server is not None:
+            if not isinstance(server, str) or not server.strip():
+                return None, f"target.yml rag.{label}.{name}.server must be a non-empty string"
+            if server not in servers:
+                return None, (
+                    f"unknown rag server '{server}' in rag.{label}.{name}.server "
+                    f"(available: {_rag_visible(servers)})"
+                )
+            cleaned["server"] = server
+        source = spec.get("source")
+        if source is not None:
+            if not isinstance(source, str) or not source.strip():
+                return None, f"target.yml rag.{label}.{name}.source must be a non-empty string"
+            cleaned["source"] = source
+        for flag in ("require", "rewrite"):
+            if flag in spec:
+                value = spec[flag]
+                if not isinstance(value, bool):
+                    return None, f"target.yml rag.{label}.{name}.{flag} must be a boolean"
+                cleaned[flag] = value
+        for numkey in ("chat_budget", "time_budget_s"):
+            if numkey in spec:
+                value = spec[numkey]
+                if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                    return None, (
+                        f"target.yml rag.{label}.{name}.{numkey} must be a positive integer"
+                    )
+                cleaned[numkey] = value
+        out[name] = cleaned
+    return out, None
+
+
+def _rag_finalize_budgets(raw: object) -> tuple[dict | None, str | None]:
+    budgets = {
+        "chat_budget": RAG_DEFAULT_CHAT_BUDGET,
+        "time_budget_s": RAG_DEFAULT_TIME_BUDGET_S,
+    }
+    if raw is None:
+        return budgets, None
+    if not isinstance(raw, dict):
+        return None, "target.yml rag.budgets must be a mapping"
+    extra = [str(k) for k in raw if k not in _RAG_BUDGET_KEYS]
+    if extra:
+        return None, (
+            f"target.yml rag.budgets has unknown key(s) {', '.join(extra)} "
+            f"(valid: {', '.join(_RAG_BUDGET_KEYS)})"
+        )
+    for key in _RAG_BUDGET_KEYS:
+        if key in raw:
+            value = raw[key]
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                return None, f"target.yml rag.budgets.{key} must be a positive integer"
+            budgets[key] = value
+    return budgets, None
+
+
+def _rag_finalize_target(section: dict, servers: dict) -> tuple[dict | None, str | None]:
+    enabled_raw = section.get("enabled")
+    if enabled_raw is None:
+        enabled: list[str] = []
+    elif isinstance(enabled_raw, list):
+        enabled = []
+        for item in enabled_raw:
+            if not isinstance(item, str) or not item.strip():
+                return None, "target.yml rag.enabled must be a list of non-empty server names"
+            if item not in servers:
+                return None, (
+                    f"unknown rag server '{item}' in rag.enabled "
+                    f"(available: {_rag_visible(servers)})"
+                )
+            enabled.append(item)
+    else:
+        return None, "target.yml rag.enabled must be a list of server names"
+    default_server = section.get("default_server")
+    if default_server is not None:
+        if not isinstance(default_server, str) or not default_server.strip():
+            return None, "target.yml rag.default_server must be a non-empty string"
+        if default_server not in servers:
+            return None, (
+                f"unknown rag server '{default_server}' in rag.default_server "
+                f"(available: {_rag_visible(servers)})"
+            )
+    roles, error = _rag_finalize_specs("roles", section.get("roles"), servers, _RAG_ROLE_KEYS)
+    if error:
+        return None, error
+    phases, error = _rag_finalize_specs("phases", section.get("phases"), servers, _RAG_PHASE_KEYS)
+    if error:
+        return None, error
+    budgets, error = _rag_finalize_budgets(section.get("budgets"))
+    if error:
+        return None, error
+    return {
+        "enabled": enabled,
+        "default_server": default_server,
+        "roles": roles,
+        "phases": phases,
+        "budgets": budgets,
+    }, None
+
+
+def load_rag_config(project_root: pathlib.Path | str) -> tuple[dict, str | None]:
+    """Load the merged RAG config -> (config, error).
+
+    config is {enabled, default_server, servers, roles, phases, budgets,
+    fingerprint}; a missing machine/project layer is an empty layer and a
+    missing `rag:` section means nothing is enabled. Any parse or validation
+    problem returns ({}, message) and never blocks dispatching.
+    """
+    root = pathlib.Path(project_root)
+    machine_path = machine_rag_servers_path()
+    machine_servers: dict = {}
+    if machine_path is not None:
+        machine_servers, error = _rag_layer_servers(machine_path, "machine rag-servers.yml")
+        if error:
+            return {}, error
+    project_servers: dict = {}
+    project_path = rag_servers_path(root)
+    if project_path.exists():
+        project_servers, error = _rag_layer_servers(project_path, "project rag-servers.yml")
+        if error:
+            return {}, error
+    section, error = _rag_target_section(root)
+    if error:
+        return {}, error
+    servers: dict = {}
+    for name in sorted(set(machine_servers) | set(project_servers)):
+        merged, origins = _rag_merge_server(
+            name, machine_servers.get(name, {}), project_servers.get(name, {})
+        )
+        entry, error = _rag_finalize_server(name, merged, origins, root)
+        if error:
+            return {}, error
+        servers[name] = entry
+    target, error = _rag_finalize_target(section, servers)
+    if error:
+        return {}, error
+    config = {
+        "enabled": target["enabled"],
+        "default_server": target["default_server"],
+        "servers": servers,
+        "roles": target["roles"],
+        "phases": target["phases"],
+        "budgets": target["budgets"],
+    }
+    config["fingerprint"] = rag_fingerprint(config)
+    return config, None
+
+
+def rag_token_env_names(config: dict) -> set[str]:
+    """Every declared `mcp.token_env` NAME (never its value).
+
+    Used by the launcher to strip all declared RAG token envs from a worker
+    env and to inject only the ones the enabled servers need (T-07, VC-013).
+    """
+    names: set[str] = set()
+    for entry in (config.get("servers") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        mcp = entry.get("mcp")
+        if not isinstance(mcp, dict):
+            continue
+        name = mcp.get("token_env")
+        if isinstance(name, str) and name.strip():
+            names.add(name.strip())
+    return names
+
+
+def _rag_role_spec(config: dict, role: str) -> dict:
+    spec = (config.get("roles") or {}).get(role)
+    return spec if isinstance(spec, dict) else {}
+
+
+def _rag_phase_spec(config: dict, phase: str) -> dict:
+    spec = (config.get("phases") or {}).get(phase)
+    return spec if isinstance(spec, dict) else {}
+
+
+def _rag_required_for(config: dict, role: str, phase: str) -> bool:
+    """required = role.require OR phase.require (union, no exception)."""
+    return bool(_rag_role_spec(config, role).get("require")) or bool(
+        _rag_phase_spec(config, phase).get("require")
+    )
+
+
+def _rag_resolve_defaults(config: dict, role: str, phase: str) -> tuple[str | None, str | None, bool]:
+    """Resolve (server, source, rewrite): role > phase > default_server."""
+    role_spec = _rag_role_spec(config, role)
+    phase_spec = _rag_phase_spec(config, phase)
+    server = role_spec.get("server") or phase_spec.get("server") or config.get("default_server")
+    source = role_spec.get("source")
+    if source is None:
+        source = phase_spec.get("source")
+    rewrite = role_spec.get("rewrite")
+    if rewrite is None:
+        rewrite = phase_spec.get("rewrite")
+    if rewrite is None:
+        entry = (config.get("servers") or {}).get(server or "")
+        caps = (entry or {}).get("capabilities") if isinstance(entry, dict) else None
+        rewrite = bool((caps or {}).get("rewrite")) and (
+            role in RAG_RESEARCH_ROLES or phase in RAG_RESEARCH_PHASES
+        )
+    return server, source, bool(rewrite)
+
+
+def _rag_budget(config: dict, role: str, task_meta: dict, key: str, fallback: int) -> int:
+    """task.md header > role spec > rag.budgets > built-in default."""
+    explicit = task_meta.get(key)
+    if isinstance(explicit, int) and not isinstance(explicit, bool) and explicit > 0:
+        return explicit
+    role_value = _rag_role_spec(config, role).get(key)
+    if isinstance(role_value, int) and not isinstance(role_value, bool) and role_value > 0:
+        return role_value
+    global_value = (config.get("budgets") or {}).get(key)
+    if isinstance(global_value, int) and not isinstance(global_value, bool) and global_value > 0:
+        return global_value
+    return fallback
+
+
+def render_rag_block(config: dict, task_meta: dict) -> str | None:
+    """Render the task.md `<!-- mw-rag: v1 -->` block (design D-009).
+
+    Returns None (writing not one byte) when `enabled` is empty — the
+    structural zero-impact guarantee (D-014/AC-001). The render is a pure
+    function of the config and task_meta; the TS renderRagBlock (T-04) emits
+    the byte-identical text.
+    """
+    enabled = [
+        name for name in (config.get("enabled") or [])
+        if isinstance(name, str) and name.strip()
+    ]
+    if not enabled:
+        return None
+    if not isinstance(task_meta, dict):
+        task_meta = {}
+    task_type = str(task_meta.get("type") or "")
+    # Unknown/absent `type:` falls back to coding (T-16 / D-105), the same rule
+    # `roleForTaskType` uses on the TS side.
+    role = str(task_meta.get("role") or TASK_TYPE_TO_ROLE.get(task_type, "coding"))
+    phase = str(task_meta.get("phase") or "")
+    server, source, rewrite = _rag_resolve_defaults(config, role, phase)
+    lines = [
+        RAG_MARKER_V1,
+        f"[mw] RAG enabled: {', '.join(enabled)}",
+    ]
+    required_roles = sorted(
+        name for name, spec in (config.get("roles") or {}).items()
+        if isinstance(spec, dict) and spec.get("require")
+    )
+    if required_roles:
+        lines.append(f"[mw] Required roles: {', '.join(required_roles)}")
+    required_phases = sorted(
+        name for name, spec in (config.get("phases") or {}).items()
+        if isinstance(spec, dict) and spec.get("require")
+    )
+    if required_phases:
+        lines.append(f"[mw] Required phases: {', '.join(required_phases)}")
+    lines.append(f"[mw] Default server: {server or 'none'}")
+    lines.append(f"[mw] Default source: {source or 'none'}")
+    lines.append(f"[mw] Rewrite: {'true' if rewrite else 'false'}")
+    lines.append(
+        f"[mw] Chat budget: {_rag_budget(config, role, task_meta, 'chat_budget', RAG_DEFAULT_CHAT_BUDGET)}"
+    )
+    lines.append(
+        f"[mw] Time budget: {_rag_budget(config, role, task_meta, 'time_budget_s', RAG_DEFAULT_TIME_BUDGET_S)}s"
+    )
+    lines.append(f"[mw] Citation syntax: {RAG_CITATION_SYNTAX}")
+    lines.append(f"fingerprint={config.get('fingerprint') or rag_fingerprint(config, enabled)}")
+    return "\n".join(lines)
+
+
+def _rag_canonical(value: object) -> object:
+    """Canonical JSON shape: sorted keys, no whitespace, ensure_ascii=False,
+    integral floats normalized to int (TS/Py canonical-JSON parity)."""
+    if isinstance(value, bool) or value is None or isinstance(value, str):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else value
+    if isinstance(value, dict):
+        return {str(key): _rag_canonical(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_rag_canonical(item) for item in value]
+    return str(value)
+
+
+def rag_fingerprint(config: dict, enabled: list[str] | None = None) -> str:
+    """sha256 over the canonical static config (design D-009).
+
+    Scope: the enabled servers' static fields + resolved path_roots file
+    content digest + roles/phases + budgets. Excluded: probe/health state,
+    session ids, capability corrections, and every field of a server that is
+    not enabled, so an unrelated edit never fakes a config tear (VC-022).
+    """
+    names = list(config.get("enabled") or []) if enabled is None else list(enabled)
+    servers = config.get("servers") or {}
+    entries = []
+    for name in sorted({str(item) for item in names}):
+        entry = servers.get(name)
+        if not isinstance(entry, dict):
+            continue
+        mcp = entry.get("mcp")
+        skill = entry.get("skill")
+        entries.append(_rag_canonical({
+            "name": name,
+            "transport": entry.get("transport"),
+            "adapter": entry.get("adapter"),
+            "mcp": None if not isinstance(mcp, dict) else {
+                "url": mcp.get("url"),
+                "token_env": mcp.get("token_env"),
+                "timeout_ms": mcp.get("timeout_ms"),
+            },
+            "skill": None if not isinstance(skill, dict) else {
+                "dir": skill.get("dir"),
+                "cli_entry": skill.get("cli_entry"),
+                "timeout_ms": skill.get("timeout_ms"),
+            },
+            "path_roots_file": entry.get("path_roots_file"),
+            "path_roots_digest": entry.get("path_roots_digest"),
+            "sources": list(entry.get("sources") or []),
+            "capabilities": entry.get("capabilities") or {},
+        }))
+    payload = _rag_canonical({
+        "enabled": sorted({str(item) for item in names}),
+        "servers": entries,
+        "default_server": config.get("default_server"),
+        "roles": config.get("roles") or {},
+        "phases": config.get("phases") or {},
+        "budgets": config.get("budgets") or {},
+    })
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 # 鈹€鈹€ Credential resolution 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -2218,6 +2916,54 @@ def _render_partition_command(command: str, config: dict) -> str:
 def toolchain_probe_path(project_dir: pathlib.Path | str) -> pathlib.Path:
     """Machine-local toolchain probe cache (mw-dual-workspace D-013)."""
     return pathlib.Path(project_dir) / ".mw" / "toolchain.json"
+
+
+# ── Toolchain discipline helpers (dual-toolchain practice guide) ─────────────
+# Scope: dual-mode UE game dev (game repo + engine source repo, MSVC/UBT) —
+# target discovery and error signatures are UE/MSVC-specific; hashing is
+# toolchain-agnostic.
+
+def sha256_eol_normalized(path: pathlib.Path | str) -> str:
+    """EOL-insensitive sha256 (practice §5.5): engine repos on
+    core.autocrlf=input flip CRLF working files to LF on checkout/rebase
+    without any content change — byte-exact hashing then reports false
+    drift. Normalize CRLF→LF before hashing so freezes survive EOL flips
+    (same recipe as the guide's freeze pipelines)."""
+    data = pathlib.Path(path).read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(data).hexdigest()
+
+
+def discover_build_targets(game_root: pathlib.Path | str) -> list[dict]:
+    """UE build target names from <game>/Source/*.Target.cs (practice §2.1:
+    target names are read from the Target.cs files, never guessed — the
+    class name must match the file name, *Editor = editor target). Returns
+    [] when there is no Source dir (non-UE game roots)."""
+    source = pathlib.Path(game_root) / "Source"
+    if not source.is_dir():
+        return []
+    out: list[dict] = []
+    for f in sorted(source.glob("*.Target.cs")):
+        name = f.name[: -len(".Target.cs")]
+        out.append({
+            "name": name,
+            "kind": "editor" if name.endswith("Editor") else "game",
+            "file": str(f),
+        })
+    return out
+
+
+# MSVC "error C2039", linker "LNK2001", UBT/MSBuild "error :" — the three
+# signatures the practice guide's build acceptance greps for. Remote-executor
+# retry noise ("Force local retry") deliberately does not match.
+_BUILD_ERROR_RE = re.compile(r"error C\d{1,5}|LNK\d{4}|error :")
+
+
+def scan_build_error_lines(text: str) -> list[str]:
+    """Error-signature lines from a build log (practice §2.3-2: the exit
+    code is necessary but not sufficient — 600+ green static assertions can
+    still hide real C2039/UHT/LNK2001 defects only a real compile+link
+    exposes; acceptance records exit 0 AND zero signature hits together)."""
+    return [line for line in text.splitlines() if _BUILD_ERROR_RE.search(line)]
 
 
 # ── Workspace-profile rendering (mw-target-partition AC-007/FIX-1) ─────────────

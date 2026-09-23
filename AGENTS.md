@@ -1,5 +1,9 @@
 # Development Rules
 
+## AgenticTask Workflow
+
+- Non-trivial implementation (new feature, multi-file change, or anything beyond a one-line fix) requires an active AgenticTask key first: create the key (spec → claim) or record a `mini-spec.md` for the trivial-fix fast path. This applies to mid-session requirements injected after a requirements discussion too — no un-keyed "wild" implementation (untraceable, no goal alignment, no evidence, no closure). Check the active key in `.agenticdoc/_index.parallel` / `_index.md` before the first write to code.
+
 ## Conversational Style
 
 - Keep answers short and concise

@@ -683,8 +683,8 @@ const TIMI_MODELS: Model<Api>[] = [
 		compat: TIMI_ANTHROPIC_COMPAT,
 	},
 	{
-		id: "gpt-6",
-		name: "GPT-6",
+		id: "gpt-6-astra",
+		name: "GPT-6 Astra",
 		api: "openai-responses",
 		baseUrl: TIMI_BASE_URL,
 		provider: "timi",

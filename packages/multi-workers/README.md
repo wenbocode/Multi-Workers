@@ -80,6 +80,7 @@ python mw.py <子命令>
 | `pull-agentictask` / `push-agentictask` | 更新 / 推送 AgenticTask 框架 |
 | `update-env [--apply] [--json] [--fetch]` | 增量自检（UPDATE.md 锚点：bundle/dist/serve/框架传播）；`--apply` 执行安全修复后复查 |
 | `target set/show/clear` | 双工作区配置（见下） |
+| `ue-toolchain run/targets/hash` | dual 模式 UE 工具链纪律（见下）：执行模板并留证（错误签名双判 + --watch 前后哈希）、发现 UE 构建目标名、EOL 归一化哈希 |
 | `model set/show/clear` | 派发模型默认值（见下） |
 
 ## 派发模型默认值
@@ -171,7 +172,7 @@ pi 窗口内（新窗口生效）：
 
 ```yaml
 toolchain:
-  # 带 {game}/{engine}/{uproject} 占位符的命令模板
+  # 带 {game}/{engine}/{uproject} 占位符的命令模板（PM 直执走 mw ue-toolchain run，见下）
 ignore:
   deny_globs: ["**/*.uasset", "**/DerivedDataCache/**"]   # L1 上下文防火墙
 contract:
@@ -180,6 +181,16 @@ contract:
     项目约定，注入每个 task.md
   docs: [docs/api.md]
 ```
+
+### 工具链执行纪律（mw ue-toolchain）
+
+**定义域**：dual 模式的 UE 游戏开发项目（游戏仓 + 引擎源码仓 + `.uproject`，MSVC/UBT 工具链）。`run` 的留证/判定纪律和 `hash` 是工具链无关的通用件；`targets` 目标发现（`Source\*.Target.cs`）和 `errors.txt` 错误签名（`error C` / `LNK` / `error :`）是 UE/MSVC 专用。
+
+toolchain 模板不只是注入 task.md 的文档——PM 直执时用 `mw ue-toolchain` 落地[dual 实践指南](./docs/dual-toolchain-practice-guide.md)的通用纪律：
+
+- `python mw.py ue-toolchain run <name> --project <dir> [--args="-MaxParallelActions=16"]`（`--args` 值以 `-` 开头时必须用等号形式）—— 控制工作区根执行渲染后的命令，工件落 `<control>/.mw/toolchain-runs/<时间戳>-<name>/`：`cmd.txt`（逐字命令留档）、`run.log`（UTF-8 合并输出，`.log` 扩展名——质检脚本只扫 `*.log`）、`exit.txt`（退出码）、`errors.txt` + `meta.json`（错误签名扫描 `error C` / `LNK` / `error :`——退出码必要但不充分）；`--watch <file>` 前后 EOL 归一化 sha256，证明命令执行期间无人改被编译源码；`--out` 可把 run 目录指到 key evidence 归档。mw 退出码 0 = exit 0 ∧ 错误行 0 ∧ 无漂移；差分验收（基线本来就红的项目）对比两次 run 的 `errors.txt` 集合。
+- `python mw.py ue-toolchain targets --project <dir>` —— 从 `<game>/Source/*.Target.cs` 现查构建目标名（`*Editor` = editor target），勿猜。
+- `python mw.py ue-toolchain hash <file>...` —— EOL 归一化 sha256（引擎仓 `core.autocrlf=input` 会在 checkout/rebase 时把 CRLF 翻成 LF，字节级哈希会假漂移）。
 
 ## pi 窗口命令
 
@@ -192,6 +203,16 @@ contract:
 | `/mw build \| init \| start \| stop \| status \| doctor [fix] \| update [--apply]` | 服务与 bundle 管理（update = 锚点自检，见 [UPDATE.md](./UPDATE.md)） |
 | `/mw target show \| set \| clear` | 双工作区配置（见上） |
 | `/mw ack <task-key> \| all` | 确认终态 worker 结果 |
+
+### 实施准入门禁（mw-implementation-gate）
+
+非 trivial 实施（新功能、多文件改动、超出一行修的东西）必须先有 active key——这条纪律现在由 agent-team-loop 扩展的 `tool_call` 硬门机械化执行：write/edit（以及 bash 写目标收窄判定）命中仓库代码路径（`packages/**` 代码扩展名，排除 node_modules/dist/.tmp）且窗口无 active key claim 时拒绝执行，reason 内给出两条合规路径。放行条件（任一）：
+
+1. `_index.parallel` 中存在本窗口 host:pid 的 active claim（写 `.agenticdoc/<key>/spec.md` 即自动 claim）；
+2. `PI_WORKER_TASK` 存在（被派发的 worker 预授权）；
+3. 新鲜（≤24h）的 `.agenticdoc/<key>/mini-spec.md`（trivial 修复快路径，放行留审计行）。
+
+每次 block 与 mini 放行追加一行到 `.agenticdoc/_impl_gate.log`（best-effort，不影响判定）。bash 侧只判写结构的目标参数、声明非沙箱（`python -c` 内联写等已知漏过，见模块头注释）。生效条件：`mw setup --build` 重建 dist 并重启窗口；旧 bundle 进程重启前不受门禁。
 
 ## Autopilot 配置与停滞处置（mw-autopilot-stall-feedback）
 
@@ -223,6 +244,101 @@ contract:
 | `PI_WORKER_IDLE_MS` | 无活动判挂死阈值（默认 10 分钟） |
 | `MW_TARGET_GAME` / `MW_TARGET_ENGINE` | 双工作区临时覆盖 |
 | `MW_PY` | 扩展找不到 `mw.py` 时手动指定路径 |
+| `MW_IMPL_GATE_ROOT` | 门禁项目根覆盖（测试钩子，默认 cwd） |
+| `MW_RAG_SERVERS_FILE` | 机器级 RAG 配置的硬覆盖路径（设定但缺失 = 机器层为空，**不回落到 HOME**，用于测试隔离） |
+| `MW_RAG_SERVERS_HOME` | 机器级 RAG 配置的 HOME 覆盖（其后依次尝试 `HOME`、`USERPROFILE`） |
+| `MW_RAG_PYTHON` | `skill` 形态 RAG 的解释器覆盖（缺省 Windows `python` / 其它 `python3`） |
+
+## RAG 接入（可配置）
+
+RAG 是**可选**能力：只有项目显式启用时才注册工具、才往 task.md 注入块；未启用项目零影响
+（工具不注册、不写任何文件、不发探活请求）。完整的逐字段配置手册（四类可直接复制粘贴的示例、命令参考、
+退出码、失败 signature 与排查）：[`docs/rag-config-guide.md`](docs/rag-config-guide.md)。
+
+### 两层配置与逐字段合并
+
+| 层 | 路径 | 用途 |
+|----|------|------|
+| 机器级 | `~/.agents/rag-servers.yml` | 本机所有 RAG 服务的连接信息 |
+| 项目级 | `<control>/.mw/rag-servers.yml` | 项目覆盖（同名 server 逐字段覆盖机器级） |
+
+两层文件形态都是 `{servers: {<name>: {...}}}`（只有 `servers` 是合法顶层键）。合并是**逐字段**的：
+同名 server 的项目级字段覆盖机器级，`null` 删除该字段，数组（`sources`）整体替换；每个字段的来源
+记在 `origin` 里（`rag list --json` 可查）。`target.yml` 的 `rag:` 段决定启用集与角色/阶段要求：
+
+```yaml
+rag:
+  enabled: [overcode]              # 启用集（空或缺省 = 全关）
+  default_server: overcode
+  roles:
+    coding: { server: overcode, require: false, rewrite: true }
+    review: { server: overcode, source: docs, require: true }
+  phases:
+    design: { server: overcode, require: true }   # required = role.require OR phase.require
+  budgets:
+    time_budget_s: 900
+```
+
+`required = role.require OR phase.require`（并集，无例外）。`phase` 取**派发时** key 的阶段，由派发器
+写进 task.md 的 `phase:` 头（阶段未知或 `_scratch` 不写该行；`target.yml` 的 `phases:` 键必须与
+`pm-state.md` 的阶段值同大小写）。"必需"的判定标准是**产物里有可核对的引用**（`citation` + 本地路径
+存在），不是"调用过工具"。
+
+服务形态 `transport`：`mcp`（streamable-http，默认）/ `skill`（本地 CLI）/ `both`（mcp 为主，**连接层**
+失败且只读工具时才回落 CLI；`rag_feedback`、`rag_chat`、超时永不自动回落）。凭证只以 `token_env` 名
+出现在配置里，值由 `mw serve` 进程环境注入（task.md / trace / evidence 里不会出现值）。
+
+### 命令
+
+`--project <dir>` 是四个子命令的共同必填参数（argparse `required=True`）。
+
+```bash
+python mw.py rag list  --project <dir> [--json]                             # 合并后的 server 表与逐字段来源
+python mw.py rag probe --project <dir> [--json]                             # 探活（诊断；不可达仍退 0）
+python mw.py rag audit --project <dir> [--key <KEY>] [--json] [--out FILE]  # 只读审计：rag_call / 引用 / required-but-unused（无 --out 只写 stdout）
+python mw.py rag sync  --project <dir>                                      # 把 skill 形态的说明文件同步到 .pi/skills
+```
+
+退出码（以 `mw.py` 实现为准）：
+
+| 命令 | 退出码 |
+|---|---|
+| `list` / `probe` | 0 = 成功；1 = 配置错误（`probe` 不因服务不可达而失败） |
+| `sync` | 0 = 成功；1 = 配置错误或框架 skill 源文件缺失 |
+| `audit` | 0 = 无 `missing` / `unverified` / `required_missing`；1 = 有任一；2 = 用法或配置错误 |
+
+### 工具面
+
+启用后 worker 多出 6 个工具：`rag_search`、`rag_symbol`、`rag_graph`、`rag_impact`、`rag_sources`、
+`rag_feedback`；`rag_chat` 只在 `rag-research` 类型下可见。引用格式为
+`server:source:file_path:line` —— 左侧两段是 server/source，最右侧数字段是行号，中间全部内容
+（允许含 `::`）都是 file_path。
+
+逻辑名与参考服务（overcode）真实工具名的映射（AC-018）：
+
+| 逻辑工具 | 线上工具名 | 说明 |
+|---|---|---|
+| `rag_search` | `rag_search` | 重写开关为真时改走 `rag_search_multi_rounds`（服务端多轮改写） |
+| `rag_symbol` | `rag_symbol` | |
+| `rag_graph` | `graph_query` | |
+| `rag_impact` | `rag_impact` | |
+| `rag_sources` | `list_sources` + `list_collections` | 两次调用合并为一个信封 |
+| `rag_feedback` | `rag_feedback` | |
+
+映射在适配器（`overcode-v1`）里以数据表维护：换服务族 = 加一个适配器，不改配置 schema。表中 6 行是
+**六个基工具**的映射；`RAG_TOOL_MAP` 里还有第 7 条 `rag_chat`（`mcp: ["rag_chat"]`），它只在 `rag-research`
+任务注册，故不列在此表。
+
+`rag-rewrite-degraded` 与上面「开了多轮」是相反的语义：只有服务端响应信封的
+`meta.rewrite_degraded === true`（服务端**改写失败**、降级为普通检索）时才追加该 trace 行
+（`rag/adapter.ts` 的 meta 白名单 + `rag/tools.ts` 的判定）；它**不是**「启用了多轮改写」的标记。
+
+### 降级与证据
+
+五层降级：未启用 = 工具不可见；探活失败 = 注册但标注 `[unreachable at session start]`；运行时失败 =
+熔断（连续 3 次连接/超时/协议错误，能力错误不计）；必需但服务不可用 = 告警；必需但没用 = 告警。
+worker trace 里会出现 `rag_call`（含 `mcp_tool` 真实线上名）、`rag_fallback`、`rag-required-missing`、
+`rag-rewrite-degraded` 等行；`mw rag audit` 只读地对这些行做独立判定。
 
 ## 待实现（Backlog）
 
