@@ -364,8 +364,9 @@ def sha(p):
 |---|---|---|---|
 | **wall 超时**（预算耗尽被杀） | worker 终止时间 = 派发后整 1h；`last activity 57 s ago`、checkpoint `risk=low` | ① **产物不直丢**：先核查已落盘证据再取舍（曾救回 22 行 AC-014 + 一套可复用机械）；② 值得保留的产物**采纳**（t31 wall 超时产物被采纳：三个会话均 exit 0 无残留）；③ 剩余未写部分**PM 直执补全**；④ 已被取代的产物移 `_superseded/` **原样封存 + 登记哈希 + 标记禁运行** | `_pitfalls.md` P48；`T-31 §5`；`_superseded\README.md` |
 | **idle/停滞** | 30 分钟重复同一批慢扫描、零产出；mw checkpoint `risk=high` | **终止** + **PM 直执**（用 rg 秒级完成）。教训：大目录取证任务应在任务书里指定 `rg`，否则 worker 陷入慢扫描循环 | `pm-state.md:58`（design-evidence-r3-r4-r6 实录） |
-| **发散/范围漂移** | 30 min / 35 次读取 / 0 次写入、无 progress.md、在研读范围外源码 | 30 min 检查点裁决"范围漂移" ⇒ **收窄重派**：硬预算（25 次工具调用）、只许读白名单文件（3 个）、**禁读（引擎）源码**、**产物改名防撞车**；重派版 15 min/14 次交付并通过 PM 静态验收。首派产物照 `_superseded/` 封存规则处理 | `_superseded\README.md`（t29 → t29b 全实录） |
+| **发散/范围漂移** | 30 min / 35 次读取 / 0 次写入、progress.md 无自评行（只有机器行）、在研读范围外源码 | 30 min 检查点裁决"范围漂移" ⇒ **收窄重派**：硬预算（25 次工具调用）、只许读白名单文件（3 个）、**禁读（引擎）源码**、**产物改名防撞车**；重派版 15 min/14 次交付并通过 PM 静态验收。首派产物照 `_superseded/` 封存规则处理 | `_superseded\README.md`（t29 → t29b 全实录） |
 
+- **只读角色的发散口径**（mw-worker-progress-persist，2026-09-23）：review/research/verifier 这类无写工具角色，检查点机器行改由框架写入 `progress.md`（`CKPT <n>m [machine] …`），窄工具 `worker_file` 的落盘**不计入** `writes` —— 因此这类任务出现 `writes=0` 属正常，发散判据只看「机器行在推进但始终无自评行 / `repeat_top` 不下降」。
 - **重试一次仍失败 ⇒ 转 PM 直执**（派发规格口径）：实例一 = t29 失败 → 收窄重派 t29b 成功；实例二 = design-evidence 失败后未重试、直接 PM 直执；实例三 = t31 wall 超时 → 采纳产物 + PM 直执补终版汇总（`T-31 §5`）。三种路径都出现过，未见成文的"最多重试一次"硬规则【未验证：成文规则】。
 - 构建中止判据与恢复：见 §2.3-6（`_pitfalls.md` P71 D5、`pm-state.md:435`）。
 - `_superseded/` 封存记录格式（文件名字节数 + sha256 前缀 + 处置）：`v5_probe.py` 32,100 B `A7500366342397CE` / `v5_probe_launch.ps1` 64,888 B `D319309999111320`，处置 = "废弃，不运行"（`_superseded\README.md` 产物清册表）。

@@ -24,11 +24,13 @@ import {
 	appendHeartbeat,
 	appendModel,
 	appendPhase,
+	appendProgressLine,
 	appendStart,
 	appendTimeout,
 	appendTool,
 	appendToolError,
 	appendTrace,
+	formatMachineCheckpoint,
 	type WriteOutputOpts,
 	writeOutput,
 } from "./output-writer.ts";
@@ -43,6 +45,7 @@ import {
 	type ReadScopeState,
 	readScopeConfigFromMeta,
 } from "./read-scope.ts";
+import { registerWorkerFileTool, WORKER_FILE_TOOL } from "./worker-file-tool.ts";
 
 // ── Tool allowlists by task type ─────────────────────────────────────────────
 
@@ -88,6 +91,46 @@ function isRegisteredType(taskType: string): boolean {
 
 export function toolsForType(taskType: string): string[] {
 	return TOOL_ALLOWLISTS[taskType] ?? TOOL_ALLOWLISTS.fallback ?? [];
+}
+
+/** `toolsForType` plus the narrow write channel for roles with no write/edit
+ * tool (D-104/D-106). The allowlist table and `toolsForType` stay byte for
+ * byte unchanged (Python parity lock, direct test imports); the writeless
+ * extra lives only here. Write roles get the base array untouched, read-only
+ * roles get a copy with `worker_file` appended. */
+export function activeToolsForType(taskType: string): string[] {
+	const base = toolsForType(taskType);
+	return base.includes("write") ? base : [...base, WORKER_FILE_TOOL];
+}
+
+/** Checkpoint self-assessment steer text, split by role (D-104/VC-004).
+ * - `hasWriteTools === true`: the pre-change wording byte for byte — the
+ *   agent appends its own CKPT line to progress.md with its write tool.
+ * - `hasWriteTools === false`: never tells the agent to append to a file it
+ *   cannot write. The machine evidence is already on disk (framework-written),
+ *   and the self-assessment goes through the narrow tool or the reply.
+ * `deliverAs` stays `followUp` for both branches (decided by the caller). */
+export function checkpointSteerText(opts: {
+	elapsedMs: number;
+	budgetMs: number;
+	progressPath: string;
+	hasWriteTools: boolean;
+	narrowTool: string;
+}): string {
+	if (opts.hasWriteTools) {
+		return `[mw checkpoint] 运行 ${formatHeartbeatAge(opts.elapsedMs)}（总预算 ${formatHeartbeatAge(
+			opts.budgetMs,
+		)}）。请立即自评收敛性，把一行追加到 ${opts.progressPath}：CKPT ${Math.round(
+			opts.elapsedMs / 60_000,
+		)}m converging=yes|no eta≈<X>m <一句话理由>。若不收敛：立即收窄范围，优先保证已完成部分可交付，不要展开新工作。`;
+	}
+	return `[mw checkpoint] 运行 ${formatHeartbeatAge(opts.elapsedMs)}（总预算 ${formatHeartbeatAge(
+		opts.budgetMs,
+	)}）。检查点机器证据（reads/writes/phases/risk）已由框架写入 ${opts.progressPath}。请立即自评收敛性：用 ${
+		opts.narrowTool
+	} 工具把一行自评写入该文件，或在本回复中直接给出一行 CKPT ${Math.round(
+		opts.elapsedMs / 60_000,
+	)}m converging=yes|no eta≈<X>m <一句话理由>。若不收敛：立即收窄范围，优先保证已完成部分可交付，不要展开新工作。`;
 }
 
 // ── Watchdog budgets (GC-4 as amended 2026-09-09: activity-based hang
@@ -331,7 +374,9 @@ export function parseTaskMd(taskPath: string): TaskMeta {
  * read/write/edit targets, the first command line for bash, or the search
  * pattern. Keeps one tool call = one trace line. */
 function toolTarget(args: unknown): string {
-	const a = args as { path?: unknown; command?: unknown; pattern?: unknown; query?: unknown } | undefined;
+	const a = args as
+		| { path?: unknown; command?: unknown; pattern?: unknown; query?: unknown; file?: unknown }
+		| undefined;
 	const raw =
 		typeof a?.path === "string"
 			? a.path
@@ -341,7 +386,9 @@ function toolTarget(args: unknown): string {
 					? a.pattern
 					: typeof a?.query === "string"
 						? a.query
-						: "";
+						: typeof a?.file === "string"
+							? a.file
+							: "";
 	if (!raw) return "";
 	return raw.split("\n")[0] ?? "";
 }
@@ -675,6 +722,14 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	} catch (err) {
 		writeWorkerLogLine(`[worker] rag disabled: ${err instanceof Error ? err.message : String(err)}`);
 	}
+	// Narrow write channel (D-101/D-104/D-106): roles whose allowlist has no
+	// write/edit tool get `worker_file` registered — a structural gate mirroring
+	// `registerRagTools`'s disabled→skip. OUTSIDE the RAG try/catch on purpose:
+	// a broken RAG config must not swallow a read-only role's only channel.
+	const hasWriteTools = toolsForType(meta.type).includes("write");
+	if (!hasWriteTools) {
+		registerWorkerFileTool(pi, workerTaskDir);
+	}
 	if (ragRuntime !== null) {
 		await ragRuntime.ready;
 		ragRuntime.workerTaskDir = workerTaskDir;
@@ -906,19 +961,37 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			risk,
 		});
 		lastCheckpoint = { risk, reads: readCount, writes: writeCount, phases: phasesStr };
-		// Self-assessment steer: the agent appends one CKPT line to progress.md
-		// (its own convergence judgment) next to the machine evidence.
-		// sendUserMessage with deliverAs: while the agent is mid-run (tool call or
-		// generation) a bare call throws "Agent is already processing" — followUp
-		// queues the steer as its own turn after the current one, so in-flight
-		// work is never disrupted (smoke-validated 2026-09-09).
+		// Machine line: written by code (D-104/D-105) for roles with no write tool;
+		// the self-assessment line goes through worker_file or the reply, per role.
+		// Write roles keep the pre-change behavior byte for byte (no [machine] line).
+		if (!hasWriteTools) {
+			appendProgressLine(
+				meta.taskKey,
+				meta.agenticdocRoot,
+				formatMachineCheckpoint({
+					elapsedMs,
+					reads: readCount,
+					writes: writeCount,
+					phases: phasesStr,
+					repeatTop,
+					risk,
+				}),
+			);
+		}
+		// Self-assessment steer. sendUserMessage with deliverAs: while the agent is
+		// mid-run (tool call or generation) a bare call throws "Agent is already
+		// processing" — followUp queues the steer as its own turn after the current
+		// one, so in-flight work is never disrupted (smoke-validated 2026-09-09).
+		// Both role branches keep followUp; only the wording differs (VC-004).
 		const taskDir = path.dirname(taskPath);
 		pi.sendUserMessage(
-			`[mw checkpoint] 运行 ${formatHeartbeatAge(elapsedMs)}（总预算 ${formatHeartbeatAge(
+			checkpointSteerText({
+				elapsedMs,
 				budgetMs,
-			)}）。请立即自评收敛性，把一行追加到 ${path.join(taskDir, "progress.md")}：CKPT ${Math.round(
-				elapsedMs / 60_000,
-			)}m converging=yes|no eta≈<X>m <一句话理由>。若不收敛：立即收窄范围，优先保证已完成部分可交付，不要展开新工作。`,
+				progressPath: path.join(taskDir, "progress.md"),
+				hasWriteTools,
+				narrowTool: WORKER_FILE_TOOL,
+			}),
 			{ deliverAs: "followUp" },
 		);
 	}
