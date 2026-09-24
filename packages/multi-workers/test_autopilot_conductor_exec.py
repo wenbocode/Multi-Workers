@@ -352,6 +352,36 @@ def test_plan_missing_task_is_l1_gap(
     assert "T-99-missing" in vmd
 
 
+def test_plan_task_id_mapped_to_prefix_stripped_filename_closes_gap(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plan may document the id→file mapping as a prefix strip (plan §3:
+    `T-001-board-params-config-errors` → `tasks/001-board-params-config-errors.md`).
+    When the file exists under that mapped stem the plan id is NOT a missing
+    task, so the key advances instead of burning an L2 round on a phantom gap."""
+    project = _key_project(tmp_path, phases={"k1": "TASKS"})
+    key_dir = project / ".agenticdoc" / "k1"
+    key_dir.mkdir(parents=True, exist_ok=True)
+    (key_dir / "spec.md").write_text(
+        "# Spec\n\n| AC | desc |\n|----|------|\n| AC-001 | todo |\n", encoding="utf-8"
+    )
+    (key_dir / "design.md").write_text("# Design\n\n### D-001 choice\n", encoding="utf-8")
+    _tasks(
+        project, "k1", ["001-board-params-config-errors"],
+        plan=(
+            "# Plan\n\n## 3 任务清单\n\n| 任务 | 目标 |\n|------|------|\n"
+            "| `T-001-board-params-config-errors` | 骨架 |\n\n"
+            "映射：`tasks/001-board-params-config-errors.md`（去掉 `T-NNN-` 前缀）\n"
+        ),
+    )
+    fake_advance, calls = _fake_advance_factory(project)
+    monkeypatch.setattr(conductor.advance, "advance", fake_advance)
+    st = _state(project)
+    assert conductor.tick(project, st) == "ok"
+    assert calls == [("k1", "execute")]
+    assert [r for r in _rows(project, "ap-k1-") if "l2-" in r["task_key"]] == []
+
+
 # ── L3 convergence + done transaction (D-108/D-112) ──────────────────────────
 
 def _verify_key_project(tmp_path: pathlib.Path) -> pathlib.Path:

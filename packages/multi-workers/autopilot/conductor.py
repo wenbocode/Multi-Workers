@@ -1406,9 +1406,30 @@ def _phase_artifact_present(key_dir: pathlib.Path, phase: str) -> bool:
     return True  # execute (T-12 loop) / done (terminal)
 
 
+def _plan_task_file_stems(plan_id: str) -> list[str]:
+    """Candidate ``tasks/*.md`` stems for a plan-referenced ``T-NN-slug`` id.
+
+    D-111 makes the tasks/ file stem the task identity; a plan may name that
+    stem directly (``T-001-board-params-config-errors.md``) or document the
+    id→file mapping as a prefix strip (plan §3 example:
+    ``T-001-board-params-config-errors`` → ``tasks/001-board-params-config-errors.md``).
+    Both name the same task, so both are candidates; the id is only missing
+    when *neither* candidate has a file.
+    """
+    stems = [plan_id]
+    if re.match(r"^T-\d{2,3}-", plan_id):
+        stems.append(plan_id[2:])
+    return stems
+
+
 def _missing_plan_tasks(key_dir: pathlib.Path) -> list[dict]:
-    """Plan-referenced T-NN-slug stems with no tasks/ file — synthetic
-    blocking gaps for the tasks→execute boundary (D-111)."""
+    """Plan-referenced T-NN-slug ids with no tasks/ file — synthetic
+    blocking gaps for the tasks→execute boundary (D-111).
+
+    Existence is judged against the id's candidate file stems
+    (:func:`_plan_task_file_stems`), so a key that maps the plan id to a
+    prefix-stripped file name — the shape 20+ keys in this workspace use —
+    is not flagged as missing."""
     tasks_dir = key_dir / "tasks"
     present = {f.stem for f in tasks_dir.glob("*.md")} if tasks_dir.is_dir() else set()
     plan = _plan_text(key_dir)
@@ -1418,7 +1439,7 @@ def _missing_plan_tasks(key_dir: pathlib.Path) -> list[dict]:
     return [
         {"item": f"plan 任务 {stem} 在 tasks/ 缺失", "rule": "execute-gate"}
         for stem in referenced
-        if stem not in present
+        if not (present & set(_plan_task_file_stems(stem)))
     ]
 
 
