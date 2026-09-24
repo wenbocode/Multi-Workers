@@ -1705,8 +1705,21 @@ def _apply_stalled_approvals(
     per capped loop, each consumed by that loop's own monotone ``used``
     counter (see there).
     """
+    consumed = _consumed_gate_ids(project_root)
     for gate in gates.enumerate(gates_dir(project_root)):
         if gate.kind != "stalled" or gate.status != "approved":
+            continue
+        if gate.id in consumed:
+            # 2026-09-24 (FeatureMigrator incident): consumption is durable — an
+            # approved stalled gate whose answer was already applied must never
+            # resume the key again. The key-status rewrite below is not a
+            # sufficient guard: it only sees the state as of this tick's start,
+            # so a key that re-stalls inside the same tick (or on the next one)
+            # replayed the same human answer forever — and every replay
+            # re-created a pending stalled gate. Measured: 6684 pending stalled
+            # gates + 6685 stalled/gate-answered/resume events in ~12 h, all
+            # from two approved gates, with the key oscillating
+            # stalled→running→stalled every tick.
             continue
         key = gate.key
         if not key or status_of.get(key) != "stalled":
