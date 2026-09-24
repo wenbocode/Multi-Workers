@@ -422,18 +422,30 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
             // checkpoint whose machine risk is mid/high wake the PM once per task
             // with the evidence — the PM (fullest context) decides continue /
             // descope / kill + split / takeover. Low-risk checkpoints stay in the
-            // widget only; no cross-window broadcast (scoped to the watched key).
+            // widget only; no cross-window broadcast (scoped to the watched key ∪
+            // this window's dispatched tasks — mw-crosskey-risk-escalation D-101).
             for (const entry of entries) {
                 if (entry.status !== "running" || escalated.has(entry.taskKey))
                     continue;
-                if (!watch.key || ownerKeyOf(entry, agenticdocRoot) !== watch.key)
+                // Ownership is "watched key OR dispatched by this window": a task this
+                // window sent across keys (explicit `key:` dispatch, gate fallback to
+                // _scratch) is still this PM's work, while other windows' workers stay
+                // silent. `!watch.key` stays first: a window watching nothing must not
+                // start delivering off historical dispatch records.
+                const ownerKey = ownerKeyOf(entry, agenticdocRoot);
+                const owned = watch.dispatchedTaskKeys?.has(entry.taskKey) ?? false;
+                if (!watch.key || (ownerKey !== watch.key && !owned))
                     continue;
                 const ck = readTaskProgress(path.dirname(entry.taskPath))?.checkpoint;
                 if (!ck || ck.risk === "low")
                     continue;
                 escalated.add(entry.taskKey);
                 const taskDir = path.dirname(entry.taskPath);
-                deliverPmAlert(pi, `[mw] 发散风险：worker '${entry.taskKey}' 检查点 risk=${ck.risk}` +
+                // Cross-key alerts carry the owner key right after the worker name
+                // (D-102) so the PM can tell an off-watch task from a watched-key one;
+                // the watched-key label keeps the byte-exact `'name' ` form (AC-004).
+                const workerLabel = ownerKey === watch.key ? `'${entry.taskKey}' ` : `'${entry.taskKey}'（owner key=${ownerKey}）`;
+                deliverPmAlert(pi, `[mw] 发散风险：worker ${workerLabel}检查点 risk=${ck.risk}` +
                     `（elapsed ${Math.round(ck.elapsedS / 60)}m，reads=${ck.reads} writes=${ck.writes}，phases=${ck.phases}，` +
                     `重复读 top=${ck.repeatTop}）。机器判据仅供参考——请结合本 key 最全上下文判断：继续等待 / steer 收窄范围 / 终止并分拆重派 / PM 直执。` +
                     `证据：${path.join(taskDir, "trace.log")}（[CHECKPOINT] 行）与 ${path.join(taskDir, "progress.md")}（自评行；无写工具角色另含框架机器行）。`);
