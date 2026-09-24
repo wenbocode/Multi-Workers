@@ -612,24 +612,48 @@ def _l3_verdict(key_dir: pathlib.Path) -> tuple[str, str]:
     return "none", "—"
 
 
+# ── L3 verdict persistence (feature-l3-verdict-freshness) ────────────────────
+_VERDICT_VALUES = ("meets", "below")  # derived-record value domain (D-008)
+
+
 def _persist_l3_verdict(
-    key_dir: pathlib.Path, verdict: str, report_src: pathlib.Path
+    key_dir: pathlib.Path, verdict: str, report_src: pathlib.Path,
+    st: ConductorState | None = None,
 ) -> None:
-    """Persist the final L3 verdict for the closure dossier (AC-003):
-    l3-verdict.txt + l3-report.md. Check-before-write — idempotent across
-    crash-retry ticks, never clobbers an earlier verdict of the same run."""
+    """Refresh the key's **terminal** L3 verdict for the closure dossier:
+    l3-verdict.txt + l3-report.md. Every terminal event (done-meets /
+    stall-below) refreshes the derived record to that event's verdict;
+    per-file content idempotence keeps repeated ticks and crash-retries
+    zero-write, and the refresh is bidirectional so a done transaction that
+    degrades back to below is not pinned at meets (D-002/D-003/D-004)."""
+    if verdict not in _VERDICT_VALUES:
+        return  # value domain is closed: never write a third state (D-008)
+    key = key_dir.name
     verdict_file = key_dir / "l3-verdict.txt"
-    if not verdict_file.is_file():
-        verdict_file.write_text(verdict + "\n", encoding="utf-8", newline="\n")
-    report = key_dir / "l3-report.md"
-    if not report.is_file() and report_src.is_file():
+    current = (
+        verdict_file.read_text(encoding="utf-8", errors="replace")
+        if verdict_file.is_file() else None
+    )
+    before = current.strip().lower() if current is not None else None
+    verdict_changed = before != verdict
+    report_changed = False
+    if report_src.is_file():  # I-3: no source -> leave the report untouched
         try:
-            report.write_text(
-                report_src.read_text(encoding="utf-8", errors="replace"),
-                encoding="utf-8", newline="\n",
-            )
+            payload = report_src.read_bytes()
+            report = key_dir / "l3-report.md"
+            if not (report.is_file() and report.read_bytes() == payload):
+                report.write_bytes(payload)  # D-004/D-005: report first
+                report_changed = True
         except OSError:
-            pass  # dossier shows "—"; the verdict itself is already durable
+            pass  # dossier keeps the existing report; the verdict still lands
+    if verdict_changed:
+        verdict_file.write_bytes((verdict + "\n").encode("utf-8"))
+    if st is not None and (verdict_changed or report_changed):
+        source = report_src.parent.name if report_src.is_file() else "-"
+        st.timeline.append(
+            "config", key=key,
+            detail=f"l3-verdict {before or 'none'} -> {verdict} (report from {source})",
+        )
 
 
 def _iso_now() -> str:
@@ -1184,7 +1208,7 @@ def _verify_loop(
             detail=f"l3-a{used} worker status={worker_status} → re-review",
         )
         if used >= l3_limit:
-            _persist_l3_verdict(key_dir, "below", l3_report_src)
+            _persist_l3_verdict(key_dir, "below", l3_report_src, st=st)
             mark_stalled(
                 project_root, st, key,
                 f"L3 无裁决（worker {worker_status}: {round_key}）达 {used}/{l3_limit} 轮",
@@ -1206,7 +1230,7 @@ def _verify_loop(
             return False  # advanced (or gated — retried next tick)
         # meets-but-short achieved draft → same repair path as below
     if used >= l3_limit:
-        _persist_l3_verdict(key_dir, "below", l3_report_src)
+        _persist_l3_verdict(key_dir, "below", l3_report_src, st=st)
         mark_stalled(
             project_root, st, key,
             f"L3 below {l3_limit} rounds (budget {l3_budget}, credits {l3_limit - l3_budget})",
@@ -1219,7 +1243,7 @@ def _verify_loop(
         if any(_is_in_flight(r) for r in fam):
             return False
         if repair_used >= max(1, int(cfg["round_budget"])) + _resume_credits(project_root, key):
-            _persist_l3_verdict(key_dir, "below", l3_report_src)
+            _persist_l3_verdict(key_dir, "below", l3_report_src, st=st)
             mark_stalled(
                 project_root, st, key,
                 f"repair exhausted {repair_used} attempts at L3 round {used}",
@@ -1335,7 +1359,7 @@ def _done_transaction(
             )
         # 1b. persist the L3 verdict for the closure dossier (AC-003):
         # l3-verdict.txt + l3-report.md, written once (check-before-write)
-        _persist_l3_verdict(key_dir, "meets", l3_output)
+        _persist_l3_verdict(key_dir, "meets", l3_output, st=st)
         # 2. achieved.md draft (only when absent/short — never clobbers a
         #    ≥200B draft from an earlier attempt of the same verdict)
         achieved_path = key_dir / "achieved.md"
