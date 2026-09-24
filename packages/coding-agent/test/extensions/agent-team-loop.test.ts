@@ -3998,6 +3998,165 @@ describe("watchdog budgets and convergence checkpoint", () => {
 		}
 		fs.rmSync(root, { recursive: true, force: true });
 	});
+
+	// mw-crosskey-risk-escalation T-1: the escalation ownership widens to "watched
+	// key ∪ dispatched by this window" (D-101) with the owner key tagged onto
+	// cross-key alerts (D-102). [VERIFY] lines go to stdout via
+	// process.stdout.write: the suite config is silent: "passed-only" and
+	// swallows console.log from green tests (P-006).
+	it("AC-001: cross-key task dispatched by this window wakes the PM once with its owner key (VC-001)", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const is = new IndexStore(root);
+		await is.upsert({
+			key: "key-a",
+			status: "active",
+			phase: "EXECUTE",
+			claimId: "1",
+			deps: "",
+			desc: "",
+			updated: new Date().toISOString(),
+		});
+		await queueRunning(root, "key-b", "t-cross");
+		fs.writeFileSync(
+			path.join(root, "key-b", "workers", "t-cross", "trace.log"),
+			`[CHECKPOINT] ${new Date().toISOString()} elapsed=1800s reads=74 writes=0 phases=- uniq_targets=0 repeat_top=3 risk=high\n`,
+			"utf8",
+		);
+		const watch: PmWatchState = { key: "key-a", dispatchedTaskKeys: new Set(["t-cross"]) };
+		const ui: PmUiHolder = { ctx: undefined };
+
+		vi.useFakeTimers();
+		try {
+			const { pi, messages, options } = fakePi();
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
+			vi.advanceTimersByTime(500);
+			// Exactly one escalation for the cross-key dispatched worker; its text
+			// carries the owner key right after the worker name (D-102) so the PM
+			// can tell an off-watch task from a watched-key one.
+			const alerts = messages.length;
+			const ownerInText = alerts === 1 && messages[0].includes("key-b");
+			const triggerTurn = options[0]?.triggerTurn === true;
+			expect(alerts).toBe(1);
+			expect(messages[0]).toContain("'t-cross'（owner key=key-b）");
+			expect(messages[0]).toContain("risk=high");
+			expect(messages[0]).toContain("trace.log");
+			expect(messages[0]).toContain("progress.md");
+			expect(triggerTurn).toBe(true);
+			// Second tick: no duplicate escalation (once per task).
+			vi.advanceTimersByTime(500);
+			const dup = messages.length - alerts;
+			expect(dup).toBe(0);
+			clearInterval(handle);
+			process.stdout.write(
+				`[VERIFY] VC-001: alerts=${alerts} owner_in_text=${ownerInText} trigger_turn=${triggerTurn} dup=${dup}\n`,
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("AC-002: cross-key workers this window never dispatched stay silent in both dispatch-set forms (VC-002)", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const is = new IndexStore(root);
+		await is.upsert({
+			key: "key-a",
+			status: "active",
+			phase: "EXECUTE",
+			claimId: "1",
+			deps: "",
+			desc: "",
+			updated: new Date().toISOString(),
+		});
+		await queueRunning(root, "key-b", "t-foreign");
+		fs.writeFileSync(
+			path.join(root, "key-b", "workers", "t-foreign", "trace.log"),
+			`[CHECKPOINT] ${new Date().toISOString()} elapsed=1800s reads=74 writes=0 phases=- uniq_targets=0 repeat_top=3 risk=high\n`,
+			"utf8",
+		);
+		const ui: PmUiHolder = { ctx: undefined };
+
+		vi.useFakeTimers();
+		try {
+			// Form 1: dispatch registration never wired (dispatchedTaskKeys undefined).
+			const undefinedWatch: PmWatchState = { key: "key-a" };
+			const run1 = fakePi();
+			const handle1 = startWorkerPollLoop(run1.pi, store, new AckStore(root), is, root, undefinedWatch, ui, 100);
+			vi.advanceTimersByTime(500);
+			const undefinedAlerts = run1.messages.length;
+			clearInterval(handle1);
+			// Form 2: explicit empty set — other windows' workers stay silent too.
+			const emptyWatch: PmWatchState = { key: "key-a", dispatchedTaskKeys: new Set() };
+			const run2 = fakePi();
+			const handle2 = startWorkerPollLoop(run2.pi, store, new AckStore(root), is, root, emptyWatch, ui, 100);
+			vi.advanceTimersByTime(500);
+			const emptySetAlerts = run2.messages.length;
+			clearInterval(handle2);
+			expect(undefinedAlerts).toBe(0);
+			expect(emptySetAlerts).toBe(0);
+			process.stdout.write(
+				`[VERIFY] VC-002: undefined_alerts=${undefinedAlerts} empty_set_alerts=${emptySetAlerts}\n`,
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("AC-003: dispatched cross-key low-risk checkpoints never deliver; the high-risk one delivers once (VC-003)", async () => {
+		const root = mkdtemp();
+		const store = new WorkerStore(root);
+		const is = new IndexStore(root);
+		await is.upsert({
+			key: "key-a",
+			status: "active",
+			phase: "EXECUTE",
+			claimId: "1",
+			deps: "",
+			desc: "",
+			updated: new Date().toISOString(),
+		});
+		await queueRunning(root, "key-b", "t-low");
+		await queueRunning(root, "key-b", "t-high");
+		fs.writeFileSync(
+			path.join(root, "key-b", "workers", "t-low", "trace.log"),
+			`[CHECKPOINT] ${new Date().toISOString()} elapsed=1800s reads=20 writes=8 phases=- uniq_targets=3 repeat_top=1 risk=low\n`,
+			"utf8",
+		);
+		fs.writeFileSync(
+			path.join(root, "key-b", "workers", "t-high", "trace.log"),
+			`[CHECKPOINT] ${new Date().toISOString()} elapsed=1800s reads=74 writes=0 phases=- uniq_targets=0 repeat_top=3 risk=high\n`,
+			"utf8",
+		);
+		const watch: PmWatchState = { key: "key-a", dispatchedTaskKeys: new Set(["t-low", "t-high"]) };
+		const ui: PmUiHolder = { ctx: undefined };
+
+		vi.useFakeTimers();
+		try {
+			const { pi, messages } = fakePi();
+			const handle = startWorkerPollLoop(pi, store, new AckStore(root), is, root, watch, ui, 100);
+			vi.advanceTimersByTime(500);
+			// Low-risk dispatched tasks stay widget-only; only the high one escalates.
+			const lowAlerts = messages.filter((m) => m.includes("t-low")).length;
+			const highAlerts = messages.filter((m) => m.includes("t-high")).length;
+			expect(messages).toHaveLength(1);
+			expect(lowAlerts).toBe(0);
+			expect(highAlerts).toBe(1);
+			expect(messages[0]).toContain("risk=high");
+			// Second tick: the high one does not repeat; the low one never delivers.
+			vi.advanceTimersByTime(500);
+			const dup = messages.length - 1;
+			expect(messages).toHaveLength(1);
+			expect(messages.filter((m) => m.includes("t-low")).length).toBe(0);
+			clearInterval(handle);
+			process.stdout.write(`[VERIFY] VC-003: low_alerts=${lowAlerts} high_alerts=${highAlerts} dup=${dup}\n`);
+		} finally {
+			vi.useRealTimers();
+		}
+		fs.rmSync(root, { recursive: true, force: true });
+	});
 });
 
 // ── Integrated watchdog behavior via workerModeActivate (AC-001/002) ──────────
