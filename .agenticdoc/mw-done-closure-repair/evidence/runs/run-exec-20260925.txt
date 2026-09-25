@@ -1,0 +1,28 @@
+$ python -m pytest test_autopilot_conductor_exec.py -q -s
+exit=0
+
+.[VERIFY] VC-025: failure_form=exit1 retry_rounds=2 recovered=true
+.[VERIFY] VC-025: failure_form=spawn-watchdog stalled_k1=true other_key_rows=1
+.[VERIFY] VC-013: loop=task-retry budget=1 second_round_rows=0 escalated=stalled other_key_rows=1
+.....[VERIFY] VC-005: dossier_verdict=meets report=l3-report.md verdict_file=true
+[VERIFY] VC-012: verdict=meets qg_reports=1 achieved_bytes=587 advance_exit=0
+.[VERIFY] VC-012: verdict=below-twice repair_rounds=1 stalled=true
+.[VERIFY] VC-013: loop=l3 budget=1 second_round_rows=0 escalated=stalled verdict_persisted=true
+....[VERIFY] VC-024: start_lines=1 budgets_unchanged=true mtime_unchanged=true resumed_in_ticks=2
+.[VERIFY] VC-002: stderr_shape=advance_phase.py failure_lines=2
+.[VERIFY] VC-001: phase=DONE stalled_gates=0 gate_answered=0
+.[VERIFY] VC-002: prompt_contains_failure_lines=true prompt_equals_fixed_base_plus_lines=true
+.[VERIFY] VC-010: stalled_gates=0 gate_answered=0 phase=DONE
+.[VERIFY] VC-012: verdict=meets byte_equal=true
+.[VERIFY] VC-006: bytes_unchanged=true advance_exit=0
+.[VERIFY] VC-007: stalled=true l3_dispatches=1 verdict=meets
+.[VERIFY] VC-008: l3_dispatch_delta=0 streak_stall=true
+.[VERIFY] VC-009: advance_events_delta=0
+.[VERIFY] VC-011: max_answered_per_gate=1 gates_growth=0
+.[VERIFY] VC-013: marker_absent=true marker_count=0
+.[VERIFY] VC-013: marker_absent=false marker_count=1
+.[VERIFY] VC-013: marker_absent=true marker_count=0
+.[VERIFY] VC-006: sha_mismatch_no_overwrite=true draft_preserved=true resume_credit_used=true
+.
+29 passed in 0.97s
+

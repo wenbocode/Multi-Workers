@@ -131,3 +131,23 @@
   2. **liveness 只能在索引行上判定**——短命 python pid 天然已死，按 pm-state 判活会把活着的 claim 误判为 stale 并允许无 `--force` 抢占；
   3. 同步 pm-state 失败不能阻断 claim——索引行是权威，镜像失败只回一条 warning；且写入必须单行原地替换 + 换行探测（原文件为 CRLF），不得用 `StateManager.write()` 整体重写（会抹掉 7 段模板）。
 - 关联：P-005（“只有读者没有写者”的同类倒置——这里是“有写者没有读者”）；初次 advance 撞 template drift 也与此相关（claim stub 缺 `- Updated:`，靠 advance_phase 兜底升级）。
+
+## P-012 子进程失败原文是唯一词表载体——丢弃 stderr 即切断修复回路（2026-09-25，mw-done-closure-repair）
+
+- 现象：L3 meets 但 done 门禁驳回结案文书（词表类 NO MATCH）时，conductor 把 advance 的 stderr 只喂给停滞分类器后在 gated 返回点丢弃；≥200B 守卫随即冻结坏稿，5 连败 stall，无自愈路径（E2Feature 9 key 人工关单）。
+- 根因：`_done_transaction` 的返回通道只有 verdict 单值——失败原文没有任何消费面；timeline 侧 `_one_line(err,200)` 又把 GATE BLOCKED 压平截断，事后不可恢复。
+- 硬规则（规避）：
+  1. 子进程调用的回传契约按"最小充分"设计：verdict 判定需要什么、失败回流需要什么，一次定全（本例应为 `(verdict, err)` 元组）；先例 `_l3_round_verdict`/`_advance_failure_streak` 同型；
+  2. 需要逐字回流的文本只能取自进程现场输出（stderr/文件），不得经任何限长管道（timeline/log 的 200 字符压平）二次转手；
+  3. 工程词表（"系统行为变化"等）只允许存在于门禁失败原文里流入 prompt——框架源码零词表字面量，词表即可移植（rg 扫描可机检）。
+- 关联：P-007 类似（状态压平丢信息）；本坑由 mw-done-closure-repair 闭合。
+
+## P-013 转录器在下一 `## ` 行截断——合规文书的形状约束（2026-09-25，mw-done-closure-repair）
+
+- 现象：L3 reviewer 在 `## Achieved` 节内用 `## 系统行为变化` 等 H2 子节组织内容，`_md_section` 提取到第一个 H2 即截断——转录出的 achieved.md 只剩节标题（约 12B），<200B 后验 below，链路再死一轮。
+- 根因：门禁规则描述写「必含『## 系统行为变化』」，字面合规的自然写法（H2 子节）恰好被提取器的 section 语义切掉；机器检查的实际 pattern 是裸字面量（prose/H3 均命中），描述与机器判据的措辞差诱发了死形状。
+- 硬规则（规避）：
+  1. 生成指令（REPROMPT_INSTRUCTION 类常量）必须钉死文档形状：节内子标题低于 `##` 级（如 `###`），否则转录截断；
+  2. 测合规模板（stub/夹具）用与真实产物同构的形状（H3 子节），不要只测字面量存在；
+  3. 写"必含 X"类规则描述时，同步想清楚消费端的提取边界，描述与判据措辞一致。
+- 关联：P-012（同一修复链上的第二个坑）；e2e stub 模板已改 `###`，closure.py 指示文案已钉形状约束。

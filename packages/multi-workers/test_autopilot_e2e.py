@@ -83,6 +83,11 @@ def _iso_now() -> str:
 _PROVIDERS = {
     "credentials": {
         "fake": {"sources": [{"env": "MW_E2E_FAKE_KEY"}]},
+        # D-107 registry routes pi tasks at provider "timi"; the launcher's
+        # direct-route branch resolves credentials.timi before spawning the
+        # PATH-shadowed stub pi (mw-done-closure-repair T-01 root cause:
+        # "Timi credential is not available (no credential sources declared)").
+        "timi": {"sources": [{"env": "MW_E2E_FAKE_KEY"}]},
     },
     "providers": {
         "pi": {
@@ -265,19 +270,40 @@ elif loop.startswith("gen:") and loop.endswith(":tasks"):
 elif loop.startswith("exec:"):
     output.write_text(f"executed {loop} by stub\n", encoding="utf-8")
 elif task_type == "reviewer":
-    output.write_text(
-        "# L3 Report (e2e stub)\n\n"
-        "## Quality Gate Report\n\n"
-        "| VC | verdict | evidence |\n"
-        "|----|---------|----------|\n"
-        "| VC-901 | PASS | output.md |\n"
-        "| VC-902 | PASS | trace.log |\n"
-        "\n"
-        "## Achieved\n\n"
-        + "e2e stub 达成摘要：EXECUTE 任务全部完成，验证证据齐备，目标收益落地，无遗留阻塞项。 " * 6
-        + "\n",
-        encoding="utf-8",
-    )
+    if "Rejected lines" in body:
+        # reprompt round (mw-done-closure-repair): the prompt carries the
+        # done-gate rejection verbatim; obey it — reorganize the Achieved
+        # section per the listed rules so the closure gate passes.
+        output.write_text(
+            "# L3 Report (e2e stub, reprompt round)\n\n"
+            "## Quality Gate Report\n\n"
+            "| VC | verdict | evidence |\n"
+            "|----|---------|----------|\n"
+            "| VC-901 | PASS | output.md |\n"
+            "| VC-902 | PASS | trace.log |\n"
+            "\n"
+            "## Achieved\n\n"
+            "### 系统行为变化\n\n"
+            "stub 修复轮：EXECUTE 任务全部完成，验证证据齐备，目标收益落地；"
+            "结案文书按门禁驳回规则重组，无新增风险面。\n\n"
+            "### 遗留\n\n"
+            "无遗留阻塞项：全部任务收敛，无需立新 key。\n",
+            encoding="utf-8",
+        )
+    else:
+        output.write_text(
+            "# L3 Report (e2e stub)\n\n"
+            "## Quality Gate Report\n\n"
+            "| VC | verdict | evidence |\n"
+            "|----|---------|----------|\n"
+            "| VC-901 | PASS | output.md |\n"
+            "| VC-902 | PASS | trace.log |\n"
+            "\n"
+            "## Achieved\n\n"
+            + "e2e stub 达成摘要：EXECUTE 任务全部完成，验证证据齐备，目标收益落地，无遗留阻塞项。 " * 6
+            + "\n",
+            encoding="utf-8",
+        )
 elif task_type == "verifier":
     output.write_text("verdict: meets (e2e stub, advisory)\n", encoding="utf-8")
 elif task_type == "repair":

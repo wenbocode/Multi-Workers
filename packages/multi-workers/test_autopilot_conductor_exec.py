@@ -8,6 +8,7 @@ and worker output files; advance is monkeypatched with a gate-validating
 fake so the done-transaction contract (三件套) is asserted against the same
 checks the real advance_phase.py applies.
 """
+import hashlib
 import pathlib
 import sys
 
@@ -16,7 +17,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import mw_common  # noqa: E402
-from autopilot import config, conductor, dispatch, gates, roadmap, state, timeline  # noqa: E402
+from autopilot import closure, config, conductor, dispatch, gates, roadmap, state, timeline  # noqa: E402
 
 
 def _verify(tag: str, **kv) -> None:
@@ -664,4 +665,612 @@ def test_kill_restart_invariants(
     _verify(
         "VC-024", start_lines=1, budgets_unchanged=true_str(True),
         mtime_unchanged=true_str(True), resumed_in_ticks=2,
+    )
+
+
+# ── done-closure repair L2 (key mw-done-closure-repair, T-06/T-07/T-08) ──────
+# Tick-driven coverage for the achieved.md vocabulary closure loop:
+# gate-blocked (advance verify->done exit 1) -> bad-draft marker -> L3
+# reprompt -> three-condition overwrite -> advance exit 0 -> DONE.
+#
+# Naming convention (concurrency contract with the concurrent conductor
+# change): every new fixture and test here carries a `_dcr_` / `test_dcr_`
+# prefix, so the regression pass (`-k "not test_dcr"`) never picks them up.
+
+_DCR_STANDARD_VOCAB = {
+    "系统行为变化": "achieved.md 必含「系统行为变化」节（新增/修改功能与影响面）",
+    "遗留": "achieved.md 必含「遗留问题」节（明确去留的 key / 能力补丁 / 兼容策略）",
+}
+_DCR_ALT_VOCAB = {
+    "行为影响": "achieved.md 必含「行为影响」节（对既有行为的改动面）",
+    "未了事项": "achieved.md 必含「未了事项」节（尚未闭合的事项与去处）",
+}
+
+_DCR_PADDING = (
+    "达成摘要：本 key 完成了任务书列出的全部交付物，验证套件全绿，证据链闭合无缺口，"
+    "目标收益如 spec 所述已经落地。"
+) * 3
+
+
+def _dcr_events(project: pathlib.Path, ev: str) -> list[dict]:
+    return [e for e in _events(project) if e["ev"] == ev]
+
+
+def _dcr_markers(project: pathlib.Path, key: str) -> list[pathlib.Path]:
+    key_dir = project / ".agenticdoc" / key
+    if not key_dir.is_dir():
+        return []
+    return [p for p in key_dir.iterdir() if p.name == closure.BAD_DRAFT_MARKER_NAME]
+
+
+def _dcr_task_body(md_path: pathlib.Path) -> str:
+    """The prompt body of a conductor task.md (frontmatter stripped).
+
+    ``dispatch.render_task_md`` writes ``stripped_prompt``, so the inverse is
+    the text after the closing frontmatter fence with the surrounding
+    newlines removed."""
+    text = md_path.read_text(encoding="utf-8")
+    parts = text.split("---\n", 2)
+    assert len(parts) == 3, f"unexpected task.md shape: {text[:200]!r}"
+    return parts[2].strip("\n")
+
+
+def _dcr_no_match(pattern: str, description: str) -> str:
+    """The framework's content_match failure line, verbatim shape."""
+    return f"NO MATCH: achieved.md missing pattern '{pattern}' — {description}"
+
+
+def _dcr_gate_blocked_stderr(key: str, failures: list[str]) -> str:
+    """Byte-exact replica of advance_phase.py's gate-blocked stderr.
+
+    The real branch (framework ``scripts/advance_phase.py``) prints three
+    lines to stderr and exits 1::
+
+        GATE BLOCKED: <key> cannot advance to 'done'
+           Current phase: <phase>
+           - <failure>
+
+    Each is a separate ``print(..., file=sys.stderr)``, so every line ends in
+    a trailing newline. (The T-06 card paraphrases the header as
+    ``GATE BLOCKED: <key> (current phase: ...)``; the installed script — the
+    byte source this fixture must mirror — says ``cannot advance to`` with a
+    three-space-indented ``   Current phase:`` line. Only the ``   - ``
+    failure lines are parsed, so the header wording is behavior-neutral.)
+    """
+    lines = [
+        f"GATE BLOCKED: {key} cannot advance to 'done'",
+        "   Current phase: verify",
+    ]
+    lines += [f"   - {failure}" for failure in failures]
+    return "\n".join(lines) + "\n"
+
+
+def _dcr_l3_report(achieved: str, *, fail: bool = False) -> str:
+    rows = "| VC-001 | PASS | evidence/runs/a.md |\n"
+    if fail:
+        rows += "| VC-002 | FAIL | (missing) |\n"
+    return (
+        "# L3 Report\n\n"
+        "## Quality Gate Report\n\n"
+        "| VC | verdict | evidence |\n"
+        "|----|---------|----------|\n"
+        + rows
+        + "\n## Achieved\n\n"
+        + achieved
+        + "\n"
+    )
+
+
+def _dcr_achieved_noncompliant() -> str:
+    """A >=200B ## Achieved body free of every vocabulary literal in play."""
+    return "本 key 的交付物与证据链已经就绪，目标收益落地，无阻塞项。" * 6
+
+
+def _dcr_achieved_compliant(vocab: dict[str, str]) -> str:
+    """A compliant ## Achieved body: one ``###`` sub-section per rule.
+
+    ``###`` (not ``##``) keeps the sub-sections inside conductor._md_section's
+    ``## Achieved`` window (it stops at the next ``## `` line), so the verbatim
+    transcription (AC-010) carries the literals the done gate matches."""
+    parts = [_DCR_PADDING, ""]
+    for pattern, description in vocab.items():
+        parts += [f"### {pattern}", "", f"按门禁要求补齐：{description}。", ""]
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def _dcr_advance_factory(
+    project: pathlib.Path,
+    *,
+    vocab: dict[str, str] | None = None,
+    forced_failures: list[str] | None = None,
+    update_index: bool = True,
+):
+    """Gate-validating advance fake with a done-gate-blocked mode.
+
+    ``vocab`` maps each required achieved.md literal to its rule description:
+    a done advance whose achieved.md lacks any literal returns exit 1 with the
+    byte-exact gate-blocked stderr (injected vocabulary — the literals live in
+    this package-root test file, never in ``autopilot/`` sources).
+    ``forced_failures`` bypasses the vocab check (AC-006: a gate failure whose
+    lines do not name achieved.md). Non-done phases succeed and (by default)
+    rewrite the index like the real script chain.
+
+    Returns ``(fake, calls, stderrs)``; ``stderrs`` collects every non-empty
+    stderr payload returned, in call order.
+    """
+    calls: list[tuple[str, str]] = []
+    stderrs: list[str] = []
+
+    def fake_advance(key: str, phase: str, root, summary=None):
+        calls.append((key, phase))
+        if phase != "done":
+            if update_index:
+                _set_index_phase_file(project, key, phase.upper())
+            return 0, "advanced", ""
+        achieved = pathlib.Path(root) / ".agenticdoc" / key / "achieved.md"
+        content = achieved.read_text(encoding="utf-8") if achieved.is_file() else ""
+        if forced_failures is not None:
+            failures = list(forced_failures)
+        else:
+            failures = [
+                _dcr_no_match(pattern, description)
+                for pattern, description in (vocab or {}).items()
+                if pattern not in content
+            ]
+        if failures:
+            stderr = _dcr_gate_blocked_stderr(key, failures)
+            stderrs.append(stderr)
+            return 1, "", stderr
+        if update_index:
+            _set_index_phase_file(project, key, "DONE")
+        return 0, "advanced", ""
+
+    return fake_advance, calls, stderrs
+
+
+def _dcr_setup_gate_blocked(
+    project: pathlib.Path, st: conductor.ConductorState
+) -> None:
+    """tick 1-2: dispatch l3-a1, mark it meets with a non-compliant draft,
+    then force the done gate to block -> marker + l3-a2 reprompt dispatch."""
+    assert conductor.tick(project, st) == "ok"
+    _worker_output(
+        project, "k1", "ap-k1-l3-a1",
+        _dcr_l3_report(_dcr_achieved_noncompliant()),
+    )
+    _set_row(project, "ap-k1-l3-a1", "done")
+    assert conductor.tick(project, st) == "ok"
+
+
+def _dcr_finish_reprompt(
+    project: pathlib.Path, st: conductor.ConductorState, vocab: dict[str, str]
+) -> str:
+    """Mark the in-flight l3-a2 with a compliant draft and tick it through to
+    DONE. Returns the l3-a2 output text (the deciding source)."""
+    text = _dcr_l3_report(_dcr_achieved_compliant(vocab))
+    _worker_output(project, "k1", "ap-k1-l3-a2", text)
+    _set_row(project, "ap-k1-l3-a2", "done")
+    assert conductor.tick(project, st) == "ok"
+    return text
+
+
+def _dcr_answer_gate(project: pathlib.Path, gate_path: pathlib.Path, status: str) -> None:
+    text = gate_path.read_text(encoding="utf-8")
+    assert "status: pending" in text
+    gate_path.write_text(
+        text.replace("status: pending", f"status: {status}", 1),
+        encoding="utf-8", newline="\n",
+    )
+
+
+def _dcr_gate_by_key(project: pathlib.Path) -> dict[str, pathlib.Path]:
+    out: dict[str, pathlib.Path] = {}
+    for path in sorted(conductor.gates_dir(project).iterdir()):
+        if not path.name.startswith("gate-"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if line.startswith("key:"):
+                out[line.split(":", 1)[1].strip().strip("'")] = path
+                break
+    return out
+
+
+def test_dcr_fake_advance_stderr_shape() -> None:
+    """Fixture format lock: the gate-blocked stderr bytes the fake returns."""
+    stderr = _dcr_gate_blocked_stderr(
+        "k1", [_dcr_no_match("系统行为变化", "规则一"), _dcr_no_match("遗留", "规则二")]
+    )
+    assert stderr == (
+        "GATE BLOCKED: k1 cannot advance to 'done'\n"
+        "   Current phase: verify\n"
+        "   - NO MATCH: achieved.md missing pattern '系统行为变化' — 规则一\n"
+        "   - NO MATCH: achieved.md missing pattern '遗留' — 规则二\n"
+    )
+    assert closure.failure_lines(stderr) == [
+        "NO MATCH: achieved.md missing pattern '系统行为变化' — 规则一",
+        "NO MATCH: achieved.md missing pattern '遗留' — 规则二",
+    ]
+    _verify("VC-002", stderr_shape="advance_phase.py", failure_lines=2)
+
+
+def test_dcr_scenario_a_standard_vocab_closes_done(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-001/VC-001: standard vocabulary, L3 meets, non-compliant achieved
+    -> gate-blocked -> reprompt -> compliant -> overwrite -> DONE, with no
+    stalled gate and no gate-answered event."""
+    project = _verify_key_project(tmp_path)
+    fake, _calls, stderrs = _dcr_advance_factory(project, vocab=_DCR_STANDARD_VOCAB)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+
+    _dcr_setup_gate_blocked(project, st)
+    # the rejection declared the bad draft and dispatched the reprompt
+    assert len(stderrs) == 1
+    assert closure.has_achieved_failure(closure.failure_lines(stderrs[0]))
+    assert len(_dcr_markers(project, "k1")) == 1
+    assert [r["task_key"] for r in _rows(project, "ap-k1-l3-a2")] == ["ap-k1-l3-a2"]
+
+    _dcr_finish_reprompt(project, st, _DCR_STANDARD_VOCAB)
+
+    assert state.read_key_states(project)["k1"].phase == "DONE"
+    assert [g for g in gates.enumerate(conductor.gates_dir(project)) if g.kind == "stalled"] == []
+    assert _dcr_events(project, "gate-answered") == []
+    assert _dcr_markers(project, "k1") == []
+
+    # event sequence: advance exit=1 -> l3-reprompt -> dispatch -> advance exit=0
+    adv = _dcr_events(project, "advance")
+    assert [e["detail"] for e in adv] == [
+        "verify->done exit=1 class=gate-blocked",
+        "verify->done exit=0",
+    ]
+    reprompt = _dcr_events(project, "l3-reprompt")
+    assert len(reprompt) == 1 and reprompt[0]["key"] == "k1"
+    dispatched = [
+        e for e in _dcr_events(project, "dispatch") if "ap-k1-l3-a2" in e["detail"]
+    ]
+    assert len(dispatched) == 1
+    assert adv[0]["seq"] < reprompt[0]["seq"] < dispatched[0]["seq"] < adv[-1]["seq"]
+    _verify("VC-001", phase="DONE", stalled_gates=0, gate_answered=0)
+
+
+def test_dcr_reprompt_prompt_byte_exact(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-002/VC-002: the dispatched reprompt task.md body is byte-equal to
+    the fixed base (_l3_prompt + REPROMPT_INSTRUCTION) plus the verbatim
+    failure lines, recomposed with closure.compose_reprompt_prompt."""
+    project = _verify_key_project(tmp_path)
+    fake, _calls, stderrs = _dcr_advance_factory(project, vocab=_DCR_STANDARD_VOCAB)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+    _dcr_setup_gate_blocked(project, st)
+
+    flines = closure.failure_lines(stderrs[0])
+    expected = closure.compose_reprompt_prompt(conductor._l3_prompt("k1", 2), flines)
+    body = _dcr_task_body(
+        project / ".agenticdoc" / "k1" / "workers" / "ap-k1-l3-a2" / "task.md"
+    )
+    assert body == expected.strip()
+    for line in flines:
+        assert line in body
+    assert body.startswith(conductor._l3_prompt("k1", 2))
+    assert "## Quality Gate Report" in body  # the reviewer instructions survive
+    _verify(
+        "VC-002", prompt_contains_failure_lines=true_str(True),
+        prompt_equals_fixed_base_plus_lines=true_str(body == expected.strip()),
+    )
+
+
+def test_dcr_second_vocab_portable(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-008/VC-010: a different vocabulary literal set drives the same
+    closure loop — the mechanism hardcodes no engineering vocabulary."""
+    project = _verify_key_project(tmp_path)
+    fake, _calls, stderrs = _dcr_advance_factory(project, vocab=_DCR_ALT_VOCAB)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+    _dcr_setup_gate_blocked(project, st)
+    flines = closure.failure_lines(stderrs[0])
+    assert any("行为影响" in line for line in flines)
+    assert any("未了事项" in line for line in flines)
+
+    _dcr_finish_reprompt(project, st, _DCR_ALT_VOCAB)
+
+    assert state.read_key_states(project)["k1"].phase == "DONE"
+    assert [g for g in gates.enumerate(conductor.gates_dir(project)) if g.kind == "stalled"] == []
+    assert _dcr_events(project, "gate-answered") == []
+    _verify("VC-010", stalled_gates=0, gate_answered=0, phase="DONE")
+
+
+def test_dcr_achieved_verbatim_transcript(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-010/VC-012: achieved.md is the deciding L3 output's ## Achieved
+    section, transcribed verbatim (at most one trailing-newline difference)."""
+    project = _verify_key_project(tmp_path)
+    fake, _calls, _stderrs = _dcr_advance_factory(project, vocab=_DCR_STANDARD_VOCAB)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+    _dcr_setup_gate_blocked(project, st)
+    source = _dcr_finish_reprompt(project, st, _DCR_STANDARD_VOCAB)
+
+    section = conductor._md_section(source, "## Achieved")
+    assert section is not None
+    achieved = (project / ".agenticdoc" / "k1" / "achieved.md").read_text(
+        encoding="utf-8"
+    )
+    assert achieved == section.rstrip() + "\n"
+    _verify("VC-012", verdict="meets", byte_equal=true_str(True))
+
+
+def test_dcr_human_repair_protected(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-004/VC-006: after a gate-blocked failure an external, vocabulary-
+    compliant rewrite of achieved.md is never overwritten — not while the
+    reprompt is in flight, not when it converges — and the converged round
+    still advances exit=0."""
+    project = _verify_key_project(tmp_path)
+    fake, _calls, _stderrs = _dcr_advance_factory(project, vocab=_DCR_STANDARD_VOCAB)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+    _dcr_setup_gate_blocked(project, st)
+    assert _dcr_events(project, "l3-reprompt")
+
+    achieved_path = project / ".agenticdoc" / "k1" / "achieved.md"
+    human = (
+        "# 人工修稿\n\n## 系统行为变化\n\n"
+        + "见 evidence/runs/a.md。 " * 12
+        + "\n\n## 遗留问题\n\n无。\n"
+    )
+    achieved_path.write_text(human, encoding="utf-8", newline="\n")
+    before = achieved_path.read_bytes()
+
+    for _ in range(3):  # reprompt in flight: no transaction, bytes frozen
+        assert conductor.tick(project, st) == "ok"
+    assert achieved_path.read_bytes() == before
+
+    _dcr_finish_reprompt(project, st, _DCR_STANDARD_VOCAB)
+    assert achieved_path.read_bytes() == before  # sha mismatch -> no overwrite
+    assert state.read_key_states(project)["k1"].phase == "DONE"
+    assert _dcr_markers(project, "k1") == []  # lazy cleanup on advance exit=0
+    assert any(
+        e["detail"] == "verify->done exit=0" for e in _dcr_events(project, "advance")
+    )
+    _verify("VC-006", bytes_unchanged=true_str(True), advance_exit=0)
+
+
+def test_dcr_reprompt_budget_exhausted_stalls_keeps_meets(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-005/VC-007: with round_budget=1 the first gate-blocked round spends
+    the whole L3 budget — no l3-a2, key stalls, and the persisted L3 verdict
+    stays `meets` (the quality verdict and the gate failure are orthogonal)."""
+    project = _verify_key_project(tmp_path)
+    cfg = config.load_config(project)
+    cfg["round_budget"] = 1
+    config.save_config(project, cfg)
+    fake, _calls, _stderrs = _dcr_advance_factory(project, vocab=_DCR_STANDARD_VOCAB)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+    _dcr_setup_gate_blocked(project, st)
+
+    key_dir = project / ".agenticdoc" / "k1"
+    l3_rows = [r for r in _rows(project, "ap-k1-") if "-l3-" in r["task_key"]]
+    assert len(l3_rows) == 1  # l3_limit spent by l3-a1; no reprompt
+    assert _rows(project, "ap-k1-l3-a2") == []
+    rm = roadmap.load_roadmap(project / ".agenticdoc" / "_autopilot" / "_roadmap.md")
+    assert rm.stages[0].key_status["k1"] == "stalled"
+    stalled = [g for g in gates.enumerate(conductor.gates_dir(project)) if g.kind == "stalled"]
+    assert len(stalled) == 1 and stalled[0].key == "k1"
+    assert (key_dir / "l3-verdict.txt").read_text(encoding="utf-8").strip() == "meets"
+    reason = _dcr_events(project, "stalled")[0]["detail"]
+    assert "gate" in reason.lower() or "achieved.md" in reason.lower()
+    _verify(
+        "VC-007", stalled=true_str(True), l3_dispatches=len(l3_rows), verdict="meets"
+    )
+
+
+def test_dcr_non_achieved_failure_no_reprompt_streak_stall(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-006/VC-008: gate failure lines that do not mention achieved.md do
+    not burn an L3 round — the existing advance_stall_ticks streak owns the
+    escalation."""
+    project = _verify_key_project(tmp_path)
+    non_achieved = [
+        "MISSING: evidence/quality-gate-report-*.md (0 matches) — 需先执行 /quality-gate"
+    ]
+    fake, _calls, _stderrs = _dcr_advance_factory(project, forced_failures=non_achieved)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+    assert conductor.tick(project, st) == "ok"
+    _worker_output(
+        project, "k1", "ap-k1-l3-a1",
+        _dcr_l3_report(_dcr_achieved_noncompliant()),
+    )
+    _set_row(project, "ap-k1-l3-a1", "done")
+    for _ in range(5):  # advance_stall_ticks default = 5
+        assert conductor.tick(project, st) == "ok"
+
+    l3_rows = [r for r in _rows(project, "ap-k1-") if "-l3-" in r["task_key"]]
+    assert len(l3_rows) == 1  # no reprompt dispatch
+    assert _dcr_events(project, "l3-reprompt") == []
+    rm = roadmap.load_roadmap(project / ".agenticdoc" / "_autopilot" / "_roadmap.md")
+    assert rm.stages[0].key_status["k1"] == "stalled"
+    failures = [e for e in _dcr_events(project, "advance") if "exit=1" in e["detail"]]
+    assert len(failures) == 5
+    _verify("VC-008", l3_dispatch_delta=0, streak_stall=true_str(True))
+
+
+def test_dcr_inflight_reprompt_blocks_advance(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-007/VC-009: while the l3 reprompt row is in flight, later ticks add
+    no advance events (the in-flight guard is not bypassed)."""
+    project = _verify_key_project(tmp_path)
+    fake, _calls, _stderrs = _dcr_advance_factory(project, vocab=_DCR_STANDARD_VOCAB)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+    _dcr_setup_gate_blocked(project, st)
+    before = len(_dcr_events(project, "advance"))
+    a2_before = [r["task_key"] for r in _rows(project, "ap-k1-l3-a2")]
+    assert a2_before == ["ap-k1-l3-a2"]
+
+    for _ in range(5):
+        assert conductor.tick(project, st) == "ok"
+
+    assert len(_dcr_events(project, "advance")) == before
+    assert [r["task_key"] for r in _rows(project, "ap-k1-l3-a2")] == a2_before
+    _verify("VC-009", advance_events_delta=0)
+
+
+def test_dcr_gate_flood_regression_30_ticks(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-009/VC-011 (4e874f5cc regression lock): 30 mixed ticks with an
+    approved resume (reprompt in flight) and a rejected closed-legacy key
+    consume every gate answer exactly once and grow no gate files."""
+    project = _key_project(tmp_path, phases={"k1": "VERIFY", "k2": "VERIFY"})
+    cfg = config.load_config(project)
+    cfg["round_budget"] = 1
+    config.save_config(project, cfg)
+    fake, _calls, _stderrs = _dcr_advance_factory(project, vocab=_DCR_STANDARD_VOCAB)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+
+    assert conductor.tick(project, st) == "ok"  # l3-a1 for both keys
+    for key in ("k1", "k2"):
+        _worker_output(
+            project, key, f"ap-{key}-l3-a1",
+            _dcr_l3_report(_dcr_achieved_noncompliant()),
+        )
+        _set_row(project, f"ap-{key}-l3-a1", "done")
+    assert conductor.tick(project, st) == "ok"  # both gate-block -> both stall
+    gate_files = _dcr_gate_by_key(project)
+    assert set(gate_files) == {"k1", "k2"}
+
+    _dcr_answer_gate(project, gate_files["k1"], "approved")  # resume + 1 credit
+    _dcr_answer_gate(project, gate_files["k2"], "rejected")  # closed-legacy
+    assert conductor.tick(project, st) == "ok"
+    assert _rows(project, "ap-k1-l3-a2")  # reprompt in flight
+    rm = roadmap.load_roadmap(project / ".agenticdoc" / "_autopilot" / "_roadmap.md")
+    assert rm.stages[0].key_status["k2"] == "closed-legacy"
+
+    gates_before = len([p for p in conductor.gates_dir(project).iterdir() if p.name.startswith("gate-")])
+    for _ in range(30):
+        assert conductor.tick(project, st) == "ok"
+    gates_after = len([p for p in conductor.gates_dir(project).iterdir() if p.name.startswith("gate-")])
+
+    answered: dict[str, int] = {}
+    for event in _dcr_events(project, "gate-answered"):
+        gid = event["detail"].split()[0]
+        answered[gid] = answered.get(gid, 0) + 1
+    assert answered, "expected consumed gate answers"
+    assert max(answered.values()) == 1
+    assert gates_after - gates_before <= 2
+    _verify(
+        "VC-011", max_answered_per_gate=max(answered.values()),
+        gates_growth=gates_after - gates_before,
+    )
+
+
+def test_dcr_marker_lifecycle_after_success(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-011/VC-013(a): a successful three-condition overwrite leaves no
+    marker behind, and the key reaches DONE."""
+    project = _verify_key_project(tmp_path)
+    fake, _calls, _stderrs = _dcr_advance_factory(project, vocab=_DCR_STANDARD_VOCAB)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+    _dcr_setup_gate_blocked(project, st)
+    assert len(_dcr_markers(project, "k1")) == 1
+    _dcr_finish_reprompt(project, st, _DCR_STANDARD_VOCAB)
+    assert _dcr_markers(project, "k1") == []
+    assert state.read_key_states(project)["k1"].phase == "DONE"
+    _verify("VC-013", marker_absent=true_str(True), marker_count=0)
+
+
+def test_dcr_marker_single_file_on_repeat_failure(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-011/VC-013(c): two gate-blocked rounds over byte-identical rejected
+    drafts keep one marker file (in-place update, no multiplication)."""
+    project = _verify_key_project(tmp_path)
+    fake, _calls, _stderrs = _dcr_advance_factory(project, vocab=_DCR_STANDARD_VOCAB)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+    _dcr_setup_gate_blocked(project, st)
+    assert len(_dcr_markers(project, "k1")) == 1
+
+    same = _dcr_l3_report(_dcr_achieved_noncompliant())
+    _worker_output(project, "k1", "ap-k1-l3-a2", same)
+    _set_row(project, "ap-k1-l3-a2", "done")
+    assert conductor.tick(project, st) == "ok"  # second gate-block -> stall
+    markers = _dcr_markers(project, "k1")
+    assert len(markers) == 1
+    assert markers[0].name == closure.BAD_DRAFT_MARKER_NAME
+    _verify("VC-013", marker_absent=true_str(False), marker_count=len(markers))
+
+
+def test_dcr_marker_absent_after_closed_legacy(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-011/VC-013(d): rejecting the stalled gate closes the key as
+    closed-legacy and sweeps the residual bad-draft marker."""
+    project = _verify_key_project(tmp_path)
+    cfg = config.load_config(project)
+    cfg["round_budget"] = 1
+    config.save_config(project, cfg)
+    fake, _calls, _stderrs = _dcr_advance_factory(project, vocab=_DCR_STANDARD_VOCAB)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+    _dcr_setup_gate_blocked(project, st)  # budget=1 -> stalled, marker present
+    assert _dcr_markers(project, "k1")
+
+    _dcr_answer_gate(project, _dcr_gate_by_key(project)["k1"], "rejected")
+    assert conductor.tick(project, st) == "ok"
+    rm = roadmap.load_roadmap(project / ".agenticdoc" / "_autopilot" / "_roadmap.md")
+    assert rm.stages[0].key_status["k1"] == "closed-legacy"
+    assert _dcr_markers(project, "k1") == []
+    _verify("VC-013", marker_absent=true_str(True), marker_count=0)
+
+
+def test_dcr_stall_draft_sha_mismatch_blocks_overwrite(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-07 附 (T-04 note closure): mark_stalled appends the 「遗留问题（stalled
+    草稿）」section, which changes achieved.md bytes and invalidates the
+    marker's sha. After the stalled gate is approved, the rerun transaction
+    must keep that draft (sha mismatch -> no overwrite) and spend the resume
+    credit on a fresh L3 reprompt."""
+    project = _verify_key_project(tmp_path)
+    cfg = config.load_config(project)
+    cfg["round_budget"] = 1
+    config.save_config(project, cfg)
+    fake, _calls, _stderrs = _dcr_advance_factory(project, vocab=_DCR_STANDARD_VOCAB)
+    monkeypatch.setattr(conductor.advance, "advance", fake)
+    st = _state(project)
+    _dcr_setup_gate_blocked(project, st)  # stalls and appends the legacy draft
+
+    key_dir = project / ".agenticdoc" / "k1"
+    achieved_path = key_dir / "achieved.md"
+    stalled_text = achieved_path.read_text(encoding="utf-8")
+    assert "## 遗留问题（stalled 草稿）" in stalled_text
+    marker = closure.read_bad_draft_marker(key_dir)
+    assert marker is not None
+    assert marker["sha256"] != hashlib.sha256(stalled_text.encode("utf-8")).hexdigest()
+
+    _dcr_answer_gate(project, _dcr_gate_by_key(project)["k1"], "approved")
+    assert conductor.tick(project, st) == "ok"
+    # the L3 section did not clobber the stall draft; the credit funded l3-a2
+    assert "## 遗留问题（stalled 草稿）" in achieved_path.read_text(encoding="utf-8")
+    assert [r["task_key"] for r in _rows(project, "ap-k1-l3-a2")] == ["ap-k1-l3-a2"]
+    _verify(
+        "VC-006", sha_mismatch_no_overwrite=true_str(True),
+        draft_preserved=true_str(True), resume_credit_used=true_str(True),
     )

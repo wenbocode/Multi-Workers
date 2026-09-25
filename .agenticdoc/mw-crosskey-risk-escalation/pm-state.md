@@ -36,6 +36,7 @@
 - D-102：alert 文案仅在 owner ≠ watched key 时附加 `（owner key=…）`，watched key 路径逐字不变。
 - D-103：去重集合 `escalated` 与低风险抑制不变。
 - D-104：否决全局广播（会破既有"别键静默"用例与窗口上下文边界）。
+- D-105：本 key 已 DONE，后续需求 mw-done-closure-repair（autopilot done 门禁失败原文回流 L3 回路 + 内容寻址坏稿声明）为独立交付物，新建 key，与本 key 无依赖。
 
 ## 6. Turn End Records
 *(empty)*

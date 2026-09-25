@@ -38,4 +38,7 @@
 | mw-rag-window-parity | idle | DONE | WENBOZHOU-PC4:20256 |  |  | 2026-09-23T08:14:31.871Z |
 | mw-timi-gpt6-astra-rename | idle | SPEC |  |  | Rename timi/gpt-6 model entry to timi/gpt-6-astra (proxy-side model rename; params unchanged) | 2026-09-23 13:05 |
 | mw-worker-progress-persist | idle | DONE | WENBOZHOU-PC4:93144 |  |  | 2026-09-23T09:10:09.611Z |
-| mw-task-scope-isolation | active | DONE | WENBOZHOU-PC4:116360 |  |  | 2026-09-23 17:14 |
+| mw-task-scope-isolation | idle | DONE | WENBOZHOU-PC4:116360 |  |  | 2026-09-23T09:40:48.852Z |
+| mw-worker-visibility-gate | idle | DONE | WENBOZHOU-PC4:93144 |  |  | 2026-09-24T08:05:46.927Z |
+| mw-crosskey-risk-escalation | idle | DONE | WENBOZHOU-PC4:93144 |  |  | 2026-09-25T03:09:20.075Z |
+| mw-done-closure-repair | active | DONE | WENBOZHOU-PC4:18200 |  |  | 2026-09-25 16:01 |

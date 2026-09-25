@@ -47,7 +47,7 @@ if str(_PARENT) not in sys.path:
 
 import mw_common  # noqa: E402  (path bootstrapped above)
 
-from autopilot import advance, audit_evidence, config, dispatch, gates, roadmap, state, timeline  # noqa: E402
+from autopilot import advance, audit_evidence, closure, config, dispatch, gates, roadmap, state, timeline  # noqa: E402
 
 # ── Phase machine constants (T-10) ──────────────────────────────────────────
 
@@ -1289,8 +1289,45 @@ def _verify_loop(
         # I-1/I-2: a meets verdict always has a deciding source; the guard is
         # fail-closed redundancy (an impossible branch falls through to the
         # below path — no exception, no spin)
-        if _done_transaction(project_root, st, key, l3_source) != "below":
-            return False  # advanced (or gated — retried next tick)
+        dt_verdict, done_err = _done_transaction(project_root, st, key, l3_source)
+        if dt_verdict != "below":
+            flines = closure.failure_lines(done_err) if done_err else []
+            if closure.has_achieved_failure(flines):
+                # D-005 branch 2: gate-blocked on the achieved evidence draft.
+                # Re-prompt the reviewer with the verbatim rejection lines
+                # under a self-owned budget (a dispatch event interrupts the
+                # advance streak, so the streak cannot bound this loop).
+                if used >= l3_limit:
+                    mark_stalled(
+                        project_root, st, key,
+                        f"closure reprompt exhausted {used}/{l3_limit} "
+                        "(gate-blocked on evidence draft)",
+                    )
+                    # The L3 quality verdict and the done-gate vocabulary
+                    # failure are orthogonal: keep the persisted verdict
+                    # `meets` (writing below here would falsify the dossier).
+                    return False
+                st.timeline.append(
+                    "l3-reprompt", key=key,
+                    detail=(
+                        f"gate-blocked on evidence draft; reprompt "
+                        f"l3-a{used + 1} ({len(flines)} lines)"
+                    ),
+                )
+                result = dispatch.dispatch(
+                    project_root, key, f"l3-a{used + 1}", "reviewer",
+                    closure.compose_reprompt_prompt(
+                        _l3_prompt(key, used + 1), flines
+                    ),
+                    loop=l3_loop, attempt=used + 1,
+                    read_scope=[f".agenticdoc/{key}", ".agenticdoc/goal.md"],
+                    timeline=st.timeline,
+                )
+                return result.ok
+            # advanced, or gated for a non-vocabulary reason (PASS lock /
+            # OSError / index mismatch) — retried next tick via the
+            # advance-stall streak (AC-006)
+            return False
         # meets-but-short achieved draft → same repair path as below
     if used >= l3_limit:
         _persist_l3_verdict(key_dir, "below", l3_source, st=st)
@@ -1384,23 +1421,25 @@ def _done_transaction(
     st: ConductorState,
     key: str,
     l3_output: pathlib.Path,
-) -> str:
+) -> tuple[str, str]:
     """meets → mechanical done transaction (D-108 增补 1). Returns
-    advanced | below | gated. Every step is check-before-write, so a crash
+    ``(verdict, err)`` with verdict advanced | below | gated; ``err`` carries
+    the full advance stderr only on the gate-blocked advance-failure path
+    (empty otherwise, D-001). Every step is check-before-write, so a crash
     mid-transaction resumes cleanly on the next tick (AC-022)."""
     project_root = pathlib.Path(project_root)
     key_dir = project_root / ".agenticdoc" / key
     ks = state.read_key_states(project_root).get(key)
     if ks is not None and ks.phase.strip().upper() == "DONE":
-        return "advanced"  # crash-after-advance resume
+        return "advanced", ""  # crash-after-advance resume
     try:
         text = l3_output.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return "below"
+        return "below", ""
     qg = _md_section(text, "## Quality Gate Report")
     achieved = _md_section(text, "## Achieved")
     if qg is None or achieved is None:
-        return "below"
+        return "below", ""
     try:
         evidence_dir = key_dir / "evidence"
         evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -1423,23 +1462,41 @@ def _done_transaction(
         # 1b. persist the L3 verdict for the closure dossier (AC-003):
         # l3-verdict.txt + l3-report.md, written once (check-before-write)
         _persist_l3_verdict(key_dir, "meets", l3_output, st=st)
-        # 2. achieved.md draft (only when absent/short — never clobbers a
-        #    ≥200B draft from an earlier attempt of the same verdict)
+        # 2. achieved.md draft: write when absent/short; a ≥200B draft is
+        #    replaced only when the persisted bad-draft marker authorizes it
+        #    (D-003/D-004). Written atomically (tmp + os.replace) under the
+        #    per-key lock, same scope as the marker deletion.
         achieved_path = key_dir / "achieved.md"
-        if not (achieved_path.is_file() and achieved_path.stat().st_size >= 200):
-            achieved_path.write_text(
-                achieved.rstrip() + "\n", encoding="utf-8", newline="\n"
+        new_draft = achieved.rstrip() + "\n"
+        try:
+            acquire_conductor_lock(project_root, f"key-{key}", st.timeline)
+        except ConductorLockHeld:
+            return "gated", ""  # lock held — retry next tick
+        try:
+            current = (
+                achieved_path.read_bytes() if achieved_path.is_file() else None
             )
+            overwrite = current is not None and closure.overwrite_authorized(
+                closure.read_bad_draft_marker(key_dir), current, []
+            )
+            if current is None or len(current) < 200 or overwrite:
+                tmp = achieved_path.parent / (achieved_path.name + ".tmp")
+                tmp.write_text(new_draft, encoding="utf-8", newline="\n")
+                os.replace(tmp, achieved_path)
+                if overwrite:
+                    closure.delete_bad_draft_marker(key_dir)
+        finally:
+            mw_common.release_lock(lock_file(project_root, f"key-{key}"))
         # 3. 后验 ≥200B — short draft = L3 output quality issue → below path
         if achieved_path.stat().st_size < 200:
             st.timeline.append(
                 "config", key=key,
                 detail="L3 achieved draft < 200B → below (repair path, no padding)",
             )
-            return "below"
+            return "below", ""
         # 4. pm-state PASS line under the per-key lock
         if not _append_pass_line(project_root, st, key, qg_path):
-            return "gated"  # lock held — retry next tick
+            return "gated", ""  # lock held — retry next tick
         # 5. advance done (framework gates re-verify the 三件套)
         code, _out, err = advance.advance(
             key, "done", project_root, summary="autopilot L3 meets"
@@ -1449,7 +1506,37 @@ def _done_transaction(
             config.cached_load(project_root),
         )
         if code != 0:
-            return "gated"
+            # Failure scene: declare the rejected draft so a later round may
+            # replace it only with authorization (D-003). Lock held → skip the
+            # write (W1-shaped degradation); the gated return is unchanged.
+            try:
+                acquire_conductor_lock(project_root, f"key-{key}", st.timeline)
+            except ConductorLockHeld:
+                return "gated", err
+            try:
+                try:
+                    closure.write_bad_draft_marker(
+                        key_dir, closure.failure_lines(err)
+                    )
+                except OSError as exc:
+                    st.timeline.append(
+                        "config", key=key,
+                        detail=f"bad-draft marker write failed: {exc!r}",
+                    )
+            finally:
+                mw_common.release_lock(lock_file(project_root, f"key-{key}"))
+            return "gated", err
+        # advance exit=0 → lazily clear a marker left behind by a draft that
+        # was repaired outside the transaction (bytes no longer match)
+        try:
+            acquire_conductor_lock(project_root, f"key-{key}", st.timeline)
+        except ConductorLockHeld:
+            pass
+        else:
+            try:
+                closure.delete_bad_draft_marker(key_dir)
+            finally:
+                mw_common.release_lock(lock_file(project_root, f"key-{key}"))
         # 6. advance 后验 index：exit 0 后回读 phase 列；失配重跑 set-phase
         ks = state.read_key_states(project_root).get(key)
         if ks is None or ks.phase.strip().upper() != "DONE":
@@ -1465,11 +1552,11 @@ def _done_transaction(
                     f"index phase mismatch persists after set-phase rerun "
                     f"(exit {code2}: {err2[:150]})",
                 )
-                return "gated"
-        return "advanced"
+                return "gated", ""
+        return "advanced", ""
     except OSError as exc:
         st.timeline.append("config", key=key, detail=f"done transaction IO failed: {exc!r}")
-        return "gated"
+        return "gated", ""
 
 
 # ── Phase helpers ──────────────────────────────────────────────────────────
@@ -1767,6 +1854,8 @@ def _mark_key_done(
             rm_path.write_text(new_text, encoding="utf-8", newline="\n")
         finally:
             mw_common.release_lock(lock_file(project_root, "roadmap"))
+        # terminal cleanup: no live bad-draft marker may outlive DONE
+        closure.delete_bad_draft_marker(project_root / ".agenticdoc" / key)
     except (roadmap.RoadmapError, OSError) as exc:
         st.timeline.append("config", key=key, detail=f"key-done mark failed: {exc!r}")
 
@@ -1888,6 +1977,8 @@ def _apply_stalled_rejections(
                     mw_common.release_lock(lock_file(project_root, "roadmap"))
                 st.timeline.append("gate-answered", key=key, detail=f"{gate.id} rejected → {key} closed-legacy")
                 st.timeline.append("stalled", key=key, detail=f"{key} closed-legacy (stalled gate rejected)")
+                # terminal cleanup: no live bad-draft marker on closed-legacy
+                closure.delete_bad_draft_marker(project_root / ".agenticdoc" / key)
                 status_of[key] = "closed-legacy"
         except (roadmap.RoadmapError, OSError) as exc:
             st.timeline.append("config", key=key, detail=f"closed-legacy mark failed: {exc!r}")

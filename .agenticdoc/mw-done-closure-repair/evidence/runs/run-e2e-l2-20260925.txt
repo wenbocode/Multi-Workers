@@ -1,0 +1,17 @@
+$ python -m pytest -m e2e_l2 -q -s
+exit=0
+
+[VERIFY] VC-002: stages_valid=all roadmap_check_exit=0
+[VERIFY] VC-018: delay_ms=915 interval_ms=1000 slack_ms=250 pass=true
+[VERIFY] VC-004: delay_ms=966 interval_ms=1000 pass=true
+[chain] k1 done via real advance_phase.py; advances=7 dispatches=8
+.[VERIFY] VC-006: delay_ms=214 interval_ms=1000 parallel_dispatch=2 pass=true
+.[VERIFY] VC-021: beats=15 window_ms=60000 interval_ms=4000 pass=true
+.[VERIFY] VC-022: human_writes=293 conductor_rows=32 window_ms=60000 interval_ms=500 pass=true
+.[VERIFY] VC-014: conductor_pid=absent status_row=not running autopilot_writes=none suites_unchanged=true
+[VERIFY] VC-027: delay_ms=655 interval_ms=1000 pass=true
+.[VERIFY] VC-024: kill=real-process respawned=true new_pid=114624 start_lines=1 budgets_unchanged=true mtime_unchanged=true
+.[VERIFY] MULTI-PROJECT: conductors=2 per_project_pids=true queues_isolated=true p2_unaffected=true p1_respawned=true
+.
+7 passed, 931 deselected in 184.81s (0:03:04)
+

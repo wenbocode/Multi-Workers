@@ -1,0 +1,105 @@
+$ python -m pytest -q
+exit=1
+
+........................................................................ [  7%]
+..................................................[VERIFY] VC-009: audit_complete=0
+.[VERIFY] VC-009: audit_missing=1 gaps_nonempty=true
+.[VERIFY] VC-009: ac_extract=correct
+.[VERIFY] VC-009: decision_map_parity=true
+................... [ 15%]
+........................................................................ [ 23%]
+........................................................................ [ 31%]
+..........................................F............................. [ 38%]
+....................................................F................... [ 46%]
+...........................................[VERIFY] VC-012: parse_end_exit=0
+[VERIFY] VC-012: parse_end_exit=1
+[VERIFY] VC-012: parse_end_exit=2
+..[VERIFY] VC-012: parse_end_exit=None
+.........[VERIFY] VC-013: beat_guard=True, window=90
+.................. [ 54%]
+........................................................................ [ 62%]
+.........................................[VERIFY] VC-009: starter_directive=present
+.......[VERIFY] VC-012: map=0-done,1-failed,2-nc, own_row=untouched
+.........[VERIFY] VC-013: silence_failed=1, fresh_untouched=1, beat_guard=skipped
+............... [ 69%]
+........................................................................ [ 77%]
+........................................................................ [ 85%]
+........................................................................ [ 93%]
+.................................................................        [100%]
+================================== FAILURES ===================================
+________________________ test_baseline_left_end_bound _________________________
+
+    def test_baseline_left_end_bound() -> None:
+        """The frozen pre-fix renderer equals the git HEAD blob (sha256) �� the
+        byte-identical comparisons above are anchored to the real left end."""
+        if not HEAD_DISPATCH.is_file():
+            pytest.skip("frozen baseline copy not reachable (portable fallback in use)")
+        frozen = hashlib.sha256(HEAD_DISPATCH.read_bytes()).hexdigest()
+        git_blob = hashlib.sha256(_git("show", f"HEAD:{DISPATCH_RELATIVE}")).hexdigest()
+>       assert frozen == git_blob
+E       AssertionError: assert '219ed8090210...e9bd66bc8610a' == '4e3e8876a449...5422d8ba69b3b'
+E         
+E         - 4e3e8876a449acb4b425944b4ccafc6b46a74666914569c26f55422d8ba69b3b
+E         + 219ed8090210630f5f2136b0f544900bc955309c60936ac351de9bd66bc8610a
+
+test_autopilot_readcap_injection.py:892: AssertionError
+_________________ test_true_below_without_resume_stays_below __________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-6044/test_true_below_without_resume0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000207258425F0>
+
+    def test_true_below_without_resume_stays_below(
+        tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _freeze_clock(monkeypatch)
+        project, _st, key_dir, _calls = _drive_to_first_stall(tmp_path, monkeypatch)
+        verdict = (key_dir / "l3-verdict.txt").read_text(encoding="utf-8").strip()
+        row = _dossier_row(project, "k1")
+        fixture_ok = verdict == "below" and "| below |" in row
+        assert fixture_ok, (verdict, row)
+    
+        # Real key: independent mirror recompute (no tested judgement imported),
+        # cross-checked against the T-001d frozen recompute evidence.
+        root = _e2feature_root()
+>       live_persisted, live_last, live_stale = _mirror_recompute_reverse_key(root)
+                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_autopilot_verdict_freshness.py:329: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+root = WindowsPath('H:/git/E2Feature')
+
+    def _mirror_recompute_reverse_key(root: pathlib.Path) -> tuple[str, str, bool]:
+        """(persisted, last_round_verdict, stale) for the real reverse anchor."""
+        key_dir = root / ".agenticdoc" / _REVERSE_KEY
+        rounds: dict[int, pathlib.Path] = {}
+        pattern = re.compile(r"^ap-" + re.escape(_REVERSE_KEY) + r"-l3-a(\d+)$")
+        for sub in sorted((key_dir / "workers").iterdir()):
+            match = pattern.match(sub.name)
+            if match and (sub / "output.md").is_file():
+                rounds[int(match.group(1))] = sub / "output.md"
+        assert rounds, f"no L3 rounds for {_REVERSE_KEY}"
+        verdict_by_round = {n: _mirror_parse_l3_output(p) for n, p in rounds.items()}
+        last_round = max(rounds)
+        last_verdict = verdict_by_round[last_round]
+        verdict_file = key_dir / "l3-verdict.txt"
+        assert verdict_file.is_file()
+        persisted = verdict_file.read_text(encoding="utf-8").strip().lower()
+        assert persisted in ("meets", "below")
+        report = key_dir / "l3-report.md"
+        assert report.is_file()
+        report_sha = _sha256_file(report)
+        report_matches = [
+            n for n, path in rounds.items() if _sha256_file(path) == report_sha
+        ]
+        stale = persisted != last_verdict
+>       assert last_round in report_matches, "latest report is not from the last round"
+E       AssertionError: latest report is not from the last round
+E       assert 3 in [2]
+
+test_autopilot_verdict_freshness.py:191: AssertionError
+=========================== short test summary info ===========================
+FAILED test_autopilot_readcap_injection.py::test_baseline_left_end_bound - As...
+FAILED test_autopilot_verdict_freshness.py::test_true_below_without_resume_stays_below
+2 failed, 927 passed, 9 deselected in 90.97s (0:01:30)
+
