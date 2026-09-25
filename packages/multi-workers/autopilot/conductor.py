@@ -1119,8 +1119,10 @@ def _l3_prompt(key: str, attempt: int) -> str:
         "- 你的 output.md 必含两节：\n"
         "  ## Quality Gate Report（VC 断言表逐条 PASS/FAIL + needs-rerun + 证据引用）\n"
         "  ## Achieved（达成摘要：做了什么 / 目标收益 / 遗留什么）\n"
-        "- 两节写入 output.md（首选承载）；长报告可另写 report.md 作为**文档化回退源**"
-        "（判定按 output.md → report.md 优先级读取，任一份出现 FAIL 单元格即 below）"
+        "- 两节承载于 output.md（首选）；长报告可置于 report.md 作为**文档化回退源**"
+        "（判定按 output.md → report.md 优先级读取，任一份出现 FAIL 单元格即 below）\n"
+        "- 判定源取证：output.md / report.md 须属于本轮（由同轮 trace.log 锚定）；"
+        "事后补写的判定源会被标记 suspect 并按 below 处理"
     )
 
 
@@ -1129,7 +1131,9 @@ def _repair_prompt(key: str, attempt: int, report_rel: str) -> str:
         f"修复 L3 裁决 below 的问题（key {key}，第 {attempt} 轮）:\n"
         f"- L3 报告：{report_rel}"
         "（## Quality Gate Report 的 FAIL 项与 needs-rerun 遗留）\n"
-        "- 逐项修复并补充 [VERIFY] 证据到 evidence/；不重写无关 artifact"
+        "- 逐项修复并补充 [VERIFY] 证据到 evidence/；不重写无关 artifact\n"
+        "- 只读约束：workers/*-l3-*/ 下的 output.md 与 report.md 属 reviewer 本轮产物（L3 判定源）\n"
+        "- 禁止改动 workers/*-l3-*/ 判定源（只读输入）；判定源错位的唯一纠错路径 = 由框架派发新一轮 reviewer（re-review）"
     )
 
 
@@ -1142,6 +1146,12 @@ _L3_SOURCE_ORDER = ("output.md", "report.md")
 # Strict superset of the frozen `\|\s*FAIL\b`: catches `| **FAIL** |` (31 live
 # cells) while never dropping a plain `| FAIL |` match (I-8).
 _L3_FAIL_RE = re.compile(r"\|\s*\**\s*FAIL\b")
+
+# ── L3 verdict provenance guard (feature-verdict-provenance-guard D-003..D-006) ─
+# Module constants — NEVER read from config (GC-4).
+_PROVENANCE_FILENAME = "l3-verdict-provenance.json"
+_L3_TRACE_NAME = "trace.log"
+_PROVENANCE_SLACK_SEC = 60.0
 
 
 def _l3_source_paths(key_dir: pathlib.Path, task_key: str) -> list[pathlib.Path]:
@@ -1215,6 +1225,220 @@ def _l3_round_verdict(
     return verdict, status, source
 
 
+# ── L3 verdict provenance guard (D-001..D-013) ───────────────────────────────
+
+def _l3_provenance_record(
+    key_dir: pathlib.Path,
+    task_key: str,
+    deciding_source: pathlib.Path,
+    raw_verdict: str,
+) -> dict:
+    """Read-only provenance record for one L3 round (D-004..D-006).
+
+    The same-round ``trace.log`` end (mtime) anchors the round; with no
+    readable anchor the round abstains (``suspect=False``,
+    ``anchor_path=None``, GC-13) instead of guessing. T1 flags a deciding
+    source written after the round ended (+ slack); T2 additionally flags an
+    ``output.md`` whose two L3 sections are byte-equal to the same round's
+    ``report.md`` but written later (the post-hoc rewrite signature). The
+    record's ``verdict`` is the effective fail-closed verdict:
+    ``suspect ∧ raw=meets`` -> ``below``. Never writes (D-001/GC-12)."""
+    key_dir = pathlib.Path(key_dir)
+    round_name = task_key
+    prefix = f"ap-{key_dir.name}-"
+    if task_key.startswith(prefix):
+        round_name = task_key[len(prefix):]
+    try:
+        deciding_rel = deciding_source.relative_to(key_dir).as_posix()
+    except ValueError:
+        deciding_rel = deciding_source.name
+    record = {
+        "round": round_name,
+        "task_key": task_key,
+        "deciding_source": deciding_rel,
+        "source_mtime_ns": None,
+        "anchor_path": None,
+        "anchor_mtime_ns": None,
+        "suspect": False,
+        "reasons": [],
+        "raw_verdict": raw_verdict,
+        "verdict": raw_verdict,
+        "recorded_at": _iso_now(),
+    }
+    trace = key_dir / "workers" / task_key / _L3_TRACE_NAME
+    try:
+        if not trace.is_file():
+            return record
+        source_ns = deciding_source.stat().st_mtime_ns
+        anchor_ns = trace.stat().st_mtime_ns
+    except OSError:
+        return record  # no readable anchor/source -> abstain (GC-13)
+    record["source_mtime_ns"] = source_ns
+    record["anchor_path"] = f"workers/{task_key}/{_L3_TRACE_NAME}"
+    record["anchor_mtime_ns"] = anchor_ns
+    slack_ns = int(_PROVENANCE_SLACK_SEC * 1e9)
+    reasons: list[str] = []
+    if source_ns > anchor_ns + slack_ns:
+        reasons.append(
+            f"{deciding_source.name} mtime is "
+            f"{(source_ns - anchor_ns) / 1e9:.1f}s AFTER {_L3_TRACE_NAME} end"
+        )
+    if deciding_source.name == "output.md" and source_ns > anchor_ns:
+        # T2 time fingerprint first: only a later-than-round output.md can be
+        # the rewritten copy, so the report stat + reads are spent only there.
+        report = deciding_source.parent / "report.md"
+        try:
+            report_ns = report.stat().st_mtime_ns
+        except OSError:
+            report_ns = None
+        if report_ns is not None and source_ns > report_ns + slack_ns:
+            try:
+                out_text = deciding_source.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+                rep_text = report.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+            else:
+                equal = True
+                for header in ("## Quality Gate Report", "## Achieved"):
+                    out_sec = _md_section(out_text, header)
+                    if out_sec is None or out_sec != _md_section(rep_text, header):
+                        equal = False
+                        break
+                if equal:
+                    reasons.append(
+                        "output.md sections byte-equal report.md but written later"
+                    )
+    record["reasons"] = reasons
+    record["suspect"] = bool(reasons)
+    if record["suspect"] and raw_verdict == "meets":
+        record["verdict"] = "below"
+    return record
+
+
+def _persist_l3_provenance(
+    key_dir: pathlib.Path, record: dict, st: ConductorState | None = None
+) -> bool:
+    """Append one provenance record (append-only, deduped by ``task_key``,
+    ``tmp`` + ``os.replace`` atomic; returns True iff a new record landed).
+    A corrupt sidecar is never overwritten (returns False + an optional
+    timeline ``config`` event) — audit history outranks the new record
+    (D-006/GC-9/AC-020)."""
+    import json  # local: conductor carries no module-level json dependency
+
+    key_dir = pathlib.Path(key_dir)
+    path = key_dir / _PROVENANCE_FILENAME
+    entries: list = []
+    if path.is_file():
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            parsed = None
+        if not isinstance(parsed, list):
+            if st is not None:
+                st.timeline.append(
+                    "config", key=key_dir.name,
+                    detail=f"l3-provenance sidecar corrupt, not overwritten: {path.name}",
+                )
+            return False
+        entries = parsed
+    task_key = record.get("task_key")
+    for entry in entries:
+        if isinstance(entry, dict) and entry.get("task_key") == task_key:
+            return False  # same round already recorded -> zero-write (AC-020)
+    try:
+        tmp = path.parent / (path.name + ".tmp")
+        tmp.write_text(
+            json.dumps(entries + [record], ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8", newline="\n",
+        )
+        os.replace(tmp, path)
+    except OSError as exc:
+        if st is not None:
+            st.timeline.append(
+                "config", key=key_dir.name,
+                detail=f"l3-provenance write failed: {exc!r}",
+            )
+        return False
+    if st is not None:
+        st.timeline.append(
+            "config", key=key_dir.name,
+            detail=(
+                f"l3-provenance {record.get('round')} "
+                f"suspect={record.get('suspect')} "
+                f"source={record.get('deciding_source')}"
+            ),
+        )
+    return True
+
+
+def _done_credentials_present(
+    project_root: pathlib.Path, key: str
+) -> tuple[bool, list[str]]:
+    """(ok, missing) over the five persisted done-transaction derivatives
+    (D-008/DF-14): a bare index pointer must never flip roadmap key-status to
+    ``done``. Only on-disk derivatives are judged (not the full
+    ``check_gate("done")`` vocabulary) so the existing conductor fixtures
+    stay valid (R-3). Read-only."""
+    key_dir = pathlib.Path(project_root) / ".agenticdoc" / key
+    missing: list[str] = []
+    verdict_file = key_dir / "l3-verdict.txt"
+    try:
+        verdict = (
+            verdict_file.read_text(encoding="utf-8").strip().lower()
+            if verdict_file.is_file() else ""
+        )
+    except OSError:
+        verdict = ""
+    if verdict != "meets":
+        missing.append("l3-verdict.txt=meets")
+    report = key_dir / "l3-report.md"
+    try:
+        if not (report.is_file() and report.stat().st_size > 0):
+            missing.append("l3-report.md")
+    except OSError:
+        missing.append("l3-report.md")
+    if not any((key_dir / "evidence").glob("quality-gate-report-*.md")):
+        missing.append("quality-gate-report")
+    achieved = key_dir / "achieved.md"
+    try:
+        if not (achieved.is_file() and achieved.stat().st_size >= 200):
+            missing.append("achieved.md>=200B")
+    except OSError:
+        missing.append("achieved.md>=200B")
+    pm_state = key_dir / "pm-state.md"
+    try:
+        has_pass = pm_state.is_file() and "PASS" in pm_state.read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        has_pass = False
+    if not has_pass:
+        missing.append("pm-state.md PASS")
+    return (not missing, missing)
+
+
+def _timeline_has_event(
+    project_root: pathlib.Path, ev: str, key: str, detail: str
+) -> bool:
+    """Bounded-tail dedupe for refusal logging (D-009): a refusal is
+    recorded once, and the window is re-read from file truth (zero private
+    state)."""
+    try:
+        events = timeline.tail_events(
+            timeline.timeline_path(project_root), limit=200
+        )
+    except OSError:
+        return False
+    return any(
+        event.get("ev") == ev
+        and event.get("key") == key
+        and str(event.get("detail", "")) == detail
+        for event in events
+    )
+
+
 def _verify_loop(
     project_root: pathlib.Path,
     st: ConductorState,
@@ -1255,6 +1479,7 @@ def _verify_loop(
         )
         return result.ok
     verdict, worker_status, l3_source = _l3_round_verdict(project_root, rows, key, used)
+    round_key = dispatch.task_key_for(key, f"l3-a{used}")
     l3_source_rel = (
         l3_source.relative_to(pathlib.Path(project_root)).as_posix()
         if l3_source is not None
@@ -1285,6 +1510,32 @@ def _verify_loop(
             timeline=st.timeline,
         )
         return result.ok
+    if l3_source is not None:
+        record = _l3_provenance_record(key_dir, round_key, l3_source, verdict)
+        _persist_l3_provenance(key_dir, record, st=st)
+        if record["suspect"] and verdict == "meets":
+            # fail-closed (D-002/D-007): a suspect meets-round never reaches
+            # the done transaction; the only correction path is a fresh
+            # reviewer round — never the repair path.
+            st.timeline.append(
+                "l3-source-suspect", key=key,
+                detail=f"{record['round']}: " + "; ".join(record["reasons"]),
+            )
+            if used >= l3_limit:
+                _persist_l3_verdict(key_dir, "below", l3_source, st=st)
+                mark_stalled(
+                    project_root, st, key,
+                    f"L3 判定源取证可疑（{record['round']}）达 {used}/{l3_limit} 轮",
+                )
+                return False
+            result = dispatch.dispatch(
+                project_root, key, f"l3-a{used + 1}", "reviewer",
+                _l3_prompt(key, used + 1),
+                loop=l3_loop, attempt=used + 1,
+                read_scope=[f".agenticdoc/{key}", ".agenticdoc/goal.md"],
+                timeline=st.timeline,
+            )
+            return result.ok
     if verdict == "meets" and l3_source is not None:
         # I-1/I-2: a meets verdict always has a deciding source; the guard is
         # fail-closed redundancy (an impossible branch falls through to the
@@ -1840,6 +2091,15 @@ def _mark_key_done(
     project_root: pathlib.Path, st: ConductorState, key: str, rm_path: pathlib.Path
 ) -> None:
     """Roadmap key-status → done (idempotent; under the roadmap lock)."""
+    ok, missing = _done_credentials_present(project_root, key)
+    if not ok:
+        detail = (
+            "key-done refused (missing done credentials: "
+            + ", ".join(missing) + ")"
+        )
+        if not _timeline_has_event(project_root, "config", key, detail):
+            st.timeline.append("config", key=key, detail=detail)
+        return
     try:
         rm = roadmap.load_roadmap(rm_path)
         stage = roadmap.stage_by_number(rm, roadmap.stage_of_key(rm).get(key, 0))
