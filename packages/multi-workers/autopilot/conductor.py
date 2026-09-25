@@ -617,7 +617,7 @@ _VERDICT_VALUES = ("meets", "below")  # derived-record value domain (D-008)
 
 
 def _persist_l3_verdict(
-    key_dir: pathlib.Path, verdict: str, report_src: pathlib.Path,
+    key_dir: pathlib.Path, verdict: str, report_src: pathlib.Path | None,
     st: ConductorState | None = None,
 ) -> None:
     """Refresh the key's **terminal** L3 verdict for the closure dossier:
@@ -637,7 +637,7 @@ def _persist_l3_verdict(
     before = current.strip().lower() if current is not None else None
     verdict_changed = before != verdict
     report_changed = False
-    if report_src.is_file():  # I-3: no source -> leave the report untouched
+    if report_src is not None and report_src.is_file():  # I-6: None -> skip report
         try:
             payload = report_src.read_bytes()
             report = key_dir / "l3-report.md"
@@ -649,7 +649,10 @@ def _persist_l3_verdict(
     if verdict_changed:
         verdict_file.write_bytes((verdict + "\n").encode("utf-8"))
     if st is not None and (verdict_changed or report_changed):
-        source = report_src.parent.name if report_src.is_file() else "-"
+        source = (
+            report_src.parent.name
+            if report_src is not None and report_src.is_file() else "-"
+        )
         st.timeline.append(
             "config", key=key,
             detail=f"l3-verdict {before or 'none'} -> {verdict} (report from {source})",
@@ -1115,32 +1118,83 @@ def _l3_prompt(key: str, attempt: int) -> str:
         "- 需要重跑才能确认的验证命令标记 needs-rerun 并计入遗留\n"
         "- 你的 output.md 必含两节：\n"
         "  ## Quality Gate Report（VC 断言表逐条 PASS/FAIL + needs-rerun + 证据引用）\n"
-        "  ## Achieved（达成摘要：做了什么 / 目标收益 / 遗留什么）"
+        "  ## Achieved（达成摘要：做了什么 / 目标收益 / 遗留什么）\n"
+        "- 两节写入 output.md（首选承载）；长报告可另写 report.md 作为**文档化回退源**"
+        "（判定按 output.md → report.md 优先级读取，任一份出现 FAIL 单元格即 below）"
     )
 
 
-def _repair_prompt(key: str, attempt: int) -> str:
+def _repair_prompt(key: str, attempt: int, report_rel: str) -> str:
     return (
         f"修复 L3 裁决 below 的问题（key {key}，第 {attempt} 轮）:\n"
-        f"- L3 报告：.agenticdoc/{key}/workers/ap-{key}-l3-a{attempt}/output.md"
+        f"- L3 报告：{report_rel}"
         "（## Quality Gate Report 的 FAIL 项与 needs-rerun 遗留）\n"
         "- 逐项修复并补充 [VERIFY] 证据到 evidence/；不重写无关 artifact"
     )
 
 
+# ── L3 verdict source fallback (feature-l3-verdict-source-fallback) ──────────
+# Documented fallback priority for the L3 round verdict. output.md stays the
+# preferred carrier; report.md is the harness-first-class fallback (the
+# reviewer writes its long report there). report-<slug>.md is deliberately NOT
+# a fallback source (AC-021; extending the scope needs its own key).
+_L3_SOURCE_ORDER = ("output.md", "report.md")
+# Strict superset of the frozen `\|\s*FAIL\b`: catches `| **FAIL** |` (31 live
+# cells) while never dropping a plain `| FAIL |` match (I-8).
+_L3_FAIL_RE = re.compile(r"\|\s*\**\s*FAIL\b")
+
+
+def _l3_source_paths(key_dir: pathlib.Path, task_key: str) -> list[pathlib.Path]:
+    """Ordered candidate source paths (existence is not judged here)."""
+    return [key_dir / "workers" / task_key / name for name in _L3_SOURCE_ORDER]
+
+
+def _l3_read_source(path: pathlib.Path) -> str | None:
+    """Readable source text; missing / ``OSError`` -> ``None`` (D-005)."""
+    if not path.is_file():
+        return None
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _l3_qualifies(text: str) -> bool:
+    """A source qualifies when both L3 sections are present (DF-8)."""
+    return (
+        _md_section(text, "## Quality Gate Report") is not None
+        and _md_section(text, "## Achieved") is not None
+    )
+
+
+def _l3_resolve_source(
+    sources: list[tuple[pathlib.Path, str]],
+) -> tuple[str, pathlib.Path | None]:
+    """Fail-closed resolution over existing sources in priority order (I-2):
+    any qualifying source with a FAIL cell -> below + that source; else the
+    first qualifying source -> meets + that source; else below + None."""
+    qualifying = [(p, t) for p, t in sources if _l3_qualifies(t)]
+    for path, text in qualifying:
+        qg = _md_section(text, "## Quality Gate Report") or ""
+        if _L3_FAIL_RE.search(qg):
+            return "below", path
+    if qualifying:
+        return "meets", qualifying[0][0]
+    return "below", None
+
+
 def _l3_round_verdict(
     project_root: pathlib.Path, rows: list[dict], key: str, attempt: int
-) -> tuple[str, str]:
-    """(verdict, worker status) for one L3 round (AC-012).
+) -> tuple[str, str, pathlib.Path | None]:
+    """(verdict, worker status, deciding source) for one L3 round (AC-012).
 
     A round whose worker row is terminal-failed never rendered a verdict: the
     worker harness writes a placeholder ``output.md`` even when the process
     died (observed live: a reviewer killed by a provider 403 left a 181-byte
-    template), so the status is checked BEFORE the file — repairing against a
-    template and reporting `below` would pin the failure on the wrong layer.
-    Otherwise ``output.md`` is authoritative (D-108): ``meets`` / ``below``
-    exactly as before, and a round with neither a healthy status nor an output
-    file is ``no-verdict`` too.
+    template), so the status gate is checked BEFORE any source file (I-4).
+    The availability gate follows (I-5): with no readable candidate source the
+    round has ``no-verdict``; otherwise ``_l3_resolve_source`` decides over the
+    documented priority order ``output.md`` -> ``report.md`` (D-108).
     """
     task_key = dispatch.task_key_for(key, f"l3-a{attempt}")
     status = next(
@@ -1148,14 +1202,17 @@ def _l3_round_verdict(
         "",
     )
     if status in ("failed", "needs-clarification"):
-        return "no-verdict", status
-    output = (
-        pathlib.Path(project_root) / ".agenticdoc" / key / "workers"
-        / task_key / "output.md"
-    )
-    if output.is_file():
-        return _parse_l3_output(project_root, key, attempt), status
-    return "no-verdict", status or "no-row"
+        return "no-verdict", status, None
+    key_dir = pathlib.Path(project_root) / ".agenticdoc" / key
+    sources = [
+        (path, text)
+        for path in _l3_source_paths(key_dir, task_key)
+        if (text := _l3_read_source(path)) is not None
+    ]
+    if not sources:
+        return "no-verdict", status or "no-row", None
+    verdict, source = _l3_resolve_source(sources)
+    return verdict, status, source
 
 
 def _verify_loop(
@@ -1197,7 +1254,13 @@ def _verify_loop(
             timeline=st.timeline,
         )
         return result.ok
-    verdict, worker_status = _l3_round_verdict(project_root, rows, key, used)
+    verdict, worker_status, l3_source = _l3_round_verdict(project_root, rows, key, used)
+    l3_source_rel = (
+        l3_source.relative_to(pathlib.Path(project_root)).as_posix()
+        if l3_source is not None
+        else (pathlib.Path(".agenticdoc") / key / "workers"
+              / dispatch.task_key_for(key, f"l3-a{used}") / "output.md").as_posix()
+    )
     if verdict == "no-verdict":
         # The reviewer never rendered a verdict (crash / no output). Repairing
         # against a missing report is pointless and reporting `below` would pin
@@ -1222,15 +1285,15 @@ def _verify_loop(
             timeline=st.timeline,
         )
         return result.ok
-    if verdict == "meets":
-        l3_output = (
-            key_dir / "workers" / dispatch.task_key_for(key, f"l3-a{used}") / "output.md"
-        )
-        if _done_transaction(project_root, st, key, l3_output) != "below":
+    if verdict == "meets" and l3_source is not None:
+        # I-1/I-2: a meets verdict always has a deciding source; the guard is
+        # fail-closed redundancy (an impossible branch falls through to the
+        # below path — no exception, no spin)
+        if _done_transaction(project_root, st, key, l3_source) != "below":
             return False  # advanced (or gated — retried next tick)
         # meets-but-short achieved draft → same repair path as below
     if used >= l3_limit:
-        _persist_l3_verdict(key_dir, "below", l3_report_src, st=st)
+        _persist_l3_verdict(key_dir, "below", l3_source, st=st)
         mark_stalled(
             project_root, st, key,
             f"L3 below {l3_limit} rounds (budget {l3_budget}, credits {l3_limit - l3_budget})",
@@ -1243,7 +1306,7 @@ def _verify_loop(
         if any(_is_in_flight(r) for r in fam):
             return False
         if repair_used >= max(1, int(cfg["round_budget"])) + _resume_credits(project_root, key):
-            _persist_l3_verdict(key_dir, "below", l3_report_src, st=st)
+            _persist_l3_verdict(key_dir, "below", l3_source, st=st)
             mark_stalled(
                 project_root, st, key,
                 f"repair exhausted {repair_used} attempts at L3 round {used}",
@@ -1253,7 +1316,7 @@ def _verify_loop(
         stem_arg = f"{repair_base}-a{repair_used + 1}" if retry else repair_base
         result = dispatch.dispatch(
             project_root, key, stem_arg, "repair",
-            _repair_prompt(key, used),
+            _repair_prompt(key, used, l3_source_rel),
             loop=f"repair:{key}", attempt=repair_used + 1,
             timeline=st.timeline,
         )
