@@ -182,6 +182,40 @@ def test_project_partial_file_completed_and_origin_project(tmp_path: pathlib.Pat
     _verify("逐字段 origin", partial_project_keys=13, project_origin="project")
 
 
+def test_partial_file_raw_loader_vs_effective_full_view(
+    tmp_path: pathlib.Path,
+) -> None:
+    """T-02c layering evidence: raw loader vs complete resolver view.
+
+    One project file carrying a single key, one call site, both halves of the
+    contract: ``config.load_config`` returns *only* the written key (D-004
+    withdrawn — no default fill), while ``load_effective`` is self-sufficient
+    and yields all 13 keys (hard-subscript safe for conductor-style callers).
+    """
+    project = tmp_path / "proj"
+    _project_file(project, {"l2_read_file_cap": 3})
+    with _env():
+        loaded = cfg.load_config(project)
+        eff = ec.load_effective(project)
+    # Raw loader: exactly the one written key.
+    assert set(loaded) == {"l2_read_file_cap"}
+    assert loaded == {"l2_read_file_cap": 3}
+    # Resolver: complete 13-key view (== default_config key set), hard-subscript safe.
+    assert set(eff.values) == set(cfg.default_config())
+    assert len(eff.values) == 13
+    assert eff.values["l2_read_file_cap"] == 3
+    assert eff.origins["l2_read_file_cap"] == "project"
+    assert eff.values["l2_read_byte_cap"] == cfg.DEFAULT_CONFIG["l2_read_byte_cap"]
+    assert eff.origins["l2_read_byte_cap"] == "default"
+    assert eff.diagnostics == []
+    _verify(
+        "原始加载器 vs 完整视图",
+        load_config_keys=len(loaded),
+        effective_keys=len(eff.values),
+        effective_key_set=len(set(eff.values) & set(cfg.default_config())),
+    )
+
+
 def test_project_nonempty_values_win_over_machine_per_field(tmp_path: pathlib.Path) -> None:
     project = tmp_path / "proj"
     _project_file(project, {"xkey_verify_cmd": ["p"], "xkey_verify_cwd": "control"})

@@ -181,11 +181,13 @@ def _load_machine_layer(
 def _project_raw(project_root: pathlib.Path) -> dict:
     """Raw project file data, before default filling.
 
-    ``config.load_config`` merges over the defaults, which erases the
-    difference between "absent" and "explicitly set to the default value" —
-    needed for the empty-value-means-undecided rule. Called only after
-    ``load_config`` validated the file, so parsing here cannot fail-closed
-    differently (a missing file yields an empty mapping).
+    Since D-004 was withdrawn ``config.load_config`` returns only the keys the
+    file actually carries, but a *missing* file still yields the full default
+    table and would then look like 13 explicit project keys. Re-reading the
+    file keeps "absent" distinct from "explicitly written" — needed for the
+    empty-value-means-undecided rule and the project/default origin split.
+    Called only after ``load_config`` validated the file, so parsing here
+    cannot fail-closed differently (a missing file yields an empty mapping).
     """
     path = config.config_path(project_root)
     if not path.is_file():
@@ -205,8 +207,14 @@ def load_effective(
     complete 13-key value view, a 13-key origin view and machine diagnostics.
     """
     project_root = pathlib.Path(project_root)
-    values = config.load_config(project_root)  # fail-closed, before any merge
+    # Fail-closed project validation happens inside load_config, strictly
+    # before any machine merge. load_config returns only the keys the file
+    # actually carries (D-004 withdrawn), so the complete 13-key view is
+    # produced here from the authoritative default table: consumers may
+    # hard-subscript ``.values``.
+    validated_raw = config.load_config(project_root)
     defaults = config.default_config()
+    values = {**defaults, **validated_raw}
     raw = _project_raw(project_root)
 
     machine_path = machine_config_path(env)
