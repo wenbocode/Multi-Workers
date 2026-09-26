@@ -40,7 +40,8 @@
 
 - `load_effective(project_root, env=None) -> EffectiveConfig{values(13 键全量), origins, diagnostics, machine_path}`。
 - **先**对项目层做 fail-closed 校验（防止机器层"救活"非法项目值），**再** merge；结果**必须补默认值成完整 13 键**——`load_config` 现状返回原始 dict，而 `mw.py:161`/`conductor.py:266/941/2037/3975` 都是硬下标（RQ-D6 §2）。
-- origin 值域 `{project, machine, default}`；project 侧 `null` = 显式回退**内置默认**（origin `default`，不回落 machine）；machine 侧 `null` = 空操作。
+- origin 值域 `{project, machine, default}`。**层级规则（T-02 实测修订）**：键**存在**于项目层 ⇒ 项目胜出（**即使显式写成默认值**，也压过机器层——这正是“显式配置优先”的直觉语义，且是当前 schema 下唯一可实现的规则）；键**缺失** ⇒ 落到机器层（origin `machine`）；两层都缺 ⇒ `default`。
+- **原设计的“project 侧 `null` = 显式回退内置默认”条款已废除**：T-01 的 `validate_config` 对 13 键均拒 `null`，故项目文件里的 `null` 在 merge 之前就 fail-closed（`ConfigError`）。为保留该语义而放宽 schema 会引入没人需要的特例 ⇒ 接受 fail-closed，`null` 就是类型错。机器层 `null` 仍是“空操作”（不覆盖下层）。
 - 消费方切换：`mw.py:161`、`conductor.py:169/1874/2036/3975`、`dispatch.py:227-241`。**只读路径不得创建 `.mw/`**（零足迹语义）。
 - 被否决：把机器层塞进 `load_config`（会让既有未隔离 env 的测试 `test_autopilot_config.py:28-38` 读真实 HOME）；AC 里的 "cli 层"（`set` 是写命令，落盘即 project；真实消费者是独立 conductor 进程，一次性 flag 到不了它 ⇒ 从 AC-004/AC-007 删除该层）。
 
