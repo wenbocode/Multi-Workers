@@ -45,10 +45,13 @@
 - 消费方切换：`mw.py:161`、`conductor.py:169/1874/2036/3975`、`dispatch.py:227-241`。**只读路径不得创建 `.mw/`**（零足迹语义）。
 - 被否决：把机器层塞进 `load_config`（会让既有未隔离 env 的测试 `test_autopilot_config.py:28-38` 读真实 HOME）；AC 里的 "cli 层"（`set` 是写命令，落盘即 project；真实消费者是独立 conductor 进程，一次性 flag 到不了它 ⇒ 从 AC-004/AC-007 删除该层）。
 
-### D-004 `load_config` 补默认键（partial 文件不再让 serve/conductor KeyError）
+### D-004 【已撤回】`load_config` **不**补默认键（执行期修订 2026-09-26）
 
-- 改法 1 行：校验作用于原始 data，返回值 `{**default_config(), **data}`（RQ-D6 §2，TS `readConfig` 本就恒 12 键，两侧由此对称）。
-- 必要性：新增键后，**任何旧 config 文件**都会让重启后的 conductor 直接 KeyError——这是本 key 新增 `xkey_verify_cwd` 的前置修复。
+- 原方案：`load_config` 返回 `{**default_config(), **data}`，让 partial 文件不再让 serve/conductor KeyError。
+- **撤回原因（实测）**：该改动让 `test_autopilot_readcap_injection.py::test_vc008_missing_fields_byte_identical` 变红——那是 key `feature-l3-readcap-injection` 的**冻结 VC-008**：“配置未写 `l2_read_file_cap`/`l2_read_byte_cap` ⇒ caps = `(None, None)`，渲染与加该功能前**逐字节相同**”。合并默认值把“文件未写”变成了“文件写了默认值”，等于覆盖更早的冻结期望。按本仓“fail 方向不覆盖”的既定原则 ⇒ **撤回合并**（不新增 xkey 修复提案：需要改的是本 key 自己的改动，不是别的 key）。
+- 现方案：`load_config` 仍 fail-closed 校验，但**返回文件里实际写的内容**；需要“13 键完整视图”的消费者走 `default_config()` 或 `autopilot.effective_config.load_effective()`（恒 13 键）。新增键的消费者一律不得假设键存在。
+- 影响面：T-05/T-06 消费 `load_effective` ⇒ 不受影响；TS 侧 `readConfig` 仍填默认（既有行为，本 key 不动，避免无谓扩面）。
+- 教训（收口进 `_pitfalls.md`）：给“共享读取函数”加兜底合并前，必须先查是否有更早 key 的冻结判据依赖“缺键 ≠ 默认值”这一区分。
 
 ### D-005 `clear` 永不删文件
 

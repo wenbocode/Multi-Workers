@@ -121,6 +121,6 @@
 - **P-001/P-003**：PowerShell 多行 `python -c` 撕引号（本轮已再踩一次）⇒ 用临时脚本；写文件用原子写。
 - **RQ-2 §3.3**：`cached_load` 的 `(mtime_ns,size)` 判据不完备（同长度改写可被静默忽略，实测 1/3）——**不要**把它当 AC 判据。
 - **RQ-2 §5.2**：两侧差异 D1（`4.0`）/D2（partial merge）/D3（规范化）/D4（非 ASCII 字节）——新增键或改校验时必须同时处理，否则 AC-006 红。
-- **RQ-1 §1.3**：argparse REMAINDER 会吞 `--project`（`mw.py:983-985` 自记此坑）；`load_config` 不补默认键 ⇒ partial 文件会让 serve/conductor KeyError。
+- **RQ-1 §1.3**：argparse REMAINDER 会吞 `--project`（`mw.py:983-985` 自记此坑）；`load_config` 不补默认键 ⇒ partial 文件会让 serve/conductor KeyError。 **[REVISED @ 2026-09-26]** 后者的处理不是“让 `load_config` 补默认键”——实测那会推翻 key `feature-l3-readcap-injection` 的冻结 VC-008（“未写 caps 字段 ⇒ caps=(None,None)、渲染逐字节不变”）⇒ 改为：`load_config` 保持返回文件实际内容，需要完整 13 键视图的消费者用 `default_config()` / `effective_config.load_effective()`，新增键消费者不得假设键存在。
 - **RQ-3 §3.2/§5**：`mw update-env --apply` 只 copy 不 rebuild（fail-open）；`npm run build` 无 clean、无锁，失败时"全局已换、dist 未换"的部分部署。
 - **RQ-4 §2.3/§1.4**：verify cwd 取错根（control≠partition 时）；dual/single 模式下未知占位静默透传——两条都不要照抄。
