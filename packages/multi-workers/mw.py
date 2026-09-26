@@ -3228,6 +3228,301 @@ def cmd_model(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── Subcommand: autopilot (xkey verification CLI) ────────────────────────────
+# mw-autopilot-verify-cli D-005/D-006/D-014. `mw autopilot verify set` is the
+# only Python-side writer of the four xkey keys; the TS console writes the same
+# file and takes the same lock. The lock budget is frozen (retries=6,
+# base_delay=0.02 -> worst case ~1.26 s): an unavailable lock must fail loudly
+# instead of hanging for the 14 h the mw_common defaults would allow. The retry
+# constants are module-level so tests can monkeypatch them.
+
+_AP_VERIFY_LOCK_FILENAME = "autopilot-config.lock"
+_AP_VERIFY_LOCK_RETRIES = 6
+_AP_VERIFY_LOCK_BASE_DELAY = 0.02
+_AP_XKEY_KEYS = (
+    "xkey_repair",
+    "xkey_verify_cmd",
+    "xkey_verify_timeout_s",
+    "xkey_verify_cwd",
+)
+
+
+def _ap_verify_lock_path(project_dir: pathlib.Path) -> pathlib.Path:
+    return pathlib.Path(project_dir) / ".mw" / _AP_VERIFY_LOCK_FILENAME
+
+
+def _ap_verify_error(action: str, message: str) -> int:
+    print(f"[mw autopilot verify {action}] Error: {message}", file=sys.stderr)
+    return 1
+
+
+def _ap_read_raw_config(path: pathlib.Path) -> tuple[dict | None, str | None]:
+    """Read + schema-validate the raw project config (fail-closed).
+
+    Returns ``(raw, None)`` or ``(None, message)``. A missing file yields
+    ``({}, None)`` — it means 'autopilot never enabled', not an error."""
+    if not path.exists():
+        return {}, None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"cannot read {path}: {exc}"
+    try:
+        _ap_config.validate_config(raw)
+    except _ap_config.ConfigError as exc:
+        return None, str(exc)
+    return raw, None
+
+
+def _ap_resolve_verify_cwd(cwd_key: str, target: dict) -> tuple[str | None, str | None]:
+    """Resolve ``xkey_verify_cwd`` against a resolved target config (D-008).
+
+    ``""`` = auto (``workspace_root``: partition->partition, dual->game,
+    single/legacy->control). ``control``/``partition``/``parent`` and
+    ``<root name>`` are explicit selectors. Returns ``(path, None)`` or
+    ``(None, message)``; a typo fails closed (kind ``invalid-config``)."""
+    mode = target.get("mode")
+    roots = target.get("roots") or {}
+    if cwd_key == "":
+        return mw_common.workspace_root(target), None
+    if cwd_key == "control":
+        return target["control_root"], None
+    if cwd_key == "partition" and target.get("partition_root") is not None:
+        return target["partition_root"], None
+    if cwd_key == "parent" and target.get("parent_root") is not None:
+        return target["parent_root"], None
+    if cwd_key in roots:
+        return roots[cwd_key], None
+    valid = ["'' (auto)", "control"]
+    if target.get("partition_root") is not None:
+        valid += ["partition", "parent"]
+    valid += sorted(roots)
+    return None, (
+        f"invalid-config: xkey_verify_cwd {cwd_key!r} is not a valid root for "
+        f"{mode} mode (valid: {', '.join(valid)})"
+    )
+
+
+def _ap_verify_set(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """Locked read-modify-write of the four xkey keys (D-006/D-014).
+
+    The 13 keys are completed with defaults, then the new argv (and optional
+    timeout) is dry-run through the same renderer/cwd resolver the conductor
+    uses; any failure refuses to write. The write itself only goes through
+    ``autopilot.config.save_config``."""
+    action = "set"
+    # REMAINDER keeps the separator itself in the list (argparse passes the
+    # first `--` through for a REMAINDER positional), so drop exactly one
+    # leading separator before storing the argv.
+    raw_argv = [str(token) for token in (args.argv or [])]
+    if raw_argv and raw_argv[0] == "--":
+        raw_argv = raw_argv[1:]
+    argv = raw_argv
+    # REMAINDER swallows everything after `--`, so a misplaced --project would
+    # be stored as a literal token (mw.py:983-985 self-noted pitfall).
+    if "--project" in argv:
+        return _ap_verify_error(
+            action, "--project must appear before '--' (tokens after '--' are stored verbatim)"
+        )
+    if not argv:
+        return _ap_verify_error(
+            action, "no argv given after '--' (use `clear` to remove the command)"
+        )
+    changes: dict = {"xkey_verify_cmd": argv}
+    if args.timeout is not None:
+        if args.timeout < 1:
+            return _ap_verify_error(action, f"--timeout must be >= 1, got {args.timeout}")
+        changes["xkey_verify_timeout_s"] = args.timeout
+
+    path = _ap_config.config_path(project_dir)
+    lock = _ap_verify_lock_path(project_dir)
+    try:
+        mw_common.acquire_lock(
+            lock, retries=_AP_VERIFY_LOCK_RETRIES, base_delay=_AP_VERIFY_LOCK_BASE_DELAY
+        )
+    except RuntimeError as exc:
+        return _ap_verify_error(
+            action, f"{exc} (remove the stale lock if no writer is active)"
+        )
+    try:
+        raw, err = _ap_read_raw_config(path)
+        if err is not None:
+            return _ap_verify_error(
+                action,
+                f"existing _autopilot/config.json is unusable ({err}) — "
+                "fix or remove it before writing",
+            )
+        merged = {**_ap_config.default_config(), **(raw or {}), **changes}
+        try:
+            _ap_config.validate_config(merged)
+        except _ap_config.ConfigError as exc:
+            return _ap_verify_error(action, str(exc))
+        # Dry-run: the writer must resolve argv and cwd exactly like the
+        # conductor does (effective view: project layer + machine layer), so a
+        # bad placeholder/root never lands on disk. `set` never changes the cwd
+        # key, so the effective cwd read here is what the next tick will use.
+        try:
+            target = mw_common.load_target_config(project_dir)
+            rendered = mw_common.render_argv(merged["xkey_verify_cmd"], target)
+        except mw_common.TargetConfigError as exc:
+            return _ap_verify_error(action, f"{exc.kind}: {exc}")
+        try:
+            effective_values, _, _ = mw_common._autopilot_effective_values(project_dir)
+        except _ap_config.ConfigError as exc:  # fail-closed: never write over an unusable layer
+            return _ap_verify_error(action, f"effective config is unusable ({exc})")
+        cwd_key = str(effective_values.get("xkey_verify_cwd") or "")
+        cwd, cwd_err = _ap_resolve_verify_cwd(cwd_key, target)
+        if cwd_err is not None:
+            return _ap_verify_error(action, cwd_err)
+        written = _ap_config.save_config(project_dir, merged)
+    finally:
+        mw_common.release_lock(lock)
+
+    print(f"[mw autopilot verify set] {written}")
+    print(
+        "  xkey_verify_cmd: "
+        + json.dumps(merged["xkey_verify_cmd"], ensure_ascii=False)
+    )
+    print(f"  xkey_verify_timeout_s: {merged['xkey_verify_timeout_s']}")
+    print(f"  xkey_verify_cwd: {cwd_key or '(auto)'}")
+    print(f"  argv: {json.dumps(rendered, ensure_ascii=False)}")
+    print(f"  cwd: {cwd}")
+    return 0
+
+
+def _ap_verify_show(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """Read-only effective view (D-014): values + origins + expanded argv/cwd.
+
+    Never creates a directory or a file (no ``.mw/``, no lock)."""
+    path = _ap_config.config_path(project_dir)
+    values: dict = {}
+    origins: dict = {}
+    diagnostics: list[str] = []
+    argv: list[str] | None = None
+    cwd: str | None = None
+    error: str | None = None
+    try:
+        values, origins, diagnostics = mw_common._autopilot_effective_values(project_dir)
+    except _ap_config.ConfigError as exc:  # project layer is fail-closed
+        error = str(exc)
+    if error is None:
+        cmd = [str(part) for part in (values.get("xkey_verify_cmd") or [])]
+        try:
+            target = mw_common.load_target_config(project_dir)
+            argv = mw_common.render_argv(cmd, target)
+        except mw_common.TargetConfigError as exc:
+            error = f"{exc.kind}: {exc}"
+        else:
+            cwd, cwd_err = _ap_resolve_verify_cwd(
+                str(values.get("xkey_verify_cwd") or ""), target
+            )
+            if cwd_err is not None:
+                error = cwd_err
+
+    if getattr(args, "as_json", False):
+        payload = {
+            "path": str(path),
+            "exists": path.exists(),
+            "values": {key: values.get(key) for key in _AP_XKEY_KEYS} if not error else None,
+            "origins": {key: origins.get(key, "default") for key in _AP_XKEY_KEYS} if not error else None,
+            "argv": argv,
+            "cwd": cwd,
+            "diagnostics": diagnostics,
+            "error": error,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 1 if error else 0
+
+    suffix = " (missing — nothing configured)" if not path.exists() else " (exists)"
+    print(f"config: {path}{suffix}")
+    if error is not None:
+        print(f"Error: {error}")
+        return 1
+    for key in _AP_XKEY_KEYS:
+        value = values.get(key)
+        if key == "xkey_verify_cwd" and not value:
+            shown = "(auto)"
+        else:
+            shown = json.dumps(value, ensure_ascii=False)
+        print(f"{key}: {shown} [{origins.get(key, 'default')}]")
+    print(f"argv: {json.dumps(argv, ensure_ascii=False)}")
+    print(f"cwd: {cwd}")
+    for diagnostic in diagnostics:
+        print(f"diagnostics: {diagnostic}")
+    return 0
+
+
+def _ap_verify_clear(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """Remove only the four xkey keys; the file is never deleted (D-005).
+
+    No key present -> ``nothing configured``, no write, exit 0. Other keys
+    keep their values (the file stays partial rather than being default-filled,
+    so the byte footprint of an unrelated key never changes)."""
+    action = "clear"
+    path = _ap_config.config_path(project_dir)
+    if not path.exists():
+        print("[mw autopilot verify clear] nothing configured")
+        return 0
+    raw, err = _ap_read_raw_config(path)
+    if err is not None:
+        return _ap_verify_error(
+            action,
+            f"existing _autopilot/config.json is unusable ({err}) — "
+            "fix or remove it before writing",
+        )
+    if not any(key in (raw or {}) for key in _AP_XKEY_KEYS):
+        print("[mw autopilot verify clear] nothing configured")
+        return 0
+
+    lock = _ap_verify_lock_path(project_dir)
+    try:
+        mw_common.acquire_lock(
+            lock, retries=_AP_VERIFY_LOCK_RETRIES, base_delay=_AP_VERIFY_LOCK_BASE_DELAY
+        )
+    except RuntimeError as exc:
+        return _ap_verify_error(
+            action, f"{exc} (remove the stale lock if no writer is active)"
+        )
+    try:
+        raw, err = _ap_read_raw_config(path)
+        if err is not None:
+            return _ap_verify_error(
+                action,
+                f"existing _autopilot/config.json is unusable ({err}) — "
+                "fix or remove it before writing",
+            )
+        removed = [key for key in _AP_XKEY_KEYS if key in (raw or {})]
+        if not removed:
+            print("[mw autopilot verify clear] nothing configured")
+            return 0
+        for key in removed:
+            del raw[key]
+        _ap_config.save_config(project_dir, raw)
+    finally:
+        mw_common.release_lock(lock)
+    print(f"[mw autopilot verify clear] removed {', '.join(removed)} → {path}")
+    return 0
+
+
+def cmd_autopilot(args: argparse.Namespace) -> int:
+    """xkey verification channel: `mw autopilot verify set|show|clear`.
+
+    Errors print ``[mw autopilot verify <action>] Error: ...`` to stderr and
+    return 1; only `set`/`clear` write (both under the dedicated lock)."""
+    project_dir = pathlib.Path(args.project).resolve()
+    if args.autopilot_action != "verify":
+        print(
+            f"[mw autopilot] Error: unknown action {args.autopilot_action!r}",
+            file=sys.stderr,
+        )
+        return 1
+    if args.verify_action == "set":
+        return _ap_verify_set(args, project_dir)
+    if args.verify_action == "clear":
+        return _ap_verify_clear(args, project_dir)
+    return _ap_verify_show(args, project_dir)
+
+
 # ── Subcommand: pull-agentictask ───────────────────────────────────────────────
 
 def _git_short_commit(repo: pathlib.Path) -> str:
@@ -4732,6 +5027,39 @@ def _parse_args() -> argparse.Namespace:
     model_show_p = model_sub.add_parser("show", help="Print the configured roles and the effective resolution")
     model_show_p.add_argument("--project", required=True, help="Project directory")
 
+    autopilot_p = sub.add_parser(
+        "autopilot",
+        help="Autopilot configuration (xkey verification channel)",
+    )
+    autopilot_sub = autopilot_p.add_subparsers(dest="autopilot_action", required=True)
+    verify_p = autopilot_sub.add_parser(
+        "verify", help="Per-project xkey verification command (set/show/clear)"
+    )
+    verify_sub = verify_p.add_subparsers(dest="verify_action", required=True)
+    verify_set_p = verify_sub.add_parser(
+        "set", help="Set the verification argv (dry-run validated under the config lock)"
+    )
+    verify_set_p.add_argument("--project", required=True, help="Project directory")
+    verify_set_p.add_argument(
+        "--timeout", type=int, default=None, metavar="SEC",
+        help="Verification subprocess timeout in seconds (xkey_verify_timeout_s, >= 1)",
+    )
+    verify_set_p.add_argument(
+        "argv", nargs=argparse.REMAINDER, metavar="ARGV",
+        help="Verification argv after '--' (stored verbatim, no shell)",
+    )
+    verify_show_p = verify_sub.add_parser(
+        "show", help="Print effective values, origins and the expanded argv/cwd"
+    )
+    verify_show_p.add_argument("--project", required=True, help="Project directory")
+    verify_show_p.add_argument(
+        "--json", action="store_true", dest="as_json", help="Emit machine-readable JSON"
+    )
+    verify_clear_p = verify_sub.add_parser(
+        "clear", help="Remove the four xkey keys (never deletes the file)"
+    )
+    verify_clear_p.add_argument("--project", required=True, help="Project directory")
+
     init_p = sub.add_parser("init", help="Initialize project and install Extension + framework")
     init_p.add_argument("--project", required=True)
     init_p.add_argument("--no-framework", action="store_true",
@@ -4915,6 +5243,7 @@ if __name__ == "__main__":
         "target": cmd_target,
         "partition": cmd_partition,
         "model": cmd_model,
+        "autopilot": cmd_autopilot,
         "init": cmd_init,
         "pull-agentictask": cmd_pull_agentictask,
         "push-agentictask": cmd_push_agentictask,
