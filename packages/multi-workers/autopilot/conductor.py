@@ -48,7 +48,7 @@ if str(_PARENT) not in sys.path:
 
 import mw_common  # noqa: E402  (path bootstrapped above)
 
-from autopilot import advance, audit_evidence, closure, config, dispatch, gates, roadmap, state, timeline  # noqa: E402
+from autopilot import advance, audit_evidence, closure, config, dispatch, effective_config, gates, roadmap, state, timeline  # noqa: E402
 
 # ── Phase machine constants (T-10) ──────────────────────────────────────────
 
@@ -80,6 +80,29 @@ def goal_mtime_ns(project_root: pathlib.Path) -> int | None:
         return os.stat(goal_path(project_root)).st_mtime_ns
     except OSError:
         return None
+
+
+# ── Effective (layered) config ────────────────────────────────────────────────
+
+def _load_effective_config(project_root: pathlib.Path) -> dict:
+    """Layered effective config for the conductor (T-06, design D-003).
+
+    Returns the complete 13-key view. The project layer is loaded through
+    ``config.cached_load`` — the conductor's single config seam, kept
+    monkeypatchable because the per-tick fault tolerance (and its regression
+    test) relies on a raised ``ConfigError`` becoming a ``config`` timeline
+    event — over the built-in defaults, and the four machine-overridable xkey
+    keys resolved by :mod:`autopilot.effective_config` win wherever the machine
+    layer is the origin (the project value is absent or empty). A hand-written
+    partial project file therefore never KeyErrors a conductor read. Strictly
+    read-only: no directory is ever created."""
+    values = config.default_config()
+    values.update(config.cached_load(project_root))
+    effective = effective_config.load_effective(project_root)
+    for key in effective_config.EFFECTIVE_KEYS:
+        if effective.origins.get(key) == "machine":
+            values[key] = effective.values[key]
+    return values
 
 
 # ── Locks (D-113) ─────────────────────────────────────────────────────────────
@@ -166,7 +189,7 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
     (D-102). Phase transitions go ONLY through advance.advance() ->
     advance_phase.py (AC-005); goal.md is never written here."""
     project_root = pathlib.Path(project_root)
-    cfg = config.cached_load(project_root)
+    cfg = _load_effective_config(project_root)
 
     # §5.1 F: consume answered gates first — a corrupt answer file skips
     # the whole tick (policy per gates.enumerate docstring).
@@ -229,7 +252,7 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
         # once); once the proposal lands this stage is a no-op and T-06's stage
         # below takes over (an approved ticket with a proposal walks
         # applied→verified→closed this very tick, AC-005/006/007).
-        _xkey_proposal_stage(project_root, st, rows)
+        _xkey_proposal_stage(project_root, st, rows, cfg)
         _xkey_apply_stage(project_root, st, status_of, cfg)
 
     in_flight_keys = {
@@ -1871,7 +1894,7 @@ def _done_transaction(
         )
         _record_advance_result(
             project_root, st, key, "verify->done", code, err,
-            config.cached_load(project_root),
+            _load_effective_config(project_root),
         )
         if code != 0:
             # Failure scene: declare the rejected draft so a later round may
@@ -2032,8 +2055,8 @@ def tick(project_root: pathlib.Path, st: ConductorState) -> str:
         # 1. Beat first — liveness even when disabled (AC-019).
         st.timeline.append("beat")
 
-        # 2. Enabled gate (mtime-cached config).
-        cfg = config.cached_load(project_root)
+        # 2. Enabled gate (layered effective config).
+        cfg = _load_effective_config(project_root)
         if not cfg["enabled"] or cfg["paused"]:
             return "idle"
 
@@ -2402,6 +2425,93 @@ def _xkey():
     return xkey
 
 
+# The xkey channel has two roots (T-06, design D-008). The *coordination*
+# root is the control/project root (ledger, tickets, evidence, runs, timeline)
+# and never moves. The *workspace* root is where the verified artifacts and the
+# worker cwd live: partition -> partition root, dual -> game root,
+# single/legacy -> control root. The five workspace-relative anchors in this
+# module plus the S4 verify cwd resolve against it; changing only one of them
+# lets apply land on the wrong root (missing or same-named wrong file) and the
+# verification then can never go green — hence "re-anchor the family together".
+
+_CWD_SELECTOR_ORDER = ("control", "game", "engine", "partition", "parent")
+
+
+def resolve_verify_cwd(selector: object, config: dict) -> str:
+    """Resolve ``xkey_verify_cwd`` against a resolved target config (D-008).
+
+    ``""`` = auto = ``mw_common.workspace_root(config)`` (partition ->
+    partition root, dual -> game root, single/legacy -> control root). Any
+    other selector must name a root configured for the mode: one of
+    control/game/engine/partition/parent with a non-None value, or a
+    ``partition.roots`` name. An unknown selector (or a configured-but-None
+    root such as ``engine`` in a dual project without an engine) fails closed
+    with kind ``invalid-config`` (no new kind) so callers refuse to guess a
+    root and the verification never runs. The valid set is the same one the
+    write side dry-runs against, so "written => consumable" holds."""
+    values: dict[str, object] = {
+        "control": config.get("control_root"),
+        "game": config.get("game_root"),
+        "engine": config.get("engine_root"),
+        "partition": config.get("partition_root"),
+        "parent": config.get("parent_root"),
+    }
+    roots = config.get("roots")
+    if isinstance(roots, dict):
+        for name, path in roots.items():
+            if str(name) not in values:  # the fixed selectors win over roots
+                values[str(name)] = path
+    valid = [
+        name
+        for name in (
+            *_CWD_SELECTOR_ORDER,
+            *sorted(n for n in values if n not in _CWD_SELECTOR_ORDER),
+        )
+        if values.get(name) not in (None, "")
+    ]
+    if selector == "":
+        return str(mw_common.workspace_root(config))
+    if not isinstance(selector, str):
+        raise mw_common.TargetConfigError(
+            "invalid-config",
+            f"xkey_verify_cwd: expected one of {', '.join(valid)}, got {selector!r}",
+        )
+    if selector in values and values.get(selector) not in (None, ""):
+        return str(values[selector])
+    raise mw_common.TargetConfigError(
+        "invalid-config",
+        f"xkey_verify_cwd: unknown root selector {selector!r} (valid: {', '.join(valid)})",
+    )
+
+
+def _xkey_target_root(
+    project_root: pathlib.Path,
+    cfg: dict,
+    target_config: dict | None = None,
+) -> pathlib.Path:
+    """Workspace root for xkey target files + the verify cwd (T-06, D-008).
+
+    Loads the target config when the caller has not already done so and
+    resolves ``xkey_verify_cwd``. An unusable target.yml propagates its own
+    ``TargetConfigError``; an unknown selector carries kind ``invalid-config``.
+    Callers fail closed (no target write, no verify) on either."""
+    if target_config is None:
+        target_config = mw_common.load_target_config(project_root)
+    return pathlib.Path(
+        resolve_verify_cwd(cfg.get("xkey_verify_cwd", ""), target_config)
+    )
+
+
+def _xkey_verify_argv(cfg: dict, target_config: dict) -> list[str]:
+    """Expanded verify argv (AC-014) for a resolved target config.
+
+    ``render_argv`` fails closed (kind ``missing-field``) on an undefined or
+    embedded placeholder, so an unusable command can never reach a ticket or a
+    subprocess."""
+    raw = [str(part) for part in (cfg.get("xkey_verify_cmd") or [])]
+    return mw_common.render_argv(raw, target_config) if raw else []
+
+
 def _xkey_ticket_relpath(request_id: str) -> str:
     """Ticket carrier path relative to the project root (D-003/D-004).
 
@@ -2465,9 +2575,23 @@ def _xkey_aggregate(
     unresolvable marker, or an owner that is not terminal, only leaves an
     escalation ledger row and zero tickets (AC-002)."""
     xkey = _xkey()
-    root = str(project_root)
+    root = str(project_root)  # coordination root: ledger/tickets/evidence
     records = _xkey_below_records(project_root)
     if not records:
+        return
+    try:
+        target_config = mw_common.load_target_config(project_root)
+        target_root = _xkey_target_root(project_root, cfg, target_config)
+        verify_argv = _xkey_verify_argv(cfg, target_config)
+    except mw_common.TargetConfigError as exc:
+        # Fail closed: an unusable target.yml or an unknown xkey_verify_cwd
+        # must not fall back to the control root (that would silently edit a
+        # same-named file in the wrong workspace). No ticket, no gate, no
+        # target touch.
+        st.timeline.append(
+            "config",
+            detail=f"xkey workspace root unusable ({exc.kind}): {exc}",
+        )
         return
     ledger = xkey.ledger_load(root)
     rows = [row for row in ledger.get("rows", []) if isinstance(row, dict)]
@@ -2510,7 +2634,7 @@ def _xkey_aggregate(
                     _xkey_ticket_relpath(request_id), file, test_id,
                 )
             continue
-        block = xkey.locate_frozen_block(root, file, test_id)
+        block = xkey.locate_frozen_block(str(target_root), file, test_id)
         block_sha = ""
         if isinstance(block, dict):
             block_sha = str(block.get("old_block_sha256") or "")
@@ -2573,10 +2697,14 @@ def _xkey_aggregate(
                 # T-06 anchors: the whole-file sha256 at ticket creation is the
                 # zero-residue reference the verify-failed rollback must equal;
                 # one `below` verdict is by construction one red before the fix.
-                "target_file_sha256": _xkey_file_sha256(project_root, file),
+                "target_file_sha256": _xkey_file_sha256(target_root, file),
                 "red_before": 1,
                 "verification": {
+                    # Raw template kept for audit; argv/cwd are the values the
+                    # conductor will actually execute (D-008, AC-014).
                     "command": list(cfg.get("xkey_verify_cmd", [])),
+                    "argv": list(verify_argv),
+                    "cwd": str(target_root),
                     "timeout_s": int(cfg.get("xkey_verify_timeout_s", 1800)),
                 },
                 "registration": registration,
@@ -2748,12 +2876,22 @@ def _xkey_proposal_stage(
     project_root: pathlib.Path,
     st: ConductorState,
     rows: list[dict],
+    cfg: dict | None = None,
 ) -> None:
     """T-08 mount: dispatch the proposal worker for approved tickets with no
     proposal on disk. Runs before ``_xkey_apply_stage`` in the same
     ``cfg["xkey_repair"]`` gate; per-ticket exceptions are isolated so a tick
     never dies and the ticket keeps its last good state."""
     xkey = _xkey()
+    cfg = cfg if cfg is not None else _load_effective_config(project_root)
+    try:
+        target_root = _xkey_target_root(project_root, cfg)
+    except mw_common.TargetConfigError as exc:
+        st.timeline.append(
+            "config",
+            detail=f"xkey workspace root unusable ({exc.kind}): {exc}",
+        )
+        return
     try:
         tickets = xkey.tickets_iter(str(project_root))
     except Exception as exc:  # noqa: BLE001 — a corrupt ticket is skipped, not fatal
@@ -2763,7 +2901,7 @@ def _xkey_proposal_stage(
         if not isinstance(ticket, dict):
             continue
         try:
-            _xkey_proposal_one(project_root, st, xkey, ticket, rows)
+            _xkey_proposal_one(project_root, st, xkey, ticket, rows, target_root)
         except Exception as exc:  # noqa: BLE001 — per-ticket isolation
             st.timeline.append(
                 "config", key=ticket.get("owner_key"),
@@ -2848,6 +2986,7 @@ def _xkey_proposal_one(
     xkey,
     ticket: dict,
     rows: list[dict],
+    target_root: pathlib.Path,
 ) -> None:
     """One ticket: dispatch at most one proposal worker attempt this tick.
 
@@ -2891,7 +3030,7 @@ def _xkey_proposal_one(
     loop = f"xkey-proposal:{request_id}"
     result = dispatch.dispatch(
         project_root, source_key, stem, "phase-writer",
-        _xkey_proposal_prompt(project_root, ticket),
+        _xkey_proposal_prompt(project_root, ticket, target_root),
         loop=loop, attempt=attempt, timeline=st.timeline,
     )
     ticket["proposal_task_key"] = result.task_key
@@ -2917,7 +3056,9 @@ def _xkey_proposal_one(
         )
 
 
-def _xkey_proposal_prompt(project_root: pathlib.Path, ticket: dict) -> str:
+def _xkey_proposal_prompt(
+    project_root: pathlib.Path, ticket: dict, target_root: pathlib.Path
+) -> str:
     """Self-contained proposal-worker prompt (T-08, D-005 path (b)).
 
     The worker only ever writes ``evidence/<request_id>/proposal.md`` — the
@@ -2942,7 +3083,9 @@ def _xkey_proposal_prompt(project_root: pathlib.Path, ticket: dict) -> str:
         allowed_text = "(not recorded)"
     old_sha = str(frozen.get("old_block_sha256") or "(not recorded)")
     ticket_abs = project_root / _xkey_ticket_relpath(request_id)
-    target_abs = project_root / file_rel if file_rel else project_root
+    # Workspace-relative target: anchored to the resolved workspace root, not
+    # the coordination root (T-06, D-008).
+    target_abs = target_root / file_rel if file_rel else target_root
     proposal_abs = (
         _xkey_evidence_root(project_root, request_id) / _XKEY_PROPOSAL_NAME
     )
@@ -3378,12 +3521,16 @@ def _xkey_apply_block(
     frozen: dict,
     proposal: dict,
     target: pathlib.Path,
+    target_root: pathlib.Path,
 ) -> dict | None:
     """S3: snapshot, then ``xkey.apply_block_replace`` (atomic, drift-refusing).
 
-    Returns ``{"run_dir", "old_file_sha256", "new_file_sha256",
-    "new_block_sha256"}`` or ``None`` (a fail-closed exit was recorded)."""
-    root = str(project_root)
+    ``target_root`` is the resolved workspace root the ticket's relative file
+    is anchored to (T-06, D-008); the run snapshot stays under the
+    coordination root. Returns ``{"run_dir", "old_file_sha256",
+    "new_file_sha256", "new_block_sha256"}`` or ``None`` (a fail-closed exit
+    was recorded)."""
+    root = str(project_root)  # coordination root: ticket/ledger writes
     runs_root = _xkey_evidence_root(project_root, request_id) / "runs"
     current_sha = _xkey_sha256_bytes(target.read_bytes())
     replay = _xkey_replay_run(runs_root, current_sha)
@@ -3403,7 +3550,7 @@ def _xkey_apply_block(
         (run_dir / _XKEY_BAK_NAME).write_bytes(old_bytes)
         try:
             new_block_sha = xkey.apply_block_replace(
-                root, ticket, proposal["new_bytes"]
+                str(target_root), ticket, proposal["new_bytes"]
             )
         except xkey.XKeyError as exc:
             _xkey_stage_fail(
@@ -3455,11 +3602,27 @@ def _xkey_run_verify(
     applied: dict,
     cfg: dict,
 ) -> dict | None:
-    """S4: targeted rerun, red before→after; not green ⇒ rollback + no close."""
-    root = str(project_root)
-    verify_cmd = [str(part) for part in (cfg.get("xkey_verify_cmd") or [])]
+    """S4: targeted rerun, red before→after; not green ⇒ rollback + no close.
+
+    The subprocess cwd is the resolved *workspace* root (T-06, D-008: partition
+    -> partition, dual -> game, single/legacy -> control) and the argv is the
+    expanded template; ticket/ledger writes stay on the coordination root."""
+    root = str(project_root)  # coordination root: ticket/ledger writes
     timeout_s = _xkey_int(cfg.get("xkey_verify_timeout_s"), 1800)
     red_before = _xkey_int(ticket.get("red_before"), 1)
+    try:
+        target_config = mw_common.load_target_config(project_root)
+        workspace = _xkey_target_root(project_root, cfg, target_config)
+        verify_cmd = _xkey_verify_argv(cfg, target_config)
+    except mw_common.TargetConfigError as exc:
+        # Fail closed without executing anything: an unusable target.yml or an
+        # unknown xkey_verify_cwd selector must never fall back to a guessed
+        # root (which would run the suite in the wrong workspace).
+        _xkey_verify_failed(
+            project_root, st, xkey, ticket, request_id, target, applied,
+            red_before, None, f"xkey verify cwd unusable ({exc.kind}): {exc}",
+        )
+        return None
     if not verify_cmd:
         _xkey_verify_failed(
             project_root, st, xkey, ticket, request_id, target, applied,
@@ -3468,7 +3631,8 @@ def _xkey_run_verify(
         return None
     try:
         result = xkey.run_verification(
-            verify_cmd, cwd=root, run_dir=str(applied["run_dir"]), timeout=timeout_s,
+            verify_cmd, cwd=str(workspace),
+            run_dir=str(applied["run_dir"]), timeout=timeout_s,
         )
     except Exception as exc:  # noqa: BLE001 — fail-closed, never close on doubt
         _xkey_verify_failed(
@@ -3647,8 +3811,19 @@ def _xkey_apply_one(
             "ticket carries no frozen_block (fail-closed)",
         )
         return
+    try:
+        target_root = _xkey_target_root(project_root, cfg)
+    except mw_common.TargetConfigError as exc:
+        # Fail closed before touching any file: an unusable target.yml or an
+        # unknown xkey_verify_cwd selector must not silently anchor the target
+        # to the control root (same-named wrong file) or run the verify.
+        _xkey_stage_fail(
+            project_root, st, xkey, ticket, request_id, "boundary_violation",
+            f"xkey workspace root unusable ({exc.kind}): {exc}",
+        )
+        return
     target_rel = _xkey_norm_path(frozen.get("file"))
-    target = pathlib.Path(project_root) / target_rel
+    target = target_root / target_rel
     if not target_rel or not target.is_file():
         _xkey_stage_fail(
             project_root, st, xkey, ticket, request_id, "boundary_violation",
@@ -3678,7 +3853,8 @@ def _xkey_apply_one(
             )
             return
         applied = _xkey_apply_block(
-            project_root, st, xkey, ticket, request_id, frozen, proposal, target
+            project_root, st, xkey, ticket, request_id, frozen, proposal, target,
+            target_root,
         )
         if applied is None:
             return
@@ -3972,7 +4148,7 @@ def main(argv: list[str] | None = None) -> int:
             tick(project_root, st)  # act-then-sleep: first tick before any wait
             interval = args.poll_interval
             if interval is None:
-                interval = config.cached_load(project_root)["poll_interval_sec"]
+                interval = _load_effective_config(project_root)["poll_interval_sec"]
             interval = max(0.1, float(interval))
             deadline = time.monotonic() + interval
             while not stop.is_set() and time.monotonic() < deadline:

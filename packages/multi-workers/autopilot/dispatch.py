@@ -44,6 +44,7 @@ if str(_PARENT) not in sys.path:
 import mw_common  # noqa: E402  (path bootstrapped above)
 
 from autopilot import config as autopilot_config  # noqa: E402
+from autopilot import effective_config  # noqa: E402
 from autopilot import timeline as timeline_mod  # noqa: E402
 
 # ── Typed registry (D-107) ────────────────────────────────────────────────────
@@ -226,12 +227,21 @@ def _read_scope_caps(project_root: pathlib.Path) -> tuple[int | None, int | None
     try:
         if not autopilot_config.config_path(project_root).exists():
             return None, None
-        cfg = autopilot_config.load_config(project_root)
+        # Layered effective read (T-06, D-003): strictly read-only, no
+        # directory is created. Presence is taken from the project layer's raw
+        # keys: the effective layer always materialises the built-in defaults,
+        # so it cannot express "this field was never configured" — an omitted
+        # cap must stay omitted (VC-008: a hand-written partial config renders
+        # byte-identically to the pre-cap renderer). The value itself comes from
+        # the layered read. The caps are not machine-overridable, so the machine
+        # layer can only contribute diagnostics here.
+        project_layer = autopilot_config.load_config(project_root)
+        effective = effective_config.load_effective(project_root)
     except Exception:  # invalid/unreadable config must not break dispatching
         return None, None
     caps: list[int | None] = []
     for field in ("l2_read_file_cap", "l2_read_byte_cap"):
-        value = cfg.get(field)
+        value = effective.values.get(field) if field in project_layer else None
         caps.append(
             int(value)
             if isinstance(value, int) and not isinstance(value, bool) and value > 0
