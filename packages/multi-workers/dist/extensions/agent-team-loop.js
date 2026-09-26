@@ -20870,6 +20870,9 @@ function configPath(projectDir) {
 function gatesLockPath(projectDir) {
   return path29.join(projectDir, ".mw", "gates.lock");
 }
+function configLockPath(projectDir) {
+  return path29.join(projectDir, ".mw", "autopilot-config.lock");
+}
 var DEFAULT_CONFIG = {
   enabled: false,
   paused: false,
@@ -20882,13 +20885,15 @@ var DEFAULT_CONFIG = {
   advance_stall_ticks: 5,
   xkey_repair: false,
   xkey_verify_cmd: [],
-  xkey_verify_timeout_s: 1800
+  xkey_verify_timeout_s: 1800,
+  xkey_verify_cwd: ""
 };
 function freshDefaults() {
   return { ...DEFAULT_CONFIG, xkey_verify_cmd: [...DEFAULT_CONFIG.xkey_verify_cmd] };
 }
 var BOOL_FIELDS = ["enabled", "paused", "xkey_repair"];
 var LIST_FIELDS = ["xkey_verify_cmd"];
+var STR_FIELDS = ["xkey_verify_cwd"];
 var INT_RANGES = {
   poll_interval_sec: [1, 5],
   max_parallel_keys: [2, null],
@@ -20899,6 +20904,20 @@ var INT_RANGES = {
   advance_stall_ticks: [1, 50],
   xkey_verify_timeout_s: [1, null]
 };
+var INT_LITERAL_RE = /^-?(?:0|[1-9]\d*)$/;
+var IntegerLiteralError = class extends Error {
+  constructor(field, literal) {
+    super(`invalid _autopilot/config.json: ${field}: expected an integer literal, got ${literal}`);
+    this.name = "IntegerLiteralError";
+  }
+};
+function configReviver(key, value, context) {
+  if (typeof value !== "number" || !Number.isInteger(value)) return value;
+  if (!Object.hasOwn(INT_RANGES, key)) return value;
+  const source = context?.source;
+  if (source !== void 0 && !INT_LITERAL_RE.test(source)) throw new IntegerLiteralError(key, source);
+  return value;
+}
 function validateConfigData(data) {
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
     return ["config root must be a JSON object"];
@@ -20918,6 +20937,11 @@ function validateConfigData(data) {
     const value = cfg[field];
     if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item !== "")) {
       errors.push(`${field}: expected a list of non-empty strings, got ${JSON.stringify(value)}`);
+    }
+  }
+  for (const field of STR_FIELDS) {
+    if (field in cfg && typeof cfg[field] !== "string") {
+      errors.push(`${field}: expected string, got ${JSON.stringify(cfg[field])}`);
     }
   }
   for (const [field, [lo, hi]] of Object.entries(INT_RANGES)) {
@@ -20943,8 +20967,9 @@ function readConfig(projectDir) {
   }
   let data;
   try {
-    data = JSON.parse(raw);
+    data = JSON.parse(raw, configReviver);
   } catch (err) {
+    if (err instanceof IntegerLiteralError) return { ok: false, error: err.message };
     return { ok: false, error: `cannot parse ${file}: ${String(err)}` };
   }
   const errors = validateConfigData(data);
@@ -20953,6 +20978,7 @@ function readConfig(projectDir) {
   const boolOf = (name) => typeof cfg[name] === "boolean" ? cfg[name] : DEFAULT_CONFIG[name];
   const intOf = (name) => typeof cfg[name] === "number" ? cfg[name] : DEFAULT_CONFIG[name];
   const listOf = (name) => Array.isArray(cfg[name]) ? cfg[name] : [...DEFAULT_CONFIG[name]];
+  const strOf = (name) => typeof cfg[name] === "string" ? cfg[name] : DEFAULT_CONFIG[name];
   const merged = {
     enabled: boolOf("enabled"),
     paused: boolOf("paused"),
@@ -20965,7 +20991,8 @@ function readConfig(projectDir) {
     advance_stall_ticks: intOf("advance_stall_ticks"),
     xkey_repair: boolOf("xkey_repair"),
     xkey_verify_cmd: listOf("xkey_verify_cmd"),
-    xkey_verify_timeout_s: intOf("xkey_verify_timeout_s")
+    xkey_verify_timeout_s: intOf("xkey_verify_timeout_s"),
+    xkey_verify_cwd: strOf("xkey_verify_cwd")
   };
   return { ok: true, config: merged };
 }
@@ -20984,7 +21011,8 @@ function saveConfig(projectDir, config) {
     advance_stall_ticks: config.advance_stall_ticks,
     xkey_repair: config.xkey_repair,
     xkey_verify_cmd: [...config.xkey_verify_cmd],
-    xkey_verify_timeout_s: config.xkey_verify_timeout_s
+    xkey_verify_timeout_s: config.xkey_verify_timeout_s,
+    xkey_verify_cwd: config.xkey_verify_cwd
   };
   const file = configPath(projectDir);
   try {
@@ -22091,16 +22119,16 @@ function registerAutopilotCommands(pi, projectDir, deps = {}) {
           cmdTimeline(pi, ctx, projectDir, rest);
           return;
         case "enable":
-          cmdSetEnabled(ctx, projectDir, true, deps);
+          await cmdSetEnabled(ctx, projectDir, true, deps);
           return;
         case "disable":
-          cmdSetEnabled(ctx, projectDir, false, deps);
+          await cmdSetEnabled(ctx, projectDir, false, deps);
           return;
         case "pause":
-          cmdSetPaused(ctx, projectDir, true);
+          await cmdSetPaused(ctx, projectDir, true, deps);
           return;
         case "resume":
-          cmdSetPaused(ctx, projectDir, false);
+          await cmdSetPaused(ctx, projectDir, false, deps);
           return;
         case "roadmap":
           cmdRoadmap(ctx, projectDir);
@@ -22222,13 +22250,28 @@ function renderTimelineText(query, mark) {
   if (query.skipped > 0) lines.push(`${query.skipped} unparsable line(s) skipped`);
   return lines.join("\n");
 }
-async function cmdSetEnabled(ctx, projectDir, enabled, deps) {
-  const cfg = readConfig(projectDir);
-  if (!cfg.ok) {
-    ctx.ui.notify(`[autopilot] ${cfg.error}`, "error");
-    return;
+var DEFAULT_CONFIG_LOCK_OPTS = { retries: 6, baseDelayMs: 20 };
+async function saveConfigLocked(projectDir, mutate, lockOpts) {
+  const lockFile = configLockPath(projectDir);
+  let release;
+  try {
+    release = await acquireLock(lockFile, { ...DEFAULT_CONFIG_LOCK_OPTS, ...lockOpts });
+  } catch (err) {
+    return {
+      ok: false,
+      error: `could not take ${lockFile} (another autopilot writer holds it; delete the file if it is stale): ${err instanceof Error ? err.message : String(err)}`
+    };
   }
-  const saved = saveConfig(projectDir, { ...cfg.config, enabled });
+  try {
+    const cfg = readConfig(projectDir);
+    if (!cfg.ok) return { ok: false, error: cfg.error };
+    return saveConfig(projectDir, mutate(cfg.config));
+  } finally {
+    release();
+  }
+}
+async function cmdSetEnabled(ctx, projectDir, enabled, deps) {
+  const saved = await saveConfigLocked(projectDir, (config) => ({ ...config, enabled }), deps.lockOpts);
   if (!saved.ok) {
     ctx.ui.notify(`[autopilot] ${saved.error}`, "error");
     return;
@@ -22269,13 +22312,8 @@ async function defaultEnsureMwRunning(projectDir) {
   }
   return startMw(projectDir) ? "started" : "spawn-failed";
 }
-function cmdSetPaused(ctx, projectDir, paused) {
-  const cfg = readConfig(projectDir);
-  if (!cfg.ok) {
-    ctx.ui.notify(`[autopilot] ${cfg.error}`, "error");
-    return;
-  }
-  const saved = saveConfig(projectDir, { ...cfg.config, paused });
+async function cmdSetPaused(ctx, projectDir, paused, deps) {
+  const saved = await saveConfigLocked(projectDir, (config) => ({ ...config, paused }), deps.lockOpts);
   if (!saved.ok) {
     ctx.ui.notify(`[autopilot] ${saved.error}`, "error");
     return;

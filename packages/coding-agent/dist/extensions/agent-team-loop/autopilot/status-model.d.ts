@@ -15,7 +15,7 @@
  *     frontmatter YAML subset, status enum, seq-ordered directory scan)
  *   - timeline.jsonl + .1/.2 rotations → autopilot/timeline.py (query_events
  *     watermark / ev_filter / pruned semantics, D-109)
- *   - _autopilot/config.json           → autopilot/config.py (12 fields,
+ *   - _autopilot/config.json           → autopilot/config.py (13 fields,
  *     D-110; present-but-invalid fails closed, missing file = defaults)
  *   - rounds derivation                → autopilot/state.py used_rounds
  *     (distinct attempt per loop label; a missing attempt label degrades to
@@ -37,6 +37,11 @@ export declare function timelinePath(projectDir: string): string;
 export declare function configPath(projectDir: string): string;
 /** `.mw/gates.lock` — the O_CREAT|O_EXCL gate answer lock (D-105). */
 export declare function gatesLockPath(projectDir: string): string;
+/** `.mw/autopilot-config.lock` — the O_CREAT|O_EXCL lock guarding the
+ * config.json read-modify-write (mw-autopilot-verify-cli D-006). Same path
+ * family and protocol as the other `.mw/` locks; the Python writer takes the
+ * byte-identical path (plan §2.2), so the two sides are mutually exclusive. */
+export declare function configLockPath(projectDir: string): string;
 export interface AutopilotConfig {
     enabled: boolean;
     paused: boolean;
@@ -58,8 +63,19 @@ export interface AutopilotConfig {
     xkey_verify_cmd: string[];
     /** Conductor verification-subprocess timeout in seconds (>= 1). */
     xkey_verify_timeout_s: number;
+    /** Workspace-root selector for xkey verification (conductor-resolved).
+     * "" = auto (workspace_root). The schema only requires a string; the
+     * root-name validity is resolved at parse time (plan §2.2). */
+    xkey_verify_cwd: string;
 }
 export declare const DEFAULT_CONFIG: AutopilotConfig;
+export declare const BOOL_FIELDS: readonly ["enabled", "paused", "xkey_repair"];
+/** field → list of non-empty strings — identical to config.py _LIST_FIELDS. */
+export declare const LIST_FIELDS: readonly ["xkey_verify_cmd"];
+/** Plain string fields — identical to config.py _STRING_FIELDS. */
+export declare const STR_FIELDS: readonly ["xkey_verify_cwd"];
+/** field → [min, max|null] — identical to config.py _INT_RANGES. */
+export declare const INT_RANGES: Record<string, [number, number | null]>;
 /** Validate a raw config object exactly like config.py validate_config:
  * unknown fields and out-of-range values fail closed, naming every offender.
  * Bool fields are checked before the int rules (JSON booleans would

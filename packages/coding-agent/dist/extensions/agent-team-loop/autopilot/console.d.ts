@@ -33,7 +33,9 @@
  *   /autopilot roadmap                stage summary view
  */
 import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
+import { type LockOptions } from "../shared/file-lock.ts";
 import { type readMonitorState } from "./monitor.ts";
+import { type AutopilotConfig } from "./status-model.ts";
 /** Session entry type persisting this window's timeline watermark (D-109
  * seq/watermark protocol — same mechanism as WATCH_ENTRY_TYPE). */
 export declare const AUTOPILOT_SEEN_ENTRY_TYPE = "agent-team-loop:autopilot-seen";
@@ -52,8 +54,27 @@ export interface AutopilotConsoleDeps {
     /** Auto-show the monitor for autopilot-enabled projects on session start
      * (default true). Set false to opt out (tests / embeddings). */
     autoMonitor?: boolean;
+    /** Lock retry budget for the config read-modify-write handlers. Default:
+     * retries=6, baseDelayMs=20 (identical to the Python writer, worst case
+     * ~1.26s). Tests inject a tiny budget. */
+    lockOpts?: LockOptions;
 }
 export declare function registerAutopilotCommands(pi: ExtensionAPI, projectDir: string, deps?: AutopilotConsoleDeps): void;
+/** Lock retry budget frozen by plan §2.2 — identical to the Python writer
+ * (`mw_common.acquire_lock(retries=6, base_delay=0.02)`). */
+export declare const DEFAULT_CONFIG_LOCK_OPTS: LockOptions;
+/** Read-modify-write config.json under `.mw/autopilot-config.lock` (D-006).
+ * The whole read → mutate → atomic write runs inside the lock: two windows (or
+ * a window and the `mw autopilot verify` CLI) can otherwise interleave and roll
+ * each other back. A lock that cannot be taken fails closed — the caller
+ * reports the error and NOTHING is written. The lock deliberately lives here,
+ * not inside `saveConfig` (the primitive is not re-entrant, D-006). */
+export declare function saveConfigLocked(projectDir: string, mutate: (config: AutopilotConfig) => AutopilotConfig, lockOpts?: LockOptions): Promise<{
+    ok: true;
+} | {
+    ok: false;
+    error: string;
+}>;
 /** Forget the session-level suppression. The test suite uses it so one case's
  * `/autopilot monitor off` cannot leak into the next (a production session is
  * one process lifetime; a future session_shutdown hook can call this too). */

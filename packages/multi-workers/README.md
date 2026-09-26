@@ -235,6 +235,48 @@ toolchain 模板不只是注入 task.md 的文档——PM 直执时用 `mw ue-to
 - 新增 timeline 事件类型：`resume`（人工 approve 后恢复）、`l3-no-verdict`（reviewer 未交裁决）。
 - PM 窗口底部监控面板会展示 tick 新鲜度 / 槽位 / 每 key 相位与状态 / 停滞连击与最近错误，并在 `stalled` 行给出 `/autopilot gate <id> approve|reject` 处置命令；面板的连击派生与 conductor 守卫同口径（只有**同一 edge** 的成功才清除，相邻边界的成功既不打断也不计入），唯一差异是面板会保留 `stalled`/`gate-created` 之后的那一轮连击以便展示。
 
+## xkey 验证命令（mw autopilot verify）
+
+`mw autopilot verify` 是 conductor 的 xkey 验证通道配置入口（四个键：`xkey_verify_cmd` / `xkey_verify_cwd` / `xkey_verify_timeout_s` / `xkey_repair`）。CLI 是项目文件的写者（锁内 read-modify-write）。
+
+<!-- mw-autopilot-verify:help -->
+```text
+usage: mw.py autopilot verify [-h] {set,show,clear} ...
+
+positional arguments:
+  {set,show,clear}
+    set             Set the verification argv (dry-run validated under the
+                    config lock)
+    show            Print effective values, origins and the expanded argv/cwd
+    clear           Remove the four xkey keys (never deletes the file)
+
+options:
+  -h, --help        show this help message and exit
+```
+
+```bash
+python mw.py autopilot verify set --project <dir> [--timeout SEC] -- <argv...>
+python mw.py autopilot verify show --project <dir> [--json]
+python mw.py autopilot verify clear --project <dir>
+```
+
+- `--project` **必填且必须在 `--` 之前**：`--` 之后的 token 逐字进入 `xkey_verify_cmd`，`--project` 出现在其后会被吞进 argv，所以 argparse 直接报错（缺必填参数）。
+- `clear` 只移除四个 xkey 键、其它字段值不变，**永不删除文件**；文件缺失 = autopilot 从未启用，打印 `nothing configured` 并退出 0（不建目录、不写文件）。
+- `show` 打印有效值 + 逐字段 `[origin]`；`--json` 给机器可读形态。
+
+### 两层配置
+
+| 层 | 路径 | 用途 |
+|----|------|------|
+| 机器级 | `~/.agents/autopilot-defaults.json` | 本机默认，**只允许**覆盖 `xkey_verify_cmd` + `xkey_verify_cwd` 两个键，fail-soft |
+| 项目级 | `<control>/.agenticdoc/_autopilot/config.json` | 项目配置（四个 xkey 键），fail-closed |
+
+机器级路径解析顺序与 RAG 一致：`MW_AUTOPILOT_FILE` → `MW_AUTOPILOT_HOME` → `HOME` → `USERPROFILE`，各自拼 `/.agents/autopilot-defaults.json`。`MW_AUTOPILOT_FILE` 是整文件硬覆盖：`MW_AUTOPILOT_FILE` 指向的文件不存在时不回落到其它位置（该层为空）；两层文件缺失都不建目录。机器层是 **fail-soft**：未知键、类型/范围非法的已知键只丢该字段并记诊断，不整份作废。
+
+优先级 `project > machine > default`，规则是**空值即未决定**：两个写者都会把 13 键材料化写进项目文件，所以项目层的 `xkey_verify_cmd: []` / `xkey_verify_cwd: ""` 视为未决定，让给机器层；项目层非空则项目胜出；两层均空/缺失回落到内置默认。机器层只允许覆盖 `xkey_verify_cmd` + `xkey_verify_cwd`，其余键越域（如机器层写 `xkey_repair` / `xkey_verify_timeout_s`）⇒ **告警并忽略**。
+
+**两侧同版本上线**：先 `mw build --install`，再重启各 pi 窗口的 `serve`——旧 bundle 的 `validateConfigData` 读含新键（`xkey_verify_cwd`）的文件会 fail-closed，两侧必须同版本。
+
 ## 关键环境变量
 
 | 变量 | 说明 |
@@ -246,6 +288,8 @@ toolchain 模板不只是注入 task.md 的文档——PM 直执时用 `mw ue-to
 | `MW_PY` | 扩展找不到 `mw.py` 时手动指定路径 |
 | `MW_IMPL_GATE_ROOT` | 门禁项目根覆盖（测试钩子，默认 cwd） |
 | `MW_RAG_SERVERS_FILE` | 机器级 RAG 配置的硬覆盖路径（设定但缺失 = 机器层为空，**不回落到 HOME**，用于测试隔离） |
+| `MW_AUTOPILOT_FILE` | 机器级 autopilot 默认配置的硬覆盖路径（设定但缺失 = 机器层为空，**不回落到其它位置**，用于测试隔离） |
+| `MW_AUTOPILOT_HOME` | 机器级 autopilot 默认配置的 HOME 覆盖（其后依次尝试 `HOME`、`USERPROFILE`） |
 | `MW_RAG_SERVERS_HOME` | 机器级 RAG 配置的 HOME 覆盖（其后依次尝试 `HOME`、`USERPROFILE`） |
 | `MW_RAG_PYTHON` | `skill` 形态 RAG 的解释器覆盖（缺省 Windows `python` / 其它 `python3`） |
 
