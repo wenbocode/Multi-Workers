@@ -27,6 +27,8 @@ Timing assertions print the dual form mandated by the task book:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import pathlib
 import re
@@ -47,13 +49,23 @@ _MW_PY = _HERE / "mw.py"
 sys.path.insert(0, str(_HERE))
 
 import mw_common  # noqa: E402
-from autopilot import config, conductor, gates, roadmap, state, timeline  # noqa: E402
+from autopilot import config, conductor, gates, roadmap, state, timeline, xkey  # noqa: E402
 
 try:
     import pytest
-    pytestmark = pytest.mark.e2e_l2
 except ImportError:  # script mode
     pytest = None
+
+# The heavy real-process tests below stay behind the ``e2e_l2`` marker
+# (pytest.ini excludes it by default).  It is applied per test rather than as
+# a module-level ``pytestmark`` so the hermetic cross-key L2 replay tests at
+# the bottom of this file run in the default suite (they only need tmp_path +
+# one fixture pytest subprocess).
+if pytest is not None:
+    _e2e_l2 = pytest.mark.e2e_l2
+else:  # script mode: markers are inert (``_TESTS`` calls the functions directly)
+    def _e2e_l2(func):
+        return func
 
 _INTERVAL = 1.0          # conductor tick (seconds) — every threshold scales on it
 _STRESS_INTERVAL = 0.5   # denser writes for the concurrency stress
@@ -544,6 +556,7 @@ def _answer_gate(gate_path: pathlib.Path, decision: str, note: str) -> float:
 
 # ── 1. full chain: roadmap -> stage gate -> gen -> execute -> L3 -> done ─────
 
+@_e2e_l2
 def test_full_chain_single_key() -> None:
     project = _make_project(keys={"k1": "SPEC"})
     bin_dir = _make_stub_bin()
@@ -638,6 +651,7 @@ def test_full_chain_single_key() -> None:
 
 # ── 1b. L3 fail-marker repair chain (mw-l3-fail-marker-forms VC-011) ──────
 
+@_e2e_l2
 def test_l3_fail_marker_repair_chain() -> None:
     # Round-1 reviewer reports its FAIL as a bold bullet (non-pipe form):
     # the verdict must land below (no false-meets), the repair prompt must
@@ -701,6 +715,7 @@ def test_l3_fail_marker_repair_chain() -> None:
 
 # ── 2. parallel dispatch (VC-006) ────────────────────────────────────────────
 
+@_e2e_l2
 def test_parallel_dispatch() -> None:
     keys = {"k1": "EXECUTE", "k2": "EXECUTE"}
     project = _make_project(keys=keys, roadmap_text=_rm_running(list(keys)))
@@ -744,6 +759,7 @@ def test_parallel_dispatch() -> None:
 
 # ── 3. beat observation window (VC-021) ──────────────────────────────────────
 
+@_e2e_l2
 def test_beat_observation_window() -> None:
     # interval 4s (production default), window scaled by MW_E2E_FAST:
     # 60s@4s -> 15 beats; 15s@1s -> 15 beats. Same duty cycle, threshold 12.
@@ -771,6 +787,7 @@ def test_beat_observation_window() -> None:
 
 # ── 4. concurrent write stress (VC-022) ──────────────────────────────────────
 
+@_e2e_l2
 def test_concurrent_write_stress() -> None:
     keys = {f"k{i}": "EXECUTE" for i in range(1, 9)}  # 8 keys -> sustained churn
     project = _make_project(keys=keys, interval=1, roadmap_text=_rm_running(list(keys)))
@@ -909,6 +926,7 @@ def test_concurrent_write_stress() -> None:
 
 # ── 5. serve supervision: disabled isolation + enable chain ─────────────────
 
+@_e2e_l2
 def test_serve_enable_chain() -> None:
     project = _make_project(keys={"k1": "SPEC"}, enabled=False)
     bin_dir = _make_stub_bin()
@@ -983,6 +1001,7 @@ def test_serve_enable_chain() -> None:
 
 # ── 6. real conductor kill + serve respawn (AC-022, VC-024 process form) ────
 
+@_e2e_l2
 def test_conductor_kill_respawn() -> None:
     keys = {"k1": "EXECUTE"}
     project = _make_project(keys=keys, roadmap_text=_rm_running(list(keys)))
@@ -1080,6 +1099,7 @@ def test_conductor_kill_respawn() -> None:
 
 # ── 7. multi-project isolation (one serve per project, spec "mw serve 托管多项目")
 
+@_e2e_l2
 def test_multi_project_isolation() -> None:
     p1 = _make_project(keys={"k1": "EXECUTE"}, roadmap_text=_rm_running(["k1"]))
     _tasks(p1, "k1", ["T-01-one"])
@@ -1164,6 +1184,513 @@ def test_multi_project_isolation() -> None:
         shutil.rmtree(bin_dir, ignore_errors=True)
 
 
+# ── 8/9/10. cross-key repair channel: L2/e2e replay (VC-009/VC-010) ────────────
+#
+# The full chain (detected -> ticketed -> approved -> applied -> verified ->
+# closed) is driven in-process through the REAL conductor mounts
+# (`_xkey_aggregate` -> human gate answer -> `_consume_answered_gates` ->
+# `_xkey_apply_stage`) against a throw-away project under ``tmp_path``.  The
+# verification stage really spawns the fixture project's own pytest command
+# (``xkey_verify_cmd``), so the red count 1->0 is measured, never asserted.
+#
+# The FeatureMigrator work tree is READ-ONLY.  Every corpus literal below is
+# quoted verbatim from the FM evidence with its provenance comment; the
+# pre-fix shape is reconstructed under ``tmp_path`` (AC-010 path b).  Anchors
+# are byte shas, not line numbers (D-011: repair-r1-out-20260925-r3.txt mixes
+# 118 CRLF + 106 LF, so Python reports :220 while PowerShell reports :209).
+
+_XKEY_ROADMAP_TEMPLATE = (
+    "# Roadmap\n"
+    "> generated_at: 2026-09-26T00:00:00+00:00\n"
+    "> goal_mtime: 1\n"
+    "\n"
+    "## Stage 1: work\n"
+    "> goal: deliver\n"
+    "> status: running\n"
+)
+
+
+def _xkey_project(root: pathlib.Path, keys: tuple[str, ...]) -> pathlib.Path:
+    """Throw-away autopilot project: goal + running roadmap.
+
+    The roadmap file is required by the real gate-consumption step
+    (``_consume_answered_gates`` short-circuits without it); the xkey mounts
+    themselves read only the provenance sidecars and the xkey directory.
+    """
+    (root / ".agenticdoc" / "_autopilot").mkdir(parents=True, exist_ok=True)
+    (root / ".agenticdoc" / "goal.md").write_text("# Goal\n\nShip.\n", encoding="utf-8")
+    rows = "\n".join(f"| {key} | worker | - |" for key in keys)
+    statuses = ", ".join(f"{key}=running" for key in keys)
+    (root / ".agenticdoc" / "_autopilot" / "_roadmap.md").write_text(
+        _XKEY_ROADMAP_TEMPLATE
+        + f"> key-status: {statuses}\n"
+        + "### Keys\n"
+        + "| key | role | depends_on |\n"
+        + "|-----|------|-----------|\n"
+        + rows + "\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def _xkey_config(root: pathlib.Path, verify_cmd: list[str]) -> dict:
+    """Fixture ``_autopilot/config.json``: channel on, per-project verify argv."""
+    cfg = config.default_config()
+    cfg["enabled"] = True
+    cfg["xkey_repair"] = True
+    cfg["xkey_verify_cmd"] = list(verify_cmd)
+    cfg["xkey_verify_timeout_s"] = 300
+    config.save_config(root, cfg)
+    return cfg
+
+
+def _xkey_state(root: pathlib.Path) -> conductor.ConductorState:
+    """Fresh conductor state; the timeline seq is recovered from ``root``."""
+    tl = timeline.Timeline(timeline.timeline_path(root))
+    return conductor.ConductorState(tl, conductor.goal_mtime_ns(root))
+
+
+def _xkey_plant_below(
+    root: pathlib.Path,
+    source_key: str,
+    registration: dict | None,
+    *,
+    round_no: int = 1,
+    fail_line: str = "",
+) -> None:
+    """One below-round provenance sidecar — the conductor's only red source.
+
+    ``registration=None`` is exactly what T-03 persists when the coarse
+    cross-key marker is present but ``collect_registrations`` abstains
+    (prose-only shape) — the aggregation must escalate, never propose.
+    """
+    key_dir = root / ".agenticdoc" / source_key
+    key_dir.mkdir(parents=True, exist_ok=True)
+    (key_dir / "l3-verdict-provenance.json").write_text(
+        json.dumps([{
+            "raw_verdict": "below",
+            "verdict": "below",
+            "round": round_no,
+            "fail_line": fail_line,
+            "deciding_source": f"{source_key}/workers/l3-a1/output.md",
+            "registration": registration,
+        }], ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _xkey_write_proposal(
+    root: pathlib.Path,
+    request_id: str,
+    file: str,
+    line_range: list[int],
+    old_block_sha256: str,
+    new_block_text: str,
+    reason: str,
+) -> pathlib.Path:
+    """The T-06 ``proposal.md`` shape: S1 metadata triple + fenced new block."""
+    directory = xkey.evidence_dir(str(root), request_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "proposal.md"
+    path.write_text(
+        "---\n"
+        f"file: {file}\n"
+        f"line_range: [{line_range[0]}, {line_range[1]}]\n"
+        f"old_block_sha256: {old_block_sha256}\n"
+        f"reason: {reason}\n"
+        "---\n"
+        "\n"
+        "```python\n"
+        f"{new_block_text}"
+        "```\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return path
+
+
+def _xkey_chain_events(root: pathlib.Path) -> list[str]:
+    """Ordered ``xkey-*`` timeline events (the mechanical state sequence)."""
+    return [
+        str(event.get("ev")) for event in _events(root)
+        if str(event.get("ev", "")).startswith("xkey-")
+    ]
+
+
+def _xkey_evidence_item(root: pathlib.Path, request_id: str, name: str) -> object:
+    path = xkey.evidence_dir(str(root), request_id) / name
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+# -- synthetic fixture (VC-009): minimal frozen-constant project ----------------
+
+_SYNTHETIC_TEST_REL = "tests/test_frozen.py"
+_SYNTHETIC_TEST_ID = "test_groups_unchanged"
+# Frozen constant (12) vs measured value (13): the single pre-fix red.
+_SYNTHETIC_BLOCK_12 = (
+    'GROUPS_FROZEN = ("agent", "analyze", "branch", "config", "gate", "gui", "init",\n'
+    '                 "install-hooks", "mcp", "mr", "project", "validate")\n'
+)
+# The R1 repair: refresh the frozen expectation with the new `runs` group.
+_SYNTHETIC_BLOCK_13 = (
+    'GROUPS_FROZEN = ("agent", "analyze", "branch", "config", "gate", "gui", "init",\n'
+    '                 "install-hooks", "mcp", "mr", "project", "runs", "validate")\n'
+)
+_SYNTHETIC_MACHINE_LINE = (
+    "[VERIFY] XKEY-T05-S1: "
+    "cross_key_test=tests/test_frozen.py::test_groups_unchanged "
+    "rc=1 cli_groups=13 frozen_groups=12 owner=k-owner "
+    "handoff=registered not_fixed_by_this_key=True"
+)
+_SYNTHETIC_SOURCE = (
+    _SYNTHETIC_BLOCK_12
+    + "\n"
+    + "def _measured_groups():\n"
+    + '    return ("agent", "analyze", "branch", "config", "gate", "gui", "init",\n'
+    + '            "install-hooks", "mcp", "mr", "project", "runs", "validate")\n'
+    + "\n"
+    + "\n"
+    + "def test_groups_unchanged():\n"
+    + "    measured = _measured_groups()\n"
+    + '    print(f"[COUNT] cli_groups={len(measured)} groups={measured}")\n'
+    + '    assert tuple(measured) == GROUPS_FROZEN, f"groups changed: {measured}"\n'
+)
+
+# -- FeatureMigrator corpus (VC-010), verbatim (read-only source) ---------------
+
+_FM_TEST_REL = "tests/test_hitl_channel.py"
+_FM_TEST_ID = "test_top_level_command_groups_unchanged"
+# Machine line: cli-run-state-and-events/evidence/runs/repair-r1-out-20260925-r3.txt:220
+# (r1 :209 / r2 :239 report the same payload; r3 is the mixed-EOL file).
+_FM_MACHINE_LINE = (
+    "[VERIFY] REPAIR-R1-F1: "
+    "cross_key_test=tests/test_hitl_channel.py::test_top_level_command_groups_unchanged "
+    "rc=1 cli_groups=13 frozen_groups=12 owner=cli-hitl-channel "
+    "handoff=registered not_fixed_by_this_key=True"
+)
+# A-side K-1 prose: cli-hitl-channel/workers/ap-cli-hitl-channel-l3-a1/report.md:68
+# (spec 1.1 anchor). No `(file,test_id)`; `owner` is the role 兄弟 key -> abstain.
+_FM_K1_PROSE = (
+    "- **K-1..K-4**（4 条已知红）：K-1 兄弟 key 新增顶层组 `runs` 致本 key PG-2 "
+    "断言（12 组）红；K-2 本 key P1 的 `conftest.py` 子 env 改名（`env`→`child_env`）"
+    "触发 `tests/gui_contract/paths_encoding.py` 静态匹配器 0 命中；K-3/K-4 本 key P4 "
+    "的 `gate_service.write_acceptance`（design D-007.2/D-008/PG-3 明文要求）与两条"
+    "既有只读源码守卫（token 扫描，连 docstring 提及 `write_text` 都判红）冲突。"
+    "owner 与一行级修法均已登记（P7 §9.5 / P4 L-2/L-3/L-4；P4 明确拒绝以改名/别名"
+    "绕过守卫——避免假绿，处置正确）。"
+)
+# Pre-fix frozen block = the FM :243-244 block with `"runs"` absent (12 items).
+_FM_BLOCK_12 = (
+    'TOP_LEVEL_GROUPS = ("agent", "analyze", "branch", "config", "gate", "gui", "init",\n'
+    '                    "install-hooks", "mcp", "mr", "project", "validate")\n'
+)
+# Post-R1 block (the real current FM tree) = only the frozen expectation moved.
+_FM_BLOCK_13 = (
+    'TOP_LEVEL_GROUPS = ("agent", "analyze", "branch", "config", "gate", "gui", "init",\n'
+    '                    "install-hooks", "mcp", "mr", "project", "runs", "validate")\n'
+)
+# Reconstruction of the FM test shape (block, [COUNT] print, :268 assertion).
+_FM_TEST_SOURCE = (
+    "# Fixture reconstruction of the FeatureMigrator corpus shape (source tree read-only):\n"
+    "#   E:\\CLI_workspace\\FeatureMigrator\\tests\\test_hitl_channel.py\n"
+    "#   frozen block :243-244 (pre-R1 = 12 groups); [COUNT] print :265-266; assertion :268\n"
+    "#   registration  repair-r1-out-20260925-r3.txt:220 (byte-anchored, D-011)\n"
+    + _FM_BLOCK_12
+    + "\n"
+    + "def _help_groups() -> tuple:\n"
+    + '    """Fixture twin of FM `_help_groups` (:253-258): the measured 13 groups."""\n'
+    + '    return ("agent", "analyze", "branch", "config", "gate", "gui", "init",\n'
+    + '            "install-hooks", "mcp", "mr", "project", "runs", "validate")\n'
+    + "\n"
+    + "\n"
+    + "def _agent_subcommands() -> tuple:\n"
+    + '    return ("answer", "run")\n'
+    + "\n"
+    + "\n"
+    + "def test_top_level_command_groups_unchanged():\n"
+    + '    """PG-2: `agent answer` is a sub-command; the top level keeps its groups."""\n'
+    + "    groups = _help_groups()\n"
+    + "    subcommands = _agent_subcommands()\n"
+    + '    print(f"[COUNT] cli_groups={len(groups)} groups={groups} "\n'
+    + '          f"agent_subcommands={sorted(subcommands)}")\n'
+    + "\n"
+    + '    assert tuple(groups) == TOP_LEVEL_GROUPS, f"top-level groups changed: {groups}"\n'
+    + '    assert "agent" in groups\n'
+    + '    assert "answer" in subcommands and "run" in subcommands\n'
+)
+
+
+def test_xkey_synthetic_full_chain(tmp_path: pathlib.Path) -> None:
+    """VC-009 / AC-009: synthetic fixture, full ledger->close replay.
+
+    The proposal file is injected by the test (T-08's dispatcher is a parallel
+    card and not a precondition).  Every stage is the real conductor mount and
+    the verification is a real pytest subprocess, so the frozen assertion's
+    red count really goes 1 -> 0.
+    """
+    root = _xkey_project(tmp_path / "proj", ("k-source", "k-owner"))
+    target = root / _SYNTHETIC_TEST_REL
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(_SYNTHETIC_SOURCE.encode("utf-8"))
+    verify_cmd = [
+        sys.executable, "-X", "utf8", "-m", "pytest", "-q", _SYNTHETIC_TEST_REL,
+    ]
+    cfg = _xkey_config(root, verify_cmd)
+    st = _xkey_state(root)
+    status_of = {"k-source": "done", "k-owner": "done"}
+
+    # -- pre-fix: exactly one red (the frozen assertion) --
+    before = xkey.run_verification(
+        verify_cmd, cwd=str(root),
+        run_dir=str(root / ".tmp" / "red-before"), timeout=300,
+    )
+    assert before["red_counts"]["total"] == 1, before["red_counts"]
+    assert before["red_counts"]["returncode"] == 1
+
+    # -- detected: machine-line registration -> ledger row + ticket + gate --
+    registration = xkey.parse_registration(_SYNTHETIC_MACHINE_LINE)
+    assert registration is not None and registration["owner_key"] == "k-owner"
+    _xkey_plant_below(root, "k-source", registration, fail_line=_SYNTHETIC_MACHINE_LINE)
+    conductor._xkey_aggregate(root, st, status_of, cfg)
+
+    rows = xkey.ledger_load(str(root))["rows"]
+    assert len(rows) == 1, rows
+    assert rows[0]["status"] == "detected"
+    request_id = rows[0]["request_id"]
+    ticket = xkey.ticket_load(str(root), request_id)
+    assert ticket is not None and ticket["status"] == "ticketed"
+    assert len(sorted(conductor.gates_dir(root).glob("gate-*.md"))) == 1
+
+    # -- approved: stub human answer on the gate file, folded by step F --
+    gate = _pending_gate(root, "xkey-authorize")
+    assert gate is not None, "xkey-authorize gate not raised"
+    _answer_gate(gate, "approved", "e2e human approval")
+    conductor._consume_answered_gates(root, st, cfg)
+    ticket = xkey.ticket_load(str(root), request_id)
+    assert ticket["status"] == "approved"
+    assert xkey.ledger_load(str(root))["rows"][0]["status"] == "approved"
+
+    # -- proposal + boundary pre-check (D-005): zero write until it passes --
+    frozen = ticket["frozen_block"]
+    located = xkey.locate_frozen_block(str(root), _SYNTHETIC_TEST_REL, _SYNTHETIC_TEST_ID)
+    assert located is not None and located["symbol"] == "GROUPS_FROZEN"
+    assert located["line_range"] == frozen["line_range"]
+    assert located["old_block_sha256"] == frozen["old_block_sha256"]
+    proposal_path = _xkey_write_proposal(
+        root, request_id, _SYNTHETIC_TEST_REL, frozen["line_range"],
+        frozen["old_block_sha256"], _SYNTHETIC_BLOCK_13,
+        "source-key delivery added the top-level group `runs`; refresh the snapshot",
+    )
+    parsed = conductor._xkey_parse_proposal(proposal_path.read_bytes())
+    assert parsed is not None
+    assert xkey.check_boundary(parsed, ticket) == "ok"
+    assert target.read_bytes() == _SYNTHETIC_SOURCE.encode("utf-8"), "no write before apply"
+
+    # -- applied -> verified -> evidence -> closed (real verify subprocess) --
+    conductor._xkey_apply_stage(root, st, status_of, cfg)
+    ticket = xkey.ticket_load(str(root), request_id)
+    assert ticket["status"] == "closed", ticket.get("status")
+    row = xkey.ledger_load(str(root))["rows"][0]
+    assert row["status"] == "closed"
+    assert [h["event"] for h in row["history"]] == [
+        "detected", "approved", "applied", "verified", "closed",
+    ]
+
+    after = xkey.run_verification(
+        verify_cmd, cwd=str(root),
+        run_dir=str(root / ".tmp" / "red-after"), timeout=300,
+    )
+    assert after["red_counts"]["total"] == 0, after["red_counts"]
+    assert after["red_counts"]["returncode"] == 0
+    assert b'"runs"' in target.read_bytes()
+
+    events = _xkey_chain_events(root)
+    assert events == [
+        "xkey-detected", "xkey-ticketed", "xkey-gate-raised",
+        "xkey-applied", "xkey-verified", "xkey-closed",
+    ], events
+
+    bundle = _xkey_evidence_item(root, request_id, "bundle.json")
+    items = bundle["items"]
+    assert bundle["closed"] is True and bundle["missing"] == []
+    assert items["relaxed_assertion"] is False
+    assert items["old_sha256"] and items["new_sha256"]
+    assert items["old_sha256"] != items["new_sha256"]
+    assert pathlib.Path(items["stdout_path"]).is_file()
+
+    # -- idempotency: another tick adds no row, no gate, no run dir, no write --
+    ledger_rows_before = len(xkey.ledger_load(str(root))["rows"])
+    sha_before = hashlib.sha256(target.read_bytes()).hexdigest()
+    runs_dir = xkey.evidence_dir(str(root), request_id) / "runs"
+    runs_before = sorted(entry.name for entry in runs_dir.iterdir())
+    conductor._xkey_aggregate(root, st, status_of, cfg)
+    conductor._xkey_apply_stage(root, st, status_of, cfg)
+    assert len(xkey.ledger_load(str(root))["rows"]) == ledger_rows_before
+    assert hashlib.sha256(target.read_bytes()).hexdigest() == sha_before
+    assert sorted(entry.name for entry in runs_dir.iterdir()) == runs_before
+    assert len(sorted(conductor.gates_dir(root).glob("gate-*.md"))) == 1
+
+    _verify(
+        "VC-009", fixture_red="1->0",
+        chain=">".join(event.replace("xkey-", "") for event in events),
+        ledger_status="closed", idempotent="True", relaxed_assertion="False",
+        **{"pass": "true"},
+    )
+
+
+def test_xkey_fm_corpus_replay(tmp_path: pathlib.Path) -> None:
+    """VC-010 / AC-010 (path b): replay the FeatureMigrator corpus in a fixture.
+
+    The pre-fix shape is reconstructed from the verbatim corpus: the frozen
+    ``TOP_LEVEL_GROUPS`` has 12 entries while the measured CLI yields 13
+    (``cli_groups=13``).  Human approval applies R1 (refresh the frozen
+    expectation only — the assertion body is never touched), the targeted
+    rerun ``pytest tests/test_hitl_channel.py -q`` goes 1 failed -> green and
+    the full red count goes 1 -> 0.  The FM work tree is never written.
+    """
+    root = _xkey_project(
+        tmp_path / "fm", ("cli-run-state-and-events", "cli-hitl-channel")
+    )
+    target = root / _FM_TEST_REL
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(_FM_TEST_SOURCE.encode("utf-8"))
+    targeted_cmd = [sys.executable, "-X", "utf8", "-m", "pytest", "-q", _FM_TEST_REL]
+    full_cmd = [sys.executable, "-X", "utf8", "-m", "pytest", "-q"]
+    cfg = _xkey_config(root, targeted_cmd)
+    st = _xkey_state(root)
+    status_of = {"cli-run-state-and-events": "done", "cli-hitl-channel": "done"}
+
+    # -- pre-fix: the frozen assertion is the whole suite's single red --
+    full_before = xkey.run_verification(
+        full_cmd, cwd=str(root),
+        run_dir=str(root / ".tmp" / "fm-full-before"), timeout=300,
+    )
+    targeted_before = xkey.run_verification(
+        targeted_cmd, cwd=str(root),
+        run_dir=str(root / ".tmp" / "fm-targeted-before"), timeout=300,
+    )
+    assert full_before["red_counts"]["total"] == 1, full_before["red_counts"]
+    assert targeted_before["red_counts"]["total"] == 1
+
+    # -- the corpus machine line parses field-for-field (VC-011 L2 echo) --
+    registration = xkey.parse_registration(_FM_MACHINE_LINE)
+    assert registration == {
+        "file": _FM_TEST_REL,
+        "test_id": _FM_TEST_ID,
+        "owner_key": "cli-hitl-channel",
+        "handoff": "registered",
+        "frozen_block": None,
+    }, registration
+    _xkey_plant_below(
+        root, "cli-run-state-and-events", registration, fail_line=_FM_MACHINE_LINE,
+    )
+    conductor._xkey_aggregate(root, st, status_of, cfg)
+    rows = xkey.ledger_load(str(root))["rows"]
+    assert len(rows) == 1 and rows[0]["owner_key"] == "cli-hitl-channel"
+    request_id = rows[0]["request_id"]
+
+    # -- D-006: the AST locator resolves the frozen block mechanically --
+    located = xkey.locate_frozen_block(str(root), _FM_TEST_REL, _FM_TEST_ID)
+    assert located is not None, "locate_frozen_block must resolve the FM shape"
+    assert located["symbol"] == "TOP_LEVEL_GROUPS"
+    assert located["line_range"][1] == located["line_range"][0] + 1
+    ticket = xkey.ticket_load(str(root), request_id)
+    assert ticket is not None and ticket["status"] == "ticketed"
+    assert ticket["frozen_block"]["old_block_sha256"] == located["old_block_sha256"]
+
+    # -- human approval -> R1 proposal -> apply -> verify -> close --
+    gate = _pending_gate(root, "xkey-authorize")
+    assert gate is not None
+    _answer_gate(gate, "approved", "e2e human approval (FM corpus replay)")
+    conductor._consume_answered_gates(root, st, cfg)
+    proposal_path = _xkey_write_proposal(
+        root, request_id, _FM_TEST_REL, located["line_range"],
+        located["old_block_sha256"], _FM_BLOCK_13,
+        "R1: insert `runs` into the frozen TOP_LEVEL_GROUPS snapshot (assertion untouched)",
+    )
+    parsed = conductor._xkey_parse_proposal(proposal_path.read_bytes())
+    assert parsed is not None
+    ticket = xkey.ticket_load(str(root), request_id)
+    assert xkey.check_boundary(parsed, ticket) == "ok"
+    conductor._xkey_apply_stage(root, st, status_of, cfg)
+
+    ticket = xkey.ticket_load(str(root), request_id)
+    assert ticket["status"] == "closed", ticket.get("status")
+    assert xkey.ledger_load(str(root))["rows"][0]["status"] == "closed"
+    assert "assert tuple(groups) == TOP_LEVEL_GROUPS" in target.read_text(encoding="utf-8")
+
+    targeted_after = xkey.run_verification(
+        targeted_cmd, cwd=str(root),
+        run_dir=str(root / ".tmp" / "fm-targeted-after"), timeout=300,
+    )
+    full_after = xkey.run_verification(
+        full_cmd, cwd=str(root),
+        run_dir=str(root / ".tmp" / "fm-full-after"), timeout=300,
+    )
+    assert targeted_after["red_counts"]["total"] == 0, targeted_after["red_counts"]
+    assert full_after["red_counts"]["total"] == 0, full_after["red_counts"]
+
+    bundle = _xkey_evidence_item(root, request_id, "bundle.json")
+    items = bundle["items"]
+    assert bundle["closed"] is True
+    assert isinstance(items["old_sha256"], str) and items["old_sha256"]
+    assert isinstance(items["new_sha256"], str) and items["new_sha256"]
+    assert items["old_sha256"] != items["new_sha256"]
+    assert items["relaxed_assertion"] is False
+
+    _verify(
+        "VC-010", fm_replay_red="1->0", targeted="1 failed -> green",
+        relaxed_assertion="False", old_sha256=items["old_sha256"][:12],
+        new_sha256=items["new_sha256"][:12],
+        **{"pass": "true"},
+    )
+
+
+def test_xkey_prose_registration_escalates_only(tmp_path: pathlib.Path) -> None:
+    """VC-002 (L2 echo): a K-1 prose registration escalates, zero tickets.
+
+    The A-side corpus line carries no ``(file,test_id)`` and only the role
+    ``兄弟 key`` as owner.  The parser abstains (no guessing) and the real
+    aggregator must record exactly one escalation with zero tickets/gates.
+    """
+    root = _xkey_project(tmp_path / "prose", ("cli-hitl-channel",))
+    cfg = _xkey_config(root, [sys.executable, "-X", "utf8", "-m", "pytest", "-q"])
+    st = _xkey_state(root)
+
+    assert xkey.parse_registration(_FM_K1_PROSE) is None
+    assert xkey.collect_registrations([("l3-a1/report.md", _FM_K1_PROSE)]) is None
+    _xkey_plant_below(root, "cli-hitl-channel", None, fail_line=_FM_K1_PROSE)
+    conductor._xkey_aggregate(root, st, {"cli-hitl-channel": "done"}, cfg)
+
+    assert xkey.tickets_iter(str(root)) == []
+    assert sorted(conductor.gates_dir(root).glob("gate-*.md")) == []
+    rows = xkey.ledger_load(str(root))["rows"]
+    assert len(rows) == 1 and rows[0]["status"] == "escalated", rows
+    assert set(rows[0]["unresolvable_fields"]) == {"file", "test_id", "owner_key"}
+
+    _verify(
+        "VC-002", prose_shape="K-1 (no test_id/owner)", tickets=0, gates=0,
+        escalations=len(rows), **{"pass": "true"},
+    )
+
+
+# -- script-mode wrappers (pytest injects tmp_path; ``_TESTS`` cannot) ----------
+
+def _script_xkey_synthetic_full_chain() -> None:
+    with tempfile.TemporaryDirectory(prefix="mw-e2e-xkey-") as tmp:
+        test_xkey_synthetic_full_chain(pathlib.Path(tmp))
+
+
+def _script_xkey_fm_corpus_replay() -> None:
+    with tempfile.TemporaryDirectory(prefix="mw-e2e-xkey-fm-") as tmp:
+        test_xkey_fm_corpus_replay(pathlib.Path(tmp))
+
+
+def _script_xkey_prose_registration_escalates_only() -> None:
+    with tempfile.TemporaryDirectory(prefix="mw-e2e-xkey-prose-") as tmp:
+        test_xkey_prose_registration_escalates_only(pathlib.Path(tmp))
+
+
 # ── script mode ──────────────────────────────────────────────────────────────
 
 _TESTS = [
@@ -1175,6 +1702,9 @@ _TESTS = [
     test_serve_enable_chain,
     test_conductor_kill_respawn,
     test_multi_project_isolation,
+    _script_xkey_synthetic_full_chain,
+    _script_xkey_fm_corpus_replay,
+    _script_xkey_prose_registration_escalates_only,
 ]
 
 

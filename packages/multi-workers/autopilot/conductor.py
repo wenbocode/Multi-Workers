@@ -31,6 +31,7 @@ through advance.advance() → advance_phase.py.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import pathlib
 import re
@@ -169,7 +170,7 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
 
     # §5.1 F: consume answered gates first — a corrupt answer file skips
     # the whole tick (policy per gates.enumerate docstring).
-    if not _consume_answered_gates(project_root, st):
+    if not _consume_answered_gates(project_root, st, cfg):
         return
 
     # §5.1 F2: orphan reconciliation.
@@ -212,6 +213,24 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
 
     # Stalled keys whose stalled gate was rejected → closed-legacy (F7).
     _apply_stalled_rejections(project_root, st, status_of, stage_of)
+
+    # Cross-key red aggregation (xkey-repair-mechanism D-010): fold the below
+    # rounds' handoff registrations into the ledger, mint tickets and raise
+    # xkey-authorize gates. Placed after _apply_stalled_* (status_of is this
+    # tick's final key-status view, needed to judge the owner key) and before
+    # the dispatch loop (gates/tickets raised here are visible this tick).
+    # AC-008: the whole mechanism is opt-in, so a disabled project runs the
+    # exact same control flow it always did.
+    if cfg.get("xkey_repair", False):
+        _xkey_aggregate(project_root, st, status_of, cfg)
+        # Same gate, after the aggregator: an approve consumed by step F above
+        # is immediately visible. T-08 runs first and dispatches the proposal
+        # worker for an approved ticket with no proposal on disk (exactly
+        # once); once the proposal lands this stage is a no-op and T-06's stage
+        # below takes over (an approved ticket with a proposal walks
+        # applied→verified→closed this very tick, AC-005/006/007).
+        _xkey_proposal_stage(project_root, st, rows)
+        _xkey_apply_stage(project_root, st, status_of, cfg)
 
     in_flight_keys = {
         key
@@ -271,7 +290,9 @@ def _consumed_gate_ids(project_root: pathlib.Path) -> set[str]:
     return ids
 
 
-def _consume_answered_gates(project_root: pathlib.Path, st: ConductorState) -> bool:
+def _consume_answered_gates(
+    project_root: pathlib.Path, st: ConductorState, cfg: dict | None = None
+) -> bool:
     """§5.1 F: apply answered-gate transitions. Returns False when a corrupt
     gate file forces a tick skip (timeline config event appended).
 
@@ -279,7 +300,13 @@ def _consume_answered_gates(project_root: pathlib.Path, st: ConductorState) -> b
     when it actually changes the roadmap, so an answered gate is consumed
     exactly once across ticks and conductor restarts. stalled-reject is
     consumed by _apply_stalled_rejections (it owns the key-status rewrite);
-    budget-exhausted / goal-change gates are polled, not transitioned."""
+    budget-exhausted / goal-change gates are polled, not transitioned.
+
+    ``xkey`` answered-authorization gates are folded here too (D-010): step F
+    runs before ``_apply_stalled_approvals/_apply_stalled_rejections``, which
+    only understand ``stalled`` keys — routing an xkey approval through them
+    would leave the ticket frozen forever. The branch is gated by
+    ``cfg["xkey_repair"]`` so a disabled project never touches the module."""
     try:
         all_gates = gates.enumerate(gates_dir(project_root))
     except gates.GateFormatError as exc:
@@ -290,7 +317,13 @@ def _consume_answered_gates(project_root: pathlib.Path, st: ConductorState) -> b
         return True  # nothing to transition yet
     consumed = _consumed_gate_ids(project_root)
     for gate in all_gates:
-        if gate.status == "pending" or gate.stage is None:
+        if gate.status == "pending":
+            continue
+        if gate.kind == "xkey-authorize":
+            if (cfg or {}).get("xkey_repair", False) and gate.id not in consumed:
+                _consume_xkey_gate(project_root, st, gate)
+            continue
+        if gate.stage is None:
             continue
         if gate.id in consumed:
             continue  # answer already applied (timeline consumption record)
@@ -1117,7 +1150,10 @@ def _l3_prompt(key: str, attempt: int) -> str:
         "（证据记录制：不重跑命令）\n"
         "- 需要重跑才能确认的验证命令标记 needs-rerun 并计入遗留\n"
         "- 你的 output.md 必含两节：\n"
-        "  ## Quality Gate Report（VC 断言表逐条 PASS/FAIL + needs-rerun + 证据引用）\n"
+        "  ## Quality Gate Report（VC 断言表逐条 PASS/FAIL + needs-rerun + 证据引用；"
+        "如发现跨 key 红，本行内须含一行机器行："
+        "cross_key_test=<path>::<test_id> owner=<key> handoff=registered "
+        "not_fixed_by_this_key=True）\n"
         "  ## Achieved（达成摘要：做了什么 / 目标收益 / 遗留什么）\n"
         "- 两节承载于 output.md（首选）；长报告可置于 report.md 作为**文档化回退源**"
         "（判定按 output.md → report.md 优先级读取，"
@@ -1231,7 +1267,11 @@ def _l3_resolve_source(
 
 
 def _l3_round_verdict(
-    project_root: pathlib.Path, rows: list[dict], key: str, attempt: int
+    project_root: pathlib.Path,
+    rows: list[dict],
+    key: str,
+    attempt: int,
+    registration_out: dict | None = None,
 ) -> tuple[str, str, pathlib.Path | None, str | None]:
     """(verdict, worker status, deciding source, fail line) for one L3 round.
 
@@ -1242,7 +1282,14 @@ def _l3_round_verdict(
     The availability gate follows (I-5): with no readable candidate source the
     round has ``no-verdict``; otherwise ``_l3_resolve_source`` decides over the
     documented priority order ``output.md`` -> ``report.md`` (D-108).
-    """
+
+    The return shape is frozen (4-tuple, pinned by the provenance guard's
+    ``test_frozen_anchors_and_criteria_unchanged``), so the cross-key handoff
+    registrations (D-001, xkey-repair-mechanism) are handed to the caller
+    through the optional ``registration_out`` sink instead: when given, the
+    merged registration for the round's sources is stored under
+    ``registration_out["registration"]`` (a dict, or ``None`` when the round
+    mentions a cross-key handoff but its fields cannot be resolved)."""
     task_key = dispatch.task_key_for(key, f"l3-a{attempt}")
     status = next(
         (str(row.get("status", "")) for row in rows if row.get("task_key") == task_key),
@@ -1258,11 +1305,30 @@ def _l3_round_verdict(
     ]
     if not sources:
         return "no-verdict", status or "no-row", None, None
+    if registration_out is not None:
+        # D-001 read side: scan ALL sources (the corpus splits (file,test_id)
+        # and owner= across output.md/report.md), reusing the same fail-closed
+        # "first readable source wins" spirit as _l3_resolve_source. A
+        # marker-bearing but unresolvable round records `registration: None`
+        # so the aggregator raises an escalation record (AC-002) instead of
+        # dropping the red; a round with no marker at all leaves the key
+        # absent (not a cross-key red → zero footprint).
+        if _XKEY_MARKER_RE.search("\n".join(text for _path, text in sources)):
+            registration_out["registration"] = _xkey().collect_registrations(
+                [(path.name, text) for path, text in sources]
+            )
     verdict, source, fail_line = _l3_resolve_source(sources)
     return verdict, status, source, fail_line
 
 
 # ── L3 verdict provenance guard (D-001..D-013) ───────────────────────────────
+
+# Sentinel: "the caller did not opt into cross-key registration recording"
+# (switch off ⇒ the sidecar stays byte-identical, AC-008) versus an explicit
+# `registration=None` (marker present but unresolvable ⇒ AC-002 escalation).
+# NEVER read from config (GC-4).
+_REGISTRATION_UNSET = object()
+
 
 def _l3_provenance_record(
     key_dir: pathlib.Path,
@@ -1270,6 +1336,7 @@ def _l3_provenance_record(
     deciding_source: pathlib.Path,
     raw_verdict: str,
     fail_line: str | None = None,
+    registration: object = _REGISTRATION_UNSET,
 ) -> dict:
     """Read-only provenance record for one L3 round (D-004..D-006).
 
@@ -1304,6 +1371,8 @@ def _l3_provenance_record(
         "fail_line": fail_line,
         "recorded_at": _iso_now(),
     }
+    if registration is not _REGISTRATION_UNSET:
+        record["registration"] = registration
     trace = key_dir / "workers" / task_key / _L3_TRACE_NAME
     try:
         if not trace.is_file():
@@ -1517,8 +1586,10 @@ def _verify_loop(
             timeline=st.timeline,
         )
         return result.ok
+    registration_out: dict = {}
     verdict, worker_status, l3_source, fail_line = _l3_round_verdict(
-        project_root, rows, key, used
+        project_root, rows, key, used,
+        registration_out=registration_out if cfg.get("xkey_repair", False) else None,
     )
     round_key = dispatch.task_key_for(key, f"l3-a{used}")
     l3_source_rel = (
@@ -1553,7 +1624,8 @@ def _verify_loop(
         return result.ok
     if l3_source is not None:
         record = _l3_provenance_record(
-            key_dir, round_key, l3_source, verdict, fail_line=fail_line
+            key_dir, round_key, l3_source, verdict, fail_line=fail_line,
+            registration=registration_out.get("registration", _REGISTRATION_UNSET),
         )
         _persist_l3_provenance(key_dir, record, st=st)
         if record["suspect"] and verdict == "meets":
@@ -2096,13 +2168,23 @@ def _gate_open(
     *,
     loop: str | None = None,
     stage: int | None = None,
+    request_id: str | None = None,
 ) -> bool:
+    """Is a matching gate already pending?
+
+    ``request_id`` is the per-object dedup dimension the cross-key channel
+    needs (D-010): one ``xkey-authorize`` gate per request, matched against
+    ``context_refs`` exactly like ``loop``. Without it the conductor would
+    raise a fresh gate every tick — the 6684-gates/12h flood the stalled-gate
+    durable-consumption guard was added to stop."""
     for gate in gates.enumerate(gates_dir(project_root)):
         if gate.kind != kind or gate.status != "pending":
             continue
         if loop is not None and loop not in gate.context_refs:
             continue
         if stage is not None and gate.stage != stage:
+            continue
+        if request_id is not None and request_id not in gate.context_refs:
             continue
         return True
     return False
@@ -2287,6 +2369,1398 @@ def _apply_stalled_rejections(
                 status_of[key] = "closed-legacy"
         except (roadmap.RoadmapError, OSError) as exc:
             st.timeline.append("config", key=key, detail=f"closed-legacy mark failed: {exc!r}")
+
+
+# ── Cross-key red repair: mounting only (xkey-repair-mechanism D-010) ────
+#
+# The conductor MOUNTS the cross-key channel; every shape decision (parse /
+# ledger / ticket / locate / boundary / apply / verify / evidence) lives in
+# ``autopilot.xkey`` (T-01) and is imported, never redefined here. The module
+# is pulled in lazily so an ``xkey_repair``-off conductor (AC-008 default)
+# never imports it — the parallel wave that lands xkey.py cannot change the
+# existing suite. Zero private state: candidates re-derive from the per-key
+# provenance sidecars and the xkey ledger every tick, so a restart replays
+# exactly the same (idempotent) work.
+
+# Coarse "this round mentions a cross-key handoff" pre-filter. Field parsing
+# itself is ``xkey.collect_registrations``; this only separates "marker present
+# but unresolvable" (⇒ escalation record, AC-002) from "no cross-key content
+# at all" (⇒ not a cross-key red, no record — D-001 Q4 rule 4).
+_XKEY_MARKER_RE = re.compile(
+    r"cross_?key|跨\s*key|\[XKEY\]|handoff\s*[=:]|交接|挂账|owner\s*在案|已登记",
+    re.IGNORECASE,
+)
+# Ticket states in which exactly one ``xkey-authorize`` gate must be pending;
+# any other state (approved/rejected/applied/closed/…) means the object moved
+# on and the aggregator must not raise a new gate for it.
+_XKEY_AWAITING = ("detected", "ticketed", "pending-auth")
+
+
+def _xkey():
+    """Lazy accessor for the cross-key module (T-01's frozen public surface)."""
+    from autopilot import xkey
+    return xkey
+
+
+def _xkey_ticket_relpath(request_id: str) -> str:
+    """Ticket carrier path relative to the project root (D-003/D-004).
+
+    Deterministic so a later tick can re-point a gate at an existing ticket
+    (``context_refs`` needs the path, not the parsed dict)."""
+    return f".agenticdoc/_autopilot/xkey/tickets/xkey-{request_id}.md"
+
+
+def _xkey_below_records(
+    project_root: pathlib.Path,
+) -> list[tuple[pathlib.Path, dict]]:
+    """(key_dir, provenance record) for every below round on disk.
+
+    Read-only feed (D-001): the per-key ``l3-verdict-provenance.json`` sidecars
+    are the only new-red source. A corrupt sidecar is skipped — the provenance
+    writer never overwrites one, and audit history outranks this scan."""
+    import json  # local: conductor carries no module-level json dependency
+
+    base = pathlib.Path(project_root) / ".agenticdoc"
+    found: list[tuple[pathlib.Path, dict]] = []
+    if not base.is_dir():
+        return found
+    for key_dir in sorted(base.iterdir()):
+        if not key_dir.is_dir():
+            continue
+        sidecar = key_dir / _PROVENANCE_FILENAME
+        if not sidecar.is_file():
+            continue
+        try:
+            parsed = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(parsed, list):
+            continue
+        for record in parsed:
+            if not isinstance(record, dict):
+                continue
+            # The reviewer's own verdict is the red signal: a suspect `meets`
+            # round (verdict flipped to below by the provenance guard) is an
+            # evidence artifact, not a cross-key red. Fall back to the
+            # effective `verdict` for records written without the raw field.
+            raw = record.get("raw_verdict")
+            if raw is None:
+                raw = record.get("verdict")
+            if raw == "below":
+                found.append((key_dir, record))
+    return found
+
+
+def _xkey_aggregate(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    status_of: dict[str, str],
+    cfg: dict,
+) -> None:
+    """Fold below-round registrations into ledger + tickets + gates (D-010).
+
+    O(new verdicts): the ledger's ``dedup_key`` set gives idempotent dedup. A
+    complete registration whose owner key is terminal opens a machine-readable
+    ticket and exactly one ``xkey-authorize`` gate (request_id-guarded); an
+    unresolvable marker, or an owner that is not terminal, only leaves an
+    escalation ledger row and zero tickets (AC-002)."""
+    xkey = _xkey()
+    root = str(project_root)
+    records = _xkey_below_records(project_root)
+    if not records:
+        return
+    ledger = xkey.ledger_load(root)
+    rows = [row for row in ledger.get("rows", []) if isinstance(row, dict)]
+    known = {row.get("dedup_key") for row in rows}
+    by_pair: dict[tuple, dict] = {
+        (row.get("file"), row.get("test_id")): row for row in rows
+    }
+    for key_dir, record in records:
+        source_key = key_dir.name
+        registration = record.get("registration", _REGISTRATION_UNSET)
+        if registration is _REGISTRATION_UNSET:
+            continue  # not a cross-key round / persisted with the switch off
+        if not isinstance(registration, dict):
+            _xkey_escalate(project_root, st, xkey, known, source_key, record, None)
+            continue
+        file = registration.get("file")
+        test_id = registration.get("test_id")
+        owner_key = registration.get("owner_key")
+        if not (
+            isinstance(file, str) and file
+            and isinstance(test_id, str) and test_id
+            and isinstance(owner_key, str) and owner_key
+        ):
+            _xkey_escalate(
+                project_root, st, xkey, known, source_key, record, registration
+            )
+            continue
+        if status_of.get(owner_key) not in _DEP_SATISFIED:
+            # Owner not terminal: no cross-key ticket (scenario C, AC-002).
+            _xkey_escalate(
+                project_root, st, xkey, known, source_key, record, registration
+            )
+            continue
+        existing = by_pair.get((file, test_id))
+        if existing is not None:
+            request_id = str(existing.get("request_id") or "")
+            if request_id and str(existing.get("status") or "") in _XKEY_AWAITING:
+                _xkey_ensure_gate(
+                    project_root, st, request_id, owner_key,
+                    _xkey_ticket_relpath(request_id), file, test_id,
+                )
+            continue
+        block = xkey.locate_frozen_block(root, file, test_id)
+        block_sha = ""
+        if isinstance(block, dict):
+            block_sha = str(block.get("old_block_sha256") or "")
+        if not block_sha:
+            block_sha = str(registration.get("frozen_block") or "")
+        dedup_key = xkey.dedup_key(file, test_id, block_sha)
+        request_id = "XKEY-" + hashlib.sha1(
+            dedup_key.encode("utf-8")
+        ).hexdigest()[:12]
+        xkey.ledger_append(root, {
+            "dedup_key": dedup_key,
+            "source_key": source_key,
+            "owner_key": owner_key,
+            "test_id": test_id,
+            "file": file,
+            "frozen_block": block,
+            "status": "detected",
+            "request_id": request_id,
+            "reason": record.get("fail_line"),
+            "history": [{
+                "ts": _iso_now(),
+                "event": "detected",
+                "detail": (
+                    f"below {record.get('round')} registration "
+                    f"→ ticket {request_id}"
+                ),
+            }],
+        })
+        known.add(dedup_key)
+        by_pair[(file, test_id)] = {
+            "file": file, "test_id": test_id,
+            "request_id": request_id, "status": "ticketed",
+        }
+        st.timeline.append(
+            "xkey-detected", key=owner_key,
+            detail=f"{source_key} {file}::{test_id} → {request_id}",
+        )
+        if xkey.ticket_load(root, request_id) is None:
+            ticket = {
+                "schema_version": 1,
+                "request_id": request_id,
+                "created_by": "conductor",
+                "created_at": _iso_now(),
+                "status": "ticketed",
+                "source_key": source_key,
+                "owner_key": owner_key,
+                "affected_keys": [source_key, owner_key],
+                "dedup_key": dedup_key,
+                "file": file,
+                "test_id": test_id,
+                "frozen_block": block,
+                "handoff": registration.get("handoff"),
+                "reason": record.get("fail_line"),
+                "fail_line": record.get("fail_line"),
+                "deciding_source": record.get("deciding_source"),
+                "round": record.get("round"),
+                "authorization_snapshot": (
+                    block.get("old_block_sha256") if isinstance(block, dict) else None
+                ),
+                # T-06 anchors: the whole-file sha256 at ticket creation is the
+                # zero-residue reference the verify-failed rollback must equal;
+                # one `below` verdict is by construction one red before the fix.
+                "target_file_sha256": _xkey_file_sha256(project_root, file),
+                "red_before": 1,
+                "verification": {
+                    "command": list(cfg.get("xkey_verify_cmd", [])),
+                    "timeout_s": int(cfg.get("xkey_verify_timeout_s", 1800)),
+                },
+                "registration": registration,
+                "decisions": [],
+            }
+            xkey.ticket_write(root, ticket)
+            st.timeline.append(
+                "xkey-ticketed", key=owner_key,
+                detail=f"{request_id} {file}::{test_id}",
+            )
+        _xkey_ensure_gate(
+            project_root, st, request_id, owner_key,
+            _xkey_ticket_relpath(request_id), file, test_id,
+        )
+
+
+def _xkey_ensure_gate(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    request_id: str,
+    owner_key: str,
+    ticket_rel: str,
+    file: str,
+    test_id: str,
+) -> None:
+    """Raise one ``xkey-authorize`` gate per request_id (D-010 flood guard).
+
+    ``_gate_open(request_id=…)`` matches ``context_refs``, so N ticks on the
+    same pending ticket still produce exactly one gate (VC-012)."""
+    if _gate_open(project_root, "xkey-authorize", request_id=request_id):
+        return
+    gate_path = _create_gate(
+        project_root, st, "xkey-authorize",
+        f"跨 key 红 {file}::{test_id}（owner {owner_key}）请求解冻授权："
+        f"追认后由框架执行受限修复，拒绝则留账本。",
+        key=owner_key,
+        refs=[request_id, ticket_rel],
+    )
+    if gate_path is not None:
+        st.timeline.append(
+            "xkey-gate-raised", key=owner_key,
+            detail=f"{request_id} → {ticket_rel}",
+        )
+
+
+def _xkey_escalate(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    xkey,
+    known: set,
+    source_key: str,
+    record: dict,
+    registration: dict | None,
+) -> None:
+    """Record one escalation (AC-002): a cross-key round whose registration
+    cannot be resolved to a live ticket. Zero tickets, zero gates; the ledger
+    row + timeline event are the durable, idempotent record."""
+    rnd = record.get("round")
+    dedup_key = f"escalated::{source_key}::{rnd}"
+    if dedup_key in known:
+        return
+    reg = registration if isinstance(registration, dict) else {}
+    missing = [name for name in ("file", "test_id", "owner_key") if not reg.get(name)]
+    if not missing:
+        missing = ["owner_not_terminal"]
+    root = str(project_root)
+    xkey.ledger_append(root, {
+        "dedup_key": dedup_key,
+        "source_key": source_key,
+        "owner_key": reg.get("owner_key"),
+        "test_id": reg.get("test_id"),
+        "file": reg.get("file"),
+        "frozen_block": None,
+        "status": "escalated",
+        "request_id": None,
+        "reason": record.get("fail_line"),
+        "unresolvable_fields": missing,
+        "history": [{
+            "ts": _iso_now(),
+            "event": "escalated",
+            "detail": "registration unresolvable or owner not terminal → human/PM",
+        }],
+    })
+    known.add(dedup_key)
+    st.timeline.append(
+        "xkey-escalated", key=reg.get("owner_key") or source_key,
+        detail=f"{source_key} {rnd} unresolvable={','.join(missing)}",
+    )
+
+
+def _consume_xkey_gate(
+    project_root: pathlib.Path, st: ConductorState, gate: gates.Gate
+) -> None:
+    """Fold one answered ``xkey-authorize`` gate into ledger + ticket (D-010).
+
+    Runs inside ``_consume_answered_gates`` (step F), i.e. before
+    ``_apply_stalled_*``: an xkey approval is the only path that moves a
+    ticketed red forward, and the stalled machinery only ever sees ``stalled``
+    keys — routing this through it would leave the ticket frozen forever."""
+    xkey = _xkey()
+    request_id = gate.context_refs[0] if gate.context_refs else ""
+    if not request_id:
+        st.timeline.append(
+            "config", detail=f"{gate.id} xkey-authorize without request_id ref"
+        )
+        return
+    root = str(project_root)
+    ticket = xkey.ticket_load(root, request_id)
+    if ticket is None:
+        st.timeline.append(
+            "config", key=gate.key,
+            detail=f"{gate.id} xkey-authorize ticket missing: {request_id}",
+        )
+        return
+    status = "approved" if gate.status == "approved" else "rejected"
+    dedup_key = ticket.get("dedup_key")
+    if dedup_key:
+        xkey.ledger_append(root, {
+            "dedup_key": dedup_key,
+            "source_key": ticket.get("source_key"),
+            "owner_key": ticket.get("owner_key"),
+            "test_id": ticket.get("test_id"),
+            "file": ticket.get("file"),
+            "frozen_block": ticket.get("frozen_block"),
+            "status": status,
+            "request_id": request_id,
+            "decisions": [{
+                "decision": status,
+                "by": gate.answered_by,
+                "at": gate.answered_at,
+                "note": gate.note,
+            }],
+            "history": [{
+                "ts": _iso_now(),
+                "event": status,
+                "detail": f"{gate.id} answered {gate.status}",
+            }],
+        })
+    ticket["status"] = status
+    xkey.ticket_write(root, ticket)
+    st.timeline.append(
+        "gate-answered", key=gate.key,
+        detail=f"{gate.id} {gate.status} → xkey {request_id} {status}",
+    )
+
+
+# ── Cross-key red repair: proposal dispatch (T-08, D-005 path (b)) ──────────
+#
+# T-03 delivered detected → ticketed → gate → approved; T-06 consumes an
+# approved ticket whose proposal is already on disk. This segment closes the
+# gap between them: an approved ticket with no proposal file gets exactly one
+# proposal-worker dispatch (phase-writer). The worker only ever writes
+# ``evidence/<request_id>/proposal.md`` — the conductor applies nothing until
+# T-06's boundary pre-check passes, so a wrong proposal is zero-residue by
+# construction.
+#
+# Zero private state: the trigger (ticket status + proposal file absence), the
+# dedup marker (ticket frontmatter: proposal_task_key / proposal_attempts) and
+# the attempt bound all re-derive from disk every tick, so a restart replays
+# exactly the same work (no in-memory cursor, D-010). A refused dispatch
+# escalates (ledger history + escalation.md) and leaves the ticket approved;
+# after _XKEY_PROPOSAL_MAX_ATTEMPTS the stage stops re-dispatching and records
+# one durable exhaustion marker, never an unbounded retry loop.
+
+_XKEY_PROPOSAL_MAX_ATTEMPTS = 2  # mirrors the roadmap-writer's 2-proposal cap
+
+
+def _xkey_proposal_stage(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    rows: list[dict],
+) -> None:
+    """T-08 mount: dispatch the proposal worker for approved tickets with no
+    proposal on disk. Runs before ``_xkey_apply_stage`` in the same
+    ``cfg["xkey_repair"]`` gate; per-ticket exceptions are isolated so a tick
+    never dies and the ticket keeps its last good state."""
+    xkey = _xkey()
+    try:
+        tickets = xkey.tickets_iter(str(project_root))
+    except Exception as exc:  # noqa: BLE001 — a corrupt ticket is skipped, not fatal
+        st.timeline.append("config", detail=f"xkey tickets unreadable: {exc!r}")
+        return
+    for ticket in tickets:
+        if not isinstance(ticket, dict):
+            continue
+        try:
+            _xkey_proposal_one(project_root, st, xkey, ticket, rows)
+        except Exception as exc:  # noqa: BLE001 — per-ticket isolation
+            st.timeline.append(
+                "config", key=ticket.get("owner_key"),
+                detail=(
+                    f"xkey proposal stage error for {ticket.get('request_id')}: "
+                    f"{exc!r} (ticket kept at its last good state)"
+                ),
+            )
+
+
+def _xkey_proposal_in_flight(
+    rows: list[dict], source_key: str, base_stem: str
+) -> bool:
+    """A live dispatch already exists in the proposal stem family.
+
+    Durable file truth (queue rows), so a conductor restart cannot re-dispatch
+    an in-flight proposal worker; the same guard covers the ``-a<N>`` retry
+    rows (D-111 task identity)."""
+    if not source_key:
+        return False
+    anchor = re.escape(dispatch.task_key_for(source_key, base_stem))
+    pat = re.compile(rf"^{anchor}(-a\d+)?$")
+    return any(
+        pat.match(str(row.get("task_key", ""))) and _is_in_flight(row)
+        for row in rows
+    )
+
+
+def _xkey_proposal_escalate(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    xkey,
+    ticket: dict,
+    request_id: str,
+    event: str,
+    detail: str,
+) -> None:
+    """Durable failure record: ledger history + escalation.md + timeline.
+
+    The ticket status is intentionally untouched (stays ``approved`` — a
+    refused dispatch is a channel failure, not a repair failure)."""
+    root = str(project_root)
+    if ticket.get("dedup_key"):
+        xkey.ledger_append(root, _xkey_ledger_row(
+            ticket, str(ticket.get("status") or "approved"),
+            [{"ts": _iso_now(), "event": event, "detail": detail}],
+        ))
+    _xkey_escalation_write(project_root, request_id, event, detail)
+    st.timeline.append(
+        "xkey-" + event.replace("_", "-"), key=ticket.get("owner_key"),
+        detail=f"{request_id} {detail}",
+    )
+
+
+def _xkey_proposal_exhaust(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    xkey,
+    ticket: dict,
+    request_id: str,
+    detail: str,
+) -> None:
+    """Bound reached: record one durable marker + escalation, then stop.
+
+    ``proposal_exhausted_at`` is the on-disk guard that keeps later ticks from
+    re-dispatching and from re-emitting the escalation event (no timeline
+    spam). A human can clear the field (or land a proposal) to retry."""
+    if ticket.get("proposal_exhausted_at"):
+        return
+    ticket["proposal_exhausted_at"] = _iso_now()
+    ticket["proposal_exhausted_detail"] = _one_line(detail, 200)
+    xkey.ticket_write(str(project_root), ticket)
+    _xkey_proposal_escalate(
+        project_root, st, xkey, ticket, request_id,
+        "proposal_dispatch_exhausted", detail,
+    )
+
+
+def _xkey_proposal_one(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    xkey,
+    ticket: dict,
+    rows: list[dict],
+) -> None:
+    """One ticket: dispatch at most one proposal worker attempt this tick.
+
+    Trigger: status ``approved`` **and** ``evidence/<request_id>/proposal.md``
+    absent. The dispatch marker + attempt count are written back into the
+    ticket frontmatter (``xkey.ticket_write``) before the next tick can see
+    them, and the in-flight row guard covers the crash gap between the queue
+    write and the marker write."""
+    request_id = ticket.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        return
+    if str(ticket.get("status") or "") != "approved":
+        return
+    proposal_path = (
+        _xkey_evidence_root(project_root, request_id) / _XKEY_PROPOSAL_NAME
+    )
+    if proposal_path.is_file():
+        return  # proposal on disk → T-06 takes over
+    if ticket.get("proposal_exhausted_at"):
+        return  # bound already recorded — never spin
+    source_key = str(ticket.get("source_key") or "")
+    if not source_key or source_key == dispatch.SCRATCH_OWNER:
+        _xkey_proposal_exhaust(
+            project_root, st, xkey, ticket, request_id,
+            "ticket carries no dispatchable source_key",
+        )
+        return
+    base_stem = f"xkey-{request_id}-proposal"
+    if _xkey_proposal_in_flight(rows, source_key, base_stem):
+        return  # a live dispatch in this stem family is never duplicated
+    attempts = _xkey_int(ticket.get("proposal_attempts"), 0)
+    if attempts >= _XKEY_PROPOSAL_MAX_ATTEMPTS:
+        _xkey_proposal_exhaust(
+            project_root, st, xkey, ticket, request_id,
+            f"proposal dispatch bound reached ({attempts}/"
+            f"{_XKEY_PROPOSAL_MAX_ATTEMPTS}); ticket stays approved",
+        )
+        return
+    attempt = attempts + 1
+    stem = base_stem if attempt == 1 else f"{base_stem}-a{attempt}"
+    loop = f"xkey-proposal:{request_id}"
+    result = dispatch.dispatch(
+        project_root, source_key, stem, "phase-writer",
+        _xkey_proposal_prompt(project_root, ticket),
+        loop=loop, attempt=attempt, timeline=st.timeline,
+    )
+    ticket["proposal_task_key"] = result.task_key
+    ticket["proposal_dispatch_at"] = _iso_now()
+    ticket["proposal_attempts"] = attempt
+    xkey.ticket_write(str(project_root), ticket)
+    if result.ok:
+        st.timeline.append(
+            "xkey-proposal-dispatched", key=ticket.get("owner_key"),
+            detail=f"{request_id} {result.task_key} attempt {attempt}",
+        )
+        return
+    _xkey_proposal_escalate(
+        project_root, st, xkey, ticket, request_id,
+        "proposal_dispatch_refused",
+        f"proposal dispatch refused at attempt {attempt}: {result.reason}",
+    )
+    if attempt >= _XKEY_PROPOSAL_MAX_ATTEMPTS:
+        _xkey_proposal_exhaust(
+            project_root, st, xkey, ticket, request_id,
+            f"proposal dispatch bound reached ({attempt}/"
+            f"{_XKEY_PROPOSAL_MAX_ATTEMPTS}); ticket stays approved",
+        )
+
+
+def _xkey_proposal_prompt(project_root: pathlib.Path, ticket: dict) -> str:
+    """Self-contained proposal-worker prompt (T-08, D-005 path (b)).
+
+    The worker only ever writes ``evidence/<request_id>/proposal.md`` — the
+    conductor applies nothing until T-06's boundary pre-check passes, so every
+    fact the worker needs (absolute ticket path, frozen-block spec, allowed
+    line set, untouchable list, output contract, prohibitions) is rendered
+    here; the ticket file stays the authoritative fallback."""
+    project_root = pathlib.Path(project_root)
+    request_id = str(ticket.get("request_id") or "")
+    frozen = ticket.get("frozen_block")
+    if not isinstance(frozen, dict):
+        frozen = {}
+    file_rel = _xkey_norm_path(frozen.get("file") or ticket.get("file"))
+    symbol = str(frozen.get("symbol") or "(not recorded)")
+    line_range = _xkey_line_range(frozen.get("line_range"))
+    if line_range is not None:
+        start, end = line_range
+        range_literal = f"[{start}, {end}]"
+        allowed_text = ", ".join(str(n) for n in range(start, end + 1))
+    else:
+        range_literal = "(not recorded)"
+        allowed_text = "(not recorded)"
+    old_sha = str(frozen.get("old_block_sha256") or "(not recorded)")
+    ticket_abs = project_root / _xkey_ticket_relpath(request_id)
+    target_abs = project_root / file_rel if file_rel else project_root
+    proposal_abs = (
+        _xkey_evidence_root(project_root, request_id) / _XKEY_PROPOSAL_NAME
+    )
+    forbidden = ticket.get("untouchable")
+    if isinstance(forbidden, (list, tuple)) and forbidden:
+        untouchable = "\n".join(f"- {item}" for item in forbidden)
+    else:
+        untouchable = (
+            "- 目标文件中 line_range 以外的所有行（含同文件其它模块级常量）\n"
+            "- 该用例的函数体 / 断言逻辑（本次只更新冻结期望/常量块）"
+        )
+    reason = _one_line(
+        ticket.get("reason") or ticket.get("fail_line") or "(not recorded)", 300
+    )
+    return (
+        f"# 跨 key 冻结块修复提案（request {request_id}）\n\n"
+        "你是提案 worker：只产提案，不落地任何修复。conductor 会在人工追认后做"
+        "边界预检并原子应用；提案越界 ⇒ 零写入、零残留。\n\n"
+        "## 1. 工单（权威，先完整阅读）\n\n"
+        f"- 工单文件：{ticket_abs}\n"
+        "- 工单状态：approved（人工已追认）\n"
+        f"- 红用例：{ticket.get('test_id') or '(not recorded)'}"
+        f"（owner key：{ticket.get('owner_key') or '(not recorded)'}）\n"
+        f"- 红的原因：{reason}\n\n"
+        "## 2. 冻结块规格（逐字来自工单，不得改写）\n\n"
+        f"- 目标文件：{file_rel or '(not recorded)'}"
+        f"（绝对路径：{target_abs}）\n"
+        f"- 符号：{symbol}\n"
+        f"- 行范围（含端点，1-based）：{range_literal}\n"
+        f"- old_block_sha256：{old_sha}\n"
+        f"- 允许改的行集合：{{{allowed_text}}}\n\n"
+        "## 3. untouchable（不可触碰）\n\n"
+        f"{untouchable}\n"
+        "- 除下方唯一写入目标外，不得修改任何其它文件\n\n"
+        "## 4. 输出契约（唯一写入目标）\n\n"
+        f"- 写入：{proposal_abs}\n"
+        "- 文件格式（frontmatter + 一个围栏代码块）：\n\n"
+        "```markdown\n"
+        "---\n"
+        f"file: {file_rel}\n"
+        f"line_range: {range_literal}\n"
+        f"old_block_sha256: {old_sha}\n"
+        "changed_lines: <实际改动的行号，逗号分隔；必须是允许改的行集合的子集，可省略>\n"
+        "---\n\n"
+        "```python\n"
+        "<新的冻结块内容：逐字、逐行，保留原缩进与行尾换行>\n"
+        "```\n"
+        "```\n\n"
+        "- frontmatter 的 file / line_range / old_block_sha256 三键必须逐字等于工单值"
+        "（大小写、空格、行范围写法都保持一致）；任何不一致会被判为 boundary "
+        "violation，提案作废且零写入。\n"
+        "- 围栏块内只放新的冻结块内容本身（不含差量标记、不含解释文字）；改动行范围"
+        "必须恰好覆盖 line_range，其它行原样保留。\n"
+        "- 新块内容按字节精确承载（D-012）：保持目标文件既有换行风格（CRLF/LF），"
+        "不要在块内额外加空行。\n\n"
+        "## 5. 明令禁止\n\n"
+        "- 不得修改目标文件的断言主体 / 测试逻辑（只更新冻结期望/常量块）\n"
+        "- 不得修改任何其它文件（含测试文件、其它 key 的产物、conductor/框架文件）\n"
+        "- 不得执行 git 写入操作（commit / checkout / stash 等）\n\n"
+        "## 6. 完成后必须报告\n\n"
+        "- 你实际改动的行号集合（与 changed_lines 一致）\n"
+        "- 旧的 old_block_sha256 与新的新块 sha256（如可计算）\n"
+        "- 提案文件绝对路径\n"
+    )
+
+
+# ── Cross-key red repair: apply / verify / evidence / close (T-06) ──────────
+#
+# T-03 delivered detected → ticketed → gate → approved. This segment consumes
+# an approved ticket that has a proposal on disk and walks it through
+# applied → verified → closed (design D-005/D-006/D-007/D-012, AC-005/006/007).
+#
+# Every mechanical judgement stays in ``autopilot.xkey`` (check_boundary /
+# apply_block_replace / run_verification / evidence_bundle_write); this block
+# only sequences the stages and persists the state transitions. Three
+# non-negotiables:
+#   * S2 boundary violation → zero write (the target is never opened for
+#     writing; the file sha stays exactly the ticket-creation value).
+#   * S3 snapshot the whole target byte-exactly *before* applying
+#     (runs/<ts>/pre-apply.bak), so any later failure can be undone by bytes.
+#   * S4 verification not green → restore from that snapshot byte-exactly,
+#     status ``verify_failed``, never close (the fail direction never
+#     collapses into a closure).
+#
+# Zero private state: the entry condition (ticket status + proposal file) and
+# every stage input re-derive from disk, so a restart replays exactly the same
+# (idempotent) work. Per-ticket exceptions are caught so a tick never dies and
+# the ticket keeps its last good state.
+
+_XKEY_PROPOSAL_NAME = "proposal.md"
+_XKEY_BAK_NAME = "pre-apply.bak"
+_XKEY_RUN_MARKER_NAME = "run.json"
+_XKEY_EVIDENCE_NAME = "escalation.md"
+# Statuses that (re-)enter the stage. `applied`/`verified` resume rather than
+# restart, so a conductor death between two stages never strands a modified
+# file: the stage re-derives the run dir + shas from the ticket/run marker.
+_XKEY_APPLY_ENTRIES = frozenset({"approved", "applied", "verified"})
+# Rows that must never be re-opened by another stage pass.
+_XKEY_TERMINAL_STATUSES = frozenset({
+    "closed", "boundary_violation", "verify_failed", "rejected", "timed-out",
+})
+_XKEY_PROPOSAL_META = ("file", "line_range", "old_block_sha256")
+
+_XKEY_FRONT_FENCE_RE = re.compile(
+    rb"\A(?:\xef\xbb\xbf)?(?:[ \t]*\r?\n)*?[ \t]*---[ \t]*\r?\n"
+)
+_XKEY_FENCE_CLOSE_RE = re.compile(rb"(?m)^[ \t]*---[ \t]*\r?$")
+_XKEY_CODE_FENCE_RE = re.compile(rb"(?m)^[ \t]*```[^\n]*\r?\n")
+_XKEY_CODE_FENCE_END_RE = re.compile(rb"(?m)^[ \t]*```[ \t]*\r?$")
+
+
+def _xkey_sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _xkey_file_sha256(project_root: pathlib.Path, file: object) -> str:
+    """Whole-file byte sha256 ("" when the path is unusable) — the
+    ticket-creation anchor AC-005/AC-007 measure zero-residue against."""
+    rel = _xkey_norm_path(file)
+    if not rel:
+        return ""
+    try:
+        return _xkey_sha256_bytes((pathlib.Path(project_root) / rel).read_bytes())
+    except OSError:
+        return ""
+
+
+def _xkey_norm_path(value: object) -> str:
+    """Slash form without a leading ``./`` (proposal ↔ ticket comparison)."""
+    text = str(value).strip().strip("`'\"")
+    text = text.replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text
+
+
+def _xkey_line_range(value: object) -> list[int] | None:
+    """``[s, e]`` / ``s-e`` / ``s,e`` → ordered inclusive pair, else None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            start, end = int(value[0]), int(value[1])
+        except (TypeError, ValueError):
+            return None
+        return [start, end] if start >= 1 and end >= start else None
+    if isinstance(value, str):
+        match = re.fullmatch(
+            r"\s*[\[(]?\s*(\d+)\s*(?:-|\.\.|,)\s*(\d+)\s*[\])]?\s*", value
+        )
+        if match is not None:
+            start, end = int(match.group(1)), int(match.group(2))
+            return [start, end] if start >= 1 and end >= start else None
+    return None
+
+
+def _xkey_line_list(value: str) -> list[int] | None:
+    """A comma/space separated line list (proposal ``changed_lines``)."""
+    parts = [part for part in re.split(r"[,\s]+", value.strip().strip("[]")) if part]
+    out: set[int] = set()
+    for part in parts:
+        if not re.fullmatch(r"\d+", part):
+            return None
+        out.add(int(part))
+    return sorted(out) or None
+
+
+def _xkey_int(value: object, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _xkey_evidence_root(project_root: pathlib.Path, request_id: str) -> pathlib.Path:
+    return (
+        pathlib.Path(project_root)
+        / ".agenticdoc" / "_autopilot" / "xkey" / "evidence" / request_id
+    )
+
+
+def _xkey_json_read(path: pathlib.Path) -> dict | None:
+    import json  # local: keep the conductor module-level import surface small
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _xkey_json_write(path: pathlib.Path, payload: dict) -> None:
+    import json
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = pathlib.Path(str(path) + ".tmp")
+    tmp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8", newline="\n",
+    )
+    os.replace(tmp, path)
+
+
+def _xkey_run_stamp(runs_root: pathlib.Path) -> str:
+    base = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    stamp = base
+    index = 1
+    while (runs_root / stamp).exists():
+        index += 1
+        stamp = f"{base}-{index}"
+    return stamp
+
+
+def _xkey_parse_proposal(raw: bytes) -> dict | None:
+    """Parse ``proposal.md``: the S1 metadata triple + one fenced new block.
+
+    Frontmatter carries ``file`` / ``line_range`` / ``old_block_sha256``
+    (optional ``changed_lines`` / ``reason``); the first fenced code block is
+    the byte-exact new block content (D-012). Any unusable shape returns
+    ``None`` — the caller treats that as a boundary violation, never a repair."""
+    head = _XKEY_FRONT_FENCE_RE.match(raw)
+    if head is None:
+        return None
+    rest = raw[head.end():]
+    close = _XKEY_FENCE_CLOSE_RE.search(rest)
+    if close is None:
+        return None
+    try:
+        front_text = rest[:close.start()].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    meta: dict[str, str] = {}
+    for line in front_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if ":" not in stripped:
+            return None
+        key, _, value = stripped.partition(":")
+        cleaned = value.strip().strip("`'\"")
+        if cleaned:
+            meta[key.strip()] = cleaned
+    if any(not meta.get(name) for name in _XKEY_PROPOSAL_META):
+        return None
+    line_range = _xkey_line_range(meta["line_range"])
+    if line_range is None:
+        return None
+    body = rest[close.end():]
+    open_fence = _XKEY_CODE_FENCE_RE.search(body)
+    if open_fence is None:
+        return None
+    content_start = open_fence.end()
+    end_fence = _XKEY_CODE_FENCE_END_RE.search(body[content_start:])
+    if end_fence is None:
+        return None
+    proposal = {
+        "file": meta["file"],
+        "line_range": line_range,
+        "old_block_sha256": meta["old_block_sha256"],
+        "new_bytes": body[content_start:content_start + end_fence.start()],
+    }
+    changed = meta.get("changed_lines")
+    if changed:
+        parsed_lines = _xkey_line_list(changed)
+        if parsed_lines:
+            proposal["changed_lines"] = parsed_lines
+    if meta.get("reason"):
+        proposal["reason"] = meta["reason"]
+    return proposal
+
+
+def _xkey_proposal_matches(proposal: dict, frozen: dict) -> bool:
+    """S1: the proposal metadata must equal the ticket frozen block verbatim"""
+    if _xkey_norm_path(proposal.get("file")) != _xkey_norm_path(frozen.get("file")):
+        return False
+    if _xkey_line_range(proposal.get("line_range")) != _xkey_line_range(
+        frozen.get("line_range")
+    ):
+        return False
+    proposal_sha = proposal.get("old_block_sha256")
+    frozen_sha = frozen.get("old_block_sha256")
+    return bool(proposal_sha) and proposal_sha == frozen_sha
+
+
+def _xkey_escalation_write(
+    project_root: pathlib.Path, request_id: str, status: str, detail: str
+) -> None:
+    """Durable human-visible record for a fail-closed stage exit."""
+    path = _xkey_evidence_root(project_root, request_id) / _XKEY_EVIDENCE_NAME
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = (
+            f"# XKey escalation {request_id}\n\n"
+            f"- status: {status}\n"
+            f"- detail: {detail}\n"
+            f"- at: {_iso_now()}\n"
+            f"- ticket: {_xkey_ticket_relpath(request_id)}\n"
+        )
+        tmp = pathlib.Path(str(path) + ".tmp")
+        tmp.write_text(body, encoding="utf-8", newline="\n")
+        os.replace(tmp, path)
+    except OSError:
+        pass  # the timeline event + ledger history remain the durable record
+
+
+def _xkey_replay_run(
+    runs_root: pathlib.Path, current_file_sha: str
+) -> tuple[pathlib.Path, dict] | None:
+    """Newest completed apply whose new file sha equals what is on disk.
+
+    This is the crash-replay guard: a conductor death after the atomic write
+    but before the ticket update must not read as sha-drift."""
+    if not runs_root.is_dir():
+        return None
+    for entry in sorted(runs_root.iterdir(), reverse=True):
+        if not entry.is_dir():
+            continue
+        record = _xkey_json_read(entry / _XKEY_RUN_MARKER_NAME)
+        if record is None:
+            continue
+        if (
+            record.get("phase") == "applied"
+            and record.get("new_file_sha256") == current_file_sha
+            and (entry / _XKEY_BAK_NAME).is_file()
+        ):
+            return entry, record
+    return None
+
+
+def _xkey_ledger_row(ticket: dict, status: str, history: list[dict]) -> dict:
+    """One ledger update carrying the row identity the ledger merges on."""
+    return {
+        "dedup_key": ticket.get("dedup_key"),
+        "source_key": ticket.get("source_key"),
+        "owner_key": ticket.get("owner_key"),
+        "test_id": ticket.get("test_id"),
+        "file": ticket.get("file"),
+        "frozen_block": ticket.get("frozen_block"),
+        "status": status,
+        "request_id": ticket.get("request_id"),
+        "history": history,
+    }
+
+
+def _xkey_stage_fail(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    xkey,
+    ticket: dict,
+    request_id: str,
+    status: str,
+    detail: str,
+) -> None:
+    """Fail-closed exit (S2 boundary / S3 drift): status + ledger + escalation,
+    zero writes to the affected file (it was never opened for writing)."""
+    root = str(project_root)
+    ticket[status] = {"detail": detail, "at": _iso_now()}
+    ticket["status"] = status
+    xkey.ticket_write(root, ticket)
+    if ticket.get("dedup_key"):
+        xkey.ledger_append(root, _xkey_ledger_row(ticket, status, [{
+            "ts": _iso_now(), "event": status,
+            "detail": detail,
+        }]))
+    _xkey_escalation_write(project_root, request_id, status, detail)
+    st.timeline.append(
+        "xkey-" + status.replace("_", "-"), key=ticket.get("owner_key"),
+        detail=f"{request_id} {detail}",
+    )
+
+
+def _xkey_restore(
+    target: pathlib.Path, run_dir: pathlib.Path
+) -> tuple[bool, str]:
+    """Restore the target from the byte snapshot; (restored, restored sha)."""
+    bak = run_dir / _XKEY_BAK_NAME
+    if not bak.is_file():
+        return False, ""
+    try:
+        data = bak.read_bytes()
+        tmp = pathlib.Path(str(target) + ".xkey-restore.tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+    except OSError:
+        return False, ""
+    return True, _xkey_sha256_bytes(data)
+
+
+def _xkey_verify_failed(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    xkey,
+    ticket: dict,
+    request_id: str,
+    target: pathlib.Path,
+    applied: dict,
+    red_before: int,
+    red_after: int | None,
+    detail: str,
+    stdout_path: object = None,
+) -> None:
+    """S4 failure: byte-restore from the snapshot, never close."""
+    root = str(project_root)
+    restored, restored_sha = _xkey_restore(target, pathlib.Path(str(applied["run_dir"])))
+    expected = str(ticket.get("target_file_sha256") or applied.get("old_file_sha256") or "")
+    sha_ok = bool(expected) and restored_sha == expected
+    ticket["verify"] = {
+        "red_before": red_before, "red_after": red_after,
+        "restored": restored, "restored_sha256": restored_sha,
+        "expected_file_sha256": expected, "restore_sha_ok": sha_ok,
+        "stdout_path": stdout_path, "detail": detail, "failed_at": _iso_now(),
+    }
+    ticket["status"] = "verify_failed"
+    xkey.ticket_write(root, ticket)
+    if ticket.get("dedup_key"):
+        xkey.ledger_append(root, _xkey_ledger_row(ticket, "verify_failed", [{
+            "ts": _iso_now(), "event": "verify_failed",
+            "detail": f"{detail}; restored={restored} sha_ok={sha_ok}",
+        }]))
+    _xkey_escalation_write(project_root, request_id, "verify_failed", detail)
+    st.timeline.append(
+        "xkey-verify-failed", key=ticket.get("owner_key"),
+        detail=f"{request_id} {detail}; restored={restored} sha_ok={sha_ok}",
+    )
+
+
+def _xkey_apply_block(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    xkey,
+    ticket: dict,
+    request_id: str,
+    frozen: dict,
+    proposal: dict,
+    target: pathlib.Path,
+) -> dict | None:
+    """S3: snapshot, then ``xkey.apply_block_replace`` (atomic, drift-refusing).
+
+    Returns ``{"run_dir", "old_file_sha256", "new_file_sha256",
+    "new_block_sha256"}`` or ``None`` (a fail-closed exit was recorded)."""
+    root = str(project_root)
+    runs_root = _xkey_evidence_root(project_root, request_id) / "runs"
+    current_sha = _xkey_sha256_bytes(target.read_bytes())
+    replay = _xkey_replay_run(runs_root, current_sha)
+    if replay is not None:
+        run_dir, record = replay
+        applied = {
+            "run_dir": str(run_dir),
+            "old_file_sha256": str(record.get("old_file_sha256") or ""),
+            "new_file_sha256": current_sha,
+            "new_block_sha256": str(record.get("new_block_sha256") or ""),
+        }
+    else:
+        old_bytes = target.read_bytes()
+        old_sha = _xkey_sha256_bytes(old_bytes)
+        run_dir = runs_root / _xkey_run_stamp(runs_root)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / _XKEY_BAK_NAME).write_bytes(old_bytes)
+        try:
+            new_block_sha = xkey.apply_block_replace(
+                root, ticket, proposal["new_bytes"]
+            )
+        except xkey.XKeyError as exc:
+            _xkey_stage_fail(
+                project_root, st, xkey, ticket, request_id, "boundary_violation",
+                f"apply refused, no write: {exc}",
+            )
+            return None
+        applied = {
+            "run_dir": str(run_dir),
+            "old_file_sha256": old_sha,
+            "new_file_sha256": _xkey_sha256_bytes(target.read_bytes()),
+            "new_block_sha256": new_block_sha,
+        }
+        _xkey_json_write(run_dir / _XKEY_RUN_MARKER_NAME, {
+            "request_id": request_id,
+            "phase": "applied",
+            "old_block_sha256": frozen.get("old_block_sha256"),
+            "applied_at": _iso_now(),
+            **applied,
+        })
+    ticket["status"] = "applied"
+    ticket["apply"] = applied
+    xkey.ticket_write(root, ticket)
+    if ticket.get("dedup_key"):
+        xkey.ledger_append(root, _xkey_ledger_row(ticket, "applied", [{
+            "ts": _iso_now(), "event": "applied",
+            "detail": (
+                f"block replace applied: file "
+                f"{applied['old_file_sha256'][:12]}→{applied['new_file_sha256'][:12]}"
+            ),
+        }]))
+    st.timeline.append(
+        "xkey-applied", key=ticket.get("owner_key"),
+        detail=(
+            f"{request_id} {_xkey_norm_path(frozen.get('file'))} "
+            f"{applied['old_file_sha256'][:12]}→{applied['new_file_sha256'][:12]}"
+        ),
+    )
+    return applied
+
+
+def _xkey_run_verify(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    xkey,
+    ticket: dict,
+    request_id: str,
+    target: pathlib.Path,
+    applied: dict,
+    cfg: dict,
+) -> dict | None:
+    """S4: targeted rerun, red before→after; not green ⇒ rollback + no close."""
+    root = str(project_root)
+    verify_cmd = [str(part) for part in (cfg.get("xkey_verify_cmd") or [])]
+    timeout_s = _xkey_int(cfg.get("xkey_verify_timeout_s"), 1800)
+    red_before = _xkey_int(ticket.get("red_before"), 1)
+    if not verify_cmd:
+        _xkey_verify_failed(
+            project_root, st, xkey, ticket, request_id, target, applied,
+            red_before, None, "xkey_verify_cmd is empty (cannot prove green)",
+        )
+        return None
+    try:
+        result = xkey.run_verification(
+            verify_cmd, cwd=root, run_dir=str(applied["run_dir"]), timeout=timeout_s,
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-closed, never close on doubt
+        _xkey_verify_failed(
+            project_root, st, xkey, ticket, request_id, target, applied,
+            red_before, None, f"run_verification raised: {exc!r}",
+        )
+        return None
+    counts = result.get("red_counts") or {}
+    red_after = _xkey_int(counts.get("total"), 0)
+    returncode = _xkey_int(counts.get("returncode"), 1)
+    timed_out = bool(counts.get("timed_out"))
+    if not (red_after == 0 and not timed_out and returncode == 0):
+        _xkey_verify_failed(
+            project_root, st, xkey, ticket, request_id, target, applied,
+            red_before, red_after,
+            (
+                f"not green: red {red_before}->{red_after} "
+                f"rc={returncode} timed_out={timed_out}"
+            ),
+            stdout_path=result.get("stdout_path"),
+        )
+        return None
+    verify = {
+        "red_before": red_before,
+        "red_after": red_after,
+        "returncode": returncode,
+        "timed_out": timed_out,
+        "stdout_path": result.get("stdout_path"),
+        "stdout_sha256": result.get("sha256"),
+        "verify_cmd": verify_cmd,
+        "summary": counts.get("summary"),
+        "verified_at": _iso_now(),
+    }
+    ticket["status"] = "verified"
+    ticket["verify"] = verify
+    xkey.ticket_write(root, ticket)
+    if ticket.get("dedup_key"):
+        xkey.ledger_append(root, _xkey_ledger_row(ticket, "verified", [{
+            "ts": _iso_now(), "event": "verified",
+            "detail": f"targeted rerun green: red {red_before}->{red_after}",
+        }]))
+    st.timeline.append(
+        "xkey-verified", key=ticket.get("owner_key"),
+        detail=f"{request_id} red {red_before}->{red_after}",
+    )
+    return verify
+
+
+def _xkey_write_evidence(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    xkey,
+    ticket: dict,
+    request_id: str,
+    applied: dict,
+    verify: dict,
+) -> bool:
+    """S5: the AC-006 bundle; ``closed`` comes from the module, never guessed."""
+    root = str(project_root)
+    bundle = {
+        "old_sha256": applied.get("old_file_sha256"),
+        "new_sha256": applied.get("new_file_sha256"),
+        "reason": (
+            ticket.get("reason") or ticket.get("fail_line")
+            or "cross-key frozen block refresh"
+        ),
+        "relaxed_assertion": False,
+        "verify_cmd": verify.get("verify_cmd"),
+        "stdout_path": verify.get("stdout_path"),
+        "red_before": verify.get("red_before"),
+        "red_after": verify.get("red_after"),
+    }
+    bundle_path = xkey.evidence_bundle_write(root, request_id, bundle)
+    document = _xkey_json_read(pathlib.Path(bundle_path))
+    closed = bool(document and document.get("closed") is True)
+    ticket["evidence"] = {
+        "bundle_path": bundle_path,
+        "closed": closed,
+        "missing": (document or {}).get("missing", []),
+        "written_at": _iso_now(),
+    }
+    xkey.ticket_write(root, ticket)
+    if not closed:
+        _xkey_escalation_write(
+            project_root, request_id, "evidence_incomplete",
+            f"bundle not closed: missing={ticket['evidence']['missing']}",
+        )
+        st.timeline.append(
+            "xkey-evidence-incomplete", key=ticket.get("owner_key"),
+            detail=f"{request_id} missing={ticket['evidence']['missing']}",
+        )
+    return closed
+
+
+def _xkey_close(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    xkey,
+    ticket: dict,
+    request_id: str,
+    applied: dict,
+    verify: dict,
+) -> None:
+    """S6: close the ledger row and annotate both affected keys *in the row*.
+
+    D-004: a DONE key's files are never written and a cross-key red has no
+    single owner, so the two closure annotations (the source handoff and the
+    owner legacy) live in the ledger row itself."""
+    root = str(project_root)
+    source_key = ticket.get("source_key")
+    owner_key = ticket.get("owner_key")
+    ts = _iso_now()
+    closures = [
+        {
+            "role": "source",
+            "key": source_key,
+            "annotation": (
+                f"交接登记闭合（{source_key} 的跨 key 交接随 {request_id} 修复闭合）"
+            ),
+            "at": ts,
+        },
+        {
+            "role": "owner",
+            "key": owner_key,
+            "annotation": (
+                f"遗留登记闭合（{owner_key} 的遗留红随 {request_id} 修复闭合）"
+            ),
+            "at": ts,
+        },
+    ]
+    ticket["status"] = "closed"
+    ticket["closures"] = closures
+    xkey.ticket_write(root, ticket)
+    if ticket.get("dedup_key"):
+        row = _xkey_ledger_row(ticket, "closed", [{
+            "ts": ts, "event": "closed",
+            "detail": (
+                f"file {applied.get('old_file_sha256', '')[:12]}→"
+                f"{applied.get('new_file_sha256', '')[:12]}; "
+                f"red {verify.get('red_before')}->{verify.get('red_after')}"
+            ),
+        }])
+        row["closures"] = closures
+        xkey.ledger_append(root, row)
+    st.timeline.append(
+        "xkey-closed", key=owner_key,
+        detail=f"{request_id} source={source_key} owner={owner_key}",
+    )
+
+
+def _xkey_apply_one(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    xkey,
+    ticket: dict,
+    row_status: dict[str, str],
+    cfg: dict,
+) -> None:
+    """One ticket: S1 boundary → S2 check → S3 apply → S4 verify → S5
+    evidence → S6 close, resuming from the persisted stage on re-entry."""
+    request_id = ticket.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        return
+    status = str(ticket.get("status") or "")
+    if status not in _XKEY_APPLY_ENTRIES:
+        return
+    if row_status.get(request_id) in _XKEY_TERMINAL_STATUSES:
+        return  # the ledger's terminal row outranks a stale ticket write
+    proposal_path = _xkey_evidence_root(project_root, request_id) / _XKEY_PROPOSAL_NAME
+    if not proposal_path.is_file() and status == "approved":
+        return  # approved but no proposal yet — wait for the proposal worker
+    frozen = ticket.get("frozen_block")
+    if not isinstance(frozen, dict):
+        _xkey_stage_fail(
+            project_root, st, xkey, ticket, request_id, "boundary_violation",
+            "ticket carries no frozen_block (fail-closed)",
+        )
+        return
+    target_rel = _xkey_norm_path(frozen.get("file"))
+    target = pathlib.Path(project_root) / target_rel
+    if not target_rel or not target.is_file():
+        _xkey_stage_fail(
+            project_root, st, xkey, ticket, request_id, "boundary_violation",
+            f"target file missing: {target_rel or frozen.get('file')!r}",
+        )
+        return
+
+    if status == "approved":
+        try:
+            proposal = _xkey_parse_proposal(proposal_path.read_bytes())
+        except OSError as exc:
+            _xkey_stage_fail(
+                project_root, st, xkey, ticket, request_id, "boundary_violation",
+                f"proposal unreadable: {exc!r}",
+            )
+            return
+        if proposal is None or not _xkey_proposal_matches(proposal, frozen):
+            _xkey_stage_fail(
+                project_root, st, xkey, ticket, request_id, "boundary_violation",
+                "proposal metadata does not match the ticket frozen_block",
+            )
+            return
+        if xkey.check_boundary(proposal, ticket) != "ok":
+            _xkey_stage_fail(
+                project_root, st, xkey, ticket, request_id, "boundary_violation",
+                "check_boundary rejected the proposal (zero write)",
+            )
+            return
+        applied = _xkey_apply_block(
+            project_root, st, xkey, ticket, request_id, frozen, proposal, target
+        )
+        if applied is None:
+            return
+    else:
+        applied = ticket.get("apply")
+        if not isinstance(applied, dict) or not applied.get("run_dir"):
+            _xkey_stage_fail(
+                project_root, st, xkey, ticket, request_id, "verify_failed",
+                f"ticket status {status} without persisted apply state",
+            )
+            return
+
+    if status == "verified":
+        verify = ticket.get("verify")
+        if not isinstance(verify, dict):
+            _xkey_stage_fail(
+                project_root, st, xkey, ticket, request_id, "verify_failed",
+                "ticket status verified without persisted verify state",
+            )
+            return
+    else:
+        verify = _xkey_run_verify(
+            project_root, st, xkey, ticket, request_id, target, applied, cfg
+        )
+        if verify is None:
+            return
+
+    if not _xkey_write_evidence(
+        project_root, st, xkey, ticket, request_id, applied, verify
+    ):
+        return
+    _xkey_close(
+        project_root, st, xkey, ticket, request_id, applied, verify
+    )
+
+
+def _xkey_apply_stage(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    status_of: dict[str, str],
+    cfg: dict,
+) -> None:
+    """T-06 mount: fold every approved ticket with a proposal through S1→S6.
+
+    Entry re-derives from disk every tick (ticket status ∈ approved/applied/
+    verified **and** ``evidence/<request_id>/proposal.md`` present), so a
+    closed/failed ticket never re-enters — that is what makes the stage
+    idempotent. ``status_of`` is accepted to keep the mount signature the
+    design fixed; ownership terminality was already decided upstream by
+    ``_xkey_aggregate``. Any exception is caught here: the tick survives and
+    the ticket keeps its last good state."""
+    del status_of  # part of the frozen mount signature; decided in _xkey_aggregate
+    xkey = _xkey()
+    root = str(project_root)
+    try:
+        ledger = xkey.ledger_load(root)
+    except Exception as exc:  # noqa: BLE001 — a corrupt ledger never overwrites
+        st.timeline.append("config", detail=f"xkey ledger unreadable: {exc!r}")
+        return
+    row_status = {
+        str(row.get("request_id")): str(row.get("status") or "")
+        for row in ledger.get("rows", [])
+        if isinstance(row, dict) and row.get("request_id")
+    }
+    try:
+        tickets = xkey.tickets_iter(root)
+    except Exception as exc:  # noqa: BLE001 — a corrupt ticket is skipped, not fatal
+        st.timeline.append("config", detail=f"xkey tickets unreadable: {exc!r}")
+        return
+    for ticket in tickets:
+        if not isinstance(ticket, dict):
+            continue
+        try:
+            _xkey_apply_one(project_root, st, xkey, ticket, row_status, cfg)
+        except Exception as exc:  # noqa: BLE001 — per-ticket isolation
+            st.timeline.append(
+                "config", key=ticket.get("owner_key"),
+                detail=(
+                    f"xkey apply stage error for {ticket.get('request_id')}: "
+                    f"{exc!r} (ticket kept at its last good state)"
+                ),
+            )
 
 
 # ── Stalled marking (four artifacts, F7/AC-006) ─────────────────────────────

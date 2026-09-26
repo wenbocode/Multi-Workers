@@ -42,4 +42,5 @@
 | mw-worker-visibility-gate | idle | DONE | WENBOZHOU-PC4:93144 |  |  | 2026-09-24T08:05:46.927Z |
 | mw-crosskey-risk-escalation | idle | DONE | WENBOZHOU-PC4:93144 |  |  | 2026-09-25T03:09:20.075Z |
 | mw-done-closure-repair | idle | DONE | WENBOZHOU-PC4:18200 |  |  | 2026-09-25T08:18:47.606Z |
-| mw-l3-fail-marker-forms | active | DONE | WENBOZHOU-PC4:18200 | — | — | 2026-09-25 19:36 |
+| mw-l3-fail-marker-forms | idle | DONE | WENBOZHOU-PC4:18200 | — | — | 2026-09-26 11:25 |
+| xkey-repair-mechanism | active | DONE | WENBOZHOU-PC4:18200 | — | — | 2026-09-26 12:46 |

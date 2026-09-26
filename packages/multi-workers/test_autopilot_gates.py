@@ -410,11 +410,11 @@ class TestCorruptFrontmatter:
             gates.enumerate(d)
 
 
-# --- 5 kinds + 3 statuses --------------------------------------------------------
+# --- kinds + 3 statuses ---------------------------------------------------------
 
 
 class TestKindAndStatusEnumeration:
-    def test_all_five_kinds_render_and_round_trip(self, tmp_path):
+    def test_all_kinds_render_and_round_trip(self, tmp_path):
         d = tmp_path / "gates"
         for kind in gates.GATE_KINDS:
             p = gates.create(d, kind, f"Proceed with {kind}?", [f"refs/{kind}.md"])
@@ -422,10 +422,11 @@ class TestKindAndStatusEnumeration:
             assert f"kind: {kind}" in text
             assert f"# Gate gate-" in text
             assert gates.parse(p).kind == kind
+        count = len(gates.GATE_KINDS)
         ids = [g.id for g in gates.enumerate(d)]
-        assert ids == [f"gate-{i:04d}" for i in range(1, 6)]
+        assert ids == [f"gate-{i:04d}" for i in range(1, count + 1)]
         assert {g.kind for g in gates.enumerate(d)} == set(gates.GATE_KINDS)
-        print("[VERIFY] VC-005: kinds=5 rendered=5 roundtrip=5")
+        print(f"[VERIFY] VC-005: kinds={count} rendered={count} roundtrip={count}")
 
     def test_status_lifecycle_three_values(self, tmp_path):
         d = tmp_path / "gates"

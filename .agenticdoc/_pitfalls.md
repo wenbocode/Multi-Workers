@@ -171,3 +171,23 @@
   2. 停机走 `.mw/mw.stop` 优雅停（serve 见文件→自清→退出）；若 serve 已死而 stop 文件残留，再启动前必须手删（否则新 serve 第一 tick 即死）；
   3. 重启命令带 `-X utf8`（中文输出 stdio）；不得用 PowerShell 文本命令碰 config.json（PS 5.1 写 BOM → serve 配置监听崩 → 整栈退出，FM 台账 A-07 / P-001 家族）。
 - 关联：P-001（PS BOM 家族）；FM 台账 A-05/A-07；UPDATE.md A3（已同步修正）；2026-09-26 三项目重启实操验证（FM 116368 / E2 76584 / MW 78608，均 fresh + conductor 拉起 + 心跳在跳）。
+
+## P-016 解除 skip 的用例可能是空洞的——必须做非空洞对照（2026-09-26，xkey-repair-mechanism T-07）
+
+- 现象：为「依赖尚未落地的实现」而标 `pytest.mark.skip` 的用例，在依赖落地后解除 skip 时**看似绿实则没咬住任何东西**。本轮三例全部中招：① 现场用错了 kwarg（`_gate_open(..., ref=...)` 实为 `request_id`），等于测试自实现了一个假守卫；② fixture 用 `ConductorState()`（arity 错）且缺 running roadmap ⇒ 被测代码路径**根本不可达**（悬空断言）；③ 缺「必含节内」的位置断言 ⇒ 只验了字符串存在、没验它落在判定源可读的节里。
+- 根因：skip 是用例与实现之间的**时间差**——写用例时实现不存在，作者只能凭**当时的理解**猜接口与可达条件；这个理解错误在 skip 期间完全不可见（不运行 = 不报错），解除 skip 时若只把标记删掉，测出来的绿是「测试代码自己编的绿」。
+- 硬规则（规避）：
+  1. 解除 skip 必须**同时**做非空洞对照：把被测守卫摘掉/反转（或把开关拨到相反值），断言用例**转红**；本轮做法——摘掉 `_gate_open` 守卫 ⇒ 5 tick = 5 gate（守卫在场时 = 1），开关拨到 `xkey_repair=True` ⇒ 目录出现 + 事件出现；
+  2. 校验**可达性**而非只看断言结果：确认 fixture 真能走到被测分支（本轮 VC-008 原 fixture 不可达），必要时断言分支入口被命中；
+  3. 删除 skip 时检查**参数名/arity/节位置**三类「时间差伪影」，不要只删标记。
+- 关联：P-014（取证不可核/构造用例须标注）；本条是同一家族在**测试侧**的形态。
+
+## P-017 `npm run check` 会全仓 `--write`——多会话并行时是破坏性命令（2026-09-26，xkey-repair-mechanism T-05）
+
+- 现象：`npm run check` 的第一条是 `biome check --write --error-on-warnings .`，**带 `--write` 且作用域是全仓**。多窗口/多会话共用同一 cwd 时，它会就地改写**其他会话正在编辑的**文件（格式化/修可自动修的 lint），且改写后对方毫无感知——比「跑测试」危险得多。
+- 根因：AGENTS.md 规定「After code changes: npm run check」，但没写明该命令自带全仓写权限；单会话模型下无害，多会话并行模型下越界。
+- 硬规则（规避）：
+  1. 纯 Python/文档改动**不需要**跑 `npm run check`（biome/tsgo 不覆盖 Python）；本轮 T-05 主动跳过是正确判断；
+  2. 必须跑时，先 `git status --porcelain` 确认工作树里没有别人的未提交改动，或只对有改动的文件定向跑 biome；
+  3. 不要为了「跑一下 check」而先 stash/clean——那会破坏他人未提交工作（禁手）。
+- 关联：P-015（多会话/多进程资源契约家族）；AGENTS.md Commands 节。

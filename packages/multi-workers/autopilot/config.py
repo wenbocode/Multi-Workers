@@ -20,6 +20,12 @@ Field set and defaults (D-110):
     l2_read_byte_cap   int     65536
     advance_stall_ticks int    5    (1..50; consecutive same-edge advance
                                     failures before the key is marked stalled)
+    xkey_repair        bool    false (cross-key red repair channel; AC-008 off
+                                    by default so every existing flow is
+                                    untouched until a project opts in)
+    xkey_verify_cmd    list[str] []  (per-project verification argv, D-007;
+                                    no shell, so a list is the contract)
+    xkey_verify_timeout_s int  1800 (>=1; conductor subprocess timeout in s)
 
 The mtime cache (:func:`cached_load`) lets ``mw serve`` and the conductor poll
 the config every tick without re-reading and re-parsing the file each second.
@@ -45,10 +51,14 @@ DEFAULT_CONFIG: dict = {
     "l2_read_file_cap": 8,
     "l2_read_byte_cap": 65536,
     "advance_stall_ticks": 5,
+    "xkey_repair": False,
+    "xkey_verify_cmd": [],
+    "xkey_verify_timeout_s": 1800,
 }
 
 # bool must be rejected before the int rules (bool is an int subclass).
-_BOOL_FIELDS = ("enabled", "paused")
+_BOOL_FIELDS = ("enabled", "paused", "xkey_repair")
+_LIST_FIELDS = ("xkey_verify_cmd",)
 _INT_RANGES: dict[str, tuple[int, int | None]] = {
     "poll_interval_sec": (1, 5),
     "max_parallel_keys": (2, None),
@@ -57,6 +67,7 @@ _INT_RANGES: dict[str, tuple[int, int | None]] = {
     "l2_read_file_cap": (1, None),
     "l2_read_byte_cap": (1, None),
     "advance_stall_ticks": (1, 50),
+    "xkey_verify_timeout_s": (1, None),
 }
 
 # resolved path -> (mtime_ns, size, config dict); None entry = file absent.
@@ -83,6 +94,16 @@ def validate_config(cfg: object) -> None:
     for field in _BOOL_FIELDS:
         if field in cfg and not isinstance(cfg[field], bool):
             errors.append(f"{field}: expected true/false, got {cfg[field]!r}")
+    for field in _LIST_FIELDS:
+        if field not in cfg:
+            continue
+        value = cfg[field]
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) and item for item in value
+        ):
+            errors.append(
+                f"{field}: expected a list of non-empty strings, got {value!r}"
+            )
     for field, (lo, hi) in _INT_RANGES.items():
         if field not in cfg:
             continue

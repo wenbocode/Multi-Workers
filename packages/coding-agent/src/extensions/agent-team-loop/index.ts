@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { pmActivate } from "./pm/pm-orchestrator.ts";
 import { registerImplementationGate } from "./shared/implementation-gate.ts";
 import { registerProtectedConfigGuard } from "./shared/protected-config.ts";
+import { registerXkeyGateGuard } from "./shared/xkey-gate-guard.ts";
 import { workerModeActivate } from "./worker/worker-mode.ts";
 
 // Defense against a double-load: if the same bundle is loaded twice in one host
@@ -39,6 +40,13 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 	// register the listener. Hard block on write/edit/bash targeting the
 	// protected agent config; reads pass through.
 	registerProtectedConfigGuard(pi);
+
+	// XKEY gate-dir guard (xkey-repair-mechanism D-008, AC-004): gate files
+	// (.agenticdoc/_autopilot/gates/**) are the human-answer channel, so the
+	// agent tool layer is refused (write/edit/bash, fail-closed) while reads
+	// and the xkey proposal tree stay open. Registered in EVERY mode, same
+	// position as the protected-config guard so a worker window is covered.
+	registerXkeyGateGuard(pi);
 
 	// Implementation entry gate (mw-implementation-gate): write/edit/bash
 	// calls targeting code paths under packages/ pass only with an active

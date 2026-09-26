@@ -23,7 +23,9 @@ sole creator there is no concurrent-allocation conflict.
 Frontmatter schema (design 4.1) - 12 fields:
   id, kind, stage, key, created_at, created_by, question, context_refs,
   status, answered_at, answered_by, note
-  kind   in {stage-confirm, stage-close, stalled, budget-exhausted, goal-change}
+  kind   in {stage-confirm, stage-close, stalled, budget-exhausted, goal-change,
+            xkey-authorize}  (the closed set is GATE_KINDS; the TS mirror is
+            status-model.ts GATE_KINDS — both sides validate fail-closed)
   status in {pending, approved, rejected}
 
 YAML subset (hand-rolled: stdlib ships no yaml and third-party pyyaml is not
@@ -55,6 +57,7 @@ GATE_KINDS: tuple[str, ...] = (
     "stalled",
     "budget-exhausted",
     "goal-change",
+    "xkey-authorize",
 )
 
 GATE_STATUSES: tuple[str, ...] = ("pending", "approved", "rejected")
