@@ -15,7 +15,7 @@
  *     frontmatter YAML subset, status enum, seq-ordered directory scan)
  *   - timeline.jsonl + .1/.2 rotations → autopilot/timeline.py (query_events
  *     watermark / ev_filter / pruned semantics, D-109)
- *   - _autopilot/config.json           → autopilot/config.py (12 fields,
+ *   - _autopilot/config.json           → autopilot/config.py (13 fields,
  *     D-110; present-but-invalid fails closed, missing file = defaults)
  *   - rounds derivation                → autopilot/state.py used_rounds
  *     (distinct attempt per loop label; a missing attempt label degrades to
@@ -62,6 +62,14 @@ export function gatesLockPath(projectDir: string): string {
 	return path.join(projectDir, ".mw", "gates.lock");
 }
 
+/** `.mw/autopilot-config.lock` — the O_CREAT|O_EXCL lock guarding the
+ * config.json read-modify-write (mw-autopilot-verify-cli D-006). Same path
+ * family and protocol as the other `.mw/` locks; the Python writer takes the
+ * byte-identical path (plan §2.2), so the two sides are mutually exclusive. */
+export function configLockPath(projectDir: string): string {
+	return path.join(projectDir, ".mw", "autopilot-config.lock");
+}
+
 // ── config.json (mirror of autopilot/config.py, D-110) ──────────────────────
 
 export interface AutopilotConfig {
@@ -85,6 +93,10 @@ export interface AutopilotConfig {
 	xkey_verify_cmd: string[];
 	/** Conductor verification-subprocess timeout in seconds (>= 1). */
 	xkey_verify_timeout_s: number;
+	/** Workspace-root selector for xkey verification (conductor-resolved).
+	 * "" = auto (workspace_root). The schema only requires a string; the
+	 * root-name validity is resolved at parse time (plan §2.2). */
+	xkey_verify_cwd: string;
 }
 
 export const DEFAULT_CONFIG: AutopilotConfig = {
@@ -100,6 +112,7 @@ export const DEFAULT_CONFIG: AutopilotConfig = {
 	xkey_repair: false,
 	xkey_verify_cmd: [],
 	xkey_verify_timeout_s: 1800,
+	xkey_verify_cwd: "",
 };
 
 /** Fresh copy of the defaults that callers may mutate freely — mirror of
@@ -109,13 +122,16 @@ function freshDefaults(): AutopilotConfig {
 	return { ...DEFAULT_CONFIG, xkey_verify_cmd: [...DEFAULT_CONFIG.xkey_verify_cmd] };
 }
 
-const BOOL_FIELDS = ["enabled", "paused", "xkey_repair"] as const;
+export const BOOL_FIELDS = ["enabled", "paused", "xkey_repair"] as const;
 
 /** field → list of non-empty strings — identical to config.py _LIST_FIELDS. */
-const LIST_FIELDS = ["xkey_verify_cmd"] as const;
+export const LIST_FIELDS = ["xkey_verify_cmd"] as const;
+
+/** Plain string fields — identical to config.py _STRING_FIELDS. */
+export const STR_FIELDS = ["xkey_verify_cwd"] as const;
 
 /** field → [min, max|null] — identical to config.py _INT_RANGES. */
-const INT_RANGES: Record<string, [number, number | null]> = {
+export const INT_RANGES: Record<string, [number, number | null]> = {
 	poll_interval_sec: [1, 5],
 	max_parallel_keys: [2, null],
 	round_budget: [1, null],
@@ -125,6 +141,36 @@ const INT_RANGES: Record<string, [number, number | null]> = {
 	advance_stall_ticks: [1, 50],
 	xkey_verify_timeout_s: [1, null],
 };
+
+/** Node >= 22 hands the reviver a third argument whose `context.source` is the
+ * ORIGINAL literal text for primitive values. That is the only way to tell
+ * `4.0` / `4.00` / `1e2` / `-0.0` apart from `4` — JSON.parse normalizes all of
+ * them to the integer number 4 (design D-007 Direction B). The lib.es5
+ * `JSON.parse` overload has no such parameter, so the reviver is narrowed here
+ * and cast once at the call site (no `any`). */
+type ConfigReviverContext = { source?: string };
+
+/** Pure JSON integer literal — exactly the forms Python's `int` accepts from
+ * `json.loads`, so the two schema owners agree on every literal. */
+const INT_LITERAL_RE = /^-?(?:0|[1-9]\d*)$/;
+
+/** Raised by configReviver so readConfig can report the field and literal
+ * instead of a generic parse error. */
+class IntegerLiteralError extends Error {
+	constructor(field: string, literal: string) {
+		super(`invalid _autopilot/config.json: ${field}: expected an integer literal, got ${literal}`);
+		this.name = "IntegerLiteralError";
+	}
+}
+
+/** JSON.parse reviver rejecting non-integer literals for the int fields. */
+function configReviver(this: unknown, key: string, value: unknown, context?: ConfigReviverContext): unknown {
+	if (typeof value !== "number" || !Number.isInteger(value)) return value;
+	if (!Object.hasOwn(INT_RANGES, key)) return value;
+	const source = context?.source;
+	if (source !== undefined && !INT_LITERAL_RE.test(source)) throw new IntegerLiteralError(key, source);
+	return value;
+}
 
 /** Validate a raw config object exactly like config.py validate_config:
  * unknown fields and out-of-range values fail closed, naming every offender.
@@ -152,6 +198,11 @@ export function validateConfigData(data: unknown): string[] {
 		const value = cfg[field];
 		if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item !== "")) {
 			errors.push(`${field}: expected a list of non-empty strings, got ${JSON.stringify(value)}`);
+		}
+	}
+	for (const field of STR_FIELDS) {
+		if (field in cfg && typeof cfg[field] !== "string") {
+			errors.push(`${field}: expected string, got ${JSON.stringify(cfg[field])}`);
 		}
 	}
 	for (const [field, [lo, hi]] of Object.entries(INT_RANGES)) {
@@ -186,8 +237,9 @@ export function readConfig(projectDir: string): ConfigResult {
 	}
 	let data: unknown;
 	try {
-		data = JSON.parse(raw);
+		data = JSON.parse(raw, configReviver as (this: unknown, key: string, value: unknown) => unknown);
 	} catch (err) {
+		if (err instanceof IntegerLiteralError) return { ok: false, error: err.message };
 		return { ok: false, error: `cannot parse ${file}: ${String(err)}` };
 	}
 	const errors = validateConfigData(data);
@@ -210,6 +262,8 @@ export function readConfig(projectDir: string): ConfigResult {
 	): number => (typeof cfg[name] === "number" ? (cfg[name] as number) : DEFAULT_CONFIG[name]);
 	const listOf = (name: "xkey_verify_cmd"): string[] =>
 		Array.isArray(cfg[name]) ? (cfg[name] as string[]) : [...DEFAULT_CONFIG[name]];
+	const strOf = (name: "xkey_verify_cwd"): string =>
+		typeof cfg[name] === "string" ? cfg[name] : DEFAULT_CONFIG[name];
 	const merged: AutopilotConfig = {
 		enabled: boolOf("enabled"),
 		paused: boolOf("paused"),
@@ -223,6 +277,7 @@ export function readConfig(projectDir: string): ConfigResult {
 		xkey_repair: boolOf("xkey_repair"),
 		xkey_verify_cmd: listOf("xkey_verify_cmd"),
 		xkey_verify_timeout_s: intOf("xkey_verify_timeout_s"),
+		xkey_verify_cwd: strOf("xkey_verify_cwd"),
 	};
 	return { ok: true, config: merged };
 }
@@ -247,6 +302,7 @@ export function saveConfig(projectDir: string, config: AutopilotConfig): { ok: t
 		xkey_repair: config.xkey_repair,
 		xkey_verify_cmd: [...config.xkey_verify_cmd],
 		xkey_verify_timeout_s: config.xkey_verify_timeout_s,
+		xkey_verify_cwd: config.xkey_verify_cwd,
 	};
 	const file = configPath(projectDir);
 	try {

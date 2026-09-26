@@ -30,25 +30,35 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../src/core/extensions/types.ts";
-import { registerAutopilotCommands } from "../../src/extensions/agent-team-loop/autopilot/console.ts";
+import {
+	DEFAULT_CONFIG_LOCK_OPTS,
+	registerAutopilotCommands,
+	saveConfigLocked,
+} from "../../src/extensions/agent-team-loop/autopilot/console.ts";
 import { answerGate } from "../../src/extensions/agent-team-loop/autopilot/gate-writer.ts";
 import {
+	BOOL_FIELDS,
+	configLockPath,
 	DEFAULT_CONFIG,
 	deriveStatusModel,
 	gatesDir,
 	gatesLockPath,
+	INT_RANGES,
+	LIST_FIELDS,
 	listGates,
 	nonBeatFilter,
 	parseTaskLabels,
 	queryTimeline,
 	readConfig,
 	renderStatusText,
+	STR_FIELDS,
 	saveConfig,
 	timelinePath,
 	usedRounds,
 	watermarkFromSince,
 } from "../../src/extensions/agent-team-loop/autopilot/status-model.ts";
 import { pmActivate } from "../../src/extensions/agent-team-loop/pm/pm-orchestrator.ts";
+import { acquireLock } from "../../src/extensions/agent-team-loop/shared/file-lock.ts";
 
 function mkdtemp(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "ap-console-"));
@@ -806,6 +816,195 @@ describe("config read/write (D-110)", () => {
 	});
 });
 
+// ── Config integer literals + write lock (mw-autopilot-verify-cli T-04) ──────
+
+describe("config integer literals, mirror exports, and write lock (T-04)", () => {
+	/** Write a raw config.json body verbatim so 4.0 / 1e2 / -0.0 reach
+	 * readConfig exactly as a human wrote them (JSON.stringify would normalize
+	 * the number before the reviver ever saw the literal). */
+	function writeRawConfig(root: string, body: string): string {
+		const dir = path.join(root, ".agenticdoc", "_autopilot");
+		fs.mkdirSync(dir, { recursive: true });
+		const file = path.join(dir, "config.json");
+		fs.writeFileSync(file, `{${body}}\n`, "utf8");
+		return file;
+	}
+
+	it("D-007 Direction B: 12 integer literals accept/reject exactly like config.py", () => {
+		// poll_interval_sec has range [1, 5]; Python's int(json.loads("4.0")) is a
+		// float and fails validate_config, so every non-int literal must reject.
+		const cases: Array<{ literal: string; ok: boolean; expect?: string }> = [
+			{ literal: "4", ok: true },
+			{ literal: "4.0", ok: false, expect: "4.0" },
+			{ literal: "4.00", ok: false, expect: "4.00" },
+			{ literal: "1e2", ok: false, expect: "1e2" },
+			{ literal: "1E2", ok: false, expect: "1E2" },
+			{ literal: "-0.0", ok: false, expect: "-0.0" },
+			{ literal: "4.5", ok: false, expect: "expected integer" },
+			{ literal: "9", ok: false, expect: "must be <= 5" },
+			{ literal: "0", ok: false, expect: "must be >= 1" },
+			{ literal: '"4"', ok: false, expect: "expected integer" },
+			{ literal: "true", ok: false, expect: "expected integer" },
+			{ literal: "null", ok: false, expect: "expected integer" },
+		];
+		expect(cases).toHaveLength(12);
+		for (const c of cases) {
+			const root = mkdtemp();
+			try {
+				writeRawConfig(root, `"poll_interval_sec": ${c.literal}`);
+				const read = readConfig(root);
+				expect(read.ok, `literal ${c.literal}`).toBe(c.ok);
+				if (read.ok) {
+					expect(read.config.poll_interval_sec).toBe(4);
+				} else {
+					expect(read.error, `literal ${c.literal}`).toContain("poll_interval_sec");
+					if (c.expect !== undefined) expect(read.error, `literal ${c.literal}`).toContain(c.expect);
+				}
+			} finally {
+				fs.rmSync(root, { recursive: true, force: true });
+			}
+		}
+	});
+
+	it("AC-006/AC-012: the 13-key mirror registers xkey_verify_cwd as a string and exports the registries", () => {
+		expect(Object.keys(DEFAULT_CONFIG)).toHaveLength(13);
+		expect(Object.keys(DEFAULT_CONFIG).at(-1)).toBe("xkey_verify_cwd"); // config.py DEFAULT_CONFIG order
+		expect(DEFAULT_CONFIG.xkey_verify_cwd).toBe("");
+		// Exported for the T-07 cross-language mirror check.
+		expect([...BOOL_FIELDS]).toEqual(["enabled", "paused", "xkey_repair"]);
+		expect([...LIST_FIELDS]).toEqual(["xkey_verify_cmd"]);
+		expect([...STR_FIELDS]).toEqual(["xkey_verify_cwd"]);
+		expect(Object.keys(INT_RANGES)).toEqual([
+			"poll_interval_sec",
+			"max_parallel_keys",
+			"round_budget",
+			"worker_timeout_min",
+			"l2_read_file_cap",
+			"l2_read_byte_cap",
+			"advance_stall_ticks",
+			"xkey_verify_timeout_s",
+		]);
+
+		const root = mkdtemp();
+		try {
+			// Absent key falls back to the default rather than failing.
+			const missing = readConfig(root);
+			expect(missing.ok).toBe(true);
+			if (missing.ok) expect(missing.config.xkey_verify_cwd).toBe("");
+			// Any string passes the schema layer (root-name validity is parse-time).
+			writeRawConfig(root, '"xkey_verify_cwd": "control"');
+			const named = readConfig(root);
+			expect(named.ok).toBe(true);
+			if (named.ok) expect(named.config.xkey_verify_cwd).toBe("control");
+			// Non-strings fail closed, naming the field.
+			for (const bad of ["4", "true", '["a"]', "null"]) {
+				writeRawConfig(root, `"xkey_verify_cwd": ${bad}`);
+				const r = readConfig(root);
+				expect(r.ok, `xkey_verify_cwd: ${bad}`).toBe(false);
+				if (!r.ok) expect(r.error).toContain("xkey_verify_cwd: expected string");
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("AC-011: the TS config lock path is byte-identical to the Python side", () => {
+		const root = mkdtemp();
+		try {
+			// Frozen by plan §2.2 and config.py config_lock_path (T-05): the two
+			// writers must contend on ONE path or every lock assertion is hollow.
+			expect(configLockPath(root)).toBe(path.join(root, ".mw", "autopilot-config.lock"));
+			expect(path.basename(configLockPath(root))).toBe("autopilot-config.lock");
+			expect(path.dirname(configLockPath(root))).toBe(path.join(root, ".mw"));
+			expect(DEFAULT_CONFIG_LOCK_OPTS).toEqual({ retries: 6, baseDelayMs: 20 });
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("AC-011: a held config lock refuses the write and leaves config.json byte-identical", async () => {
+		const root = mkdtemp();
+		try {
+			const file = writeRawConfig(root, '"round_budget": 2');
+			const before = fs.readFileSync(file, "utf8");
+			const lockFile = configLockPath(root);
+			const release = await acquireLock(lockFile, { retries: 0 });
+			try {
+				const blocked = await saveConfigLocked(root, (c) => ({ ...c, paused: true }), {
+					retries: 1,
+					baseDelayMs: 1,
+				});
+				expect(blocked.ok).toBe(false);
+				if (!blocked.ok) {
+					expect(blocked.error).toContain(lockFile);
+					expect(blocked.error).toContain("could not take");
+				}
+				expect(fs.readFileSync(file, "utf8")).toBe(before); // untouched
+				expect(fs.existsSync(lockFile)).toBe(true); // the holder's lock survives
+			} finally {
+				release();
+			}
+			expect(fs.existsSync(lockFile)).toBe(false);
+			// Released → the same RMW now goes through and preserves other keys.
+			const retry = await saveConfigLocked(root, (c) => ({ ...c, paused: true }), { retries: 1, baseDelayMs: 1 });
+			expect(retry.ok).toBe(true);
+			const after = JSON.parse(fs.readFileSync(file, "utf8"));
+			expect(after.paused).toBe(true);
+			expect(after.round_budget).toBe(2);
+			expect(fs.existsSync(lockFile)).toBe(false); // released after the write
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("AC-011/AC-025: /autopilot pause honors the injected lock budget and refuses under a held lock", async () => {
+		const root = mkdtemp();
+		try {
+			const file = writeRawConfig(root, '"enabled": true');
+			const before = fs.readFileSync(file, "utf8");
+			const lockFile = configLockPath(root);
+			const release = await acquireLock(lockFile, { retries: 0 });
+			try {
+				const { pi, commands } = fakeConsolePi();
+				registerAutopilotCommands(pi, root, { lockOpts: { retries: 1, baseDelayMs: 1 } });
+				const { ctx, notifications } = fakeCmdCtx();
+				await commands.get("autopilot")?.handler("pause", ctx);
+				expect(notifications[0]).toContain("could not take");
+				expect(notifications[0]).toContain(lockFile);
+				expect(fs.readFileSync(file, "utf8")).toBe(before); // refused ⇒ no write
+			} finally {
+				release();
+			}
+			const { pi, commands } = fakeConsolePi();
+			registerAutopilotCommands(pi, root, { lockOpts: { retries: 1, baseDelayMs: 1 } });
+			const { ctx, notifications } = fakeCmdCtx();
+			await commands.get("autopilot")?.handler("pause", ctx);
+			expect(notifications[0]).toContain("paused");
+			expect(JSON.parse(fs.readFileSync(file, "utf8")).paused).toBe(true);
+			expect(fs.existsSync(lockFile)).toBe(false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("AC-011: read-only paths never take the lock or create .mw", async () => {
+		const root = mkdtemp();
+		try {
+			const read = readConfig(root);
+			expect(read.ok).toBe(true);
+			expect(fs.existsSync(path.join(root, ".mw"))).toBe(false);
+			const { pi, commands } = fakeConsolePi();
+			registerAutopilotCommands(pi, root);
+			const { ctx } = fakeCmdCtx();
+			await commands.get("autopilot")?.handler("status --json", ctx);
+			expect(fs.existsSync(configLockPath(root))).toBe(false);
+			expect(fs.existsSync(path.join(root, ".mw"))).toBe(false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
 // ── /autopilot command set (VC-017 / AC-015/016/025) ─────────────────────────
 
 describe("/autopilot command set (VC-017 / AC-015 / AC-016 / AC-025)", () => {
@@ -989,7 +1188,12 @@ describe("/autopilot command set (VC-017 / AC-015 / AC-016 / AC-025)", () => {
 				l2_read_file_cap: 8,
 				l2_read_byte_cap: 65536,
 				advance_stall_ticks: 5,
+				xkey_repair: false,
+				xkey_verify_cmd: [],
+				xkey_verify_timeout_s: 1800,
+				xkey_verify_cwd: "",
 			});
+			expect(Object.keys(enabled)).toHaveLength(13);
 			// Same shape config.py save_config writes: indent-2 + trailing newline.
 			expect(fs.readFileSync(configFile, "utf8").endsWith("}\n")).toBe(true);
 

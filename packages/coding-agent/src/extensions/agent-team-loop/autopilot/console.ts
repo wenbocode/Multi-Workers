@@ -36,10 +36,13 @@
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
 import { windowClaimId } from "../pm/ui-bridge.ts";
+import { acquireLock, type LockOptions } from "../shared/file-lock.ts";
 import { getMwStatus, restartMw, serveStaleness, startMw } from "../shared/mw-runner.ts";
 import { answerGate } from "./gate-writer.ts";
 import { isMonitorActive, MONITOR_WIDGET_ID, type readMonitorState, startMonitor, stopMonitor } from "./monitor.ts";
 import {
+	type AutopilotConfig,
+	configLockPath,
 	deriveStatusModel,
 	gatesDir,
 	gatesLockPath,
@@ -75,6 +78,10 @@ export interface AutopilotConsoleDeps {
 	/** Auto-show the monitor for autopilot-enabled projects on session start
 	 * (default true). Set false to opt out (tests / embeddings). */
 	autoMonitor?: boolean;
+	/** Lock retry budget for the config read-modify-write handlers. Default:
+	 * retries=6, baseDelayMs=20 (identical to the Python writer, worst case
+	 * ~1.26s). Tests inject a tiny budget. */
+	lockOpts?: LockOptions;
 }
 
 const USAGE =
@@ -106,16 +113,16 @@ export function registerAutopilotCommands(pi: ExtensionAPI, projectDir: string, 
 					cmdTimeline(pi, ctx, projectDir, rest);
 					return;
 				case "enable":
-					cmdSetEnabled(ctx, projectDir, true, deps);
+					await cmdSetEnabled(ctx, projectDir, true, deps);
 					return;
 				case "disable":
-					cmdSetEnabled(ctx, projectDir, false, deps);
+					await cmdSetEnabled(ctx, projectDir, false, deps);
 					return;
 				case "pause":
-					cmdSetPaused(ctx, projectDir, true);
+					await cmdSetPaused(ctx, projectDir, true, deps);
 					return;
 				case "resume":
-					cmdSetPaused(ctx, projectDir, false);
+					await cmdSetPaused(ctx, projectDir, false, deps);
 					return;
 				case "roadmap":
 					cmdRoadmap(ctx, projectDir);
@@ -273,18 +280,49 @@ function renderTimelineText(query: TimelineQuery, mark: number): string {
 
 // ── /autopilot enable|disable (AC-025) and pause|resume ──────────────────────
 
+/** Lock retry budget frozen by plan §2.2 — identical to the Python writer
+ * (`mw_common.acquire_lock(retries=6, base_delay=0.02)`). */
+export const DEFAULT_CONFIG_LOCK_OPTS: LockOptions = { retries: 6, baseDelayMs: 20 };
+
+/** Read-modify-write config.json under `.mw/autopilot-config.lock` (D-006).
+ * The whole read → mutate → atomic write runs inside the lock: two windows (or
+ * a window and the `mw autopilot verify` CLI) can otherwise interleave and roll
+ * each other back. A lock that cannot be taken fails closed — the caller
+ * reports the error and NOTHING is written. The lock deliberately lives here,
+ * not inside `saveConfig` (the primitive is not re-entrant, D-006). */
+export async function saveConfigLocked(
+	projectDir: string,
+	mutate: (config: AutopilotConfig) => AutopilotConfig,
+	lockOpts?: LockOptions,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+	const lockFile = configLockPath(projectDir);
+	let release: () => void;
+	try {
+		release = await acquireLock(lockFile, { ...DEFAULT_CONFIG_LOCK_OPTS, ...lockOpts });
+	} catch (err) {
+		return {
+			ok: false,
+			error:
+				`could not take ${lockFile} (another autopilot writer holds it; ` +
+				`delete the file if it is stale): ${err instanceof Error ? err.message : String(err)}`,
+		};
+	}
+	try {
+		const cfg = readConfig(projectDir);
+		if (!cfg.ok) return { ok: false, error: cfg.error };
+		return saveConfig(projectDir, mutate(cfg.config));
+	} finally {
+		release();
+	}
+}
+
 async function cmdSetEnabled(
 	ctx: ExtensionCommandContext,
 	projectDir: string,
 	enabled: boolean,
 	deps: AutopilotConsoleDeps,
 ): Promise<void> {
-	const cfg = readConfig(projectDir);
-	if (!cfg.ok) {
-		ctx.ui.notify(`[autopilot] ${cfg.error}`, "error");
-		return;
-	}
-	const saved = saveConfig(projectDir, { ...cfg.config, enabled });
+	const saved = await saveConfigLocked(projectDir, (config) => ({ ...config, enabled }), deps.lockOpts);
 	if (!saved.ok) {
 		ctx.ui.notify(`[autopilot] ${saved.error}`, "error");
 		return;
@@ -330,13 +368,13 @@ async function defaultEnsureMwRunning(projectDir: string): Promise<EnsureMwOutco
 	return startMw(projectDir) ? "started" : "spawn-failed";
 }
 
-function cmdSetPaused(ctx: ExtensionCommandContext, projectDir: string, paused: boolean): void {
-	const cfg = readConfig(projectDir);
-	if (!cfg.ok) {
-		ctx.ui.notify(`[autopilot] ${cfg.error}`, "error");
-		return;
-	}
-	const saved = saveConfig(projectDir, { ...cfg.config, paused });
+async function cmdSetPaused(
+	ctx: ExtensionCommandContext,
+	projectDir: string,
+	paused: boolean,
+	deps: AutopilotConsoleDeps,
+): Promise<void> {
+	const saved = await saveConfigLocked(projectDir, (config) => ({ ...config, paused }), deps.lockOpts);
 	if (!saved.ok) {
 		ctx.ui.notify(`[autopilot] ${saved.error}`, "error");
 		return;
