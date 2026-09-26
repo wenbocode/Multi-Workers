@@ -161,3 +161,13 @@
   2. 放宽方向必配值感知豁免，且豁免必须 token 局部（`ZERO_RE.match(line, fail_token_pos)`），禁整行 search——行内否定（`| **FAIL** | yes | … 0 fail … |`）会把真 FAIL 行整体豁免掉；
   3. 提示词措辞与判定判据同步更新（本 key 顺带把 `_l3_prompt` 的「FAIL 单元格」改为三形态口径），否则 reviewer 继续只产旧字形，新规则永远等不到新形状验证。
 - 关联：P-012/P-013（同一 L3 判定链的措辞/形状家族）；E2 `feature-false-meets-remediation` 引用本 key 判据表与翻转表；另登记 closure-reprompt/L3-轮预算共享计数的交互（e2e 诊断运行，非缺陷）。
+
+## P-015 serve 的 env 参数不落盘——重启路径不同则环境丢失（2026-09-26，mw-l3-fail-marker-forms 收尾重启）
+
+- 现象：`PI_WORKER_IDLE_MS` 只活在 serve 进程 env（`worker-mode.ts` 经 serve→launcher→worker 继承链读取），不进 config.json。`/mw restart` 的 `startMw` 走 `spawn(... mw.py start ...)` 继承**执行它的窗口的** `process.env`——换窗口/新窗口执行重启即丢变量，idle 墙回退默认 10min；跑全量套件的 worker（实测 572–630s，波动跨过 600s）必被误杀（FM 台账 A-05）。
+- 根因：serve 可调参数分两处——config.json（落盘、监督步骤重载）与进程 env（不落盘、仅启动时快照）；重启路径又多（/mw restart / mw start / 直接 `mw.py serve`），各自继承不同父进程的 env，没有任何一处显式声明 serve 的 env 契约。
+- 硬规则（规避）：
+  1. 重启 serve 前必须枚举其 env 依赖（`PI_WORKER_IDLE_MS` / `PI_WORKER_TIMEOUT_MS` / 凭证 env），用**显式 env** 重启；非默认 idle 的部署建议直接给 3600000（对齐 60min 墙钟兜底，idle 与 wall 同点由 wall 兑现）；
+  2. 停机走 `.mw/mw.stop` 优雅停（serve 见文件→自清→退出）；若 serve 已死而 stop 文件残留，再启动前必须手删（否则新 serve 第一 tick 即死）；
+  3. 重启命令带 `-X utf8`（中文输出 stdio）；不得用 PowerShell 文本命令碰 config.json（PS 5.1 写 BOM → serve 配置监听崩 → 整栈退出，FM 台账 A-07 / P-001 家族）。
+- 关联：P-001（PS BOM 家族）；FM 台账 A-05/A-07；UPDATE.md A3（已同步修正）；2026-09-26 三项目重启实操验证（FM 116368 / E2 76584 / MW 78608，均 fresh + conductor 拉起 + 心跳在跳）。

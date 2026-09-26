@@ -35,7 +35,7 @@ skill 克隆是 **pull --ff-only 自远端**（只认已 push 的 commit）。�
 |---|------|------|------------------|--------------|
 | A1 | MW 扩展 bundle | `~/.pi/agent/extensions/agent-team-loop.js` | mtime 对比 `packages/coding-agent/src/extensions/agent-team-loop/` 最新源 mtime；或 `/mw doctor` 报「扩展 bundle: 源码较新，建议 /mw build 重建」 | `/mw build`（任意 pi 窗口，等价 `mw build --install`）→ **重启 pi 窗口** |
 | A2 | pi dist | `packages/coding-agent/dist` | dist mtime 落后 `packages/coding-agent/src` | `mw build --install`（默认含 dist 重建；`--no-dist` 跳过）→ 重启窗口 |
-| A3 | mw serve | `<project>/.mw/serve.meta`（`started_at_ms`） | serve 启动时间早于 `packages/multi-workers/*.py` 最新 mtime；窗口启动 banner 与 `/mw status` 直接报 `STALE CODE … Run /mw restart` | 该项目窗口 `/mw restart`（在飞 worker 由新 launcher orphan reconcile 收养） |
+| A3 | mw serve | `<project>/.mw/serve.meta`（`started_at_ms`） | serve 启动时间早于 `packages/multi-workers/*.py` 最新 mtime；窗口启动 banner 与 `/mw status` 直接报 `STALE CODE … Run /mw restart` | 该项目窗口 `/mw restart`（在飞 worker 由新 launcher orphan reconcile 收养）。**注意 serve 的 env 参数（`PI_WORKER_IDLE_MS` 等）不落盘，`/mw restart` 继承执行窗口的 env——非默认 env 的部署须显式带 env 重启**（`.mw/mw.stop` 优雅停 + 同命令同 code_dir + `-X utf8`；详见 `_pitfalls.md` P-015） |
 | A4 | 框架源仓 | `<MW 检出>/.agents/skills/agentic-task`（live 工作仓库） | `git status`（未提交）；`git log origin/master..HEAD`（未推送） | `git commit` + `git push`（发布给其他机器 / 已装项目） |
 | A5 | .tmp 框架缓存 | `packages/multi-workers/.tmp/agentic-task` | `git fetch origin` 后 `git rev-list HEAD..origin/master --count > 0` | `mw pull-agentictask`（`--force` 弃本地分歧，reset --hard 对齐远端） |
 | A6 | 项目 skill 克隆 | `<project>/.agents/skills/agentic-task` | 同上 vs `origin/master` | `/update-agentictask`，或手动 `git -C … pull --ff-only`（前提 A4 已 push） |
