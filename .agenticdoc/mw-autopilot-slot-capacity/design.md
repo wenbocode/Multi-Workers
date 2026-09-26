@@ -358,7 +358,7 @@ VC-010: 当提交方案集时，含"不改"项且每项给取值域、校验与�
 VC-011: 当比对两侧 key-status 集合时，Python 与 TS 的 enum 逐值相等
        Layer: L1   Output: [VERIFY] VC-011: equal=true   Source: AC-010, AC-021
 VC-012: 当比对两侧 EVENT_TYPES 时，排序集合相等（含 target-config-rejected）
-       Layer: L1   Output: [VERIFY] VC-012: equal=true count=18   Source: AC-010, AC-022
+       Layer: L1   Output: [VERIFY] VC-012: equal=true (set equality, not count)   Source: AC-010, AC-022
 VC-013: 当阅读结论时，每条回应 (c1)(c2)(c3)(c3′)(d) 并由 AC-002..AC-010 支撑
        Layer: L0   Output: [VERIFY] VC-013: answered=5   Source: AC-011
 VC-014: 当面板渲染 slots 时，key 层槽位与 worker 层运行数分别可读且口径显式标注
