@@ -1,0 +1,630 @@
+{
+  "schema": "mw-autopilot-config-corpus/v1",
+  "cases": [
+    {
+      "id": "int-literal-4-0",
+      "categories": [
+        "D1"
+      ],
+      "payload_text": "{\"poll_interval_sec\": 4.0}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "poll_interval_sec"
+        ]
+      }
+    },
+    {
+      "id": "int-literal-4-00",
+      "categories": [
+        "D1"
+      ],
+      "payload_text": "{\"poll_interval_sec\": 4.00}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "poll_interval_sec"
+        ]
+      }
+    },
+    {
+      "id": "int-literal-1e2",
+      "categories": [
+        "D1"
+      ],
+      "payload_text": "{\"poll_interval_sec\": 1e2}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "poll_interval_sec"
+        ]
+      }
+    },
+    {
+      "id": "int-literal-upper-e2",
+      "categories": [
+        "D1"
+      ],
+      "payload_text": "{\"round_budget\": 1E2}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "round_budget"
+        ]
+      }
+    },
+    {
+      "id": "int-literal-neg-zero",
+      "categories": [
+        "D1"
+      ],
+      "payload_text": "{\"round_budget\": -0.0}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "round_budget"
+        ]
+      }
+    },
+    {
+      "id": "int-literal-4-5",
+      "categories": [
+        "D1"
+      ],
+      "payload_text": "{\"poll_interval_sec\": 4.5}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "poll_interval_sec"
+        ]
+      }
+    },
+    {
+      "id": "int-literal-1e400",
+      "categories": [
+        "D1"
+      ],
+      "payload_text": "{\"round_budget\": 1e400}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "round_budget"
+        ]
+      }
+    },
+    {
+      "id": "int-valid-4",
+      "categories": [
+        "D1"
+      ],
+      "payload_text": "{\"poll_interval_sec\": 4}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "int-from-string",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"poll_interval_sec\": \"4\"}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "poll_interval_sec"
+        ]
+      }
+    },
+    {
+      "id": "int-from-bool",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"round_budget\": true}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "round_budget"
+        ]
+      }
+    },
+    {
+      "id": "int-from-null",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"round_budget\": null}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "round_budget"
+        ]
+      }
+    },
+    {
+      "id": "bool-from-string",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"enabled\": \"true\"}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "enabled"
+        ]
+      }
+    },
+    {
+      "id": "bool-from-int",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"paused\": 1}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "paused"
+        ]
+      }
+    },
+    {
+      "id": "bool-valid",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"xkey_repair\": true}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "string-from-int",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"xkey_verify_cwd\": 5}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "xkey_verify_cwd"
+        ]
+      }
+    },
+    {
+      "id": "list-not-list",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"xkey_verify_cmd\": \"echo\"}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "xkey_verify_cmd"
+        ]
+      }
+    },
+    {
+      "id": "list-empty-item",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"xkey_verify_cmd\": [\"echo\", \"\"]}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "xkey_verify_cmd"
+        ]
+      }
+    },
+    {
+      "id": "root-array",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "[]",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "root-null",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "null",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "range-poll-low",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"poll_interval_sec\": 0}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "poll_interval_sec"
+        ]
+      }
+    },
+    {
+      "id": "range-poll-high",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"poll_interval_sec\": 6}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "poll_interval_sec"
+        ]
+      }
+    },
+    {
+      "id": "range-poll-min",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"poll_interval_sec\": 1}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "range-poll-max",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"poll_interval_sec\": 5}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "range-max-parallel-low",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"max_parallel_keys\": 1}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "max_parallel_keys"
+        ]
+      }
+    },
+    {
+      "id": "range-max-parallel-min",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"max_parallel_keys\": 2}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "range-stall-high",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"advance_stall_ticks\": 51}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "advance_stall_ticks"
+        ]
+      }
+    },
+    {
+      "id": "range-stall-max",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"advance_stall_ticks\": 50}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "bigint-2p53",
+      "categories": [
+        "D6"
+      ],
+      "payload_text": "{\"max_parallel_keys\": 9007199254740992}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "bigint-2p53-minus-1",
+      "categories": [
+        "D6"
+      ],
+      "payload_text": "{\"max_parallel_keys\": 9007199254740991}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "unknown-key",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"totally_unknown\": 1}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "totally_unknown"
+        ]
+      }
+    },
+    {
+      "id": "partial-single",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"round_budget\": 3}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-two",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"enabled\": true, \"worker_timeout_min\": 45}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "empty-object",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "list-empty",
+      "categories": [
+        "D3"
+      ],
+      "payload_text": "{\"xkey_verify_cmd\": []}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "list-whitespace-item",
+      "categories": [
+        "D3"
+      ],
+      "payload_text": "{\"xkey_verify_cmd\": [\"   \"]}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "string-empty",
+      "categories": [
+        "D3"
+      ],
+      "payload_text": "{\"xkey_verify_cwd\": \"\"}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "nonascii-list",
+      "categories": [
+        "D4",
+        "D3"
+      ],
+      "payload_text": "{\"xkey_verify_cmd\": [\"echo\", \"中文-命令\", \"🚀 emoji\", \"back\\\\slash\", \"</script>\", \"tab\\ttab\"]}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "nonascii-cwd",
+      "categories": [
+        "D4"
+      ],
+      "payload_text": "{\"xkey_verify_cwd\": \"根目录/子目录\"}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "nonascii-unicode-escape",
+      "categories": [
+        "D4"
+      ],
+      "payload_text": "{\"xkey_verify_cwd\": \"\\u4e2d\\u6587\"}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "nonascii-combo",
+      "categories": [
+        "D4",
+        "D3"
+      ],
+      "payload_text": "{\"xkey_verify_cwd\": \"中文🚀</script>\\\\tab\\t\", \"xkey_verify_cmd\": [\"a/b\"]}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-enabled",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"enabled\": false}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-paused",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"paused\": false}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-poll_interval_sec",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"poll_interval_sec\": 4}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-max_parallel_keys",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"max_parallel_keys\": 2}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-round_budget",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"round_budget\": 2}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-worker_timeout_min",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"worker_timeout_min\": 30}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-l2_read_file_cap",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"l2_read_file_cap\": 8}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-l2_read_byte_cap",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"l2_read_byte_cap\": 65536}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-advance_stall_ticks",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"advance_stall_ticks\": 5}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-xkey_repair",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"xkey_repair\": false}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-xkey_verify_cmd",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"xkey_verify_cmd\": []}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-xkey_verify_timeout_s",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"xkey_verify_timeout_s\": 1800}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-xkey_verify_cwd",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"xkey_verify_cwd\": \"\"}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    }
+  ]
+}
