@@ -54,6 +54,8 @@ try:
 except ImportError:  # pragma: no cover - doctor reports this explicitly
     yaml = None  # type: ignore[assignment]
 
+from autopilot import effective_config  # noqa: E402  (layered config, D-002)
+
 # Credential env vars that are never declared in providers.json but must still
 # be stripped from every worker env (kept from the pre-schema launcher).
 EXTRA_CREDENTIAL_VARS: frozenset[str] = frozenset([
@@ -2010,19 +2012,9 @@ def _source_desc(source: dict) -> str:
 
 
 def _autopilot_effective_values(project_dir: pathlib.Path) -> tuple[dict, dict, list[str]]:
-    """Effective autopilot config (project layer merged with the machine layer
-    when autopilot.effective_config exists) -> (values, origins, diagnostics).
-
-    mw_common is imported early by mw.py / launcher / conductor, so the
-    optional machine-layer module is resolved here instead of at import time:
-    while it is absent the validated project layer alone is authoritative
-    (the pre-existing behavior) and doctor stays read-only."""
-    try:
-        from autopilot import effective_config
-    except ImportError:
-        from autopilot import config as ap_config
-
-        return ap_config.cached_load(project_dir), {}, []
+    """Effective autopilot config (project layer merged with the machine layer)
+    -> (values, origins, diagnostics). Read-only: the machine layer is
+    fail-soft, the project layer fail-closed (autopilot.effective_config)."""
     effective = effective_config.load_effective(project_dir)
     return effective.values, effective.origins, list(effective.diagnostics)
 
