@@ -15,7 +15,7 @@
  *     frontmatter YAML subset, status enum, seq-ordered directory scan)
  *   - timeline.jsonl + .1/.2 rotations → autopilot/timeline.py (query_events
  *     watermark / ev_filter / pruned semantics, D-109)
- *   - _autopilot/config.json           → autopilot/config.py (8 fields,
+ *   - _autopilot/config.json           → autopilot/config.py (12 fields,
  *     D-110; present-but-invalid fails closed, missing file = defaults)
  *   - rounds derivation                → autopilot/state.py used_rounds
  *     (distinct attempt per loop label; a missing attempt label degrades to
@@ -63,8 +63,19 @@ export const DEFAULT_CONFIG = {
     l2_read_file_cap: 8,
     l2_read_byte_cap: 65536,
     advance_stall_ticks: 5,
+    xkey_repair: false,
+    xkey_verify_cmd: [],
+    xkey_verify_timeout_s: 1800,
 };
-const BOOL_FIELDS = ["enabled", "paused"];
+/** Fresh copy of the defaults that callers may mutate freely — mirror of
+ * config.py default_config(). `xkey_verify_cmd` is an array, so a shallow
+ * spread would hand every reader the same mutable DEFAULT_CONFIG element. */
+function freshDefaults() {
+    return { ...DEFAULT_CONFIG, xkey_verify_cmd: [...DEFAULT_CONFIG.xkey_verify_cmd] };
+}
+const BOOL_FIELDS = ["enabled", "paused", "xkey_repair"];
+/** field → list of non-empty strings — identical to config.py _LIST_FIELDS. */
+const LIST_FIELDS = ["xkey_verify_cmd"];
 /** field → [min, max|null] — identical to config.py _INT_RANGES. */
 const INT_RANGES = {
     poll_interval_sec: [1, 5],
@@ -74,6 +85,7 @@ const INT_RANGES = {
     l2_read_file_cap: [1, null],
     l2_read_byte_cap: [1, null],
     advance_stall_ticks: [1, 50],
+    xkey_verify_timeout_s: [1, null],
 };
 /** Validate a raw config object exactly like config.py validate_config:
  * unknown fields and out-of-range values fail closed, naming every offender.
@@ -95,6 +107,14 @@ export function validateConfigData(data) {
     for (const field of BOOL_FIELDS) {
         if (field in cfg && typeof cfg[field] !== "boolean") {
             errors.push(`${field}: expected true/false, got ${JSON.stringify(cfg[field])}`);
+        }
+    }
+    for (const field of LIST_FIELDS) {
+        if (!(field in cfg))
+            continue;
+        const value = cfg[field];
+        if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item !== "")) {
+            errors.push(`${field}: expected a list of non-empty strings, got ${JSON.stringify(value)}`);
         }
     }
     for (const [field, [lo, hi]] of Object.entries(INT_RANGES)) {
@@ -126,7 +146,7 @@ export function readConfig(projectDir) {
     }
     catch (err) {
         if (err.code === "ENOENT")
-            return { ok: true, config: { ...DEFAULT_CONFIG } };
+            return { ok: true, config: freshDefaults() };
         return { ok: false, error: `cannot read ${file}: ${String(err)}` };
     }
     let data;
@@ -144,6 +164,7 @@ export function readConfig(projectDir) {
     const cfg = data;
     const boolOf = (name) => typeof cfg[name] === "boolean" ? cfg[name] : DEFAULT_CONFIG[name];
     const intOf = (name) => (typeof cfg[name] === "number" ? cfg[name] : DEFAULT_CONFIG[name]);
+    const listOf = (name) => Array.isArray(cfg[name]) ? cfg[name] : [...DEFAULT_CONFIG[name]];
     const merged = {
         enabled: boolOf("enabled"),
         paused: boolOf("paused"),
@@ -154,6 +175,9 @@ export function readConfig(projectDir) {
         l2_read_file_cap: intOf("l2_read_file_cap"),
         l2_read_byte_cap: intOf("l2_read_byte_cap"),
         advance_stall_ticks: intOf("advance_stall_ticks"),
+        xkey_repair: boolOf("xkey_repair"),
+        xkey_verify_cmd: listOf("xkey_verify_cmd"),
+        xkey_verify_timeout_s: intOf("xkey_verify_timeout_s"),
     };
     return { ok: true, config: merged };
 }
@@ -175,6 +199,9 @@ export function saveConfig(projectDir, config) {
         l2_read_file_cap: config.l2_read_file_cap,
         l2_read_byte_cap: config.l2_read_byte_cap,
         advance_stall_ticks: config.advance_stall_ticks,
+        xkey_repair: config.xkey_repair,
+        xkey_verify_cmd: [...config.xkey_verify_cmd],
+        xkey_verify_timeout_s: config.xkey_verify_timeout_s,
     };
     const file = configPath(projectDir);
     try {
@@ -395,7 +422,14 @@ export function readRoadmap(projectDir) {
     return { ok: true, stages: parse.stages, warnings: parse.warnings };
 }
 // ── gates (view-side enumeration, mirror of autopilot/gates.py) ──────────────
-export const GATE_KINDS = ["stage-confirm", "stage-close", "stalled", "budget-exhausted", "goal-change"];
+export const GATE_KINDS = [
+    "stage-confirm",
+    "stage-close",
+    "stalled",
+    "budget-exhausted",
+    "goal-change",
+    "xkey-authorize",
+];
 export const GATE_STATUSES = ["pending", "approved", "rejected"];
 /** Canonical frontmatter field order (gates.py FRONTMATTER_FIELDS). */
 export const GATE_FRONTMATTER_FIELDS = [

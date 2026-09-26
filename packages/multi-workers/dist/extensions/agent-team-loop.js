@@ -43,8 +43,8 @@ var require_windows = __commonJS({
   "node_modules/isexe/windows.js"(exports, module) {
     module.exports = isexe;
     isexe.sync = sync;
-    var fs32 = __require("fs");
-    function checkPathExt(path36, options) {
+    var fs33 = __require("fs");
+    function checkPathExt(path37, options) {
       var pathext = options.pathExt !== void 0 ? options.pathExt : process.env.PATHEXT;
       if (!pathext) {
         return true;
@@ -55,25 +55,25 @@ var require_windows = __commonJS({
       }
       for (var i = 0; i < pathext.length; i++) {
         var p = pathext[i].toLowerCase();
-        if (p && path36.substr(-p.length).toLowerCase() === p) {
+        if (p && path37.substr(-p.length).toLowerCase() === p) {
           return true;
         }
       }
       return false;
     }
-    function checkStat(stat, path36, options) {
+    function checkStat(stat, path37, options) {
       if (!stat.isSymbolicLink() && !stat.isFile()) {
         return false;
       }
-      return checkPathExt(path36, options);
+      return checkPathExt(path37, options);
     }
-    function isexe(path36, options, cb) {
-      fs32.stat(path36, function(er, stat) {
-        cb(er, er ? false : checkStat(stat, path36, options));
+    function isexe(path37, options, cb) {
+      fs33.stat(path37, function(er, stat) {
+        cb(er, er ? false : checkStat(stat, path37, options));
       });
     }
-    function sync(path36, options) {
-      return checkStat(fs32.statSync(path36), path36, options);
+    function sync(path37, options) {
+      return checkStat(fs33.statSync(path37), path37, options);
     }
   }
 });
@@ -83,14 +83,14 @@ var require_mode = __commonJS({
   "node_modules/isexe/mode.js"(exports, module) {
     module.exports = isexe;
     isexe.sync = sync;
-    var fs32 = __require("fs");
-    function isexe(path36, options, cb) {
-      fs32.stat(path36, function(er, stat) {
+    var fs33 = __require("fs");
+    function isexe(path37, options, cb) {
+      fs33.stat(path37, function(er, stat) {
         cb(er, er ? false : checkStat(stat, options));
       });
     }
-    function sync(path36, options) {
-      return checkStat(fs32.statSync(path36), options);
+    function sync(path37, options) {
+      return checkStat(fs33.statSync(path37), options);
     }
     function checkStat(stat, options) {
       return stat.isFile() && checkMode(stat, options);
@@ -114,7 +114,7 @@ var require_mode = __commonJS({
 // node_modules/isexe/index.js
 var require_isexe = __commonJS({
   "node_modules/isexe/index.js"(exports, module) {
-    var fs32 = __require("fs");
+    var fs33 = __require("fs");
     var core;
     if (process.platform === "win32" || global.TESTING_WINDOWS) {
       core = require_windows();
@@ -123,7 +123,7 @@ var require_isexe = __commonJS({
     }
     module.exports = isexe;
     isexe.sync = sync;
-    function isexe(path36, options, cb) {
+    function isexe(path37, options, cb) {
       if (typeof options === "function") {
         cb = options;
         options = {};
@@ -132,17 +132,17 @@ var require_isexe = __commonJS({
         if (typeof Promise !== "function") {
           throw new TypeError("callback not provided");
         }
-        return new Promise(function(resolve15, reject) {
-          isexe(path36, options || {}, function(er, is) {
+        return new Promise(function(resolve16, reject) {
+          isexe(path37, options || {}, function(er, is) {
             if (er) {
               reject(er);
             } else {
-              resolve15(is);
+              resolve16(is);
             }
           });
         });
       }
-      core(path36, options || {}, function(er, is) {
+      core(path37, options || {}, function(er, is) {
         if (er) {
           if (er.code === "EACCES" || options && options.ignoreErrors) {
             er = null;
@@ -152,9 +152,9 @@ var require_isexe = __commonJS({
         cb(er, is);
       });
     }
-    function sync(path36, options) {
+    function sync(path37, options) {
       try {
-        return core.sync(path36, options || {});
+        return core.sync(path37, options || {});
       } catch (er) {
         if (options && options.ignoreErrors || er.code === "EACCES") {
           return false;
@@ -170,7 +170,7 @@ var require_isexe = __commonJS({
 var require_which = __commonJS({
   "node_modules/which/which.js"(exports, module) {
     var isWindows = process.platform === "win32" || process.env.OSTYPE === "cygwin" || process.env.OSTYPE === "msys";
-    var path36 = __require("path");
+    var path37 = __require("path");
     var COLON = isWindows ? ";" : ":";
     var isexe = require_isexe();
     var getNotFoundError = (cmd) => Object.assign(new Error(`not found: ${cmd}`), { code: "ENOENT" });
@@ -203,27 +203,27 @@ var require_which = __commonJS({
         opt = {};
       const { pathEnv, pathExt, pathExtExe } = getPathInfo(cmd, opt);
       const found = [];
-      const step = (i) => new Promise((resolve15, reject) => {
+      const step = (i) => new Promise((resolve16, reject) => {
         if (i === pathEnv.length)
-          return opt.all && found.length ? resolve15(found) : reject(getNotFoundError(cmd));
+          return opt.all && found.length ? resolve16(found) : reject(getNotFoundError(cmd));
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-        const pCmd = path36.join(pathPart, cmd);
+        const pCmd = path37.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
-        resolve15(subStep(p, i, 0));
+        resolve16(subStep(p, i, 0));
       });
-      const subStep = (p, i, ii) => new Promise((resolve15, reject) => {
+      const subStep = (p, i, ii) => new Promise((resolve16, reject) => {
         if (ii === pathExt.length)
-          return resolve15(step(i + 1));
+          return resolve16(step(i + 1));
         const ext2 = pathExt[ii];
         isexe(p + ext2, { pathExt: pathExtExe }, (er, is) => {
           if (!er && is) {
             if (opt.all)
               found.push(p + ext2);
             else
-              return resolve15(p + ext2);
+              return resolve16(p + ext2);
           }
-          return resolve15(subStep(p, i, ii + 1));
+          return resolve16(subStep(p, i, ii + 1));
         });
       });
       return cb ? step(0).then((res) => cb(null, res), cb) : step(0);
@@ -235,7 +235,7 @@ var require_which = __commonJS({
       for (let i = 0; i < pathEnv.length; i++) {
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-        const pCmd = path36.join(pathPart, cmd);
+        const pCmd = path37.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
         for (let j = 0; j < pathExt.length; j++) {
           const cur = p + pathExt[j];
@@ -283,7 +283,7 @@ var require_path_key = __commonJS({
 var require_resolveCommand = __commonJS({
   "node_modules/cross-spawn/lib/util/resolveCommand.js"(exports, module) {
     "use strict";
-    var path36 = __require("path");
+    var path37 = __require("path");
     var which = require_which();
     var getPathKey = require_path_key();
     function resolveCommandAttempt(parsed, withoutPathExt) {
@@ -301,7 +301,7 @@ var require_resolveCommand = __commonJS({
       try {
         resolved = which.sync(parsed.command, {
           path: env[getPathKey({ env })],
-          pathExt: withoutPathExt ? path36.delimiter : void 0
+          pathExt: withoutPathExt ? path37.delimiter : void 0
         });
       } catch (e) {
       } finally {
@@ -310,7 +310,7 @@ var require_resolveCommand = __commonJS({
         }
       }
       if (resolved) {
-        resolved = path36.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
+        resolved = path37.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
       }
       return resolved;
     }
@@ -364,8 +364,8 @@ var require_shebang_command = __commonJS({
       if (!match2) {
         return null;
       }
-      const [path36, argument] = match2[0].replace(/#! ?/, "").split(" ");
-      const binary = path36.split("/").pop();
+      const [path37, argument] = match2[0].replace(/#! ?/, "").split(" ");
+      const binary = path37.split("/").pop();
       if (binary === "env") {
         return argument;
       }
@@ -378,16 +378,16 @@ var require_shebang_command = __commonJS({
 var require_readShebang = __commonJS({
   "node_modules/cross-spawn/lib/util/readShebang.js"(exports, module) {
     "use strict";
-    var fs32 = __require("fs");
+    var fs33 = __require("fs");
     var shebangCommand = require_shebang_command();
     function readShebang(command) {
       const size = 150;
       const buffer = Buffer.alloc(size);
       let fd;
       try {
-        fd = fs32.openSync(command, "r");
-        fs32.readSync(fd, buffer, 0, size, 0);
-        fs32.closeSync(fd);
+        fd = fs33.openSync(command, "r");
+        fs33.readSync(fd, buffer, 0, size, 0);
+        fs33.closeSync(fd);
       } catch (e) {
       }
       return shebangCommand(buffer.toString());
@@ -400,7 +400,7 @@ var require_readShebang = __commonJS({
 var require_parse = __commonJS({
   "node_modules/cross-spawn/lib/parse.js"(exports, module) {
     "use strict";
-    var path36 = __require("path");
+    var path37 = __require("path");
     var resolveCommand = require_resolveCommand();
     var escape2 = require_escape();
     var readShebang = require_readShebang();
@@ -425,7 +425,7 @@ var require_parse = __commonJS({
       const needsShell = !isExecutableRegExp.test(commandFile);
       if (parsed.options.forceShell || needsShell) {
         const needsDoubleEscapeMetaChars = isCmdShimRegExp.test(commandFile);
-        parsed.command = path36.normalize(parsed.command);
+        parsed.command = path37.normalize(parsed.command);
         parsed.command = escape2.command(parsed.command);
         parsed.args = parsed.args.map((arg) => escape2.argument(arg, needsDoubleEscapeMetaChars));
         const shellCommand = [parsed.command].concat(parsed.args).join(" ");
@@ -612,17 +612,17 @@ var require_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    function visit_(key, node, visitor, path36) {
-      const ctrl = callVisitor(key, node, visitor, path36);
+    function visit_(key, node, visitor, path37) {
+      const ctrl = callVisitor(key, node, visitor, path37);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path36, ctrl);
-        return visit_(key, ctrl, visitor, path36);
+        replaceNode(key, path37, ctrl);
+        return visit_(key, ctrl, visitor, path37);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path36 = Object.freeze(path36.concat(node));
+          path37 = Object.freeze(path37.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = visit_(i, node.items[i], visitor, path36);
+            const ci = visit_(i, node.items[i], visitor, path37);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -633,13 +633,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path36 = Object.freeze(path36.concat(node));
-          const ck = visit_("key", node.key, visitor, path36);
+          path37 = Object.freeze(path37.concat(node));
+          const ck = visit_("key", node.key, visitor, path37);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = visit_("value", node.value, visitor, path36);
+          const cv = visit_("value", node.value, visitor, path37);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -660,17 +660,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node, visitor, path36) {
-      const ctrl = await callVisitor(key, node, visitor, path36);
+    async function visitAsync_(key, node, visitor, path37) {
+      const ctrl = await callVisitor(key, node, visitor, path37);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path36, ctrl);
-        return visitAsync_(key, ctrl, visitor, path36);
+        replaceNode(key, path37, ctrl);
+        return visitAsync_(key, ctrl, visitor, path37);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path36 = Object.freeze(path36.concat(node));
+          path37 = Object.freeze(path37.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = await visitAsync_(i, node.items[i], visitor, path36);
+            const ci = await visitAsync_(i, node.items[i], visitor, path37);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -681,13 +681,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path36 = Object.freeze(path36.concat(node));
-          const ck = await visitAsync_("key", node.key, visitor, path36);
+          path37 = Object.freeze(path37.concat(node));
+          const ck = await visitAsync_("key", node.key, visitor, path37);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = await visitAsync_("value", node.value, visitor, path36);
+          const cv = await visitAsync_("value", node.value, visitor, path37);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -714,23 +714,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node, visitor, path36) {
+    function callVisitor(key, node, visitor, path37) {
       if (typeof visitor === "function")
-        return visitor(key, node, path36);
+        return visitor(key, node, path37);
       if (identity.isMap(node))
-        return visitor.Map?.(key, node, path36);
+        return visitor.Map?.(key, node, path37);
       if (identity.isSeq(node))
-        return visitor.Seq?.(key, node, path36);
+        return visitor.Seq?.(key, node, path37);
       if (identity.isPair(node))
-        return visitor.Pair?.(key, node, path36);
+        return visitor.Pair?.(key, node, path37);
       if (identity.isScalar(node))
-        return visitor.Scalar?.(key, node, path36);
+        return visitor.Scalar?.(key, node, path37);
       if (identity.isAlias(node))
-        return visitor.Alias?.(key, node, path36);
+        return visitor.Alias?.(key, node, path37);
       return void 0;
     }
-    function replaceNode(key, path36, node) {
-      const parent = path36[path36.length - 1];
+    function replaceNode(key, path37, node) {
+      const parent = path37[path37.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node;
       } else if (identity.isPair(parent)) {
@@ -1340,10 +1340,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path36, value) {
+    function collectionFromPath(schema, path37, value) {
       let v = value;
-      for (let i = path36.length - 1; i >= 0; --i) {
-        const k = path36[i];
+      for (let i = path37.length - 1; i >= 0; --i) {
+        const k = path37[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -1362,7 +1362,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path36) => path36 == null || typeof path36 === "object" && !!path36[Symbol.iterator]().next().done;
+    var isEmptyPath = (path37) => path37 == null || typeof path37 === "object" && !!path37[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -1392,11 +1392,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path36, value) {
-        if (isEmptyPath(path36))
+      addIn(path37, value) {
+        if (isEmptyPath(path37))
           this.add(value);
         else {
-          const [key, ...rest] = path36;
+          const [key, ...rest] = path37;
           const node = this.get(key, true);
           if (identity.isCollection(node))
             node.addIn(rest, value);
@@ -1410,8 +1410,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path36) {
-        const [key, ...rest] = path36;
+      deleteIn(path37) {
+        const [key, ...rest] = path37;
         if (rest.length === 0)
           return this.delete(key);
         const node = this.get(key, true);
@@ -1425,8 +1425,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path36, keepScalar) {
-        const [key, ...rest] = path36;
+      getIn(path37, keepScalar) {
+        const [key, ...rest] = path37;
         const node = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node) ? node.value : node;
@@ -1444,8 +1444,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path36) {
-        const [key, ...rest] = path36;
+      hasIn(path37) {
+        const [key, ...rest] = path37;
         if (rest.length === 0)
           return this.has(key);
         const node = this.get(key, true);
@@ -1455,8 +1455,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path36, value) {
-        const [key, ...rest] = path36;
+      setIn(path37, value) {
+        const [key, ...rest] = path37;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -1590,16 +1590,16 @@ var require_foldFlowLines = __commonJS({
         onFold();
       let res = text.slice(0, folds[0]);
       for (let i2 = 0; i2 < folds.length; ++i2) {
-        const fold3 = folds[i2];
+        const fold4 = folds[i2];
         const end2 = folds[i2 + 1] || text.length;
-        if (fold3 === 0)
+        if (fold4 === 0)
           res = `
 ${indent}${text.slice(0, end2)}`;
         else {
-          if (mode === FOLD_QUOTED && escapedFolds[fold3])
-            res += `${text[fold3]}\\`;
+          if (mode === FOLD_QUOTED && escapedFolds[fold4])
+            res += `${text[fold4]}\\`;
           res += `
-${indent}${text.slice(fold3 + 1, end2)}`;
+${indent}${text.slice(fold4 + 1, end2)}`;
         }
       }
       return res;
@@ -3971,9 +3971,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path36, value) {
+      addIn(path37, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path36, value);
+          this.contents.addIn(path37, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -4048,14 +4048,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path36) {
-        if (Collection.isEmptyPath(path36)) {
+      deleteIn(path37) {
+        if (Collection.isEmptyPath(path37)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path36) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path37) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -4070,10 +4070,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path36, keepScalar) {
-        if (Collection.isEmptyPath(path36))
+      getIn(path37, keepScalar) {
+        if (Collection.isEmptyPath(path37))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path36, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path37, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -4084,10 +4084,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path36) {
-        if (Collection.isEmptyPath(path36))
+      hasIn(path37) {
+        if (Collection.isEmptyPath(path37))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path36) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path37) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -4104,13 +4104,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path36, value) {
-        if (Collection.isEmptyPath(path36)) {
+      setIn(path37, value) {
+        if (Collection.isEmptyPath(path37)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path36), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path37), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path36, value);
+          this.contents.setIn(path37, value);
         }
       }
       /**
@@ -4496,10 +4496,10 @@ var require_resolve_block_map = __commonJS({
       let offset = bm.offset;
       let commentEnd = null;
       for (const collItem of bm.items) {
-        const { start, key, sep: sep10, value } = collItem;
+        const { start, key, sep: sep11, value } = collItem;
         const keyProps = resolveProps.resolveProps(start, {
           indicator: "explicit-key-ind",
-          next: key ?? sep10?.[0],
+          next: key ?? sep11?.[0],
           offset,
           onError,
           parentIndent: bm.indent,
@@ -4513,7 +4513,7 @@ var require_resolve_block_map = __commonJS({
             else if ("indent" in key && key.indent !== bm.indent)
               onError(offset, "BAD_INDENT", startColMsg);
           }
-          if (!keyProps.anchor && !keyProps.tag && !sep10) {
+          if (!keyProps.anchor && !keyProps.tag && !sep11) {
             commentEnd = keyProps.end;
             if (keyProps.comment) {
               if (map.comment)
@@ -4537,7 +4537,7 @@ var require_resolve_block_map = __commonJS({
         ctx.atKey = false;
         if (utilMapIncludes.mapIncludes(ctx, map.items, keyNode))
           onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-        const valueProps = resolveProps.resolveProps(sep10 ?? [], {
+        const valueProps = resolveProps.resolveProps(sep11 ?? [], {
           indicator: "map-value-ind",
           next: value,
           offset: keyNode.range[2],
@@ -4553,7 +4553,7 @@ var require_resolve_block_map = __commonJS({
             if (ctx.options.strict && keyProps.start < valueProps.found.offset - 1024)
               onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key");
           }
-          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : composeEmptyNode(ctx, offset, sep10, null, valueProps, onError);
+          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : composeEmptyNode(ctx, offset, sep11, null, valueProps, onError);
           if (ctx.schema.compat)
             utilFlowIndentCheck.flowIndentCheck(bm.indent, value, onError);
           offset = valueNode.range[2];
@@ -4644,7 +4644,7 @@ var require_resolve_end = __commonJS({
       let comment = "";
       if (end) {
         let hasSpace = false;
-        let sep10 = "";
+        let sep11 = "";
         for (const token of end) {
           const { source, type } = token;
           switch (type) {
@@ -4658,13 +4658,13 @@ var require_resolve_end = __commonJS({
               if (!comment)
                 comment = cb;
               else
-                comment += sep10 + cb;
-              sep10 = "";
+                comment += sep11 + cb;
+              sep11 = "";
               break;
             }
             case "newline":
               if (comment)
-                sep10 += source;
+                sep11 += source;
               hasSpace = true;
               break;
             default:
@@ -4707,18 +4707,18 @@ var require_resolve_flow_collection = __commonJS({
       let offset = fc.offset + fc.start.source.length;
       for (let i = 0; i < fc.items.length; ++i) {
         const collItem = fc.items[i];
-        const { start, key, sep: sep10, value } = collItem;
+        const { start, key, sep: sep11, value } = collItem;
         const props = resolveProps.resolveProps(start, {
           flow: fcName,
           indicator: "explicit-key-ind",
-          next: key ?? sep10?.[0],
+          next: key ?? sep11?.[0],
           offset,
           onError,
           parentIndent: fc.indent,
           startOnNewline: false
         });
         if (!props.found) {
-          if (!props.anchor && !props.tag && !sep10 && !value) {
+          if (!props.anchor && !props.tag && !sep11 && !value) {
             if (i === 0 && props.comma)
               onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
             else if (i < fc.items.length - 1)
@@ -4772,8 +4772,8 @@ var require_resolve_flow_collection = __commonJS({
             }
           }
         }
-        if (!isMap2 && !sep10 && !props.found) {
-          const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep10, null, props, onError);
+        if (!isMap2 && !sep11 && !props.found) {
+          const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep11, null, props, onError);
           coll.items.push(valueNode);
           offset = valueNode.range[2];
           if (isBlock(value))
@@ -4785,7 +4785,7 @@ var require_resolve_flow_collection = __commonJS({
           if (isBlock(key))
             onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg);
           ctx.atKey = false;
-          const valueProps = resolveProps.resolveProps(sep10 ?? [], {
+          const valueProps = resolveProps.resolveProps(sep11 ?? [], {
             flow: fcName,
             indicator: "map-value-ind",
             next: value,
@@ -4796,8 +4796,8 @@ var require_resolve_flow_collection = __commonJS({
           });
           if (valueProps.found) {
             if (!isMap2 && !props.found && ctx.options.strict) {
-              if (sep10)
-                for (const st of sep10) {
+              if (sep11)
+                for (const st of sep11) {
                   if (st === valueProps.found)
                     break;
                   if (st.type === "newline") {
@@ -4814,7 +4814,7 @@ var require_resolve_flow_collection = __commonJS({
             else
               onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`);
           }
-          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode(ctx, valueProps.end, sep10, null, valueProps, onError) : null;
+          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode(ctx, valueProps.end, sep11, null, valueProps, onError) : null;
           if (valueNode) {
             if (isBlock(value))
               onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
@@ -4994,7 +4994,7 @@ var require_resolve_block_scalar = __commonJS({
           chompStart = i + 1;
       }
       let value = "";
-      let sep10 = "";
+      let sep11 = "";
       let prevMoreIndented = false;
       for (let i = 0; i < contentStart; ++i)
         value += lines[i][0].slice(trimIndent) + "\n";
@@ -5011,24 +5011,24 @@ var require_resolve_block_scalar = __commonJS({
           indent = "";
         }
         if (type === Scalar.Scalar.BLOCK_LITERAL) {
-          value += sep10 + indent.slice(trimIndent) + content;
-          sep10 = "\n";
+          value += sep11 + indent.slice(trimIndent) + content;
+          sep11 = "\n";
         } else if (indent.length > trimIndent || content[0] === "	") {
-          if (sep10 === " ")
-            sep10 = "\n";
-          else if (!prevMoreIndented && sep10 === "\n")
-            sep10 = "\n\n";
-          value += sep10 + indent.slice(trimIndent) + content;
-          sep10 = "\n";
+          if (sep11 === " ")
+            sep11 = "\n";
+          else if (!prevMoreIndented && sep11 === "\n")
+            sep11 = "\n\n";
+          value += sep11 + indent.slice(trimIndent) + content;
+          sep11 = "\n";
           prevMoreIndented = true;
         } else if (content === "") {
-          if (sep10 === "\n")
+          if (sep11 === "\n")
             value += "\n";
           else
-            sep10 = "\n";
+            sep11 = "\n";
         } else {
-          value += sep10 + content;
-          sep10 = " ";
+          value += sep11 + content;
+          sep11 = " ";
           prevMoreIndented = false;
         }
       }
@@ -5210,25 +5210,25 @@ var require_resolve_flow_scalar = __commonJS({
       if (!match2)
         return source;
       let res = match2[1];
-      let sep10 = " ";
+      let sep11 = " ";
       let pos = first.lastIndex;
       line.lastIndex = pos;
       while (match2 = line.exec(source)) {
         if (match2[1] === "") {
-          if (sep10 === "\n")
-            res += sep10;
+          if (sep11 === "\n")
+            res += sep11;
           else
-            sep10 = "\n";
+            sep11 = "\n";
         } else {
-          res += sep10 + match2[1];
-          sep10 = " ";
+          res += sep11 + match2[1];
+          sep11 = " ";
         }
         pos = line.lastIndex;
       }
       const last = /[ \t]*(.*)/sy;
       last.lastIndex = pos;
       match2 = last.exec(source);
-      return res + sep10 + (match2?.[1] ?? "");
+      return res + sep11 + (match2?.[1] ?? "");
     }
     function doubleQuotedValue(source, onError) {
       let res = "";
@@ -5237,8 +5237,8 @@ var require_resolve_flow_scalar = __commonJS({
         if (ch === "\r" && source[i + 1] === "\n")
           continue;
         if (ch === "\n") {
-          const { fold: fold3, offset } = foldNewline(source, i);
-          res += fold3;
+          const { fold: fold4, offset } = foldNewline(source, i);
+          res += fold4;
           i = offset;
         } else if (ch === "\\") {
           let next = source[++i];
@@ -5278,19 +5278,19 @@ var require_resolve_flow_scalar = __commonJS({
       return res;
     }
     function foldNewline(source, offset) {
-      let fold3 = "";
+      let fold4 = "";
       let ch = source[offset + 1];
       while (ch === " " || ch === "	" || ch === "\n" || ch === "\r") {
         if (ch === "\r" && source[offset + 2] !== "\n")
           break;
         if (ch === "\n")
-          fold3 += "\n";
+          fold4 += "\n";
         offset += 1;
         ch = source[offset + 1];
       }
-      if (!fold3)
-        fold3 = " ";
-      return { fold: fold3, offset };
+      if (!fold4)
+        fold4 = " ";
+      return { fold: fold4, offset };
     }
     var escapeCodes = {
       "0": "\0",
@@ -6038,14 +6038,14 @@ var require_cst_stringify = __commonJS({
         }
       }
     }
-    function stringifyItem({ start, key, sep: sep10, value }) {
+    function stringifyItem({ start, key, sep: sep11, value }) {
       let res = "";
       for (const st of start)
         res += st.source;
       if (key)
         res += stringifyToken(key);
-      if (sep10)
-        for (const st of sep10)
+      if (sep11)
+        for (const st of sep11)
           res += st.source;
       if (value)
         res += stringifyToken(value);
@@ -6070,9 +6070,9 @@ var require_cst_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    visit.itemAtPath = (cst, path36) => {
+    visit.itemAtPath = (cst, path37) => {
       let item = cst;
-      for (const [field, index] of path36) {
+      for (const [field, index] of path37) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -6081,23 +6081,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit.parentCollection = (cst, path36) => {
-      const parent = visit.itemAtPath(cst, path36.slice(0, -1));
-      const field = path36[path36.length - 1][0];
+    visit.parentCollection = (cst, path37) => {
+      const parent = visit.itemAtPath(cst, path37.slice(0, -1));
+      const field = path37[path37.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path36, item, visitor) {
-      let ctrl = visitor(item, path36);
+    function _visit(path37, item, visitor) {
+      let ctrl = visitor(item, path37);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path36.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path37.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -6108,10 +6108,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path36);
+            ctrl = ctrl(item, path37);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path36) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path37) : ctrl;
     }
     exports.visit = visit;
   }
@@ -7212,18 +7212,18 @@ var require_parser = __commonJS({
         if (this.type === "map-value-ind") {
           const prev = getPrevProps(this.peek(2));
           const start = getFirstKeyStartProps(prev);
-          let sep10;
+          let sep11;
           if (scalar.end) {
-            sep10 = scalar.end;
-            sep10.push(this.sourceToken);
+            sep11 = scalar.end;
+            sep11.push(this.sourceToken);
             delete scalar.end;
           } else
-            sep10 = [this.sourceToken];
+            sep11 = [this.sourceToken];
           const map = {
             type: "block-map",
             offset: scalar.offset,
             indent: scalar.indent,
-            items: [{ start, key: scalar, sep: sep10 }]
+            items: [{ start, key: scalar, sep: sep11 }]
           };
           this.onKeyLine = true;
           this.stack[this.stack.length - 1] = map;
@@ -7376,15 +7376,15 @@ var require_parser = __commonJS({
                 } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
                   const start2 = getFirstKeyStartProps(it.start);
                   const key = it.key;
-                  const sep10 = it.sep;
-                  sep10.push(this.sourceToken);
+                  const sep11 = it.sep;
+                  sep11.push(this.sourceToken);
                   delete it.key;
                   delete it.sep;
                   this.stack.push({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start: start2, key, sep: sep10 }]
+                    items: [{ start: start2, key, sep: sep11 }]
                   });
                 } else if (start.length > 0) {
                   it.sep = it.sep.concat(start, this.sourceToken);
@@ -7413,14 +7413,14 @@ var require_parser = __commonJS({
             case "scalar":
             case "single-quoted-scalar":
             case "double-quoted-scalar": {
-              const fs32 = this.flowScalar(this.type);
+              const fs33 = this.flowScalar(this.type);
               if (atNextItem || it.value) {
-                map.items.push({ start, key: fs32, sep: [] });
+                map.items.push({ start, key: fs33, sep: [] });
                 this.onKeyLine = true;
               } else if (it.sep) {
-                this.stack.push(fs32);
+                this.stack.push(fs33);
               } else {
-                Object.assign(it, { key: fs32, sep: [] });
+                Object.assign(it, { key: fs33, sep: [] });
                 this.onKeyLine = true;
               }
               return;
@@ -7548,13 +7548,13 @@ var require_parser = __commonJS({
             case "scalar":
             case "single-quoted-scalar":
             case "double-quoted-scalar": {
-              const fs32 = this.flowScalar(this.type);
+              const fs33 = this.flowScalar(this.type);
               if (!it || it.value)
-                fc.items.push({ start: [], key: fs32, sep: [] });
+                fc.items.push({ start: [], key: fs33, sep: [] });
               else if (it.sep)
-                this.stack.push(fs32);
+                this.stack.push(fs33);
               else
-                Object.assign(it, { key: fs32, sep: [] });
+                Object.assign(it, { key: fs33, sep: [] });
               return;
             }
             case "flow-map-end":
@@ -7578,13 +7578,13 @@ var require_parser = __commonJS({
             const prev = getPrevProps(parent);
             const start = getFirstKeyStartProps(prev);
             fixFlowSeqItems(fc);
-            const sep10 = fc.end.splice(1, fc.end.length);
-            sep10.push(this.sourceToken);
+            const sep11 = fc.end.splice(1, fc.end.length);
+            sep11.push(this.sourceToken);
             const map = {
               type: "block-map",
               offset: fc.offset,
               indent: fc.indent,
-              items: [{ start, key: fc, sep: sep10 }]
+              items: [{ start, key: fc, sep: sep11 }]
             };
             this.onKeyLine = true;
             this.stack[this.stack.length - 1] = map;
@@ -17502,7 +17502,7 @@ async function callCli(cliEntry, name, args, opts) {
   const interpreter = resolveRagPython(opts.env);
   const server = cliEntry.cliEntry;
   if (opts.signal.aborted) throw cliError("timeout", server, name, "call cancelled before spawn");
-  return await new Promise((resolve15, reject) => {
+  return await new Promise((resolve16, reject) => {
     const child = spawn2(interpreter, argv, {
       cwd: cliEntry.dir,
       env: opts.env,
@@ -17560,7 +17560,7 @@ async function callCli(cliEntry, name, args, opts) {
           return;
         }
         try {
-          resolve15(JSON.parse(text));
+          resolve16(JSON.parse(text));
         } catch {
           reject(cliError("protocol", server, name, "cli stdout is not valid JSON", detail));
         }
@@ -18190,7 +18190,7 @@ async function waitForStart(statusFn, timeoutMs, stableMs, pollMs = 250) {
     } else {
       stableSince = null;
     }
-    await new Promise((resolve15) => setTimeout(resolve15, pollMs));
+    await new Promise((resolve16) => setTimeout(resolve16, pollMs));
   }
   return statusFn().running;
 }
@@ -18268,7 +18268,7 @@ async function restartSequence(isRunning, requestStop, start, waitUp, timeoutMs,
     requestStop();
     const deadline = Date.now() + timeoutMs;
     while (isRunning() && Date.now() < deadline) {
-      await new Promise((resolve15) => setTimeout(resolve15, pollMs));
+      await new Promise((resolve16) => setTimeout(resolve16, pollMs));
     }
     if (isRunning()) return "stop-failed";
   }
@@ -18437,7 +18437,7 @@ async function acquireLock(lockPath, opts = {}) {
   throw new Error(`Could not acquire lock at ${lockPath}`);
 }
 function sleep(ms) {
-  return new Promise((resolve15) => setTimeout(resolve15, ms));
+  return new Promise((resolve16) => setTimeout(resolve16, ms));
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/index-store.ts
@@ -20879,9 +20879,16 @@ var DEFAULT_CONFIG = {
   worker_timeout_min: 30,
   l2_read_file_cap: 8,
   l2_read_byte_cap: 65536,
-  advance_stall_ticks: 5
+  advance_stall_ticks: 5,
+  xkey_repair: false,
+  xkey_verify_cmd: [],
+  xkey_verify_timeout_s: 1800
 };
-var BOOL_FIELDS = ["enabled", "paused"];
+function freshDefaults() {
+  return { ...DEFAULT_CONFIG, xkey_verify_cmd: [...DEFAULT_CONFIG.xkey_verify_cmd] };
+}
+var BOOL_FIELDS = ["enabled", "paused", "xkey_repair"];
+var LIST_FIELDS = ["xkey_verify_cmd"];
 var INT_RANGES = {
   poll_interval_sec: [1, 5],
   max_parallel_keys: [2, null],
@@ -20889,7 +20896,8 @@ var INT_RANGES = {
   worker_timeout_min: [1, null],
   l2_read_file_cap: [1, null],
   l2_read_byte_cap: [1, null],
-  advance_stall_ticks: [1, 50]
+  advance_stall_ticks: [1, 50],
+  xkey_verify_timeout_s: [1, null]
 };
 function validateConfigData(data) {
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
@@ -20903,6 +20911,13 @@ function validateConfigData(data) {
   for (const field of BOOL_FIELDS) {
     if (field in cfg && typeof cfg[field] !== "boolean") {
       errors.push(`${field}: expected true/false, got ${JSON.stringify(cfg[field])}`);
+    }
+  }
+  for (const field of LIST_FIELDS) {
+    if (!(field in cfg)) continue;
+    const value = cfg[field];
+    if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item !== "")) {
+      errors.push(`${field}: expected a list of non-empty strings, got ${JSON.stringify(value)}`);
     }
   }
   for (const [field, [lo, hi]] of Object.entries(INT_RANGES)) {
@@ -20923,7 +20938,7 @@ function readConfig(projectDir) {
   try {
     raw = fs26.readFileSync(file, "utf8");
   } catch (err) {
-    if (err.code === "ENOENT") return { ok: true, config: { ...DEFAULT_CONFIG } };
+    if (err.code === "ENOENT") return { ok: true, config: freshDefaults() };
     return { ok: false, error: `cannot read ${file}: ${String(err)}` };
   }
   let data;
@@ -20937,6 +20952,7 @@ function readConfig(projectDir) {
   const cfg = data;
   const boolOf = (name) => typeof cfg[name] === "boolean" ? cfg[name] : DEFAULT_CONFIG[name];
   const intOf = (name) => typeof cfg[name] === "number" ? cfg[name] : DEFAULT_CONFIG[name];
+  const listOf = (name) => Array.isArray(cfg[name]) ? cfg[name] : [...DEFAULT_CONFIG[name]];
   const merged = {
     enabled: boolOf("enabled"),
     paused: boolOf("paused"),
@@ -20946,7 +20962,10 @@ function readConfig(projectDir) {
     worker_timeout_min: intOf("worker_timeout_min"),
     l2_read_file_cap: intOf("l2_read_file_cap"),
     l2_read_byte_cap: intOf("l2_read_byte_cap"),
-    advance_stall_ticks: intOf("advance_stall_ticks")
+    advance_stall_ticks: intOf("advance_stall_ticks"),
+    xkey_repair: boolOf("xkey_repair"),
+    xkey_verify_cmd: listOf("xkey_verify_cmd"),
+    xkey_verify_timeout_s: intOf("xkey_verify_timeout_s")
   };
   return { ok: true, config: merged };
 }
@@ -20962,7 +20981,10 @@ function saveConfig(projectDir, config) {
     worker_timeout_min: config.worker_timeout_min,
     l2_read_file_cap: config.l2_read_file_cap,
     l2_read_byte_cap: config.l2_read_byte_cap,
-    advance_stall_ticks: config.advance_stall_ticks
+    advance_stall_ticks: config.advance_stall_ticks,
+    xkey_repair: config.xkey_repair,
+    xkey_verify_cmd: [...config.xkey_verify_cmd],
+    xkey_verify_timeout_s: config.xkey_verify_timeout_s
   };
   const file = configPath(projectDir);
   try {
@@ -21166,7 +21188,14 @@ function readRoadmap(projectDir) {
   const parse3 = parseRoadmapText(text);
   return { ok: true, stages: parse3.stages, warnings: parse3.warnings };
 }
-var GATE_KINDS = ["stage-confirm", "stage-close", "stalled", "budget-exhausted", "goal-change"];
+var GATE_KINDS = [
+  "stage-confirm",
+  "stage-close",
+  "stalled",
+  "budget-exhausted",
+  "goal-change",
+  "xkey-authorize"
+];
 var GATE_STATUSES = ["pending", "approved", "rejected"];
 var GATE_FRONTMATTER_FIELDS = [
   "id",
@@ -23507,6 +23536,137 @@ function registerProtectedConfigGuard(pi) {
   });
 }
 
+// packages/coding-agent/src/extensions/agent-team-loop/shared/xkey-gate-guard.ts
+import * as fs32 from "node:fs";
+import * as os6 from "node:os";
+import * as path36 from "node:path";
+var IS_WIN324 = process.platform === "win32";
+var ENV_GATE_ROOT2 = "MW_XKEY_GATE_ROOT";
+var AGENTICDOC_DIR3 = ".agenticdoc";
+var AUTOPILOT_DIR = "_autopilot";
+var GATES_DIR = "gates";
+var GATE_DIR_FRAGMENT = `${AGENTICDOC_DIR3}/${AUTOPILOT_DIR}/${GATES_DIR}`;
+var GUARD_EXPLANATION2 = "Gate files (.agenticdoc/_autopilot/gates/**) are the human-answer channel: only a human answers them (via the /autopilot gate console or by editing the file from outside the agent). An agent tool call must not write them. To propose a change, write .agenticdoc/_autopilot/xkey/evidence/<request_id>/proposal.md instead - the conductor validates proposals and applies them; ledger.json and tickets/ stay with the conductor. Reads of gate files remain allowed.";
+function fold3(p) {
+  return IS_WIN324 ? p.toLowerCase() : p;
+}
+function toForwardSlashes3(p) {
+  return p.replaceAll("\\", "/");
+}
+function escapeRegExp2(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function boundary2() {
+  return "(?![\\w-])";
+}
+function fragmentPresent2(scan, frag) {
+  return new RegExp(escapeRegExp2(frag) + boundary2()).test(scan);
+}
+function expandTildePath3(p) {
+  if (p === "~") return os6.homedir();
+  if (p.startsWith("~/") || p.startsWith("~\\")) {
+    return path36.join(os6.homedir(), p.slice(2));
+  }
+  return p;
+}
+function resolveXkeyGateRoot(env = process.env) {
+  const raw = env[ENV_GATE_ROOT2];
+  if (typeof raw === "string" && raw !== "") {
+    return path36.resolve(expandTildePath3(raw));
+  }
+  return process.cwd();
+}
+function xkeyGateDir(root) {
+  return path36.join(root, AGENTICDOC_DIR3, AUTOPILOT_DIR, GATES_DIR);
+}
+function isUnder(parent, child) {
+  const p = fold3(path36.normalize(parent));
+  const c = fold3(path36.normalize(child));
+  if (c === p) return true;
+  const prefix = p.endsWith(path36.sep) ? p : p + path36.sep;
+  return c.startsWith(prefix);
+}
+function isXkeyGatePath(root, rawPath, cwd = process.cwd()) {
+  if (typeof rawPath !== "string" || rawPath === "") return false;
+  const target = path36.resolve(cwd, expandTildePath3(rawPath));
+  if (isUnder(xkeyGateDir(root), target)) return true;
+  return fragmentPresent2(toForwardSlashes3(fold3(target)), GATE_DIR_FRAGMENT);
+}
+var WRITE_VERB_RE2 = /\b(rm|rmdir|rd|del|erase|mv|move|ren|rename|cp|copy|rsync|install|dd|tee|shred|truncate|touch|chmod|chown|ln)\b/i;
+var POWERSHELL_WRITE_RE2 = /\b(remove-item|move-item|copy-item|rename-item|new-item|set-content|add-content|clear-content|out-file)\b/i;
+var SED_IN_PLACE_RE2 = /\bsed\b[^\n;&|]*(?:\s-i(?:\.\w+)?\b|--in-place\b)/i;
+var FIND_WRITE_RE2 = /\bfind\b[^\n;&|]*(\s-delete\b|\s-exec\b|\s-execdir\b)/i;
+var REDIRECT_RE2 = /(?:^|[\s;&|(])\d?>{1,2}\s*("[^"]*"|'[^']*'|[^\s;&|>]+)/g;
+var INLINE_CODE_RE2 = /\b(python3?|node)\b[^\n;&|]*(\s-c\b|\s-e\b|\s--eval\b|<<)/i;
+var INLINE_WRITE_MARKER_RE2 = /(['"][wa]['"]|writefile|write_file|unlink|rmsync|rmtree|os\.remove|os\.rename|shutil\.(move|copy|copyfile)|truncate\(|appendfile|open\([^)]*,\s*['"][wa]['"])/i;
+function checkXkeyGateBashCommand(root, command) {
+  if (typeof command !== "string" || command === "") return { prohibited: false };
+  const scan = toForwardSlashes3(fold3(command));
+  const refs = [];
+  if (fragmentPresent2(scan, GATE_DIR_FRAGMENT)) refs.push(GATE_DIR_FRAGMENT);
+  const dirFrag = toForwardSlashes3(fold3(path36.normalize(xkeyGateDir(root))));
+  if (dirFrag !== GATE_DIR_FRAGMENT && fragmentPresent2(scan, dirFrag)) refs.push(dirFrag);
+  if (refs.length === 0) return { prohibited: false };
+  const constructs = [];
+  if (WRITE_VERB_RE2.test(scan)) constructs.push("write verb");
+  if (POWERSHELL_WRITE_RE2.test(scan)) constructs.push("powershell write cmdlet");
+  if (SED_IN_PLACE_RE2.test(scan)) constructs.push("sed -i");
+  if (FIND_WRITE_RE2.test(scan)) constructs.push("find -delete/-exec");
+  if (INLINE_CODE_RE2.test(scan) && INLINE_WRITE_MARKER_RE2.test(scan)) constructs.push("inline code write");
+  for (const m of scan.matchAll(REDIRECT_RE2)) {
+    const target = (m[1] ?? "").replace(/^["']|["']$/g, "");
+    if (target !== "" && fragmentPresent2(target, GATE_DIR_FRAGMENT)) constructs.push("redirect target");
+  }
+  if (constructs.length === 0) return { prohibited: false };
+  return {
+    prohibited: true,
+    reason: `xkey-gate-guard: blocked a bash command referencing the gate directory (${refs.join(", ")}) with a write construct (${constructs.join(", ")}). ${GUARD_EXPLANATION2}`
+  };
+}
+function recordXkeyGateBlockTrace(toolName, detail, taskPathEnv = process.env.PI_WORKER_TASK) {
+  if (!taskPathEnv) return;
+  try {
+    const dir = path36.dirname(path36.resolve(taskPathEnv));
+    fs32.mkdirSync(dir, { recursive: true });
+    const first = detail.split("\n")[0] ?? "";
+    fs32.appendFileSync(
+      path36.join(dir, "trace.log"),
+      `[XKEY_GATE] ${(/* @__PURE__ */ new Date()).toISOString()} blocked tool=${toolName} target=${first}
+`,
+      "utf8"
+    );
+  } catch {
+  }
+}
+function registerXkeyGateGuard(pi) {
+  const root = resolveXkeyGateRoot();
+  pi.on("tool_call", (event) => {
+    if (event.toolName === "write" || event.toolName === "edit") {
+      const rawPath = event.input.path;
+      if (typeof rawPath === "string" && rawPath !== "" && isXkeyGatePath(root, rawPath)) {
+        recordXkeyGateBlockTrace(event.toolName, rawPath);
+        return {
+          block: true,
+          reason: `xkey-gate-guard: blocked ${event.toolName} of ${rawPath}. ${GUARD_EXPLANATION2}`
+        };
+      }
+      return void 0;
+    }
+    if (event.toolName === "bash") {
+      const command = event.input.command;
+      if (typeof command === "string" && command !== "") {
+        const verdict = checkXkeyGateBashCommand(root, command);
+        if (verdict.prohibited) {
+          recordXkeyGateBlockTrace(event.toolName, command);
+          return { block: true, reason: verdict.reason };
+        }
+      }
+      return void 0;
+    }
+    return void 0;
+  });
+}
+
 // packages/coding-agent/src/extensions/agent-team-loop/index.ts
 var ACTIVATION_FLAG = "__agentTeamLoopActivated";
 async function activate(pi) {
@@ -23519,6 +23679,7 @@ async function activate(pi) {
   }
   g[ACTIVATION_FLAG] = true;
   registerProtectedConfigGuard(pi);
+  registerXkeyGateGuard(pi);
   registerImplementationGate(pi);
   if (process.env.PI_WORKER_TASK) {
     await workerModeActivate(pi);

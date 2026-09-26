@@ -15,7 +15,7 @@
  *     frontmatter YAML subset, status enum, seq-ordered directory scan)
  *   - timeline.jsonl + .1/.2 rotations → autopilot/timeline.py (query_events
  *     watermark / ev_filter / pruned semantics, D-109)
- *   - _autopilot/config.json           → autopilot/config.py (8 fields,
+ *   - _autopilot/config.json           → autopilot/config.py (12 fields,
  *     D-110; present-but-invalid fails closed, missing file = defaults)
  *   - rounds derivation                → autopilot/state.py used_rounds
  *     (distinct attempt per loop label; a missing attempt label degrades to
@@ -50,6 +50,14 @@ export interface AutopilotConfig {
      * stalled (mw-autopilot-stall-feedback AC-003). Optional in the file —
      * absent falls back to the default. */
     advance_stall_ticks: number;
+    /** Cross-key red repair channel (xkey-repair-mechanism AC-008). Off by
+     * default so every existing flow is untouched until a project opts in. */
+    xkey_repair: boolean;
+    /** Per-project verification argv — no shell, so a list is the contract
+     * (D-007). */
+    xkey_verify_cmd: string[];
+    /** Conductor verification-subprocess timeout in seconds (>= 1). */
+    xkey_verify_timeout_s: number;
 }
 export declare const DEFAULT_CONFIG: AutopilotConfig;
 /** Validate a raw config object exactly like config.py validate_config:
@@ -118,7 +126,7 @@ export type RoadmapResult = {
     error: string;
 };
 export declare function readRoadmap(projectDir: string): RoadmapResult;
-export declare const GATE_KINDS: readonly ["stage-confirm", "stage-close", "stalled", "budget-exhausted", "goal-change"];
+export declare const GATE_KINDS: readonly ["stage-confirm", "stage-close", "stalled", "budget-exhausted", "goal-change", "xkey-authorize"];
 export declare const GATE_STATUSES: readonly ["pending", "approved", "rejected"];
 /** Canonical frontmatter field order (gates.py FRONTMATTER_FIELDS). */
 export declare const GATE_FRONTMATTER_FIELDS: readonly ["id", "kind", "stage", "key", "created_at", "created_by", "question", "context_refs", "status", "answered_at", "answered_by", "note"];
