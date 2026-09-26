@@ -2009,6 +2009,69 @@ def _source_desc(source: dict) -> str:
     return str(kind or "unknown")
 
 
+def _autopilot_effective_values(project_dir: pathlib.Path) -> tuple[dict, dict, list[str]]:
+    """Effective autopilot config (project layer merged with the machine layer
+    when autopilot.effective_config exists) -> (values, origins, diagnostics).
+
+    mw_common is imported early by mw.py / launcher / conductor, so the
+    optional machine-layer module is resolved here instead of at import time:
+    while it is absent the validated project layer alone is authoritative
+    (the pre-existing behavior) and doctor stays read-only."""
+    try:
+        from autopilot import effective_config
+    except ImportError:
+        from autopilot import config as ap_config
+
+        return ap_config.cached_load(project_dir), {}, []
+    effective = effective_config.load_effective(project_dir)
+    return effective.values, effective.origins, list(effective.diagnostics)
+
+
+def _doctor_autopilot(project_dir: pathlib.Path) -> dict:
+    """Autopilot verify config section (AC-008, D-011). Read-only: it never
+    creates a directory or a file.
+
+    xkey_verify_missing is the fail-loud condition: xkey_repair is explicitly
+    enabled but the effective verify argv (project layer merged with the
+    machine layer, then placeholder-expanded) is empty, so every xkey ticket
+    would stall with verify_failed. Registered in doctor_report so both report
+    paths (`mw doctor` and `mw bootstrap`) surface it."""
+    project_dir = pathlib.Path(project_dir)
+    config_file = project_dir / ".agenticdoc" / "_autopilot" / "config.json"
+    section: dict = {
+        "path": str(config_file),
+        "exists": config_file.exists(),
+        "xkey_repair": False,
+        "xkey_verify_cmd": [],
+        "xkey_verify_timeout_s": None,
+        "xkey_verify_cwd": "",
+        "xkey_verify_argv": [],
+        "xkey_verify_missing": False,
+        "origins": {},
+        "diagnostics": [],
+        "error": None,
+    }
+    try:
+        values, origins, diagnostics = _autopilot_effective_values(project_dir)
+    except Exception as exc:  # config.ConfigError or a T-02 machine-layer failure
+        section["error"] = str(exc)
+        return section
+    section["xkey_repair"] = bool(values.get("xkey_repair"))
+    cmd = [str(part) for part in (values.get("xkey_verify_cmd") or [])]
+    section["xkey_verify_cmd"] = cmd
+    section["xkey_verify_timeout_s"] = values.get("xkey_verify_timeout_s")
+    section["xkey_verify_cwd"] = values.get("xkey_verify_cwd") or ""
+    section["origins"] = origins
+    section["diagnostics"] = diagnostics
+    if cmd:
+        try:
+            section["xkey_verify_argv"] = render_argv(cmd, load_target_config(project_dir))
+        except TargetConfigError as exc:
+            section["error"] = f"{exc.kind}: {exc}"
+    section["xkey_verify_missing"] = section["xkey_repair"] and not section["xkey_verify_argv"]
+    return section
+
+
 def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
     issues: list[str] = []
     suggestions: list[str] = []
@@ -2041,6 +2104,12 @@ def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
                     issues.append(
                         f"target toolchain check failed: {check['name']} ({check['detail']})"
                     )
+    autopilot = report.get("autopilot") or {}
+    if autopilot.get("xkey_verify_missing"):
+        issues.append(
+            "autopilot xkey_repair is enabled but the effective verify command is "
+            "empty - run 'mw autopilot verify set --project <dir> -- <argv...>'"
+        )
     if report["bundle"].get("stale"):
         suggestions.append(
             "extension bundle older than source - run '/mw build' or 'mw.py build --install'"
@@ -2113,6 +2182,7 @@ def doctor_report(
     report["credentials"] = route_precheck(config, os.environ)
     report["bundle"] = _doctor_bundle()
     report["target"] = _doctor_target(project_dir)
+    report["autopilot"] = _doctor_autopilot(project_dir)
     report["dispatch"] = _doctor_dispatch(project_dir)
     report["pi_shell"] = ensure_pi_shell_path(env=os.environ, fix=fix)
     if fix and report["pi_shell"].get("status") in ("filled", "replaced"):
@@ -2214,6 +2284,15 @@ def format_doctor_text(report: dict) -> str:
             )
         else:
             lines.append("conductor: not running")
+    # Autopilot verify row: emitted only when the fail-loud condition holds,
+    # so an xkey_repair=false project keeps the existing text output unchanged
+    # (AC-012 zero-perturbation).
+    autopilot = report.get("autopilot")
+    if autopilot is not None and autopilot.get("xkey_verify_missing"):
+        lines.append(
+            "autopilot: xkey_repair enabled but verify command empty - "
+            "run 'mw autopilot verify set --project <dir> -- <argv...>'"
+        )
     # pi shellPath row (fresh-machine shell bootstrap)
     pi_shell = report.get("pi_shell")
     if pi_shell is not None:
@@ -2891,6 +2970,13 @@ def render_toolchain_command(command: str, config: dict) -> str:
     return out
 
 
+def _partition_token_names(roots: dict | None) -> list[str]:
+    """Defined token names for partition mode: {parent}, {partition} and the
+    sorted {<root name>} tokens. Shared with render_argv so both build the
+    same "defines:" list (the toolchain error text is unchanged)."""
+    return ["{parent}", "{partition}"] + ["{" + n + "}" for n in sorted(roots or {})]
+
+
 def _render_partition_command(command: str, config: dict) -> str:
     """partition-mode token set (AC-004): {parent}/{partition}/{<root name>};
     any leftover placeholder-shaped token is an undefined placeholder."""
@@ -2904,13 +2990,234 @@ def _render_partition_command(command: str, config: dict) -> str:
         out = out.replace("{" + name + "}", root_path)
     leftover = _TOKEN_RE.search(out)
     if leftover is not None:
-        defined = ["{parent}", "{partition}"] + ["{" + n + "}" for n in sorted(roots)]
+        defined = _partition_token_names(roots)
         _tc_fail(
             "missing-field",
             f"toolchain command references undefined placeholder '{leftover.group(0)}' "
             f"(partition mode defines: {', '.join(defined)}): {command}",
         )
     return out
+
+
+# verify-argv token sets for the non-partition modes (partition is dynamic:
+# {control} + _partition_token_names(roots)).
+_VERIFY_ARGV_DEFINED: dict[str, tuple[str, ...]] = {
+    "dual": ("{control}", "{game}", "{engine}", "{uproject}"),
+    "single": ("{control}", "{game}", "{uproject}"),
+}
+
+
+def render_argv(cmd: list[str], config: dict) -> list[str]:
+    """Render a verification argv template (AC-014), fail-closed.
+
+    The token set is the workspace mode's root tokens plus {control} — a
+    verify-argv-only selector, so the toolchain contract is untouched. Unlike
+    render_toolchain_command (whole-string replace with silent passthrough),
+    every element must be either a literal or exactly one placeholder, and
+    each referenced token must be defined/configured for the mode. Raises
+    TargetConfigError("missing-field") for embedded, undefined or
+    unconfigured placeholders; the error text always carries the original
+    element."""
+    mode = config.get("mode")
+    if mode == "partition":
+        roots = config.get("roots") or {}
+        defined = ["{control}"] + _partition_token_names(roots)
+        values: dict[str, str | None] = {
+            "control": config.get("control_root"),
+            "parent": config.get("parent_root"),
+            "partition": config.get("partition_root"),
+        }
+        for name, root_path in roots.items():
+            values[name] = root_path
+    else:
+        mode = "dual" if mode == "dual" else "single"
+        defined = list(_VERIFY_ARGV_DEFINED[mode])
+        values = {
+            "control": config.get("control_root"),
+            "game": config.get("game_root"),
+        }
+        if mode == "dual":
+            values["engine"] = config.get("engine_root")
+        values["uproject"] = config.get("uproject")
+
+    out: list[str] = []
+    for element in cmd:
+        match = _TOKEN_RE.fullmatch(element)
+        if match is not None:
+            name = match.group(1)
+            if name not in values:
+                _tc_fail(
+                    "missing-field",
+                    f"verification command references undefined placeholder '{match.group(0)}' "
+                    f"(verify argv defines: {', '.join(defined)}): {element}",
+                )
+            if name == "uproject":
+                out.append(discover_uproject(config.get("game_root"), config.get("uproject")))
+                continue
+            value = values[name]
+            if value is None:
+                _tc_fail(
+                    "missing-field",
+                    f"verification command references '{match.group(0)}' but it is not "
+                    f"configured in {mode} mode: {element}",
+                )
+            out.append(str(value))
+            continue
+        if _TOKEN_RE.search(element) is not None:
+            _tc_fail(
+                "missing-field",
+                "verification command placeholder must occupy a whole argv element: "
+                f"{element}",
+            )
+        out.append(element)
+    return out
+
+
+def workspace_root(config: dict) -> str:
+    """Worker workspace root for a resolved target config: partition mode
+    anchors to the partition root, dual to the game root, single/legacy to the
+    control root."""
+    mode = config.get("mode")
+    if mode == "partition":
+        return config["partition_root"]
+    if mode == "dual":
+        return config["game_root"]
+    return config["control_root"]
+
+
+# ── Repo dist content anchors (mw-autopilot-verify-cli D-009, AC-009) ────────
+# Cheap, build-free, read-only checks used by `mw update-env` (T-08) to keep
+# the tracked artifacts from silently drifting behind their sources.
+
+# Paths relative to the repository root (mw_common.py lives at
+# packages/multi-workers/mw_common.py).
+_REPO_STATUS_MODEL_REL = (
+    "packages", "coding-agent", "src", "extensions", "agent-team-loop",
+    "autopilot", "status-model.ts",
+)
+_REPO_BUNDLE_REL = (
+    "packages", "multi-workers", "dist", "extensions", "agent-team-loop.js",
+)
+_REPO_CODING_AGENT_DIST_REL = ("packages", "coding-agent", "dist")
+
+# Guard behaviour markers. Both must stay qualified: the bare substrings also
+# occur in an esbuild path banner ("// .../xkey-gate-guard.ts") and in the
+# environment variable name MW_XKEY_GATE_ROOT, so they cannot anchor.
+_GATE_GUARD_MARKERS = ("xkey-gate-guard: blocked", "[XKEY_GATE]")
+
+# Anchored on the assignment, never a bare string search: prose or a comment
+# mentioning GATE_KINDS must not be mistaken for the enum itself.
+_GATE_KINDS_ASSIGN_RE = re.compile(r"GATE_KINDS\s*=\s*\[(.*?)\]", re.DOTALL)
+_STRING_LITERAL_RE = re.compile(r'"([^"\\]*)"')
+
+
+def _repo_root() -> pathlib.Path:
+    return pathlib.Path(__file__).resolve().parents[2]
+
+
+def _gate_kinds_from_text(text: str) -> set[str]:
+    """GATE_KINDS entries parsed from the `GATE_KINDS = [` assignment (empty
+    set when no such assignment exists)."""
+    match = _GATE_KINDS_ASSIGN_RE.search(text)
+    if match is None:
+        return set()
+    return set(_STRING_LITERAL_RE.findall(match.group(1)))
+
+
+def repo_bundle_anchor() -> dict:
+    """A1b repo-bundle-vs-source content anchor (AC-009(b), D-009).
+
+    The tracked repo bundle's GATE_KINDS set must equal the status-model.ts
+    set and both guard behaviour markers must be present. stale=None when a
+    side is missing (not a complete checkout); stale=False only when every
+    check passed. Pure reads — no directory or file is created."""
+    root = _repo_root()
+    source = root.joinpath(*_REPO_STATUS_MODEL_REL)
+    bundle = root.joinpath(*_REPO_BUNDLE_REL)
+    if not source.is_file() or not bundle.is_file():
+        return {"stale": None, "detail": "repo bundle or status-model source missing"}
+    try:
+        source_kinds = _gate_kinds_from_text(source.read_text(encoding="utf-8"))
+        bundle_text = bundle.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"stale": None, "detail": f"cannot read repo bundle/source: {exc}"}
+    if not source_kinds:
+        return {"stale": None, "detail": "status-model.ts has no GATE_KINDS assignment"}
+    bundle_kinds = _gate_kinds_from_text(bundle_text)
+    problems: list[str] = []
+    missing = sorted(source_kinds - bundle_kinds)
+    extra = sorted(bundle_kinds - source_kinds)
+    if missing:
+        problems.append("kind set missing " + ", ".join(missing))
+    if extra:
+        problems.append("kind set has extra " + ", ".join(extra))
+    missing_guards = [marker for marker in _GATE_GUARD_MARKERS if marker not in bundle_text]
+    if missing_guards:
+        problems.append("guard marker(s) missing: " + ", ".join(missing_guards))
+    if problems:
+        return {"stale": True, "detail": "repo bundle vs source: " + "; ".join(problems)}
+    return {
+        "stale": False,
+        "detail": (
+            f"repo bundle matches source (kind {len(source_kinds)} entries, "
+            "guard markers present)"
+        ),
+    }
+
+
+def sourcemap_drift() -> dict:
+    """A2b dist sourcesContent anchor (AC-009(b), D-009).
+
+    Every tracked *.map under packages/coding-agent/dist embeds its source text
+    (inlineSources: true), so comparing sourcesContent against the file on disk
+    detects content drift without a build. EOL is normalized (CRLF/CR -> LF):
+    .gitattributes pins eol=lf, so an EOL-only flip is not drift. stale=None
+    when the dist tree or the maps are absent; stale=True lists the first
+    mismatches. Pure reads."""
+    dist_root = _repo_root().joinpath(*_REPO_CODING_AGENT_DIST_REL)
+    if not dist_root.is_dir():
+        return {"stale": None, "detail": "packages/coding-agent/dist missing"}
+    maps = sorted(dist_root.rglob("*.map"))
+    if not maps:
+        return {"stale": None, "detail": "no source maps under packages/coding-agent/dist"}
+    mismatches: list[str] = []
+    compared = 0
+    for map_path in maps:
+        try:
+            data = json.loads(map_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            mismatches.append(f"{map_path}: unreadable map")
+            continue
+        sources = data.get("sources") or []
+        contents = data.get("sourcesContent") or []
+        for index, source in enumerate(sources):
+            if index >= len(contents) or contents[index] is None:
+                continue
+            source_path = (map_path.parent / str(source)).resolve()
+            if not source_path.is_file():
+                continue
+            try:
+                with open(source_path, "r", encoding="utf-8", newline="") as handle:
+                    actual = handle.read()
+            except OSError:
+                continue
+            compared += 1
+            actual_norm = actual.replace("\r\n", "\n").replace("\r", "\n")
+            embedded_norm = str(contents[index]).replace("\r\n", "\n").replace("\r", "\n")
+            if actual_norm != embedded_norm:
+                mismatches.append(str(source_path))
+    if mismatches:
+        return {
+            "stale": True,
+            "detail": (
+                f"{len(mismatches)} of {compared} embedded source(s) differ: "
+                + ", ".join(mismatches[:5])
+            ),
+        }
+    return {
+        "stale": False,
+        "detail": f"sourcesContent matches for {compared} source(s) across {len(maps)} map(s)",
+    }
 
 
 def toolchain_probe_path(project_dir: pathlib.Path | str) -> pathlib.Path:
