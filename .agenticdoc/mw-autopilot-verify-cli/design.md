@@ -32,7 +32,7 @@
 
 - 格式 **JSON**（非 YAML）：复用项目层同一 `validate_config`/序列化字节契约（AC-006 才有意义）；零新增 PyYAML 依赖（`packages/multi-workers` 无依赖声明，PyYAML 是隐式依赖 `mw_common.py:51-55`）；TS 侧无需要读机器层，避免 `status-model.ts` 新增 `yaml` import（RQ-D2 §1.3）。
 - 路径：`~/.agents/autopilot-defaults.json`；env 顺序照抄 RAG 形状——`MW_AUTOPILOT_FILE`（整文件硬覆盖，设定但缺失**不回落**）→ `MW_AUTOPILOT_HOME` → `HOME` → `USERPROFILE`；缺失 = 层空，**不建目录**（`mw_common.py:368-396`）。
-- **覆盖域受限**：仅 `xkey_repair` / `xkey_verify_cmd` / `xkey_verify_timeout_s` / `xkey_verify_cwd` 四键。覆盖 `enabled`/`paused` 会让全机项目被动启用 conductor（`mw.py:161/166-176`），语义危险（RQ-D2 §3）。
+- **覆盖域（2026-09-26 修订，用户确认选项 1）**：仅 `xkey_verify_cmd` + `xkey_verify_cwd`，规则 = **空值即未决定**（`[]` / `""` ⇒ 用机器层；非空 ⇒ 项目胜出；两层均空/缺失 ⇒ `default`）。**理由（实测）**：两侧写者（`save_config` 与 TS `saveConfig`，后者注释明写不变量 "saves normalize the file to the full canonical set"）都会把 13 键**材料化**写进项目文件 ⇒ “键存在即胜出”会被材料化出的空值永久挡住机器层，U-1 变死功能。`xkey_repair`（功能开关，机器层硬开会造成项目**无法关闭**该功能）与 `xkey_verify_timeout_s`（材料化后无法区分“显式默认 1800”与“未配置”）退出机器层域。覆盖 `enabled`/`paused` 仍禁止（会让全机项目被动启用 conductor，`mw.py:161/166-176`）。
 - **错误即 fail-soft 逐字段**：未知键 → 告警 + 忽略；已知键类型/范围错 → 丢弃该字段 + 告警（下层胜出）；整份 JSON 坏 → 该层视为空 + 告警。**绝不整份作废**（RAG 的整份作废 `mw_common.py:782-796` 会让一个 typo poison 全机）。项目层仍 fail-closed。
 - 被否决：YAML（把隐式依赖升级为必需 + TS 侧格式分裂）；机器层覆盖全部 12 键（运行态副作用）。
 
