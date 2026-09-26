@@ -6,11 +6,9 @@ All fixtures build their own project roots under tmp_path; nothing touches a
 real project or the real framework install.
 """
 import json
-import os
 import pathlib
 import subprocess
 import sys
-import time
 
 import pytest
 
@@ -108,45 +106,108 @@ def test_save_rejects_invalid(tmp_path: pathlib.Path) -> None:
     assert not cfg.config_path(tmp_path).exists()
 
 
-# ── config: mtime cache ──────────────────────────────────────────────────────
+# ── config: no cache short-circuit / defaults / encoding ─────────────────────
 
-def test_mtime_cache_invalidation(tmp_path: pathlib.Path) -> None:
+def test_default_config_has_13_keys_in_order() -> None:
+    assert len(cfg.DEFAULT_CONFIG) == 13
+    assert list(cfg.DEFAULT_CONFIG)[-1] == "xkey_verify_cwd"
+    assert list(cfg.DEFAULT_CONFIG)[-2] == "xkey_verify_timeout_s"
+    assert cfg.default_config()["xkey_verify_cwd"] == ""
+    _verify("VC-016", default_config_keys=len(cfg.DEFAULT_CONFIG),
+            xkey_verify_cwd_default=repr(cfg.DEFAULT_CONFIG["xkey_verify_cwd"]))
+
+
+def test_partial_file_is_completed_with_defaults(tmp_path: pathlib.Path) -> None:
+    """A partial config.json is valid and merges over the 13 defaults."""
     cfg.invalidate_cache()
-    a = cfg.default_config()
-    a["round_budget"] = 2
-    cfg.save_config(tmp_path, a)
+    path = cfg.config_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"advance_stall_ticks": 7}), encoding="utf-8")
+    loaded = cfg.load_config(tmp_path)
+    assert set(loaded) == set(cfg.DEFAULT_CONFIG)
+    assert len(loaded) == 13
+    assert loaded["advance_stall_ticks"] == 7
+    assert loaded["poll_interval_sec"] == 4  # untouched field falls back
+    assert loaded["xkey_verify_cwd"] == ""
+    _verify("VC-016", partial_keys=len(loaded), explicit_wins=loaded["advance_stall_ticks"])
+
+
+def test_xkey_verify_cwd_schema_is_string_only(tmp_path: pathlib.Path) -> None:
+    """Schema accepts any string; root-name validity is a parse-time concern."""
+    path = cfg.config_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for bad in (5, True, ["control"], {"root": "control"}):
+        path.write_text(json.dumps({"xkey_verify_cwd": bad}), encoding="utf-8")
+        with pytest.raises(cfg.ConfigError) as excinfo:
+            cfg.load_config(tmp_path)
+        assert "xkey_verify_cwd" in str(excinfo.value), excinfo.value
+    path.write_text(json.dumps({"xkey_verify_cwd": "some-root"}), encoding="utf-8")
+    assert cfg.load_config(tmp_path)["xkey_verify_cwd"] == "some-root"
+
+
+def test_save_config_writes_non_ascii_verbatim(tmp_path: pathlib.Path) -> None:
+    cfg.invalidate_cache()
+    conf = cfg.default_config()
+    conf["xkey_verify_cmd"] = ["echo", "中文-命令"]
+    path = cfg.save_config(tmp_path, conf)
+    raw = path.read_bytes()
+    expected = json.dumps(conf, indent=2, ensure_ascii=False) + "\n"
+    assert raw == expected.encode("utf-8")
+    assert "中文-命令".encode("utf-8") in raw
+    assert b"\\u4e2d" not in raw  # ensure_ascii=False: no \uXXXX escapes
+    assert cfg.load_config(tmp_path)["xkey_verify_cmd"] == ["echo", "中文-命令"]
+    _verify("VC-003", non_ascii_bytes=len(raw), verbatim=true_str(True))
+
+
+def test_same_length_rewrite_seen_without_cache_clear(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No stat short-circuit: an external, same-byte-length rewrite must be
+    visible on the next cached_load even though the cache was never cleared.
+
+    The file's stat is frozen so (mtime_ns, size) cannot change; any
+    mtime/size-keyed cache would serve a stale value, making this the
+    non-hollow counter-proof for the removal of the stat shortcut."""
+    cfg.invalidate_cache()
+    path = cfg.config_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    before = json.dumps({"round_budget": 2}, indent=2) + "\n"
+    after = json.dumps({"round_budget": 9}, indent=2) + "\n"
+    assert len(before) == len(after), "rewrite must keep the byte length"
+    path.write_text(before, encoding="utf-8", newline="\n")
     assert cfg.cached_load(tmp_path)["round_budget"] == 2
 
-    # External edit (not via save_config): different size + forced later
-    # mtime, so the cache must miss even on coarse-mtime filesystems.
-    path = cfg.config_path(tmp_path)
-    later = time.time() + 10
-    b = cfg.default_config()
-    b["round_budget"] = 9
-    path.write_text(json.dumps(b, indent=2) + "\n", encoding="utf-8")
-    os.utime(path, (later, later))
-    assert cfg.cached_load(tmp_path)["round_budget"] == 9
+    frozen = path.stat()
+    real_stat = pathlib.Path.stat
 
-    # Defensive copy: mutating the returned dict cannot corrupt the cache.
+    def frozen_stat(self: pathlib.Path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        return frozen if self == path else real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "stat", frozen_stat)
+    path.write_text(after, encoding="utf-8", newline="\n")  # bare bytes write
+    got = cfg.cached_load(tmp_path)["round_budget"]
+    assert got == 9, f"same-length rewrite ignored (stale cache): got {got}"
+    _verify("VC-003", same_length_rewrite=9, cache_cleared=true_str(False))
+
+
+def test_cached_load_defensive_copy_and_write_coherence(tmp_path: pathlib.Path) -> None:
+    cfg.invalidate_cache()
+    a = cfg.default_config()
+    a["round_budget"] = 9
+    cfg.save_config(tmp_path, a)
     got = cfg.cached_load(tmp_path)
     got["round_budget"] = 123
-    assert cfg.cached_load(tmp_path)["round_budget"] == 9
-
-    # invalidate_cache forces a reload.
-    cfg.invalidate_cache()
-    assert cfg.cached_load(tmp_path)["round_budget"] == 9
-
-    # save_config keeps the cache coherent (no stale read after a write).
+    assert cfg.cached_load(tmp_path)["round_budget"] == 9  # defensive copy
     c = cfg.default_config()
     c["round_budget"] = 5
     cfg.save_config(tmp_path, c)
-    assert cfg.cached_load(tmp_path)["round_budget"] == 5
-    _verify("VC-027", cache_invalidation=true_str(True), cache_write_coherent=true_str(True))
+    assert cfg.cached_load(tmp_path)["round_budget"] == 5  # write coherent
+    _verify("VC-003", defensive_copy=true_str(True), cache_write_coherent=true_str(True))
 
 
 def test_cache_absent_then_created(tmp_path: pathlib.Path) -> None:
     cfg.invalidate_cache()
-    assert cfg.cached_load(tmp_path) == cfg.DEFAULT_CONFIG  # caches "absent"
+    assert cfg.cached_load(tmp_path) == cfg.DEFAULT_CONFIG  # absent -> defaults
     d = cfg.default_config()
     d["enabled"] = True
     cfg.save_config(tmp_path, d)

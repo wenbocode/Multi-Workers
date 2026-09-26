@@ -26,9 +26,13 @@ Field set and defaults (D-110):
     xkey_verify_cmd    list[str] []  (per-project verification argv, D-007;
                                     no shell, so a list is the contract)
     xkey_verify_timeout_s int  1800 (>=1; conductor subprocess timeout in s)
+    xkey_verify_cwd    str     ""   (workspace cwd for xkey verification; "" = auto.
+                                    Schema only requires a string; root-name
+                                    validity is resolved at parse time)
 
-The mtime cache (:func:`cached_load`) lets ``mw serve`` and the conductor poll
-the config every tick without re-reading and re-parsing the file each second.
+:func:`cached_load` is a thin alias of :func:`load_config` plus a JSON
+round-trip defensive copy. It no longer caches by mtime/size, so an external
+edit of equal byte length is always picked up on the next poll.
 """
 
 from __future__ import annotations
@@ -54,11 +58,13 @@ DEFAULT_CONFIG: dict = {
     "xkey_repair": False,
     "xkey_verify_cmd": [],
     "xkey_verify_timeout_s": 1800,
+    "xkey_verify_cwd": "",
 }
 
 # bool must be rejected before the int rules (bool is an int subclass).
 _BOOL_FIELDS = ("enabled", "paused", "xkey_repair")
 _LIST_FIELDS = ("xkey_verify_cmd",)
+_STRING_FIELDS = ("xkey_verify_cwd",)
 _INT_RANGES: dict[str, tuple[int, int | None]] = {
     "poll_interval_sec": (1, 5),
     "max_parallel_keys": (2, None),
@@ -69,9 +75,6 @@ _INT_RANGES: dict[str, tuple[int, int | None]] = {
     "advance_stall_ticks": (1, 50),
     "xkey_verify_timeout_s": (1, None),
 }
-
-# resolved path -> (mtime_ns, size, config dict); None entry = file absent.
-_CACHE: dict[str, tuple[int, int, dict] | None] = {}
 
 
 def config_path(project_root: pathlib.Path) -> pathlib.Path:
@@ -104,6 +107,9 @@ def validate_config(cfg: object) -> None:
             errors.append(
                 f"{field}: expected a list of non-empty strings, got {value!r}"
             )
+    for field in _STRING_FIELDS:
+        if field in cfg and not isinstance(cfg[field], str):
+            errors.append(f"{field}: expected string, got {cfg[field]!r}")
     for field, (lo, hi) in _INT_RANGES.items():
         if field not in cfg:
             continue
@@ -121,7 +127,9 @@ def validate_config(cfg: object) -> None:
 
 def load_config(project_root: pathlib.Path) -> dict:
     """Load config.json. Missing file -> defaults, zero footprint (nothing is
-    created). Present file -> parse + validate; invalid raises ConfigError."""
+    created). Present file -> parse + validate the raw data (fail-closed:
+    unknown keys, wrong types and out-of-range values still raise), then merge
+    over the defaults so a partial file yields all 13 keys."""
     path = config_path(project_root)
     if not path.exists():
         return default_config()
@@ -130,46 +138,33 @@ def load_config(project_root: pathlib.Path) -> dict:
     except (OSError, json.JSONDecodeError) as exc:
         raise ConfigError(f"cannot read {path}: {exc}") from exc
     validate_config(data)
-    return data
+    return {**default_config(), **data}
 
 
 def save_config(project_root: pathlib.Path, cfg: dict) -> pathlib.Path:
     """Validate, then atomically write config.json (tmp + replace, UTF-8,
-    trailing newline). The console enable/disable/pause/resume flow writes
-    through this function only."""
+    trailing newline, non-ASCII preserved verbatim). The console
+    enable/disable/pause/resume flow writes through this function only."""
     validate_config(cfg)
     path = config_path(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = pathlib.Path(str(path) + ".tmp")
-    tmp_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8", newline="\n")
+    tmp_path.write_text(
+        json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n"
+    )
     tmp_path.replace(path)
-    _CACHE.pop(str(path.resolve()), None)
     return path
 
 
 def cached_load(project_root: pathlib.Path) -> dict:
-    """:func:`load_config` behind an mtime+size cache for per-tick polls.
+    """:func:`load_config` plus a JSON round-trip defensive copy.
 
-    Cache key is the resolved path; entries invalidate on mtime/size change,
-    on :func:`save_config`, and via :func:`invalidate_cache` (tests). Returns
-    a defensive copy so callers cannot corrupt the cache by mutating the
-    result."""
-    path = config_path(project_root)
-    key = str(path.resolve())
-    try:
-        st = path.stat()
-    except FileNotFoundError:
-        if _CACHE.get(key, "unset") is not None:
-            _CACHE[key] = None
-        return default_config()
-    cached = _CACHE.get(key)
-    if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
-        return json.loads(json.dumps(cached[2]))
-    cfg = load_config(project_root)
-    _CACHE[key] = (st.st_mtime_ns, st.st_size, cfg)
-    return json.loads(json.dumps(cfg))
+    No mtime/size cache: every poll re-reads and re-parses the file, so an
+    external edit is always visible (even when byte length is unchanged).
+    The round-trip keeps callers from mutating shared state."""
+    return json.loads(json.dumps(load_config(project_root)))
 
 
 def invalidate_cache() -> None:
-    """Forget all cached configs (tests and manual refresh)."""
-    _CACHE.clear()
+    """Kept for API compatibility; loading no longer caches anything."""
+    return None
