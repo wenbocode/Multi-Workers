@@ -2,10 +2,11 @@
 
 ## 1. Snapshot
 - Key: mw-autopilot-verify-cli
-- Phase: EXECUTE
+- Phase: DONE
 - Next Action: verify 收口（质量门禁报告已出，待 `advance_phase verify` → `done`）
 - Started: 2026-09-26 14:18
-- Updated: 2026-09-26 15:35
+- Updated: 2026-09-26 15:23
+- Completed: 2026-09-26 15:23
 
 ## 2. Task Status
 
