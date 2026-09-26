@@ -43,4 +43,5 @@
 | mw-crosskey-risk-escalation | idle | DONE | WENBOZHOU-PC4:93144 |  |  | 2026-09-25T03:09:20.075Z |
 | mw-done-closure-repair | idle | DONE | WENBOZHOU-PC4:18200 |  |  | 2026-09-25T08:18:47.606Z |
 | mw-l3-fail-marker-forms | idle | DONE | WENBOZHOU-PC4:18200 | — | — | 2026-09-26 11:25 |
-| xkey-repair-mechanism | active | DONE | WENBOZHOU-PC4:18200 | — | — | 2026-09-26 12:46 |
+| xkey-repair-mechanism | idle | DONE | WENBOZHOU-PC4:18200 | — | — | 2026-09-26T06:08:15.957Z |
+| mw-autopilot-verify-cli | active | DESIGN | WENBOZHOU-PC4:18200 |  |  | 2026-09-26 14:18 |
