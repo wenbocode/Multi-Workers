@@ -123,6 +123,32 @@ class TestHelpers:
         (repo / "stray.md").write_text("x", encoding="utf-8")
         assert mw._git_dirty(repo) == (1, 1)
 
+    def test_git_dirty_paths_sees_staged_and_untracked(self, tmp_path):
+        repo = _make_framework_source(tmp_path / "repo")
+        target = repo / "packages" / "ai" / "src" / "x.ts"
+        target.parent.mkdir(parents=True)
+        target.write_text("x\n", encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-m", "src")
+        assert mw._git_dirty_paths(repo, mw._BOOTSTRAP_DIRTY_PATHS) == []
+        # unstaged change → tracked by the pathspec
+        target.write_text("changed\n", encoding="utf-8")
+        assert any("x.ts" in ln for ln in mw._git_dirty_paths(repo, mw._BOOTSTRAP_DIRTY_PATHS))
+        # staged change (git diff --quiet would miss this) still shows
+        _git(repo, "add", "-A")
+        assert any("x.ts" in ln for ln in mw._git_dirty_paths(repo, mw._BOOTSTRAP_DIRTY_PATHS))
+        # untracked file inside the guarded paths is seen
+        (repo / "packages" / "ai" / "src" / "new.ts").write_text("x\n", encoding="utf-8")
+        assert any("new.ts" in ln for ln in mw._git_dirty_paths(repo, mw._BOOTSTRAP_DIRTY_PATHS))
+        # a change outside the guarded paths is ignored
+        (repo / "install.py").write_text("# dirty\n", encoding="utf-8")
+        assert all("install.py" not in ln for ln in mw._git_dirty_paths(repo, mw._BOOTSTRAP_DIRTY_PATHS))
+
+    def test_git_dirty_paths_none_for_non_git_dir(self, tmp_path):
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        assert mw._git_dirty_paths(plain, mw._BOOTSTRAP_DIRTY_PATHS) is None
+
     def test_update_git_counts_behind_and_ahead(self, tmp_path):
         origin = _git_init(tmp_path / "origin.git", bare=True)
         seed = _make_framework_source(tmp_path / "seed")
@@ -176,6 +202,8 @@ def _patch_world(monkeypatch, tmp_path, *, source: pathlib.Path, code_dir: pathl
     monkeypatch.setattr(mw, "_TMP_AGENTICTASK", tmp_path / "no-cache")
     monkeypatch.setattr(mw, "_SCRIPT_DIR", code_dir)
     monkeypatch.setattr(mw, "_repo_root", lambda: repo_root)
+    # A1b/A2b anchors resolve the repo root through mw_common, not mw.
+    monkeypatch.setattr(mw_common, "_repo_root", lambda: repo_root)
     monkeypatch.setattr(mw, "_check_pid", lambda _p: 12345)
     monkeypatch.setattr(mw_common, "_doctor_bundle", lambda: {
         "available": True, "source_available": True, "stale": bundle_stale,
@@ -208,6 +236,53 @@ def _world(tmp_path, monkeypatch, *, bundle_stale=False, dist_stale=False):
     return project, source
 
 
+def _write_repo_bundle_fixture(
+    repo_root: pathlib.Path,
+    *,
+    source_kinds: tuple[str, ...] = ("stage-confirm", "xkey-authorize"),
+    bundle_kinds: tuple[str, ...] | None = None,
+    guards: bool = True,
+) -> None:
+    """A1b fixture: the status-model.ts source plus the tracked repo bundle.
+    Defaults match on both sides; callers override one side to create drift."""
+    src = (repo_root / "packages" / "coding-agent" / "src" / "extensions"
+           / "agent-team-loop" / "autopilot" / "status-model.ts")
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text(
+        "export const GATE_KINDS = ["
+        + ", ".join(f'"{k}"' for k in source_kinds) + "] as const;\n",
+        encoding="utf-8",
+    )
+    kinds = source_kinds if bundle_kinds is None else bundle_kinds
+    bundle = (repo_root / "packages" / "multi-workers" / "dist" / "extensions"
+              / "agent-team-loop.js")
+    bundle.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "var GATE_KINDS = [" + ", ".join(f'"{k}"' for k in kinds) + "];",
+        # esbuild's module banner: a path comment only, never a guard behaviour
+        # marker — a bare `xkey-gate-guard` search would false-positive here.
+        "// packages/coding-agent/src/extensions/agent-team-loop/shared/xkey-gate-guard.ts",
+    ]
+    if guards:
+        lines.append("const blocked = `xkey-gate-guard: blocked`;")
+        lines.append("const trace = `[XKEY_GATE] blocked tool`;")
+    bundle.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_sourcemap_fixture(repo_root: pathlib.Path, *, drifted: bool = False) -> None:
+    """A2b fixture: one dist *.map embedding its source, next to the source."""
+    src = repo_root / "packages" / "coding-agent" / "src" / "mod.ts"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("export const x = 1;\n", encoding="utf-8")
+    embedded = "export const x = 2;   // stale build\n" if drifted else src.read_text(encoding="utf-8")
+    map_path = repo_root / "packages" / "coding-agent" / "dist" / "mod.js.map"
+    map_path.parent.mkdir(parents=True, exist_ok=True)
+    map_path.write_text(
+        json.dumps({"version": 3, "sources": ["../src/mod.ts"], "sourcesContent": [embedded]}),
+        encoding="utf-8",
+    )
+
+
 class TestCheckUpdateEnv:
     def test_healthy_world(self, tmp_path, monkeypatch):
         project, _source = _world(tmp_path, monkeypatch)
@@ -222,6 +297,79 @@ class TestCheckUpdateEnv:
         assert by_id["manifest"]["status"] == "ok"
         assert by_id["legacy-patterns"]["status"] == "ok"
         assert report["summary"]["healthy"] is True
+
+    def test_repo_bundle_content_anchor_fresh_and_stale(self, tmp_path, monkeypatch):
+        project, _source = _world(tmp_path, monkeypatch)
+        repo_root = tmp_path / "repo-root"
+        _write_repo_bundle_fixture(repo_root)
+        by_id = {c["id"]: c for c in mw._check_update_env(project)["checks"]}
+        assert by_id["repo-bundle"]["status"] == "ok"
+        # bundle lost a kind and both guard behaviour markers → stale, auto
+        _write_repo_bundle_fixture(repo_root, bundle_kinds=("stage-confirm",), guards=False)
+        report = mw._check_update_env(project)
+        by_id = {c["id"]: c for c in report["checks"]}
+        check = by_id["repo-bundle"]
+        assert check["status"] == "stale" and check["auto"] is True
+        assert "missing xkey-authorize" in check["detail"]
+        assert "xkey-gate-guard: blocked" in check["detail"]
+        assert report["summary"]["healthy"] is False
+
+    def test_repo_bundle_anchor_ignores_path_comment_only(self, tmp_path, monkeypatch):
+        """Mandated counterexample: the only xkey-gate-guard mention is the
+        esbuild path banner, so the (qualified) guard criterion must stay red."""
+        project, _source = _world(tmp_path, monkeypatch)
+        _write_repo_bundle_fixture(tmp_path / "repo-root", guards=False)
+        by_id = {c["id"]: c for c in mw._check_update_env(project)["checks"]}
+        check = by_id["repo-bundle"]
+        assert check["status"] == "stale"
+        assert "guard marker(s) missing" in check["detail"]
+
+    def test_repo_bundle_anchor_unjudgeable_is_not_ok(self, tmp_path, monkeypatch):
+        project, _source = _world(tmp_path, monkeypatch)  # no fixture files
+        by_id = {c["id"]: c for c in mw._check_update_env(project)["checks"]}
+        assert by_id["repo-bundle"]["status"] == "info"
+        assert by_id["repo-bundle"]["status"] != "ok"
+
+    def test_sourcemap_content_anchor_fresh_and_stale(self, tmp_path, monkeypatch):
+        project, _source = _world(tmp_path, monkeypatch)
+        repo_root = tmp_path / "repo-root"
+        _write_sourcemap_fixture(repo_root, drifted=False)
+        by_id = {c["id"]: c for c in mw._check_update_env(project)["checks"]}
+        assert by_id["pi-dist-content"]["status"] == "ok"
+        _write_sourcemap_fixture(repo_root, drifted=True)
+        report = mw._check_update_env(project)
+        by_id = {c["id"]: c for c in report["checks"]}
+        check = by_id["pi-dist-content"]
+        assert check["status"] == "stale" and check["auto"] is True
+        assert "mod.ts" in check["detail"]
+        assert report["summary"]["healthy"] is False
+
+    def test_sourcemap_anchor_flags_historical_181a75332_shape(self, tmp_path, monkeypatch):
+        """A2b must be red on the exact 181a75332 shape: the tracked dist map
+        embeds a status-model source without xkey-authorize while the current
+        source has it. Read from git objects — no build."""
+        repo = pathlib.Path(mw.__file__).resolve().parents[2]
+        rel = ("packages/coding-agent/dist/extensions/agent-team-loop/"
+               "autopilot/status-model.js.map")
+        shown = subprocess.run(["git", "-C", str(repo), "show", f"181a75332:{rel}"],
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+        if shown.returncode != 0 or not shown.stdout:
+            pytest.skip("181a75332 map unavailable in this checkout")
+        old_map = json.loads(shown.stdout)
+        src_rel = ("packages/coding-agent/src/extensions/agent-team-loop/"
+                   "autopilot/status-model.ts")
+        current = (repo / src_rel).read_text(encoding="utf-8")
+        assert "xkey-authorize" in current
+        fixture = tmp_path / "historical-root"
+        (fixture / rel).parent.mkdir(parents=True)
+        (fixture / rel).write_text(json.dumps(old_map), encoding="utf-8")
+        (fixture / src_rel).parent.mkdir(parents=True, exist_ok=True)
+        (fixture / src_rel).write_text(current, encoding="utf-8")
+        monkeypatch.setattr(mw_common, "_repo_root", lambda: fixture)
+        result = mw_common.sourcemap_drift()
+        assert result["stale"] is True
+        assert "status-model.ts" in result["detail"]
 
     def test_stale_world(self, tmp_path, monkeypatch):
         project, source = _world(tmp_path, monkeypatch, bundle_stale=True, dist_stale=True)
@@ -294,13 +442,14 @@ class TestApplyUpdateEnv:
             {"id": cid, "layer": "project" if cid in ("serve", "skill-clone", "claude-adapters", "manifest") else "machine",
              "status": "stale" if cid in stale_ids else "ok", "detail": "d", "fix": "f",
              "auto": True}
-            for cid in ("bundle", "pi-dist", "tmp-cache", "serve", "skill-clone",
-                        "claude-adapters", "manifest")
+            for cid in ("repo-bundle", "bundle", "pi-dist", "pi-dist-content", "tmp-cache",
+                        "serve", "skill-clone", "claude-adapters", "manifest")
         ]
         return {"checks": checks, "summary": {"ok": 0, "stale": len(stale_ids), "warn": 0, "healthy": False}}
 
     def test_order_and_manual_notes(self, tmp_path, monkeypatch):
         calls = []
+        monkeypatch.setattr(mw, "_build_bundle", lambda: calls.append("build") or (True, "built"))
         monkeypatch.setattr(mw, "_deploy_bundle", lambda no_dist: calls.append("deploy") or 0)
         monkeypatch.setattr(mw, "_pull_agentictask", lambda remote, *, force, branch: calls.append("pull") or (True, "ok"))
         monkeypatch.setattr(mw, "_resolve_framework_source_readonly", lambda: tmp_path)
@@ -309,19 +458,40 @@ class TestApplyUpdateEnv:
         monkeypatch.setattr(mw, "cmd_start", lambda a: calls.append("start"))
         applied, manual = mw._apply_update_env(tmp_path, self._report(
             "bundle", "tmp-cache", "skill-clone", "serve"))
-        assert calls == ["deploy", "pull", "install", "stop", "start"]
+        assert calls == ["build", "deploy", "pull", "install", "stop", "start"]
         assert len(applied) == 4
         assert any("重启 pi 窗口" in m for m in manual)
         assert any("/reload" in m for m in manual)
 
-    def test_build_failure_goes_manual(self, tmp_path, monkeypatch):
+    def test_s1_build_failure_skips_deploy(self, tmp_path, monkeypatch):
+        # The fail-open fix: a failed rebuild must never fall through to deploy.
+        calls = []
+        monkeypatch.setattr(mw, "_build_bundle", lambda: calls.append("build") or (False, "boom"))
+        monkeypatch.setattr(mw, "_deploy_bundle", lambda no_dist: calls.append("deploy") or 0)
+        applied, manual = mw._apply_update_env(tmp_path, self._report("bundle"))
+        assert calls == ["build"]
+        assert applied == []
+        assert any("失败" in m for m in manual)
+
+    def test_s1_deploy_failure_goes_manual(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(mw, "_build_bundle", lambda: (True, "built"))
         monkeypatch.setattr(mw, "_deploy_bundle", lambda no_dist: 1)
         applied, manual = mw._apply_update_env(tmp_path, self._report("bundle"))
         assert applied == []
         assert any("失败" in m for m in manual)
 
+    def test_s1_repo_bundle_stale_triggers_rebuild(self, tmp_path, monkeypatch):
+        # A1b alone (global bundle/dist mtimes ok) must still rebuild + deploy.
+        calls = []
+        monkeypatch.setattr(mw, "_build_bundle", lambda: calls.append("build") or (True, "built"))
+        monkeypatch.setattr(mw, "_deploy_bundle", lambda no_dist: calls.append("deploy") or 0)
+        applied, manual = mw._apply_update_env(tmp_path, self._report("repo-bundle"))
+        assert calls == ["build", "deploy"]
+        assert applied == ["bundle+dist 重建并全局重装"]
+
     def test_no_action_when_healthy(self, tmp_path, monkeypatch):
         calls = []
+        monkeypatch.setattr(mw, "_build_bundle", lambda: calls.append("build") or (True, "built"))
         monkeypatch.setattr(mw, "_deploy_bundle", lambda no_dist: calls.append("deploy") or 0)
         applied, manual = mw._apply_update_env(tmp_path, self._report())
         assert applied == [] and manual == []

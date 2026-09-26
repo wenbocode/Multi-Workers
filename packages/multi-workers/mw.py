@@ -3904,7 +3904,18 @@ def _agentictask_update_install() -> tuple[bool, str]:
 def _deploy_bundle(no_dist: bool) -> int:
     """Install the freshly built bundle globally: bundle copy + .mw-py-path
     sidecar + /update-agentictask command + pi dist rebuild. Shared by
-    `mw build --install` and `mw update-env --apply`. Returns exit code."""
+    `mw build --install` and `mw update-env --apply`. Returns exit code.
+
+    The dist rebuild runs BEFORE the global copy: if it fails the old global
+    bundle is left untouched (fail-closed) instead of pairing a fresh global
+    copy with a stale dist (partial deploy, AC-009(c))."""
+    dist_msg = ""
+    if not no_dist:
+        dok, dmsg = _rebuild_pi_dist()
+        if not dok:
+            print(f"[mw build] Error: {dmsg}", file=sys.stderr)
+            return 1
+        dist_msg = dmsg
     ext_dst = _global_ext_dir() / "agent-team-loop.js"
     ext_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(str(_bundle_path()), str(ext_dst))
@@ -3914,20 +3925,76 @@ def _deploy_bundle(no_dist: bool) -> int:
           file=None if ok_u else sys.stderr)
     print(f"[mw build] installed globally: {ext_dst}")
     # The npm global `pi` links to packages/coding-agent, so the runtime
-    # executes the repo's dist — rebuild it so the built-in agent-team-loop
-    # copy and any pi-core changes reach the runtime (opt out: --no-dist).
+    # executes the repo's dist — the rebuild above made it match the source.
     if no_dist:
         print("[mw build] dist rebuild skipped (--no-dist)")
         return 0
-    dok, dmsg = _rebuild_pi_dist()
-    if not dok:
-        print(f"[mw build] Error: {dmsg}", file=sys.stderr)
-        return 1
-    print(f"[mw build] {dmsg}: {_repo_root() / 'packages' / 'coding-agent' / 'dist'}")
+    print(f"[mw build] {dist_msg}: {_repo_root() / 'packages' / 'coding-agent' / 'dist'}")
     return 0
 
 
+# Pathspecs whose uncommitted changes would be silently compiled into tracked
+# build artifacts: `mw build --install` runs tsgo over coding-agent/src, while
+# `mw bootstrap` runs the root build over every workspace's src. `git diff
+# --quiet` is not enough here: it misses staged and untracked files, and tsgo's
+# include: src/**/*.ts compiles new untracked sources too.
+_BUILD_DIRTY_PATHS = ["packages/coding-agent/src"]
+_BOOTSTRAP_DIRTY_PATHS = ["packages/*/src/**"]
+
+
+def _git_dirty_paths(repo: pathlib.Path, paths: list[str]) -> list[str] | None:
+    """Porcelain lines for uncommitted changes under `paths` (staged, unstaged
+    and untracked). None when the check cannot be made (not a git checkout): a
+    non-git tree cannot commit compiled artifacts, so the guard is skipped
+    rather than blocking."""
+    if not (repo / ".git").exists():
+        return None
+    r = _git(["status", "--porcelain", "--untracked-files=all", "--", *paths], cwd=repo)
+    if r.returncode != 0:
+        return None
+    return [ln for ln in r.stdout.splitlines() if ln.strip()]
+
+
+def _refuse_dirty_build(label: str, dirty: list[str], paths: list[str],
+                        allow_cmd: str) -> None:
+    """Refusal shown by both `mw build --install` and `mw bootstrap`."""
+    shown = "\n".join(f"  {ln}" for ln in dirty[:5])
+    if len(dirty) > 5:
+        shown += f"\n  ...（另有 {len(dirty) - 5} 处）"
+    print(
+        f"[{label}] Error: 工作树有未提交改动，构建会把它编进 tracked 产物"
+        f"（多会话共享 cwd 时多半属于别的会话）：\n{shown}\n"
+        f"(共 {len(dirty)} 处；拦截面 {', '.join(paths)})\n"
+        f"确认后重跑：{allow_cmd}",
+        file=sys.stderr,
+    )
+
+
+def _bootstrap_dirty_guard(repo_root: pathlib.Path, allow_dirty: bool) -> bool:
+    """False (after printing the refusal) when the root `npm run build` in
+    `mw bootstrap` would compile uncommitted packages/*/src changes into the
+    tracked dist trees. Non-git trees skip the check."""
+    dirty = _git_dirty_paths(repo_root, _BOOTSTRAP_DIRTY_PATHS)
+    if not dirty:
+        return True
+    if allow_dirty:
+        print("[mw bootstrap] --allow-dirty: 已按脏树构建，产物可能含未提交源码", flush=True)
+        return True
+    _refuse_dirty_build("mw bootstrap", dirty, _BOOTSTRAP_DIRTY_PATHS,
+                        "mw bootstrap --allow-dirty")
+    return False
+
+
 def cmd_build(args: argparse.Namespace) -> int:
+    if args.install:
+        allow_dirty = bool(getattr(args, "allow_dirty", False))
+        dirty = _git_dirty_paths(_repo_root(), _BUILD_DIRTY_PATHS)
+        if dirty and not allow_dirty:
+            _refuse_dirty_build("mw build", dirty, _BUILD_DIRTY_PATHS,
+                                "mw build --install --allow-dirty")
+            return 1
+        if dirty:
+            print("[mw build] --allow-dirty: 已按脏树构建，产物可能含未提交源码")
     ok, msg = _build_bundle()
     if not ok:
         print(f"[mw build] Error: {msg}", file=sys.stderr)
@@ -4343,6 +4410,8 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         skip(3, "--fast")
     else:
         step(3, "npm run build (root; the ai build fetches models.dev — network required)")
+        if not _bootstrap_dirty_guard(repo_root, bool(getattr(args, "allow_dirty", False))):
+            return 1
         if not _run_stream([npm, "run", "build"], cwd=repo_root):
             return fail("repo build failed — see the output above")
 
@@ -4638,6 +4707,34 @@ def _check_update_env(project_dir: pathlib.Path) -> dict:
         add("bundle", "machine", "ok",
             f"bundle {b['global_bundle_mtime']} ≥ 源码最新 {b['source_newest_mtime']}")
 
+    # A1b repo bundle content (AC-009(b)/(c)): the tracked repo bundle's
+    # GATE_KINDS set and guard behaviour markers vs the status-model source.
+    # The A1/A2 mtime anchors cannot see a content-stale bundle at all.
+    rb = mw_common.repo_bundle_anchor()
+    rb_detail = str(rb.get("detail", ""))
+    if rb.get("stale") is None:
+        add("repo-bundle", "machine", "info", f"无法判定: {rb_detail}",
+            "确认是完整检出（packages/multi-workers/dist + status-model.ts）")
+    elif rb["stale"]:
+        add("repo-bundle", "machine", "stale", rb_detail,
+            "mw build（重建 repo bundle → 全局重装 → 重建 coding-agent dist），随后重启 pi 窗口",
+            auto=True)
+    else:
+        add("repo-bundle", "machine", "ok", rb_detail)
+
+    # A2b coding-agent dist content (AC-009(c)): every tracked *.map embeds its
+    # source (inlineSources), so sourcesContent drift is detectable with no build.
+    sd = mw_common.sourcemap_drift()
+    sd_detail = str(sd.get("detail", ""))
+    if sd.get("stale") is None:
+        add("pi-dist-content", "machine", "skip", f"无法判定: {sd_detail}")
+    elif sd["stale"]:
+        add("pi-dist-content", "machine", "stale", sd_detail,
+            "mw build --install（重建 coding-agent dist），随后重启 pi 窗口",
+            auto=True)
+    else:
+        add("pi-dist-content", "machine", "ok", sd_detail)
+
     # A2 pi dist (coarse mtime heuristic; the npm-linked global pi runs from here)
     dist_dir = _repo_root() / "packages" / "coding-agent" / "dist"
     src_dir = _repo_root() / "packages" / "coding-agent" / "src"
@@ -4814,14 +4911,20 @@ def _apply_update_env(project_dir: pathlib.Path, report: dict) -> tuple[list[str
         c = by_id.get(cid)
         return bool(c) and c["status"] == "stale" and c.get("auto")
 
-    # S1: bundle + pi dist
-    if stale("bundle") or stale("pi-dist"):
-        rc = _deploy_bundle(no_dist=False)
-        if rc == 0:
-            applied.append("bundle+dist 重建并全局重装")
-            manual.append("重启 pi 窗口以加载新 bundle/dist")
+    # S1: bundle + pi dist. Rebuild BEFORE deploying (AC-009(c)): copying a
+    # stale repo bundle to the global dir only refreshes its mtime, so the
+    # re-check would report healthy while the content stays old (fail-open).
+    if any(stale(cid) for cid in ("repo-bundle", "bundle", "pi-dist", "pi-dist-content")):
+        ok, msg = _build_bundle()
+        if not ok:
+            manual.append(f"bundle 重建失败: {msg} — 未部署（避免 fail-open）")
         else:
-            manual.append("mw build --install 失败 — 手动排查后重试")
+            rc = _deploy_bundle(no_dist=False)
+            if rc == 0:
+                applied.append("bundle+dist 重建并全局重装")
+                manual.append("重启 pi 窗口以加载新 bundle/dist")
+            else:
+                manual.append("mw build --install 失败 — 手动排查后重试")
 
     # .tmp cache (before framework reinstall — the cache may be its source)
     if stale("tmp-cache"):
@@ -5115,6 +5218,8 @@ def _parse_args() -> argparse.Namespace:
                                   "requires a previous full bootstrap)")
     bootstrap_p.add_argument("--no-start", dest="no_start", action="store_true",
                              help="Do not start the service (steps 1-6 + doctor only)")
+    bootstrap_p.add_argument("--allow-dirty", dest="allow_dirty", action="store_true",
+                             help="Run the root build despite uncommitted changes under packages/*/src")
 
     build_p = sub.add_parser("build",
                              help="Rebuild the extension bundle with esbuild (bash-free, cwd-independent)")
@@ -5123,6 +5228,9 @@ def _parse_args() -> argparse.Namespace:
     build_p.add_argument("--no-dist", dest="no_dist", action="store_true",
                          help="Skip rebuilding packages/coding-agent/dist (the npm-link pi runtime); "
                               "by default --install also rebuilds it")
+    build_p.add_argument("--allow-dirty", dest="allow_dirty", action="store_true",
+                         help="Install despite uncommitted changes under packages/coding-agent/src "
+                              "(the artifacts may embed unreviewed source)")
 
     update_env_p = sub.add_parser(
         "update-env",
