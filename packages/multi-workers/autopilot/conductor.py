@@ -618,7 +618,7 @@ _VERDICT_VALUES = ("meets", "below")  # derived-record value domain (D-008)
 
 def _persist_l3_verdict(
     key_dir: pathlib.Path, verdict: str, report_src: pathlib.Path | None,
-    st: ConductorState | None = None,
+    st: ConductorState | None = None, reason: str | None = None,
 ) -> None:
     """Refresh the key's **terminal** L3 verdict for the closure dossier:
     l3-verdict.txt + l3-report.md. Every terminal event (done-meets /
@@ -653,10 +653,10 @@ def _persist_l3_verdict(
             report_src.parent.name
             if report_src is not None and report_src.is_file() else "-"
         )
-        st.timeline.append(
-            "config", key=key,
-            detail=f"l3-verdict {before or 'none'} -> {verdict} (report from {source})",
-        )
+        detail = f"l3-verdict {before or 'none'} -> {verdict} (report from {source}"
+        if reason is not None:
+            detail += f"; fail: {_one_line(reason, 80)}"
+        st.timeline.append("config", key=key, detail=detail + ")")
 
 
 def _iso_now() -> str:
@@ -1120,21 +1120,28 @@ def _l3_prompt(key: str, attempt: int) -> str:
         "  ## Quality Gate Report（VC 断言表逐条 PASS/FAIL + needs-rerun + 证据引用）\n"
         "  ## Achieved（达成摘要：做了什么 / 目标收益 / 遗留什么）\n"
         "- 两节承载于 output.md（首选）；长报告可置于 report.md 作为**文档化回退源**"
-        "（判定按 output.md → report.md 优先级读取，任一份出现 FAIL 单元格即 below）\n"
+        "（判定按 output.md → report.md 优先级读取，"
+        "任一份的任意行出现 FAIL 标记（表格单元格 / 项目符 / 结论行）即 below）\n"
         "- 判定源取证：output.md / report.md 须属于本轮（由同轮 trace.log 锚定）；"
         "事后补写的判定源会被标记 suspect 并按 below 处理"
     )
 
 
-def _repair_prompt(key: str, attempt: int, report_rel: str) -> str:
-    return (
-        f"修复 L3 裁决 below 的问题（key {key}，第 {attempt} 轮）:\n"
-        f"- L3 报告：{report_rel}"
-        "（## Quality Gate Report 的 FAIL 项与 needs-rerun 遗留）\n"
+def _repair_prompt(
+    key: str, attempt: int, report_rel: str, fail_line: str | None = None
+) -> str:
+    lines = [
+        f"修复 L3 裁决 below 的问题（key {key}，第 {attempt} 轮）:\n",
+        f"- L3 报告：{report_rel}（FAIL 项与 needs-rerun 遗留）\n",
+    ]
+    if fail_line is not None:
+        lines.append(f"- 首个 FAIL 行：{fail_line}（修复目标）\n")
+    lines.append(
         "- 逐项修复并补充 [VERIFY] 证据到 evidence/；不重写无关 artifact\n"
         "- 只读约束：workers/*-l3-*/ 下的 output.md 与 report.md 属 reviewer 本轮产物（L3 判定源）\n"
         "- 禁止改动 workers/*-l3-*/ 判定源（只读输入）；判定源错位的唯一纠错路径 = 由框架派发新一轮 reviewer（re-review）"
     )
+    return "".join(lines)
 
 
 # ── L3 verdict source fallback (feature-l3-verdict-source-fallback) ──────────
@@ -1146,6 +1153,34 @@ _L3_SOURCE_ORDER = ("output.md", "report.md")
 # Strict superset of the frozen `\|\s*FAIL\b`: catches `| **FAIL** |` (31 live
 # cells) while never dropping a plain `| FAIL |` match (I-8).
 _L3_FAIL_RE = re.compile(r"\|\s*\**\s*FAIL\b")
+# Line-level forms (D-001): a FAIL bullet at line start and a prose line
+# whose FAIL is followed by a dash. `_L3_FAIL_ZERO_RE` is the token-local
+# zero-value exemption, always applied with `match(line, token_pos)`.
+_L3_FAIL_BULLET_RE = re.compile(r"^\s*[-*]\s*\**\s*FAIL\b")
+_L3_FAIL_PROSE_RE = re.compile(r"^[^|\n]*?\**\s*FAIL\s*[—–-]")
+_L3_FAIL_ZERO_RE = re.compile(r"FAIL\s*\**\s*[：:=]?\s*\**\s*0\b")
+
+
+def _l3_fail_marker_line(text: str) -> str | None:
+    """First line carrying a FAIL marker (verbatim), else ``None`` (D-001).
+
+    The scan walks the whole document line by line. A line fires when the
+    pipe rule or the line-start prose rule matches anywhere in it, or when
+    the bullet rule matches without the token-local zero-value exemption.
+    The exemption is anchored at the matched FAIL token's start, never a
+    whole-line search: ``- FAIL 9 项，其中 FAIL：0`` fires on its first
+    token."""
+    for line in text.splitlines():
+        if _L3_FAIL_RE.search(line) or _L3_FAIL_PROSE_RE.search(line):
+            return line
+        match = _L3_FAIL_BULLET_RE.match(line)
+        if match is None:
+            continue
+        token_pos = match.start() + match.group(0).rindex("FAIL")
+        if _L3_FAIL_ZERO_RE.match(line, token_pos) is None:
+            return line
+    return None
+
 
 # ── L3 verdict provenance guard (feature-verdict-provenance-guard D-003..D-006) ─
 # Module constants — NEVER read from config (GC-4).
@@ -1179,24 +1214,26 @@ def _l3_qualifies(text: str) -> bool:
 
 def _l3_resolve_source(
     sources: list[tuple[pathlib.Path, str]],
-) -> tuple[str, pathlib.Path | None]:
+) -> tuple[str, pathlib.Path | None, str | None]:
     """Fail-closed resolution over existing sources in priority order (I-2):
-    any qualifying source with a FAIL cell -> below + that source; else the
-    first qualifying source -> meets + that source; else below + None."""
+    the first readable source (qualifying or not) whose full text carries a
+    FAIL marker -> below + that source + its first marker line; else the
+    first qualifying source -> meets + that source + None; else below + None
+    + None (D-002/D-003: the veto covers unqualified sources too)."""
+    for path, text in sources:
+        fail_line = _l3_fail_marker_line(text)
+        if fail_line is not None:
+            return "below", path, fail_line
     qualifying = [(p, t) for p, t in sources if _l3_qualifies(t)]
-    for path, text in qualifying:
-        qg = _md_section(text, "## Quality Gate Report") or ""
-        if _L3_FAIL_RE.search(qg):
-            return "below", path
     if qualifying:
-        return "meets", qualifying[0][0]
-    return "below", None
+        return "meets", qualifying[0][0], None
+    return "below", None, None
 
 
 def _l3_round_verdict(
     project_root: pathlib.Path, rows: list[dict], key: str, attempt: int
-) -> tuple[str, str, pathlib.Path | None]:
-    """(verdict, worker status, deciding source) for one L3 round (AC-012).
+) -> tuple[str, str, pathlib.Path | None, str | None]:
+    """(verdict, worker status, deciding source, fail line) for one L3 round.
 
     A round whose worker row is terminal-failed never rendered a verdict: the
     worker harness writes a placeholder ``output.md`` even when the process
@@ -1212,7 +1249,7 @@ def _l3_round_verdict(
         "",
     )
     if status in ("failed", "needs-clarification"):
-        return "no-verdict", status, None
+        return "no-verdict", status, None, None
     key_dir = pathlib.Path(project_root) / ".agenticdoc" / key
     sources = [
         (path, text)
@@ -1220,9 +1257,9 @@ def _l3_round_verdict(
         if (text := _l3_read_source(path)) is not None
     ]
     if not sources:
-        return "no-verdict", status or "no-row", None
-    verdict, source = _l3_resolve_source(sources)
-    return verdict, status, source
+        return "no-verdict", status or "no-row", None, None
+    verdict, source, fail_line = _l3_resolve_source(sources)
+    return verdict, status, source, fail_line
 
 
 # ── L3 verdict provenance guard (D-001..D-013) ───────────────────────────────
@@ -1232,6 +1269,7 @@ def _l3_provenance_record(
     task_key: str,
     deciding_source: pathlib.Path,
     raw_verdict: str,
+    fail_line: str | None = None,
 ) -> dict:
     """Read-only provenance record for one L3 round (D-004..D-006).
 
@@ -1263,6 +1301,7 @@ def _l3_provenance_record(
         "reasons": [],
         "raw_verdict": raw_verdict,
         "verdict": raw_verdict,
+        "fail_line": fail_line,
         "recorded_at": _iso_now(),
     }
     trace = key_dir / "workers" / task_key / _L3_TRACE_NAME
@@ -1478,7 +1517,9 @@ def _verify_loop(
             timeline=st.timeline,
         )
         return result.ok
-    verdict, worker_status, l3_source = _l3_round_verdict(project_root, rows, key, used)
+    verdict, worker_status, l3_source, fail_line = _l3_round_verdict(
+        project_root, rows, key, used
+    )
     round_key = dispatch.task_key_for(key, f"l3-a{used}")
     l3_source_rel = (
         l3_source.relative_to(pathlib.Path(project_root)).as_posix()
@@ -1511,7 +1552,9 @@ def _verify_loop(
         )
         return result.ok
     if l3_source is not None:
-        record = _l3_provenance_record(key_dir, round_key, l3_source, verdict)
+        record = _l3_provenance_record(
+            key_dir, round_key, l3_source, verdict, fail_line=fail_line
+        )
         _persist_l3_provenance(key_dir, record, st=st)
         if record["suspect"] and verdict == "meets":
             # fail-closed (D-002/D-007): a suspect meets-round never reaches
@@ -1581,10 +1624,11 @@ def _verify_loop(
             return False
         # meets-but-short achieved draft → same repair path as below
     if used >= l3_limit:
-        _persist_l3_verdict(key_dir, "below", l3_source, st=st)
+        _persist_l3_verdict(key_dir, "below", l3_source, st=st, reason=fail_line)
         mark_stalled(
             project_root, st, key,
-            f"L3 below {l3_limit} rounds (budget {l3_budget}, credits {l3_limit - l3_budget})",
+            f"L3 below {l3_limit} rounds (budget {l3_budget}, credits {l3_limit - l3_budget})"
+            + (f"; fail: {_one_line(fail_line, 80)}" if fail_line is not None else ""),
         )
         return False
     repair_base = f"repair-a{used}"
@@ -1594,17 +1638,18 @@ def _verify_loop(
         if any(_is_in_flight(r) for r in fam):
             return False
         if repair_used >= max(1, int(cfg["round_budget"])) + _resume_credits(project_root, key):
-            _persist_l3_verdict(key_dir, "below", l3_source, st=st)
+            _persist_l3_verdict(key_dir, "below", l3_source, st=st, reason=fail_line)
             mark_stalled(
                 project_root, st, key,
-                f"repair exhausted {repair_used} attempts at L3 round {used}",
+                f"repair exhausted {repair_used} attempts at L3 round {used}"
+                + (f"; fail: {_one_line(fail_line, 80)}" if fail_line is not None else ""),
             )
             return False
         retry = repair_used > 0
         stem_arg = f"{repair_base}-a{repair_used + 1}" if retry else repair_base
         result = dispatch.dispatch(
             project_root, key, stem_arg, "repair",
-            _repair_prompt(key, used, l3_source_rel),
+            _repair_prompt(key, used, l3_source_rel, fail_line=fail_line),
             loop=f"repair:{key}", attempt=repair_used + 1,
             timeline=st.timeline,
         )

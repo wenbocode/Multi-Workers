@@ -638,7 +638,7 @@ def test_frozen_anchors_and_criteria_unchanged(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The two frozen primitives keep their exact region sha and
-    `_l3_round_verdict` still returns a 3-tuple."""
+    `_l3_round_verdict` returns the 4-tuple (fail_line threaded, T-02)."""
     parse_sha = _conductor_region_sha("def _parse_l3_output(")
     md_sha = _conductor_region_sha("def _md_section(")
     project, st = fallback._boot(tmp_path, monkeypatch)
@@ -647,7 +647,7 @@ def test_frozen_anchors_and_criteria_unchanged(
     tuple_len = len(result) if isinstance(result, tuple) else -1
     parse_ok = parse_sha == _PARSE_L3_SHA
     md_ok = md_sha == _MD_SECTION_SHA
-    ok = parse_ok and md_ok and tuple_len == 3
+    ok = parse_ok and md_ok and tuple_len == 4
     print(
         f"[VERIFY] VC-013: parse_sha_match={_b(parse_ok)} "
         f"md_section_sha_match={_b(md_ok)} tuple_len={tuple_len}"

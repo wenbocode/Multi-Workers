@@ -1,0 +1,8 @@
+诊断运行（test_l3_fail_marker_repair_chain 首跑 stall 排查，stub round-2 为朴素稿时）：
+timeline 关键行：
+  seq 19 config    l3-verdict none -> meets (report from ap-k1-l3-a2)   <- round-2 meets 正常
+  seq 20 advance   verify->done exit=1 class=gate-blocked              <- done 门驳朴素 Achieved（缺 系统行为变化）
+  seq 23 stalled   closure reprompt exhausted 2/2 (gate-blocked on evidence draft)
+结论：closure reprompt 预算与 L3 轮预算共享 used 计数；FAIL 轮(1)+修复后 meets 轮(2) 耗尽 l3_limit=2 后
+零 reprompt 直接 stall（verdict 保持 meets，fail-closed 可恢复）。e2e 终稿以 round-2 合规稿绕开。
+登记为观察项（closure/预算域），非本 key 缺陷。

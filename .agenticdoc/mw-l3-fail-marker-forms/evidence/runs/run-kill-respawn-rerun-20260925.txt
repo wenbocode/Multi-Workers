@@ -1,0 +1,7 @@
+$ python -X utf8 -c 'import test_autopilot_e2e as t; t.test_conductor_kill_respawn()' (MW_E2E_FAST=1)
+exit=0
+
+[VERIFY] VC-024: kill=real-process respawned=true new_pid=22904 start_lines=1 budgets_unchanged=true mtime_unchanged=true
+kill_respawn PASS
+
+注：全量 e2e 首跑中该测试 PermissionError(13)（Windows 文件锁瞬态，与本 key 改动面零交集：kill/respawn 机制未被触碰，同代码同套件 20 分钟前绿）。隔离复跑绿，判非回归。

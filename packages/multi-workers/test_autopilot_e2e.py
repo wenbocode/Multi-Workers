@@ -270,7 +270,51 @@ elif loop.startswith("gen:") and loop.endswith(":tasks"):
 elif loop.startswith("exec:"):
     output.write_text(f"executed {loop} by stub\n", encoding="utf-8")
 elif task_type == "reviewer":
-    if "Rejected lines" in body:
+    if (
+        os.environ.get("MW_E2E_L3_FAIL_FIRST") == "1"
+        and "l3-a1" in task_dir.name
+    ):
+        # mw-l3-fail-marker-forms (VC-011): round-1 reviewer reports its
+        # FAIL as a bold bullet (non-pipe form) — the file's only marker.
+        output.write_text(
+            "# L3 Report (e2e stub, fail-marker round)\n\n"
+            "## Quality Gate Report\n\n"
+            "| VC | verdict | evidence |\n"
+            "|----|---------|----------|\n"
+            "| VC-901 | PASS | output.md |\n"
+            "| VC-902 | PASS | trace.log |\n"
+            "\n"
+            "- **FAIL：1**（VC-903: 证据缺失）\n"
+            "\n"
+            "## Achieved\n\n"
+            "e2e stub fail-marker round：判定 below，等待修复轮。\n",
+            encoding="utf-8",
+        )
+    elif (
+        os.environ.get("MW_E2E_L3_FAIL_FIRST") == "1"
+        and "l3-a2" in task_dir.name
+    ):
+        # mw-l3-fail-marker-forms (VC-011): the post-repair round-2 reports
+        # clean VC verdicts AND a done-gate-compliant Achieved draft (the
+        # plain else-branch draft would burn the shared closure-reprompt
+        # budget the FAIL round already drew from).
+        output.write_text(
+            "# L3 Report (e2e stub, post-repair round)\n\n"
+            "## Quality Gate Report\n\n"
+            "| VC | verdict | evidence |\n"
+            "|----|---------|----------|\n"
+            "| VC-901 | PASS | output.md |\n"
+            "| VC-902 | PASS | trace.log |\n"
+            "\n"
+            "## Achieved\n\n"
+            "### 系统行为变化\n\n"
+            "stub 修复轮：EXECUTE 任务全部完成，验证证据齐备，目标收益落地；"
+            "结案文书按门禁驳回规则重组，无新增风险面。\n\n"
+            "### 遗留\n\n"
+            "无遗留阻塞项：全部任务收敛，无需立新 key。\n",
+            encoding="utf-8",
+        )
+    elif "Rejected lines" in body:
         # reprompt round (mw-done-closure-repair): the prompt carries the
         # done-gate rejection verbatim; obey it — reorganize the Achieved
         # section per the listed rules so the closure gate passes.
@@ -584,6 +628,69 @@ def test_full_chain_single_key() -> None:
             f"[chain] k1 done via real advance_phase.py; advances={len(adv)} "
             f"dispatches={len(_rows(project))}",
             flush=True,
+        )
+    finally:
+        _kill_tree(cond)
+        _kill_tree(launcher)
+        shutil.rmtree(project, ignore_errors=True)
+        shutil.rmtree(bin_dir, ignore_errors=True)
+
+
+# ── 1b. L3 fail-marker repair chain (mw-l3-fail-marker-forms VC-011) ──────
+
+def test_l3_fail_marker_repair_chain() -> None:
+    # Round-1 reviewer reports its FAIL as a bold bullet (non-pipe form):
+    # the verdict must land below (no false-meets), the repair prompt must
+    # carry the verbatim fail line, and the repaired chain must close DONE
+    # via a clean round-2 meets.
+    project = _make_project(keys={"k1": "EXECUTE"}, roadmap_text=_rm_running(["k1"]))
+    _tasks(project, "k1", ["T-01-one"])
+    bin_dir = _make_stub_bin()
+    env = _child_env(bin_dir)
+    env["MW_E2E_L3_FAIL_FIRST"] = "1"  # stub: round-1 reviewer writes the bullet FAIL
+    cond = launcher = None
+    try:
+        cond = _start_conductor(project, env)
+        launcher = _start_launcher(project, env)
+
+        # below round-1 -> repair dispatched with the fail line injected
+        repair_md = (
+            project / ".agenticdoc" / "k1" / "workers" / "ap-k1-repair-a1" / "task.md"
+        )
+        got = _wait_until(lambda: repair_md.is_file(), timeout=90)
+        assert got, "repair never dispatched (round-1 bullet FAIL not detected?)"
+        body = repair_md.read_text(encoding="utf-8")
+        assert "首个 FAIL 行" in body, "repair prompt lacks the fail-line bullet"
+        assert "- **FAIL：1**" in body, "repair prompt lacks the verbatim fail line"
+
+        # no false-meets: the key must not be DONE at the repair point
+        assert state.read_key_states(project)["k1"].phase != "DONE"
+
+        # repaired chain closes: round-2 clean meets -> DONE + stage-close
+        got = _wait_until(
+            lambda: _pending_gate(project, "stage-close") is not None, timeout=150
+        )
+        assert got, "stage-close gate not reached (chain stalled after repair)"
+        ks = state.read_key_states(project)["k1"]
+        assert ks.phase == "DONE", f"k1 phase {ks.phase}"
+        key_dir = project / ".agenticdoc" / "k1"
+        verdict = (key_dir / "l3-verdict.txt").read_text(encoding="utf-8").strip()
+        assert verdict == "meets", f"terminal verdict {verdict!r}"
+        # provenance: round l3-a1 recorded the bullet fail_line; l3-a2 clean
+        sidecar = key_dir / "l3-verdict-provenance.json"
+        records = __import__("json").loads(sidecar.read_text(encoding="utf-8"))
+        by_round = {r["round"]: r for r in records}
+        assert "- **FAIL：1**" in (by_round["l3-a1"].get("fail_line") or ""), (
+            "l3-a1 provenance lost the fail_line"
+        )
+        assert not by_round["l3-a2"].get("fail_line"), (
+            "l3-a2 clean round must carry no fail_line"
+        )
+        adv = [e for e in _events(project) if e["ev"] == "advance"]
+        assert any("verify->done exit=0" in e["detail"] for e in adv)
+        _verify(
+            "VC-011", fail_form="bullet", repair_prompt="fail-line-injected",
+            rounds=len(records), **{"pass": "true"},
         )
     finally:
         _kill_tree(cond)
@@ -1061,6 +1168,7 @@ def test_multi_project_isolation() -> None:
 
 _TESTS = [
     test_full_chain_single_key,
+    test_l3_fail_marker_repair_chain,
     test_parallel_dispatch,
     test_beat_observation_window,
     test_concurrent_write_stress,

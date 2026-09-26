@@ -9,6 +9,7 @@ fake so the done-transaction contract (三件套) is asserted against the same
 checks the real advance_phase.py applies.
 """
 import hashlib
+import json
 import pathlib
 import sys
 
@@ -1273,4 +1274,291 @@ def test_dcr_stall_draft_sha_mismatch_blocks_overwrite(
     _verify(
         "VC-006", sha_mismatch_no_overwrite=true_str(True),
         draft_preserved=true_str(True), resume_credit_used=true_str(True),
+    )
+
+
+# ── L3 fail-marker forms, L2 scenarios (key mw-l3-fail-marker-forms, T-03) ────
+# Design: .agenticdoc/mw-l3-fail-marker-forms/design.md (D-001..D-007). These
+# scenarios pin the round-level consequences of the new three-form FAIL scan
+# (pipe / bullet / prose + token-local zero-value exemption), the full-file
+# scan over every readable source (FAIL veto generalized to non-qualifying
+# sources), and the fail_line threading into stall reason / timeline detail /
+# provenance sidecar / repair prompt (VC-004/005/006/007).
+#
+# TDD note: Worker B lands the conductor change (conductor.py) in parallel; on
+# HEAD 76d5d612e these cases are intentionally RED (a bullet-only FAIL source
+# still meets, `fail_line` missing from the provenance record / repair
+# prompt), which is the expected red control. Never "fix" conductor.py from
+# this test file.
+#
+# Only `test_fmr_*` cases and `_fmr_*` fixtures are new; the shared harness
+# (`_verify_key_project`, `_fake_advance_factory`, `_worker_output`, `_rows`,
+# `_events`, `_set_row`, `_state`) is reused verbatim.
+
+_FMR_ACHIEVED = (
+    "达成摘要：本 key 完成了全部任务书列出的交付物，验证套件全绿，"
+    "证据链闭合无缺口，目标收益如 spec 所述已经落地。"
+) * 3
+
+# design D-001 marker forms (verbatim live-corpus shapes).
+_FMR_BULLET_FAIL_ONE = "- **FAIL：1**"       # sampling a1 output.md:12 shape
+_FMR_BULLET_FAIL_TWO = "- **FAIL：2**"       # non-qualifying source veto
+_FMR_PIPE_MARKER = "| VC-007 | **FAIL** | no | 缺证据 | evidence/z.txt |"
+_FMR_INLINE_NEGATION_ROW = (
+    "| VC-034 | **FAIL** | yes | featuremark 0 fail、全量 9=registered 9 | evidence/w.txt |"
+)
+# sampling a1 shares this first-20-char prefix with the timeline sample.
+_FMR_SAMPLE = _FMR_PIPE_MARKER[:20]
+
+_FMR_QG_HEADER = "| VC | verdict | evidence |\n|----|---------|----------|\n"
+
+# design D-002/§4 negative corpus: zero-value FAIL texts that must not flip a
+# meet (cigate a2 shape).
+_FMR_ZERO_TLDR = "TL;DR: PASS 35，FAIL=0，needs-rerun=0。"
+_FMR_ZERO_SUMMARY = "**汇总**：**PASS 35 / FAIL 0 / needs-rerun 0**。"
+_FMR_ZERO_BULLET = "- FAIL：0"
+
+
+def _fmr_output(qg_body: str, *, tldr: str = "", achieved: str | None = None) -> str:
+    """Reviewer output.md: optional TL;DR + `## Quality Gate Report` + an
+    `## Achieved` section. ``achieved=None`` omits the second section, i.e. a
+    NON-qualifying source (D-003 whitewash-hole shape)."""
+    text = "# L3 Report\n\n"
+    if tldr:
+        text += tldr + "\n\n"
+    text += "## Quality Gate Report\n\n" + qg_body + "\n"
+    if achieved is not None:
+        text += "\n## Achieved\n\n" + achieved + "\n"
+    return text
+
+
+def _fmr_report(
+    project: pathlib.Path, key: str, task_key: str, text: str
+) -> pathlib.Path:
+    """The round's report.md fallback carrier (never the key l3-report.md)."""
+    path = project / ".agenticdoc" / key / "workers" / task_key / "report.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8", newline="\n")
+    return path
+
+
+def _fmr_boot(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, *, budget: int | None = None
+) -> tuple[pathlib.Path, conductor.ConductorState, list[tuple[str, str]]]:
+    """A VERIFY key on the gate-free L3 chain; budget=1 terminalizes the
+    first below round (persisted verdict + stall) so the decision is
+    observable without a repair round."""
+    project = _verify_key_project(tmp_path)
+    if budget is not None:
+        cfg = config.load_config(project)
+        cfg["round_budget"] = budget
+        config.save_config(project, cfg)
+    fake_advance, calls = _fake_advance_factory(project)
+    monkeypatch.setattr(conductor.advance, "advance", fake_advance)
+    return project, _state(project), calls
+
+
+def _fmr_key_dir(project: pathlib.Path) -> pathlib.Path:
+    return project / ".agenticdoc" / "k1"
+
+
+def _fmr_verdict(project: pathlib.Path) -> str:
+    path = _fmr_key_dir(project) / "l3-verdict.txt"
+    return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+
+
+def _fmr_provenance(project: pathlib.Path, task_key: str) -> dict:
+    sidecar = _fmr_key_dir(project) / conductor._PROVENANCE_FILENAME
+    entries = json.loads(sidecar.read_text(encoding="utf-8"))
+    return next(e for e in entries if e.get("task_key") == task_key)
+
+
+def _fmr_round(
+    project: pathlib.Path, st: conductor.ConductorState, task_key: str, text: str
+) -> None:
+    """Write one reviewer round's output.md and mark its queue row done."""
+    _worker_output(project, "k1", task_key, text)
+    _set_row(project, task_key, "done")
+
+
+def test_fmr_bullet_fail_only_source_below(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-001/D-002 G3 regression anchor: a QUALIFYING output.md whose only
+    FAIL marker is the Chinese-colon bullet `- **FAIL：1**` decides below with
+    NO report.md in play — the round must never lean on the absent fallback."""
+    project, st, calls = _fmr_boot(tmp_path, monkeypatch, budget=1)
+    assert conductor.tick(project, st) == "ok"  # l3-a1 dispatched
+    task_key = "ap-k1-l3-a1"
+    out = _fmr_output(
+        _FMR_QG_HEADER + _FMR_BULLET_FAIL_ONE + "\n", achieved=_FMR_ACHIEVED
+    )
+    _fmr_round(project, st, task_key, out)
+    report_path = _fmr_key_dir(project) / "workers" / task_key / "report.md"
+    assert not report_path.exists()  # red-line: absent fallback is not readable
+
+    assert conductor.tick(project, st) == "ok"  # below -> persist + stall
+
+    assert _fmr_verdict(project) == "below"
+    assert ("k1", "done") not in calls  # no false-meets DONE
+    assert state.read_key_states(project)["k1"].phase == "VERIFY"
+    rm = roadmap.load_roadmap(
+        project / ".agenticdoc" / "_autopilot" / "_roadmap.md"
+    )
+    assert rm.stages[0].key_status["k1"] == "stalled"
+    assert not report_path.exists()
+    _verify(
+        "VC-005", verdict="below", report_present="false",
+        meets="false", done_in_calls="false",
+    )
+
+
+def test_fmr_nonqualifying_output_fail_vetoes_clean_report(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-003 whitewash-hole closure: a NON-qualifying output.md carrying a
+    FAIL bullet vetoes a completely clean qualifying report.md."""
+    project, st, calls = _fmr_boot(tmp_path, monkeypatch, budget=1)
+    assert conductor.tick(project, st) == "ok"
+    task_key = "ap-k1-l3-a1"
+    out = _fmr_output(
+        _FMR_QG_HEADER + _FMR_BULLET_FAIL_TWO + "\n", achieved=None
+    )
+    _worker_output(project, "k1", task_key, out)
+    report_path = _fmr_report(project, "k1", task_key, _L3_MEETS)
+    assert report_path.is_file()
+    _set_row(project, task_key, "done")
+
+    assert conductor.tick(project, st) == "ok"
+
+    assert _fmr_verdict(project) == "below"
+    assert ("k1", "done") not in calls
+    # the veto came from the non-qualifying output.md, not from the clean
+    # report.md: the persisted dossier report is the deciding source's bytes.
+    l3_report = (_fmr_key_dir(project) / "l3-report.md").read_text(encoding="utf-8")
+    assert l3_report == out and l3_report != _L3_MEETS
+    _verify(
+        "VC-006", verdict="below", veto_source="output.md-unqualified",
+        clean_report_whitewashes="false", done_in_calls="false",
+    )
+
+
+def test_fmr_fail_line_threading(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-004 (VC-007): the deciding pipe marker line is threaded into all
+    four consumption faces — stall reason, `l3-verdict` timeline detail,
+    provenance sidecar, repair prompt."""
+    project, st, _calls = _fmr_boot(tmp_path, monkeypatch)  # default budget 2
+    assert conductor.tick(project, st) == "ok"  # l3-a1
+    a1 = "ap-k1-l3-a1"
+    out = _fmr_output(
+        _FMR_QG_HEADER + _FMR_PIPE_MARKER + "\n", achieved=_FMR_ACHIEVED
+    )
+    _fmr_round(project, st, a1, out)
+
+    assert conductor.tick(project, st) == "ok"  # below -> repair-a1
+
+    # (c) provenance sidecar: one record per round, verbatim fail_line.
+    rec1 = _fmr_provenance(project, a1)
+    assert rec1["fail_line"] == _FMR_PIPE_MARKER
+    assert rec1["raw_verdict"] == "below" and rec1["verdict"] == "below"
+    for schema_key in (
+        "round", "task_key", "deciding_source", "suspect", "reasons",
+        "raw_verdict", "verdict", "fail_line",
+    ):
+        assert schema_key in rec1
+
+    # (d) repair prompt body carries the target FAIL line.
+    repair_task = _fmr_key_dir(project) / "workers" / "ap-k1-repair-a1" / "task.md"
+    assert repair_task.is_file(), "below round did not dispatch a repair"
+    assert _FMR_PIPE_MARKER in _dcr_task_body(repair_task)
+
+    # second below round terminalizes the loop (budget 2) -> faces (a)/(b).
+    _set_row(project, "ap-k1-repair-a1", "done")
+    assert conductor.tick(project, st) == "ok"  # dispatch l3-a2
+    a2 = "ap-k1-l3-a2"
+    _fmr_round(project, st, a2, out)
+    assert conductor.tick(project, st) == "ok"  # used==limit -> persist + stall
+
+    assert _fmr_verdict(project) == "below"
+    # (a) stall reason names the FAIL line.
+    stalled = [e for e in _events(project) if e["ev"] == "stalled"]
+    assert stalled and "fail:" in stalled[0]["detail"]
+    assert _FMR_SAMPLE in stalled[0]["detail"]
+    # (b) timeline `l3-verdict ... -> below (report from ...; fail: ...)`.
+    terminal = [
+        e["detail"] for e in _events(project)
+        if e["ev"] == "config" and e["detail"].startswith("l3-verdict ")
+        and "-> below" in e["detail"] and "; fail: " in e["detail"]
+    ]
+    assert terminal, [e["detail"] for e in _events(project)]
+    assert f"l3-verdict none -> below (report from {a2}; fail: " in terminal[-1]
+    assert _FMR_SAMPLE in terminal[-1]
+    # both rounds recorded, each with the verbatim marker line.
+    assert _fmr_provenance(project, a2)["fail_line"] == _FMR_PIPE_MARKER
+    _verify(
+        "VC-007", stall_reason="fail-marker", timeline="l3-verdict-fail",
+        provenance="fail_line", repair_prompt="fail_line",
+        records=2, ok=true_str(True),
+    )
+
+
+def test_fmr_meets_preserved_with_zero_fail_texts(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-001 zero-value exemption (VC-004): summary/TL;DR/bullet FAIL=0
+    texts must never flip a meet."""
+    project, st, calls = _fmr_boot(tmp_path, monkeypatch)
+    assert conductor.tick(project, st) == "ok"
+    task_key = "ap-k1-l3-a1"
+    out = _fmr_output(
+        _FMR_QG_HEADER
+        + _FMR_ZERO_SUMMARY + "\n"
+        + _FMR_ZERO_BULLET + "\n"
+        + "| VC-001 | PASS | evidence/runs/a.md |\n",
+        tldr=_FMR_ZERO_TLDR,
+        achieved=_FMR_ACHIEVED,
+    )
+    _fmr_round(project, st, task_key, out)
+
+    assert conductor.tick(project, st) == "ok"  # meets -> done transaction
+
+    assert _fmr_verdict(project) == "meets"
+    assert ("k1", "done") in calls
+    assert state.read_key_states(project)["k1"].phase == "DONE"
+    assert [e for e in _events(project) if e["ev"] == "stalled"] == []
+    assert not [
+        e for e in _events(project)
+        if e["ev"] == "config" and "-> below" in e["detail"]
+    ]
+    _verify(
+        "VC-004", verdict="meets", done=true_str(True),
+        zero_fail_texts=3, false_below="false",
+    )
+
+
+def test_fmr_inline_negation_still_fires(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-001 token-local exemption (VC-004): the `0 fail` inside a pipe row
+    must not exempt the pipe FAIL hit (no whole-line discard)."""
+    project, st, calls = _fmr_boot(tmp_path, monkeypatch, budget=1)
+    assert conductor.tick(project, st) == "ok"
+    task_key = "ap-k1-l3-a1"
+    out = _fmr_output(
+        _FMR_QG_HEADER + _FMR_INLINE_NEGATION_ROW + "\n", achieved=_FMR_ACHIEVED
+    )
+    _fmr_round(project, st, task_key, out)
+
+    assert conductor.tick(project, st) == "ok"
+
+    assert _fmr_verdict(project) == "below"
+    assert ("k1", "done") not in calls
+    rec = _fmr_provenance(project, task_key)
+    assert rec["raw_verdict"] == "below"
+    assert rec["deciding_source"] == f"workers/{task_key}/output.md"
+    _verify(
+        "VC-004", verdict="below", inline_zero_negation="did-not-exempt",
+        deciding_source="output.md", done_in_calls="false",
     )

@@ -238,7 +238,7 @@ def test_report_fallback_meets_and_pointer(
     assert _sha256(output_path) != _sha256(report_path)
     harness._set_row(project, task_key, "done")
 
-    verdict, status, source = conductor._l3_round_verdict(
+    verdict, status, source, _fail_line = conductor._l3_round_verdict(
         project, harness._rows(project), "k1", 1
     )
     assert (verdict, source) == ("meets", report_path), (verdict, status, source)
@@ -272,7 +272,7 @@ def test_output_priority_when_both_qualify(
     assert _sha256(output_path) != _sha256(report_path)
     harness._set_row(project, task_key, "done")
 
-    verdict, _status, source = conductor._l3_round_verdict(
+    verdict, _status, source, _fail_line = conductor._l3_round_verdict(
         project, harness._rows(project), "k1", 1
     )
     assert (verdict, source) == ("meets", output_path), (verdict, source)
@@ -307,10 +307,11 @@ def test_report_fail_not_whitewashed_by_output_pass(
     report_path = _report(project, "k1", task_key, _REPORT_BELOW)
     harness._set_row(project, task_key, "done")
 
-    verdict, _status, source = conductor._l3_round_verdict(
+    verdict, _status, source, fail_line = conductor._l3_round_verdict(
         project, harness._rows(project), "k1", 1
     )
     assert (verdict, source) == ("below", report_path), (verdict, source)
+    assert fail_line is not None and "FAIL" in fail_line
 
     assert conductor.tick(project, st) == "ok"  # persist below(report) + stall
     key_dir = project / ".agenticdoc" / "k1"
@@ -322,11 +323,28 @@ def test_report_fail_not_whitewashed_by_output_pass(
         l3_report.is_file() and _sha256(l3_report) == _sha256(output_path)
     )
     dossier_below = "| below |" in _dossier_row(project, "k1")
-    ok = verdict == "below" and pointer_eq_report and not whitewash and dossier_below
+    # D-003 whitewash closure: a NON-qualifying output.md carrying a FAIL
+    # marker must still veto, even when a clean qualifying report.md exists.
+    nonqual_output = _write_worker_file(
+        project, "k1", task_key, "output.md",
+        "# L3 output\n\n## Quality Gate Report\n\n- **FAIL：1**\n",
+    )
+    _report(project, "k1", task_key, _REPORT_MEETS)
+    v2, _s2, src2, fail2 = conductor._l3_round_verdict(
+        project, harness._rows(project), "k1", 1
+    )
+    nonqual_veto = (
+        v2 == "below" and src2 == nonqual_output
+        and fail2 is not None and "FAIL" in fail2
+    )
+    ok = (
+        verdict == "below" and pointer_eq_report and not whitewash
+        and dossier_below and nonqual_veto
+    )
     _verify(
         "VC-003", verdict=verdict, source=source.name,
         pointer_eq_report=_b(pointer_eq_report), dossier_below=_b(dossier_below),
-        whitewash=_b(whitewash), ok=_b(ok),
+        whitewash=_b(whitewash), nonqual_veto=_b(nonqual_veto), ok=_b(ok),
     )
     assert ok
 
@@ -344,7 +362,7 @@ def test_bold_fail_detected_and_frozen_primitive_differs(
     )
     assert not (project / ".agenticdoc" / "k1" / "workers" / task_key / "report.md").exists()
 
-    verdict, _status, source = conductor._l3_round_verdict(
+    verdict, _status, source, _fail_line = conductor._l3_round_verdict(
         project, harness._rows(project), "k1", 1
     )
     frozen_parse = conductor._parse_l3_output(project, "k1", 1)
@@ -382,7 +400,7 @@ def test_both_unqualified_is_below_without_fabricated_artifacts(
     _report(project, "k1", task_key, _REPORT_NO_SECTIONS)
     harness._set_row(project, task_key, "done")
 
-    verdict, _status, source = conductor._l3_round_verdict(
+    verdict, _status, source, _fail_line = conductor._l3_round_verdict(
         project, harness._rows(project), "k1", 1
     )
     assert verdict == "below" and source is None, (verdict, source)
@@ -461,7 +479,7 @@ def test_change_classes_fixture_reproduce_4_plus_3(
             _report(project, "k1", task_key, rpt_text)
         legacy = conductor._parse_l3_output(project, "k1", number)
         rows = [{"task_key": task_key, "status": "done"}]
-        candidate, _status, _src = conductor._l3_round_verdict(
+        candidate, _status, _src, _fail = conductor._l3_round_verdict(
             project, rows, "k1", number
         )
         if legacy == "below" and candidate == "meets":
@@ -481,15 +499,17 @@ def test_change_classes_fixture_reproduce_4_plus_3(
             )
             if text is not None
         ]
+        # New-caliber no-false-meets probe: the full-text fail-scan (D-002)
+        # must never mark a meets round as carrying a FAIL marker.
         if candidate == "meets" and any(
-            conductor._l3_qualifies(text)
-            and conductor._L3_FAIL_RE.search(
-                conductor._md_section(text, "## Quality Gate Report") or ""
-            )
+            conductor._l3_fail_marker_line(text) is not None
             for _path, text in sources
         ):
             false_meets += 1
 
+    # Invariance (design §4, MINOR-4): the 17 fixture rounds carry no
+    # bullet/prose/zero-value FAIL text, so the full-text three-form scan
+    # cannot move the 4/3/10 class counts — they stay pinned.
     ok = (
         below_to_meets == 4
         and meets_to_below == 3
@@ -577,8 +597,39 @@ def test_config_snapshot_and_fail_regex_superset(
         project, "k1", task_key, "output.md",
         "# L3\n\n## Quality Gate Report\n\n| VC | verdict |\n|----|----|\n| VC-1 | PASS |\n",
     )
-    verdict, _status, _source = conductor._l3_round_verdict(project, [], "k1", 1)
+    verdict, _status, _source, _fail_line = conductor._l3_round_verdict(
+        project, [], "k1", 1
+    )
     missing_section_below = verdict == "below"
+
+    # Per-rule probes (D-005): the frozen pipe rule keeps its exact pattern and
+    # every old hit; the three new rules are line-anchored and are all blind to
+    # `FAILED`.
+    pipe = conductor._L3_FAIL_RE
+    bullet = conductor._L3_FAIL_BULLET_RE
+    prose = conductor._L3_FAIL_PROSE_RE
+    zero = conductor._L3_FAIL_ZERO_RE
+    pipe_pattern_unchanged = pipe.pattern == r"\|\s*\**\s*FAIL\b"
+    bullet_ok = (
+        bullet.match("- **FAIL：9**") is not None
+        and bullet.match("- FAIL：0") is not None
+        and bullet.match("**FAIL**") is not None
+        and bullet.match("- 质量门禁：0 FAIL") is None
+    )
+    prose_ok = (
+        prose.match("FAIL — 21/30 VC 通过，9 项失败") is not None
+        and prose.match("- FAIL：0") is None
+    )
+    zero_ok = (
+        zero.match("- FAIL：0", 2) is not None
+        and zero.match("- FAIL：9", 2) is None
+    )
+    failed_unmatched = (
+        pipe.search("FAILED") is None
+        and bullet.match("FAILED") is None
+        and prose.search("FAILED") is None
+        and zero.search("FAILED") is None
+    )
 
     # strict-superset probe on fixture-synthesized QG sections: every old hit
     # must be a new hit (old_only=0), and the bold form adds 4 new hits.
@@ -593,21 +644,26 @@ def test_config_snapshot_and_fail_regex_superset(
     ]
     old_re = re.compile(r"\|\s*FAIL\b")
     old_hits = {i for i, text in enumerate(samples) if old_re.search(text)}
-    new_hits = {i for i, text in enumerate(samples) if conductor._L3_FAIL_RE.search(text)}
+    new_hits = {i for i, text in enumerate(samples) if pipe.search(text)}
     old_only = len(old_hits - new_hits)
     new_only = len(new_hits - old_hits)
     superset = old_hits <= new_hits
 
     after = cfg_path.read_bytes()
     config_unchanged = before == after
+    four_rule_probes = (
+        pipe_pattern_unchanged and bullet_ok and prose_ok and zero_ok
+        and failed_unmatched
+    )
     ok = (
         config_unchanged and missing_section_below and old_only == 0
-        and new_only == 4 and superset
+        and new_only == 4 and superset and four_rule_probes
     )
     _verify(
         "VC-008", scope="fixture", config_unchanged=_b(config_unchanged),
         missing_section_below=_b(missing_section_below), old_only=old_only,
-        new_only=new_only, superset=_b(superset), ok=_b(ok),
+        new_only=new_only, superset=_b(superset),
+        four_rule_probes=_b(four_rule_probes), ok=_b(ok),
     )
     assert ok
 
@@ -790,7 +846,7 @@ def test_slug_report_is_not_a_fallback_source(
     assert conductor._l3_qualifies(slug.read_text(encoding="utf-8"))
     harness._set_row(project, task_key, "done")
 
-    verdict, _status, source = conductor._l3_round_verdict(
+    verdict, _status, source, _fail_line = conductor._l3_round_verdict(
         project, harness._rows(project), "k1", 1
     )
     assert verdict == "below" and source is None, (verdict, source)
