@@ -3,7 +3,7 @@
 Resolves the *effective* autopilot configuration from two on-disk layers:
 
     project  <root>/.agenticdoc/_autopilot/config.json   fail-closed
-    machine  ~/.agents/autopilot-defaults.json           fail-soft, xkey four keys only
+    machine  ~/.agents/autopilot-defaults.json           fail-soft, two keys only
 
 and returns a complete 13-key view (:data:`autopilot.config.DEFAULT_CONFIG`
 order) together with a per-field ``origin`` in :data:`ORIGINS` and the
@@ -23,8 +23,21 @@ Layer semantics (frozen contract for T-05/T-06 consumers):
 * Machine path resolution (RAG shape, ``mw_common.machine_rag_servers_path``):
   ``MW_AUTOPILOT_FILE`` (whole-file hard override; set-but-missing means the
   layer is empty and ``HOME`` is **not** consulted) -> ``MW_AUTOPILOT_HOME`` ->
-  ``HOME`` -> ``USERPROFILE``, each joined with ``/.agents/autopilot-defaults.json``.
-  A missing file yields ``machine_path=None`` and creates no directory.
+  ``HOME`` -> ``USERPROFILE``, each joined with
+  ``/.agents/autopilot-defaults.json``. A missing file yields
+  ``machine_path=None`` and creates no directory.
+
+Machine overridability (2026-09-26 revision, user option 1) is limited to
+:data:`EFFECTIVE_KEYS` = ``xkey_verify_cmd`` + ``xkey_verify_cwd``, and the
+rule is **empty value = undecided**: both canonical writers
+(``config.save_config`` and the TS ``saveConfig``) materialize the full key set
+into the project file, so "key present wins" would let a materialized empty
+``xkey_verify_cmd: []`` permanently shadow the machine layer. A project value
+that is either absent or equal to :data:`EMPTY_VALUE` therefore defers to the
+machine layer; a non-empty project value wins; two empty/absent layers fall
+back to the built-in default. Keys outside ``EFFECTIVE_KEYS`` are never
+machine-overridable: their origin is ``project`` when the project file carries
+them explicitly and ``default`` otherwise.
 
 The read path is strictly read-only: no file, directory or lock is ever
 created (no ``.mw/``, no ``.agenticdoc/``).
@@ -33,9 +46,7 @@ Known deviation from design D-002 §4.3 (reported to PM, not worked around
 here): the design says a project-level ``null`` must resolve to origin
 ``default`` without falling back to the machine layer. T-01's
 ``config.validate_config`` rejects ``null`` for all 13 keys (fail-closed), so
-such a file raises :class:`ConfigError` before the merge is reached. Explicit
-project keys (including keys set to their default value) are still tracked via
-the raw file so that "project wins over machine" holds for them.
+such a file raises :class:`ConfigError` before the merge is reached.
 """
 
 from __future__ import annotations
@@ -47,14 +58,17 @@ from collections.abc import Mapping
 
 from autopilot import config
 
+# Machine-overridable keys (2026-09-26 revision: narrowed from four to two).
 EFFECTIVE_KEYS = (
-    "xkey_repair",
     "xkey_verify_cmd",
-    "xkey_verify_timeout_s",
     "xkey_verify_cwd",
 )
+# "Empty value = undecided": a project value equal to this defers to the
+# machine layer. Materializing writers fill exactly these values when unset.
+EMPTY_VALUE = {"xkey_verify_cmd": [], "xkey_verify_cwd": ""}
 ORIGINS = ("project", "machine", "default")
 
+_MISSING = object()
 _ENV_FILE = "MW_AUTOPILOT_FILE"
 _ENV_HOME = "MW_AUTOPILOT_HOME"
 _DEFAULTS_BASENAME = "autopilot-defaults.json"
@@ -164,18 +178,20 @@ def _load_machine_layer(
     return machine, diagnostics
 
 
-def _project_present_keys(project_root: pathlib.Path) -> set[str]:
-    """Keys the project file explicitly carries (not default-filled).
+def _project_raw(project_root: pathlib.Path) -> dict:
+    """Raw project file data, before default filling.
 
     ``config.load_config`` merges over the defaults, which erases the
     difference between "absent" and "explicitly set to the default value" —
-    needed to let the project layer win over the machine layer in both cases.
+    needed for the empty-value-means-undecided rule. Called only after
+    ``load_config`` validated the file, so parsing here cannot fail-closed
+    differently (a missing file yields an empty mapping).
     """
     path = config.config_path(project_root)
     if not path.is_file():
-        return set()
+        return {}
     data = json.loads(path.read_text(encoding="utf-8"))
-    return set(data) if isinstance(data, dict) else set()
+    return data if isinstance(data, dict) else {}
 
 
 def load_effective(
@@ -190,19 +206,36 @@ def load_effective(
     """
     project_root = pathlib.Path(project_root)
     values = config.load_config(project_root)  # fail-closed, before any merge
-    present = _project_present_keys(project_root)
+    defaults = config.default_config()
+    raw = _project_raw(project_root)
 
     machine_path = machine_config_path(env)
     machine, diagnostics = _load_machine_layer(machine_path)
 
     origins = {field: "default" for field in config.DEFAULT_CONFIG}
     for field in config.DEFAULT_CONFIG:
-        if field in present:
-            origins[field] = "project"
+        if field not in EFFECTIVE_KEYS:
+            # Never machine-overridable: explicit project key -> project, else default.
+            if field in raw:
+                origins[field] = "project"
             continue
-        if field in machine:
-            values[field] = machine[field]
+        project_value = raw.get(field, _MISSING)
+        machine_value = machine.get(field, _MISSING)
+        project_unset = project_value is _MISSING or project_value == EMPTY_VALUE[field]
+        machine_unset = (
+            machine_value is _MISSING
+            or machine_value is None
+            or machine_value == EMPTY_VALUE[field]
+        )
+        if not project_unset:
+            values[field] = project_value
+            origins[field] = "project"
+        elif not machine_unset:
+            values[field] = machine_value
             origins[field] = "machine"
+        else:
+            values[field] = defaults[field]
+            origins[field] = "default"
 
     return EffectiveConfig(
         values=values,
