@@ -128,8 +128,14 @@ def validate_config(cfg: object) -> None:
 def load_config(project_root: pathlib.Path) -> dict:
     """Load config.json. Missing file -> defaults, zero footprint (nothing is
     created). Present file -> parse + validate the raw data (fail-closed:
-    unknown keys, wrong types and out-of-range values still raise), then merge
-    over the defaults so a partial file yields all 13 keys."""
+    unknown keys, wrong types and out-of-range values still raise), then
+    return the raw data itself: a partial file yields exactly the keys it
+    actually carries, never a silent default fill.
+
+    Consumers that need the complete 13-key view must use
+    :func:`default_config` or :func:`autopilot.effective_config.load_effective`;
+    a key a human may have omitted must be read with ``.get(...)``, not by
+    subscripting."""
     path = config_path(project_root)
     if not path.exists():
         return default_config()
@@ -138,7 +144,7 @@ def load_config(project_root: pathlib.Path) -> dict:
     except (OSError, json.JSONDecodeError) as exc:
         raise ConfigError(f"cannot read {path}: {exc}") from exc
     validate_config(data)
-    return {**default_config(), **data}
+    return data
 
 
 def save_config(project_root: pathlib.Path, cfg: dict) -> pathlib.Path:

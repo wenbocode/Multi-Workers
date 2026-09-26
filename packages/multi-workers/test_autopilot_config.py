@@ -16,6 +16,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 from autopilot import advance as adv
 from autopilot import config as cfg
+from autopilot import effective_config as ec
 
 
 def _verify(tag: str, **kv) -> None:
@@ -117,19 +118,24 @@ def test_default_config_has_13_keys_in_order() -> None:
             xkey_verify_cwd_default=repr(cfg.DEFAULT_CONFIG["xkey_verify_cwd"]))
 
 
-def test_partial_file_is_completed_with_defaults(tmp_path: pathlib.Path) -> None:
-    """A partial config.json is valid and merges over the 13 defaults."""
+def test_partial_file_returns_only_written_keys(tmp_path: pathlib.Path) -> None:
+    """load_config never fills defaults: a partial config.json yields exactly
+    the keys it carries. The complete 13-key view has its own sources
+    (default_config() / effective_config.load_effective)."""
     cfg.invalidate_cache()
     path = cfg.config_path(tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"advance_stall_ticks": 7}), encoding="utf-8")
     loaded = cfg.load_config(tmp_path)
-    assert set(loaded) == set(cfg.DEFAULT_CONFIG)
-    assert len(loaded) == 13
+    assert set(loaded) == {"advance_stall_ticks"}
     assert loaded["advance_stall_ticks"] == 7
-    assert loaded["poll_interval_sec"] == 4  # untouched field falls back
-    assert loaded["xkey_verify_cwd"] == ""
-    _verify("VC-016", partial_keys=len(loaded), explicit_wins=loaded["advance_stall_ticks"])
+    assert "poll_interval_sec" not in loaded  # no default fill
+    # The complete 13-key view has its own sources.
+    assert len(cfg.default_config()) == 13
+    assert len(ec.load_effective(tmp_path).values) == 13
+    _verify("VC-016", partial_keys=len(loaded), default_keys=len(cfg.default_config()),
+            effective_keys=len(ec.load_effective(tmp_path).values),
+            explicit_wins=loaded["advance_stall_ticks"])
 
 
 def test_xkey_verify_cwd_schema_is_string_only(tmp_path: pathlib.Path) -> None:
