@@ -325,6 +325,10 @@ flowchart TD
 
 ### 已完成回填
 
+- **D-004 已撕回（2026-09-26，执行期修正）**：原打算让 `load_config` 返回 `{**default_config(), **data}`，使新消费者拿到 13 键。实测立即推翻 `feature-l3-readcap-injection` 的冻结判据 `test_vc008_missing_fields_byte_identical`（“未写 cap 字段 ⇒ caps=(None,None) 且渲染与加该功能前逐字节相同”）：合并默认把“未写”变成“写了 65536”，语义从“未注入”翻成“注入默认”。改为**双视图**：`load_config` 只返回文件里实际写的键（原始视图），`default_config()` / `effective_config.load_effective().values` 提供 13 键（解析视图），两组各自有判据。下游连锁：T-02c（`load_effective` 自补 13 键）、T-06（`dispatch._read_scope_caps` 的“存在性”改判项目层原始键）、T-07b（跨语言判据分层，TS 合并视图比 Python 解析视图）。
+- **D-015 新增（执行期，PM 决策）**：serve 监管步进的 `enabled` 读取改为容错（`.get("enabled", DEFAULT_CONFIG["enabled"])`）。原因为上游调用点普查发现硬下标会在“文件存在但缺 `enabled`”时 `KeyError`，而本 key 的 `clear`（保文件、只删自己管的键）能造出这种文件（手写 xkey-only 文件 ⇒ `{}`）⇒ `mw serve` 直接崩。**不**改回“给 `load_config` 补默认”（即 D-004，已撕回）；只改读取侧，键存在时行为不变（T-11）。
+- **AC-013 括注修订（2026-09-26）**：spec AC-013 原写“partition 模式缺省 = partition 根；其它模式 = control 根”，与 D-008（dual ⇒ game 根）不一致；spec 已挂 `[REVISED @ 2026-09-26]` 对齐 D-008。T-09 的真值表（30 行）按 D-008 钉定：dual→game、single/legacy→control。
+
 - **D-002/D-003 修订（2026-09-26，用户确认选项 1）**：机器层域由四键收窄为 `xkey_verify_cmd` + `xkey_verify_cwd`，规则改为“**空值即未决定**”；`xkey_repair`/`xkey_verify_timeout_s` 越域即告警忽略（原因见 D-002）。项目层 `null` 语义**废弃**：`validate_config` 对 13 键均拒 `null` ⇒ `null` 就是类型错（fail-closed）。
 - **T-02 实现说明（已核实无行为偏离）**：`load_effective` 对项目文件读两次（一次 `load_config` 供 fail-closed 校验 + 13 键，一次裸读供“显式出现键集合”），因为 `load_config` 的补默认会抹掉“缺省”与“显式写默认值”的区别（后者必须压过机器层）。机器层路径判定用 `Path.is_file()`（同名目录 ⇒ 层空 + fail-soft）。
 
