@@ -157,8 +157,15 @@ def _conductor_supervise_step(
     log_handle: object,
 ) -> subprocess.Popen[bytes] | None:
     """One serve-loop supervision step for the conductor (config mtime-cached
-    via cached_load). Returns the (possibly new) conductor proc."""
-    enabled = _ap_config.cached_load(project_dir)["enabled"]
+    via cached_load). Returns the (possibly new) conductor proc.
+
+    A present-but-partial config.json only carries the keys a human actually
+    wrote (see config.load_config), so every key read here goes through
+    ``.get(name, DEFAULT_CONFIG[name])``: a missing ``enabled`` means "not
+    enabled", never a KeyError that would take the whole serve loop down."""
+    enabled = _ap_config.cached_load(project_dir).get(
+        "enabled", _ap_config.DEFAULT_CONFIG["enabled"]
+    )
     pid_alive = (
         _check_pid(_ap_conductor.conductor_pid_file(project_dir)) is not None
         or (proc is not None and proc.poll() is None)
