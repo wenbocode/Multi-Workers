@@ -17,7 +17,12 @@ Criteria:
   P3 read-modify-write byte-idempotent in both directions
   P4 corpus sha256 + case count + D1-D6 coverage
   P5 registry dump is exercised by the TS suite (kept out of this mirror)
-  P6 a one-key partial file yields the full 13-key shape
+  P6 view layering (D-004 was withdrawn, 0d11cc22d): a partial file yields a
+     partial dict from the Python *raw* loader (``config.load_config``), while
+     the Python *parsed* view (``effective_config.load_effective().values``)
+     and the TS merged ``readConfig`` both yield the full 13-key shape. The
+     cross-side comparison is parsed-vs-parsed; the raw loader has no TS
+     counterpart because ``readConfig`` is deliberately merge-on-read.
 
 Fail-closed (P-016): a missing `node` executable is a hard failure, never a
 skip — a skipped case is a hollow measurement.
@@ -44,7 +49,7 @@ _HERE = pathlib.Path(__file__).resolve().parent
 _REPO = _HERE.parent.parent
 sys.path.insert(0, str(_HERE))
 
-from autopilot import config  # noqa: E402
+from autopilot import config, effective_config  # noqa: E402
 
 CORPUS_FILE = _HERE / "test" / "fixtures" / "autopilot-config-corpus.json"
 TS_MODULE = (
@@ -155,7 +160,14 @@ def _case_root(work: pathlib.Path, index: int, case_id: str) -> pathlib.Path:
 
 
 def _measure_python(corpus: dict, work: pathlib.Path) -> dict:
-    """Seed each payload, read it through `load_config`, re-save on accept."""
+    """Seed each payload, read it through both Python views, re-save on accept.
+
+    D-004 was withdrawn (0d11cc22d), so ``load_config`` is the *raw* loader:
+    it returns exactly the keys the file carries. The full 13-key view is the
+    *parsed* view, ``effective_config.load_effective().values`` — a canonical
+    write materializes that view, which is what the TS ``saveConfig`` does too,
+    so P2/P3 byte parity still compares full-view writes on both sides.
+    """
     records: dict = {}
     for index, case in enumerate(corpus["cases"]):
         root = _case_root(work, index, case["id"])
@@ -170,9 +182,12 @@ def _measure_python(corpus: dict, work: pathlib.Path) -> dict:
             loaded = None
             record = {"verdict": "reject", "error_fields": _error_fields(str(exc))}
         if loaded is not None:
-            assert len(loaded) == 13, f"{case['id']}: partial read yielded {len(loaded)} keys"
-            record["keys"] = list(loaded.keys())
-            config.save_config(root, loaded)
+            record["raw_keys"] = list(loaded.keys())
+            # env={} pins the parsed view to the project layer only (no HOME
+            # machine defaults), so the measurement is hermetic.
+            effective = effective_config.load_effective(root, env={}).values
+            record["effective_keys"] = list(effective.keys())
+            config.save_config(root, effective)
             record["before_sha256"] = before
             record["after_sha256"] = _sha256_file(path)
         records[case["id"]] = record
@@ -189,8 +204,9 @@ def _crossread_python(corpus: dict, work: pathlib.Path) -> dict:
             pytest.fail(f"TS side did not write {path}")
         before = _sha256_file(path)
         try:
-            loaded = config.load_config(root)
-            config.save_config(root, loaded)
+            config.load_config(root)
+            effective = effective_config.load_effective(root, env={}).values
+            config.save_config(root, effective)
             records[case["id"]] = {
                 "verdict": "accept",
                 "before_sha256": before,
@@ -268,18 +284,26 @@ def _measured() -> dict:
     return _MEASURED
 
 
+def _payload_keys(case: dict) -> list[str] | None:
+    """Keys the payload literally writes, in file order (None when not an object)."""
+    try:
+        parsed = json.loads(case["payload_text"])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return list(parsed.keys())
+
+
 def _single_key_cases(corpus: dict) -> list[tuple[dict, str]]:
     out: list[tuple[dict, str]] = []
     for case in corpus["cases"]:
         if case["expected"]["verdict"] != "accept":
             continue
-        try:
-            parsed = json.loads(case["payload_text"])
-        except json.JSONDecodeError:
+        keys = _payload_keys(case)
+        if keys is None or len(keys) != 1:
             continue
-        if not isinstance(parsed, dict) or len(parsed) != 1:
-            continue
-        out.append((case, next(iter(parsed))))
+        out.append((case, keys[0]))
     return out
 
 
@@ -358,22 +382,58 @@ def test_p3_crossread_idempotence() -> None:
 
 
 def test_p6_partial_single_key() -> None:
+    """Layered-view contract after D-004 was withdrawn (0d11cc22d).
+
+    Python exposes two distinct views and they must not be conflated:
+
+      * raw: ``config.load_config`` returns exactly the keys the file carries
+        (a partial file yields a partial dict — no silent default fill);
+      * parsed: ``effective_config.load_effective(root).values`` returns the
+        full 13-key view (same set/order as :func:`config.default_config`).
+
+    TS ``readConfig`` is merge-on-read (view-side robustness: absent fields
+    fall back to defaults), so it is comparable only to the Python *parsed*
+    view. There is no TS counterpart to the raw loader, which is why the raw
+    assertion below is Python-only and the cross-side comparison is
+    parsed-vs-parsed.
+    """
     measured = _measured()
     corpus, py, ts = measured["corpus"], measured["py"], measured["ts"]
     expected_keys = set(KNOWN_FIELDS)
+    # Raw view, every accepted payload: exactly the keys the file wrote (this
+    # also covers the 0-key and 2-key partials, not just the single-key ones).
+    for case in corpus["cases"]:
+        case_id = case["id"]
+        if case["expected"]["verdict"] != "accept":
+            continue
+        written = _payload_keys(case)
+        assert written is not None, f"{case_id}: accepted payload is not a JSON object"
+        assert py[case_id]["raw_keys"] == written, (
+            f"{case_id}: raw load_config keys {py[case_id]['raw_keys']} != written keys {written}"
+        )
     partials = _single_key_cases(corpus)
     covered: set[str] = set()
     for case, key in partials:
         case_id = case["id"]
         assert py[case_id]["verdict"] == "accept", f"{case_id}: py"
         assert ts[case_id]["verdict"] == "accept", f"{case_id}: ts"
-        assert len(py[case_id]["keys"]) == 13, f"{case_id}: py key count"
-        assert len(ts[case_id]["keys"]) == 13, f"{case_id}: ts key count"
-        assert set(py[case_id]["keys"]) == expected_keys, f"{case_id}: py key set"
-        assert set(ts[case_id]["keys"]) == expected_keys, f"{case_id}: ts key set"
+        # Python raw loader: only the single key the file actually carries.
+        assert py[case_id]["raw_keys"] == [key], f"{case_id}: py raw key set"
+        # Python parsed view: the full 13-key shape.
+        assert len(py[case_id]["effective_keys"]) == 13, f"{case_id}: py effective key count"
+        assert set(py[case_id]["effective_keys"]) == expected_keys, f"{case_id}: py effective key set"
+        # TS readConfig merged (parsed) view: the full 13-key shape.
+        assert len(ts[case_id]["keys"]) == 13, f"{case_id}: ts merged key count"
+        assert set(ts[case_id]["keys"]) == expected_keys, f"{case_id}: ts merged key set"
+        # Cross-side parsed comparison: TS merged vs Python effective. Never
+        # TS vs the Python raw loader (that view is deliberately partial here).
+        assert set(ts[case_id]["keys"]) == set(py[case_id]["effective_keys"]), (
+            f"{case_id}: ts merged vs py effective key set"
+        )
         covered.add(key)
     assert covered == expected_keys, sorted(expected_keys - covered)
     print(
-        f"[VERIFY] P6: partial_single_key={len(partials)} both_13_keys=true fields_covered={len(covered)}",
+        f"[VERIFY] P6: partial_single_key={len(partials)} raw_view_partial=true "
+        f"effective_view_13=true fields_covered={len(covered)}",
         flush=True,
     )

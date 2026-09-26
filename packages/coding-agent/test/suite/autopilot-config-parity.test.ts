@@ -12,7 +12,12 @@
  *   P1 accept/reject + offending-field-name set identical per payload
  *   P2 `save_config` and `saveConfig` produce byte-identical files (sha256)
  *   P3 read-modify-write is byte-idempotent in BOTH directions
- *   P6 a one-key partial file yields the full 13-key shape on both sides
+ *   P6 view layering after D-004 was withdrawn (0d11cc22d): a partial file
+ *      yields a partial dict from the Python *raw* loader (`config.load_config`),
+ *      while the Python *parsed* view (`effective_config.load_effective().values`)
+ *      and the TS merged `readConfig` both yield the full 13-key shape. The
+ *      cross-side comparison is parsed-vs-parsed; the raw loader has no TS
+ *      counterpart because `readConfig` is deliberately merge-on-read.
  *
  * Fail-closed (design D-013 / P-016): a missing interpreter or a failing
  * subprocess is a hard failure. There is deliberately no `skipIf` here — a
@@ -77,7 +82,7 @@ function errorFields(message: string): string[] {
 const PY_HARNESS = [
 	"import hashlib, json, pathlib, re, sys",
 	"sys.path.insert(0, sys.argv[1])",
-	"from autopilot import config",
+	"from autopilot import config, effective_config",
 	"corpus = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding='utf-8'))",
 	"work = pathlib.Path(sys.argv[3])",
 	"mode = sys.argv[4]",
@@ -110,10 +115,14 @@ const PY_HARNESS = [
 	"        loaded = None",
 	"        record = {'verdict': 'reject', 'error_fields': error_fields(str(exc))}",
 	"    if loaded is not None:",
-	"        if len(loaded) != 13:",
-	"            raise SystemExit('partial read did not yield 13 keys: %s' % case['id'])",
-	"        record['keys'] = list(loaded.keys())",
-	"        config.save_config(root, loaded)",
+	"        # D-004 withdrawn (0d11cc22d): load_config is the raw loader and",
+	"        # returns only the keys the file carries; the full 13-key view is",
+	"        # effective_config.load_effective().values (env={} = project layer",
+	"        # only, no HOME machine defaults -> hermetic measurement).",
+	"        record['raw_keys'] = list(loaded.keys())",
+	"        effective = effective_config.load_effective(root, env={}).values",
+	"        record['effective_keys'] = list(effective.keys())",
+	"        config.save_config(root, effective)",
 	"        record['before_sha256'] = before",
 	"        record['after_sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()",
 	"    cases[case['id']] = record",
@@ -126,7 +135,10 @@ const PY_HARNESS = [
 interface PyCaseResult {
 	verdict: "accept" | "reject";
 	error_fields: string[];
-	keys?: string[];
+	/** Raw loader (`config.load_config`): only the keys the file carries. */
+	raw_keys?: string[];
+	/** Parsed view (`effective_config.load_effective().values`): always 13. */
+	effective_keys?: string[];
 	before_sha256?: string;
 	after_sha256?: string;
 }
@@ -328,7 +340,7 @@ describe("autopilot config cross-language parity (AC-006 / VC-006)", () => {
 		process.stdout.write(`[VERIFY] P3: py_to_ts_idempotent=${pyToTs} ts_to_py_idempotent=${tsToPy}\n`);
 	});
 
-	it("P6: a one-key partial file yields the full 13-key shape on both sides", () => {
+	it("P6: a partial file yields the raw view (py) and the full 13-key parsed view (py + ts)", () => {
 		const { py, ts } = measure();
 		const expectedKeys = Object.keys(DEFAULT_CONFIG);
 		const partials = singleKeyCases();
@@ -338,16 +350,26 @@ describe("autopilot config cross-language parity (AC-006 / VC-006)", () => {
 			const tsCase = ts.get(testCase.id);
 			expect(pyCase?.verdict, `${testCase.id}: py`).toBe("accept");
 			expect(tsCase?.verdict, `${testCase.id}: ts`).toBe("accept");
-			expect(tsCase?.keys.length, `${testCase.id}: ts key count`).toBe(13);
-			expect(pyCase?.keys?.length, `${testCase.id}: py key count`).toBe(13);
-			expect([...(tsCase?.keys ?? [])].sort(), `${testCase.id}: ts key set`).toEqual([...expectedKeys].sort());
-			expect([...(pyCase?.keys ?? [])].sort(), `${testCase.id}: py key set`).toEqual([...expectedKeys].sort());
+			// Python raw loader: only the single written key (no D-004 default fill).
+			expect(pyCase?.raw_keys, `${testCase.id}: py raw load_config keys`).toEqual([key]);
+			// Python parsed view (load_effective().values): full 13-key shape.
+			expect(pyCase?.effective_keys?.length, `${testCase.id}: py parsed key count`).toBe(13);
+			expect([...(pyCase?.effective_keys ?? [])].sort(), `${testCase.id}: py parsed key set`).toEqual([...expectedKeys].sort());
+			// TS readConfig is merge-on-read, i.e. the parsed view: full 13-key shape.
+			expect(tsCase?.keys.length, `${testCase.id}: ts merged key count`).toBe(13);
+			expect([...(tsCase?.keys ?? [])].sort(), `${testCase.id}: ts merged key set`).toEqual([...expectedKeys].sort());
+			// Cross-side comparison is parsed-vs-parsed: TS merged vs Python parsed.
+			// There is no TS raw view to compare against `pyCase.raw_keys`.
+			expect([...(tsCase?.keys ?? [])].sort(), `${testCase.id}: ts merged vs py parsed key set`).toEqual(
+				[...(pyCase?.effective_keys ?? [])].sort(),
+			);
 			covered.add(key);
 		}
 		// Every one of the 13 fields must be exercised as the sole key.
 		expect([...covered].sort()).toEqual([...expectedKeys].sort());
 		process.stdout.write(
-			`[VERIFY] P6: partial_single_key=${partials.length} both_13_keys=true fields_covered=${covered.size}\n`,
+			`[VERIFY] P6: partial_single_key=${partials.length} raw_view_partial=true ` +
+				`effective_view_13=true fields_covered=${covered.size}\n`,
 		);
 	});
 });
