@@ -866,9 +866,22 @@ describe("config integer literals, mirror exports, and write lock (T-04)", () =>
 		}
 	});
 
-	it("AC-006/AC-012: the 13-key mirror registers xkey_verify_cwd as a string and exports the registries", () => {
-		expect(Object.keys(DEFAULT_CONFIG)).toHaveLength(13);
-		expect(Object.keys(DEFAULT_CONFIG).at(-1)).toBe("xkey_verify_cwd"); // config.py DEFAULT_CONFIG order
+	it("AC-006/AC-012: the 14-key mirror registers auto_gate_mode last and exports the registries", () => {
+		// Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
+		expect(Object.keys(DEFAULT_CONFIG)).toHaveLength(14);
+		// Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
+		expect(Object.keys(DEFAULT_CONFIG).at(-1)).toBe("auto_gate_mode"); // config.py DEFAULT_CONFIG order
+		// T-17 negative lock, mirroring T-15's Python
+		// test_machine_layer_effective_keys_stay_two_and_exclude_auto_gate_mode:
+		// the TS mirror has no `EFFECTIVE_KEYS` export (readConfig is merge-on-read;
+		// the machine layer is Python-only -- T-11 report section 1), so the closest
+		// analogue is the xkey registry pair = the Python machine-overridable set
+		// (EFFECTIVE_KEYS == xkey_verify_cmd + xkey_verify_cwd). It must stay exactly
+		// those two keys and never gain auto_gate_mode (project-layer only, D-010).
+		const tsMachineOverridable = [...LIST_FIELDS, ...STR_FIELDS];
+		expect(tsMachineOverridable).toEqual(["xkey_verify_cmd", "xkey_verify_cwd"]);
+		expect(tsMachineOverridable).toHaveLength(2);
+		expect(tsMachineOverridable).not.toContain("auto_gate_mode");
 		expect(DEFAULT_CONFIG.xkey_verify_cwd).toBe("");
 		// Exported for the T-07 cross-language mirror check.
 		expect([...BOOL_FIELDS]).toEqual(["enabled", "paused", "xkey_repair"]);
@@ -1178,6 +1191,7 @@ describe("/autopilot command set (VC-017 / AC-015 / AC-016 / AC-025)", () => {
 			expect(starts).toEqual([root]);
 			expect(notifications[0]).toContain("enabled");
 			const enabled = JSON.parse(fs.readFileSync(configFile, "utf8"));
+			// Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
 			expect(enabled).toEqual({
 				enabled: true,
 				paused: false,
@@ -1192,8 +1206,10 @@ describe("/autopilot command set (VC-017 / AC-015 / AC-016 / AC-025)", () => {
 				xkey_verify_cmd: [],
 				xkey_verify_timeout_s: 1800,
 				xkey_verify_cwd: "",
+				auto_gate_mode: "off",
 			});
-			expect(Object.keys(enabled)).toHaveLength(13);
+			// Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
+			expect(Object.keys(enabled)).toHaveLength(14);
 			// Same shape config.py save_config writes: indent-2 + trailing newline.
 			expect(fs.readFileSync(configFile, "utf8").endsWith("}\n")).toBe(true);
 

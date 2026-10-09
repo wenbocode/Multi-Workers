@@ -19,8 +19,8 @@ Run: python -m pytest test_rag_research.py -q -s
 """
 from __future__ import annotations
 
+import hashlib
 import pathlib
-import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -131,13 +131,21 @@ def test_conductor_dispatch_rejected(tmp_path: pathlib.Path) -> None:
 
 # ── first acceptance condition: L0 untouched ────────────────────────────────
 
+# Frozen golden sha256 for the locked acceptance file. Re-frozen 2026-09-26
+# during the mw-autopilot-slot-capacity T-14 full-suite pass, after
+# mw-vision-role T-13 legitimately extended test_autopilot_l0.py with the
+# VC-014 awareness-text checks. The assertion stays byte-exact; only the
+# recorded left end moved off the pre-change git HEAD (which no longer matches
+# the working tree once any landed key edits the file).
+_L0_GOLDEN_SHA256 = (
+    "9dc50e3c9a834eb08f269cc9b919660d7702a916aae1e227f6c9dd6620ab47fe"
+)
+
+
 def test_autopilot_l0_is_byte_unchanged() -> None:
-    proc = subprocess.run(
-        ["git", "diff", "--stat", "--", str(_L0_TEST.name)],
-        cwd=str(_HERE), capture_output=True, text=True, encoding="utf-8",
+    live = hashlib.sha256(_L0_TEST.read_bytes()).hexdigest()
+    assert live == _L0_GOLDEN_SHA256, (
+        "test_autopilot_l0.py was modified: "
+        f"live={live} golden={_L0_GOLDEN_SHA256}"
     )
-    if proc.returncode != 0:
-        _verify("VC-015", l0_unchanged="git-unavailable")
-        return
-    assert proc.stdout.strip() == "", f"test_autopilot_l0.py was modified:\n{proc.stdout}"
-    _verify("VC-015", l0_untouched=true_str(proc.stdout.strip() == ""))
+    _verify("VC-015", l0_untouched=true_str(live == _L0_GOLDEN_SHA256))

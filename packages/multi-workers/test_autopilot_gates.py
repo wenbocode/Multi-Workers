@@ -218,8 +218,16 @@ class TestParseRoundTrip:
         keys = [
             ln.split(":", 1)[0] for ln in lines[1:end] if not ln.startswith(" ")
         ]
-        assert keys == list(gates.FRONTMATTER_FIELDS)
-        assert len(keys) == 12
+        # Count/order changed in mw-autopilot-slot-capacity (T-03): the schema
+        # grew 12 -> 40 fields and create() now emits the v2 `gate_schema`
+        # marker as the second line, so the emitted block is base 12 + marker.
+        assert len(gates.FRONTMATTER_FIELDS) == 40
+        assert keys == [
+            gates.FRONTMATTER_FIELDS[0],
+            "gate_schema",
+            *gates.FRONTMATTER_FIELDS[1:12],
+        ]
+        assert len(keys) == 13  # base 12 + gate_schema
 
     def test_files_are_utf8_lf_only(self, tmp_path):
         p = gates.create(tmp_path / "gates", "stalled", "q?", ["x.md"], stage=1)

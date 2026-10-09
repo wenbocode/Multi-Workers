@@ -87,15 +87,23 @@ function writeConfig(root: string, cfg: { enabled: boolean; paused?: boolean }):
 	);
 }
 
-/** _workers.parallel rows in the 8-column WorkerStore format. */
-function writeWorkers(root: string, rows: Array<{ key: string; status: string; dispatchedAt: string }>): void {
+/** `_workers.parallel` rows in the 9-column WorkerStore format
+ * (`... | model | origin`). `ownerKey` selects the
+ * `.agenticdoc/<owner>/workers/` path; `origin` defaults to empty (a legacy
+ * row, which the canonical reader normalises to `manual`). */
+function writeWorkers(
+	root: string,
+	rows: Array<{ key: string; status: string; dispatchedAt: string; ownerKey?: string; origin?: string }>,
+): void {
 	const agenticdoc = path.join(root, ".agenticdoc");
 	fs.mkdirSync(agenticdoc, { recursive: true });
-	const lines = rows.map(
-		(r) =>
-			`${r.key} | ${r.status} | pi | timi | ${path.join(agenticdoc, "_scratch", "workers", r.key, "task.md")} | ` +
-			`${r.dispatchedAt} | ${r.dispatchedAt} | `,
-	);
+	const lines = rows.map((r) => {
+		const owner = r.ownerKey ?? "_scratch";
+		return (
+			`${r.key} | ${r.status} | pi | timi | ${path.join(agenticdoc, owner, "workers", r.key, "task.md")} | ` +
+			`${r.dispatchedAt} | ${r.dispatchedAt} |  | ${r.origin ?? ""}`
+		);
+	});
 	fs.writeFileSync(path.join(agenticdoc, "_workers.parallel"), `${lines.join("\n")}\n`, "utf8");
 }
 
@@ -529,7 +537,20 @@ describe("/autopilot monitor command wiring", () => {
 				serve: { running: true, pid: 27572, stale: false, staleDetail: "", upMs: 7_380_000 },
 				conductor: { pid: 99000, alive: true, enabled: true, paused: false, everEnabled: true },
 				autopilot: stubAutopilot(),
-				workers: [{ taskKey: "ap-x-t01", elapsedMs: 180_000 }],
+				workers: [
+					{
+						taskKey: "ap-x-t01",
+						status: "running",
+						cli: "pi",
+						provider: "timi",
+						taskPath: "H:/p/.agenticdoc/_scratch/workers/ap-x-t01/task.md",
+						dispatchedAt: "2026-09-22T10:00:00+00:00",
+						updatedAt: "2026-09-22T10:00:00+00:00",
+						model: "",
+						origin: "manual",
+						elapsedMs: 180_000,
+					},
+				],
 				gates: [{ id: "gate-0002", kind: "stage-confirm", stage: 2, key: "" }],
 			};
 			const { pi, commands } = fakeConsolePi();
@@ -813,6 +834,10 @@ describe("autopilot progress section (AC-006/AC-007)", () => {
 					key: "ap-feature-params-service-repair-a1",
 					status: "running",
 					dispatchedAt: "2026-09-22T10:00:00+00:00",
+					// T-16/AC-021: a conductor row owns its slot via origin + path,
+					// not via the `ap-` task-key prefix.
+					ownerKey: "feature-params-service",
+					origin: "conductor",
 				},
 			]);
 			writeGate(root, {
@@ -910,6 +935,49 @@ describe("autopilot progress section (AC-006/AC-007)", () => {
 			expect(panel).toContain("-> /autopilot gate gate-0002 approve|reject");
 			expect(panel).toContain("deps blocked by feature-params-service");
 			for (const line of renderMonitorLines(snap)) expect(line.length).toBeLessThanOrEqual(110);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("T-16/AC-021: slot ownership uses origin+path, not the ap- prefix", () => {
+		const root = mkdtemp();
+		try {
+			const now = Date.parse("2026-09-22T10:00:12+00:00");
+			writeConfigJson(root, {
+				enabled: true,
+				paused: false,
+				poll_interval_sec: 4,
+				max_parallel_keys: 2,
+			});
+			writeRoadmap(root, [
+				{ key: "feature-params-service", status: "running", dependsOn: [] },
+				{ key: "feature-gui-backend", status: "running", dependsOn: [] },
+			]);
+			writeIndex(root, [
+				{ key: "feature-params-service", phase: "EXECUTE" },
+				{ key: "feature-gui-backend", phase: "EXECUTE" },
+			]);
+			const row = {
+				key: "ap-feature-params-service-repair-a1",
+				status: "running",
+				dispatchedAt: "2026-09-22T10:00:00+00:00",
+				ownerKey: "feature-params-service",
+			};
+			// A PM-hand-started `ap-` row with no `origin` column reads `manual`
+			// (VC-028): the old prefix rule counted it as a conductor slot.
+			writeWorkers(root, [row]);
+			const manual = readMonitorState(root, now);
+			expect(manual.autopilot.slotsUsed).toBe(0);
+			expect(manual.autopilot.keys.find((k) => k.key === "feature-params-service")?.inFlight).toBe(0);
+			expect(renderMonitorLines(manual).join("\n")).toContain("slots 0/2");
+
+			// Control: stamping origin makes the same row own the slot.
+			writeWorkers(root, [{ ...row, origin: "conductor" }]);
+			const withOrigin = readMonitorState(root, now);
+			expect(withOrigin.autopilot.slotsUsed).toBe(1);
+			expect(withOrigin.autopilot.keys.find((k) => k.key === "feature-params-service")?.inFlight).toBe(1);
+			expect(renderMonitorLines(withOrigin).join("\n")).toContain("slots 1/2");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

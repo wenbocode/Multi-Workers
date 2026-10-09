@@ -1,0 +1,112 @@
+# 原始运行证据（PM 亲跑）
+- 时间: 2026-09-26T19:19:58
+- 命令: node ..\..\node_modules\vitest\dist\cli.js --run test/extensions/
+- 退出码: 0
+
+```text
+
+ RUN  v4.1.9 H:/git/Multi-Workers/packages/coding-agent
+
+[VERIFY] VC-008: unknown_branches=10
+[VERIFY] VC-001: progress_exists=true machine_lines=1
+[VERIFY] VC-010: claim_ids_equal=true headings=7 updated_lines=1 crlf=27->27 lf_only=0 bytes=597->597 outside_line_identical=true
+···········[VERIFY] VC-010: lf_variant claim_ids_equal=true crlf=0 lf_only=27 headings=7 updated_lines=1 bytes=570->570
+[VERIFY] VC-002: machine_lines=2 sentinel_first=true
+·········[VERIFY] gateTierOf: SPEC→spec init→spec —→spec ""→spec unknown→spec DESIGN→design PLAN→design TASKS→design EXECUTE→design VERIFY→design DONE→design
+····························································································································[VERIFY] VC-001: spec_phase_pass=true gate_blocked=false
+[VERIFY] VC-002: blocked=true design_gap=1 task_dir=false
+[VERIFY] VC-011: inserted=true ok=true outside_identical=true
+[MEASURE] VC-011 insert: crlf=26->27 lf_only=0 headings=7->7 updated_lines=1->1 bytes=571->597
+[VERIFY] VC-011: no_key_line ok=false untouched=true
+[VERIFY] VC-003: blocked=true design_evidence_gap=1
+[VERIFY] VC-011: claim_ok=false file_created=false dir_created=false
+········[VERIFY] VC-004: tier=spec design_gaps=0 variants=4
+·····[VERIFY] VC-005: spec_gaps=4 design_gaps=0
+[VERIFY] VC-012: coding_at_spec_allowed=true gate_blocked=false
+[VERIFY] boundary: design_md_bytes=500 design_tier_pass=true
+····················································[VERIFY] VC-005: append_ok=true report_ok=true bytes_ok=true
+··················[VERIFY] VC-006: rejections=12 new_files=0 schema_rejections=12
+[VERIFY] D-102/D-109: schema_pattern_single_source=true additional_properties_rejected=true
+·········[worker] start task=t-image-cap type=vision phases=-
+[IMAGE-CAP] model=glm-5.3 provider=timi task=t-image-cap declared=images:yes
+[VERIFY] VC-011: image_cap_line=true exit=1 control_ok=true
+[worker] start task=t-idle type=coding phases=-
+[VERIFY] VC-006: agg_lines=1 owner_in_line=true count_in_line=true max_len=36
+[worker] failed exit=1 elapsed=1m tools=0
+[VERIFY] VC-006: refused=true queue_delta=0 dir_exists=false
+[worker] start task=t-image-ok type=vision phases=-
+[worker] start task=t-steer type=coding phases=-
+[worker] start task=t-wall type=coding phases=-
+···········[worker] start task=t-no-images type=coding phases=-
+[worker] start task=t-image-nomodel type=vision phases=-
+[worker] failed exit=1 elapsed=2m tools=0
+[worker] start task=t-catch type=coding phases=1
+[VERIFY] VC-007: agg_lines=0 identical_baseline=true
+········[worker] failed exit=1 elapsed=0s tools=0 phases=0/1
+····[VERIFY] VC-008: agg_lines=1 terminal_counted=1
+[worker] start task=t-hook type=coding phases=-
+[worker] start task=t-ok type=coding phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[VERIFY] VC-010: claim_ids_equal=true headings=7 updated_lines=1 crlf=27->27
+[worker] refused task=t-refused type=bogus-type: Fail-closed (D-107/VC-023): this task carries origin: conductor but type 'bogus-type' has no tool-allowlist entry — running it would fall back to the full tool set, which conductor dispatches never get. Registered types: coding, phase-writer, rag-research, repair, research, review, reviewer, roadmap-writer, verifier, vision.
+[worker] start task=t-refused type=bogus-type phases=-
+·······[VERIFY] VC-011: claim_ok=true warnings=0 claim_ids_equal=true headings=7 updated_lines=1
+[VERIFY] VC-012: coding_at_spec_allowed=true
+·····[VERIFY] VC-008: failopen_ok=true queue_delta=1
+················[VERIFY] VC-007: queue_delta=1 images_line=yes order_ok=true
+····[VERIFY] VC-016: auto_route=true type_unchanged=true explicit_model_untouched=true
+[VERIFY] VC-009: risk_marker=risk=high:1
+·[worker] start task=t-live type=coding phases=-
+········[VERIFY] multi-owner sample:   ~ 5 elsewhere: key-b(1 running, 1 done, 1 failed), _scratch(1 running, 1 pending)
+[worker] failed exit=1 elapsed=1m tools=0
+[VERIFY] tie-break sample:   ~ 2 elsewhere: aaa-key(1 running), zzz-key(1 running)
+·····[VERIFY] VC-017: types=vision,review type_unchanged=true effective_vision=2 auto_route_fired=1
+············································································[worker] start task=t-review type=review phases=-
+[VERIFY] VC-001: progress_exists=true machine_lines=1
+[VERIFY] VC-002: machine_lines=1 sentinel_first=true
+[worker] start task=t-coding type=coding phases=-
+[VERIFY] VC-003: machine_lines=0
+[VERIFY] VC-002: machine_lines=3 sentinel_first=true
+[VERIFY] VC-004: writeless_write_instr=false coding_identical=true
+[VERIFY] VC-007: table_unchanged=true extra_only_writeless=true types=10
+[worker] start task=t-coding type=coding phases=-
+[worker] start task=t-review type=review phases=-
+[worker] start task=t-research type=research phases=-
+[worker] start task=t-roadmap-writer type=roadmap-writer phases=-
+[worker] start task=t-phase-writer type=phase-writer phases=-
+[worker] start task=t-verifier type=verifier phases=-
+[worker] start task=t-reviewer type=reviewer phases=-
+[worker] start task=t-repair type=repair phases=-
+[worker] start task=t-rag-research type=rag-research phases=-
+········[worker] start task=t-trace-ok type=review phases=-
+·················[worker] start task=w1 type=coding phases=-
+·······[worker] done exit=0 elapsed=0s tools=1
+[VERIFY] VC-005: append_ok=true report_ok=true tool_line=true
+·······[worker] start task=t-trace-err type=review phases=-
+···········[worker] done exit=0 elapsed=0s tools=1 tool_errors=1
+[VERIFY] VC-006: rejections=1 new_files=0 tool_err_line=true
+·[worker] start task=t-trace-schema-err type=review phases=-
+·················[VERIFY] VC-001: alerts=1 owner_in_text=true trigger_turn=true dup=0
+[VERIFY] VC-002: undefined_alerts=0 empty_set_alerts=0
+[VERIFY] VC-003: low_alerts=0 high_alerts=1 dup=0
+[worker] start task=t-hang type=coding phases=-
+[worker] failed exit=1 elapsed=1m tools=0
+[worker] start task=t-stream type=coding phases=-
+[worker] done exit=0 elapsed=3m tools=0
+[worker] start task=t-phases type=coding phases=2
+[worker] failed exit=1 elapsed=1m tools=0 phases=0/2
+[worker] start task=t-order type=coding phases=-
+[worker] failed exit=1 elapsed=3m tools=0
+··········[worker] start task=w1 type=coding phases=-
+····································[VERIFY] VC-004: role_for_vision=vision mirror_ok=true
+·····[worker] done exit=0 elapsed=0s tools=1 tool_errors=1
+[VERIFY] VC-006: schema_rejection_ok=true tool_err_line=true
+··
+
+ Test Files  21 passed (21)
+      Tests  502 passed (502)
+   Start at  19:19:53
+   Duration  4.73s (transform 5.99s, setup 0ms, import 11.43s, tests 8.22s, environment 1ms)
+
+
+```

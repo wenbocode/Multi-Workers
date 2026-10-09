@@ -7,9 +7,9 @@
  * Without it either side could quietly shrink the corpus until the parity suite
  * goes green (P-016: no hollow cases).
  *
- * P5 spawns the real Python module and compares the four registry tables and the
- * 13-key defaults byte-for-byte (key set, key ORDER, default values, JSON types,
- * and integer ranges) against the TS mirror in `status-model.ts`.
+ * P5 spawns the real Python module and compares the registry tables and the
+ * 14-key defaults byte-for-byte (key set, key ORDER, default values, JSON types,
+ * integer ranges, and closed-set enums) against the TS mirror in `status-model.ts`.
  *
  * Fail-closed: a missing interpreter or a failing subprocess throws with stderr.
  */
@@ -22,6 +22,7 @@ import { describe, expect, it } from "vitest";
 import {
 	BOOL_FIELDS,
 	DEFAULT_CONFIG,
+	ENUM_FIELDS,
 	INT_RANGES,
 	LIST_FIELDS,
 	STR_FIELDS,
@@ -34,8 +35,8 @@ const CORPUS_FILE = fileURLToPath(
 const MULTI_WORKERS_DIR = fileURLToPath(new URL("../../../multi-workers/", import.meta.url));
 
 /** Frozen by T-07; any edit to the corpus must be a deliberate re-freeze. */
-const FROZEN_CORPUS_SHA256 = "951987eaf2abebfa256365ed6642ce1ae0b077a2a6a6c18b4f974729c7dc594d";
-const FROZEN_CORPUS_COUNT = 53;
+const FROZEN_CORPUS_SHA256 = "c97eeafc087bc2ef311d4422f84f8359ac5dd2f7f4ce73e1d8c0b4db4ddcf2b6";
+const FROZEN_CORPUS_COUNT = 55;
 
 interface CorpusCase {
 	id: string;
@@ -64,6 +65,7 @@ const PY_REGISTRY_DUMP = [
 	"    'bool_fields': list(config._BOOL_FIELDS),",
 	"    'list_fields': list(config._LIST_FIELDS),",
 	"    'string_fields': list(config._STRING_FIELDS),",
+	"    'enum_fields': {k: list(v) for k, v in config._ENUM_FIELDS.items()},",
 	"    'int_ranges': {k: list(v) for k, v in config._INT_RANGES.items()},",
 	"}, ensure_ascii=False))",
 	"print('P5_JSON_END')",
@@ -75,6 +77,7 @@ interface PyRegistryDump {
 	bool_fields: string[];
 	list_fields: string[];
 	string_fields: string[];
+	enum_fields: Record<string, string[]>;
 	int_ranges: Record<string, (number | null)[]>;
 }
 
@@ -159,11 +162,18 @@ describe("autopilot config new-key mirror (P5)", () => {
 		expect([...BOOL_FIELDS]).toEqual(py.bool_fields);
 		expect([...LIST_FIELDS]).toEqual(py.list_fields);
 		expect([...STR_FIELDS]).toEqual(py.string_fields);
+		expect(JSON.stringify(ENUM_FIELDS)).toBe(JSON.stringify(py.enum_fields));
 		expect(JSON.stringify(INT_RANGES)).toBe(JSON.stringify(py.int_ranges));
 
-		// The registries partition the 13 keys exactly (no field unclassified,
+		// The registries partition the 14 keys exactly (no field unclassified,
 		// none classified twice).
-		const registered = [...py.bool_fields, ...py.list_fields, ...py.string_fields, ...Object.keys(py.int_ranges)];
+		const registered = [
+			...py.bool_fields,
+			...py.list_fields,
+			...py.string_fields,
+			...Object.keys(py.enum_fields),
+			...Object.keys(py.int_ranges),
+		];
 		expect(registered.length).toBe(py.keys.length);
 		expect([...registered].sort()).toEqual([...py.keys].sort());
 
@@ -178,7 +188,8 @@ describe("autopilot config new-key mirror (P5)", () => {
 		process.stdout.write(
 			`[VERIFY] P5: key_order_match=true defaults_match=true ` +
 				`bool=${py.bool_fields.length} list=${py.list_fields.length} ` +
-				`str=${py.string_fields.length} int=${Object.keys(py.int_ranges).length}\n`,
+				`str=${py.string_fields.length} enum=${Object.keys(py.enum_fields).length} ` +
+				`int=${Object.keys(py.int_ranges).length}\n`,
 		);
 	});
 });

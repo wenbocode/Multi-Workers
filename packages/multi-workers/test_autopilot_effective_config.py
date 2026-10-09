@@ -69,7 +69,8 @@ def _home_with_machine(home: pathlib.Path, payload: object) -> pathlib.Path:
 
 def _assert_full_view(eff: ec.EffectiveConfig) -> None:
     assert set(eff.values) == set(cfg.DEFAULT_CONFIG)
-    assert len(eff.values) == 13
+    # Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
+    assert len(eff.values) == 14
     assert set(eff.origins) == set(cfg.DEFAULT_CONFIG)
     assert set(eff.origins.values()) <= set(ec.ORIGINS)
 
@@ -179,7 +180,7 @@ def test_project_partial_file_completed_and_origin_project(tmp_path: pathlib.Pat
     assert eff.values["enabled"] is False
     assert eff.origins["enabled"] == "default"
     assert eff.diagnostics == []
-    _verify("逐字段 origin", partial_project_keys=13, project_origin="project")
+    _verify("逐字段 origin", partial_project_keys=14, project_origin="project")
 
 
 def test_partial_file_raw_loader_vs_effective_full_view(
@@ -190,7 +191,7 @@ def test_partial_file_raw_loader_vs_effective_full_view(
     One project file carrying a single key, one call site, both halves of the
     contract: ``config.load_config`` returns *only* the written key (D-004
     withdrawn — no default fill), while ``load_effective`` is self-sufficient
-    and yields all 13 keys (hard-subscript safe for conductor-style callers).
+    and yields all 14 keys (hard-subscript safe for conductor-style callers).
     """
     project = tmp_path / "proj"
     _project_file(project, {"l2_read_file_cap": 3})
@@ -200,9 +201,10 @@ def test_partial_file_raw_loader_vs_effective_full_view(
     # Raw loader: exactly the one written key.
     assert set(loaded) == {"l2_read_file_cap"}
     assert loaded == {"l2_read_file_cap": 3}
-    # Resolver: complete 13-key view (== default_config key set), hard-subscript safe.
+    # Resolver: complete 14-key view (== default_config key set), hard-subscript safe.
     assert set(eff.values) == set(cfg.default_config())
-    assert len(eff.values) == 13
+    # Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
+    assert len(eff.values) == 14
     assert eff.values["l2_read_file_cap"] == 3
     assert eff.origins["l2_read_file_cap"] == "project"
     assert eff.values["l2_read_byte_cap"] == cfg.DEFAULT_CONFIG["l2_read_byte_cap"]
@@ -357,7 +359,7 @@ def test_tt7_machine_out_of_domain_repair_timeout_ignored(tmp_path: pathlib.Path
 
 
 def test_tt8_materialized_project_still_takes_machine(tmp_path: pathlib.Path) -> None:
-    """(8) CORE REGRESSION: a project file materialized with all 13 keys
+    """(8) CORE REGRESSION: a project file materialized with all 14 keys
     (``xkey_verify_cmd: []`` as written by scan/console) must still inherit the
     machine-layer command."""
     project = tmp_path / "proj"
@@ -379,7 +381,7 @@ def test_tt8_materialized_project_still_takes_machine(tmp_path: pathlib.Path) ->
     assert eff.values["enabled"] is True
     assert eff.origins["enabled"] == "project"
     assert eff.diagnostics == []
-    _verify("材料化场景仍取机器层", project_keys=13, machine_cmd=eff.values["xkey_verify_cmd"],
+    _verify("材料化场景仍取机器层", project_keys=14, machine_cmd=eff.values["xkey_verify_cmd"],
             machine_cwd=eff.values["xkey_verify_cwd"], cmd_origin=eff.origins["xkey_verify_cmd"])
 
 
@@ -598,7 +600,7 @@ def test_verify_summary(tmp_path: pathlib.Path) -> None:
     traceable: the 8-case truth table, the materialization regression, the
     out-of-domain warnings, and the fail-soft + zero-footprint invariants.
     """
-    # Materialized project (all 13 keys, empty effective values) + machine layer
+    # Materialized project (all 14 keys, empty effective values) + machine layer
     # that also carries two out-of-domain keys.
     project = tmp_path / "proj"
     _project_file(project, dict(cfg.DEFAULT_CONFIG))
@@ -639,3 +641,15 @@ def test_verify_summary(tmp_path: pathlib.Path) -> None:
             "fail-soft 与零足迹未回退": "true",
         },
     )
+
+
+def test_machine_layer_effective_keys_stay_two_and_exclude_auto_gate_mode() -> None:
+    """Machine layer stays exactly {xkey_verify_cmd, xkey_verify_cwd}: the v2
+    auto_gate_mode key is project/default only, never machine-overridable.
+
+    Count lock refreshed/negative lock added by mw-autopilot-slot-capacity (T-03).
+    Counterfactual: adding `auto_gate_mode` to EFFECTIVE_KEYS turns this red.
+    """
+    assert ec.EFFECTIVE_KEYS == ("xkey_verify_cmd", "xkey_verify_cwd")
+    assert len(ec.EFFECTIVE_KEYS) == 2
+    assert "auto_gate_mode" not in ec.EFFECTIVE_KEYS

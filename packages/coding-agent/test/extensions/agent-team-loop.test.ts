@@ -316,7 +316,7 @@ describe("WorkerStore", () => {
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
-	it("writes 8-column rows (incl. model)", async () => {
+	it("writes 9-column rows (incl. model + origin)", async () => {
 		const root = mkdtemp();
 		const ws = new WorkerStore(root);
 		await ws.upsert({
@@ -334,8 +334,9 @@ describe("WorkerStore", () => {
 			.split("\n")
 			.filter((l) => l.trim());
 		expect(lines).toHaveLength(1);
-		expect(lines[0].split(" | ")).toHaveLength(8);
+		expect(lines[0].split(" | ")).toHaveLength(9);
 		expect(lines[0].split(" | ")[7]).toBe("m1");
+		expect(lines[0].split(" | ")[8]).toBe("manual");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 

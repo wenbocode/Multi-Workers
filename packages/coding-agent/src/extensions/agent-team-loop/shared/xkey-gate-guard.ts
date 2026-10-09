@@ -15,23 +15,37 @@ import type { ExtensionAPI } from "../../../core/extensions/types.ts";
  * truth-disclosure (the refusal, not a cryptographic proof, is what makes
  * agent answering observable).
  *
- * Rule: agent tool calls must not create, modify, move, or delete anything
- * under `<project>/.agenticdoc/_autopilot/gates/` (the directory itself
- * included). write/edit tool paths are resolved like the tools do (relative
- * against cwd, leading ~ expanded); bash commands are scanned text-level
- * (fail-closed, mirroring protected-config.ts: a command that references the
- * gate directory and carries any write construct is denied, even when the
- * reference is a read side — rerun the read part alone). Reads stay allowed,
- * and this is not a sandbox: an out-of-process writer with the same uid can
- * still touch the file. What the guard guarantees is that an agent cannot do
- * it through its only channel without a recorded refusal.
+ * Widening (mw-autopilot-slot-capacity D-013 / AC-020 / AC-030): the audit
+ * and the kill switch are file-driven too — `_autopilot/timeline.jsonl`,
+ * `_autopilot/config.json` and `_autopilot/auto-decisions.jsonl` were outside
+ * every tool-layer guard, so the audited party could append forged events or
+ * flip its own switch. The guard now covers the whole `_autopilot` directory,
+ * not only `gates/`.
  *
- * Deliberately NOT blocked (D-004/D-005): `.agenticdoc/_autopilot/xkey/`
- * below the gate dir — `evidence/**` (worker must write proposals and
- * verification artifacts), `ledger.json`, and `tickets/**` all pass. The
- * guard blocks the gate directory only; ownership of the xkey tree is
- * enforced by the conductor, not here, so the proposal path can never be
- * killed by a guard-side mistake.
+ * Rule: agent tool calls must not create, modify, move, or delete anything
+ * under `<project>/.agenticdoc/_autopilot/` (the directory itself included),
+ * EXCEPT the pre-existing `_autopilot/xkey/**` subtree. write/edit tool paths
+ * are resolved like the tools do (relative against cwd, leading ~ expanded);
+ * bash commands are scanned text-level (fail-closed, mirroring
+ * protected-config.ts: a command that references the guarded directory and
+ * carries any write construct is denied, even when the reference is a read
+ * side — rerun the read part alone). Reads stay allowed, and this is not a
+ * sandbox: an out-of-process writer with the same uid can still touch the
+ * file. What the guard guarantees is that an agent cannot do it through its
+ * only channel without a recorded refusal.
+ *
+ * Deliberately NOT blocked (xkey-repair-mechanism D-004/D-005): the
+ * `_autopilot/xkey/` subtree — `evidence/**` (the proposal worker must write
+ * proposals and verification artifacts), `ledger.json`, and `tickets/**` all
+ * pass exactly as before. Ownership of that tree is enforced by the
+ * conductor, not here, so the proposal path can never be killed by a
+ * guard-side mistake. The boundary is a path boundary, so `_autopilotX` /
+ * `_autopilot-backup` lookalikes are not hit.
+ *
+ * Residual risk (AC-020): this is an application-layer guard, not a sandbox —
+ * a same-uid out-of-band process (another shell, the Python conductor, an
+ * editor) can still write these files. The guard only makes a forgery through
+ * the agent tool channel leave a refusal record.
  *
  * Registered in EVERY mode (index.ts, next to registerProtectedConfigGuard /
  * registerImplementationGate) so a worker window is covered too.
@@ -44,18 +58,22 @@ const ENV_GATE_ROOT = "MW_XKEY_GATE_ROOT";
 
 const AGENTICDOC_DIR = ".agenticdoc";
 const AUTOPILOT_DIR = "_autopilot";
-const GATES_DIR = "gates";
+/** The pre-existing agent-writable subtree left open by the widening
+ * (xkey-repair-mechanism D-004/D-005): `_autopilot/xkey/**`. */
+const XKEY_DIR = "xkey";
 
-/** Project-relative fragment shared by every spelling of the gate directory
- * (relative, absolute, and backslash Windows forms after normalization). */
-const GATE_DIR_FRAGMENT = `${AGENTICDOC_DIR}/${AUTOPILOT_DIR}/${GATES_DIR}`;
+/** Project-relative fragment shared by every spelling of the guarded
+ * directory (relative, absolute, and backslash Windows forms after
+ * normalization). */
+const AUTOPILOT_DIR_FRAGMENT = `${AGENTICDOC_DIR}/${AUTOPILOT_DIR}`;
 
 const GUARD_EXPLANATION =
-	"Gate files (.agenticdoc/_autopilot/gates/**) are the human-answer channel: only a human answers them " +
-	"(via the /autopilot gate console or by editing the file from outside the agent). An agent tool call must " +
-	"not write them. To propose a change, write .agenticdoc/_autopilot/xkey/evidence/<request_id>/proposal.md " +
-	"instead - the conductor validates proposals and applies them; ledger.json and tickets/ stay with the " +
-	"conductor. Reads of gate files remain allowed.";
+	"Autopilot state (.agenticdoc/_autopilot/**) is the conductor's audit and control channel: gates/** are " +
+	"answered only by a human (via the /autopilot gate console or by editing the file from outside the agent), " +
+	"and timeline.jsonl / config.json / auto-decisions.jsonl are written only by the conductor. An agent tool " +
+	"call must not write them. To propose a change, write " +
+	".agenticdoc/_autopilot/xkey/evidence/<request_id>/proposal.md instead - the conductor validates proposals " +
+	"and applies them; ledger.json and tickets/ stay with the conductor. Reads remain allowed.";
 
 function fold(p: string): string {
 	return IS_WIN32 ? p.toLowerCase() : p;
@@ -70,14 +88,21 @@ function escapeRegExp(s: string): string {
 }
 
 /** Fragment boundary: the match must not continue into a word character or
- * dash (`.../gates` yes, `.../gates-backup` / `.../gatesX` no). */
+ * dash (`.../_autopilot` yes, `.../_autopilot-backup` / `.../_autopilotX`
+ * no). */
 function boundary(): string {
 	return "(?![\\w-])";
 }
 
-/** Is the given path fragment present in scan text with a proper boundary? */
-function fragmentPresent(scan: string, frag: string): boolean {
-	return new RegExp(escapeRegExp(frag) + boundary()).test(scan);
+/** The guarded-directory fragment: boundary-checked AND not the xkey subtree
+ * (`_autopilot/xkey` stays writable, `_autopilot/xkeyX` does not). */
+function guardedFragmentPattern(fragment: string): string {
+	return `${escapeRegExp(fragment)}${boundary()}(?!/${XKEY_DIR}${boundary()})`;
+}
+
+/** Is the guarded (non-xkey) directory fragment present in scan text? */
+function guardedFragmentPresent(scan: string, fragment: string): boolean {
+	return new RegExp(guardedFragmentPattern(fragment)).test(scan);
 }
 
 /** Tilde expansion only (mirrors core normalizePath's tilde branch): `~` and
@@ -103,9 +128,15 @@ export function resolveXkeyGateRoot(env: NodeJS.ProcessEnv = process.env): strin
 	return process.cwd();
 }
 
-/** The project's gate directory: `<root>/.agenticdoc/_autopilot/gates`. */
-export function xkeyGateDir(root: string): string {
-	return path.join(root, AGENTICDOC_DIR, AUTOPILOT_DIR, GATES_DIR);
+/** The project's guarded directory: `<root>/.agenticdoc/_autopilot`. */
+export function xkeyGuardedDir(root: string): string {
+	return path.join(root, AGENTICDOC_DIR, AUTOPILOT_DIR);
+}
+
+/** The pre-existing agent-writable xkey subtree:
+ * `<root>/.agenticdoc/_autopilot/xkey` (xkey-repair-mechanism D-004/D-005). */
+export function xkeySubtreeDir(root: string): string {
+	return path.join(xkeyGuardedDir(root), XKEY_DIR);
 }
 
 /** Is `child` the same as `parent` or nested under it (folded, separator
@@ -118,15 +149,16 @@ function isUnder(parent: string, child: string): boolean {
 	return c.startsWith(prefix);
 }
 
-/** Does a write/edit tool path target the gate directory? Pure: resolves the
- * path like the tools do (cwd-relative, ~ expanded, folded) and also matches
- * an absolute spelling of any project's gate directory, so a write aimed at
- * a different project is still refused. */
+/** Does a write/edit tool path target the guarded `_autopilot` directory
+ * (outside the xkey subtree)? Pure: resolves the path like the tools do
+ * (cwd-relative, ~ expanded, folded) and also matches an absolute spelling
+ * of any project's `_autopilot` directory, so a write aimed at a different
+ * project is still refused. */
 export function isXkeyGatePath(root: string, rawPath: string, cwd: string = process.cwd()): boolean {
 	if (typeof rawPath !== "string" || rawPath === "") return false;
 	const target = path.resolve(cwd, expandTildePath(rawPath));
-	if (isUnder(xkeyGateDir(root), target)) return true;
-	return fragmentPresent(toForwardSlashes(fold(target)), GATE_DIR_FRAGMENT);
+	if (isUnder(xkeyGuardedDir(root), target) && !isUnder(xkeySubtreeDir(root), target)) return true;
+	return guardedFragmentPresent(toForwardSlashes(fold(target)), AUTOPILOT_DIR_FRAGMENT);
 }
 
 /** Shell/PowerShell write verbs (word-bounded so prose does not fire; the
@@ -148,25 +180,25 @@ const INLINE_WRITE_MARKER_RE =
 	/(['"][wa]['"]|writefile|write_file|unlink|rmsync|rmtree|os\.remove|os\.rename|shutil\.(move|copy|copyfile)|truncate\(|appendfile|open\([^)]*,\s*['"][wa]['"])/i;
 
 export interface XkeyGateBashVerdict {
-	/** True when the command must be blocked (gate-dir reference + write
-	 * construct, or a redirect whose target is inside the gate dir). */
+	/** True when the command must be blocked (guarded-dir reference + write
+	 * construct, or a redirect whose target is inside the guarded dir). */
 	prohibited: boolean;
 	/** Block reason (always present when prohibited=true). */
 	reason?: string;
 }
 
-/** Decision for one bash tool command: fail-closed — a gate-directory
- * reference plus any write construct is denied, redirect targets are checked
- * separately (a redirect to an unprotected path with a gate read side stays
- * allowed). Text-level heuristic mirroring protected-config.ts, not a
- * sandbox. */
+/** Decision for one bash tool command: fail-closed — a guarded `_autopilot`
+ * reference (outside the xkey subtree) plus any write construct is denied,
+ * redirect targets are checked separately (a redirect to an unprotected path
+ * with a guarded-side read stays allowed). Text-level heuristic mirroring
+ * protected-config.ts, not a sandbox. */
 export function checkXkeyGateBashCommand(root: string, command: string): XkeyGateBashVerdict {
 	if (typeof command !== "string" || command === "") return { prohibited: false };
 	const scan = toForwardSlashes(fold(command));
 	const refs: string[] = [];
-	if (fragmentPresent(scan, GATE_DIR_FRAGMENT)) refs.push(GATE_DIR_FRAGMENT);
-	const dirFrag = toForwardSlashes(fold(path.normalize(xkeyGateDir(root))));
-	if (dirFrag !== GATE_DIR_FRAGMENT && fragmentPresent(scan, dirFrag)) refs.push(dirFrag);
+	if (guardedFragmentPresent(scan, AUTOPILOT_DIR_FRAGMENT)) refs.push(AUTOPILOT_DIR_FRAGMENT);
+	const dirFrag = toForwardSlashes(fold(path.normalize(xkeyGuardedDir(root))));
+	if (dirFrag !== AUTOPILOT_DIR_FRAGMENT && guardedFragmentPresent(scan, dirFrag)) refs.push(dirFrag);
 	if (refs.length === 0) return { prohibited: false };
 
 	const constructs: string[] = [];
@@ -177,14 +209,14 @@ export function checkXkeyGateBashCommand(root: string, command: string): XkeyGat
 	if (INLINE_CODE_RE.test(scan) && INLINE_WRITE_MARKER_RE.test(scan)) constructs.push("inline code write");
 	for (const m of scan.matchAll(REDIRECT_RE)) {
 		const target = (m[1] ?? "").replace(/^["']|["']$/g, "");
-		if (target !== "" && fragmentPresent(target, GATE_DIR_FRAGMENT)) constructs.push("redirect target");
+		if (target !== "" && guardedFragmentPresent(target, AUTOPILOT_DIR_FRAGMENT)) constructs.push("redirect target");
 	}
 
 	if (constructs.length === 0) return { prohibited: false };
 	return {
 		prohibited: true,
 		reason:
-			`xkey-gate-guard: blocked a bash command referencing the gate directory (${refs.join(", ")}) ` +
+			`xkey-gate-guard: blocked a bash command referencing the autopilot directory (${refs.join(", ")}) ` +
 			`with a write construct (${constructs.join(", ")}). ${GUARD_EXPLANATION}`,
 	};
 }
@@ -213,10 +245,11 @@ export function recordXkeyGateBlockTrace(
 	}
 }
 
-/** Register the tool_call gate-dir block: write/edit paths and bash commands
- * are checked against the gate directory; everything else (including all
- * reads and the xkey evidence/ledger/tickets tree) passes through untouched.
- * Runs in every mode (PM, worker, interactive). */
+/** Register the tool_call autopilot block: write/edit paths and bash commands
+ * are checked against `.agenticdoc/_autopilot/**` (minus the xkey subtree);
+ * everything else (including all reads and the xkey evidence/ledger/tickets
+ * tree) passes through untouched. Runs in every mode (PM, worker,
+ * interactive). */
 export function registerXkeyGateGuard(pi: ExtensionAPI): void {
 	const root = resolveXkeyGateRoot();
 	pi.on("tool_call", (event) => {

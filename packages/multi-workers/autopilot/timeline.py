@@ -45,7 +45,7 @@ Public surface (T-06 dispatch reuses ``append``):
     timeline_path(project_root) -> pathlib.Path
     Timeline(path, *, rotate_threshold_bytes=ROTATE_THRESHOLD_BYTES,
              generations=ROTATE_GENERATIONS)
-        .append(ev, key=None, stage=None, detail="") -> int | None
+        .append(ev, key=None, stage=None, detail="", data=None) -> int | None
         .rotate() -> bool
         .next_seq -> int
     query_events(path, watermark=0, *, ev_filter=None) -> TimelineQuery
@@ -82,6 +82,17 @@ EVENT_TYPES: frozenset[str] = frozenset({
     "reconcile",
     "resume",
     "l3-no-verdict",
+    # Gate redesign (mw-autopilot-slot-capacity, D-005/D-006/D-009): names are
+    # pre-admitted here and in the TS mirror (status-model.ts EVENT_TYPES) so
+    # the cross-language parity test locks both sides; the producers land in
+    # T-07/T-08. Adding unused vocabulary is safe — the set is an include-set
+    # for filtering, not a rejection gate (unknown ev values append fine).
+    "gate-auto-decision",
+    "gate-auto-revoke",
+    "review-decided",
+    "review-escalated",
+    "evidence-reconciliation",
+    "stage-reopen-refused",
 })
 
 # `key` value for stage-level/global events (AC-017 erratum: the key field
@@ -285,6 +296,7 @@ class Timeline:
         key: str | None = None,
         stage: int | None = None,
         detail: str = "",
+        data: dict | None = None,
     ) -> int | None:
         """Append one event line; returns its seq, or None on failure.
 
@@ -297,6 +309,13 @@ class Timeline:
         null): an explicit non-empty ``key`` wins (key-level event); else
         ``str(stage)`` when a stage is given (stage-level event); else ``-``
         (global event).
+
+        ``data`` (T-07, mw-autopilot-slot-capacity): optional structured
+        payload. Only emitted when the caller passes a mapping, so the base
+        six-field line schema of every legacy event is byte-identical — the
+        automatic-decision authority payload rides here (the TS side reads
+        the same optional key, T-02), and ``_read_events`` already passes the
+        whole parsed dict through untouched.
         """
         try:
             stage_value = None if stage is None else int(stage)
@@ -308,17 +327,17 @@ class Timeline:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._ensure_tail_terminated()
             seq = self._next_seq
-            line = json.dumps(
-                {
-                    "ts": _iso_now(),
-                    "seq": seq,
-                    "ev": str(ev),
-                    "key": key_value,
-                    "stage": stage_value,
-                    "detail": "" if detail is None else str(detail),
-                },
-                ensure_ascii=False,
-            ) + "\n"
+            payload = {
+                "ts": _iso_now(),
+                "seq": seq,
+                "ev": str(ev),
+                "key": key_value,
+                "stage": stage_value,
+                "detail": "" if detail is None else str(detail),
+            }
+            if data is not None:
+                payload["data"] = dict(data)
+            line = json.dumps(payload, ensure_ascii=False) + "\n"
             _write_line(self.path, line)
             self._next_seq = seq + 1
             return seq

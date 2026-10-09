@@ -19,7 +19,7 @@ from autopilot import timeline as timeline_mod
 
 
 def _verify(tag: str, **kv) -> None:
-    print(f"[VERIFY] {tag}: " + " ".join(f"{k}={v}" for k, v in kv.items()))
+    print(f"[VERIFY] {tag}: " + " ".join(f"{k}={v}" for k, v in kv.items()), flush=True)
 
 
 def true_str(b: bool) -> str:

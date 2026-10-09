@@ -6,6 +6,7 @@
   - `packages/multi-workers/test_autopilot_config_parity.py`
   - `packages/coding-agent/test/suite/autopilot-config-parity.test.ts`
   - `packages/coding-agent/test/suite/autopilot-config-sync.test.ts`
+  - `packages/coding-agent/src/extensions/agent-team-loop/autopilot/status-model.ts`（**配置镜像段**：类型 `:87` 邻域、`DEFAULT_CONFIG` `:111` 邻域、取值域 `:141` 邻域、键联合 `:260` 邻域、parse `:276` 邻域、serialize `:301` 邻域） —— T-09 实测上报：TS 侧**尚未声明** `auto_gate_mode`（当前只在 `monitor.ts` 里 raw read 用于显示）。本卡必须把它加进 TS 配置镜像，否则两侧键数断言与 parity 用例无法成立。
 - AC: AC-010, AC-018 · VC: VC-011, VC-022
 - 基线: `4a207ecfb`（改动前先核对 HEAD 与写面未被他人改动）
 
@@ -15,6 +16,7 @@
 
 ## 交付物
 
+- **TS 配置镜像补齐 `auto_gate_mode`**（type / DEFAULT_CONFIG / 取值域闭集 / 键联合 / parse / serialize 六处），与 Python `config.py` 逐项对齐（T-09 上报的缺口）。
 - 语料**新增**（不替换）2 例：合法值（`off|shadow|live` 各一）+ 非法值（fail-closed 断言）。
 - `FROZEN_CORPUS_SHA256` / `FROZEN_CORPUS_COUNT`（`test_autopilot_config_parity.py:60-61`）重算。
 - 键数断言 `13 → 14`（`:423-431` 与 TS `:356/:359`），并保持 `covered == KNOWN_FIELDS` 语义。

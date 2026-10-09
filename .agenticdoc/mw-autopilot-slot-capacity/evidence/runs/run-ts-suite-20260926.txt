@@ -1,0 +1,397 @@
+# 原始运行证据（PM 亲跑）
+- 时间: 2026-09-26T19:19:40
+- 命令: node ..\..\node_modules\vitest\dist\cli.js --run test/suite/
+- 退出码: 1
+
+```text
+
+ RUN  v4.1.9 H:/git/Multi-Workers/packages/coding-agent
+
+x[VERIFY] VC-301: dir=null parse=ok
+[VERIFY] VC-302: dir=null parse=ok
+[VERIFY] VC-303: dir="" kind=invalid-shape mentions_skill_dir=true
+[VERIFY] VC-304: null_to_root=true explicit=C:\Users\WENBOZ~1\AppData\Local\Temp\mw-rag-window-dir-GZCTis\skills\x
+[VERIFY] VC-306: list={"sub":"list","rest":[]} audit={"sub":"audit","rest":["--key","K"]} bogus=usage(all_5=true)
+[VERIFY] VC-307: unknown_sub_runner_calls=0 usage_notices=3
+[VERIFY] VC-308: level0=info level1=warning level2=error
+[VERIFY] VC-308: truncated_lines=31 hint_present=true exact30_intact=true
+[VERIFY] VC-311: mw_description_has_rag=true
+·xxx·····x···[VERIFY] VC-027: golden_byte_match=true fingerprint_match=true origin_table_match=true fixture_digest_match=true
+[VERIFY] VC-111: server=A source=docs rewrite=true
+···········xx·······························[VERIFY] VC-305: dir=default parsed=null ts==py prefix=5e9bfc0055eb | dir=null parsed=null ts==py prefix=5e9bfc0055eb | dir=explicit parsed=skills/x ts==py prefix=2998c51ff849
+·········[VERIFY] VC-009: session_handshake=true session_id_present=true requests=2
+[VERIFY] VC-009: error_kind=connect elapsed_lt_2000ms=true elapsed_ms=9
+[VERIFY] VC-009: reset_kind=connect reset_not_timeout=true
+········[VERIFY] VC-009: slow_kind=timeout throttled=true
+[VERIFY] VC-009: delivered_lost_kind=timeout delivered=true calls=2
+[VERIFY] VC-009: http500_kind=protocol missing_session_kind=protocol
+[VERIFY] VC-009: tool_error_kind=tool
+[VERIFY] VC-009: token_ok=true mismatch_kind=protocol secret_hits=0
+······················[VERIFY] VC-009: cli_argv_intact=true shell_used=false
+·[VERIFY] evidence_line_types=5+fallback formats=stable
+·[VERIFY] VC-011: rag_call_types=6 impact_results_semantics=affected-files
+[VERIFY] VC-010: short_circuited=true api_calls=0 capability_not_counted=true
+······[VERIFY] VC-001: rag_tools=0 task_md_block=0 probe_requests=0 skill_file_unchanged=true budget_file_absent=true
+[VERIFY] P1: crosslang_verdict_match=55/55
+·[VERIFY] P2: canonical_sha_match=32 sha256_equal=true
+···[VERIFY] VC-012: skill_primary=true fallback_on_connect=true write_tool_no_fallback=true
+·[VERIFY] VC-009: cli_exit2=connect cli_exit3=tool
+···[VERIFY] VC-305b: dir="skills/x" cli_entry="cli.py" ts==py=true prefix=a7ac2452cbb3
+[VERIFY] P3: py_to_ts_idempotent=32 ts_to_py_idempotent=32
+··[VERIFY] P6: partial_single_key=29 raw_view_partial=true effective_view_14=true fields_covered=14
+···[VERIFY] VC-012: skill_primary=true fallback_on_connect=true write_tool_no_fallback=true
+[VERIFY] VC-305b: url="http://127.0.0.1:19999/" token_env="RAG_TOKEN" ts==py=true prefix=b30415c5058c
+···[VERIFY] VC-013: secret_hits=0 error_redacted=true argv_clean_scope=T-07/T-08
+[VERIFY] VC-021: degraded_flag=true trace_delta=rag-rewrite-degraded clean_delta=0
+···[VERIFY] VC-012: equal=true count=23
+··[VERIFY] P4: corpus_sha256=c97eeafc087bc2ef311d4422f84f8359ac5dd2f7f4ce73e1d8c0b4db4ddcf2b6 cases=55 categories=D1,D2,D3,D4,D5,D6
+·[VERIFY] VC-309: not-enabled[ts=py=true]"rag: not enabled (skill absent)" | config-error[ts=py=true]"rag: ERROR - rag server 'S': adapter must be 'overcode-v1'" | enabled-unreachable[ts=py=true]"rag: enabled=S; probe=S=unreachable; fingerprint=e527406e5021; skill=absent"
+···········[VERIFY] VC-305b: blank_dir_ts_kind=invalid-shape blank_dir_py_error=true
+····················[VERIFY] P5: key_order_match=true defaults_match=true bool=3 list=1 str=1 enum=1 int=8
+····[VERIFY] VC-004: tools=6 chat_visible=false server_enums=6/6
+[VERIFY] VC-005: error_kind=capability message_match=true api_calls=0
+[VERIFY] VC-003: rejected=true error_kind=unknown-rag-server queued=0
+[VERIFY] golden_byte_match=true bytes=347 trailing_newline=false
+·····································[VERIFY] VC-024: field_merge=true array_replace=true null_delete=true origin_per_field=true
+[VERIFY] VC-002: server=S url_match=true origin=project
+············[worker] start task=ap-dual-vc005 type=verifier phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[worker] start task=ap-dual-vc014 type=coding phases=1
+[worker] done exit=0 elapsed=0s tools=0 phases=1/1
+····[VERIFY] VC-020: worker_reads_phase=true missing=unknown
+[VERIFY] VC-020: phase_written=true ts_empty_byte_identical=true
+[worker] start task=w-research type=rag-research phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[VERIFY] VC-106: runtime_doc_found=true sections=6 verdict=ok
+[worker] start task=w-research type=rag-research phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[VERIFY] VC-106: missing_doc_emits_marker=true
+[worker] start task=w-unknown type=foobar phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[VERIFY] VC-105: ts_role=coding ts_phase=unknown ts_required=true type_literal=foobar server=A
+[worker] start task=w-required type=coding phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[worker] done exit=0 elapsed=0s tools=0
+[VERIFY] VC-014: required_unused_emitted=true output_marked=true idempotent=true
+[worker] start task=w-cited type=coding phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[VERIFY] VC-014: citation_present_emitted=false
+[worker] start task=w-optional type=coding phases=-
+[worker] start task=ap-t13-vc011 type=verifier phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[worker] start task=ap-t13-matrix type=verifier phases=-
+[worker] start task=ap-t13-nopath type=verifier phases=-
+[worker] start task=ap-t13-caps type=verifier phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[worker] start task=ap-t13-legacy type=verifier phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[worker] start task=ap-dual-vc011 type=verifier phases=-
+[VERIFY] VC-016: rejected=true chat_calls=2 concurrent_single_grant=true
+················[worker] done exit=0 elapsed=0s tools=0
+[VERIFY] VC-014: not_required_writes=0
+·················[VERIFY] VC-028: mapped_names=6/6 sources_merged=true multi_rounds_tool=rag_search_multi_rounds
+[worker] start task=w-disabled type=coding phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[VERIFY] VC-014: rag_disabled_writes=0
+[worker] start task=mwppe-union type=coding phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[worker] start task=mwppe-deny type=coding phases=-
+····[VERIFY] VC-104: unreachable_marker=true rag_unavailable_line=true server=A
+·····[worker] start task=ap-goal-ap-roadmap-writer type=roadmap-writer phases=-
+[worker] start task=ap-goal-ap-phase-writer type=phase-writer phases=-
+·[worker] start task=ap-goal-ap-verifier type=verifier phases=-
+··[worker] start task=ap-goal-ap-reviewer type=reviewer phases=-
+[worker] start task=ap-goal-ap-repair type=repair phases=-
+····[worker] refused task=ap-goal-ap-stale type=verifier-pro: Fail-closed (D-107/VC-023): this task carries origin: conductor but type 'verifier-pro' has no tool-allowlist entry — running it would fall back to the full tool set, which conductor dispatches never get. Registered types: coding, phase-writer, rag-research, repair, research, review, reviewer, roadmap-writer, verifier, vision.
+[worker] start task=ap-goal-ap-stale type=verifier-pro phases=-
+[VERIFY] VC-008: role=design rewrite_tool=rag_search_multi_rounds explicit=false fixture_calls=1 coding_tool=rag_search
+[VERIFY] VC-101: design_wire=rag_search_multi_rounds coding_wire=rag_search explicit_off_wire=rag_search
+····[worker] refused task=ap-goal-ap-fb type=fallback: Fail-closed (D-107/VC-023): this task carries origin: conductor but type 'fallback' has no tool-allowlist entry — running it would fall back to the full tool set, which conductor dispatches never get. Registered types: coding, phase-writer, rag-research, repair, research, review, reviewer, roadmap-writer, verifier, vision.
+[worker] start task=ap-goal-ap-fb type=fallback phases=-
+····[worker] refused task=ap-goal-ap-noscope type=verifier: Fail-closed (D-106): verifier dispatches require a non-empty read_scope in task.md — without one the L2 containment boundary is undefined.
+[worker] start task=ap-goal-ap-noscope type=verifier phases=-
+·[worker] refused task=ap-goal-ap-emptyscope type=verifier: Fail-closed (D-106): verifier dispatches require a non-empty read_scope in task.md — without one the L2 containment boundary is undefined.
+··[worker] start task=ap-goal-ap-emptyscope type=verifier phases=-
+[VERIFY] VC-102: role_server=B role_hits_a=0 role_hits_b=1 explicit_server=A explicit_hits_a=1 explicit_hits_b=1 role_default_wire=rag_search explicit_wire=rag_search
+[worker] start task=m-coding type=coding phases=-
+[worker] start task=m-review type=review phases=-
+··[worker] start task=m-research type=research phases=-
+[worker] start task=m-unknown type=mystery-type phases=-
+[worker] start task=m-verifier type=verifier phases=-
+·[VERIFY] VC-016: rejected=true chat_calls=2 concurrent_single_grant=true
+[VERIFY] VC-110: role="" phase="" wire=rag_search server=default_server files_added=0
+······[worker] start task=ap-goal-ap-start type=coding phases=-
+[worker] start task=ap-goal-ap-start type=coding phases=-
+····[worker] start task=ap-goal-ap-l2 type=phase-writer phases=1
+[worker] done exit=0 elapsed=0s tools=0 phases=1/1
+[worker] start task=t-alive type=coding phases=-
+········[VERIFY] VC-026: grammar_cases=5 roundtrip=5/5
+········[VERIFY] VC-006: citation_roundtrip=true line_hint=123 exists=true
+[VERIFY] VC-007: unconfigured_hint=true missing_file_distinct=true
+[worker] start task=t-hang type=coding phases=-
+[worker] failed exit=1 elapsed=1m tools=0
+·················[worker] start task=t-hung-tool type=coding phases=-
+[worker] failed exit=1 elapsed=30m tools=1
+····[VERIFY] VC-017: heartbeat_interval_le_30s=true pings=5 l2_worker_alive_scope=T-11
+[VERIFY] VC-025: cumulative_rejected=true wall_guard_chat_rejected=true cheap_call_allowed=true
+[VERIFY] VC-025: cumulative_rejected=true wall_guard_chat_rejected=true cheap_call_allowed=true
+······················································[VERIFY] Q-AC-303: ok=false code=-1 hint_has_MW_PY=true output="Could not find mw.py — set MW_PY env var."
+[VERIFY] VC-015: parity_unchanged=pass tools=11 conductor_dispatchable=false
+·[VERIFY] VC-015: rag_chat_visible_only_for=rag-research gated_types=5
+[VERIFY] rag_chat_timeout: chat=600000 retrieval=180000 configured_override=900000
+[VERIFY] VC-018: doc_exists=true sections=6 citations_parseable=true
+[VERIFY] VC-018: missing_section_detected=true sections=5
+[VERIFY] VC-018: unparseable_citation_detected=true count=1
+[VERIFY] VC-018: missing_doc_detected=true sections=0
+··················-··········-·····-··············································[VERIFY] VC-309b: empty_py_row=false empty_ts_row=false configured_py_row=true configured_ts_row=true
+·[VERIFY] VC-310: no_rag_row=true lines=4
+[VERIFY] VC-310: gate_absent=false gate_inert=false gate_exists=true gate_enabled=true rows=0
+[VERIFY] VC-310: rag_rows=1 line="rag: not enabled (skill unknown)"
+[VERIFY] Q-X-04: py=audit,init,list,probe,sync ts=audit,init,list,probe,sync equal=true
+············[VERIFY] VC-308b: argv0=["rag","list","--project=C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\mw-rag-spawn-j582bI"] argv1_code=1 ok0=true ok1=false
+······························x·x·x·xx·xx
+
+ Test Files  5 failed | 88 passed | 1 skipped (94)
+      Tests  14 failed | 499 passed | 3 skipped (516)
+   Start at  19:14:55
+   Duration  284.96s (transform 62.65s, setup 0ms, import 233.64s, tests 737.90s, environment 7ms)
+
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 14 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/suite/agent-session-runtime.test.ts > AgentSessionRuntime characterization > settles the active response before session replacement
+Error: Test timed out in 30000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/suite/agent-session-runtime.test.ts:166:2
+    164|  });
+    165|
+    166|  it("settles the active response before session replacement", async ()…
+       |  ^
+    167|   let toolStarted!: () => void;
+    168|   const toolStartedPromise = new Promise<void>((resolve) => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/14]⎯
+
+ FAIL  test/suite/agent-session-runtime.test.ts > AgentSessionRuntime characterization > emits session_before_switch and session_start for new and resume flows
+Error: Test timed out in 30000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/suite/agent-session-runtime.test.ts:215:2
+    213|  });
+    214|
+    215|  it("emits session_before_switch and session_start for new and resume …
+       |  ^
+    216|   const events: RecordedSessionEvent[] = [];
+    217|   const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) =>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/14]⎯
+
+ FAIL  test/suite/agent-session-runtime.test.ts > AgentSessionRuntime characterization > emits session_before_fork and session_start and honors cancellation
+Error: Test timed out in 30000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/suite/agent-session-runtime.test.ts:295:2
+    293|  });
+    294|
+    295|  it("emits session_before_fork and session_start and honors cancellati…
+       |  ^
+    296|   const events: RecordedSessionEvent[] = [];
+    297|   let cancelNextFork = false;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/14]⎯
+
+ FAIL  test/suite/agent-session-runtime.test.ts > AgentSessionRuntime characterization > duplicates the current active branch when forking at the current position
+Error: Test timed out in 30000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/suite/agent-session-runtime.test.ts:357:2
+    355|  });
+    356|
+    357|  it("duplicates the current active branch when forking at the current …
+       |  ^
+    358|   const { runtime } = await createRuntimeForTest(() => {});
+    359|   await runtime.session.prompt("hello");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/14]⎯
+
+ FAIL  test/suite/agent-session-runtime.test.ts > AgentSessionRuntime characterization > duplicates the current active branch in-memory when forking at the current position
+Error: Test timed out in 30000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/suite/agent-session-runtime.test.ts:397:2
+    395|  });
+    396|
+    397|  it("duplicates the current active branch in-memory when forking at th…
+       |  ^
+    398|   const tempDir = join(tmpdir(), `pi-runtime-suite-in-memory-${Date.no…
+    399|   mkdirSync(tempDir, { recursive: true });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/14]⎯
+
+ FAIL  test/suite/agent-session-runtime.test.ts > AgentSessionRuntime characterization > updates the runtime session cwd on cross-cwd session replacement
+Error: Test timed out in 30000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/suite/agent-session-runtime.test.ts:514:2
+    512|  });
+    513|
+    514|  it("updates the runtime session cwd on cross-cwd session replacement"…
+       |  ^
+    515|   const firstDir = join(tmpdir(), `pi-runtime-cwd-a-${Date.now()}-${Ma…
+    516|   const secondDir = join(tmpdir(), `pi-runtime-cwd-b-${Date.now()}-${M…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/14]⎯
+
+ FAIL  test/suite/agent-session-runtime.test.ts > AgentSessionRuntime characterization > restores model and thinking state from the destination session
+Error: Test timed out in 30000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/suite/agent-session-runtime.test.ts:586:2
+    584|  });
+    585|
+    586|  it("restores model and thinking state from the destination session", …
+       |  ^
+    587|   const { runtime, faux, tempDir } = await createRuntimeForTest(() => …
+    588|    bootstrapModel: false,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/14]⎯
+
+ FAIL  test/suite/regressions/2791-fswatch-error-crash.test.ts > issue #2791 fs.watch error event crashes process > process should survive an error event on the theme FSWatcher
+AssertionError: Child crashed (exit 1). stderr: node:internal/modules/esm/load:193
+    throw new ERR_UNSUPPORTED_ESM_URL_SCHEME(parsed, schemes);
+          ^
+
+Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. On Windows, absolute paths must be valid file:// URLs. Received protocol 'h:'
+    at throwIfUnsupportedURLScheme (node:internal/modules/esm/load:193:11)
+    at defaultLoadSync (node:internal/modules/esm/load:146:3)
+    at #loadAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:802:12)
+    at #loadSync (node:internal/modules/esm/loader:834:53)
+    at ModuleLoader.load (node:internal/modules/esm/loader:783:26)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:494:31)
+    at #getOrCreateModuleJobAfterResolve (node:internal/modules/esm/loader:560:36)
+    at afterResolve (node:internal/modules/esm/loader:607:52)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:613:12)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:163:33) {
+  code: 'ERR_UNSUPPORTED_ESM_URL_SCHEME'
+}
+
+Node.js v24.19.0: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/suite/regressions/2791-fswatch-error-crash.test.ts:104:82
+    102|   }
+    103|
+    104|   expect(exitCode, `Child crashed (exit ${exitCode}). stderr: ${stderr…
+       |                                                                                  ^
+    105|  });
+    106| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/14]⎯
+
+ FAIL  test/suite/regressions/3302-find-path-glob.test.ts > issue #3302 find returns no results for path-based glob patterns > directory-prefixed pattern with ** tail matches subtree
+AssertionError: expected [] to include 'some/parent/child/file.ext'
+ ❯ test/suite/regressions/3302-find-path-glob.test.ts:58:17
+     56|   const files = await runFind("some/parent/child/**");
+     57|   // Matches files (and possibly directories) under the subtree. Asser…
+     58|   expect(files).toContain("some/parent/child/file.ext");
+       |                 ^
+     59|   expect(files).toContain("some/parent/child/test.spec.ts");
+     60|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/14]⎯
+
+ FAIL  test/suite/regressions/3302-find-path-glob.test.ts > issue #3302 find returns no results for path-based glob patterns > leading ** wildcard with path segments matches
+AssertionError: expected [] to include 'some/parent/child/file.ext'
+ ❯ test/suite/regressions/3302-find-path-glob.test.ts:64:24
+     62|  it("leading ** wildcard with path segments matches", async () => {
+     63|   const files = await runFind("**/parent/child/*");
+     64|   expect(files.sort()).toContain("some/parent/child/file.ext");
+       |                        ^
+     65|   expect(files.sort()).toContain("some/parent/child/test.spec.ts");
+     66|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/14]⎯
+
+ FAIL  test/suite/regressions/3302-find-path-glob.test.ts > issue #3302 find returns no results for path-based glob patterns > src/**/*.spec.ts matches nested spec file
+AssertionError: expected [] to deeply equal [ 'src/foo/bar/example.spec.ts' ]
+
+- Expected
++ Received
+
+- [
+-   "src/foo/bar/example.spec.ts",
+- ]
++ []
+
+ ❯ test/suite/regressions/3302-find-path-glob.test.ts:70:17
+     68|  it("src/**/*.spec.ts matches nested spec file", async () => {
+     69|   const files = await runFind("src/**/*.spec.ts");
+     70|   expect(files).toEqual(["src/foo/bar/example.spec.ts"]);
+       |                 ^
+     71|  });
+     72| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/14]⎯
+
+ FAIL  test/suite/regressions/3592-no-builtin-tools-keeps-extension-tools.test.ts > regression #3592: no-builtin-tools keeps extension tools enabled > keeps extension tools active when built-in defaults are disabled
+AssertionError: expected [ Array(8) ] to deeply equal [ Array(8) ]
+
+- Expected
++ Received
+
+  [
+-   "bash",
+    "dynamic_tool",
+    "edit",
+    "find",
+    "grep",
+    "ls",
++   "powershell",
+    "read",
+    "write",
+  ]
+
+ ❯ test/suite/regressions/3592-no-builtin-tools-keeps-extension-tools.test.ts:81:5
+     79|     .map((tool) => tool.name)
+     80|     .sort(),
+     81|   ).toEqual(["bash", "dynamic_tool", "edit", "find", "grep", "ls", "re…
+       |     ^
+     82|   expect(session.getActiveToolNames()).toEqual(["dynamic_tool"]);
+     83|   expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/14]⎯
+
+ FAIL  test/suite/regressions/5109-exclude-tools.test.ts > regression #5109: exclude tools > filters built-in and extension tools from available and active tools
+AssertionError: expected [ Array(7) ] to include 'bash'
+ ❯ test/suite/regressions/5109-exclude-tools.test.ts:51:25
+     49|    expect(allToolNames).not.toContain("read");
+     50|    expect(allToolNames).not.toContain("ask_question");
+     51|    expect(allToolNames).toContain("bash");
+       |                         ^
+     52|    expect(allToolNames).toContain("dynamic_tool");
+     53|    expect(harness.session.getActiveToolNames().sort()).toEqual(["bash"…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/14]⎯
+
+ FAIL  test/suite/regressions/5109-exclude-tools.test.ts > regression #5109: exclude tools > lets excluded tools override the allowlist
+AssertionError: expected [ 'powershell' ] to deeply equal [ 'bash' ]
+
+- Expected
++ Received
+
+  [
+-   "bash",
++   "powershell",
+  ]
+
+ ❯ test/suite/regressions/5109-exclude-tools.test.ts:72:53
+     70|    await harness.session.bindExtensions({});
+     71|
+     72|    expect(toolNames(harness.session.getAllTools())).toEqual(["bash"]);
+       |                                                     ^
+     73|    expect(harness.session.getActiveToolNames()).toEqual(["bash"]);
+     74|    expect(harness.session.systemPrompt).toContain("- bash:");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/14]⎯
+
+
+```

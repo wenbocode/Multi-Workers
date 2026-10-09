@@ -879,12 +879,13 @@ def test_concurrent_write_stress() -> None:
         ob.join(timeout=5)
 
         # -- integrity: every line parses with the per-file column count --
+        # (7 legacy | 8 +model | 9 +origin; T-12 added the origin column)
         wtext = mw_common.workers_path(project).read_text(encoding="utf-8")
         for lineno, line in enumerate(wtext.splitlines(), 1):
             if not line.startswith("|"):
                 continue
             cols = line.strip().strip("|").split("|")
-            assert 7 <= len(cols) <= 8, f"workers line {lineno}: {len(cols)} cols"
+            assert 7 <= len(cols) <= 9, f"workers line {lineno}: {len(cols)} cols"
         final_rows = mw_common.parse_workers_file(mw_common.workers_path(project))
         for row in final_rows:
             assert row.get("task_key") and row.get("status"), f"bad row {row}"

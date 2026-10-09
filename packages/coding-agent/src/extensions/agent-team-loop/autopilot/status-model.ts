@@ -15,7 +15,7 @@
  *     frontmatter YAML subset, status enum, seq-ordered directory scan)
  *   - timeline.jsonl + .1/.2 rotations → autopilot/timeline.py (query_events
  *     watermark / ev_filter / pruned semantics, D-109)
- *   - _autopilot/config.json           → autopilot/config.py (13 fields,
+ *   - _autopilot/config.json           → autopilot/config.py (14 fields,
  *     D-110; present-but-invalid fails closed, missing file = defaults)
  *   - rounds derivation                → autopilot/state.py used_rounds
  *     (distinct attempt per loop label; a missing attempt label degrades to
@@ -97,6 +97,12 @@ export interface AutopilotConfig {
 	 * "" = auto (workspace_root). The schema only requires a string; the
 	 * root-name validity is resolved at parse time (plan §2.2). */
 	xkey_verify_cwd: string;
+	/** Automatic gate-decision kill switch (mw-autopilot-slot-capacity AC-018,
+	 * D-010): closed set off|shadow|live, default "off" leaves every existing
+	 * flow untouched. Project layer only — deliberately NOT in the Python
+	 * effective_config EFFECTIVE_KEYS, so a machine-layer entry cannot
+	 * silently turn automation on. Any other value fails closed. */
+	auto_gate_mode: string;
 }
 
 export const DEFAULT_CONFIG: AutopilotConfig = {
@@ -113,6 +119,7 @@ export const DEFAULT_CONFIG: AutopilotConfig = {
 	xkey_verify_cmd: [],
 	xkey_verify_timeout_s: 1800,
 	xkey_verify_cwd: "",
+	auto_gate_mode: "off",
 };
 
 /** Fresh copy of the defaults that callers may mutate freely — mirror of
@@ -129,6 +136,12 @@ export const LIST_FIELDS = ["xkey_verify_cmd"] as const;
 
 /** Plain string fields — identical to config.py _STRING_FIELDS. */
 export const STR_FIELDS = ["xkey_verify_cwd"] as const;
+
+/** field → closed set of allowed strings — identical to config.py
+ * _ENUM_FIELDS. Membership is validated fail-closed like every other rule. */
+export const ENUM_FIELDS: Record<string, readonly string[]> = {
+	auto_gate_mode: ["off", "shadow", "live"],
+};
 
 /** field → [min, max|null] — identical to config.py _INT_RANGES. */
 export const INT_RANGES: Record<string, [number, number | null]> = {
@@ -205,6 +218,13 @@ export function validateConfigData(data: unknown): string[] {
 			errors.push(`${field}: expected string, got ${JSON.stringify(cfg[field])}`);
 		}
 	}
+	for (const [field, allowed] of Object.entries(ENUM_FIELDS)) {
+		if (!(field in cfg)) continue;
+		const value = cfg[field];
+		if (typeof value !== "string" || !allowed.includes(value)) {
+			errors.push(`${field}: expected one of ${allowed.join(", ")}, got ${JSON.stringify(value)}`);
+		}
+	}
 	for (const [field, [lo, hi]] of Object.entries(INT_RANGES)) {
 		if (!(field in cfg)) continue;
 		const value = cfg[field];
@@ -262,7 +282,7 @@ export function readConfig(projectDir: string): ConfigResult {
 	): number => (typeof cfg[name] === "number" ? (cfg[name] as number) : DEFAULT_CONFIG[name]);
 	const listOf = (name: "xkey_verify_cmd"): string[] =>
 		Array.isArray(cfg[name]) ? (cfg[name] as string[]) : [...DEFAULT_CONFIG[name]];
-	const strOf = (name: "xkey_verify_cwd"): string =>
+	const strOf = (name: "xkey_verify_cwd" | "auto_gate_mode"): string =>
 		typeof cfg[name] === "string" ? cfg[name] : DEFAULT_CONFIG[name];
 	const merged: AutopilotConfig = {
 		enabled: boolOf("enabled"),
@@ -278,6 +298,7 @@ export function readConfig(projectDir: string): ConfigResult {
 		xkey_verify_cmd: listOf("xkey_verify_cmd"),
 		xkey_verify_timeout_s: intOf("xkey_verify_timeout_s"),
 		xkey_verify_cwd: strOf("xkey_verify_cwd"),
+		auto_gate_mode: strOf("auto_gate_mode"),
 	};
 	return { ok: true, config: merged };
 }
@@ -303,6 +324,7 @@ export function saveConfig(projectDir: string, config: AutopilotConfig): { ok: t
 		xkey_verify_cmd: [...config.xkey_verify_cmd],
 		xkey_verify_timeout_s: config.xkey_verify_timeout_s,
 		xkey_verify_cwd: config.xkey_verify_cwd,
+		auto_gate_mode: config.auto_gate_mode,
 	};
 	const file = configPath(projectDir);
 	try {
@@ -319,7 +341,7 @@ export function saveConfig(projectDir: string, config: AutopilotConfig): { ok: t
 // ── _roadmap.md (lenient view-side parse of the D-105 schema) ────────────────
 
 export const STAGE_STATUSES = ["pending", "approved", "running", "closed", "closed-human", "halted"] as const;
-export const KEY_STATUSES = ["running", "done", "stalled", "closed-legacy"] as const;
+export const KEY_STATUSES = ["running", "done", "stalled", "closed-legacy", "pending-review"] as const;
 
 export interface RoadmapKey {
 	key: string;
@@ -332,7 +354,8 @@ export interface RoadmapStage {
 	title: string;
 	goal: string;
 	status: string;
-	/** key → running|done|stalled|closed-legacy (D-105 KEY_STATUSES).
+	/** key → running|done|stalled|closed-legacy|pending-review (D-105 KEY_STATUSES).
+	 * `pending-review` (T-08 / D-005) is the non-terminal deferred-review state.
 	 * Values are kept verbatim; ones outside the enum surface as parse
 	 * warnings instead of being dropped. */
 	keyStatus: Record<string, string>;
@@ -568,7 +591,11 @@ export const GATE_KINDS = [
 ] as const;
 export const GATE_STATUSES = ["pending", "approved", "rejected"] as const;
 
-/** Canonical frontmatter field order (gates.py FRONTMATTER_FIELDS). */
+/** Canonical frontmatter field order (gates.py FRONTMATTER_FIELDS). The first
+ * 12 names are the frozen base schema; the remaining 28 are the additive v2
+ * set (design D1.1 1..26 + the consumption record). Both sides fail closed on
+ * an unknown field, so this list must stay item-for-item in the Python order
+ * (VC-D6-06). */
 export const GATE_FRONTMATTER_FIELDS = [
 	"id",
 	"kind",
@@ -582,7 +609,40 @@ export const GATE_FRONTMATTER_FIELDS = [
 	"answered_at",
 	"answered_by",
 	"note",
+	"reason_code",
+	"evidence_refs",
+	"loop",
+	"used_rounds",
+	"round_limit",
+	"credits_used",
+	"observed_at",
+	"verdicts_final",
+	"open_items",
+	"subject_sha256",
+	"roadmap_validation",
+	"proposal_sha256",
+	"goal_sha256",
+	"constraints",
+	"goal_sha256_before",
+	"goal_sha256_after",
+	"goal_diff",
+	"write_scope",
+	"blast_radius",
+	"answer_source",
+	"auto_policy_id",
+	"expires_at",
+	"evidence_anchor_mtime_ns",
+	"default_action",
+	"out_of_band_actions",
+	"gate_schema",
+	"consumed_at",
+	"consumed_seq",
 ] as const;
+
+/** The one missing-value sentinel (design D4/D6): every presentation layer
+ * renders this exact literal for a field that is absent. Never prose, never a
+ * guess, never derived from `question`/`note`. */
+export const MISSING_FIELD_SENTINEL = "unknown (no field)";
 
 export interface GateRecord {
 	id: string;
@@ -593,11 +653,48 @@ export interface GateRecord {
 	question: string;
 	createdAt: string;
 	path: string;
+	/** v2 mirror (design D1.1) — parsed so the console can render the 13-line
+	 * card without re-reading the file. Absent fields are null / []. */
+	contextRefs: string[];
+	evidenceRefs: string[];
+	reasonCode: string | null;
+	observedAt: string | null;
+	subjectSha256: string | null;
+	proposalSha256: string | null;
+	goalSha256: string | null;
+	loop: string | null;
+	usedRounds: number | null;
+	roundLimit: number | null;
+	creditsUsed: number | null;
+	verdictsFinal: unknown;
+	openItems: unknown;
+	roadmapValidation: unknown;
+	constraints: string[];
+	answerSource: string | null;
+	expiresAt: string | null;
+	defaultAction: string | null;
+	outOfBandActions: string[];
+	gateSchema: number;
+	answeredAt: string | null;
+	answeredBy: string | null;
+	note: string | null;
 }
 
 class GateFormatError extends Error {}
 
 const GATE_FILE_RE = /^gate-(\d+)\.md$/;
+/** Named block-list fields (gates.py _LIST_FIELDS) — one set, two impls. */
+const GATE_LIST_FIELDS = new Set(["context_refs", "evidence_refs"]);
+/** Single-line JSON substring fields (gates.py _JSON_LIST_FIELDS/_JSON_OBJ_FIELDS). */
+const GATE_JSON_LIST_FIELDS = new Set([
+	"verdicts_final",
+	"open_items",
+	"roadmap_validation",
+	"constraints",
+	"write_scope",
+	"out_of_band_actions",
+]);
+const GATE_JSON_OBJ_FIELDS = new Set(["goal_diff", "blast_radius"]);
 const GATE_FIELD_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
 const GATE_LIST_ITEM_RE = /^[ \t]+-[ \t]+(.*)$/;
 const GATE_NULL_LITERALS = new Set(["", "~", "-", "null", "Null", "NULL"]);
@@ -633,9 +730,10 @@ export function parseGateFile(text: string, file: string): GateRecord {
 		throw new GateFormatError(`${file}: frontmatter must open with a '---' line`);
 	}
 	const fields = new Map<string, string | null>();
-	const contextRefs: string[] = [];
+	const listValues = new Map<string, string[]>();
+	for (const name of GATE_LIST_FIELDS) listValues.set(name, []);
 	const seen = new Set<string>();
-	let inRefs = false;
+	let activeList: string | null = null;
 	let closed = false;
 	for (let i = 1; i < lines.length; i++) {
 		const line = lines[i];
@@ -643,16 +741,16 @@ export function parseGateFile(text: string, file: string): GateRecord {
 			closed = true;
 			break;
 		}
-		if (inRefs) {
+		if (activeList !== null) {
 			const item = GATE_LIST_ITEM_RE.exec(line);
 			if (item !== null) {
 				const ref = gateScalar(item[1], file, i + 1);
 				if (ref === null || ref === "")
-					throw new GateFormatError(`${file}: empty context_refs item (line ${i + 1})`);
-				contextRefs.push(ref);
+					throw new GateFormatError(`${file}: empty ${activeList} item (line ${i + 1})`);
+				listValues.get(activeList)?.push(ref);
 				continue;
 			}
-			inRefs = false; // dedent: fall through to a normal field line
+			activeList = null; // dedent: fall through to a normal field line
 		}
 		const field = GATE_FIELD_LINE_RE.exec(line);
 		if (field === null) throw new GateFormatError(`${file}: invalid frontmatter line ${i + 1}: '${line}'`);
@@ -663,14 +761,29 @@ export function parseGateFile(text: string, file: string): GateRecord {
 		if (seen.has(name)) throw new GateFormatError(`${file}: duplicate frontmatter field '${name}' (line ${i + 1})`);
 		seen.add(name);
 		const raw = field[2];
-		if (name === "context_refs") {
+		if (GATE_LIST_FIELDS.has(name)) {
 			if (raw === undefined || raw === "") {
 				fields.set(name, null);
-				inRefs = true;
+				activeList = name;
 			} else if (raw === "[]") {
 				fields.set(name, null);
+			} else if (raw.startsWith("'")) {
+				// Single-line JSON array substring (gates.py _parse_list_field).
+				const scalar = gateScalar(raw, file, i + 1);
+				let decoded: unknown;
+				try {
+					decoded = JSON.parse(scalar ?? "");
+				} catch {
+					throw new GateFormatError(
+						`${file}: ${name} must be a block list, [] or a single-line JSON array (line ${i + 1})`,
+					);
+				}
+				if (!Array.isArray(decoded) || !decoded.every((x) => typeof x === "string" && x !== "")) {
+					throw new GateFormatError(`${file}: ${name} JSON array must contain non-empty strings (line ${i + 1})`);
+				}
+				listValues.set(name, decoded as string[]);
 			} else {
-				throw new GateFormatError(`${file}: context_refs must be a block list or [] (line ${i + 1})`);
+				throw new GateFormatError(`${file}: ${name} must be a block list or [] (line ${i + 1})`);
 			}
 		} else {
 			fields.set(name, gateScalar(raw, file, i + 1));
@@ -689,7 +802,48 @@ export function parseGateFile(text: string, file: string): GateRecord {
 		const value = fields.get(name) ?? null;
 		return typeof value === "string" && value !== "" ? value : null;
 	};
+	const intField = (name: string): number | null => {
+		const value = optional(name);
+		if (value === null) return null;
+		if (!/^-?\d+$/.test(value))
+			throw new GateFormatError(`${file}: field '${name}' must be an integer, got '${value}'`);
+		return Number.parseInt(value, 10);
+	};
+	const isoField = (name: string, value: string | null): string | null => {
+		if (value !== null && !isIsoTimestamp(value)) {
+			throw new GateFormatError(`${file}: ${name} is not an ISO-8601 timestamp: '${value}'`);
+		}
+		return value;
+	};
+	const jsonField = (name: string, wantArray: boolean): unknown => {
+		const value = optional(name);
+		if (value === null) return null;
+		let decoded: unknown;
+		try {
+			decoded = JSON.parse(value);
+		} catch {
+			throw new GateFormatError(
+				`${file}: field '${name}' must be a single-line JSON ${wantArray ? "array" : "object"}`,
+			);
+		}
+		const isArray = Array.isArray(decoded);
+		const isObject = typeof decoded === "object" && decoded !== null && !isArray;
+		if ((wantArray && !isArray) || (!wantArray && !isObject)) {
+			throw new GateFormatError(`${file}: field '${name}' must decode to a JSON ${wantArray ? "array" : "object"}`);
+		}
+		return decoded;
+	};
+	const jsonStringList = (name: string): string[] => {
+		const decoded = jsonField(name, true);
+		if (decoded === null) return [];
+		if (!Array.isArray(decoded) || !decoded.every((x) => typeof x === "string")) {
+			throw new GateFormatError(`${file}: field '${name}' JSON array must contain strings`);
+		}
+		return decoded;
+	};
 
+	const contextRefs = listValues.get("context_refs") ?? [];
+	const evidenceRefs = listValues.get("evidence_refs") ?? [];
 	const id = required("id");
 	if (!/^gate-\d+$/.test(id)) throw new GateFormatError(`${file}: id must match 'gate-<digits>', got '${id}'`);
 	const kind = required("kind");
@@ -706,19 +860,25 @@ export function parseGateFile(text: string, file: string): GateRecord {
 		if (!/^-?\d+$/.test(stageRaw)) throw new GateFormatError(`${file}: stage must be an integer, got '${stageRaw}'`);
 		stage = Number.parseInt(stageRaw, 10);
 	}
-	if (contextRefs.some((r) => r === "")) {
-		throw new GateFormatError(`${file}: context_refs must be a list of non-empty strings`);
-	}
 	const createdAt = required("created_at");
 	if (!isIsoTimestamp(createdAt)) {
 		throw new GateFormatError(`${file}: created_at is not an ISO-8601 timestamp: '${createdAt}'`);
 	}
-	const answeredAt = optional("answered_at");
-	if (answeredAt !== null && !isIsoTimestamp(answeredAt)) {
-		throw new GateFormatError(`${file}: answered_at is not an ISO-8601 timestamp: '${answeredAt}'`);
-	}
+	const answeredAt = isoField("answered_at", optional("answered_at"));
 	required("created_by");
 	const question = required("question");
+	// Validate every declared JSON field/consumption field (fail-closed, same
+	// as gates.py) even when this view does not render it.
+	for (const name of GATE_JSON_LIST_FIELDS) jsonField(name, true);
+	for (const name of GATE_JSON_OBJ_FIELDS) jsonField(name, false);
+	intField("evidence_anchor_mtime_ns");
+	intField("consumed_seq");
+	isoField("consumed_at", optional("consumed_at"));
+	let gateSchema = intField("gate_schema");
+	if (gateSchema === null) gateSchema = 1;
+	if (gateSchema !== 1 && gateSchema !== 2) {
+		throw new GateFormatError(`${file}: gate_schema must be one of 1, 2, got ${gateSchema}`);
+	}
 
 	return {
 		id,
@@ -729,6 +889,29 @@ export function parseGateFile(text: string, file: string): GateRecord {
 		question,
 		createdAt,
 		path: file,
+		contextRefs,
+		evidenceRefs,
+		reasonCode: optional("reason_code"),
+		observedAt: isoField("observed_at", optional("observed_at")),
+		subjectSha256: optional("subject_sha256"),
+		proposalSha256: optional("proposal_sha256"),
+		goalSha256: optional("goal_sha256"),
+		loop: optional("loop"),
+		usedRounds: intField("used_rounds"),
+		roundLimit: intField("round_limit"),
+		creditsUsed: intField("credits_used"),
+		verdictsFinal: jsonField("verdicts_final", true),
+		openItems: jsonField("open_items", true),
+		roadmapValidation: jsonField("roadmap_validation", true),
+		constraints: jsonStringList("constraints"),
+		answerSource: optional("answer_source"),
+		expiresAt: isoField("expires_at", optional("expires_at")),
+		defaultAction: optional("default_action"),
+		outOfBandActions: jsonStringList("out_of_band_actions"),
+		gateSchema,
+		answeredAt,
+		answeredBy: optional("answered_by"),
+		note: optional("note"),
 	};
 }
 
@@ -790,9 +973,20 @@ export const EVENT_TYPES = new Set([
 	"goal-halt",
 	"goal-snapshot",
 	"type-rejected",
+	"target-config-rejected",
 	"reconcile",
 	"resume",
 	"l3-no-verdict",
+	// Gate redesign (mw-autopilot-slot-capacity, D-005/D-006/D-009): names are
+	// pre-admitted in lockstep with autopilot/timeline.py EVENT_TYPES so the
+	// parity test locks both sides; the producers land in T-07/T-08. Unused
+	// vocabulary is inert — the set is a console include-set, not a gate.
+	"gate-auto-decision",
+	"gate-auto-revoke",
+	"review-decided",
+	"review-escalated",
+	"evidence-reconciliation",
+	"stage-reopen-refused",
 ]);
 
 export const BEAT_EV = "beat";
@@ -811,6 +1005,9 @@ export interface TimelineEvent {
 	key: string;
 	stage: number | null;
 	detail: string;
+	/** Optional structured payload (design D-009, e.g. `gate-auto-decision`).
+	 * Absent — never null — on legacy lines that carry none. */
+	data?: Record<string, unknown>;
 }
 
 export interface TimelineQuery {
@@ -879,14 +1076,20 @@ function readTimelineEvents(file: string): { events: TimelineEvent[]; skipped: n
 			skipped += 1;
 			continue;
 		}
-		events.push({
+		const event: TimelineEvent = {
 			ts: typeof rec.ts === "string" ? rec.ts : "",
 			seq,
 			ev: typeof rec.ev === "string" ? rec.ev : "",
 			key: typeof rec.key === "string" ? rec.key : "-",
 			stage: typeof rec.stage === "number" && Number.isInteger(rec.stage) ? rec.stage : null,
 			detail: typeof rec.detail === "string" ? rec.detail : "",
-		});
+		};
+		// Payload whitelist stays closed: only the optional `data` object is
+		// admitted (design D-009); every other extra key is still dropped.
+		if (typeof rec.data === "object" && rec.data !== null && !Array.isArray(rec.data)) {
+			event.data = rec.data as Record<string, unknown>;
+		}
+		events.push(event);
 	}
 	return { events, skipped };
 }

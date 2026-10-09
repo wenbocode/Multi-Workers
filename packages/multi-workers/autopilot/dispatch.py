@@ -256,6 +256,37 @@ def _read_scope_caps(project_root: pathlib.Path) -> tuple[int | None, int | None
     return caps[0], caps[1]
 
 
+def _worker_timeout_min(project_root: pathlib.Path) -> int | None:
+    """`worker_timeout_min` for the rendered task.md, or None when unconfigured.
+
+    Until 2026-09-26 this key was a silent no-op: config.py parsed and
+    validated it, but no renderer emitted a task.md `timeout:` header, so the
+    worker wall chain (task.md > PI_WORKER_TIMEOUT_MS > 60m,
+    worker-mode.ts `resolveBudgetMs`) could never reach the configured value
+    (D-017/VC-015).
+
+    Only an explicit project-layer value is rendered, mirroring
+    :func:`_read_scope_caps`. The built-in default (config.py
+    ``worker_timeout_min = 30``) must NOT materialise as a header: task.md wins
+    the chain, so rendering the default would silently cut every
+    conductor-dispatched worker from the 60m harness default to 30m — the same
+    regression that moved `DEFAULT_BUDGET_MS` to 60m in the first place.
+    """
+    try:
+        if not autopilot_config.config_path(project_root).exists():
+            return None
+        project_layer = autopilot_config.load_config(project_root)
+        if "worker_timeout_min" not in project_layer:
+            return None
+        effective = effective_config.load_effective(project_root)
+    except Exception:  # invalid/unreadable config must not break dispatching
+        return None
+    value = effective.values.get("worker_timeout_min")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
 def render_task_md(
     task_type: str,
     prompt: str,
@@ -272,6 +303,7 @@ def render_task_md(
     profile_block: str | None = None,
     rag_config: dict | None = None,
     task_meta: dict | None = None,
+    worker_timeout_min: int | None = None,
 ) -> str:
     """Render one conductor task.md: frontmatter labels + prompt body.
 
@@ -305,6 +337,12 @@ def render_task_md(
     :func:`_read_scope_caps`) render only when supplied — ``None`` (absent
     config, legacy callers, direct unit tests) leaves the output
     byte-identical to the pre-fix renderer.
+
+    ``worker_timeout_min`` (D-017) renders ``timeout: <minutes>`` in the
+    frontmatter only when the project explicitly configured the key
+    (:func:`_worker_timeout_min`) — worker-mode.ts gives the task.md header
+    top priority in the wall chain, so an unconfigured render would pin every
+    worker to the config default instead of the 60m harness default.
     """
     lines = [
         "---",
@@ -321,6 +359,8 @@ def render_task_md(
         f"loop: {loop}",
         f"attempt: {attempt}",
     ]
+    if worker_timeout_min is not None:
+        lines.append(f"timeout: {int(worker_timeout_min)}")
     if read_scope:
         lines.append("read_scope:")
         lines.extend(f"  - {item}" for item in read_scope)
@@ -527,6 +567,7 @@ def dispatch(
                 ev="target-config-rejected",
             )
     read_file_cap, read_byte_cap = _read_scope_caps(project_root)
+    timeout_min = _worker_timeout_min(project_root)
     content = render_task_md(
         task_type, prompt, loop=loop, attempt=attempt, read_scope=scope,
         deny_globs=globs, model=model, phase=_owner_phase(project_root, owner),
@@ -534,6 +575,7 @@ def dispatch(
         rag_config=rag_config,
         read_file_cap=read_file_cap,
         read_byte_cap=read_byte_cap,
+        worker_timeout_min=timeout_min,
     )
 
     # 1. task.md (before the queue row — the crash gap is the orphan shape
@@ -558,6 +600,11 @@ def dispatch(
         "dispatched_at": mw_common.iso_now(),
         "updated_at": mw_common.iso_now(),
         "model": model,
+        # D-019/AC-021: the producer records who owns the row. The PM/TS
+        # writer stamps `manual` (worker-store.ts); the conductor stamps
+        # `conductor` here, so attribution never falls back to the `ap-`
+        # task-key prefix (a false signal on 6 measured rows).
+        "origin": mw_common.WORKER_ORIGIN_CONDUCTOR,
     }
     try:
         mw_common.acquire_lock(lock)
@@ -605,6 +652,7 @@ def dispatch(
                 queued["task_path"] == str(task_md)
                 and queued["cli"] == entry.cli
                 and queued["status"] == "pending"
+                and queued.get("origin") == mw_common.WORKER_ORIGIN_CONDUCTOR
             )
     row_verified = row_verified and matches == 1
 

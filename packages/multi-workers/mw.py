@@ -40,6 +40,7 @@ from mw_common import (
 )
 from autopilot import config as _ap_config
 from autopilot import conductor as _ap_conductor
+from autopilot import roadmap as _ap_roadmap
 
 _SCRIPT_DIR = pathlib.Path(__file__).parent
 _LAUNCHER_PY = _SCRIPT_DIR / "launcher.py"
@@ -3549,11 +3550,14 @@ def _ap_verify_clear(args: argparse.Namespace, project_dir: pathlib.Path) -> int
 
 
 def cmd_autopilot(args: argparse.Namespace) -> int:
-    """xkey verification channel: `mw autopilot verify set|show|clear`.
+    """Autopilot CLI: `verify set|show|clear` (xkey channel) and `gates`.
 
-    Errors print ``[mw autopilot verify <action>] Error: ...`` to stderr and
-    return 1; only `set`/`clear` write (both under the dedicated lock)."""
+    Errors print ``[mw autopilot <action>] Error: ...`` to stderr and return 1;
+    only `verify set`/`clear` write (both under the dedicated lock). `gates` is
+    a read-only machine exit for the gate queue (T-13)."""
     project_dir = pathlib.Path(args.project).resolve()
+    if args.autopilot_action == "gates":
+        return _ap_gates(args, project_dir)
     if args.autopilot_action != "verify":
         print(
             f"[mw autopilot] Error: unknown action {args.autopilot_action!r}",
@@ -3565,6 +3569,240 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
     if args.verify_action == "clear":
         return _ap_verify_clear(args, project_dir)
     return _ap_verify_show(args, project_dir)
+
+
+# ── `mw autopilot gates`: layer-B machine exit (T-13 / AC-006, AC-012) ───────
+
+# Per-kind consequence table for the card's A/R line. Code constants only - no
+# prose derivation and no model call (design D3.2 L3; TS mirror console.ts
+# GATE_ACTIONS).
+_GATE_CARD_ACTIONS: dict[str, tuple[str, str, str]] = {
+    "stage-confirm": (
+        "stage opens, its keys become eligible",
+        "stage stays halted until a new proposal",
+        "no",
+    ),
+    "stage-close": (
+        "stage -> closed, next stage-confirm opens",
+        "stage -> halted, roadmap edit required",
+        "no",
+    ),
+    "stalled": ("one resume round granted for the key", "key stays stalled (terminal)", "yes"),
+    "budget-exhausted": (
+        "one resume round granted for the loop",
+        "loop stays exhausted (terminal)",
+        "yes",
+    ),
+    "goal-change": ("new goal adopted, keys re-validate", "goal change refused, halt and report", "no"),
+    "xkey-authorize": ("cross-key write ticket authorized", "ticket refused, blocker recorded", "no"),
+}
+
+# Each gate renders EXACTLY 13 lines, each <= 110 columns (design D-015).
+_GATE_CARD_LINE_MAX = 110
+
+
+def _gate_card_clamp(value: object, limit: int) -> str:
+    text = value if isinstance(value, str) else str(value)
+    limit = max(0, limit)
+    return text if len(text) <= limit else text[: max(0, limit - 1)] + "\u2026"
+
+
+def _gate_card_line(value: object) -> str:
+    return _gate_card_clamp(value, _GATE_CARD_LINE_MAX)
+
+
+def _gate_downstream_keys(stage: object, entry: dict) -> list[str] | None:
+    """Keys depending (transitively) on the gate's key, or every key of a
+    stage-level gate's stage. None when the roadmap/stage is unavailable.
+    Same derivation as console.ts downstreamKeys."""
+    if stage is None:
+        return None
+    key = entry.get("key")
+    if not key:
+        return [k.key for k in stage.keys]
+    found: set[str] = set()
+    grew = True
+    while grew:
+        grew = False
+        for item in stage.keys:
+            if item.key in found:
+                continue
+            if key in item.depends_on or any(dep in found for dep in item.depends_on):
+                found.add(item.key)
+                grew = True
+    return sorted(found)
+
+
+def _gate_verdict_summary(value: object) -> str:
+    """`key:verdict` summary from the verdicts_final snapshot (L5)."""
+    if not isinstance(value, list):
+        return mw_common.GATE_MISSING_SENTINEL
+    parts: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        parts.append(f"{item.get('key', '?')}:{item.get('verdict', '?')}")
+    return ",".join(parts) if parts else mw_common.GATE_MISSING_SENTINEL
+
+
+def _render_gate_cards(section: dict, project_dir: pathlib.Path) -> list[str]:
+    """The layer-B card: header + EXACTLY 13 lines per pending gate, fixed
+    order, each line <= 110 columns (AC-026 / design D3.2). Missing v2 fields
+    render the one sentinel literal - never prose, never a guess. Pure read:
+    no model/dispatch reference, no directory creation."""
+    sentinel = mw_common.GATE_MISSING_SENTINEL
+    pending = section.get("pending") or []
+    if not pending:
+        total = section.get("total", 0)
+        return [f"no pending gates ({total} total, {total - section.get('pending_count', 0)} answered)"]
+    stages: dict[int, object] = {}
+    try:
+        parsed = _ap_roadmap.load_roadmap(_ap_roadmap.roadmap_path(project_dir))
+        stages = {stage.number: stage for stage in parsed.stages}
+    except Exception:
+        stages = {}
+    lines: list[str] = [f"{len(pending)} pending gate(s):"]
+    for entry in pending:
+        gate_id = entry["id"]
+        kind = entry["kind"]
+        created_at = mw_common._gate_node_value(entry.get("created_at"))
+        waited = mw_common._gate_node_value(entry.get("waited_s"))
+        waited_text = sentinel if waited is None else mw_common._gate_waited_text(waited)
+        action = _GATE_CARD_ACTIONS.get(kind)
+        approve, reject, reversible = action if action is not None else (sentinel, sentinel, sentinel)
+        stage = stages.get(entry.get("stage")) if entry.get("stage") is not None else None
+        goal = stage.goal if stage is not None and stage.goal else sentinel
+        refs = entry.get("context_refs") or []
+        src = refs[1] if len(refs) > 1 else sentinel
+        history = entry.get("history") or []
+        history_text = (
+            "none"
+            if not history
+            else "; ".join(
+                f"{h['gate_id']} [{h['kind']}] {h['scope']} {h['status']} {h['answered_at'] or '\u2014'}"
+                for h in history
+            )
+        )
+        notes = [h for h in history if h.get("note")]
+        prior_note = f"[{notes[-1]['gate_id']}] {notes[-1]['note']}" if notes else "none"
+        constraints = entry.get("constraints")
+        constraints_text = sentinel if not constraints else "; ".join(str(c) for c in constraints)
+        downstream = _gate_downstream_keys(stage, entry)
+        impact = (
+            sentinel
+            if downstream is None
+            else f"downstream={len(downstream)} keys [{','.join(downstream[:5])}]"
+        )
+        roadmap_status = stage.status if stage is not None else sentinel
+        q_tail = f" (full: {entry['path']})"
+        records = entry.get("evidence") or []
+        if not records:
+            evidence_text = f"evidence: {sentinel}"
+        else:
+            described = []
+            for record in records[:3]:
+                rel = record.get("ref") or record.get("path") or "?"
+                if record.get("path") is None:
+                    described.append(f"{rel} ({sentinel})")
+                else:
+                    described.append(f"{rel} ({record['bytes']}B, mtime={record['mtime']})")
+            evidence_text = "evidence: " + "; ".join(described)
+            if len(records) > 3:
+                evidence_text += f" +{len(records) - 3} more"
+            if entry.get("drift_detail"):
+                evidence_text += f" DRIFT({entry['drift_detail']})"
+        open_items = entry.get("open_items")
+        open_text = sentinel if open_items is None else json.dumps(open_items, ensure_ascii=False)
+        lines.append(_gate_card_line(f"{gate_id} [{kind}] {entry['scope']} created={created_at} waited={waited_text}"))
+        lines.append(
+            _gate_card_line(
+                f"Q: {_gate_card_clamp(entry.get('question') or '', max(0, _GATE_CARD_LINE_MAX - 3 - len(q_tail)))}{q_tail}"
+            )
+        )
+        lines.append(
+            _gate_card_line(
+                f"A: approve = {approve} (reversible: {reversible}) | "
+                f"R: reject = {reject} (reversible: {reversible})"
+            )
+        )
+        lines.append(
+            _gate_card_line(
+                f"goal: {_gate_card_clamp(goal, 60)} | "
+                f"goal_sha256={entry.get('goal_sha256') or sentinel} | "
+                f"proposal_sha256={entry.get('proposal_sha256') or sentinel} | "
+                f"roadmap_validation={sentinel if entry.get('roadmap_validation') is None else json.dumps(entry['roadmap_validation'], ensure_ascii=False)}"
+            )
+        )
+        lines.append(
+            _gate_card_line(
+                f"reason: {mw_common._gate_node_value(entry.get('reason_code')) or sentinel} "
+                f'src="{_gate_card_clamp(src, 60)}" | verdict: l3={_gate_verdict_summary(entry.get("verdicts_final"))}'
+            )
+        )
+        lines.append(_gate_card_line(evidence_text))
+        lines.append(
+            _gate_card_line(
+                f"impact: {impact} | stage-close: {'this gate' if kind == 'stage-close' else 'na'} | "
+                f"next-stage: na | roadmap: {roadmap_status}"
+            )
+        )
+        lines.append(_gate_card_line(f"history: {history_text}"))
+        lines.append(
+            _gate_card_line(
+                f"default: {mw_common._gate_node_value(entry.get('default_action')) or sentinel} | "
+                f"ttl: {mw_common._gate_node_value(entry.get('expires_at')) or sentinel}"
+            )
+        )
+        lines.append(
+            _gate_card_line(
+                f"budget: loop={entry.get('loop') or sentinel} "
+                f"used={entry.get('used_rounds') if entry.get('used_rounds') is not None else sentinel}/"
+                f"{entry.get('round_limit') if entry.get('round_limit') is not None else sentinel} "
+                f"credits={entry.get('credits_used') if entry.get('credits_used') is not None else sentinel}"
+            )
+        )
+        lines.append(
+            _gate_card_line(
+                f"constraints: {_gate_card_clamp(constraints_text, 50)} | "
+                f"prior: {_gate_card_clamp(prior_note, 40)}"
+            )
+        )
+        lines.append(_gate_card_line(f"open-items: {open_text}"))
+        lines.append(
+            _gate_card_line(
+                f"answer: {entry['answer_entry']['value']}  "
+                f"expected: {entry.get('answer_source') or sentinel}"
+            )
+        )
+    return lines
+
+
+def _ap_gates(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw autopilot gates [--json]`: read-only gate queue view. Text = the
+    layer-B 13-line cards; --json = the doctor gate segment (layer C machine
+    exit, same shape as `mw doctor --json`'s `gates` key)."""
+    section = mw_common._doctor_gates(project_dir)
+    if section.get("error"):
+        print(f"[mw autopilot gates] Error: {section['error']}", file=sys.stderr)
+        return 1
+    if getattr(args, "as_json", False):
+        print(json.dumps(section, indent=2, default=str))
+        return 0
+    for line in _render_gate_cards(section, project_dir):
+        print(line)
+    for err in section.get("parse_errors") or []:
+        print(f"warning: {err['path']}: {err['error']}")
+    # T-24 / VC-048: an off-gate prose authorization is visible in the gates
+    # view too (the JSON section carries the full `crosskey_prose` node).
+    for request in (section.get("crosskey_prose") or {}).get("requests") or []:
+        if request.get("authorization") != "prose":
+            continue
+        print(
+            "warning: cross-key request "
+            f"{request.get('request_id') or request['path']} is authorized by prose "
+            f"only ({request['path']}) - treated as unauthorized (VC-048)"
+        )
+    return 0
 
 
 # ── Subcommand: pull-agentictask ───────────────────────────────────────────────
@@ -5181,6 +5419,15 @@ def _parse_args() -> argparse.Namespace:
         help="Autopilot configuration (xkey verification channel)",
     )
     autopilot_sub = autopilot_p.add_subparsers(dest="autopilot_action", required=True)
+    gates_p = autopilot_sub.add_parser(
+        "gates",
+        help="Read-only gate queue view (pending gates; --json = machine exit)",
+    )
+    gates_p.add_argument("--project", required=True, help="Project directory")
+    gates_p.add_argument(
+        "--json", action="store_true", dest="as_json",
+        help="Emit the doctor gate segment as JSON (layer-C machine exit)",
+    )
     verify_p = autopilot_sub.add_parser(
         "verify", help="Per-project xkey verification command (set/show/clear)"
     )

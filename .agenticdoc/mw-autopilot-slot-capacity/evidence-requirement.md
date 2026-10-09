@@ -86,7 +86,7 @@
 | 证据来源 | 证据类型 | 期望内容 | 充分性判定 |
 |---------|---------|---------|----------|
 | `[VERIFY] VC-011: equal=true` | 预设节点输出（L1） | 当比对两侧 key-status 集合时，Python 与 TS 的 enum 逐值相等 | 单次 PASS |
-| `[VERIFY] VC-012: equal=true count=18` | 预设节点输出（L1） | 当比对两侧 EVENT_TYPES 时，排序集合相等（含 target-config-rejected） | 单次 PASS |
+| `[VERIFY] VC-012: equal=true count=23` | 预设节点输出（L1） | 当比对两侧 EVENT_TYPES 时，排序集合相等（含 target-config-rejected）。**注**：期望值为实测值 23（旧 17 + 本 key 新增 6），此处原写 `count=18` 系陈旧字面量，已于 2026-09-26 按 T-02 实测 `[VERIFY] VC-012: equal=true count=23` 更正；判据本身是**集合相等**，计数仅为附带信息 | 单次 PASS |
 | 路径分类 | 异常 | — | — |
 
 ## AC-011: 最终结论必须由 AC-002..AC-010 的证据链支撑，并逐条回应 (c1)(c2)(c3)(c3′)(d)：说明如何改善夜跑吞吐与 worker 层利用率，或为何不该动；"不改"也必须给证据化理由

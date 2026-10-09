@@ -29,6 +29,13 @@ Field set and defaults (D-110):
     xkey_verify_cwd    str     ""   (workspace cwd for xkey verification; "" = auto.
                                     Schema only requires a string; root-name
                                     validity is resolved at parse time)
+    auto_gate_mode     str     "off" (off|shadow|live; AC-018 kill switch for
+                                    the automatic gate path - off leaves every
+                                    existing flow untouched. Project layer only:
+                                    deliberately NOT in effective_config
+                                    EFFECTIVE_KEYS, so the machine layer cannot
+                                    silently turn automation on. Any other value
+                                    fails closed like every other field.)
 
 :func:`cached_load` is a thin alias of :func:`load_config` plus a JSON
 round-trip defensive copy. It no longer caches by mtime/size, so an external
@@ -59,12 +66,16 @@ DEFAULT_CONFIG: dict = {
     "xkey_verify_cmd": [],
     "xkey_verify_timeout_s": 1800,
     "xkey_verify_cwd": "",
+    "auto_gate_mode": "off",
 }
 
 # bool must be rejected before the int rules (bool is an int subclass).
 _BOOL_FIELDS = ("enabled", "paused", "xkey_repair")
 _LIST_FIELDS = ("xkey_verify_cmd",)
 _STRING_FIELDS = ("xkey_verify_cwd",)
+_ENUM_FIELDS: dict[str, tuple[str, ...]] = {
+    "auto_gate_mode": ("off", "shadow", "live"),
+}
 _INT_RANGES: dict[str, tuple[int, int | None]] = {
     "poll_interval_sec": (1, 5),
     "max_parallel_keys": (2, None),
@@ -110,6 +121,14 @@ def validate_config(cfg: object) -> None:
     for field in _STRING_FIELDS:
         if field in cfg and not isinstance(cfg[field], str):
             errors.append(f"{field}: expected string, got {cfg[field]!r}")
+    for field, allowed in _ENUM_FIELDS.items():
+        if field not in cfg:
+            continue
+        value = cfg[field]
+        if not isinstance(value, str) or value not in allowed:
+            errors.append(
+                f"{field}: expected one of {', '.join(allowed)}, got {value!r}"
+            )
     for field, (lo, hi) in _INT_RANGES.items():
         if field not in cfg:
             continue
@@ -132,7 +151,7 @@ def load_config(project_root: pathlib.Path) -> dict:
     return the raw data itself: a partial file yields exactly the keys it
     actually carries, never a silent default fill.
 
-    Consumers that need the complete 13-key view must use
+    Consumers that need the complete 14-key view must use
     :func:`default_config` or :func:`autopilot.effective_config.load_effective`;
     a key a human may have omitted must be read with ``.get(...)``, not by
     subscripting."""

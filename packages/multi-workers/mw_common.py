@@ -42,7 +42,7 @@ import shutil
 import subprocess
 import time
 import sys
-from typing import Mapping
+from typing import Mapping, Sequence
 
 try:
     import tomllib  # Python 3.11+
@@ -55,6 +55,8 @@ except ImportError:  # pragma: no cover - doctor reports this explicitly
     yaml = None  # type: ignore[assignment]
 
 from autopilot import effective_config  # noqa: E402  (layered config, D-002)
+from autopilot import gates as gate_protocol  # noqa: E402  (gate queue, T-13)
+from autopilot import roadmap as roadmap_protocol  # noqa: E402  (validate_roadmap, AC-031)
 
 # Credential env vars that are never declared in providers.json but must still
 # be stripped from every worker env (kept from the pre-schema launcher).
@@ -1562,7 +1564,14 @@ def lock_path(project_dir: pathlib.Path) -> pathlib.Path:
 
 
 def parse_workers_file(path: pathlib.Path) -> list[dict[str, str]]:
-    """Parse _workers.parallel. Tolerates 7-column legacy and 8-column rows."""
+    """Parse _workers.parallel.
+
+    Column order is locked to the TS writer (worker-store.ts
+    parseWorkerLine/serializeWorkerLine): ``task_key | status | cli | provider
+    | task_path | dispatched_at | updated_at | model | origin``. Legacy
+    7-column (no model) and 8-column (no origin) rows parse unchanged; a
+    missing origin is the empty string, never a guessed value.
+    """
     if not path.exists():
         return []
     entries: list[dict[str, str]] = []
@@ -1571,7 +1580,7 @@ def parse_workers_file(path: pathlib.Path) -> list[dict[str, str]]:
         if not line or line.startswith("#"):
             continue
         parts = [p.strip() for p in line.split("|")]
-        if len(parts) not in (7, 8):
+        if len(parts) not in (7, 8, 9):
             continue
         entries.append({
             "task_key": parts[0],
@@ -1581,13 +1590,19 @@ def parse_workers_file(path: pathlib.Path) -> list[dict[str, str]]:
             "task_path": parts[4],
             "dispatched_at": parts[5],
             "updated_at": parts[6],
-            "model": parts[7] if len(parts) == 8 else "",
+            "model": parts[7] if len(parts) >= 8 else "",
+            "origin": parts[8] if len(parts) == 9 else "",
         })
     return entries
 
 
 def serialize_entry(entry: dict[str, str]) -> str:
-    return " | ".join([
+    """Serialize one row, appending the optional `origin` column last.
+
+    The column is emitted only when set, so a rewrite keeps legacy 7/8-column
+    rows byte-identical (no write-side migration of historical rows — D-019).
+    """
+    cols = [
         entry["task_key"],
         entry["status"],
         entry["cli"],
@@ -1596,7 +1611,72 @@ def serialize_entry(entry: dict[str, str]) -> str:
         entry["dispatched_at"],
         entry["updated_at"],
         entry.get("model", ""),
-    ])
+    ]
+    origin = str(entry.get("origin", "") or "").strip()
+    if origin:
+        cols.append(origin)
+    return " | ".join(cols)
+
+
+# ── Worker attribution (D-019 / AC-021) ───────────────────────────────────────
+
+WORKER_ORIGIN_CONDUCTOR = "conductor"
+WORKER_ORIGIN_MANUAL = "manual"
+WORKER_ORIGINS = (WORKER_ORIGIN_CONDUCTOR, WORKER_ORIGIN_MANUAL)
+
+# `.agenticdoc/<key>/workers/<task>/task.md` — the queue-row path contract
+# (dispatch.py `task_dir`). Paths are normalised to forward slashes first so
+# Windows rows match too.
+_WORKER_PATH_KEY_RE = re.compile(r"(?:^|/)\.agenticdoc/([^/]+)/workers/")
+
+
+def worker_origin(row: dict[str, str]) -> str:
+    """Queue-row provenance: ``conductor`` or ``manual``.
+
+    Only the literal `conductor` cell makes a row a conductor dispatch. A
+    missing column (legacy row), an empty cell and any unknown value all
+    normalise to `manual`: fail-closed, and the reason the `ap-` task-key
+    prefix can never resurrect the false signal on its own (AC-021/VC-028).
+    """
+    raw = str(row.get("origin", "") or "").strip().lower()
+    return WORKER_ORIGIN_CONDUCTOR if raw == WORKER_ORIGIN_CONDUCTOR else WORKER_ORIGIN_MANUAL
+
+
+def worker_path_key(task_path: str) -> str:
+    """Project key from a `.agenticdoc/<key>/workers/...` path ("" otherwise).
+
+    The path is the origin-independent anchor (VC-028 ``fallback=path``):
+    legacy rows and conductor rows alike resolve their owner key this way.
+    """
+    match = _WORKER_PATH_KEY_RE.search(str(task_path or "").replace("\\", "/"))
+    return match.group(1) if match else ""
+
+
+def worker_owner_key(row: dict[str, str]) -> str:
+    """Owner project key of one row: the key its `task_path` is filed under.
+
+    Independent of `origin` — a manual row still groups under its key for the
+    panel; it just never holds a conductor slot (`row_belongs_to`).
+    """
+    return worker_path_key(str(row.get("task_path", "")))
+
+
+def worker_is_conductor(row: dict[str, str]) -> bool:
+    """True only for rows written with ``origin: conductor``."""
+    return worker_origin(row) == WORKER_ORIGIN_CONDUCTOR
+
+
+def row_belongs_to(row: dict[str, str], key: str) -> bool:
+    """Unified owner predicate (D-019): does this row hold `key`'s slot?
+
+    `origin` decides first: a `manual` row — including every legacy row
+    without the column — owns no autopilot slot. A conductor row owns the key
+    its `task_path` anchors under. Neither branch consults the `ap-` task-key
+    prefix, which is a false signal on its own (6 measured rows).
+    """
+    if not worker_is_conductor(row):
+        return False
+    return worker_owner_key(row) == key
 
 
 def acquire_lock(lock_file: pathlib.Path, retries: int = 20, base_delay: float = 0.05) -> None:
@@ -2184,6 +2264,519 @@ def _doctor_autopilot(project_dir: pathlib.Path) -> dict:
     return section
 
 
+# ── Gate queue section (T-13 / AC-006, AC-012, AC-019, AC-031) ───────────────
+
+# The single fallback literal every layer renders for a value the file family
+# cannot supply (T-09 contract). Never prose, never a guess.
+GATE_MISSING_SENTINEL = "unknown (no field)"
+
+_GATE_DIR_REL = (".agenticdoc", "_autopilot", "gates")
+_GATE_FILE_RE = re.compile(r"^gate-(\d+)\.md$")
+# v2 decision fields a pending gate may be required to declare (design D6
+# §D1.1). The actual requirement is PER KIND, expressed by the two frozen
+# tuples below; `_GATE_PENDING_DECISION_FIELDS` stays the union of every
+# candidate name (never emptied — the "someone bypassed the creator"
+# detector reads the per-kind result of `_gate_missing_fields`).
+#
+# Universal requirement (T-20): `expires_at`/`default_action` carry AC-019's
+# "no implicit permanent retention" rule and apply to EVERY schema-2 pending
+# gate. Both creation sites (`conductor._create_gate` and the goal-change site
+# in `tick`) stamp them through `conductor._stamp_gate_defaults`.
+_GATE_UNIVERSAL_DECISION_FIELDS = ("expires_at", "default_action")
+
+# `reason_code` is a machine-written proposition field (design.md:254 groups it
+# with `machine_evidence` / `cause_class` / ...): the conductor writes it only
+# where the machine itself renders a judgement. The pure human-decision kinds
+# (stage-confirm / stage-close / goal-change / xkey-authorize) ask a person and
+# `budget-exhausted`'s rule ("used == limit + credits" with blocking gaps) does
+# not use it, so requiring it there is a guaranteed false positive. Only
+# `stalled` always carries one: the 12 `mark_stalled` call sites in
+# conductor.py stamp the frozen stall code (STALL_REASON_CODES, T-07).
+_GATE_REASON_CODE_REQUIRED_KINDS = ("stalled",)
+
+_GATE_PENDING_DECISION_FIELDS = (*_GATE_UNIVERSAL_DECISION_FIELDS, "reason_code")
+
+
+def _gate_node(value: object, *, source: str, sentinel: bool = False) -> dict:
+    """One JSON value node: value + its source anchor (D1/D7). A `None` value
+    on a sentinel field additionally carries the fixed fallback literal."""
+    node: dict = {"value": value, "source": source}
+    if value is None and sentinel:
+        node["sentinel"] = GATE_MISSING_SENTINEL
+    return node
+
+
+def _gate_node_value(node: object) -> object:
+    """Unwrap a value node (tolerates a bare scalar)."""
+    if isinstance(node, dict) and "value" in node:
+        return node["value"]
+    return node
+
+
+def _gate_waited_text(waited_s: object) -> str:
+    """`45s` / `3m` / `3.9h` / `15d` — the waited-time token shared by the
+    doctor text line and the CLI card (same buckets as console.ts)."""
+    seconds = max(0, int(waited_s or 0))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = seconds / 3600.0
+    if hours < 48:
+        return f"{round(hours, 1):.1f}h"
+    return f"{round(seconds / 86400.0)}d"
+
+
+def _gate_scope(gate: object) -> str:
+    """`stage=N key=K` / `scope=none` — identical to the panel/card token."""
+    parts: list[str] = []
+    if gate.stage is not None:
+        parts.append(f"stage={gate.stage}")
+    if gate.key:
+        parts.append(f"key={gate.key}")
+    return " ".join(parts) if parts else "scope=none"
+
+
+def _gate_evidence_path(project_dir: pathlib.Path, ref: str) -> pathlib.Path | None:
+    """Resolve one `evidence_refs` entry (`kind:relpath[#sha][@mtime_ns]`)
+    against `.agenticdoc/` first, then the project root (TS mirror:
+    monitor.ts evidenceFilePath). Read-only; never creates anything."""
+    body = re.sub(r"^[^:]*:", "", ref, count=1)
+    rel = body.split("#")[0].split("@")[0]
+    if not rel:
+        return None
+    for candidate in (project_dir / ".agenticdoc" / rel, project_dir / rel):
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:  # pragma: no cover - transient filesystem race
+            continue
+    return None
+
+
+def _gate_created_epoch(created_at: str) -> float | None:
+    """`created_at` as a POSIX timestamp, or None when unparsable."""
+    probe = created_at[:-1] + "+00:00" if created_at.endswith("Z") else created_at
+    try:
+        parsed = datetime.datetime.fromisoformat(probe)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.timestamp()
+
+
+def _roadmap_validation(project_dir: pathlib.Path) -> dict:
+    """`validate_roadmap` visibility (AC-031 / VC-049): the doctor is the
+    first production caller of the semantic validator besides
+    roadmap_check.py. Read-only; a missing roadmap is not an error."""
+    path = roadmap_protocol.roadmap_path(project_dir)
+    section: dict = {
+        "path": str(path),
+        "exists": path.is_file(),
+        "problems": [],
+        "error": None,
+    }
+    if not section["exists"]:
+        return section
+    try:
+        parsed = roadmap_protocol.load_roadmap(path)
+    except roadmap_protocol.RoadmapError as exc:
+        section["error"] = str(exc)
+        return section
+    except OSError as exc:
+        section["error"] = str(exc)
+        return section
+    try:
+        section["problems"] = [str(problem) for problem in roadmap_protocol.validate_roadmap(parsed)]
+    except Exception as exc:  # pragma: no cover - defensive, must never raise
+        section["error"] = str(exc)
+    return section
+
+
+def _gate_missing_fields(gate: object) -> list[str]:
+    """Decision fields absent on a schema-2 PENDING gate. Legacy v1 files
+    never report missing (I7 / G-D6-1: 34 historical answered gates must not
+    flood the surface).
+
+    The set is per kind (T-20): `expires_at`/`default_action` for every kind,
+    `reason_code` only for :data:`_GATE_REASON_CODE_REQUIRED_KINDS`. A missing
+    field stays an issue/alert (I2/I6), never a note — that is what keeps the
+    "someone bypassed the creator" detector alive."""
+    if gate.gate_schema != gate_protocol.GATE_SCHEMA_CURRENT:
+        return []
+    required = _GATE_UNIVERSAL_DECISION_FIELDS
+    if gate.kind in _GATE_REASON_CODE_REQUIRED_KINDS:
+        required = (*required, "reason_code")
+    return [name for name in required if not getattr(gate, name, None)]
+
+
+def _gate_drift(project_dir: pathlib.Path, gate: object) -> list[dict]:
+    """Evidence rewritten after the gate was created (D5: mtime > created_at)."""
+    created = _gate_created_epoch(gate.created_at)
+    if created is None:
+        return []
+    drift: list[dict] = []
+    for ref in gate.evidence_refs:
+        path = _gate_evidence_path(project_dir, ref)
+        if path is None:
+            continue
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:  # pragma: no cover - transient stat race
+            continue
+        if mtime > created:
+            drift.append(
+                {
+                    "id": gate.id,
+                    "path": str(path),
+                    "mtime": datetime.datetime.fromtimestamp(
+                        mtime, datetime.timezone.utc
+                    ).isoformat(),
+                    "created_at": gate.created_at,
+                }
+            )
+    return drift
+
+
+def _gate_pending_entry(
+    project_dir: pathlib.Path, gate: object, answered: list, now: datetime.datetime
+) -> dict:
+    """One pending gate's machine face (design D6 §D3.3): every scalar carries
+    a `source` or `formula+inputs`; an absent v2 value carries the sentinel."""
+    source = f"gates/{gate.id}.md"
+    created_epoch = _gate_created_epoch(gate.created_at)
+    waited_s = (
+        int(max(0.0, now.timestamp() - created_epoch)) if created_epoch is not None else None
+    )
+    evidence: list[dict] = []
+    drift_detail: str | None = None
+    for ref in gate.evidence_refs:
+        path = _gate_evidence_path(project_dir, ref)
+        record: dict = {
+            "ref": ref,
+            "path": str(path) if path is not None else None,
+            "mtime": None,
+            "bytes": None,
+            "drift": False,
+        }
+        if path is not None:
+            try:
+                stat = path.stat()
+                record["mtime"] = datetime.datetime.fromtimestamp(
+                    stat.st_mtime, datetime.timezone.utc
+                ).isoformat()
+                record["bytes"] = stat.st_size
+                if created_epoch is not None and stat.st_mtime > created_epoch:
+                    record["drift"] = True
+                    drift_detail = f"mtime={record['mtime']}, gate_created={gate.created_at}"
+            except OSError:  # pragma: no cover - transient stat race
+                pass
+        evidence.append(record)
+
+    same_scope = [
+        h for h in answered if h.stage == gate.stage and (h.key or None) == (gate.key or None)
+    ]
+    same_scope.sort(key=lambda h: h.id)
+    history = [
+        {
+            "gate_id": h.id,
+            "kind": h.kind,
+            "scope": _gate_scope(h),
+            "status": h.status,
+            "answered_at": h.answered_at,
+            "note": h.note,
+        }
+        for h in same_scope
+    ]
+    return {
+        "id": gate.id,
+        "kind": gate.kind,
+        "stage": gate.stage,
+        "key": gate.key,
+        "scope": _gate_scope(gate),
+        "path": str(gate.path),
+        "question": gate.question,
+        "context_refs": list(gate.context_refs),
+        "created_at": _gate_node(gate.created_at, source=f"{source}:created_at"),
+        "waited_s": {
+            "value": waited_s,
+            "formula": "now - created_at",
+            "inputs": ["now", f"{source}:created_at"],
+        },
+        "reason_code": _gate_node(gate.reason_code, source=f"{source}:reason_code", sentinel=True),
+        "evidence": evidence,
+        "drift_detail": drift_detail,
+        "default_action": _gate_node(
+            gate.default_action, source=f"{source}:default_action", sentinel=True
+        ),
+        "expires_at": _gate_node(gate.expires_at, source=f"{source}:expires_at", sentinel=True),
+        "loop": gate.loop,
+        "used_rounds": gate.used_rounds,
+        "round_limit": gate.round_limit,
+        "credits_used": gate.credits_used,
+        "constraints": list(gate.constraints) if gate.constraints else None,
+        "open_items": gate.open_items,
+        "verdicts_final": gate.verdicts_final,
+        "goal_sha256": gate.goal_sha256,
+        "proposal_sha256": gate.proposal_sha256,
+        "roadmap_validation": gate.roadmap_validation,
+        "answer_source": gate.answer_source,
+        "answer_entry": {
+            "value": f"/autopilot gate {gate.id} approve|reject --note <text>",
+            "source": "console.ts:195/208",
+        },
+        "history": history,
+    }
+
+
+# ── Cross-key prose-authorization scan (T-24 / VC-048, AC-031 / G11) ─────────
+#
+# The machine carrier for a cross-key repair authorization is an ANSWERED
+# `xkey-authorize` gate: `conductor._xkey_ensure_gate` writes the request id
+# into `context_refs` and the gate's answer is the authorization record. The
+# path actually seen in production is a hand-written `decision:` line inside
+# `_autopilot/evidence/cross-key-repair-request-*.md` (design D1 §6.2 P4). That
+# path has no schema, so it can only be detected by a read-only scan - and it
+# must be judged UNAUTHORIZED (fail-closed): prose never unlocks anything.
+
+_CROSSKEY_EVIDENCE_REL = (".agenticdoc", "_autopilot", "evidence")
+_CROSSKEY_REQUEST_FILE_RE = re.compile(r"^cross-key-repair-request-.*\.md$")
+_CROSSKEY_REQUEST_ID_RE = re.compile(r"^\s*request_id\s*:\s*(?P<value>.+?)\s*$")
+_CROSSKEY_REQUEST_STATUS_RE = re.compile(r"^\s*status\s*:\s*(?P<value>.+?)\s*$")
+# `decision: <approved|rejected> by <who> at <ts>` (design D1 §6.2 P4),
+# optionally wrapped in `**…**`. Anchored at the line start so the template
+# line the request file itself prescribes (which carries `<approved|rejected>`
+# / `<who>` placeholders inside backticks) is never mistaken for an answer.
+_CROSSKEY_DECISION_RE = re.compile(
+    r"^\s*\*{0,2}\s*decision\s*:\s*(?P<verdict>approved|rejected)\b"
+    r"(?:\s*\([^)\n]*\))?\s+by\s+(?P<who>[^\s*]+)\s+at\s+(?P<at>[^\s*（(),，]+)",
+    re.IGNORECASE,
+)
+
+
+def _crosskey_prose_decision(text: str) -> dict | None:
+    """The hand-written authorization line of one request file, or None.
+
+    Shape: `decision: <approved|rejected> by <who> at <ts>`, optionally wrapped
+    in `**…**` (FM 20260925-n1: `**decision: approved (R1) by
+    user-via-pm-window at 2026-09-26T03:04:05+00:00**`). This is the scan's
+    ONLY prose detector - the T-24 reverse control monkeypatches it to None and
+    the positive fixture must then go green, proving this predicate fires."""
+    for line in text.splitlines():
+        match = _CROSSKEY_DECISION_RE.match(line)
+        if match is None:
+            continue
+        return {
+            "verdict": match.group("verdict").lower(),
+            "by": match.group("who"),
+            "at": match.group("at"),
+            "line": line.strip(),
+        }
+    return None
+
+
+def _crosskey_field(text: str, pattern: re.Pattern[str]) -> str | None:
+    """First `name: value` line matching `pattern`, value unbackticked."""
+    for line in text.splitlines():
+        match = pattern.match(line)
+        if match is not None:
+            value = match.group("value").strip().strip("`").strip()
+            return value or None
+    return None
+
+
+def _crosskey_machine_carriers(gates_dir: pathlib.Path) -> dict[str, str]:
+    """`request_id -> gate id` for every ANSWERED `xkey-authorize` gate.
+
+    A pending gate is not a carrier: only the answer authorizes. Corrupt gate
+    files are skipped here (the gate queue section reports them as parse
+    errors); they never make a prose authorization look machine-backed."""
+    carriers: dict[str, str] = {}
+    if not gates_dir.is_dir():
+        return carriers
+    for entry in sorted(gates_dir.iterdir()):
+        if gate_protocol.GATE_FILE_RE.match(entry.name) is None or not entry.is_file():
+            continue
+        try:
+            gate = gate_protocol.parse(entry)
+        except (gate_protocol.GateFormatError, OSError):
+            continue
+        if gate.kind != "xkey-authorize" or gate.status == "pending":
+            continue
+        if not gate.context_refs:
+            continue
+        carriers.setdefault(gate.context_refs[0], gate.id)
+    return carriers
+
+
+def _crosskey_prose_scan(project_dir: pathlib.Path) -> dict:
+    """Read-only scan of the off-gate `cross-key-repair-request-*.md` path.
+
+    One entry per request file under `.agenticdoc/_autopilot/evidence/`,
+    judged on whether its authorization has a machine carrier (a linked,
+    already-answered `xkey-authorize` gate). PROSE-ONLY (hand-written
+    `decision:` line, no carrier) is the G11 gap: it is reported and
+    `treated_as_authorized` stays False (fail-closed). Never writes, never
+    creates/answers a gate, never changes xkey semantics."""
+    evidence_dir = project_dir.joinpath(*_CROSSKEY_EVIDENCE_REL)
+    section: dict = {
+        "dir": str(evidence_dir),
+        "exists": evidence_dir.is_dir(),
+        "requests": [],
+        "machine_authorized": 0,
+        "prose_only": 0,
+        "fail_closed": True,
+        "error": None,
+    }
+    if not section["exists"]:
+        return section
+    try:
+        entries = sorted(
+            entry
+            for entry in evidence_dir.iterdir()
+            if entry.is_file() and _CROSSKEY_REQUEST_FILE_RE.match(entry.name) is not None
+        )
+    except OSError as exc:
+        section["error"] = str(exc)
+        return section
+    carriers = _crosskey_machine_carriers(project_dir.joinpath(*_GATE_DIR_REL))
+    for entry in entries:
+        try:
+            text = entry.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            section["requests"].append({
+                "path": str(entry),
+                "request_id": None,
+                "status": None,
+                "machine_authorized": False,
+                "carrier_gate": None,
+                "prose_decision": None,
+                "authorization": "unreadable",
+                "treated_as_authorized": False,
+                "error": str(exc),
+            })
+            continue
+        request_id = _crosskey_field(text, _CROSSKEY_REQUEST_ID_RE)
+        decision = _crosskey_prose_decision(text)
+        carrier = carriers.get(request_id) if request_id else None
+        if carrier is not None:
+            authorization = "machine"
+        elif decision is not None:
+            authorization = "prose"
+        else:
+            authorization = "none"
+        section["requests"].append({
+            "path": str(entry),
+            "request_id": request_id,
+            "status": _crosskey_field(text, _CROSSKEY_REQUEST_STATUS_RE),
+            "machine_authorized": carrier is not None,
+            "carrier_gate": carrier,
+            "prose_decision": decision,
+            "authorization": authorization,
+            "treated_as_authorized": authorization == "machine",
+        })
+    section["machine_authorized"] = sum(
+        1 for request in section["requests"] if request["machine_authorized"]
+    )
+    section["prose_only"] = sum(
+        1 for request in section["requests"] if request["authorization"] == "prose"
+    )
+    return section
+
+
+def _doctor_gates(project_dir: pathlib.Path) -> dict:
+    """Gate queue section (AC-006/012/019/031). Read-only: it never creates a
+    directory or a file; a missing gates directory is an empty queue.
+
+    Fields (design D6 §D4.1): dir/exists/total/pending_count/schema_versions/
+    parse_errors/pending[]/missing_fields[]/drift[]/replayed[]/error plus the
+    AC-031 `roadmap_validation` visibility and the T-24/VC-048
+    `crosskey_prose` off-gate authorization scan."""
+    project_dir = pathlib.Path(project_dir)
+    gates_dir = project_dir.joinpath(*_GATE_DIR_REL)
+    section: dict = {
+        "dir": str(gates_dir),
+        "exists": gates_dir.is_dir(),
+        "total": 0,
+        "pending_count": 0,
+        "schema_versions": {},
+        "parse_errors": [],
+        "pending": [],
+        "missing_fields": [],
+        "drift": [],
+        "replayed": [],
+        "roadmap_validation": _roadmap_validation(project_dir),
+        "crosskey_prose": _crosskey_prose_scan(project_dir),
+        "error": None,
+    }
+    if not section["exists"]:
+        return section
+    try:
+        entries = sorted(entry for entry in gates_dir.iterdir() if entry.is_file())
+    except OSError as exc:
+        section["error"] = str(exc)
+        return section
+
+    parsed_gates: list = []
+    for entry in entries:
+        if _GATE_FILE_RE.match(entry.name) is None:
+            continue
+        section["total"] += 1
+        try:
+            parsed_gates.append(gate_protocol.parse(entry))
+        except (gate_protocol.GateFormatError, OSError) as exc:
+            section["parse_errors"].append({"path": str(entry), "error": str(exc)})
+
+    for gate in parsed_gates:
+        version = str(gate.gate_schema)
+        section["schema_versions"][version] = section["schema_versions"].get(version, 0) + 1
+
+    pending = [gate for gate in parsed_gates if gate.status == "pending"]
+    answered = [gate for gate in parsed_gates if gate.status != "pending"]
+    section["pending_count"] = len(pending)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for gate in pending:
+        section["pending"].append(_gate_pending_entry(project_dir, gate, answered, now))
+        missing = _gate_missing_fields(gate)
+        if missing:
+            section["missing_fields"].append({"id": gate.id, "fields": missing})
+        section["drift"].extend(_gate_drift(project_dir, gate))
+        prior = [
+            h
+            for h in answered
+            if h.kind == gate.kind and h.stage == gate.stage and (h.key or None) == (gate.key or None)
+        ]
+        if prior:
+            latest = max(prior, key=lambda h: h.id)
+            section["replayed"].append(
+                {
+                    "id": gate.id,
+                    "prior_gate": latest.id,
+                    "kind": gate.kind,
+                    "scope": _gate_scope(gate),
+                }
+            )
+    return section
+
+
+def _gates_text_alerted(section: dict) -> bool:
+    """I7 zero-perturbation gate: the `gates:` text line appears only when at
+    least one of I1-I6 (or the I9/T-24 prose-only cross-key alert) fired."""
+    if section.get("parse_errors") or section.get("drift") or section.get("replayed"):
+        return True
+    if (section.get("crosskey_prose") or {}).get("prose_only"):
+        return True
+    missing_ids = {item["id"] for item in section.get("missing_fields") or []}
+    for entry in section.get("pending") or []:
+        if entry["id"] in missing_ids:
+            return True
+        if (_gate_node_value(entry.get("waited_s")) or 0) > 24 * 3600:
+            return True
+    return False
+
+
 def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
     issues: list[str] = []
     suggestions: list[str] = []
@@ -2221,6 +2814,85 @@ def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
         issues.append(
             "autopilot xkey_repair is enabled but the effective verify command is "
             "empty - run 'mw autopilot verify set --project <dir> -- <argv...>'"
+        )
+    # Gate queue (T-13): I1-I6 alerts with fix strings; I7/I8 are handled by
+    # the text layer / JSON-only information and never produce an issue.
+    gates_section = report.get("gates") or {}
+    if gates_section.get("error"):
+        issues.append(
+            f"gate queue unreadable ({gates_section['error']}) - inspect "
+            f"{gates_section.get('dir')}"
+        )
+    for err in gates_section.get("parse_errors") or []:
+        issues.append(
+            f"gate file invalid: {err['path']} ({err['error']}) - "
+            "fix the frontmatter or move the file out of _autopilot/gates"
+        )
+    missing_by_id = {item["id"]: list(item["fields"]) for item in gates_section.get("missing_fields") or []}
+    for entry in gates_section.get("pending") or []:
+        missing = set(missing_by_id.get(entry["id"], ()))
+        if "expires_at" in missing or "default_action" in missing:
+            issues.append(
+                f"gate {entry['id']} ({entry['kind']}, {entry['scope']}) pending since "
+                f"{_gate_node_value(entry['created_at'])} with no expires_at/default_action - "
+                "set the default action or answer the gate "
+                "(AC-019: no implicit permanent retention)"
+            )
+        waited = _gate_node_value(entry.get("waited_s")) or 0
+        review = (
+            f"gate {entry['id']} pending {int(waited // 3600)}h - run "
+            f"'/autopilot gate {entry['id']} approve|reject --note <text>' or "
+            "'/autopilot gates' to review"
+        )
+        if waited > 72 * 3600:
+            issues.append(review)
+        elif waited > 24 * 3600:
+            suggestions.append(review)
+        extra = missing - {"expires_at", "default_action"}
+        if extra:
+            suggestions.append(
+                f"gate {entry['id']} is schema 2 but missing {', '.join(sorted(extra))} - "
+                "the conductor fills them on the next write; rendering shows "
+                f"'{GATE_MISSING_SENTINEL}'"
+            )
+    for drift in gates_section.get("drift") or []:
+        suggestions.append(
+            f"gate {drift['id']} evidence {drift['path']} was modified after the gate "
+            f"(mtime {drift['mtime']} vs {drift['created_at']}) - re-derive the evidence "
+            "before answering"
+        )
+    for replay in gates_section.get("replayed") or []:
+        issues.append(
+            f"gate {replay['id']} repeats ({replay['kind']}, {replay['scope']}) of answered "
+            f"{replay['prior_gate']} - check gate consumption (D1) before answering"
+        )
+    # T-24 / VC-048 (G11): an off-gate `decision:` line with no answered
+    # `xkey-authorize` carrier is prose-only. Report it and keep the
+    # fail-closed verdict ("treated as unauthorized") - the issue only makes
+    # it visible, it never unlocks anything.
+    crosskey_section = gates_section.get("crosskey_prose") or {}
+    for request in crosskey_section.get("requests") or []:
+        if request.get("authorization") != "prose":
+            continue
+        decision = request.get("prose_decision") or {}
+        label = request.get("request_id") or request.get("path")
+        issues.append(
+            f"cross-key repair request {label} is authorized by prose only "
+            f"(decision: {decision.get('verdict')} by {decision.get('by')} at "
+            f"{decision.get('at')}) with no answered xkey-authorize gate "
+            f"({request.get('path')}) - treated as unauthorized (VC-048), raise/answer "
+            "an xkey-authorize gate to authorize"
+        )
+    roadmap_section = gates_section.get("roadmap_validation") or {}
+    if roadmap_section.get("error"):
+        suggestions.append(
+            f"roadmap unusable ({roadmap_section['error']}) - run "
+            "'python autopilot/roadmap_check.py --project <dir>'"
+        )
+    for problem in roadmap_section.get("problems") or []:
+        suggestions.append(
+            f"roadmap invalid: {problem} - validate_roadmap ran but the conductor does "
+            "not enforce it yet"
         )
     if report["bundle"].get("stale"):
         suggestions.append(
@@ -2311,6 +2983,7 @@ def doctor_report(
     report["bundle"] = _doctor_bundle()
     report["target"] = _doctor_target(project_dir)
     report["autopilot"] = _doctor_autopilot(project_dir)
+    report["gates"] = _doctor_gates(project_dir)
     report["dispatch"] = _doctor_dispatch(project_dir)
     report["pi_shell"] = ensure_pi_shell_path(env=os.environ, fix=fix)
     if fix and report["pi_shell"].get("status") in ("filled", "replaced"):
@@ -2420,6 +3093,22 @@ def format_doctor_text(report: dict) -> str:
         lines.append(
             "autopilot: xkey_repair enabled but verify command empty - "
             "run 'mw autopilot verify set --project <dir> -- <argv...>'"
+        )
+    # Gate queue row: emitted only when I1-I6 fire, so a fully healthy project
+    # keeps the existing text output unchanged (I7 zero-perturbation).
+    gates_section = report.get("gates")
+    if gates_section is not None and _gates_text_alerted(gates_section):
+        pending = gates_section.get("pending") or []
+        oldest = max((_gate_node_value(e.get("waited_s")) or 0) for e in pending) if pending else 0
+        crosskey_prose_only = (gates_section.get("crosskey_prose") or {}).get("prose_only") or 0
+        prose_suffix = (
+            f", {crosskey_prose_only} prose-only cross-key" if crosskey_prose_only else ""
+        )
+        lines.append(
+            f"gates: {gates_section['pending_count']} pending "
+            f"({_gate_waited_text(oldest)} oldest, "
+            f"{len(gates_section.get('parse_errors') or [])} parse error(s), "
+            f"{len(gates_section.get('drift') or [])} drift{prose_suffix})"
         )
     # pi shellPath row (fresh-machine shell bootstrap)
     pi_shell = report.get("pi_shell")

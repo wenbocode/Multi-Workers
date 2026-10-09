@@ -3,6 +3,7 @@
 - 波次: **2** · 依赖: T-05, T-06
 - 写面（独占）: 
   - `packages/multi-workers/autopilot/conductor.py`（命题/自动决策段）
+  - `packages/multi-workers/autopilot/timeline.py`（`Timeline.append` 扩展：发出可选 `data` 载荷 —— T-02 只放开了 TS 读取侧）
   - `packages/multi-workers/test_autopilot_auto_decision.py`（新建）
 - AC: AC-016, AC-017, AC-018, AC-019, AC-020, AC-024, AC-025, AC-029 · VC: VC-018, VC-019, VC-020, VC-021, VC-022, VC-023, VC-033, VC-034, VC-035, VC-036, VC-046, VC-047
 - 基线: `4a207ecfb`（改动前先核对 HEAD 与写面未被他人改动）
@@ -20,6 +21,7 @@
 - `auto_gate_mode` 三态：`off`（行为与今天一致）/ `shadow`（只写账本、状态零改动）/ `live`（执行）；配额复用 P1–P9；**熔断状态落盘**（重启后仍熔断）；熔断动作 = 升级给人。
 - `gate-auto-revoke` + 消费集合 = `answered − revoked`（按 `decision_id`）。
 - 对账：`claimed_done ∧ ¬bound_meets` ⇒ `evidence-reconciliation` 事件 + **拦新的 stage-close 转换**（`:628-630` 之前加前置）；历史只 warn 不回退。
+- `Timeline.append` 扩展（T-02 遗留）：Python 写入口当前只写 `ts/seq/ev/key/stage/detail`，**不写 `data`**；TS 读取侧已放开可选 `data`（T-02 落）。本卡必须让 append 能发出 `data` 对象，否则 `gate-auto-decision` 的权威载荷写不进去。T-08 的 `review-decided`/`review-escalated` 复用这条通路。
 
 ## 契约（不得重定义）
 
@@ -46,6 +48,19 @@
 - 本卡与 T-05 同文件且是最大改动面 ⇒ 严格串行；建议先落谓词（纯函数 + 单测）再接触执行链。
 - CS 侧的 `stage-close` 事实面**只作守卫**（必要不充分）：过了守卫**不等于**放行，仍归 case 3 —— 这句必须写进代码注释，防止后人把守卫当许可证。
 - `xkey-authorize` / `goal-change` 的政策面**永不自动**。
+
+## T-06 交付接口（消费方须知，PM 于 T-06 回执后补）
+
+`autopilot/evidence.py` 已落地（20/20 绿）：`snapshot(paths)` / `changed(before, after)` / `evidence_digest` /
+`write_sidecar` / `record_snapshot(reason=created|consumed)` / `resolve_value` / `binding_of` / `resolve`。
+本卡接线时必须一并处理 T-06 交出的 6 条残留：
+
+1. **重放绑定**：门被归档而 sidecar 缺失时，重用 id 会误绑旧 sidecar ⇒ 必须比对 `gate_file.sha256` 再决定 `bound`。
+2. **加锁**：`evidence.py` **无内部锁** ⇒ 一切 sidecar 读写必须在 `.mw/gates.lock` 内调用。
+3. **成本上界**：指针集合只覆盖**末轮**（否则 FM 已被 6684 门洪泛过）。
+4. **`partial` 不等于篡改**：`evidence_digest` 含 `mtime_ns`，一次良性 `touch` 也会翻 `partial` ⇒ 判据须结合 sha256 差集，不能只看 digest。
+5. **损坏 sidecar 保持 `unbound`**（fail-closed，正确方向）：自动决策必须因此**升级给人**，不得当作 `bound`。
+6. **无 GC/归档策略**：FM 有 6684 个洪泛门 ⇒ sidecar 数量会线性增长，本卡不建 GC（记入 `achieved.md` 遗留）。
 
 ## 回执
 

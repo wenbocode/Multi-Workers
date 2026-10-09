@@ -33,22 +33,34 @@
  *   /autopilot roadmap                stage summary view
  */
 
+import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
 import { windowClaimId } from "../pm/ui-bridge.ts";
 import { acquireLock, type LockOptions } from "../shared/file-lock.ts";
 import { getMwStatus, restartMw, serveStaleness, startMw } from "../shared/mw-runner.ts";
 import { answerGate } from "./gate-writer.ts";
-import { isMonitorActive, MONITOR_WIDGET_ID, type readMonitorState, startMonitor, stopMonitor } from "./monitor.ts";
+import {
+	evidenceFilePath,
+	isMonitorActive,
+	MONITOR_WIDGET_ID,
+	readAutoGateMode,
+	type readMonitorState,
+	startMonitor,
+	stopMonitor,
+} from "./monitor.ts";
 import {
 	type AutopilotConfig,
 	configLockPath,
 	deriveStatusModel,
+	type GateRecord,
 	gatesDir,
 	gatesLockPath,
 	listGates,
+	MISSING_FIELD_SENTINEL,
 	nonBeatFilter,
 	queryTimeline,
+	type RoadmapStage,
 	readConfig,
 	readRoadmap,
 	renderStatusText,
@@ -177,24 +189,263 @@ function cmdStatus(pi: ExtensionAPI, ctx: ExtensionCommandContext, projectDir: s
 	ctx.ui.notify(json ? JSON.stringify(result.model.status, null, 2) : renderStatusText(result.model), "info");
 }
 
-// ── /autopilot gates (AC-015 pending queue) ──────────────────────────────────
+// ── /autopilot gates (AC-015 pending queue, AC-026 13-line card) ─────────────
+
+/** Per-kind consequence table for the card's A/R line. Code constants only —
+ * no prose derivation and no model call (design D3.2 L3). */
+const GATE_ACTIONS: Record<string, { approve: string; reject: string; reversible: string }> = {
+	"stage-confirm": {
+		approve: "stage opens, its keys become eligible",
+		reject: "stage stays halted until a new proposal",
+		reversible: "no",
+	},
+	"stage-close": {
+		approve: "stage -> closed, next stage-confirm opens",
+		reject: "stage -> halted, roadmap edit required",
+		reversible: "no",
+	},
+	stalled: {
+		approve: "one resume round granted for the key",
+		reject: "key stays stalled (terminal)",
+		reversible: "yes",
+	},
+	"budget-exhausted": {
+		approve: "one resume round granted for the loop",
+		reject: "loop stays exhausted (terminal)",
+		reversible: "yes",
+	},
+	"goal-change": {
+		approve: "new goal adopted, keys re-validate",
+		reject: "goal change refused, halt and report",
+		reversible: "no",
+	},
+	"xkey-authorize": {
+		approve: "cross-key write ticket authorized",
+		reject: "ticket refused, blocker recorded",
+		reversible: "no",
+	},
+};
+
+/** Card line width cap: each gate renders EXACTLY 13 lines, each <= 110 cols. */
+const GATE_CARD_LINE_MAX = 110;
+
+function cardClamp(value: string, max: number): string {
+	return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+}
+
+function cardLine(value: string): string {
+	return cardClamp(value, GATE_CARD_LINE_MAX);
+}
+
+/** "45s" / "3m" / "3.9h" / "15d" — waited-time for the card's L1. */
+function formatWaited(ms: number): string {
+	const s = Math.max(0, Math.floor(ms / 1000));
+	if (s < 60) return `${s}s`;
+	const m = Math.floor(s / 60);
+	if (m < 60) return `${m}m`;
+	const h = ms / 3_600_000;
+	if (h < 48) return `${(Math.round(h * 10) / 10).toFixed(1)}h`;
+	return `${Math.round(ms / 86_400_000)}d`;
+}
+
+/** `stage=N` / `key=K` scope token (identical to the monitor panel's). */
+function gateScope(g: GateRecord): string {
+	const parts: string[] = [];
+	if (g.stage !== null) parts.push(`stage=${g.stage}`);
+	if (g.key !== null && g.key !== "") parts.push(`key=${g.key}`);
+	return parts.length === 0 ? "scope=none" : parts.join(" ");
+}
+
+/** Same-scope key for L8/L11 (stage + key). Answered gates of any kind in the
+ * same scope count as replay history, but a keyed pending gate never inherits
+ * a stage-level (keyless) answered gate as its history. */
+function gateScopeKey(g: GateRecord): string {
+	return `${g.stage ?? "-"}|${g.key ?? ""}`;
+}
+
+/** One evidence descriptor: `relpath (bytesB, sections=[...], mtime=iso)`. */
+function describeEvidence(projectDir: string, ref: string): string {
+	const body = ref.replace(/^[^:]*:/, "");
+	const rel = body.split("#")[0].split("@")[0] || ref;
+	const file = evidenceFilePath(projectDir, ref);
+	if (file === null) return `${rel} (${MISSING_FIELD_SENTINEL})`;
+	try {
+		const stat = fs.statSync(file);
+		const sections = fs
+			.readFileSync(file, "utf8")
+			.split(/\r\n|\r|\n/)
+			.filter((line) => line.startsWith("## "))
+			.map((line) => line.slice(3).trim())
+			.filter((name) => name !== "");
+		const sectionText = sections.length === 0 ? "[]" : `[${sections.slice(0, 4).join(",")}]`;
+		return `${rel} (${stat.size}B, sections=${sectionText}, mtime=${new Date(stat.mtimeMs).toISOString()})`;
+	} catch {
+		return `${rel} (${MISSING_FIELD_SENTINEL})`;
+	}
+}
+
+/** `DRIFT(...)` suffix when the newest evidence mtime is newer than the gate.
+ * Same judgement as the monitor panel (design D5): mtime > created_at. */
+function evidenceDrift(projectDir: string, refs: string[], createdAt: string): string | null {
+	const createdMs = Date.parse(createdAt);
+	if (Number.isNaN(createdMs)) return null;
+	let newestMs = Number.NEGATIVE_INFINITY;
+	for (const ref of refs) {
+		const file = evidenceFilePath(projectDir, ref);
+		if (file === null) continue;
+		try {
+			const mtimeMs = fs.statSync(file).mtimeMs;
+			if (mtimeMs > newestMs) newestMs = mtimeMs;
+		} catch {
+			// transient stat race — skip this ref
+		}
+	}
+	if (!Number.isFinite(newestMs) || newestMs <= createdMs) return null;
+	return `mtime=${new Date(newestMs).toISOString()}, gate_created=${new Date(createdMs).toISOString()}`;
+}
+
+/** `key:verdict` summary from the verdicts_final snapshot (L5). */
+function verdictSummary(value: unknown): string {
+	if (!Array.isArray(value)) return MISSING_FIELD_SENTINEL;
+	const parts: string[] = [];
+	for (const item of value) {
+		if (typeof item !== "object" || item === null) continue;
+		const row = item as Record<string, unknown>;
+		const key = typeof row.key === "string" ? row.key : "?";
+		const verdict = typeof row.verdict === "string" ? row.verdict : "?";
+		parts.push(`${key}:${verdict}`);
+	}
+	return parts.length === 0 ? MISSING_FIELD_SENTINEL : parts.join(",");
+}
+
+function jsonSummary(value: unknown): string {
+	return value === null || value === undefined ? MISSING_FIELD_SENTINEL : JSON.stringify(value);
+}
+
+/** Keys that depend (transitively) on the gate's key, or every key of a
+ * stage-level gate's stage. Null when the roadmap/stage is unavailable. */
+function downstreamKeys(stage: RoadmapStage | undefined, gate: GateRecord): string[] | null {
+	if (stage === undefined) return null;
+	if (gate.key === null || gate.key === "") return stage.keys.map((k) => k.key);
+	const found = new Set<string>();
+	let grew = true;
+	while (grew) {
+		grew = false;
+		for (const k of stage.keys) {
+			if (found.has(k.key)) continue;
+			if (k.dependsOn.includes(gate.key) || k.dependsOn.some((d) => found.has(d))) {
+				found.add(k.key);
+				grew = true;
+			}
+		}
+	}
+	return [...found];
+}
+
+/** The /autopilot gates card: header + EXACTLY 13 lines per pending gate, in a
+ * fixed order, every line <= 110 columns (AC-026 / design D3.2). Missing v2
+ * fields render the one sentinel literal — never prose, never a guess. */
+export function renderGateCards(gates: GateRecord[], projectDir: string, nowMs: number): string[] {
+	const pending = gates.filter((g) => g.status === "pending");
+	if (pending.length === 0) return [`no pending gates (${gates.length} total)`];
+	const roadmap = readRoadmap(projectDir);
+	const stages = roadmap.ok ? roadmap.stages : [];
+	const autoMode = readAutoGateMode(projectDir);
+	const lines: string[] = [`${pending.length} pending gate(s):`];
+	for (const g of pending) {
+		const stage = g.stage === null ? undefined : stages.find((s) => s.number === g.stage);
+		const createdMs = Date.parse(g.createdAt);
+		const waited = Number.isNaN(createdMs) ? MISSING_FIELD_SENTINEL : formatWaited(Math.max(0, nowMs - createdMs));
+		const scope = gateScope(g);
+		const action = GATE_ACTIONS[g.kind];
+		const approve = action === undefined ? MISSING_FIELD_SENTINEL : action.approve;
+		const reject = action === undefined ? MISSING_FIELD_SENTINEL : action.reject;
+		const reversible = action === undefined ? MISSING_FIELD_SENTINEL : action.reversible;
+		const goal = stage === undefined || stage.goal === "" ? MISSING_FIELD_SENTINEL : stage.goal;
+		const src = g.contextRefs.length > 1 ? g.contextRefs[1] : MISSING_FIELD_SENTINEL;
+		const prior = gates.filter((h) => h.id !== g.id && h.status !== "pending" && gateScopeKey(h) === gateScopeKey(g));
+		const history =
+			prior.length === 0
+				? "none"
+				: prior.map((h) => `${h.id} [${h.kind}] ${gateScope(h)} ${h.status} ${h.answeredAt ?? "—"}`).join("; ");
+		const withNote = prior.filter((h) => h.note !== null && h.note !== "");
+		const lastNote = withNote[withNote.length - 1];
+		const priorNote = lastNote === undefined ? "none" : `[${lastNote.id}] ${lastNote.note}`;
+		const constraints = g.constraints.length === 0 ? MISSING_FIELD_SENTINEL : g.constraints.join("; ");
+		const downstream = downstreamKeys(stage, g);
+		const impact =
+			downstream === null
+				? MISSING_FIELD_SENTINEL
+				: `downstream=${downstream.length} keys [${downstream.slice(0, 5).join(",")}]`;
+		const roadmapStatus = stage === undefined ? MISSING_FIELD_SENTINEL : stage.status;
+		const qTail = ` (full: ${g.path})`;
+		const evidence =
+			g.evidenceRefs.length === 0
+				? `evidence: ${MISSING_FIELD_SENTINEL}`
+				: `evidence: ${g.evidenceRefs
+						.slice(0, 3)
+						.map((ref) => describeEvidence(projectDir, ref))
+						.join("; ")}${g.evidenceRefs.length > 3 ? ` +${g.evidenceRefs.length - 3} more` : ""}${
+						evidenceDrift(projectDir, g.evidenceRefs, g.createdAt) === null
+							? ""
+							: ` DRIFT(${evidenceDrift(projectDir, g.evidenceRefs, g.createdAt)})`
+					}`;
+
+		lines.push(cardLine(`${g.id} [${g.kind}] ${scope} created=${g.createdAt} waited=${waited}`));
+		lines.push(cardLine(`Q: ${cardClamp(g.question, Math.max(0, GATE_CARD_LINE_MAX - 3 - qTail.length))}${qTail}`));
+		lines.push(
+			cardLine(
+				`A: approve = ${approve} (reversible: ${reversible}) | R: reject = ${reject} (reversible: ${reversible})`,
+			),
+		);
+		lines.push(
+			cardLine(
+				`goal: ${cardClamp(goal, 60)} | goal_sha256=${g.goalSha256 ?? MISSING_FIELD_SENTINEL} | ` +
+					`proposal_sha256=${g.proposalSha256 ?? MISSING_FIELD_SENTINEL} | roadmap_validation=${jsonSummary(g.roadmapValidation)}`,
+			),
+		);
+		lines.push(
+			cardLine(
+				`reason: ${g.reasonCode ?? MISSING_FIELD_SENTINEL} src="${cardClamp(src, 60)}" | ` +
+					`verdict: l3=${verdictSummary(g.verdictsFinal)}`,
+			),
+		);
+		lines.push(cardLine(evidence));
+		lines.push(
+			cardLine(
+				`impact: ${impact} | stage-close: ${g.kind === "stage-close" ? "this gate" : "na"} | ` +
+					`next-stage: na | roadmap: ${roadmapStatus}`,
+			),
+		);
+		lines.push(cardLine(`history: ${history}`));
+		lines.push(
+			cardLine(
+				`default: ${g.defaultAction ?? MISSING_FIELD_SENTINEL} | ttl: ${g.expiresAt ?? MISSING_FIELD_SENTINEL} | auto=${autoMode}`,
+			),
+		);
+		lines.push(
+			cardLine(
+				`budget: loop=${g.loop ?? MISSING_FIELD_SENTINEL} used=${g.usedRounds ?? MISSING_FIELD_SENTINEL}/${
+					g.roundLimit ?? MISSING_FIELD_SENTINEL
+				} credits=${g.creditsUsed ?? MISSING_FIELD_SENTINEL}`,
+			),
+		);
+		lines.push(cardLine(`constraints: ${cardClamp(constraints, 50)} | prior: ${cardClamp(priorNote, 40)}`));
+		lines.push(
+			cardLine(`open-items: ${g.openItems === null ? MISSING_FIELD_SENTINEL : JSON.stringify(g.openItems)}`),
+		);
+		lines.push(
+			cardLine(
+				`answer: /autopilot gate ${g.id} approve|reject --note <text>  expected: ${g.answerSource ?? MISSING_FIELD_SENTINEL}`,
+			),
+		);
+	}
+	return lines;
+}
 
 function cmdGates(ctx: ExtensionCommandContext, projectDir: string): void {
 	const { gates, errors } = listGates(projectDir);
-	const pending = gates.filter((g) => g.status === "pending");
-	const lines: string[] = [];
-	if (pending.length === 0) {
-		lines.push(`no pending gates (${gates.length} total)`);
-	} else {
-		lines.push(`${pending.length} pending gate(s):`);
-		for (const g of pending) {
-			const scope = [g.stage !== null ? `stage=${g.stage}` : null, g.key !== null ? `key=${g.key}` : null]
-				.filter((s) => s !== null)
-				.join(" ");
-			lines.push(`  ${g.id} [${g.kind}]${scope === "" ? "" : ` ${scope}`} — ${g.question} (created ${g.createdAt})`);
-			lines.push(`    answer: /autopilot gate ${g.id} approve|reject [--note <text>]  (${g.path})`);
-		}
-	}
+	const lines = renderGateCards(gates, projectDir, Date.now());
 	for (const e of errors) lines.push(`warning: ${e}`);
 	ctx.ui.notify(lines.join("\n"), "info");
 }

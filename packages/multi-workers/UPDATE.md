@@ -67,6 +67,7 @@ skill 克隆是 **pull --ff-only 自远端**（只认已 push 的 commit）。�
 | `/mw status` / `doctor [fix]` | 项目窗口 | — | serve 状态（含 STALE CODE 判定）/ 全链路诊断 | — | doctor 含 bundle、launcher log、队列、活性、凭据、派发档 |
 | `/mw model set <role> <prefix/model>` | 项目窗口 | role: main/coding/review/research | 写 `.mw/dispatch.yml`（pi 窗口内先行 registry 校验，错 id 拒写） | worker role **下次 spawn**（无需重启 serve）；`main` 下次窗口启动 | 配置面而非代码面，常与更新混问 |
 | `mw autopilot verify set\|show\|clear` | 项目/机器 | `set --project <dir> [--timeout SEC] -- <argv...>`；`show --project <dir> [--json]`；`clear --project <dir>` | 项目层写 `.agenticdoc/_autopilot/config.json` 的四个 xkey 键（dedicated lock 内 RMW + dry-run）；`show` 合并机器层 `~/.agents/autopilot-defaults.json`（只允许覆盖 `xkey_verify_cmd`/`xkey_verify_cwd`，空值即未决定）并逐字段报 origin | 下次 conductor tick（serve 无需重启；CLI 代码变更才需重启 serve） | `--project` 必填且在 `--` 之前；越域机器键告警并忽略；`clear` 永不删除文件；两侧须同版本（先 `mw build --install` 再重启 serve） |
+| `mw autopilot gates --project <dir> [--json]` | 项目 | `--project`（必填）、`--json` | 只读列出 pending gate：文本 = 层 B 卡片（`1 + 13*N` 行，缺值渲染为唯一哨兵 `unknown (no field)`）；`--json` = 与 `mw doctor --json` 的 `gates` 段同源 | 即时 | 零写（不建目录/文件）；全绿项目文本为 `no pending gates (N total)`；pi 窗口内用 `/autopilot gates` 同源转发 |
 | `/reload` / 重启 pi 窗口 | 窗口 | — | 刷新 skill 摘要 + goal 门禁 / 重载扩展 bundle + dist | — | 扩展 bundle 只在进程启动时加载 |
 
 ## 3. 场景 → 最小动作
@@ -147,3 +148,37 @@ S6 验证
    additive merge，属例外通道。
 8. **写文件纪律**：自动化更新脚本一律遵守框架内置坑点 B-001（先算后写 / 原子替换），
    见 `.agents/skills/agentic-task` pm-mind「框架内置坑点」。
+
+## 6. Gate schema v2 / `auto_gate_mode` 升级说明（mw-autopilot-slot-capacity）
+
+本 key 重设计了 autopilot 的 gate 命题面与三分处置（case 1 自动决策 / case 2 待复核 / case 3 升级人工）。
+对使用者的可见面如下；**默认配置下行为与升级前逐字节一致**。
+
+### 6.1 新配置键 `auto_gate_mode`
+
+| 字段 | 类型 | 默认 | 取值 | 说明 |
+|---|---|---|---|---|
+| `auto_gate_mode` | str | `off` | `off` / `shadow` / `live` | gate 自动决策开关（AC-018 kill switch），fail-closed 枚举 |
+
+- 写在哪里：项目层 `.agenticdoc/_autopilot/config.json`（沿用既有配置面）。机器层 `~/.agents/autopilot-defaults.json` **只**允许覆盖 `xkey_verify_cmd`/`xkey_verify_cwd`；`auto_gate_mode` 故意不进 `EFFECTIVE_KEYS`，机器层写它会被报为越域并忽略。
+- `off`（默认）：**与升级前逐字节一致** —— 不写台账行、不落新字段、不改 gate/roadmap 状态、不产生 `gate-auto-decision` 事件。只读呈现面仍会显示 gate 新字段与 `auto=off`。
+- `shadow`：每个 gate 写一行台账（`executed=false`），零状态变更，用于积累 `shadow -> live` 门槛所需的样本与反例。
+- `live`：只对两条可自动执行的规则生效（`budget-exhausted`，以及被证伪的 `stalled` false-negative）；其余种类仍走人工。
+- 非法值（如 `on`）两侧都 fail-closed 拒绝整个配置文件；TS 镜像与 Python 字段逐项一致（parity 语料 55 例，两侧计数锁 14）。
+- 生效时机：conductor 下次 tick（不必重启 serve）；本次改动的 mw Python 代码本身需要各活跃项目 `/mw restart`。
+
+### 6.2 新 gate 字段与呈现哨兵
+
+- gate frontmatter 允许集扩到 **40 字段**（基础 12 + 新增 26 个可选 v2 字段 + 消费 2 字段 `consumed_at`/`consumed_seq`）。**历史 gate 文件无需迁移**：`_REQUIRED_FIELDS` 保持 6 个，缺 `gate_schema` 按 v1 解析，34 个历史门照旧可读。
+- 新建门落盘 **13 键**（`id`、`gate_schema: 2` + 基础字段）；可选字段只在有生产者时才写，缺值不进文件。
+- 呈现哨兵：**`unknown (no field)`**（全仓唯一字面量）。缺失的 v2 值一律渲染成它，绝不从 question/note 散文或 LLM 猜测兜底；已答门不报缺失字段。
+- 三层呈现：
+  - 层 A `/autopilot monitor`：每门 1 行（含 age 与 `DRIFT(...)`，≤110 列），conductor 行带 `auto=off|shadow|live`。
+  - 层 B `/autopilot gates`（pi 窗口）/ `mw autopilot gates`（CLI）：`1 + 13*N` 行卡片，每行 ≤110 列。
+  - 层 C `mw doctor` 的 `gates` 段 + 告警 I1–I8（JSON 出口：`mw doctor --json` 的 `gates` 键）。
+
+### 6.3 升级动作
+
+1. 代码面：`mw build --install`（扩展 bundle + dist）→ 重启 pi 窗口；每个活跃项目 `/mw restart`（mw Python 改动）。
+2. 配置面：需要影子期时在项目 `.agenticdoc/_autopilot/config.json` 加 `"auto_gate_mode": "shadow"`；保持默认则**什么都不用做**。
+3. 验证：`mw doctor` 的 `gates:` 行、`mw autopilot gates --project <dir>`，以及 `/autopilot monitor` 的 `auto=` 值。

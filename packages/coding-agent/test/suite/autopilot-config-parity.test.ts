@@ -15,7 +15,7 @@
  *   P6 view layering after D-004 was withdrawn (0d11cc22d): a partial file
  *      yields a partial dict from the Python *raw* loader (`config.load_config`),
  *      while the Python *parsed* view (`effective_config.load_effective().values`)
- *      and the TS merged `readConfig` both yield the full 13-key shape. The
+ *      and the TS merged `readConfig` both yield the full 14-key shape. The
  *      cross-side comparison is parsed-vs-parsed; the raw loader has no TS
  *      counterpart because `readConfig` is deliberately merge-on-read.
  *
@@ -116,7 +116,7 @@ const PY_HARNESS = [
 	"        record = {'verdict': 'reject', 'error_fields': error_fields(str(exc))}",
 	"    if loaded is not None:",
 	"        # D-004 withdrawn (0d11cc22d): load_config is the raw loader and",
-	"        # returns only the keys the file carries; the full 13-key view is",
+	"        # returns only the keys the file carries; the full 14-key view is",
 	"        # effective_config.load_effective().values (env={} = project layer",
 	"        # only, no HOME machine defaults -> hermetic measurement).",
 	"        record['raw_keys'] = list(loaded.keys())",
@@ -137,7 +137,7 @@ interface PyCaseResult {
 	error_fields: string[];
 	/** Raw loader (`config.load_config`): only the keys the file carries. */
 	raw_keys?: string[];
-	/** Parsed view (`effective_config.load_effective().values`): always 13. */
+	/** Parsed view (`effective_config.load_effective().values`): always 14. */
 	effective_keys?: string[];
 	before_sha256?: string;
 	after_sha256?: string;
@@ -340,7 +340,7 @@ describe("autopilot config cross-language parity (AC-006 / VC-006)", () => {
 		process.stdout.write(`[VERIFY] P3: py_to_ts_idempotent=${pyToTs} ts_to_py_idempotent=${tsToPy}\n`);
 	});
 
-	it("P6: a partial file yields the raw view (py) and the full 13-key parsed view (py + ts)", () => {
+	it("P6: a partial file yields the raw view (py) and the full 14-key parsed view (py + ts)", () => {
 		const { py, ts } = measure();
 		const expectedKeys = Object.keys(DEFAULT_CONFIG);
 		const partials = singleKeyCases();
@@ -352,12 +352,16 @@ describe("autopilot config cross-language parity (AC-006 / VC-006)", () => {
 			expect(tsCase?.verdict, `${testCase.id}: ts`).toBe("accept");
 			// Python raw loader: only the single written key (no D-004 default fill).
 			expect(pyCase?.raw_keys, `${testCase.id}: py raw load_config keys`).toEqual([key]);
-			// Python parsed view (load_effective().values): full 13-key shape.
-			expect(pyCase?.effective_keys?.length, `${testCase.id}: py parsed key count`).toBe(13);
-			expect([...(pyCase?.effective_keys ?? [])].sort(), `${testCase.id}: py parsed key set`).toEqual([...expectedKeys].sort());
-			// TS readConfig is merge-on-read, i.e. the parsed view: full 13-key shape.
-			expect(tsCase?.keys.length, `${testCase.id}: ts merged key count`).toBe(13);
-			expect([...(tsCase?.keys ?? [])].sort(), `${testCase.id}: ts merged key set`).toEqual([...expectedKeys].sort());
+			// Python parsed view (load_effective().values): full 14-key shape.
+			expect(pyCase?.effective_keys?.length, `${testCase.id}: py parsed key count`).toBe(14);
+			expect([...(pyCase?.effective_keys ?? [])].sort(), `${testCase.id}: py parsed key set`).toEqual(
+				[...expectedKeys].sort(),
+			);
+			// TS readConfig is merge-on-read, i.e. the parsed view: full 14-key shape.
+			expect(tsCase?.keys.length, `${testCase.id}: ts merged key count`).toBe(14);
+			expect([...(tsCase?.keys ?? [])].sort(), `${testCase.id}: ts merged key set`).toEqual(
+				[...expectedKeys].sort(),
+			);
 			// Cross-side comparison is parsed-vs-parsed: TS merged vs Python parsed.
 			// There is no TS raw view to compare against `pyCase.raw_keys`.
 			expect([...(tsCase?.keys ?? [])].sort(), `${testCase.id}: ts merged vs py parsed key set`).toEqual(
@@ -365,11 +369,11 @@ describe("autopilot config cross-language parity (AC-006 / VC-006)", () => {
 			);
 			covered.add(key);
 		}
-		// Every one of the 13 fields must be exercised as the sole key.
+		// Every one of the 14 fields must be exercised as the sole key.
 		expect([...covered].sort()).toEqual([...expectedKeys].sort());
 		process.stdout.write(
 			`[VERIFY] P6: partial_single_key=${partials.length} raw_view_partial=true ` +
-				`effective_view_13=true fields_covered=${covered.size}\n`,
+				`effective_view_14=true fields_covered=${covered.size}\n`,
 		);
 	});
 });

@@ -41,6 +41,14 @@
 | | T-09 三层呈现（TS + doctor 契约） | `monitor.ts`、`console.ts`、`status-model.ts`（字段镜像段） | T-02, T-03 |
 | | T-10 守卫覆盖面 | `xkey-gate-guard.ts` | T-02 |
 | | T-12 归属与超时接线 | `dispatch.py`、`worker-store.ts`、`mw_common.py`（workers 段） | T-03 |
+| | T-15 计数锁刷新（T-03 协调缺口） | 4 个 Python 测试文件 | T-03 |
+| **3** | T-16 归属判据委派（T-12 缺口） | `conductor.py`（`reconcile_orphans`/`_row_belongs_to`）、`monitor.ts`（`:615/:623`） | T-07, T-12 |
+| **2** | T-17 TS 计数锁刷新（T-11 缺口） | `autopilot-console.test.ts` | T-03, T-11 |
+| **3** | T-18 时效默认字段旁路修补（T-08 缺口） | `conductor.py`（goal-change 建门点） | T-08 |
+| **3** | T-19 case 2 生产者接线（T-08 缺口） | `conductor.py`（自动决策段） | T-07, T-08, T-18 |
+| **3** | T-20 `reason_code` 必需集按 kind 收敛 + 闭集写入护栏 | `mw_common.py`、`conductor.py`、2 个测试 | T-07, T-13, T-18, T-19 |
+| **3** | T-21 延后处置留台账行（影子与实动共用） | `conductor.py`（延后段）、(必要则) TS 镜像、1 个测试 | T-07, T-19, T-20 |
+| **3** | T-22 证据行陈旧性审计（`[VERIFY]` 数值实测化） | 4 个测试文件（仅证据行） | T-19, T-21 |
 | **2** | T-07 命题重写 + 自动决策核心 | `conductor.py`（命题/自动决策段） | T-05, T-06 |
 | | T-11 parity 语料重冻 | `test_autopilot_config_parity.py`、`autopilot-config-corpus.json`、TS parity test | T-03, T-09 |
 | | T-13 doctor gate 段 + CLI | `mw_common.py`（doctor 段）、`mw.py` | T-03, T-09, T-12 |
@@ -59,6 +67,8 @@
 - 底座 12（`gates.py:68-81` = `status-model.ts:572-587`，**不重排、不改语义**）：`id` / `kind` / `stage` / `key` / `created_at` / `created_by` / `question` / `context_refs` / `status` / `answered_at` / `answered_by` / `note`
 - 新增 **26**（D6 §D1.1 逐条编号 1..26）：`reason_code` / `evidence_refs` / `loop` / `used_rounds` / `round_limit` / `credits_used` / `observed_at` / `verdicts_final` / `open_items` / `subject_sha256` / `roadmap_validation` / `proposal_sha256` / `goal_sha256` / `constraints` / `goal_sha256_before` / `goal_sha256_after` / `goal_diff` / `write_scope` / `blast_radius` / `answer_source` / `auto_policy_id` / `expires_at` / `evidence_anchor_mtime_ns` / `default_action` / `out_of_band_actions` / `gate_schema`
 - **口径对账（本 plan 权威）**：D-004（消费记录载体）另加 **2** 个字段 `consumed_at` / `consumed_seq`，**不在 D6 的 26 条内** ⇒ 本 key 新增字段总数 = **28**，全部可选、全部不进 `_REQUIRED_FIELDS`。design.md §4.2 的"26"只计 D6 清单。
+- **两种顺序必须分开（T-09 实测澄清，T-15 交叉印证）**：① `FRONTMATTER_FIELDS` = **允许集顺序**（`id, kind, stage, …`，`gate_schema` 在 **第 38 位**，随后 `consumed_at`/`consumed_seq`）⇒ 两侧 parity 断言锁的是这个顺序；② **新建门的落盘键序** = `id, gate_schema, kind, stage, …`（共 13 键，`gate_schema` 紧跟 `id`）⇒ 这是 D6 §D2.1 R4 的渲染顺序规则。本 plan 早先把两者混为一谈（"gate_schema 紧跟 id" 只对渲染顺序成立）。
+- **物化口径（T-15 实测更正，本 plan 权威）**：`FRONTMATTER_FIELDS` = **允许集（40）**，而 `gates.create()` 实际落盘 **13 键**（底座 12 + `gate_schema: 2`，位置紧跟 `id`）—— 可选字段**未写就不物化**。故断言正确形态 = `len(FRONTMATTER_FIELDS) == 40` **且** 新建门的键序断言（13 键）。本 plan 早先写的"刷新到 40 顺序"是笔误：40 若被当作物化键数，就是一条假断言。
 - 具名列表字段 = **`_LIST_FIELDS = {"context_refs", "evidence_refs"}`**（两侧把硬编码特判从"单名"改"集合"；`gates.py:354-364` / `status-model.ts:666`）。**其余结构化字段一律单行 JSON 子串**（`json-list`/`json-obj`），**不得**依赖 YAML 嵌套（`gates.py:38-45`）。
 - 批次纪律（D6 §D1.3）：**P1 字段**（`reason_code`/`evidence_refs`/`loop`/`used_rounds`/`round_limit`/`credits_used`/`observed_at`/`verdicts_final`/`open_items`/`subject_sha256`/`expires_at`/`evidence_anchor_mtime_ns`/`default_action`/`gate_schema` + 消费 2 字段）在本 key 落；**P2 字段**（`constraints`/`write_scope`/`blast_radius`/`answer_source`/`auto_policy_id`/`goal_sha256_before|after`/`goal_diff`/`roadmap_validation`/`proposal_sha256`）**只在数据源到位时写**，否则一律渲染 `unknown (no field)`。
 
@@ -72,7 +82,9 @@
 
 ### 2.3 事件与配置
 
-- 新增事件 **6**：`gate-auto-decision` / `gate-auto-revoke` / `review-decided` / `review-escalated` / `evidence-reconciliation` / `stage-reopen-refused`；TS 侧另补既有缺失项 **`target-config-rejected`** ⇒ 两侧 `EVENT_TYPES` **集合相等**（判据 = 排序后集合相等，不是数量相等）。
+- **守卫覆盖面（T-10 实测确认）**：封堵面 = `_autopilot/**`，但**保留既有 `_autopilot/xkey/**` 豁免**（前 key `xkey-repair-mechanism` D-004/D-005 的有意设计：提案 worker 经工具通道往那里写提案，`conductor.py:3061-3165`）。AC-020/AC-030 只点名审计三件套 + gates，不含 xkey 子树。**残余风险**：被审方仍可往 `_autopilot/xkey/**` 写提案（其可利用性取决于前 key 的授权检查，超出本 key 范围）；bash 文本级启发式在片段缩短为 `_autopilot` 后假阳略增。
+
+- 新增事件 **6**：`gate-auto-decision` / `gate-auto-revoke` / `review-decided` / `review-escalated` / `evidence-reconciliation` / `stage-reopen-refused`；TS 侧另补既有缺失项 **`target-config-rejected`** ⇒ 两侧 `EVENT_TYPES` **集合相等**（判据 = 排序后集合相等，不是数量相等）。**[T-02 实测更正]** `EVENT_TYPES` 是**读取侧 include-set（过滤用）**，写入侧**不校验**（`Timeline.append` 声明 "Never raises"）：集合不等的后果是**观测面静默隐藏**（`console.ts:261` 的 `nonBeatFilter()`），不是写入被拒。
 - 账本：`<root>/.agenticdoc/_autopilot/auto-decisions.jsonl`（append-only）；timeline 行新增可选 `data` 载荷。
 - 配置键：`auto_gate_mode`（str，闭集 `off|shadow|live`，默认 `off`）；**不加入** `EFFECTIVE_KEYS`（维持 2 个 xkey 键）。
 - 权威字段（审计）：`decided_at` / `seq`（conductor 时钟）、`evidence[]`（`{path,sha256,mtime_ns}`）、`rule_id` / `rule_version`（代码常量）、`switch`（`load_effective` 结果 + `config_sha256`）、`decision_id`。**`answered_by`/`answered_at` 只作展示**。
@@ -102,11 +114,21 @@
 | T-09 | 三层呈现 | 1 | AC-007, AC-012, AC-021, AC-026 | VC-008/014/027/028/037/038 | 层 A/B（TS）+ 字段镜像 + DRIFT + 禁 LLM |
 | T-10 | 守卫覆盖面 | 1 | AC-020, AC-030 | VC-025/026 | `xkey-gate-guard.ts` 封堵到 `_autopilot/**` |
 | T-12 | 归属与超时接线 | 1 | AC-013, AC-021 | VC-015/027/028 | 行级 `origin` + `owner_key` 判据 + `timeout:` 渲染 |
+| T-15 | 计数锁刷新（T-03 缺口） | 1 | AC-018, AC-026 | VC-011/024/038 | 4 个 Python 测试文件的 13→14 / 12→40 计数锁（**执行期新增**：T-03 实测该缺口不在 T-11 写面内） |
+| T-16 | 归属判据委派（T-12 缺口） | 3 | AC-021 | VC-027/028 | `reconcile_orphans` 写 `origin`；`_row_belongs_to` 与 `monitor.ts` 委派给唯一权威判据（**执行期新增**：T-12 实测两消费点仍用旧规则，三口径未真正统一） |
+| T-17 | TS 计数锁刷新（T-11 缺口） | 2 | AC-018, AC-026 | VC-011/024 | `autopilot-console.test.ts` 的 13→14 计数/形状锁 + TS 侧 `EFFECTIVE_KEYS` 负断言（**执行期新增**：T-11 实测同类缺口在 TS 侧） |
+| T-18 | 时效默认字段旁路修补（T-08 缺口） | 3 | AC-019 | VC-024 | goal-change 门不走咽喉点 ⇒ 永远缺 `expires_at`/`default_action`、doctor 常报不健康（**执行期新增**：PM 用生产 API 复算发现；P-023 硬规则 4） |
+| T-19 | case 2 生产者接线（T-08 缺口） | 3 | AC-027, AC-028 | VC-039..043 | `defer_key_to_review` 无生产调用者 ⇒ `pending-review` 不可达 ⇒ 三分处置的 case 2 是死代码（**执行期新增**：T-08 自报 + PM 复算确认） |
+| T-20 | `reason_code` 必需集按 kind 收敛 + 闭集护栏 | 3 | AC-019, AC-026 | VC-024 | doctor 对 4/6 类门无条件误报（`reason_code` 被要求在不做机器判定的 kind 上）；且该过宽规则已诱发 T-18 自创契约外值 `goal-md-mtime-moved`（**执行期新增**：PM 逐 kind 实测发现） |
+| T-21 | 延后处置留台账行（影子/实动共用） | 3 | AC-027, AC-028 | VC-039..043 | live 延后无台账行（审计断链）；影子记 `escalate` 而 live 实际 `defer`（**影子失真** ⇒ 用失真样本满足影子门槛）（**执行期新增**：T-19 自报 + PM 读码认定的更重后果） |
+| T-22 | 证据行陈旧性审计 | 3 | AC-019, AC-027 | VC-024/039..043 | T-19 的 `_verify(... auto_decision_rows=0)` 是只打印不校验的**硬编码字面量**，T-21 改语义后成为假声明；审计本 key 全部证据行的同类风险（**执行期新增**：PM 复核 T-21 时发现，P-019 家族） |
 | T-07 | 命题重写 + 自动决策核心 | 2 | AC-016…AC-020, AC-024, AC-025, AC-029 | VC-018…023/033…036/046/047 | 6 门事实面谓词 + 留痕账本 + 配额熔断 + 影子 + 对账拦截面 |
 | T-11 | parity 语料重冻 | 2 | AC-010, AC-018 | VC-011/022 | 语料 53→55 + 计数断言 13→14（两侧） |
 | T-13 | doctor gate 段 + CLI | 2 | AC-006, AC-012, AC-019, AC-031 | VC-007/014/024/049 | 9 段字段 + I1–I8 + `mw autopilot gates --json` |
 | T-08 | 待复核 + 合法重开 | 3 | AC-027, AC-028 | VC-039/040/041/042/043 | `pending-review`（两侧同波）+ 收口前置 + 48h 升级 + `review-decided` |
 | T-14 | 文档 + dist + 全量回归 | 4 | 全部 | 全部 | CHANGELOG/UPDATE/dist + 基线对照 |
+| T-23 | `KEY_STATUSES` 跨语言机器锁（QG 欠债） | 5 | AC-010 | VC-011 | 新增 `autopilot-status-parity.test.ts`：真子进程 dump 取 Python 真值 + 保序相等 + `_DEP_SATISFIED` 内部一致性 + 镜像被消费证明；**收口期由 QG 判定 ⚠️ 后开出**（`evidence/quality-gate-report-20260926-194528.md` Q-VC-011/Q-AC-010），并需核实 T-08 回执里定位不到的 "machine-checked subset proof" 声称 |
+| T-24 | 绕门散文授权的机器判定（QG 欠债） | 6 | AC-031 | VC-048 | 只读 doctor 扫描 `_autopilot/evidence/cross-key-repair-request-*.md`：有机器载体（关联已答 `xkey-authorize` 门）则不报，仅散文 `decision:` 行 ⇒ I 类 issue + fail-closed 视为未授权；**收口期由 QG 判定 ⚠️ 后开出**（同报告 Q-VC-048/Q-AC-031），判据锚点 = FM 真实文件 `:57` + 设计 `design-gate-propositions:373` |
 
 依赖 mermaid（边标签无引号）：
 
@@ -124,10 +146,31 @@ graph LR
     T03 --> T11["T-11 parity 语料"]
     T09 --> T11
     T09 --> T13["T-13 doctor 与 CLI"]
+    T07 --> T16["T-16 归属委派"]
+    T12 --> T16
+    T16 --> T14["T-14 文档与产物"]
+    T03 --> T17["T-17 TS 计数锁"]
+    T11 --> T17
+    T17 --> T14
+    T08 --> T18["T-18 默认字段旁路"]
+    T18 --> T19["T-19 case2 生产者"]
+    T19 --> T14
+    T19 --> T20["T-20 reason_code 收敛"]
+    T20 --> T14
+    T20 --> T21["T-21 延后留痕"]
+    T21 --> T14
+    T21 --> T22["T-22 证据行审计"]
+    T22 --> T14
     T12 --> T13
     T07 --> T08["T-08 待复核"]
     T08 --> T14["T-14 文档与产物"]
     T13 --> T14
+    T02 --> T23["T-23 状态枚举锁"]
+    T08 --> T23
+    T23 --> T14
+    T13 --> T24["T-24 绕门检测"]
+    T07 --> T24
+    T24 --> T14
 ```
 
 ---

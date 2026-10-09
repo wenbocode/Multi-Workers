@@ -5,7 +5,7 @@ CLI is the Python-side writer of the four xkey keys (the TS console writes the
 same file under the same lock). Coverage:
 
 * `set` stores the argv after `--` verbatim (flag-shaped tokens included),
-  completes all 13 config keys, and is byte-idempotent.
+  completes all 14 config keys, and is byte-idempotent.
 * `set` refuses bad input without touching the file: misplaced `--project`,
   empty argv, `--timeout < 1`, an undefined/embedded placeholder, an invalid
   cwd root, a broken existing config, and an unavailable lock.
@@ -118,7 +118,8 @@ def test_set_stores_flag_shaped_tokens_verbatim(
     # The separator itself is consumed, never stored.
     assert "--" in stored["xkey_verify_cmd"]  # ... unless the user passed a second one
     assert set(stored) == set(_cfg.DEFAULT_CONFIG)
-    assert len(stored) == 13
+    # Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
+    assert len(stored) == 14
     _verify("VC-001", argv_tokens=len(tokens), completed_keys=len(stored), verbatim=True)
 
 

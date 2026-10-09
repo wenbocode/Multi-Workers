@@ -10,7 +10,7 @@ Schema (D-105):
     ## Stage 1: <title>
     > goal: <stage goal, required non-empty>
     > status: pending | approved | running | closed | closed-human | halted
-    > key-status: <key>=<running|done|stalled|closed-legacy>, ...
+    > key-status: <key>=<running|done|stalled|closed-legacy|pending-review>, ...
     ### Keys
     | key | role | depends_on |
     |-----|------|-----------|
@@ -60,11 +60,18 @@ STAGE_STATUSES: tuple[str, ...] = (
 )
 
 # Per-key runtime statuses persisted on the key-status line (D-105).
+# `pending-review` (T-08 / D-005) is a NON-terminal deferred-review state: it
+# blocks stage closure (it is not in the closure terminal set), it does NOT
+# unlock dependents (`conductor._DEP_SATISFIED` excludes it) and the conductor
+# does not dispatch it. The enum is a cross-language fail-closed contract
+# (P-021): TS `status-model.KEY_STATUSES` must carry the same values in the
+# same order or one side skips the whole tick on an unknown value.
 KEY_STATUSES: tuple[str, ...] = (
     "running",
     "done",
     "stalled",
     "closed-legacy",
+    "pending-review",
 )
 
 # Field names recognized inside a stage section.

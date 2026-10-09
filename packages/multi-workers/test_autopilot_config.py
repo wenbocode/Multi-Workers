@@ -109,10 +109,13 @@ def test_save_rejects_invalid(tmp_path: pathlib.Path) -> None:
 
 # ── config: no cache short-circuit / defaults / encoding ─────────────────────
 
-def test_default_config_has_13_keys_in_order() -> None:
-    assert len(cfg.DEFAULT_CONFIG) == 13
-    assert list(cfg.DEFAULT_CONFIG)[-1] == "xkey_verify_cwd"
-    assert list(cfg.DEFAULT_CONFIG)[-2] == "xkey_verify_timeout_s"
+def test_default_config_has_14_keys_in_order() -> None:
+    # Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
+    assert len(cfg.DEFAULT_CONFIG) == 14
+    # T-03 appends the v2 auto_gate_mode key last, shifting the xkey tail one slot.
+    assert list(cfg.DEFAULT_CONFIG)[-1] == "auto_gate_mode"
+    assert list(cfg.DEFAULT_CONFIG)[-2] == "xkey_verify_cwd"
+    assert list(cfg.DEFAULT_CONFIG)[-3] == "xkey_verify_timeout_s"
     assert cfg.default_config()["xkey_verify_cwd"] == ""
     _verify("VC-016", default_config_keys=len(cfg.DEFAULT_CONFIG),
             xkey_verify_cwd_default=repr(cfg.DEFAULT_CONFIG["xkey_verify_cwd"]))
@@ -120,7 +123,7 @@ def test_default_config_has_13_keys_in_order() -> None:
 
 def test_partial_file_returns_only_written_keys(tmp_path: pathlib.Path) -> None:
     """load_config never fills defaults: a partial config.json yields exactly
-    the keys it carries. The complete 13-key view has its own sources
+    the keys it carries. The complete 14-key view has its own sources
     (default_config() / effective_config.load_effective)."""
     cfg.invalidate_cache()
     path = cfg.config_path(tmp_path)
@@ -130,9 +133,10 @@ def test_partial_file_returns_only_written_keys(tmp_path: pathlib.Path) -> None:
     assert set(loaded) == {"advance_stall_ticks"}
     assert loaded["advance_stall_ticks"] == 7
     assert "poll_interval_sec" not in loaded  # no default fill
-    # The complete 13-key view has its own sources.
-    assert len(cfg.default_config()) == 13
-    assert len(ec.load_effective(tmp_path).values) == 13
+    # The complete 14-key view has its own sources.
+    # Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
+    assert len(cfg.default_config()) == 14
+    assert len(ec.load_effective(tmp_path).values) == 14
     _verify("VC-016", partial_keys=len(loaded), default_keys=len(cfg.default_config()),
             effective_keys=len(ec.load_effective(tmp_path).values),
             explicit_wins=loaded["advance_stall_ticks"])

@@ -20,7 +20,7 @@ Criteria:
   P6 view layering (D-004 was withdrawn, 0d11cc22d): a partial file yields a
      partial dict from the Python *raw* loader (``config.load_config``), while
      the Python *parsed* view (``effective_config.load_effective().values``)
-     and the TS merged ``readConfig`` both yield the full 13-key shape. The
+     and the TS merged ``readConfig`` both yield the full 14-key shape. The
      cross-side comparison is parsed-vs-parsed; the raw loader has no TS
      counterpart because ``readConfig`` is deliberately merge-on-read.
 
@@ -57,8 +57,8 @@ TS_MODULE = (
     / "agent-team-loop" / "autopilot" / "status-model.ts"
 )
 
-FROZEN_CORPUS_SHA256 = "951987eaf2abebfa256365ed6642ce1ae0b077a2a6a6c18b4f974729c7dc594d"
-FROZEN_CORPUS_COUNT = 53
+FROZEN_CORPUS_SHA256 = "c97eeafc087bc2ef311d4422f84f8359ac5dd2f7f4ce73e1d8c0b4db4ddcf2b6"
+FROZEN_CORPUS_COUNT = 55
 
 KNOWN_FIELDS = list(config.DEFAULT_CONFIG)
 
@@ -163,7 +163,7 @@ def _measure_python(corpus: dict, work: pathlib.Path) -> dict:
     """Seed each payload, read it through both Python views, re-save on accept.
 
     D-004 was withdrawn (0d11cc22d), so ``load_config`` is the *raw* loader:
-    it returns exactly the keys the file carries. The full 13-key view is the
+    it returns exactly the keys the file carries. The full 14-key view is the
     *parsed* view, ``effective_config.load_effective().values`` — a canonical
     write materializes that view, which is what the TS ``saveConfig`` does too,
     so P2/P3 byte parity still compares full-view writes on both sides.
@@ -389,7 +389,7 @@ def test_p6_partial_single_key() -> None:
       * raw: ``config.load_config`` returns exactly the keys the file carries
         (a partial file yields a partial dict — no silent default fill);
       * parsed: ``effective_config.load_effective(root).values`` returns the
-        full 13-key view (same set/order as :func:`config.default_config`).
+        full 14-key view (same set/order as :func:`config.default_config`).
 
     TS ``readConfig`` is merge-on-read (view-side robustness: absent fields
     fall back to defaults), so it is comparable only to the Python *parsed*
@@ -419,11 +419,11 @@ def test_p6_partial_single_key() -> None:
         assert ts[case_id]["verdict"] == "accept", f"{case_id}: ts"
         # Python raw loader: only the single key the file actually carries.
         assert py[case_id]["raw_keys"] == [key], f"{case_id}: py raw key set"
-        # Python parsed view: the full 13-key shape.
-        assert len(py[case_id]["effective_keys"]) == 13, f"{case_id}: py effective key count"
+        # Python parsed view: the full 14-key shape.
+        assert len(py[case_id]["effective_keys"]) == 14, f"{case_id}: py effective key count"
         assert set(py[case_id]["effective_keys"]) == expected_keys, f"{case_id}: py effective key set"
-        # TS readConfig merged (parsed) view: the full 13-key shape.
-        assert len(ts[case_id]["keys"]) == 13, f"{case_id}: ts merged key count"
+        # TS readConfig merged (parsed) view: the full 14-key shape.
+        assert len(ts[case_id]["keys"]) == 14, f"{case_id}: ts merged key count"
         assert set(ts[case_id]["keys"]) == expected_keys, f"{case_id}: ts merged key set"
         # Cross-side parsed comparison: TS merged vs Python effective. Never
         # TS vs the Python raw loader (that view is deliberately partial here).
@@ -434,6 +434,6 @@ def test_p6_partial_single_key() -> None:
     assert covered == expected_keys, sorted(expected_keys - covered)
     print(
         f"[VERIFY] P6: partial_single_key={len(partials)} raw_view_partial=true "
-        f"effective_view_13=true fields_covered={len(covered)}",
+        f"effective_view_14=true fields_covered={len(covered)}",
         flush=True,
     )

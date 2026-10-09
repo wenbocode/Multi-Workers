@@ -337,6 +337,19 @@
       }
     },
     {
+      "id": "enum-auto-gate-mode-invalid",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"auto_gate_mode\": \"on\"}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "auto_gate_mode"
+        ]
+      }
+    },
+    {
       "id": "bigint-2p53",
       "categories": [
         "D6"
@@ -621,6 +634,17 @@
         "D2"
       ],
       "payload_text": "{\"xkey_verify_cwd\": \"\"}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-auto_gate_mode",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"auto_gate_mode\": \"live\"}",
       "expected": {
         "verdict": "accept",
         "error_fields": []
