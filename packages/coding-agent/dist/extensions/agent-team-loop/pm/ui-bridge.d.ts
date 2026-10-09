@@ -215,8 +215,8 @@ export declare function resolveDispatchType(cli: string, requested: string): {
     ok: false;
     message: string;
 };
-/** Build the task.md frontmatter (type / model / model-reason) for one dispatch
- * and the echo line that tells the PM which layer supplies the model
+/** Build the task.md frontmatter (type / phase / images / model / model-reason)
+ * for one dispatch and the echo line that tells the PM which layer supplies the model
  * (design D-001~D-007). Shared by the dispatch_worker tool and /worker so the
  * two entries can never drift.
  *
@@ -231,6 +231,14 @@ export declare function planDispatchFrontmatter(input: {
     /** Owner key's current phase (T-14): non-empty appends `phase: <P>` right
      * after `type:`; ""/undefined keeps the pre-T-14 bytes unchanged. */
     phase?: string;
+    /** Declared image capability (T-05): `"yes"`/`"no"` appends `images: <v>`
+     * right after `phase:` and before `model:`; `undefined` (undeclared) keeps
+     * the pre-T-05 bytes unchanged. */
+    images?: "yes" | "no";
+    /** Task body, scanned for an image-file reference when `images` is
+     * undeclared (T-06 auto-detection). Optional (T-17): callers that only
+     * exercise the phase/model path omit it, matching `phase?: string`. */
+    description?: string;
     model: string;
     modelReason: string;
     registry: ModelRegistry | undefined;

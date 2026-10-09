@@ -31,6 +31,7 @@
  * PURE READ-ONLY (AC-008): no fs write API anywhere in this file; the
  * on/off state lives only in module memory (AC-009), never in config.json.
  */
+import { type WorkerEntry } from "../shared/worker-store.ts";
 import { type ConfigResult, type RoadmapResult, type TimelineEvent } from "./status-model.ts";
 /** Widget id for the monitor panel (the watch widget is
  * "agent-team-loop-watch" — the two coexist, D-003). */
@@ -53,9 +54,15 @@ export interface MonitorConductor {
     /** False while _autopilot/config.json is absent or invalid — autopilot
      * was never enabled (a missing config is not an error, D-110). */
     everEnabled: boolean;
+    /** Auto-decision kill switch (`auto_gate_mode`: off|shadow|live, T-03).
+     * Optional on hand-built snapshots; absent renders as `off`. */
+    autoMode?: string;
 }
-export interface MonitorWorker {
-    taskKey: string;
+/** One running queue row plus its panel-computed age. The full
+ * {@link WorkerEntry} is carried so slot ownership is decided by the canonical
+ * predicate ({@link workerBelongsToKey} / {@link workerOwnerKey}) — never by
+ * the `ap-` task-key prefix, which is a false signal on its own (AC-021). */
+export interface MonitorWorker extends WorkerEntry {
     elapsedMs: number;
 }
 export interface MonitorGate {
@@ -65,7 +72,23 @@ export interface MonitorGate {
     /** Owning key (empty for stage-level gates) — the stalled-gate recovery
      * hint needs it to point at the right key. */
     key: string;
+    /** `created_at` verbatim (null only when absent/unparsable) — without it
+     * the panel cannot show the gate's age (AC-012). Optional so hand-built
+     * snapshots stay constructible. */
+    createdAt?: string | null;
+    /** Age in ms at collect time (null when created_at is unknown). */
+    ageMs?: number | null;
+    /** `reason_code` verbatim when present — never derived from `question`. */
+    reasonCode?: string | null;
+    /** Evidence pointers (`evidence_refs`) — the drift input. */
+    evidenceRefs?: string[];
+    /** `DRIFT(...)` detail when an evidence mtime is newer than created_at. */
+    drift?: string | null;
 }
+/** The auto-decision kill switch, read raw so the value stays visible even
+ * while the TS config mirror does not yet declare `auto_gate_mode` (T-03 owns
+ * the key on the Python side). Missing/unreadable config = off. */
+export declare function readAutoGateMode(projectDir: string): string;
 /** One roadmap key as the autopilot section shows it (AC-006). */
 export interface MonitorKey {
     key: string;
@@ -108,6 +131,9 @@ export interface MonitorSnapshot {
     workers: MonitorWorker[];
     gates: MonitorGate[];
 }
+/** Resolve one `evidence_refs` entry (`kind:relpath[#sha][@mtime_ns]`)
+ * against the project's `.agenticdoc/` first, then the project root. */
+export declare function evidenceFilePath(projectDir: string, ref: string): string | null;
 /** Derive the full monitor snapshot from the file family. Read-only; every
  * individual source degrades to a safe default (missing pid file → not
  * running, missing config → never enabled, missing gates dir → empty queue)

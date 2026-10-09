@@ -35,7 +35,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { IndexStore } from "../shared/index-store.js";
 import { getMwStatus, readServeMeta, serveStaleness } from "../shared/mw-runner.js";
-import { WorkerStore } from "../shared/worker-store.js";
+import { WorkerStore, workerBelongsToKey, workerOwnerKey } from "../shared/worker-store.js";
 import { BEAT_EV, configPath, DEFAULT_CONFIG, gatesDir, readConfig, readRoadmap, timelinePath, } from "./status-model.js";
 /** Widget id for the monitor panel (the watch widget is
  * "agent-team-loop-watch" — the two coexist, D-003). */
@@ -44,11 +44,30 @@ export const MONITOR_WIDGET_ID = "agent-team-loop-monitor";
 export const MONITOR_INTERVAL_MS = 4000;
 /** Panel line width cap (same as the watch widget's WATCH_LINE_MAX). */
 const MONITOR_LINE_MAX = 110;
+/** The auto-decision kill switch, read raw so the value stays visible even
+ * while the TS config mirror does not yet declare `auto_gate_mode` (T-03 owns
+ * the key on the Python side). Missing/unreadable config = off. */
+export function readAutoGateMode(projectDir) {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(configPath(projectDir), "utf8"));
+        if (typeof parsed === "object" && parsed !== null) {
+            const mode = parsed.auto_gate_mode;
+            if (mode === "off" || mode === "shadow" || mode === "live")
+                return mode;
+        }
+    }
+    catch {
+        // missing/invalid config — autopilot never enabled
+    }
+    return "off";
+}
 // ── Collect: readMonitorState (pure, read-only) ──────────────────────────────
-/** Scan one gate file's frontmatter for the four fields the panel needs
- * (D-004 line scan — no YAML dependency). Returns the gate only when it is
+/** Scan one gate file's frontmatter for the fields the panel needs (D-004
+ * line scan — no YAML dependency). Returns the gate only when it is
  * `status: pending` with a usable id/kind; anything else (answered gates,
- * non-gate or unparsable files) is skipped. */
+ * non-gate or unparsable files) is skipped. Also captures `created_at`,
+ * `reason_code` and `evidence_refs` so the panel can show age/reason and
+ * compute the evidence-drift marker (AC-012). */
 function scanPendingGate(file) {
     let text;
     try {
@@ -65,10 +84,24 @@ function scanPendingGate(file) {
     let stage = null;
     let key = "";
     let status = "";
+    let createdAt = null;
+    let reasonCode = null;
+    const evidenceRefs = [];
+    let activeList = null;
     for (let i = 1; i < lines.length; i++) {
         const line = lines[i];
         if (line.trim() === "---")
             break; // frontmatter closed
+        if (activeList === "evidence_refs") {
+            const item = /^[ \t]+-[ \t]+(.*)$/.exec(line);
+            if (item !== null) {
+                const ref = (item[1] ?? "").trim().replace(/^'(.*)'$/, "$1");
+                if (ref !== "")
+                    evidenceRefs.push(ref);
+                continue;
+            }
+            activeList = null; // dedent
+        }
         const m = /^([A-Za-z_][A-Za-z0-9_]*):[ \t]*(.*?)[ \t]*$/.exec(line);
         if (m === null)
             continue; // list items, blank lines, etc.
@@ -84,10 +117,74 @@ function scanPendingGate(file) {
             key = value;
         else if (name === "stage")
             stage = /^-?\d+$/.test(value) ? Number.parseInt(value, 10) : null;
+        else if (name === "created_at")
+            createdAt = value === "" ? null : value;
+        else if (name === "reason_code")
+            reasonCode = value === "" ? null : value;
+        else if (name === "evidence_refs") {
+            if (value === "") {
+                activeList = "evidence_refs";
+            }
+            else if (value === "[]") {
+                activeList = null;
+            }
+            else if (value.startsWith("'")) {
+                // v2 renderer shape: a single-line JSON array substring.
+                try {
+                    const decoded = JSON.parse(value.replace(/^'/, "").replace(/'$/, "").replaceAll("''", "'"));
+                    if (Array.isArray(decoded)) {
+                        for (const item of decoded)
+                            if (typeof item === "string" && item !== "")
+                                evidenceRefs.push(item);
+                    }
+                }
+                catch {
+                    // unparsable — drift stays unknown rather than guessing
+                }
+            }
+        }
     }
     if (status !== "pending" || id === "" || kind === "")
         return null;
-    return { id, kind, stage, key };
+    return { id, kind, stage, key, createdAt, reasonCode, evidenceRefs, ageMs: null, drift: null };
+}
+/** Resolve one `evidence_refs` entry (`kind:relpath[#sha][@mtime_ns]`)
+ * against the project's `.agenticdoc/` first, then the project root. */
+export function evidenceFilePath(projectDir, ref) {
+    const body = ref.replace(/^[^:]*:/, "");
+    const rel = body.split("#")[0].split("@")[0] ?? "";
+    if (rel === "")
+        return null;
+    const underAgenticdoc = path.join(projectDir, ".agenticdoc", rel);
+    if (fs.existsSync(underAgenticdoc))
+        return underAgenticdoc;
+    const underRoot = path.join(projectDir, rel);
+    return fs.existsSync(underRoot) ? underRoot : null;
+}
+/** `DRIFT(...)` detail when the newest evidence mtime is newer than the gate's
+ * created_at, else null. Never throws: an unstattable ref is skipped. */
+function gateDriftDetail(projectDir, gate, createdAtMs) {
+    if (createdAtMs === null || gate.evidenceRefs === undefined || gate.evidenceRefs.length === 0)
+        return null;
+    let newestMs = Number.NEGATIVE_INFINITY;
+    for (const ref of gate.evidenceRefs) {
+        const file = evidenceFilePath(projectDir, ref);
+        if (file === null)
+            continue;
+        try {
+            const mtimeMs = fs.statSync(file).mtimeMs;
+            if (mtimeMs > newestMs)
+                newestMs = mtimeMs;
+        }
+        catch {
+            // transient stat race — skip this ref
+        }
+    }
+    if (!Number.isFinite(newestMs) || newestMs <= createdAtMs)
+        return null;
+    // Compact by design: the panel only flags the drift; the full mtime pair
+    // lives in the /autopilot gates card (L6) and `mw doctor`.
+    return "mtime>created_at";
 }
 /** Derive the full monitor snapshot from the file family. Read-only; every
  * individual source degrades to a safe default (missing pid file → not
@@ -151,7 +248,14 @@ export function readMonitorState(projectDir, nowMs) {
             paused = cfg.config.paused;
         }
     }
-    const conductor = { pid: conductorPid, alive: conductorAlive, enabled, paused, everEnabled };
+    const conductor = {
+        pid: conductorPid,
+        alive: conductorAlive,
+        enabled,
+        paused,
+        everEnabled,
+        autoMode: readAutoGateMode(projectDir),
+    };
     // workers — every running row across ALL keys (system-scoped, unlike the
     // key-scoped watch widget), elapsed from dispatchedAt; rows with an
     // unparsable dispatchedAt are dropped rather than shown wrong.
@@ -162,10 +266,12 @@ export function readMonitorState(projectDir, nowMs) {
         const dispatched = Date.parse(entry.dispatchedAt);
         if (Number.isNaN(dispatched))
             continue;
-        workers.push({ taskKey: entry.taskKey, elapsedMs: Math.max(0, nowMs - dispatched) });
+        workers.push({ ...entry, elapsedMs: Math.max(0, nowMs - dispatched) });
     }
     workers.sort((a, b) => b.elapsedMs - a.elapsedMs || a.taskKey.localeCompare(b.taskKey));
     // gates — pending queue only, seq order (the directory scan is the queue).
+    // Age and the evidence-drift marker are computed HERE (collect) so the
+    // renderer stays a pure function of the snapshot.
     const gates = [];
     try {
         const dir = gatesDir(projectDir);
@@ -173,8 +279,13 @@ export function readMonitorState(projectDir, nowMs) {
             if (!entry.isFile() || !/^gate-\d+\.md$/.test(entry.name))
                 continue;
             const gate = scanPendingGate(path.join(dir, entry.name));
-            if (gate !== null)
-                gates.push(gate);
+            if (gate === null)
+                continue;
+            const createdMs = gate.createdAt === null || gate.createdAt === undefined ? null : Date.parse(gate.createdAt);
+            const createdKnown = createdMs !== null && !Number.isNaN(createdMs) ? createdMs : null;
+            gate.ageMs = createdKnown === null ? null : Math.max(0, nowMs - createdKnown);
+            gate.drift = gateDriftDetail(projectDir, gate, createdKnown);
+            gates.push(gate);
         }
     }
     catch {
@@ -404,14 +515,15 @@ export function deriveAutopilotPanel(projectDir, nowMs, workers, deps) {
             key,
             phase: phaseByKey.get(key) ?? "—",
             status: statusByKey.get(key) ?? "unknown",
-            inFlight: workers.filter((w) => w.taskKey.startsWith(`ap-${key}-`)).length,
+            inFlight: workers.filter((w) => workerBelongsToKey(w, key)).length,
             blockedBy: (depsByKey.get(key) ?? []).filter((dep) => !["done", "closed-legacy"].includes(statusByKey.get(dep) ?? "")),
         });
     }
     const busyKeys = new Set();
     for (const w of workers) {
-        const owner = allKeys.find((key) => w.taskKey.startsWith(`ap-${key}-`));
-        busyKeys.add(owner ?? w.taskKey);
+        const owner = workerOwnerKey(w);
+        if (owner !== "" && allKeys.includes(owner) && workerBelongsToKey(w, owner))
+            busyKeys.add(owner);
     }
     return {
         enabled: config?.enabled ?? false,
@@ -473,17 +585,18 @@ export function renderMonitorLines(s) {
         const up = s.serve.upMs !== null ? `, up ${formatDuration(s.serve.upMs)}` : "";
         lines.push(trunc(`serve: PID ${s.serve.pid ?? "?"} fresh${up}`, MONITOR_LINE_MAX));
     }
+    const autoToken = ` | auto=${s.conductor.autoMode ?? "off"}`;
     if (!s.conductor.everEnabled) {
-        lines.push("conductor: not enabled (/autopilot enable)");
+        lines.push(`conductor: not enabled (/autopilot enable)${autoToken}`);
     }
     else if (s.conductor.pid !== null && s.conductor.alive) {
-        lines.push(trunc(`conductor: PID ${s.conductor.pid} alive | ${conductorIntent(s.conductor)}`, MONITOR_LINE_MAX));
+        lines.push(trunc(`conductor: PID ${s.conductor.pid} alive | ${conductorIntent(s.conductor)}${autoToken}`, MONITOR_LINE_MAX));
     }
     else if (s.conductor.pid !== null) {
-        lines.push(`conductor: dead (pid ${s.conductor.pid} stale)`);
+        lines.push(`conductor: dead (pid ${s.conductor.pid} stale)${autoToken}`);
     }
     else {
-        lines.push(trunc(`conductor: not running | ${conductorIntent(s.conductor)}`, MONITOR_LINE_MAX));
+        lines.push(trunc(`conductor: not running | ${conductorIntent(s.conductor)}${autoToken}`, MONITOR_LINE_MAX));
     }
     if (s.autopilot.enabled) {
         const a = s.autopilot;
@@ -539,13 +652,37 @@ export function renderMonitorLines(s) {
     if (s.gates.length === 0) {
         lines.push("gates: 0 pending");
     }
-    else if (s.gates.length === 1) {
-        const g = s.gates[0];
-        lines.push(trunc(`gates: 1 pending - ${g.id} (${g.kind}) -> /autopilot gate ${g.id} approve|reject`, MONITOR_LINE_MAX));
-    }
     else {
-        const list = s.gates.map((g) => `${g.id} (${g.kind})`).join(", ");
-        lines.push(trunc(`gates: ${s.gates.length} pending - ${list} -> /autopilot gates`, MONITOR_LINE_MAX));
+        // One line per pending gate (AC-012): the first carries the count, the
+        // rest indent like the attention rows. age/reason/DRIFT are collected
+        // facts, never derived from the question prose. On overflow the optional
+        // tokens are dropped whole (reason -> age -> scope -> drift) so `id`,
+        // `kind` and the complete answer entry always survive (design D3.1).
+        s.gates.forEach((g, index) => {
+            const head = index === 0 ? `gates: ${s.gates.length} pending - ` : "  · ";
+            const base = `${head}${g.id} (${g.kind})`;
+            const answer = ` -> /autopilot gate ${g.id} approve|reject`;
+            const tokens = [];
+            const scope = g.stage !== null ? ` stage=${g.stage}` : g.key !== "" ? ` key=${g.key}` : "";
+            if (scope !== "")
+                tokens.push({ text: scope, drop: 3 });
+            if (g.ageMs !== null && g.ageMs !== undefined)
+                tokens.push({ text: ` age=${formatDuration(g.ageMs)}`, drop: 2 });
+            if (g.reasonCode !== null && g.reasonCode !== undefined)
+                tokens.push({ text: ` reason=${g.reasonCode}`, drop: 1 });
+            if (g.drift !== null && g.drift !== undefined)
+                tokens.push({ text: ` DRIFT(${g.drift})`, drop: 4 });
+            let line = `${base}${tokens.map((t) => t.text).join("")}${answer}`;
+            for (const drop of [1, 2, 3, 4]) {
+                if (line.length <= MONITOR_LINE_MAX)
+                    break;
+                line = `${base}${tokens
+                    .filter((t) => t.drop > drop)
+                    .map((t) => t.text)
+                    .join("")}${answer}`;
+            }
+            lines.push(trunc(line, MONITOR_LINE_MAX));
+        });
     }
     return lines;
 }

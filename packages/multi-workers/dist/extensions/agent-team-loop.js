@@ -43,7 +43,7 @@ var require_windows = __commonJS({
   "node_modules/isexe/windows.js"(exports, module) {
     module.exports = isexe;
     isexe.sync = sync;
-    var fs33 = __require("fs");
+    var fs34 = __require("fs");
     function checkPathExt(path37, options) {
       var pathext = options.pathExt !== void 0 ? options.pathExt : process.env.PATHEXT;
       if (!pathext) {
@@ -68,12 +68,12 @@ var require_windows = __commonJS({
       return checkPathExt(path37, options);
     }
     function isexe(path37, options, cb) {
-      fs33.stat(path37, function(er, stat) {
+      fs34.stat(path37, function(er, stat) {
         cb(er, er ? false : checkStat(stat, path37, options));
       });
     }
     function sync(path37, options) {
-      return checkStat(fs33.statSync(path37), path37, options);
+      return checkStat(fs34.statSync(path37), path37, options);
     }
   }
 });
@@ -83,14 +83,14 @@ var require_mode = __commonJS({
   "node_modules/isexe/mode.js"(exports, module) {
     module.exports = isexe;
     isexe.sync = sync;
-    var fs33 = __require("fs");
+    var fs34 = __require("fs");
     function isexe(path37, options, cb) {
-      fs33.stat(path37, function(er, stat) {
+      fs34.stat(path37, function(er, stat) {
         cb(er, er ? false : checkStat(stat, options));
       });
     }
     function sync(path37, options) {
-      return checkStat(fs33.statSync(path37), options);
+      return checkStat(fs34.statSync(path37), options);
     }
     function checkStat(stat, options) {
       return stat.isFile() && checkMode(stat, options);
@@ -114,7 +114,7 @@ var require_mode = __commonJS({
 // node_modules/isexe/index.js
 var require_isexe = __commonJS({
   "node_modules/isexe/index.js"(exports, module) {
-    var fs33 = __require("fs");
+    var fs34 = __require("fs");
     var core;
     if (process.platform === "win32" || global.TESTING_WINDOWS) {
       core = require_windows();
@@ -132,12 +132,12 @@ var require_isexe = __commonJS({
         if (typeof Promise !== "function") {
           throw new TypeError("callback not provided");
         }
-        return new Promise(function(resolve16, reject) {
+        return new Promise(function(resolve17, reject) {
           isexe(path37, options || {}, function(er, is) {
             if (er) {
               reject(er);
             } else {
-              resolve16(is);
+              resolve17(is);
             }
           });
         });
@@ -203,27 +203,27 @@ var require_which = __commonJS({
         opt = {};
       const { pathEnv, pathExt, pathExtExe } = getPathInfo(cmd, opt);
       const found = [];
-      const step = (i) => new Promise((resolve16, reject) => {
+      const step = (i) => new Promise((resolve17, reject) => {
         if (i === pathEnv.length)
-          return opt.all && found.length ? resolve16(found) : reject(getNotFoundError(cmd));
+          return opt.all && found.length ? resolve17(found) : reject(getNotFoundError(cmd));
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
         const pCmd = path37.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
-        resolve16(subStep(p, i, 0));
+        resolve17(subStep(p, i, 0));
       });
-      const subStep = (p, i, ii) => new Promise((resolve16, reject) => {
+      const subStep = (p, i, ii) => new Promise((resolve17, reject) => {
         if (ii === pathExt.length)
-          return resolve16(step(i + 1));
+          return resolve17(step(i + 1));
         const ext2 = pathExt[ii];
         isexe(p + ext2, { pathExt: pathExtExe }, (er, is) => {
           if (!er && is) {
             if (opt.all)
               found.push(p + ext2);
             else
-              return resolve16(p + ext2);
+              return resolve17(p + ext2);
           }
-          return resolve16(subStep(p, i, ii + 1));
+          return resolve17(subStep(p, i, ii + 1));
         });
       });
       return cb ? step(0).then((res) => cb(null, res), cb) : step(0);
@@ -378,16 +378,16 @@ var require_shebang_command = __commonJS({
 var require_readShebang = __commonJS({
   "node_modules/cross-spawn/lib/util/readShebang.js"(exports, module) {
     "use strict";
-    var fs33 = __require("fs");
+    var fs34 = __require("fs");
     var shebangCommand = require_shebang_command();
     function readShebang(command) {
       const size = 150;
       const buffer = Buffer.alloc(size);
       let fd;
       try {
-        fd = fs33.openSync(command, "r");
-        fs33.readSync(fd, buffer, 0, size, 0);
-        fs33.closeSync(fd);
+        fd = fs34.openSync(command, "r");
+        fs34.readSync(fd, buffer, 0, size, 0);
+        fs34.closeSync(fd);
       } catch (e) {
       }
       return shebangCommand(buffer.toString());
@@ -7413,14 +7413,14 @@ var require_parser = __commonJS({
             case "scalar":
             case "single-quoted-scalar":
             case "double-quoted-scalar": {
-              const fs33 = this.flowScalar(this.type);
+              const fs34 = this.flowScalar(this.type);
               if (atNextItem || it.value) {
-                map.items.push({ start, key: fs33, sep: [] });
+                map.items.push({ start, key: fs34, sep: [] });
                 this.onKeyLine = true;
               } else if (it.sep) {
-                this.stack.push(fs33);
+                this.stack.push(fs34);
               } else {
-                Object.assign(it, { key: fs33, sep: [] });
+                Object.assign(it, { key: fs34, sep: [] });
                 this.onKeyLine = true;
               }
               return;
@@ -7548,13 +7548,13 @@ var require_parser = __commonJS({
             case "scalar":
             case "single-quoted-scalar":
             case "double-quoted-scalar": {
-              const fs33 = this.flowScalar(this.type);
+              const fs34 = this.flowScalar(this.type);
               if (!it || it.value)
-                fc.items.push({ start: [], key: fs33, sep: [] });
+                fc.items.push({ start: [], key: fs34, sep: [] });
               else if (it.sep)
-                this.stack.push(fs33);
+                this.stack.push(fs34);
               else
-                Object.assign(it, { key: fs33, sep: [] });
+                Object.assign(it, { key: fs34, sep: [] });
               return;
             }
             case "flow-map-end":
@@ -7863,10 +7863,11 @@ var require_dist = __commonJS({
 });
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts
-import * as fs29 from "node:fs";
+import * as fs30 from "node:fs";
 import * as path33 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/autopilot/console.ts
+import * as fs28 from "node:fs";
 import * as path31 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
@@ -14212,9 +14213,10 @@ var DISPATCH_ROLE_BY_TYPE = {
   verifier: "review",
   reviewer: "review",
   research: "research",
-  "rag-research": "research"
+  "rag-research": "research",
+  vision: "vision"
 };
-var DISPATCHABLE_TYPES = ["coding", "review", "research", "rag-research"];
+var DISPATCHABLE_TYPES = ["coding", "review", "research", "rag-research", "vision"];
 function roleForTaskType(taskType) {
   return DISPATCH_ROLE_BY_TYPE[taskType] ?? "coding";
 }
@@ -14282,6 +14284,40 @@ function validateModelValue(registry, cli, taskProvider, value) {
     ok: false,
     message: `Model '${trimmed}' not found for provider '${provider}' (known ids include: ${candidates}). Use /mw model set <role> ${trimmed} with a valid id, or omit the model to inherit the configured role default.`
   };
+}
+var IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"];
+function modelImageCapability(registry, cli, provider, value) {
+  try {
+    const trimmed = value.trim();
+    if (!trimmed || !registry || cli.toLowerCase() !== "pi") return "unknown";
+    const { prefix, modelId } = parseModelValue(trimmed);
+    if (!modelId) return "unknown";
+    if (CLI_EXECUTOR_PREFIXES.includes(prefix)) return "unknown";
+    const resolved = prefix ? PREFIX_TO_PROVIDER_ID[prefix] : provider.trim();
+    if (prefix && !resolved) return "unknown";
+    if (!resolved) return "unknown";
+    const ids = registry.getAll().filter((m) => m.provider === resolved);
+    if (ids.length === 0) return "unknown";
+    const model = registry.find(resolved, modelId);
+    if (!model) return "unknown";
+    return model.input?.includes("image") ? "yes" : "no";
+  } catch {
+    return "unknown";
+  }
+}
+function detectImageNeed(cwd, description) {
+  if (!description) return false;
+  const extensionPattern = new RegExp(`(${IMAGE_EXTENSIONS.join("|")})(?![A-Za-z0-9])`, "i");
+  for (const token of description.split(/\s+/)) {
+    if (!extensionPattern.test(token)) continue;
+    if (token.includes("://")) continue;
+    if (/[*?[\]]/.test(token)) continue;
+    try {
+      if (fs7.existsSync(path9.resolve(cwd, token))) return true;
+    } catch {
+    }
+  }
+  return false;
 }
 function settingsDefaultModel() {
   const base = process.env.PI_CODING_AGENT_DIR ?? path9.join(os.homedir(), ".pi", "agent");
@@ -16544,6 +16580,9 @@ var TOOL_ALLOWLISTS = {
     "rag_feedback",
     "rag_chat"
   ],
+  // Vision bucket (mw-vision-role D-001): full coding set, same order as the
+  // Python-side REGISTRY entry in autopilot/dispatch.py.
+  vision: ["read", "write", "edit", "bash", "find", "grep", "ls"],
   fallback: ["read", "write", "edit", "bash", "find", "grep", "ls"]
 };
 function isRegisteredType(taskType) {
@@ -16586,6 +16625,10 @@ function resolveIdleMs(env) {
   if (Number.isFinite(envMs) && envMs > 0) return envMs;
   return DEFAULT_IDLE_MS;
 }
+var DEFAULT_TOOL_IDLE_MS = 30 * 6e4;
+function resolveToolIdleMs(idleMs) {
+  return Math.max(idleMs, DEFAULT_TOOL_IDLE_MS);
+}
 function checkpointAnchorMs(budgetMs) {
   return Math.min(CHECKPOINT_ANCHOR_MS, Math.max(1e3, Math.round(budgetMs / 2)));
 }
@@ -16606,6 +16649,7 @@ function parseTaskMd(taskPath) {
   let phase;
   let timeoutMin;
   let origin;
+  let images;
   const phases = [];
   let currentPhase = null;
   let inPhasePrompt = false;
@@ -16633,6 +16677,7 @@ function parseTaskMd(taskPath) {
     if (trimmed.startsWith("origin:")) {
       origin = trimmed.slice("origin:".length).trim();
     }
+    if (trimmed.startsWith("images:")) images = trimmed.slice("images:".length).trim() === "yes";
     if (trimmed === "read_scope:") {
       readScope = [];
       inReadScopeList = true;
@@ -16699,6 +16744,7 @@ function parseTaskMd(taskPath) {
     taskKey,
     agenticdocRoot: agenticdocRoot2,
     origin,
+    images,
     trueAgenticdocRoot,
     timeoutMin,
     readScope,
@@ -16774,6 +16820,19 @@ function appendReadScopeRejectionsSection(taskKey, agenticdocRoot2, rejections) 
 ${lines.join("\n")}
 `, "utf8");
   } catch {
+  }
+}
+function appendIdleKillEvidence(taskKey, agenticdocRoot2, evidence) {
+  try {
+    const dir = path16.resolve(agenticdocRoot2, taskKey);
+    fs12.mkdirSync(dir, { recursive: true });
+    const num = (value) => value === null ? "-" : String(value);
+    const line = `[IDLE_KILL] ${(/* @__PURE__ */ new Date()).toISOString()} tool_in_flight=${evidence.toolInFlight} tool_run_s=${num(evidence.toolRunS)} tool_idle_s=${num(evidence.toolIdleS)} silence_s=${evidence.silenceS} threshold_s=${evidence.thresholdS} threshold_kind=${evidence.thresholdKind} last_activity=${evidence.lastActivity}`;
+    fs12.appendFileSync(path16.join(dir, "trace.log"), `${line}
+`, "utf8");
+    return true;
+  } catch {
+    return false;
   }
 }
 function evidencePhase(phase) {
@@ -16867,6 +16926,29 @@ async function workerModeActivate(pi) {
   pi.on("session_start", (_event, ctx) => {
     const modelId = ctx.model?.id;
     if (modelId) appendModel(meta.taskKey, meta.agenticdocRoot, modelId);
+    if (meta.images === true && ctx.model && Array.isArray(ctx.model.input) && !ctx.model.input.includes("image")) {
+      const line = `[IMAGE-CAP] model=${ctx.model.id} provider=${ctx.model.provider} task=${meta.taskKey} declared=images:yes`;
+      writeWorkerLogLine(line);
+      appendError(meta.taskKey, meta.agenticdocRoot, line);
+      writeOutput({
+        taskKey: meta.taskKey,
+        agenticdocRoot: meta.agenticdocRoot,
+        exitCode: 1,
+        summary: "Task refused (image capability).",
+        exitReason: line
+      });
+      outputWritten = true;
+      killTrackedDetachedChildren();
+      process.exit(1);
+      return;
+    }
+    if (meta.images === true && ctx.model === void 0) {
+      appendTrace(
+        meta.taskKey,
+        meta.agenticdocRoot,
+        "[IMAGE-CAP] fail-open: ctx.model undefined, image capability unverifiable for declared=images:yes"
+      );
+    }
   });
   writeWorkerLogLine(
     `[worker] start task=${meta.taskKey} type=${meta.type} phases=${phaseTotal > 0 ? phaseTotal : "-"}`
@@ -16944,23 +17026,33 @@ async function workerModeActivate(pi) {
       return { block: true, reason: verdict.reason };
     });
   }
+  const inFlightTools = /* @__PURE__ */ new Map();
   let lastActivityAt = startedAt;
   let lastDeltaAt;
   let lastToolAt;
-  const touch = () => {
+  let lastActivitySource = "session_start";
+  const touch = (source) => {
     lastActivityAt = Date.now();
+    lastActivitySource = source;
   };
   pi.on("message_update", () => {
-    touch();
+    touch("delta");
     lastDeltaAt = Date.now();
   });
-  pi.on("message_start", touch);
-  pi.on("message_end", touch);
-  pi.on("turn_start", touch);
-  pi.on("turn_end", touch);
-  pi.on("agent_start", touch);
-  pi.on("tool_execution_update", touch);
-  pi.on("tool_execution_end", touch);
+  pi.on("message_start", () => touch("message_start"));
+  pi.on("message_end", () => touch("message_end"));
+  pi.on("turn_start", () => touch("turn_start"));
+  pi.on("turn_end", () => touch("turn_end"));
+  pi.on("agent_start", () => touch("agent_start"));
+  pi.on("tool_execution_update", (event) => {
+    const tool = inFlightTools.get(event.toolCallId);
+    if (tool) tool.lastActivityAt = Date.now();
+    touch("tool_update");
+  });
+  pi.on("tool_execution_end", (event) => {
+    inFlightTools.delete(event.toolCallId);
+    touch("tool_end");
+  });
   let toolCallCount = 0;
   let toolErrorCount = 0;
   const toolsUsed = /* @__PURE__ */ new Set();
@@ -16971,7 +17063,13 @@ async function workerModeActivate(pi) {
   pi.on("tool_execution_start", (event) => {
     toolCallCount++;
     toolsUsed.add(event.toolName);
-    touch();
+    const toolStartedAt = Date.now();
+    inFlightTools.set(event.toolCallId, {
+      name: event.toolName,
+      startedAt: toolStartedAt,
+      lastActivityAt: toolStartedAt
+    });
+    touch("tool_start");
     lastToolAt = Date.now();
     const target = toolTarget2(event.args);
     if (READ_TOOLS.has(event.toolName)) {
@@ -16991,7 +17089,7 @@ async function workerModeActivate(pi) {
   });
   let lastAssistantText = "";
   pi.on("agent_end", (event) => {
-    touch();
+    touch("agent_end");
     for (let i = event.messages.length - 1; i >= 0; i--) {
       const msg = event.messages[i];
       if (msg.role === "assistant") {
@@ -17017,6 +17115,7 @@ async function workerModeActivate(pi) {
   }
   const budgetMs = resolveBudgetMs(meta.timeoutMin, process.env.PI_WORKER_TIMEOUT_MS);
   const idleMs = resolveIdleMs(process.env.PI_WORKER_IDLE_MS);
+  const toolIdleMs = resolveToolIdleMs(idleMs);
   const riskAnchorMs = checkpointAnchorMs(budgetMs);
   let taskDone = false;
   let lastCheckpoint;
@@ -17029,6 +17128,13 @@ async function workerModeActivate(pi) {
     if (wallTimer) clearTimeout(wallTimer);
     if (checkpointTimer) clearTimeout(checkpointTimer);
     if (steerTimer) clearTimeout(steerTimer);
+  }
+  function freshestInFlightTool() {
+    let best;
+    for (const tool of inFlightTools.values()) {
+      if (best === void 0 || tool.lastActivityAt > best.lastActivityAt) best = tool;
+    }
+    return best;
   }
   function timeoutExit(kind, detail) {
     taskDone = true;
@@ -17118,9 +17224,44 @@ async function workerModeActivate(pi) {
   steerTimer.unref();
   idleTimer = setInterval(() => {
     if (taskDone) return;
-    const idleForMs = Date.now() - lastActivityAt;
-    if (idleForMs < idleMs) return;
     const now = Date.now();
+    const idleForMs = now - lastActivityAt;
+    const inFlight = freshestInFlightTool();
+    if (inFlight !== void 0) {
+      const toolIdleForMs = now - inFlight.lastActivityAt;
+      if (toolIdleForMs < toolIdleMs) return;
+      const toolRunS = Math.round((now - inFlight.startedAt) / 1e3);
+      const written2 = appendIdleKillEvidence(meta.taskKey, meta.agenticdocRoot, {
+        toolInFlight: inFlight.name,
+        toolRunS,
+        toolIdleS: Math.round(toolIdleForMs / 1e3),
+        silenceS: Math.round(idleForMs / 1e3),
+        thresholdS: Math.round(toolIdleMs / 1e3),
+        thresholdKind: "tool_idle",
+        lastActivity: lastActivitySource
+      });
+      if (!written2) return;
+      timeoutExit(
+        "idle",
+        `in-flight tool ${inFlight.name} silent for ${Math.round(
+          toolIdleForMs / 1e3
+        )}s (tool running ${toolRunS}s, threshold ${Math.round(toolIdleMs / 1e3)}s, last activity ${lastActivitySource})`
+      );
+      return;
+    }
+    if (idleForMs < idleMs) return;
+    const deltaIdleMs = lastDeltaAt === void 0 ? Number.POSITIVE_INFINITY : now - lastDeltaAt;
+    if (deltaIdleMs < idleMs) return;
+    const written = appendIdleKillEvidence(meta.taskKey, meta.agenticdocRoot, {
+      toolInFlight: "none",
+      toolRunS: null,
+      toolIdleS: null,
+      silenceS: Math.round(idleForMs / 1e3),
+      thresholdS: Math.round(idleMs / 1e3),
+      thresholdKind: "idle",
+      lastActivity: lastActivitySource
+    });
+    if (!written) return;
     const d = lastDeltaAt === void 0 ? "-" : `${Math.round((now - lastDeltaAt) / 1e3)}`;
     const t = lastToolAt === void 0 ? "-" : `${Math.round((now - lastToolAt) / 1e3)}`;
     timeoutExit(
@@ -17502,7 +17643,7 @@ async function callCli(cliEntry, name, args, opts) {
   const interpreter = resolveRagPython(opts.env);
   const server = cliEntry.cliEntry;
   if (opts.signal.aborted) throw cliError("timeout", server, name, "call cancelled before spawn");
-  return await new Promise((resolve16, reject) => {
+  return await new Promise((resolve17, reject) => {
     const child = spawn2(interpreter, argv, {
       cwd: cliEntry.dir,
       env: opts.env,
@@ -17560,7 +17701,7 @@ async function callCli(cliEntry, name, args, opts) {
           return;
         }
         try {
-          resolve16(JSON.parse(text));
+          resolve17(JSON.parse(text));
         } catch {
           reject(cliError("protocol", server, name, "cli stdout is not valid JSON", detail));
         }
@@ -18190,7 +18331,7 @@ async function waitForStart(statusFn, timeoutMs, stableMs, pollMs = 250) {
     } else {
       stableSince = null;
     }
-    await new Promise((resolve16) => setTimeout(resolve16, pollMs));
+    await new Promise((resolve17) => setTimeout(resolve17, pollMs));
   }
   return statusFn().running;
 }
@@ -18268,7 +18409,7 @@ async function restartSequence(isRunning, requestStop, start, waitUp, timeoutMs,
     requestStop();
     const deadline = Date.now() + timeoutMs;
     while (isRunning() && Date.now() < deadline) {
-      await new Promise((resolve16) => setTimeout(resolve16, pollMs));
+      await new Promise((resolve17) => setTimeout(resolve17, pollMs));
     }
     if (isRunning()) return "stop-failed";
   }
@@ -18437,7 +18578,7 @@ async function acquireLock(lockPath, opts = {}) {
   throw new Error(`Could not acquire lock at ${lockPath}`);
 }
 function sleep(ms) {
-  return new Promise((resolve16) => setTimeout(resolve16, ms));
+  return new Promise((resolve17) => setTimeout(resolve17, ms));
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/index-store.ts
@@ -19780,14 +19921,47 @@ function planDispatchFrontmatter(input) {
   const configured = readRoleModel(input.cwd, role) ?? "";
   const requested = input.model.trim();
   const reason = oneLineReason(input.modelReason);
-  const typeLines = input.phase !== void 0 && input.phase.length > 0 ? `type: ${input.taskType}
-phase: ${input.phase}
-` : `type: ${input.taskType}
+  const imagesRequested = input.images === "no" ? false : input.images === "yes" ? true : detectImageNeed(input.cwd, input.description ?? "");
+  const imagesField = input.images === "no" ? "no" : imagesRequested ? "yes" : void 0;
+  const headLines = [`type: ${input.taskType}`];
+  if (input.phase !== void 0 && input.phase.length > 0) headLines.push(`phase: ${input.phase}`);
+  if (imagesField !== void 0) headLines.push(`images: ${imagesField}`);
+  const typeLines = `${headLines.join("\n")}
 `;
-  const effective = requested || configured;
+  let effective = requested || configured;
   if (effective) {
     const validation = validateModelValue(input.registry, input.cli, input.provider, effective);
     if (!validation.ok) return { ok: false, message: validation.message };
+  }
+  let autoRouteSource = "";
+  if (!requested && imagesRequested) {
+    const roleCapability = modelImageCapability(input.registry, input.cli, input.provider, effective);
+    if (roleCapability === "no") {
+      const visionValue = readRoleModel(input.cwd, "vision") ?? "";
+      if (visionValue && modelImageCapability(input.registry, input.cli, input.provider, visionValue) === "yes") {
+        effective = visionValue;
+        autoRouteSource = role;
+      }
+    }
+  }
+  if (imagesRequested) {
+    const capability = modelImageCapability(input.registry, input.cli, input.provider, effective);
+    if (capability === "no") {
+      return {
+        ok: false,
+        message: `Task declares images (or references an image file) but model '${effective}' cannot take image input. Use 'mw model set vision <provider/model>' to configure a vision role, or declare 'images: no' if the task does not need the image.`
+      };
+    }
+  }
+  if (autoRouteSource) {
+    const routeReason = reason ? `${reason}; auto-route: ${autoRouteSource} -> vision` : `auto-route: ${autoRouteSource} -> vision`;
+    const routeLines = [...headLines, `model: ${effective}`, `model-reason: ${routeReason}`];
+    return {
+      ok: true,
+      frontmatter: `${routeLines.join("\n")}
+`,
+      echo: `model: dispatch.yml vision=${effective} (model-source: auto-route, ${autoRouteSource} -> vision)`
+    };
   }
   if (!requested) {
     return {
@@ -19809,7 +19983,7 @@ phase: ${input.phase}
       message: `Model override for role '${role}' needs model_reason: dispatch.yml ${role}=${configured}, requested=${requested}. Omit the model to use the configured default, or re-dispatch with model_reason explaining the deviation.`
     };
   }
-  const lines = input.phase !== void 0 && input.phase.length > 0 ? [`type: ${input.taskType}`, `phase: ${input.phase}`] : [`type: ${input.taskType}`];
+  const lines = [...headLines];
   if (requested) lines.push(`model: ${requested}`);
   if (reason) lines.push(`model-reason: ${reason}`);
   return {
@@ -19848,7 +20022,12 @@ function registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRo
       ),
       type: typebox_exports.Optional(
         typebox_exports.String({
-          description: "Task type: 'coding' | 'review' | 'research'. Selects the dispatch.yml role (and the worker tool allowlist). Default: derived from cli (pi -> coding, claude -> review, codex -> codex)."
+          description: "Task type: 'coding' | 'review' | 'research' | 'rag-research' | 'vision'. Selects the dispatch.yml role (and the worker tool allowlist). Use 'vision' for tasks that must read image files (screenshots/mockups). Default: derived from cli (pi -> coding, claude -> review, codex -> codex)."
+        })
+      ),
+      images: typebox_exports.Optional(
+        typebox_exports.Union([typebox_exports.Literal("yes"), typebox_exports.Literal("no")], {
+          description: "Declare the image requirement: 'yes' means this task must look at images (refused when the effective model cannot take image input), 'no' exempts it. Omit to auto-detect an existing image file referenced in the description."
         })
       ),
       key: typebox_exports.Optional(
@@ -19865,6 +20044,7 @@ function registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRo
         model,
         model_reason,
         type,
+        images,
         key
       } = params;
       const ragCheck = validateRagEnabled(projectDir);
@@ -19918,6 +20098,8 @@ ${DOC_GATE_HINT}`
         provider,
         taskType: typeField,
         phase: ownerPhase,
+        description,
+        images,
         model: model ?? "",
         modelReason: model_reason ?? "",
         registry: _context?.modelRegistry
@@ -20152,7 +20334,7 @@ function registerAdvancePhaseTool(pi, projectDir) {
   });
 }
 function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, watch, projectDir = path27.dirname(agenticdocRoot2)) {
-  const USAGE2 = "Usage: /worker <claude|codex|pi> [--type coding|review|research] [--model <id>] [--reason <text>] [--key <name>] <task description>";
+  const USAGE2 = "Usage: /worker <claude|codex|pi> [--type coding|review|research|rag-research|vision] [--model <id>] [--reason <text>] [--key <name>] <task description>";
   pi.registerCommand("worker", {
     description: "Spawn a worker: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] <task description>",
     handler: async (args, ctx) => {
@@ -20163,7 +20345,8 @@ function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, wa
       let modelReason = "";
       let typeArg = "";
       let keyArg = "";
-      while (["--model", "--type", "--reason", "--key"].includes(parts[idx] ?? "")) {
+      let imagesArg;
+      while (["--model", "--type", "--reason", "--key", "--images"].includes(parts[idx] ?? "")) {
         const flag = parts[idx];
         const value = parts[idx + 1] ?? "";
         idx += 2;
@@ -20174,7 +20357,13 @@ function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, wa
         if (flag === "--model") model = value;
         else if (flag === "--type") typeArg = value;
         else if (flag === "--reason") modelReason = value;
-        else keyArg = value;
+        else if (flag === "--images") {
+          if (value !== "yes" && value !== "no") {
+            ctx.ui.notify("--images must be 'yes' or 'no'.", "warning");
+            return;
+          }
+          imagesArg = value;
+        } else keyArg = value;
       }
       const description = parts.slice(idx).join(" ");
       const validCli = ["claude", "codex", "pi"];
@@ -20215,6 +20404,8 @@ function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, wa
         provider,
         taskType: typeField,
         phase: ownerPhase,
+        description,
+        images: imagesArg,
         model,
         modelReason,
         registry: ctx.modelRegistry
@@ -20305,7 +20496,8 @@ function formatDoctorReport(report, fix) {
     if (dispatch.error) {
       lines.push(`\u6D3E\u53D1\u6A21\u578B: \u914D\u7F6E\u9519\u8BEF \u2014 ${dispatch.error}`);
     } else {
-      const roles = Object.entries(dispatch.models ?? {}).map(([role, value]) => `${role}=${value}`).join("; ");
+      const capabilities = dispatch.images ?? {};
+      const roles = Object.entries(dispatch.models ?? {}).map(([role, value]) => `${role}=${value} images=${capabilities[role] || "unknown"}`).join("; ");
       const window = dispatch.window_model || "\uFF08\u672A\u8BB0\u5F55\uFF09";
       lines.push(`\u6D3E\u53D1\u6A21\u578B: ${roles || "\u672A\u8BBE\u89D2\u8272"}; \u7A97\u53E3\u6A21\u578B ${window}`);
     }
@@ -20469,7 +20661,7 @@ async function runMwModelCommand(ctx, projectDir, argsText, runner = modelMw) {
     const value = parts[2];
     if (!role || !value || parts.length > 3) {
       ctx.ui.notify(
-        "Usage: /mw model set <role> <prefix/model> \u2014 roles: main, coding, review, research (e.g. /mw model set review timi/gpt-5.6-sol)",
+        "Usage: /mw model set <role> <prefix/model> \u2014 roles: main, coding, review, research, vision (e.g. /mw model set review timi/gpt-5.6-sol)",
         "warning"
       );
       return;
@@ -20786,11 +20978,27 @@ import * as path30 from "node:path";
 // packages/coding-agent/src/extensions/agent-team-loop/shared/worker-store.ts
 import * as fs25 from "node:fs";
 import * as path28 from "node:path";
-var WORKER_COLS = 8;
+var WORKER_COLS_MIN = 7;
+var WORKER_COLS_MAX = 9;
+var WORKER_PATH_KEY_RE = /(?:^|[\\/])\.agenticdoc[\\/]([^\\/]+)[\\/]workers[\\/]/;
+function normalizeWorkerOrigin(raw) {
+  return (raw ?? "").trim().toLowerCase() === "conductor" ? "conductor" : "manual";
+}
+function workerOrigin(entry) {
+  return entry.origin ?? "manual";
+}
+function workerOwnerKey(entry) {
+  return WORKER_PATH_KEY_RE.exec(entry.taskPath)?.[1] ?? "";
+}
+function workerBelongsToKey(entry, key) {
+  return workerOrigin(entry) === "conductor" && workerOwnerKey(entry) === key;
+}
 function parseWorkerLine(line) {
   const parts = line.split("|");
-  if (parts.length !== WORKER_COLS && parts.length !== WORKER_COLS - 1) return void 0;
-  const [taskKey, status, cli, provider, taskPath, dispatchedAt, updatedAt, model] = parts.map((s) => s.trim());
+  if (parts.length < WORKER_COLS_MIN || parts.length > WORKER_COLS_MAX) return void 0;
+  const [taskKey, status, cli, provider, taskPath, dispatchedAt, updatedAt, model, origin] = parts.map(
+    (s) => s.trim()
+  );
   if (!taskKey || taskKey.startsWith("#")) return void 0;
   return {
     taskKey: taskKey ?? "",
@@ -20800,7 +21008,8 @@ function parseWorkerLine(line) {
     taskPath: taskPath ?? "",
     dispatchedAt: dispatchedAt ?? "",
     updatedAt: updatedAt ?? "",
-    model: model ?? ""
+    model: model ?? "",
+    origin: origin === void 0 || origin === "" ? void 0 : normalizeWorkerOrigin(origin)
   };
 }
 function serializeWorkerLine(entry) {
@@ -20812,7 +21021,8 @@ function serializeWorkerLine(entry) {
     entry.taskPath,
     entry.dispatchedAt,
     entry.updatedAt,
-    entry.model ?? ""
+    entry.model ?? "",
+    workerOrigin(entry)
   ].join(" | ");
 }
 var WorkerStore = class {
@@ -20886,7 +21096,8 @@ var DEFAULT_CONFIG = {
   xkey_repair: false,
   xkey_verify_cmd: [],
   xkey_verify_timeout_s: 1800,
-  xkey_verify_cwd: ""
+  xkey_verify_cwd: "",
+  auto_gate_mode: "off"
 };
 function freshDefaults() {
   return { ...DEFAULT_CONFIG, xkey_verify_cmd: [...DEFAULT_CONFIG.xkey_verify_cmd] };
@@ -20894,6 +21105,9 @@ function freshDefaults() {
 var BOOL_FIELDS = ["enabled", "paused", "xkey_repair"];
 var LIST_FIELDS = ["xkey_verify_cmd"];
 var STR_FIELDS = ["xkey_verify_cwd"];
+var ENUM_FIELDS = {
+  auto_gate_mode: ["off", "shadow", "live"]
+};
 var INT_RANGES = {
   poll_interval_sec: [1, 5],
   max_parallel_keys: [2, null],
@@ -20944,6 +21158,13 @@ function validateConfigData(data) {
       errors.push(`${field}: expected string, got ${JSON.stringify(cfg[field])}`);
     }
   }
+  for (const [field, allowed] of Object.entries(ENUM_FIELDS)) {
+    if (!(field in cfg)) continue;
+    const value = cfg[field];
+    if (typeof value !== "string" || !allowed.includes(value)) {
+      errors.push(`${field}: expected one of ${allowed.join(", ")}, got ${JSON.stringify(value)}`);
+    }
+  }
   for (const [field, [lo, hi]] of Object.entries(INT_RANGES)) {
     if (!(field in cfg)) continue;
     const value = cfg[field];
@@ -20992,7 +21213,8 @@ function readConfig(projectDir) {
     xkey_repair: boolOf("xkey_repair"),
     xkey_verify_cmd: listOf("xkey_verify_cmd"),
     xkey_verify_timeout_s: intOf("xkey_verify_timeout_s"),
-    xkey_verify_cwd: strOf("xkey_verify_cwd")
+    xkey_verify_cwd: strOf("xkey_verify_cwd"),
+    auto_gate_mode: strOf("auto_gate_mode")
   };
   return { ok: true, config: merged };
 }
@@ -21012,7 +21234,8 @@ function saveConfig(projectDir, config) {
     xkey_repair: config.xkey_repair,
     xkey_verify_cmd: [...config.xkey_verify_cmd],
     xkey_verify_timeout_s: config.xkey_verify_timeout_s,
-    xkey_verify_cwd: config.xkey_verify_cwd
+    xkey_verify_cwd: config.xkey_verify_cwd,
+    auto_gate_mode: config.auto_gate_mode
   };
   const file = configPath(projectDir);
   try {
@@ -21027,7 +21250,7 @@ function saveConfig(projectDir, config) {
   return { ok: true };
 }
 var STAGE_STATUSES = ["pending", "approved", "running", "closed", "closed-human", "halted"];
-var KEY_STATUSES = ["running", "done", "stalled", "closed-legacy"];
+var KEY_STATUSES = ["running", "done", "stalled", "closed-legacy", "pending-review"];
 var STAGE_PREFIX_RE = /^##\s*Stage\b/;
 var STAGE_HEADER_RE = /^##\s*Stage\s+(\d+)\s*:\s*(.+)$/;
 var ROADMAP_FIELD_RE = /^>\s*([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/;
@@ -21237,11 +21460,50 @@ var GATE_FRONTMATTER_FIELDS = [
   "status",
   "answered_at",
   "answered_by",
-  "note"
+  "note",
+  "reason_code",
+  "evidence_refs",
+  "loop",
+  "used_rounds",
+  "round_limit",
+  "credits_used",
+  "observed_at",
+  "verdicts_final",
+  "open_items",
+  "subject_sha256",
+  "roadmap_validation",
+  "proposal_sha256",
+  "goal_sha256",
+  "constraints",
+  "goal_sha256_before",
+  "goal_sha256_after",
+  "goal_diff",
+  "write_scope",
+  "blast_radius",
+  "answer_source",
+  "auto_policy_id",
+  "expires_at",
+  "evidence_anchor_mtime_ns",
+  "default_action",
+  "out_of_band_actions",
+  "gate_schema",
+  "consumed_at",
+  "consumed_seq"
 ];
+var MISSING_FIELD_SENTINEL = "unknown (no field)";
 var GateFormatError = class extends Error {
 };
 var GATE_FILE_RE = /^gate-(\d+)\.md$/;
+var GATE_LIST_FIELDS = /* @__PURE__ */ new Set(["context_refs", "evidence_refs"]);
+var GATE_JSON_LIST_FIELDS = /* @__PURE__ */ new Set([
+  "verdicts_final",
+  "open_items",
+  "roadmap_validation",
+  "constraints",
+  "write_scope",
+  "out_of_band_actions"
+]);
+var GATE_JSON_OBJ_FIELDS = /* @__PURE__ */ new Set(["goal_diff", "blast_radius"]);
 var GATE_FIELD_LINE_RE2 = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
 var GATE_LIST_ITEM_RE = /^[ \t]+-[ \t]+(.*)$/;
 var GATE_NULL_LITERALS = /* @__PURE__ */ new Set(["", "~", "-", "null", "Null", "NULL"]);
@@ -21268,9 +21530,10 @@ function parseGateFile(text, file) {
     throw new GateFormatError(`${file}: frontmatter must open with a '---' line`);
   }
   const fields = /* @__PURE__ */ new Map();
-  const contextRefs = [];
+  const listValues = /* @__PURE__ */ new Map();
+  for (const name of GATE_LIST_FIELDS) listValues.set(name, []);
   const seen = /* @__PURE__ */ new Set();
-  let inRefs = false;
+  let activeList = null;
   let closed = false;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
@@ -21278,16 +21541,16 @@ function parseGateFile(text, file) {
       closed = true;
       break;
     }
-    if (inRefs) {
+    if (activeList !== null) {
       const item = GATE_LIST_ITEM_RE.exec(line);
       if (item !== null) {
         const ref = gateScalar(item[1], file, i + 1);
         if (ref === null || ref === "")
-          throw new GateFormatError(`${file}: empty context_refs item (line ${i + 1})`);
-        contextRefs.push(ref);
+          throw new GateFormatError(`${file}: empty ${activeList} item (line ${i + 1})`);
+        listValues.get(activeList)?.push(ref);
         continue;
       }
-      inRefs = false;
+      activeList = null;
     }
     const field = GATE_FIELD_LINE_RE2.exec(line);
     if (field === null) throw new GateFormatError(`${file}: invalid frontmatter line ${i + 1}: '${line}'`);
@@ -21298,14 +21561,28 @@ function parseGateFile(text, file) {
     if (seen.has(name)) throw new GateFormatError(`${file}: duplicate frontmatter field '${name}' (line ${i + 1})`);
     seen.add(name);
     const raw = field[2];
-    if (name === "context_refs") {
+    if (GATE_LIST_FIELDS.has(name)) {
       if (raw === void 0 || raw === "") {
         fields.set(name, null);
-        inRefs = true;
+        activeList = name;
       } else if (raw === "[]") {
         fields.set(name, null);
+      } else if (raw.startsWith("'")) {
+        const scalar = gateScalar(raw, file, i + 1);
+        let decoded;
+        try {
+          decoded = JSON.parse(scalar ?? "");
+        } catch {
+          throw new GateFormatError(
+            `${file}: ${name} must be a block list, [] or a single-line JSON array (line ${i + 1})`
+          );
+        }
+        if (!Array.isArray(decoded) || !decoded.every((x) => typeof x === "string" && x !== "")) {
+          throw new GateFormatError(`${file}: ${name} JSON array must contain non-empty strings (line ${i + 1})`);
+        }
+        listValues.set(name, decoded);
       } else {
-        throw new GateFormatError(`${file}: context_refs must be a block list or [] (line ${i + 1})`);
+        throw new GateFormatError(`${file}: ${name} must be a block list or [] (line ${i + 1})`);
       }
     } else {
       fields.set(name, gateScalar(raw, file, i + 1));
@@ -21323,6 +21600,47 @@ function parseGateFile(text, file) {
     const value = fields.get(name) ?? null;
     return typeof value === "string" && value !== "" ? value : null;
   };
+  const intField = (name) => {
+    const value = optional(name);
+    if (value === null) return null;
+    if (!/^-?\d+$/.test(value))
+      throw new GateFormatError(`${file}: field '${name}' must be an integer, got '${value}'`);
+    return Number.parseInt(value, 10);
+  };
+  const isoField = (name, value) => {
+    if (value !== null && !isIsoTimestamp(value)) {
+      throw new GateFormatError(`${file}: ${name} is not an ISO-8601 timestamp: '${value}'`);
+    }
+    return value;
+  };
+  const jsonField = (name, wantArray) => {
+    const value = optional(name);
+    if (value === null) return null;
+    let decoded;
+    try {
+      decoded = JSON.parse(value);
+    } catch {
+      throw new GateFormatError(
+        `${file}: field '${name}' must be a single-line JSON ${wantArray ? "array" : "object"}`
+      );
+    }
+    const isArray = Array.isArray(decoded);
+    const isObject2 = typeof decoded === "object" && decoded !== null && !isArray;
+    if (wantArray && !isArray || !wantArray && !isObject2) {
+      throw new GateFormatError(`${file}: field '${name}' must decode to a JSON ${wantArray ? "array" : "object"}`);
+    }
+    return decoded;
+  };
+  const jsonStringList = (name) => {
+    const decoded = jsonField(name, true);
+    if (decoded === null) return [];
+    if (!Array.isArray(decoded) || !decoded.every((x) => typeof x === "string")) {
+      throw new GateFormatError(`${file}: field '${name}' JSON array must contain strings`);
+    }
+    return decoded;
+  };
+  const contextRefs = listValues.get("context_refs") ?? [];
+  const evidenceRefs = listValues.get("evidence_refs") ?? [];
   const id = required("id");
   if (!/^gate-\d+$/.test(id)) throw new GateFormatError(`${file}: id must match 'gate-<digits>', got '${id}'`);
   const kind = required("kind");
@@ -21339,19 +21657,23 @@ function parseGateFile(text, file) {
     if (!/^-?\d+$/.test(stageRaw)) throw new GateFormatError(`${file}: stage must be an integer, got '${stageRaw}'`);
     stage = Number.parseInt(stageRaw, 10);
   }
-  if (contextRefs.some((r) => r === "")) {
-    throw new GateFormatError(`${file}: context_refs must be a list of non-empty strings`);
-  }
   const createdAt = required("created_at");
   if (!isIsoTimestamp(createdAt)) {
     throw new GateFormatError(`${file}: created_at is not an ISO-8601 timestamp: '${createdAt}'`);
   }
-  const answeredAt = optional("answered_at");
-  if (answeredAt !== null && !isIsoTimestamp(answeredAt)) {
-    throw new GateFormatError(`${file}: answered_at is not an ISO-8601 timestamp: '${answeredAt}'`);
-  }
+  const answeredAt = isoField("answered_at", optional("answered_at"));
   required("created_by");
   const question = required("question");
+  for (const name of GATE_JSON_LIST_FIELDS) jsonField(name, true);
+  for (const name of GATE_JSON_OBJ_FIELDS) jsonField(name, false);
+  intField("evidence_anchor_mtime_ns");
+  intField("consumed_seq");
+  isoField("consumed_at", optional("consumed_at"));
+  let gateSchema = intField("gate_schema");
+  if (gateSchema === null) gateSchema = 1;
+  if (gateSchema !== 1 && gateSchema !== 2) {
+    throw new GateFormatError(`${file}: gate_schema must be one of 1, 2, got ${gateSchema}`);
+  }
   return {
     id,
     kind,
@@ -21360,7 +21682,30 @@ function parseGateFile(text, file) {
     key: optional("key"),
     question,
     createdAt,
-    path: file
+    path: file,
+    contextRefs,
+    evidenceRefs,
+    reasonCode: optional("reason_code"),
+    observedAt: isoField("observed_at", optional("observed_at")),
+    subjectSha256: optional("subject_sha256"),
+    proposalSha256: optional("proposal_sha256"),
+    goalSha256: optional("goal_sha256"),
+    loop: optional("loop"),
+    usedRounds: intField("used_rounds"),
+    roundLimit: intField("round_limit"),
+    creditsUsed: intField("credits_used"),
+    verdictsFinal: jsonField("verdicts_final", true),
+    openItems: jsonField("open_items", true),
+    roadmapValidation: jsonField("roadmap_validation", true),
+    constraints: jsonStringList("constraints"),
+    answerSource: optional("answer_source"),
+    expiresAt: isoField("expires_at", optional("expires_at")),
+    defaultAction: optional("default_action"),
+    outOfBandActions: jsonStringList("out_of_band_actions"),
+    gateSchema,
+    answeredAt,
+    answeredBy: optional("answered_by"),
+    note: optional("note")
   };
 }
 function listGates(projectDir) {
@@ -21412,9 +21757,20 @@ var EVENT_TYPES = /* @__PURE__ */ new Set([
   "goal-halt",
   "goal-snapshot",
   "type-rejected",
+  "target-config-rejected",
   "reconcile",
   "resume",
-  "l3-no-verdict"
+  "l3-no-verdict",
+  // Gate redesign (mw-autopilot-slot-capacity, D-005/D-006/D-009): names are
+  // pre-admitted in lockstep with autopilot/timeline.py EVENT_TYPES so the
+  // parity test locks both sides; the producers land in T-07/T-08. Unused
+  // vocabulary is inert — the set is a console include-set, not a gate.
+  "gate-auto-decision",
+  "gate-auto-revoke",
+  "review-decided",
+  "review-escalated",
+  "evidence-reconciliation",
+  "stage-reopen-refused"
 ]);
 var BEAT_EV = "beat";
 function nonBeatFilter() {
@@ -21471,14 +21827,18 @@ function readTimelineEvents(file) {
       skipped += 1;
       continue;
     }
-    events.push({
+    const event = {
       ts: typeof rec.ts === "string" ? rec.ts : "",
       seq,
       ev: typeof rec.ev === "string" ? rec.ev : "",
       key: typeof rec.key === "string" ? rec.key : "-",
       stage: typeof rec.stage === "number" && Number.isInteger(rec.stage) ? rec.stage : null,
       detail: typeof rec.detail === "string" ? rec.detail : ""
-    });
+    };
+    if (typeof rec.data === "object" && rec.data !== null && !Array.isArray(rec.data)) {
+      event.data = rec.data;
+    }
+    events.push(event);
   }
   return { events, skipped };
 }
@@ -21670,6 +22030,17 @@ function renderStatusText(model) {
 var MONITOR_WIDGET_ID = "agent-team-loop-monitor";
 var MONITOR_INTERVAL_MS = 4e3;
 var MONITOR_LINE_MAX = 110;
+function readAutoGateMode(projectDir) {
+  try {
+    const parsed = JSON.parse(fs27.readFileSync(configPath(projectDir), "utf8"));
+    if (typeof parsed === "object" && parsed !== null) {
+      const mode = parsed.auto_gate_mode;
+      if (mode === "off" || mode === "shadow" || mode === "live") return mode;
+    }
+  } catch {
+  }
+  return "off";
+}
 function scanPendingGate(file) {
   let text;
   try {
@@ -21684,9 +22055,22 @@ function scanPendingGate(file) {
   let stage = null;
   let key = "";
   let status = "";
+  let createdAt = null;
+  let reasonCode = null;
+  const evidenceRefs = [];
+  let activeList = null;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim() === "---") break;
+    if (activeList === "evidence_refs") {
+      const item = /^[ \t]+-[ \t]+(.*)$/.exec(line);
+      if (item !== null) {
+        const ref = (item[1] ?? "").trim().replace(/^'(.*)'$/, "$1");
+        if (ref !== "") evidenceRefs.push(ref);
+        continue;
+      }
+      activeList = null;
+    }
     const m = /^([A-Za-z_][A-Za-z0-9_]*):[ \t]*(.*?)[ \t]*$/.exec(line);
     if (m === null) continue;
     const name = m[1] ?? "";
@@ -21696,9 +22080,50 @@ function scanPendingGate(file) {
     else if (name === "status") status = value;
     else if (name === "key") key = value;
     else if (name === "stage") stage = /^-?\d+$/.test(value) ? Number.parseInt(value, 10) : null;
+    else if (name === "created_at") createdAt = value === "" ? null : value;
+    else if (name === "reason_code") reasonCode = value === "" ? null : value;
+    else if (name === "evidence_refs") {
+      if (value === "") {
+        activeList = "evidence_refs";
+      } else if (value === "[]") {
+        activeList = null;
+      } else if (value.startsWith("'")) {
+        try {
+          const decoded = JSON.parse(value.replace(/^'/, "").replace(/'$/, "").replaceAll("''", "'"));
+          if (Array.isArray(decoded)) {
+            for (const item of decoded) if (typeof item === "string" && item !== "") evidenceRefs.push(item);
+          }
+        } catch {
+        }
+      }
+    }
   }
   if (status !== "pending" || id === "" || kind === "") return null;
-  return { id, kind, stage, key };
+  return { id, kind, stage, key, createdAt, reasonCode, evidenceRefs, ageMs: null, drift: null };
+}
+function evidenceFilePath(projectDir, ref) {
+  const body = ref.replace(/^[^:]*:/, "");
+  const rel = body.split("#")[0].split("@")[0] ?? "";
+  if (rel === "") return null;
+  const underAgenticdoc = path30.join(projectDir, ".agenticdoc", rel);
+  if (fs27.existsSync(underAgenticdoc)) return underAgenticdoc;
+  const underRoot = path30.join(projectDir, rel);
+  return fs27.existsSync(underRoot) ? underRoot : null;
+}
+function gateDriftDetail(projectDir, gate, createdAtMs) {
+  if (createdAtMs === null || gate.evidenceRefs === void 0 || gate.evidenceRefs.length === 0) return null;
+  let newestMs = Number.NEGATIVE_INFINITY;
+  for (const ref of gate.evidenceRefs) {
+    const file = evidenceFilePath(projectDir, ref);
+    if (file === null) continue;
+    try {
+      const mtimeMs = fs27.statSync(file).mtimeMs;
+      if (mtimeMs > newestMs) newestMs = mtimeMs;
+    } catch {
+    }
+  }
+  if (!Number.isFinite(newestMs) || newestMs <= createdAtMs) return null;
+  return "mtime>created_at";
 }
 function readMonitorState(projectDir, nowMs) {
   const status = getMwStatus(projectDir);
@@ -21748,13 +22173,20 @@ function readMonitorState(projectDir, nowMs) {
       paused = cfg.config.paused;
     }
   }
-  const conductor = { pid: conductorPid, alive: conductorAlive, enabled, paused, everEnabled };
+  const conductor = {
+    pid: conductorPid,
+    alive: conductorAlive,
+    enabled,
+    paused,
+    everEnabled,
+    autoMode: readAutoGateMode(projectDir)
+  };
   const workers = [];
   for (const entry of new WorkerStore(path30.join(projectDir, ".agenticdoc")).readAll()) {
     if (entry.status !== "running") continue;
     const dispatched = Date.parse(entry.dispatchedAt);
     if (Number.isNaN(dispatched)) continue;
-    workers.push({ taskKey: entry.taskKey, elapsedMs: Math.max(0, nowMs - dispatched) });
+    workers.push({ ...entry, elapsedMs: Math.max(0, nowMs - dispatched) });
   }
   workers.sort((a, b) => b.elapsedMs - a.elapsedMs || a.taskKey.localeCompare(b.taskKey));
   const gates = [];
@@ -21763,7 +22195,12 @@ function readMonitorState(projectDir, nowMs) {
     for (const entry of fs27.readdirSync(dir, { withFileTypes: true })) {
       if (!entry.isFile() || !/^gate-\d+\.md$/.test(entry.name)) continue;
       const gate = scanPendingGate(path30.join(dir, entry.name));
-      if (gate !== null) gates.push(gate);
+      if (gate === null) continue;
+      const createdMs = gate.createdAt === null || gate.createdAt === void 0 ? null : Date.parse(gate.createdAt);
+      const createdKnown = createdMs !== null && !Number.isNaN(createdMs) ? createdMs : null;
+      gate.ageMs = createdKnown === null ? null : Math.max(0, nowMs - createdKnown);
+      gate.drift = gateDriftDetail(projectDir, gate, createdKnown);
+      gates.push(gate);
     }
   } catch {
   }
@@ -21943,7 +22380,7 @@ function deriveAutopilotPanel(projectDir, nowMs, workers, deps) {
       key,
       phase: phaseByKey.get(key) ?? "\u2014",
       status: statusByKey.get(key) ?? "unknown",
-      inFlight: workers.filter((w) => w.taskKey.startsWith(`ap-${key}-`)).length,
+      inFlight: workers.filter((w) => workerBelongsToKey(w, key)).length,
       blockedBy: (depsByKey.get(key) ?? []).filter(
         (dep) => !["done", "closed-legacy"].includes(statusByKey.get(dep) ?? "")
       )
@@ -21951,8 +22388,8 @@ function deriveAutopilotPanel(projectDir, nowMs, workers, deps) {
   }
   const busyKeys = /* @__PURE__ */ new Set();
   for (const w of workers) {
-    const owner = allKeys.find((key) => w.taskKey.startsWith(`ap-${key}-`));
-    busyKeys.add(owner ?? w.taskKey);
+    const owner = workerOwnerKey(w);
+    if (owner !== "" && allKeys.includes(owner) && workerBelongsToKey(w, owner)) busyKeys.add(owner);
   }
   return {
     enabled: config?.enabled ?? false,
@@ -21996,14 +22433,20 @@ function renderMonitorLines(s) {
     const up = s.serve.upMs !== null ? `, up ${formatDuration(s.serve.upMs)}` : "";
     lines.push(trunc2(`serve: PID ${s.serve.pid ?? "?"} fresh${up}`, MONITOR_LINE_MAX));
   }
+  const autoToken = ` | auto=${s.conductor.autoMode ?? "off"}`;
   if (!s.conductor.everEnabled) {
-    lines.push("conductor: not enabled (/autopilot enable)");
+    lines.push(`conductor: not enabled (/autopilot enable)${autoToken}`);
   } else if (s.conductor.pid !== null && s.conductor.alive) {
-    lines.push(trunc2(`conductor: PID ${s.conductor.pid} alive | ${conductorIntent(s.conductor)}`, MONITOR_LINE_MAX));
+    lines.push(
+      trunc2(
+        `conductor: PID ${s.conductor.pid} alive | ${conductorIntent(s.conductor)}${autoToken}`,
+        MONITOR_LINE_MAX
+      )
+    );
   } else if (s.conductor.pid !== null) {
-    lines.push(`conductor: dead (pid ${s.conductor.pid} stale)`);
+    lines.push(`conductor: dead (pid ${s.conductor.pid} stale)${autoToken}`);
   } else {
-    lines.push(trunc2(`conductor: not running | ${conductorIntent(s.conductor)}`, MONITOR_LINE_MAX));
+    lines.push(trunc2(`conductor: not running | ${conductorIntent(s.conductor)}${autoToken}`, MONITOR_LINE_MAX));
   }
   if (s.autopilot.enabled) {
     const a = s.autopilot;
@@ -22054,14 +22497,26 @@ function renderMonitorLines(s) {
   }
   if (s.gates.length === 0) {
     lines.push("gates: 0 pending");
-  } else if (s.gates.length === 1) {
-    const g = s.gates[0];
-    lines.push(
-      trunc2(`gates: 1 pending - ${g.id} (${g.kind}) -> /autopilot gate ${g.id} approve|reject`, MONITOR_LINE_MAX)
-    );
   } else {
-    const list = s.gates.map((g) => `${g.id} (${g.kind})`).join(", ");
-    lines.push(trunc2(`gates: ${s.gates.length} pending - ${list} -> /autopilot gates`, MONITOR_LINE_MAX));
+    s.gates.forEach((g, index) => {
+      const head = index === 0 ? `gates: ${s.gates.length} pending - ` : "  \xB7 ";
+      const base = `${head}${g.id} (${g.kind})`;
+      const answer = ` -> /autopilot gate ${g.id} approve|reject`;
+      const tokens = [];
+      const scope = g.stage !== null ? ` stage=${g.stage}` : g.key !== "" ? ` key=${g.key}` : "";
+      if (scope !== "") tokens.push({ text: scope, drop: 3 });
+      if (g.ageMs !== null && g.ageMs !== void 0)
+        tokens.push({ text: ` age=${formatDuration(g.ageMs)}`, drop: 2 });
+      if (g.reasonCode !== null && g.reasonCode !== void 0)
+        tokens.push({ text: ` reason=${g.reasonCode}`, drop: 1 });
+      if (g.drift !== null && g.drift !== void 0) tokens.push({ text: ` DRIFT(${g.drift})`, drop: 4 });
+      let line = `${base}${tokens.map((t) => t.text).join("")}${answer}`;
+      for (const drop of [1, 2, 3, 4]) {
+        if (line.length <= MONITOR_LINE_MAX) break;
+        line = `${base}${tokens.filter((t) => t.drop > drop).map((t) => t.text).join("")}${answer}`;
+      }
+      lines.push(trunc2(line, MONITOR_LINE_MAX));
+    });
   }
   return lines;
 }
@@ -22169,20 +22624,203 @@ function cmdStatus(pi, ctx, projectDir, rest) {
   if (head.seq > 0) pi.appendEntry(AUTOPILOT_SEEN_ENTRY_TYPE, { seq: head.seq, ts: head.ts });
   ctx.ui.notify(json ? JSON.stringify(result.model.status, null, 2) : renderStatusText(result.model), "info");
 }
-function cmdGates(ctx, projectDir) {
-  const { gates, errors } = listGates(projectDir);
-  const pending = gates.filter((g) => g.status === "pending");
-  const lines = [];
-  if (pending.length === 0) {
-    lines.push(`no pending gates (${gates.length} total)`);
-  } else {
-    lines.push(`${pending.length} pending gate(s):`);
-    for (const g of pending) {
-      const scope = [g.stage !== null ? `stage=${g.stage}` : null, g.key !== null ? `key=${g.key}` : null].filter((s) => s !== null).join(" ");
-      lines.push(`  ${g.id} [${g.kind}]${scope === "" ? "" : ` ${scope}`} \u2014 ${g.question} (created ${g.createdAt})`);
-      lines.push(`    answer: /autopilot gate ${g.id} approve|reject [--note <text>]  (${g.path})`);
+var GATE_ACTIONS = {
+  "stage-confirm": {
+    approve: "stage opens, its keys become eligible",
+    reject: "stage stays halted until a new proposal",
+    reversible: "no"
+  },
+  "stage-close": {
+    approve: "stage -> closed, next stage-confirm opens",
+    reject: "stage -> halted, roadmap edit required",
+    reversible: "no"
+  },
+  stalled: {
+    approve: "one resume round granted for the key",
+    reject: "key stays stalled (terminal)",
+    reversible: "yes"
+  },
+  "budget-exhausted": {
+    approve: "one resume round granted for the loop",
+    reject: "loop stays exhausted (terminal)",
+    reversible: "yes"
+  },
+  "goal-change": {
+    approve: "new goal adopted, keys re-validate",
+    reject: "goal change refused, halt and report",
+    reversible: "no"
+  },
+  "xkey-authorize": {
+    approve: "cross-key write ticket authorized",
+    reject: "ticket refused, blocker recorded",
+    reversible: "no"
+  }
+};
+var GATE_CARD_LINE_MAX = 110;
+function cardClamp(value, max) {
+  return value.length <= max ? value : `${value.slice(0, max - 1)}\u2026`;
+}
+function cardLine(value) {
+  return cardClamp(value, GATE_CARD_LINE_MAX);
+}
+function formatWaited(ms) {
+  const s = Math.max(0, Math.floor(ms / 1e3));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = ms / 36e5;
+  if (h < 48) return `${(Math.round(h * 10) / 10).toFixed(1)}h`;
+  return `${Math.round(ms / 864e5)}d`;
+}
+function gateScope(g) {
+  const parts = [];
+  if (g.stage !== null) parts.push(`stage=${g.stage}`);
+  if (g.key !== null && g.key !== "") parts.push(`key=${g.key}`);
+  return parts.length === 0 ? "scope=none" : parts.join(" ");
+}
+function gateScopeKey(g) {
+  return `${g.stage ?? "-"}|${g.key ?? ""}`;
+}
+function describeEvidence(projectDir, ref) {
+  const body = ref.replace(/^[^:]*:/, "");
+  const rel = body.split("#")[0].split("@")[0] || ref;
+  const file = evidenceFilePath(projectDir, ref);
+  if (file === null) return `${rel} (${MISSING_FIELD_SENTINEL})`;
+  try {
+    const stat = fs28.statSync(file);
+    const sections = fs28.readFileSync(file, "utf8").split(/\r\n|\r|\n/).filter((line) => line.startsWith("## ")).map((line) => line.slice(3).trim()).filter((name) => name !== "");
+    const sectionText = sections.length === 0 ? "[]" : `[${sections.slice(0, 4).join(",")}]`;
+    return `${rel} (${stat.size}B, sections=${sectionText}, mtime=${new Date(stat.mtimeMs).toISOString()})`;
+  } catch {
+    return `${rel} (${MISSING_FIELD_SENTINEL})`;
+  }
+}
+function evidenceDrift(projectDir, refs, createdAt) {
+  const createdMs = Date.parse(createdAt);
+  if (Number.isNaN(createdMs)) return null;
+  let newestMs = Number.NEGATIVE_INFINITY;
+  for (const ref of refs) {
+    const file = evidenceFilePath(projectDir, ref);
+    if (file === null) continue;
+    try {
+      const mtimeMs = fs28.statSync(file).mtimeMs;
+      if (mtimeMs > newestMs) newestMs = mtimeMs;
+    } catch {
     }
   }
+  if (!Number.isFinite(newestMs) || newestMs <= createdMs) return null;
+  return `mtime=${new Date(newestMs).toISOString()}, gate_created=${new Date(createdMs).toISOString()}`;
+}
+function verdictSummary(value) {
+  if (!Array.isArray(value)) return MISSING_FIELD_SENTINEL;
+  const parts = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue;
+    const row = item;
+    const key = typeof row.key === "string" ? row.key : "?";
+    const verdict = typeof row.verdict === "string" ? row.verdict : "?";
+    parts.push(`${key}:${verdict}`);
+  }
+  return parts.length === 0 ? MISSING_FIELD_SENTINEL : parts.join(",");
+}
+function jsonSummary(value) {
+  return value === null || value === void 0 ? MISSING_FIELD_SENTINEL : JSON.stringify(value);
+}
+function downstreamKeys(stage, gate) {
+  if (stage === void 0) return null;
+  if (gate.key === null || gate.key === "") return stage.keys.map((k) => k.key);
+  const found = /* @__PURE__ */ new Set();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const k of stage.keys) {
+      if (found.has(k.key)) continue;
+      if (k.dependsOn.includes(gate.key) || k.dependsOn.some((d) => found.has(d))) {
+        found.add(k.key);
+        grew = true;
+      }
+    }
+  }
+  return [...found];
+}
+function renderGateCards(gates, projectDir, nowMs) {
+  const pending = gates.filter((g) => g.status === "pending");
+  if (pending.length === 0) return [`no pending gates (${gates.length} total)`];
+  const roadmap = readRoadmap(projectDir);
+  const stages = roadmap.ok ? roadmap.stages : [];
+  const autoMode = readAutoGateMode(projectDir);
+  const lines = [`${pending.length} pending gate(s):`];
+  for (const g of pending) {
+    const stage = g.stage === null ? void 0 : stages.find((s) => s.number === g.stage);
+    const createdMs = Date.parse(g.createdAt);
+    const waited = Number.isNaN(createdMs) ? MISSING_FIELD_SENTINEL : formatWaited(Math.max(0, nowMs - createdMs));
+    const scope = gateScope(g);
+    const action = GATE_ACTIONS[g.kind];
+    const approve = action === void 0 ? MISSING_FIELD_SENTINEL : action.approve;
+    const reject = action === void 0 ? MISSING_FIELD_SENTINEL : action.reject;
+    const reversible = action === void 0 ? MISSING_FIELD_SENTINEL : action.reversible;
+    const goal = stage === void 0 || stage.goal === "" ? MISSING_FIELD_SENTINEL : stage.goal;
+    const src = g.contextRefs.length > 1 ? g.contextRefs[1] : MISSING_FIELD_SENTINEL;
+    const prior = gates.filter((h) => h.id !== g.id && h.status !== "pending" && gateScopeKey(h) === gateScopeKey(g));
+    const history = prior.length === 0 ? "none" : prior.map((h) => `${h.id} [${h.kind}] ${gateScope(h)} ${h.status} ${h.answeredAt ?? "\u2014"}`).join("; ");
+    const withNote = prior.filter((h) => h.note !== null && h.note !== "");
+    const lastNote = withNote[withNote.length - 1];
+    const priorNote = lastNote === void 0 ? "none" : `[${lastNote.id}] ${lastNote.note}`;
+    const constraints = g.constraints.length === 0 ? MISSING_FIELD_SENTINEL : g.constraints.join("; ");
+    const downstream = downstreamKeys(stage, g);
+    const impact = downstream === null ? MISSING_FIELD_SENTINEL : `downstream=${downstream.length} keys [${downstream.slice(0, 5).join(",")}]`;
+    const roadmapStatus = stage === void 0 ? MISSING_FIELD_SENTINEL : stage.status;
+    const qTail = ` (full: ${g.path})`;
+    const evidence = g.evidenceRefs.length === 0 ? `evidence: ${MISSING_FIELD_SENTINEL}` : `evidence: ${g.evidenceRefs.slice(0, 3).map((ref) => describeEvidence(projectDir, ref)).join("; ")}${g.evidenceRefs.length > 3 ? ` +${g.evidenceRefs.length - 3} more` : ""}${evidenceDrift(projectDir, g.evidenceRefs, g.createdAt) === null ? "" : ` DRIFT(${evidenceDrift(projectDir, g.evidenceRefs, g.createdAt)})`}`;
+    lines.push(cardLine(`${g.id} [${g.kind}] ${scope} created=${g.createdAt} waited=${waited}`));
+    lines.push(cardLine(`Q: ${cardClamp(g.question, Math.max(0, GATE_CARD_LINE_MAX - 3 - qTail.length))}${qTail}`));
+    lines.push(
+      cardLine(
+        `A: approve = ${approve} (reversible: ${reversible}) | R: reject = ${reject} (reversible: ${reversible})`
+      )
+    );
+    lines.push(
+      cardLine(
+        `goal: ${cardClamp(goal, 60)} | goal_sha256=${g.goalSha256 ?? MISSING_FIELD_SENTINEL} | proposal_sha256=${g.proposalSha256 ?? MISSING_FIELD_SENTINEL} | roadmap_validation=${jsonSummary(g.roadmapValidation)}`
+      )
+    );
+    lines.push(
+      cardLine(
+        `reason: ${g.reasonCode ?? MISSING_FIELD_SENTINEL} src="${cardClamp(src, 60)}" | verdict: l3=${verdictSummary(g.verdictsFinal)}`
+      )
+    );
+    lines.push(cardLine(evidence));
+    lines.push(
+      cardLine(
+        `impact: ${impact} | stage-close: ${g.kind === "stage-close" ? "this gate" : "na"} | next-stage: na | roadmap: ${roadmapStatus}`
+      )
+    );
+    lines.push(cardLine(`history: ${history}`));
+    lines.push(
+      cardLine(
+        `default: ${g.defaultAction ?? MISSING_FIELD_SENTINEL} | ttl: ${g.expiresAt ?? MISSING_FIELD_SENTINEL} | auto=${autoMode}`
+      )
+    );
+    lines.push(
+      cardLine(
+        `budget: loop=${g.loop ?? MISSING_FIELD_SENTINEL} used=${g.usedRounds ?? MISSING_FIELD_SENTINEL}/${g.roundLimit ?? MISSING_FIELD_SENTINEL} credits=${g.creditsUsed ?? MISSING_FIELD_SENTINEL}`
+      )
+    );
+    lines.push(cardLine(`constraints: ${cardClamp(constraints, 50)} | prior: ${cardClamp(priorNote, 40)}`));
+    lines.push(
+      cardLine(`open-items: ${g.openItems === null ? MISSING_FIELD_SENTINEL : JSON.stringify(g.openItems)}`)
+    );
+    lines.push(
+      cardLine(
+        `answer: /autopilot gate ${g.id} approve|reject --note <text>  expected: ${g.answerSource ?? MISSING_FIELD_SENTINEL}`
+      )
+    );
+  }
+  return lines;
+}
+function cmdGates(ctx, projectDir) {
+  const { gates, errors } = listGates(projectDir);
+  const lines = renderGateCards(gates, projectDir, Date.now());
   for (const e of errors) lines.push(`warning: ${e}`);
   ctx.ui.notify(lines.join("\n"), "info");
 }
@@ -22391,7 +23029,7 @@ function cmdRoadmap(ctx, projectDir) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/ack-store.ts
-import * as fs28 from "node:fs";
+import * as fs29 from "node:fs";
 import * as path32 from "node:path";
 var AckStore = class {
   constructor(agenticdocRoot2) {
@@ -22402,8 +23040,8 @@ var AckStore = class {
    * comment lines and malformed rows are skipped. */
   readAll() {
     const result = /* @__PURE__ */ new Map();
-    if (!fs28.existsSync(this.filePath)) return result;
-    const lines = fs28.readFileSync(this.filePath, "utf8").split("\n");
+    if (!fs29.existsSync(this.filePath)) return result;
+    const lines = fs29.readFileSync(this.filePath, "utf8").split("\n");
     for (const line of lines) {
       const entry = parseAckLine(line);
       if (entry === void 0) continue;
@@ -22436,8 +23074,8 @@ var AckStore = class {
       const content = `${[...merged].map(([key, ts]) => `${key} | ${ts}`).join("\n")}
 `;
       const tmpPath = `${this.filePath}.tmp`;
-      fs28.writeFileSync(tmpPath, content, "utf8");
-      fs28.renameSync(tmpPath, this.filePath);
+      fs29.writeFileSync(tmpPath, content, "utf8");
+      fs29.renameSync(tmpPath, this.filePath);
     } finally {
       release();
     }
@@ -22610,8 +23248,8 @@ async function restoreWatch(pi, watch, indexStore, workerStore, ackStore, agenti
   );
   pi.appendEntry(WATCH_ENTRY_TYPE, { key, claimed: data.claimed ?? false });
   const pmStatePath = path33.join(agenticdocRoot2, key, "pm-state.md");
-  if (fs29.existsSync(pmStatePath)) {
-    const updated = fs29.statSync(pmStatePath).mtime.toISOString();
+  if (fs30.existsSync(pmStatePath)) {
+    const updated = fs30.statSync(pmStatePath).mtime.toISOString();
     ctx.ui.notify(
       `[mw] key '${key}' \u6709\u5DF2\u4FDD\u5B58\u7684 pm-state.md\uFF08\u66F4\u65B0\u4E8E ${updated}\uFF09\u3002\u5982\u9700\u63A5\u7EED\u4E0A\u6B21\u7684\u5DE5\u4F5C\u4E0A\u4E0B\u6587\uFF0C\u8BA9 agent \u8BFB\u53D6 ${key}/pm-state.md \u7684 Notes \u533A\u3002`,
       "info"
@@ -22632,17 +23270,17 @@ function readTaskOrigin(taskContent) {
 }
 function isConductorTask(taskMdPath) {
   try {
-    return readTaskOrigin(fs29.readFileSync(taskMdPath, "utf8")) === "conductor";
+    return readTaskOrigin(fs30.readFileSync(taskMdPath, "utf8")) === "conductor";
   } catch {
     return false;
   }
 }
 async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
-  if (!fs29.existsSync(agenticdocRoot2)) return;
+  if (!fs30.existsSync(agenticdocRoot2)) return;
   const dispatched = new Set(workerStore.readAll().map((e) => e.taskKey));
   let owners;
   try {
-    owners = fs29.readdirSync(agenticdocRoot2, { withFileTypes: true });
+    owners = fs30.readdirSync(agenticdocRoot2, { withFileTypes: true });
   } catch {
     return;
   }
@@ -22651,7 +23289,7 @@ async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
     const workersDir = path33.join(agenticdocRoot2, owner.name, "workers");
     let taskDirs;
     try {
-      taskDirs = fs29.readdirSync(workersDir, { withFileTypes: true });
+      taskDirs = fs30.readdirSync(workersDir, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -22661,7 +23299,7 @@ async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
       const taskKey = taskDir.name;
       if (dispatched.has(taskKey)) continue;
       const taskMdPath = path33.join(workersDir, taskKey, "task.md");
-      if (!fs29.existsSync(taskMdPath)) continue;
+      if (!fs30.existsSync(taskMdPath)) continue;
       if (isConductorTask(taskMdPath)) continue;
       undispatched.push({ taskKey, taskMdPath });
     }
@@ -22679,7 +23317,7 @@ async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
       }
     }
     for (const { taskKey, taskMdPath } of undispatched) {
-      const taskContent = fs29.readFileSync(taskMdPath, "utf8");
+      const taskContent = fs30.readFileSync(taskMdPath, "utf8");
       const { cli, provider } = pickWorkerRoute(taskContent);
       const model = readModel(taskContent);
       try {
@@ -22788,7 +23426,8 @@ var PARALLEL_PROTOCOL = [
   "   \uFF08\u53EA\u8BFB\u89D2\u8272\uFF0C\u5F7C\u6B64\u65E0\u6587\u4EF6\u51B2\u7A81\uFF09\uFF0C\u6BCF\u4E2A RQ \u53EA\u5199\u552F\u4E00\u7684 evidence/research/<phase>-<rq-slug>-<date>.md\uFF1B\u7981\u6B62\u4E24\u4E2A worker \u5199\u540C\u4E00\u6587\u4EF6\u3002",
   "3. \u7F16\u7801\u6309\u6587\u4EF6/\u6A21\u5757\u8FB9\u754C\u5E76\u884C\uFF1A\u540C\u4E00\u6587\u4EF6\u540C\u4E00\u65F6\u523B\u53EA\u5141\u8BB8\u4E00\u4E2A worker\u3002",
   "4. \u76F8\u4F4D\u6587\u6863\uFF08spec.md / design.md\uFF09\u7531 PM \u81EA\u5DF1\u4E32\u884C\u5199\uFF0C\u4E0D\u6D3E worker\u3002",
-  "5. \u6D3E\u53D1\u524D\u5148\u770B widget \u4E0A\u7684 running worker \u6570\uFF1A\u80FD\u5E76\u884C\u5C31\u4E0D\u8981\u4E32\u884C\u7B49\u5F85\uFF1Bworker \u7EC8\u6001\u56DE\u8BFB\u540E\u7ACB\u523B\u8865\u6D3E\u4E0B\u4E00\u6279\u3002"
+  "5. \u6D3E\u53D1\u524D\u5148\u770B widget \u4E0A\u7684 running worker \u6570\uFF1A\u80FD\u5E76\u884C\u5C31\u4E0D\u8981\u4E32\u884C\u7B49\u5F85\uFF1Bworker \u7EC8\u6001\u56DE\u8BFB\u540E\u7ACB\u523B\u8865\u6D3E\u4E0B\u4E00\u6279\u3002",
+  "6. \u5F15\u7528\u56FE\u7247/\u622A\u56FE/mockup \u7684\u4EFB\u52A1\u7528 type: vision \u6D3E\u53D1\uFF08\u89C6\u89C9\u89D2\u8272\uFF0Cworker \u8BFB\u53D6\u56FE\u7247\u6587\u4EF6\u5E76\u53D7 image \u80FD\u529B\u95E8\u7981\u7EA6\u675F\uFF09\u3002"
 ].join("\n");
 function pmActivate(pi) {
   const projectDir = process.cwd();
@@ -22879,7 +23518,7 @@ ${PARALLEL_PROTOCOL}` };
     ui.ctx = ctx;
     autoStartMonitor(ctx, projectDir);
     await restoreWatch(pi, watch, indexStore, workerStore, ackStore, agenticdocRoot2, ctx);
-    const initialized = fs29.existsSync(path33.join(projectDir, ".agenticdoc"));
+    const initialized = fs30.existsSync(path33.join(projectDir, ".agenticdoc"));
     if (!initialized) {
       const result = initMw(projectDir);
       if (result.ok) {
@@ -22915,7 +23554,7 @@ ${PARALLEL_PROTOCOL}` };
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/implementation-gate.ts
-import * as fs30 from "node:fs";
+import * as fs31 from "node:fs";
 import * as os4 from "node:os";
 import * as path34 from "node:path";
 var IS_WIN322 = process.platform === "win32";
@@ -22946,14 +23585,14 @@ function expandTildePath(p) {
 }
 function isExistingDir(absPath) {
   try {
-    return fs30.statSync(absPath).isDirectory();
+    return fs31.statSync(absPath).isDirectory();
   } catch {
     return false;
   }
 }
 function defaultReadTextFile(absPath) {
   try {
-    return fs30.readFileSync(absPath, "utf8");
+    return fs31.readFileSync(absPath, "utf8");
   } catch {
     return void 0;
   }
@@ -23031,7 +23670,7 @@ function hasActiveKeyClaim(root, claimId, readIndexFile = defaultReadTextFile) {
 function findFreshMiniSpec(root, now = Date.now(), maxAgeMs = MINI_SPEC_FRESH_MS) {
   let entries;
   try {
-    entries = fs30.readdirSync(path34.join(root, AGENTICDOC_DIR2), { withFileTypes: true });
+    entries = fs31.readdirSync(path34.join(root, AGENTICDOC_DIR2), { withFileTypes: true });
   } catch {
     return void 0;
   }
@@ -23041,7 +23680,7 @@ function findFreshMiniSpec(root, now = Date.now(), maxAgeMs = MINI_SPEC_FRESH_MS
     if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
     const candidate = path34.join(root, AGENTICDOC_DIR2, entry.name, MINI_SPEC_FILE);
     try {
-      const mtime = fs30.statSync(candidate).mtimeMs;
+      const mtime = fs31.statSync(candidate).mtimeMs;
       if (now - mtime <= maxAgeMs && mtime > bestMtime) {
         best = candidate;
         bestMtime = mtime;
@@ -23398,8 +24037,8 @@ function gateDecision(toolName, input, env, cwd = process.cwd()) {
 function recordImplGateAudit(tag, toolName, target, basis, root = resolveGateRoot()) {
   try {
     const dir = path34.join(root, AGENTICDOC_DIR2);
-    fs30.mkdirSync(dir, { recursive: true });
-    fs30.appendFileSync(
+    fs31.mkdirSync(dir, { recursive: true });
+    fs31.appendFileSync(
       path34.join(dir, GATE_LOG_FILE),
       `[GATE] ${(/* @__PURE__ */ new Date()).toISOString()} ${tag} tool=${toolName} target=${target} basis=${basis}
 `,
@@ -23426,7 +24065,7 @@ function registerImplementationGate(pi) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/protected-config.ts
-import * as fs31 from "node:fs";
+import * as fs32 from "node:fs";
 import * as os5 from "node:os";
 import * as path35 from "node:path";
 var IS_WIN323 = process.platform === "win32";
@@ -23534,9 +24173,9 @@ function recordProtectedBlockTrace(toolName, detail, taskPathEnv = process.env.P
   if (!taskPathEnv) return;
   try {
     const dir = path35.dirname(path35.resolve(taskPathEnv));
-    fs31.mkdirSync(dir, { recursive: true });
+    fs32.mkdirSync(dir, { recursive: true });
     const first = detail.split("\n")[0] ?? "";
-    fs31.appendFileSync(
+    fs32.appendFileSync(
       path35.join(dir, "trace.log"),
       `[PROTECTED_CONFIG] ${(/* @__PURE__ */ new Date()).toISOString()} blocked tool=${toolName} target=${first}
 `,
@@ -23575,16 +24214,16 @@ function registerProtectedConfigGuard(pi) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/xkey-gate-guard.ts
-import * as fs32 from "node:fs";
+import * as fs33 from "node:fs";
 import * as os6 from "node:os";
 import * as path36 from "node:path";
 var IS_WIN324 = process.platform === "win32";
 var ENV_GATE_ROOT2 = "MW_XKEY_GATE_ROOT";
 var AGENTICDOC_DIR3 = ".agenticdoc";
 var AUTOPILOT_DIR = "_autopilot";
-var GATES_DIR = "gates";
-var GATE_DIR_FRAGMENT = `${AGENTICDOC_DIR3}/${AUTOPILOT_DIR}/${GATES_DIR}`;
-var GUARD_EXPLANATION2 = "Gate files (.agenticdoc/_autopilot/gates/**) are the human-answer channel: only a human answers them (via the /autopilot gate console or by editing the file from outside the agent). An agent tool call must not write them. To propose a change, write .agenticdoc/_autopilot/xkey/evidence/<request_id>/proposal.md instead - the conductor validates proposals and applies them; ledger.json and tickets/ stay with the conductor. Reads of gate files remain allowed.";
+var XKEY_DIR = "xkey";
+var AUTOPILOT_DIR_FRAGMENT = `${AGENTICDOC_DIR3}/${AUTOPILOT_DIR}`;
+var GUARD_EXPLANATION2 = "Autopilot state (.agenticdoc/_autopilot/**) is the conductor's audit and control channel: gates/** are answered only by a human (via the /autopilot gate console or by editing the file from outside the agent), and timeline.jsonl / config.json / auto-decisions.jsonl are written only by the conductor. An agent tool call must not write them. To propose a change, write .agenticdoc/_autopilot/xkey/evidence/<request_id>/proposal.md instead - the conductor validates proposals and applies them; ledger.json and tickets/ stay with the conductor. Reads remain allowed.";
 function fold3(p) {
   return IS_WIN324 ? p.toLowerCase() : p;
 }
@@ -23597,8 +24236,11 @@ function escapeRegExp2(s) {
 function boundary2() {
   return "(?![\\w-])";
 }
-function fragmentPresent2(scan, frag) {
-  return new RegExp(escapeRegExp2(frag) + boundary2()).test(scan);
+function guardedFragmentPattern(fragment) {
+  return `${escapeRegExp2(fragment)}${boundary2()}(?!/${XKEY_DIR}${boundary2()})`;
+}
+function guardedFragmentPresent(scan, fragment) {
+  return new RegExp(guardedFragmentPattern(fragment)).test(scan);
 }
 function expandTildePath3(p) {
   if (p === "~") return os6.homedir();
@@ -23614,8 +24256,11 @@ function resolveXkeyGateRoot(env = process.env) {
   }
   return process.cwd();
 }
-function xkeyGateDir(root) {
-  return path36.join(root, AGENTICDOC_DIR3, AUTOPILOT_DIR, GATES_DIR);
+function xkeyGuardedDir(root) {
+  return path36.join(root, AGENTICDOC_DIR3, AUTOPILOT_DIR);
+}
+function xkeySubtreeDir(root) {
+  return path36.join(xkeyGuardedDir(root), XKEY_DIR);
 }
 function isUnder(parent, child) {
   const p = fold3(path36.normalize(parent));
@@ -23627,8 +24272,8 @@ function isUnder(parent, child) {
 function isXkeyGatePath(root, rawPath, cwd = process.cwd()) {
   if (typeof rawPath !== "string" || rawPath === "") return false;
   const target = path36.resolve(cwd, expandTildePath3(rawPath));
-  if (isUnder(xkeyGateDir(root), target)) return true;
-  return fragmentPresent2(toForwardSlashes3(fold3(target)), GATE_DIR_FRAGMENT);
+  if (isUnder(xkeyGuardedDir(root), target) && !isUnder(xkeySubtreeDir(root), target)) return true;
+  return guardedFragmentPresent(toForwardSlashes3(fold3(target)), AUTOPILOT_DIR_FRAGMENT);
 }
 var WRITE_VERB_RE2 = /\b(rm|rmdir|rd|del|erase|mv|move|ren|rename|cp|copy|rsync|install|dd|tee|shred|truncate|touch|chmod|chown|ln)\b/i;
 var POWERSHELL_WRITE_RE2 = /\b(remove-item|move-item|copy-item|rename-item|new-item|set-content|add-content|clear-content|out-file)\b/i;
@@ -23641,9 +24286,9 @@ function checkXkeyGateBashCommand(root, command) {
   if (typeof command !== "string" || command === "") return { prohibited: false };
   const scan = toForwardSlashes3(fold3(command));
   const refs = [];
-  if (fragmentPresent2(scan, GATE_DIR_FRAGMENT)) refs.push(GATE_DIR_FRAGMENT);
-  const dirFrag = toForwardSlashes3(fold3(path36.normalize(xkeyGateDir(root))));
-  if (dirFrag !== GATE_DIR_FRAGMENT && fragmentPresent2(scan, dirFrag)) refs.push(dirFrag);
+  if (guardedFragmentPresent(scan, AUTOPILOT_DIR_FRAGMENT)) refs.push(AUTOPILOT_DIR_FRAGMENT);
+  const dirFrag = toForwardSlashes3(fold3(path36.normalize(xkeyGuardedDir(root))));
+  if (dirFrag !== AUTOPILOT_DIR_FRAGMENT && guardedFragmentPresent(scan, dirFrag)) refs.push(dirFrag);
   if (refs.length === 0) return { prohibited: false };
   const constructs = [];
   if (WRITE_VERB_RE2.test(scan)) constructs.push("write verb");
@@ -23653,21 +24298,21 @@ function checkXkeyGateBashCommand(root, command) {
   if (INLINE_CODE_RE2.test(scan) && INLINE_WRITE_MARKER_RE2.test(scan)) constructs.push("inline code write");
   for (const m of scan.matchAll(REDIRECT_RE2)) {
     const target = (m[1] ?? "").replace(/^["']|["']$/g, "");
-    if (target !== "" && fragmentPresent2(target, GATE_DIR_FRAGMENT)) constructs.push("redirect target");
+    if (target !== "" && guardedFragmentPresent(target, AUTOPILOT_DIR_FRAGMENT)) constructs.push("redirect target");
   }
   if (constructs.length === 0) return { prohibited: false };
   return {
     prohibited: true,
-    reason: `xkey-gate-guard: blocked a bash command referencing the gate directory (${refs.join(", ")}) with a write construct (${constructs.join(", ")}). ${GUARD_EXPLANATION2}`
+    reason: `xkey-gate-guard: blocked a bash command referencing the autopilot directory (${refs.join(", ")}) with a write construct (${constructs.join(", ")}). ${GUARD_EXPLANATION2}`
   };
 }
 function recordXkeyGateBlockTrace(toolName, detail, taskPathEnv = process.env.PI_WORKER_TASK) {
   if (!taskPathEnv) return;
   try {
     const dir = path36.dirname(path36.resolve(taskPathEnv));
-    fs32.mkdirSync(dir, { recursive: true });
+    fs33.mkdirSync(dir, { recursive: true });
     const first = detail.split("\n")[0] ?? "";
-    fs32.appendFileSync(
+    fs33.appendFileSync(
       path36.join(dir, "trace.log"),
       `[XKEY_GATE] ${(/* @__PURE__ */ new Date()).toISOString()} blocked tool=${toolName} target=${first}
 `,

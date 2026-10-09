@@ -15,7 +15,7 @@
  *     frontmatter YAML subset, status enum, seq-ordered directory scan)
  *   - timeline.jsonl + .1/.2 rotations → autopilot/timeline.py (query_events
  *     watermark / ev_filter / pruned semantics, D-109)
- *   - _autopilot/config.json           → autopilot/config.py (13 fields,
+ *   - _autopilot/config.json           → autopilot/config.py (14 fields,
  *     D-110; present-but-invalid fails closed, missing file = defaults)
  *   - rounds derivation                → autopilot/state.py used_rounds
  *     (distinct attempt per loop label; a missing attempt label degrades to
@@ -67,6 +67,12 @@ export interface AutopilotConfig {
      * "" = auto (workspace_root). The schema only requires a string; the
      * root-name validity is resolved at parse time (plan §2.2). */
     xkey_verify_cwd: string;
+    /** Automatic gate-decision kill switch (mw-autopilot-slot-capacity AC-018,
+     * D-010): closed set off|shadow|live, default "off" leaves every existing
+     * flow untouched. Project layer only — deliberately NOT in the Python
+     * effective_config EFFECTIVE_KEYS, so a machine-layer entry cannot
+     * silently turn automation on. Any other value fails closed. */
+    auto_gate_mode: string;
 }
 export declare const DEFAULT_CONFIG: AutopilotConfig;
 export declare const BOOL_FIELDS: readonly ["enabled", "paused", "xkey_repair"];
@@ -74,6 +80,9 @@ export declare const BOOL_FIELDS: readonly ["enabled", "paused", "xkey_repair"];
 export declare const LIST_FIELDS: readonly ["xkey_verify_cmd"];
 /** Plain string fields — identical to config.py _STRING_FIELDS. */
 export declare const STR_FIELDS: readonly ["xkey_verify_cwd"];
+/** field → closed set of allowed strings — identical to config.py
+ * _ENUM_FIELDS. Membership is validated fail-closed like every other rule. */
+export declare const ENUM_FIELDS: Record<string, readonly string[]>;
 /** field → [min, max|null] — identical to config.py _INT_RANGES. */
 export declare const INT_RANGES: Record<string, [number, number | null]>;
 /** Validate a raw config object exactly like config.py validate_config:
@@ -107,7 +116,7 @@ export declare function saveConfig(projectDir: string, config: AutopilotConfig):
     error: string;
 };
 export declare const STAGE_STATUSES: readonly ["pending", "approved", "running", "closed", "closed-human", "halted"];
-export declare const KEY_STATUSES: readonly ["running", "done", "stalled", "closed-legacy"];
+export declare const KEY_STATUSES: readonly ["running", "done", "stalled", "closed-legacy", "pending-review"];
 export interface RoadmapKey {
     key: string;
     role: string;
@@ -118,7 +127,8 @@ export interface RoadmapStage {
     title: string;
     goal: string;
     status: string;
-    /** key → running|done|stalled|closed-legacy (D-105 KEY_STATUSES).
+    /** key → running|done|stalled|closed-legacy|pending-review (D-105 KEY_STATUSES).
+     * `pending-review` (T-08 / D-005) is the non-terminal deferred-review state.
      * Values are kept verbatim; ones outside the enum surface as parse
      * warnings instead of being dropped. */
     keyStatus: Record<string, string>;
@@ -144,8 +154,16 @@ export type RoadmapResult = {
 export declare function readRoadmap(projectDir: string): RoadmapResult;
 export declare const GATE_KINDS: readonly ["stage-confirm", "stage-close", "stalled", "budget-exhausted", "goal-change", "xkey-authorize"];
 export declare const GATE_STATUSES: readonly ["pending", "approved", "rejected"];
-/** Canonical frontmatter field order (gates.py FRONTMATTER_FIELDS). */
-export declare const GATE_FRONTMATTER_FIELDS: readonly ["id", "kind", "stage", "key", "created_at", "created_by", "question", "context_refs", "status", "answered_at", "answered_by", "note"];
+/** Canonical frontmatter field order (gates.py FRONTMATTER_FIELDS). The first
+ * 12 names are the frozen base schema; the remaining 28 are the additive v2
+ * set (design D1.1 1..26 + the consumption record). Both sides fail closed on
+ * an unknown field, so this list must stay item-for-item in the Python order
+ * (VC-D6-06). */
+export declare const GATE_FRONTMATTER_FIELDS: readonly ["id", "kind", "stage", "key", "created_at", "created_by", "question", "context_refs", "status", "answered_at", "answered_by", "note", "reason_code", "evidence_refs", "loop", "used_rounds", "round_limit", "credits_used", "observed_at", "verdicts_final", "open_items", "subject_sha256", "roadmap_validation", "proposal_sha256", "goal_sha256", "constraints", "goal_sha256_before", "goal_sha256_after", "goal_diff", "write_scope", "blast_radius", "answer_source", "auto_policy_id", "expires_at", "evidence_anchor_mtime_ns", "default_action", "out_of_band_actions", "gate_schema", "consumed_at", "consumed_seq"];
+/** The one missing-value sentinel (design D4/D6): every presentation layer
+ * renders this exact literal for a field that is absent. Never prose, never a
+ * guess, never derived from `question`/`note`. */
+export declare const MISSING_FIELD_SENTINEL = "unknown (no field)";
 export interface GateRecord {
     id: string;
     kind: string;
@@ -155,6 +173,31 @@ export interface GateRecord {
     question: string;
     createdAt: string;
     path: string;
+    /** v2 mirror (design D1.1) — parsed so the console can render the 13-line
+     * card without re-reading the file. Absent fields are null / []. */
+    contextRefs: string[];
+    evidenceRefs: string[];
+    reasonCode: string | null;
+    observedAt: string | null;
+    subjectSha256: string | null;
+    proposalSha256: string | null;
+    goalSha256: string | null;
+    loop: string | null;
+    usedRounds: number | null;
+    roundLimit: number | null;
+    creditsUsed: number | null;
+    verdictsFinal: unknown;
+    openItems: unknown;
+    roadmapValidation: unknown;
+    constraints: string[];
+    answerSource: string | null;
+    expiresAt: string | null;
+    defaultAction: string | null;
+    outOfBandActions: string[];
+    gateSchema: number;
+    answeredAt: string | null;
+    answeredBy: string | null;
+    note: string | null;
 }
 /** Parse one gate file into a GateRecord. Throws GateFormatError on any
  * frontmatter/schema violation — corrupt gate files surface as errors, never
@@ -181,6 +224,9 @@ export interface TimelineEvent {
     key: string;
     stage: number | null;
     detail: string;
+    /** Optional structured payload (design D-009, e.g. `gate-auto-decision`).
+     * Absent — never null — on legacy lines that carry none. */
+    data?: Record<string, unknown>;
 }
 export interface TimelineQuery {
     /** Parsed lines with seq > watermark, sorted ascending (rotations

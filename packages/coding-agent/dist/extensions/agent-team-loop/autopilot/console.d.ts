@@ -35,7 +35,7 @@
 import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
 import { type LockOptions } from "../shared/file-lock.ts";
 import { type readMonitorState } from "./monitor.ts";
-import { type AutopilotConfig } from "./status-model.ts";
+import { type AutopilotConfig, type GateRecord } from "./status-model.ts";
 /** Session entry type persisting this window's timeline watermark (D-109
  * seq/watermark protocol — same mechanism as WATCH_ENTRY_TYPE). */
 export declare const AUTOPILOT_SEEN_ENTRY_TYPE = "agent-team-loop:autopilot-seen";
@@ -60,6 +60,10 @@ export interface AutopilotConsoleDeps {
     lockOpts?: LockOptions;
 }
 export declare function registerAutopilotCommands(pi: ExtensionAPI, projectDir: string, deps?: AutopilotConsoleDeps): void;
+/** The /autopilot gates card: header + EXACTLY 13 lines per pending gate, in a
+ * fixed order, every line <= 110 columns (AC-026 / design D3.2). Missing v2
+ * fields render the one sentinel literal — never prose, never a guess. */
+export declare function renderGateCards(gates: GateRecord[], projectDir: string, nowMs: number): string[];
 /** Lock retry budget frozen by plan §2.2 — identical to the Python writer
  * (`mw_common.acquire_lock(retries=6, base_delay=0.02)`). */
 export declare const DEFAULT_CONFIG_LOCK_OPTS: LockOptions;

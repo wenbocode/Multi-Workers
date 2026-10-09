@@ -179,6 +179,10 @@ export interface DoctorJson {
         exists?: boolean;
         models?: Record<string, string>;
         window_model?: string;
+        /** Per-role image capability ("yes"/"no"/"unknown", AC-010/AC-015),
+         * written by mw.py only when the config parsed and has roles. Optional so
+         * an older mw.py still renders (roles fall back to "unknown"). */
+        images?: Record<string, string>;
         error?: string;
     };
     /** RAG section (mw.py `_doctor_rag`) — informational, all fields optional

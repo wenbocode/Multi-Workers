@@ -44,6 +44,9 @@ const TOOL_ALLOWLISTS = {
         "rag_feedback",
         "rag_chat",
     ],
+    // Vision bucket (mw-vision-role D-001): full coding set, same order as the
+    // Python-side REGISTRY entry in autopilot/dispatch.py.
+    vision: ["read", "write", "edit", "bash", "find", "grep", "ls"],
     fallback: ["read", "write", "edit", "bash", "find", "grep", "ls"],
 };
 /** Is this a dispatchable type with an explicit allowlist entry? "fallback"
@@ -107,6 +110,26 @@ export function resolveIdleMs(env) {
         return envMs;
     return DEFAULT_IDLE_MS;
 }
+/** Max silence allowed while a tool is in flight, before the in-flight branch
+ * of the idle watchdog kills. Root cause (measured 2026-09-26, T-04/AC-005):
+ * 22/24 idle kills died while a bash call was in flight with zero
+ * `tool_execution_update` — bash updates are output-driven (core/tools/bash.ts),
+ * so a long command that prints nothing looked like a hung worker. A tool that
+ * is still running legitimately owns the activity clock, but only up to a
+ * bound: a genuinely hung tool must still die (VC-006). 30m mirrors the
+ * design's floor (D-016) and sits inside the 60m default wall budget, which
+ * remains the outer guard. Deliberately a code constant: T-04 forbids a new
+ * config key, so this is NOT wired through `_autopilot/config.json`.
+ *
+ * Deliberately does not change `DEFAULT_IDLE_MS` or the PI_WORKER_IDLE_MS
+ * semantics: the threshold was never the root cause. */
+export const DEFAULT_TOOL_IDLE_MS = 30 * 60_000;
+/** Effective in-flight tool-idle bound: the configured raw idle threshold
+ * (lower bound, so a tightened PI_WORKER_IDLE_MS also tightens this) vs the
+ * 30m floor. */
+export function resolveToolIdleMs(idleMs) {
+    return Math.max(idleMs, DEFAULT_TOOL_IDLE_MS);
+}
 /** First convergence-checkpoint time: the 30m anchor, scaled down
  * proportionally for small budgets so smoke runs exercise the whole path. */
 export function checkpointAnchorMs(budgetMs) {
@@ -141,6 +164,7 @@ export function parseTaskMd(taskPath) {
     let phase;
     let timeoutMin;
     let origin;
+    let images;
     const phases = [];
     let currentPhase = null;
     let inPhasePrompt = false;
@@ -170,6 +194,8 @@ export function parseTaskMd(taskPath) {
         if (trimmed.startsWith("origin:")) {
             origin = trimmed.slice("origin:".length).trim();
         }
+        if (trimmed.startsWith("images:"))
+            images = trimmed.slice("images:".length).trim() === "yes";
         // read_scope renders as a YAML block list (dispatch.py render_task_md):
         // `  - entry` lines after a bare `read_scope:`. Any other line ends the
         // list. `read_scope:` present-but-empty keeps the field defined — the
@@ -259,6 +285,7 @@ export function parseTaskMd(taskPath) {
         taskKey,
         agenticdocRoot,
         origin,
+        images,
         trueAgenticdocRoot,
         timeoutMin,
         readScope,
@@ -385,6 +412,26 @@ function appendReadScopeRejectionsSection(taskKey, agenticdocRoot, rejections) {
     }
     catch {
         // Best-effort at exit — nothing else we can do
+    }
+}
+/** Append one machine `[IDLE_KILL]` line to trace.log. Returns false when the
+ * line could not be written — the caller must then NOT kill ("no evidence ->
+ * no kill"); the wall watchdog stays the outer bound, so a hung worker is
+ * still reaped even if the evidence write keeps failing. */
+export function appendIdleKillEvidence(taskKey, agenticdocRoot, evidence) {
+    try {
+        const dir = path.resolve(agenticdocRoot, taskKey);
+        fs.mkdirSync(dir, { recursive: true });
+        const num = (value) => (value === null ? "-" : String(value));
+        const line = `[IDLE_KILL] ${new Date().toISOString()} tool_in_flight=${evidence.toolInFlight} ` +
+            `tool_run_s=${num(evidence.toolRunS)} tool_idle_s=${num(evidence.toolIdleS)} ` +
+            `silence_s=${evidence.silenceS} threshold_s=${evidence.thresholdS} ` +
+            `threshold_kind=${evidence.thresholdKind} last_activity=${evidence.lastActivity}`;
+        fs.appendFileSync(path.join(dir, "trace.log"), `${line}\n`, "utf8");
+        return true;
+    }
+    catch {
+        return false;
     }
 }
 // ── VC-014 worker-face emission (T-14) ───────────────────────────────────────
@@ -524,6 +571,32 @@ export async function workerModeActivate(pi) {
         const modelId = ctx.model?.id;
         if (modelId)
             appendModel(meta.taskKey, meta.agenticdocRoot, modelId);
+        // T-09/AC-011 (VC-011): runtime image-capability backstop. The dispatch
+        // declared `images: yes` but the resolved model cannot read images —
+        // refuse before the task body runs, through the same failure channel as
+        // dispatchRefusal. `outputWritten` is set first so the process 'exit'
+        // safety net does not append its crash output over this refusal.
+        if (meta.images === true && ctx.model && Array.isArray(ctx.model.input) && !ctx.model.input.includes("image")) {
+            const line = `[IMAGE-CAP] model=${ctx.model.id} provider=${ctx.model.provider} task=${meta.taskKey} declared=images:yes`;
+            writeWorkerLogLine(line);
+            appendError(meta.taskKey, meta.agenticdocRoot, line);
+            writeOutput({
+                taskKey: meta.taskKey,
+                agenticdocRoot: meta.agenticdocRoot,
+                exitCode: 1,
+                summary: "Task refused (image capability).",
+                exitReason: line,
+            });
+            outputWritten = true;
+            killTrackedDetachedChildren();
+            process.exit(1);
+            return;
+        }
+        // Fail-open (GC-8): without a resolved model the capability is
+        // unverifiable — record a trace note, never block the task.
+        if (meta.images === true && ctx.model === undefined) {
+            appendTrace(meta.taskKey, meta.agenticdocRoot, "[IMAGE-CAP] fail-open: ctx.model undefined, image capability unverifiable for declared=images:yes");
+        }
     });
     writeWorkerLogLine(`[worker] start task=${meta.taskKey} type=${meta.type} phases=${phaseTotal > 0 ? phaseTotal : "-"}`);
     // Safety net: guarantee an output.md exists on any exit path. The normal
@@ -635,28 +708,35 @@ export async function workerModeActivate(pi) {
             return { block: true, reason: verdict.reason };
         });
     }
-    // Activity tracking (AC-001): lastActivityAt is refreshed by every
-    // lifecycle signal — token deltas (message_update: the discriminator
-    // between a slow in-flight generation and a dead connection), message
-    // boundaries, turns, and tool events. The idle watchdog kills only when
-    // NOTHING has moved for the idle threshold.
+    const inFlightTools = new Map();
     let lastActivityAt = startedAt;
     let lastDeltaAt;
     let lastToolAt;
-    const touch = () => {
+    /** Last source that refreshed `lastActivityAt` (VC-004 evidence field). */
+    let lastActivitySource = "session_start";
+    const touch = (source) => {
         lastActivityAt = Date.now();
+        lastActivitySource = source;
     };
     pi.on("message_update", () => {
-        touch();
+        touch("delta");
         lastDeltaAt = Date.now();
     });
-    pi.on("message_start", touch);
-    pi.on("message_end", touch);
-    pi.on("turn_start", touch);
-    pi.on("turn_end", touch);
-    pi.on("agent_start", touch);
-    pi.on("tool_execution_update", touch);
-    pi.on("tool_execution_end", touch);
+    pi.on("message_start", () => touch("message_start"));
+    pi.on("message_end", () => touch("message_end"));
+    pi.on("turn_start", () => touch("turn_start"));
+    pi.on("turn_end", () => touch("turn_end"));
+    pi.on("agent_start", () => touch("agent_start"));
+    pi.on("tool_execution_update", (event) => {
+        const tool = inFlightTools.get(event.toolCallId);
+        if (tool)
+            tool.lastActivityAt = Date.now();
+        touch("tool_update");
+    });
+    pi.on("tool_execution_end", (event) => {
+        inFlightTools.delete(event.toolCallId);
+        touch("tool_end");
+    });
     // Track tool calls for trace.log (AC-012) + structured [TOOL]/[TOOL_ERR]
     // progress lines: what the worker is operating on, and where it failed.
     // Read/write counters and target sets feed the convergence checkpoint.
@@ -670,7 +750,13 @@ export async function workerModeActivate(pi) {
     pi.on("tool_execution_start", (event) => {
         toolCallCount++;
         toolsUsed.add(event.toolName);
-        touch();
+        const toolStartedAt = Date.now();
+        inFlightTools.set(event.toolCallId, {
+            name: event.toolName,
+            startedAt: toolStartedAt,
+            lastActivityAt: toolStartedAt,
+        });
+        touch("tool_start");
         lastToolAt = Date.now();
         const target = toolTarget(event.args);
         if (READ_TOOLS.has(event.toolName)) {
@@ -695,7 +781,7 @@ export async function workerModeActivate(pi) {
     // Capture last assistant text for output summary (AC-019)
     let lastAssistantText = "";
     pi.on("agent_end", (event) => {
-        touch();
+        touch("agent_end");
         for (let i = event.messages.length - 1; i >= 0; i--) {
             const msg = event.messages[i];
             if (msg.role === "assistant") {
@@ -734,6 +820,10 @@ export async function workerModeActivate(pi) {
     //   its final reply (→ output.md) instead of dying mid-finalization.
     const budgetMs = resolveBudgetMs(meta.timeoutMin, process.env.PI_WORKER_TIMEOUT_MS);
     const idleMs = resolveIdleMs(process.env.PI_WORKER_IDLE_MS);
+    // T-04: the in-flight branch judges the tool-idle clock against this bound
+    // (>= the raw idle threshold) so a silent long command is not a hang, while a
+    // tool that never reports progress still dies.
+    const toolIdleMs = resolveToolIdleMs(idleMs);
     const riskAnchorMs = checkpointAnchorMs(budgetMs);
     let taskDone = false;
     let lastCheckpoint;
@@ -750,6 +840,15 @@ export async function workerModeActivate(pi) {
             clearTimeout(checkpointTimer);
         if (steerTimer)
             clearTimeout(steerTimer);
+    }
+    /** Freshest in-flight tool (max lastActivityAt), or undefined when none. */
+    function freshestInFlightTool() {
+        let best;
+        for (const tool of inFlightTools.values()) {
+            if (best === undefined || tool.lastActivityAt > best.lastActivityAt)
+                best = tool;
+        }
+        return best;
     }
     function timeoutExit(kind, detail) {
         taskDone = true;
@@ -850,10 +949,52 @@ export async function workerModeActivate(pi) {
     idleTimer = setInterval(() => {
         if (taskDone)
             return;
-        const idleForMs = Date.now() - lastActivityAt;
+        const now = Date.now();
+        const idleForMs = now - lastActivityAt;
+        // B (T-04): while a tool is in flight, judge the TOOL-idle clock, not raw
+        // activity. A silent long bash is not a hung worker; the tool's own
+        // heartbeat (core/tools/bash.ts) keeps this clock fresh. The bound keeps a
+        // genuinely hung tool killable (C/VC-006).
+        const inFlight = freshestInFlightTool();
+        if (inFlight !== undefined) {
+            const toolIdleForMs = now - inFlight.lastActivityAt;
+            if (toolIdleForMs < toolIdleMs)
+                return;
+            const toolRunS = Math.round((now - inFlight.startedAt) / 1000);
+            const written = appendIdleKillEvidence(meta.taskKey, meta.agenticdocRoot, {
+                toolInFlight: inFlight.name,
+                toolRunS,
+                toolIdleS: Math.round(toolIdleForMs / 1000),
+                silenceS: Math.round(idleForMs / 1000),
+                thresholdS: Math.round(toolIdleMs / 1000),
+                thresholdKind: "tool_idle",
+                lastActivity: lastActivitySource,
+            });
+            if (!written)
+                return; // no evidence -> no kill
+            timeoutExit("idle", `in-flight tool ${inFlight.name} silent for ${Math.round(toolIdleForMs / 1000)}s (tool running ${toolRunS}s, threshold ${Math.round(toolIdleMs / 1000)}s, last activity ${lastActivitySource})`);
+            return;
+        }
         if (idleForMs < idleMs)
             return;
-        const now = Date.now();
+        // C (T-04): the no-in-flight branch keeps the existing judgement, with a
+        // second confirmation that the token-delta clock is stale too — a recent
+        // delta is the one signal that separates a slow generation from a dead
+        // connection, so a genuinely hung worker is still killed (VC-006).
+        const deltaIdleMs = lastDeltaAt === undefined ? Number.POSITIVE_INFINITY : now - lastDeltaAt;
+        if (deltaIdleMs < idleMs)
+            return;
+        const written = appendIdleKillEvidence(meta.taskKey, meta.agenticdocRoot, {
+            toolInFlight: "none",
+            toolRunS: null,
+            toolIdleS: null,
+            silenceS: Math.round(idleForMs / 1000),
+            thresholdS: Math.round(idleMs / 1000),
+            thresholdKind: "idle",
+            lastActivity: lastActivitySource,
+        });
+        if (!written)
+            return; // no evidence -> no kill
         const d = lastDeltaAt === undefined ? "-" : `${Math.round((now - lastDeltaAt) / 1000)}`;
         const t = lastToolAt === undefined ? "-" : `${Math.round((now - lastToolAt) / 1000)}`;
         timeoutExit("idle", `no activity for ${Math.round(idleForMs / 1000)}s (last delta ${d}s ago, last tool ${t}s ago)`);

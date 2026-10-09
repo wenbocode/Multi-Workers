@@ -136,6 +136,12 @@ function resolveSpawnContext(command, cwd, spawnHook, exposeSessionEnvironment, 
 }
 const BASH_PREVIEW_LINES = 5;
 const BASH_UPDATE_THROTTLE_MS = 100;
+/** Liveness heartbeat cadence for a running command (T-04). Mirrors the 30s
+ * `withHeartbeat` precedent used by the RAG tools (rag/budget.ts): bash updates
+ * are output-driven, so a command that prints nothing emits zero events and
+ * used to look like a hung worker to the idle watchdog. A periodic no-op
+ * progress update refreshes that watchdog's activity clock. */
+const BASH_HEARTBEAT_INTERVAL_MS = 30_000;
 class BashResultRenderComponent extends Container {
     state = {
         cachedWidth: undefined,
@@ -259,6 +265,7 @@ export function createBashToolDefinition(cwd, options) {
             const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
             let acceptingOutput = true;
             let updateTimer;
+            let heartbeatTimer;
             let updateDirty = false;
             let lastUpdateAt = 0;
             const emitOutputUpdate = () => {
@@ -299,6 +306,29 @@ export function createBashToolDefinition(cwd, options) {
             if (onUpdate) {
                 onUpdate({ content: [], details: undefined });
             }
+            // T-04 heartbeat: worker sessions only (PI_WORKER_TASK is the worker
+            // switch). Interactive rendering is deliberately unchanged — it already
+            // re-renders the elapsed time while a command runs, and the watchdog that
+            // needs this liveness signal only exists in worker mode.
+            const updateSink = onUpdate;
+            if (updateSink && process.env.PI_WORKER_TASK) {
+                heartbeatTimer = setInterval(() => {
+                    try {
+                        const snapshot = output.snapshot({ persistIfTruncated: true });
+                        updateSink({
+                            content: [{ type: "text", text: snapshot.content || "" }],
+                            details: {
+                                truncation: snapshot.truncation.truncated ? snapshot.truncation : undefined,
+                                fullOutputPath: snapshot.fullOutputPath,
+                            },
+                        });
+                    }
+                    catch {
+                        // Heartbeats are best-effort liveness only.
+                    }
+                }, BASH_HEARTBEAT_INTERVAL_MS);
+                heartbeatTimer.unref();
+            }
             const handleData = (data) => {
                 if (!acceptingOutput)
                     return;
@@ -307,6 +337,10 @@ export function createBashToolDefinition(cwd, options) {
             };
             const finishOutput = async () => {
                 acceptingOutput = false;
+                if (heartbeatTimer) {
+                    clearInterval(heartbeatTimer);
+                    heartbeatTimer = undefined;
+                }
                 output.finish();
                 clearUpdateTimer();
                 emitOutputUpdate();
@@ -367,6 +401,10 @@ export function createBashToolDefinition(cwd, options) {
                 return { content: [{ type: "text", text: outputText }], details };
             }
             finally {
+                if (heartbeatTimer) {
+                    clearInterval(heartbeatTimer);
+                    heartbeatTimer = undefined;
+                }
                 clearUpdateTimer();
             }
         },
