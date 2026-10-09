@@ -37,3 +37,16 @@
 - **既有基线红（与本 key 无关，未修）**：`test_autopilot_readcap_injection.py::test_baseline_left_end_bound`（E-04，冻结副本 sha ≠ 脏工作区 HEAD）与 `::test_existing_regression_files_untouched`（E-06，另一 key `mw-autopilot-slot-capacity` 在改 `test_autopilot_config.py`；另含本 key T-03 的**授权**重冻，提交后消失）。
 - **AC-017 期望串修正**：设计期写的 `routed=2` 逻辑不可满足，已改为 `type_unchanged=true effective_vision=2 auto_route_fired=1`（语义未变，仅计数口径），`design.md` §7 与 `evidence-requirement.md` 均已标注 `[REVISED @ 2026-09-26]`。
 - **未提交**：本 key 的全部改动仍在工作区（未 commit、未 `git add`），与 `mw-autopilot-slot-capacity`、`mw-rag-integration-fix` 等并发 key 的脏文件共存于同一 worktree。
+
+---
+
+## 收口后状态更新（2026-10-09，提交 + 构建 + 干净检出复验）
+
+上面「遗留」里的第一条（B2 陈旧 bundle）已处置，判定随之更新：
+
+- **已提交**（分支 `dev/AgentTeam`）：`7a864c1c7`（feat：代码 + 测试，19 文件）、`5c1149f1b`（docs(agentic)：本 key 全部文档与证据）、`fd30eb8be`（fix：让 `render_task_md` 签名冻结断言与提交顺序无关）。并发 key 的在飞文件仍留在工作区未纳入（逐 hunk 归属后部分暂存）。
+- **已构建并全局安装**：`python mw.py build --install --allow-dirty` ⇒ 全局 bundle 952,453 B（`IMAGE-CAP`/`auto-route` 标记已在），`packages/coding-agent/dist` 同步重建。
+  - 因工作区含**并发 key 未提交的 src**，构建用了 `--allow-dirty`，故受跟踪产物 `packages/multi-workers/dist/extensions/agent-team-loop.js` 处于 modified 且**有意未提交**（待对方 src 干净后重跑 `mw.py build --install` 再提交，见 `handover.md` R2）。
+- **构建后真进程复验（无 `-ne`，走安装后的 bundle）通过**：`pi-via-tsx rc=1`、`[IMAGE-CAP] model=deepseek-v4.1-flash provider=timi task=l2t declared=images:yes`、`trace.log` 有 `[ERROR]` 行、`output.md` 为「Task refused (image capability)」。⇒ ⚠️-3 的源码层/安装层证据已齐，仅剩「运行中的窗口重启后再看一眼」。
+- **⚠️-1（`npm run check` 字面）** 与 **⚠️-2（活窗口 TS 渲染）** 仍未闭（后者需窗口重启）。3 项欠债与全部 NIT 已逐条写入 `handover.md`（R1–R6）。
+- **干净检出复验（对 `fd30eb8be` 建 detached worktree）**：`test_dispatch_models.py + test_autopilot_readcap_injection.py` = **68 passed / 2 failed**，两红均为已登记基线（`test_baseline_left_end_bound` 冻结 sha 早于 HEAD；`test_existing_regression_files_untouched` 在本机 `core.autocrlf=true` 下把 live 文件字节（CRLF）与 `git show HEAD:`（LF）比对 ⇒ 环境性红。**该红在干净检出上也复现，证实 E-06 除并发 key 改文件外还含 CRLF 成分**）。`test_render_task_md_signature_shape` 在干净检出上由红转绿（本次修复本体）。`test_serve_doctor.py` 的 3 例 `TestUpdateIndexClaim` 在 detached worktree 里因 `.agents/skills/**` 未被跟踪而报 `FileNotFoundError`，属 worktree 环境伪影。
