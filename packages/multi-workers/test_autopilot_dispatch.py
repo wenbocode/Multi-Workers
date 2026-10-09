@@ -31,7 +31,7 @@ def true_str(b: bool) -> str:
 def test_registry_types_and_tools() -> None:
     assert set(dispatch.REGISTRY) == {
         "roadmap-writer", "phase-writer", "verifier", "reviewer", "repair",
-        "rag-research",
+        "rag-research", "vision",
     }
     assert dispatch.tool_set("roadmap-writer") == (
         "read", "write", "edit", "find", "grep", "ls",
@@ -42,6 +42,11 @@ def test_registry_types_and_tools() -> None:
     assert dispatch.tool_set("verifier") == ("read", "find", "grep", "ls")
     assert dispatch.tool_set("reviewer") == ("read", "find", "grep", "ls")
     assert dispatch.tool_set("repair") == (
+        "read", "write", "edit", "bash", "find", "grep", "ls",
+    )
+    # mw-vision-role T-03 (AC-005): the vision bucket is the full coding set,
+    # same order as `coding`/`phase-writer`/`repair` above.
+    assert dispatch.tool_set("vision") == (
         "read", "write", "edit", "bash", "find", "grep", "ls",
     )
     for entry in dispatch.REGISTRY.values():
@@ -61,6 +66,44 @@ def test_registry_types_and_tools() -> None:
     assert dispatch.tool_set("coding") == ()
     assert dispatch.tool_set("") == ()
     _verify("VC-023", registry_types=len(dispatch.REGISTRY), unknown_tools=0)
+
+
+def test_vision_conductor_dispatchable(tmp_path: pathlib.Path) -> None:
+    """mw-vision-role T-03 / AC-019 (VC-019): `vision` is conductor-dispatchable.
+
+    T-01 registered it `conductor_dispatchable=True`; this case drives the real
+    rejection branch so a future flip to `False` (or an accidental PM-only
+    registration) fails with a named reason instead of a generic `ok=false`.
+    The unknown-type control stays refused (AC-019, 异常路径).
+    """
+    tl = timeline_mod.Timeline(
+        tmp_path / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+    )
+    result = dispatch.dispatch(
+        tmp_path, "k1", "v-01", "vision",
+        "Analyze the screenshot.",
+        loop="exec:k1:v-01", attempt=1, timeline=tl,
+    )
+    assert "not-conductor-dispatchable" not in result.reason, result.reason
+    assert result.ok and result.reason == ""
+    rows = [
+        r for r in mw_common.parse_workers_file(mw_common.workers_path(tmp_path))
+        if r["task_key"] == "ap-k1-v-01"
+    ]
+    assert len(rows) == 1, rows
+
+    unknown = dispatch.dispatch(
+        tmp_path, "k1", "v-02", "not-a-registered-type", "x",
+        loop="exec:k1:v-02", attempt=1, timeline=tl,
+    )
+    assert unknown.ok is False and unknown.reason == "unknown-type"
+    _verify(
+        "VC-019",
+        conductor_dispatchable=true_str(
+            dispatch.REGISTRY["vision"].conductor_dispatchable
+        ),
+        unknown_type_refused=true_str(unknown.reason == "unknown-type"),
+    )
 
 
 def test_registry_snapshot_for_parity() -> None:

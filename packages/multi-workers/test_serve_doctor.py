@@ -435,6 +435,29 @@ class TestDoctorCli:
         text = mw_common.format_doctor_text(report)
         assert "pi_shell:" in text
 
+    def test_dispatch_images_unknown_is_skip(self, tmp_path: pathlib.Path) -> None:
+        # T-12 (AC-010/AC-015) skip branch in a real subprocess: the probe
+        # cannot be monkeypatched across processes, so use a model id no
+        # registry can list -> deterministic "unknown" -> skip row, no issue,
+        # no suggestion, and the exit code stays 0.
+        proj = tmp_path
+        (proj / ".mw").mkdir()
+        (proj / ".agenticdoc").mkdir()
+        (proj / ".mw" / "dispatch.yml").write_text(
+            "models:\n  coding: timi/zzz-not-a-real-model\n", encoding="utf-8")
+        mw_common.pid_file(proj).write_text(str(os.getpid()), encoding="utf-8")
+
+        result = self._run_doctor(proj)
+
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        assert report["dispatch"]["images"] == {"coding": "unknown"}
+        summary = report["summary"]
+        assert not any("images" in i for i in summary["issues"])
+        assert not any("mw model set vision" in s for s in summary["suggestions"])
+        text = mw_common.format_doctor_text(report)
+        assert "dispatch: coding=timi/zzz-not-a-real-model images=unknown" in text
+
     def test_issues_exit_code_one(self, tmp_path: pathlib.Path) -> None:
         proj = tmp_path
         (proj / ".mw").mkdir()

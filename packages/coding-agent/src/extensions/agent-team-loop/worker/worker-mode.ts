@@ -79,6 +79,9 @@ const TOOL_ALLOWLISTS: Record<string, string[]> = {
 		"rag_feedback",
 		"rag_chat",
 	],
+	// Vision bucket (mw-vision-role D-001): full coding set, same order as the
+	// Python-side REGISTRY entry in autopilot/dispatch.py.
+	vision: ["read", "write", "edit", "bash", "find", "grep", "ls"],
 	fallback: ["read", "write", "edit", "bash", "find", "grep", "ls"],
 };
 
@@ -220,6 +223,10 @@ interface TaskMeta {
 	/** Dispatch origin marker (D-104): "conductor" on autopilot dispatches,
 	 * undefined on manual/legacy tasks (which keep the fallback path, GC-8). */
 	origin?: string;
+	/** task.md `images:` header (T-09/AC-011): `true` only when the dispatch
+	 * declared `images: yes` (the task needs image reads). An undeclared header
+	 * stays `undefined` and changes nothing (zero branches). */
+	images?: boolean;
 	/** TRUE .agenticdoc root — task.md four levels up
 	 * (.agenticdoc/{owner}/workers/{taskKey}/task.md → .agenticdoc), where
 	 * goal.md lives (D-116). Distinct from `agenticdocRoot`, which is the
@@ -251,6 +258,7 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 	let phase: string | undefined;
 	let timeoutMin: number | undefined;
 	let origin: string | undefined;
+	let images: boolean | undefined;
 	const phases: TaskPhase[] = [];
 	let currentPhase: TaskPhase | null = null;
 	let inPhasePrompt = false;
@@ -279,6 +287,7 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 		if (trimmed.startsWith("origin:")) {
 			origin = trimmed.slice("origin:".length).trim();
 		}
+		if (trimmed.startsWith("images:")) images = trimmed.slice("images:".length).trim() === "yes";
 		// read_scope renders as a YAML block list (dispatch.py render_task_md):
 		// `  - entry` lines after a bare `read_scope:`. Any other line ends the
 		// list. `read_scope:` present-but-empty keeps the field defined — the
@@ -357,6 +366,7 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 		taskKey,
 		agenticdocRoot,
 		origin,
+		images,
 		trueAgenticdocRoot,
 		timeoutMin,
 		readScope,
@@ -668,6 +678,36 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	pi.on("session_start", (_event, ctx) => {
 		const modelId = ctx.model?.id;
 		if (modelId) appendModel(meta.taskKey, meta.agenticdocRoot, modelId);
+		// T-09/AC-011 (VC-011): runtime image-capability backstop. The dispatch
+		// declared `images: yes` but the resolved model cannot read images —
+		// refuse before the task body runs, through the same failure channel as
+		// dispatchRefusal. `outputWritten` is set first so the process 'exit'
+		// safety net does not append its crash output over this refusal.
+		if (meta.images === true && ctx.model && Array.isArray(ctx.model.input) && !ctx.model.input.includes("image")) {
+			const line = `[IMAGE-CAP] model=${ctx.model.id} provider=${ctx.model.provider} task=${meta.taskKey} declared=images:yes`;
+			writeWorkerLogLine(line);
+			appendError(meta.taskKey, meta.agenticdocRoot, line);
+			writeOutput({
+				taskKey: meta.taskKey,
+				agenticdocRoot: meta.agenticdocRoot,
+				exitCode: 1,
+				summary: "Task refused (image capability).",
+				exitReason: line,
+			});
+			outputWritten = true;
+			killTrackedDetachedChildren();
+			process.exit(1);
+			return;
+		}
+		// Fail-open (GC-8): without a resolved model the capability is
+		// unverifiable — record a trace note, never block the task.
+		if (meta.images === true && ctx.model === undefined) {
+			appendTrace(
+				meta.taskKey,
+				meta.agenticdocRoot,
+				"[IMAGE-CAP] fail-open: ctx.model undefined, image capability unverifiable for declared=images:yes",
+			);
+		}
 	});
 	writeWorkerLogLine(
 		`[worker] start task=${meta.taskKey} type=${meta.type} phases=${phaseTotal > 0 ? phaseTotal : "-"}`,

@@ -5027,8 +5027,22 @@ describe("dispatch model config", () => {
 			dispatch: { exists: true, models: { coding: "timi/glm-5.3" }, window_model: "claude/claude-sonnet-5" },
 		};
 		expect(formatDoctorReport(withDispatch, false)).toContain(
-			"派发模型: coding=timi/glm-5.3; 窗口模型 claude/claude-sonnet-5",
+			"派发模型: coding=timi/glm-5.3 images=unknown; 窗口模型 claude/claude-sonnet-5",
 		);
+		// AC-010/AC-015: the capability column renders the mw.py verdict verbatim
+		// per role; an older mw.py without `images` falls back to unknown above.
+		const withCaps: DoctorJson = {
+			...base,
+			dispatch: {
+				exists: true,
+				models: { coding: "timi/glm-5.3", vision: "timi/deepseek-v4-flash-vision-exp" },
+				window_model: "claude/claude-sonnet-5",
+				images: { coding: "no", vision: "yes" },
+			},
+		};
+		const capsText = formatDoctorReport(withCaps, false);
+		expect(capsText).toContain("coding=timi/glm-5.3 images=no");
+		expect(capsText).toContain("vision=timi/deepseek-v4-flash-vision-exp images=yes");
 		const broken: DoctorJson = {
 			...base,
 			dispatch: { exists: true, models: {}, window_model: "", error: "dispatch.yml unreadable: boom" },
@@ -5277,6 +5291,38 @@ describe("dispatch role + model override gate (mw-dispatch-role-escape)", () => 
 		expect(resolveDispatchType("claude", "")).toEqual({ ok: true, type: "review" });
 		expect(resolveDispatchType("pi", "research")).toEqual({ ok: true, type: "research" });
 		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("VC-004: vision maps to its own role on the TS half and mirrors the Python table", () => {
+		// mw-vision-role T-03 (AC-004/VC-004): before this case only the Python
+		// TASK_TYPE_TO_ROLE table was asserted, so roleForTaskType("vision") could
+		// fall back to "coding" with every suite green. The mirror is asserted
+		// here against the frozen Python map (mw_common.py:139, 10 keys, `vision`
+		// appended last by T-01) — not a mere "exists" check.
+		const pyMirror: Record<string, string> = {
+			coding: "coding",
+			"phase-writer": "coding",
+			repair: "coding",
+			"roadmap-writer": "coding",
+			review: "review",
+			verifier: "review",
+			reviewer: "review",
+			research: "research",
+			"rag-research": "research",
+			vision: "vision",
+		};
+		expect(Object.keys(DISPATCH_ROLE_BY_TYPE).sort()).toEqual(Object.keys(pyMirror).sort());
+		const mirrorDiff = Object.entries(pyMirror).filter(
+			([taskType, role]) => DISPATCH_ROLE_BY_TYPE[taskType] !== role,
+		);
+		expect(mirrorDiff).toEqual([]);
+		expect(roleForTaskType("vision")).toBe("vision");
+		expect(resolveDispatchType("pi", "vision")).toEqual({ ok: true, type: "vision" });
+		// unknown types keep the coding fallback on both sides
+		expect(roleForTaskType("not-a-type")).toBe("coding");
+		process.stdout.write(
+			`[VERIFY] VC-004: role_for_vision=${roleForTaskType("vision")} mirror_ok=${mirrorDiff.length === 0}\n`,
+		);
 	});
 
 	it("VC-008: /mw model set validates a prefixed id before writing", async () => {

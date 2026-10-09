@@ -135,7 +135,7 @@ KNOWN_MODEL_PREFIXES = frozenset(MODEL_PREFIX_TO_PI_PROVIDER) | frozenset(CLI_PR
 
 # Configurable roles (mw model set <role>): main = the PM window itself;
 # the rest map dispatch task types onto semantic buckets.
-DISPATCH_ROLES = ("main", "coding", "review", "research")
+DISPATCH_ROLES = ("main", "coding", "review", "research", "vision")
 TASK_TYPE_TO_ROLE: dict[str, str] = {
     "coding": "coding",
     "phase-writer": "coding",
@@ -148,6 +148,8 @@ TASK_TYPE_TO_ROLE: dict[str, str] = {
     # mw-rag-integration T-09: PM-dispatched RAG research bucket, same model
     # role as research (mirror of TS DISPATCH_ROLE_BY_TYPE).
     "rag-research": "research",
+    # mw-vision-role T-01: vision bucket (screenshot/diagram/visual analysis).
+    "vision": "vision",
 }
 
 STALE_FILE_NAME = "_workers.stale.parallel"
@@ -1260,6 +1262,12 @@ def _doctor_dispatch(project_dir: pathlib.Path) -> dict:
     falls through to the window model / per-cli defaults). A broken file is a
     suggestion, never an issue: model defaults are a convenience and must not
     flag the chain unhealthy.
+
+    `images` is the per-role image capability ("yes"/"no"/"unknown", AC-010 /
+    AC-015) and the single source the TS doctor renderer reads. It is only
+    probed when the config parsed and lists at least one role: the missing-file
+    early return must stay exactly {"exists": False}, and an unusable file
+    carries no trustworthy role list.
     """
     path = dispatch_config_path(project_dir)
     section: dict = {"exists": path.exists()}
@@ -1270,6 +1278,11 @@ def _doctor_dispatch(project_dir: pathlib.Path) -> dict:
     section["window_model"] = read_window_model(project_dir)
     if err:
         section["error"] = err
+        return section
+    if section["models"]:
+        section["images"] = {
+            role: model_images(value) for role, value in sorted(section["models"].items())
+        }
     return section
 
 
@@ -1359,6 +1372,113 @@ def ensure_pi_shell_path(
             else " — no PowerShell detected; install one or set it by hand"
         )
     return result
+
+
+# ── Model image-capability probe (`pi --list-models` snapshot) ─────────────
+#
+# The only Python-side answer to "can this model see images?", shared by
+# `mw model set` (config-time refusal) and `mw model show` / `mw doctor`
+# (three-state capability column). One full `pi --list-models` snapshot per
+# process builds {(provider, model): images}; all callers are one-shot
+# commands, no resident hot path (serve/launcher/conductor) touches this.
+#
+# Fail-open is the whole contract: "yes"/"no" only on an exact row match.
+# Everything else — pi not on PATH, spawn failure, timeout, rc != 0, no data
+# row, zero hits, CLI prefixes, bare ids — is "unknown", never "no". A
+# missing row means an unauthenticated provider or an unknown model, not a
+# model that rejects images.
+
+MODEL_PROBE_TIMEOUT_S = 3.0  # doctor promises < 5s; measured probe 0.8-0.96s
+
+# Process-local memo of the parsed snapshot. None = not probed yet; {} =
+# probed and unavailable (stays unknown for the rest of the process). Injected
+# which/run seams bypass the memo — they are test doubles that must vary.
+_MODEL_IMAGE_SNAPSHOT: dict[tuple[str, str], str] | None = None
+
+# context / max-out cells, e.g. 200K, 1M, 32.8K, 131.1K (dynamic widths).
+_MODEL_SIZE_TOKEN = re.compile(r"^\d+(\.\d+)?[KM]$")
+
+
+def _parse_model_rows(stdout: str) -> dict[tuple[str, str], str]:
+    """Parse `pi --list-models` stdout -> {(provider, model): "yes"|"no"}.
+
+    Rows are recognised by token shape, never by line number: the worker
+    environment prepends `[worker] start ...` noise and the column widths are
+    dynamic. The CLI's pattern search is fuzzy (a fragment matches several
+    rows), so callers select by exact (provider, model) equality.
+    """
+    rows: dict[tuple[str, str], str] = {}
+    for line in stdout.splitlines():
+        tokens = line.split()
+        if len(tokens) != 6:
+            continue
+        if not (_MODEL_SIZE_TOKEN.match(tokens[2]) and _MODEL_SIZE_TOKEN.match(tokens[3])):
+            continue
+        if tokens[4] not in ("yes", "no") or tokens[5] not in ("yes", "no"):
+            continue
+        rows[(tokens[0], tokens[1])] = tokens[5]
+    return rows
+
+
+def _probe_model_rows(*, which=None, run=None) -> dict[tuple[str, str], str] | None:
+    """One `pi --list-models` snapshot -> {(provider, model): images} | None.
+
+    None means the probe is unavailable and every value must resolve to
+    "unknown". `which`/`run` are injectable seams (defaults shutil.which /
+    subprocess.run) for cross-platform tests, mirroring
+    ensure_pi_shell_path(..., detect=None). pi is resolved through
+    shutil.which: on Windows a bare ["pi", ...] fails with WinError 2 because
+    Popen does not apply PATHEXT (launcher.py:_resolve_cli).
+    """
+    resolve = which or shutil.which
+    spawn = run or subprocess.run
+    try:
+        pi_bin = resolve("pi")
+    except OSError:
+        return None
+    if not pi_bin:
+        return None
+    try:
+        result = spawn(  # noqa: S603 - resolved path, list args, no shell
+            [pi_bin, "--list-models"],
+            capture_output=True, text=True, encoding="utf-8",
+            timeout=MODEL_PROBE_TIMEOUT_S,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    rows = _parse_model_rows(result.stdout or "")
+    return rows or None
+
+
+def _model_capability(rows: dict[tuple[str, str], str], value: str) -> str:
+    prefix, model_id = parse_model_value(value)
+    provider = MODEL_PREFIX_TO_PI_PROVIDER.get(prefix, "")
+    if not provider or not model_id:
+        return "unknown"
+    return rows.get((provider, model_id), "unknown")
+
+
+def model_capabilities(values: Sequence[str], *, which=None, run=None) -> dict[str, str]:
+    """One `pi --list-models` snapshot -> {value: "yes"|"no"|"unknown"}.
+
+    Memoized per process (real probe only); never raises. Missing rows, an
+    unavailable pi, timeouts and parse misses all fall back to "unknown".
+    """
+    global _MODEL_IMAGE_SNAPSHOT
+    if which is None and run is None:
+        if _MODEL_IMAGE_SNAPSHOT is None:
+            _MODEL_IMAGE_SNAPSHOT = _probe_model_rows() or {}
+        rows = _MODEL_IMAGE_SNAPSHOT
+    else:
+        rows = _probe_model_rows(which=which, run=run) or {}
+    return {value: _model_capability(rows, value) for value in values}
+
+
+def model_images(value: str, *, which=None, run=None) -> str:
+    """Convenience single-value wrapper: 'timi/glm-5.3' -> "yes"|"no"|"unknown"."""
+    return model_capabilities([value], which=which, run=run)[value]
 
 
 # 鈹€鈹€ Route resolution 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -2126,6 +2246,22 @@ def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
             f"dispatch.yml unusable ({dispatch['error']}) - model defaults are "
             "ignored; fix or remove .mw/dispatch.yml"
         )
+    # A role whose model cannot read images is a suggestion, never an issue:
+    # dispatch defaults are a convenience, and an issue here would flip
+    # summary.healthy and make every doctor run exit 1 (AC-010).
+    # AC-010 scopes the capability verdict to the `vision` role only: the text
+    # roles (main/coding/review/research) do not need image input (image tasks
+    # are auto-routed or dispatched as `type: vision`), so flagging them would
+    # be a false positive plus permanent noise on every doctor run.
+    dispatch_images = dispatch.get("images") or {}
+    for role_name, value in sorted((dispatch.get("models") or {}).items()):
+        if role_name != "vision" or dispatch_images.get(role_name) != "no":
+            continue
+        suggestions.append(
+            f"dispatch role {role_name} uses {value}, which cannot read images "
+            f"(images=no) - run 'mw model set vision <vision-model>' and re-dispatch "
+            f"with that role, or give '{role_name}' an image-capable model"
+        )
     if report["orphan_proxy"]["detected"]:
         ports = ", ".join(str(p["port"]) for p in report["orphan_proxy"]["ports"])
         suggestions.append(
@@ -2301,8 +2437,10 @@ def format_doctor_text(report: dict) -> str:
         if dispatch.get("error"):
             lines.append(f"dispatch: ERROR — {dispatch['error']}")
         else:
+            capabilities = dispatch.get("images") or {}
             roles = ", ".join(
-                f"{role}={value}" for role, value in sorted((dispatch.get("models") or {}).items())
+                f"{role}={value} images={capabilities.get(role) or 'unknown'}"
+                for role, value in sorted((dispatch.get("models") or {}).items())
             ) or "no roles set"
             window = dispatch.get("window_model") or "(none recorded)"
             lines.append(f"dispatch: {roles}; window model {window}")

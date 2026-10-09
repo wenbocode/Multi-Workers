@@ -3164,6 +3164,39 @@ def cmd_model(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
+        # T-11: a vision role must be able to read images. The probe is
+        # fail-open: only a hard "no" refuses (missing/unavailable stays
+        # "unknown" and writes), and --force overrides entirely.
+        if args.force and role != "vision":
+            print(
+                f"[mw model set] Error: --force is only valid for the 'vision' role "
+                f"(got {role!r}); it only skips the image-capability probe",
+                file=sys.stderr,
+            )
+            return 1
+        if role == "vision":
+            if args.force:
+                print(f"[mw model set] --force: image-capability probe skipped for {value}")
+            else:
+                verdict = mw_common.model_images(value)
+                if verdict == "no":
+                    print(
+                        f"[mw model set] Error: {value} reports images=no — a 'vision' "
+                        "role model must accept image input",
+                        file=sys.stderr,
+                    )
+                    print(
+                        "[mw model set] Suggest: pick a vision-capable model, e.g. "
+                        "`mw model set vision timi/deepseek-v4-flash-vision-exp`, or "
+                        f"override with `mw model set vision {value} --force`",
+                        file=sys.stderr,
+                    )
+                    return 1
+                if verdict == "unknown":
+                    print(
+                        f"[mw model set] skip: image capability of {value} is unknown "
+                        "(probe unavailable or model not listed); writing anyway"
+                    )
         existing, err = mw_common.load_dispatch_config(project_dir)
         if err:
             print(
@@ -3219,7 +3252,7 @@ def cmd_model(args: argparse.Namespace) -> int:
     for role in mw_common.DISPATCH_ROLES:
         configured = existing.get("models", {}).get(role, "")
         if configured:
-            print(f"{role}: {configured}")
+            print(f"{role}: {configured} images={mw_common.model_images(configured)}")
             continue
         # Effective preview on the default worker route (pi+timi): the first
         # compatible layer of the chain after the role config.
@@ -3231,7 +3264,11 @@ def cmd_model(args: argparse.Namespace) -> int:
             window_model=window,
         )
         effective = value or "(route default: glm-5.3 for pi+timi, gpt-5.6-sol for codex)"
-        print(f"{role}: (unset) → {effective} [{source}]")
+        # AC-015: every role line carries a capability verdict. An unset role
+        # previews the route default (no concrete model id here) - fall back to
+        # "unknown" without probing an empty string.
+        capability = mw_common.model_images(value) if value else "unknown"
+        print(f"{role}: (unset) → {effective} [{source}] images={capability}")
     return 0
 
 
@@ -5130,6 +5167,8 @@ def _parse_args() -> argparse.Namespace:
                              help=f"One of: {', '.join(mw_common.DISPATCH_ROLES)}")
     model_set_p.add_argument("value", metavar="PROVIDER/MODEL",
                              help="Model with provider prefix (e.g. timi/glm-5.3, claude/claude-sonnet-5, codex_cli/gpt-5.6-sol)")
+    model_set_p.add_argument("--force", action="store_true",
+                             help="Skip the image-capability check when setting the 'vision' role")
     model_clear_p = model_sub.add_parser("clear", help="Remove one role (or 'all')")
     model_clear_p.add_argument("--project", required=True, help="Project directory")
     model_clear_p.add_argument("role", metavar="ROLE|all",

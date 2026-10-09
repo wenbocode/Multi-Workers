@@ -7,7 +7,14 @@ import type { ModelRegistry } from "../../../core/model-registry.ts";
 import { validateRagEnabled } from "../rag/tools.ts";
 import type { AckStore } from "../shared/ack-store.ts";
 import { runAgenticScript } from "../shared/agentic-scripts.ts";
-import { DISPATCHABLE_TYPES, readRoleModel, roleForTaskType, validateModelValue } from "../shared/dispatch-models.ts";
+import {
+	DISPATCHABLE_TYPES,
+	detectImageNeed,
+	modelImageCapability,
+	readRoleModel,
+	roleForTaskType,
+	validateModelValue,
+} from "../shared/dispatch-models.ts";
 import { acquireLock } from "../shared/file-lock.ts";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.ts";
 import { type IndexStore, readIndexMdActive } from "../shared/index-store.ts";
@@ -1013,8 +1020,8 @@ function dispatchPhase(agenticdocRoot: string, ownerKey: string): string {
 	return new StateManager(agenticdocRoot, ownerKey).read().phase ?? "";
 }
 
-/** Build the task.md frontmatter (type / model / model-reason) for one dispatch
- * and the echo line that tells the PM which layer supplies the model
+/** Build the task.md frontmatter (type / phase / images / model / model-reason)
+ * for one dispatch and the echo line that tells the PM which layer supplies the model
  * (design D-001~D-007). Shared by the dispatch_worker tool and /worker so the
  * two entries can never drift.
  *
@@ -1029,6 +1036,14 @@ export function planDispatchFrontmatter(input: {
 	/** Owner key's current phase (T-14): non-empty appends `phase: <P>` right
 	 * after `type:`; ""/undefined keeps the pre-T-14 bytes unchanged. */
 	phase?: string;
+	/** Declared image capability (T-05): `"yes"`/`"no"` appends `images: <v>`
+	 * right after `phase:` and before `model:`; `undefined` (undeclared) keeps
+	 * the pre-T-05 bytes unchanged. */
+	images?: "yes" | "no";
+	/** Task body, scanned for an image-file reference when `images` is
+	 * undeclared (T-06 auto-detection). Optional (T-17): callers that only
+	 * exercise the phase/model path omit it, matching `phase?: string`. */
+	description?: string;
 	model: string;
 	modelReason: string;
 	registry: ModelRegistry | undefined;
@@ -1037,18 +1052,84 @@ export function planDispatchFrontmatter(input: {
 	const configured = readRoleModel(input.cwd, role) ?? "";
 	const requested = input.model.trim();
 	const reason = oneLineReason(input.modelReason);
-	const typeLines =
-		input.phase !== undefined && input.phase.length > 0
-			? `type: ${input.taskType}\nphase: ${input.phase}\n`
-			: `type: ${input.taskType}\n`;
+	// Image requirement (T-06, three-state, verbatim precedence): an explicit
+	// `images: "no"` short-circuits to "no image" WITHOUT calling the filesystem
+	// detector (the exemption is unconditional and must stay cheap); an explicit
+	// `images: "yes"` forces the requirement; otherwise the description is
+	// scanned for a reference to an existing image file.
+	const imagesRequested =
+		input.images === "no"
+			? false
+			: input.images === "yes"
+				? true
+				: detectImageNeed(input.cwd, input.description ?? "");
+	// Write side (D-013): a detected need writes `images: yes` too, so the
+	// worker's runtime fallback covers auto-detected tasks.
+	const imagesField: "yes" | "no" | undefined = input.images === "no" ? "no" : imagesRequested ? "yes" : undefined;
+	const headLines = [`type: ${input.taskType}`];
+	if (input.phase !== undefined && input.phase.length > 0) headLines.push(`phase: ${input.phase}`);
+	if (imagesField !== undefined) headLines.push(`images: ${imagesField}`);
+	const typeLines = `${headLines.join("\n")}\n`;
 
 	// The value that will actually run: an explicit request wins, else the
 	// configured role default (which the launcher would pick next). Either way
 	// it must name a model the pi route can resolve.
-	const effective = requested || configured;
+	let effective = requested || configured;
 	if (effective) {
 		const validation = validateModelValue(input.registry, input.cli, input.provider, effective);
 		if (!validation.ok) return { ok: false, message: validation.message };
+	}
+
+	// Auto-route (T-07, AC-016/AC-017): an un-pinned task that needs images while
+	// its role default is a definite "no" moves to the `vision` role's model when
+	// that model is a definite "yes". ONLY the model value moves — `type:` (and
+	// with it the worker tool allowlist) is deliberately left untouched (D-004).
+	// An explicit `model:` is never rewritten (it walks the capability gate
+	// below), and a missing / non-"yes" `vision` value leaves `effective` on the
+	// role default so the gate still owns the refusal. Runs BEFORE the gate:
+	// otherwise the gate would refuse before routing could take effect.
+	let autoRouteSource = "";
+	if (!requested && imagesRequested) {
+		const roleCapability = modelImageCapability(input.registry, input.cli, input.provider, effective);
+		if (roleCapability === "no") {
+			const visionValue = readRoleModel(input.cwd, "vision") ?? "";
+			if (visionValue && modelImageCapability(input.registry, input.cli, input.provider, visionValue) === "yes") {
+				effective = visionValue;
+				autoRouteSource = role;
+			}
+		}
+	}
+
+	// Capability gate (T-06, AC-006/AC-008): only a definite "no" refuses, and
+	// only when the task really needs images. "unknown" fails open by design —
+	// never turn an undecidable registry lookup into a refused dispatch.
+	if (imagesRequested) {
+		const capability = modelImageCapability(input.registry, input.cli, input.provider, effective);
+		if (capability === "no") {
+			return {
+				ok: false,
+				message:
+					`Task declares images (or references an image file) but model '${effective}' cannot take image input. ` +
+					"Use 'mw model set vision <provider/model>' to configure a vision role, or declare 'images: no' if the task does not need the image.",
+			};
+		}
+	}
+
+	// Auto-route result: the vision model is pinned (the role default cannot take
+	// image input) and the machine-readable source rides both the task
+	// frontmatter (`model-reason`) and the echo (`model-source`). `type:` stays
+	// untouched. Checked before the no-override branch below, which would
+	// otherwise emit a frontmatter without the routed `model:` line.
+	if (autoRouteSource) {
+		const routeReason = reason
+			? `${reason}; auto-route: ${autoRouteSource} -> vision`
+			: `auto-route: ${autoRouteSource} -> vision`;
+		const routeLines = [...headLines, `model: ${effective}`, `model-reason: ${routeReason}`];
+		return {
+			ok: true,
+			frontmatter: `${routeLines.join("\n")}\n`,
+			echo: `model: dispatch.yml vision=${effective} (model-source: auto-route, ${autoRouteSource} -> vision)`,
+		};
 	}
 
 	if (!requested) {
@@ -1080,10 +1161,7 @@ export function planDispatchFrontmatter(input: {
 		};
 	}
 
-	const lines =
-		input.phase !== undefined && input.phase.length > 0
-			? [`type: ${input.taskType}`, `phase: ${input.phase}`]
-			: [`type: ${input.taskType}`];
+	const lines = [...headLines];
 	if (requested) lines.push(`model: ${requested}`);
 	if (reason) lines.push(`model-reason: ${reason}`);
 	return {
@@ -1143,7 +1221,13 @@ export function registerWorkerTools(
 			type: Type.Optional(
 				Type.String({
 					description:
-						"Task type: 'coding' | 'review' | 'research'. Selects the dispatch.yml role (and the worker tool allowlist). Default: derived from cli (pi -> coding, claude -> review, codex -> codex).",
+						"Task type: 'coding' | 'review' | 'research' | 'rag-research' | 'vision'. Selects the dispatch.yml role (and the worker tool allowlist). Use 'vision' for tasks that must read image files (screenshots/mockups). Default: derived from cli (pi -> coding, claude -> review, codex -> codex).",
+				}),
+			),
+			images: Type.Optional(
+				Type.Union([Type.Literal("yes"), Type.Literal("no")], {
+					description:
+						"Declare the image requirement: 'yes' means this task must look at images (refused when the effective model cannot take image input), 'no' exempts it. Omit to auto-detect an existing image file referenced in the description.",
 				}),
 			),
 			key: Type.Optional(
@@ -1161,6 +1245,7 @@ export function registerWorkerTools(
 				model,
 				model_reason,
 				type,
+				images,
 				key,
 			} = params as {
 				task_key: string;
@@ -1169,6 +1254,7 @@ export function registerWorkerTools(
 				model?: string;
 				model_reason?: string;
 				type?: string;
+				images?: "yes" | "no";
 				key?: string;
 			};
 			// RAG dispatcher gate (VC-003): an unusable rag config (e.g. `enabled`
@@ -1242,6 +1328,8 @@ export function registerWorkerTools(
 				provider,
 				taskType: typeField,
 				phase: ownerPhase,
+				description,
+				images,
 				model: model ?? "",
 				modelReason: model_reason ?? "",
 				registry: _context?.modelRegistry,
@@ -1551,7 +1639,7 @@ export function registerWorkerCommands(
 	projectDir: string = path.dirname(agenticdocRoot),
 ): void {
 	const USAGE =
-		"Usage: /worker <claude|codex|pi> [--type coding|review|research] [--model <id>] [--reason <text>] [--key <name>] <task description>";
+		"Usage: /worker <claude|codex|pi> [--type coding|review|research|rag-research|vision] [--model <id>] [--reason <text>] [--key <name>] <task description>";
 	pi.registerCommand("worker", {
 		description:
 			"Spawn a worker: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] <task description>",
@@ -1565,7 +1653,8 @@ export function registerWorkerCommands(
 			let modelReason = "";
 			let typeArg = "";
 			let keyArg = "";
-			while (["--model", "--type", "--reason", "--key"].includes(parts[idx] ?? "")) {
+			let imagesArg: "yes" | "no" | undefined;
+			while (["--model", "--type", "--reason", "--key", "--images"].includes(parts[idx] ?? "")) {
 				const flag = parts[idx];
 				const value = parts[idx + 1] ?? "";
 				idx += 2;
@@ -1576,7 +1665,13 @@ export function registerWorkerCommands(
 				if (flag === "--model") model = value;
 				else if (flag === "--type") typeArg = value;
 				else if (flag === "--reason") modelReason = value;
-				else keyArg = value;
+				else if (flag === "--images") {
+					if (value !== "yes" && value !== "no") {
+						ctx.ui.notify("--images must be 'yes' or 'no'.", "warning");
+						return;
+					}
+					imagesArg = value;
+				} else keyArg = value;
 			}
 			const description = parts.slice(idx).join(" ");
 
@@ -1628,6 +1723,8 @@ export function registerWorkerCommands(
 				provider,
 				taskType: typeField,
 				phase: ownerPhase,
+				description,
+				images: imagesArg,
 				model,
 				modelReason,
 				registry: ctx.modelRegistry,
@@ -1758,8 +1855,9 @@ export function formatDoctorReport(report: DoctorJson, fix: boolean): string {
 		if (dispatch.error) {
 			lines.push(`派发模型: 配置错误 — ${dispatch.error}`);
 		} else {
+			const capabilities = dispatch.images ?? {};
 			const roles = Object.entries(dispatch.models ?? {})
-				.map(([role, value]) => `${role}=${value}`)
+				.map(([role, value]) => `${role}=${value} images=${capabilities[role] || "unknown"}`)
 				.join("; ");
 			const window = dispatch.window_model || "（未记录）";
 			lines.push(`派发模型: ${roles || "未设角色"}; 窗口模型 ${window}`);
@@ -1990,7 +2088,7 @@ export async function runMwModelCommand(
 		const value = parts[2];
 		if (!role || !value || parts.length > 3) {
 			ctx.ui.notify(
-				"Usage: /mw model set <role> <prefix/model> — roles: main, coding, review, research (e.g. /mw model set review timi/gpt-5.6-sol)",
+				"Usage: /mw model set <role> <prefix/model> — roles: main, coding, review, research, vision (e.g. /mw model set review timi/gpt-5.6-sol)",
 				"warning",
 			);
 			return;

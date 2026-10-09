@@ -241,6 +241,12 @@ def test_vc023_registry_parity() -> None:
         assert ts_reg[name] == tools, (
             f"{name}: py={tools} ts={ts_reg[name]} (order-exact required)"
         )
+    # mw-vision-role T-03 (AC-005/VC-005): pin the `vision` bucket by literal on
+    # both sides. The loop above already covers it dynamically; this literal is
+    # the order-exact anchor `test_mwpp_collection_parity.py` refroze against.
+    _vision_tools = ["read", "write", "edit", "bash", "find", "grep", "ls"]
+    assert py_reg["vision"] == _vision_tools, f"py vision={py_reg['vision']}"
+    assert ts_reg["vision"] == _vision_tools, f"ts vision={ts_reg['vision']}"
     # the TS side holds exactly the conductor types + the documented legacy
     # worker buckets (coding/review/research) + the internal fallback bucket
     expected_ts_keys = set(py_reg) | {"coding", "review", "research", "fallback"}
@@ -323,6 +329,82 @@ def test_vc023_worker_fail_closed() -> None:
     )
 
 
+# ── 4. VC-014: PM dispatch-awareness text surfaces (mw-vision-role T-13) ─────
+
+_TS_UI_BRIDGE = (
+    _REPO / "packages" / "coding-agent" / "src" / "extensions"
+    / "agent-team-loop" / "pm" / "ui-bridge.ts"
+)
+_TS_PM_ORCH = (
+    _REPO / "packages" / "coding-agent" / "src" / "extensions"
+    / "agent-team-loop" / "pm" / "pm-orchestrator.ts"
+)
+_TS_DISPATCH_MODELS = (
+    _REPO / "packages" / "coding-agent" / "src" / "extensions"
+    / "agent-team-loop" / "shared" / "dispatch-models.ts"
+)
+
+
+def _parse_ts_dispatchable_types() -> set[str]:
+    """DISPATCHABLE_TYPES from shared/dispatch-models.ts (the whitelist side)."""
+    src = _TS_DISPATCH_MODELS.read_text(encoding="utf-8")
+    m = re.search(r"export const DISPATCHABLE_TYPES\s*=\s*\[([^\]]*)\]", src)
+    assert m, "DISPATCHABLE_TYPES not found in dispatch-models.ts"
+    return set(re.findall(r'"([\w-]+)"', m.group(1)))
+
+
+def _parse_dispatch_type_tool_tokens() -> set[str]:
+    """Type tokens enumerated by the PM-visible dispatch_worker `type`
+    description: quoted literals plus the `cli -> type` default-mapping
+    targets (codex is reachable only through that legacy mapping)."""
+    src = _TS_UI_BRIDGE.read_text(encoding="utf-8")
+    m = re.search(r'"Task type:[^"]*"', src)
+    assert m, "dispatch_worker `type` description not found in ui-bridge.ts"
+    desc = m.group(0)
+    return set(re.findall(r"'([\w-]+)'", desc)) | set(
+        re.findall(r"->\s*([\w-]+)", desc)
+    )
+
+
+def test_vc014_pm_dispatch_awareness_texts() -> None:
+    # (1) the type-description token set must equal the whitelist (+ codex,
+    # which the description lists only as the legacy cli-derived default).
+    tokens = _parse_dispatch_type_tool_tokens()
+    expected = _parse_ts_dispatchable_types() | {"codex"}
+    assert tokens == expected, (
+        f"type description drift: extra={sorted(tokens - expected)} "
+        f"missing={sorted(expected - tokens)}"
+    )
+
+    ui_src = _TS_UI_BRIDGE.read_text(encoding="utf-8")
+    # (2) /worker USAGE enumerates the same type surface
+    worker_usage = re.search(r'"Usage: /worker [^"]*"', ui_src)
+    assert worker_usage, "/worker USAGE not found in ui-bridge.ts"
+    assert "vision" in worker_usage.group(0), worker_usage.group(0)
+
+    # (3) /mw model set role list == mw_common.DISPATCH_ROLES (parsed set)
+    model_usage = re.search(r'"Usage: /mw model set [^"]*"', ui_src)
+    assert model_usage, "/mw model set USAGE not found in ui-bridge.ts"
+    roles_m = re.search(r"roles:\s*([^()]+?)\s*\(", model_usage.group(0))
+    assert roles_m, f"role list not parseable: {model_usage.group(0)}"
+    ui_roles = {r.strip() for r in roles_m.group(1).split(",") if r.strip()}
+    assert ui_roles == set(mw_common.DISPATCH_ROLES), (
+        f"role drift: ui={sorted(ui_roles)} py={sorted(mw_common.DISPATCH_ROLES)}"
+    )
+
+    # (4) PARALLEL_PROTOCOL names both type: vision and type: research
+    orch_src = _TS_PM_ORCH.read_text(encoding="utf-8")
+    proto_m = re.search(
+        r"export const PARALLEL_PROTOCOL = \[(.*?)\]\.join\(", orch_src, re.DOTALL
+    )
+    assert proto_m, "PARALLEL_PROTOCOL not found in pm-orchestrator.ts"
+    proto = proto_m.group(1)
+    assert "type: vision" in proto, "PARALLEL_PROTOCOL missing 'type: vision'"
+    assert "type: research" in proto, "PARALLEL_PROTOCOL missing 'type: research'"
+
+    _verify("VC-014", surfaces=4, token_set_ok="true")
+
+
 # ── script mode ──────────────────────────────────────────────────────────────
 
 _TESTS = [
@@ -331,6 +413,7 @@ _TESTS = [
     test_vc023_registry_parity,
     test_vc023_unknown_type_rejected,
     test_vc023_worker_fail_closed,
+    test_vc014_pm_dispatch_awareness_texts,
 ]
 
 

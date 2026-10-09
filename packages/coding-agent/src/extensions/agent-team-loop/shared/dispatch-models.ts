@@ -65,13 +65,14 @@ export const DISPATCH_ROLE_BY_TYPE: Record<string, string> = {
 	reviewer: "review",
 	research: "research",
 	"rag-research": "research",
+	vision: "vision",
 };
 
 /** The role-level types the PM dispatch surface accepts (`type:` in task.md).
  * Every entry has a tool allowlist entry in worker-mode.ts. `rag-research` is
  * PM-dispatched here; the conductor refuses it on the Python side
  * (`conductor_dispatchable=False` in autopilot/dispatch.py). */
-export const DISPATCHABLE_TYPES = ["coding", "review", "research", "rag-research"] as const;
+export const DISPATCHABLE_TYPES = ["coding", "review", "research", "rag-research", "vision"] as const;
 
 /** Role for a declared task type (unknown -> coding, same as the Python chain). */
 export function roleForTaskType(taskType: string): string {
@@ -193,6 +194,79 @@ export function validateModelValue(
 			`Model '${trimmed}' not found for provider '${provider}' (known ids include: ${candidates}). ` +
 			`Use /mw model set <role> ${trimmed} with a valid id, or omit the model to inherit the configured role default.`,
 	};
+}
+
+/**
+ * Three-state image capability of a model value. `"unknown"` is NOT `"no"`:
+ * the caller must fail open (allow) whenever the registry cannot decide.
+ */
+export type ImageCapability = "yes" | "no" | "unknown";
+
+/** Image extensions accepted by the read tool (`core/tools/read.ts:212`). */
+const IMAGE_EXTENSIONS: readonly string[] = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"];
+
+/**
+ * Whether one dispatch model value can take image input, using the same
+ * fail-open contract (and the same early-return order) as
+ * {@link validateModelValue}: only a registry hit is decidable, everything
+ * else is `"unknown"` so the dispatch gate never invents a failure. The
+ * undecidable branches are, in order:
+ *
+ * 1. empty value
+ * 2. `registry === undefined`
+ * 3. non-pi cli
+ * 4. value carries no model id
+ * 5. CLI-executor prefix (codex_cli / claude_cli)
+ * 6. prefix is not in {@link PREFIX_TO_PROVIDER_ID}
+ * 7. no provider (bare value without a task provider)
+ * 8. the provider has no id at all in the registry
+ * 9. `registry.find(provider, modelId)` misses
+ */
+export function modelImageCapability(
+	registry: ModelRegistry | undefined,
+	cli: string,
+	provider: string,
+	value: string,
+): ImageCapability {
+	try {
+		const trimmed = value.trim();
+		if (!trimmed || !registry || cli.toLowerCase() !== "pi") return "unknown";
+		const { prefix, modelId } = parseModelValue(trimmed);
+		if (!modelId) return "unknown";
+		if (CLI_EXECUTOR_PREFIXES.includes(prefix)) return "unknown";
+		const resolved = prefix ? PREFIX_TO_PROVIDER_ID[prefix] : provider.trim();
+		if (prefix && !resolved) return "unknown";
+		if (!resolved) return "unknown";
+		const ids = registry.getAll().filter((m) => m.provider === resolved);
+		if (ids.length === 0) return "unknown";
+		const model = registry.find(resolved, modelId);
+		if (!model) return "unknown";
+		return model.input?.includes("image") ? "yes" : "no";
+	} catch {
+		return "unknown";
+	}
+}
+
+/**
+ * Whether a task description references an existing image file: at least one
+ * whitespace-separated token ends in an image extension, carries no glob
+ * metacharacters (`*?[]`), is not a URL, and exists relative to `cwd`. The
+ * caller owns the `images: no` override (it short-circuits before this).
+ */
+export function detectImageNeed(cwd: string, description: string): boolean {
+	if (!description) return false;
+	const extensionPattern = new RegExp(`(${IMAGE_EXTENSIONS.join("|")})(?![A-Za-z0-9])`, "i");
+	for (const token of description.split(/\s+/)) {
+		if (!extensionPattern.test(token)) continue;
+		if (token.includes("://")) continue;
+		if (/[*?[\]]/.test(token)) continue;
+		try {
+			if (fs.existsSync(path.resolve(cwd, token))) return true;
+		} catch {
+			// Unresolvable token: treat as "no image", never as an error.
+		}
+	}
+	return false;
 }
 
 /** pi's settings.json defaultModel, when the user pinned one (agent dir

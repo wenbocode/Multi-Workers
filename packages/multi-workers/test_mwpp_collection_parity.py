@@ -1,9 +1,9 @@
 """
-test_mwpp_collection_parity.py — 10-key TOOL_ALLOWLISTS snapshot parity
+test_mwpp_collection_parity.py — 11-key TOOL_ALLOWLISTS snapshot parity
 (mw-worker-progress-persist T-3; AC-008, VC-008).
 
 The L0 parity case (`test_autopilot_l0.py::test_vc023_registry_parity`) only
-checks the 6 keys the Python REGISTRY owns; the TS-side legacy buckets
+checks the 7 keys the Python REGISTRY owns; the TS-side legacy buckets
 (coding/review/research) and the internal `fallback` bucket values are not
 locked anywhere. This module freezes the whole pre-change TS table (2026-09-23)
 as a literal and asserts the parsed source equals it item-by-item, order
@@ -33,6 +33,9 @@ def _verify(tag: str, **kv) -> None:
 
 # Frozen 2026-09-23 snapshot of `worker-mode.ts::TOOL_ALLOWLISTS` before the
 # mw-worker-progress-persist change (RQ-D2 F5). Order-exact by construction.
+# Refrozen 2026-09-26 (mw-vision-role T-03, AC-005): the `vision` bucket was
+# added as a copy of the `coding` set. Addition only — no existing key, value
+# or ordering changed, so the freeze still proves the pre-change rows.
 _EXPECTED_ALLOWLISTS: dict[str, list[str]] = {
     "coding": ["read", "write", "edit", "bash", "find", "grep", "ls"],
     "review": ["read", "find", "grep", "ls"],
@@ -55,6 +58,7 @@ _EXPECTED_ALLOWLISTS: dict[str, list[str]] = {
         "rag_feedback",
         "rag_chat",
     ],
+    "vision": ["read", "write", "edit", "bash", "find", "grep", "ls"],
     "fallback": ["read", "write", "edit", "bash", "find", "grep", "ls"],
 }
 
@@ -74,4 +78,12 @@ def test_vc008_allowlist_snapshot_unchanged() -> None:
         parity_pass="true",
         snapshot_equal="true",
         keys=len(parsed),
+    )
+    # mw-vision-role T-03 (AC-005): T-02 registered the TS `vision` bucket but
+    # deferred the parity lock here; emit it explicitly so the refreeze is
+    # observable in the run, not just implied by the VC-008 snapshot.
+    _verify(
+        "VC-005",
+        allowlist_vision=",".join(parsed["vision"]),
+        parity="true" if parsed["vision"] == _EXPECTED_ALLOWLISTS["vision"] else "false",
     )

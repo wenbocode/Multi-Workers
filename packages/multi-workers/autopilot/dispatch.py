@@ -104,6 +104,12 @@ REGISTRY: dict[str, DispatchType] = {
         ),
         "pi", "timi", False, False,
     ),
+    # Vision bucket (mw-vision-role D-001): full coding set, conductor may
+    # dispatch it. Tool order is locked per-item against the TS
+    # TOOL_ALLOWLISTS entry.
+    "vision": DispatchType(
+        "vision", _CODING_TOOLS, "pi", "timi", False,
+    ),
 }
 
 SCRATCH_OWNER = "_scratch"
@@ -262,6 +268,7 @@ def render_task_md(
     read_byte_cap: int | None = None,
     model: str = "",
     phase: str = "",
+    images: str | None = None,
     profile_block: str | None = None,
     rag_config: dict | None = None,
     task_meta: dict | None = None,
@@ -281,6 +288,13 @@ def render_task_md(
     ``_scratch``, legacy callers) leaves the output byte-identical to the
     pre-T-14 renderer, so existing task.md files and tests do not churn.
 
+    ``images`` (mw-vision-role AC-009): the task's declared image capability
+    (``"yes"`` / ``"no"``). Only a truthy value emits ``images: <v>`` between
+    ``phase:`` and ``model:`` — both ``None`` and ``""`` leave the output
+    byte-identical to the pre-images renderer (the header declares a caller
+    decision, it is never a default, so an undeclared task must not gain a
+    line).
+
     ``profile_block`` (mw-target-partition FIX-1) is emitted before the RAG
     block so the conductor path keeps the same block order as the TS
     dispatcher. ``rag_config`` is `mw_common.load_rag_config`'s output; an
@@ -298,6 +312,8 @@ def render_task_md(
     ]
     if phase:
         lines.append(f"phase: {phase}")
+    if images:   # None / "" -> zero bytes (AC-009); declared -> images: yes|no
+        lines.append(f"images: {images}")
     if model:
         lines.append(f"model: {model}")
     lines += [

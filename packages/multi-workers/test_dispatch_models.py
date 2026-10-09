@@ -149,6 +149,9 @@ class TestParseAndCompat:
         "reviewer": "review",
         "research": "research",
         "rag-research": "research",
+        # mw-vision-role T-01: parity sync with mw_common.TASK_TYPE_TO_ROLE
+        # and dispatch-models.ts DISPATCH_ROLE_BY_TYPE.
+        "vision": "vision",
     }
 
     def test_role_map_matches_ts_mirror(self) -> None:
@@ -419,10 +422,17 @@ class TestDirectProviderSpawn:
 # ── mw model CLI ──────────────────────────────────────────────────────────────
 
 
-def _model_args(project: pathlib.Path, action: str, role: str = "", value: str = "") -> argparse.Namespace:
+def _model_args(project: pathlib.Path, action: str, role: str = "", value: str = "",
+                *, force: bool = False) -> argparse.Namespace:
     return argparse.Namespace(
-        project=str(project), model_action=action, role=role, value=value,
+        project=str(project), model_action=action, role=role, value=value, force=force,
     )
+
+
+def _emit_verify(capsys: pytest.CaptureFixture[str], line: str) -> None:
+    """Print a [VERIFY] line for quality-gate extraction, bypassing pytest capture."""
+    with capsys.disabled():
+        print(line, flush=True)
 
 
 class TestModelCli:
@@ -464,6 +474,129 @@ class TestModelCli:
         assert "coding: (unset)" in out and "[window]" in out
 
 
+class TestModelSetVisionCapability:
+    """T-11: the `vision` role refuses images=no models at config time, stays
+    fail-open on "unknown", and exposes a --force escape hatch. The probe is
+    injected through mw_common.model_images (seam style: test_serve_doctor)."""
+
+    _VISION_YES = "timi/deepseek-v4-flash-vision-exp"
+    _VISION_NO = "timi/glm-5.3"
+
+    @staticmethod
+    def _stub(monkeypatch: pytest.MonkeyPatch, verdict: str) -> None:
+        monkeypatch.setattr(mw_common, "model_images", lambda value, **_kw: verdict)
+
+    @staticmethod
+    def _probe_must_not_run(monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(value, **_kw):  # noqa: ANN001, ANN202
+            raise AssertionError(f"probe must not run for {value!r}")
+
+        monkeypatch.setattr(mw_common, "model_images", boom)
+
+    def test_no_refusal_leaves_dispatch_yml_byte_identical(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        root = _project(tmp_path, dispatch_yml="models:\n  coding: timi/glm-5.3\n")
+        yml = root / ".mw" / "dispatch.yml"
+        before = yml.read_bytes()
+        self._stub(monkeypatch, "no")
+
+        rc = mw.cmd_model(_model_args(root, "set", "vision", self._VISION_NO))
+
+        assert rc != 0
+        assert yml.read_bytes() == before
+        err = capsys.readouterr().err
+        assert "images" in err
+        assert "mw model set vision" in err and "--force" in err
+
+    def test_yes_writes_vision_role(self, tmp_path: pathlib.Path,
+                                    monkeypatch: pytest.MonkeyPatch) -> None:
+        root = _project(tmp_path)
+        self._stub(monkeypatch, "yes")
+        assert mw.cmd_model(_model_args(root, "set", "vision", self._VISION_YES)) == 0
+        config, err = mw_common.load_dispatch_config(root)
+        assert err is None
+        assert config["models"]["vision"] == self._VISION_YES
+
+    def test_unknown_writes_with_skip_hint(self, tmp_path: pathlib.Path,
+                                           monkeypatch: pytest.MonkeyPatch,
+                                           capsys: pytest.CaptureFixture[str]) -> None:
+        root = _project(tmp_path)
+        self._stub(monkeypatch, "unknown")
+        assert mw.cmd_model(_model_args(root, "set", "vision", self._VISION_NO)) == 0
+        config, _ = mw_common.load_dispatch_config(root)
+        assert config["models"]["vision"] == self._VISION_NO
+        out = capsys.readouterr().out
+        assert "skip" in out and "unknown" in out
+
+    def test_force_skips_the_probe(self, tmp_path: pathlib.Path,
+                                   monkeypatch: pytest.MonkeyPatch,
+                                   capsys: pytest.CaptureFixture[str]) -> None:
+        root = _project(tmp_path)
+        self._probe_must_not_run(monkeypatch)
+        assert mw.cmd_model(_model_args(root, "set", "vision", self._VISION_NO, force=True)) == 0
+        config, _ = mw_common.load_dispatch_config(root)
+        assert config["models"]["vision"] == self._VISION_NO
+        assert "--force" in capsys.readouterr().out
+
+    def test_force_on_non_vision_role_is_rejected(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        root = _project(tmp_path, dispatch_yml="models:\n  review: timi/glm-5.3-air\n")
+        yml = root / ".mw" / "dispatch.yml"
+        before = yml.read_bytes()
+        self._probe_must_not_run(monkeypatch)
+        assert mw.cmd_model(_model_args(root, "set", "coding", "timi/glm-5.3", force=True)) != 0
+        assert yml.read_bytes() == before
+
+    def test_other_roles_never_probe(self, tmp_path: pathlib.Path,
+                                     monkeypatch: pytest.MonkeyPatch) -> None:
+        root = _project(tmp_path)
+        self._probe_must_not_run(monkeypatch)
+        for role in ("main", "coding", "review", "research"):
+            assert mw.cmd_model(_model_args(root, "set", role, "timi/glm-5.3")) == 0, role
+        config, _ = mw_common.load_dispatch_config(root)
+        assert set(config["models"]) == {"main", "coding", "review", "research"}
+
+    def test_verify_vc001(self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+                          capsys: pytest.CaptureFixture[str]) -> None:
+        self._stub(monkeypatch, "yes")
+        rc = mw.cmd_model(_model_args(tmp_path, "set", "vision", self._VISION_YES))
+        config, _ = mw_common.load_dispatch_config(tmp_path)
+        assert rc == 0 and config["models"]["vision"] == self._VISION_YES
+        _emit_verify(capsys, f"[VERIFY] VC-001: vision={self._VISION_YES} rc={rc}")
+
+    def test_verify_vc002(self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+                          capsys: pytest.CaptureFixture[str]) -> None:
+        roles = len(mw_common.DISPATCH_ROLES)
+        assert roles == 5 and "vision" in mw_common.DISPATCH_ROLES
+        monkeypatch.setattr(sys, "argv", [
+            "mw", "model", "set", "--project", str(tmp_path), "villain", "timi/x",
+        ])
+        with pytest.raises(SystemExit) as exc:
+            mw._parse_args()
+        assert exc.value.code != 0
+        _emit_verify(capsys, f"[VERIFY] VC-002: rc=nonzero roles={roles}")
+
+    def test_verify_vc013(self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+                          capsys: pytest.CaptureFixture[str]) -> None:
+        root = _project(tmp_path, dispatch_yml="models:\n  coding: timi/glm-5.3\n")
+        yml = root / ".mw" / "dispatch.yml"
+        before = yml.read_bytes()
+        self._stub(monkeypatch, "no")
+        no_rc = mw.cmd_model(_model_args(root, "set", "vision", self._VISION_NO))
+        unchanged = yml.read_bytes() == before
+        self._probe_must_not_run(monkeypatch)
+        force_rc = mw.cmd_model(_model_args(root, "set", "vision", self._VISION_NO, force=True))
+        assert no_rc != 0 and unchanged and force_rc == 0
+        _emit_verify(
+            capsys,
+            f"[VERIFY] VC-013: no_rc={no_rc} yml_unchanged={str(unchanged).lower()} "
+            f"force_rc={force_rc}",
+        )
+
+
 # ── doctor section ────────────────────────────────────────────────────────────
 
 
@@ -493,3 +626,174 @@ class TestDoctorDispatch:
         # suggestion) — model defaults must not flag the chain unhealthy.
         assert not any("dispatch.yml" in i for i in summary["issues"])
         assert any("dispatch.yml unusable" in s for s in summary["suggestions"])
+
+
+class TestDoctorImagesCapability:
+    """T-12 (AC-010 / AC-015): the dispatch capability column is probed only
+    when roles are configured, `no` lands in suggestions (never issues, which
+    would flip summary.healthy and doctor exit 1), and all three verdicts keep
+    doctor exit code 0. The probe is injected through mw_common.model_images
+    (in-process seam, same style as the T-11 cases above); a real subprocess
+    cannot be monkeypatched, so test_serve_doctor covers only the skip branch."""
+
+    _DISPATCH = "models:\n  coding: timi/glm-5.3\n  vision: timi/deepseek-v4-flash-vision-exp\n"
+
+    @staticmethod
+    def _stub(monkeypatch: pytest.MonkeyPatch, verdict: str) -> None:
+        monkeypatch.setattr(mw_common, "model_images", lambda value, **_kw: verdict)
+
+    @staticmethod
+    def _doctor_rc(root: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> int:
+        # Keep the unrelated RAG/network section out of this hermetic test and
+        # scope pi_shell to a per-test agent dir; a live service (this pytest
+        # process) leaves the dispatch verdict as the only healthy/exit lever.
+        monkeypatch.setattr(mw, "_doctor_rag", lambda project_dir: {"exists": False})
+        monkeypatch.setenv(mw_common.AGENT_DIR_ENV, str(root / "pi-agent"))
+        providers = root / "providers.json"
+        providers.write_text(json.dumps(_HERMETIC_CONFIG), encoding="utf-8")
+        (root / ".mw").mkdir(exist_ok=True)
+        mw_common.pid_file(root).write_text(str(os.getpid()), encoding="utf-8")
+        return mw.cmd_doctor(
+            argparse.Namespace(
+                project=str(root), providers=str(providers), json=True,
+                fix=False, stale_after=90,
+            )
+        )
+
+    def test_no_is_a_suggestion_not_an_issue(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        root = _project(tmp_path, dispatch_yml=self._DISPATCH)
+        self._stub(monkeypatch, "no")
+        rc = self._doctor_rc(root, monkeypatch)
+        report = json.loads(capsys.readouterr().out)
+        assert report["dispatch"]["images"] == {"coding": "no", "vision": "no"}
+        summary = report["summary"]
+        assert not summary["issues"]
+        # T-15 (AC-010): the verdict is scoped to the `vision` role, so the
+        # text role `coding` (images=no) must stay silent - exactly one image
+        # suggestion, and it is the vision one.
+        image_suggestions = [s for s in summary["suggestions"] if "images=no" in s]
+        assert len(image_suggestions) == 1, summary["suggestions"]
+        assert image_suggestions[0].startswith("dispatch role vision")
+        assert not any(s.startswith("dispatch role coding") for s in summary["suggestions"])
+        assert "images=no" in mw_common.format_doctor_text(report)
+        assert rc == 0
+
+    def test_other_roles_silent_when_vision_unconfigured(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """T-15 regression: with no `vision` role configured, text roles whose
+        models report images=no must not produce an image suggestion (they do
+        not need image input), while the AC-015 column keeps them visible."""
+        root = _project(
+            tmp_path,
+            dispatch_yml="models:\n  coding: timi/glm-5.3\n  review: timi/glm-5.3\n",
+        )
+        self._stub(monkeypatch, "no")
+        rc = self._doctor_rc(root, monkeypatch)
+        report = json.loads(capsys.readouterr().out)
+        assert report["dispatch"]["images"] == {"coding": "no", "review": "no"}
+        summary = report["summary"]
+        assert not any("mw model set vision" in s for s in summary["suggestions"])
+        assert not summary["issues"]
+        assert rc == 0, summary
+
+    def test_three_states_keep_doctor_rc_zero(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        states: list[str] = []
+        for verdict, state in (("no", "suggestion"), ("yes", "ok"), ("unknown", "skip")):
+            root = tmp_path / verdict
+            root.mkdir()
+            _project(root, dispatch_yml=self._DISPATCH)
+            self._stub(monkeypatch, verdict)
+            rc = self._doctor_rc(root, monkeypatch)
+            report = json.loads(capsys.readouterr().out)
+            summary = report["summary"]
+            assert report["dispatch"]["images"] == {"coding": verdict, "vision": verdict}
+            assert not summary["issues"]
+            if verdict == "no":
+                assert any("mw model set vision" in s for s in summary["suggestions"])
+            else:
+                assert not any("images" in s for s in summary["suggestions"])
+            assert f"images={verdict}" in mw_common.format_doctor_text(report)
+            assert rc == 0, (verdict, report["summary"])
+            states.append(state)
+        _emit_verify(capsys, f"[VERIFY] VC-010: doctor_rc=0 states={','.join(states)}")
+
+    def test_model_show_every_role_line_has_images(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        root = _project(
+            tmp_path,
+            dispatch_yml="models:\n  coding: timi/glm-5.3\n",
+            window_model="claude/claude-sonnet-5",
+        )
+        seen: list[str] = []
+        for verdict in ("yes", "no", "unknown"):
+            self._stub(monkeypatch, verdict)
+            assert mw.cmd_model(_model_args(root, "show")) == 0
+            out = capsys.readouterr().out
+            role_lines = [
+                line for line in out.splitlines()
+                if line.split(":", 1)[0] in mw_common.DISPATCH_ROLES
+            ]
+            assert len(role_lines) == len(mw_common.DISPATCH_ROLES)
+            for line in role_lines:
+                assert f"images={verdict}" in line, line
+            seen.append(verdict)
+        _emit_verify(capsys, f"[VERIFY] VC-015: show_images={'/'.join(seen)} rc=0")
+
+
+# ── vision role resolution ────────────────────────────────────────────────────
+
+
+class TestVisionRoleResolution:
+    """mw-vision-role T-18 (AC-003 / VC-003): a `type: vision` task.md resolves
+    to the configured `vision` role default (`source=config:vision`), and a
+    task.md `model:` line still wins (`source=task`). The task type/model are
+    read through the launcher's real parser so the assertion tracks what the
+    dispatch chain actually sees, not a hand-passed stand-in."""
+
+    _VISION = "timi/deepseek-v4-flash-vision-exp"
+    _OVERRIDE = "timi/glm-5.3"
+    _DISPATCH = f"models:\n  vision: {_VISION}\n  coding: timi/placeholder\n"
+
+    @staticmethod
+    def _resolve_task(root: pathlib.Path) -> tuple[str, str, str, str]:
+        task = root / ".agenticdoc" / "k" / "workers" / "t1" / "task.md"
+        task_type, task_model = launcher._read_task_md_fields(str(task))
+        config, err = mw_common.load_dispatch_config(root)
+        assert err is None
+        value, source = mw_common.resolve_dispatch_model(
+            cli="pi",
+            task_type=task_type,
+            entry_model=task_model,
+            config_models=config.get("models", {}),
+            window_model=mw_common.read_window_model(root),
+        )
+        return task_type, task_model, value, source
+
+    def test_verify_vc003(self, tmp_path: pathlib.Path,
+                          capsys: pytest.CaptureFixture[str]) -> None:
+        root = _project(
+            tmp_path,
+            task_body="type: vision\ninspect the screenshot\n",
+            dispatch_yml=self._DISPATCH,
+        )
+        task_type, task_model, value, source = self._resolve_task(root)
+        assert task_type == "vision" and task_model == ""
+        assert (value, source) == (self._VISION, "config:vision")
+
+        (root / ".agenticdoc" / "k" / "workers" / "t1" / "task.md").write_text(
+            f"type: vision\nmodel: {self._OVERRIDE}\ninspect\n", encoding="utf-8")
+        task_type, task_model, value, source = self._resolve_task(root)
+        assert task_model == self._OVERRIDE
+        assert (value, source) == (self._OVERRIDE, "task")
+
+        _emit_verify(capsys, "[VERIFY] VC-003: source=config:vision task_override=task")
