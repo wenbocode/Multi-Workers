@@ -918,16 +918,14 @@ def test_render_task_md_signature_shape() -> None:
     removed = [name for name in head_params if name not in worktree_params]
     by_name = inspect.signature(dispatch_mod.render_task_md).parameters
     # `images` is this card's param (mw-vision-role T-08). `worker_timeout_min`
-    # is a concurrent key's working-tree addition that this frozen-copy
-    # comparison also sees; the expected list tracks the live shape so the
-    # assertion keeps testing the real signature instead of going red on an
-    # out-of-card param.
-    assert extra == [
-        "read_file_cap",
-        "read_byte_cap",
-        "images",
-        "worker_timeout_min",
-    ], extra
+    # is a concurrent key's working-tree addition (mw-autopilot-slot-capacity)
+    # that this frozen-copy comparison also sees: an exact list is red in one
+    # commit order or the other (verified on a clean checkout of 7a864c1c7, where
+    # only the three params below were present), so pin the known ordered prefix
+    # and reject anything outside the known set.
+    _KNOWN_EXTRA = ["read_file_cap", "read_byte_cap", "images", "worker_timeout_min"]
+    assert extra[:3] == ["read_file_cap", "read_byte_cap", "images"], extra
+    assert set(extra) <= set(_KNOWN_EXTRA), extra
     assert removed == [], removed
     assert all(by_name[name].default is None for name in extra)
     assert str(inspect.signature(dispatch_mod.dispatch)) == str(
