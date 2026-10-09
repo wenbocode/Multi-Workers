@@ -48,6 +48,8 @@
 - Added the autopilot config section to `mw doctor` (mw-autopilot-verify-cli): both report paths (`mw doctor` and the extension's `/mw doctor`) show the two config layers, the per-field origin and the machine-layer file path, and raise an issue naming the exact command when a machine-layer key sits outside the supported domain. Silent for a project with no autopilot configuration.
 
 - Added content anchors to `mw update-env` (mw-autopilot-verify-cli): the repo bundle check now compares the bundle's kind set and its guard markers against the sources, so a stale bundle whose mtime was merely refreshed is reported stale, and a new `pi-dist-content` check compares the coding-agent sourcemaps' embedded sources against the current TypeScript files, so a dist whose sources moved on is reported stale even when the files exist.
+- Added the `vision` dispatch role and the dispatch-time image-capability gate (mw-vision-role): `.mw/dispatch.yml` gains a fifth role and the typed dispatch registry a fifth task type (`type: vision` maps to role `vision` with the tool allowlist `read,write,edit,bash,find,grep,ls`), so a task that has to read a screenshot or mockup can be pinned to a model that accepts images. The worker task header carries the new `images: yes|no` line (`render_task_md` writes an explicit declaration as authored, an image reference found in the task text as `yes`, and no line at all when neither applies), `mw model set vision <model>` refuses a model the catalog marks as text-only unless `--force` is given (a config-time probe with a three second timeout, where an undeterminable model never blocks), and `mw model show` plus `mw doctor --json` report a per-role `images=yes|no|unknown` value. A dispatch that needs images and resolves to a model that cannot see them is refused before any side effect - no task directory, no queue row, `_workers.parallel` untouched - while an unknown, empty or CLI-prefixed model value falls open.
+
 
 ### Changed
 
@@ -64,6 +66,8 @@
 - Changed `save_config` to write non-ASCII text as literal UTF-8 and adopted the extension side's string-field set (mw-autopilot-verify-cli): both implementations now produce byte-identical files, which is what makes the cross-language byte-parity criterion possible at all.
 
 - Changed the config write path to take a dedicated per-project lock (mw-autopilot-verify-cli): `<root>/.mw/autopilot-config.lock`, acquired through the existing lock primitive with six retries and a 20 ms base delay, wraps each read-modify-write on both sides. The retry budget is injectable so it stays testable, read-only paths take no lock and create no directory, and a leftover lock is never stolen automatically. The lock sits at the read-modify-write sites rather than inside `save_config`, because the primitive is not reentrant.
+- Changed the doctor's image-capability mismatch from an issue into a suggestion scoped to the `vision` role (mw-vision-role): only an unconfigured or text-only `vision` role is reported, as a suggestion with exit code 0, while the other four roles stay silent, so an intentionally text-only `main`/`coding`/`research`/`review` no longer produces a permanent finding whose prescription does not apply to it.
+
 
 ### Fixed
 
