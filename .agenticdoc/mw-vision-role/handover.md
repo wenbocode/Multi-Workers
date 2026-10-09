@@ -1,7 +1,7 @@
 # Handover: mw-vision-role（状态 DONE，剩余项交接）
 
 - **key**: `mw-vision-role` · phase **DONE**（`_index.parallel` 已同步）
-- **commits**: `7a864c1c7`（feat：代码 + 测试，19 文件）· `5c1149f1b`（docs(agentic)：spec/design/plan/19 卡/证据/QG）· `fd30eb8be`（fix：签名冻结断言与提交顺序无关）· `mini-spec.md`（快车道记录）
+- **commits**: `7a864c1c7`（feat：代码 + 测试，19 文件）· `5c1149f1b`（docs(agentic)：spec/design/plan/19 卡/证据/QG）· `fd30eb8be`（fix：签名冻结断言与提交顺序无关）· `63150abca`（docs：两个包的 `[Unreleased]` 补 vision 条目）· `mini-spec.md`（快车道记录）
 - **收口文档**: `achieved.md`（系统行为变化 9 条 + 遗留 8 条）· `evidence/quality-gate-report-20260926T1850Z.md`（46 问：44 充分 / 3 验证欠债 / 0 无证据）· `evidence/reviews/qg-review-mw-vision-role-20260926.md`（独立 QG：`PASS-WITH-NITS`、`blockers=0`）
 - **主证据**: `evidence/runs/verify-mw-vision-role-20260926.md`（T-14 正文 + T-19 附录 A，含全部原始输出）
 
@@ -57,9 +57,9 @@ cd ../.. && git status --short packages/multi-workers/dist
 
 `npm run check` 第一步是 `biome check --write .`，会改写并发会话的在飞文件 ⇒ 本次只逐条跑了只读组件（全仓 biome `--error-on-warnings`、`tsgo --noEmit`、pinned-deps、ts-imports、shrinkwrap、install-lock、browser-smoke）全绿。建议在干净树（或 CI）跑一次字面命令，或把写模式与只读门禁拆分。
 
-### R4 CHANGELOG 条目（本 key 未加）
+### R4 CHANGELOG 条目（已于 2026-10-09 完成，`63150abca`）
 
-`packages/{coding-agent,multi-workers}/CHANGELOG.md` 的 `[Unreleased]` 需要 `vision` 角色的 `### Added` 条目；仓库流程要求发布前跑 `/cl` 审计，建议由 `/cl` 统一补（本次未动这两个文件——它们正被并发 key 修改）。
+`packages/multi-workers/CHANGELOG.md`（`### Added` 1 条 + `### Changed` 1 条）与 `packages/coding-agent/CHANGELOG.md`（`### Added` 1 条）已写入 `[Unreleased]`，均带 `(mw-vision-role)` 前缀。注意：两个文件的 `[Unreleased]` 里**还留着并发 key 未提交的条目**（多 workers 22 行、coding-agent 14 行，均为纯新增），提交时按行归属只暂存了本 key 的三条 —— 后续对方提交或跑 `/cl` 时会把它们一并带入，属正常。
 
 ### R5 可选加固（已被独立 QG 记为 NIT，不阻塞）
 
