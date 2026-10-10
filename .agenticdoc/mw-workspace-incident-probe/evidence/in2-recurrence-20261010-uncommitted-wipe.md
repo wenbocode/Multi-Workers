@@ -3,7 +3,11 @@
 - 记录人：`mw-gate-verdict-hardening` 窗口之外的独立审计（本次由 PM 直执的只读审计，非本 key 派发）
 - 记录时刻：2026-10-10 15:0x（本地 UTC+8）
 - 归属：IN-2（`evidence/in2-file-vanish-incident-20261009.md` 的同族事件，**第二次发生**）
-- 性质：只读取证 + 一条落地建议；本文件是唯一写面
+- 性质：只读取证 + 一条落地建议
+
+> 引用来源说明：本文引用的 IN-3 重跑稿（`.agenticdoc/**` 81 份覆写）已于 2026-10-10 15:19（本地）按 PM 决策**整体回退到 HEAD**（命令：`git restore --source=HEAD --worktree --pathspec-from-file=…/rewrites-81-filelist.txt`）。
+> 重跑稿全文（含下文 D.11 段落）保存在 `../../_incidents/in3-queue-reenqueue-20261010/rewrites-81-20261010.patch`（81 个 `diff --git` 段，可用 `git apply` 前向复原）。
+> 因此下文的行号引用对应当前工作树已不存在的重跑稿版本，检索时请以 patch 为准。
 
 ---
 
@@ -19,7 +23,7 @@
 | 时刻（本地） | 事件 | 证据 |
 |---|---|---|
 | 11:29–11:30 | `packages/coding-agent` 403 + 207 个 `.ts`（src+test）在同一分钟被重写；`packages/ai` 175 个 `.ts` 同在 11:29 | `Get-ChildItem … \| Group-Object LastWriteTime` 直方图 |
-| 11:28–11:30 | 同窗口另一 worker 记录 `git ls-files -d` = **3056**（coding-agent 1683 / ai 886 / tui 156 / session-backends 101 / server 99 / client 63 / protocol 49 / evals 19），随后删除计数 `2056→1856→1656→1056→456→256→0` 递减 | `.agenticdoc/mw-vision-role/evidence/runs/verify-mw-vision-role-20260926.md:2790`（D.11）+ `%TEMP%\mwv14d\poll-restore.sh` 输出 |
+| 11:28–11:30 | 同窗口另一 worker 记录 `git ls-files -d` = **3056**（coding-agent 1683 / ai 886 / tui 156 / session-backends 101 / server 99 / client 63 / protocol 49 / evals 19），随后删除计数 `2056→1856→1656→1056→456→256→0` 递减 | 重跑稿 `mw-vision-role/evidence/runs/verify-mw-vision-role-20260926.md` D.11（patch 内检索 `D.11`）+ `%TEMP%\mwv14d\poll-restore.sh` 输出 |
 | 11:32 | gitignored `packages/ai/src/providers/data/`（40 个 JSON）被以漂移上游数据重生 ⇒ `npx tsgo --noEmit` 24 红（`together.json` 的 `moonshotai/Kimi-K2.6`：dist=2 / src=0） | D.11.2 |
 | 11:35:53 | 该 worker 用 `cp -r dist/providers/data/. src/providers/data/` 定点恢复（本文件记录时复核 `git diff --no-index` 退出 0） | D.11.3；`%TEMP%\mwv14d\ai-recover.sh` |
 | 11:40:42–11:40:47 | 全局 bundle 刷新 + coding-agent dist 重建（vision 角色的 dist 补建） | `mw doctor` bundle 段；dist mtime |
