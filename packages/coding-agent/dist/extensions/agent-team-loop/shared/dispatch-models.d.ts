@@ -21,7 +21,7 @@ export declare const DISPATCH_ROLE_BY_TYPE: Record<string, string>;
  * Every entry has a tool allowlist entry in worker-mode.ts. `rag-research` is
  * PM-dispatched here; the conductor refuses it on the Python side
  * (`conductor_dispatchable=False` in autopilot/dispatch.py). */
-export declare const DISPATCHABLE_TYPES: readonly ["coding", "review", "research", "rag-research"];
+export declare const DISPATCHABLE_TYPES: readonly ["coding", "review", "research", "rag-research", "vision"];
 /** Role for a declared task type (unknown -> coding, same as the Python chain). */
 export declare function roleForTaskType(taskType: string): string;
 /** Record the current window model for the launcher's inheritance chain
@@ -52,6 +52,36 @@ export interface ModelValidation {
  * is refused: pi would otherwise silently treat it as a custom model id
  * (core/model-resolver.ts buildFallbackModel) and issue requests with it. */
 export declare function validateModelValue(registry: ModelRegistry | undefined, cli: string, taskProvider: string, value: string): ModelValidation;
+/**
+ * Three-state image capability of a model value. `"unknown"` is NOT `"no"`:
+ * the caller must fail open (allow) whenever the registry cannot decide.
+ */
+export type ImageCapability = "yes" | "no" | "unknown";
+/**
+ * Whether one dispatch model value can take image input, using the same
+ * fail-open contract (and the same early-return order) as
+ * {@link validateModelValue}: only a registry hit is decidable, everything
+ * else is `"unknown"` so the dispatch gate never invents a failure. The
+ * undecidable branches are, in order:
+ *
+ * 1. empty value
+ * 2. `registry === undefined`
+ * 3. non-pi cli
+ * 4. value carries no model id
+ * 5. CLI-executor prefix (codex_cli / claude_cli)
+ * 6. prefix is not in {@link PREFIX_TO_PROVIDER_ID}
+ * 7. no provider (bare value without a task provider)
+ * 8. the provider has no id at all in the registry
+ * 9. `registry.find(provider, modelId)` misses
+ */
+export declare function modelImageCapability(registry: ModelRegistry | undefined, cli: string, provider: string, value: string): ImageCapability;
+/**
+ * Whether a task description references an existing image file: at least one
+ * whitespace-separated token ends in an image extension, carries no glob
+ * metacharacters (`*?[]`), is not a URL, and exists relative to `cwd`. The
+ * caller owns the `images: no` override (it short-circuits before this).
+ */
+export declare function detectImageNeed(cwd: string, description: string): boolean;
 /** pi's settings.json defaultModel, when the user pinned one (agent dir
  * resolution mirrors core getAgentDir(); the bundle must stay self-contained
  * and not import core config). */
