@@ -3476,13 +3476,14 @@ def _ap_verify_show(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
             "error": error,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 1 if error else 0
+        if error is not None:
+            return _ap_verify_error("show", error)
+        return 0
 
     suffix = " (missing — nothing configured)" if not path.exists() else " (exists)"
     print(f"config: {path}{suffix}")
     if error is not None:
-        print(f"Error: {error}")
-        return 1
+        return _ap_verify_error("show", error)
     for key in _AP_XKEY_KEYS:
         value = values.get(key)
         if key == "xkey_verify_cwd" and not value:

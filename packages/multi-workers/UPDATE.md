@@ -175,7 +175,7 @@ S6 验证
 - 三层呈现：
   - 层 A `/autopilot monitor`：每门 1 行（含 age 与 `DRIFT(...)`，≤110 列），conductor 行带 `auto=off|shadow|live`。
   - 层 B `/autopilot gates`（pi 窗口）/ `mw autopilot gates`（CLI）：`1 + 13*N` 行卡片，每行 ≤110 列。
-  - 层 C `mw doctor` 的 `gates` 段 + 告警 I1–I8（JSON 出口：`mw doctor --json` 的 `gates` 键）。
+  - 层 C `mw doctor` 的 `gates` 段 + 告警 I1–I8（JSON 出口：`mw doctor --json` 的 `gates` 键），另含只读子段 `crosskey_prose`：绕门散文授权（仅有手写 `decision:` 行、无已答 `xkey-authorize` 门）报 I 类 issue 且 `treated_as_authorized=false`，`mw autopilot gates` 文本面同印 `N prose-only cross-key`。只读判定，不解锁任何依赖/阶段/动作。
 
 ### 6.3 升级动作
 

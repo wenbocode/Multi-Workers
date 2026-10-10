@@ -72,7 +72,7 @@ python mw.py rag sync  --project <控制工作区>          # 把 skill 说明�
 | `mcp.url` | MCP endpoint（streamable HTTP JSON-RPC） | 非空 URL；`transport` 为 `mcp`/`both` 时**必需** | `http://localhost:8100/mcp/` | 缺了 → `transport 'mcp' requires mcp.url`；写错端口/路径 → 会话开始探活失败，工具描述带 `[unreachable at session start]` |
 | `mcp.token_env` | 持有令牌的**环境变量名**，不是令牌本身；值由 `mw serve` 自己的环境提供 | 变量名或 `null`；默认 `null`（不加认证头） | `OVERCODE_MCP_TOKEN` | 填了令牌值 → mw 会拿它当变量名去查环境，认证失败；且令牌值可能随配置文件泄漏 |
 | `mcp.timeout_ms` | 单次 MCP 请求超时（毫秒） | 正整数；默认 `180000` | `180000` | 非正整数 → `mcp.timeout_ms must be a positive integer` |
-| `skill.dir` | 本地 CLI 的工作目录（相对项目根） | 非空字符串；**TS 侧必填**（缺省或 `null` 报 `must be a non-empty string`），Python 侧接受 `null`/缺省 = 项目根；要项目根就写 `.`（见 §8 遗留） | `skills/overcode` | 只写 `skill: {cli_entry: ...}` 不给 `dir` → TS 侧报错；写错路径 → CLI 入口找不到 |
+| `skill.dir` | 本地 CLI 的工作目录（相对项目根/控制工作区根） | 非空字符串；缺省或 `null` = 项目根（TS 与 Python 一致，写 `.` 等价；只有非字符串类型才报 `must be a non-empty string`） | `skills/overcode` | 写错路径 → CLI 入口找不到；缺省/`null` 不再报错，解析为项目根 |
 | `skill.cli_entry` | 运行本地 CLI 适配器的命令；`transport` 为 `skill`/`both` 时**必需** | 非空字符串 | `python overcode_cli.py` | 缺了 → `transport 'skill' requires skill.cli_entry` |
 | `skill.timeout_ms` | 单次 CLI 调用超时（毫秒） | 正整数；默认 `180000` | `180000` | 非正整数 → `skill.timeout_ms must be a positive integer` |
 
@@ -365,7 +365,7 @@ rag:
 - **`rewrite: true` 还需要服务端 `capabilities.rewrite: true`**：角色/阶段开了 `rewrite` 但服务端没有该能力时，
   改写会被跳过或报能力错误。
 - **`rag_chat` 只在 `rag-research` 任务类型下注册**：其它类型看不到这个工具，不是配置错误。
-- **`skill.dir` 两侧行为不一致（遗留，未修）**：Python 接受 `null`/缺省（= 项目根），TS 侧要求非空字符串（`rag/config.ts:262` `requireString`）。跨语言统一前，写 `dir: .` 最稳。已记录待修（T-23 独立验证发现）。
+- **`skill.dir` 缺省 = 控制工作区根**：TS（`rag/config.ts` 的 `optionalTrimmedString`，D-301）与 Python 两侧都接受 `null`/缺省并解析为项目根；要显式写项目根可用 `dir: .`。
 - **没有 `rag:` 段的项目零影响**：不注册工具、不注入 task.md、不探活、不写文件；`enabled: []` 与「没有 `rag:` 段」等价。
 - **`path_roots_file` 悬空引用是静默陷阱**：`mw rag init` 默认会写出 `.mw/rag-roots.json`（`engine: "."`）并激活
   该字段；只有用了 `--no-roots`（或手工删掉文件）它才保持注释。手工激活前先确认文件存在（见 §3.1、§3.4）。

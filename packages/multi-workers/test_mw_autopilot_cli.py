@@ -207,6 +207,49 @@ def test_set_lock_unavailable_returns_1_bytes_unchanged(
     _verify("VC-011", lock_busy="return 1", file_unchanged=True)
 
 
+def test_set_lock_held_by_another_process_returns_1(tmp_path: pathlib.Path) -> None:
+    """A live foreign process holding the lock wins: rc=1, target untouched.
+
+    The lock is file-based (``O_CREAT|O_EXCL``), so a lock file owned by a
+    running second process is indistinguishable from a stale file to ``set``;
+    both must fail loud and leave the target bytes alone. The child acquires
+    through the real ``mw_common.acquire_lock`` protocol and stays alive."""
+    _write_config(tmp_path, {"enabled": True})
+    before = _raw_bytes(tmp_path)
+    lock = tmp_path / ".mw" / "autopilot-config.lock"
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import pathlib, sys, time\n"
+                f"sys.path.insert(0, {str(MW_PY.parent)!r})\n"
+                "import mw_common\n"
+                f"mw_common.acquire_lock(pathlib.Path({str(lock)!r}))\n"
+                "print('locked', flush=True)\n"
+                "time.sleep(30)\n"
+            ),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        stdin=subprocess.DEVNULL,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "locked"
+        assert lock.is_file()
+        result = _run_cli(tmp_path, "set", "--project", str(tmp_path), "--", "echo", "ok")
+        assert result.returncode == 1, result.stderr
+        assert "[mw autopilot verify set] Error:" in result.stderr
+        assert _raw_bytes(tmp_path) == before
+        assert lock.is_file()  # the holder's lock is never stolen or released
+    finally:
+        holder.terminate()
+        holder.wait(timeout=10)
+    _verify("VC-011", lock_holder="live process", returncode=1, file_unchanged=True)
+
+
 def test_set_releases_lock_on_success(tmp_path: pathlib.Path) -> None:
     assert mw.cmd_autopilot(_set_args(tmp_path, ["echo", "ok"])) == 0
     assert not mw._ap_verify_lock_path(tmp_path).exists()
@@ -330,9 +373,24 @@ def test_show_expands_argv_and_cwd(tmp_path: pathlib.Path, capsys: pytest.Captur
 def test_show_rejects_invalid_project_config(tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_config(tmp_path, {"poll_interval_sec": 99})
     assert mw.cmd_autopilot(_show_args(tmp_path, as_json=True)) == 1
-    payload = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
     assert payload["error"]
     assert payload["values"] is None
+    # Errors follow the frozen `[mw autopilot verify <action>] Error:` stderr
+    # contract; the JSON payload stays on stdout for machines.
+    assert "[mw autopilot verify show] Error:" in captured.err
+    assert "Error:" not in captured.out
+
+
+def test_show_text_error_goes_to_stderr(tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write_config(tmp_path, {"poll_interval_sec": 99})
+    assert mw.cmd_autopilot(_show_args(tmp_path)) == 1
+    captured = capsys.readouterr()
+    assert "[mw autopilot verify show] Error:" in captured.err
+    assert "Error:" not in captured.out
+    # The config-path line stays on stdout so the failed read is still locatable.
+    assert str(_config_path(tmp_path)) in captured.out
 
 
 def test_show_does_not_create_mw_dir_after_set(tmp_path: pathlib.Path) -> None:

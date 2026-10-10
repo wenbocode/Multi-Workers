@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import sys
+from unittest import mock
 
 import pytest
 
@@ -175,9 +177,7 @@ def test_embedded_placeholder_is_reported_and_counts_as_unresolvable(
 # ── layer-aware resolution (real effective_config path, not a fallback) ──────
 
 
-def test_machine_layer_supplies_verify_command(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_machine_layer_supplies_verify_command(tmp_path: pathlib.Path) -> None:
     """(a) A machine-layer xkey_verify_cmd satisfies an empty project value: no
     issue and the origin comes from the real layered resolver."""
     project = tmp_path / "project"
@@ -187,9 +187,16 @@ def test_machine_layer_supplies_verify_command(
         tmp_path / "machine" / "autopilot-defaults.json",
         {"xkey_verify_cmd": ["python", "-m", "pytest", "-q"]},
     )
-    monkeypatch.setenv("MW_AUTOPILOT_FILE", str(machine))
     before = _snapshot(project)
-    report = mw_common.doctor_report(project, fix=False, config=mw_common.load_providers(None))
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "USERPROFILE": str(tmp_path / "home"),
+        "MW_AUTOPILOT_FILE": str(machine),
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        report = mw_common.doctor_report(
+            project, fix=False, config=mw_common.load_providers(None),
+        )
     section = report["autopilot"]
     assert section["xkey_verify_cmd"] == ["python", "-m", "pytest", "-q"]
     assert section["origins"]["xkey_verify_cmd"] == "machine"
@@ -200,9 +207,7 @@ def test_machine_layer_supplies_verify_command(
     assert _snapshot(project) == before
 
 
-def test_both_layers_empty_still_issues(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_both_layers_empty_still_issues(tmp_path: pathlib.Path) -> None:
     """(b) Project [] (undecided) + machine [] (undecided) -> built-in default
     (empty argv) -> fail-loud issue with the fix command."""
     project = tmp_path / "project"
@@ -211,9 +216,16 @@ def test_both_layers_empty_still_issues(
     machine = _write_machine_layer(
         tmp_path / "machine" / "autopilot-defaults.json", {"xkey_verify_cmd": []},
     )
-    monkeypatch.setenv("MW_AUTOPILOT_FILE", str(machine))
     before = _snapshot(project)
-    report = mw_common.doctor_report(project, fix=False, config=mw_common.load_providers(None))
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "USERPROFILE": str(tmp_path / "home"),
+        "MW_AUTOPILOT_FILE": str(machine),
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        report = mw_common.doctor_report(
+            project, fix=False, config=mw_common.load_providers(None),
+        )
     section = report["autopilot"]
     assert section["origins"]["xkey_verify_cmd"] == "default"
     assert section["xkey_verify_missing"] is True
@@ -226,9 +238,7 @@ def test_both_layers_empty_still_issues(
     assert _snapshot(project) == before
 
 
-def test_machine_layer_diagnostics_surface_without_error(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_machine_layer_diagnostics_surface_without_error(tmp_path: pathlib.Path) -> None:
     """(c) Out-of-domain key and broken JSON are fail-soft: originals stay in
     diagnostics and the section does not turn into an error."""
     project = tmp_path / "project"
@@ -240,26 +250,35 @@ def test_machine_layer_diagnostics_surface_without_error(
     machine = _write_machine_layer(
         tmp_path / "machine" / "autopilot-defaults.json", {"xkey_repair": True},
     )
-    monkeypatch.setenv("MW_AUTOPILOT_FILE", str(machine))
+    before = _snapshot(project)
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "USERPROFILE": str(tmp_path / "home"),
+        "MW_AUTOPILOT_FILE": str(machine),
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        report = mw_common.doctor_report(
+            project, fix=False, config=mw_common.load_providers(None),
+        )
+        section = report["autopilot"]
+        assert section["error"] is None
+        assert section["xkey_repair"] is False  # project wins, machine key ignored
+        assert any("not machine-overridable" in d for d in section["diagnostics"])
 
-    report = mw_common.doctor_report(project, fix=False, config=mw_common.load_providers(None))
-    section = report["autopilot"]
-    assert section["error"] is None
-    assert section["xkey_repair"] is False  # project wins, machine key ignored
-    assert any("not machine-overridable" in d for d in section["diagnostics"])
-
-    machine.write_text("{ not json", encoding="utf-8")
-    report = mw_common.doctor_report(project, fix=False, config=mw_common.load_providers(None))
-    section = report["autopilot"]
-    assert section["error"] is None
-    assert any("unreadable" in d for d in section["diagnostics"])
-    assert section["xkey_verify_cmd"] == ["python", "-m", "pytest", "-q"]
-    assert section["xkey_verify_missing"] is False
+        machine.write_text("{ not json", encoding="utf-8")
+        report = mw_common.doctor_report(
+            project, fix=False, config=mw_common.load_providers(None),
+        )
+        section = report["autopilot"]
+        assert section["error"] is None
+        assert any("unreadable" in d for d in section["diagnostics"])
+        assert section["xkey_verify_cmd"] == ["python", "-m", "pytest", "-q"]
+        assert section["xkey_verify_missing"] is False
+    assert not (project / ".mw").exists()
+    assert _snapshot(project) == before
 
 
-def test_missing_file_override_does_not_fall_back_to_home(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_missing_file_override_does_not_fall_back_to_home(tmp_path: pathlib.Path) -> None:
     """(d) MW_AUTOPILOT_FILE set-but-missing means an empty machine layer: the
     HOME vars must not be consulted, so an empty project command still issues."""
     project = tmp_path / "project"
@@ -270,14 +289,19 @@ def test_missing_file_override_does_not_fall_back_to_home(
         home / ".agents" / "autopilot-defaults.json",
         {"xkey_verify_cmd": ["python", "-m", "pytest", "-q"]},
     )
-    monkeypatch.setenv("MW_AUTOPILOT_HOME", str(home))
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
     missing = tmp_path / "no-override-file.json"
-    monkeypatch.setenv("MW_AUTOPILOT_FILE", str(missing))
     assert not missing.exists()
     before = _snapshot(project)
-    report = mw_common.doctor_report(project, fix=False, config=mw_common.load_providers(None))
+    env = {
+        "MW_AUTOPILOT_HOME": str(home),
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "MW_AUTOPILOT_FILE": str(missing),
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        report = mw_common.doctor_report(
+            project, fix=False, config=mw_common.load_providers(None),
+        )
     section = report["autopilot"]
     assert section["origins"]["xkey_verify_cmd"] == "default"
     assert section["xkey_verify_missing"] is True

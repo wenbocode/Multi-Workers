@@ -5,7 +5,7 @@ Resolves the *effective* autopilot configuration from two on-disk layers:
     project  <root>/.agenticdoc/_autopilot/config.json   fail-closed
     machine  ~/.agents/autopilot-defaults.json           fail-soft, two keys only
 
-and returns a complete 13-key view (:data:`autopilot.config.DEFAULT_CONFIG`
+and returns a complete view of every key (:data:`autopilot.config.DEFAULT_CONFIG`
 order) together with a per-field ``origin`` in :data:`ORIGINS` and the
 machine-layer diagnostics.
 
@@ -45,7 +45,7 @@ created (no ``.mw/``, no ``.agenticdoc/``).
 Known deviation from design D-002 §4.3 (reported to PM, not worked around
 here): the design says a project-level ``null`` must resolve to origin
 ``default`` without falling back to the machine layer. T-01's
-``config.validate_config`` rejects ``null`` for all 13 keys (fail-closed), so
+``config.validate_config`` rejects ``null`` for every key (fail-closed), so
 such a file raises :class:`ConfigError` before the merge is reached.
 """
 
@@ -79,8 +79,8 @@ _VALIDATION_PREFIX = "invalid _autopilot/config.json: "
 class EffectiveConfig:
     """Resolved configuration view.
 
-    ``values`` always carries all 13 keys (config.DEFAULT_CONFIG order) and
-    ``origins`` maps the same 13 keys to one of ORIGINS. ``diagnostics`` lists
+    ``values`` always carries every key (config.DEFAULT_CONFIG order) and
+    ``origins`` maps the same keys to one of ORIGINS. ``diagnostics`` lists
     the fail-soft machine-layer warnings (empty when the layer is absent or
     clean). ``machine_path`` is the resolved machine file or None.
     """
@@ -183,9 +183,10 @@ def _project_raw(project_root: pathlib.Path) -> dict:
 
     Since D-004 was withdrawn ``config.load_config`` returns only the keys the
     file actually carries, but a *missing* file still yields the full default
-    table and would then look like 13 explicit project keys. Re-reading the
-    file keeps "absent" distinct from "explicitly written" — needed for the
-    empty-value-means-undecided rule and the project/default origin split.
+    table and would then look like every project key as explicitly written.
+    Re-reading the file keeps "absent" distinct from "explicitly written" —
+    needed for the empty-value-means-undecided rule and the project/default
+    origin split.
     Called only after ``load_config`` validated the file, so parsing here
     cannot fail-closed differently (a missing file yields an empty mapping).
     """
@@ -204,12 +205,13 @@ def load_effective(
 
     Validates the project layer first (fail-closed, ``ConfigError`` propagates
     unchanged), then merges the fail-soft machine layer per field, producing a
-    complete 13-key value view, a 13-key origin view and machine diagnostics.
+    complete value view (every ``DEFAULT_CONFIG`` key), a matching origin view
+    and machine diagnostics.
     """
     project_root = pathlib.Path(project_root)
     # Fail-closed project validation happens inside load_config, strictly
     # before any machine merge. load_config returns only the keys the file
-    # actually carries (D-004 withdrawn), so the complete 13-key view is
+    # actually carries (D-004 withdrawn), so the complete key view is
     # produced here from the authoritative default table: consumers may
     # hard-subscript ``.values``.
     validated_raw = config.load_config(project_root)

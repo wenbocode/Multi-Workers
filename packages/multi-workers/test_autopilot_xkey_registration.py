@@ -66,7 +66,7 @@ def _state(root: pathlib.Path) -> conductor.ConductorState:
 
 
 # Minimal running stage so ``orchestrate`` reaches the xkey mount
-# (``conductor.py:224``) instead of returning at the roadmap/stage gate.
+# (``conductor.py:280``) instead of returning at the roadmap/stage gate.
 _ROADMAP_RUNNING = (
     "# Roadmap\n"
     "> generated_at: 2026-09-10T00:00:00+00:00\n"
@@ -86,7 +86,7 @@ _ROADMAP_RUNNING = (
 def _plant_below_round(root: pathlib.Path, key: str = "k-source") -> None:
     """One below-round provenance sidecar carrying a complete registration.
 
-    ``_xkey_below_records`` (``conductor.py:2405``) reads exactly this shape;
+    ``_xkey_below_records`` (``conductor.py:3287``) reads exactly this shape;
     with the switch on the aggregator writes a ledger row (plus a ticket and an
     ``xkey-authorize`` gate when the owner key is terminal).
     """
@@ -704,11 +704,11 @@ def test_vc012_single_gate_per_pending_ticket(tmp_path: pathlib.Path) -> None:
     """VC-012 / AC-003 / D-010: one pending ticket over N=5 ticks -> one gate.
 
     Drives the real aggregator mount (``conductor._xkey_aggregate``,
-    ``conductor.py:2446``, spliced into ``orchestrate`` at ``conductor.py:224``)
+    ``conductor.py:3328``, spliced into ``orchestrate`` at ``conductor.py:280``)
     instead of replaying its guard: five ticks on one below registration must
     leave exactly one ``xkey-authorize`` gate.  The flood guard itself is
     ``_xkey_ensure_gate`` -> ``_gate_open(request_id=...)``
-    (``conductor.py:2583`` / ``conductor.py:2157``).
+    (``conductor.py:3488`` / ``conductor.py:2575``).
     """
     root = tmp_path / "proj"
     (root / ".agenticdoc").mkdir(parents=True)
@@ -737,7 +737,7 @@ def test_vc008_switch_off_writes_no_xkey_artifacts(tmp_path: pathlib.Path) -> No
 
     The fixture is an *active* autopilot project (``enabled=True``) with one
     below-round registration on disk: with the switch on that record opens a
-    ledger row, a ticket and a gate (T-03 report §3.4).  ``conductor.py:224``
+    ledger row, a ticket and a gate (T-03 report §3.4).  ``conductor.py:280``
     gates the whole aggregate on ``cfg["xkey_repair"]``, so the switch-off tick
     must reach ``orchestrate`` yet write nothing under ``_autopilot/xkey``.
     """
@@ -767,7 +767,7 @@ def test_vc011_write_side_prompt_requires_machine_line() -> None:
     """VC-011 write half / D-001: the L3 prompt must require the S-A machine line
     *inside* the mandatory ``## Quality Gate Report`` section (not an appendix).
 
-    The prompt is built by ``conductor._l3_prompt`` (``conductor.py:1138``, the
+    The prompt is built by ``conductor._l3_prompt`` (``conductor.py:1433``, the
     only construction point); the line lands in the mandatory-section bullet, so
     the reviewer's deciding source carries it where the parser scans (D-001).
     """
