@@ -8,6 +8,7 @@ import datetime
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import time
 
@@ -27,6 +28,8 @@ from mw_common import (
     credential_inject_env,
     describe_missing,
     load_providers,
+    model_capabilities,
+    model_images,
     parse_workers_file,
     resolve_credential,
     route_for,
@@ -609,3 +612,124 @@ class TestTaskDirLastActivity:
 
     def test_missing_dir_returns_none(self, tmp_path):
         assert task_dir_last_activity(tmp_path / "nope") is None
+
+
+# ── Model image-capability probe (T-10: VC-010 / VC-013) ─────────────────────
+#
+# Every case injects the which/run seams; nothing spawns a real pi. The
+# listing fixture mirrors `pi --list-models` (6-token rows, 2-space padded
+# columns) and deliberately carries the worker-mode noise line first.
+
+_MODEL_LISTING = (
+    "[worker] start task=mvr-x type=coding phases=-\n"
+    "provider       model                         context  max-out  thinking  images\n"
+    "timi           deepseek-v4-flash-vision-exp  200K     64K      no        yes\n"
+    "timi           glm-5.3                       200K     64K      no        no\n"
+    "zai-coding-cn  glm-5.3                       1M       131.1K   yes       no\n"
+)
+
+
+def _fake_probe_run(stdout: str, returncode: int = 0):
+    def run(cmd, **_kwargs):
+        return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr="")
+    return run
+
+
+def _fake_which(name: str):
+    return "pi"
+
+
+class TestModelCapabilityProbe:
+    def test_which_none_is_unknown(self):
+        caps = model_capabilities(
+            ["timi/deepseek-v4-flash-vision-exp", "nope/x"],
+            which=lambda name: None, run=_fake_probe_run(_MODEL_LISTING),
+        )
+        assert caps == {
+            "timi/deepseek-v4-flash-vision-exp": "unknown",
+            "nope/x": "unknown",
+        }
+
+    def test_row_yes(self):
+        assert model_images(
+            "timi/deepseek-v4-flash-vision-exp",
+            which=_fake_which, run=_fake_probe_run(_MODEL_LISTING),
+        ) == "yes"
+
+    def test_row_no(self):
+        assert model_images(
+            "timi/glm-5.3", which=_fake_which, run=_fake_probe_run(_MODEL_LISTING),
+        ) == "no"
+
+    def test_provider_column_compared_exactly(self):
+        # The CLI search is fuzzy (glm-5.3 exists under two providers); only
+        # the exact (provider, model) row counts, never a same-named other row.
+        assert model_images(
+            "zai/glm-5.3", which=_fake_which, run=_fake_probe_run(_MODEL_LISTING),
+        ) == "no"
+
+    def test_timeout_is_unknown(self):
+        def boom(cmd, **_kwargs):
+            raise subprocess.TimeoutExpired(cmd, mw_common.MODEL_PROBE_TIMEOUT_S)
+
+        assert model_images(
+            "timi/glm-5.3", which=_fake_which, run=boom,
+        ) == "unknown"
+
+    def test_nonzero_rc_is_unknown(self):
+        assert model_images(
+            "timi/glm-5.3", which=_fake_which, run=_fake_probe_run(_MODEL_LISTING, 1),
+        ) == "unknown"
+
+    def test_unparseable_output_is_unknown(self):
+        assert model_images(
+            "timi/glm-5.3", which=_fake_which, run=_fake_probe_run("No models matching\n"),
+        ) == "unknown"
+
+    def test_missing_row_is_unknown_not_no(self):
+        # Unauthenticated provider / model not in the listing: --list-models
+        # omits it, which must read as unknown (fail-open), never as "no".
+        assert model_images(
+            "deepseek/deepseek-chat", which=_fake_which, run=_fake_probe_run(_MODEL_LISTING),
+        ) == "unknown"
+
+    def test_cli_prefix_and_bare_id_unknown(self):
+        caps = model_capabilities(
+            ["codex_cli/gpt-5", "claude_cli/sonnet", "glm-5.3"],
+            which=_fake_which, run=_fake_probe_run(_MODEL_LISTING),
+        )
+        assert set(caps.values()) == {"unknown"}
+
+    def test_worker_noise_line_ignored(self):
+        # Row detection is by token shape: the [worker] prelude must not
+        # shift parsing to a fixed line/header offset.
+        stdout = "[worker] start task=x type=coding phases=-\n" + _MODEL_LISTING
+        assert model_images(
+            "timi/deepseek-v4-flash-vision-exp", which=_fake_which, run=_fake_probe_run(stdout),
+        ) == "yes"
+
+    def test_real_probe_memoized_per_process(self, monkeypatch):
+        calls: list = []
+
+        def spy_run(cmd, **_kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=_MODEL_LISTING, stderr="")
+
+        monkeypatch.setattr(mw_common, "_MODEL_IMAGE_SNAPSHOT", None)
+        monkeypatch.setattr(mw_common.shutil, "which", _fake_which)
+        monkeypatch.setattr(mw_common.subprocess, "run", spy_run)
+        first = mw_common.model_capabilities(["timi/glm-5.3"])
+        second = mw_common.model_capabilities(["timi/deepseek-v4-flash-vision-exp"])
+        assert first["timi/glm-5.3"] == "no"
+        assert second["timi/deepseek-v4-flash-vision-exp"] == "yes"
+        assert len(calls) == 1  # one snapshot for the whole process
+
+    def test_verify_vc013(self, capsys):
+        yes = model_images(
+            "timi/deepseek-v4-flash-vision-exp",
+            which=_fake_which, run=_fake_probe_run(_MODEL_LISTING),
+        )
+        no = model_images("timi/glm-5.3", which=_fake_which, run=_fake_probe_run(_MODEL_LISTING))
+        unknown = model_images("nope/x", which=_fake_which, run=_fake_probe_run(_MODEL_LISTING))
+        assert (yes, no, unknown) == ("yes", "no", "unknown")
+        _emit_verify(capsys, f"[VERIFY] VC-013: probe_yes={yes} probe_no={no} probe_unknown={unknown}")
