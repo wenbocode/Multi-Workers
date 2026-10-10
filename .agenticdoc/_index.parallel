@@ -1,7 +1,4 @@
 # Index Parallel
-
-| Key | Status | Phase | ClaimId | Deps | Desc | Updated |
-|-----|--------|-------|---------|------|------|---------|
 | agent-team-loop | idle | EXECUTE | 20260808-174558-3176 | — | Agent Team Loop: multi-CLI worker orchestration (pi/codex/claude) via AgenticTask PM + timi-proxy routing | 2026-09-07T12:05:36.859Z |
 | timi-gpt-pi-routing | idle | DONE | 20260814-151438-9272 | agent-team-loop | Fix Pi Timi GPT Responses routing and Multi-Workers launcher integration | 2026-09-07T12:05:36.859Z |
 | mw-dispatch-reliability | idle | EXECUTE | 20260828-160111-8496 | — | Fix multi-worker dispatch availability (per-task credential failure isolation, stale entry cleanup) and build debug/test system (mw doctor, L0/L1/L2 tests) | 2026-09-07T12:05:36.859Z |
@@ -49,4 +46,5 @@
 | mw-vision-role | idle | DONE | WENBOZHOU-PC4:8152 |  |  | 2026-10-09T08:40:50.732Z |
 | mw-gate-verdict-hardening | idle | TASKS | WENBOZHOU-PC4:117296 |  |  | 2026-10-10 10:53 |
 | mw-workspace-incident-probe | idle | SPEC | WENBOZHOU-PC4:18200 |  |  | 2026-10-10T02:47:08.467Z |
-| mw-worktree-junction-guard | active | SPEC | WENBOZHOU-PC4:18200 |  |  | 2026-10-10T02:47:08.467Z |
+| mw-worktree-junction-guard | idle | SPEC | WENBOZHOU-PC4:18200 |  |  | 2026-10-10T07:25:24.333Z |
+| mw-ack-verify-stdout | active | SPEC | WENBOZHOU-PC4:1768 |  |  | 2026-10-10T07:25:24.333Z |
