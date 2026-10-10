@@ -45,5 +45,8 @@
 | mw-l3-fail-marker-forms | idle | DONE | WENBOZHOU-PC4:18200 | — | — | 2026-09-26 11:25 |
 | xkey-repair-mechanism | idle | DONE | WENBOZHOU-PC4:18200 | — | — | 2026-09-26T06:08:15.957Z |
 | mw-autopilot-verify-cli | idle | DONE | WENBOZHOU-PC4:18200 |  |  | 2026-09-26T07:28:26.450Z |
-| mw-autopilot-slot-capacity | idle | TASKS | WENBOZHOU-PC4:18200 |  |  | 2026-09-26 16:51 |
-| mw-vision-role | idle | DONE | WENBOZHOU-PC4:49348 |  |  | 2026-09-26T10:23:59.018Z |
+| mw-autopilot-slot-capacity | idle | DONE | WENBOZHOU-PC4:18200 |  |  | 2026-10-09 16:30 |
+| mw-vision-role | idle | DONE | WENBOZHOU-PC4:8152 |  |  | 2026-10-09T08:40:50.732Z |
+| mw-gate-verdict-hardening | idle | TASKS | WENBOZHOU-PC4:117296 |  |  | 2026-10-10 10:53 |
+| mw-workspace-incident-probe | idle | SPEC | WENBOZHOU-PC4:18200 |  |  | 2026-10-10T02:47:08.467Z |
+| mw-worktree-junction-guard | active | SPEC | WENBOZHOU-PC4:18200 |  |  | 2026-10-10T02:47:08.467Z |
