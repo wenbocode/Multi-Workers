@@ -23,6 +23,16 @@ function isIsoUtc(value: string): boolean {
 	return !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 
+/**
+ * vitest runs with `silent: "passed-only"`, which buffers console output from
+ * passing tests: a `console.log` marker never reaches the real stdout, so the
+ * agent-team-loop verification channel cannot read it. Write markers straight
+ * to the process stream instead.
+ */
+function verify(line: string): void {
+	process.stdout.write(`${line}\n`);
+}
+
 describe("AckStore", () => {
 	const roots: string[] = [];
 
@@ -85,7 +95,7 @@ describe("AckStore", () => {
 		expect([...reloaded.keys()]).toEqual(keys);
 		expect(isIsoUtc(reloaded.get(keys[0] ?? "") ?? "")).toBe(true);
 
-		console.log(`[VERIFY] VC-004: acked=${keys.join(",")}, persisted=yes`);
+		verify(`[VERIFY] VC-004: acked=${keys.join(",")}, persisted=yes`);
 	});
 
 	it("tolerates bad rows and skips # comment lines on read", () => {
