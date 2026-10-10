@@ -6326,7 +6326,14 @@ def _auto_decide_one(
         # disposition — exactly one `defer` row, never the escalate row (T-21).
         deferral = _defer_declined_gate(project_root, st, gate, mode)
         if deferral is not None:
-            if not _defer_recorded(rows, gate.id):
+            # A state change MUST be recorded (T-21 item 1): `_defer_recorded`
+            # only dedups the no-state-change re-entry (a key parked by another
+            # producer, so `executed=False`), so it must never suppress an
+            # `executed=True` row. On a shadow->live flip the shadow preview row
+            # already satisfies `_defer_recorded`; without this guard the live
+            # pass would park the key and leave NO authority record — exactly
+            # the audit gap T-21 exists to close.
+            if deferral.executed or not _defer_recorded(rows, gate.id):
                 _record_defer_decision(
                     project_root, st, cfg, gate, rule, mode, deferral,
                     reason_code, prop, rows, breaker,

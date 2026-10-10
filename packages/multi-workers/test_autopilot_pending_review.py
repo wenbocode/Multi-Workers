@@ -1270,3 +1270,67 @@ def test_t21_non_deferrable_stage_close_keeps_case_3_escalate(
         ),
         decision_rows=len(rows),
     )
+
+
+def test_t21_shadow_then_live_flip_still_records_the_executed_row(
+    tmp_path: pathlib.Path,
+) -> None:
+    """T-21 item 1 (shadow->live transition): the shadow pilot records the
+    `defer` preview row with zero state change; flipping the SAME project to
+    `live` must still perform the park AND append the `executed=true` row.
+
+    Regression: the mode-agnostic defer dedup made the shadow preview row
+    suppress the live row, so a real state change (key -> `pending-review`)
+    left only an `executed=false` shadow row — the T-21 audit gap itself,
+    reproduced on the pilot's own promotion path."""
+    project = _project(tmp_path, mode="shadow")
+    _roadmap(project, {"k1": "stalled", "k2": "done"})
+    _index(project, {"k1": "SPEC", "k2": "DONE"})
+    st = _state(project)
+    gate_path = _declined_stalled_gate(project, st, "k1")
+    assert gate_path is not None
+
+    conductor.auto_decide_gates(
+        project, st, conductor._load_effective_config(project)
+    )
+    gate_id = gates.parse(gate_path).id
+    shadow_rows = _gate_rows(project, gate_id)
+    assert [
+        (row["decision"], row["executed"], row["mode"]) for row in shadow_rows
+    ] == [("defer", False, "shadow")]
+    assert _key_status(project, "k1") == "stalled"  # shadow changed nothing
+
+    cfg = conductor._load_effective_config(project)
+    cfg["auto_gate_mode"] = "live"
+    config.save_config(project, cfg)
+    conductor.auto_decide_gates(
+        project, st, conductor._load_effective_config(project)
+    )
+
+    assert _key_status(project, "k1") == "pending-review"
+    rows = _gate_rows(project, gate_id)
+    live_rows = [row for row in rows if row["mode"] == "live"]
+    assert len(live_rows) == 1, rows
+    assert (live_rows[0]["decision"], live_rows[0]["executed"]) == (
+        "defer", True
+    )
+    assert live_rows[0]["reason_code"] in conductor.REASON_CODES
+    assert (
+        live_rows[0]["gate_file_sha256_before"]
+        == live_rows[0]["gate_file_sha256_after"]
+    )
+    assert not [row for row in rows if row["decision"] == "escalate"]
+
+    # the executed live row is the effective decision: no re-run, no flood
+    conductor.auto_decide_gates(
+        project, st, conductor._load_effective_config(project)
+    )
+    assert len(_gate_rows(project, gate_id)) == 2
+    _verify(
+        "T-21",
+        flip_rows=[
+            (row["decision"], row["executed"], row["mode"]) for row in rows
+        ],
+        key_status=_key_status(project, "k1"),
+        executed_live_rows=len(live_rows),
+    )
