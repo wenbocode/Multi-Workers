@@ -59,6 +59,9 @@ __pycache__/
 # Local scratch (codex proxy debugging)
 .codex-fix/
 
+# Local worker/agent scratch dirs (ad-hoc scripts, captures)
+.tmp/
+
 # pi context autosaves
 context-autosave-*.md
 
