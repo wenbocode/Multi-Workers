@@ -1,0 +1,15 @@
+mw-console-title-clobber - end-to-end sentinel experiment (win32, 2026-10-11)
+console-title probe: GetConsoleTitleW on the console this harness is attached to
+every child runs with piped stdout/stderr (the clobber condition)
+
+--- mw side (AC-2): model-capability probe ---
+resolved pi: C:\Users\wenbozhou\AppData\Roaming\npm\pi.CMD
+A  pi --list-models (inherited console, OLD call form) before='SENTINEL-A2' after='pi'          CLOBBERED   rc=0
+B  _probe_model_rows() (fixed source, real spawn)    before='SENTINEL-B2' after='SENTINEL-B2' safe   rows=31
+C  mw.py model show (fixed source, user-facing cmd)  before='SENTINEL-C2' after='SENTINEL-C2' safe   rc=0
+
+--- pi side (AC-3): process.title gate in cli.ts ---
+A' cli.ts HEAD copy (pre-change, piped stdout)       before='SENTINEL-D2' after='pi'          CLOBBERED   rc=0
+B' src/cli.ts (fixed, piped stdout)                  before='SENTINEL-E2' after='SENTINEL-E2' safe   rc=0
+
+temp HEAD copy removed: H:\git\Multi-Workers\packages\coding-agent\src\cli-titlecheck-old.ts exists=False

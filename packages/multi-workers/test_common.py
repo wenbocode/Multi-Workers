@@ -733,3 +733,30 @@ class TestModelCapabilityProbe:
         unknown = model_images("nope/x", which=_fake_which, run=_fake_probe_run(_MODEL_LISTING))
         assert (yes, no, unknown) == ("yes", "no", "unknown")
         _emit_verify(capsys, f"[VERIFY] VC-013: probe_yes={yes} probe_no={no} probe_unknown={unknown}")
+
+    def test_probe_child_isolated_from_the_parent_console(self, capsys):
+        # mw-console-title-clobber AC-1: the probe child sets process.title
+        # (= SetConsoleTitleW on Windows) on the console it inherits, which
+        # renamed the host pi window to "pi". CREATE_NO_WINDOW (0x08000000) is
+        # launcher.py:1104's pattern for the worker spawn.
+        assert mw_common._probe_spawn_kwargs("win32") == {"creationflags": 0x08000000}
+        assert mw_common._probe_spawn_kwargs("linux") == {}
+        assert mw_common._probe_spawn_kwargs("darwin") == {}
+
+        seen: dict = {}
+
+        def spy_run(cmd, **kwargs):
+            seen.update(kwargs)
+            return subprocess.CompletedProcess(cmd, 0, stdout=_MODEL_LISTING, stderr="")
+
+        rows = mw_common._probe_model_rows(which=_fake_which, run=spy_run)
+        assert rows and ("timi", "glm-5.3") in rows
+        expected = mw_common._probe_spawn_kwargs()
+        if expected:
+            assert seen["creationflags"] == expected["creationflags"]
+        else:
+            assert "creationflags" not in seen
+        _emit_verify(
+            capsys,
+            f"[VERIFY] AC-1: probe_creationflags={seen.get('creationflags')} platform={sys.platform}",
+        )

@@ -1428,6 +1428,23 @@ def _parse_model_rows(stdout: str) -> dict[tuple[str, str], str]:
     return rows
 
 
+def _probe_spawn_kwargs(platform: str | None = None) -> dict:
+    """Console isolation for the probe child (mw-console-title-clobber).
+
+    Windows: the child pi sets `process.title`, which lands on SetConsoleTitleW
+    for the console it inherits from us. Without CREATE_NO_WINDOW every
+    `/mw model show` / `/mw model set` / `/mw doctor` renamed the host pi window
+    to "pi" (the TUI only re-asserts its own OSC title on a few events, so the
+    dirty title stuck). launcher.py:1104 isolates the worker spawn the same way;
+    this probe was the one spawn left without the flag. Non-Windows: no flags,
+    behaviour unchanged. `platform` is a test seam.
+    """
+    if (platform or sys.platform) == "win32":
+        flags = {"creationflags": subprocess.CREATE_NO_WINDOW}  # type: ignore[attr-defined]
+        return flags
+    return {}
+
+
 def _probe_model_rows(*, which=None, run=None) -> dict[tuple[str, str], str] | None:
     """One `pi --list-models` snapshot -> {(provider, model): images} | None.
 
@@ -1436,7 +1453,8 @@ def _probe_model_rows(*, which=None, run=None) -> dict[tuple[str, str], str] | N
     subprocess.run) for cross-platform tests, mirroring
     ensure_pi_shell_path(..., detect=None). pi is resolved through
     shutil.which: on Windows a bare ["pi", ...] fails with WinError 2 because
-    Popen does not apply PATHEXT (launcher.py:_resolve_cli).
+    Popen does not apply PATHEXT (launcher.py:_resolve_cli). The child is
+    console-isolated (_probe_spawn_kwargs).
     """
     resolve = which or shutil.which
     spawn = run or subprocess.run
@@ -1451,6 +1469,7 @@ def _probe_model_rows(*, which=None, run=None) -> dict[tuple[str, str], str] | N
             [pi_bin, "--list-models"],
             capture_output=True, text=True, encoding="utf-8",
             timeout=MODEL_PROBE_TIMEOUT_S,
+            **_probe_spawn_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

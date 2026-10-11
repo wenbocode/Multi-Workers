@@ -48,3 +48,4 @@
 | mw-workspace-incident-probe | idle | SPEC | WENBOZHOU-PC4:18200 |  |  | 2026-10-10T02:47:08.467Z |
 | mw-worktree-junction-guard | idle | SPEC | WENBOZHOU-PC4:18200 |  |  | 2026-10-10T07:25:24.333Z |
 | mw-ack-verify-stdout | idle | DONE | WENBOZHOU-PC4:1768 |  |  | 2026-10-11 17:42 |
+| mw-console-title-clobber | idle | DONE | — |  |  | 2026-10-11 23:23 |

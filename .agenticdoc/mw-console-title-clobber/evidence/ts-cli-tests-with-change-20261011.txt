@@ -1,0 +1,81 @@
+
+ RUN  v4.1.9 H:/git/Multi-Workers/packages/coding-agent
+
+·················································Installing ./packages/local-package...
+Installing C:\Users\WENBOZ~1\AppData\Local\Temp\pi-package-commands-1791732147737-kyyxs6ahm7t\local-package/...
+Removing C:\Users\WENBOZ~1\AppData\Local\Temp\pi-package-commands-1791732147737-kyyxs6ahm7t\local-package/...
+········Updating npm:fake-package...
+·····xstderr | test/package-command-paths.test.ts > package commands > allows local package install to initialize fresh project settings
+Project is not trusted. Use --approve to modify local package config.
+
+···x·········x········
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/package-command-paths.test.ts > package commands > allows local package install to initialize fresh project settings
+Error: ENOENT: no such file or directory, open 'C:\Users\WENBOZ~1\AppData\Local\Temp\pi-package-commands-1791732147898-u6c3cdxbh7p\project\.pi\settings.json'
+ ❯ test/package-command-paths.test.ts:352:31
+    350|
+    351|   const settingsPath = join(projectDir, ".pi", "settings.json");
+    352|   const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as …
+       |                               ^
+    353|   expect(settings.packages?.length).toBe(1);
+    354|   const stored = settings.packages?.[0] ?? "";
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  test/package-command-paths.test.ts > package commands > cycles project package overrides in config local mode
+AssertionError: expected [ { source: 'npm:pi-tools', …(2) } ] to deeply equal [ { source: 'npm:pi-tools', …(2) } ]
+
+- Expected
++ Received
+
+  [
+    {
+      "autoload": false,
+      "extensions": [
+-       "-extensions/bar.ts",
++       "-extensions\\bar.ts",
+      ],
+      "source": "npm:pi-tools",
+    },
+  ]
+
+ ❯ test/package-command-paths.test.ts:432:57
+    430|
+    431|   selector.getResourceList().handleInput(" ");
+    432|   expect(settingsManager.getProjectSettings().packages).toEqual([
+       |                                                         ^
+    433|    { source: "npm:pi-tools", autoload: false, extensions: ["-extension…
+    434|   ]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  test/package-command-paths.test.ts > package commands > prints a pnpm metadata hint when self-update fails
+AssertionError: expected 'error: pi cannot self-update this ins…' to contain 'exited with code 23'
+
+- Expected
++ Received
+
+- exited with code 23
++ error: pi cannot self-update this installation.
++ This installation is not managed by a global pnpm install. Update it with the package manager, wrapper, or source checkout that provides it.
++
++ Location of pi executable: H:\git\Multi-Workers\node_modules\vitest\dist\workers\forks.js
+
+ ❯ test/package-command-paths.test.ts:711:19
+    709|    const stderr = errorSpy.mock.calls.map(([message]) => String(messag…
+    710|    expect(stdout).not.toContain("Updated pi");
+    711|    expect(stderr).toContain("exited with code 23");
+       |                   ^
+    712|    expect(stderr).toContain("If pnpm reports missing package versions"…
+    713|    expect(stderr).toContain("Run `pnpm store prune` and retry `pi upda…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed | 6 passed (7)
+      Tests  3 failed | 82 passed (85)
+   Start at  23:22:24
+   Duration  12.12s (transform 2.47s, setup 0ms, import 3.60s, tests 26.95s, environment 0ms)
+
