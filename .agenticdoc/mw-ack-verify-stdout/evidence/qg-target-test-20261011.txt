@@ -1,0 +1,11 @@
+
+ RUN  v4.1.9 H:/git/Multi-Workers/packages/coding-agent
+
+[VERIFY] VC-004: acked=mw-widget-terminal-lifecycle/t-01-ack-store, persisted=yes
+·····
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  17:42:07
+   Duration  185ms (transform 24ms, setup 0ms, import 33ms, tests 30ms, environment 0ms)
+

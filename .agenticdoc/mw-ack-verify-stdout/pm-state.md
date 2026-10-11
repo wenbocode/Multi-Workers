@@ -2,10 +2,11 @@
 
 ## 1. Snapshot
 - Key: mw-ack-verify-stdout
-- Next Action: 实现与验证已完成（AC-1 / AC-2 / VC-1 均有原始输出为证，见 `evidence/verify-run-20261010.md`）。
-  剩余动作：① 用户决定是否提交（当前为未提交工作树状态）；② 37 处同类埋点是否另立 key。
+- Phase: DONE
+- Next Action: 已结案（DONE）。遗留：① 37 处同类埋点是否另立 key；② 本 key 文档尚未提交（待用户决定）。
 - Started: 2026-10-10 15:20
-- Updated: 2026-10-10 15:32
+- Updated: 2026-10-11 17:42
+- Completed: 2026-10-11 17:42
 
 ## 2. Task Status
 *(trivial-fix fast path：单文件单调用点，未派 worker，PM 直执)*
@@ -23,6 +24,7 @@
 | E-1 | 修改前 stdout 抓取（无 VC-004 行） | `evidence/ack-test-stdout-before-20261010.txt` |
 | E-2 | 修改后 stdout 抓取（含 VC-004 行） | `evidence/ack-test-stdout-after-20261010.txt` |
 | E-3 | before/after 对照 + check 结果 + 同类残留枚举 | `evidence/verify-run-20261010.md` |
+| E-4 | 收口质检（PASS）：目标测试复跑 5/5、stdout 含 VC-004 行、退出码 0 | `evidence/quality-gate-report-20261011.md` + `evidence/qg-target-test-20261011.txt` |
 
 ## 4. Hypothesis Queue
 *(empty)*
@@ -42,3 +44,4 @@
 - 15:25:19：修改前基线运行（HEAD 版）→ 5/5 绿、stdout 无 `VC-004`（负向对照）。
 - 15:25:27：应用修改（`verify()` 助手 + 埋点切换）→ 5/5 绿、stdout 出现唯一 `VC-004` 行。
 - 15:2x：`npm run check` 全绿；单文件 biome 0 告警；`.gitignore` 加 `.tmp/`。
+- 10-11 17:42：收口准备——修复 pm-state 缺失的 `- Phase:` 接口行（模板漂移），复跑目标测试（5/5，stdout 含 `VC-004`），补写 `achieved.md` 与质检报告，随后 `advance_phase … done`。
