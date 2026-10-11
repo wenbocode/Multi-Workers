@@ -649,6 +649,228 @@
         "verdict": "accept",
         "error_fields": []
       }
+    },
+    {
+      "id": "partial-key-launcher_max_workers",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"launcher_max_workers\": 8}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-dispatch_max_per_scan",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"dispatch_max_per_scan\": 3}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-queue_alarm_delta",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"queue_alarm_delta\": 50}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "range-launcher-max-workers-low",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"launcher_max_workers\": 0}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "launcher_max_workers"
+        ]
+      }
+    },
+    {
+      "id": "range-launcher-max-workers-high",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"launcher_max_workers\": 65}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "launcher_max_workers"
+        ]
+      }
+    },
+    {
+      "id": "range-dispatch-max-per-scan-low",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"dispatch_max_per_scan\": 0}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "dispatch_max_per_scan"
+        ]
+      }
+    },
+    {
+      "id": "range-dispatch-max-per-scan-high",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"dispatch_max_per_scan\": 65}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "dispatch_max_per_scan"
+        ]
+      }
+    },
+    {
+      "id": "range-queue-alarm-delta-low",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"queue_alarm_delta\": 9}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "queue_alarm_delta"
+        ]
+      }
+    },
+    {
+      "id": "range-queue-alarm-delta-high",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"queue_alarm_delta\": 10001}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "queue_alarm_delta"
+        ]
+      }
+    },
+    {
+      "id": "partial-key-l3_abort_retry_limit",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"l3_abort_retry_limit\": 1}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-gate_reminder_after_min",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"gate_reminder_after_min\": 30}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "partial-key-gate_reminder_max",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"gate_reminder_max\": 2}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "range-l3-abort-retry-limit-low",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"l3_abort_retry_limit\": -1}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "l3_abort_retry_limit"
+        ]
+      }
+    },
+    {
+      "id": "range-l3-abort-retry-limit-high",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"l3_abort_retry_limit\": 11}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "l3_abort_retry_limit"
+        ]
+      }
+    },
+    {
+      "id": "range-gate-reminder-after-min-low",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"gate_reminder_after_min\": 0}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "gate_reminder_after_min"
+        ]
+      }
+    },
+    {
+      "id": "range-gate-reminder-after-min-high",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"gate_reminder_after_min\": 1441}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "gate_reminder_after_min"
+        ]
+      }
+    },
+    {
+      "id": "range-gate-reminder-max-low",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"gate_reminder_max\": 0}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "gate_reminder_max"
+        ]
+      }
+    },
+    {
+      "id": "range-gate-reminder-max-high",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"gate_reminder_max\": 3}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "gate_reminder_max"
+        ]
+      }
     }
   ]
 }

@@ -294,11 +294,11 @@ def test_counterfactual_b_engine_never_approves_false_budget_gate(
     )
 
 
-# ── reason_code closed set + 12-call-site mapping table ─────────────────────
+# ── reason_code closed set + 14-call-site mapping table ─────────────────────
 
 def test_reason_code_closed_set_is_closed() -> None:
     assert set(conductor.STALL_REASON_CODES) <= conductor.REASON_CODES
-    assert len(conductor.STALL_REASON_CODES) == 12
+    assert len(conductor.STALL_REASON_CODES) == 14
     for rule in conductor.RULES:
         assert conductor.auto_decision_for_rule(
             rule, rule.counterexample()
@@ -327,10 +327,10 @@ def _mark_stalled_calls(source: str) -> list[str]:
     return calls
 
 
-def test_all_twelve_mark_stalled_call_sites_pass_a_reason_code() -> None:
+def test_all_mark_stalled_call_sites_pass_a_reason_code() -> None:
     source = pathlib.Path(conductor.__file__).read_text(encoding="utf-8")
     calls = _mark_stalled_calls(source)
-    assert len(calls) == 12, f"expected 12 call sites, found {len(calls)}"
+    assert len(calls) == 14, f"expected 14 call sites, found {len(calls)}"
     missing = [call[:60] for call in calls if "reason_code=" not in call]
     assert missing == [], f"call sites without reason_code: {missing}"
     codes = set(re.findall(r'reason_code="([a-z0-9-]+)"', source))

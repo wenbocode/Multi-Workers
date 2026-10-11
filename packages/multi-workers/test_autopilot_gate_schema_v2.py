@@ -346,7 +346,10 @@ def test_gate_schema_rejects_unknown_version(tmp_path: pathlib.Path) -> None:
 def test_auto_gate_mode_defaults_to_off() -> None:
     assert cfg.DEFAULT_CONFIG["auto_gate_mode"] == "off"
     assert cfg.default_config()["auto_gate_mode"] == "off"
-    assert list(cfg.DEFAULT_CONFIG)[-1] == "auto_gate_mode"
+    # mw-gate-verdict-hardening T-18 appended the three G5/G6 keys after it and
+    # T-02 appended the three G1/G2 keys after those, so auto_gate_mode is the
+    # last *G1/G2-era* field but now sits at index -7.
+    assert list(cfg.DEFAULT_CONFIG)[-7] == "auto_gate_mode"
 
 
 @pytest.mark.parametrize("value", ["off", "shadow", "live"])

@@ -14,9 +14,11 @@
  *                                     human view and --json come from the
  *                                     same derivation (view parity, VC-017)
  *   /autopilot gates                  pending gate list
- *   /autopilot gate <id> approve|reject [--note <text>]
+ *   /autopilot gate <id> approve|reject [--note <text>] [--authorizes <a,b>]
  *                                     answer a gate under .mw/gates.lock
- *                                     (AC-016)
+ *                                     (AC-016); `--authorizes` declares the
+ *                                     closed-set action types this answer
+ *                                     authorizes (G3, {@link AUTHORIZES_ACTIONS})
  *   /autopilot timeline [--since <iso>] [--all]
  *                                     replay events since the last-seen
  *                                     watermark (default), beats filtered;
@@ -97,7 +99,7 @@ export interface AutopilotConsoleDeps {
 }
 
 const USAGE =
-	"Usage: /autopilot status [--json] | gates | gate <id> approve|reject [--note <text>] | " +
+	"Usage: /autopilot status [--json] | gates | gate <id> approve|reject [--note <text>] [--authorizes <a,b>] | " +
 	"timeline [--since <iso>] [--all] | enable | disable | pause | resume | roadmap | monitor [on|off]";
 
 export function registerAutopilotCommands(pi: ExtensionAPI, projectDir: string, deps: AutopilotConsoleDeps = {}): void {
@@ -456,7 +458,7 @@ async function cmdGate(ctx: ExtensionCommandContext, projectDir: string, rest: s
 	const id = rest[0] ?? "";
 	const decision = rest[1] ?? "";
 	if (id === "" || (decision !== "approve" && decision !== "reject")) {
-		ctx.ui.notify("Usage: /autopilot gate <id> approve|reject [--note <text>]", "warning");
+		ctx.ui.notify("Usage: /autopilot gate <id> approve|reject [--note <text>] [--authorizes <a,b>]", "warning");
 		return;
 	}
 	if (!/^gate-\d+$/.test(id)) {
@@ -471,12 +473,26 @@ async function cmdGate(ctx: ExtensionCommandContext, projectDir: string, rest: s
 				.slice(noteIdx + 1)
 				.join(" ")
 				.trim() || undefined;
+	// G3 (D-012): `--authorizes <a,b>` — comma-separated closed-set actions.
+	// Values are collected up to the next `--flag`; an empty value or no flag
+	// means "do not write" (the gate file's existing line is untouched).
+	let authorizes: string[] | undefined;
+	const authorizesIdx = rest.indexOf("--authorizes");
+	if (authorizesIdx >= 0) {
+		const tokens: string[] = [];
+		for (let i = authorizesIdx + 1; i < rest.length && !rest[i].startsWith("--"); i++) {
+			tokens.push(...rest[i].split(","));
+		}
+		const values = tokens.map((v) => v.trim()).filter((v) => v !== "");
+		if (values.length > 0) authorizes = values;
+	}
 
 	const result = await answerGate({
 		gateFile: path.join(gatesDir(projectDir), `${id}.md`),
 		lockFile: gatesLockPath(projectDir),
 		decision,
 		note,
+		authorizes,
 		answeredBy: windowClaimId(),
 	});
 	if (result.ok) {
@@ -688,6 +704,12 @@ function cmdMonitor(
  * closed for this session while `/autopilot monitor on` clears it again. */
 let monitorSuppressed = false;
 
+/** G4 D-019: the ctx the currently active panel was started for. The extension
+ * factory is reused across `/new` / `/resume` / `/fork` / `/import`, while the
+ * interval and its captured `apply` callback survive — so an active panel with
+ * a DIFFERENT ctx points at a disposed UI and must be re-armed. */
+let monitorCtx: ExtensionContext | null = null;
+
 /** Forget the session-level suppression. The test suite uses it so one case's
  * `/autopilot monitor off` cannot leak into the next (a production session is
  * one process lifetime; a future session_shutdown hook can call this too). */
@@ -702,15 +724,25 @@ export function resetMonitorSuppression(): void {
  * a stalled key has to be visible without remembering a command to run — the
  * E2Feature incident ran 2h35m unnoticed because nothing surfaced it.
  *
- * Returns true when the panel is showing. Idempotent: an already-active panel
- * is left alone (and reports true). Guards, in order: no visual UI, the
- * autoMonitor opt-out, an explicit session-level `/autopilot monitor off`,
- * and a config that is absent/invalid or `enabled: false`. */
+ * Returns true when the panel is showing. Idempotent for the SAME window: an
+ * already-active panel with the same ctx is left alone (and reports true). A
+ * different ctx means the session was replaced while the interval survived, so
+ * the panel is stopped and started again for the new ctx (D-019/AC-018).
+ * Guards, in order: no visual UI, the autoMonitor opt-out, an explicit
+ * session-level `/autopilot monitor off`, and a config that is
+ * absent/invalid or `enabled: false`. */
 export function autoStartMonitor(ctx: ExtensionContext, projectDir: string, deps: AutopilotConsoleDeps = {}): boolean {
 	if (!ctx.hasUI) return false;
 	if (deps.autoMonitor === false) return false;
 	if (monitorSuppressed) return false;
-	if (isMonitorActive()) return true;
+	if (isMonitorActive()) {
+		// Same window → idempotent no-op. Different window (session replacement)
+		// → the active panel belongs to a disposed ctx: stop it (clears the stale
+		// widget via the captured callback) and fall through to re-arm on `ctx`.
+		// stopMonitor keeps its "not active → no-op" semantics (D-019).
+		if (monitorCtx === ctx) return true;
+		stopMonitor();
+	}
 	const cfg = readConfig(projectDir);
 	if (!cfg.ok || !cfg.config.enabled) return false;
 	startMonitor(
@@ -720,6 +752,7 @@ export function autoStartMonitor(ctx: ExtensionContext, projectDir: string, deps
 		},
 		{ intervalMs: deps.monitorIntervalMs, readState: deps.readMonitorState },
 	);
+	monitorCtx = ctx;
 	return true;
 }
 

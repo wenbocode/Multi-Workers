@@ -33,6 +33,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import mw  # noqa: E402
 import mw_common  # noqa: E402
+from autopilot import contract_guard  # noqa: E402
 
 
 def _verify(tag: str, **kv: object) -> None:
@@ -141,6 +142,50 @@ VALID_ROADMAP = """# Roadmap
 | k1 | parser | - |
 | k2 | validator | k1 |
 """
+
+# G3 (T-11) contract fixtures: a frozen key whose AC text is later rewritten.
+CONTRACT_SPEC = """# Spec
+
+## 3. Acceptance Criteria
+
+| AC ID | 判据 |
+|---|---|
+| AC-001 | first frozen contract text |
+| AC-002 | second frozen contract text |
+"""
+
+CONTRACT_DESIGN = """# Design
+
+## §7 Verification Contract
+
+VC-001: first assertion text
+       Layer: L0   Output: [VERIFY] VC-001: one=true   Source: AC-001
+"""
+
+
+def _rewrite_ac(key_dir: pathlib.Path) -> None:
+    (key_dir / "spec.md").write_text(
+        CONTRACT_SPEC.replace(
+            "first frozen contract text", "first frozen contract text REWRITTEN"
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def _frozen_key(
+    project: pathlib.Path,
+    key: str = "k1",
+    spec: str = CONTRACT_SPEC,
+    design: str = CONTRACT_DESIGN,
+) -> pathlib.Path:
+    """A key dir with a real freeze sidecar (T-04 library writer)."""
+    key_dir = project / ".agenticdoc" / key
+    key_dir.mkdir(parents=True, exist_ok=True)
+    (key_dir / "spec.md").write_text(spec, encoding="utf-8", newline="\n")
+    (key_dir / "design.md").write_text(design, encoding="utf-8", newline="\n")
+    contract_guard.freeze_contract(key_dir, key, spec, design)
+    return key_dir
 
 
 # ── segment shape + read-only discipline ─────────────────────────────────────
@@ -685,6 +730,105 @@ def test_cli_unknown_autopilot_action_still_fails(tmp_path: pathlib.Path, capsys
     )
     assert mw.cmd_autopilot(args) == 1
     assert "unknown action" in capsys.readouterr().err
+
+
+# ── G3 contract-guard section (T-11 / AC-013, VC-016) ────────────────────────
+
+
+def test_contract_guard_section_absent_without_freeze(tmp_path: pathlib.Path) -> None:
+    """Zero-perturbation: a project without any freeze sidecar must not gain the
+    `contract_guard` key, so historical `--json`/text output is unchanged."""
+    _write_gate(tmp_path, "gate-0001", _gate_text("gate-0001"))
+    report = _report(tmp_path)
+    assert "contract_guard" not in report["gates"]
+    assert "contract-guard" not in mw_common.format_doctor_text(report)
+    _verify("VC-016", freeze_keys=0, contract_guard_key="absent")
+
+
+def test_contract_guard_unauthorized_change_is_an_issue(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The non-hollow case: freeze + rewritten AC text + no approval record."""
+    _make_service_running(tmp_path)
+    _rewrite_ac(_frozen_key(tmp_path))
+    report = _report(tmp_path)
+    section = report["gates"]["contract_guard"]
+    assert section["unauthorized"] == 1
+    entry = section["keys"][0]
+    assert entry["key"] == "k1"
+    assert entry["changed_ids"] == ["AC-001"]
+    assert entry["authorized"] is False
+    assert entry["carrier"] is None
+    assert entry["freeze"] == ".agenticdoc/k1/evidence/contract-freeze.json"
+    match = [i for i in report["summary"]["issues"] if i.startswith("contract-guard:")]
+    assert len(match) == 1
+    assert "AC-001" in match[0] and "k1" in match[0]
+    assert report["summary"]["healthy"] is False
+    text = mw_common.format_doctor_text(report)
+    assert "gates:" in text and "1 contract-guard" in text
+    rc = mw.cmd_doctor(_doctor_args(tmp_path))
+    out = capsys.readouterr().out
+    assert rc == 1 and "contract-guard:" in out
+    _verify(
+        "VC-016",
+        unauthorized=section["unauthorized"],
+        changed_ids=",".join(entry["changed_ids"]),
+        exit_code=rc,
+    )
+
+
+def test_contract_guard_authorized_change_is_silent(tmp_path: pathlib.Path) -> None:
+    """An approved gate carrying `authorizes: ["contract-change"]` clears it."""
+    _make_service_running(tmp_path)
+    _rewrite_ac(_frozen_key(tmp_path))
+    _write_gate(
+        tmp_path,
+        "gate-0001",
+        _gate_text(
+            "gate-0001",
+            kind="stalled",
+            stage=None,
+            key="k1",
+            status="approved",
+            extra={
+                "answered_at": _iso_ago(1),
+                "answered_by": "human",
+                "authorizes": '\'["contract-change"]\'',
+            },
+        ),
+    )
+    report = _report(tmp_path)
+    section = report["gates"]["contract_guard"]
+    assert section["unauthorized"] == 0
+    assert section["keys"][0]["authorized"] is True
+    assert section["keys"][0]["carrier"] == "gate-0001"
+    assert not any(i.startswith("contract-guard:") for i in report["summary"]["issues"])
+    assert "gates:" not in mw_common.format_doctor_text(report)
+    _verify("VC-016", carrier=section["keys"][0]["carrier"], unauthorized=0)
+
+
+def test_contract_guard_scan_is_zero_write(tmp_path: pathlib.Path) -> None:
+    """The doctor path (including the freeze scan) creates nothing."""
+    _rewrite_ac(_frozen_key(tmp_path))
+    before = _snapshot(tmp_path)
+    _report(tmp_path)
+    mw_common.format_doctor_text(_report(tmp_path))
+    zero_write = _snapshot(tmp_path) == before
+    assert zero_write
+    assert not (tmp_path / ".mw").exists()
+    _verify("VC-016", zero_write=zero_write, entries=len(before))
+
+
+def test_contract_guard_section_is_reproducible(tmp_path: pathlib.Path) -> None:
+    """Stable sort + project-relative path: no timestamp, no absolute path."""
+    _rewrite_ac(_frozen_key(tmp_path, "k1"))
+    _rewrite_ac(_frozen_key(tmp_path, "k0"))
+    first = json.dumps(_report(tmp_path)["gates"]["contract_guard"], sort_keys=True)
+    second = json.dumps(_report(tmp_path)["gates"]["contract_guard"], sort_keys=True)
+    assert first == second
+    assert [e["key"] for e in json.loads(first)["keys"]] == ["k0", "k1"]
+    assert str(tmp_path) not in first
+    _verify("VC-016", reproducible=True, sorted_keys="k0,k1")
 
 
 # ── [VERIFY] markers ─────────────────────────────────────────────────────────

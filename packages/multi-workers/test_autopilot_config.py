@@ -109,13 +109,27 @@ def test_save_rejects_invalid(tmp_path: pathlib.Path) -> None:
 
 # ── config: no cache short-circuit / defaults / encoding ─────────────────────
 
-def test_default_config_has_14_keys_in_order() -> None:
-    # Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
-    assert len(cfg.DEFAULT_CONFIG) == 14
-    # T-03 appends the v2 auto_gate_mode key last, shifting the xkey tail one slot.
-    assert list(cfg.DEFAULT_CONFIG)[-1] == "auto_gate_mode"
-    assert list(cfg.DEFAULT_CONFIG)[-2] == "xkey_verify_cwd"
-    assert list(cfg.DEFAULT_CONFIG)[-3] == "xkey_verify_timeout_s"
+def test_default_config_has_20_keys_in_order() -> None:
+    # Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode),
+    # 14 -> 17 in mw-gate-verdict-hardening T-18 (G5/G6: launcher_max_workers,
+    # dispatch_max_per_scan, queue_alarm_delta), 17 -> 20 in T-02 (G1/G2:
+    # l3_abort_retry_limit, gate_reminder_after_min, gate_reminder_max).
+    assert len(cfg.DEFAULT_CONFIG) == 20
+    # T-02 appends the G1/G2 keys last, shifting the T-18 tail.
+    assert list(cfg.DEFAULT_CONFIG)[-1] == "gate_reminder_max"
+    assert list(cfg.DEFAULT_CONFIG)[-2] == "gate_reminder_after_min"
+    assert list(cfg.DEFAULT_CONFIG)[-3] == "l3_abort_retry_limit"
+    assert list(cfg.DEFAULT_CONFIG)[-4] == "queue_alarm_delta"
+    assert list(cfg.DEFAULT_CONFIG)[-5] == "dispatch_max_per_scan"
+    assert list(cfg.DEFAULT_CONFIG)[-6] == "launcher_max_workers"
+    assert list(cfg.DEFAULT_CONFIG)[-7] == "auto_gate_mode"
+    assert list(cfg.DEFAULT_CONFIG)[-8] == "xkey_verify_cwd"
+    assert list(cfg.DEFAULT_CONFIG)[-9] == "xkey_verify_timeout_s"
+    assert cfg.DEFAULT_CONFIG["launcher_max_workers"] == 8
+    # T-02 G1/G2 frozen contract (plan 2.1 / design D-007).
+    assert cfg.DEFAULT_CONFIG["l3_abort_retry_limit"] == 1
+    assert cfg.DEFAULT_CONFIG["gate_reminder_after_min"] == 30
+    assert cfg.DEFAULT_CONFIG["gate_reminder_max"] == 2
     assert cfg.default_config()["xkey_verify_cwd"] == ""
     _verify("VC-016", default_config_keys=len(cfg.DEFAULT_CONFIG),
             xkey_verify_cwd_default=repr(cfg.DEFAULT_CONFIG["xkey_verify_cwd"]))
@@ -123,7 +137,7 @@ def test_default_config_has_14_keys_in_order() -> None:
 
 def test_partial_file_returns_only_written_keys(tmp_path: pathlib.Path) -> None:
     """load_config never fills defaults: a partial config.json yields exactly
-    the keys it carries. The complete 14-key view has its own sources
+    the keys it carries. The complete 20-key view has its own sources
     (default_config() / effective_config.load_effective)."""
     cfg.invalidate_cache()
     path = cfg.config_path(tmp_path)
@@ -133,13 +147,109 @@ def test_partial_file_returns_only_written_keys(tmp_path: pathlib.Path) -> None:
     assert set(loaded) == {"advance_stall_ticks"}
     assert loaded["advance_stall_ticks"] == 7
     assert "poll_interval_sec" not in loaded  # no default fill
-    # The complete 14-key view has its own sources.
-    # Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
-    assert len(cfg.default_config()) == 14
-    assert len(ec.load_effective(tmp_path).values) == 14
+    # The complete 20-key view has its own sources.
+    # Count changed 13 -> 14 (slot-capacity T-03), 14 -> 17 (mw-gate-verdict-hardening T-18),
+    # 17 -> 20 (T-02 G1/G2 keys).
+    assert len(cfg.default_config()) == 20
+    assert len(ec.load_effective(tmp_path).values) == 20
     _verify("VC-016", partial_keys=len(loaded), default_keys=len(cfg.default_config()),
             effective_keys=len(ec.load_effective(tmp_path).values),
             explicit_wins=loaded["advance_stall_ticks"])
+
+
+# ── config: T-02 G1/G2 keys - single-key accept + out-of-range reject ─────────
+
+# Frozen contract (config.py docstring + plan 2.1 / design D-007):
+# (key, default, (lo, hi)).
+_T02_KEYS: tuple[tuple[str, int, tuple[int, int]], ...] = (
+    ("l3_abort_retry_limit", 1, (0, 10)),
+    ("gate_reminder_after_min", 30, (1, 1440)),
+    ("gate_reminder_max", 2, (1, 2)),
+)
+
+
+@pytest.mark.parametrize("key,default,bounds", _T02_KEYS)
+def test_t02_key_single_payload_accepted(
+    tmp_path: pathlib.Path, key: str, default: int, bounds: tuple[int, int]
+) -> None:
+    """A config.json carrying exactly one G1/G2 key loads with no default fill,
+    and the resolver surfaces it as an explicit project value (VC-019)."""
+    cfg.invalidate_cache()
+    path = cfg.config_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({key: default}), encoding="utf-8")
+    loaded = cfg.load_config(tmp_path)
+    assert loaded == {key: default}, loaded  # no silent default fill
+    eff = ec.load_effective(tmp_path)
+    assert eff.values[key] == default
+    assert eff.origins[key] == "project"
+    # The other keys still resolve to their built-in defaults.
+    assert eff.values["gate_reminder_max"] == cfg.DEFAULT_CONFIG["gate_reminder_max"]
+    assert len(eff.values) == 20
+    _verify("VC-019", key=key, accepted=default, origin=eff.origins[key], bounds=bounds)
+
+
+@pytest.mark.parametrize(
+    "key,bad,default,bounds",
+    [
+        ("l3_abort_retry_limit", 11, 1, (0, 10)),
+        ("gate_reminder_after_min", 0, 30, (1, 1440)),
+        ("gate_reminder_max", 3, 2, (1, 2)),
+    ],
+)
+def test_t02_key_out_of_range_rejected(
+    tmp_path: pathlib.Path, key: str, bad: int, default: int, bounds: tuple[int, int]
+) -> None:
+    """Fail-closed: an out-of-range explicit value is rejected with a
+    ConfigError naming the field; the built-in default stays authoritative
+    (the write is never silently absorbed)."""
+    cfg.invalidate_cache()
+    path = cfg.config_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({key: bad}), encoding="utf-8")
+    with pytest.raises(cfg.ConfigError) as excinfo:
+        cfg.load_config(tmp_path)
+    assert key in str(excinfo.value), excinfo.value
+    # The rejected value never rewrites the default table.
+    assert cfg.DEFAULT_CONFIG[key] == default
+    _verify("VC-019", key=key, rejected=bad, default=default, bounds=bounds)
+
+
+def test_t02_key_bounds_are_exact(tmp_path: pathlib.Path) -> None:
+    """Value domains are frozen verbatim: gate_reminder_max is capped at 1..2
+    so config can only lower, never raise, AC-005's "at most two" reminder
+    cap (design D-007); gate_reminder_after_min stops at 24 h so the active
+    reminder always precedes doctor's passive 24h/72h text."""
+    assert cfg._INT_RANGES["l3_abort_retry_limit"] == (0, 10)
+    assert cfg._INT_RANGES["gate_reminder_after_min"] == (1, 1440)
+    assert cfg._INT_RANGES["gate_reminder_max"] == (1, 2)
+    # Boundary values inside the domain still accept...
+    for key, value in (
+        ("l3_abort_retry_limit", 0),
+        ("l3_abort_retry_limit", 10),
+        ("gate_reminder_after_min", 1),
+        ("gate_reminder_after_min", 1440),
+        ("gate_reminder_max", 1),
+        ("gate_reminder_max", 2),
+    ):
+        cfg.validate_config({key: value})  # must not raise
+    # ...while one step outside each bound fails.
+    for key, value in (
+        ("l3_abort_retry_limit", -1),
+        ("gate_reminder_after_min", 1441),
+        ("gate_reminder_max", 0),
+    ):
+        with pytest.raises(cfg.ConfigError):
+            cfg.validate_config({key: value})
+    # The three G1/G2 keys are project-layer only, never machine-overridable.
+    assert {key for key, _default, _bounds in _T02_KEYS}.isdisjoint(ec.EFFECTIVE_KEYS)
+    _verify(
+        "VC-019",
+        gate_reminder_max_range=cfg._INT_RANGES["gate_reminder_max"],
+        gate_reminder_after_min_range=cfg._INT_RANGES["gate_reminder_after_min"],
+        l3_abort_retry_limit_range=cfg._INT_RANGES["l3_abort_retry_limit"],
+        not_effective_keys=True,
+    )
 
 
 def test_xkey_verify_cwd_schema_is_string_only(tmp_path: pathlib.Path) -> None:

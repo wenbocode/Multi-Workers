@@ -51,7 +51,9 @@ import {
 	queryTimeline,
 	readConfig,
 	renderStatusText,
+	STATUS_SCHEMA,
 	STR_FIELDS,
+	type StatusModel,
 	saveConfig,
 	timelinePath,
 	usedRounds,
@@ -77,6 +79,10 @@ function tl(seq: number, ev: string, key: string, stage: number | null, detail: 
 		detail,
 	});
 }
+
+/** Deterministic clock for the status fixture: every gate is created at
+ * 11:00:00Z, so deriving at 12:00:00Z makes every `ageMs` exactly 3600000. */
+const STATUS_NOW_MS = Date.parse("2026-09-08T12:00:00+00:00");
 
 /** A gate file in the exact shape gates.py _gate_file_content writes. */
 function gateFile(g: {
@@ -348,7 +354,7 @@ describe("status model derivation (VC-017 / AC-015)", () => {
 		writeStatusFixture(root);
 		try {
 			const t0 = Date.now();
-			const result = deriveStatusModel(root);
+			const result = deriveStatusModel(root, STATUS_NOW_MS);
 			const elapsedMs = Date.now() - t0;
 			expect(result.ok).toBe(true);
 			if (!result.ok) return;
@@ -375,11 +381,12 @@ describe("status model derivation (VC-017 / AC-015)", () => {
 					},
 				],
 			});
-			// gates group: all gates, seq order, {id, kind, status}
+			// gates group: all gates, seq order, {id, kind, status, ageMs}
+			// (T-05/D-009: ageMs = STATUS_NOW_MS - created_at = 1h for all three).
 			expect(s.gates).toEqual([
-				{ id: "gate-0001", kind: "stage-confirm", status: "approved" },
-				{ id: "gate-0002", kind: "stalled", status: "pending" },
-				{ id: "gate-0003", kind: "budget-exhausted", status: "pending" },
+				{ id: "gate-0001", kind: "stage-confirm", status: "approved", ageMs: 3_600_000 },
+				{ id: "gate-0002", kind: "stalled", status: "pending", ageMs: 3_600_000 },
+				{ id: "gate-0003", kind: "budget-exhausted", status: "pending", ageMs: 3_600_000 },
 			]);
 			// timeline group: the last-seen watermark {seq, ts}
 			expect(s.timeline).toEqual({ seq: 9, ts: "2026-09-08T12:00:08+00:00" });
@@ -421,12 +428,44 @@ describe("status model derivation (VC-017 / AC-015)", () => {
 		}
 	});
 
+	it("AC-008/VC-011: the status gate row shows the pending age (`?`, never NaN, when created_at is unparsable)", () => {
+		const root = mkdtemp();
+		writeStatusFixture(root);
+		try {
+			const result = deriveStatusModel(root, STATUS_NOW_MS);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			const text = renderStatusText(result.model);
+			// Every fixture gate was created 1h before STATUS_NOW_MS (T-05 ageMs).
+			expect(text).toContain("gate-0002 stalled pending age=1h 0m");
+			expect(text).toContain("gate-0003 budget-exhausted pending age=1h 0m");
+			expect(text).not.toContain("NaN");
+			// The null branch is defensive (listGates rejects a non-ISO
+			// created_at before it reaches the view) but must still render `?`.
+			const nullAge: StatusModel = {
+				status: {
+					schema: STATUS_SCHEMA,
+					stage: { current: 0, status: "none", keys: [] },
+					gates: [{ id: "gate-0099", kind: "stalled", status: "pending", ageMs: null }],
+					timeline: { seq: 0, ts: "" },
+					config: { enabled: true, poll_interval_sec: 4, round_budget: 2, max_parallel_keys: 2 },
+				},
+				paused: false,
+				warnings: [],
+			};
+			expect(renderStatusText(nullAge)).toContain("gate-0099 stalled pending age=?");
+			expect(renderStatusText(nullAge)).not.toContain("NaN");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("VC-017: a second derivation (console closed and reopened, D-005) is identical — no process state", () => {
 		const root = mkdtemp();
 		writeStatusFixture(root);
 		try {
-			const first = deriveStatusModel(root);
-			const second = deriveStatusModel(root);
+			const first = deriveStatusModel(root, STATUS_NOW_MS);
+			const second = deriveStatusModel(root, STATUS_NOW_MS);
 			expect(second).toEqual(first);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -866,11 +905,18 @@ describe("config integer literals, mirror exports, and write lock (T-04)", () =>
 		}
 	});
 
-	it("AC-006/AC-012: the 14-key mirror registers auto_gate_mode last and exports the registries", () => {
-		// Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
-		expect(Object.keys(DEFAULT_CONFIG)).toHaveLength(14);
-		// Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
-		expect(Object.keys(DEFAULT_CONFIG).at(-1)).toBe("auto_gate_mode"); // config.py DEFAULT_CONFIG order
+	it("AC-006/AC-012: the 20-key mirror registers the G5/G6 + G1/G2 keys last and exports the registries", () => {
+		// Count changed 13 -> 14 (slot-capacity T-03), 14 -> 17 (mw-gate-verdict-hardening T-18),
+		// 17 -> 20 (T-02: l3_abort_retry_limit / gate_reminder_after_min / gate_reminder_max).
+		expect(Object.keys(DEFAULT_CONFIG)).toHaveLength(20);
+		// T-18 then T-02 append after auto_gate_mode (config.py DEFAULT_CONFIG order).
+		expect(Object.keys(DEFAULT_CONFIG).at(-1)).toBe("gate_reminder_max");
+		expect(Object.keys(DEFAULT_CONFIG).at(-2)).toBe("gate_reminder_after_min");
+		expect(Object.keys(DEFAULT_CONFIG).at(-3)).toBe("l3_abort_retry_limit");
+		expect(Object.keys(DEFAULT_CONFIG).at(-4)).toBe("queue_alarm_delta");
+		expect(Object.keys(DEFAULT_CONFIG).at(-5)).toBe("dispatch_max_per_scan");
+		expect(Object.keys(DEFAULT_CONFIG).at(-6)).toBe("launcher_max_workers");
+		expect(Object.keys(DEFAULT_CONFIG).at(-7)).toBe("auto_gate_mode"); // config.py DEFAULT_CONFIG order
 		// T-17 negative lock, mirroring T-15's Python
 		// test_machine_layer_effective_keys_stay_two_and_exclude_auto_gate_mode:
 		// the TS mirror has no `EFFECTIVE_KEYS` export (readConfig is merge-on-read;
@@ -896,6 +942,12 @@ describe("config integer literals, mirror exports, and write lock (T-04)", () =>
 			"l2_read_byte_cap",
 			"advance_stall_ticks",
 			"xkey_verify_timeout_s",
+			"launcher_max_workers",
+			"dispatch_max_per_scan",
+			"queue_alarm_delta",
+			"l3_abort_retry_limit",
+			"gate_reminder_after_min",
+			"gate_reminder_max",
 		]);
 
 		const root = mkdtemp();
@@ -1207,9 +1259,16 @@ describe("/autopilot command set (VC-017 / AC-015 / AC-016 / AC-025)", () => {
 				xkey_verify_timeout_s: 1800,
 				xkey_verify_cwd: "",
 				auto_gate_mode: "off",
+				launcher_max_workers: 8,
+				dispatch_max_per_scan: 3,
+				queue_alarm_delta: 50,
+				l3_abort_retry_limit: 1,
+				gate_reminder_after_min: 30,
+				gate_reminder_max: 2,
 			});
-			// Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
-			expect(Object.keys(enabled)).toHaveLength(14);
+			// Count changed 13 -> 14 (slot-capacity T-03), 14 -> 17 (mw-gate-verdict-hardening T-18),
+			// 17 -> 20 (T-02: l3_abort_retry_limit / gate_reminder_after_min / gate_reminder_max).
+			expect(Object.keys(enabled)).toHaveLength(20);
 			// Same shape config.py save_config writes: indent-2 + trailing newline.
 			expect(fs.readFileSync(configFile, "utf8").endsWith("}\n")).toBe(true);
 

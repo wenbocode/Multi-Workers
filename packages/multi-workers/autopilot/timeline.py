@@ -93,6 +93,21 @@ EVENT_TYPES: frozenset[str] = frozenset({
     "review-escalated",
     "evidence-reconciliation",
     "stage-reopen-refused",
+    # Gate verdict hardening (mw-gate-verdict-hardening, T-03, design D-002/
+    # D-016): vocabulary first, producers later — the same pre-admission
+    # precedent as the block above (producers land in T-01/T-07/T-10, the TS
+    # mirror in T-05). Names are verbatim; the cross-language parity test
+    # (`autopilot-event-parity.test.ts`) asserts set equality against the TS
+    # half, so neither side may rename or prefix them. Adding unused
+    # vocabulary is safe: EVENT_TYPES is an include-set for filtering, not a
+    # rejection gate (Timeline.append's "never raises" contract is untouched).
+    "l3-aborted",
+    "gate-reminder",
+    "contract-refused",
+    # T-23 / AC-025: the first-sight anchor producer (design/plan acceptance
+    # boundaries) and the explicit `mw autopilot contract-freeze` CLI. One
+    # name only; the TS mirror (status-model.ts EVENT_TYPES) is T-14's scope.
+    "contract-frozen",
 })
 
 # `key` value for stage-level/global events (AC-017 erratum: the key field

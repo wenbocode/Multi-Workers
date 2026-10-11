@@ -50,7 +50,7 @@ if str(_PARENT) not in sys.path:
 
 import mw_common  # noqa: E402  (path bootstrapped above)
 
-from autopilot import advance, audit_evidence, closure, config, dispatch, effective_config, evidence, gates, roadmap, state, timeline  # noqa: E402
+from autopilot import advance, audit_evidence, closure, config, contract_guard, dispatch, effective_config, evidence, gates, roadmap, state, timeline  # noqa: E402
 
 # ── Phase machine constants (T-10) ──────────────────────────────────────────
 
@@ -1450,6 +1450,19 @@ def _l3_prompt(key: str, attempt: int) -> str:
     )
 
 
+# ── G3 contract-change hard constraint (T-10, AC-010 / VC-013) ───────────────
+# ONE literal, appended verbatim to every prompt that can touch spec/design
+# (repair / phase-writer / fix-writer). It is deliberately a separate string
+# from anything in `contract_guard.py`: the VC-013 lock test asserts the three
+# prompts carry this exact text, so the wording must not drift. It also must
+# stay free of the engineering vocabulary the closure VC-003 scanner rejects.
+_CONTRACT_CONSTRAINT = (
+    "- 硬约束：不得修改已锁定 AC/VC 的生效文本（spec.md §3 AC 表、design.md §7 VC 断言块）；\n"
+    "  确需变更必须走重开流程，并在 evidence/contract-change-<ts>.md 写明「变更清单 + 授权源 gate id」；\n"
+    "  未获授权的改写会被 advance done 前检查拒绝（fail-closed）。"
+)
+
+
 def _repair_prompt(
     key: str, attempt: int, report_rel: str, fail_line: str | None = None
 ) -> str:
@@ -1462,7 +1475,8 @@ def _repair_prompt(
     lines.append(
         "- 逐项修复并补充 [VERIFY] 证据到 evidence/；不重写无关 artifact\n"
         "- 只读约束：workers/*-l3-*/ 下的 output.md 与 report.md 属 reviewer 本轮产物（L3 判定源）\n"
-        "- 禁止改动 workers/*-l3-*/ 判定源（只读输入）；判定源错位的唯一纠错路径 = 由框架派发新一轮 reviewer（re-review）"
+        "- 禁止改动 workers/*-l3-*/ 判定源（只读输入）；判定源错位的唯一纠错路径 = 由框架派发新一轮 reviewer（re-review）\n"
+        + _CONTRACT_CONSTRAINT
     )
     return "".join(lines)
 
@@ -1535,6 +1549,61 @@ def _l3_qualifies(text: str) -> bool:
     )
 
 
+# ── L3 stream-abort fingerprint (mw-gate-verdict-hardening D-001..D-004) ────
+# A provider stream closed before `response.completed`, so the reviewer never
+# rendered a verdict while the harness still wrote a placeholder output.md.
+# The marker is matched as a SUBSTRING: its byte-exact origin is outside this
+# repo (the gateway emits `stream closed before response.completed`; upstream pi
+# may prefix it with `WebSocket `). The 64 KiB tail window mirrors the existing
+# `mw_common.parse_end_exit` precedent (`_TRACE_TAIL_BYTES`) — one tail-read
+# semantic, not a second one.
+_L3_ABORT_MARKER = "stream closed before response.completed"
+_L3_ABORT_TAIL_BYTES = 64 * 1024
+_L3_ABORT_DONE_ZERO_RE = re.compile(r"\[worker\] done exit=0\b")
+
+
+def _l3_worker_log_tail(worker_log: pathlib.Path) -> str:
+    """Decoded tail (64 KiB) of a round's ``worker.log``; missing file or
+    ``OSError`` -> ``""`` (no fingerprint, fail-closed). Mirrors the
+    stat + tail-read shape of ``mw_common.parse_end_exit`` so polling stays
+    cheap and the window has a single definition."""
+    try:
+        with worker_log.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - _L3_ABORT_TAIL_BYTES))
+            return fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _l3_stream_aborted(key_dir: pathlib.Path, task_key: str) -> bool:
+    """Provider stream-abort fingerprint for one round (D-001): the tail
+    64 KiB of the round's ``worker.log`` carries the abort marker AND no
+    readable L3 source has both sections. The marker alone is not enough (a
+    qualifying source always wins), which keeps the three-way classification
+    — wrong carrier / stream abort / real FAIL — a partition (AC-002, AC-004).
+    """
+    worker_log = key_dir / "workers" / task_key / "worker.log"
+    if _L3_ABORT_MARKER not in _l3_worker_log_tail(worker_log):
+        return False
+    for path in _l3_source_paths(key_dir, task_key):
+        text = _l3_read_source(path)
+        if text is not None and _l3_qualifies(text):
+            return False
+    return True
+
+
+def _l3_output_bytes(key_dir: pathlib.Path, task_key: str) -> int | None:
+    """Size of the round's ``output.md`` (D-002 payload), or ``None`` when the
+    carrier is absent: the abort round's placeholder is small, so the size is
+    what distinguishes "template written" from "no file at all"."""
+    try:
+        return (key_dir / "workers" / task_key / "output.md").stat().st_size
+    except OSError:
+        return None
+
+
 def _l3_resolve_source(
     sources: list[tuple[pathlib.Path, str]],
 ) -> tuple[str, pathlib.Path | None, str | None]:
@@ -1562,6 +1631,10 @@ def _l3_round_verdict(
 ) -> tuple[str, str, pathlib.Path | None, str | None]:
     """(verdict, worker status, deciding source, fail line) for one L3 round.
 
+    The verdict slot domain is ``meets | below | no-verdict | aborted``: an
+    ``aborted`` round is a provider stream abort (D-001) and is fingerprinted
+    *before* the status gate below.
+
     A round whose worker row is terminal-failed never rendered a verdict: the
     worker harness writes a placeholder ``output.md`` even when the process
     died (observed live: a reviewer killed by a provider 403 left a 181-byte
@@ -1582,9 +1655,14 @@ def _l3_round_verdict(
         (str(row.get("status", "")) for row in rows if row.get("task_key") == task_key),
         "",
     )
+    key_dir = pathlib.Path(project_root) / ".agenticdoc" / key
+    # D-001: the fingerprint is checked BEFORE the status gate. The live abort
+    # rounds carry queue status `failed` (the launcher writes the real exit
+    # code back), so a fingerprint after this gate would never fire (6/6 leak).
+    if _l3_stream_aborted(key_dir, task_key):
+        return "aborted", status or "no-row", None, None
     if status in ("failed", "needs-clarification"):
         return "no-verdict", status, None, None
-    key_dir = pathlib.Path(project_root) / ".agenticdoc" / key
     sources = [
         (path, text)
         for path in _l3_source_paths(key_dir, task_key)
@@ -1851,20 +1929,28 @@ def _verify_loop(
     path, never padded (D-108 后验)."""
     key_dir = pathlib.Path(project_root) / ".agenticdoc" / key
     l3_loop = f"l3:{key}"
+    # D-003: stream-abort rerolls get their own loop label so they never
+    # consume the shared L3 budget; the round stem still shares one numbering
+    # space (`l3-a{used + abort_used}`) so the newest round is always the
+    # terminal `l3-a{N}` and `_l3_round_verdict` keeps reading it.
+    l3_abort_loop = f"l3abort:{key}"
     # Three loop families share round_budget (spec §2.2 / AC-011):
     # L1↔L2, L3 convergence, task retry. Default 2 preserves AC-010's
     # 复评总轮数 ≤ 2. Approved stalled gates add one round each (AC-013).
     l3_budget = max(1, int(cfg["round_budget"]))
     l3_limit = l3_budget + _resume_credits(project_root, key)
+    abort_limit = max(0, int(cfg.get("l3_abort_retry_limit", 1)))
     used = rounds.get(l3_loop, 0)
+    abort_used = rounds.get(l3_abort_loop, 0)
+    round_no = used + abort_used
     l3_report_src = (
-        key_dir / "workers" / dispatch.task_key_for(key, f"l3-a{used}")
+        key_dir / "workers" / dispatch.task_key_for(key, f"l3-a{round_no}")
         / "output.md"
     )
     for prefix in (f"ap-{key}-l3-", f"ap-{key}-repair-"):
         if any(_is_in_flight(r) for r in rows if r["task_key"].startswith(prefix)):
             return False  # wait for the in-flight review/repair
-    if used == 0:
+    if round_no == 0:
         result = dispatch.dispatch(
             project_root, key, "l3-a1", "reviewer",
             _l3_prompt(key, 1),
@@ -1875,24 +1961,70 @@ def _verify_loop(
         return result.ok
     registration_out: dict = {}
     verdict, worker_status, l3_source, fail_line = _l3_round_verdict(
-        project_root, rows, key, used,
+        project_root, rows, key, round_no,
         registration_out=registration_out if cfg.get("xkey_repair", False) else None,
     )
-    round_key = dispatch.task_key_for(key, f"l3-a{used}")
+    round_key = dispatch.task_key_for(key, f"l3-a{round_no}")
     l3_source_rel = (
         l3_source.relative_to(pathlib.Path(project_root)).as_posix()
         if l3_source is not None
         else (pathlib.Path(".agenticdoc") / key / "workers"
-              / dispatch.task_key_for(key, f"l3-a{used}") / "output.md").as_posix()
+              / dispatch.task_key_for(key, f"l3-a{round_no}") / "output.md").as_posix()
     )
+    if verdict == "aborted":
+        # D-001/D-002/D-004: bounded dedicated reroll; the shared `l3_limit`
+        # is untouched (the `used >= l3_limit` checks below still govern
+        # ordinary rounds only). Budget spent => stall with the machine code
+        # `l3-aborted` so `proposition_stalled` finds `reason_code == cause`.
+        log_tail = _l3_worker_log_tail(
+            key_dir / "workers" / round_key / "worker.log"
+        )
+        st.timeline.append(
+            "l3-aborted", key=key,
+            detail=(
+                f"{round_key} worker status={worker_status} stream-closed"
+                + (
+                    f" → reroll {abort_used + 1}/{abort_limit}"
+                    if abort_used < abort_limit
+                    else f" → reroll budget exhausted {abort_used}/{abort_limit}"
+                )
+            ),
+            data={
+                "round": round_no,
+                "task_key": round_key,
+                "worker_status": worker_status,
+                "output_bytes": _l3_output_bytes(key_dir, round_key),
+                "done_exit_zero": bool(_L3_ABORT_DONE_ZERO_RE.search(log_tail)),
+                "retry_used": abort_used,
+                "retry_limit": abort_limit,
+                "recorded_at": _iso_now(),
+            },
+        )
+        if abort_used < abort_limit:
+            result = dispatch.dispatch(
+                project_root, key, f"l3-a{round_no + 1}", "reviewer",
+                _l3_prompt(key, round_no + 1),
+                loop=l3_abort_loop, attempt=abort_used + 1,
+                read_scope=[f".agenticdoc/{key}", ".agenticdoc/goal.md"],
+                timeline=st.timeline,
+            )
+            return result.ok
+        _persist_l3_verdict(key_dir, "below", l3_report_src, st=st)
+        mark_stalled(
+            project_root, st, key,
+            f"L3 流中止（{round_key}）重掷 {abort_used}/{abort_limit} 次仍未裁决",
+            reason_code="l3-aborted", loop=l3_abort_loop,
+            used_rounds=abort_used, round_limit=abort_limit, credits_used=0,
+        )
+        return False
     if verdict == "no-verdict":
         # The reviewer never rendered a verdict (crash / no output). Repairing
         # against a missing report is pointless and reporting `below` would pin
         # the real cause on the wrong layer (AC-012).
-        round_key = dispatch.task_key_for(key, f"l3-a{used}")
+        round_key = dispatch.task_key_for(key, f"l3-a{round_no}")
         st.timeline.append(
             "l3-no-verdict", key=key,
-            detail=f"l3-a{used} worker status={worker_status} → re-review",
+            detail=f"l3-a{round_no} worker status={worker_status} → re-review",
         )
         if used >= l3_limit:
             _persist_l3_verdict(key_dir, "below", l3_report_src, st=st)
@@ -1905,8 +2037,8 @@ def _verify_loop(
             )
             return False
         result = dispatch.dispatch(
-            project_root, key, f"l3-a{used + 1}", "reviewer",
-            _l3_prompt(key, used + 1),
+            project_root, key, f"l3-a{round_no + 1}", "reviewer",
+            _l3_prompt(key, round_no + 1),
             loop=l3_loop, attempt=used + 1,
             read_scope=[f".agenticdoc/{key}", ".agenticdoc/goal.md"],
             timeline=st.timeline,
@@ -1937,8 +2069,8 @@ def _verify_loop(
                 )
                 return False
             result = dispatch.dispatch(
-                project_root, key, f"l3-a{used + 1}", "reviewer",
-                _l3_prompt(key, used + 1),
+                project_root, key, f"l3-a{round_no + 1}", "reviewer",
+                _l3_prompt(key, round_no + 1),
                 loop=l3_loop, attempt=used + 1,
                 read_scope=[f".agenticdoc/{key}", ".agenticdoc/goal.md"],
                 timeline=st.timeline,
@@ -1973,13 +2105,13 @@ def _verify_loop(
                     "l3-reprompt", key=key,
                     detail=(
                         f"gate-blocked on evidence draft; reprompt "
-                        f"l3-a{used + 1} ({len(flines)} lines)"
+                        f"l3-a{round_no + 1} ({len(flines)} lines)"
                     ),
                 )
                 result = dispatch.dispatch(
-                    project_root, key, f"l3-a{used + 1}", "reviewer",
+                    project_root, key, f"l3-a{round_no + 1}", "reviewer",
                     closure.compose_reprompt_prompt(
-                        _l3_prompt(key, used + 1), flines
+                        _l3_prompt(key, round_no + 1), flines
                     ),
                     loop=l3_loop, attempt=used + 1,
                     read_scope=[f".agenticdoc/{key}", ".agenticdoc/goal.md"],
@@ -2002,7 +2134,7 @@ def _verify_loop(
             credits_used=l3_limit - l3_budget,
         )
         return False
-    repair_base = f"repair-a{used}"
+    repair_base = f"repair-a{round_no}"
     fam = _family_rows(rows, key, repair_base)
     if not any(r["status"] == "done" for r in fam):
         repair_used = rounds.get(f"repair:{key}", 0)
@@ -2023,15 +2155,15 @@ def _verify_loop(
         stem_arg = f"{repair_base}-a{repair_used + 1}" if retry else repair_base
         result = dispatch.dispatch(
             project_root, key, stem_arg, "repair",
-            _repair_prompt(key, used, l3_source_rel, fail_line=fail_line),
+            _repair_prompt(key, round_no, l3_source_rel, fail_line=fail_line),
             loop=f"repair:{key}", attempt=repair_used + 1,
             timeline=st.timeline,
         )
         return result.ok
     # repair for this round done → next L3 review round
     result = dispatch.dispatch(
-        project_root, key, f"l3-a{used + 1}", "reviewer",
-        _l3_prompt(key, used + 1),
+        project_root, key, f"l3-a{round_no + 1}", "reviewer",
+        _l3_prompt(key, round_no + 1),
         loop=l3_loop, attempt=used + 1,
         read_scope=[f".agenticdoc/{key}", ".agenticdoc/goal.md"],
         timeline=st.timeline,
@@ -2096,12 +2228,43 @@ def _done_transaction(
     ``(verdict, err)`` with verdict advanced | below | gated; ``err`` carries
     the full advance stderr only on the gate-blocked advance-failure path
     (empty otherwise, D-001). Every step is check-before-write, so a crash
-    mid-transaction resumes cleanly on the next tick (AC-022)."""
+    mid-transaction resumes cleanly on the next tick (AC-022).
+
+    G3 (T-10 / AC-011): the contract check is the FIRST check-before-write.
+    Frozen AC/VC text that changed without an approval record refuses the
+    advance (machine-classified `contract-refused` event + a
+    `contract-unauthorized` stall gate) before any QG/achieved/pm-state
+    write. No freeze sidecar => no identity anchor => no refusal, so keys
+    from before this feature behave exactly as before (AC-013)."""
     project_root = pathlib.Path(project_root)
     key_dir = project_root / ".agenticdoc" / key
     ks = state.read_key_states(project_root).get(key)
     if ks is not None and ks.phase.strip().upper() == "DONE":
         return "advanced", ""  # crash-after-advance resume
+    contract = contract_guard.evaluate(
+        key_dir, gates_dir(project_root), key=key
+    )
+    if not contract.ok:
+        freeze_rel = contract_guard.freeze_path(key_dir).relative_to(
+            project_root
+        ).as_posix()
+        changed = ", ".join(contract.changed_ids)
+        st.timeline.append(
+            "contract-refused", key=key,
+            detail=f"AC/VC text changed without authorization: {changed}",
+            data={
+                "changed_ids": list(contract.changed_ids),
+                "freeze_rel": freeze_rel,
+                "carrier": contract.carrier,
+            },
+        )
+        mark_stalled(
+            project_root, st, key,
+            f"AC/VC 生效文本被未授权改写（{changed}；freeze {freeze_rel}）"
+            "——需人应答带 authorizes: [\"contract-change\"] 的门或回退文本",
+            reason_code="contract-unauthorized",
+        )
+        return "gated", ""
     try:
         text = l3_output.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -2293,7 +2456,8 @@ def _phase_writer_prompt(key: str, phase: str, nxt: str) -> str:
         f"为 key {key} 生成 {phase} 阶段 artifact（推进到 {nxt} 需要）:\n"
         f"- 遵循 AgenticTask 框架的 {phase} 产出规范（.agents/skills/agentic-task）\n"
         f"- 产出到 .agenticdoc/{key}/ 下对应文件\n"
-        f"- 需要的证据留底写入 .agenticdoc/{key}/evidence/"
+        f"- 需要的证据留底写入 .agenticdoc/{key}/evidence/\n"
+        + _CONTRACT_CONSTRAINT
     )
 
 
@@ -2323,8 +2487,314 @@ def _fix_writer_prompt(
         f"补证 key {key} 的 {phase}-> {nxt} 边界（L2 回合 {attempt} 修复动作）:\n"
         f"L1 缺口:\n{gap_lines}\n"
         f"verifier 裁决（如已产出）: {verifier_out}\n"
-        f"生成/补齐证据文件使机械审计可闭合，不改动无关 artifact。"
+        f"生成/补齐证据文件使机械审计可闭合，不改动无关 artifact。\n"
+        + _CONTRACT_CONSTRAINT
     )
+
+
+# ── G2 pending-gate reminders (mw-gate-verdict-hardening D-005..D-008) ──────
+#
+# The judgment lives only in Python (D-005): a gate pending past its next
+# threshold with no non-terminal `_workers.parallel` row gets one
+# `gate-reminder` timeline event plus one `phase:"remind"` ledger row. The
+# count lives in the append-only ledger because the timeline's 200-event tail
+# (~20 min) is far shorter than the second reminder's 60-min interval (D-006);
+# the extension side (T-09) only relays the event and never re-judges.
+
+GATE_REMINDER_EVENT = "gate-reminder"
+_REMIND_PHASE = "remind"
+
+
+def _reminder_count(rows: list[dict], gate_id: str) -> int:
+    """Reminders already recorded for one gate (ledger truth, D-006).
+
+    The existing ledger consumers all enter through `phase == "decide"`, so
+    a `remind` row is invisible to the auto-decision machinery; this is the
+    one reader that counts them."""
+    return sum(
+        1
+        for row in rows
+        if row.get("phase") == _REMIND_PHASE
+        and str(row.get("gate_id")) == gate_id
+    )
+
+
+def pending_gate_reminders(
+    pending: list[gates.Gate],
+    rows: list[dict],
+    reminder_counts: dict[str, int],
+    now: float,
+    after_min: int,
+    max_reminders: int,
+    stage_status: dict[int, str] | None = None,
+    stage_of_key: dict[str, int] | None = None,
+) -> list[tuple[gates.Gate, int]]:
+    """Pure decision (D-007/D-008): the `(gate, n)` pairs to remind about now.
+
+    Four conditions must hold together:
+      1. `age >= n * after_min` minutes, anchored on the gate's own
+         `created_at` — never `expires_at` (every historical v1 gate lacks it);
+      2. no non-terminal `_workers.parallel` row: an EXECUTE-phase sparse
+         timeline is not a human-blocked gate (AC-007);
+      3. `n <= gate_reminder_max` (the cap config can only lower);
+      4. the gate does not provably belong to a terminal autopilot stage
+         (AC-002). The gate→stage resolution is two-level: the gate's own
+         `stage` snapshot first, then `stage_of_key` on the gate's `key`. A
+         gate whose stage cannot be resolved (a global gate, a key off the
+         roadmap, a dangling stage number, an unknown status) is NOT
+         suppressed — a missing record must never silence a reminder. The
+         terminal family is `rank >= _STAGE_TERMINAL_RANK`, the very rank the
+         stage-status write guard consumes, so the family has one definition.
+    `stage_status`/`stage_of_key` are optional keyword inputs: when absent the
+    judgment has no stage facts, condition 4 never fires, and every pre-AC-002
+    caller stays byte-identical (fail-open, D-015).
+    `pending` comes from `gates.pending_gates` (`status == "pending"`), so an
+    answered gate drops out on the next tick with zero residual state (AC-006).
+    """
+    if any(_is_in_flight(row) for row in rows):
+        return []
+    due: list[tuple[gates.Gate, int]] = []
+    for gate in pending:
+        n = reminder_counts.get(gate.id, 0) + 1
+        if n > max_reminders:
+            continue
+        stage_number: int | None = gate.stage
+        if stage_number is None and stage_of_key is not None and gate.key:
+            stage_number = stage_of_key.get(gate.key)
+        if stage_status is not None and stage_number is not None:
+            rank = _STAGE_STATUS_RANK.get(stage_status.get(stage_number, ""))
+            if rank is not None and rank >= _STAGE_TERMINAL_RANK:
+                continue
+        anchor = mw_common._gate_created_epoch(gate.created_at)  # noqa: SLF001 — same-package private (doctor precedent)
+        if anchor is None or (now - anchor) < n * after_min * 60:
+            continue
+        due.append((gate, n))
+    return due
+
+
+def _gate_stage_context(
+    project_root: pathlib.Path,
+) -> tuple[dict[int, str] | None, dict[str, int] | None]:
+    """The stage facts one reminder pass needs, read from the roadmap ONCE
+    (AC-002 / DD-11): `(stage_status, stage_of_key)`.
+
+    A missing or unparseable roadmap degrades to `(None, None)`, which the
+    pure judgment reads as "no suppression" (fail-open, D-015). The degraded
+    state is announced once per pass on stderr — `mw serve` redirects the
+    conductor's streams to `.mw/conductor.log` — so it is visible rather than
+    silent, and the tick never raises: `roadmap.load_roadmap` reports every
+    missing/unreadable/structurally-invalid file as `RoadmapError`."""
+    try:
+        rm = roadmap.load_roadmap(roadmap.roadmap_path(project_root))
+    except roadmap.RoadmapError as exc:
+        print(
+            "[conductor] gate reminders: roadmap unavailable, "
+            f"stage-terminal suppression disabled this tick: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None, None
+    return (
+        {stage.number: stage.status for stage in rm.stages if stage.status is not None},
+        roadmap.stage_of_key(rm),
+    )
+
+
+def _remind_pending_gates(
+    project_root: pathlib.Path, st: ConductorState, cfg: dict
+) -> None:
+    """IO shell for the pure reminder decision: read the queue / gate / ledger
+    facts, then append one ledger row + one `gate-reminder` per due gate.
+
+    A corrupt gate queue is skipped here (the same policy as `orchestrate`);
+    `tick`'s own goal check records the accompanying config event."""
+    try:
+        pending = gates.pending_gates(gates_dir(project_root))
+    except gates.GateFormatError:
+        return
+    if not pending:
+        return
+    rows = mw_common.parse_workers_file(mw_common.workers_path(project_root))
+    ledger = auto_decision_rows(project_root)
+    counts = {gate.id: _reminder_count(ledger, gate.id) for gate in pending}
+    stage_status, stage_of_key = _gate_stage_context(project_root)
+    now = time.time()
+    after_min = max(1, int(cfg.get("gate_reminder_after_min", 30)))
+    max_reminders = max(1, int(cfg.get("gate_reminder_max", 2)))
+    for gate, n in pending_gate_reminders(
+        pending, rows, counts, now, after_min, max_reminders,
+        stage_status=stage_status,
+        stage_of_key=stage_of_key,
+    ):
+        anchor = mw_common._gate_created_epoch(gate.created_at)  # noqa: SLF001
+        waited_s = 0 if anchor is None else max(0, int(now - anchor))
+        waited_min = waited_s // 60
+        _append_auto_decision_row(project_root, {
+            "phase": _REMIND_PHASE,
+            "gate_id": gate.id,
+            "gate_kind": gate.kind,
+            "gate_key": gate.key or "",
+            "reminder_n": n,
+            "reminded_at": _iso_now(),
+            "detail": f"pending {waited_min}m >= {n * after_min}m",
+        })
+        st.timeline.append(
+            GATE_REMINDER_EVENT,
+            key=gate.key,
+            stage=gate.stage,
+            detail=(
+                f"{gate.id} {gate.kind} pending {waited_min}m "
+                f"(reminder {n}/{max_reminders})"
+            ),
+            data={
+                "gate_id": gate.id,
+                "gate_kind": gate.kind,
+                "gate_key": gate.key or "",
+                "reminder_n": n,
+                "waited_s": waited_s,
+                "after_min": after_min,
+            },
+        )
+
+
+# ── G3 contract anchor first-sight freeze (T-23 / AC-025, VC-047) ──────────
+#
+# T-04 built the freeze-library and T-10 the done-gate consumer, but nothing in
+# production ever CREATED the sidecar, so `evaluate` always read `no_anchor`
+# and AC-011 could never refuse (G3 dormant). This step is the missing
+# producer: the two acceptance boundaries (`design` accepts the AC text,
+# `plan` accepts the VC text) anchor the identity exactly once. Historical keys
+# are never backfilled (P-018) - their anchor needs the explicit
+# `mw autopilot contract-freeze`.
+
+#: `_index.parallel` phase -> (`block` name, freeze sidecar family) frozen at
+#: first sight. Every other phase (spec/tasks/execute/verify/done/empty) is
+#: deliberately absent: no retroactive anchoring.
+_FIRST_SIGHT_BLOCKS: dict[str, tuple[str, str]] = {
+    "design": ("ac", "spec"),
+    "plan": ("vc", "design"),
+}
+
+_CONTRACT_FROZEN_EVENT = "contract-frozen"
+_FIRST_SIGHT_SOURCE = "conductor-first-sight"
+
+
+def _read_contract_text(path: pathlib.Path) -> str:
+    """UTF-8 text of one acceptance artifact; ``""`` when it is absent.
+
+    A boundary whose artifact is not on disk yet is simply not anchored, so a
+    missing file is not an error here. Any other OSError (an unreadable file)
+    propagates to the caller's single degrade path.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+
+
+def _freeze_contract_first_sight(
+    project_root: pathlib.Path, st: ConductorState, cfg: dict
+) -> None:
+    """Anchor the AC/VC identity at the design/plan acceptance boundaries.
+
+    For every key whose ``_index.parallel`` phase is ``design`` (freeze the AC
+    block) or ``plan`` (freeze the VC block): while that block is still empty,
+    merge the freshly extracted family into the existing sidecar and write it
+    ONCE. A non-empty block is never rewritten - the fast path is then a single
+    ``read_freeze`` call with zero write and zero text parse (the tick runs at
+    high frequency). A non-boundary phase is never touched (P-018: no
+    backfill), and every failure is swallowed into a degraded
+    ``contract-frozen`` event - this step must never break the tick (§9).
+    """
+    try:
+        key_states = state.read_key_states(project_root)
+    except (OSError, ValueError) as exc:
+        # The unreadable index is an already-reported degraded state; record
+        # the skip and let the tick proceed to orchestrate().
+        st.timeline.append(
+            _CONTRACT_FROZEN_EVENT,
+            detail=f"first-sight skipped: index unreadable ({exc!r})",
+            data={
+                "block": "",
+                "phase": "",
+                "source": _FIRST_SIGHT_SOURCE,
+                "freeze_rel": "",
+                "ids": [],
+            },
+        )
+        return
+    for key in sorted(key_states):
+        phase = (key_states[key].phase or "").strip().lower()
+        block = _FIRST_SIGHT_BLOCKS.get(phase)
+        if block is None:
+            continue
+        _freeze_block_first_sight(project_root, st, key, phase, block[0], block[1])
+
+
+def _freeze_block_first_sight(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    key: str,
+    phase: str,
+    block: str,
+    family: str,
+) -> None:
+    """One key's first-sight freeze of one family (never raises)."""
+    key_dir = pathlib.Path(project_root) / ".agenticdoc" / key
+    freeze_rel = contract_guard.freeze_path(key_dir).relative_to(project_root).as_posix()
+    data = {
+        "block": block,
+        "phase": phase,
+        "source": _FIRST_SIGHT_SOURCE,
+        "freeze_rel": freeze_rel,
+        "ids": [],
+    }
+    try:
+        existing = contract_guard.read_freeze(key_dir)
+        if existing is not None and existing.get(family):
+            return  # anchored: one read, zero write, zero reparse
+        source_name = (
+            contract_guard.SPEC_FILE_NAME
+            if family == "spec"
+            else contract_guard.DESIGN_FILE_NAME
+        )
+        if not (key_dir / source_name).is_file():
+            return  # no acceptance artifact to anchor (not an error)
+        fresh = contract_guard.build_freeze(
+            key,
+            _read_contract_text(key_dir / contract_guard.SPEC_FILE_NAME),
+            _read_contract_text(key_dir / contract_guard.DESIGN_FILE_NAME),
+        )
+        entries = fresh.get(family)
+        if not isinstance(entries, dict) or not entries:
+            return  # artifact present but no ids: nothing to anchor
+        # Merge: keep the other family exactly as frozen, replace only the
+        # target family with the current text. A non-empty target was returned
+        # above, so a first-sight write never rewrites an existing block.
+        merged = dict(fresh)
+        for other in ("spec", "design"):
+            if other == family:
+                continue
+            other_block = existing.get(other) if existing is not None else None
+            merged[other] = dict(other_block) if isinstance(other_block, dict) else {}
+        merged[family] = dict(sorted(entries.items()))
+        contract_guard.write_freeze(key_dir, merged)
+        st.timeline.append(
+            _CONTRACT_FROZEN_EVENT,
+            key=key,
+            detail=f"{block} block frozen ({len(merged[family])} ids) from {source_name}",
+            data={**data, "ids": sorted(merged[family])},
+        )
+    except (OSError, ValueError) as exc:
+        # `read_freeze`/`extract_contract` are total, but the sidecar write can
+        # fail (read-only checkout, disk full) and a racing directory removal
+        # can raise OSError. Record the degradation and keep ticking.
+        st.timeline.append(
+            _CONTRACT_FROZEN_EVENT,
+            key=key,
+            detail=f"{block} block freeze failed: {exc!r}",
+            data=data,
+        )
 
 
 def tick(project_root: pathlib.Path, st: ConductorState) -> str:
@@ -2339,6 +2809,14 @@ def tick(project_root: pathlib.Path, st: ConductorState) -> str:
         cfg = _load_effective_config(project_root)
         if not cfg["enabled"] or cfg["paused"]:
             return "idle"
+
+        # 2b. G2 pending-gate reminders (D-007): before the goal detection so
+        # an open goal-change gate — which early-returns below — still reminds.
+        _remind_pending_gates(project_root, st, cfg)
+
+        # 2c. G3 first-sight contract anchor (AC-025/T-23): the design/plan
+        # acceptance boundaries create the sidecar the done gate consumes.
+        _freeze_contract_first_sight(project_root, st, cfg)
 
         # 3. goal.md change detection (D-102): halt + ONE goal-change gate.
         current = goal_mtime_ns(project_root)
@@ -2551,15 +3029,19 @@ def _log_dropped_gate_fields(
 
 
 def _gate_default_fields(path: pathlib.Path) -> dict[str, str]:
-    """The two time-effectiveness defaults every new gate must carry (AC-019).
+    """The defaults every new gate must carry (AC-019; G3/T-10).
 
     ``expires_at`` is derived from the file's own ``created_at`` (just written
     by ``gates.create``) so the two can never disagree; it uses the same
     ISO-8601 rendering ``created_at`` uses. If ``created_at`` is unparseable
     the field is left out on purpose: the doctor then reports it missing
     instead of the creator inventing a deadline (fail-closed, matching the
-    `unknown (no field)` semantics)."""
-    fields = {"default_action": GATE_DEFAULT_ACTION}
+    `unknown (no field)` semantics).
+
+    ``authorizes: []`` is materialized here - not by ``gates.create``, whose
+    13-key output is frozen - so a human can fill the value when answering the
+    gate; an empty array means "not authorized" (fail-closed)."""
+    fields = {"default_action": GATE_DEFAULT_ACTION, "authorizes": "[]"}
     try:
         gate = gates.parse(path)
     except gates.GateFormatError:
@@ -4887,7 +5369,7 @@ GATE_AUTO_DECISION_EVENT = "gate-auto-decision"
 GATE_AUTO_REVOKE_EVENT = "gate-auto-revoke"
 EVIDENCE_RECONCILIATION_EVENT = "evidence-reconciliation"
 
-# Closed set: the 12 `mark_stalled` call sites (D1 G14 mapping table).
+# Closed set: the 14 `mark_stalled` call sites (D1 G14 mapping table).
 STALL_REASON_CODES: tuple[str, ...] = (
     "advance-class",        # _record_advance_result :1091
     "l2-budget-rejected",   # _advance_key budget gate rejected :1177
@@ -4900,7 +5382,9 @@ STALL_REASON_CODES: tuple[str, ...] = (
     "l3-reprompt-exhausted",# _verify_loop evidence-draft reprompt spent :1881
     "l3-below",             # _verify_loop L3 below budget :1914
     "l3-repair-exhausted",  # _verify_loop repair budget spent :1928
+    "l3-aborted",           # _verify_loop stream-abort reroll budget spent :2002
     "index-phase-mismatch", # _done_transaction set-phase rerun failed :2132
+    "contract-unauthorized",# _done_transaction AC/VC changed w/o approval (T-10)
 )
 
 # Fact-plane predicate outcomes.
@@ -5289,6 +5773,8 @@ def _stall_family(gate: gates.Gate) -> str:
     loop = str(gate.loop or "")
     if loop.startswith("repair:"):
         return "repair"
+    if loop.startswith("l3abort:"):
+        return "l3"
     if loop.startswith("l3:"):
         return "l3"
     if loop.startswith("l2:"):
@@ -5297,6 +5783,12 @@ def _stall_family(gate: gates.Gate) -> str:
         return "exec"
     if not loop and gate.reason_code == "index-phase-mismatch":
         return "index"
+    # G3 (T-10): the done transaction raises the contract refusal with no loop
+    # label. Recompute it through the L3 branch, which checks G3 first, so
+    # `reason_code == cause_class` stays true (missing this => advance-class
+    # => `stalled-reason-drift`).
+    if not loop and gate.reason_code == "contract-unauthorized":
+        return "l3"
     return "advance"
 
 
@@ -5350,19 +5842,38 @@ def _recompute_l3_stall_code(project_root: pathlib.Path, gate: gates.Gate) -> st
     if not key:
         return "l3-no-verdict"
     key_dir = pathlib.Path(project_root) / ".agenticdoc" / key
+    # G3 (T-10): a contract refusal comes from the done-transaction guard, not
+    # from an L3 round. Recompute it independently by re-running the guard: it
+    # is `contract-unauthorized` while the guard still refuses, else the claim
+    # cannot be reproduced (`advance-class` => stalled-reason-drift).
+    if gate.reason_code == "contract-unauthorized":
+        verdict = contract_guard.evaluate(
+            key_dir, gates_dir(project_root), key=key
+        )
+        return "advance-class" if verdict.ok else "contract-unauthorized"
     try:
-        used = state.used_rounds(_all_workers_dirs(project_root)).get(f"l3:{key}", 0)
+        by_loop = state.used_rounds(_all_workers_dirs(project_root))
     except Exception:  # noqa: BLE001 — derivation failure is not a pass
         return "l3-no-verdict"
-    if used < 1:
+    # D-003: once abort rerolls share the stem space the terminal round is
+    # `l3-a{used + abort_used}`; counting only `used` would re-derive an
+    # earlier round and trip `stalled-reason-drift`.
+    used = by_loop.get(f"l3:{key}", 0)
+    round_no = used + by_loop.get(f"l3abort:{key}", 0)
+    if round_no < 1:
         return "l3-no-verdict"
     try:
         rows = mw_common.parse_workers_file(mw_common.workers_path(project_root))
         verdict, _status, _src, _fail = _l3_round_verdict(
-            project_root, rows, key, used
+            project_root, rows, key, round_no
         )
     except Exception:  # noqa: BLE001
         return "l3-no-verdict"
+    # The abort verdict describes the terminal round; a stale suspect record
+    # from an earlier round must not shadow it (an abort round writes no
+    # provenance record at all).
+    if verdict == "aborted":
+        return "l3-aborted"
     prov = _last_provenance_record(key_dir)
     if prov is not None and prov.get("suspect"):
         return "l3-suspect"
@@ -5395,12 +5906,13 @@ def recompute_false_negative_class(
     if prov is not None and prov.get("suspect"):
         return "undecidable"
     try:
-        used = state.used_rounds(_all_workers_dirs(project_root)).get(f"l3:{key}", 0)
-        if used < 1:
+        by_loop = state.used_rounds(_all_workers_dirs(project_root))
+        round_no = by_loop.get(f"l3:{key}", 0) + by_loop.get(f"l3abort:{key}", 0)
+        if round_no < 1:
             return "undecidable"
         rows = mw_common.parse_workers_file(mw_common.workers_path(project_root))
         verdict, _status, _src, fail_line = _l3_round_verdict(
-            project_root, rows, key, used
+            project_root, rows, key, round_no
         )
     except Exception:  # noqa: BLE001 — cannot prove => undecidable
         return "undecidable"

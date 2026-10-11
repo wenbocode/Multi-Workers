@@ -33,6 +33,14 @@ an absent gate_schema means 1 (legacy):
         blast_radius, answer_source, auto_policy_id, expires_at,
         evidence_anchor_mtime_ns, default_action, out_of_band_actions,
         gate_schema, consumed_at, consumed_seq
+  authorizes: single-line JSON array of action types drawn from the closed set
+        AUTHORIZES_ACTIONS = {retry, contract-change}; an absent field or an
+        empty array means "this gate authorizes no action" (fail-closed). It
+        is a recognized contract field (mw-gate-verdict-hardening D-011) but
+        stays outside the frozen 40-name FRONTMATTER_FIELDS order so the
+        cross-language 40-name lock (test_autopilot_gates.py:224,
+        autopilot-gate-presentation.test.ts) is preserved. create() never
+        renders it; the conductor materializes it on new gates (T-10).
   kind   in {stage-confirm, stage-close, stalled, budget-exhausted, goal-change,
             xkey-authorize}  (the closed set is GATE_KINDS; the TS mirror is
             status-model.ts GATE_KINDS — both sides validate fail-closed)
@@ -157,9 +165,19 @@ _JSON_LIST_FIELDS = frozenset(
         "constraints",
         "write_scope",
         "out_of_band_actions",
+        # Recognized contract field outside FRONTMATTER_FIELDS (D-011); the
+        # parse-surface membership check below accepts _JSON_LIST_FIELDS names
+        # as well, so this stays the only place the name is declared.
+        "authorizes",
     }
 )
 _JSON_OBJ_FIELDS = frozenset({"goal_diff", "blast_radius"})
+
+# Closed set of action types a gate may authorize (D-011). `install` is
+# deliberately excluded: it has no machine consumer, and listing a consumerless
+# member would create a new semantic hole. Out-of-set members are rejected at
+# parse time (fail-closed).
+AUTHORIZES_ACTIONS: frozenset[str] = frozenset({"retry", "contract-change"})
 
 GATE_ID_RE = re.compile(r"^gate-(\d+)$")
 GATE_FILE_RE = re.compile(r"^gate-(\d+)\.md$")
@@ -242,6 +260,7 @@ class Gate:
     evidence_anchor_mtime_ns: int | None = None
     default_action: str | None = None
     out_of_band_actions: list[object] | None = None
+    authorizes: list[str] | None = None
     gate_schema: int = GATE_SCHEMA_LEGACY
     consumed_at: str | None = None
     consumed_seq: int | None = None
@@ -481,7 +500,11 @@ def _parse_frontmatter(text: str, path: pathlib.Path) -> dict[str, object]:
                 f"{path}: invalid frontmatter line {i + 1}: {line!r}"
             )
         name = field.group(1)
-        if name not in FRONTMATTER_FIELDS:
+        # FRONTMATTER_FIELDS is the frozen 40-name cross-language order;
+        # _JSON_LIST_FIELDS additionally declares the additive `authorizes`
+        # contract field (D-011), which must stay parseable without growing
+        # that frozen order.
+        if name not in FRONTMATTER_FIELDS and name not in _JSON_LIST_FIELDS:
             raise GateFormatError(
                 f"{path}: unknown frontmatter field '{name}' (line {i + 1})"
             )
@@ -633,6 +656,24 @@ def _to_gate(fields: dict[str, object], path: pathlib.Path) -> Gate:
             f"{path}: gate_schema must be one of "
             f"{sorted(_GATE_SCHEMA_VALUES)}, got {gate_schema}"
         )
+    authorizes: list[str] | None = None
+    authorizes_raw = optional_json("authorizes")
+    if authorizes_raw is not None:
+        # optional_json only guarantees a JSON array; the closed set and the
+        # per-member type are contract-level, so validate them here.
+        if not all(isinstance(action, str) for action in authorizes_raw):
+            raise GateFormatError(
+                f"{path}: field 'authorizes' must be a JSON array of strings"
+            )
+        out_of_set = sorted(
+            {action for action in authorizes_raw if action not in AUTHORIZES_ACTIONS}
+        )
+        if out_of_set:
+            raise GateFormatError(
+                f"{path}: unknown authorizes action(s) {', '.join(out_of_set)} "
+                f"(expected one of: {', '.join(sorted(AUTHORIZES_ACTIONS))})"
+            )
+        authorizes = list(authorizes_raw)
 
     return Gate(
         id=gate_id,
@@ -673,6 +714,7 @@ def _to_gate(fields: dict[str, object], path: pathlib.Path) -> Gate:
         evidence_anchor_mtime_ns=optional_int("evidence_anchor_mtime_ns"),
         default_action=optional("default_action"),
         out_of_band_actions=optional_json("out_of_band_actions"),
+        authorizes=authorizes,
         gate_schema=gate_schema,
         consumed_at=optional_iso("consumed_at"),
         consumed_seq=optional_int("consumed_seq"),

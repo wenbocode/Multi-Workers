@@ -23,10 +23,15 @@
  *      interval singleton (D-001: independent from the watch poll loop,
  *      which is key-scoped). start renders the FIRST FRAME synchronously
  *      (AC-001 met with zero ticks), then re-reads every intervalMs. Read
- *      errors (transient rename/lock races) skip the tick silently — the
- *      panel keeps the last frame (§9). The `apply` callback is injected by
- *      console.ts (it wraps ctx.ui.setWidget), so this module holds no pi
- *      dependency — that is the test seam.
+ *      errors (transient rename/lock races) no longer drop the frame: the
+ *      tick emits a DEGRADED frame that reuses the last good payload and
+ *      carries the failure time + summary (AC-017/D-018). Every frame also
+ *      self-attests its freshness with an absolute collection stamp plus a
+ *      monotonic tick count, and the header raises STALE PANEL once the
+ *      stamp has not moved for more than PANEL_STALE_MISSED_CYCLES periods
+ *      (AC-015/D-017). The `apply` callback is injected by console.ts (it
+ *      wraps ctx.ui.setWidget), so this module holds no pi dependency —
+ *      that is the test seam.
  *
  * PURE READ-ONLY (AC-008): no fs write API anywhere in this file; the
  * on/off state lives only in module memory (AC-009), never in config.json.
@@ -39,6 +44,7 @@ import { getMwStatus, readServeMeta, serveStaleness } from "../shared/mw-runner.
 import { type WorkerEntry, WorkerStore, workerBelongsToKey, workerOwnerKey } from "../shared/worker-store.ts";
 import {
 	BEAT_EV,
+	blockedOnHuman,
 	type ConfigResult,
 	configPath,
 	DEFAULT_CONFIG,
@@ -46,6 +52,7 @@ import {
 	type RoadmapResult,
 	readConfig,
 	readRoadmap,
+	TERMINAL_WORKER_STATUSES,
 	type TimelineEvent,
 	timelinePath,
 } from "./status-model.ts";
@@ -56,6 +63,15 @@ export const MONITOR_WIDGET_ID = "agent-team-loop-monitor";
 
 /** Poll cadence — the same 4s beat as the watch widget (spec §2.2). */
 export const MONITOR_INTERVAL_MS = 4000;
+
+/** G4 AC-015: how many refresh periods the frame stamp may sit still before
+ * the header must say STALE PANEL. AC-015 fixes the bound at "more than 3
+ * refresh periods". This is the panel-cadence instance of the conductor's
+ * `staleAfterMs = max(30s, pollMs*5)` / `tickStale` mechanism (a small
+ * multiple of the observed cadence) — deliberately not a re-use of that
+ * variable's VALUE, because the conductor beat and the panel refresh are
+ * separate clocks. */
+export const PANEL_STALE_MISSED_CYCLES = 3;
 
 /** Panel line width cap (same as the watch widget's WATCH_LINE_MAX). */
 const MONITOR_LINE_MAX = 110;
@@ -173,6 +189,38 @@ export interface MonitorSnapshot {
 	autopilot: MonitorAutopilot;
 	workers: MonitorWorker[];
 	gates: MonitorGate[];
+	/** G2 AC-007/AC-008 (design D-008/D-009): a pending gate exists AND no
+	 * non-terminal worker row is in flight — the file-only truth table shared
+	 * verbatim with the Python reminder (T-07, `blockedOnHuman` in
+	 * status-model.ts). The third axis ("conductor still ticking") is TS-only
+	 * and stays render-time: see the `BLOCKED_ON_HUMAN` line in
+	 * {@link renderMonitorLines}, which also requires `!autopilot.tickStale`. */
+	blockedOnHuman: boolean;
+	/** G4 AC-015 (D-017): absolute wall-clock ms (`Date.now()`) of the LAST
+	 * SUCCESSFUL collection behind this frame — NOT a frame-relative age (which
+	 * is always 0 at render time and therefore proves nothing). A frozen panel
+	 * stops advancing here, so this is the one in-frame fact that can tell a
+	 * frozen frame from a live one. Absent on hand-built snapshots. */
+	collectedAtMs?: number;
+	/** G4 AC-015: monotonic count of successful collections since module load.
+	 * Never reset by stop()/re-arm (`startMonitor`), so freshness cannot be
+	 * faked by going back to 0 (D-017). */
+	tickCount?: number;
+	/** G4 AC-015: the frame's own stamp has not advanced for more than
+	 * `PANEL_STALE_MISSED_CYCLES` refresh periods ⇒ the header says STALE
+	 * PANEL. Set by the tick loop, the only place that knows the cadence and
+	 * the wall clock. */
+	stale?: boolean;
+	/** G4 AC-015: `no refresh since <iso>, <duration>` when `stale`; rendered
+	 * verbatim inside the header alert. */
+	staleDetail?: string;
+	/** G4 AC-017 (D-018): this frame is DEGRADED — the read threw, so the payload
+	 * is the last good snapshot plus diagnostics (never a dropped frame). */
+	degraded?: boolean;
+	/** G4 AC-017: wall-clock ms of the failed read that produced this frame. */
+	lastErrorAtMs?: number;
+	/** G4 AC-017: one-line error summary (`name: message`, capped). */
+	lastError?: string;
 }
 
 // ── Collect: readMonitorState (pure, read-only) ──────────────────────────────
@@ -352,7 +400,12 @@ export function readMonitorState(projectDir: string, nowMs: number): MonitorSnap
 	// key-scoped watch widget), elapsed from dispatchedAt; rows with an
 	// unparsable dispatchedAt are dropped rather than shown wrong.
 	const workers: MonitorWorker[] = [];
+	let nonTerminalRows = 0;
 	for (const entry of new WorkerStore(path.join(projectDir, ".agenticdoc")).readAll()) {
+		// In-flight means NON-TERMINAL, not merely `running`: a `pending` row
+		// starts on the next tick, so counting it prevents a false
+		// BLOCKED_ON_HUMAN (design D-008/F6, same set as _TERMINAL_STATUSES).
+		if (!TERMINAL_WORKER_STATUSES.has(entry.status)) nonTerminalRows += 1;
 		if (entry.status !== "running") continue;
 		const dispatched = Date.parse(entry.dispatchedAt);
 		if (Number.isNaN(dispatched)) continue;
@@ -383,7 +436,23 @@ export function readMonitorState(projectDir: string, nowMs: number): MonitorSnap
 
 	const autopilot = deriveAutopilotPanel(projectDir, nowMs, workers);
 
-	return { serve, conductor, autopilot, workers, gates };
+	// G2 AC-007 (D-008): the file-only truth table, shared verbatim with the
+	// Python reminder (T-07). Collected once here; the renderer adds the
+	// TS-only third axis (`!tickStale`) on top.
+	const blocked = blockedOnHuman(gates.length, nonTerminalRows);
+	// G4 AC-015 (D-017): stamp the frame here so ANY caller of readMonitorState
+	// gets a self-attesting snapshot; startMonitor then advances `tickCount`
+	// and re-stamps `collectedAtMs` with its own (possibly injected) clock.
+	return {
+		serve,
+		conductor,
+		autopilot,
+		workers,
+		gates,
+		blockedOnHuman: blocked,
+		collectedAtMs: nowMs,
+		tickCount: monitorTickCount,
+	};
 }
 
 // ── Autopilot progress: deriveAutopilotPanel (AC-006/AC-007) ──────────────────
@@ -662,15 +731,48 @@ function conductorIntent(c: MonitorConductor): string {
 	return c.paused ? "autopilot enabled, paused" : "autopilot enabled, not paused";
 }
 
+/** G4 AC-015 (D-017): the panel header doubles as the frame's
+ * self-attestation. It carries the STALE PANEL alert plus the absolute
+ * `collected` stamp and monotonic `tick` count. Bits are appended in priority
+ * order and truncated/dropped before the alert can be cut away, so a long
+ * detail can never hide "STALE PANEL". */
+function monitorHeaderLine(s: MonitorSnapshot): string {
+	const bits: string[] = [];
+	if (s.stale === true) bits.push(`STALE PANEL (${s.staleDetail ?? "no refresh"})`);
+	if (s.collectedAtMs !== undefined) {
+		bits.push(`collected ${new Date(s.collectedAtMs).toISOString()} tick ${s.tickCount ?? 0}`);
+	}
+	let line = "[autopilot monitor]";
+	for (const bit of bits) {
+		if (`${line} ${bit}`.length <= MONITOR_LINE_MAX) {
+			line = `${line} ${bit}`;
+			continue;
+		}
+		const room = MONITOR_LINE_MAX - line.length - 1;
+		if (room > 8) line = `${line} ${trunc(bit, room)}`;
+		break;
+	}
+	return line;
+}
+
 /**
  * Render the snapshot as the fixed-section panel. Every section is always
  * present (0 running folds to the "workers: 0 running" header, 0 pending to
  * "gates: 0 pending") so the panel's height — and therefore the editor
  * layout — never flickers between ticks (§9). All lines cap at
- * MONITOR_LINE_MAX columns with an ellipsis.
+ * MONITOR_LINE_MAX columns with an ellipsis. The first line is the
+ * self-attesting header (see {@link monitorHeaderLine}).
  */
 export function renderMonitorLines(s: MonitorSnapshot): string[] {
-	const lines: string[] = ["[autopilot monitor]"];
+	const lines: string[] = [monitorHeaderLine(s)];
+	// G4 AC-017 (D-018): a degraded frame says so on its own line — the payload
+	// below stays the last known truth, the diagnostic is explicit and in-frame
+	// (no write path). Error summary first so a long path/timestamp cannot hide
+	// it; the line is capped like every other.
+	if (s.degraded === true) {
+		const at = s.lastErrorAtMs === undefined ? "?" : new Date(s.lastErrorAtMs).toISOString();
+		lines.push(trunc(`DEGRADED: ${s.lastError ?? "unknown error"} (read failed at ${at})`, MONITOR_LINE_MAX));
+	}
 
 	if (!s.serve.running) {
 		lines.push("serve: not running -> /mw restart");
@@ -720,6 +822,18 @@ export function renderMonitorLines(s: MonitorSnapshot): string[] {
 				MONITOR_LINE_MAX,
 			),
 		);
+		// G2 AC-008 (VC-011): first-glance "is a human actually the blocker?"
+		// marker — a pending gate with zero non-terminal workers. The third
+		// truth-table axis is render-time: a stale tick already prints STALE on
+		// the line above, so the marker stays off instead of double-reporting.
+		if (s.blockedOnHuman && !a.tickStale) {
+			lines.push(
+				trunc(
+					`BLOCKED_ON_HUMAN: ${s.gates.length} pending gate(s), 0 non-terminal workers -> /autopilot gates`,
+					MONITOR_LINE_MAX,
+				),
+			);
+		}
 		const stallByKey = new Map(a.stalls.map((stall) => [stall.key, stall]));
 		const attention = a.keys.filter(
 			(k) => k.status === "stalled" || k.inFlight > 0 || k.blockedBy.length > 0 || stallByKey.has(k.key),
@@ -805,17 +919,101 @@ export function renderMonitorLines(s: MonitorSnapshot): string[] {
 let monitorTimer: ReturnType<typeof setInterval> | null = null;
 let monitorApply: ((lines: string[] | undefined) => void) | null = null;
 
+/** G4 AC-015 (D-017): monotonic count of SUCCESSFUL collections. Module-level
+ * and deliberately NOT reset by stop()/start() — a re-arm must not make a
+ * frozen panel look fresh again by returning to tick 0. */
+let monitorTickCount = 0;
+
+/** G4 AC-017 (D-018): the last frame whose read succeeded. A degraded frame
+ * reuses this payload verbatim. Run-scoped: `startMonitor` clears it, because
+ * a new run has no previous frame to fall back to. */
+let lastGoodSnapshot: MonitorSnapshot | null = null;
+
+/** G4 AC-015: wall-clock anchor of the current run — the time of the last
+ * SUCCESSFUL collection, or the run start while nothing has succeeded yet. A
+ * degraded frame keeps showing it so a frozen panel is self-evident (the
+ * stamp must not advance just because the read failed again). */
+let anchorAtMs: number | null = null;
+
 export function isMonitorActive(): boolean {
 	return monitorTimer !== null;
+}
+
+/** One-line error summary for a degraded frame (`name: message`), never empty
+ * and never thrown. */
+function errorSummary(err: unknown): string {
+	const text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+	return text.trim() === "" ? "unknown error" : text;
+}
+
+/**
+ * G4 AC-017 (D-018): build the DEGRADED frame for a failed read.
+ *
+ * With a previous good frame the payload is reused verbatim (the panel keeps
+ * showing the last known truth), and `collectedAtMs`/`tickCount` keep their
+ * last-good values — that is what lets a frozen stamp be told apart from a
+ * live one. `stale`/`staleDetail` flag it once the stamp has not moved for
+ * more than {@link PANEL_STALE_MISSED_CYCLES} refresh periods.
+ *
+ * BOUNDARY (D-018): if the FIRST collection already failed there is no
+ * previous frame to reuse, so the frame carries only `collectedAtMs` (this
+ * failed attempt) plus the error summary; `stale` stays false because there is
+ * no past stamp to measure from. The frame is still emitted — never dropped
+ * silently.
+ */
+function degradedSnapshot(err: unknown, nowMs: number, intervalMs: number): MonitorSnapshot {
+	const summary = trunc(errorSummary(err), 160);
+	// The anchor does not advance on a failed read: freshness is measured from
+	// the last real collection (or the run start when there has been none), so
+	// a panel stuck on failures eventually says STALE PANEL instead of looking
+	// freshly stamped (AC-015).
+	const anchor = anchorAtMs ?? nowMs;
+	const ageMs = Math.max(0, nowMs - anchor);
+	const late = ageMs > intervalMs * PANEL_STALE_MISSED_CYCLES;
+	const diagnostics = {
+		collectedAtMs: anchor,
+		tickCount: monitorTickCount,
+		degraded: true,
+		lastErrorAtMs: nowMs,
+		lastError: summary,
+		stale: late,
+		staleDetail: late ? `no refresh since ${new Date(anchor).toISOString()}, ${formatDuration(ageMs)}` : undefined,
+	};
+	if (lastGoodSnapshot !== null) return { ...lastGoodSnapshot, ...diagnostics };
+	// BOUNDARY (D-018): before the first successful collection there is no
+	// previous payload to reuse — only the (non-advancing) anchor stamp and the
+	// error summary. The frame is still emitted, never dropped silently.
+	return {
+		serve: { running: false, pid: null, stale: false, staleDetail: "", upMs: null },
+		conductor: { pid: null, alive: false, enabled: false, paused: false, everEnabled: false },
+		autopilot: {
+			enabled: false,
+			everEnabled: false,
+			tickSeq: null,
+			tickAgeMs: null,
+			tickStale: false,
+			slotsUsed: 0,
+			slotsMax: 0,
+			stallTicks: 0,
+			keys: [],
+			stalls: [],
+		},
+		workers: [],
+		gates: [],
+		blockedOnHuman: false,
+		...diagnostics,
+	};
 }
 
 /**
  * Start the monitor. Idempotent: already active → true, nothing changes.
  * The FIRST FRAME renders synchronously before this returns (AC-001 with
  * zero ticks), then every `intervalMs` (default 4000ms) the state is
- * re-derived and re-rendered. A read that throws (transient file race)
- * skips that tick silently — the panel keeps the previous frame and the
- * next tick retries.
+ * re-derived and re-rendered. A read that throws no longer skips the tick: it
+ * emits a DEGRADED frame (last good payload + failure time + summary) so a
+ * failing panel can never be silently frozen (AC-017). A failure of the widget
+ * write itself is not recoverable from here — the next tick retries (re-arming
+ * after a session swap is T-12/D-019, not this task).
  */
 export function startMonitor(
 	projectDir: string,
@@ -825,16 +1023,37 @@ export function startMonitor(
 	if (monitorTimer !== null) return true;
 	const readState = opts?.readState ?? readMonitorState;
 	const nowMs = opts?.nowMs ?? Date.now;
+	const intervalMs = opts?.intervalMs ?? MONITOR_INTERVAL_MS;
+	// A fresh run has no reusable frame: if the FIRST tick fails there is
+	// nothing to fall back to and the frame must say so (D-018 boundary). The
+	// anchor starts at the run start and only moves on a successful collection.
+	lastGoodSnapshot = null;
+	anchorAtMs = nowMs();
 	const render = (): void => {
+		const now = nowMs();
+		let frame: MonitorSnapshot;
 		try {
-			apply(renderMonitorLines(readState(projectDir, nowMs())));
+			const collected = readState(projectDir, now);
+			monitorTickCount += 1;
+			// Stamp the successful collection: absolute wall clock + the
+			// monotonic count are the frame's self-attestation (AC-015).
+			frame = { ...collected, collectedAtMs: now, tickCount: monitorTickCount };
+			lastGoodSnapshot = frame;
+			anchorAtMs = now;
+		} catch (err) {
+			// G4 AC-017: no longer swallow the whole tick — degrade instead.
+			frame = degradedSnapshot(err, now, intervalMs);
+		}
+		try {
+			apply(renderMonitorLines(frame));
 		} catch {
-			// transient read error — keep the last frame, retry next tick
+			// The widget write itself failed (e.g. an invalidated session
+			// runner): nothing to render into, retry next tick.
 		}
 	};
 	render();
 	monitorApply = apply;
-	monitorTimer = setInterval(render, opts?.intervalMs ?? MONITOR_INTERVAL_MS);
+	monitorTimer = setInterval(render, intervalMs);
 	return true;
 }
 

@@ -226,6 +226,12 @@ toolchain 模板不只是注入 task.md 的文档——PM 直执时用 `mw ue-to
 | `round_budget` | 2 | L1↔L2 / L3 复评 / 任务重试共用的轮数上限 |
 | `advance_stall_ticks` | 5 | 同一 `(key, edge)` 的 phase 推进连续失败次数阀值（1..50）；达阼值即把 key 标 `stalled` 并建门禁 |
 | `worker_timeout_min` | 30 | worker 墙钟兜底超时 |
+| `launcher_max_workers` | 8 | 单轮并发 spawn 上限（1..64） |
+| `dispatch_max_per_scan` | 3 | 每轮自动派发配额（1..64） |
+| `queue_alarm_delta` | 50 | 队列突发形态判据阈值（10..10000） |
+| `l3_abort_retry_limit` | 1 | L3 流中止独立重掷预算（0..10） |
+| `gate_reminder_after_min` | 30 | 待应答门首次提醒阈值（1..1440 分钟） |
+| `gate_reminder_max` | 2 | 每门最多提醒次数（1..2） |
 
 停滞处置：
 
@@ -234,6 +240,10 @@ toolchain 模板不只是注入 task.md 的文档——PM 直执时用 `mw ue-to
 - `L3 无裁决`：reviewer worker 崩溃（`output.md` 缺失）不再被当成 `below`，而是重派下一轮 L3，停滞原因也写明 worker 状态与 task_key。
 - 新增 timeline 事件类型：`resume`（人工 approve 后恢复）、`l3-no-verdict`（reviewer 未交裁决）。
 - PM 窗口底部监控面板会展示 tick 新鲜度 / 槽位 / 每 key 相位与状态 / 停滞连击与最近错误，并在 `stalled` 行给出 `/autopilot gate <id> approve|reject` 处置命令；面板的连击派生与 conductor 守卫同口径（只有**同一 edge** 的成功才清除，相邻边界的成功既不打断也不计入），唯一差异是面板会保留 `stalled`/`gate-created` 之后的那一轮连击以便展示。
+
+### G3 契约闸门（mw-gate-verdict-hardening）
+
+`mw autopilot contract-guard [--project P] [--key K] [--json]`：只读判定——冻结的 AC/VC 文本（`<key>/evidence/contract-freeze.json` 内容寻址锚）与已答复授权记录是否一致；无锚点、无 carrier 均按无授权处理。`mw autopilot contract-freeze --project P --key K [--block ac|vc|all] [--force] [--json]`：显式补/重冻锚点（conductor 在 `design`/`plan` 接受边界已幂等自动建立），只有 `--force` 才允许覆盖已变更块。`advance *->done` 前做机械身份检查，未授权改写 ⇒ `contract-refused` 事件 + `contract-unauthorized` stall。
 
 ## xkey 验证命令（mw autopilot verify）
 

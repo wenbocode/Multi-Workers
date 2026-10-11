@@ -373,6 +373,61 @@ def _exit_to_status(exit_code: int) -> str:
     return "failed"
 
 
+def _reap_status(
+    task_dir: pathlib.Path | None, exit_code: int, task_key: str
+) -> str:
+    """Product-first terminal status for a reaped worker (AC-006 / DD-06).
+
+    The worker-written ``run.json`` is the product, so a terminal ``status``
+    there outranks the process exit code: an exit 0 whose run recorded
+    ``needs-clarification`` must not land in the queue as ``done`` (the G-f
+    gap). When there is no terminal run state -- no ``run.json``, unreadable
+    JSON, or a non-terminal ``running``/``pending`` -- the historical
+    :func:`_exit_to_status` mapping applies unchanged (zero back-fill,
+    byte-identical to the pre-AC-006 launcher).
+
+    A terminal run state that disagrees with the exit code is reported once
+    on stderr -- which ``mw serve`` captures into ``.mw/launcher.log``
+    (mw.py:334) -- with the task key, both values and the value actually
+    used, so the PM can audit the decision after the fact. Never raises,
+    never touches stdout (the ``mw doctor`` JSON contract) and never writes
+    ``run.json`` (the worker owns it; ``read_run_status`` is the single
+    reader shared with the T-20 stale reconcile).
+    """
+    from_exit = _exit_to_status(exit_code)
+    if task_dir is None:
+        return from_exit
+    run_status = mw_common.read_run_status(task_dir)
+    if run_status not in mw_common.RUN_TERMINAL_STATUSES:
+        return from_exit
+    if run_status != from_exit:
+        print(
+            f"[launcher] {task_key}: reap status conflict "
+            f"run.json={run_status} exit={exit_code} (exit-status={from_exit}) "
+            f"used={run_status}",
+            file=sys.stderr,
+            flush=True,
+        )
+    return run_status
+
+
+def _reap_task_dirs(project_dir: pathlib.Path) -> dict[str, pathlib.Path]:
+    """``task_key -> task dir`` from the live queue rows (reap reads run.json).
+
+    Best-effort like every other ledger read: an unreadable/absent queue file
+    yields no map, and each reaped row then falls back to its exit code
+    exactly as before. The first row wins (``task_key`` is unique in
+    practice).
+    """
+    dirs: dict[str, pathlib.Path] = {}
+    for entry in _parse_workers_file(_workers_path(project_dir)):
+        key = entry.get("task_key")
+        task_path = entry.get("task_path")
+        if key and task_path and key not in dirs:
+            dirs[key] = pathlib.Path(task_path).parent
+    return dirs
+
+
 def _require_task_file(task_path: str) -> pathlib.Path:
     """Validate the task file exists; return its Path.
 
@@ -564,6 +619,13 @@ def _reconcile_orphans(
     line, or a lone output.md from an old bundle) applies unconditionally
     every poll; the silence rule (presumed dead) additionally yields to
     another live launcher's fresh beat (D-008).
+
+    T-20/D-022 adds the product-carried state: a worker-written `run.json`
+    outranks the ledger row. A terminal `run.json` converges the row to that
+    exact status (the row merely lagged), and an active `run.json` whose process
+    is gone converges to `lost` — the launcher may only ADD `lost`, never
+    fabricate done/failed, and never touches the artifacts (the scene is what
+    the human needs to judge a run whose outcome was never verified).
     """
     for entry in _parse_workers_file(_workers_path(project_dir)):
         if entry["status"] != "running":
@@ -573,9 +635,38 @@ def _reconcile_orphans(
             continue  # own row: never touched by reconcile
         task_dir = pathlib.Path(entry["task_path"]).parent
         end_exit = mw_common.parse_end_exit(task_dir)
+        run_status = mw_common.read_run_status(task_dir)
         if end_exit is not None:
             status = _exit_to_status(end_exit)
             reason = f"reconcile: [END] exit={end_exit} (orphaned row)"
+        elif run_status in mw_common.RUN_TERMINAL_STATUSES:
+            # The product already ended the run; the row only lagged (e.g. the
+            # launcher died between the worker's terminal write and the reap).
+            status = run_status
+            reason = f"reconcile: run.json status={run_status} (orphaned row)"
+        elif run_status in ("running", "pending"):
+            # The run recorded itself as live and its process is gone: the
+            # outcome is unverified. `output.md` proves the terminal write path
+            # ran, so no silence window is needed there (its absence is what the
+            # window protects against — a live run owned by another launcher).
+            if not (task_dir / "output.md").exists():
+                last = _row_last_activity(entry, task_dir)
+                if last is None:
+                    continue  # no parseable activity evidence — never guess
+                age_min = (time.time() - last) / 60.0
+                if age_min < mw_common.orphan_dead_after():
+                    continue  # within the silence window: keep running
+                if mw_common.other_live_launcher(project_dir, os.getpid()):
+                    print(
+                        f"[launcher] reconcile: silence rule yielded for {key!r} "
+                        "(another live launcher holds a fresh beat)",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    continue
+            mw_common.mark_run_lost(task_dir)
+            status = "lost"
+            reason = f"reconcile: run.json status={run_status}, process gone, outcome unverified (scene preserved)"
         elif (task_dir / "output.md").exists():
             status = "failed"
             reason = "reconcile: completed without END marker, status unverifiable — read output.md"
@@ -785,6 +876,12 @@ def _poll_once(
     # launcher's silence rule knows we are live (and ours knows of them).
     mw_common.launcher_beat_write(project_dir, os.getpid())
 
+    # T-18/D-027 (AC-021): `None` resolves to the configured cap, never to
+    # "unbounded". A direct `_poll_once(..., None)` caller is bounded too, so
+    # the IN-3 amplifier (66 concurrent workers) cannot come back through a
+    # forgotten argument.
+    limit = max_workers if max_workers is not None else mw_common.launcher_max_workers(project_dir)
+
     archived = mw_common.archive_stale_entries(project_dir)
     if archived:
         print(
@@ -794,10 +891,12 @@ def _poll_once(
 
     # Reap finished processes
     finished = [k for k, p in running_procs.items() if p.poll() is not None]
+    # AC-006/DD-06: reap reads the product (run.json) before the exit code.
+    reap_dirs = _reap_task_dirs(project_dir) if finished else {}
     for key in finished:
         proc = running_procs.pop(key)
         code = proc.returncode if proc.returncode is not None else 1
-        status = _exit_to_status(code)
+        status = _reap_status(reap_dirs.get(key), code, key)
         _update_status(project_dir, key, status)
         # Close the per-task worker.log handle now the process has exited.
         lh = log_handles.pop(key, None)
@@ -817,12 +916,39 @@ def _poll_once(
 
     # Discover new pending tasks
     entries = _parse_workers_file(_workers_path(project_dir))
+    # Ack convergence (T-18/D-027, AC-023): an acked task already finished —
+    # its row only looks non-terminal because a queue rebuild rewrote it
+    # (IN-3). Converge it to `done` and never spawn it again. This is the
+    # fail-closed direction: a stale ack costs one skipped spawn of a task the
+    # PM has already absorbed, while a missed ack costs a full re-run.
+    acked = mw_common.read_acked(project_dir)
+    for entry in entries:
+        key = entry["task_key"]
+        if key not in acked or entry["status"] in mw_common._TERMINAL_STATUSES:
+            continue
+        # Prefer the product's own verdict when it wrote one (D-022); fall back
+        # to `done` (ack only happens for a terminal task).
+        run_status = mw_common.read_run_status(pathlib.Path(entry["task_path"]).parent)
+        converged = run_status if run_status in mw_common.RUN_TERMINAL_STATUSES else "done"
+        try:
+            _update_status(project_dir, key, converged)
+            entry["status"] = converged
+            print(
+                f"[launcher] {key}: acked at {acked[key]} but the queue row was "
+                f"non-terminal — converged to {converged} (AC-023)",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception as exc:  # noqa: BLE001 — never mask the poll loop
+            print(f"[launcher] {key}: ack convergence failed: {exc}", file=sys.stderr, flush=True)
     for entry in entries:
         key = entry["task_key"]
         if entry["status"] != "pending":
             continue
         if key in running_procs:
             continue  # AC-008: no duplicate spawn
+        if key in acked:
+            continue  # AC-023: acked tasks are never re-spawned
         # Location contract (D-001 isolation): reject root-level / misplaced
         # task dirs loudly instead of spawning them.
         try:
@@ -834,7 +960,7 @@ def _poll_once(
             except Exception:  # noqa: BLE001 — never mask the poll loop
                 pass
             continue
-        if max_workers and len(running_procs) >= max_workers:
+        if len(running_procs) >= limit:
             if not any(q["task_key"] == key for q in pending_queue):
                 pending_queue.append(entry)  # AC-007
             continue
@@ -849,8 +975,15 @@ def run(
     providers_path: pathlib.Path | None = None,
     port_overrides: dict[str, int] | None = None,
 ) -> None:
-    """Main launcher loop. Runs until interrupted."""
+    """Main launcher loop. Runs until interrupted.
+
+    Concurrency is always bounded (T-18/D-027, AC-021): an explicit
+    ``max_workers`` wins (CLI > task.md header > config > default), otherwise
+    the effective `launcher_max_workers` applies — `None` is never
+    "unbounded".
+    """
     config = _load_providers(providers_path or (pathlib.Path(__file__).parent / "providers.json"))
+    max_workers = max_workers if max_workers is not None else mw_common.launcher_max_workers(project_dir)
 
     # Apply port overrides from CLI (--pi-port, --claude-port, etc.)
     if port_overrides:
@@ -864,12 +997,18 @@ def run(
     running_procs: dict[str, subprocess.Popen[bytes]] = {}
     # task_key -> open worker.log handle (closed when the process is reaped)
     log_handles: dict[str, object] = {}
-    # Queue for tasks waiting on max_workers limit
+    # Queue for tasks waiting on the max_workers limit
     pending_queue: list[dict[str, str]] = []
 
     if dry_run:
         _dry_run(project_dir, config)
         return
+
+    print(
+        f"[launcher] max_workers={max_workers} (bounded; AC-021)",
+        file=sys.stderr,
+        flush=True,
+    )
 
     while True:
         try:
@@ -1018,7 +1157,11 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Multi-Workers launcher")
     parser.add_argument("--project", required=True, help="Project directory")
     parser.add_argument("--poll-interval", type=int, default=DEFAULT_POLL_INTERVAL)
-    parser.add_argument("--max-workers", type=int, default=None)
+    parser.add_argument(
+        "--max-workers", type=int, default=None,
+        help="Concurrency cap; default = launcher_max_workers from "
+             ".agenticdoc/_autopilot/config.json, else 8 (AC-021: never unbounded)",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--providers", default=None, help="Path to providers.json")
     # Port overrides: map provider key to proxy port (mirrors mw serve flags)

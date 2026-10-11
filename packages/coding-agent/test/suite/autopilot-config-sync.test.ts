@@ -8,7 +8,7 @@
  * goes green (P-016: no hollow cases).
  *
  * P5 spawns the real Python module and compares the registry tables and the
- * 14-key defaults byte-for-byte (key set, key ORDER, default values, JSON types,
+ * 20-key defaults byte-for-byte (key set, key ORDER, default values, JSON types,
  * integer ranges, and closed-set enums) against the TS mirror in `status-model.ts`.
  *
  * Fail-closed: a missing interpreter or a failing subprocess throws with stderr.
@@ -35,8 +35,8 @@ const CORPUS_FILE = fileURLToPath(
 const MULTI_WORKERS_DIR = fileURLToPath(new URL("../../../multi-workers/", import.meta.url));
 
 /** Frozen by T-07; any edit to the corpus must be a deliberate re-freeze. */
-const FROZEN_CORPUS_SHA256 = "c97eeafc087bc2ef311d4422f84f8359ac5dd2f7f4ce73e1d8c0b4db4ddcf2b6";
-const FROZEN_CORPUS_COUNT = 55;
+const FROZEN_CORPUS_SHA256 = "1e27f59396c4076575743ea0bb71b05371b8532322adfb4c8bfa3c20ade4744a";
+const FROZEN_CORPUS_COUNT = 73;
 
 interface CorpusCase {
 	id: string;
@@ -165,7 +165,7 @@ describe("autopilot config new-key mirror (P5)", () => {
 		expect(JSON.stringify(ENUM_FIELDS)).toBe(JSON.stringify(py.enum_fields));
 		expect(JSON.stringify(INT_RANGES)).toBe(JSON.stringify(py.int_ranges));
 
-		// The registries partition the 14 keys exactly (no field unclassified,
+		// The registries partition the 20 keys exactly (no field unclassified,
 		// none classified twice).
 		const registered = [
 			...py.bool_fields,

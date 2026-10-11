@@ -12,6 +12,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	normalizeWorkerOrigin,
@@ -109,9 +110,13 @@ describe("worker-store origin column (T-12)", () => {
 		fs.mkdirSync(root, { recursive: true });
 		const store = new WorkerStore(root);
 		await store.upsert(entry({ taskKey: "manual-task", taskPath: keyedPath("k", "manual-task") }));
-		const raw = fs.readFileSync(path.join(root, "_workers.parallel"), "utf8").trim();
-		expect(raw.split(" | ")).toHaveLength(9);
-		expect(raw.split(" | ")[8]).toBe("manual");
+		const raw = fs.readFileSync(path.join(root, "_workers.parallel"), "utf8").trim().split("\n");
+		// A brand-new queue is stamped with the layout version (T-15/AC-023), so
+		// the row is the file's last line.
+		expect(raw[0]).toBe("# mw-queue:v2");
+		const cells = raw[raw.length - 1].split(" | ");
+		expect(cells).toHaveLength(9);
+		expect(cells[8]).toBe("manual");
 		expect(store.findByKey("manual-task")?.origin).toBe("manual");
 	});
 });
@@ -176,5 +181,204 @@ describe("unified owner predicate (VC-027/VC-028)", () => {
 			origin: "conductor",
 		});
 		expect(workerBelongsToKey(conductor, "feature-gui-time-mvp-board")).toBe(true);
+	});
+});
+
+describe("queue integrity: unreadable rows are counted, never dropped (T-15, AC-023)", () => {
+	/** The IN-3 shape: 9-column rows (`origin` last, `dispatched_at` written by
+	 * the TS writer as `…Z`). Every one of these must read back as a row. */
+	function nineColumnLine(i: number): string {
+		return (
+			`in3-task-${i} | done | pi | timi | H:/proj/.agenticdoc/k/workers/in3-task-${i}/task.md | ` +
+			`2026-10-10T02:50:05.${String(200 + i).padStart(3, "0")}Z | 2026-10-10T03:20:40+00:00 | deepseek-v4.1-flash | manual`
+		);
+	}
+
+	it("reads every 9-column IN-3-shaped row and reports no unreadable line", () => {
+		const root = path.join(mkdtemp(), ".agenticdoc");
+		fs.mkdirSync(root, { recursive: true });
+		const lines = [...Array(25).keys()].map(nineColumnLine);
+		fs.writeFileSync(path.join(root, "_workers.parallel"), `${lines.join("\n")}\n`, "utf8");
+
+		const queue = new WorkerStore(root).readQueue();
+		expect(queue.rows).toHaveLength(25);
+		expect(queue.unparsable).toEqual([]);
+		expect(queue.version).toBe(1);
+		expect(queue.rows[0]?.taskKey).toBe("in3-task-0");
+		expect(queue.rows[24]?.origin).toBe("manual");
+	});
+
+	it("counts an unreadable line, then re-writes one row without touching it", async () => {
+		const root = path.join(mkdtemp(), ".agenticdoc");
+		fs.mkdirSync(root, { recursive: true });
+		const file = path.join(root, "_workers.parallel");
+		const badLine = "ten | cols | pi | timi | /p.md | t1 | t1 | model | origin | extra";
+		fs.writeFileSync(file, `${nineColumnLine(0)}\n${badLine}\n\n# a comment, not a failure\n`, "utf8");
+
+		const store = new WorkerStore(root);
+		const before = store.readQueue();
+		expect(before.rows).toHaveLength(1);
+		expect(before.unparsable).toEqual([{ index: 1, line: badLine, reason: "cols" }]);
+
+		// The upsert of a *different* row must not become a silent deletion of
+		// the unreadable one (the IN-3 mechanism was exactly this).
+		await store.upsert(entry({ taskKey: "in3-task-9", taskPath: keyedPath("k", "in3-task-9") }));
+		const raw = fs.readFileSync(file, "utf8");
+		expect(raw).toContain(badLine);
+		expect(raw).toContain(nineColumnLine(0));
+		expect(raw.split("\n").filter((l) => l.trim() !== "")).toHaveLength(4);
+		expect(store.readQueue().unparsable).toHaveLength(1);
+		expect(store.readAll()).toHaveLength(2);
+	});
+
+	it("replaces a row in place and leaves the rest of the file byte-identical", async () => {
+		const root = path.join(mkdtemp(), ".agenticdoc");
+		fs.mkdirSync(root, { recursive: true });
+		const file = path.join(root, "_workers.parallel");
+		const badLine = "broken | pending | pi";
+		fs.writeFileSync(file, `${nineColumnLine(0)}\n${nineColumnLine(1)}\n${badLine}\n`, "utf8");
+
+		const store = new WorkerStore(root);
+		await store.upsert(entry({ taskKey: "in3-task-1", taskPath: keyedPath("k", "in3-task-1"), status: "done" }));
+
+		const lines = fs.readFileSync(file, "utf8").trim().split("\n");
+		expect(lines).toHaveLength(3);
+		expect(lines[0]).toBe(nineColumnLine(0));
+		expect(lines[1]?.split(" | ")[1]).toBe("done");
+		expect(lines[2]).toBe(badLine);
+	});
+
+	it("reads a declared header and never adds one to an existing header-less file", async () => {
+		const root = path.join(mkdtemp(), ".agenticdoc");
+		fs.mkdirSync(root, { recursive: true });
+		const file = path.join(root, "_workers.parallel");
+
+		// (a) new queue: stamped v2.
+		const fresh = new WorkerStore(root);
+		await fresh.upsert(entry({ taskKey: "in3-task-0", taskPath: keyedPath("k", "in3-task-0") }));
+		expect(fs.readFileSync(file, "utf8")).toContain("# mw-queue:v2");
+		expect(fresh.readQueue().version).toBe(2);
+
+		// (b) legacy header-less file: version 1, and the file keeps its shape.
+		const legacyRoot = path.join(mkdtemp(), ".agenticdoc");
+		fs.mkdirSync(legacyRoot, { recursive: true });
+		fs.writeFileSync(path.join(legacyRoot, "_workers.parallel"), `${nineColumnLine(0)}\n`, "utf8");
+		const legacy = new WorkerStore(legacyRoot);
+		expect(legacy.readQueue().version).toBe(1);
+		await legacy.upsert(entry({ taskKey: "in3-task-1", taskPath: keyedPath("k", "in3-task-1") }));
+		const lines = fs.readFileSync(path.join(legacyRoot, "_workers.parallel"), "utf8").trim().split("\n");
+		expect(lines[0]).toBe(nineColumnLine(0));
+		expect(lines[1]).toContain("in3-task-1");
+		expect(lines.some((l) => l.startsWith("#"))).toBe(false);
+
+		// (c) an explicitly declared version is reported as-is.
+		fs.writeFileSync(path.join(legacyRoot, "_workers.parallel"), `# mw-queue:v2\n${nineColumnLine(0)}\n`, "utf8");
+		expect(legacy.readQueue().version).toBe(2);
+	});
+
+	it("reports the two failure reasons separately (too few cells vs empty task key)", () => {
+		const root = path.join(mkdtemp(), ".agenticdoc");
+		fs.mkdirSync(root, { recursive: true });
+		fs.writeFileSync(
+			path.join(root, "_workers.parallel"),
+			"too | few | cells\n | pending | pi | timi | /p.md | t1 | t1 |\n",
+			"utf8",
+		);
+		const queue = new WorkerStore(root).readQueue();
+		expect(queue.rows).toEqual([]);
+		expect(queue.unparsable.map((u) => u.reason)).toEqual(["cols", "task-key"]);
+	});
+});
+
+describe("IN-3 sample replay (T-21, AC-019/AC-023)", () => {
+	// The incident's row shape, de-sensitised but column-faithful: 9 columns,
+	// the burst second in `dispatched_at`, TS (`Z`) and Python (`+00:00`)
+	// timestamps. Provenance + sha256: evidence/runs/t-21-integrity-report.md.
+	const FIXTURE = fileURLToPath(
+		new URL("../../../multi-workers/test/fixtures/in3-queue-9col-burst.txt", import.meta.url),
+	);
+	const FIXTURE_ROWS = 250;
+	const FIXTURE_OWNERS = 27;
+	const BURST_SECOND = "2026-10-10T02:50:05";
+	const LEGACY_WORKER_COLS = 8;
+
+	const fixtureLines = (): string[] =>
+		fs
+			.readFileSync(FIXTURE, "utf8")
+			.split("\n")
+			.filter((line) => line.trim() !== "");
+
+	/** The codec that lost the rows: `b8bc115ff^` (`WORKER_COLS = 8`). */
+	function legacyParse(line: string): string[] | undefined {
+		const parts = line.split("|").map((s) => s.trim());
+		if (parts.length !== LEGACY_WORKER_COLS && parts.length !== LEGACY_WORKER_COLS - 1) return undefined;
+		return parts;
+	}
+
+	function withFixture(lines: string[]): { store: WorkerStore; file: string } {
+		const root = path.join(mkdtemp(), ".agenticdoc");
+		fs.mkdirSync(root, { recursive: true });
+		const file = path.join(root, "_workers.parallel");
+		fs.writeFileSync(file, `${lines.join("\n")}\n`, "utf8");
+		return { store: new WorkerStore(root), file };
+	}
+
+	it("keeps the incident shape: 9 columns, one burst second, 27 owners", () => {
+		const lines = fixtureLines();
+		expect(lines).toHaveLength(FIXTURE_ROWS);
+		const cols = lines.map((line) => line.split("|").map((s) => s.trim()));
+		expect(cols.every((c) => c.length === 9)).toBe(true);
+		expect(cols.every((c) => c[5].startsWith(BURST_SECOND) && c[5].endsWith("Z"))).toBe(true);
+		expect(cols.every((c) => c[6].endsWith("+00:00"))).toBe(true);
+		expect(cols.every((c) => c[8] === "manual")).toBe(true);
+		expect(new Set(cols.map((c) => c[4].split("/")[3])).size).toBe(FIXTURE_OWNERS);
+	});
+
+	it("reads every incident row (the dispatched set can never be empty)", () => {
+		const { store } = withFixture(fixtureLines());
+
+		const queue = store.readQueue();
+
+		expect(queue.version).toBe(1);
+		expect(queue.unparsable).toEqual([]);
+		expect(queue.rows).toHaveLength(FIXTURE_ROWS);
+		// What `dispatchNewTasks` keys off: one readable row per task.md.
+		expect(new Set(queue.rows.map((r) => r.taskKey)).size).toBe(FIXTURE_ROWS);
+		expect(new Set(queue.rows.map((r) => workerOwnerKey(r))).size).toBe(FIXTURE_OWNERS);
+	});
+
+	it("the pre-fix codec drops every incident row (the mechanism, executable)", () => {
+		const lines = fixtureLines();
+
+		const readable = lines.filter((line) => legacyParse(line) !== undefined);
+
+		expect(readable).toEqual([]);
+	});
+
+	it("also reads the legacy 8-column writer output (both codecs stay readable)", () => {
+		const legacyLines = fixtureLines().map((line) => line.split("|").slice(0, 8).join(" | "));
+		const { store } = withFixture(legacyLines);
+
+		const queue = store.readQueue();
+
+		expect(queue.rows).toHaveLength(FIXTURE_ROWS);
+		expect(queue.unparsable).toEqual([]);
+		expect(queue.rows.every((r) => workerOrigin(r) === "manual")).toBe(true);
+	});
+
+	it("counts a 10-column row and keeps its slot across an upsert", async () => {
+		const bad = `inj-10col | pending | pi | timi | H:/proj/.agenticdoc/pk01/workers/inj/task.md | ${BURST_SECOND}.999Z | 2026-10-10T03:00:00+00:00 |  | manual | extra`;
+		const { store, file } = withFixture([...fixtureLines(), bad]);
+
+		const before = store.readQueue();
+		expect(before.rows).toHaveLength(FIXTURE_ROWS);
+		expect(before.unparsable.map((u) => u.reason)).toEqual(["cols"]);
+
+		await store.upsert(entry({ taskKey: "brand-new", taskPath: keyedPath("pk01", "brand-new") }));
+
+		const after = fs.readFileSync(file, "utf8").trimEnd().split("\n");
+		expect(after).toHaveLength(FIXTURE_ROWS + 2);
+		expect(after).toContain(bad);
+		expect(store.readQueue().unparsable.map((u) => u.reason)).toEqual(["cols"]);
 	});
 });

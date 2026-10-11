@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { minimatch } from "minimatch";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import { killTrackedDetachedChildren } from "../../../utils/shell.ts";
+import { recordDispatchAlarm } from "../pm/pm-orchestrator.ts";
 import { Breaker, Budget } from "../rag/budget.ts";
 import { requiredFor } from "../rag/config.ts";
 import { appendEvidence } from "../rag/evidence.ts";
@@ -13,9 +15,21 @@ import {
 	type RagRuntime,
 	registerRagTools,
 } from "../rag/tools.ts";
+import { hasDeliverableEvidence } from "../shared/deliverable-evidence.ts";
 import { roleForTaskType } from "../shared/dispatch-models.ts";
 import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
+import {
+	collectArtifacts,
+	isTerminalRunStatus,
+	newRunId,
+	parseSupersedes,
+	RUN_SCHEMA,
+	type RunState,
+	type RunStatus,
+	runMarker,
+	writeRunState,
+} from "../shared/run-store.ts";
 import {
 	appendCheckpoint,
 	appendEnd,
@@ -39,6 +53,8 @@ import { goalMtime, writePhaseFile } from "./phase-runner.ts";
 import {
 	applyParentRootUnion,
 	checkReadScopeCall,
+	isSameOrUnder,
+	normalizeForCompare,
 	parentRootFromTaskContent,
 	type ReadScopeConfig,
 	type ReadScopeRejection,
@@ -104,6 +120,19 @@ export function toolsForType(taskType: string): string[] {
 export function activeToolsForType(taskType: string): string[] {
 	const base = toolsForType(taskType);
 	return base.includes("write") ? base : [...base, WORKER_FILE_TOOL];
+}
+
+/** Is this a role whose tool set carries `bash` (contract C3)? */
+export function isShellRole(taskType: string): boolean {
+	return activeToolsForType(taskType).includes("bash");
+}
+
+/** Is this a role with no write/edit tool (contract C3)? Such a role writes
+ * only through the narrow `worker_file` channel, so bash is the one structural
+ * hole left for the AC-005b write-surface guard. */
+export function isWritelessRole(taskType: string): boolean {
+	const tools = activeToolsForType(taskType);
+	return !tools.includes("write") && !tools.includes("edit");
 }
 
 /** Checkpoint self-assessment steer text, split by role (D-104/VC-004).
@@ -262,6 +291,10 @@ interface TaskMeta {
 	/** deny_globs entries (mw-dual-workspace AC-006), minimatch dual-basis.
 	 * Present → deny firewall active even without read_scope (deny-only). */
 	denyGlobs?: string[];
+	/** write_scope entries (contract C1/T-03), project-root relative. Present →
+	 * the AC-005b bash write surface is narrowed to the intersection with the
+	 * default (own taskDir + `<key>/evidence/**`); absent → default surface. */
+	writeScope?: string[];
 	/** l2_read_file_cap frontmatter (positive int), when present. */
 	readFileCap?: number;
 	/** l2_read_byte_cap frontmatter (positive int), when present. */
@@ -288,6 +321,8 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 	let inReadScopeList = false;
 	let denyGlobs: string[] | undefined;
 	let inDenyGlobsList = false;
+	let writeScope: string[] | undefined;
+	let inWriteScopeList = false;
 	let readFileCap: number | undefined;
 	let readByteCap: number | undefined;
 	let ragChatBudget: number | undefined;
@@ -342,6 +377,40 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 				inDenyGlobsList = false;
 			}
 		}
+		// write_scope (contract C1, T-02 → T-03): the producer renders the
+		// one-line comma form (`write_scope: a, b`); the read_scope/deny_globs
+		// YAML block-list form is accepted too, so the two consumer paths cannot
+		// drift apart. A present-but-blank value stays defined as [] (fail-closed,
+		// mirroring read_scope); an absent header leaves the field undefined and
+		// the consumer falls back to the default surface.
+		if (trimmed.startsWith("write_scope:")) {
+			const rest = trimmed.slice("write_scope:".length).trim();
+			if (rest) {
+				writeScope = rest
+					.split(",")
+					.map((item) => item.trim())
+					.map((item) =>
+						(item.startsWith('"') && item.endsWith('"')) || (item.startsWith("'") && item.endsWith("'"))
+							? item.slice(1, -1)
+							: item,
+					)
+					.filter((item) => item.length > 0);
+				inWriteScopeList = false;
+			} else {
+				writeScope = [];
+				inWriteScopeList = true;
+			}
+		} else if (inWriteScopeList && !inPhasePrompt) {
+			if (trimmed.startsWith("- ")) {
+				let item = trimmed.slice(2).trim();
+				if ((item.startsWith('"') && item.endsWith('"')) || (item.startsWith("'") && item.endsWith("'"))) {
+					item = item.slice(1, -1);
+				}
+				if (item) writeScope?.push(item);
+			} else {
+				inWriteScopeList = false;
+			}
+		}
 		if (trimmed.startsWith("l2_read_file_cap:")) {
 			const v = Number(trimmed.slice("l2_read_file_cap:".length).trim());
 			if (Number.isFinite(v) && v > 0) readFileCap = v;
@@ -393,6 +462,7 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 		timeoutMin,
 		readScope,
 		denyGlobs,
+		writeScope,
 		readFileCap,
 		readByteCap,
 		ragChatBudget,
@@ -533,6 +603,430 @@ function appendReadScopeRejectionsSection(
 		fs.appendFileSync(path.join(dir, "output.md"), `\n${lines.join("\n")}\n`, "utf8");
 	} catch {
 		// Best-effort at exit — nothing else we can do
+	}
+}
+
+// ── Bash write-surface guard (AC-005b / contract C3) ─────────────────────────
+//
+// A role with `bash` but no `write`/`edit` (today: `research` only) can bypass
+// its narrow `worker_file` channel with a shell command (the old gap R23). The
+// guard classifies each bash command against KNOWN write patterns, extracts the
+// target paths and blocks only targets outside the worker's write surface (own
+// taskDir + `<key>/evidence/**`, narrowed by the task's `write_scope:` header
+// when present). Tier P1 (design DD-03): the failure mode is a MISS — an exotic
+// write slips through — never a false block, so pure-read and unclassifiable
+// commands pass without a trace line.
+
+/** One extracted write target. */
+export interface BashWriteCandidate {
+	/** Raw path exactly as written in the command. */
+	target: string;
+	/** Which write pattern produced it (audit/debug). */
+	pattern: string;
+}
+
+/** Block rule identifiers, mirroring read-scope's rule tokens. */
+export type BashWriteScopeRule = "deny" | "scope" | "write-scope";
+
+/** Enforcement config for one writeless+shell worker. */
+export interface BashWriteScopeConfig {
+	/** Worker cwd = project root (launcher guarantee). */
+	projectRoot: string;
+	/** Own task dir (`.agenticdoc/<key>/workers/<taskKey>`), absolute. */
+	taskDir: string;
+	/** Own key dir (`.agenticdoc/<key>`), absolute. */
+	keyDir: string;
+	/** TRUE `.agenticdoc` root (`.agenticdoc`), absolute. */
+	trueRoot: string;
+	/** `write_scope:` entries (project-root relative): undefined = header
+	 * absent (the default surface), [] = present-but-blank (fail-closed). */
+	writeScope: string[] | undefined;
+}
+
+/** Verdict for one extracted target. */
+export interface BashWriteScopeVerdict {
+	allowed: boolean;
+	/** Rule that fired on a block. */
+	rule?: BashWriteScopeRule;
+	/** Short machine token for the trace line (e.g. `denied:pm-state.md`). */
+	detail?: string;
+	/** Human block reason (carries the allowed dirs on every rule). */
+	reason?: string;
+	/** The raw target the verdict was produced for. */
+	target?: string;
+}
+
+interface ShellToken {
+	text: string;
+	/** True for an unquoted control-operator token (`>`, `>>`, `|`, ...). */
+	operator: boolean;
+}
+
+/** Split a shell command into quote-aware tokens; control operators become
+ * their own tokens, so `echo "a > b"` never yields a redirect. */
+export function tokenizeShellCommand(command: string): ShellToken[] {
+	const tokens: ShellToken[] = [];
+	let word = "";
+	let hasWord = false;
+	const flush = (): void => {
+		if (hasWord) {
+			tokens.push({ text: word, operator: false });
+			word = "";
+			hasWord = false;
+		}
+	};
+	let i = 0;
+	while (i < command.length) {
+		const ch = command[i];
+		if (ch === "'" || ch === '"') {
+			hasWord = true;
+			i++;
+			while (i < command.length && command[i] !== ch) {
+				if (ch === '"' && command[i] === "\\" && i + 1 < command.length) {
+					i++;
+					word += command[i];
+				} else {
+					word += command[i];
+				}
+				i++;
+			}
+			i++; // closing quote (or end of input)
+			continue;
+		}
+		if (ch === "\\" && i + 1 < command.length) {
+			hasWord = true;
+			word += command[i + 1];
+			i += 2;
+			continue;
+		}
+		if (ch === " " || ch === "\t") {
+			flush();
+			i++;
+			continue;
+		}
+		if (ch === "\n") {
+			flush();
+			tokens.push({ text: ";", operator: true });
+			i++;
+			continue;
+		}
+		if (ch === ">" || ch === "<" || ch === "|" || ch === ";" || ch === "&" || ch === "(" || ch === ")") {
+			flush();
+			let op = ch;
+			while (i + 1 < command.length && command[i + 1] === ch) {
+				op += ch;
+				i++;
+			}
+			tokens.push({ text: op, operator: true });
+			i++;
+			continue;
+		}
+		hasWord = true;
+		word += ch;
+		i++;
+	}
+	flush();
+	return tokens;
+}
+
+/** Wrapper commands whose following word is still a command position. */
+const SHELL_WRAPPER_COMMANDS = new Set(["sudo", "env", "command", "nohup", "time", "nice", "stdbuf", "xargs"]);
+
+function isCommandPosition(tokens: ShellToken[], index: number): boolean {
+	if (index === 0) return true;
+	const previous = tokens[index - 1];
+	if (previous.operator) return true;
+	return SHELL_WRAPPER_COMMANDS.has(path.basename(previous.text).toLowerCase());
+}
+
+/** Word tokens from `start` up to (not including) the next operator. */
+function shellOperands(tokens: ShellToken[], start: number): string[] {
+	const values: string[] = [];
+	for (let i = start; i < tokens.length; i++) {
+		if (tokens[i].operator) break;
+		values.push(tokens[i].text);
+	}
+	return values;
+}
+
+/** Targets that are not repository writes (null devices / std streams). */
+const NULL_WRITE_TARGETS = new Set([
+	"/dev/null",
+	"/dev/stdout",
+	"/dev/stderr",
+	"/dev/fd/1",
+	"/dev/fd/2",
+	"nul",
+	"/nul",
+]);
+
+/** PowerShell write cmdlets and the flags that carry an explicit path. */
+const POWERSHELL_WRITE_COMMANDS = new Set([
+	"set-content",
+	"add-content",
+	"clear-content",
+	"out-file",
+	"new-item",
+	"remove-item",
+]);
+const POWERSHELL_PATH_FLAGS = new Set(["-path", "-literalpath", "-filepath", "-destination"]);
+
+/** Inline python/node write call sites; the LAST capture group is the path. */
+const INLINE_WRITE_PATTERNS: RegExp[] = [
+	/\bopen\s*\(\s*(?:f)?(['"])([^'"]+)\1\s*,\s*(?:mode\s*=\s*)?['"][wax+]/i,
+	/\bwrite_(?:text|bytes)\s*\(\s*(['"])([^'"]+)\1/i,
+	/\bos\.(?:remove|unlink|rmdir|mkdir|makedirs|rename)\s*\(\s*(['"])([^'"]+)\1/i,
+	/\bshutil\.rmtree\s*\(\s*(['"])([^'"]+)\1/i,
+	/\bshutil\.(?:copy|copyfile|move)\s*\(\s*(['"])([^'"]+)\1\s*,\s*(['"])([^'"]+)\3/i,
+	/\bPath\s*\(\s*(['"])([^'"]+)\1\s*\)\s*\.\s*(?:write_text|write_bytes|touch|mkdir|unlink|rename|replace)/i,
+	/\b(?:fs\.)?(?:writeFileSync|writeFile|appendFileSync|appendFile|unlinkSync|unlink|rmSync|rm|rmdirSync|rmdir|mkdirSync|mkdir|createWriteStream)\s*\(\s*(['"])([^'"]+)\1/i,
+	/\b(?:fs\.)?renameSync\s*\(\s*(['"])([^'"]+)\1\s*,\s*(['"])([^'"]+)\3/i,
+];
+
+function inlineScriptArgument(operands: string[]): string | null {
+	for (let i = 0; i < operands.length; i++) {
+		if (operands[i] === "-c" || operands[i] === "-e") {
+			const value = operands[i + 1];
+			return value === undefined ? null : value;
+		}
+	}
+	return null;
+}
+
+function inlineScriptTargets(script: string): BashWriteCandidate[] {
+	const targets: BashWriteCandidate[] = [];
+	for (const pattern of INLINE_WRITE_PATTERNS) {
+		const match = pattern.exec(script);
+		if (match === null) continue;
+		const target = match[match.length - 1];
+		if (typeof target === "string" && target.length > 0) targets.push({ target, pattern: "inline-script" });
+	}
+	return targets;
+}
+
+/** Extract the KNOWN write targets of a bash command. An empty result means
+ * "not a recognized write" — the caller must allow it (P1, DD-03). */
+export function extractBashWriteCandidates(command: string): BashWriteCandidate[] {
+	const tokens = tokenizeShellCommand(command);
+	const out: BashWriteCandidate[] = [];
+	const add = (target: string, pattern: string): void => {
+		const value = target.trim();
+		if (value === "" || NULL_WRITE_TARGETS.has(value.toLowerCase())) return;
+		out.push({ target: value, pattern });
+	};
+
+	for (let i = 0; i < tokens.length; i++) {
+		const token = tokens[i];
+		if (token.operator) {
+			if (token.text === ">" || token.text === ">>") {
+				const next = tokens[i + 1];
+				if (next !== undefined && !next.operator) add(next.text, "redirect");
+			}
+			continue;
+		}
+		if (!isCommandPosition(tokens, i)) continue;
+		const commandName = path.basename(token.text).toLowerCase();
+		const operands = shellOperands(tokens, i + 1);
+		switch (commandName) {
+			case "tee": {
+				for (const value of operands) if (!value.startsWith("-")) add(value, "tee");
+				break;
+			}
+			case "cp":
+			case "mv": {
+				const values = operands.filter((value) => !value.startsWith("-"));
+				const destination = values[values.length - 1];
+				if (destination !== undefined) add(destination, commandName);
+				break;
+			}
+			case "rm":
+			case "mkdir":
+			case "touch":
+			case "truncate": {
+				for (const value of operands) if (!value.startsWith("-")) add(value, commandName);
+				break;
+			}
+			case "sed": {
+				const inPlace = operands.some((value) => value === "-i" || value === "--in-place" || /^-i./.test(value));
+				if (!inPlace) break;
+				const positional = operands.filter((value) => !value.startsWith("-"));
+				for (const value of positional.slice(1)) add(value, "sed -i");
+				break;
+			}
+			case "git": {
+				const sub = operands[0]?.toLowerCase();
+				if (sub !== "checkout" && sub !== "apply" && sub !== "clean" && sub !== "restore") break;
+				const paths = operands.slice(1).filter((value) => !value.startsWith("-"));
+				if (paths.length === 0) add(".", `git ${sub}`);
+				else for (const value of paths) add(value, `git ${sub}`);
+				break;
+			}
+			case "curl": {
+				for (let k = 0; k < operands.length; k++) {
+					if (operands[k] === "-o" || operands[k] === "--output") {
+						if (operands[k + 1] !== undefined) add(operands[k + 1], "curl -o");
+					} else if (operands[k].startsWith("--output=")) {
+						add(operands[k].slice("--output=".length), "curl -o");
+					}
+				}
+				break;
+			}
+			case "wget": {
+				for (let k = 0; k < operands.length; k++) {
+					if (operands[k] === "-O" || operands[k] === "--output-document") {
+						if (operands[k + 1] !== undefined) add(operands[k + 1], "wget -O");
+					} else if (operands[k].startsWith("--output-document=")) {
+						add(operands[k].slice("--output-document=".length), "wget -O");
+					}
+				}
+				break;
+			}
+			case "python":
+			case "python3":
+			case "py":
+			case "node": {
+				const script = inlineScriptArgument(operands);
+				if (script !== null) {
+					for (const candidate of inlineScriptTargets(script)) add(candidate.target, candidate.pattern);
+				}
+				break;
+			}
+			default: {
+				if (!POWERSHELL_WRITE_COMMANDS.has(commandName)) break;
+				for (let k = 0; k < operands.length; k++) {
+					const value = operands[k];
+					if (value.startsWith("-")) {
+						if (POWERSHELL_PATH_FLAGS.has(value.toLowerCase()) && operands[k + 1] !== undefined) {
+							add(operands[k + 1], `${commandName} -Path`);
+						}
+						continue;
+					}
+					const previous = operands[k - 1];
+					if (previous?.startsWith("-")) continue;
+					add(value, commandName);
+				}
+				break;
+			}
+		}
+	}
+	return out;
+}
+
+function samePath(a: string, b: string): boolean {
+	return isSameOrUnder(a, b) && isSameOrUnder(b, a);
+}
+
+const GLOB_MAGIC_RE = /[*?[\]{}]/;
+
+/** Absolute deny reason for a resolved target, or null. The deny list is
+ * checked first and can never be widened by a `write_scope:` header. */
+function bashWriteDenyReason(config: BashWriteScopeConfig, target: string): string | null {
+	const workersDir = path.join(config.keyDir, "workers");
+	if (samePath(target, path.join(config.keyDir, "pm-state.md"))) return "pm-state.md";
+	if (isSameOrUnder(workersDir, target)) {
+		const firstSegment = path.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
+		if (firstSegment.startsWith("_workers")) return "workers/_workers*";
+	}
+	if (samePath(target, path.join(config.trueRoot, "_index.parallel"))) return "_index.parallel";
+	if (isSameOrUnder(config.trueRoot, target) && !isSameOrUnder(config.keyDir, target)) {
+		return "other key dir / .agenticdoc root";
+	}
+	if (isSameOrUnder(path.join(config.projectRoot, "packages"), target)) return "packages/**";
+	if (isSameOrUnder(path.join(config.projectRoot, ".git"), target)) return ".git/**";
+	return null;
+}
+
+function matchesWriteScopeEntry(config: BashWriteScopeConfig, entry: string, absoluteTarget: string): boolean {
+	const normalized = entry.trim();
+	if (normalized === "") return false;
+	if (GLOB_MAGIC_RE.test(normalized)) {
+		const relative = path.relative(config.projectRoot, absoluteTarget).replaceAll("\\", "/");
+		const forward = absoluteTarget.replaceAll("\\", "/");
+		const glob = normalized.replaceAll("\\", "/");
+		if (minimatch(relative, glob) || minimatch(forward, glob)) return true;
+		if (glob.endsWith("/**")) {
+			const stripped = glob.slice(0, -3);
+			if (stripped !== "" && (minimatch(relative, stripped) || minimatch(forward, stripped))) return true;
+		}
+		return false;
+	}
+	return isSameOrUnder(normalizeForCompare(config.projectRoot, normalized), absoluteTarget);
+}
+
+/** The bash write-surface verdict for one extracted target: deny list first
+ * (absolute priority), then the default surface (own taskDir + `<key>/evidence`),
+ * then the task's `write_scope:` intersection when the header is present. */
+export function checkBashWriteScopeTarget(config: BashWriteScopeConfig, rawTarget: string): BashWriteScopeVerdict {
+	const target = normalizeForCompare(config.projectRoot, rawTarget);
+	const evidenceDir = path.join(config.keyDir, "evidence");
+	const allowedLabel = `${config.taskDir} or ${evidenceDir}`;
+	const denied = bashWriteDenyReason(config, target);
+	if (denied !== null) {
+		return {
+			allowed: false,
+			rule: "deny",
+			detail: `denied:${denied}`,
+			target: rawTarget,
+			reason:
+				`write-scope: blocked bash write to ${rawTarget}: ${denied} is on the denied write list ` +
+				`[rule=deny]; allowed: ${allowedLabel}`,
+		};
+	}
+	if (!isSameOrUnder(config.taskDir, target) && !isSameOrUnder(evidenceDir, target)) {
+		return {
+			allowed: false,
+			rule: "scope",
+			detail: "outside-allowed-surface",
+			target: rawTarget,
+			reason:
+				`write-scope: blocked bash write to ${rawTarget}: outside the worker write surface ` +
+				`[rule=scope]; allowed: ${allowedLabel}`,
+		};
+	}
+	if (
+		config.writeScope !== undefined &&
+		!config.writeScope.some((entry) => matchesWriteScopeEntry(config, entry, target))
+	) {
+		return {
+			allowed: false,
+			rule: "write-scope",
+			detail: "outside-declared-write-scope",
+			target: rawTarget,
+			reason:
+				`write-scope: blocked bash write to ${rawTarget}: outside the task's declared write_scope ` +
+				`[rule=write-scope]; allowed: ${allowedLabel}`,
+		};
+	}
+	return { allowed: true, target: rawTarget };
+}
+
+/** One blocked bash write, as accumulated for the trace audit line. */
+interface BashWriteScopeRejection {
+	ts: string;
+	rule: BashWriteScopeRule;
+	detail: string;
+	target: string;
+	pattern: string;
+	command: string;
+}
+
+/** Append one `[WRITE_SCOPE] ... write-scope ...` audit line to trace.log.
+ * Contract (AC-005b): the line carries the `write-scope` token and the blocked
+ * command summary. Pure-read/unclassified commands never reach here (no audit
+ * noise — the P1 miss surface is covered by the existing full command trace). */
+function appendBashWriteScopeTraceLine(taskKey: string, agenticdocRoot: string, r: BashWriteScopeRejection): void {
+	try {
+		const dir = path.resolve(agenticdocRoot, taskKey);
+		fs.mkdirSync(dir, { recursive: true });
+		const summary = r.command.replace(/\s+/g, " ").trim().slice(0, 200);
+		fs.appendFileSync(
+			path.join(dir, "trace.log"),
+			`[WRITE_SCOPE] ${r.ts} write-scope blocked rule=${r.rule} detail=${r.detail} pattern=${r.pattern} ` +
+				`target=${r.target} cmd=${summary}\n`,
+			"utf8",
+		);
+	} catch {
+		// Diagnostic append — a failure must never break the block itself
 	}
 }
 
@@ -696,19 +1190,50 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	// is refused right below.
 	appendStartPidLine(meta.taskKey, meta.agenticdocRoot);
 
+	// Product-carried run identity (D-022/D-023, AC-022): this process writes its
+	// OWN run.json — `running` now, a terminal state on every exit path below.
+	// That is what makes a finished task un-restartable even when its ledger row
+	// is lost (IN-3 rebuilt 252 rows in one second and a re-run overwrote a
+	// finished task's output.md at 11:45:40), and what forces more work on a
+	// finished task to use a NEW task_key declaring `supersedes:`.
+	// task.md is read once here and reused for the read-scope parent root below.
+	const taskDir = path.dirname(taskPath);
+	const taskContent = fs.readFileSync(taskPath, "utf8");
+	const runState: RunState = {
+		schema: RUN_SCHEMA,
+		task_key: meta.taskKey,
+		run_id: newRunId(meta.taskKey),
+		// `.agenticdoc/<key>/workers/<task>` (or `_scratch`): the owner key is the
+		// directory that owns this task, never inferred from the task-key prefix.
+		owner_key: path.basename(path.dirname(path.dirname(taskDir))),
+		kind: meta.type,
+		status: "running",
+		started_at: new Date().toISOString(),
+		supersedes: parseSupersedes(taskContent),
+		artifacts: [],
+		pid: process.pid,
+		last_heartbeat_at: new Date().toISOString(),
+	};
+	writeRunState(taskDir, runState);
+
 	// D-107 fail-closed gate: refuse the task before any agent turn, with the
 	// reason in output.md (counts into the loop budget escalation on the
 	// conductor side, AC-023).
 	const refusal = dispatchRefusal(meta);
 	if (refusal !== undefined) {
 		appendError(meta.taskKey, meta.agenticdocRoot, refusal);
+		markOutcome(1);
 		writeOutput({
 			taskKey: meta.taskKey,
 			agenticdocRoot: meta.agenticdocRoot,
 			exitCode: 1,
 			summary: "Task refused at startup (fail-closed).",
 			exitReason: refusal,
+			runMarker: runMarker(runState),
 		});
+		// A refusal is a real terminal outcome: record it as such, so the row and
+		// the product tell the same story and the task is never auto-restarted.
+		finishRun("failed", 1);
 		writeWorkerLogLine(`[worker] refused task=${meta.taskKey} type=${meta.type}: ${refusal}`);
 		killTrackedDetachedChildren();
 		process.exit(1);
@@ -724,14 +1249,42 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	// No-op for empty (fail-closed) / deny-only scopes and non-partition tasks.
 	const readScopeConfig: ReadScopeConfig | undefined = applyParentRootUnion(
 		readScopeConfigFromMeta(meta),
-		parentRootFromTaskContent(fs.readFileSync(taskPath, "utf8")),
+		parentRootFromTaskContent(taskContent),
 	);
 	const readScopeState: ReadScopeState = { allowedCalls: 0, bytesRead: 0 };
 	const readScopeRejections: ReadScopeRejection[] = [];
 
 	function writeOutputGuarded(opts: WriteOutputOpts): void {
-		writeOutput(opts);
+		// The product write is this run's terminal moment, and the marker it carries
+		// must state the outcome the same write records — so reflect it in memory
+		// first (finishRun persists it right after, R15).
+		markOutcome(opts.exitCode);
+		writeOutput({ ...opts, runMarker: runMarker(runState) });
 		appendReadScopeRejectionsSection(meta.taskKey, meta.agenticdocRoot, readScopeRejections);
+	}
+
+	/** The one place that maps an exit code to a terminal status (shared by the
+	 * output.md marker and the persisted record). AC-006 adds the framework's
+	 * no-product verdict: exit 2 = needs-clarification (not a crash), so the OS
+	 * exit code, `[END] exit=`, run.json.status and the output.md marker all
+	 * agree with `launcher._exit_to_status`. */
+	function markOutcome(exitCode: number): RunStatus {
+		runState.status = exitCode === 0 ? "done" : exitCode === 2 ? "needs-clarification" : "failed";
+		return runState.status;
+	}
+
+	/** Terminal write for THIS run (AC-022/D-022). Every exit path lands here
+	 * through `recordEnd`, a startup refusal, or the process-exit safety net.
+	 * Best-effort by contract (R15): when the write fails it is noted in
+	 * trace.log and the run still writes output.md. `artifacts` is re-collected
+	 * here (the deliverables exist by now), never for a `lost` run — the Python
+	 * launcher owns that single addition (D-023). */
+	function finishRun(status: RunStatus, exit?: number): void {
+		runState.status = status;
+		runState.ended_at = new Date().toISOString();
+		if (exit !== undefined) runState.exit = exit;
+		runState.artifacts = collectArtifacts(taskDir);
+		writeRunState(taskDir, runState);
 	}
 
 	// Task lifecycle start: trace.log gets a machine-parseable [START] anchor
@@ -753,14 +1306,17 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			const line = `[IMAGE-CAP] model=${ctx.model.id} provider=${ctx.model.provider} task=${meta.taskKey} declared=images:yes`;
 			writeWorkerLogLine(line);
 			appendError(meta.taskKey, meta.agenticdocRoot, line);
+			markOutcome(1);
 			writeOutput({
 				taskKey: meta.taskKey,
 				agenticdocRoot: meta.agenticdocRoot,
 				exitCode: 1,
 				summary: "Task refused (image capability).",
 				exitReason: line,
+				runMarker: runMarker(runState),
 			});
 			outputWritten = true;
+			finishRun("failed", 1);
 			killTrackedDetachedChildren();
 			process.exit(1);
 			return;
@@ -809,6 +1365,11 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		} catch {
 			// Best-effort during exit — nothing else we can do.
 		}
+		// Crash backstop: nothing wrote output, so this run ended without a
+		// result — record that in the product too (a normal terminal path returns
+		// above via `outputWritten`). Guarded so a terminal state is never
+		// downgraded.
+		if (!isTerminalRunStatus(runState.status)) finishRun("failed", 1);
 	});
 
 	// RAG surface (D-002): registered only when the project enables servers;
@@ -892,6 +1453,47 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			readScopeRejections.push(rejection);
 			appendReadScopeTraceLine(meta.taskKey, meta.agenticdocRoot, rejection);
 			return { block: true, reason: verdict.reason };
+		});
+	}
+
+	// Bash write-surface guard (AC-005b / contract C3): a role with `bash` but no
+	// write/edit tool (today: `research` only) could bypass its narrow
+	// `worker_file` channel through a shell command. Known write patterns are
+	// classified, their targets resolved, and only targets outside the worker's
+	// write surface are blocked. The surface is the default (own taskDir +
+	// `<key>/evidence/**`), narrowed by the task's `write_scope:` header when the
+	// producer (T-02) rendered one. Pure-read and unclassifiable commands pass
+	// silently (P1: a miss is preferable to a false block).
+	const bashWriteScopeConfig: BashWriteScopeConfig | undefined =
+		isShellRole(meta.type) && isWritelessRole(meta.type)
+			? {
+					projectRoot: process.cwd(), // launcher spawns workers with cwd = project root
+					taskDir,
+					keyDir: path.dirname(meta.agenticdocRoot),
+					trueRoot: meta.trueAgenticdocRoot,
+					writeScope: meta.writeScope,
+				}
+			: undefined;
+	if (bashWriteScopeConfig) {
+		const config = bashWriteScopeConfig;
+		pi.on("tool_call", (event) => {
+			if (event.toolName !== "bash") return undefined;
+			const command = (event.input as { command?: unknown } | undefined)?.command;
+			if (typeof command !== "string" || command.trim() === "") return undefined;
+			for (const candidate of extractBashWriteCandidates(command)) {
+				const verdict = checkBashWriteScopeTarget(config, candidate.target);
+				if (verdict.allowed) continue;
+				appendBashWriteScopeTraceLine(meta.taskKey, meta.agenticdocRoot, {
+					ts: new Date().toISOString(),
+					rule: verdict.rule ?? "scope",
+					detail: verdict.detail ?? "blocked",
+					target: candidate.target,
+					pattern: candidate.pattern,
+					command,
+				});
+				return { block: true, reason: verdict.reason };
+			}
+			return undefined;
 		});
 	}
 
@@ -997,7 +1599,10 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 
 	// Shared terminal bookkeeping: trace [END] with exact runtime + a status
 	// line into worker.log (synchronous — survives an immediate process.exit).
-	function recordEnd(exitCode: 0 | 1): void {
+	function recordEnd(exitCode: 0 | 1 | 2): void {
+		// Single exit-code → status mapping (markOutcome), reused here so the trace
+		// line, the persisted record and the marker can never disagree (AC-006).
+		const status = markOutcome(exitCode);
 		appendEnd(meta.taskKey, meta.agenticdocRoot, {
 			exitCode,
 			elapsedMs: Date.now() - startedAt,
@@ -1005,8 +1610,9 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			phaseDone: meta.phases ? completedPhaseIdx : undefined,
 			phaseTotal,
 		});
+		finishRun(status, exitCode);
 		writeWorkerLogLine(
-			`[worker] ${exitCode === 0 ? "done" : "failed"} exit=${exitCode} elapsed=${formatHeartbeatAge(
+			`[worker] ${status} exit=${exitCode} elapsed=${formatHeartbeatAge(
 				Date.now() - startedAt,
 			)} tools=${toolCallCount}${toolErrorCount > 0 ? ` tool_errors=${toolErrorCount}` : ""}${
 				phaseTotal > 0 ? ` phases=${completedPhaseIdx}/${phaseTotal}` : ""
@@ -1252,6 +1858,10 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			meta.agenticdocRoot,
 			phases && phases.length > 0 ? `${completedPhaseIdx}/${phases.length}` : "-",
 		);
+		// Same tick refreshes the product-carried liveness stamp: a reader that
+		// has only run.json can still tell a live run from a dead one (D-022).
+		runState.last_heartbeat_at = new Date().toISOString();
+		writeRunState(taskDir, runState);
 	}, HEARTBEAT_INTERVAL_MS);
 	heartbeat.unref();
 
@@ -1262,24 +1872,65 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		return `${base}${tools}`;
 	}
 
+	/** AC-007/DD-09: the effort half of `## Exit Reason` — which product file this
+	 * run actually wrote, taken from the live write-tool targets (not from disk, so
+	 * it reflects what the agent did even when the file was later removed). The
+	 * value domain is fixed: the two canonical products, or `none`. */
+	function writesLabel(): "report.md" | "progress.md" | "none" {
+		const bases = new Set([...writeTargets].map((t) => path.basename(t.replace(/[\\/]+$/, ""))));
+		if ([...bases].some((b) => b === "report.md" || /^report-.+\.md$/.test(b))) return "report.md";
+		if (bases.has("progress.md")) return "progress.md";
+		return "none";
+	}
+
 	/** Success path. Does NOT process.exit: this handler runs inside pi's
 	 * agent_settled emit — returning lets pi's print mode resolve, print the
 	 * final assistant message to stdout (captured as worker.log), flush, and
 	 * exit with its own code. Exiting here was why worker.log stayed empty:
 	 * process.exit truncates the pending stdout flush. */
 	function finishSuccess(): void {
+		// AC-010②: a second settle in the same process is a no-op — without this the
+		// append-only writer (output-writer.ts D-117) adds a second harness block,
+		// a second `[END]` and (for an NC run) a second no-product alarm.
+		if (taskDone) return;
 		taskDone = true;
 		clearWatchdogTimers();
 		clearInterval(heartbeat);
+		// AC-006 (contract C5): a writeless role that settles without a product is
+		// needs-clarification, not done. Judged here — before the single write-out —
+		// so the output.md marker, `## Questions`, run.json.status and `[END] exit=`
+		// all carry the same verdict. Write roles are exempt: a coding run's
+		// deliverable is the repository, not a file in its own task dir.
+		const evidence = isWritelessRole(meta.type)
+			? hasDeliverableEvidence(taskDir, lastAssistantText)
+			: { delivered: true, channel: "none" as const, detail: "write role" };
+		const exitCode: 0 | 2 = evidence.delivered ? 0 : 2;
+		// AC-007/DD-09: carry the settle-time artifacts into the product so a
+		// `## Deliverables` section can list them (the writer drops output.md and
+		// progress.md, and omits the section when nothing is left).
+		const effort = `writes=${writesLabel()}`;
 		writeOutputGuarded({
 			taskKey: meta.taskKey,
 			agenticdocRoot: meta.agenticdocRoot,
-			exitCode: 0,
+			exitCode,
 			summary: buildSummary(),
-			changedFiles: [],
+			changedFiles: collectArtifacts(taskDir),
 			verificationSteps: "See task output for details.",
-			exitReason: `Agent settled after ${toolCallCount} tool call(s).`,
+			exitReason: evidence.delivered
+				? `Agent settled after ${toolCallCount} tool call(s). ${effort}`
+				: `Agent settled after ${toolCallCount} tool call(s) without a deliverable: ${evidence.detail} ${effort}`,
+			questions: evidence.delivered ? undefined : `no-product: ${evidence.detail}`,
 		});
+		if (!evidence.delivered) {
+			// The ledger root is the TRUE `.agenticdoc` root (meta.trueAgenticdocRoot),
+			// never `<key>/workers` (meta.agenticdocRoot) — the latter would scatter the
+			// row into a directory no consumer reads.
+			recordDispatchAlarm(meta.trueAgenticdocRoot, {
+				kind: "no-product",
+				count: 1,
+				detail: `${meta.taskKey}:${evidence.channel}`,
+			});
+		}
 		// VC-014 (AC-010): warning-only required-but-unused marker. ragRuntime is
 		// null on an RAG-less project, so this is a structural zero-write no-op.
 		if (ragRuntime !== null) {
@@ -1292,12 +1943,18 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 				taskDir: path.dirname(taskPath),
 			});
 		}
-		recordEnd(0);
+		recordEnd(exitCode);
 		outputWritten = true;
 	}
 
 	pi.on("agent_settled", () => {
 		try {
+			// AC-010②: this handler is the settle entry point; once finishSuccess has
+			// run (taskDone), later settles must not re-write phase files, re-emit
+			// goal checks or append another output.md block. Phased tasks keep
+			// taskDone === false until the final finishSuccess, so the phase machine
+			// below is unaffected.
+			if (taskDone) return;
 			if (!initialSettled) {
 				initialSettled = true;
 				// Initial task prompt (from pi -p) has settled

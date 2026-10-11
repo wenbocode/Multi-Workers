@@ -16,6 +16,15 @@ import type { Model } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../src/core/extensions/types.ts";
 import type { ModelRegistry } from "../../src/core/model-registry.ts";
+import { autoStartMonitor, registerAutopilotCommands } from "../../src/extensions/agent-team-loop/autopilot/console.ts";
+import { answerGate } from "../../src/extensions/agent-team-loop/autopilot/gate-writer.ts";
+import {
+	isMonitorActive,
+	MONITOR_WIDGET_ID,
+	startMonitor,
+	stopMonitor,
+} from "../../src/extensions/agent-team-loop/autopilot/monitor.ts";
+import { configPath, gatesDir, gatesLockPath } from "../../src/extensions/agent-team-loop/autopilot/status-model.ts";
 import { activate } from "../../src/extensions/agent-team-loop/index.ts";
 import {
 	autoTakeOverFromDoc,
@@ -333,10 +342,14 @@ describe("WorkerStore", () => {
 			.readFileSync(path.join(root, "_workers.parallel"), "utf8")
 			.split("\n")
 			.filter((l) => l.trim());
-		expect(lines).toHaveLength(1);
-		expect(lines[0].split(" | ")).toHaveLength(9);
-		expect(lines[0].split(" | ")[7]).toBe("m1");
-		expect(lines[0].split(" | ")[8]).toBe("manual");
+		// A brand-new queue carries the layout version header (T-15/AC-023); the
+		// row itself is the last line.
+		expect(lines[0]).toBe("# mw-queue:v2");
+		const row = lines[lines.length - 1];
+		expect(lines).toHaveLength(2);
+		expect(row?.split(" | ")).toHaveLength(9);
+		expect(row?.split(" | ")[7]).toBe("m1");
+		expect(row?.split(" | ")[8]).toBe("manual");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
@@ -373,7 +386,7 @@ describe("StateManager", () => {
 // ── output-writer ────────────────────────────────────────────────────────────
 
 describe("output-writer writeOutput", () => {
-	it("exit 0 writes the four sections and >50 bytes", () => {
+	it("exit 0 writes Deliverables only when deliverables exist, and >50 bytes", () => {
 		const root = mkdtemp();
 		const key = "task-out";
 		makeTaskDir(root, key);
@@ -387,10 +400,30 @@ describe("output-writer writeOutput", () => {
 			exitReason: "OK",
 		});
 		const out = fs.readFileSync(path.join(root, key, "output.md"), "utf8");
-		for (const section of ["## Summary", "## Changed Files", "## Verification Steps", "## Exit Reason"]) {
+		// AC-007: with deliverables the section is `## Deliverables`, never the old
+		// `## Changed Files` (whose list could not exist) and never a placeholder.
+		for (const section of ["## Summary", "## Deliverables", "## Verification Steps", "## Exit Reason"]) {
 			expect(out).toContain(section);
 		}
+		expect(out).not.toContain("## Changed Files");
+		expect(out).toContain("## Deliverables\n\nx.ts");
 		expect(out.length).toBeGreaterThan(50);
+
+		// Reverse (a): no deliverables => the whole section is omitted, not empty.
+		const key2 = "task-out-empty";
+		makeTaskDir(root, key2);
+		writeOutput({
+			taskKey: key2,
+			agenticdocRoot: root,
+			exitCode: 0,
+			summary: "Done",
+			verificationSteps: "see trace",
+			exitReason: "OK",
+		});
+		const out2 = fs.readFileSync(path.join(root, key2, "output.md"), "utf8");
+		expect(out2).not.toContain("## Changed Files");
+		expect(out2).not.toContain("## Deliverables");
+		expect(out2).not.toContain("(none)");
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
@@ -791,7 +824,11 @@ describe("agentic-scripts", () => {
 describe("advance_phase tool", () => {
 	it("validates key and target phase without spawning anything", async () => {
 		const { pi, tools } = fakeCmdPi();
-		registerAdvancePhaseTool(pi, path.join(os.tmpdir(), "no-such-project"));
+		registerAdvancePhaseTool(
+			pi,
+			path.join(os.tmpdir(), "no-such-project"),
+			new IndexStore(path.join(os.tmpdir(), "no-such-project")),
+		);
 		const tool = tools.get("advance_phase");
 		if (!tool) throw new Error("advance_phase not registered");
 
@@ -847,7 +884,7 @@ describe("advance_phase tool", () => {
 			"utf8",
 		);
 		const { pi, tools } = fakeCmdPi();
-		registerAdvancePhaseTool(pi, root);
+		registerAdvancePhaseTool(pi, root, new IndexStore(root));
 		const tool = tools.get("advance_phase");
 		if (!tool) throw new Error("advance_phase not registered");
 
@@ -2392,6 +2429,202 @@ describe("startWorkerPollLoop summary scoping", () => {
 			vi.useRealTimers();
 		}
 		fs.rmSync(root, { recursive: true, force: true });
+	});
+});
+
+// ── startWorkerPollLoop gate reminders (G2: AC-005/AC-018, VC-007/VC-023) ────
+
+describe("startWorkerPollLoop gate reminders (G2)", () => {
+	function reminderPi(): {
+		pi: ExtensionAPI;
+		messages: string[];
+		options: Array<{ triggerTurn?: boolean } | undefined>;
+		entries: Array<{ customType: string; data: unknown }>;
+	} {
+		const messages: string[] = [];
+		const options: Array<{ triggerTurn?: boolean } | undefined> = [];
+		const entries: Array<{ customType: string; data: unknown }> = [];
+		const pi = {
+			sendMessage: (m: { content: string }, opts?: { triggerTurn?: boolean }) => {
+				messages.push(m.content);
+				options.push(opts);
+			},
+			appendEntry: (customType: string, data?: unknown) => {
+				entries.push({ customType, data });
+			},
+		} as unknown as ExtensionAPI;
+		return { pi, messages, options, entries };
+	}
+
+	/** A fake ExtensionContext whose sessionManager replays the given entries. */
+	function ctxWithReminders(entries: Array<{ gateId: string; n: number; seq: number }>): ExtensionContext {
+		return {
+			hasUI: false,
+			ui: { setWidget: () => {} },
+			sessionManager: {
+				getEntries: () =>
+					entries.map((e) => ({
+						type: "custom",
+						customType: "agent-team-loop:gate-reminder-seen",
+						data: { seq: e.seq, gateId: e.gateId, n: e.n },
+					})),
+			},
+		} as unknown as ExtensionContext;
+	}
+
+	/** Append a `phase:"remind"` row in the shape the conductor writes (D-006). */
+	function appendReminder(
+		root: string,
+		row: { seq: number; gateId: string; gateKey?: string; n?: number; kind?: string },
+	): void {
+		const dir = path.join(root, "_autopilot");
+		fs.mkdirSync(dir, { recursive: true });
+		const payload = {
+			seq: row.seq,
+			phase: "remind",
+			gate_id: row.gateId,
+			gate_kind: row.kind ?? "stalled",
+			gate_key: row.gateKey ?? "",
+			reminder_n: row.n ?? 1,
+			reminded_at: new Date().toISOString(),
+			detail: "no in-flight workers",
+		};
+		fs.appendFileSync(path.join(dir, "auto-decisions.jsonl"), `${JSON.stringify(payload)}\n`, "utf8");
+	}
+
+	function start(root: string, pi: ExtensionAPI, watch: PmWatchState, ui: PmUiHolder): NodeJS.Timeout {
+		return startWorkerPollLoop(
+			pi,
+			new WorkerStore(root),
+			new AckStore(root),
+			new IndexStore(root),
+			root,
+			watch,
+			ui,
+			100,
+		);
+	}
+
+	it("delivers a new remind row once and never replays it on later ticks (VC-007)", async () => {
+		const root = mkdtemp();
+		vi.useFakeTimers();
+		try {
+			const { pi, messages, options, entries } = reminderPi();
+			const handle = start(root, pi, { key: "key-a" }, { ctx: undefined });
+			// The row appears only after the window opened — a fresh reminder.
+			appendReminder(root, { seq: 1, gateId: "gate-0007", gateKey: "key-a", n: 1 });
+			vi.advanceTimersByTime(300); // 3 ticks read the same append-only row
+			expect(messages).toHaveLength(1);
+			expect(messages[0]).toContain("[mw] 门提醒（1）");
+			expect(messages[0]).toContain("gate-0007");
+			expect(messages[0]).toContain("key=key-a");
+			// The reminder must wake an idle PM (the whole point of AC-005).
+			expect(options[0]?.triggerTurn).toBe(true);
+			// The delivery is recorded so /new, /resume and restarts can dedupe.
+			expect(entries).toEqual([
+				{ customType: "agent-team-loop:gate-reminder-seen", data: { seq: 1, gateId: "gate-0007", n: 1 } },
+			]);
+			clearInterval(handle);
+		} finally {
+			vi.useRealTimers();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not replay reminders that predate a fresh window (no-replay baseline)", () => {
+		const root = mkdtemp();
+		appendReminder(root, { seq: 1, gateId: "gate-old", gateKey: "key-a", n: 1 });
+		vi.useFakeTimers();
+		try {
+			const { pi, messages } = reminderPi();
+			const handle = start(root, pi, { key: "key-a" }, { ctx: undefined });
+			vi.advanceTimersByTime(500);
+			expect(messages).toEqual([]);
+			clearInterval(handle);
+		} finally {
+			vi.useRealTimers();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("resumes from the recorded session watermark, delivering only newer rows", () => {
+		const root = mkdtemp();
+		appendReminder(root, { seq: 1, gateId: "gate-0007", gateKey: "key-a", n: 1 });
+		appendReminder(root, { seq: 2, gateId: "gate-0007", gateKey: "key-a", n: 2 });
+		const ui: PmUiHolder = { ctx: ctxWithReminders([{ gateId: "gate-0007", n: 1, seq: 1 }]) };
+		vi.useFakeTimers();
+		try {
+			const { pi, messages } = reminderPi();
+			// Open-time baseline is seq=2; the recorded delivery lowers it to 1, so
+			// seq=2 (appended while the window was down) still reaches the PM while
+			// seq=1 is not re-pushed.
+			const handle = start(root, pi, { key: "key-a" }, ui);
+			vi.advanceTimersByTime(300);
+			expect(messages).toHaveLength(1);
+			expect(messages[0]).toContain("（2）");
+			clearInterval(handle);
+		} finally {
+			vi.useRealTimers();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("scopes keyed reminders to the watched key and still delivers keyless ones (D-010)", () => {
+		const root = mkdtemp();
+		vi.useFakeTimers();
+		try {
+			const { pi, messages } = reminderPi();
+			const handle = start(root, pi, { key: "key-a" }, { ctx: undefined });
+			appendReminder(root, { seq: 1, gateId: "gate-other", gateKey: "key-b", n: 1 });
+			appendReminder(root, { seq: 2, gateId: "gate-stage", gateKey: "", n: 1 });
+			appendReminder(root, { seq: 3, gateId: "gate-mine", gateKey: "key-a", n: 1 });
+			vi.advanceTimersByTime(300);
+			const text = messages.join("\n");
+			expect(text).not.toContain("gate-other"); // another window's key
+			expect(text).toContain("gate-stage"); // stage-level: visible here
+			expect(text).toContain("gate-mine");
+			expect(messages).toHaveLength(2);
+			clearInterval(handle);
+		} finally {
+			vi.useRealTimers();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("stays silent without a watched key", () => {
+		const root = mkdtemp();
+		vi.useFakeTimers();
+		try {
+			const { pi, messages } = reminderPi();
+			const handle = start(root, pi, { key: undefined }, { ctx: undefined });
+			appendReminder(root, { seq: 1, gateId: "gate-stage", gateKey: "", n: 1 });
+			vi.advanceTimersByTime(300);
+			expect(messages).toEqual([]);
+			clearInterval(handle);
+		} finally {
+			vi.useRealTimers();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("tolerates a torn ledger line without crashing the tick", () => {
+		const root = mkdtemp();
+		vi.useFakeTimers();
+		try {
+			const { pi, messages } = reminderPi();
+			const handle = start(root, pi, { key: "key-a" }, { ctx: undefined });
+			const dir = path.join(root, "_autopilot");
+			fs.mkdirSync(dir, { recursive: true });
+			fs.appendFileSync(path.join(dir, "auto-decisions.jsonl"), '{"phase":"remi\n', "utf8");
+			appendReminder(root, { seq: 1, gateId: "gate-0007", gateKey: "key-a", n: 1 });
+			vi.advanceTimersByTime(300);
+			expect(messages).toHaveLength(1);
+			expect(messages[0]).toContain("gate-0007");
+			clearInterval(handle);
+		} finally {
+			vi.useRealTimers();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
 
@@ -4427,6 +4660,53 @@ describe("pmActivate lifecycle (m3)", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	}, 20000);
+
+	it("session_shutdown stops the monitor panel and leaves no timer (AC-018/VC-023)", async () => {
+		const root = mkdtemp();
+		fs.mkdirSync(path.join(root, ".agenticdoc"), { recursive: true });
+		const cwd = process.cwd();
+		process.chdir(root);
+		try {
+			const handlers = new Map<string, (event?: unknown, ctx?: unknown) => unknown>();
+			const pi = {
+				registerCommand: () => {},
+				registerTool: () => {},
+				on: (name: string, handler: (event?: unknown, ctx?: unknown) => unknown) => {
+					handlers.set(name, handler);
+				},
+				appendEntry: () => {},
+				sendMessage: () => {},
+			} as unknown as ExtensionAPI;
+
+			vi.useFakeTimers();
+			try {
+				// The autopilot panel is active, as autoStartMonitor leaves it on
+				// session_start.
+				stopMonitor(); // guard against module state leaked by an earlier case
+				const frames: Array<string[] | undefined> = [];
+				startMonitor(root, (lines) => frames.push(lines));
+				expect(isMonitorActive()).toBe(true);
+
+				pmActivate(pi);
+				expect(handlers.has("session_shutdown")).toBe(true);
+				expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+				// Teardown: one session_shutdown clears the monitor interval (and the
+				// poll loop), clearing the widget without a residual timer.
+				(handlers.get("session_shutdown") as () => void)();
+				expect(isMonitorActive()).toBe(false);
+				expect(frames.length).toBe(2); // first frame + the clear
+				expect(frames[1]).toBeUndefined();
+				expect(vi.getTimerCount()).toBe(0);
+			} finally {
+				vi.useRealTimers();
+				stopMonitor();
+			}
+		} finally {
+			process.chdir(cwd);
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	}, 20000);
 });
 
 describe("pmActivate parallel protocol (mw-parallel-protocol)", () => {
@@ -5380,5 +5660,251 @@ describe("dispatch role + model override gate (mw-dispatch-role-escape)", () => 
 		await legacy.execute({ task_key: "t1", description: "work" });
 		expect(taskMdOf(legacy.root, "t1")).toBe("type: coding\n\nwork\n");
 		fs.rmSync(legacy.root, { recursive: true, force: true });
+	});
+});
+
+// ── G3 gate answer authorizes (T-12: D-011/D-012, VC-012) ────────────────────
+
+/** A gate file in the conductor-materialized shape (T-10). `authorizes` is
+ * emitted verbatim when given, mirroring `_stamp_gate_defaults`. */
+function writeAnswerableGate(root: string, id: string, authorizes?: string): string {
+	const dir = gatesDir(root);
+	fs.mkdirSync(dir, { recursive: true });
+	const lines = [
+		"---",
+		`id: ${id}`,
+		"kind: stalled",
+		"stage: 1",
+		"key: k1",
+		"gate_schema: 2",
+		"created_at: 2026-09-26T04:37:27+00:00",
+		"created_by: conductor",
+		"question: 'q?'",
+		"context_refs: []",
+		"status: pending",
+		"answered_at:",
+		"answered_by:",
+		"note:",
+		"default_action: halt-and-report",
+		...(authorizes === undefined ? [] : [`authorizes: ${authorizes}`]),
+		"---",
+		"",
+		`# Gate ${id}`,
+		"",
+	];
+	const file = path.join(dir, `${id}.md`);
+	fs.writeFileSync(file, `${lines.join("\n")}\n`, "utf8");
+	return file;
+}
+
+describe("G3 gate answer authorizes (T-12: AC-009/AC-012)", () => {
+	const lockOpts = { retries: 1, baseDelayMs: 1 };
+
+	it("VC-012: --authorizes rewrites the materialized line and preserves every other byte", async () => {
+		const root = mkdtemp();
+		try {
+			const gateFile = writeAnswerableGate(root, "gate-0001", "[]");
+			const before = fs.readFileSync(gateFile, "utf8");
+			const result = await answerGate({
+				gateFile,
+				lockFile: gatesLockPath(root),
+				decision: "approve",
+				authorizes: ["contract-change"],
+				answeredBy: "h:1",
+				lockOpts,
+			});
+			expect(result.ok).toBe(true);
+			const after = fs.readFileSync(gateFile, "utf8");
+			expect(after).toContain(`authorizes: '["contract-change"]'`);
+			// Only answer lines changed: same line count, only status/answered_*/note/authorizes move.
+			const beforeLines = before.split("\n");
+			const afterLines = after.split("\n");
+			expect(afterLines).toHaveLength(beforeLines.length);
+			const changedNames = new Set<string>();
+			for (let i = 0; i < beforeLines.length; i++) {
+				if (beforeLines[i] === afterLines[i]) continue;
+				changedNames.add(/^([A-Za-z_][A-Za-z0-9_]*):/.exec(beforeLines[i] ?? "")?.[1] ?? "");
+			}
+			expect([...changedNames]).not.toContain("");
+			for (const name of changedNames) {
+				expect(["answered_at", "answered_by", "authorizes", "note", "status"]).toContain(name);
+			}
+			expect(changedNames.has("status")).toBe(true);
+			expect(changedNames.has("authorizes")).toBe(true);
+			expect(fs.existsSync(gatesLockPath(root))).toBe(false);
+			process.stdout.write("[VERIFY] VC-012: closed_set=2 listed_only=true\n");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("VC-012 CF-A: an out-of-set action is refused fail-closed and the gate file is byte-identical", async () => {
+		const root = mkdtemp();
+		try {
+			const gateFile = writeAnswerableGate(root, "gate-0001", "[]");
+			const before = fs.readFileSync(gateFile, "utf8");
+			const result = await answerGate({
+				gateFile,
+				lockFile: gatesLockPath(root),
+				decision: "approve",
+				authorizes: ["install"],
+				answeredBy: "h:1",
+				lockOpts,
+			});
+			expect(result.ok).toBe(false);
+			if (!result.ok) {
+				expect(result.error).toContain("'install'");
+				expect(result.error).toContain("contract-change, retry");
+			}
+			expect(fs.readFileSync(gateFile, "utf8")).toBe(before);
+			expect(fs.existsSync(gatesLockPath(root))).toBe(false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("VC-012 CF-D: asking to authorize on a gate with no authorizes line is refused with a hint (never dropped)", async () => {
+		const root = mkdtemp();
+		try {
+			const gateFile = writeAnswerableGate(root, "gate-0001"); // no authorizes line
+			const before = fs.readFileSync(gateFile, "utf8");
+			const result = await answerGate({
+				gateFile,
+				lockFile: gatesLockPath(root),
+				decision: "approve",
+				authorizes: ["retry"],
+				answeredBy: "h:1",
+				lockOpts,
+			});
+			expect(result.ok).toBe(false);
+			if (!result.ok) {
+				expect(result.error).toContain("no 'authorizes:' line");
+				expect(result.error).toContain("authorizes: []");
+			}
+			expect(fs.readFileSync(gateFile, "utf8")).toBe(before);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("VC-012: omitting --authorizes leaves the materialized line untouched", async () => {
+		const root = mkdtemp();
+		try {
+			const gateFile = writeAnswerableGate(root, "gate-0001", "[]");
+			const result = await answerGate({
+				gateFile,
+				lockFile: gatesLockPath(root),
+				decision: "approve",
+				answeredBy: "h:1",
+				lockOpts,
+			});
+			expect(result.ok).toBe(true);
+			expect(fs.readFileSync(gateFile, "utf8")).toContain("authorizes: []");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("VC-012: /autopilot gate ... --authorizes writes the values through the cmdGate surface", async () => {
+		const root = mkdtemp();
+		try {
+			const gateFile = writeAnswerableGate(root, "gate-0001", "[]");
+			const handler = registerFakeAutopilotCommands(root);
+			const { ctx, notifications } = fakeAutopilotCtx();
+			await handler("gate gate-0001 approve --authorizes retry,contract-change", ctx);
+			expect(notifications.join("\n")).toContain("gate-0001 approved");
+			const after = fs.readFileSync(gateFile, "utf8");
+			expect(after).toContain(`authorizes: '["retry","contract-change"]'`);
+			expect(after).toContain("status: approved");
+
+			// Out-of-set through the command surface: refused, file unchanged.
+			const beforeBad = fs.readFileSync(gateFile, "utf8");
+			await handler("gate gate-0001 approve --authorizes install", ctx);
+			expect(notifications.at(-1)).toContain("not in the closed set");
+			expect(fs.readFileSync(gateFile, "utf8")).toBe(beforeBad);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+/** Register the /autopilot commands against a throwaway pi and return the
+ * command handler (only cmdGate is exercised here). */
+function registerFakeAutopilotCommands(root: string): (args: string, ctx: ExtensionCommandContext) => Promise<void> {
+	let handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> = async () => {};
+	const pi = {
+		registerCommand: (
+			_name: string,
+			opts: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> },
+		) => {
+			handler = opts.handler;
+		},
+		appendEntry: () => {},
+	} as unknown as ExtensionAPI;
+	registerAutopilotCommands(pi, root, { monitorIntervalMs: 100 });
+	return (args, ctx) => handler(args, ctx);
+}
+
+function fakeAutopilotCtx(): { ctx: ExtensionCommandContext; notifications: string[] } {
+	const notifications: string[] = [];
+	const ctx = {
+		hasUI: true,
+		ui: {
+			notify: (message: string) => {
+				notifications.push(message);
+			},
+			setWidget: () => {},
+		},
+		sessionManager: { getEntries: () => [] },
+	} as unknown as ExtensionCommandContext;
+	return { ctx, notifications };
+}
+
+// ── G4 rearm after session replacement (T-12: D-019, AC-018/VC-023) ─────────
+
+describe("G4 monitor rearm after session replacement (AC-018/VC-023)", () => {
+	it("VC-023: an active panel bound to a different ctx is stopped and re-armed on the new ctx", () => {
+		const root = mkdtemp();
+		try {
+			fs.mkdirSync(path.dirname(configPath(root)), { recursive: true });
+			fs.writeFileSync(configPath(root), `${JSON.stringify({ enabled: true })}\n`, "utf8");
+			const makeCtx = (): { ctx: ExtensionContext; widgets: Array<string[] | undefined> } => {
+				const widgets: Array<string[] | undefined> = [];
+				const ctx = {
+					hasUI: true,
+					ui: {
+						notify: () => {},
+						setWidget: (key: string, content: string[] | undefined) => {
+							if (key === MONITOR_WIDGET_ID) widgets.push(content);
+						},
+					},
+				} as unknown as ExtensionContext;
+				return { ctx, widgets };
+			};
+			const first = makeCtx();
+			const replacement = makeCtx();
+			try {
+				expect(autoStartMonitor(first.ctx, root)).toBe(true);
+				expect(isMonitorActive()).toBe(true);
+				expect(first.widgets.at(-1)?.[0]).toContain("[autopilot monitor]");
+				// Same ctx: idempotent, no extra frame.
+				const frames = first.widgets.length;
+				expect(autoStartMonitor(first.ctx, root)).toBe(true);
+				expect(first.widgets.length).toBe(frames);
+
+				// Session replacement: a different ctx must re-arm, not no-op.
+				expect(autoStartMonitor(replacement.ctx, root)).toBe(true);
+				expect(isMonitorActive()).toBe(true);
+				const rearmed = (replacement.widgets.at(-1)?.[0] ?? "").includes("[autopilot monitor]");
+				expect(rearmed).toBe(true);
+				process.stdout.write(
+					`[VERIFY] VC-023: rearmed=${replacement.widgets.length > 0} panel_present=${rearmed}\n`,
+				);
+			} finally {
+				stopMonitor();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 });

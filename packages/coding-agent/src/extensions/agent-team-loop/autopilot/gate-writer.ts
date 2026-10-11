@@ -4,10 +4,12 @@
  *
  * Answering a gate = rewriting four frontmatter fields of the gate file —
  * `status` / `answered_at` / `answered_by` (the answering window's claimId,
- * for audit) / `note` — under `.mw/gates.lock` (O_CREAT|O_EXCL, the shared
- * file-lock protocol). EVERY other line is preserved byte-for-byte,
- * including a trailing CR when the source line had one, so hand-edited gate
- * files keep their exact shape across an answer.
+ * for audit) / `note` — plus, when the human passes `--authorizes` (G3/D-011),
+ * the already-materialized `authorizes:` JSON-list line — under
+ * `.mw/gates.lock` (O_CREAT|O_EXCL, the shared file-lock protocol). EVERY
+ * other line is preserved byte-for-byte, including a trailing CR when the
+ * source line had one, so hand-edited gate files keep their exact shape
+ * across an answer.
  *
  * Creation is conductor-only (gates.py); this module never creates gates and
  * never reorders or synthesizes fields — conductor-created gates always
@@ -20,6 +22,7 @@
 
 import * as fs from "node:fs";
 import { acquireLock, type LockOptions } from "../shared/file-lock.ts";
+import { AUTHORIZES_ACTIONS } from "./status-model.ts";
 
 export interface AnswerGateOptions {
 	/** Path of the gate .md file to answer. */
@@ -36,6 +39,13 @@ export interface AnswerGateOptions {
 	/** Timestamp override for `answered_at`. Defaults to now at second
 	 * precision in the `...Z` form gates.py _check_iso explicitly accepts. */
 	answeredAt?: string;
+	/** G3 (D-011/D-012): action types this answer authorizes, from the closed
+	 * set {@link AUTHORIZES_ACTIONS} `{retry, contract-change}`. Values outside
+	 * the set are refused fail-closed and nothing is written. Omitted or empty
+	 * → the existing `authorizes:` line is left untouched. The line must
+	 * already exist (the conductor materializes `authorizes: []` for new
+	 * gates): this writer only rewrites existing lines and refuses otherwise. */
+	authorizes?: string[];
 	/** Lock retry options (tests inject small values). */
 	lockOpts?: LockOptions;
 }
@@ -46,8 +56,11 @@ export type AnswerGateResult =
 
 const GATE_FIELD_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
 
-/** The four fields an answer rewrites (gates.py FRONTMATTER_FIELDS members). */
-const ANSWER_FIELDS = ["status", "answered_at", "answered_by", "note"] as const;
+/** The frontmatter fields an answer may rewrite (gates.py FRONTMATTER_FIELDS
+ * members plus the recognized `authorizes` extension field, whose line is
+ * materialized by the conductor). Only already-existing lines are rewritten;
+ * `authorizes` is additionally refused when its line is absent. */
+const ANSWER_FIELDS = ["status", "answered_at", "answered_by", "note", "authorizes"] as const;
 
 /** Scalars safe to render unquoted (no YAML indicators, no spaces, no
  * quotes) — identical charset to gates.py _PLAIN_SCALAR_RE. */
@@ -95,9 +108,10 @@ function isoNowSeconds(): string {
 
 type RewriteResult = { ok: true; content: string } | { ok: false; error: string };
 
-/** Rewrite the answer fields of a gate file's frontmatter. Only the four
- * answer lines change; every other line — including the body, context_refs
- * list, and any CRLF endings — is preserved byte-for-byte. */
+/** Rewrite the answer fields of a gate file's frontmatter. Only the answer
+ * lines change; every other line — including the body, context_refs list, and
+ * any CRLF endings — is preserved byte-for-byte. A requested `authorizes`
+ * whose line does not exist is refused (never silently dropped). */
 function rewriteAnswerFields(content: string, replacements: Map<string, string>, gateFile: string): RewriteResult {
 	const lines = content.split("\n");
 	if (lines.length === 0 || lines[0].trim() !== "---") {
@@ -119,6 +133,10 @@ function rewriteAnswerFields(content: string, replacements: Map<string, string>,
 		if (m === null) continue; // list item / prose — preserved as-is
 		const name = m[1] ?? "";
 		if (!(ANSWER_FIELDS as readonly string[]).includes(name) || rewritten.has(name)) continue;
+		// Only fields this answer actually supplies are rewritten; a recognized
+		// field with no replacement (e.g. `authorizes` when the human did not pass
+		// --authorizes) keeps its existing line untouched.
+		if (!replacements.has(name)) continue;
 		const value = replacements.get(name) ?? "";
 		// An empty value renders as the bare `field:` line — the same shape
 		// gates.py create() writes for empty optionals.
@@ -127,6 +145,18 @@ function rewriteAnswerFields(content: string, replacements: Map<string, string>,
 	}
 	if (!rewritten.has("status")) {
 		return { ok: false, error: `${gateFile}: no 'status:' line in frontmatter — not a gate file (or corrupt)` };
+	}
+	// G3 boundary (D-012): an explicit authorization must never be silently
+	// dropped. Only existing lines are rewritten, so a gate file without the
+	// conductor-materialized `authorizes:` line cannot receive one here.
+	if (replacements.has("authorizes") && !rewritten.has("authorizes")) {
+		return {
+			ok: false,
+			error:
+				`${gateFile}: no 'authorizes:' line in frontmatter — this writer only rewrites existing lines. ` +
+				"The conductor materializes 'authorizes: []' for new gates; add that line manually and retry, " +
+				"or answer without --authorizes.",
+		};
 	}
 	return { ok: true, content: lines.join("\n") };
 }
@@ -141,12 +171,29 @@ export async function answerGate(opts: AnswerGateOptions): Promise<AnswerGateRes
 	if (opts.note !== undefined && /[\r\n]/.test(opts.note)) {
 		return { ok: false, error: "note must be a single line (frontmatter scalars cannot span lines)" };
 	}
+	// G3 closed set (D-011): validate before touching the file so an
+	// out-of-set action can never be written (fail-closed, nothing to roll back).
+	// Empty/omitted means "do not write authorization" (the line is untouched).
+	const authorizes =
+		opts.authorizes !== undefined && opts.authorizes.length > 0 ? [...new Set(opts.authorizes)] : undefined;
+	if (authorizes !== undefined) {
+		const outOfSet = authorizes.filter((action) => !(AUTHORIZES_ACTIONS as readonly string[]).includes(action));
+		if (outOfSet.length > 0) {
+			return {
+				ok: false,
+				error:
+					`authorizes value(s) ${outOfSet.map((v) => `'${v}'`).join(", ")} are not in the closed set ` +
+					`(expected one of: ${[...AUTHORIZES_ACTIONS].sort().join(", ")})`,
+			};
+		}
+	}
 	const replacements = new Map<string, string>([
 		["status", status],
 		["answered_at", opts.answeredAt ?? isoNowSeconds()],
 		["answered_by", opts.answeredBy === "" ? "" : renderScalar(opts.answeredBy)],
 		["note", opts.note === undefined ? "" : renderScalar(opts.note)],
 	]);
+	if (authorizes !== undefined) replacements.set("authorizes", renderScalar(JSON.stringify(authorizes)));
 
 	let release: () => void;
 	try {

@@ -25,6 +25,45 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from autopilot import timeline as tl
 
 
+# Frozen D-109 timeline vocabulary. This literal is the Python-half lock: the
+# judge is SET EQUALITY against the live ``tl.EVENT_TYPES``, not a count — a
+# rename keeps the count identical but must still redden the lock. The
+# cross-language half is ``autopilot-event-parity.test.ts``, which compares the
+# same set to ``status-model.ts::EVENT_TYPES``; a name present on one side only
+# would be silently swallowed by the console's default beat-free view.
+LOCKED_EVENT_TYPES = frozenset(
+    {
+        "advance",
+        "beat",
+        "config",
+        "contract-frozen",
+        "contract-refused",
+        "dispatch",
+        "evidence-reconciliation",
+        "gate-answered",
+        "gate-auto-decision",
+        "gate-auto-revoke",
+        "gate-created",
+        "gate-reminder",
+        "goal-halt",
+        "goal-snapshot",
+        "l3-aborted",
+        "l3-no-verdict",
+        "reconcile",
+        "resume",
+        "review-decided",
+        "review-escalated",
+        "skip",
+        "stage-close",
+        "stage-reopen-refused",
+        "stalled",
+        "target-config-rejected",
+        "type-rejected",
+        "worker-terminal",
+    }
+)
+
+
 def _verify(**kv: object) -> None:
     print("[VERIFY] VC-019: " + " ".join(f"{k}={v}" for k, v in kv.items()))
 
@@ -45,20 +84,28 @@ def test_append_line_schema_all_event_types(tmp_path: pathlib.Path) -> None:
     writer = tl.Timeline(path)
     for ev in sorted(tl.EVENT_TYPES):
         assert writer.append(ev, key=f"key-{ev}", stage=1, detail=f"detail for {ev}") is not None
-    assert len(tl.EVENT_TYPES) == 23  # enum locked by D-109; +target-config-rejected (mw-dual-workspace D-005 fail-closed dispatch); +resume, +l3-no-verdict (mw-autopilot-stall-feedback AC-004/AC-012); +6 gate-redesign names (mw-autopilot-slot-capacity D-005/D-006/D-009, two-side parity)
+    # Set equality, not a count: a rename keeps len() identical yet still
+    # breaks the vocabulary lock. The literal freezes D-109 plus the additive
+    # names (target-config-rejected, resume/l3-no-verdict, the 6 gate-redesign
+    # names, and T-23's contract-frozen).
+    assert tl.EVENT_TYPES == LOCKED_EVENT_TYPES, (
+        "EVENT_TYPES drifted: "
+        f"added={sorted(tl.EVENT_TYPES - LOCKED_EVENT_TYPES)} "
+        f"removed={sorted(LOCKED_EVENT_TYPES - tl.EVENT_TYPES)}"
+    )
 
     raw = path.read_bytes()
     assert b"\r" not in raw  # newline symmetry: LF only, never \r\n
     events = _read_lines(path)
-    assert len(events) == 23
-    assert [e["seq"] for e in events] == list(range(1, 24))  # dense, increasing
+    assert len(events) == len(LOCKED_EVENT_TYPES)
+    assert [e["seq"] for e in events] == list(range(1, len(LOCKED_EVENT_TYPES) + 1))  # dense, increasing
     for e in events:
         assert set(e) == {"ts", "seq", "ev", "key", "stage", "detail"}
         assert isinstance(e["seq"], int)
         assert e["key"] == f"key-{e['ev']}"
         assert e["stage"] == 1
         datetime.datetime.fromisoformat(e["ts"])  # ts is real iso8601
-    _verify(event_lines=14, per_type="all", schema="valid")
+    _verify(event_lines=len(events), per_type="all", schema="valid")
 
 
 def test_unknown_ev_accepted_and_filter(tmp_path: pathlib.Path) -> None:

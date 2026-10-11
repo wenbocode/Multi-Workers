@@ -41,6 +41,7 @@ import {
 	MONITOR_WIDGET_ID,
 	type MonitorAutopilot,
 	type MonitorSnapshot,
+	PANEL_STALE_MISSED_CYCLES,
 	readMonitorState,
 	readTimelineTail,
 	renderMonitorLines,
@@ -49,7 +50,9 @@ import {
 } from "../../src/extensions/agent-team-loop/autopilot/monitor.ts";
 import {
 	DEFAULT_CONFIG,
+	deriveStatusModel,
 	readConfig,
+	renderStatusText,
 	type TimelineEvent,
 	validateConfigData,
 } from "../../src/extensions/agent-team-loop/autopilot/status-model.ts";
@@ -249,7 +252,9 @@ describe("autopilot monitor panel (T-01, VC-001..008 + VC-011)", () => {
 			expect(serveLine).toContain(String(process.pid));
 			expect(/fresh|stale/.test(serveLine)).toBe(true);
 			// Fixed section structure: all four sections always present (§9).
-			expect(lines[0]).toBe("[autopilot monitor]");
+			// G4: the header now carries the frame's self-attesting stamp, so
+			// assert the stable prefix instead of exact equality.
+			expect(lines[0]).toContain("[autopilot monitor]");
 			expect(lines.some((l) => l.startsWith("conductor:"))).toBe(true);
 			expect(lines.some((l) => l.startsWith("workers:"))).toBe(true);
 			expect(lines.some((l) => l.startsWith("gates:"))).toBe(true);
@@ -346,7 +351,7 @@ describe("autopilot monitor panel (T-01, VC-001..008 + VC-011)", () => {
 			const { ctx, widgets } = fakeCmdCtx(true);
 			await commands.get("autopilot")?.handler("monitor on", ctx);
 			expect(widgets[0]?.key).toBe(MONITOR_WIDGET_ID);
-			expect(widgets[0]?.content?.[0]).toBe("[autopilot monitor]");
+			expect(widgets[0]?.content?.[0]).toContain("[autopilot monitor]");
 			expect(widgets[0]?.options?.placement).toBe("belowEditor");
 			// First frame + two ticks = three setWidget calls with content.
 			vi.advanceTimersByTime(100);
@@ -476,6 +481,247 @@ describe("autopilot monitor panel (T-01, VC-001..008 + VC-011)", () => {
 	});
 });
 
+// ── G2 AC-008 (VC-011): pending age + BLOCKED_ON_HUMAN marker ────────────────
+
+describe("G2 AC-008/VC-011: pending-gate age + BLOCKED_ON_HUMAN marker", () => {
+	const NOW_MS = Date.parse("2026-09-11T10:30:00+00:00");
+
+	it("VC-011: status rows show pending age and the panel marks the human-blocked state", () => {
+		const root = mkdtemp();
+		writeConfig(root, { enabled: true });
+		writeGate(root, { id: "gate-0007", kind: "stalled", stage: null, status: "pending", key: "k1" });
+		try {
+			// (a) pending gate + 0 non-terminal rows ⇒ the truth table is true.
+			const blocked = readMonitorState(root, NOW_MS);
+			expect(blocked.blockedOnHuman).toBe(true);
+			const marker = renderMonitorLines(blocked).find((l) => l.startsWith("BLOCKED_ON_HUMAN"));
+			expect(marker).toBeDefined();
+			expect(marker ?? "").toContain("1 pending gate(s)");
+
+			// (b) the status view shows the pending age; `age=?` for an
+			// unparsable created_at — never NaN.
+			const status = deriveStatusModel(root, NOW_MS);
+			expect(status.ok).toBe(true);
+			if (!status.ok) return;
+			const text = renderStatusText(status.model);
+			expect(text).toContain("gate-0007 stalled pending age=30m");
+			expect(text).not.toContain("NaN");
+			process.stdout.write("[VERIFY] VC-011: age_shown=true blocked_marker=true\n");
+
+			// (c) non-hollow fixtures: a `pending` row is non-terminal (design
+			// D-008/F6) and a `running` row too — both clear the marker.
+			writeWorkers(root, [
+				{ key: "ap-k1-t01", status: "pending", dispatchedAt: "2026-09-11T10:00:00+00:00", ownerKey: "k1" },
+			]);
+			const pendingRow = readMonitorState(root, NOW_MS);
+			expect(pendingRow.blockedOnHuman).toBe(false);
+			expect(renderMonitorLines(pendingRow).some((l) => l.startsWith("BLOCKED_ON_HUMAN"))).toBe(false);
+
+			writeWorkers(root, [
+				{ key: "ap-k1-t02", status: "running", dispatchedAt: "2026-09-11T10:00:00+00:00", ownerKey: "k1" },
+			]);
+			const runningRow = readMonitorState(root, NOW_MS);
+			expect(runningRow.blockedOnHuman).toBe(false);
+			expect(renderMonitorLines(runningRow).some((l) => l.startsWith("BLOCKED_ON_HUMAN"))).toBe(false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("VC-011: a stale conductor suppresses only the marker, not the truth table (TS-only third axis)", () => {
+		const root = mkdtemp();
+		writeConfig(root, { enabled: true });
+		writeGate(root, { id: "gate-0008", kind: "stalled", stage: null, status: "pending", key: "k1" });
+		writeTimeline(root, [{ ts: "2026-09-11T10:00:00+00:00", ev: "beat" }]);
+		try {
+			const snap = readMonitorState(root, NOW_MS);
+			expect(snap.autopilot.tickStale).toBe(true);
+			expect(snap.blockedOnHuman).toBe(true); // file-only truth table unchanged
+			expect(renderMonitorLines(snap).some((l) => l.startsWith("BLOCKED_ON_HUMAN"))).toBe(false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+// ── G4 AC-015..017 (VC-020..VC-022): freshness + degraded frames ─────────────
+
+/** A readState that fails on demand: drives the degraded path without touching
+ * any file (the fail injection adds no write path). */
+function flakyReadState(): { readState: typeof readMonitorState; fail: (on: boolean) => void } {
+	let failing = false;
+	return {
+		readState: (projectDir: string, nowMs: number) => {
+			if (failing) throw new Error("boom");
+			return readMonitorState(projectDir, nowMs);
+		},
+		fail: (on: boolean): void => {
+			failing = on;
+		},
+	};
+}
+
+describe("G4 AC-015/AC-016/AC-017 (VC-020..VC-022): frame self-attestation", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		stopMonitor();
+		vi.useRealTimers();
+	});
+
+	it("VC-020: the absolute stamp + tick advance every tick; >3 stale periods raise STALE PANEL", () => {
+		const root = mkdtemp();
+		const t0 = Date.parse("2026-10-10T12:00:00+00:00");
+		let now = t0;
+		const { readState, fail } = flakyReadState();
+		writeServe(root, process.pid, t0);
+		writeConfig(root, { enabled: true });
+		try {
+			const frames: Array<string[] | undefined> = [];
+			startMonitor(root, (lines) => frames.push(lines), { nowMs: () => now, readState });
+			const header = (index: number): string => frames[index]?.[0] ?? "";
+			// Frame 0 stamps the absolute wall-clock collection time + tick count.
+			expect(header(0)).toContain(`collected ${new Date(t0).toISOString()}`);
+			expect(header(0)).toMatch(/tick \d+/);
+			expect(header(0)).not.toContain("STALE PANEL");
+			const tickAt0 = Number(/tick (\d+)/.exec(header(0))?.[1]);
+			// Tick 1 advances BOTH the stamp and the monotonic count.
+			now += 4000;
+			vi.advanceTimersByTime(4000);
+			expect(header(1)).toContain(`collected ${new Date(now).toISOString()}`);
+			expect(Number(/tick (\d+)/.exec(header(1))?.[1])).toBeGreaterThan(tickAt0);
+			// The read starts failing: the stamp freezes (payload = last good), the
+			// tick count stops, and no frame is dropped.
+			fail(true);
+			const goodStamp = new Date(now).toISOString();
+			for (let i = 0; i < PANEL_STALE_MISSED_CYCLES; i++) {
+				now += 4000;
+				vi.advanceTimersByTime(4000);
+			}
+			expect(frames).toHaveLength(2 + PANEL_STALE_MISSED_CYCLES);
+			const atBound = header(frames.length - 1);
+			expect(atBound).toContain(`collected ${goodStamp}`);
+			expect(atBound).not.toContain("STALE PANEL"); // exactly N periods is not "more than N"
+			expect(frames.at(-1)?.join("\n")).toContain("DEGRADED");
+			// The next failed period crosses the AC-015 bound.
+			now += 4000;
+			vi.advanceTimersByTime(4000);
+			const late = header(frames.length - 1);
+			expect(late).toContain("STALE PANEL");
+			expect(late).toContain("no refresh since");
+			process.stdout.write("[VERIFY] VC-020: stamp_advances=true stale_warned=true\n");
+		} finally {
+			stopMonitor();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("VC-021: a data-plane change is followed within <=2 refresh cycles", () => {
+		const root = mkdtemp();
+		const t0 = Date.parse("2026-10-10T12:00:00+00:00");
+		let now = t0;
+		const { readState } = flakyReadState();
+		writeWorkers(root, [{ key: "ap-k1-old", status: "done", dispatchedAt: new Date(t0).toISOString() }]);
+		try {
+			const frames: Array<string[] | undefined> = [];
+			startMonitor(root, (lines) => frames.push(lines), { nowMs: () => now, readState });
+			const workersLine = (index: number): string => frames[index]?.find((l) => l.startsWith("workers:")) ?? "";
+			expect(workersLine(0)).toBe("workers: 0 running");
+			// The data plane flips 0 -> 3 running rows...
+			writeWorkers(
+				root,
+				[1, 2, 3].map((n) => ({
+					key: `ap-k1-t0${n}`,
+					status: "running",
+					dispatchedAt: new Date(t0).toISOString(),
+					ownerKey: "k1",
+					origin: "conductor",
+				})),
+			);
+			// ...and the panel must have followed by the 2nd refresh cycle.
+			now += 4000;
+			vi.advanceTimersByTime(4000);
+			now += 4000;
+			vi.advanceTimersByTime(4000);
+			expect(workersLine(2)).toBe("workers: 3 running (all keys)");
+			process.stdout.write("[VERIFY] VC-021: followed_within_cycles=2\n");
+		} finally {
+			stopMonitor();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("VC-022: a failing read emits a DEGRADED frame, including when the FIRST tick fails", () => {
+		const root = mkdtemp();
+		const t0 = Date.parse("2026-10-10T12:00:00+00:00");
+		let now = t0;
+		const { readState, fail } = flakyReadState();
+		writeConfig(root, { enabled: true });
+		writeWorkers(root, [
+			{
+				key: "ap-k1-t01",
+				status: "running",
+				dispatchedAt: new Date(t0).toISOString(),
+				ownerKey: "k1",
+				origin: "conductor",
+			},
+		]);
+		try {
+			const roots = [path.join(root, ".mw"), path.join(root, ".agenticdoc")];
+			const before = hashTree(roots);
+			// (a) with a previous good frame the degraded frame reuses its payload.
+			const frames: Array<string[] | undefined> = [];
+			startMonitor(root, (lines) => frames.push(lines), { nowMs: () => now, readState });
+			expect(frames).toHaveLength(1);
+			expect(frames[0]?.join("\n")).toContain("workers: 1 running");
+			fail(true);
+			now += 4000;
+			vi.advanceTimersByTime(4000);
+			expect(frames).toHaveLength(2); // never silently dropped
+			const degraded = frames.at(-1) ?? [];
+			expect(degraded.join("\n")).toContain("workers: 1 running"); // last-good payload kept
+			expect(degraded.join("\n")).toContain("DEGRADED");
+			expect(degraded.join("\n")).toContain("boom");
+			expect(degraded.join("\n")).toContain(`read failed at ${new Date(now).toISOString()}`);
+			expect(degraded[0]).toContain(`collected ${new Date(t0).toISOString()}`);
+			stopMonitor();
+
+			// (b) BOUNDARY (D-018): the very FIRST collection fails ⇒ no previous
+			// frame exists; the emitted frame carries the collection stamp + the
+			// error summary and fabricates no data.
+			now = t0;
+			const firstFail: Array<string[] | undefined> = [];
+			startMonitor(root, (lines) => firstFail.push(lines), { nowMs: () => now, readState });
+			expect(firstFail).toHaveLength(1);
+			const only = firstFail[0] ?? [];
+			expect(only[0]).toContain(`collected ${new Date(t0).toISOString()}`);
+			expect(only.join("\n")).toContain("DEGRADED");
+			expect(only.join("\n")).toContain("boom");
+			expect(only.join("\n")).not.toContain("workers: 1 running"); // no fabricated payload
+			// The boundary stamp does not advance on further failures: the panel goes
+			// STALE PANEL instead of pretending to be freshly stamped.
+			for (let i = 0; i <= PANEL_STALE_MISSED_CYCLES; i++) {
+				now += 4000;
+				vi.advanceTimersByTime(4000);
+			}
+			const lateBoundary = firstFail.at(-1) ?? [];
+			expect(lateBoundary[0]).toContain("STALE PANEL");
+			expect(lateBoundary[0]).toContain(`no refresh since ${new Date(t0).toISOString()}`);
+			expect(lateBoundary.join("\n")).toContain("DEGRADED");
+			expect(lateBoundary.join("\n")).not.toContain("workers: 1 running");
+			// No write path was added: the read-only contract holds on the failure
+			// path too.
+			expect(hashTree(roots)).toBe(before);
+			process.stdout.write("[VERIFY] VC-022: degraded_frame=true silent_frames=0\n");
+		} finally {
+			stopMonitor();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
 // ── /autopilot monitor command wiring (console.ts) ───────────────────────────
 
 describe("/autopilot monitor command wiring", () => {
@@ -495,6 +741,7 @@ describe("/autopilot monitor command wiring", () => {
 			autopilot: stubAutopilot(),
 			workers: [],
 			gates: [],
+			blockedOnHuman: false,
 		}).join("\n");
 		expect(paused).toContain("serve: not running -> /mw restart");
 		expect(paused).toContain("conductor: PID 123 alive | autopilot enabled, paused");
@@ -507,6 +754,7 @@ describe("/autopilot monitor command wiring", () => {
 			autopilot: stubAutopilot({ enabled: false, everEnabled: false }),
 			workers: [],
 			gates: [],
+			blockedOnHuman: false,
 		}).join("\n");
 		expect(never).toContain("serve: PID 7 STALE CODE (serve started X, mw code changed Y) -> /mw restart");
 		expect(never).toContain("conductor: not enabled (/autopilot enable)");
@@ -525,6 +773,7 @@ describe("/autopilot monitor command wiring", () => {
 			autopilot: stubAutopilot({ enabled: false, everEnabled: false }),
 			workers: [],
 			gates: [],
+			blockedOnHuman: false,
 		});
 		expect(longDetail[1]?.length).toBeLessThanOrEqual(110);
 		expect(longDetail[1]).toContain("-> /mw restart");
@@ -552,6 +801,7 @@ describe("/autopilot monitor command wiring", () => {
 					},
 				],
 				gates: [{ id: "gate-0002", kind: "stage-confirm", stage: 2, key: "" }],
+				blockedOnHuman: false,
 			};
 			const { pi, commands } = fakeConsolePi();
 			registerAutopilotCommands(pi, root, {
@@ -633,6 +883,7 @@ describe("VC-010: watch + monitor widgets coexist on one window (distinct ids, n
 			autopilot: stubAutopilot(),
 			workers: [],
 			gates: [],
+			blockedOnHuman: false,
 		};
 		const { pi, commands } = fakeConsolePi();
 		registerAutopilotCommands(pi, root, {
@@ -647,7 +898,7 @@ describe("VC-010: watch + monitor widgets coexist on one window (distinct ids, n
 
 			// The monitor panel goes on over the SAME window UI.
 			await commands.get("autopilot")?.handler("monitor on", ctx);
-			expect(store.get("agent-team-loop-monitor")?.[0]).toBe("[autopilot monitor]");
+			expect(store.get("agent-team-loop-monitor")?.[0]).toContain("[autopilot monitor]");
 
 			// Two distinct ids, both live — neither overwrote the other.
 			expect(new Set(calls.map((c) => c.key))).toEqual(
@@ -663,7 +914,7 @@ describe("VC-010: watch + monitor widgets coexist on one window (distinct ids, n
 			vi.advanceTimersByTime(100);
 			expect(store.get("agent-team-loop-watch")?.[0]).toContain("[mw] ap-x");
 			setWatchWidget(ctx, ["[mw] ap-x | phase=3 | 1 running"]);
-			expect(store.get("agent-team-loop-monitor")?.[0]).toBe("[autopilot monitor]");
+			expect(store.get("agent-team-loop-monitor")?.[0]).toContain("[autopilot monitor]");
 			expect(store.get("agent-team-loop-watch")?.[0]).toContain("phase=3");
 
 			// monitor off clears ONLY the monitor id — the watch widget stays.
@@ -762,7 +1013,7 @@ describe("autopilot monitor auto-show (AC-008)", () => {
 			expect(autoStartMonitor(ctx, root)).toBe(true);
 			expect(isMonitorActive()).toBe(true);
 			expect(widgets.at(-1)?.key).toBe(MONITOR_WIDGET_ID);
-			expect(widgets.at(-1)?.content?.[0]).toBe("[autopilot monitor]");
+			expect(widgets.at(-1)?.content?.[0]).toContain("[autopilot monitor]");
 			// idempotent: an active panel is left alone (no extra start)
 			const frames = widgets.length;
 			expect(autoStartMonitor(ctx, root)).toBe(true);

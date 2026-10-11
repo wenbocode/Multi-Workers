@@ -439,7 +439,9 @@ class DispatchResult:
 
     ok=True  — task.md + queue row written and the row read back verified.
     ok=False — nothing entered the queue (rows stays 0); ``reason`` names why:
-    unknown-type | verifier-read-scope-required | lock-unavailable.
+    unknown-type | verifier-read-scope-required | lock-unavailable |
+    run-terminal:<status> | run-running (AC-004: a settled or live `run.json`
+    outranks the ledger; both refuse before any side effect).
     A failure after the task.md was written (lock-unavailable) leaves the
     orphan shape on purpose — reconciliation re-inserts it next tick."""
 
@@ -484,11 +486,16 @@ def dispatch(
       - verifier without a non-empty read_scope (D-106)
       - unusable target.yml (mw-dual-workspace fail-closed: never a silently
         un-injected task.md; event kind target-config-rejected)
+      - `run.json` already terminal or `running` (AC-004/DD-12, checked
+        first, with zero side effects: no task dir, no queue row)
     On success a ``dispatch`` timeline event is appended (AC-017: every
     dispatch leaves a timeline trace), when a timeline writer is given.
     """
     project_root = pathlib.Path(project_root)
     task_key = task_key_for(owner, stem)
+    # The identity path is only computed here; creating it still happens after
+    # every rejection below, so a refused dispatch leaves zero side effects.
+    task_dir = project_root / ".agenticdoc" / owner / "workers" / task_key
 
     def reject(reason: str, detail: str, ev: str = "type-rejected") -> DispatchResult:
         if timeline is not None:
@@ -497,6 +504,39 @@ def dispatch(
             )
         return DispatchResult(
             ok=False, reason=reason, task_key=task_key, task_md=None, row_verified=False
+        )
+
+    # AC-004 (DD-12): the product carries its own run state (T-20/D-022), and
+    # that state outranks every ledger-derived criterion below. This is the
+    # FIRST dispatch criterion: a `run.json` that already ended means the work
+    # is settled (re-dispatching would replay a finished task), and a live
+    # `running` record means another process owns this identity right now
+    # (re-dispatching would run it twice). Both refuse before ANY side effect —
+    # no task dir, no task.md, no queue row. Exactly one read per attempt:
+    # `mw_common.read_run_status` is the single reader (no new JSON parsing),
+    # and `run_status` is reused for both branches. `None` (no run.json /
+    # unreadable / no status) is "no information", so the historical
+    # fail-open path is byte-for-byte unchanged — zero backfill.
+    run_status = mw_common.read_run_status(task_dir)
+    if run_status is not None:
+        if run_status in mw_common.RUN_TERMINAL_STATUSES:
+            return reject(
+                f"run-terminal:{run_status}",
+                f"run.json status={run_status} (terminal) - not re-dispatching",
+            )
+        if run_status == "running":
+            return reject(
+                "run-running",
+                "run.json status=running - another process owns this task",
+            )
+        # Forward-compatible: an unknown non-terminal status is no information
+        # either, so it keeps the fail-open default (dispatch) and is logged
+        # for diagnosis rather than guessed into a terminal meaning.
+        print(
+            f"[dispatch] debug: unknown run.json status {run_status!r} for "
+            f"{task_key} - dispatching (fail-open)",
+            file=sys.stderr,
+            flush=True,
         )
 
     entry = REGISTRY.get(task_type)
@@ -580,7 +620,6 @@ def dispatch(
 
     # 1. task.md (before the queue row — the crash gap is the orphan shape
     #    that reconciliation heals; see module docstring / D-102).
-    task_dir = project_root / ".agenticdoc" / owner / "workers" / task_key
     task_dir.mkdir(parents=True, exist_ok=True)
     task_md = task_dir / "task.md"
     task_md.write_text(content, encoding="utf-8", newline="\n")
@@ -618,19 +657,14 @@ def dispatch(
         )
     try:
         wpath.parent.mkdir(parents=True, exist_ok=True)
-        existing = mw_common.parse_workers_file(wpath)
-        idx = next(
-            (i for i, e in enumerate(existing) if e["task_key"] == task_key), None
-        )
-        if idx is None:
-            existing.append(row)
-        else:
-            existing[idx] = row
-        # Queue write goes through mw_common._write_workers_file (content
-        # fully precomputed, then tmp + os.replace): a serialization error
-        # must never truncate _workers.parallel — open("w") truncates before
-        # the write expression is evaluated (pitfalls P-003 / PM defect #50).
-        mw_common._write_workers_file(wpath, existing)
+        # Queue write goes through mw_common.upsert_worker_row (content fully
+        # precomputed, then tmp + os.replace): a serialization error must
+        # never truncate _workers.parallel — open("w") truncates before the
+        # write expression is evaluated (pitfalls P-003 / PM defect #50).
+        # Slot-preserving (T-18/AC-023): the dispatcher rewrites only its own
+        # row, so rows no parser can read are never silently deleted (the
+        # third Python writer of the IN-3 amplifier F4).
+        mw_common.upsert_worker_row(wpath, row)
     except OSError as exc:
         return DispatchResult(
             ok=False,

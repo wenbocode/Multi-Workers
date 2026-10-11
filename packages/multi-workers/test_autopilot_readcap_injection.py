@@ -991,11 +991,19 @@ def test_vc009_images_zero_byte_and_position() -> None:
 #   test_autopilot_config.py    13 -> 14 config keys (T-03 auto_gate_mode;
 #                               count/order lock refreshed by T-15)
 #   test_autopilot_dispatch.py  `vision` registry entry + test (mw-vision-role T-03)
+# Re-frozen again 2026-10-10 during mw-gate-verdict-hardening T-18:
+#   test_autopilot_config.py    14 -> 17 config keys (G5/G6: launcher_max_workers,
+#                               dispatch_max_per_scan, queue_alarm_delta), so the
+#                               count/order lock had to move with the schema.
+# Re-frozen again 2026-10-10 during mw-gate-verdict-hardening T-02:
+#   test_autopilot_config.py    17 -> 20 config keys (G1/G2: l3_abort_retry_limit,
+#                               gate_reminder_after_min, gate_reminder_max), plus
+#                               the single-key accept / out-of-range reject cases.
 # The assertion is byte-exact and unchanged in strength; only its recorded left
 # end moved off the pre-change git HEAD.
 _GOLDEN_REGRESSION_SHA256 = {
     "test_autopilot_config.py":
-        "5a728d0dec0a4b474da1fd8589d67eafe284afa90c44168fc53936cb13b1fa11",
+        "27b222b9d166325b536a27c01f106b9304d360ecfab451bbe8082324fd973f40",
     "test_autopilot_dispatch.py":
         "66cf1f5f6658c8e50284e7fd761cbaebd415f2e4b2216f15d7fb81680b73e902",
 }

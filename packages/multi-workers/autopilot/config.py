@@ -36,6 +36,28 @@ Field set and defaults (D-110):
                                     EFFECTIVE_KEYS, so the machine layer cannot
                                     silently turn automation on. Any other value
                                     fails closed like every other field.)
+    launcher_max_workers int   8    (1..64; launcher concurrency cap, T-18/D-027.
+                                    Bounded by default: an absent value or an
+                                    explicit ``None`` must never mean "unbounded"
+                                    - IN-3 spawned 66 workers at once that way.)
+    dispatch_max_per_scan int  3    (1..64; how many NEW queue rows one dispatch
+                                    scan may add before it stops (T-17/D-026).
+                                    A quota of rows, not of tasks.)
+    queue_alarm_delta   int    50   (10..10000; doctor `queue-burst-shape`
+                                    threshold: more than this many non-terminal
+                                    rows AND > 90% of the queue non-terminal is
+                                    the IN-3 fingerprint (252 rows, 0 terminal).)
+    l3_abort_retry_limit int   1   (0..10; T-01/AC-003 dedicated re-roll budget
+                                    for G1 aborted rounds - the `l3abort:{key}`
+                                    loop, never charged against `l3_limit`.)
+    gate_reminder_after_min int 30  (1..1440; T-07/G2 age threshold in minutes
+                                    for the first pending-gate reminder. Upper
+                                    bound 24 h keeps the active reminder strictly
+                                    ahead of doctor's passive 24h/72h text.)
+    gate_reminder_max   int    2    (1..2; T-07/G2 cap on reminders for one gate.
+                                    Bounded at 2 by design D-007 so a config can
+                                    only lower, never raise, AC-005's "at most
+                                    two reminders" contract.)
 
 :func:`cached_load` is a thin alias of :func:`load_config` plus a JSON
 round-trip defensive copy. It no longer caches by mtime/size, so an external
@@ -67,6 +89,12 @@ DEFAULT_CONFIG: dict = {
     "xkey_verify_timeout_s": 1800,
     "xkey_verify_cwd": "",
     "auto_gate_mode": "off",
+    "launcher_max_workers": 8,
+    "dispatch_max_per_scan": 3,
+    "queue_alarm_delta": 50,
+    "l3_abort_retry_limit": 1,
+    "gate_reminder_after_min": 30,
+    "gate_reminder_max": 2,
 }
 
 # bool must be rejected before the int rules (bool is an int subclass).
@@ -85,6 +113,12 @@ _INT_RANGES: dict[str, tuple[int, int | None]] = {
     "l2_read_byte_cap": (1, None),
     "advance_stall_ticks": (1, 50),
     "xkey_verify_timeout_s": (1, None),
+    "launcher_max_workers": (1, 64),
+    "dispatch_max_per_scan": (1, 64),
+    "queue_alarm_delta": (10, 10000),
+    "l3_abort_retry_limit": (0, 10),
+    "gate_reminder_after_min": (1, 1440),
+    "gate_reminder_max": (1, 2),
 }
 
 
@@ -151,7 +185,7 @@ def load_config(project_root: pathlib.Path) -> dict:
     return the raw data itself: a partial file yields exactly the keys it
     actually carries, never a silent default fill.
 
-    Consumers that need the complete 14-key view must use
+    Consumers that need the complete 20-key view must use
     :func:`default_config` or :func:`autopilot.effective_config.load_effective`;
     a key a human may have omitted must be read with ``.get(...)``, not by
     subscripting."""

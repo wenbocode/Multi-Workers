@@ -1117,3 +1117,277 @@ class TestDualWorkspaceSpawnCwd:
         assert "target.yml" in worker_log
         statuses = {e["task_key"]: e["status"] for e in _parse_workers_file(queue_file)}
         assert statuses["t001"] == "failed"  # fail-closed, visible in the queue
+
+
+# ── T-18 (AC-021): the launcher cap is always finite ───────────────────────
+
+
+def _machine_config_off(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the machine config layer at a nonexistent file: the project layer
+    (and the built-in default) is what the test then measures."""
+    monkeypatch.setenv("MW_AUTOPILOT_FILE", str(tmp_path / "absent-machine-config.json"))
+
+
+def _write_project_config(tmp_path: pathlib.Path, **overrides: object) -> pathlib.Path:
+    path = tmp_path / ".agenticdoc" / "_autopilot" / "config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(overrides, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _pending_workers(tmp_path: pathlib.Path, count: int) -> list[dict[str, str]]:
+    rows = []
+    for i in range(count):
+        key = f"t{i:03d}"
+        d = _make_worker_dir(tmp_path, key)
+        rows.append(_entry(d / "task.md", task_key=key))
+    return rows
+
+
+class TestLauncherMaxWorkersBound:
+    """T-18/D-027 (AC-021): `max_workers=None` used to mean "unbounded" — the
+    IN-3 amplifier that let 66 workers run at once. It now resolves to the
+    configured `launcher_max_workers` (default 8); an explicit value still wins
+    (CLI arg > config > built-in default)."""
+
+    @staticmethod
+    def _spawn_all(
+        tmp_path: pathlib.Path,
+        providers: dict,
+        queue_file: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+        rows: list[dict[str, str]],
+        max_workers: int | None,
+    ) -> dict:
+        monkeypatch.setenv("TIMI_API_KEY", "test-timi-key")
+        monkeypatch.setattr(launcher.shutil, "which", lambda name: str(tmp_path / "pi.CMD"))
+        monkeypatch.setattr(launcher.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+        queue_file.write_text(
+            "\n".join(_serialize_entry(e) for e in rows) + "\n", encoding="utf-8"
+        )
+        running: dict = {}
+        _poll_once(tmp_path, providers, running, {}, [], max_workers)
+        return running
+
+    def test_default_max_workers_is_eight_not_unbounded(
+        self, tmp_path: pathlib.Path, providers: dict, queue_file: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _machine_config_off(tmp_path, monkeypatch)
+        rows = _pending_workers(tmp_path, 12)
+
+        running = self._spawn_all(tmp_path, providers, queue_file, monkeypatch, rows, None)
+
+        assert len(running) == 8, sorted(running)
+        assert mw_common.launcher_max_workers(tmp_path) == 8
+
+    def test_project_config_cap_is_used(
+        self, tmp_path: pathlib.Path, providers: dict, queue_file: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _machine_config_off(tmp_path, monkeypatch)
+        _write_project_config(tmp_path, launcher_max_workers=2)
+        rows = _pending_workers(tmp_path, 5)
+
+        running = self._spawn_all(tmp_path, providers, queue_file, monkeypatch, rows, None)
+
+        assert len(running) == 2, sorted(running)
+
+    def test_explicit_arg_wins_over_config(
+        self, tmp_path: pathlib.Path, providers: dict, queue_file: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _machine_config_off(tmp_path, monkeypatch)
+        _write_project_config(tmp_path, launcher_max_workers=1)
+        rows = _pending_workers(tmp_path, 4)
+
+        running = self._spawn_all(tmp_path, providers, queue_file, monkeypatch, rows, 3)
+
+        assert len(running) == 3, sorted(running)
+
+    def test_unreadable_config_falls_back_to_the_bounded_default(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _machine_config_off(tmp_path, monkeypatch)
+        _write_project_config(tmp_path, launcher_max_workers=999999)  # out of range
+
+        assert mw_common.launcher_max_workers(tmp_path) == 8
+
+
+class TestLauncherAckConvergence:
+    """T-18/D-027 (AC-023): `_workers.acked` is now consulted before spawning.
+    An acked task whose row looks non-terminal (a queue rebuild rewrote it —
+    IN-3) is converged to a terminal status and never re-run; an unreadable
+    acked file is "no information" and must not skip everything."""
+
+    def test_acked_non_terminal_row_converges_and_is_not_spawned(
+        self, task_file: pathlib.Path, tmp_path: pathlib.Path, providers: dict,
+        queue_file: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _machine_config_off(tmp_path, monkeypatch)
+        monkeypatch.setenv("TIMI_API_KEY", "test-timi-key")
+        monkeypatch.setattr(launcher.shutil, "which", lambda name: str(tmp_path / "pi.CMD"))
+        monkeypatch.setattr(launcher.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+        entry = _entry(task_file)
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+        (tmp_path / ".agenticdoc" / "_workers.acked").write_text(
+            "t001 | 2026-10-10T02:00:00+00:00\n", encoding="utf-8"
+        )
+
+        running: dict = {}
+        _poll_once(tmp_path, providers, running, {}, [], None)
+
+        assert running == {}
+        statuses = {e["task_key"]: e["status"] for e in _parse_workers_file(queue_file)}
+        assert statuses["t001"] == "done"
+
+    def test_acked_parse_failure_does_not_skip(
+        self, task_file: pathlib.Path, tmp_path: pathlib.Path, providers: dict,
+        queue_file: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _machine_config_off(tmp_path, monkeypatch)
+        monkeypatch.setenv("TIMI_API_KEY", "test-timi-key")
+        monkeypatch.setattr(launcher.shutil, "which", lambda name: str(tmp_path / "pi.CMD"))
+        monkeypatch.setattr(launcher.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+        entry = _entry(task_file)
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+        # Garbage in every shape: no separator, empty key, empty timestamp.
+        (tmp_path / ".agenticdoc" / "_workers.acked").write_text(
+            "t001\n# comment\n | 2026-10-10T02:00:00+00:00\nt002 | \n", encoding="utf-8"
+        )
+
+        running: dict = {}
+        _poll_once(tmp_path, providers, running, {}, [], None)
+
+        assert "t001" in running  # unreadable ack state is never a skip
+        assert mw_common.read_acked(tmp_path) == {}
+
+# ── T-20 (AC-022/D-022): product-carried run.json in the reconcile ladder ────
+
+
+def _write_run_json(task_dir: pathlib.Path, status: str, **overrides) -> pathlib.Path:
+    """A worker-written run.json (schema 1 shape, mirrors shared/run-store.ts)."""
+    record = {
+        "schema": 1,
+        "task_key": overrides.pop("task_key", task_dir.name),
+        "run_id": overrides.pop("run_id", f"{task_dir.name}@2026-10-10T02:00:00.000Z"),
+        "owner_key": "test-key",
+        "kind": "coding",
+        "status": status,
+        "started_at": "2026-10-10T02:00:00.000Z",
+        "artifacts": overrides.pop("artifacts", []),
+    }
+    record.update(overrides)
+    path = task_dir / "run.json"
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _read_run_json(task_dir: pathlib.Path) -> dict:
+    return json.loads((task_dir / "run.json").read_text(encoding="utf-8"))
+
+
+class TestReconcileRunState:
+    """T-20/D-022: the worker-written run.json outranks the ledger row.
+
+    A terminal run.json converges the row to that status (the row lagged); an
+    active run.json whose process is gone converges to `lost` — the launcher may
+    only ADD `lost`, never fabricate done/failed, and never rewrites the
+    artifacts (`[END]` positive evidence still wins over a stale `running`)."""
+
+    def test_run_json_terminal_converges_stuck_row(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        d = _make_worker_dir(tmp_path, "t001")
+        _write_run_json(d, "done", artifacts=["output.md"])
+        entry = _entry(d / "task.md", status="running", task_key="t001")
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "done"
+        log_text = (d / "worker.log").read_text(encoding="utf-8")
+        assert "run.json status=done" in log_text
+
+    def test_run_json_terminal_needs_clarification_is_preserved(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        d = _make_worker_dir(tmp_path, "t001")
+        _write_run_json(d, "needs-clarification")
+        entry = _entry(d / "task.md", status="running", task_key="t001")
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "needs-clarification"
+
+    def test_run_json_running_with_output_md_becomes_lost(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        d = _make_worker_dir(tmp_path, "t001")
+        _write_run_json(d, "running", artifacts=[])
+        (d / "output.md").write_text("# Result\nfinished, no run.json terminal write\n", encoding="utf-8")
+        entry = _entry(d / "task.md", status="running", task_key="t001")
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "lost"
+        record = _read_run_json(d)
+        assert record["status"] == "lost"
+        assert "ended_at" in record
+        assert record["run_id"] == "t001@2026-10-10T02:00:00.000Z"  # identity untouched
+        assert record["artifacts"] == []  # the scene is preserved, never rebuilt
+        assert "unverified" in (d / "worker.log").read_text(encoding="utf-8")
+        # The artifact itself is untouched.
+        assert "finished, no run.json terminal write" in (d / "output.md").read_text(encoding="utf-8")
+
+    def test_run_json_running_stale_no_output_becomes_lost(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        d = _make_worker_dir(tmp_path, "t001")
+        _write_run_json(d, "running")
+        queue_file.write_text(
+            _serialize_entry(_aged_orphan_entry(d, "t001", 95)) + "\n", encoding="utf-8"
+        )
+        _age_task_dir(d, 95 * 60)
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "lost"
+        assert _read_run_json(d)["status"] == "lost"
+
+    def test_run_json_running_fresh_stays_running(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        d = _make_worker_dir(tmp_path, "t001")
+        _write_run_json(d, "running")
+        queue_file.write_text(
+            _serialize_entry(_aged_orphan_entry(d, "t001", 5)) + "\n", encoding="utf-8"
+        )
+        _age_task_dir(d, 5 * 60)
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "running"
+        assert _read_run_json(d)["status"] == "running"  # nothing written
+        assert not (d / "worker.log").exists()
+
+    def test_end_marker_wins_over_stale_running_run_json(
+        self, tmp_path: pathlib.Path, queue_file: pathlib.Path,
+    ) -> None:
+        # Positive evidence (the worker reached its [END] write) must never be
+        # downgraded to `lost` because run.json lagged one write behind.
+        d = _make_worker_dir(tmp_path, "t001")
+        _write_run_json(d, "running")
+        (d / "trace.log").write_text(_end_line(0) + "\n", encoding="utf-8")
+        entry = _entry(d / "task.md", status="running", task_key="t001")
+        queue_file.write_text(_serialize_entry(entry) + "\n", encoding="utf-8")
+
+        _reconcile_orphans(tmp_path, {})
+
+        assert _parse_workers_file(queue_file)[0]["status"] == "done"
+        assert _read_run_json(d)["status"] == "running"  # launcher never writes here
+
+    def test_lost_row_is_terminal_for_the_ledger(self) -> None:
+        assert "lost" in mw_common._TERMINAL_STATUSES

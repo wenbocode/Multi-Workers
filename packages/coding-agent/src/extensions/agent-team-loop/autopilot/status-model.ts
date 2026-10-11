@@ -103,6 +103,29 @@ export interface AutopilotConfig {
 	 * effective_config EFFECTIVE_KEYS, so a machine-layer entry cannot
 	 * silently turn automation on. Any other value fails closed. */
 	auto_gate_mode: string;
+	/** Launcher concurrency cap (T-18/D-027, AC-021): 1..64, default 8. Bounded
+	 * by default — an absent value (and an explicit `None` on the Python side)
+	 * must never mean "unbounded"; IN-3 spawned 66 workers at once that way. */
+	launcher_max_workers: number;
+	/** Max NEW queue rows one dispatch scan may add (T-17/D-026, AC-021). A
+	 * quota of rows, not of tasks; the rest of the scan is refused + alarmed. */
+	dispatch_max_per_scan: number;
+	/** Doctor `queue-burst-shape` threshold (T-18/D-027): more than this many
+	 * non-terminal rows AND > 90% of the queue non-terminal is the IN-3
+	 * fingerprint (252 rows, 0 terminal). 10..10000, default 50. */
+	queue_alarm_delta: number;
+	/** G1 dedicated `l3abort:` re-roll cap (T-02/D-003, AC-003): 0..10, default
+	 * 1. Counted on its own loop label, so it never spends the shared l3
+	 * budget. */
+	l3_abort_retry_limit: number;
+	/** G2 pending-gate reminder threshold in minutes (T-02/D-007, AC-005):
+	 * 1..1440, default 30. Capped at 24h so the active channel always fires
+	 * before `mw doctor`'s 24h/72h text. */
+	gate_reminder_after_min: number;
+	/** G2 reminders per gate (T-02/D-007, AC-005): closed 1..2, default 2. The
+	 * range max is 2 by design — a config can only lower the cap, never raise
+	 * it past AC-005's "at most 2". */
+	gate_reminder_max: number;
 }
 
 export const DEFAULT_CONFIG: AutopilotConfig = {
@@ -120,6 +143,12 @@ export const DEFAULT_CONFIG: AutopilotConfig = {
 	xkey_verify_timeout_s: 1800,
 	xkey_verify_cwd: "",
 	auto_gate_mode: "off",
+	launcher_max_workers: 8,
+	dispatch_max_per_scan: 3,
+	queue_alarm_delta: 50,
+	l3_abort_retry_limit: 1,
+	gate_reminder_after_min: 30,
+	gate_reminder_max: 2,
 };
 
 /** Fresh copy of the defaults that callers may mutate freely — mirror of
@@ -153,6 +182,12 @@ export const INT_RANGES: Record<string, [number, number | null]> = {
 	l2_read_byte_cap: [1, null],
 	advance_stall_ticks: [1, 50],
 	xkey_verify_timeout_s: [1, null],
+	launcher_max_workers: [1, 64],
+	dispatch_max_per_scan: [1, 64],
+	queue_alarm_delta: [10, 10000],
+	l3_abort_retry_limit: [0, 10],
+	gate_reminder_after_min: [1, 1440],
+	gate_reminder_max: [1, 2],
 };
 
 /** Node >= 22 hands the reviver a third argument whose `context.source` is the
@@ -278,7 +313,13 @@ export function readConfig(projectDir: string): ConfigResult {
 			| "l2_read_file_cap"
 			| "l2_read_byte_cap"
 			| "advance_stall_ticks"
-			| "xkey_verify_timeout_s",
+			| "xkey_verify_timeout_s"
+			| "launcher_max_workers"
+			| "dispatch_max_per_scan"
+			| "queue_alarm_delta"
+			| "l3_abort_retry_limit"
+			| "gate_reminder_after_min"
+			| "gate_reminder_max",
 	): number => (typeof cfg[name] === "number" ? (cfg[name] as number) : DEFAULT_CONFIG[name]);
 	const listOf = (name: "xkey_verify_cmd"): string[] =>
 		Array.isArray(cfg[name]) ? (cfg[name] as string[]) : [...DEFAULT_CONFIG[name]];
@@ -299,6 +340,12 @@ export function readConfig(projectDir: string): ConfigResult {
 		xkey_verify_timeout_s: intOf("xkey_verify_timeout_s"),
 		xkey_verify_cwd: strOf("xkey_verify_cwd"),
 		auto_gate_mode: strOf("auto_gate_mode"),
+		launcher_max_workers: intOf("launcher_max_workers"),
+		dispatch_max_per_scan: intOf("dispatch_max_per_scan"),
+		queue_alarm_delta: intOf("queue_alarm_delta"),
+		l3_abort_retry_limit: intOf("l3_abort_retry_limit"),
+		gate_reminder_after_min: intOf("gate_reminder_after_min"),
+		gate_reminder_max: intOf("gate_reminder_max"),
 	};
 	return { ok: true, config: merged };
 }
@@ -325,6 +372,12 @@ export function saveConfig(projectDir: string, config: AutopilotConfig): { ok: t
 		xkey_verify_timeout_s: config.xkey_verify_timeout_s,
 		xkey_verify_cwd: config.xkey_verify_cwd,
 		auto_gate_mode: config.auto_gate_mode,
+		launcher_max_workers: config.launcher_max_workers,
+		dispatch_max_per_scan: config.dispatch_max_per_scan,
+		queue_alarm_delta: config.queue_alarm_delta,
+		l3_abort_retry_limit: config.l3_abort_retry_limit,
+		gate_reminder_after_min: config.gate_reminder_after_min,
+		gate_reminder_max: config.gate_reminder_max,
 	};
 	const file = configPath(projectDir);
 	try {
@@ -590,6 +643,13 @@ export const GATE_KINDS = [
 	"xkey-authorize",
 ] as const;
 export const GATE_STATUSES = ["pending", "approved", "rejected"] as const;
+/** Closed set of action types a gate may authorize (gates.py AUTHORIZES_ACTIONS,
+ * design D-011). This is the ONE TS declaration of the set — `gate-writer.ts`
+ * imports it, and `autopilot-gate-presentation.test.ts` locks it against the
+ * Python side, so the two languages can never drift into separate copies.
+ * `install` is deliberately excluded (no machine consumer). */
+export const AUTHORIZES_ACTIONS = ["contract-change", "retry"] as const;
+const AUTHORIZES_ACTION_SET = new Set<string>(AUTHORIZES_ACTIONS);
 
 /** Canonical frontmatter field order (gates.py FRONTMATTER_FIELDS). The first
  * 12 names are the frozen base schema; the remaining 28 are the additive v2
@@ -674,6 +734,9 @@ export interface GateRecord {
 	expiresAt: string | null;
 	defaultAction: string | null;
 	outOfBandActions: string[];
+	/** G3 (D-011): recognized contract field OUTSIDE the frozen 40-name order,
+	 * declared as a single-line JSON array. [] / absent = not authorized. */
+	authorizes: string[];
 	gateSchema: number;
 	answeredAt: string | null;
 	answeredBy: string | null;
@@ -685,14 +748,19 @@ class GateFormatError extends Error {}
 const GATE_FILE_RE = /^gate-(\d+)\.md$/;
 /** Named block-list fields (gates.py _LIST_FIELDS) — one set, two impls. */
 const GATE_LIST_FIELDS = new Set(["context_refs", "evidence_refs"]);
-/** Single-line JSON substring fields (gates.py _JSON_LIST_FIELDS/_JSON_OBJ_FIELDS). */
-const GATE_JSON_LIST_FIELDS = new Set([
+/** Single-line JSON substring fields (gates.py _JSON_LIST_FIELDS/_JSON_OBJ_FIELDS).
+ * `authorizes` is a recognized extension field: it is NOT in
+ * GATE_FRONTMATTER_FIELDS (frozen 40-name cross-language order), but the parse
+ * surface accepts it as a JSON-list field so Python and TS read the same
+ * shape (D-011 REVISED). */
+export const GATE_JSON_LIST_FIELDS = new Set([
 	"verdicts_final",
 	"open_items",
 	"roadmap_validation",
 	"constraints",
 	"write_scope",
 	"out_of_band_actions",
+	"authorizes",
 ]);
 const GATE_JSON_OBJ_FIELDS = new Set(["goal_diff", "blast_radius"]);
 const GATE_FIELD_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
@@ -755,7 +823,10 @@ export function parseGateFile(text: string, file: string): GateRecord {
 		const field = GATE_FIELD_LINE_RE.exec(line);
 		if (field === null) throw new GateFormatError(`${file}: invalid frontmatter line ${i + 1}: '${line}'`);
 		const name = field[1] ?? "";
-		if (!(GATE_FRONTMATTER_FIELDS as readonly string[]).includes(name)) {
+		// The frozen 40-name order OR a recognized JSON-list extension field
+		// (`authorizes`) parses; anything else stays fail-closed (gates.py
+		// parse-surface membership check, D-011).
+		if (!(GATE_FRONTMATTER_FIELDS as readonly string[]).includes(name) && !GATE_JSON_LIST_FIELDS.has(name)) {
 			throw new GateFormatError(`${file}: unknown frontmatter field '${name}' (line ${i + 1})`);
 		}
 		if (seen.has(name)) throw new GateFormatError(`${file}: duplicate frontmatter field '${name}' (line ${i + 1})`);
@@ -842,6 +913,14 @@ export function parseGateFile(text: string, file: string): GateRecord {
 		return decoded;
 	};
 
+	const authorizes = jsonStringList("authorizes");
+	const outOfSet = [...new Set(authorizes.filter((action) => !AUTHORIZES_ACTION_SET.has(action)))].sort();
+	if (outOfSet.length > 0) {
+		throw new GateFormatError(
+			`${file}: unknown authorizes action(s) ${outOfSet.join(", ")} (expected one of: ${[...AUTHORIZES_ACTIONS].sort().join(", ")})`,
+		);
+	}
+
 	const contextRefs = listValues.get("context_refs") ?? [];
 	const evidenceRefs = listValues.get("evidence_refs") ?? [];
 	const id = required("id");
@@ -908,6 +987,7 @@ export function parseGateFile(text: string, file: string): GateRecord {
 		expiresAt: isoField("expires_at", optional("expires_at")),
 		defaultAction: optional("default_action"),
 		outOfBandActions: jsonStringList("out_of_band_actions"),
+		authorizes,
 		gateSchema,
 		answeredAt,
 		answeredBy: optional("answered_by"),
@@ -987,6 +1067,18 @@ export const EVENT_TYPES = new Set([
 	"review-escalated",
 	"evidence-reconciliation",
 	"stage-reopen-refused",
+	// Gate verdict hardening (mw-gate-verdict-hardening, T-05, design D-002/
+	// D-016): the TS half of the T-03 vocabulary. Names are verbatim from
+	// timeline.py EVENT_TYPES; the parity test asserts set equality, so
+	// neither side may rename or prefix them. Producers land in T-01/T-07/
+	// T-10 — pre-admitted vocabulary is safe (include-set, not a gate).
+	"l3-aborted",
+	"gate-reminder",
+	"contract-refused",
+	// Gate verdict hardening (mw-gate-verdict-hardening, T-23, AC-025): the TS
+	// half of the Python `contract-frozen` anchor event. The parity test asserts
+	// set equality, so the name is verbatim from timeline.py EVENT_TYPES.
+	"contract-frozen",
 ]);
 
 export const BEAT_EV = "beat";
@@ -1239,6 +1331,27 @@ export interface GateView {
 	id: string;
 	kind: string;
 	status: string;
+	/** Milliseconds since the gate file's `created_at` (D-009/AC-008), computed
+	 * at derivation time. `null` when the timestamp is unavailable — never a
+	 * fallback to `expires_at`: every historical (v1) gate lacks that field,
+	 * so keying age off it would report "unknown" forever (D-007). */
+	ageMs: number | null;
+}
+
+/** Worker statuses that end a run — the `mw_common._TERMINAL_STATUSES` mirror
+ * (T-20/D-022: `done`, `failed`, `needs-clarification`, `lost`). A row in any
+ * of these is no longer in flight; `pending` and `running` are. */
+export const TERMINAL_WORKER_STATUSES: ReadonlySet<string> = new Set(["done", "failed", "needs-clarification", "lost"]);
+
+/** G2 `BLOCKED_ON_HUMAN` truth table (T-05, design D-008): a project is
+ * blocked on a human when a pending gate exists AND no non-terminal worker
+ * row is in flight. Deliberately NOT `status == "running"` — a `pending` row
+ * starts on the next tick, so counting it as "in flight" avoids a false
+ * reminder. The third axis (`conductor still ticking`) is a TS render-time
+ * concern owned by `monitor.ts`'s `tickStale`; this is the file-only
+ * predicate both TS surfaces share, mirroring the Python truth table in T-07. */
+export function blockedOnHuman(pendingGates: number, nonTerminalRows: number): boolean {
+	return pendingGates > 0 && nonTerminalRows === 0;
 }
 
 export interface TimelineWatermark {
@@ -1312,7 +1425,7 @@ function keyRounds(perLoop: Map<string, number>, key: string, budget: number): K
  * an invalid config.json (D-110 fail-closed); a missing/parse-failed
  * roadmap, corrupt gate files, and an absent timeline all degrade to empty
  * views plus warnings. */
-export function deriveStatusModel(projectDir: string): StatusModelResult {
+export function deriveStatusModel(projectDir: string, nowMs: number = Date.now()): StatusModelResult {
 	const cfg = readConfig(projectDir);
 	if (!cfg.ok) return cfg;
 	const config = cfg.config;
@@ -1346,7 +1459,17 @@ export function deriveStatusModel(projectDir: string): StatusModelResult {
 
 	const gateScan = listGates(projectDir);
 	warnings.push(...gateScan.errors);
-	const gates: GateView[] = gateScan.gates.map((g) => ({ id: g.id, kind: g.kind, status: g.status }));
+	// Age is computed HERE (collect) from the gate's own created_at; the
+	// renderer stays a pure function of the model (same split as monitor.ts).
+	const gates: GateView[] = gateScan.gates.map((g) => {
+		const createdMs = Date.parse(g.createdAt);
+		return {
+			id: g.id,
+			kind: g.kind,
+			status: g.status,
+			ageMs: Number.isNaN(createdMs) ? null : Math.max(0, nowMs - createdMs),
+		};
+	});
 
 	const head = queryTimeline(timelinePath(projectDir), 0).head;
 
@@ -1375,6 +1498,16 @@ export function deriveStatusModel(projectDir: string): StatusModelResult {
 	};
 }
 
+/** "45s" / "3m" / "2h 3m" — coarse pending age for the status text (D-009).
+ * Mirrors monitor.ts's formatDuration so the two surfaces read the same. */
+function formatCoarseAge(ms: number): string {
+	const s = Math.max(0, Math.floor(ms / 1000));
+	if (s < 60) return `${s}s`;
+	const m = Math.floor(s / 60);
+	if (m < 60) return `${m}m`;
+	return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
 /** Human-readable rendering of the SAME derivation that produced the --json
  * payload (view parity, VC-017): every number below is taken from the model
  * object, so the two views cannot drift. */
@@ -1395,7 +1528,11 @@ export function renderStatusText(model: StatusModel): string {
 	}
 	const pending = status.gates.filter((g) => g.status === "pending");
 	lines.push(`gates: ${status.gates.length} total, ${pending.length} pending`);
-	for (const g of status.gates) lines.push(`  ${g.id} ${g.kind} ${g.status}`);
+	for (const g of status.gates) {
+		// D-009: pending age in the human row ("age=?" when unknown).
+		const age = g.ageMs === null ? "?" : formatCoarseAge(g.ageMs);
+		lines.push(`  ${g.id} ${g.kind} ${g.status} age=${age}`);
+	}
 	lines.push(`timeline: seq=${status.timeline.seq} ts=${status.timeline.ts}`);
 	lines.push(
 		`config: enabled=${status.config.enabled} | poll_interval_sec=${status.config.poll_interval_sec}` +

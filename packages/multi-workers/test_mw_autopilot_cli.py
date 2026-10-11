@@ -31,6 +31,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import mw  # noqa: E402
 from autopilot import config as _cfg  # noqa: E402
+from autopilot import contract_guard  # noqa: E402
 
 MW_PY = pathlib.Path(__file__).parent / "mw.py"
 
@@ -118,8 +119,9 @@ def test_set_stores_flag_shaped_tokens_verbatim(
     # The separator itself is consumed, never stored.
     assert "--" in stored["xkey_verify_cmd"]  # ... unless the user passed a second one
     assert set(stored) == set(_cfg.DEFAULT_CONFIG)
-    # Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
-    assert len(stored) == 14
+    # Count changed 13 -> 14 (slot-capacity T-03), 14 -> 17 (mw-gate-verdict-hardening T-18),
+    # 17 -> 20 (mw-gate-verdict-hardening T-02 G1/G2 keys).
+    assert len(stored) == 20
     _verify("VC-001", argv_tokens=len(tokens), completed_keys=len(stored), verbatim=True)
 
 
@@ -399,6 +401,170 @@ def test_show_does_not_create_mw_dir_after_set(tmp_path: pathlib.Path) -> None:
     assert not (mw_dir / "autopilot-config.lock").exists()  # released
     assert mw.cmd_autopilot(_show_args(tmp_path)) == 0
     assert not (mw_dir / "autopilot-config.lock").exists()
+
+
+# ── contract-guard (T-11 / AC-013, VC-016) ───────────────────────────────────
+
+CONTRACT_SPEC = """# Spec
+
+## 3. Acceptance Criteria
+
+| AC ID | 判据 |
+|---|---|
+| AC-001 | first frozen contract text |
+"""
+
+CONTRACT_DESIGN = """# Design
+
+VC-001: first assertion text
+       Layer: L0   Output: [VERIFY] VC-001: one=true   Source: AC-001
+"""
+
+
+def _guard_args(
+    project: pathlib.Path, key: str | None = None, as_json: bool = False
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        project=str(project),
+        autopilot_action="contract-guard",
+        key=key,
+        as_json=as_json,
+    )
+
+
+def _run_guard_cli(project: pathlib.Path, *argv: str) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    env["MW_AUTOPILOT_FILE"] = str(project / "no-machine-layer.json")
+    env.pop("MW_AUTOPILOT_HOME", None)
+    return subprocess.run(
+        [sys.executable, str(MW_PY), "autopilot", "contract-guard", *argv],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        stdin=subprocess.DEVNULL,
+        timeout=60,
+        env=env,
+    )
+
+
+def _frozen_key(
+    project: pathlib.Path, key: str = "k1"
+) -> pathlib.Path:
+    key_dir = project / ".agenticdoc" / key
+    key_dir.mkdir(parents=True, exist_ok=True)
+    (key_dir / "spec.md").write_text(CONTRACT_SPEC, encoding="utf-8", newline="\n")
+    (key_dir / "design.md").write_text(CONTRACT_DESIGN, encoding="utf-8", newline="\n")
+    contract_guard.freeze_contract(key_dir, key, CONTRACT_SPEC, CONTRACT_DESIGN)
+    return key_dir
+
+
+def _rewrite_ac(key_dir: pathlib.Path) -> None:
+    (key_dir / "spec.md").write_text(
+        CONTRACT_SPEC.replace(
+            "first frozen contract text", "first frozen contract text REWRITTEN"
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def _authorizing_gate(project: pathlib.Path, gate_id: str, key: str) -> None:
+    gdir = project / ".agenticdoc" / "_autopilot" / "gates"
+    gdir.mkdir(parents=True, exist_ok=True)
+    text = "\n".join(
+        [
+            "---",
+            f"id: {gate_id}",
+            "kind: stalled",
+            "stage:",
+            f"key: {key}",
+            "created_at: 2026-10-10T08:00:00+00:00",
+            "created_by: conductor",
+            "question: approve the contract text change?",
+            "context_refs: []",
+            "status: approved",
+            "answered_at: 2026-10-10T09:00:00+00:00",
+            "answered_by: human",
+            "note:",
+            'authorizes: \'["contract-change"]\'',
+            "---",
+            "",
+        ]
+    )
+    (gdir / f"{gate_id}.md").write_text(text, encoding="utf-8", newline="\n")
+
+
+def test_contract_guard_cli_no_freeze_is_readonly(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert mw.cmd_autopilot(_guard_args(tmp_path, key="k1")) == 0
+    assert "freeze=no" in capsys.readouterr().out
+    assert mw.cmd_autopilot(_guard_args(tmp_path, key="k1", as_json=True)) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["refused"] is False and payload["ok"] is True
+    assert payload["keys"][0]["freeze"] is False
+    assert "no_anchor" not in payload["keys"][0]  # not part of the wire shape
+    # Without --key there is no anchored key at all: nothing to check.
+    assert mw.cmd_autopilot(_guard_args(tmp_path)) == 0
+    assert "no freeze sidecar" in capsys.readouterr().out
+    assert not (tmp_path / ".agenticdoc").exists()
+    _verify("VC-016", no_freeze="exit 0", read_only=True)
+
+
+def test_contract_guard_cli_refuses_unauthorized_change(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _rewrite_ac(_frozen_key(tmp_path))
+    assert mw.cmd_autopilot(_guard_args(tmp_path, key="k1", as_json=True)) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["refused"] is True and payload["ok"] is False
+    assert payload["unauthorized"] == 1
+    entry = payload["keys"][0]
+    assert entry["key"] == "k1"
+    assert entry["changed_ids"] == ["AC-001"]
+    assert entry["carrier"] is None
+    assert entry["authorized"] is False
+    assert str(tmp_path) not in json.dumps(payload)
+    assert mw.cmd_autopilot(_guard_args(tmp_path, key="k1")) == 1
+    assert "ok=no refused" in capsys.readouterr().out
+    _verify("VC-016", refused=True, changed_ids=entry["changed_ids"], carrier=None)
+
+
+def test_contract_guard_cli_authorizing_gate_clears_it(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _rewrite_ac(_frozen_key(tmp_path))
+    _authorizing_gate(tmp_path, "gate-0001", "k1")
+    assert mw.cmd_autopilot(_guard_args(tmp_path, key="k1", as_json=True)) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["refused"] is False
+    assert payload["keys"][0]["carrier"] == "gate-0001"
+    assert payload["keys"][0]["authorized"] is True
+    _verify("VC-016", carrier=payload["keys"][0]["carrier"], refused=False)
+
+
+def test_contract_guard_cli_all_keys_and_reproducible(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _rewrite_ac(_frozen_key(tmp_path, "k1"))
+    _rewrite_ac(_frozen_key(tmp_path, "k0"))
+    assert mw.cmd_autopilot(_guard_args(tmp_path, as_json=True)) == 1
+    first = capsys.readouterr().out
+    assert mw.cmd_autopilot(_guard_args(tmp_path, as_json=True)) == 1
+    second = capsys.readouterr().out
+    assert first == second
+    payload = json.loads(first)
+    assert [entry["key"] for entry in payload["keys"]] == ["k0", "k1"]
+    assert payload["unauthorized"] == 2
+    _verify("VC-016", reproducible=True, keys="k0,k1", unauthorized=2)
+
+
+def test_contract_guard_cli_argparse_shape(tmp_path: pathlib.Path) -> None:
+    result = _run_guard_cli(tmp_path)  # --project required
+    assert result.returncode == 2
+    result = _run_guard_cli(tmp_path, "--project", str(tmp_path), "--json")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["keys"] == []
 
 
 # ── argparse shape ───────────────────────────────────────────────────────────

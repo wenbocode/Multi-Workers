@@ -40,6 +40,7 @@ from mw_common import (
 )
 from autopilot import config as _ap_config
 from autopilot import conductor as _ap_conductor
+from autopilot import contract_guard
 from autopilot import roadmap as _ap_roadmap
 
 _SCRIPT_DIR = pathlib.Path(__file__).parent
@@ -3551,14 +3552,19 @@ def _ap_verify_clear(args: argparse.Namespace, project_dir: pathlib.Path) -> int
 
 
 def cmd_autopilot(args: argparse.Namespace) -> int:
-    """Autopilot CLI: `verify set|show|clear` (xkey channel) and `gates`.
+    """Autopilot CLI: `verify set|show|clear` (xkey channel), `gates` and
+    `contract-guard`.
 
     Errors print ``[mw autopilot <action>] Error: ...`` to stderr and return 1;
-    only `verify set`/`clear` write (both under the dedicated lock). `gates` is
-    a read-only machine exit for the gate queue (T-13)."""
+    only `verify set`/`clear` write (both under the dedicated lock). `gates`
+    (pre-existing) and `contract-guard` (T-11) are read-only machine exits."""
     project_dir = pathlib.Path(args.project).resolve()
     if args.autopilot_action == "gates":
         return _ap_gates(args, project_dir)
+    if args.autopilot_action == "contract-guard":
+        return _ap_contract_guard(args, project_dir)
+    if args.autopilot_action == "contract-freeze":
+        return _ap_contract_freeze(args, project_dir)
     if args.autopilot_action != "verify":
         print(
             f"[mw autopilot] Error: unknown action {args.autopilot_action!r}",
@@ -3804,6 +3810,245 @@ def _ap_gates(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
             f"only ({request['path']}) - treated as unauthorized (VC-048)"
         )
     return 0
+
+
+def _ap_contract_guard(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw autopilot contract-guard [--key K] [--json]`: read-only G3 verdict.
+
+    The judgement is delegated to `autopilot.contract_guard.evaluate` (T-04) -
+    this CLI never re-derives freeze/diff/approval logic, and never writes (the
+    freeze sidecar is produced by the conductor / the T-04 library, not here).
+    Exit 0 = the done gate would not refuse (no anchor included); 1 = an
+    unauthorized frozen-contract change, or an unreadable gate queue. `--json`
+    carries no timestamp and no absolute path, so it is reproducible."""
+    key = getattr(args, "key", None)
+    try:
+        if key:
+            entries = [mw_common._contract_guard_entry(project_dir, key)]
+        else:
+            scan = mw_common._contract_guard_scan(project_dir)
+            entries = list(scan["keys"]) if scan is not None else []
+    except (ValueError, OSError) as exc:  # GateFormatError is a ValueError
+        print(f"[mw autopilot contract-guard] Error: {exc}", file=sys.stderr)
+        return 1
+
+    def refused(entry: dict) -> bool:
+        # `no_anchor` is present on the `--key` path and stripped from the
+        # doctor-scan shape (a scan entry is always anchored).
+        return (not entry["authorized"]) and not entry.get("no_anchor", False)
+
+    failed = any(refused(entry) for entry in entries)
+    if getattr(args, "as_json", False):
+        payload = {
+            "keys": [
+                {
+                    "authorized": entry["authorized"],
+                    "carrier": entry["carrier"],
+                    "changed_ids": entry["changed_ids"],
+                    "freeze": not entry.get("no_anchor", False),
+                    "key": entry["key"],
+                    "reasons": entry["reasons"],
+                    "refused": refused(entry),
+                }
+                for entry in entries
+            ],
+            "ok": not failed,
+            "refused": failed,
+            "unauthorized": sum(1 for entry in entries if refused(entry)),
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 1 if failed else 0
+
+    if not entries:
+        print("contract-guard: no freeze sidecar (nothing to check)")
+        return 0
+    for entry in entries:
+        changed = ",".join(entry["changed_ids"]) or "-"
+        carrier = entry["carrier"] or "none"
+        if entry.get("no_anchor", False):
+            print(f"contract-guard: {entry['key']} freeze=no carrier=none ok=yes (no anchor)")
+        elif entry["authorized"]:
+            print(
+                f"contract-guard: {entry['key']} freeze=yes changed={changed} "
+                f"carrier={carrier} ok=yes"
+            )
+        else:
+            print(
+                f"contract-guard: {entry['key']} freeze=yes changed={changed} "
+                f"carrier={carrier} ok=no refused"
+            )
+    return 1 if failed else 0
+
+
+# ── `mw autopilot contract-freeze`: explicit G3 anchor writer (T-23 / AC-025) ──
+
+#: `--block` choice -> the blocks it processes. `all` = both acceptance
+#: boundaries; a block left out is reported as `skipped` without being touched.
+_CONTRACT_FREEZE_BLOCKS: dict[str, tuple[tuple[str, str], ...]] = {
+    "ac": (("ac", "spec"),),
+    "vc": (("vc", "design"),),
+    "all": (("ac", "spec"), ("vc", "design")),
+}
+
+
+def _read_optional_text(path: pathlib.Path) -> str:
+    """UTF-8 text or ``""`` when the artifact is absent.
+
+    A missing ``spec.md``/``design.md`` yields an empty family - the freeze
+    then has nothing to fill for that block (never an error)."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+
+
+def _contract_freeze_plan(
+    existing: dict | None,
+    identity: object,
+    selected: tuple[tuple[str, str], ...],
+    force: bool,
+) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, object]], dict[str, list[str]]]:
+    """Pure per-block decision against one sidecar snapshot.
+
+    Returns ``(blocks, statuses, replaced)``:
+      - ``blocks``: final ``{family: {id: sha}}`` to persist (the on-disk
+        snapshot for a block that is not touched).
+      - ``statuses``: ``{block: {"status": ..., "ids": [...]}}`` with
+        ``written`` (filled or ``--force`` re-frozen), ``unchanged``
+        (present and equal to the current text -> default skip), ``refused``
+        (present and different without ``--force``), or ``skipped`` (not
+        selected, or no ids to anchor).
+      - ``replaced``: ``{block: [changed/removed ids]}`` for the ``--force``
+        print and the refusal diagnostic.
+    """
+    acs = dict(getattr(identity, "acs", {}) or {})
+    vcs = dict(getattr(identity, "vcs", {}) or {})
+    current = {"ac": acs, "vc": vcs}
+    family_of = {"ac": "spec", "vc": "design"}
+    selected_names = {name for name, _ in selected}
+    blocks: dict[str, dict[str, str]] = {}
+    statuses: dict[str, dict[str, object]] = {}
+    replaced: dict[str, list[str]] = {}
+    for name in ("ac", "vc"):
+        family = family_of[name]
+        frozen_raw = existing.get(family) if isinstance(existing, dict) else None
+        frozen = dict(frozen_raw) if isinstance(frozen_raw, dict) else {}
+        blocks[family] = frozen
+        if name not in selected_names:
+            statuses[name] = {"status": "skipped", "ids": []}
+            continue
+        cur = current[name]
+        if not frozen:
+            if cur:
+                blocks[family] = dict(cur)
+                statuses[name] = {"status": "written", "ids": sorted(cur)}
+            else:
+                statuses[name] = {"status": "skipped", "ids": []}
+            continue
+        if frozen == cur:
+            statuses[name] = {"status": "unchanged", "ids": sorted(frozen)}
+            continue
+        ids = sorted(
+            field_id
+            for field_id in set(frozen) | set(cur)
+            if frozen.get(field_id) != cur.get(field_id)
+        )
+        replaced[name] = ids
+        if force:
+            blocks[family] = dict(cur)
+            statuses[name] = {"status": "written", "ids": sorted(cur)}
+        else:
+            statuses[name] = {"status": "refused", "ids": ids}
+    return blocks, statuses, replaced
+
+
+def _write_contract_freeze(
+    key_dir: pathlib.Path,
+    key: str,
+    blocks: dict[str, dict[str, str]],
+) -> None:
+    """Persist one merged payload through the T-04 atomic writer."""
+    payload = contract_guard.build_freeze(key, "", "")
+    payload["spec"] = dict(sorted(blocks.get("spec", {}).items()))
+    payload["design"] = dict(sorted(blocks.get("design", {}).items()))
+    contract_guard.write_freeze(key_dir, payload)
+
+
+def _ap_contract_freeze(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw autopilot contract-freeze --project P --key K [--block ac|vc|all]
+    [--force] [--json]`: the explicit G3 anchor writer.
+
+    T-23's human entry for a block the first-sight producer never anchored
+    (historical keys are never backfilled automatically). A missing block is
+    filled; an existing block whose frozen shas equal the current text is left
+    untouched (``unchanged``); an existing block whose text changed is refused
+    without ``--force`` (exit 1, the replaced ids are printed) and re-frozen
+    with ``--force`` (old/new family sha printed). The write goes through
+    ``contract_guard.write_freeze`` (tmp+replace). No lock is added: the
+    sidecar is a per-key file, so the same-key concurrent case is handled by
+    re-reading immediately before the write - if a writer got there first, the
+    decision is re-derived from that snapshot and the write is idempotent.
+    """
+    key = args.key
+    force = bool(getattr(args, "force", False))
+    selected = _CONTRACT_FREEZE_BLOCKS[getattr(args, "block", "all") or "all"]
+    key_dir = project_dir / ".agenticdoc" / key
+    freeze_rel = contract_guard.freeze_path(key_dir).relative_to(project_dir).as_posix()
+    try:
+        existing = contract_guard.read_freeze(key_dir)
+        identity = contract_guard.extract_contract(
+            _read_optional_text(key_dir / contract_guard.SPEC_FILE_NAME),
+            _read_optional_text(key_dir / contract_guard.DESIGN_FILE_NAME),
+        )
+        blocks, statuses, replaced = _contract_freeze_plan(existing, identity, selected, force)
+        for name, _family in selected:
+            if statuses[name]["status"] != "written":
+                continue
+            # Lock-free idempotence: re-read right before the write. A block
+            # that appeared since the snapshot wins, so re-derive once.
+            latest = contract_guard.read_freeze(key_dir)
+            if latest != existing:
+                existing = latest
+                blocks, statuses, replaced = _contract_freeze_plan(latest, identity, selected, force)
+            if any(statuses[n]["status"] == "written" for n, _f in selected):
+                _write_contract_freeze(key_dir, key, blocks)
+            break
+    except (OSError, ValueError) as exc:  # UnicodeDecodeError / relative_to are ValueError
+        print(f"[mw autopilot contract-freeze] Error: {exc}", file=sys.stderr)
+        return 1
+
+    refused = any(statuses[name]["status"] == "refused" for name in ("ac", "vc"))
+    if getattr(args, "as_json", False):
+        print(json.dumps(
+            {
+                "key": key,
+                "freeze_rel": freeze_rel,
+                "blocks": {name: statuses[name] for name in ("ac", "vc")},
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ))
+        return 1 if refused else 0
+
+    print(f"contract-freeze: {key} freeze={freeze_rel}")
+    family_of = {"ac": "spec", "vc": "design"}
+    for name in ("ac", "vc"):
+        status = statuses[name]["status"]
+        ids = ",".join(statuses[name]["ids"]) or "-"
+        line = f"contract-freeze: {name} {status} ids={ids}"
+        if name in replaced:
+            line += f" replaced={','.join(replaced[name])}"
+        if status == "written" and name in replaced:
+            # --force re-freeze diagnostics: old/new family sha.
+            family = family_of[name]
+            old_block = existing.get(family) if isinstance(existing, dict) else None
+            old_sha = contract_guard.family_sha(old_block if isinstance(old_block, dict) else {})
+            line += f" old_sha={old_sha} new_sha={contract_guard.family_sha(blocks[family])}"
+        if status == "refused":
+            line += " - pass --force to re-freeze"
+        print(line)
+    return 1 if refused else 0
 
 
 # ── Subcommand: pull-agentictask ───────────────────────────────────────────────
@@ -5428,6 +5673,37 @@ def _parse_args() -> argparse.Namespace:
     gates_p.add_argument(
         "--json", action="store_true", dest="as_json",
         help="Emit the doctor gate segment as JSON (layer-C machine exit)",
+    )
+    contract_guard_p = autopilot_sub.add_parser(
+        "contract-guard",
+        help="Read-only G3 check: frozen AC/VC text vs answered approval records",
+    )
+    contract_guard_p.add_argument("--project", required=True, help="Project directory")
+    contract_guard_p.add_argument(
+        "--key", default=None,
+        help="Single key (default: every key that carries a freeze sidecar)",
+    )
+    contract_guard_p.add_argument(
+        "--json", action="store_true", dest="as_json",
+        help="Emit the machine-readable verdict (stable sort, no timestamp)",
+    )
+    contract_freeze_p = autopilot_sub.add_parser(
+        "contract-freeze",
+        help="Explicitly write the G3 AC/VC anchor sidecar (--force re-freezes changes)",
+    )
+    contract_freeze_p.add_argument("--project", required=True, help="Project directory")
+    contract_freeze_p.add_argument("--key", required=True, help="Key to anchor (one key only)")
+    contract_freeze_p.add_argument(
+        "--block", choices=("ac", "vc", "all"), default="all",
+        help="Which acceptance block to freeze (default: all)",
+    )
+    contract_freeze_p.add_argument(
+        "--force", action="store_true",
+        help="Re-freeze a block whose text changed since it was frozen",
+    )
+    contract_freeze_p.add_argument(
+        "--json", action="store_true", dest="as_json",
+        help="Emit the machine-readable per-block receipt (stable sort)",
     )
     verify_p = autopilot_sub.add_parser(
         "verify", help="Per-project xkey verification command (set/show/clear)"

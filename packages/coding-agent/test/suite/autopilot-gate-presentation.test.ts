@@ -25,7 +25,9 @@ import { describe, expect, it } from "vitest";
 import { renderGateCards } from "../../src/extensions/agent-team-loop/autopilot/console.ts";
 import { readMonitorState, renderMonitorLines } from "../../src/extensions/agent-team-loop/autopilot/monitor.ts";
 import {
+	AUTHORIZES_ACTIONS,
 	GATE_FRONTMATTER_FIELDS,
+	GATE_JSON_LIST_FIELDS,
 	gatesDir,
 	listGates,
 	MISSING_FIELD_SENTINEL,
@@ -70,6 +72,8 @@ interface GateSpec {
 	answerSource?: string;
 	expiresAt?: string;
 	defaultAction?: string;
+	/** G3 (D-011): recognized JSON-list contract field outside the frozen 40. */
+	authorizes?: string[];
 	answeredAt?: string;
 	answeredBy?: string;
 	note?: string;
@@ -109,6 +113,7 @@ function writeGate(root: string, spec: GateSpec): string {
 	if (spec.answerSource !== undefined) lines.push(`answer_source: ${spec.answerSource}`);
 	if (spec.expiresAt !== undefined) lines.push(`expires_at: ${spec.expiresAt}`);
 	if (spec.defaultAction !== undefined) lines.push(`default_action: ${spec.defaultAction}`);
+	if (spec.authorizes !== undefined) lines.push(`authorizes: '${JSON.stringify(spec.authorizes)}'`);
 	lines.push(`status: ${spec.status ?? "pending"}`);
 	lines.push(`answered_at: ${spec.answeredAt ?? ""}`);
 	lines.push(`answered_by: ${spec.answeredBy ?? ""}`);
@@ -239,6 +244,61 @@ describe("gate frontmatter mirror (VC-D6-06)", () => {
 		expect(pyFields).toContain("gate_schema");
 		expect(pyFields).toContain("consumed_at");
 		expect(pyFields).toContain("consumed_seq");
+	});
+
+	it("VC-012: authorizes is a recognized JSON-list extension field outside the frozen 40, closed set enforced", () => {
+		const root = mkdtemp("ap-gate-present-authz-");
+		try {
+			// The frozen 40-name cross-language order never gains `authorizes`.
+			expect(GATE_FRONTMATTER_FIELDS).toHaveLength(40);
+			expect(GATE_FRONTMATTER_FIELDS).not.toContain("authorizes");
+			expect(GATE_JSON_LIST_FIELDS.has("authorizes")).toBe(true);
+
+			// A gate materialized with the field parses and the value is preserved.
+			const file = writeGate(root, {
+				id: "gate-0001",
+				kind: "stalled",
+				stage: 1,
+				key: "k1",
+				authorizes: ["contract-change"],
+			});
+			const parsed = parseGateFile(fs.readFileSync(file, "utf8"), file);
+			expect(parsed.authorizes).toEqual(["contract-change"]);
+
+			// The conductor-materialized empty array means "not authorized".
+			const emptyFile = writeGate(root, { id: "gate-0002", kind: "stalled", stage: 1, authorizes: [] });
+			expect(parseGateFile(fs.readFileSync(emptyFile, "utf8"), emptyFile).authorizes).toEqual([]);
+
+			// Out-of-set members are rejected fail-closed; the error names the legal set.
+			const bad = writeGate(root, { id: "gate-0003", kind: "stalled", stage: 1, authorizes: ["install"] });
+			const badText = fs.readFileSync(bad, "utf8");
+			expect(() => parseGateFile(badText, bad)).toThrow(/unknown authorizes action\(s\) install/);
+			expect(() => parseGateFile(badText, bad)).toThrow(/contract-change, retry/);
+
+			process.stdout.write(`[VERIFY] VC-012: closed_set=${AUTHORIZES_ACTIONS.length} listed_only=true\n`);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("VC-012: the TS authorizes closed set and JSON-list registration mirror Python exactly", () => {
+		const multiWorkers = fileURLToPath(new URL("../../../multi-workers/", import.meta.url));
+		const script = [
+			"import json, sys",
+			"sys.path.insert(0, sys.argv[1])",
+			"from autopilot import gates",
+			"print('AUTHORIZES_BEGIN')",
+			"print(json.dumps({'actions': sorted(gates.AUTHORIZES_ACTIONS), 'json_list': sorted(gates._JSON_LIST_FIELDS)}))",
+			"print('AUTHORIZES_END')",
+		].join("\n");
+		const run = spawnSync(resolveRagPython(), ["-c", script, multiWorkers], { encoding: "utf8" });
+		expect(run.status, run.stderr).toBe(0);
+		const stdout = run.stdout.replace(/\r\n/g, "\n");
+		const match = /AUTHORIZES_BEGIN\n(.*)\nAUTHORIZES_END/s.exec(stdout);
+		expect(match).not.toBeNull();
+		const py = JSON.parse(match?.[1] ?? "{}") as { actions: string[]; json_list: string[] };
+		expect([...AUTHORIZES_ACTIONS].sort()).toEqual(py.actions);
+		expect([...GATE_JSON_LIST_FIELDS].sort()).toEqual(py.json_list);
 	});
 
 	it("parses a v2 gate with both evidence_refs encodings and rejects unknown fields", () => {

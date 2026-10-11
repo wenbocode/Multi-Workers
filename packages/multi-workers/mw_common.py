@@ -54,9 +54,12 @@ try:
 except ImportError:  # pragma: no cover - doctor reports this explicitly
     yaml = None  # type: ignore[assignment]
 
+from autopilot import config as autopilot_config  # noqa: E402  (schema defaults, T-18)
 from autopilot import effective_config  # noqa: E402  (layered config, D-002)
+from autopilot import contract_guard  # noqa: E402  (G3 AC/VC identity, T-11)
 from autopilot import gates as gate_protocol  # noqa: E402  (gate queue, T-13)
 from autopilot import roadmap as roadmap_protocol  # noqa: E402  (validate_roadmap, AC-031)
+from autopilot import timeline as autopilot_timeline  # noqa: E402  (beat watermark, T-08)
 
 # Credential env vars that are never declared in providers.json but must still
 # be stripped from every worker env (kept from the pre-schema launcher).
@@ -159,7 +162,10 @@ STALE_REASON = "task.md not found"
 
 # Entries in these statuses are history: a missing task.md is harmless (the dir
 # may have been cleaned up), so only non-terminal entries get archived.
-_TERMINAL_STATUSES = {"done", "failed", "needs-clarification"}
+# `lost` (T-20/D-022) is terminal for the ledger too: the run is over, its
+# outcome is simply unverified — keeping it out of this set would make every
+# lost row permanent doctor noise and a permanent re-spawn candidate.
+_TERMINAL_STATUSES = {"done", "failed", "needs-clarification", "lost"}
 
 
 def iso_now() -> str:
@@ -1559,8 +1565,109 @@ def stale_path(project_dir: pathlib.Path) -> pathlib.Path:
     return pathlib.Path(project_dir) / ".agenticdoc" / STALE_FILE_NAME
 
 
+ACKED_FILE_NAME = "_workers.acked"
+
+
+def acked_path(project_dir: pathlib.Path) -> pathlib.Path:
+    return pathlib.Path(project_dir) / ".agenticdoc" / ACKED_FILE_NAME
+
+
 def lock_path(project_dir: pathlib.Path) -> pathlib.Path:
     return pathlib.Path(project_dir) / ".mw" / "workers.lock"
+
+
+# `_workers.parallel` row width: 7 (legacy) .. 9 (model + origin) columns.
+# Mirrors worker-store.ts WORKER_COLS_MIN/MAX — the two parsers must agree, or
+# one side silently drops rows the other wrote (IN-3, AC-023).
+WORKER_COLS_MIN = 7
+WORKER_COLS_MAX = 9
+
+# Optional queue-format header written by the TS store when it CREATES a file
+# (`# mw-queue:v2`). Headerless files are v1; historical files are never
+# rewritten just to gain a header (D-025).
+QUEUE_HEADER_RE = re.compile(r"^#\s*mw-queue:v(\d+)\s*$")
+
+
+def parse_worker_line(line: str) -> dict[str, str] | None:
+    """One row -> dict, or ``None`` when it is not a 7..9 column row.
+
+    The single-line mirror of the TS ``parseWorkerLine``: comment rows, blank
+    rows and any other width yield ``None`` (the caller decides what that
+    means: skip, report, or fail closed).
+    """
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    parts = [p.strip() for p in stripped.split("|")]
+    if len(parts) < WORKER_COLS_MIN or len(parts) > WORKER_COLS_MAX:
+        return None
+    return {
+        "task_key": parts[0],
+        "status": parts[1],
+        "cli": parts[2],
+        "provider": parts[3],
+        "task_path": parts[4],
+        "dispatched_at": parts[5],
+        "updated_at": parts[6],
+        "model": parts[7] if len(parts) >= 8 else "",
+        "origin": parts[8] if len(parts) == 9 else "",
+    }
+
+
+def read_workers_file_lines(path: pathlib.Path) -> list[str]:
+    """Raw `_workers.parallel` lines in file order (no trailing newline artifact).
+
+    Used by the slot-preserving writers: unlike :func:`parse_workers_file`,
+    which drops every row it cannot read, the line list keeps unparsable and
+    comment lines exactly as they are so a rewrite cannot delete them
+    (AC-023, IN-3). An unreadable/missing file yields an empty list.
+    """
+    try:
+        return path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+
+def _scan_worker_lines(path: pathlib.Path) -> list[tuple[str, dict[str, str] | None]]:
+    """``[(raw_line, parsed_row_or_None)]`` in file order — the slot map every
+    writer uses. A malformed row keeps its slot with ``None``."""
+    return [(line, parse_worker_line(line)) for line in read_workers_file_lines(path)]
+
+
+def parse_workers_queue(path: pathlib.Path) -> dict:
+    """Parse `_workers.parallel` **without losing rows** (AC-023, T-18).
+
+    Returns ``{"rows": [...], "unparsable": [...], "version": int}``:
+
+    * ``rows`` — one dict per readable row (same shape as
+      :func:`parse_workers_file`), in file order;
+    * ``unparsable`` — one ``{"line": n, "cols": n, "text": raw}`` per
+      non-comment line that is not a 7..9 column row, in file order;
+    * ``version`` — 2 when the file carries a `# mw-queue:v2` header, else 1
+      (headerless files are v1; nothing is backfilled, D-025).
+
+    The Python mirror of the TS ``readQueue()``: the row count plus
+    ``len(unparsable)`` always equals the number of non-comment lines, which
+    is what makes "silent row drop" impossible to reintroduce.
+    """
+    rows: list[dict[str, str]] = []
+    unparsable: list[dict] = []
+    version = 1
+    for index, line in enumerate(read_workers_file_lines(path), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            match = QUEUE_HEADER_RE.match(stripped)
+            if match is not None:
+                version = int(match.group(1))
+            continue
+        row = parse_worker_line(stripped)
+        if row is None:
+            unparsable.append({"line": index, "cols": len(stripped.split("|")), "text": stripped})
+            continue
+        rows.append(row)
+    return {"rows": rows, "unparsable": unparsable, "version": version}
 
 
 def parse_workers_file(path: pathlib.Path) -> list[dict[str, str]]:
@@ -1571,29 +1678,12 @@ def parse_workers_file(path: pathlib.Path) -> list[dict[str, str]]:
     | task_path | dispatched_at | updated_at | model | origin``. Legacy
     7-column (no model) and 8-column (no origin) rows parse unchanged; a
     missing origin is the empty string, never a guessed value.
+
+    Rows this function cannot read are dropped *from the returned list* —
+    readers that must not lose them (dispatch guards, doctor, the writers)
+    use :func:`parse_workers_queue` instead.
     """
-    if not path.exists():
-        return []
-    entries: list[dict[str, str]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) not in (7, 8, 9):
-            continue
-        entries.append({
-            "task_key": parts[0],
-            "status": parts[1],
-            "cli": parts[2],
-            "provider": parts[3],
-            "task_path": parts[4],
-            "dispatched_at": parts[5],
-            "updated_at": parts[6],
-            "model": parts[7] if len(parts) >= 8 else "",
-            "origin": parts[8] if len(parts) == 9 else "",
-        })
-    return entries
+    return parse_workers_queue(path)["rows"]
 
 
 def serialize_entry(entry: dict[str, str]) -> str:
@@ -1616,6 +1706,117 @@ def serialize_entry(entry: dict[str, str]) -> str:
     if origin:
         cols.append(origin)
     return " | ".join(cols)
+
+
+# ── Ack sidecar + run state + launcher bound (T-18 / AC-021, AC-023, D-022) ───
+#
+# `_workers.acked` is written by the TS AckStore (`taskKey | ackedAtIso`, one
+# row per acked task) and was previously never read on the Python side, so an
+# acked task could still be re-spawned after a queue rebuild (IN-3 amplifier
+# F3). Reading is deliberately fail-safe: a missing file, a comment row, a
+# wrong column count and an empty key/timestamp are all "no information" —
+# the caller keeps judging by the ledger instead of skipping everything.
+
+RUN_TERMINAL_STATUSES = frozenset({"done", "failed", "needs-clarification", "lost"})
+
+
+def read_acked(project_dir: pathlib.Path) -> dict[str, str]:
+    """``task_key -> ackedAtIso`` from `.agenticdoc/_workers.acked`.
+
+    Fail-safe by contract (VC-031): the file is optional sidecar state, so
+    nothing here may raise or invent an entry. Malformed rows are skipped,
+    never treated as an acknowledgement.
+    """
+    try:
+        content = acked_path(project_dir).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    acked: dict[str, str] = {}
+    for raw in content.splitlines():
+        if not raw.strip():
+            continue
+        parts = [p.strip() for p in raw.split("|")]
+        if len(parts) != 2:
+            continue
+        task_key, acked_at = parts
+        if not task_key or task_key.startswith("#") or not acked_at:
+            continue
+        acked[task_key] = acked_at
+    return acked
+
+
+def read_run_status(task_dir: pathlib.Path) -> str | None:
+    """Raw `status` from a worker-written `run.json` (D-022), or ``None``.
+
+    ``None`` means "no information" (missing file, unreadable JSON, non-object
+    root, missing/empty status) — never a guess, so callers keep judging by the
+    ledger instead of trusting an absent product. Forward-compatible with
+    T-20's `run-store.ts`: only `status` is read and an unknown value is
+    returned as-is for the caller to reject.
+    """
+    try:
+        data = json.loads((pathlib.Path(task_dir) / "run.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    status = data.get("status")
+    if not isinstance(status, str) or not status:
+        return None
+    return status
+
+
+def mark_run_lost(task_dir: pathlib.Path) -> str | None:
+    """Record ``status="lost"`` in a worker-written ``run.json`` (T-20/D-022).
+
+    The launcher's ONLY write to run.json: the worker owns ``running`` and every
+    terminal state, and the launcher may only ever add ``lost`` when a process
+    that recorded itself as running is gone with no verified outcome. Everything
+    else in the record (run_id, artifacts, supersedes, pid) is preserved
+    verbatim — the scene stays intact for the human who has to decide next.
+
+    Best-effort by contract: returns the written status, or ``None`` when there
+    is nothing to update (no/invalid record) or the write failed. Never raises,
+    so a broken product can never kill the poll loop.
+    """
+    path = pathlib.Path(task_dir) / "run.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    data["status"] = "lost"
+    data["ended_at"] = iso_now()
+    data.pop("exit", None)
+    try:
+        tmp_path = pathlib.Path(str(path) + ".tmp")
+        tmp_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
+        )
+        tmp_path.replace(path)
+    except OSError:
+        return None
+    return "lost"
+
+
+def launcher_max_workers(project_dir: pathlib.Path) -> int:
+    """Effective launcher concurrency cap (T-18/D-027, AC-021).
+
+    Always a bounded int >= 1. A missing/unreadable/out-of-range config falls
+    back to the built-in default instead of ever meaning "unbounded": the
+    IN-3 amplifier was exactly `max_workers = None` (F1), which let 66 workers
+    run at once.
+    """
+    fallback = int(autopilot_config.DEFAULT_CONFIG["launcher_max_workers"])
+    try:
+        values = effective_config.load_effective(project_dir).values
+    except Exception:  # noqa: BLE001 — a broken config must not kill the launcher
+        return fallback
+    limit = values.get("launcher_max_workers", fallback)
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        return fallback
+    return limit
 
 
 # ── Worker attribution (D-019 / AC-021) ───────────────────────────────────────
@@ -1701,27 +1902,79 @@ def release_lock(lock_file: pathlib.Path) -> None:
         pass
 
 
-def _write_workers_file(path: pathlib.Path, entries: list[dict[str, str]]) -> None:
+def _write_workers_file(path: pathlib.Path, lines: list[str]) -> None:
+    """Atomically write `_workers.parallel` from **raw lines** (T-18/AC-023).
+
+    Takes lines, not parsed rows: every unparsable/comment line the caller did
+    not deliberately remove keeps its slot verbatim. The old row-shaped
+    signature forced a full re-serialize from the parsed view, which silently
+    deleted every row the parser could not read — the write half of IN-3
+    (amplifier F4).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    content = "\n".join(serialize_entry(e) for e in entries) + "\n"
+    content = "\n".join(lines) + "\n"
     tmp_path = pathlib.Path(str(path) + ".tmp")
-    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.write_text(content, encoding="utf-8", newline="\n")
     tmp_path.replace(path)
 
 
+def upsert_worker_row(path: pathlib.Path, row: dict[str, str]) -> None:
+    """Insert/replace ONE row by task_key, every other line verbatim
+    (AC-023) — the Python mirror of the TS ``upsert``.
+
+    The caller owns the lock (``autopilot/dispatch.py`` takes
+    ``.mw/workers.lock`` itself). An existing row is rewritten inside its own
+    slot, a new one is appended; either way unparsable and legacy lines keep
+    their slots, so a dispatcher write can never make a queue *look* empty.
+    """
+    task_key = row["task_key"]
+    out: list[str] = []
+    replaced = False
+    for line, existing in _scan_worker_lines(path):
+        if existing is not None and existing["task_key"] == task_key and not replaced:
+            out.append(serialize_entry(row))
+            replaced = True
+            continue
+        out.append(line)
+    if not replaced:
+        out.append(serialize_entry(row))
+    _write_workers_file(path, out)
+
+
 def update_status(project_dir: pathlib.Path, task_key: str, status: str) -> None:
-    """Update one task's status under the file lock (launcher-side writer)."""
+    """Update one task's status under the file lock (launcher-side writer).
+
+    Line-preserving (AC-023): only the matching row is rewritten, every other
+    line — including rows no parser can read — is written back byte-identical.
+    When the task has no row at all the file is left untouched: rewriting it
+    from the parsed view would delete the very rows that make a queue look
+    empty (IN-3).
+    """
     wpath = workers_path(project_dir)
     lock = lock_path(project_dir)
     acquire_lock(lock)
     try:
-        entries = parse_workers_file(wpath)
         updated_at = iso_now()
-        for entry in entries:
-            if entry["task_key"] == task_key:
-                entry["status"] = status
-                entry["updated_at"] = updated_at
-        _write_workers_file(wpath, entries)
+        out: list[str] = []
+        found = False
+        for line, row in _scan_worker_lines(wpath):
+            if row is not None and row["task_key"] == task_key:
+                row["status"] = status
+                row["updated_at"] = updated_at
+                out.append(serialize_entry(row))
+                found = True
+            else:
+                out.append(line)
+        if not found:
+            # Nothing to change. A fresh project gets the (empty) queue file
+            # created — the caller must never crash on a missing .agenticdoc
+            # (T-03 lesson) — but an existing file is left untouched: the old
+            # unconditional rewrite is exactly what deleted unparsable rows
+            # (IN-3/AC-023).
+            if not wpath.exists():
+                _write_workers_file(wpath, [])
+            return
+        _write_workers_file(wpath, out)
     finally:
         release_lock(lock)
 
@@ -1741,16 +1994,20 @@ def archive_stale_entries(project_dir: pathlib.Path) -> list[str]:
         return []
     acquire_lock(lock)
     try:
-        entries = parse_workers_file(wpath)
-        stale_idx = {
-            i for i, e in enumerate(entries)
-            if e["status"] not in _TERMINAL_STATUSES
-            and not pathlib.Path(e["task_path"]).exists()
-        }
-        if not stale_idx:
+        scanned = _scan_worker_lines(wpath)
+        stale: list[dict[str, str]] = []
+        kept: list[str] = []
+        for line, row in scanned:
+            if (
+                row is not None
+                and row["status"] not in _TERMINAL_STATUSES
+                and not pathlib.Path(row["task_path"]).exists()
+            ):
+                stale.append(row)
+                continue
+            kept.append(line)
+        if not stale:
             return []
-        stale = [entries[i] for i in sorted(stale_idx)]
-        kept = [e for i, e in enumerate(entries) if i not in stale_idx]
         now = iso_now()
         spath.parent.mkdir(parents=True, exist_ok=True)
         with spath.open("a", encoding="utf-8") as fh:
@@ -1851,7 +2108,7 @@ _EXT_SRC_DIR = (
     pathlib.Path(__file__).resolve().parent.parent
     / "coding-agent" / "src" / "extensions" / "agent-team-loop"
 )
-_TERMINAL_STATUSES = {"done", "failed", "needs-clarification"}
+_TERMINAL_STATUSES = {"done", "failed", "needs-clarification", "lost"}
 
 
 def doctor_fix(project_dir: pathlib.Path) -> list[str]:
@@ -2151,8 +2408,27 @@ def task_dir_last_activity(task_dir: pathlib.Path) -> float | None:
     return newest
 
 
+def _queue_alarm_delta(project_dir: pathlib.Path) -> int:
+    """Effective `queue_alarm_delta` for the doctor burst-shape criterion.
+
+    Read-only and fail-soft: an unreadable/out-of-range config falls back to
+    the built-in default instead of making the whole doctor run fail (the
+    criteria must never depend on a writable or healthy config).
+    """
+    fallback = int(autopilot_config.DEFAULT_CONFIG["queue_alarm_delta"])
+    try:
+        values = effective_config.load_effective(pathlib.Path(project_dir)).values
+    except Exception:  # noqa: BLE001 — doctor must still report the queue
+        return fallback
+    delta = values.get("queue_alarm_delta", fallback)
+    if isinstance(delta, bool) or not isinstance(delta, int) or delta < 1:
+        return fallback
+    return delta
+
+
 def _doctor_queue(project_dir: pathlib.Path) -> dict:
-    entries = parse_workers_file(workers_path(project_dir))
+    queue = parse_workers_queue(workers_path(project_dir))
+    entries = queue["rows"]
     non_terminal = [
         {
             "task_key": e["task_key"],
@@ -2170,10 +2446,35 @@ def _doctor_queue(project_dir: pathlib.Path) -> dict:
             archived_total = len(spath.read_text(encoding="utf-8").splitlines())
         except OSError:
             archived_total = 0
+    # run-ledger-conflict (T-18/D-027, D-022): the product carries its own
+    # terminal state; a non-terminal row whose `run.json` already ended is a
+    # conflict, never a re-run candidate. Present only when T-20's run.json
+    # exists, so this stays quiet on historical projects.
+    run_ledger_conflict: list[dict] = []
+    for e in entries:
+        if e["status"] in _TERMINAL_STATUSES:
+            continue
+        run_status = read_run_status(pathlib.Path(e["task_path"]).parent)
+        if run_status in RUN_TERMINAL_STATUSES:
+            run_ledger_conflict.append(
+                {
+                    "task_key": e["task_key"],
+                    "row_status": e["status"],
+                    "run_status": run_status,
+                    "task_path": e["task_path"],
+                }
+            )
     return {
         "non_terminal": non_terminal,
+        "non_terminal_count": len(non_terminal),
+        "rows_total": len(entries),
         "stale_count": stale_count,
         "archived_total": archived_total,
+        "unparsable": queue["unparsable"],
+        "unparsable_count": len(queue["unparsable"]),
+        "version": queue["version"],
+        "alarm_delta": _queue_alarm_delta(project_dir),
+        "run_ledger_conflict": run_ledger_conflict,
     }
 
 
@@ -2686,14 +2987,163 @@ def _crosskey_prose_scan(project_dir: pathlib.Path) -> dict:
     return section
 
 
+def _contract_guard_entry(project_dir: pathlib.Path, key: str) -> dict:
+    """One key's G3 verdict, in the doctor/CLI wire shape.
+
+    Reuses :func:`autopilot.contract_guard.evaluate` (T-04) as the single
+    judgement - this function never re-derives freeze/diff/approval logic. The
+    freeze path is project-relative (posix) and no timestamp is included, so
+    the payload stays reproducible. Read-only: ``evaluate`` opens files for
+    reading only. A corrupt gate queue propagates as ``ValueError``/``OSError``
+    (the caller decides: doctor skips, the CLI fails loud).
+    """
+    project_dir = pathlib.Path(project_dir)
+    key_dir = project_dir / ".agenticdoc" / key
+    verdict = contract_guard.evaluate(
+        key_dir, project_dir.joinpath(*_GATE_DIR_REL), key=key
+    )
+    return {
+        "key": key,
+        "freeze": contract_guard.freeze_path(key_dir)
+        .relative_to(project_dir)
+        .as_posix(),
+        "no_anchor": bool(verdict.no_anchor),
+        "changed_ids": list(verdict.changed_ids),
+        "authorized": bool(verdict.ok),
+        "carrier": verdict.carrier,
+        "reasons": list(verdict.reasons),
+    }
+
+
+def _contract_guard_scan(project_dir: pathlib.Path) -> dict | None:
+    """Per-key G3 verdicts for keys that carry a usable freeze sidecar.
+
+    Returns ``None`` when no key has a freeze, so ``_doctor_gates`` never adds
+    the ``contract_guard`` key and historical `--json`/text output stays
+    byte-identical (P-018 / AC-013). Entries are sorted by key; every path is
+    project-relative. Read-only: the scan never creates a file or directory
+    (no `.tmp`, no lock). A corrupt gate queue cannot authorize anything, so
+    the affected key is skipped here - its parse error is already an issue in
+    the gate section (fail-closed reporting, no silent approval).
+    """
+    project_dir = pathlib.Path(project_dir)
+    agenticdoc = project_dir / ".agenticdoc"
+    try:
+        key_dirs = sorted(
+            (entry for entry in agenticdoc.iterdir() if entry.is_dir()),
+            key=lambda entry: entry.name,
+        )
+    except OSError:  # pragma: no cover - transient filesystem race
+        return None
+    entries: list[dict] = []
+    for key_dir in key_dirs:
+        try:
+            entry = _contract_guard_entry(project_dir, key_dir.name)
+        except (ValueError, OSError):
+            continue
+        if entry.pop("no_anchor"):
+            continue
+        entries.append(entry)
+    if not entries:
+        return None
+    return {
+        "keys": entries,
+        "unauthorized": sum(1 for entry in entries if not entry["authorized"]),
+    }
+
+
+# ── AC-001 / C8: `blocked_on_human` in the doctor gates section ──────────────
+#
+# Three-axis truth table, same source as the monitor panel (design DD-10):
+#   1. pending gate > 0            — this section's `pending_count`
+#   2. no non-terminal worker row  — `_doctor_queue()`'s `non_terminal_count`,
+#                                    the TS `TERMINAL_WORKER_STATUSES` mirror
+#                                    (monitor.ts:403-408: `pending` also counts
+#                                    as in flight, not just `running`)
+#   3. conductor tick fresh        — newest timeline `beat` younger than the
+#                                    panel's stale bound (monitor.ts:698-704)
+#
+# The panel's file-only predicate is the two-axis `blockedOnHuman`
+# (status-model.ts:1353), rendered when `!tickStale` (monitor.ts:829). Axis 3
+# is evaluated here as a POSITIVE freshness test rather than the panel's
+# `tickAgeMs === null => not stale`: a project with no timeline (the conductor
+# never ran) must stay silent, which is what keeps historical doctor text
+# byte-identical (I7 zero-perturbation) and matches "任一条不足 ⇒ false".
+
+# The panel's stale floor (monitor.ts:698-704):
+# `staleAfterMs = max(30_000, poll_interval_sec * 1000 * 5)`. `poll_interval_sec`
+# is validated to 1..5 (autopilot/config.py `_INT_RANGES`), so `poll*5 <= 25s`
+# and the bound is 30s for every valid config; the floor constant is reused
+# verbatim so only a cadence-cap change can move it.
+_PANEL_TICK_STALE_SEC = 30.0
+
+
+def _conductor_tick_stale_after_sec(project_dir: pathlib.Path) -> float:
+    """`max(30s, poll_interval_sec * 5)` — the monitor panel's stale bound.
+
+    Read-only and fail-soft (same discipline as `_queue_alarm_delta`): an
+    unreadable/out-of-range config falls back to the built-in default instead
+    of taking the doctor run down."""
+    fallback = int(autopilot_config.DEFAULT_CONFIG["poll_interval_sec"])
+    try:
+        values = effective_config.load_effective(pathlib.Path(project_dir)).values
+    except Exception:  # noqa: BLE001 — doctor must still report the gate queue
+        poll = fallback
+    else:
+        raw = values.get("poll_interval_sec", fallback)
+        poll = raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1 else fallback
+    return max(_PANEL_TICK_STALE_SEC, float(poll) * 5.0)
+
+
+def _conductor_tick_fresh(project_dir: pathlib.Path) -> bool:
+    """True when the newest timeline `beat` is inside the panel's stale bound.
+
+    Read-only: `autopilot.timeline.tail_events` opens the current timeline
+    file for reading only and never creates it. A missing/unreadable timeline,
+    a timeline without a `beat`, and an unparsable timestamp all mean "not
+    fresh"."""
+    path = autopilot_timeline.timeline_path(project_dir)
+    for event in reversed(autopilot_timeline.tail_events(path)):
+        if event.get("ev") != "beat":
+            continue
+        raw = event.get("ts")
+        if not isinstance(raw, str) or not raw:
+            return False
+        try:
+            stamp = _parse_heartbeat_ts(raw)
+        except ValueError:
+            return False
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=datetime.timezone.utc)
+        age = datetime.datetime.now(datetime.timezone.utc) - stamp
+        return age.total_seconds() <= _conductor_tick_stale_after_sec(project_dir)
+    return False
+
+
+def _blocked_on_human(project_dir: pathlib.Path, pending_count: int) -> bool:
+    """The three-axis `blocked_on_human` verdict (C8, design DD-10).
+
+    Axes are checked in order and short-circuit; any unmet axis yields False.
+    Read-only: both extra inputs (`_doctor_queue`, the timeline tail) are pure
+    reads, so the doctor surface still creates nothing (AC-001 / VC-003).
+    """
+    if pending_count <= 0:
+        return False
+    if int(_doctor_queue(project_dir).get("non_terminal_count") or 0) > 0:
+        return False
+    return _conductor_tick_fresh(project_dir)
+
+
 def _doctor_gates(project_dir: pathlib.Path) -> dict:
     """Gate queue section (AC-006/012/019/031). Read-only: it never creates a
     directory or a file; a missing gates directory is an empty queue.
 
     Fields (design D6 §D4.1): dir/exists/total/pending_count/schema_versions/
     parse_errors/pending[]/missing_fields[]/drift[]/replayed[]/error plus the
-    AC-031 `roadmap_validation` visibility and the T-24/VC-048
-    `crosskey_prose` off-gate authorization scan."""
+    AC-031 `roadmap_validation` visibility, the T-24/VC-048 `crosskey_prose`
+    off-gate authorization scan, the T-11/AC-013 `contract_guard` section
+    (present only for keys with a freeze sidecar) and the T-08/AC-001
+    `blocked_on_human` boolean (contract C8)."""
     project_dir = pathlib.Path(project_dir)
     gates_dir = project_dir.joinpath(*_GATE_DIR_REL)
     section: dict = {
@@ -2709,8 +3159,12 @@ def _doctor_gates(project_dir: pathlib.Path) -> dict:
         "replayed": [],
         "roadmap_validation": _roadmap_validation(project_dir),
         "crosskey_prose": _crosskey_prose_scan(project_dir),
+        "blocked_on_human": False,
         "error": None,
     }
+    contract_section = _contract_guard_scan(project_dir)
+    if contract_section is not None:
+        section["contract_guard"] = contract_section
     if not section["exists"]:
         return section
     try:
@@ -2736,6 +3190,7 @@ def _doctor_gates(project_dir: pathlib.Path) -> dict:
     pending = [gate for gate in parsed_gates if gate.status == "pending"]
     answered = [gate for gate in parsed_gates if gate.status != "pending"]
     section["pending_count"] = len(pending)
+    section["blocked_on_human"] = _blocked_on_human(project_dir, section["pending_count"])
     now = datetime.datetime.now(datetime.timezone.utc)
     for gate in pending:
         section["pending"].append(_gate_pending_entry(project_dir, gate, answered, now))
@@ -2766,7 +3221,17 @@ def _gates_text_alerted(section: dict) -> bool:
     least one of I1-I6 (or the I9/T-24 prose-only cross-key alert) fired."""
     if section.get("parse_errors") or section.get("drift") or section.get("replayed"):
         return True
+    # T-08 / AC-001 (C8): blocked-on-human is a first-class alert — a pending
+    # gate with no in-flight worker and a live conductor must be visible with
+    # its `BLOCKED_ON_HUMAN` suffix even when none of I1-I6 fired.
+    if section.get("blocked_on_human"):
+        return True
     if (section.get("crosskey_prose") or {}).get("prose_only"):
+        return True
+    # T-11 / AC-013: an unauthorized frozen-contract change is a fail-closed
+    # alert, so the `gates:` text line must appear for it too. The key is only
+    # present when a freeze sidecar exists (P-018).
+    if (section.get("contract_guard") or {}).get("unauthorized"):
         return True
     missing_ids = {item["id"] for item in section.get("missing_fields") or []}
     for entry in section.get("pending") or []:
@@ -2795,6 +3260,35 @@ def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
         issues.append(
             f"{report['queue']['stale_count']} stale queue entries (task.md missing) - "
             "run 'mw.py doctor --fix' or restart mw"
+        )
+    # Queue shape criteria (T-18/D-027, AC-021): all three are stateless reads
+    # (no snapshot file, no write), so the read-only doctor surface can never
+    # itself create the symptom it reports.
+    queue_section = report["queue"]
+    unparsable_count = int(queue_section.get("unparsable_count") or 0)
+    if unparsable_count:
+        first = (queue_section.get("unparsable") or [{}])[0]
+        issues.append(
+            f"queue-rows-unparsable: {unparsable_count} row(s) in _workers.parallel cannot be "
+            f"read (first: line {first.get('line', '?')}, {first.get('cols', '?')} columns) - "
+            "dispatch is refused while any row is unreadable (AC-020/AC-023); fix or delete "
+            "the bad row, never rewrite the file from a parsed view"
+        )
+    rows_total = int(queue_section.get("rows_total") or 0)
+    non_terminal_count = int(queue_section.get("non_terminal_count") or 0)
+    alarm_delta = int(queue_section.get("alarm_delta") or 50)
+    if rows_total > alarm_delta and non_terminal_count / rows_total > 0.9:
+        issues.append(
+            f"queue-burst-shape: {rows_total} rows of which {non_terminal_count} are "
+            f"non-terminal (threshold {alarm_delta}, >90% non-terminal) - the IN-3 "
+            "mass re-enqueue fingerprint; check the launcher's concurrency cap and the "
+            "dispatch scan scope before restarting anything"
+        )
+    for conflict in queue_section.get("run_ledger_conflict") or []:
+        issues.append(
+            f"run-ledger-conflict: {conflict['task_key']} is '{conflict['row_status']}' in the "
+            f"queue but its run.json already ended as '{conflict['run_status']}' - "
+            "do not re-dispatch; converge the row (AC-022/D-022)"
         )
     if report["launcher_log"].get("fatal"):
         issues.append("launcher.log contains FATAL lines - inspect the tail")
@@ -2882,6 +3376,23 @@ def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
             f"{decision.get('at')}) with no answered xkey-authorize gate "
             f"({request.get('path')}) - treated as unauthorized (VC-048), raise/answer "
             "an xkey-authorize gate to authorize"
+        )
+    # T-11 / AC-013 (G3): frozen AC/VC text changed with no answered gate that
+    # authorizes `contract-change` for the key. Same caliber as the queue-shape
+    # criteria (T-18): report it and keep the fail-closed verdict (the done
+    # transaction refuses); the issue only makes the refusal visible. The
+    # `contract_guard` node exists only for freeze-carrying keys, so historical
+    # projects stay silent (P-018).
+    contract_section = gates_section.get("contract_guard") or {}
+    for entry in contract_section.get("keys") or []:
+        if entry.get("authorized"):
+            continue
+        changed = ", ".join(entry.get("changed_ids") or ()) or "?"
+        issues.append(
+            f"contract-guard: key {entry['key']} contract text changed without "
+            f"authorization ({changed}) since the freeze ({entry.get('freeze')}) - "
+            "advance-to-done refused; answer a gate with "
+            'authorizes: ["contract-change"] or revert the AC/VC text'
         )
     roadmap_section = gates_section.get("roadmap_validation") or {}
     if roadmap_section.get("error"):
@@ -3032,10 +3543,14 @@ def format_doctor_text(report: dict) -> str:
     else:
         lines.append("launcher_log: no log file")
     queue = report["queue"]
-    lines.append(
-        f"queue: {len(queue['non_terminal'])} non-terminal task(s), "
+    queue_line = (
+        f"queue: {queue['non_terminal_count']} non-terminal task(s), "
         f"{queue['stale_count']} stale, {queue['archived_total']} archived"
     )
+    # Zero-perturbation: healthy queues keep the historical byte-identical line.
+    if queue.get("unparsable_count"):
+        queue_line += f", {queue['unparsable_count']} unparsable"
+    lines.append(queue_line)
     liveness = report.get("worker_liveness", [])
     if liveness:
         alive = sum(1 for v in liveness if v["verdict"] == "alive")
@@ -3104,11 +3619,21 @@ def format_doctor_text(report: dict) -> str:
         prose_suffix = (
             f", {crosskey_prose_only} prose-only cross-key" if crosskey_prose_only else ""
         )
+        contract_unauthorized = (
+            (gates_section.get("contract_guard") or {}).get("unauthorized") or 0
+        )
+        contract_suffix = (
+            f", {contract_unauthorized} contract-guard" if contract_unauthorized else ""
+        )
+        # T-08 / AC-001 (C8): the suffix is the only textual surface of
+        # `blocked_on_human`; it appears iff the field is true.
+        blocked_suffix = " BLOCKED_ON_HUMAN" if gates_section.get("blocked_on_human") else ""
         lines.append(
             f"gates: {gates_section['pending_count']} pending "
             f"({_gate_waited_text(oldest)} oldest, "
             f"{len(gates_section.get('parse_errors') or [])} parse error(s), "
-            f"{len(gates_section.get('drift') or [])} drift{prose_suffix})"
+            f"{len(gates_section.get('drift') or [])} drift{prose_suffix}{contract_suffix})"
+            f"{blocked_suffix}"
         )
     # pi shellPath row (fresh-machine shell bootstrap)
     pi_shell = report.get("pi_shell")
