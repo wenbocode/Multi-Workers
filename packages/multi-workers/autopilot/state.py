@@ -156,19 +156,26 @@ def parse_task_labels(task_md: pathlib.Path) -> dict[str, str]:
     Lenient by design: worker-authored content must never crash state
     derivation — a missing frontmatter or malformed line simply yields no
     label. Nested blocks (read_scope lists) are skipped, not parsed.
+
+    The header boundary comes from the shared single source
+    ``mw_common.read_task_header_region`` (BOM strip + ``---`` fence
+    semantics), so this mirror cannot drift from the TS side
+    (``status-model.ts::parseTaskLabels``) on an unclosed fence or a BOM
+    (T-17/A4). Fenced-only stays local: a task.md with no closed ``---``
+    fence has no autopilot labels. Keys are matched on the raw (untrimmed)
+    line, exactly like TS.
     """
     try:
         text = pathlib.Path(task_md).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
-    lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
+    _lines, region = mw_common.read_task_header_region(text)
+    if not region.fenced:
         return {}
+    raw_lines = text.splitlines()
     labels: dict[str, str] = {}
-    for line in lines[1:]:
-        if line.strip() == "---":
-            break
-        m = _FM_LINE_RE.match(line)
+    for i in range(region.start_line, region.end_line + 1):
+        m = _FM_LINE_RE.match(raw_lines[i]) if i < len(raw_lines) else None
         if m is None:
             continue  # list item / nested block / prose — skip
         labels[m.group(1)] = m.group(2)

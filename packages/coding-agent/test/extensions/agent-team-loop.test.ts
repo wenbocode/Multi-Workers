@@ -12,6 +12,7 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Model } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../src/core/extensions/types.ts";
@@ -24,7 +25,12 @@ import {
 	startMonitor,
 	stopMonitor,
 } from "../../src/extensions/agent-team-loop/autopilot/monitor.ts";
-import { configPath, gatesDir, gatesLockPath } from "../../src/extensions/agent-team-loop/autopilot/status-model.ts";
+import {
+	configPath,
+	gatesDir,
+	gatesLockPath,
+	parseTaskLabels,
+} from "../../src/extensions/agent-team-loop/autopilot/status-model.ts";
 import { activate } from "../../src/extensions/agent-team-loop/index.ts";
 import {
 	autoTakeOverFromDoc,
@@ -108,6 +114,7 @@ import {
 	phaseAuditWarnings,
 	pmStateInterfaceViolation,
 } from "../../src/extensions/agent-team-loop/shared/pm-state-guard.ts";
+import { readTaskType, scanBodyTypeLines } from "../../src/extensions/agent-team-loop/shared/task-frontmatter.ts";
 import { type WorkerStatus, WorkerStore } from "../../src/extensions/agent-team-loop/shared/worker-store.ts";
 import {
 	appendCheckpoint,
@@ -126,6 +133,7 @@ import {
 } from "../../src/extensions/agent-team-loop/worker/output-writer.ts";
 import { goalMtime, writePhaseFile } from "../../src/extensions/agent-team-loop/worker/phase-runner.ts";
 import {
+	activeToolsForType,
 	checkpointAnchorMs,
 	computeRisk,
 	DEFAULT_BUDGET_MS,
@@ -5906,5 +5914,400 @@ describe("G4 monitor rearm after session replacement (AC-018/VC-023)", () => {
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
+	});
+});
+
+// ── AC-005 single-source role resolution (T-07) ─────────────────────────────
+// The role of a worker task must come from exactly one value: the FIRST
+// `type:` inside the header region. The old `parseTaskMd` scan was last-wins,
+// so a below-header `type: coding` line could hand a `review` task the
+// write/edit/bash surface (A8). These tests pin the switch to
+// `shared/task-frontmatter.ts` and the PM ruling on fail-closed scope: only
+// tasks carrying an origin marker (conductor dispatch) are refused; unmarked
+// (manual/smoke) tasks keep their GC-8 fallback and leave an audit line.
+describe("AC-005 single-source type resolution (T-07)", () => {
+	const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+
+	function findCorpusTaskMds(): string[] {
+		const root = path.join(REPO_ROOT, ".agenticdoc");
+		const out: string[] = [];
+		let keys: string[];
+		try {
+			keys = fs.readdirSync(root);
+		} catch {
+			return out;
+		}
+		for (const key of keys) {
+			const workers = path.join(root, key, "workers");
+			let taskKeys: string[];
+			try {
+				taskKeys = fs.readdirSync(workers);
+			} catch {
+				continue;
+			}
+			for (const taskKey of taskKeys) {
+				const taskMd = path.join(workers, taskKey, "task.md");
+				if (fs.existsSync(taskMd)) out.push(taskMd);
+			}
+		}
+		return out;
+	}
+
+	function fakeWorkerPi(): {
+		pi: ExtensionAPI;
+		emit: (name: string, payload?: unknown) => void;
+	} {
+		const handlers = new Map<string, Array<(e: unknown) => void>>();
+		const pi = {
+			on: (name: string, cb: (e: unknown) => void) => {
+				const list = handlers.get(name) ?? [];
+				list.push(cb);
+				handlers.set(name, list);
+			},
+			sendUserMessage: () => {},
+		};
+		return {
+			pi: pi as unknown as ExtensionAPI,
+			emit: (name, payload) => {
+				for (const cb of handlers.get(name) ?? []) cb(payload);
+			},
+		};
+	}
+
+	/** Activate the worker loop against a task.md at root/key-a/workers/{taskKey}. */
+	async function activateTask(
+		root: string,
+		taskKey: string,
+		body: string,
+	): Promise<{ taskDir: string; emit: (name: string, payload?: unknown) => void }> {
+		const taskDir = path.join(root, "key-a", "workers", taskKey);
+		fs.mkdirSync(taskDir, { recursive: true });
+		fs.writeFileSync(path.join(taskDir, "task.md"), body, "utf8");
+		const { pi, emit } = fakeWorkerPi();
+		process.env.PI_WORKER_TASK = path.join(taskDir, "task.md");
+		await workerModeActivate(pi);
+		return { taskDir, emit };
+	}
+
+	it("VC-MWGF-020 / VC-020: the FIRST header `type:` wins - a body `type:` line cannot flip the role", () => {
+		const root = mkdtemp();
+		try {
+			const taskDir = path.join(root, "key-a", "workers", "t-first-wins");
+			fs.mkdirSync(taskDir, { recursive: true });
+			const taskPath = path.join(taskDir, "task.md");
+			fs.writeFileSync(taskPath, "type: review\n\nwork\n\ntype: coding\n", "utf8");
+			const meta = parseTaskMd(taskPath);
+			expect(meta.type).toBe("review");
+			expect(roleForTaskType(meta.type)).toBe("review");
+			expect(activeToolsForType(meta.type)).not.toContain("write");
+			expect(activeToolsForType(meta.type)).not.toContain("edit");
+			expect(activeToolsForType(meta.type)).not.toContain("bash");
+			// The single-source reading agrees, and the body line is still visible as
+			// ignored evidence (never as the value).
+			const text = fs.readFileSync(taskPath, "utf8");
+			expect(readTaskType(text).type).toBe("review");
+			expect(scanBodyTypeLines(text).map((l) => l.value)).toEqual(["coding"]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("VC-MWGF-021 / VC-021: the named corpus file review-mw-worker-tree-kill resolves to its header coding", () => {
+		const taskPath = path.join(
+			REPO_ROOT,
+			".agenticdoc",
+			"mw-worker-tree-kill",
+			"workers",
+			"review-mw-worker-tree-kill",
+			"task.md",
+		);
+		expect(fs.existsSync(taskPath)).toBe(true);
+		const text = fs.readFileSync(taskPath, "utf8");
+		// Header line 1 is `coding`, body line 3 is `review`: last-wins returned
+		// `review`, the single source must return `coding`.
+		expect(readTaskType(text).type).toBe("coding");
+		expect(readTaskType(text).source).toBe("header");
+		const meta = parseTaskMd(taskPath);
+		expect(meta.type).toBe("coding");
+		expect(roleForTaskType(meta.type)).toBe("coding");
+		expect(scanBodyTypeLines(text).map((l) => l.value)).toContain("review");
+	});
+
+	it("VC-MWGF-022 / VC-022: every corpus task.md resolves to the same type via parseTaskMd and the single source", () => {
+		const files = findCorpusTaskMds();
+		expect(files.length).toBeGreaterThan(0);
+		const flips: string[] = [];
+		for (const file of files) {
+			const text = fs.readFileSync(file, "utf8");
+			const single = readTaskType(text).type ?? "default";
+			const parsed = parseTaskMd(file).type;
+			if (parsed !== single) flips.push(`${file}: parseTaskMd=${parsed} single=${single}`);
+		}
+		// No count cap: the corpus may grow; the judgement is flip == 0.
+		expect(flips).toEqual([]);
+	});
+
+	it("VC-MWGF-023 / VC-021: an origin-marked task with only a body `type:` fails closed (no header type)", async () => {
+		const root = mkdtemp();
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+		try {
+			const { taskDir } = await activateTask(root, "t-origin-body", "origin: conductor\n\ntype: coding\n\nwork\n");
+			expect(exitSpy).toHaveBeenCalledWith(1);
+			const output = fs.readFileSync(path.join(taskDir, "output.md"), "utf8");
+			expect(output).toContain("Fail-closed");
+			expect(output).toContain("'default'");
+		} finally {
+			exitSpy.mockRestore();
+			delete process.env.PI_WORKER_TASK;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("VC-MWGF-041 / VC-021: an unmarked task keeps the GC-8 fallback and leaves a [HEADER] audit line", async () => {
+		const root = mkdtemp();
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+		try {
+			const { taskDir, emit } = await activateTask(root, "t-manual-body", "\ntype: coding\n\nwork\n");
+			// T-13 zero-interception contract: no origin marker -> no refusal.
+			expect(exitSpy).not.toHaveBeenCalled();
+			expect(activeToolsForType(parseTaskMd(path.join(taskDir, "task.md")).type)).toEqual(
+				activeToolsForType("coding"),
+			);
+			emit("agent_end", { messages: [] });
+			emit("agent_settled");
+			const trace = fs.readFileSync(path.join(taskDir, "trace.log"), "utf8");
+			expect(trace).toContain("[HEADER] body-type-ignored count=1 lines=2 values=coding escaped=false role=coding");
+			expect(trace).toContain("[HEADER] unregistered-type-fallback type=default source=body role=coding");
+		} finally {
+			exitSpy.mockRestore();
+			delete process.env.PI_WORKER_TASK;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("VC-023/P3: parseTaskLabels keeps fenced-only semantics on top of the shared boundary", () => {
+		const root = mkdtemp();
+		try {
+			const fenced = path.join(root, "fenced.md");
+			fs.writeFileSync(fenced, "---\ntype: review\nloop: l1\n---\n\nbody\n", "utf8");
+			expect(parseTaskLabels(fenced).get("type")).toBe("review");
+			expect(parseTaskLabels(fenced).get("loop")).toBe("l1");
+
+			// Shared boundary strips the BOM, so a BOM+fenced task.md now resolves.
+			const bomFenced = path.join(root, "bom-fenced.md");
+			fs.writeFileSync(bomFenced, "\uFEFF---\ntype: vision\n---\n\nbody\n", "utf8");
+			expect(parseTaskLabels(bomFenced).get("type")).toBe("vision");
+
+			// Fenced-only stays: an unfenced header carries no autopilot labels.
+			const unfenced = path.join(root, "unfenced.md");
+			fs.writeFileSync(unfenced, "type: coding\nloop: l2\n\nbody\n", "utf8");
+			expect(parseTaskLabels(unfenced).size).toBe(0);
+
+			// An unclosed fence is not a fence (design-pinned boundary change).
+			const unclosed = path.join(root, "unclosed.md");
+			fs.writeFileSync(unclosed, "---\ntype: coding\n\nbody\n", "utf8");
+			expect(parseTaskLabels(unclosed).size).toBe(0);
+
+			// T-17/A4 parity pin: the labels map is last-wins INSIDE the header, and a
+			// body `type:` is never read. The Python mirror
+			// (`autopilot/state.py::parse_task_labels`) reuses
+			// `mw_common.read_task_header_region`, so both sides return these exact
+			// maps — the pre-T-17 mirror returned the body-derived map for the
+			// unclosed fence and an empty map for the BOM case.
+			const dup = path.join(root, "dup-type.md");
+			fs.writeFileSync(dup, "---\ntype: coding\nloop: l2\ntype: review\n---\n\nbody\n", "utf8");
+			expect([...parseTaskLabels(dup).entries()]).toEqual([
+				["type", "review"],
+				["loop", "l2"],
+			]);
+			const bodyType = path.join(root, "body-type.md");
+			fs.writeFileSync(bodyType, "---\ntype: coding\n---\n\nbody\ntype: review\n", "utf8");
+			expect([...parseTaskLabels(bodyType).entries()]).toEqual([["type", "coding"]]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+// ── VC namespace registry for key mw-guard-form-hardening (T-18/C) ──────────
+// design.md §6 declares VC-001…VC-046, but the plain `VC-NNN` form is reused by
+// other keys' suites (this file's extension list VC-001…023, the agentic-task
+// test_advance_phase.py VC-001…036, the rag-* suites VC-001…). Every design VC
+// therefore carries a key-namespaced `VC-MWGF-0NN` label. Carriers that live in
+// this file or mwds-t03-bash-write-scope.test.ts carry the label on the test
+// itself; the carriers outside the T-18 write surface are registered here so
+// `rg "VC-MWGF-0NN"` resolves each of the 46 exactly once.
+//   VC-MWGF-011  mwds-t02-write-intent.test.ts:467  AC-003 directory blindness
+//   VC-MWGF-012  mwds-t02-write-intent.test.ts:540  containment via the read-scope normalizer
+//   VC-MWGF-013  mwds-t02-write-intent.test.ts:559  own taskDir + framework names allowed
+//   VC-MWGF-014  mwds-t02-write-intent.test.ts:234  corpus hits=13 / violations=1 / FP=0
+//   VC-MWGF-015  mwds-t02-write-intent.test.ts:494  five leak samples refused (5/5)
+//   VC-MWGF-016  mwds-t02-write-intent.test.ts:507  shape discovery (no extension enum)
+//   VC-MWGF-017  mwds-t02-write-intent.test.ts:572  deny prefix outranks shape
+//   VC-MWGF-018  mwds-t02-write-intent.test.ts:521  bare tokens / prose yield no FP
+//   VC-MWGF-019  mwds-t02-write-intent.test.ts:619  Windows boundary rulings
+//   VC-MWGF-024  worker-crosskey-readonly.test.ts:255  explicit exempt set (design §4.4.5: 14 names)
+//   VC-MWGF-025  worker-crosskey-readonly.test.ts:274  live `_tmp` key refused
+//   VC-MWGF-026  worker-crosskey-readonly.test.ts:290  case-variant key normalization
+//   VC-MWGF-027  worker-crosskey-readonly.test.ts:381  `_index.md` fallback -> `_scratch`, zero writes
+//   VC-MWGF-028  worker-crosskey-readonly.test.ts:333  claim/advance_phase direction consistency
+//   VC-MWGF-033  worker-crosskey-readonly.test.ts:441  BR-07/BR-08 key-identity branches
+//   VC-MWGF-034  mwds-t04-deliverable.test.ts:526  BR-09/BR-10 deliverable branches
+//   VC-MWGF-035  mwds-t04-deliverable.test.ts:215  placeholder oracle vs external 16-member list
+//   VC-MWGF-037  mwds-t04-deliverable.test.ts:215  placeholder count = 16
+//   VC-MWGF-039  task-frontmatter.test.ts:220  shared/task-frontmatter.ts single source
+//   VC-MWGF-040  test_task_type_parity.py:237  golden fixture 18 cases (+ reverse diff :287, fail-not-skip :230)
+//   VC-MWGF-042  test_task_type_parity.py:311  BOM: 7 historical books readable (+ py==ts md5 :300)
+//   VC-MWGF-043  worker-crosskey-readonly.test.ts:255  exempt 14-name constant, name by name
+//   VC-MWGF-044  worker-crosskey-readonly.test.ts:415  unconditional dispatch guard, 3 call lines kept
+//   VC-MWGF-046  mwds-t02-write-intent.test.ts:482  own-taskDir relative form kept (fixture semantics)
+
+// ── T-17/B-1 anchor integrity (AC-011) ──────────────────────────────────────
+// Every `file:line` reference in spec.md / design.md must resolve on the FINAL
+// working tree AND the referenced line must carry the claimed symbol (a line
+// number that merely exists is not an anchor). Emits the machine-readable
+// `[ANCHORS]` line and fails unless unresolved + out-of-range + mismatch == 0.
+
+describe("T-17/B-1 anchor integrity (VC-MWGF-038 / AC-011)", () => {
+	const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+	const ANCHOR_ROOTS = [
+		"",
+		"packages/coding-agent",
+		"packages/coding-agent/src/extensions/agent-team-loop",
+		"packages/coding-agent/src/extensions/agent-team-loop/pm",
+		"packages/multi-workers",
+		".agents/skills/agentic-task/scripts",
+	];
+	const DOCS = [".agenticdoc/mw-guard-form-hardening/spec.md", ".agenticdoc/mw-guard-form-hardening/design.md"];
+
+	function resolveRef(ref: string): string | undefined {
+		for (const root of ANCHOR_ROOTS) {
+			const candidate = root === "" ? path.join(REPO_ROOT, ref) : path.join(REPO_ROOT, root, ref);
+			if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+		}
+		return undefined;
+	}
+
+	/** `path:start` -> what that line must carry. `end` widens the window for
+	 * range refs (`file:2167-2169`). */
+	const EXPECTED: Record<string, { end?: number; must: RegExp }> = {
+		"worker/worker-mode.ts:336": { must: /export function parseTaskMd/ },
+		"worker/worker-mode.ts:694": { must: /export interface BashWriteCandidate/ },
+		"worker/worker-mode.ts:709": { must: /export type BashWriteScopeRule/ },
+		"worker/worker-mode.ts:742": { must: /interface ShellToken/ },
+		"worker/worker-mode.ts:756": { must: /export function tokenizeShellCommand/ },
+		"worker/worker-mode.ts:834": { must: /const COMMAND_WRAPPERS/ },
+		"worker/worker-mode.ts:1014": { must: /const INLINE_WRITE_PATTERNS/ },
+		"worker/worker-mode.ts:1182": { must: /token\.text === ">" \|\| token\.text === ">>"/ },
+		"worker/worker-mode.ts:1237": { must: /const inlineTargets/ },
+		"worker/worker-mode.ts:1303": { must: /case "python":/ },
+		"worker/worker-mode.ts:1309": { must: /inlineTargets\(INLINE_WRITE_PATTERNS/ },
+		"worker/worker-mode.ts:1519": { must: /export function extractBashWriteCandidates/ },
+		"worker/worker-mode.ts:1533": { must: /function bashWriteDenyReason/ },
+		"worker/worker-mode.ts:1571": { must: /export function checkBashWriteScopeTarget/ },
+		"worker/worker-mode.ts:1572": { must: /config: BashWriteScopeConfig/ },
+		"worker/worker-mode.ts:1660": { must: /function appendBashWriteScopeTraceLine/ },
+		"worker/worker-mode.ts:1967": { end: 1972, must: /writeSurfaceMarker === "malformed"/ },
+		"worker/worker-mode.ts:2167": {
+			end: 2169,
+			must: /checkBashWriteScopeTarget\(config, candidate\.target, candidate\.verbatim\)/,
+		},
+		"worker/read-scope.ts:100": { must: /export function normalizeForCompare/ },
+		"pm/ui-bridge.ts:52": { must: /from "\.\.\/worker\/read-scope\.ts"/ },
+		"pm/ui-bridge.ts:97": { must: /readIndexMdActive/ },
+		"pm/ui-bridge.ts:277": { must: /export function foreignLiveClaimRefusal/ },
+		"pm/ui-bridge.ts:1148": { must: /export function resolveDispatchType/ },
+		"ui-bridge.ts:1337": { end: 1339, must: /runtime consumer only greps/ },
+		"pm/ui-bridge.ts:1340": { end: 1341, must: /export const WRITE_SURFACE_MARKER =/ },
+		"pm/ui-bridge.ts:1349": { must: /export const WRITE_INTENT_VERBS/ },
+		"pm/ui-bridge.ts:1432": { must: /const WRITE_INTENT_TOKEN_RE/ },
+		"pm/ui-bridge.ts:1548": { must: /export function collectWriteIntentHits/ },
+		"pm/ui-bridge.ts:1645": { must: /export function judgeWriteTarget/ },
+		"pm/ui-bridge.ts:1664": { must: /export function isWhitelistedWriteTarget/ },
+		"pm/ui-bridge.ts:1679": { must: /export function judgeWriteIntent/ },
+		"pm/ui-bridge.ts:1745": { must: /export function applyWriteSurfaceContract/ },
+		"pm/ui-bridge.ts:1780": { must: /export function writeDispatchTaskMd/ },
+		"pm/ui-bridge.ts:2256": { must: /export function registerAdvancePhaseTool/ },
+		"pm/ui-bridge.ts:2345": { must: /runAgenticScript\(projectDir, "advance_phase\.py"/ },
+		"pm/pm-orchestrator.ts:488": { must: /export function countWriteScopeResidualRisks/ },
+		"shared/index-store.ts:67": { must: /export function keyNameRefusal/ },
+		"shared/index-store.ts:169": { must: /const idx = existing\.findIndex/ },
+		"shared/index-store.ts:212": { must: /const idx = rows\.findIndex/ },
+		"shared/index-store.ts:285": { must: /findByKey\(key: string\)/ },
+		"shared/task-frontmatter.ts:109": { must: /export function extractTaskHeader/ },
+		"shared/task-frontmatter.ts:117": { must: /export function readTaskHeaderScalar/ },
+		"shared/task-frontmatter.ts:141": { must: /export function readTaskType/ },
+		"shared/task-frontmatter.ts:159": { must: /export function scanBodyTypeLines/ },
+		"shared/task-frontmatter.ts:169": { must: /export function findTypeEscalation/ },
+		"shared/deliverable-evidence.ts:63": { must: /export const DELIVERABLE_PLACEHOLDERS/ },
+		"shared/deliverable-evidence.ts:85": { must: /DELIVERABLE_PLACEHOLDERS\.has/ },
+		"shared/agentic-scripts.ts:21": { must: /export function agenticScriptsDir/ },
+		"test/suite/mwds-t03-bash-write-scope.test.ts:167": { must: /startsWith\("\[WRITE_SCOPE\]"\)/ },
+		"test/suite/mwds-t02-write-intent.test.ts:445": {
+			must: /worker_file basenames, framework names and the own task dir pass/,
+		},
+		"test/suite/mwds-t01-worker-guard.test.ts:269": {
+			must: /every declared surface maps to a real foreignLiveClaimRefusal call site/,
+		},
+		"test/suite/autopilot-protocol.test.ts:346": { must: /taskKey: "m-coding"/ },
+		"test/suite/autopilot-monitor.test.ts:1254": { must: /degrades to placeholders for an empty project/ },
+		".agents/skills/agentic-task/scripts/advance_phase.py:599": { must: /index_script = Path\(__file__\)\.parent/ },
+	};
+
+	it("every spec.md / design.md `file:line` reference is anchored to the current tree", () => {
+		const refRe = /([A-Za-z0-9_./-]*\.(?:ts|py|json|ps1|md))(?:::)?:(\d+)(?:-(\d+))?/g;
+		const unresolved: string[] = [];
+		const outOfRange: string[] = [];
+		const mismatched: string[] = [];
+		let total = 0;
+		for (const doc of DOCS) {
+			const text = fs.readFileSync(path.join(REPO_ROOT, doc), "utf8");
+			for (const line of text.split("\n")) {
+				refRe.lastIndex = 0;
+				let match = refRe.exec(line);
+				while (match !== null) {
+					total += 1;
+					const ref = match[1] ?? "";
+					const start = Number(match[2]);
+					const end = match[3] === undefined ? start : Number(match[3]);
+					const key = `${ref}:${start}`;
+					const resolved = resolveRef(ref);
+					if (resolved === undefined) {
+						unresolved.push(`${doc} ${key}`);
+						match = refRe.exec(line);
+						continue;
+					}
+					const lines = fs.readFileSync(resolved, "utf8").split("\n");
+					if (start < 1 || end > lines.length) {
+						outOfRange.push(`${doc} ${key}`);
+						match = refRe.exec(line);
+						continue;
+					}
+					const spec = EXPECTED[key];
+					if (spec === undefined) {
+						unresolved.push(`${doc} ${key}`);
+						match = refRe.exec(line);
+						continue;
+					}
+					const last = Math.max(end, spec.end ?? end);
+					const window = lines.slice(start - 1, last).join("\n");
+					if (!spec.must.test(window)) {
+						mismatched.push(`${doc} ${key} -> ${(lines[start - 1] ?? "").trim().slice(0, 90)}`);
+					}
+					match = refRe.exec(line);
+				}
+			}
+		}
+		const unanchored = unresolved.length + outOfRange.length + mismatched.length;
+		process.stdout.write(
+			`[ANCHORS] refs_total=${total} resolved=${total - unanchored} unresolved=${unresolved.length} ` +
+				`out_of_range=${outOfRange.length} content_mismatch=${mismatched.length} unanchored_refs=${unanchored}\n`,
+		);
+		for (const entry of unresolved) process.stdout.write(`[ANCHORS] unresolved ${entry}\n`);
+		for (const entry of outOfRange) process.stdout.write(`[ANCHORS] out-of-range ${entry}\n`);
+		for (const entry of mismatched) process.stdout.write(`[ANCHORS] mismatch ${entry}\n`);
+		expect(unresolved).toEqual([]);
+		expect(outOfRange).toEqual([]);
+		expect(mismatched).toEqual([]);
 	});
 });

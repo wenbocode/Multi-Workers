@@ -37,8 +37,15 @@ export function writeOutput(opts) {
     sections.push(`## TL;DR\n\n${headline(opts.summary)}`);
     sections.push(`## Summary\n\n${opts.summary || "(no summary)"}`);
     if (opts.exitCode === 0) {
-        const files = opts.changedFiles?.join("\n") ?? "(none)";
-        sections.push(`## Changed Files\n\n${files}`);
+        // AC-007/DD-09: the old `## Changed Files` section claimed a file list that
+        // could never exist (`changedFiles` had a single `[]` producer, so the
+        // `?? "(none)"` branch was dead code). Render the collected deliverables
+        // instead, and omit the section when there are none — an empty section or a
+        // `(none)` placeholder would be noise a reader cannot distinguish from a
+        // real, empty delivery.
+        const deliverables = (opts.changedFiles ?? []).filter((f) => f !== "output.md" && f !== "progress.md");
+        if (deliverables.length > 0)
+            sections.push(`## Deliverables\n\n${deliverables.join("\n")}`);
         sections.push(`## Verification Steps\n\n${opts.verificationSteps || "(none)"}`);
         sections.push(`## Exit Reason\n\n${opts.exitReason || "Task completed successfully."}`);
     }
@@ -69,7 +76,7 @@ export function writeOutput(opts) {
     catch {
         existing = "";
     }
-    const body = `${sections.join("\n\n")}\n`;
+    const body = `${opts.runMarker ? `${opts.runMarker}\n\n` : ""}${sections.join("\n\n")}\n`;
     fs.writeFileSync(outputPath, existing.trim() === "" ? body : `${existing.trimEnd()}\n\n---\n\n${body}`, "utf8");
 }
 export function appendTrace(taskKey, agenticdocRoot, line) {

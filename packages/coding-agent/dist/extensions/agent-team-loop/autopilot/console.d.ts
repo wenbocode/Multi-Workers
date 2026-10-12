@@ -14,9 +14,11 @@
  *                                     human view and --json come from the
  *                                     same derivation (view parity, VC-017)
  *   /autopilot gates                  pending gate list
- *   /autopilot gate <id> approve|reject [--note <text>]
+ *   /autopilot gate <id> approve|reject [--note <text>] [--authorizes <a,b>]
  *                                     answer a gate under .mw/gates.lock
- *                                     (AC-016)
+ *                                     (AC-016); `--authorizes` declares the
+ *                                     closed-set action types this answer
+ *                                     authorizes (G3, {@link AUTHORIZES_ACTIONS})
  *   /autopilot timeline [--since <iso>] [--all]
  *                                     replay events since the last-seen
  *                                     watermark (default), beats filtered;
@@ -90,9 +92,12 @@ export declare function resetMonitorSuppression(): void;
  * a stalled key has to be visible without remembering a command to run — the
  * E2Feature incident ran 2h35m unnoticed because nothing surfaced it.
  *
- * Returns true when the panel is showing. Idempotent: an already-active panel
- * is left alone (and reports true). Guards, in order: no visual UI, the
- * autoMonitor opt-out, an explicit session-level `/autopilot monitor off`,
- * and a config that is absent/invalid or `enabled: false`. */
+ * Returns true when the panel is showing. Idempotent for the SAME window: an
+ * already-active panel with the same ctx is left alone (and reports true). A
+ * different ctx means the session was replaced while the interval survived, so
+ * the panel is stopped and started again for the new ctx (D-019/AC-018).
+ * Guards, in order: no visual UI, the autoMonitor opt-out, an explicit
+ * session-level `/autopilot monitor off`, and a config that is
+ * absent/invalid or `enabled: false`. */
 export declare function autoStartMonitor(ctx: ExtensionContext, projectDir: string, deps?: AutopilotConsoleDeps): boolean;
 //# sourceMappingURL=console.d.ts.map

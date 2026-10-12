@@ -58,6 +58,29 @@ export type ClaimState = "free" | "held-live" | "held-stale";
 /** Whether a key's claim blocks a takeover. "held-live" = another live window
  * (or a foreign host we cannot verify) holds it and --force is required. */
 export declare function claimState(claimId: string, self: string): ClaimState;
+/** Machine-readable refusal code for a cross-key write (AC-024). */
+export declare const CROSS_KEY_READ_ONLY = "cross-key-read-only";
+/** Writer surfaces the cross-key guard actually fences, in refusal-text order.
+ * Single declaration source (AC-003/VC-011): the refusal body below is built
+ * from this array, and the coverage test asserts every entry maps to a real
+ * guard call site — the text can never again claim a surface the code does not
+ * guard (the pre-AC-003 gap: it named `/worker` while only dispatch_worker and
+ * advance_phase called the guard). */
+export declare const CROSS_KEY_READ_ONLY_SURFACES: readonly ["dispatch_worker", "/worker", "advance_phase"];
+/** Row-ack addendum of the refusal text: `ack_worker_result` filters rows by
+ * ownership instead of calling the guard, so it is named in the text but is
+ * deliberately NOT part of {@link CROSS_KEY_READ_ONLY_SURFACES} (which is the
+ * call-site set VC-011 compares against). */
+export declare const CROSS_KEY_READ_ONLY_ACK_NOTE = "acking its rows";
+/** Cross-key write guard (AC-024): a key whose `_index.parallel` row is held
+ * live by ANOTHER window is READ-ONLY for this window. Reading it stays global
+ * and unrestricted (`list_tasks` scope "all"/"key", `mw_status`, `mw doctor`,
+ * the watch panel); the WRITER surfaces refuse with the stable
+ * {@link CROSS_KEY_READ_ONLY} code instead of silently touching another
+ * window's namespace. Writable: this window's own claim, an unclaimed key
+ * (new-key bootstrap: write spec.md -> advance -> dispatch), and `_scratch`.
+ * Returns null when the write is allowed. */
+export declare function foreignLiveClaimRefusal(indexStore: IndexStore, key: string): string | null;
 export interface TakeoverResult {
     ok: boolean;
     /** Present when ok=false: the live claim that blocked the takeover. */
@@ -70,6 +93,10 @@ export interface TakeoverResult {
      * claims to have passed. Non-blocking — claiming a broken key to fix it
      * is legitimate; the warnings make the breakage visible immediately. */
     audit: string[];
+    /** Present when ok=false: the key NAME was refused by the shared
+     * shape/reserved gate (AC-006, stable `keyNameRefusal` code) rather than a
+     * live foreign claim. */
+    refusal?: string;
     /** Result of mirroring the claim into {key}/pm-state.md's '- Claim-Id:'
      * line (mw-worker-visibility-gate D-107/D-108); undefined when the claim
      * itself failed. A failed mirror never flips `ok` — the index row is
@@ -129,8 +156,12 @@ export declare function readWorkerLogTail(taskDir: string): string | undefined;
  *    ?? `## Exit Reason` first line
  *  - needs-clarification: `## Questions` first line ?? worker.log tail ??
  *    explicit no-output hint (claude/codex tasks write no output.md at all)
- *  - done: `## TL;DR` first line ?? headline-normalized `## Summary` first
- *    line (old output.md files)
+ *  - lost (D-022/T-20): the run's process is gone with no verified outcome —
+ *    same evidence ladder as a failure (Exit Reason, then the log tail), so the
+ *    PM reads the scene instead of a synthesized conclusion
+ *  - done: `## TL;DR` first line ?? `## Summary` first line (old output.md
+ *    files). AC-010: the LAST non-placeholder TL;DR/Summary block, not the
+ *    first — append-only multi-run files lead with crash placeholders.
  * Returns "" when nothing informative exists (caller renders the key only).
  * Line-width truncation stays with the caller (WATCH_LINE_MAX). */
 export declare function readTerminalDetail(taskDir: string, status: WorkerStatus): string;
@@ -250,6 +281,142 @@ export declare function planDispatchFrontmatter(input: {
     ok: false;
     message: string;
 };
+/** Paired markers of the dispatch-injected write-surface contract (contract
+ * C2, producer T-02 → consumer T-03). The runtime consumer only greps for
+ * these markers; the three lines between them are for the worker and PM. */
+export declare const WRITE_SURFACE_MARKER = "<!-- mw-write-surface: v1 -->";
+export declare const WRITE_SURFACE_MARKER_END = "<!-- /mw-write-surface: v1 -->";
+/** Machine-readable refusal code for an unsatisfiable write requirement. */
+export declare const WORKER_WRITE_SURFACE = "worker-write-surface";
+/** Write verbs a task book can use to order a file write (AC-005a). Exported so
+ * the rule is enumerable by the unit matrix and by the corpus replay.
+ * `写到文件` before `写到` so the longest form wins. */
+export declare const WRITE_INTENT_VERBS: readonly string[];
+/** Allow-guards (AC-005a), stable names for the test matrix. A hit matching
+ * any guard is a legitimate mention, never an unsatisfiable write order. */
+export declare const WRITE_INTENT_GUARDS: readonly string[];
+/** Upper bound (chars) between a write verb and its path. The matcher is
+ * deliberately stricter: only whitespace and at most one quote may separate
+ * the two, which is what keeps prose like "追加而非重写 achieved.md" out while
+ * still satisfying the ≤32 bound. */
+export declare const WRITE_INTENT_PATH_WINDOW = 32;
+export interface WriteIntentHit {
+    verb: string;
+    path: string;
+    clause: string;
+}
+/** Shape classes for one candidate token (AC-004). The first four (`punct`,
+ * `version`, `abbrev`, `bare`) are non-candidates: prose, not write targets. */
+export type WriteTargetShape = "punct" | "version" | "abbrev" | "bare" | "sep" | "dot-lead" | "drive-relative" | "ads" | "colon" | "ext" | "deny-name" | "exists";
+/** Verdict of the target axis (AC-003/AC-004). `rule` exists only when
+ * allowed=false: `deny` = the deny prefix table fired, `scope` = a path-shaped
+ * target outside the write surface. */
+export interface WriteTargetJudge {
+    allowed: boolean;
+    shape: WriteTargetShape;
+    rule?: "deny" | "scope";
+    detail?: string;
+}
+/** Write-surface context for judgeWriteTarget (AC-003/AC-004). `keyDir` and
+ * `trueRoot` activate the deny prefix table (same table as worker-mode.ts);
+ * omitted, only containment + shape evaluation run. */
+export interface PmWriteSurfaceCtx {
+    taskDir: string;
+    projectRoot: string;
+    keyDir?: string;
+    trueRoot?: string;
+}
+/** Write-intent hits that survive the five allow-guards (AC-005a). Pure over
+ * text so the corpus replay and the unit cases share one implementation. */
+export declare function collectWriteIntentHits(text: string): WriteIntentHit[];
+/** Shape classification for one candidate token (AC-004). Ordered so the
+ * pointed Win32 forms (`drive-relative`, `ads`) are labelled before the `ext`
+ * rule can swallow them; trailing dots/spaces are stripped first (Win32
+ * CreateFile semantics). Read-only (`existsSync`). */
+export declare function classifyWriteTargetShape(pathToken: string, ctx: {
+    projectRoot: string;
+}): WriteTargetShape;
+/** Target-axis verdict (AC-003/AC-004), evaluation order:
+ *   1. deny prefixes (absolute priority, mirrors worker-mode.ts)
+ *   2. own task dir — realpath + segment boundary (read-scope.ts reuse)
+ *   3. basename channel — ONLY for a token with no directory component, so a
+ *      whitelisted basename can never whitelist a foreign directory (A4 fix)
+ *   4. path shape => refuse (fail-closed, A3 fix)
+ *   5. non-candidate prose => pass untouched
+ * The `!hasDirComponent` precondition (not `shape === "bare"`) is load-bearing:
+ * `output.md`/`report.md` are `ext`-shaped and must still use the channel. */
+export declare function judgeWriteTarget(pathToken: string, ctx: PmWriteSurfaceCtx): WriteTargetJudge;
+/** Boolean wrapper of {@link judgeWriteTarget} (AC-003/AC-004): may this role
+ * legitimately write `pathToken`? */
+export declare function isWhitelistedWriteTarget(pathToken: string, ctx: PmWriteSurfaceCtx): boolean;
+export interface WriteIntentVerdict {
+    ok: boolean;
+    /** Guard-surviving hits, before the whitelist (AC-005a corpus metric). */
+    hits: WriteIntentHit[];
+    /** Hits whose target the role cannot reach (the refusal set). */
+    violations: WriteIntentHit[];
+}
+/** Judgement entry point: only a writeless role without a shell is judged — a
+ * write role passes untouched, a shell role (`research`) is handled by the
+ * AC-005b runtime guard instead. `allowForeignWrite` is the escape hatch. */
+export declare function judgeWriteIntent(input: {
+    type: string;
+    description: string;
+    taskDir: string;
+    projectRoot: string;
+    allowForeignWrite?: boolean;
+    /** Own key dir (`.agenticdoc/<key>`); activates the deny prefix table. */
+    keyDir?: string;
+    /** TRUE `.agenticdoc` root; activates the deny prefix table. */
+    trueRoot?: string;
+}): WriteIntentVerdict;
+/** Refusal text for an unsatisfiable write order (AC-005a): names the code, the
+ * role, the path, and the three ways forward. */
+export declare function writeIntentRefusal(input: {
+    taskKey: string;
+    type: string;
+    path: string;
+}): string;
+/** Default `write_scope:` line for a shell role (contract C1): the task's own
+ * dir plus the key's evidence tree. Absent for non-shell roles. */
+export declare function renderDefaultWriteScope(ownerKey: string, taskKey: string): string;
+/** The injected 3-line contract section (contract C2), marker-paired. */
+export declare function renderWriteSurfaceContract(type: string, writeScope: string | undefined): string;
+/** Idempotent contract-section application (contract C2, VC-019): any existing
+ * marker region is removed, then the canonical section is inserted right after
+ * the leading frontmatter block. Applying it twice is a byte-level fixed point
+ * and leaves exactly one marker pair. */
+export declare function applyWriteSurfaceContract(taskMdText: string, type: string, writeScope: string | undefined): string;
+/** Single write point for one dispatch's task.md (contract C4). Both dispatch
+ * entries — the `dispatch_worker` tool and the `/worker` command — go through
+ * here so the pipeline (frontmatter merge, contract-section injection, mkdir,
+ * writeFileSync) has exactly one implementation. The T-01 extraction is
+ * byte-for-byte equivalent to the inline writes it replaced: with no
+ * `writeScope` and no injection hook the file content is
+ * `${frontmatter}\n${body}\n` and only the mkdir/write order is shared. T-02
+ * fills in the write-surface contract section (C2) and `injected` reports
+ * whether this call wrote one. */
+export declare function writeDispatchTaskMd(deps: {
+    agenticdocRoot: string;
+    ownerKey: string;
+}, input: {
+    taskKey: string;
+    type: string;
+    body: string;
+    frontmatter: string;
+    /** Rendered `write_scope:` line (T-02, contract C1); undefined keeps the
+     * pre-C1 frontmatter bytes. */
+    writeScope?: string;
+    /** AC-005a (contract C2): inject the write-surface contract section.
+     * Opt-in so the pre-C2 byte shape stays available (T-01/T-03 callers). */
+    injectWriteSurface?: boolean;
+    /** AC-005a escape hatch: record `allow_foreign_write: true` for audit. */
+    allowForeignWrite?: boolean;
+}): {
+    ok: true;
+    path: string;
+    injected: boolean;
+};
 /**
  * Register agent-callable tools for worker dispatch and task listing.
  * These complement the slash commands in registerWorkerCommands.
@@ -269,7 +436,7 @@ export declare function registerSwitchKeyTool(pi: ExtensionAPI, indexStore: Inde
  * with "no shell, cannot execute advance_phase.py / update_index.py". This
  * tool spawns the script directly (list args, no shell); gate semantics stay
  * in the Python script, the single source of truth audit_phase.py replays. */
-export declare function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: string): void;
+export declare function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: string, indexStore: IndexStore): void;
 /**
  * Spawn a worker directly from the pi window.
  * Usage: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] [--key <name>] <desc>

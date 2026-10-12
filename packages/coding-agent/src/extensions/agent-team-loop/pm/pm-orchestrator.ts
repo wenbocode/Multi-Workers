@@ -15,6 +15,7 @@ import { dispatchDocGaps, readPhaseDocs } from "../shared/phase-docs.ts";
 import { syncPmStateClaimId } from "../shared/pm-state-claim.ts";
 import { registerPmStateGuard } from "../shared/pm-state-guard.ts";
 import { evaluateRunIdentity, type RunIdentityRefusal } from "../shared/run-store.ts";
+import { readTaskType } from "../shared/task-frontmatter.ts";
 import { type WorkerEntry, type WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 import { isGoalEstablished, readGoal } from "./goal-reader.ts";
 import { StateManager } from "./state-manager.ts";
@@ -348,7 +349,10 @@ function pickWorkerRoute(taskContent: string): { cli: string; provider: string }
 	// agent, not claude redirects (design D-005) — a claude worker requires an
 	// explicit `cli` param on dispatch_worker / /worker, where missing
 	// credentials fail per-task instead of silently degrading the route.
-	if (/^type:\s*codex/im.test(taskContent)) return { cli: "codex", provider: "" };
+	// The reading comes from the single-source header parser (AC-005/F-6): the
+	// old `/^type:\s*codex/im` full-text regex let one body line flip the
+	// dispatch CLI, outside the shared `type:` matrix.
+	if (readTaskType(taskContent).type === "codex") return { cli: "codex", provider: "" };
 	return { cli: "pi", provider: "timi" };
 }
 
@@ -398,7 +402,13 @@ export type DispatchAlarmKind =
 	// A read-only run that settled without any deliverable (AC-006): the worker
 	// recorded `needs-clarification` and emitted this alarm itself, with the
 	// ledger root pinned to the true `.agenticdoc` (never `<key>/workers`).
-	| "no-product";
+	| "no-product"
+	// Residual write-guard risk (AC-007/T-03): a writeless+shell worker was
+	// allowed through by contract on a target that is not statically
+	// determinable (`allow-unknown`) while its basename still names a deny-list
+	// artifact (`pm-state.md`, `_workers*`). The guard itself cannot block;
+	// observability is the only remaining defence (design DD-08).
+	| "write-scope-risk";
 
 export interface DispatchAlarm {
 	kind: DispatchAlarmKind;
@@ -434,6 +444,10 @@ export function describeDispatchAlarm(alarm: DispatchAlarm): string {
 			return `${alarm.count} read-only run(s) settled without a product — needs-clarification, awaiting human judgement${
 				alarm.detail ? `: ${alarm.detail}` : ""
 			}`;
+		case "write-scope-risk":
+			return `${alarm.count} write-scope residual-risk row(s) (blocked=false, risk=deny-basename)${
+				alarm.detail ? ` on ${alarm.detail}` : ""
+			} — the guard allowed them by contract; review the audited target`;
 	}
 }
 
@@ -463,6 +477,40 @@ export function recordDispatchAlarm(agenticdocRoot: string, alarm: DispatchAlarm
 	} catch (err) {
 		console.error(`[mw] dispatch alarm not recorded: ${err instanceof Error ? err.message : String(err)}`);
 	}
+}
+
+/** Count the write-guard residual-risk audit rows in one worker trace
+ * (AC-007/T-03): `[WRITE_SCOPE]` lines carrying BOTH `blocked=false` and
+ * `risk=deny-basename`. The filter is deliberately the two-field pair and never
+ * `rule=allow-unknown` alone (design-write-guard-landing §5.5): the unknown tier
+ * is the contract, the deny-list basename is the residual risk. Best-effort — a
+ * missing/unreadable trace is zero, never an error. */
+export function countWriteScopeResidualRisks(taskDir: string): number {
+	let raw: string;
+	try {
+		raw = fs.readFileSync(path.join(taskDir, "trace.log"), "utf8");
+	} catch {
+		return 0;
+	}
+	let count = 0;
+	for (const line of raw.split("\n")) {
+		if (!line.startsWith("[WRITE_SCOPE] ")) continue;
+		if (!line.includes("blocked=false")) continue;
+		if (!line.includes("risk=deny-basename")) continue;
+		count += 1;
+	}
+	return count;
+}
+
+/** PM-side exit for the write-guard residual risk (AC-007/DD-08): the worker
+ * was allowed through by contract, so the ledger row is the remaining defence.
+ * Reuses the single dispatch-alarm channel and its unchanged row shape; returns
+ * the number of residual-risk rows found (0 ⇒ nothing written). */
+export function recordWriteScopeResidualRisks(agenticdocRoot: string, taskKey: string, taskDir: string): number {
+	const count = countWriteScopeResidualRisks(taskDir);
+	if (count === 0) return 0;
+	recordDispatchAlarm(agenticdocRoot, { kind: "write-scope-risk", count, detail: taskKey });
+	return count;
 }
 
 /** Single-scan dispatch quota (AC-021). A scan that wants to queue more rows
@@ -919,6 +967,12 @@ export function startWorkerPollLoop(
 				if (!watch.key || ownerKeyOf(entry, agenticdocRoot) !== watch.key) continue;
 				// Task dir from the queue row taskPath: works for keyed {key}/workers/<task-key>/ and legacy root paths.
 				const taskDir = path.dirname(entry.taskPath);
+				// AC-007/DD-08 residual risk: a contract-allowed write whose basename
+				// still names a deny-list artifact is only observable here (the guard
+				// wrote `blocked=false risk=deny-basename` and moved on). Reuses the
+				// single dispatch-alarm ledger channel; `notified` above bounds it to
+				// once per task per session.
+				recordWriteScopeResidualRisks(agenticdocRoot, entry.taskKey, taskDir);
 				// Terminal readback (AC-014): inject the full output.md body into
 				// the conversation so worker results reach the PM without manual
 				// file reads. Falls through to the spawn-failure / no-output

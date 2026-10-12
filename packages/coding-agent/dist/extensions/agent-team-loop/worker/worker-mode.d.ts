@@ -8,6 +8,12 @@ export declare function toolsForType(taskType: string): string[];
  * extra lives only here. Write roles get the base array untouched, read-only
  * roles get a copy with `worker_file` appended. */
 export declare function activeToolsForType(taskType: string): string[];
+/** Is this a role whose tool set carries `bash` (contract C3)? */
+export declare function isShellRole(taskType: string): boolean;
+/** Is this a role with no write/edit tool (contract C3)? Such a role writes
+ * only through the narrow `worker_file` channel, so bash is the one structural
+ * hole left for the AC-005b write-surface guard. */
+export declare function isWritelessRole(taskType: string): boolean;
 /** Checkpoint self-assessment steer text, split by role (D-104/VC-004).
  * - `hasWriteTools === true`: the pre-change wording byte for byte — the
  *   agent appends its own CKPT line to progress.md with its write tool.
@@ -105,6 +111,10 @@ interface TaskMeta {
     /** deny_globs entries (mw-dual-workspace AC-006), minimatch dual-basis.
      * Present → deny firewall active even without read_scope (deny-only). */
     denyGlobs?: string[];
+    /** write_scope entries (contract C1/T-03), project-root relative. Present →
+     * the AC-005b bash write surface is narrowed to the intersection with the
+     * default (own taskDir + `<key>/evidence/**`); absent → default surface. */
+    writeScope?: string[];
     /** l2_read_file_cap frontmatter (positive int), when present. */
     readFileCap?: number;
     /** l2_read_byte_cap frontmatter (positive int), when present. */
@@ -113,8 +123,89 @@ interface TaskMeta {
     ragChatBudget?: number;
     /** task.md `rag_time_budget_s:` header (positive int seconds), when present. */
     ragTimeBudgetS?: number;
+    /** AC-010/T-12: structure of the C2 contract markers read back from this
+     * task book (see {@link writeSurfaceMarkerState}). */
+    writeSurfaceMarker: WriteSurfaceMarkerState;
 }
+/** Structure of the C2 write-surface contract markers in a task book
+ * (AC-010/T-12). The producer is `pm/ui-bridge.ts::applyWriteSurfaceContract`
+ * (contract section injected for writeless roles); until now nothing in the
+ * execution path read the paired markers back, so the only writer-side
+ * guarantee was that idempotency regex — a half-removed or duplicated pair
+ * would survive into the task book unobserved. `parseTaskMd` records the
+ * structure here and `workerModeActivate` consumes it: `"malformed"` appends
+ * one `[WRITE_SURFACE]` audit line. `"absent"` is the normal state for
+ * manual/legacy task books (the section is opt-in and conductor-rendered task
+ * books never carry it), so absence is deliberately not flagged. Only markers
+ * that occupy a whole line count: the section is line-joined, and an inline
+ * mention in prose (a task book quoting the marker) is not a section. */
+export type WriteSurfaceMarkerState = "absent" | "ok" | "malformed";
+export declare function writeSurfaceMarkerState(content: string): WriteSurfaceMarkerState;
 export declare function parseTaskMd(taskPath: string): TaskMeta;
+/** One extracted write target. */
+export interface BashWriteCandidate {
+    /** Raw path exactly as written in the command. */
+    target: string;
+    /** Which write pattern produced it (audit/debug). */
+    pattern: string;
+    /** False when the target word carries a live shell expansion (`$`, backtick,
+     * unquoted leading `~`, glob, brace). The verdict layer only receives the raw
+     * string (four quoting forms are byte-identical there), so the flag is
+     * computed in the lexer and carried through. */
+    verbatim: boolean;
+}
+/** Block rule identifiers, mirroring read-scope's rule tokens. `allow-unknown`
+ * is the non-blocking token for a target that is not statically determinable
+ * (see `checkBashWriteScopeTarget`), not a block reason. */
+export type BashWriteScopeRule = "deny" | "scope" | "write-scope" | "allow-unknown";
+/** Enforcement config for one writeless+shell worker. */
+export interface BashWriteScopeConfig {
+    /** Worker cwd = project root (launcher guarantee). */
+    projectRoot: string;
+    /** Own task dir (`.agenticdoc/<key>/workers/<taskKey>`), absolute. */
+    taskDir: string;
+    /** Own key dir (`.agenticdoc/<key>`), absolute. */
+    keyDir: string;
+    /** TRUE `.agenticdoc` root (`.agenticdoc`), absolute. */
+    trueRoot: string;
+    /** `write_scope:` entries (project-root relative): undefined = header
+     * absent (the default surface), [] = present-but-blank (fail-closed). */
+    writeScope: string[] | undefined;
+}
+/** Verdict for one extracted target. */
+export interface BashWriteScopeVerdict {
+    allowed: boolean;
+    /** Rule that fired on a block. */
+    rule?: BashWriteScopeRule;
+    /** Short machine token for the trace line (e.g. `denied:pm-state.md`). */
+    detail?: string;
+    /** Human block reason (carries the allowed dirs on every rule). */
+    reason?: string;
+    /** The raw target the verdict was produced for. */
+    target?: string;
+    /** Set on an `allow-unknown` verdict whose basename still names a deny-list
+     * artifact (`pm-state.md`, `_workers*`) — the residual-risk marker (AC-007). */
+    risk?: "deny-basename";
+}
+interface ShellToken {
+    text: string;
+    /** True for an unquoted control-operator token (`>`, `>>`, `|`, ...). */
+    operator: boolean;
+    /** False once the word contains a live expansion (see the tokenizer). */
+    verbatim: boolean;
+}
+/** Split a shell command into quote-aware tokens; control operators become
+ * their own tokens, so `echo "a > b"` never yields a redirect. */
+export declare function tokenizeShellCommand(command: string): ShellToken[];
+/** Extract the KNOWN write targets of a bash command. An empty result means
+ * "not a recognized write" — the caller must allow it (P1, DD-03). */
+export declare function extractBashWriteCandidates(command: string): BashWriteCandidate[];
+/** The bash write-surface verdict for one extracted target: a non-verbatim
+ * target is not statically determinable (`allow-unknown`, fail-open); otherwise
+ * the deny list comes first (absolute priority), then the default surface (own
+ * taskDir + `<key>/evidence`), then the task's `write_scope:` intersection when
+ * the header is present. */
+export declare function checkBashWriteScopeTarget(config: BashWriteScopeConfig, rawTarget: string, verbatim: boolean): BashWriteScopeVerdict;
 /** Structured evidence emitted before any idle kill (VC-004/AC-005). Every
  * field is part of the contract: which tool was in flight (or `none`), how long
  * it had been running, the threshold that produced the verdict, and the last

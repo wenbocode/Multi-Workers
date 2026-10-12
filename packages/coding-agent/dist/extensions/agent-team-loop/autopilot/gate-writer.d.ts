@@ -4,10 +4,12 @@
  *
  * Answering a gate = rewriting four frontmatter fields of the gate file —
  * `status` / `answered_at` / `answered_by` (the answering window's claimId,
- * for audit) / `note` — under `.mw/gates.lock` (O_CREAT|O_EXCL, the shared
- * file-lock protocol). EVERY other line is preserved byte-for-byte,
- * including a trailing CR when the source line had one, so hand-edited gate
- * files keep their exact shape across an answer.
+ * for audit) / `note` — plus, when the human passes `--authorizes` (G3/D-011),
+ * the already-materialized `authorizes:` JSON-list line — under
+ * `.mw/gates.lock` (O_CREAT|O_EXCL, the shared file-lock protocol). EVERY
+ * other line is preserved byte-for-byte, including a trailing CR when the
+ * source line had one, so hand-edited gate files keep their exact shape
+ * across an answer.
  *
  * Creation is conductor-only (gates.py); this module never creates gates and
  * never reorders or synthesizes fields — conductor-created gates always
@@ -33,6 +35,13 @@ export interface AnswerGateOptions {
     /** Timestamp override for `answered_at`. Defaults to now at second
      * precision in the `...Z` form gates.py _check_iso explicitly accepts. */
     answeredAt?: string;
+    /** G3 (D-011/D-012): action types this answer authorizes, from the closed
+     * set {@link AUTHORIZES_ACTIONS} `{retry, contract-change}`. Values outside
+     * the set are refused fail-closed and nothing is written. Omitted or empty
+     * → the existing `authorizes:` line is left untouched. The line must
+     * already exist (the conductor materializes `authorizes: []` for new
+     * gates): this writer only rewrites existing lines and refuses otherwise. */
+    authorizes?: string[];
     /** Lock retry options (tests inject small values). */
     lockOpts?: LockOptions;
 }

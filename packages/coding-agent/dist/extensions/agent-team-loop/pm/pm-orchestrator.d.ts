@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
 import { AckStore } from "../shared/ack-store.ts";
 import { IndexStore } from "../shared/index-store.ts";
+import { type RunIdentityRefusal } from "../shared/run-store.ts";
 import { WorkerStore } from "../shared/worker-store.ts";
 import { type PmUiHolder, type PmWatchState } from "./ui-bridge.ts";
 export type PhaseDocName = "spec.md" | "design.md" | "plan.md";
@@ -48,6 +49,48 @@ export declare function autoTakeOverFromDoc(pi: ExtensionAPI, indexStore: IndexS
  * takeover re-claims the key with this process's identity — quietly, unless
  * another live window took it over in the meantime. */
 export declare function restoreWatch(pi: ExtensionAPI, watch: PmWatchState, indexStore: IndexStore, workerStore: WorkerStore, ackStore: AckStore, agenticdocRoot: string, ctx: ExtensionContext): Promise<void>;
+/** Why a dispatch scan refused to queue anything (AC-020/AC-021). */
+export type DispatchAlarmKind = "queue-rows-unparsable" | "queue-unreadable" | "dispatch-quota" | "out-of-scope" | "run-ledger-conflict" | "no-product" | "write-scope-risk";
+export interface DispatchAlarm {
+    kind: DispatchAlarmKind;
+    count: number;
+    detail?: string;
+}
+/** One-line human text for a refused dispatch scan (AC-020/AC-021). */
+export declare function describeDispatchAlarm(alarm: DispatchAlarm): string;
+/** Append one machine-readable alarm row to the autopilot ledger
+ * (`.agenticdoc/_autopilot/auto-decisions.jsonl`, AC-020/AC-021). The shape
+ * mirrors the Python single writer (`conductor._append_auto_decision_row`):
+ * one JSON object per line, 1-based `seq`. Decision consumers filter on
+ * `phase == "decide"`, so `phase: "dispatch-alarm"` is invisible to them while
+ * staying visible to humans, `mw doctor` and later consumers. Best-effort by
+ * design: losing the alarm must never break dispatch. */
+export declare function recordDispatchAlarm(agenticdocRoot: string, alarm: DispatchAlarm): void;
+/** Count the write-guard residual-risk audit rows in one worker trace
+ * (AC-007/T-03): `[WRITE_SCOPE]` lines carrying BOTH `blocked=false` and
+ * `risk=deny-basename`. The filter is deliberately the two-field pair and never
+ * `rule=allow-unknown` alone (design-write-guard-landing §5.5): the unknown tier
+ * is the contract, the deny-list basename is the residual risk. Best-effort — a
+ * missing/unreadable trace is zero, never an error. */
+export declare function countWriteScopeResidualRisks(taskDir: string): number;
+/** PM-side exit for the write-guard residual risk (AC-007/DD-08): the worker
+ * was allowed through by contract, so the ledger row is the remaining defence.
+ * Reuses the single dispatch-alarm channel and its unchanged row shape; returns
+ * the number of residual-risk rows found (0 ⇒ nothing written). */
+export declare function recordWriteScopeResidualRisks(agenticdocRoot: string, taskKey: string, taskDir: string): number;
+/** Single-scan dispatch quota (AC-021). A scan that wants to queue more rows
+ * than this is looking at something it does not understand (IN-3 queued 252 in
+ * one scan and the launcher spawned 66 workers at once). */
+export declare const DEFAULT_DISPATCH_MAX_PER_SCAN = 3;
+/** `dispatch_max_per_scan` from the project's autopilot config (D-026/AC-021).
+ *
+ * An explicit `DispatchScanOptions.maxPerScan` wins (tests and refreshers);
+ * otherwise the project config decides. Read-only and fail-soft: a missing,
+ * unreadable or out-of-range config falls back to
+ * {@link DEFAULT_DISPATCH_MAX_PER_SCAN} — a broken file must never be able to
+ * disable the quota (the IN-3 direction of the failure is *more* dispatching,
+ * never less). */
+export declare function readDispatchMaxPerScan(agenticdocRoot: string): number;
 export interface DispatchScanOptions {
     /** Keys already warned about in this session — a key is reported at most once. */
     warnedKeys?: Set<string>;
@@ -56,8 +99,40 @@ export interface DispatchScanOptions {
      * intentionally suppressed (e.g. scoped to another window's key) so the
      * once-per-session dedup does not burn the key's only slot. */
     onDocGate?: (key: string, gaps: string[]) => boolean;
+    /** Scan scope (AC-019). `pm` = this window's watched key plus `_scratch`;
+     * `cli` = the whole project. Defaults to `cli` so every pre-existing caller
+     * (the `mw` command surface, tests, refreshers) keeps its global behaviour;
+     * the PM-side automatic scan passes `pm` explicitly. */
+    scope?: "pm" | "cli";
+    /** The window's watched key; the only non-scratch key in `scope: "pm"`. */
+    watchedKey?: string;
+    /** Single-scan quota override (AC-021); defaults to
+     * {@link DEFAULT_DISPATCH_MAX_PER_SCAN}. */
+    maxPerScan?: number;
+    /** Run-identity gate on the task's own product (AC-022, T-20). Default: no
+     * information, i.e. pre-T-20 behaviour — the queue row alone decides.
+     * `readTaskContent` is lazy so a candidate with its own run record is decided
+     * without reading task.md. */
+    runVerdict?: (task: {
+        taskKey: string;
+        taskDir: string;
+        readTaskContent: () => string;
+    }) => {
+        ok: true;
+    } | {
+        ok: false;
+        reason: RunIdentityRefusal;
+        detail?: string;
+    };
+    /** Alarm sink (AC-020/AC-021). Production wires it to the ledger row (and
+     * from there to the PM alert); the scan itself never invents a write path. */
+    onAlarm?: (alarm: DispatchAlarm) => void;
 }
 export declare function dispatchNewTasks(workerStore: WorkerStore, agenticdocRoot: string, opts?: DispatchScanOptions): Promise<void>;
+/** Session entry type recording a delivered gate reminder. Read back on
+ * restart/resume so the same ledger row is never pushed twice (design D-010).
+ * Same mechanism as WATCH_ENTRY_TYPE / AUTOPILOT_SEEN_ENTRY_TYPE. */
+export declare const GATE_REMINDER_ENTRY_TYPE = "agent-team-loop:gate-reminder-seen";
 export declare function startWorkerPollLoop(pi: ExtensionAPI, workerStore: WorkerStore, ackStore: AckStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, ui: PmUiHolder, pollIntervalMs?: number): NodeJS.Timeout;
 /** Marker opening the injected parallel-protocol block, and the idempotency
  * guard: a handler that already sees it in the chained system prompt must not

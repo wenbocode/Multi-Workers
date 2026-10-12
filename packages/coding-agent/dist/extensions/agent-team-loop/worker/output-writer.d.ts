@@ -3,10 +3,22 @@ export interface WriteOutputOpts {
     agenticdocRoot: string;
     exitCode: 0 | 1 | 2 | 130;
     summary: string;
+    /** Deliverables observed at settle time (AC-007/DD-09). The historical name
+     * is kept for the frozen call sites, but the list is now rendered as
+     * `## Deliverables` (the machine-generated products `output.md` and
+     * `progress.md` are dropped). An empty list omits the section entirely —
+     * never an empty section, never a `(none)` placeholder. */
     changedFiles?: string[];
     verificationSteps?: string;
     questions?: string;
     exitReason?: string;
+    /** Product-carried run identity line (`<!-- mw-run: <task_key>@<iso>
+     * status=<s> -->`, D-022/AC-022). Written as the first line of the HARNESS
+     * block: on an empty/missing output.md that is the file's first line, and when
+     * the agent wrote its own content the harness block already sits below the
+     * `---` separator — so the marker can never displace an agent-written
+     * machine-readable first line (VERDICT=/TASKS=, D-117 contract). */
+    runMarker?: string;
 }
 /** Single-line conclusion extracted from a summary (D-005): first non-empty
  * line, leading markdown markers stripped in a loop, whitespace collapsed,

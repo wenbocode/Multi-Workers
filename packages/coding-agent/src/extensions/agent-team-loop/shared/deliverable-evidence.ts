@@ -54,7 +54,7 @@ export interface DeliverableEvidence {
 }
 
 /**
- * The 15 placeholder/default strings the writer harness can emit
+ * The 16 placeholder/default strings the writer harness can emit
  * (`worker/output-writer.ts` + `worker/worker-mode.ts` exit paths; `(none)`
  * and idle/wall collapse to one documented entry each). A section body that
  * equals one of these verbatim carries no delivery — it is what the framework

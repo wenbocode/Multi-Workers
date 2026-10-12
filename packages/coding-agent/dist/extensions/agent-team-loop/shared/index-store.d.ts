@@ -1,4 +1,34 @@
 export type IndexStatus = "active" | "idle" | "done";
+/** Reserved `.agenticdoc/` root entries that name framework files/dirs, not
+ * AgenticTask key namespaces: the 12 names from RQ-5 plus `_impl_gate.log`
+ * (`shared/implementation-gate.ts` writes it) and `_incidents`. This is an
+ * EXPLICIT list, deliberately not a `_`/`.` prefix rule (the pre-AC-006
+ * exemption): a prefix rule would also exempt `_tmp`, `.mw` and
+ * `_index.parallel` from the cross-key guard and let a dispatch with
+ * `key: _index.parallel` create `.agenticdoc/_index.parallel/workers/`. */
+export declare const RESERVED_INDEX_NAMES: readonly string[];
+/** Lower-cased membership set of {@link RESERVED_INDEX_NAMES} (stored names
+ * are lower-case; compare through {@link normalizeKey}). */
+export declare const RESERVED_INDEX_NAME_SET: ReadonlySet<string>;
+/** Comparison form of a key: trimmed and lower-cased. Windows filesystems are
+ * case-insensitive, so `MW-KEY` and `mw-key` name the SAME directory — the key
+ * namespace must be case-insensitive too (A6). Reads normalize; writes keep
+ * the first-seen casing so existing `_index.parallel` bytes are never
+ * rewritten by a read (no migration). */
+export declare function normalizeKey(key: string): string;
+/** True for `_scratch` and its case variants — the only reserved name that is
+ * still usable as an owner key (never as a claimable/advanceable key). */
+export declare function isScratchKey(key: string): boolean;
+/** Stable machine code + human message of a refused key name. */
+export interface KeyNameRefusal {
+    code: string;
+    message: string;
+}
+/** Shape + reserved-name gate shared by the cross-key guard, `IndexStore.claim`
+ * and `advance_phase` (AC-006/DD-07a/DD-07b): `null` = usable key name. Every
+ * other return refuses the name unconditionally, independent of claim state,
+ * so no caller can bootstrap a namespace next to a framework file. */
+export declare function keyNameRefusal(key: string): KeyNameRefusal | null;
 export interface IndexEntry {
     key: string;
     status: IndexStatus;
@@ -39,6 +69,15 @@ export interface ClaimOutcome {
     ok: boolean;
     /** Present when ok=false: the claim that blocked or beat us. */
     blockedBy?: string;
+    /** Present when ok=false and the refusal was the key NAME itself (AC-006):
+     * stable {@link keyNameRefusal} code (`reserved-key-name`,
+     * `key-illegal-shape`, `key-path-escape`, `empty-key`). */
+    refusal?: string;
+    /** Present when ok=true and the request hit an existing row that differs
+     * from it only by case (A6): the stored, first-written spelling. The claim
+     * resolves to that row -- this field exists so the substitution is auditable
+     * rather than silent. */
+    caseVariantOf?: string;
     /** The target row as it stands after the attempt. */
     entry: IndexEntry;
     /** True when the target row was auto-created (key unknown to the index). */

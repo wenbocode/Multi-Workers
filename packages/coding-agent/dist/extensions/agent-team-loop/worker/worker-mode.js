@@ -1,17 +1,23 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { minimatch } from "minimatch";
 import { killTrackedDetachedChildren } from "../../../utils/shell.js";
+import { recordDispatchAlarm } from "../pm/pm-orchestrator.js";
+import { WRITE_SURFACE_MARKER, WRITE_SURFACE_MARKER_END } from "../pm/ui-bridge.js";
 import { Breaker, Budget } from "../rag/budget.js";
 import { requiredFor } from "../rag/config.js";
 import { appendEvidence } from "../rag/evidence.js";
 import { researchDocEvidence, scanCitations, validateResearchDoc } from "../rag/research-doc.js";
 import { applyRagTools, RAG_CHAT_BUDGET_HEADER, RAG_TIME_BUDGET_HEADER, registerRagTools, } from "../rag/tools.js";
+import { hasDeliverableEvidence } from "../shared/deliverable-evidence.js";
 import { roleForTaskType } from "../shared/dispatch-models.js";
 import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.js";
 import { controlRootFromTaskPath } from "../shared/paths.js";
+import { collectArtifacts, isTerminalRunStatus, newRunId, parseSupersedes, RUN_SCHEMA, runMarker, writeRunState, } from "../shared/run-store.js";
+import { findTypeEscalation, readTaskType, scanBodyTypeLines } from "../shared/task-frontmatter.js";
 import { appendCheckpoint, appendEnd, appendError, appendGoalCheck, appendHeartbeat, appendModel, appendPhase, appendProgressLine, appendStart, appendTimeout, appendTool, appendToolError, appendTrace, formatMachineCheckpoint, writeOutput, } from "./output-writer.js";
 import { goalMtime, writePhaseFile } from "./phase-runner.js";
-import { applyParentRootUnion, checkReadScopeCall, parentRootFromTaskContent, readScopeConfigFromMeta, } from "./read-scope.js";
+import { applyParentRootUnion, checkReadScopeCall, isSameOrUnder, normalizeForCompare, parentRootFromTaskContent, readScopeConfigFromMeta, } from "./read-scope.js";
 import { registerWorkerFileTool, WORKER_FILE_TOOL } from "./worker-file-tool.js";
 // ── Tool allowlists by task type ─────────────────────────────────────────────
 const TOOL_ALLOWLISTS = {
@@ -66,6 +72,17 @@ export function toolsForType(taskType) {
 export function activeToolsForType(taskType) {
     const base = toolsForType(taskType);
     return base.includes("write") ? base : [...base, WORKER_FILE_TOOL];
+}
+/** Is this a role whose tool set carries `bash` (contract C3)? */
+export function isShellRole(taskType) {
+    return activeToolsForType(taskType).includes("bash");
+}
+/** Is this a role with no write/edit tool (contract C3)? Such a role writes
+ * only through the narrow `worker_file` channel, so bash is the one structural
+ * hole left for the AC-005b write-surface guard. */
+export function isWritelessRole(taskType) {
+    const tools = activeToolsForType(taskType);
+    return !tools.includes("write") && !tools.includes("edit");
 }
 /** Checkpoint self-assessment steer text, split by role (D-104/VC-004).
  * - `hasWriteTools === true`: the pre-change wording byte for byte — the
@@ -157,10 +174,20 @@ export function computeRisk(s) {
         return "mid";
     return "low";
 }
+export function writeSurfaceMarkerState(content) {
+    const lines = content.split(/\r?\n/).map((line) => line.trimEnd());
+    const starts = lines.filter((line) => line === WRITE_SURFACE_MARKER).length;
+    const ends = lines.filter((line) => line === WRITE_SURFACE_MARKER_END).length;
+    if (starts === 0 && ends === 0)
+        return "absent";
+    if (starts !== 1 || ends !== 1)
+        return "malformed";
+    return lines.indexOf(WRITE_SURFACE_MARKER) < lines.indexOf(WRITE_SURFACE_MARKER_END) ? "ok" : "malformed";
+}
 export function parseTaskMd(taskPath) {
     const content = fs.readFileSync(taskPath, "utf8");
     const lines = content.split("\n");
-    let taskType = "default";
+    const taskType = readTaskType(content).type ?? "default";
     let phase;
     let timeoutMin;
     let origin;
@@ -172,15 +199,14 @@ export function parseTaskMd(taskPath) {
     let inReadScopeList = false;
     let denyGlobs;
     let inDenyGlobsList = false;
+    let writeScope;
+    let inWriteScopeList = false;
     let readFileCap;
     let readByteCap;
     let ragChatBudget;
     let ragTimeBudgetS;
     for (const line of lines) {
         const trimmed = line.trim();
-        if (trimmed.startsWith("type:")) {
-            taskType = trimmed.slice("type:".length).trim();
-        }
         if (trimmed.startsWith("phase:")) {
             const v = trimmed.slice("phase:".length).trim();
             if (v)
@@ -232,6 +258,42 @@ export function parseTaskMd(taskPath) {
             }
             else {
                 inDenyGlobsList = false;
+            }
+        }
+        // write_scope (contract C1, T-02 → T-03): the producer renders the
+        // one-line comma form (`write_scope: a, b`); the read_scope/deny_globs
+        // YAML block-list form is accepted too, so the two consumer paths cannot
+        // drift apart. A present-but-blank value stays defined as [] (fail-closed,
+        // mirroring read_scope); an absent header leaves the field undefined and
+        // the consumer falls back to the default surface.
+        if (trimmed.startsWith("write_scope:")) {
+            const rest = trimmed.slice("write_scope:".length).trim();
+            if (rest) {
+                writeScope = rest
+                    .split(",")
+                    .map((item) => item.trim())
+                    .map((item) => (item.startsWith('"') && item.endsWith('"')) || (item.startsWith("'") && item.endsWith("'"))
+                    ? item.slice(1, -1)
+                    : item)
+                    .filter((item) => item.length > 0);
+                inWriteScopeList = false;
+            }
+            else {
+                writeScope = [];
+                inWriteScopeList = true;
+            }
+        }
+        else if (inWriteScopeList && !inPhasePrompt) {
+            if (trimmed.startsWith("- ")) {
+                let item = trimmed.slice(2).trim();
+                if ((item.startsWith('"') && item.endsWith('"')) || (item.startsWith("'") && item.endsWith("'"))) {
+                    item = item.slice(1, -1);
+                }
+                if (item)
+                    writeScope?.push(item);
+            }
+            else {
+                inWriteScopeList = false;
             }
         }
         if (trimmed.startsWith("l2_read_file_cap:")) {
@@ -290,10 +352,12 @@ export function parseTaskMd(taskPath) {
         timeoutMin,
         readScope,
         denyGlobs,
+        writeScope,
         readFileCap,
         readByteCap,
         ragChatBudget,
         ragTimeBudgetS,
+        writeSurfaceMarker: writeSurfaceMarkerState(content),
     };
 }
 // ── Trace helpers ────────────────────────────────────────────────────────────
@@ -351,6 +415,45 @@ function appendStartPidLine(taskKey, agenticdocRoot) {
     }
     catch {
         // Diagnostic append — must never break worker startup
+    }
+}
+/** Append one `[HEADER]` audit line to trace.log (AC-005 §1.4). Best-effort,
+ * like the other trace anchors: a diagnostic append must never break startup. */
+function appendHeaderTraceLine(taskKey, agenticdocRoot, line) {
+    try {
+        const dir = path.resolve(agenticdocRoot, taskKey);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.appendFileSync(path.join(dir, "trace.log"), `${line}\n`, "utf8");
+    }
+    catch {
+        // Diagnostic append — must never break worker startup
+    }
+}
+/** AC-005 observability (DRQ-3 §1.4): record how the single-source role was
+ * resolved and what the header boundary ignored. `body-type-ignored` lists the
+ * below-header `type:` lines the parser refused to read (A8); `BOM detected`
+ * makes the Python-side divergence visible; an unregistered type on an UNMARKED
+ * task is the GC-8 fallback the PM ruling keeps (origin-marked tasks are
+ * refused by `dispatchRefusal` before this is read). Observational only — it
+ * never changes the run's fate (T-13 zero interception). */
+function appendHeaderAudit(taskKey, agenticdocRoot, content, taskType) {
+    const reading = readTaskType(content);
+    if (reading.bomStripped)
+        appendHeaderTraceLine(taskKey, agenticdocRoot, "[HEADER] BOM detected");
+    const bodyLines = scanBodyTypeLines(content);
+    if (bodyLines.length > 0) {
+        const shown = bodyLines.slice(0, 4);
+        const lines = shown.map((l) => l.line).join(",");
+        const values = shown.map((l) => l.value).join(",");
+        // The escalation predicate is reported, not enforced here (T-07 scope:
+        // the PM ruling only refuses missing/invalid types on origin-marked tasks).
+        const escaped = findTypeEscalation(bodyLines, taskType, activeToolsForType) !== undefined;
+        appendHeaderTraceLine(taskKey, agenticdocRoot, `[HEADER] body-type-ignored count=${bodyLines.length} lines=${lines} values=${values} ` +
+            `escaped=${escaped} role=${roleForTaskType(taskType)}`);
+    }
+    if (!isRegisteredType(taskType)) {
+        appendHeaderTraceLine(taskKey, agenticdocRoot, `[HEADER] unregistered-type-fallback type=${taskType} source=${reading.source} ` +
+            `role=${roleForTaskType(taskType)}`);
     }
 }
 /** Worker-side re-check of the conductor's dispatch-time refusals (D-107
@@ -412,6 +515,937 @@ function appendReadScopeRejectionsSection(taskKey, agenticdocRoot, rejections) {
     }
     catch {
         // Best-effort at exit — nothing else we can do
+    }
+}
+/** Live shell-expansion characters. Deliberately NOT `GLOB_MAGIC_RE`: that set
+ * matches `write_scope:` entries, this one decides `verbatim` on command words. */
+const LIVE_EXPANSION_CHARS = new Set(["$", "`", "*", "?", "[", "{"]);
+/** Split a shell command into quote-aware tokens; control operators become
+ * their own tokens, so `echo "a > b"` never yields a redirect. */
+export function tokenizeShellCommand(command) {
+    const tokens = [];
+    let word = "";
+    let hasWord = false;
+    let inert = true;
+    const append = (ch, live) => {
+        word += ch;
+        if (live && (LIVE_EXPANSION_CHARS.has(ch) || (ch === "~" && word.length === 1)))
+            inert = false;
+    };
+    const flush = () => {
+        if (hasWord) {
+            tokens.push({ text: word, operator: false, verbatim: inert });
+            word = "";
+            hasWord = false;
+            inert = true;
+        }
+    };
+    let i = 0;
+    while (i < command.length) {
+        const ch = command[i];
+        if (ch === "'" || ch === '"') {
+            hasWord = true;
+            i++;
+            while (i < command.length && command[i] !== ch) {
+                if (ch === '"' && command[i] === "\\" && i + 1 < command.length) {
+                    // POSIX: only `$`, a backtick, `"` and `\` are escaped in double quotes (P-1).
+                    i = appendDoubleQuoteEscape(command, i, append);
+                }
+                else {
+                    // Single quotes inert everything; double quotes only inert an
+                    // escaped character (`$`/backtick/glob stay live inside `"`).
+                    append(command[i], ch === '"');
+                }
+                i++;
+            }
+            i++; // closing quote (or end of input)
+            continue;
+        }
+        if (ch === "\\" && i + 1 < command.length) {
+            hasWord = true;
+            append(command[i + 1], false);
+            i += 2;
+            continue;
+        }
+        if (ch === " " || ch === "\t") {
+            flush();
+            i++;
+            continue;
+        }
+        if (ch === "\n") {
+            flush();
+            tokens.push(markLineBreak({ text: ";", operator: true, verbatim: true }));
+            i++;
+            continue;
+        }
+        if (ch === ">" || ch === "<" || ch === "|" || ch === ";" || ch === "&" || ch === "(" || ch === ")") {
+            flush();
+            let op = ch;
+            while (i + 1 < command.length && (command[i + 1] === ch || (command[i + 1] === "-" && op === "<<"))) {
+                op += command[i + 1]; // `ch` repeats, but `<<-` absorbs its `-`
+                i++;
+            }
+            tokens.push({ text: op, operator: true, verbatim: true });
+            i++;
+            continue;
+        }
+        hasWord = true;
+        append(ch, true);
+        i++;
+    }
+    flush();
+    return tokens;
+}
+/** Wrapper commands whose following word is still a command position.
+ * Byte-frozen: expanded (never replaced) by `COMMAND_WRAPPERS` below. */
+const SHELL_WRAPPER_COMMANDS = new Set(["sudo", "env", "command", "nohup", "time", "nice", "stdbuf", "xargs"]);
+/** Command-position wrappers: skip their known flags, the next word is the command. */
+const COMMAND_WRAPPERS = new Set([...SHELL_WRAPPER_COMMANDS, "doas", "timeout", "setsid"]);
+/** Wrappers whose payload is shell source (re-tokenized and scanned again). */
+const SHELL_SCRIPT_WRAPPERS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
+const CMD_SCRIPT_WRAPPERS = new Set(["cmd"]);
+const PS_SCRIPT_WRAPPERS = new Set(["powershell", "pwsh"]);
+/** Unwrap recursion budget; a deeper payload is left undecided (fails open). */
+const MAX_UNWRAP_DEPTH = 3;
+/** Wrapper flags that consume one value. Unlisted flags are arity 0, which can
+ * only lose coverage — never introduce a false block. */
+const WRAPPER_VALUE_FLAGS = {
+    sudo: new Set([
+        "-u",
+        "--user",
+        "-g",
+        "--group",
+        "-p",
+        "--prompt",
+        "-C",
+        "--close-from",
+        "-h",
+        "--host",
+        "-r",
+        "--role",
+        "-t",
+        "--type",
+        "-T",
+        "--command-timeout",
+        "-U",
+        "--other-user",
+        "-R",
+        "--chroot",
+        "-D",
+        "--chdir",
+    ]),
+    doas: new Set(["-u", "-C"]),
+    env: new Set(["-u", "--unset", "-C", "--chdir", "-S", "--split-string"]),
+    nice: new Set(["-n", "--adjustment"]),
+    stdbuf: new Set(["-i", "--input", "-o", "--output", "-e", "--error"]),
+    timeout: new Set(["-k", "--kill-after", "-s", "--signal"]),
+    xargs: new Set([
+        "-n",
+        "--max-args",
+        "-I",
+        "--replace",
+        "-i",
+        "-d",
+        "--delimiter",
+        "-E",
+        "--eof",
+        "-P",
+        "--max-procs",
+        "-s",
+        "--max-chars",
+        "-L",
+        "--max-lines",
+        "-a",
+        "--arg-file",
+    ]),
+    time: new Set(["-o", "--output", "-f", "--format"]),
+};
+/** Operand-position flags that consume one value (arity-aware `positionals`). */
+const OPERAND_VALUE_FLAGS = {
+    truncate: new Set(["-s", "--size", "-r", "--reference"]),
+    install: new Set(["-m", "--mode", "-o", "--owner", "-g", "--group", "-t", "--target-directory", "-S", "--suffix"]),
+    cp: new Set(["-t", "--target-directory", "-S", "--suffix"]),
+    mv: new Set(["-t", "--target-directory", "-S", "--suffix"]),
+    ln: new Set(["-t", "--target-directory", "-S", "--suffix"]),
+    rsync: new Set([
+        "-e",
+        "--rsh",
+        "--exclude",
+        "--include",
+        "--files-from",
+        "--chown",
+        "--chmod",
+        "--bwlimit",
+        "--port",
+        "--rsync-path",
+        "--filter",
+        "--exclude-from",
+        "--include-from",
+        "--log-file",
+        "-T",
+        "--temp-dir",
+        "-M",
+        "--remote-option",
+        "--out-format",
+        "--suffix",
+    ]),
+    sed: new Set(["-e", "--expression"]),
+    perl: new Set(["-e", "-E"]),
+};
+function flagBase(value) {
+    if (value.includes("="))
+        return value.slice(0, value.indexOf("="));
+    if (value.startsWith("--"))
+        return value;
+    return `-${value[1] ?? ""}`;
+}
+function flagHasAttachedValue(value) {
+    return value.includes("=") || (value.startsWith("-") && !value.startsWith("--") && value.length > 2);
+}
+/** Word tokens from `start` up to (not including) the next operator. */
+function shellOperands(tokens, start) {
+    const values = [];
+    for (let i = start; i < tokens.length; i++) {
+        if (tokens[i].operator)
+            break;
+        values.push(tokens[i]);
+    }
+    return values;
+}
+/** Positional tokens after arity-aware flag skipping; a bare `--` stops flag
+ * interpretation so `rm -- -weird.txt` keeps its operand. */
+function positionals(operandTokens, commandName) {
+    const values = [];
+    const valueFlags = OPERAND_VALUE_FLAGS[commandName];
+    let flagsDone = false;
+    for (let i = 0; i < operandTokens.length; i++) {
+        const token = operandTokens[i];
+        const value = token.text;
+        if (!flagsDone) {
+            if (value === "--") {
+                flagsDone = true;
+                continue;
+            }
+            if (value.startsWith("-") && value !== "-") {
+                if (valueFlags?.has(flagBase(value)) === true && !flagHasAttachedValue(value))
+                    i++;
+                continue;
+            }
+        }
+        values.push(token);
+    }
+    return values;
+}
+/** The `-t`/`--target-directory` value, with or without an embedded `=`. */
+function targetDirectory(operandTokens, flags) {
+    for (let i = 0; i < operandTokens.length; i++) {
+        const value = operandTokens[i].text;
+        if (flags.includes(value))
+            return operandTokens[i + 1] ?? null;
+        for (const flag of flags) {
+            if (flag.startsWith("--") && value.startsWith(`${flag}=`)) {
+                const text = value.slice(flag.length + 1);
+                return text === "" ? null : { text, operator: false, verbatim: operandTokens[i].verbatim };
+            }
+        }
+    }
+    return null;
+}
+/** Targets that are not repository writes (null devices / std streams). */
+const NULL_WRITE_TARGETS = new Set([
+    "/dev/null",
+    "/dev/stdout",
+    "/dev/stderr",
+    "/dev/fd/1",
+    "/dev/fd/2",
+    "nul",
+    "/nul",
+    "$null", // PowerShell null stream: not a repository write, no audit noise
+]);
+/** PowerShell write cmdlets and the flags that carry an explicit path. */
+const POWERSHELL_WRITE_COMMANDS = new Set([
+    "set-content",
+    "add-content",
+    "clear-content",
+    "out-file",
+    "new-item",
+    "remove-item",
+]);
+const POWERSHELL_PATH_FLAGS = new Set(["-path", "-literalpath", "-filepath", "-destination"]);
+/** Inline python/node write call sites; the LAST capture group is the path.
+ * The bare `write_(text|bytes)` form is intentionally absent: it captures the
+ * written CONTENT, not the path (historical false-positive `write_text('x')`). */
+const INLINE_WRITE_PATTERNS = [
+    /\bopen\s*\(\s*(?:f)?(['"])([^'"]+)\1\s*,\s*(?:mode\s*=\s*)?['"][wax+]/i,
+    /\bos\.(?:remove|unlink|rmdir|mkdir|makedirs|rename)\s*\(\s*(['"])([^'"]+)\1/i,
+    /\bshutil\.rmtree\s*\(\s*(['"])([^'"]+)\1/i,
+    /\bshutil\.(?:copy|copyfile|move)\s*\(\s*(['"])([^'"]+)\1\s*,\s*(['"])([^'"]+)\3/i,
+    /\bPath\s*\(\s*(['"])([^'"]+)\1\s*\)\s*\.\s*(?:write_text|write_bytes|touch|mkdir|unlink|rename|replace)/i,
+    /\b(?:fs\.)?(?:writeFileSync|writeFile|appendFileSync|appendFile|unlinkSync|unlink|rmSync|rm|rmdirSync|rmdir|mkdirSync|mkdir|createWriteStream)\s*\(\s*(['"])([^'"]+)\1/i,
+    /\b(?:fs\.)?renameSync\s*\(\s*(['"])([^'"]+)\1\s*,\s*(['"])([^'"]+)\3/i,
+];
+/** Perl/Ruby inline write call sites (literal path is the last capture). */
+const PERL_INLINE_PATTERNS = [
+    /\bopen\s*\(\s*(?:[A-Za-z_]\w*\s*,\s*)?(['"])[^'"]*\1\s*,\s*(['"])([^'"]+)\2/,
+    /\bopen\s*\(\s*(?:[A-Za-z_]\w*\s*,\s*)?(['"])[>+]{1,2}([^'"]+)\1/,
+];
+const RUBY_INLINE_PATTERNS = [
+    /\bFile\s*\.\s*(?:write|binwrite|open)\s*\(\s*(['"])([^'"]+)\1/,
+    /\bIO\s*\.\s*(?:write|binwrite)\s*\(\s*(['"])([^'"]+)\1/,
+];
+/** Inline process-spawn call sites; the captured literal is a shell payload. */
+const INLINE_EXEC_PATTERNS = [
+    /\bos\s*\.\s*(?:system|popen)\s*\(\s*(['"])([^'"]+)\1/,
+    /\bsubprocess\s*\.\s*(?:run|call|check_call|check_output|Popen)\s*\(\s*(['"])([^'"]+)\1/,
+    /\b(?:execSync|exec|execFileSync|spawnSync|spawn)\s*\(\s*(['"])([^'"]+)\1/,
+];
+function matchInline(patterns, script) {
+    const values = [];
+    for (const pattern of patterns) {
+        const match = pattern.exec(script);
+        if (match === null)
+            continue;
+        const value = match[match.length - 1];
+        if (typeof value === "string" && value.length > 0)
+            values.push(value);
+    }
+    return values;
+}
+/** Which flag of `commandName` introduces an inline script payload. */
+function scriptPayloadFlag(commandName, value) {
+    if (SHELL_SCRIPT_WRAPPERS.has(commandName)) {
+        return value.startsWith("-") && !value.startsWith("--") && value.includes("c");
+    }
+    if (CMD_SCRIPT_WRAPPERS.has(commandName)) {
+        return value === "/c" || value === "/C" || value === "/k" || value === "/K";
+    }
+    if (PS_SCRIPT_WRAPPERS.has(commandName)) {
+        const lower = value.toLowerCase();
+        return lower === "-command" || lower === "-c" || lower === "-commandwithargs";
+    }
+    if (commandName === "perl")
+        return /^-[A-Za-z]*[eE][A-Za-z]*$/.test(value);
+    if (commandName === "ruby")
+        return value === "-e" || value === "-E";
+    if (commandName === "python" || commandName === "python3" || commandName === "py")
+        return value === "-c";
+    if (commandName === "node")
+        return value === "-e" || value === "--eval" || value === "-p" || value === "--print";
+    return false;
+}
+function scriptPayloadToken(operands, commandName) {
+    for (let i = 0; i < operands.length; i++) {
+        if (scriptPayloadFlag(commandName, operands[i].text))
+            return operands[i + 1] ?? null;
+    }
+    return null;
+}
+/** Skip command-position wrappers and their flags; returns the inner command
+ * index plus any `xargs` replacement placeholders. */
+function skipWrapperPrefix(tokens, start) {
+    let i = start;
+    const placeholders = [];
+    while (i < tokens.length && !tokens[i].operator) {
+        const name = commandBasename(tokens[i].text);
+        if (!COMMAND_WRAPPERS.has(name))
+            break;
+        i++;
+        while (i < tokens.length && !tokens[i].operator) {
+            const value = tokens[i].text;
+            if (value === "--") {
+                i++;
+                continue;
+            }
+            if (!value.startsWith("-")) {
+                if (name === "timeout") {
+                    // `timeout` takes exactly one leading positional (DURATION) before
+                    // the wrapped command; consume it and stop skipping.
+                    i++;
+                    break;
+                }
+                if (name === "env" && /^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) {
+                    i++;
+                    continue;
+                }
+                break;
+            }
+            if (name === "xargs") {
+                const base = flagBase(value);
+                if (base === "--replace" || base === "-I" || base === "-i") {
+                    if (flagHasAttachedValue(value)) {
+                        const attached = value.includes("=") ? value.slice(value.indexOf("=") + 1) : value.slice(2);
+                        if (attached !== "")
+                            placeholders.push(attached);
+                        i++;
+                        continue;
+                    }
+                    if (base === "-i") {
+                        placeholders.push("{}");
+                        i++;
+                        continue;
+                    }
+                    const next = tokens[i + 1];
+                    if (next !== undefined && !next.operator) {
+                        placeholders.push(next.text);
+                        i += 2;
+                        continue;
+                    }
+                    i++;
+                    continue;
+                }
+            }
+            const arity = WRAPPER_VALUE_FLAGS[name]?.has(flagBase(value)) === true ? 1 : 0;
+            i += arity === 1 && !flagHasAttachedValue(value) ? 2 : 1;
+        }
+    }
+    return { index: i, placeholders };
+}
+/** Recursive extractor over already-tokenized words. `opaqueTokens` are runtime
+ * placeholders (`{}`, `xargs -I R`): a target containing one is not statically
+ * determinable and is marked non-verbatim (fail-open). */
+function extractFromTokens(tokens, depth, out, opaqueTokens) {
+    const add = (source, pattern, verbatimOverride) => {
+        const value = (typeof source === "string" ? source : source.text).trim();
+        if (value === "" || NULL_WRITE_TARGETS.has(value.toLowerCase()))
+            return;
+        let verbatim = verbatimOverride ?? (typeof source === "string" ? true : source.verbatim);
+        if (verbatim) {
+            for (const opaque of opaqueTokens) {
+                if (opaque !== "" && value.includes(opaque)) {
+                    verbatim = false;
+                    break;
+                }
+            }
+        }
+        out.push({ target: value, pattern, verbatim });
+    };
+    // Comparison contexts (`[[ a > b ]]`, `(( a > b ))`, `$(( a > b ))`): the
+    // `>`/`<` there compare, they do not redirect (F-2). Track the depth so a real
+    // redirect after the closing bracket still registers.
+    let comparisonDepth = 0;
+    for (let i = 0, list = dropHeredocBodies(tokens); i < list.length; i++) {
+        const token = list[i];
+        if (token.operator) {
+            if (token.text === "((") {
+                comparisonDepth += 1;
+                continue;
+            }
+            if (token.text === "))") {
+                if (comparisonDepth > 0)
+                    comparisonDepth -= 1;
+                continue;
+            }
+            if (token.text === ">" || token.text === ">>") {
+                if (comparisonDepth > 0)
+                    continue;
+                const next = list[i + 1];
+                if (next === undefined)
+                    continue;
+                if (!next.operator) {
+                    add(next, "redirect");
+                    continue;
+                }
+                const after = list[i + 2];
+                if (after !== undefined && !after.operator) {
+                    if (next.text === "|")
+                        add(after, "redirect-clobber");
+                    else if (next.text === "&" && !/^\d+$/.test(after.text) && after.text !== "-") {
+                        add(after, "redirect-fd-target");
+                    }
+                }
+            }
+            continue;
+        }
+        if (token.text === "[[") {
+            comparisonDepth += 1;
+            continue;
+        }
+        if (token.text === "]]") {
+            if (comparisonDepth > 0)
+                comparisonDepth -= 1;
+            continue;
+        }
+        const previous = list[i - 1];
+        if (previous !== undefined && !previous.operator)
+            continue;
+        extractCommand(list, i, depth, out, add, opaqueTokens);
+    }
+}
+/** Extract the write targets of one command found at `start` (which may be a
+ * command-position wrapper chain). */
+function extractCommand(tokens, start, depth, out, add, opaqueTokens) {
+    const skip = skipWrapperPrefix(tokens, start);
+    const commandIndex = skip.index;
+    if (commandIndex >= tokens.length)
+        return;
+    const commandToken = tokens[commandIndex];
+    if (commandToken.operator)
+        return;
+    const commandName = commandBasename(commandToken.text);
+    const operandTokens = shellOperands(tokens, commandIndex + 1);
+    const childOpaque = new Set(opaqueTokens);
+    for (const placeholder of skip.placeholders)
+        if (placeholder !== "")
+            childOpaque.add(placeholder);
+    const recurseShell = (payload) => {
+        if (depth >= MAX_UNWRAP_DEPTH)
+            return;
+        extractFromTokens(tokenizeShellCommand(payload), depth + 1, out, childOpaque);
+    };
+    const inlineTargets = (patterns, script) => {
+        for (const value of matchInline(patterns, script.text)) {
+            add(value, "inline-script", script.verbatim && !/[$`]/.test(value));
+        }
+    };
+    switch (commandName) {
+        case "bash":
+        case "sh":
+        case "zsh":
+        case "dash":
+        case "ksh":
+        case "cmd":
+        case "powershell":
+        case "pwsh": {
+            const payload = scriptPayloadToken(operandTokens, commandName);
+            if (payload !== null)
+                recurseShell(payload.text);
+            break;
+        }
+        case "perl": {
+            let suffix;
+            let suffixVerbatim = true;
+            const files = [];
+            for (let k = 0; k < operandTokens.length; k++) {
+                const token = operandTokens[k];
+                const value = token.text;
+                if (value === "--") {
+                    for (let m = k + 1; m < operandTokens.length; m++)
+                        files.push(operandTokens[m]);
+                    break;
+                }
+                if (value === "-i" || value === "--in-place") {
+                    suffix = "";
+                    continue;
+                }
+                if (value.startsWith("-i") && value.length > 2 && !value.startsWith("--")) {
+                    suffix = value.slice(2);
+                    suffixVerbatim = token.verbatim;
+                    continue;
+                }
+                if (value.startsWith("--in-place=")) {
+                    suffix = value.slice("--in-place=".length);
+                    suffixVerbatim = token.verbatim;
+                    continue;
+                }
+                if (scriptPayloadFlag("perl", value)) {
+                    const payload = operandTokens[k + 1];
+                    if (payload !== undefined)
+                        inlineTargets(PERL_INLINE_PATTERNS, payload);
+                    k++;
+                    continue;
+                }
+                if (value.startsWith("-"))
+                    continue;
+                files.push(token);
+            }
+            if (suffix !== undefined) {
+                for (const file of files) {
+                    add(file, "perl -i");
+                    if (suffix !== "")
+                        add(`${file.text}${suffix}`, "perl -i", file.verbatim && suffixVerbatim);
+                }
+            }
+            break;
+        }
+        case "ruby": {
+            const payload = scriptPayloadToken(operandTokens, "ruby");
+            if (payload !== null)
+                inlineTargets(RUBY_INLINE_PATTERNS, payload);
+            break;
+        }
+        case "python":
+        case "python3":
+        case "py":
+        case "node": {
+            const payload = scriptPayloadToken(operandTokens, commandName);
+            if (payload !== null) {
+                inlineTargets(INLINE_WRITE_PATTERNS, payload);
+                for (const captured of matchInline(INLINE_EXEC_PATTERNS, payload.text))
+                    recurseShell(captured);
+            }
+            break;
+        }
+        case "tee": {
+            for (const token of operandTokens)
+                if (!token.text.startsWith("-"))
+                    add(token, "tee");
+            break;
+        }
+        case "cp":
+        case "mv": {
+            const dir = targetDirectory(operandTokens, ["-t", "--target-directory"]);
+            if (dir !== null) {
+                add(dir, commandName);
+                break;
+            }
+            const values = positionals(operandTokens, commandName);
+            const destination = values[values.length - 1];
+            if (destination !== undefined)
+                add(destination, commandName);
+            break;
+        }
+        case "rm":
+        case "mkdir":
+        case "touch":
+        case "truncate": {
+            for (const token of positionals(operandTokens, commandName))
+                add(token, commandName);
+            break;
+        }
+        case "install": {
+            const dir = targetDirectory(operandTokens, ["-t", "--target-directory"]);
+            const values = positionals(operandTokens, "install");
+            if (dir !== null) {
+                add(dir, "install -t");
+                for (const token of values)
+                    add(token, "install");
+            }
+            else if (values.length >= 2) {
+                add(values[values.length - 1], "install");
+            }
+            break;
+        }
+        case "ln": {
+            const dir = targetDirectory(operandTokens, ["-t", "--target-directory"]);
+            if (dir !== null) {
+                add(dir, "ln -t");
+                break;
+            }
+            const values = positionals(operandTokens, "ln");
+            if (values.length >= 2)
+                add(values[values.length - 1], "ln");
+            break;
+        }
+        case "rsync": {
+            const values = positionals(operandTokens, "rsync");
+            if (values.length >= 2)
+                add(values[values.length - 1], "rsync");
+            break;
+        }
+        case "dd": {
+            for (const token of operandTokens) {
+                const match = /^of=(.*)$/.exec(token.text);
+                if (match !== null && match[1] !== "")
+                    add(match[1], "dd of=", token.verbatim);
+            }
+            break;
+        }
+        case "tar": {
+            let create = false;
+            let extract = false;
+            // Keep the whole token (not only its text) so the target's live-expansion
+            // flag survives: `tar -czf $OUT.tar` is not statically determinable and
+            // must land in the allow-unknown tier, not be denied as a literal (F-1).
+            let archive;
+            let directory;
+            for (let k = 0; k < operandTokens.length; k++) {
+                const token = operandTokens[k];
+                const value = token.text;
+                if (value === "-C" || value === "--directory") {
+                    directory = operandTokens[k + 1];
+                    k++;
+                    continue;
+                }
+                if (value.startsWith("--directory=")) {
+                    directory = { text: value.slice("--directory=".length), operator: false, verbatim: token.verbatim };
+                    continue;
+                }
+                if (value === "-f" || value === "--file") {
+                    archive = operandTokens[k + 1];
+                    k++;
+                    continue;
+                }
+                if (value.startsWith("--file=")) {
+                    archive = { text: value.slice("--file=".length), operator: false, verbatim: token.verbatim };
+                    continue;
+                }
+                if (value.startsWith("-") && !value.startsWith("--")) {
+                    const letters = value.slice(1);
+                    if (letters.includes("c"))
+                        create = true;
+                    if (letters.includes("x"))
+                        extract = true;
+                    if (letters.includes("f")) {
+                        archive = operandTokens[k + 1];
+                        k++;
+                    }
+                }
+            }
+            if (extract && directory !== undefined)
+                add(directory, "tar -C");
+            else if (extract)
+                add(".", "tar -x");
+            else if (create && archive !== undefined)
+                add(archive, "tar -c");
+            break;
+        }
+        case "sed": {
+            const inPlace = operandTokens.some((token) => token.text === "-i" ||
+                token.text === "--in-place" ||
+                token.text.startsWith("--in-place=") ||
+                (token.text.startsWith("-i") && token.text.length > 2 && !token.text.startsWith("--")));
+            if (!inPlace)
+                break;
+            let suffix = "";
+            let suffixVerbatim = true;
+            for (const token of operandTokens) {
+                if (token.text.startsWith("--in-place=")) {
+                    suffix = token.text.slice("--in-place=".length);
+                    suffixVerbatim = token.verbatim;
+                }
+                else if (token.text.startsWith("-i") && token.text.length > 2 && !token.text.startsWith("--")) {
+                    suffix = token.text.slice(2);
+                    suffixVerbatim = token.verbatim;
+                }
+            }
+            const values = positionals(operandTokens, "sed");
+            for (const token of values.slice(1)) {
+                add(token, "sed -i");
+                if (suffix !== "")
+                    add(`${token.text}${suffix}`, "sed -i", token.verbatim && suffixVerbatim);
+            }
+            break;
+        }
+        case "find": {
+            const roots = [];
+            for (const token of operandTokens) {
+                if (token.text.startsWith("-") || token.text === "!")
+                    break;
+                roots.push(token);
+            }
+            if (roots.length === 0)
+                roots.push({ text: ".", operator: false, verbatim: true });
+            let remove = false;
+            for (let k = 0; k < operandTokens.length; k++) {
+                const value = operandTokens[k].text;
+                if (value === "-delete")
+                    remove = true;
+                if (value === "-exec" || value === "-execdir") {
+                    const sub = [];
+                    let m = k + 1;
+                    while (m < operandTokens.length && operandTokens[m].text !== ";" && operandTokens[m].text !== "+") {
+                        sub.push(operandTokens[m]);
+                        m++;
+                    }
+                    if (depth < MAX_UNWRAP_DEPTH)
+                        extractFromTokens(sub, depth + 1, out, childOpaque);
+                    k = m;
+                }
+            }
+            if (remove)
+                for (const root of roots)
+                    add(root, "find -delete");
+            break;
+        }
+        case "git": {
+            const sub = operandTokens[0]?.text.toLowerCase();
+            if (sub !== "checkout" && sub !== "apply" && sub !== "clean" && sub !== "restore")
+                break;
+            const paths = positionals(operandTokens.slice(1), "git");
+            if (paths.length === 0)
+                add(".", `git ${sub}`);
+            else
+                for (const token of paths)
+                    add(token, `git ${sub}`);
+            break;
+        }
+        case "curl": {
+            for (let k = 0; k < operandTokens.length; k++) {
+                const value = operandTokens[k].text;
+                if (value === "-o" || value === "--output") {
+                    const next = operandTokens[k + 1];
+                    if (next !== undefined)
+                        add(next, "curl -o");
+                }
+                else if (value.startsWith("--output=")) {
+                    add(value.slice("--output=".length), "curl -o", operandTokens[k].verbatim);
+                }
+            }
+            break;
+        }
+        case "wget": {
+            for (let k = 0; k < operandTokens.length; k++) {
+                const value = operandTokens[k].text;
+                if (value === "-O" || value === "--output-document") {
+                    const next = operandTokens[k + 1];
+                    if (next !== undefined)
+                        add(next, "wget -O");
+                }
+                else if (value.startsWith("--output-document=")) {
+                    add(value.slice("--output-document=".length), "wget -O", operandTokens[k].verbatim);
+                }
+            }
+            break;
+        }
+        default: {
+            if (!POWERSHELL_WRITE_COMMANDS.has(commandName))
+                break;
+            for (let k = 0; k < operandTokens.length; k++) {
+                const value = operandTokens[k].text;
+                if (value.startsWith("-")) {
+                    if (POWERSHELL_PATH_FLAGS.has(value.toLowerCase()) && operandTokens[k + 1] !== undefined) {
+                        add(operandTokens[k + 1], `${commandName} -Path`);
+                    }
+                    continue;
+                }
+                const previous = operandTokens[k - 1];
+                if (previous?.text.startsWith("-"))
+                    continue;
+                add(operandTokens[k], commandName);
+            }
+            break;
+        }
+    }
+}
+/** Extract the KNOWN write targets of a bash command. An empty result means
+ * "not a recognized write" — the caller must allow it (P1, DD-03). */
+export function extractBashWriteCandidates(command) {
+    const out = [];
+    extractFromTokens(tokenizeShellCommand(command), 0, out, new Set(["{}"]));
+    return out;
+}
+function samePath(a, b) {
+    return isSameOrUnder(a, b) && isSameOrUnder(b, a);
+}
+const GLOB_MAGIC_RE = /[*?[\]{}]/;
+/** Absolute deny reason for a resolved target, or null. The deny list is
+ * checked first and can never be widened by a `write_scope:` header. */
+function bashWriteDenyReason(config, target) {
+    const workersDir = path.join(config.keyDir, "workers");
+    if (samePath(target, path.join(config.keyDir, "pm-state.md")))
+        return "pm-state.md";
+    if (isSameOrUnder(workersDir, target)) {
+        const firstSegment = path.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
+        if (firstSegment.startsWith("_workers"))
+            return "workers/_workers*";
+    }
+    if (samePath(target, path.join(config.trueRoot, "_index.parallel")))
+        return "_index.parallel";
+    if (isSameOrUnder(config.trueRoot, target) && !isSameOrUnder(config.keyDir, target)) {
+        return "other key dir / .agenticdoc root";
+    }
+    if (isSameOrUnder(path.join(config.projectRoot, "packages"), target))
+        return "packages/**";
+    if (isSameOrUnder(path.join(config.projectRoot, ".git"), target))
+        return ".git/**";
+    return null;
+}
+function matchesWriteScopeEntry(config, entry, absoluteTarget) {
+    const normalized = entry.trim();
+    if (normalized === "")
+        return false;
+    if (GLOB_MAGIC_RE.test(normalized)) {
+        const relative = path.relative(config.projectRoot, absoluteTarget).replaceAll("\\", "/");
+        const forward = absoluteTarget.replaceAll("\\", "/");
+        const glob = normalized.replaceAll("\\", "/");
+        if (minimatch(relative, glob) || minimatch(forward, glob))
+            return true;
+        if (glob.endsWith("/**")) {
+            const stripped = glob.slice(0, -3);
+            if (stripped !== "" && (minimatch(relative, stripped) || minimatch(forward, stripped)))
+                return true;
+        }
+        return false;
+    }
+    return isSameOrUnder(normalizeForCompare(config.projectRoot, normalized), absoluteTarget);
+}
+/** The bash write-surface verdict for one extracted target: a non-verbatim
+ * target is not statically determinable (`allow-unknown`, fail-open); otherwise
+ * the deny list comes first (absolute priority), then the default surface (own
+ * taskDir + `<key>/evidence`), then the task's `write_scope:` intersection when
+ * the header is present. */
+export function checkBashWriteScopeTarget(config, rawTarget, verbatim) {
+    if (!verbatim) {
+        const basename = rawTarget.split(/[\\/]/).pop() ?? "";
+        const risk = basename === "pm-state.md" || basename.startsWith("_workers") ? "deny-basename" : undefined;
+        return {
+            allowed: true,
+            rule: "allow-unknown",
+            detail: "target-not-statically-determinable",
+            target: rawTarget,
+            risk,
+        };
+    }
+    const target = normalizeForCompare(config.projectRoot, rawTarget);
+    const evidenceDir = path.join(config.keyDir, "evidence");
+    const allowedLabel = `${config.taskDir} or ${evidenceDir}`;
+    const denied = bashWriteDenyReason(config, target);
+    if (denied !== null) {
+        return {
+            allowed: false,
+            rule: "deny",
+            detail: `denied:${denied}`,
+            target: rawTarget,
+            reason: `write-scope: blocked bash write to ${rawTarget}: ${denied} is on the denied write list ` +
+                `[rule=deny]; allowed: ${allowedLabel}`,
+        };
+    }
+    if (!isSameOrUnder(config.taskDir, target) && !isSameOrUnder(evidenceDir, target)) {
+        return {
+            allowed: false,
+            rule: "scope",
+            detail: "outside-allowed-surface",
+            target: rawTarget,
+            reason: `write-scope: blocked bash write to ${rawTarget}: outside the worker write surface ` +
+                `[rule=scope]; allowed: ${allowedLabel}`,
+        };
+    }
+    if (config.writeScope !== undefined &&
+        !config.writeScope.some((entry) => matchesWriteScopeEntry(config, entry, target))) {
+        return {
+            allowed: false,
+            rule: "write-scope",
+            detail: "outside-declared-write-scope",
+            target: rawTarget,
+            reason: `write-scope: blocked bash write to ${rawTarget}: outside the task's declared write_scope ` +
+                `[rule=write-scope]; allowed: ${allowedLabel}`,
+        };
+    }
+    return { allowed: true, target: rawTarget };
+}
+/** Append one `[WRITE_SCOPE] ... write-scope ...` audit line to trace.log.
+ * Contract (AC-005b/AC-007): the line carries the `write-scope` token, the
+ * `blocked=<bool>` field, the optional `risk=<token>` residual marker and the
+ * blocked command summary. Pure-read/unclassified commands never reach here (no
+ * audit noise — the P1 miss surface is covered by the existing full command
+ * trace). */
+function appendBashWriteScopeTraceLine(taskKey, agenticdocRoot, r) {
+    try {
+        const dir = path.resolve(agenticdocRoot, taskKey);
+        fs.mkdirSync(dir, { recursive: true });
+        const summary = r.command.replace(/\s+/g, " ").trim().slice(0, 200);
+        const risk = r.risk === undefined ? "" : `risk=${r.risk} `;
+        fs.appendFileSync(path.join(dir, "trace.log"), `[WRITE_SCOPE] ${r.ts} write-scope blocked=${String(r.blocked)} ${risk}rule=${r.rule} detail=${r.detail} ` +
+            `pattern=${r.pattern} target=${r.target} cmd=${summary}\n`, "utf8");
+    }
+    catch {
+        // Diagnostic append — a failure must never break the block itself
+    }
+}
+/** Append one machine `[WRITE_SCOPE_SUMMARY]` counter line for a guarded run
+ * (AC-007/T-03). Its `allow-unknown=` count and the number of
+ * `blocked=false rule=allow-unknown` audit rows are the two independent sources
+ * of the equality criterion `allow_unknown_audited == allow_unknown_count`.
+ * Best-effort like the audit line: a diagnostic append failure must never break
+ * the settle path. */
+function appendWriteScopeSummary(taskKey, agenticdocRoot, counts) {
+    try {
+        const dir = path.resolve(agenticdocRoot, taskKey);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.appendFileSync(path.join(dir, "trace.log"), `[WRITE_SCOPE_SUMMARY] allow=${counts.allowDetermined} deny=${counts.deny} allow-unknown=${counts.allowUnknown}\n`, "utf8");
+    }
+    catch {
+        // Diagnostic append — a failure must never break the settle path
     }
 }
 /** Append one machine `[IDLE_KILL]` line to trace.log. Returns false when the
@@ -528,19 +1562,52 @@ export async function workerModeActivate(pi) {
     // the observation unit (spawn count + pid liveness), even when the task
     // is refused right below.
     appendStartPidLine(meta.taskKey, meta.agenticdocRoot);
+    // Product-carried run identity (D-022/D-023, AC-022): this process writes its
+    // OWN run.json — `running` now, a terminal state on every exit path below.
+    // That is what makes a finished task un-restartable even when its ledger row
+    // is lost (IN-3 rebuilt 252 rows in one second and a re-run overwrote a
+    // finished task's output.md at 11:45:40), and what forces more work on a
+    // finished task to use a NEW task_key declaring `supersedes:`.
+    // task.md is read once here and reused for the read-scope parent root below.
+    const taskDir = path.dirname(taskPath);
+    const taskContent = fs.readFileSync(taskPath, "utf8");
+    // AC-005 observability: record the ignored body `type:` lines / BOM / GC-8
+    // fallback before the fail-closed gate so a refused spawn is audited too.
+    appendHeaderAudit(meta.taskKey, meta.agenticdocRoot, taskContent, meta.type);
+    const runState = {
+        schema: RUN_SCHEMA,
+        task_key: meta.taskKey,
+        run_id: newRunId(meta.taskKey),
+        // `.agenticdoc/<key>/workers/<task>` (or `_scratch`): the owner key is the
+        // directory that owns this task, never inferred from the task-key prefix.
+        owner_key: path.basename(path.dirname(path.dirname(taskDir))),
+        kind: meta.type,
+        status: "running",
+        started_at: new Date().toISOString(),
+        supersedes: parseSupersedes(taskContent),
+        artifacts: [],
+        pid: process.pid,
+        last_heartbeat_at: new Date().toISOString(),
+    };
+    writeRunState(taskDir, runState);
     // D-107 fail-closed gate: refuse the task before any agent turn, with the
     // reason in output.md (counts into the loop budget escalation on the
     // conductor side, AC-023).
     const refusal = dispatchRefusal(meta);
     if (refusal !== undefined) {
         appendError(meta.taskKey, meta.agenticdocRoot, refusal);
+        markOutcome(1);
         writeOutput({
             taskKey: meta.taskKey,
             agenticdocRoot: meta.agenticdocRoot,
             exitCode: 1,
             summary: "Task refused at startup (fail-closed).",
             exitReason: refusal,
+            runMarker: runMarker(runState),
         });
+        // A refusal is a real terminal outcome: record it as such, so the row and
+        // the product tell the same story and the task is never auto-restarted.
+        finishRun("failed", 1);
         writeWorkerLogLine(`[worker] refused task=${meta.taskKey} type=${meta.type}: ${refusal}`);
         killTrackedDetachedChildren();
         process.exit(1);
@@ -553,16 +1620,51 @@ export async function workerModeActivate(pi) {
     // the profile block's Parent root joins the allowed scope — parent is a
     // directly developed extension of the workspace, not read-only context.
     // No-op for empty (fail-closed) / deny-only scopes and non-partition tasks.
-    const readScopeConfig = applyParentRootUnion(readScopeConfigFromMeta(meta), parentRootFromTaskContent(fs.readFileSync(taskPath, "utf8")));
+    const readScopeConfig = applyParentRootUnion(readScopeConfigFromMeta(meta), parentRootFromTaskContent(taskContent));
     const readScopeState = { allowedCalls: 0, bytesRead: 0 };
     const readScopeRejections = [];
     function writeOutputGuarded(opts) {
-        writeOutput(opts);
+        // The product write is this run's terminal moment, and the marker it carries
+        // must state the outcome the same write records — so reflect it in memory
+        // first (finishRun persists it right after, R15).
+        markOutcome(opts.exitCode);
+        writeOutput({ ...opts, runMarker: runMarker(runState) });
         appendReadScopeRejectionsSection(meta.taskKey, meta.agenticdocRoot, readScopeRejections);
+    }
+    /** The one place that maps an exit code to a terminal status (shared by the
+     * output.md marker and the persisted record). AC-006 adds the framework's
+     * no-product verdict: exit 2 = needs-clarification (not a crash), so the OS
+     * exit code, `[END] exit=`, run.json.status and the output.md marker all
+     * agree with `launcher._exit_to_status`. */
+    function markOutcome(exitCode) {
+        runState.status = exitCode === 0 ? "done" : exitCode === 2 ? "needs-clarification" : "failed";
+        return runState.status;
+    }
+    /** Terminal write for THIS run (AC-022/D-022). Every exit path lands here
+     * through `recordEnd`, a startup refusal, or the process-exit safety net.
+     * Best-effort by contract (R15): when the write fails it is noted in
+     * trace.log and the run still writes output.md. `artifacts` is re-collected
+     * here (the deliverables exist by now), never for a `lost` run — the Python
+     * launcher owns that single addition (D-023). */
+    function finishRun(status, exit) {
+        runState.status = status;
+        runState.ended_at = new Date().toISOString();
+        if (exit !== undefined)
+            runState.exit = exit;
+        runState.artifacts = collectArtifacts(taskDir);
+        writeRunState(taskDir, runState);
     }
     // Task lifecycle start: trace.log gets a machine-parseable [START] anchor
     // (runtime origin for elapsed computation), worker.log a human status line.
     appendStart(meta.taskKey, meta.agenticdocRoot, meta.type, phaseTotal);
+    // AC-010/T-12: consume the C2 contract markers read back by `parseTaskMd`.
+    // The producer is PM-side; a malformed pair here means renderer drift (a
+    // dangling marker the cleanup regex could not remove, or a duplicated
+    // section) and the agent may be reading a stale half-contract. Absence is
+    // the normal state for manual/legacy task books and is never flagged.
+    if (meta.writeSurfaceMarker === "malformed") {
+        appendTrace(meta.taskKey, meta.agenticdocRoot, "[WRITE_SURFACE] contract-section markers malformed (expected exactly one ordered marker pair)");
+    }
     // D-116: record which model runs this task. ExtensionAPI has no model
     // getter — the resolved id is only readable from an event context, so
     // capture it at session start (fires before the first turn). A duplicate
@@ -580,14 +1682,17 @@ export async function workerModeActivate(pi) {
             const line = `[IMAGE-CAP] model=${ctx.model.id} provider=${ctx.model.provider} task=${meta.taskKey} declared=images:yes`;
             writeWorkerLogLine(line);
             appendError(meta.taskKey, meta.agenticdocRoot, line);
+            markOutcome(1);
             writeOutput({
                 taskKey: meta.taskKey,
                 agenticdocRoot: meta.agenticdocRoot,
                 exitCode: 1,
                 summary: "Task refused (image capability).",
                 exitReason: line,
+                runMarker: runMarker(runState),
             });
             outputWritten = true;
+            finishRun("failed", 1);
             killTrackedDetachedChildren();
             process.exit(1);
             return;
@@ -632,6 +1737,12 @@ export async function workerModeActivate(pi) {
         catch {
             // Best-effort during exit — nothing else we can do.
         }
+        // Crash backstop: nothing wrote output, so this run ended without a
+        // result — record that in the product too (a normal terminal path returns
+        // above via `outputWritten`). Guarded so a terminal state is never
+        // downgraded.
+        if (!isTerminalRunStatus(runState.status))
+            finishRun("failed", 1);
     });
     // RAG surface (D-002): registered only when the project enables servers;
     // disabled projects get no registration and no probe (structural zero impact).
@@ -706,6 +1817,71 @@ export async function workerModeActivate(pi) {
             readScopeRejections.push(rejection);
             appendReadScopeTraceLine(meta.taskKey, meta.agenticdocRoot, rejection);
             return { block: true, reason: verdict.reason };
+        });
+    }
+    // Bash write-surface guard (AC-005b / contract C3): a role with `bash` but no
+    // write/edit tool (today: `research` only) could bypass its narrow
+    // `worker_file` channel through a shell command. Known write patterns are
+    // classified, their targets resolved, and only targets outside the worker's
+    // write surface are blocked. The surface is the default (own taskDir +
+    // `<key>/evidence/**`), narrowed by the task's `write_scope:` header when the
+    // producer (T-02) rendered one. Pure-read and unclassifiable commands pass
+    // silently (P1: a miss is preferable to a false block).
+    const bashWriteScopeConfig = isShellRole(meta.type) && isWritelessRole(meta.type)
+        ? {
+            projectRoot: process.cwd(), // launcher spawns workers with cwd = project root
+            taskDir,
+            keyDir: path.dirname(meta.agenticdocRoot),
+            trueRoot: meta.trueAgenticdocRoot,
+            writeScope: meta.writeScope,
+        }
+        : undefined;
+    // AC-007/T-03 outcome counters: mutated by the guard below, consumed by
+    // `recordEnd` for the `[WRITE_SCOPE_SUMMARY]` line. Declared outside the
+    // `if` so the settle path can read them.
+    const writeScopeCounts = { allowDetermined: 0, deny: 0, allowUnknown: 0 };
+    if (bashWriteScopeConfig) {
+        const config = bashWriteScopeConfig;
+        pi.on("tool_call", (event) => {
+            if (event.toolName !== "bash")
+                return undefined;
+            const command = event.input?.command;
+            if (typeof command !== "string" || command.trim() === "")
+                return undefined;
+            for (const candidate of extractBashWriteCandidates(command)) {
+                const verdict = checkBashWriteScopeTarget(config, candidate.target, candidate.verbatim);
+                if (verdict.rule === "allow-unknown") {
+                    // Contract cost (F1–F3): not blockable — audit first, then continue.
+                    writeScopeCounts.allowUnknown += 1;
+                    appendBashWriteScopeTraceLine(meta.taskKey, meta.agenticdocRoot, {
+                        ts: new Date().toISOString(),
+                        blocked: false,
+                        rule: "allow-unknown",
+                        detail: verdict.detail ?? "target-not-statically-determinable",
+                        risk: verdict.risk,
+                        target: candidate.target,
+                        pattern: candidate.pattern,
+                        command,
+                    });
+                    continue;
+                }
+                if (verdict.allowed) {
+                    writeScopeCounts.allowDetermined += 1;
+                    continue;
+                }
+                writeScopeCounts.deny += 1;
+                appendBashWriteScopeTraceLine(meta.taskKey, meta.agenticdocRoot, {
+                    ts: new Date().toISOString(),
+                    blocked: true,
+                    rule: verdict.rule ?? "scope",
+                    detail: verdict.detail ?? "blocked",
+                    target: candidate.target,
+                    pattern: candidate.pattern,
+                    command,
+                });
+                return { block: true, reason: verdict.reason };
+            }
+            return undefined;
         });
     }
     const inFlightTools = new Map();
@@ -798,6 +1974,9 @@ export async function workerModeActivate(pi) {
     // Shared terminal bookkeeping: trace [END] with exact runtime + a status
     // line into worker.log (synchronous — survives an immediate process.exit).
     function recordEnd(exitCode) {
+        // Single exit-code → status mapping (markOutcome), reused here so the trace
+        // line, the persisted record and the marker can never disagree (AC-006).
+        const status = markOutcome(exitCode);
         appendEnd(meta.taskKey, meta.agenticdocRoot, {
             exitCode,
             elapsedMs: Date.now() - startedAt,
@@ -805,7 +1984,14 @@ export async function workerModeActivate(pi) {
             phaseDone: meta.phases ? completedPhaseIdx : undefined,
             phaseTotal,
         });
-        writeWorkerLogLine(`[worker] ${exitCode === 0 ? "done" : "failed"} exit=${exitCode} elapsed=${formatHeartbeatAge(Date.now() - startedAt)} tools=${toolCallCount}${toolErrorCount > 0 ? ` tool_errors=${toolErrorCount}` : ""}${phaseTotal > 0 ? ` phases=${completedPhaseIdx}/${phaseTotal}` : ""}`);
+        // AC-007/T-03: one machine summary per guarded run, after the last audit
+        // row and before the terminal status is persisted. Write roles register no
+        // guard and stay byte-identical (VC-024).
+        if (bashWriteScopeConfig) {
+            appendWriteScopeSummary(meta.taskKey, meta.agenticdocRoot, writeScopeCounts);
+        }
+        finishRun(status, exitCode);
+        writeWorkerLogLine(`[worker] ${status} exit=${exitCode} elapsed=${formatHeartbeatAge(Date.now() - startedAt)} tools=${toolCallCount}${toolErrorCount > 0 ? ` tool_errors=${toolErrorCount}` : ""}${phaseTotal > 0 ? ` phases=${completedPhaseIdx}/${phaseTotal}` : ""}`);
     }
     // Watchdog suite (AC-001/002/003/004, GC-4 as amended 2026-09-09).
     // - idle watchdog: NOTHING moved (no deltas/tools/turns) for idleMs while
@@ -1022,6 +2208,10 @@ export async function workerModeActivate(pi) {
     // every exit path below.
     const heartbeat = setInterval(() => {
         appendHeartbeat(meta.taskKey, meta.agenticdocRoot, phases && phases.length > 0 ? `${completedPhaseIdx}/${phases.length}` : "-");
+        // Same tick refreshes the product-carried liveness stamp: a reader that
+        // has only run.json can still tell a live run from a dead one (D-022).
+        runState.last_heartbeat_at = new Date().toISOString();
+        writeRunState(taskDir, runState);
     }, HEARTBEAT_INTERVAL_MS);
     heartbeat.unref();
     function buildSummary() {
@@ -1029,24 +2219,67 @@ export async function workerModeActivate(pi) {
         const tools = toolsUsed.size > 0 ? ` Tools used: ${[...toolsUsed].sort().join(", ")} (${toolCallCount} calls).` : "";
         return `${base}${tools}`;
     }
+    /** AC-007/DD-09: the effort half of `## Exit Reason` — which product file this
+     * run actually wrote, taken from the live write-tool targets (not from disk, so
+     * it reflects what the agent did even when the file was later removed). The
+     * value domain is fixed: the two canonical products, or `none`. */
+    function writesLabel() {
+        const bases = new Set([...writeTargets].map((t) => path.basename(t.replace(/[\\/]+$/, ""))));
+        if ([...bases].some((b) => b === "report.md" || /^report-.+\.md$/.test(b)))
+            return "report.md";
+        if (bases.has("progress.md"))
+            return "progress.md";
+        return "none";
+    }
     /** Success path. Does NOT process.exit: this handler runs inside pi's
      * agent_settled emit — returning lets pi's print mode resolve, print the
      * final assistant message to stdout (captured as worker.log), flush, and
      * exit with its own code. Exiting here was why worker.log stayed empty:
      * process.exit truncates the pending stdout flush. */
     function finishSuccess() {
+        // AC-010②: a second settle in the same process is a no-op — without this the
+        // append-only writer (output-writer.ts D-117) adds a second harness block,
+        // a second `[END]` and (for an NC run) a second no-product alarm.
+        if (taskDone)
+            return;
         taskDone = true;
         clearWatchdogTimers();
         clearInterval(heartbeat);
+        // AC-006 (contract C5): a writeless role that settles without a product is
+        // needs-clarification, not done. Judged here — before the single write-out —
+        // so the output.md marker, `## Questions`, run.json.status and `[END] exit=`
+        // all carry the same verdict. Write roles are exempt: a coding run's
+        // deliverable is the repository, not a file in its own task dir.
+        const evidence = isWritelessRole(meta.type)
+            ? hasDeliverableEvidence(taskDir, lastAssistantText)
+            : { delivered: true, channel: "none", detail: "write role" };
+        const exitCode = evidence.delivered ? 0 : 2;
+        // AC-007/DD-09: carry the settle-time artifacts into the product so a
+        // `## Deliverables` section can list them (the writer drops output.md and
+        // progress.md, and omits the section when nothing is left).
+        const effort = `writes=${writesLabel()}`;
         writeOutputGuarded({
             taskKey: meta.taskKey,
             agenticdocRoot: meta.agenticdocRoot,
-            exitCode: 0,
+            exitCode,
             summary: buildSummary(),
-            changedFiles: [],
+            changedFiles: collectArtifacts(taskDir),
             verificationSteps: "See task output for details.",
-            exitReason: `Agent settled after ${toolCallCount} tool call(s).`,
+            exitReason: evidence.delivered
+                ? `Agent settled after ${toolCallCount} tool call(s). ${effort}`
+                : `Agent settled after ${toolCallCount} tool call(s) without a deliverable: ${evidence.detail} ${effort}`,
+            questions: evidence.delivered ? undefined : `no-product: ${evidence.detail}`,
         });
+        if (!evidence.delivered) {
+            // The ledger root is the TRUE `.agenticdoc` root (meta.trueAgenticdocRoot),
+            // never `<key>/workers` (meta.agenticdocRoot) — the latter would scatter the
+            // row into a directory no consumer reads.
+            recordDispatchAlarm(meta.trueAgenticdocRoot, {
+                kind: "no-product",
+                count: 1,
+                detail: `${meta.taskKey}:${evidence.channel}`,
+            });
+        }
         // VC-014 (AC-010): warning-only required-but-unused marker. ragRuntime is
         // null on an RAG-less project, so this is a structural zero-write no-op.
         if (ragRuntime !== null) {
@@ -1059,11 +2292,18 @@ export async function workerModeActivate(pi) {
                 taskDir: path.dirname(taskPath),
             });
         }
-        recordEnd(0);
+        recordEnd(exitCode);
         outputWritten = true;
     }
     pi.on("agent_settled", () => {
         try {
+            // AC-010②: this handler is the settle entry point; once finishSuccess has
+            // run (taskDone), later settles must not re-write phase files, re-emit
+            // goal checks or append another output.md block. Phased tasks keep
+            // taskDone === false until the final finishSuccess, so the phase machine
+            // below is unaffected.
+            if (taskDone)
+                return;
             if (!initialSettled) {
                 initialSettled = true;
                 // Initial task prompt (from pi -p) has settled
@@ -1118,5 +2358,110 @@ export async function workerModeActivate(pi) {
             process.exit(1);
         }
     });
+}
+/** Double-quote backslash handling for `tokenizeShellCommand` (P-1): POSIX says
+ * a backslash inside double quotes escapes only `$`, a backtick, `"` and `\`;
+ * every other backslash is a literal character. Folding all of them away erased
+ * Windows path separators, so `& "C:\Program Files\Git\bin\bash.exe" -c "..."`
+ * tokenized to a name no wrapper set could match. Appends the escaped/literal
+ * character and returns the last consumed index (the caller advances one).
+ * Declared after its call site on purpose: AC-011 pins the line numbers that
+ * spec.md/design.md reference.
+ *
+ * T-18/A also folds a trailing `.exe` off the command basename at the two
+ * command-position call sites (`skipWrapperPrefix`, `extractCommand`):
+ * `bash.exe`/`cmd.exe`/`powershell.exe` are the same wrappers as their bare
+ * names, and the unwrap sets are exact-name matches. */
+function appendDoubleQuoteEscape(command, i, append) {
+    const next = command[i + 1];
+    if (next === "$" || next === "`" || next === '"' || next === "\\") {
+        append(next, false);
+        return i + 1;
+    }
+    append("\\", false);
+    return i;
+}
+/** T-18/A + T-20/H-2: the command-position basename with a trailing Windows
+ * `.exe` folded away. `bash.exe`/`cmd.exe`/`powershell.exe` are the same
+ * wrappers as their bare names, and the unwrap sets are exact-name matches.
+ * Splits on both separators itself instead of `path.basename`: the latter uses
+ * the host's semantics, so `C:\...\bash.exe` did not fold on POSIX (Linux CI).
+ * Declared after its call sites for the same AC-011 line-number reason. */
+function commandBasename(text) {
+    const base = (text
+        .replace(/[\\/]+$/, "")
+        .split(/[\\/]/)
+        .pop() ?? "").toLowerCase();
+    return base.replace(/\.exe$/, "");
+}
+/** T-20/H-4: the tokenizer emits `;` both for a literal `;` and for a physical
+ * newline, but a heredoc body starts at the physical newline. Tag the newline
+ * tokens so `dropHeredocBodies` can split on real line boundaries: with
+ * `cat <<EOF; printf y > real.md` the `;` is not a body start, the following
+ * `\n` is. The tag lives in a `WeakSet` so `ShellToken` itself is unchanged. */
+const LINE_BREAK_TOKENS = new WeakSet();
+function markLineBreak(token) {
+    LINE_BREAK_TOKENS.add(token);
+    return token;
+}
+/** T-19/C-17: a heredoc body is DATA, not shell source. `cat <<EOF > out.md`
+ * writes only out.md, and a body line `x > y` writes nothing — judging its `>`
+ * as a redirect was a false block. The tokenizer has no line state of its own
+ * (a newline is just a `;` operator), so the body token ranges are identified
+ * and removed here before the redirect scan. Handles `<<` / `<<-` (one operator
+ * token) and quoted delimiters (the tokenizer already unquotes the word), skips
+ * `<<` inside `(( ))` arithmetic (a shift, not a heredoc) and ignores `<<<`
+ * here-strings (single-word, no body). Declared after its call site on purpose:
+ * AC-011 pins the line numbers that spec.md/design.md reference. */
+function dropHeredocBodies(tokens) {
+    const lines = [[]];
+    for (const token of tokens) {
+        if (LINE_BREAK_TOKENS.has(token))
+            lines.push([]);
+        else
+            lines[lines.length - 1].push(token);
+    }
+    const dropped = new Set();
+    // T-20/H-3: on a CRLF-opened heredoc the tokenizer keeps a trailing `\r` in
+    // the word, so a `<<EOF\r` opener and an `EOF` closer (mixed EOL) must compare
+    // equal or the search runs to the end and swallows the real redirects.
+    const trimDelimiter = (value) => value.replace(/\r+$/, "");
+    for (let line = 0; line < lines.length; line++) {
+        const delimiters = [];
+        let depth = 0;
+        for (let i = 0; i + 1 < lines[line].length; i++) {
+            const token = lines[line][i];
+            if (token.operator && token.text === "((")
+                depth += 1;
+            else if (token.operator && token.text === "))")
+                depth = Math.max(0, depth - 1);
+            else if (depth === 0 && token.operator && (token.text === "<<" || token.text === "<<-")) {
+                if (!lines[line][i + 1].operator)
+                    delimiters.push(trimDelimiter(lines[line][i + 1].text));
+            }
+        }
+        if (delimiters.length === 0)
+            continue;
+        let cursor = line;
+        for (const delimiter of delimiters) {
+            let end = cursor + 1;
+            while (end < lines.length && !(lines[end].length === 1 && trimDelimiter(lines[end][0].text) === delimiter))
+                end++;
+            for (let d = cursor + 1; d <= end && d < lines.length; d++)
+                dropped.add(d);
+            cursor = end;
+        }
+        line = cursor;
+    }
+    if (dropped.size === 0)
+        return tokens;
+    const kept = [];
+    for (let line = 0; line < lines.length; line++) {
+        if (line > 0)
+            kept.push({ text: ";", operator: true, verbatim: true });
+        if (!dropped.has(line))
+            kept.push(...lines[line]);
+    }
+    return kept;
 }
 //# sourceMappingURL=worker-mode.js.map

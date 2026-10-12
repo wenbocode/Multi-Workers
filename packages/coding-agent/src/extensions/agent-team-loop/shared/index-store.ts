@@ -1,8 +1,104 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { acquireLock } from "./file-lock.ts";
+import { SCRATCH_WORKERS_KEY } from "./paths.ts";
 
 export type IndexStatus = "active" | "idle" | "done";
+
+// ── Key identity (AC-006 / RQ-5) ────────────────────────────────────────────
+
+/** Reserved `.agenticdoc/` root entries that name framework files/dirs, not
+ * AgenticTask key namespaces: the 12 names from RQ-5 plus `_impl_gate.log`
+ * (`shared/implementation-gate.ts` writes it) and `_incidents`. This is an
+ * EXPLICIT list, deliberately not a `_`/`.` prefix rule (the pre-AC-006
+ * exemption): a prefix rule would also exempt `_tmp`, `.mw` and
+ * `_index.parallel` from the cross-key guard and let a dispatch with
+ * `key: _index.parallel` create `.agenticdoc/_index.parallel/workers/`. */
+export const RESERVED_INDEX_NAMES: readonly string[] = [
+	"_scratch",
+	".mw",
+	"_index.parallel",
+	"_index.md",
+	"_workers.parallel",
+	"_workers.stale.parallel",
+	"_workers.acked",
+	"_autopilot",
+	"_project_log.md",
+	"_arch_snapshot.md",
+	"_pitfalls.md",
+	".agenticdoc",
+	"_impl_gate.log",
+	"_incidents",
+];
+
+/** Lower-cased membership set of {@link RESERVED_INDEX_NAMES} (stored names
+ * are lower-case; compare through {@link normalizeKey}). */
+export const RESERVED_INDEX_NAME_SET: ReadonlySet<string> = new Set(RESERVED_INDEX_NAMES);
+
+/** Comparison form of a key: trimmed and lower-cased. Windows filesystems are
+ * case-insensitive, so `MW-KEY` and `mw-key` name the SAME directory — the key
+ * namespace must be case-insensitive too (A6). Reads normalize; writes keep
+ * the first-seen casing so existing `_index.parallel` bytes are never
+ * rewritten by a read (no migration). */
+export function normalizeKey(key: string): string {
+	return key.trim().toLowerCase();
+}
+
+/** True for `_scratch` and its case variants — the only reserved name that is
+ * still usable as an owner key (never as a claimable/advanceable key). */
+export function isScratchKey(key: string): boolean {
+	return normalizeKey(key) === normalizeKey(SCRATCH_WORKERS_KEY);
+}
+
+/** Shape of a usable key name: alnum first char, then alnum / `.` / `_` / `-`. */
+const KEY_SHAPE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const KEY_MAX_LENGTH = 64;
+
+/** Stable machine code + human message of a refused key name. */
+export interface KeyNameRefusal {
+	code: string;
+	message: string;
+}
+
+/** Shape + reserved-name gate shared by the cross-key guard, `IndexStore.claim`
+ * and `advance_phase` (AC-006/DD-07a/DD-07b): `null` = usable key name. Every
+ * other return refuses the name unconditionally, independent of claim state,
+ * so no caller can bootstrap a namespace next to a framework file. */
+export function keyNameRefusal(key: string): KeyNameRefusal | null {
+	const trimmed = key.trim();
+	if (!trimmed) return { code: "empty-key", message: "the key is empty" };
+	if (RESERVED_INDEX_NAME_SET.has(normalizeKey(trimmed))) {
+		return {
+			code: "reserved-key-name",
+			message: `'${trimmed}' is a reserved framework name, not an AgenticTask key namespace`,
+		};
+	}
+	if (trimmed === "." || trimmed === "..") {
+		return { code: "key-path-escape", message: `'${trimmed}' escapes the .agenticdoc root` };
+	}
+	if (/[/\\]/.test(trimmed) || /^[A-Za-z]:/.test(trimmed)) {
+		return { code: "key-path-escape", message: `'${trimmed}' contains a path separator or drive prefix` };
+	}
+	if (trimmed.length > KEY_MAX_LENGTH) {
+		return { code: "key-illegal-shape", message: `the key is ${trimmed.length} chars (max ${KEY_MAX_LENGTH})` };
+	}
+	if (trimmed.endsWith(".")) {
+		return { code: "key-illegal-shape", message: `'${trimmed}' ends with '.'` };
+	}
+	if (/[\u0000-\u001f\u007f:<>"|?*]/.test(trimmed)) {
+		return {
+			code: "key-illegal-shape",
+			message: `'${trimmed}' contains a control, ADS or shell metacharacter`,
+		};
+	}
+	if (!KEY_SHAPE_RE.test(trimmed)) {
+		return {
+			code: "key-illegal-shape",
+			message: `'${trimmed}' does not match ^[A-Za-z0-9][A-Za-z0-9._-]*$`,
+		};
+	}
+	return null;
+}
 
 export interface IndexEntry {
 	key: string;
@@ -70,9 +166,11 @@ export class IndexStore {
 		const release = await acquireLock(this.lockPath);
 		try {
 			const existing = this.readAll();
-			const idx = existing.findIndex((e) => e.key === entry.key);
+			const idx = existing.findIndex((e) => normalizeKey(e.key) === normalizeKey(entry.key));
 			if (idx >= 0) {
-				existing[idx] = entry;
+				// Keep the first-seen casing of the stored row: reads are
+				// case-insensitive, writes must not rewrite existing rows (A6).
+				existing[idx] = { ...entry, key: existing[idx].key };
 			} else {
 				existing.push(entry);
 			}
@@ -97,8 +195,21 @@ export class IndexStore {
 		const { force = false, demoteOthers = true, activate = true } = opts;
 		const release = await acquireLock(this.lockPath);
 		try {
+			// Key name gate (AC-006): reserved/illegal names never reach the rows,
+			// so `claim('_tmp')` / `claim('_index.parallel')` cannot create an active
+			// row in a framework namespace. `_scratch` is refused here too: usable as
+			// an owner key, never claimable.
+			const nameRefusal = keyNameRefusal(key);
+			if (nameRefusal) {
+				return {
+					ok: false,
+					entry: { key, status: "idle", phase: "", claimId: "", deps: "", desc: "", updated: "" },
+					created: false,
+					refusal: nameRefusal.code,
+				};
+			}
 			const rows = this.readAll();
-			const idx = rows.findIndex((e) => e.key === key);
+			const idx = rows.findIndex((e) => normalizeKey(e.key) === normalizeKey(key));
 			const existing = rows[idx];
 			if (existing && existing.claimId !== self && heldLive(existing.claimId) && !force) {
 				return { ok: false, blockedBy: existing.claimId, entry: existing, created: false };
@@ -106,7 +217,7 @@ export class IndexStore {
 			const now = new Date().toISOString();
 			if (demoteOthers) {
 				for (let i = 0; i < rows.length; i++) {
-					if (rows[i].status === "active" && rows[i].key !== key) {
+					if (rows[i].status === "active" && normalizeKey(rows[i].key) !== normalizeKey(key)) {
 						rows[i] = { ...rows[i], status: "idle", updated: now };
 					}
 				}
@@ -129,7 +240,17 @@ export class IndexStore {
 			if (!after || after.claimId !== self) {
 				return { ok: false, blockedBy: after?.claimId, entry: after ?? claimed, created: false };
 			}
-			return { ok: true, entry: after, created: !existing };
+			// Observability (design-role-key-identity §5.1 / DD-07d): the claim hit a
+			// stored row whose bytes differ from the request only by case. The claim
+			// still resolves to that row (no migration, no duplicate), but the caller
+			// must be able to SEE the substitution instead of silently owning a row
+			// under a different spelling. `takeOverKey` turns this into an audit line.
+			const requested = key.trim();
+			const caseVariantOf =
+				existing && existing.key !== requested && existing.key.toLowerCase() === requested.toLowerCase()
+					? existing.key
+					: undefined;
+			return { ok: true, entry: after, created: !existing, ...(caseVariantOf ? { caseVariantOf } : {}) };
 		} finally {
 			release();
 		}
@@ -162,7 +283,9 @@ export class IndexStore {
 	}
 
 	findByKey(key: string): IndexEntry | undefined {
-		return this.readAll().find((e) => e.key === key);
+		// Case-insensitive (A6): the first stored row with the same normalized key
+		// wins; a caller passing a case variant gets the row the guard sees too.
+		return this.readAll().find((e) => normalizeKey(e.key) === normalizeKey(key));
 	}
 
 	/** The currently active row, if any (single-active discipline).
@@ -196,6 +319,15 @@ export interface ClaimOutcome {
 	ok: boolean;
 	/** Present when ok=false: the claim that blocked or beat us. */
 	blockedBy?: string;
+	/** Present when ok=false and the refusal was the key NAME itself (AC-006):
+	 * stable {@link keyNameRefusal} code (`reserved-key-name`,
+	 * `key-illegal-shape`, `key-path-escape`, `empty-key`). */
+	refusal?: string;
+	/** Present when ok=true and the request hit an existing row that differs
+	 * from it only by case (A6): the stored, first-written spelling. The claim
+	 * resolves to that row -- this field exists so the substitution is auditable
+	 * rather than silent. */
+	caseVariantOf?: string;
 	/** The target row as it stands after the attempt. */
 	entry: IndexEntry;
 	/** True when the target row was auto-created (key unknown to the index). */

@@ -147,14 +147,20 @@ def _read_task_md_fields(task_path: str) -> tuple[str, str]:
     queue row's model column is a display transport filled by the TS side, and
     a conductor orphan reinsert rewrites it to "" — reading task.md here keeps
     an explicit model: line effective through every path. ('', '') when the
-    file is unreadable (the spawn then fails on the missing file anyway)."""
+    file is unreadable (the spawn then fails on the missing file anyway).
+
+    `type:` comes from the AC-005 single source `mw_common.read_task_type`
+    (T-14): first `type:` of the header region, BOM stripped, never a body
+    line. The role must not be decided by any other reading, and this callsite
+    shares the function with the worker's `parseTaskMd` / the PM's dispatch
+    judgement."""
     try:
         content = pathlib.Path(task_path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return "", ""
-    type_m = re.search(r"^type:[ \t]*(\S+)[ \t\r]*$", content, flags=re.MULTILINE)
+    task_type = mw_common.read_task_type(content).type or ""
     model_m = re.search(r"^model:[ \t]*(\S+)[ \t\r]*$", content, flags=re.MULTILINE)
-    return (type_m.group(1) if type_m else "", model_m.group(1) if model_m else "")
+    return (task_type, model_m.group(1) if model_m else "")
 
 
 def _model_override_note(

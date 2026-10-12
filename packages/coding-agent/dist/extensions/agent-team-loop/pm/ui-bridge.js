@@ -7,13 +7,16 @@ import { runAgenticScript } from "../shared/agentic-scripts.js";
 import { DISPATCHABLE_TYPES, detectImageNeed, modelImageCapability, readRoleModel, roleForTaskType, validateModelValue, } from "../shared/dispatch-models.js";
 import { acquireLock } from "../shared/file-lock.js";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.js";
-import { readIndexMdActive } from "../shared/index-store.js";
+import { isScratchKey, keyNameRefusal, normalizeKey, RESERVED_INDEX_NAMES, readIndexMdActive, } from "../shared/index-store.js";
 import { buildMw, doctorMw, getMwStatus, initMw, modelMw, partitionMw, RAG_SUBCOMMANDS, ragMw, restartMw, serveStaleness, startMw, stopMw, targetMw, updateEnvMw, } from "../shared/mw-runner.js";
+import { readLastProductSectionBody } from "../shared/output-sections.js";
 import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.js";
 import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "../shared/phase-docs.js";
 import { syncPmStateClaimId } from "../shared/pm-state-claim.js";
 import { PHASE_ORDER, phaseAuditWarnings } from "../shared/pm-state-guard.js";
-import { headline } from "../worker/output-writer.js";
+import { isSameOrUnder, normalizeForCompare } from "../worker/read-scope.js";
+import { WORKER_FILE_NAME_RE } from "../worker/worker-file-tool.js";
+import { isShellRole, isWritelessRole } from "../worker/worker-mode.js";
 import { StateManager } from "./state-manager.js";
 import { dispatchTask } from "./task-dispatcher.js";
 /** Owner key for a worker task — this window's own claim first, the shared
@@ -36,8 +39,8 @@ export function resolveOwnerKeyWithSync(pi, indexStore, watch, explicit, agentic
     if (watch.key) {
         // _scratch is watchable but never indexed; a window watching it means
         // its ad-hoc dispatches belong there.
-        if (watch.key === SCRATCH_WORKERS_KEY)
-            return watch.key;
+        if (isScratchKey(watch.key))
+            return SCRATCH_WORKERS_KEY;
         if (indexStore.findByKey(watch.key)?.claimId === self)
             return watch.key;
     }
@@ -46,10 +49,31 @@ export function resolveOwnerKeyWithSync(pi, indexStore, watch, explicit, agentic
         warnForeignActiveOnce(pi, active.key);
         return SCRATCH_WORKERS_KEY;
     }
-    const owner = active?.key ?? readIndexMdActive(agenticdocRoot) ?? SCRATCH_WORKERS_KEY;
-    if (watch.key && watch.key !== owner)
-        warnOwnerMismatchOnce(pi, watch.key, owner);
-    return owner;
+    // `_index.md active:` is a degraded pointer that carries NO claim column, so
+    // it cannot be trusted by itself (A7): resolve it back to the
+    // `_index.parallel` row and apply the SAME name + liveness gate as the
+    // active-row branch. A foreign live value and a reserved/illegal name both
+    // degrade to _scratch with a warning instead of silently becoming an owner
+    // key in another window's namespace.
+    const fallbackKey = active?.key ?? readIndexMdActive(agenticdocRoot);
+    if (fallbackKey) {
+        if (keyNameRefusal(fallbackKey)) {
+            warnForeignActiveOnce(pi, fallbackKey);
+            return SCRATCH_WORKERS_KEY;
+        }
+        const row = indexStore.findByKey(fallbackKey);
+        if (row && claimState(row.claimId, self) === "held-live") {
+            warnForeignActiveOnce(pi, fallbackKey);
+            return SCRATCH_WORKERS_KEY;
+        }
+        if (watch.key && normalizeKey(watch.key) !== normalizeKey(fallbackKey)) {
+            warnOwnerMismatchOnce(pi, watch.key, fallbackKey);
+        }
+        return fallbackKey;
+    }
+    if (watch.key)
+        warnOwnerMismatchOnce(pi, watch.key, SCRATCH_WORKERS_KEY);
+    return SCRATCH_WORKERS_KEY;
 }
 /** Warned (watch -> owner) pairs this session. displaySummary persists the
  * warning to the transcript (LLM-visible), so once per pair is enough. */
@@ -144,6 +168,59 @@ export function claimState(claimId, self) {
         return "held-live"; // cannot verify liveness
     return isPidAlive(c.pid) ? "held-live" : "held-stale";
 }
+/** Machine-readable refusal code for a cross-key write (AC-024). */
+export const CROSS_KEY_READ_ONLY = "cross-key-read-only";
+/** Writer surfaces the cross-key guard actually fences, in refusal-text order.
+ * Single declaration source (AC-003/VC-011): the refusal body below is built
+ * from this array, and the coverage test asserts every entry maps to a real
+ * guard call site — the text can never again claim a surface the code does not
+ * guard (the pre-AC-003 gap: it named `/worker` while only dispatch_worker and
+ * advance_phase called the guard). */
+export const CROSS_KEY_READ_ONLY_SURFACES = ["dispatch_worker", "/worker", "advance_phase"];
+/** Row-ack addendum of the refusal text: `ack_worker_result` filters rows by
+ * ownership instead of calling the guard, so it is named in the text but is
+ * deliberately NOT part of {@link CROSS_KEY_READ_ONLY_SURFACES} (which is the
+ * call-site set VC-011 compares against). */
+export const CROSS_KEY_READ_ONLY_ACK_NOTE = "acking its rows";
+/** Cross-key write guard (AC-024): a key whose `_index.parallel` row is held
+ * live by ANOTHER window is READ-ONLY for this window. Reading it stays global
+ * and unrestricted (`list_tasks` scope "all"/"key", `mw_status`, `mw doctor`,
+ * the watch panel); the WRITER surfaces refuse with the stable
+ * {@link CROSS_KEY_READ_ONLY} code instead of silently touching another
+ * window's namespace. Writable: this window's own claim, an unclaimed key
+ * (new-key bootstrap: write spec.md -> advance -> dispatch), and `_scratch`.
+ * Returns null when the write is allowed. */
+export function foreignLiveClaimRefusal(indexStore, key) {
+    const trimmed = key.trim();
+    if (!trimmed || isScratchKey(trimmed))
+        return null;
+    // Explicit name gate (A5): reserved framework names and illegal shapes are
+    // refused unconditionally. The pre-AC-006 `_`/`.` prefix exemption returned
+    // null BEFORE findByKey, so a live `_tmp` key passed and reserved files could
+    // be used as key namespaces — there is no such bypass left.
+    const nameRefusal = keyNameRefusal(trimmed);
+    if (nameRefusal)
+        return reservedKeyRefusal(trimmed, nameRefusal);
+    const claim = indexStore.findByKey(trimmed)?.claimId.trim() ?? "";
+    if (!claim)
+        return null;
+    if (claimState(claim, windowClaimId()) !== "held-live")
+        return null;
+    return (`[${CROSS_KEY_READ_ONLY}] key '${trimmed}' is held live by another window (claim ${claim}) — ` +
+        "this window's view of it is read-only.\n" +
+        `Allowed: list_tasks { scope: "all" } or { scope: "key", key: "${trimmed}" }, mw_status, mw doctor, the watch panel.\n` +
+        `Refused: ${CROSS_KEY_READ_ONLY_SURFACES.join(", ")}, ${CROSS_KEY_READ_ONLY_ACK_NOTE}.\n` +
+        `To act on it, take it over first: switch_key { key: "${trimmed}" } ` +
+        "(ask the user before stealing a live claim).");
+}
+/** Refusal text for a key NAME that fails the shape/reserved gate (AC-006):
+ * there is no owner to negotiate with — the name itself is unusable, so the
+ * cross-key escape hatch (switch_key) does not apply. */
+function reservedKeyRefusal(key, refusal) {
+    return (`[${CROSS_KEY_READ_ONLY}] key '${key}' is refused (${refusal.code}): ${refusal.message}.\n` +
+        `Allowed: names matching ^[A-Za-z0-9][A-Za-z0-9._-]*$ that are not reserved framework names (${RESERVED_INDEX_NAMES.join(", ")}).\n` +
+        `Refused: ${CROSS_KEY_READ_ONLY_SURFACES.join(", ")}, ${CROSS_KEY_READ_ONLY_ACK_NOTE}.`);
+}
 /** Claim a key for this window — shared by /pm-key switch, /pm-key new and
  * the spec-write auto-takeover. Routes through IndexStore.claim so the
  * liveness check, demote, and write are one atomic step under the index
@@ -153,11 +230,27 @@ export async function takeOverKey(indexStore, key, force, agenticdocRoot) {
     const self = windowClaimId();
     const outcome = await indexStore.claim(key, self, (id) => claimState(id, self) === "held-live", { force });
     const audit = outcome.ok ? phaseAuditWarnings(agenticdocRoot, key, outcome.entry.phase) : [];
+    // Case-variant audit (design-role-key-identity §5.1 / DD-07d): the claim hit a
+    // stored row spelled differently only by case, so the window now owns
+    // `<stored>` while the user typed `<key>`. Surface it on the existing audit
+    // channel (every takeOverKey caller already notifies `result.audit`) instead
+    // of letting the substitution stay invisible.
+    if (outcome.caseVariantOf) {
+        audit.push(`[KEY] case-variant '${key}' -> stored '${outcome.caseVariantOf}'`);
+    }
     // Mirror the claim into {key}/pm-state.md's '- Claim-Id:' line (D-108):
     // every path that flips the index row's Claim column must also sync the
     // mirror, or the two sources diverge. Failure is non-fatal by design.
     const claimSync = outcome.ok ? syncPmStateClaimId(agenticdocRoot, key, self) : undefined;
-    return { ok: outcome.ok, blockedBy: outcome.blockedBy, claimId: self, created: outcome.created, audit, claimSync };
+    return {
+        ok: outcome.ok,
+        blockedBy: outcome.blockedBy,
+        refusal: outcome.refusal,
+        claimId: self,
+        created: outcome.created,
+        audit,
+        claimSync,
+    };
 }
 /** One-line warning for a claim whose pm-state.md mirror sync failed
  * (D-108): the claim itself succeeded — the index row is authoritative — so
@@ -181,6 +274,9 @@ const STATUS_GLYPH = {
     done: "+",
     failed: "x",
     "needs-clarification": "?",
+    // Product says the run started but its process is gone and the outcome is
+    // unknown (D-022/T-20) — loud on purpose: a `lost` row needs a human look.
+    lost: "!",
 };
 function trunc(s, max) {
     return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
@@ -305,8 +401,12 @@ function firstLine(body) {
  *    ?? `## Exit Reason` first line
  *  - needs-clarification: `## Questions` first line ?? worker.log tail ??
  *    explicit no-output hint (claude/codex tasks write no output.md at all)
- *  - done: `## TL;DR` first line ?? headline-normalized `## Summary` first
- *    line (old output.md files)
+ *  - lost (D-022/T-20): the run's process is gone with no verified outcome —
+ *    same evidence ladder as a failure (Exit Reason, then the log tail), so the
+ *    PM reads the scene instead of a synthesized conclusion
+ *  - done: `## TL;DR` first line ?? `## Summary` first line (old output.md
+ *    files). AC-010: the LAST non-placeholder TL;DR/Summary block, not the
+ *    first — append-only multi-run files lead with crash placeholders.
  * Returns "" when nothing informative exists (caller renders the key only).
  * Line-width truncation stays with the caller (WATCH_LINE_MAX). */
 export function readTerminalDetail(taskDir, status) {
@@ -316,24 +416,35 @@ export function readTerminalDetail(taskDir, status) {
             const reason = spawn.match(/^\[launcher\] spawn failed \([^)]*\):\s*(.*)$/);
             return (reason?.[1] ?? spawn).trim();
         }
-        return firstLine(readOutputSection(taskDir, "Exit Reason")) ?? "";
+        return firstLine(readLastProductSectionBody(taskDir, ["Exit Reason"])) ?? "";
     }
     if (status === "needs-clarification") {
-        return firstLine(readOutputSection(taskDir, "Questions")) ?? readWorkerLogTail(taskDir) ?? "no output.md";
+        return (firstLine(readLastProductSectionBody(taskDir, ["Questions"])) ?? readWorkerLogTail(taskDir) ?? "no output.md");
+    }
+    if (status === "lost") {
+        return (firstLine(readLastProductSectionBody(taskDir, ["Exit Reason"])) ??
+            readWorkerLogTail(taskDir) ??
+            "run lost: process gone, outcome unverified — inspect the task dir");
     }
     if (status === "done") {
-        const tldr = firstLine(readOutputSection(taskDir, "TL;DR"));
-        if (tldr !== undefined)
-            return tldr;
-        const summary = readOutputSummary(taskDir);
-        return summary === undefined ? "" : headline(summary);
+        // AC-010: last non-placeholder block, same placeholder oracle as
+        // hasDeliverableEvidence (contract C5) — a first-match here would show the
+        // leading crash stub of an append-only multi-run output.md.
+        return firstLine(readLastProductSectionBody(taskDir, ["TL;DR", "Summary"])) ?? "";
     }
     return "";
 }
 /** Terminal worker statuses (queue semantics; mirrors pm-orchestrator's
- * isTerminal — shared by the ack validation path). */
+ * isTerminal — shared by the ack validation path). `lost` is terminal for the
+ * ledger (the run is over) while still being unhandled until acked: it must be
+ * absorbed, never re-run (D-022). */
 function isTerminalStatus(status) {
-    return status === "done" || status === "failed" || status === "needs-clarification";
+    return status === "done" || status === "failed" || status === "needs-clarification" || status === "lost";
+}
+/** Statuses that stay in the widget's unhandled section until the PM acks them
+ * (D-002/D-022): everything terminal except a clean `done`. */
+function isUnhandledStatus(status) {
+    return status === "failed" || status === "needs-clarification" || status === "lost";
 }
 /** Shared ack validation + write path behind /mw ack and the ack_worker_result
  * tool (D-002). `"all"` expands to every terminal row not yet acked;
@@ -368,7 +479,7 @@ export async function ackTasks(workerStore, ackStore, targets, scope) {
         else if (!isTerminalStatus(entry.status)) {
             rejected.push({
                 key,
-                reason: `not terminal (status: ${entry.status}) — only done/failed/needs-clarification rows can be acked`,
+                reason: `not terminal (status: ${entry.status}) — only done/failed/needs-clarification/lost rows can be acked`,
             });
         }
         else if (!owns(entry)) {
@@ -406,6 +517,7 @@ export function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRo
         done: 0,
         failed: 0,
         "needs-clarification": 0,
+        lost: 0,
     };
     const acked = new Set(ackStore.readAll().keys());
     // One queue read shared by the own-key rows and the cross-key aggregate —
@@ -415,9 +527,9 @@ export function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRo
     const aggregate = elsewhereAggregateLine(all, extraTaskKeys, key, agenticdocRoot);
     for (const e of owned)
         counts[e.status]++;
-    // Unhandled = failed/needs-clarification not yet acked — the PM's explicit
+    // Unhandled = terminal-but-not-done rows not yet acked — the PM's explicit
     // to-do list; ack moves a row out of this section into history.
-    const unhandled = owned.filter((e) => (e.status === "failed" || e.status === "needs-clarification") && !acked.has(e.taskKey));
+    const unhandled = owned.filter((e) => isUnhandledStatus(e.status) && !acked.has(e.taskKey));
     const idx = indexStore.findByKey(key);
     const phase = idx
         ? `phase=${idx.phase}`
@@ -436,6 +548,8 @@ export function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRo
         parts.push(`${counts.failed} failed`);
     if (counts["needs-clarification"] > 0)
         parts.push(`${counts["needs-clarification"]} needs-clarification`);
+    if (counts.lost > 0)
+        parts.push(`${counts.lost} lost`);
     if (unhandled.length > 0)
         parts.push(`${unhandled.length} unhandled`);
     const header = `[mw] ${key} | ${phase}${badge ? ` | docs ${badge}` : ""} | ${parts.length > 0 ? parts.join(" / ") : "no workers"}`;
@@ -517,7 +631,14 @@ export function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRo
 /** Status order inside one owner group of the aggregate line (D-106): the
  * fixed sequence running/pending/done/failed/needs-clarification, only
  * non-zero entries rendered. */
-const AGGREGATE_STATUS_ORDER = ["running", "pending", "done", "failed", "needs-clarification"];
+const AGGREGATE_STATUS_ORDER = [
+    "running",
+    "pending",
+    "done",
+    "failed",
+    "needs-clarification",
+    "lost",
+];
 /** The single cross-key aggregate line for the watch panel (D-105/D-106):
  * `  ~ <N> elsewhere: <owner>(<c1> running, <c2> failed, …; risk=high:<K>)`.
  *
@@ -563,6 +684,7 @@ function elsewhereAggregateLine(all, extraTaskKeys, watchKey, agenticdocRoot) {
             done: 0,
             failed: 0,
             "needs-clarification": 0,
+            lost: 0,
         };
         for (const e of group)
             counts[e.status]++;
@@ -642,6 +764,13 @@ export function registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agent
                     ctx.ui.notify(`Key '${keyName}' already exists — use /pm-key switch ${keyName} to take it over.`, "warning");
                     return;
                 }
+                // Name gate (AC-006): a reserved/illegal name must never be registered,
+                // so it is refused here (before the claim) with a readable code.
+                const newNameRefusal = keyNameRefusal(keyName);
+                if (newNameRefusal) {
+                    ctx.ui.notify(`Key '${keyName}' is refused (${newNameRefusal.code}): ${newNameRefusal.message}.`, "warning");
+                    return;
+                }
                 // Route through the atomic claim: auto-create + demote other active
                 // rows (single-active discipline) in one locked step.
                 const result = await takeOverKey(indexStore, keyName, false, agenticdocRoot);
@@ -669,6 +798,10 @@ export function registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agent
                 }
                 const result = await takeOverKey(indexStore, keyName, force, agenticdocRoot);
                 if (!result.ok) {
+                    if (result.refusal) {
+                        ctx.ui.notify(`Key '${keyName}' is refused (${result.refusal}): reserved framework names and illegal key shapes cannot be claimed.`, "warning");
+                        return;
+                    }
                     ctx.ui.notify(`Key '${keyName}' is claimed by another live window (${result.blockedBy}). Use /pm-key switch ${keyName} --force to take it over.`, "warning");
                     return;
                 }
@@ -735,7 +868,7 @@ export function registerPmSaveCommand(pi, indexStore, workerStore, watch, agenti
             const key = watch.key;
             const row = indexStore.findByKey(key);
             const owned = workerStore.readAll().filter((e) => ownerKeyOf(e, agenticdocRoot) === key);
-            const ORDER = ["pending", "running", "done", "failed", "needs-clarification"];
+            const ORDER = ["pending", "running", "done", "failed", "needs-clarification", "lost"];
             const counts = new Map();
             for (const e of owned)
                 counts.set(e.status, (counts.get(e.status) ?? 0) + 1);
@@ -976,6 +1109,396 @@ export function planDispatchFrontmatter(input) {
             : `model: ${requested} (no dispatch.yml ${role} default)`,
     };
 }
+// ── AC-005a: dispatch-time write-surface satisfiability (T-02) ──────────────
+/** Paired markers of the dispatch-injected write-surface contract (contract
+ * C2, producer T-02 → consumer T-03). The runtime consumer only greps for
+ * these markers; the three lines between them are for the worker and PM. */
+export const WRITE_SURFACE_MARKER = "<!-- mw-write-surface: v1 -->";
+export const WRITE_SURFACE_MARKER_END = "<!-- /mw-write-surface: v1 -->";
+/** Machine-readable refusal code for an unsatisfiable write requirement. */
+export const WORKER_WRITE_SURFACE = "worker-write-surface";
+/** Write verbs a task book can use to order a file write (AC-005a). Exported so
+ * the rule is enumerable by the unit matrix and by the corpus replay.
+ * `写到文件` before `写到` so the longest form wins. */
+export const WRITE_INTENT_VERBS = [
+    "写到文件",
+    "写到",
+    "写入",
+    "落盘",
+    "输出到",
+    "保存",
+    "创建",
+    "生成",
+    "追加",
+    "覆盖",
+    "write",
+    "save",
+    "create",
+    "append",
+    "output to",
+    "into",
+];
+/** Allow-guards (AC-005a), stable names for the test matrix. A hit matching
+ * any guard is a legitimate mention, never an unsatisfiable write order. */
+export const WRITE_INTENT_GUARDS = [
+    "negation",
+    "read-marker",
+    "fenced-code",
+    "quotation",
+    "pm-attribution",
+];
+/** Upper bound (chars) between a write verb and its path. The matcher is
+ * deliberately stricter: only whitespace and at most one quote may separate
+ * the two, which is what keeps prose like "追加而非重写 achieved.md" out while
+ * still satisfying the ≤32 bound. */
+export const WRITE_INTENT_PATH_WINDOW = 32;
+/** Framework-owned basenames: naming one means "the framework already provides
+ * this channel" (reply text lands in output.md), not an external write order. */
+const FRAMEWORK_TASK_BASENAMES = ["task.md", "trace.log", "output.md", "run.json", "worker.log"];
+const WRITE_INTENT_NEGATIONS = [
+    "不要",
+    "不得",
+    "禁止",
+    "勿",
+    "无需",
+    "不准",
+    "do not",
+    "don't",
+    "never",
+    "must not",
+];
+const WRITE_INTENT_READ_MARKERS = [
+    "读取",
+    "作为输入",
+    "参考",
+    "输入",
+    "引用",
+    "依据",
+    "来源",
+    "现有",
+    "已有",
+    "核对",
+    "扫描",
+    "以…为输入",
+    "read",
+    "rg",
+    "grep",
+    "current",
+    "existing",
+    "input",
+    "from",
+];
+const WRITE_INTENT_PM_ATTRIBUTIONS = ["pm 会", "由 pm", "pm 收录", "框架会", "交给 pm", "pm 将在"];
+const WRITE_INTENT_QUOTE_PAIRS = [
+    ['"', '"'],
+    ["'", "'"],
+    ["「", "」"],
+];
+const WRITE_INTENT_ENGLISH_VERBS = new Set(["write", "save", "create", "append", "output to", "into"]);
+/** Anchored token after a write verb (A3 fix, AC-004): a wide character class
+ * with NO extension enumeration — the shape judge below decides whether a
+ * candidate is a path. New languages/config types cannot re-open the leak. */
+const WRITE_INTENT_TOKEN_RE = /^[A-Za-z0-9_.\\/~:-]+/;
+/** Non-path prose forms that would otherwise scan as a path shape: `e.g.` /
+ * `i.e.` are abbreviations, not files. */
+const WRITE_INTENT_ABBREVIATIONS = new Set(["e.g", "i.e", "etc", "vs", "cf"]);
+/** Extension-less target names the shape layer must still refuse (AC-004,
+ * `Makefile` class). A finite name table — never a bare-token fail-closed
+ * (that was measured at 35% false positives on the writeless corpus). */
+const WRITE_INTENT_DENY_NAMES = new Set([
+    "Makefile",
+    "makefile",
+    "GNUmakefile",
+    "Dockerfile",
+    "Containerfile",
+    "Rakefile",
+    "Gemfile",
+    "Procfile",
+    "Vagrantfile",
+    "Justfile",
+    "Brewfile",
+]);
+/** Shapes that name a path rather than prose (AC-004). Membership in this set
+ * is what makes step 5 of the judge refuse an out-of-surface candidate. */
+const WRITE_TARGET_PATH_SHAPES = new Set([
+    "sep",
+    "dot-lead",
+    "drive-relative",
+    "ads",
+    "colon",
+    "ext",
+    "deny-name",
+    "exists",
+]);
+const WRITE_SURFACE_SECTION_RE = new RegExp(`${WRITE_SURFACE_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s\\S]*?${WRITE_SURFACE_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\n*`, "g");
+/** Find `verb` in `clause`; English verbs match on word boundaries so
+ * `output-writer.ts` never reads as a `write` order. */
+function findWriteIntentVerb(clause, verb) {
+    const low = clause.toLowerCase();
+    const needle = verb.toLowerCase();
+    if (WRITE_INTENT_ENGLISH_VERBS.has(needle)) {
+        const re = new RegExp(`(?<![A-Za-z0-9_])${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_])`);
+        const m = re.exec(low);
+        return m ? m.index : -1;
+    }
+    return low.indexOf(needle);
+}
+/** Is `pathToken` inside a quotation span (guard ④)? */
+function pathInsideQuotation(clause, pathToken) {
+    const at = clause.indexOf(pathToken);
+    if (at === -1)
+        return false;
+    for (const [open, close] of WRITE_INTENT_QUOTE_PAIRS) {
+        let start = clause.indexOf(open);
+        while (start !== -1 && start < at) {
+            const end = clause.indexOf(close, start + 1);
+            if (end === -1)
+                break;
+            if (at > start && at + pathToken.length <= end)
+                return true;
+            start = clause.indexOf(open, start + 1);
+        }
+    }
+    return false;
+}
+/** Write-intent hits that survive the five allow-guards (AC-005a). Pure over
+ * text so the corpus replay and the unit cases share one implementation. */
+export function collectWriteIntentHits(text) {
+    const body = text.replace(/```[\s\S]*?```/g, "");
+    const hits = [];
+    for (const line of body.split(/\r?\n/)) {
+        for (const clause of line.split(/[。；！？;]/)) {
+            const low = clause.toLowerCase();
+            for (const verb of WRITE_INTENT_VERBS) {
+                const pos = findWriteIntentVerb(clause, verb);
+                if (pos < 0)
+                    continue;
+                const after = clause.slice(pos + verb.length);
+                const gap = /^\s*[`"']?\s*/.exec(after);
+                const gapLen = gap ? gap[0].length : 0;
+                if (gapLen > WRITE_INTENT_PATH_WINDOW)
+                    continue;
+                // Anchored token discovery (A3 fix, AC-004): no extension enumeration and
+                // no `pm.index !== 0` discard branch. A non-matching token means only
+                // that this verb has no candidate in this clause — never that the whole
+                // clause is abandoned, and never a forward scan into later prose.
+                const pm = WRITE_INTENT_TOKEN_RE.exec(after.slice(gapLen));
+                if (pm === null)
+                    continue;
+                const pathToken = pm[0].replace(/[.]+$/, "");
+                if (pathToken === "")
+                    continue;
+                const before = low.slice(Math.max(0, pos - 20), pos);
+                if (WRITE_INTENT_NEGATIONS.some((n) => before.includes(n)))
+                    continue;
+                if (WRITE_INTENT_READ_MARKERS.some((r) => low.includes(r)))
+                    continue;
+                if (WRITE_INTENT_PM_ATTRIBUTIONS.some((a) => low.includes(a)))
+                    continue;
+                if (pathInsideQuotation(clause, pathToken))
+                    continue;
+                hits.push({ verb, path: pathToken, clause: clause.trim() });
+                break;
+            }
+        }
+    }
+    return hits;
+}
+/** Shape classification for one candidate token (AC-004). Ordered so the
+ * pointed Win32 forms (`drive-relative`, `ads`) are labelled before the `ext`
+ * rule can swallow them; trailing dots/spaces are stripped first (Win32
+ * CreateFile semantics). Read-only (`existsSync`). */
+export function classifyWriteTargetShape(pathToken, ctx) {
+    const t = pathToken.replace(/[.\s]+$/, "");
+    if (t === "" || !/[A-Za-z0-9]/.test(t))
+        return "punct";
+    if (/^\d+(\.\d+)+$/.test(t))
+        return "version";
+    if (WRITE_INTENT_ABBREVIATIONS.has(t.toLowerCase()))
+        return "abbrev";
+    if (/[\\/]/.test(t))
+        return "sep";
+    if (/^\.[A-Za-z0-9_]/.test(t))
+        return "dot-lead";
+    if (/::/.test(t))
+        return "ads";
+    if (/^[A-Za-z]:(?![\\/])/.test(t))
+        return "drive-relative";
+    if (t.includes(":"))
+        return "colon";
+    if (/\.[A-Za-z0-9]{1,8}$/.test(t))
+        return "ext";
+    if (WRITE_INTENT_DENY_NAMES.has(t))
+        return "deny-name";
+    if (fs.existsSync(path.resolve(ctx.projectRoot, t)))
+        return "exists";
+    return "bare";
+}
+/** Bidirectional equality (worker-mode.ts `samePath` semantics). */
+function samePath(a, b) {
+    return isSameOrUnder(a, b) && isSameOrUnder(b, a);
+}
+/** PM-side deny prefix table: same six rules and priority as
+ * `worker-mode.ts::bashWriteDenyReason`, parameterized by `keyDir`/`trueRoot`.
+ * `target` must already be normalized by `normalizeForCompare`. Returns the
+ * machine-readable rule name, or null when the target is not denied. */
+function pmWriteDenyReason(ctx, target) {
+    const keyDir = ctx.keyDir;
+    const trueRoot = ctx.trueRoot;
+    if (keyDir !== undefined) {
+        if (samePath(target, path.join(keyDir, "pm-state.md")))
+            return "pm-state.md";
+        const workersDir = path.join(keyDir, "workers");
+        if (isSameOrUnder(workersDir, target)) {
+            const first = path.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
+            if (first.startsWith("_workers"))
+                return "workers/_workers*";
+        }
+    }
+    if (trueRoot !== undefined && samePath(target, path.join(trueRoot, "_index.parallel")))
+        return "_index.parallel";
+    if (trueRoot !== undefined &&
+        keyDir !== undefined &&
+        isSameOrUnder(trueRoot, target) &&
+        !isSameOrUnder(keyDir, target)) {
+        return "other key dir / .agenticdoc root";
+    }
+    if (isSameOrUnder(path.join(ctx.projectRoot, "packages"), target))
+        return "packages/**";
+    if (isSameOrUnder(path.join(ctx.projectRoot, ".git"), target))
+        return ".git/**";
+    return null;
+}
+/** Target-axis verdict (AC-003/AC-004), evaluation order:
+ *   1. deny prefixes (absolute priority, mirrors worker-mode.ts)
+ *   2. own task dir — realpath + segment boundary (read-scope.ts reuse)
+ *   3. basename channel — ONLY for a token with no directory component, so a
+ *      whitelisted basename can never whitelist a foreign directory (A4 fix)
+ *   4. path shape => refuse (fail-closed, A3 fix)
+ *   5. non-candidate prose => pass untouched
+ * The `!hasDirComponent` precondition (not `shape === "bare"`) is load-bearing:
+ * `output.md`/`report.md` are `ext`-shaped and must still use the channel. */
+export function judgeWriteTarget(pathToken, ctx) {
+    const shape = classifyWriteTargetShape(pathToken, ctx);
+    const target = normalizeForCompare(ctx.projectRoot, pathToken);
+    const task = normalizeForCompare(ctx.projectRoot, ctx.taskDir);
+    const denied = pmWriteDenyReason(ctx, target);
+    if (denied !== null)
+        return { allowed: false, shape, rule: "deny", detail: `denied:${denied}` };
+    if (isSameOrUnder(task, target))
+        return { allowed: true, shape };
+    const hasDirComponent = /[\\/]/.test(pathToken);
+    if (!hasDirComponent && (WORKER_FILE_NAME_RE.test(pathToken) || FRAMEWORK_TASK_BASENAMES.includes(pathToken))) {
+        return { allowed: true, shape };
+    }
+    if (WRITE_TARGET_PATH_SHAPES.has(shape)) {
+        return { allowed: false, shape, rule: "scope", detail: "outside-write-surface" };
+    }
+    return { allowed: true, shape };
+}
+/** Boolean wrapper of {@link judgeWriteTarget} (AC-003/AC-004): may this role
+ * legitimately write `pathToken`? */
+export function isWhitelistedWriteTarget(pathToken, ctx) {
+    return judgeWriteTarget(pathToken, ctx).allowed;
+}
+/** Judgement entry point: only a writeless role without a shell is judged — a
+ * write role passes untouched, a shell role (`research`) is handled by the
+ * AC-005b runtime guard instead. `allowForeignWrite` is the escape hatch. */
+export function judgeWriteIntent(input) {
+    if (!isWritelessRole(input.type) || isShellRole(input.type))
+        return { ok: true, hits: [], violations: [] };
+    const hits = collectWriteIntentHits(input.description);
+    const ctx = {
+        taskDir: input.taskDir,
+        projectRoot: input.projectRoot,
+        keyDir: input.keyDir,
+        trueRoot: input.trueRoot,
+    };
+    const violations = input.allowForeignWrite ? [] : hits.filter((hit) => !isWhitelistedWriteTarget(hit.path, ctx));
+    return { ok: violations.length === 0, hits, violations };
+}
+/** Refusal text for an unsatisfiable write order (AC-005a): names the code, the
+ * role, the path, and the three ways forward. */
+export function writeIntentRefusal(input) {
+    return (`[${WORKER_WRITE_SURFACE}] task '${input.taskKey}' has type '${input.type}', which has no write/edit/bash tool, ` +
+        `but its task book requires writing to '${input.path}' — unsatisfiable for this role.\n` +
+        "Fix (pick one):\n" +
+        '1. Put the deliverable in the task\'s own dir: worker_file file="report.md" (progress.md / report-<slug>.md also work); the PM collects it afterwards.\n' +
+        "2. Re-dispatch with allow_foreign_write: true — recorded in task.md frontmatter (allow_foreign_write: true) for audit; use it only when a human accepted the external path.\n" +
+        "3. Use a role with write tools: type: coding | repair | vision.");
+}
+/** Default `write_scope:` line for a shell role (contract C1): the task's own
+ * dir plus the key's evidence tree. Absent for non-shell roles. */
+export function renderDefaultWriteScope(ownerKey, taskKey) {
+    return `write_scope: .agenticdoc/${ownerKey}/workers/${taskKey}, .agenticdoc/${ownerKey}/evidence`;
+}
+/** The injected 3-line contract section (contract C2), marker-paired. */
+export function renderWriteSurfaceContract(type, writeScope) {
+    const scope = (writeScope ?? "").trim().replace(/^write_scope:\s*/, "");
+    const allowed = scope
+        ? `本任务目录下的 worker_file（progress.md | report.md | report-<slug>.md）；write_scope: ${scope}`
+        : "本任务目录下的 worker_file（progress.md | report.md | report-<slug>.md）";
+    const denied = "本任务目录之外的任何路径（pm-state.md、workers/_workers*、_index.parallel、其他 key、packages/**、.git/**）";
+    const consequence = isShellRole(type)
+        ? "运行期 bash 写面守卫 block + [TOOL_ERR] + trace 审计行"
+        : "运行期写面守卫拒绝；回复文本仍会被框架写入 output.md";
+    return [
+        WRITE_SURFACE_MARKER,
+        `- 允许写：${allowed}`,
+        `- 不得写：${denied}`,
+        `- 越界后果：${consequence}`,
+        WRITE_SURFACE_MARKER_END,
+    ].join("\n");
+}
+/** Idempotent contract-section application (contract C2, VC-019): any existing
+ * marker region is removed, then the canonical section is inserted right after
+ * the leading frontmatter block. Applying it twice is a byte-level fixed point
+ * and leaves exactly one marker pair. */
+export function applyWriteSurfaceContract(taskMdText, type, writeScope) {
+    const section = renderWriteSurfaceContract(type, writeScope);
+    const cleaned = taskMdText.replace(WRITE_SURFACE_SECTION_RE, "");
+    const blank = cleaned.search(/\n\s*\n/);
+    if (blank === -1)
+        return `${section}\n\n${cleaned}`;
+    const head = cleaned.slice(0, blank).replace(/\n+$/, "");
+    const rest = cleaned.slice(blank).replace(/^\n+/, "");
+    return `${head}\n\n${section}\n\n${rest}`;
+}
+/** Merge the audit-visible escape-hatch line (AC-005a) into frontmatter. */
+function mergeAllowForeignWrite(frontmatter, allowed) {
+    if (!allowed || /^allow_foreign_write:/m.test(frontmatter))
+        return frontmatter;
+    return `${frontmatter.replace(/\r?\n$/, "")}\nallow_foreign_write: true\n`;
+}
+/** Append a rendered `write_scope:` line to planned frontmatter (contract
+ * C1/C4). Same shape as the existing `read_scope:`/`deny_globs:` headers — one
+ * line, never an empty value: undefined/blank scope leaves the frontmatter
+ * bytes untouched. */
+function mergeWriteScope(frontmatter, writeScope) {
+    const line = (writeScope ?? "").trim();
+    if (!line)
+        return frontmatter;
+    return `${frontmatter.replace(/\r?\n$/, "")}\n${line}\n`;
+}
+/** Single write point for one dispatch's task.md (contract C4). Both dispatch
+ * entries — the `dispatch_worker` tool and the `/worker` command — go through
+ * here so the pipeline (frontmatter merge, contract-section injection, mkdir,
+ * writeFileSync) has exactly one implementation. The T-01 extraction is
+ * byte-for-byte equivalent to the inline writes it replaced: with no
+ * `writeScope` and no injection hook the file content is
+ * `${frontmatter}\n${body}\n` and only the mkdir/write order is shared. T-02
+ * fills in the write-surface contract section (C2) and `injected` reports
+ * whether this call wrote one. */
+export function writeDispatchTaskMd(deps, input) {
+    const frontmatter = mergeAllowForeignWrite(mergeWriteScope(input.frontmatter, input.writeScope), input.allowForeignWrite);
+    const taskDir = workerTaskDir(deps.agenticdocRoot, deps.ownerKey, input.taskKey);
+    fs.mkdirSync(taskDir, { recursive: true });
+    const taskMdPath = path.join(taskDir, "task.md");
+    const plain = `${frontmatter}\n${input.body}\n`;
+    const content = input.injectWriteSurface ? applyWriteSurfaceContract(plain, input.type, input.writeScope) : plain;
+    fs.writeFileSync(taskMdPath, content, "utf8");
+    return { ok: true, path: taskMdPath, injected: input.injectWriteSurface === true };
+}
 /**
  * Register agent-callable tools for worker dispatch and task listing.
  * These complement the slash commands in registerWorkerCommands.
@@ -985,7 +1508,8 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
     pi.registerTool({
         name: "dispatch_worker",
         label: "dispatch_worker",
-        description: "Dispatch a task to a background worker agent. Creates .agenticdoc/<task_key>/task.md and queues it for execution by the mw worker service. Returns the task key on success.",
+        description: "Dispatch a task to a background worker agent. Creates .agenticdoc/<owner key>/workers/<task_key>/task.md and queues it for execution by the mw worker service. Returns the task key on success. " +
+            'Cross-key writes are refused: a key another window holds live is READ-ONLY here — read it with list_tasks { scope: "all" } and take it over with switch_key before writing into it.',
         parameters: Type.Object({
             task_key: Type.String({
                 description: "Unique kebab-case key for this task (e.g. 'fix-login-bug', 'add-auth-endpoint'). Must be unique across tasks in this project.",
@@ -1008,12 +1532,15 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
             images: Type.Optional(Type.Union([Type.Literal("yes"), Type.Literal("no")], {
                 description: "Declare the image requirement: 'yes' means this task must look at images (refused when the effective model cannot take image input), 'no' exempts it. Omit to auto-detect an existing image file referenced in the description.",
             })),
+            allow_foreign_write: Type.Optional(Type.Boolean({
+                description: "AC-005a escape hatch: dispatch a writeless role even when its task book names an external write target. Recorded in task.md as `allow_foreign_write: true` for audit; use only when a human accepted the external path.",
+            })),
             key: Type.Optional(Type.String({
                 description: "AgenticTask key owning this worker task. Default: this window's claimed key (the one it watches and holds in _index.parallel), else the active key when no other live window holds it, else _scratch.",
             })),
         }),
         execute: async (_toolCallId, params, _signal, _onUpdate, _context) => {
-            const { task_key, description, cli = "pi", model, model_reason, type, images, key, } = params;
+            const { task_key, description, cli = "pi", model, model_reason, type, images, key, allow_foreign_write, } = params;
             // RAG dispatcher gate (VC-003): an unusable rag config (e.g. `enabled`
             // naming an undefined server) must refuse BEFORE any task.md is created
             // and before the queue row lands.
@@ -1022,6 +1549,13 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
                 return { content: [{ type: "text", text: ragCheck.message }], details: undefined };
             }
             const ownerKey = resolveOwnerKeyWithSync(pi, indexStore, watch, key, agenticdocRoot);
+            // Cross-key write guard (AC-024/AC-006): unconditional (DD-07e) — the
+            // guard is the single write gate for every dispatch, explicit key or not.
+            // resolveOwnerKeyWithSync already degrades a foreign-live or reserved
+            // value to _scratch, so the implicit path gains no new refusal.
+            const refusal = foreignLiveClaimRefusal(indexStore, ownerKey);
+            if (refusal)
+                return { content: [{ type: "text", text: refusal }], details: undefined };
             const validCli = ["pi", "claude", "codex"];
             if (!validCli.includes(cli)) {
                 return {
@@ -1070,6 +1604,40 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
                 };
             }
             const typeField = typeResolution.type;
+            // AC-005a (T-02): a role with neither write/edit nor bash cannot reach a
+            // path outside its own task dir, so a task book ordering one is
+            // unsatisfiable. Refused here — after the cross-key guard, before the
+            // frontmatter plan and decisively before mkdir/task.md/queue — so the
+            // refusal has zero side effects. `research` (writeless but shell-capable)
+            // is NOT refused; it only gets the contract section + write_scope header.
+            const writelessRole = isWritelessRole(typeField);
+            const allowForeignWrite = allow_foreign_write === true;
+            if (writelessRole) {
+                const verdict = judgeWriteIntent({
+                    type: typeField,
+                    description,
+                    taskDir,
+                    projectRoot: projectDir,
+                    keyDir: path.join(agenticdocRoot, ownerKey),
+                    trueRoot: agenticdocRoot,
+                    allowForeignWrite,
+                });
+                if (!verdict.ok) {
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: writeIntentRefusal({
+                                    taskKey: task_key,
+                                    type: typeField,
+                                    path: verdict.violations[0]?.path ?? "",
+                                }),
+                            },
+                        ],
+                        details: undefined,
+                    };
+                }
+            }
             // Model plan: validate the effective value and enforce the override
             // reason BEFORE any filesystem write (a refusal must leave no task dir).
             const modelPlan = planDispatchFrontmatter({
@@ -1087,9 +1655,16 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
             if (!modelPlan.ok) {
                 return { content: [{ type: "text", text: modelPlan.message }], details: undefined };
             }
-            fs.mkdirSync(taskDir, { recursive: true });
-            const taskMdPath = path.join(taskDir, "task.md");
-            fs.writeFileSync(taskMdPath, `${modelPlan.frontmatter}\n${description}\n`, "utf8");
+            const written = writeDispatchTaskMd({ agenticdocRoot, ownerKey }, {
+                taskKey: task_key,
+                type: typeField,
+                body: description,
+                frontmatter: modelPlan.frontmatter,
+                writeScope: writelessRole && isShellRole(typeField) ? renderDefaultWriteScope(ownerKey, task_key) : undefined,
+                injectWriteSurface: writelessRole,
+                allowForeignWrite,
+            });
+            const taskMdPath = written.path;
             await dispatchTask({ taskKey: task_key, status: "pending", cli, provider, model: model ?? "", taskPath: taskMdPath }, workerStore);
             // Record the dispatch on this window's state (mw-task-scope-isolation) so
             // list_tasks / ack keep owning tasks that did NOT land under the watched
@@ -1149,7 +1724,9 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
         label: "list_tasks",
         description: "List worker tasks with their current status (pending / running / done / failed / needs-clarification); every row carries its owning key. " +
             'scope "mine" (default) lists only this window\'s tasks — its watched key plus tasks it dispatched; scope "key" lists one key (pass key); scope "all" lists the whole project. ' +
-            "Acked terminal tasks are badged 'acked'.",
+            "Acked terminal tasks are badged 'acked'. " +
+            'READING is never restricted by the cross-key write guard: scope "all"/"key" cover other windows\' keys, so use them to inspect status before deciding anything. ' +
+            "Acks are refused for another window's rows.",
         parameters: Type.Object({
             scope: Type.Optional(Type.String({ description: '"mine" (default, this window) | "key" (with key) | "all" (whole project).' })),
             key: Type.Optional(Type.String({ description: 'Owner key to list when scope is "key".' })),
@@ -1221,6 +1798,17 @@ export function registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agent
             }
             const result = await takeOverKey(indexStore, trimmed, force, agenticdocRoot);
             if (!result.ok) {
+                if (result.refusal) {
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: `Key '${trimmed}' is refused (${result.refusal}): reserved framework names and illegal key shapes cannot be claimed.`,
+                            },
+                        ],
+                        details: undefined,
+                    };
+                }
                 return {
                     content: [
                         {
@@ -1264,12 +1852,13 @@ export function registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agent
  * with "no shell, cannot execute advance_phase.py / update_index.py". This
  * tool spawns the script directly (list args, no shell); gate semantics stay
  * in the Python script, the single source of truth audit_phase.py replays. */
-export function registerAdvancePhaseTool(pi, projectDir) {
+export function registerAdvancePhaseTool(pi, projectDir, indexStore) {
     const ladder = PHASE_ORDER.map((p) => p.toLowerCase());
     pi.registerTool({
         name: "advance_phase",
         label: "advance_phase",
-        description: "Advance an AgenticTask key to the target phase by running the framework gate script (advance_phase.py): checks the phase-gate evidence (spec/design/plan/tasks/execute/done prerequisites), updates pm-state.md, and syncs _index.parallel. Runs the Python script directly without a shell — prefer this over `python .../advance_phase.py` via the bash tool. This is the only sanctioned way to change a key's phase; hand-editing pm-state.md's '- Phase:' line is blocked.",
+        description: "Advance an AgenticTask key to the target phase by running the framework gate script (advance_phase.py): checks the phase-gate evidence (spec/design/plan/tasks/execute/done prerequisites), updates pm-state.md, and syncs _index.parallel. Runs the Python script directly without a shell — prefer this over `python .../advance_phase.py` via the bash tool. This is the only sanctioned way to change a key's phase; hand-editing pm-state.md's '- Phase:' line is blocked. " +
+            "Cross-key writes are refused: another window's live key is READ-ONLY here (read its phase with list_tasks, take it over with switch_key first).",
         promptGuidelines: [
             "Change phases only through this tool (or the equivalent python script when the shell works); when the result reports GATE BLOCKED, fix the listed evidence gaps before retrying.",
         ],
@@ -1292,12 +1881,17 @@ export function registerAdvancePhaseTool(pi, projectDir) {
             if (!trimmedKey || !target) {
                 return { content: [{ type: "text", text: "key and target_phase are required." }], details: undefined };
             }
-            if (trimmedKey.startsWith("_") || trimmedKey.startsWith(".")) {
+            // Same name gate as the guard and IndexStore.claim (AC-006, direction
+            // consistent): reserved names (incl. _scratch) and illegal shapes are not
+            // phase-tracked keys. `_scratch` keeps its historical wording.
+            const nameRefusal = keyNameRefusal(trimmedKey);
+            if (nameRefusal) {
+                const reason = nameRefusal.code === "reserved-key-name" ? "has a reserved prefix" : `is refused (${nameRefusal.code})`;
                 return {
                     content: [
                         {
                             type: "text",
-                            text: `Key '${trimmedKey}' has a reserved prefix and is not a phase-tracked AgenticTask key.`,
+                            text: `Key '${trimmedKey}' ${reason} and is not a phase-tracked AgenticTask key.`,
                         },
                     ],
                     details: undefined,
@@ -1330,6 +1924,13 @@ export function registerAdvancePhaseTool(pi, projectDir) {
                 args.push("--summary", summary);
             if (supersedes)
                 args.push("--supersedes", supersedes);
+            // Cross-key write guard (AC-024): advancing another live window's key
+            // rewrites ITS pm-state.md + _index.parallel row, so it is refused before
+            // the gate script runs. An unclaimed key still advances (new-key
+            // bootstrap), and this window's own claim is untouched by the guard.
+            const crossKeyRefusal = foreignLiveClaimRefusal(indexStore, trimmedKey);
+            if (crossKeyRefusal)
+                return { content: [{ type: "text", text: crossKeyRefusal }], details: undefined };
             const result = runAgenticScript(projectDir, "advance_phase.py", args);
             return { content: [{ type: "text", text: result.output }], details: undefined };
         },
@@ -1340,7 +1941,7 @@ export function registerAdvancePhaseTool(pi, projectDir) {
  * Usage: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] [--key <name>] <desc>
  */
 export function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch, projectDir = path.dirname(agenticdocRoot)) {
-    const USAGE = "Usage: /worker <claude|codex|pi> [--type coding|review|research|rag-research|vision] [--model <id>] [--reason <text>] [--key <name>] <task description>";
+    const USAGE = "Usage: /worker <claude|codex|pi> [--type coding|review|research|rag-research|vision] [--model <id>] [--reason <text>] [--key <name>] [--allow-foreign-write] <task description>";
     pi.registerCommand("worker", {
         description: "Spawn a worker: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] <task description>",
         handler: async (args, ctx) => {
@@ -1353,8 +1954,14 @@ export function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRo
             let typeArg = "";
             let keyArg = "";
             let imagesArg;
-            while (["--model", "--type", "--reason", "--key", "--images"].includes(parts[idx] ?? "")) {
+            let allowForeignWriteArg = false;
+            while (["--model", "--type", "--reason", "--key", "--images", "--allow-foreign-write"].includes(parts[idx] ?? "")) {
                 const flag = parts[idx];
+                if (flag === "--allow-foreign-write") {
+                    allowForeignWriteArg = true;
+                    idx += 1;
+                    continue;
+                }
                 const value = parts[idx + 1] ?? "";
                 idx += 2;
                 if (!value) {
@@ -1405,6 +2012,39 @@ export function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRo
             // type/model/model-reason so they are visible + re-parseable)
             const taskKey = `manual-${Date.now()}`;
             const ownerKey = resolveOwnerKeyWithSync(pi, indexStore, watch, keyArg, agenticdocRoot);
+            // Cross-key write guard (AC-003): the SAME decision function the
+            // dispatch_worker tool uses. A key another window holds live must be refused
+            // before the docs gate, the frontmatter plan and — decisively — before any
+            // mkdir/task.md/queue write, so a refusal is zero-side-effect. The implicit
+            // path never reaches here with a foreign key (resolveOwnerKeyWithSync degrades
+            // to _scratch); an explicit `--key` is what makes this reachable, exactly like
+            // the tool's explicit-key branch.
+            const crossKeyRefusal = foreignLiveClaimRefusal(indexStore, ownerKey);
+            if (crossKeyRefusal) {
+                ctx.ui.notify(crossKeyRefusal, "warning");
+                return;
+            }
+            // AC-005a (T-02): the SAME write-intent judgement the dispatch_worker
+            // tool runs — a writeless role without bash cannot satisfy an external
+            // write order, so it is refused before mkdir/task.md/queue. A shell role
+            // (`research`) is never refused here. Escape hatch: --allow-foreign-write.
+            const writelessRole = isWritelessRole(typeField);
+            const taskDir = workerTaskDir(agenticdocRoot, ownerKey, taskKey);
+            if (writelessRole) {
+                const verdict = judgeWriteIntent({
+                    type: typeField,
+                    description,
+                    taskDir,
+                    projectRoot: projectDir,
+                    keyDir: path.join(agenticdocRoot, ownerKey),
+                    trueRoot: agenticdocRoot,
+                    allowForeignWrite: allowForeignWriteArg,
+                });
+                if (!verdict.ok) {
+                    ctx.ui.notify(writeIntentRefusal({ taskKey, type: typeField, path: verdict.violations[0]?.path ?? "" }), "warning");
+                    return;
+                }
+            }
             // Docs gate, phase-tiered (mw-worker-visibility-gate): same tier rule as
             // dispatch_worker — one phase read, reused by the frontmatter below.
             const ownerPhase = dispatchPhase(agenticdocRoot, ownerKey);
@@ -1430,10 +2070,16 @@ export function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRo
                 ctx.ui.notify(modelPlan.message, "warning");
                 return;
             }
-            const taskDir = workerTaskDir(agenticdocRoot, ownerKey, taskKey);
-            fs.mkdirSync(taskDir, { recursive: true });
-            const taskMdPath = path.join(taskDir, "task.md");
-            fs.writeFileSync(taskMdPath, `${modelPlan.frontmatter}\n${description}\n`, "utf8");
+            const written = writeDispatchTaskMd({ agenticdocRoot, ownerKey }, {
+                taskKey,
+                type: typeField,
+                body: description,
+                frontmatter: modelPlan.frontmatter,
+                writeScope: writelessRole && isShellRole(typeField) ? renderDefaultWriteScope(ownerKey, taskKey) : undefined,
+                injectWriteSurface: writelessRole,
+                allowForeignWrite: allowForeignWriteArg,
+            });
+            const taskMdPath = written.path;
             // Dispatch directly to _workers.parallel
             await dispatchTask({ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath }, workerStore);
             ctx.ui.notify(`Dispatched ${cli} worker (${taskKey}) under key '${ownerKey}' [type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}].`, "info");

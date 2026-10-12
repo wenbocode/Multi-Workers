@@ -4,6 +4,7 @@ import { RAG_MARKER_V1, type RagTaskMeta, renderRagBlock } from "../rag/block.ts
 import { loadRagConfig } from "../rag/config.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
 import { renderToolchainCommand, resolveWorkspaceConfig, type WorkspaceConfig } from "../shared/target-config.ts";
+import { readTaskHeaderScalar, readTaskType } from "../shared/task-frontmatter.ts";
 import type { WorkerEntry, WorkerStore } from "../shared/worker-store.ts";
 
 /** Sentinel opening the legacy (dual/single) profile block — makes
@@ -111,11 +112,14 @@ function headerInt(content: string, header: string): number | undefined {
 	return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-/** Task metadata `renderRagBlock` needs, read from the task.md frontmatter. */
+/** Task metadata `renderRagBlock` needs, read from the task.md frontmatter.
+ * `type:`/`phase:` go through the single-source header parser (AC-005): the
+ * old `/^type:/m` and `/^phase:/m` regexes read the whole file, so a body line
+ * could inject a header key into the RAG render. */
 function parseRagTaskMeta(content: string): RagTaskMeta {
 	return {
-		type: /^type:[ \t]*(.+?)[ \t]*$/m.exec(content)?.[1],
-		phase: /^phase:[ \t]*(.+?)[ \t]*$/m.exec(content)?.[1],
+		type: readTaskType(content).type,
+		phase: readTaskHeaderScalar(content, "phase"),
 		chatBudget: headerInt(content, "rag_chat_budget:"),
 		timeBudgetS: headerInt(content, "rag_time_budget_s:"),
 	};

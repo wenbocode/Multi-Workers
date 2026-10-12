@@ -9,6 +9,7 @@ import datetime
 import json
 import os
 import pathlib
+import re
 import sys
 import time
 
@@ -1391,3 +1392,150 @@ class TestReconcileRunState:
 
     def test_lost_row_is_terminal_for_the_ledger(self) -> None:
         assert "lost" in mw_common._TERMINAL_STATUSES
+
+
+# ── T-14 / AC-005: Python callsite wiring (launcher.py / mw.py) ───────────────
+#
+# `mw_common.read_task_type` is the Python half of the AC-005 single source
+# (mirror of `shared/task-frontmatter.ts`). T-14 wires the two Python callsites
+# to it: `launcher._read_task_md_fields` (spawn-time role/model resolution) and
+# `mw._rag_task_meta` (RAG attribution). Before the wiring both callsites had
+# their own full-text regex, which (a) missed a UTF-8 BOM — 7 historical books
+# lost their `type:`, one of them actually `review` — and (b) let a body `type:`
+# line decide the role. The cases below pin that red -> green direction.
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_CORPUS_ROOT = _REPO_ROOT / ".agenticdoc"
+_BOM = "\ufeff"
+
+# design.md 4.6 C-3 / design-role-key-identity 0.2 E-1: the 7 BOM books, named
+# so the assertion never depends on the ever-growing corpus size.
+_BOM_BOOKS = (
+    "_scratch/workers/mw-dr-autodispatch/task.md",
+    "mw-dispatch-reliability/workers/mw-dr-glm53/task.md",
+    "mw-dispatch-reliability/workers/mw-dr-keyed-probe/task.md",
+    "mw-dispatch-reliability/workers/mw-dr-live-claude/task.md",
+    "mw-dispatch-reliability/workers/mw-dr-live-ok/task.md",
+    "mw-dispatch-reliability/workers/mw-dr-pi-timi-test/task.md",
+    "mw-dispatch-flow-fixes/workers/smoke-ac015-ac016/task.md",
+)
+_OLD_TYPE_RE = re.compile(r"^type:[ \t]*(\S+)[ \t\r]*$", flags=re.MULTILINE)
+
+
+def _task_md(root: pathlib.Path, text: str) -> pathlib.Path:
+    task = root / ".agenticdoc" / "k" / "workers" / "t1" / "task.md"
+    task.parent.mkdir(parents=True, exist_ok=True)
+    task.write_text(text, encoding="utf-8")
+    return task
+
+
+class TestTaskTypeCallsiteWiring:
+    """T-14: both Python callsites take the role from the same function."""
+
+    def test_bom_task_book_reads_true_type(
+        self, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        task = _task_md(tmp_path, f"{_BOM}type: review\n\nwork\n")
+        task_type, _model = launcher._read_task_md_fields(str(task))
+        assert task_type == "review"
+        reading = mw_common.read_task_type(task.read_text(encoding="utf-8"))
+        assert reading.bom_stripped is True and reading.source == "header"
+        assert mw_common.TASK_TYPE_TO_ROLE.get(task_type, "coding") == "review"
+        _emit_verify(capsys, "[VERIFY] T-14 BOM: launcher role=review (was coding default)")
+
+    def test_body_type_line_does_not_decide_role(
+        self, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        task = _task_md(tmp_path, "origin: conductor\n# notes\n\nwork\n\ntype: review\n")
+        task_type, _model = launcher._read_task_md_fields(str(task))
+        assert task_type == ""
+        assert mw_common.read_task_type(task.read_text(encoding="utf-8")).source == "body"
+        assert [v for _line, v in mw_common.scan_body_type_lines(
+            task.read_text(encoding="utf-8"))] == ["review"]
+        header_task = _task_md(tmp_path, "type: coding\n\nwork\n\ntype: review\n")
+        assert launcher._read_task_md_fields(str(header_task))[0] == "coding"
+        _emit_verify(capsys, "[VERIFY] T-14 body-type: role stays header/default")
+
+    def test_missing_type_keeps_default_role(self, tmp_path: pathlib.Path) -> None:
+        task = _task_md(tmp_path, "# title\n\nwork\n")
+        task_type, _model = launcher._read_task_md_fields(str(task))
+        assert task_type == ""
+        assert mw_common.read_task_type(task.read_text(encoding="utf-8")).source == "missing"
+        assert mw_common.TASK_TYPE_TO_ROLE.get(task_type, "coding") == "coding"
+
+    def test_origin_marked_and_unmarked_read_identically(
+        self, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """design 4.4.4: the fail-closed refusal is origin-gated and lives in
+        the worker (`dispatchRefusal`, T-07). The Python generation path owes
+        the *same* reading to both shapes and must not grow a second,
+        origin-aware role decision; the unmarked (manual/smoke) path keeps the
+        pre-existing default-role fallback."""
+        import mw
+
+        marked = _task_md(tmp_path, "origin: conductor\ntype: review\n\nwork\n")
+        unmarked = _task_md(tmp_path / "manual", "type: review\n\nwork\n")
+        assert launcher._read_task_md_fields(str(marked))[0] == "review"
+        assert launcher._read_task_md_fields(str(unmarked))[0] == "review"
+        assert mw._rag_task_meta(marked) == mw._rag_task_meta(unmarked)
+        # Both Python callsites carry the same judgement for both shapes.
+        assert launcher._read_task_md_fields(str(marked))[0] == mw._rag_task_meta(marked)["type"]
+        assert launcher._read_task_md_fields(str(unmarked))[0] == mw._rag_task_meta(unmarked)["type"]
+
+        for marked_text, manual_text in (
+            ("origin: conductor\n\nwork\n", "no header line\n\nwork\n"),
+            ("origin: conductor\ntype: mystery-type\n\nwork\n",
+             "type: mystery-type\n\nwork\n"),
+        ):
+            assert mw_common.read_task_type(marked_text) == mw_common.read_task_type(manual_text)
+            marked_task = _task_md(tmp_path / "marked", marked_text)
+            manual_task = _task_md(tmp_path / "manual2", manual_text)
+            assert launcher._read_task_md_fields(str(marked_task))[0] == launcher._read_task_md_fields(
+                str(manual_task))[0]
+            assert mw._rag_task_meta(marked_task)["type"] == mw._rag_task_meta(manual_task)["type"]
+        # Missing/illegal type resolves to the existing default role in Python;
+        # the origin-gated refusal is the worker's (T-07), not a launcher spawn
+        # refusal — no output-protocol change on this side.
+        assert mw_common.read_task_type("origin: conductor\n\nwork\n").type is None
+        assert mw_common.TASK_TYPE_TO_ROLE.get("", "coding") == "coding"
+        _emit_verify(capsys, "[VERIFY] T-14 origin-vs-manual: same reading, refusal worker-side")
+
+    def test_rag_task_meta_uses_single_source(self, tmp_path: pathlib.Path) -> None:
+        import mw
+
+        task = _task_md(
+            tmp_path,
+            f"{_BOM}type: review\nphase: SPEC\n\nwork\n\ntype: coding\nphase: body-phase\n",
+        )
+        assert mw._rag_task_meta(task) == {"type": "review", "phase": "SPEC"}
+        manual = _task_md(tmp_path / "manual", "type: coding\n\nwork\nphase: body-phase\n")
+        assert mw._rag_task_meta(manual) == {"type": "coding", "phase": ""}
+        assert mw._rag_task_meta(tmp_path / "missing" / "task.md") == {"type": "", "phase": ""}
+
+    def test_bom_historical_books_read_through_both_callsites(self) -> None:
+        import mw
+
+        seen: list[str] = []
+        for rel in _BOM_BOOKS:
+            path = _CORPUS_ROOT / rel
+            assert path.is_file(), f"historical BOM book missing: {rel}"
+            text = path.read_text(encoding="utf-8", errors="replace")
+            expected = mw_common.read_task_type(text).type or ""
+            assert expected, f"{rel}: single source still reads no type"
+            # Red direction: the pre-T-14 regexes could not see the BOM.
+            assert _OLD_TYPE_RE.search(text) is None, f"{rel}: fixture is no longer BOM-opaque"
+            assert launcher._read_task_md_fields(str(path))[0] == expected, rel
+            assert mw._rag_task_meta(path)["type"] == expected, rel
+            seen.append(f"{rel.split('/')[-2]}={expected}")
+        assert "mw-dr-live-claude=review" in seen  # the one non-coding book
+
+    def test_callsites_match_single_source_on_corpus(self) -> None:
+        import mw
+
+        tasks = sorted(_CORPUS_ROOT.rglob("task.md"))
+        assert tasks, f"corpus missing: {_CORPUS_ROOT}"
+        for path in tasks:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            expected = mw_common.read_task_type(text).type or ""
+            assert launcher._read_task_md_fields(str(path))[0] == expected, path
+            assert mw._rag_task_meta(path)["type"] == expected, path

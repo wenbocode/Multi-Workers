@@ -17,7 +17,15 @@ import {
 } from "../shared/dispatch-models.ts";
 import { acquireLock } from "../shared/file-lock.ts";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.ts";
-import { type IndexStore, readIndexMdActive } from "../shared/index-store.ts";
+import {
+	type IndexStore,
+	isScratchKey,
+	type KeyNameRefusal,
+	keyNameRefusal,
+	normalizeKey,
+	RESERVED_INDEX_NAMES,
+	readIndexMdActive,
+} from "../shared/index-store.ts";
 import type { DoctorJson, MwCliResult } from "../shared/mw-runner.ts";
 import {
 	buildMw,
@@ -41,6 +49,7 @@ import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "
 import { type PmStateClaimSyncResult, syncPmStateClaimId } from "../shared/pm-state-claim.ts";
 import { PHASE_ORDER, phaseAuditWarnings } from "../shared/pm-state-guard.ts";
 import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
+import { isSameOrUnder, normalizeForCompare } from "../worker/read-scope.ts";
 import { WORKER_FILE_NAME_RE } from "../worker/worker-file-tool.ts";
 import { isShellRole, isWritelessRole } from "../worker/worker-mode.ts";
 import { StateManager } from "./state-manager.ts";
@@ -71,7 +80,7 @@ export function resolveOwnerKeyWithSync(
 	if (watch.key) {
 		// _scratch is watchable but never indexed; a window watching it means
 		// its ad-hoc dispatches belong there.
-		if (watch.key === SCRATCH_WORKERS_KEY) return watch.key;
+		if (isScratchKey(watch.key)) return SCRATCH_WORKERS_KEY;
 		if (indexStore.findByKey(watch.key)?.claimId === self) return watch.key;
 	}
 	const active = indexStore.activeEntry();
@@ -79,9 +88,30 @@ export function resolveOwnerKeyWithSync(
 		warnForeignActiveOnce(pi, active.key);
 		return SCRATCH_WORKERS_KEY;
 	}
-	const owner = active?.key ?? readIndexMdActive(agenticdocRoot) ?? SCRATCH_WORKERS_KEY;
-	if (watch.key && watch.key !== owner) warnOwnerMismatchOnce(pi, watch.key, owner);
-	return owner;
+	// `_index.md active:` is a degraded pointer that carries NO claim column, so
+	// it cannot be trusted by itself (A7): resolve it back to the
+	// `_index.parallel` row and apply the SAME name + liveness gate as the
+	// active-row branch. A foreign live value and a reserved/illegal name both
+	// degrade to _scratch with a warning instead of silently becoming an owner
+	// key in another window's namespace.
+	const fallbackKey = active?.key ?? readIndexMdActive(agenticdocRoot);
+	if (fallbackKey) {
+		if (keyNameRefusal(fallbackKey)) {
+			warnForeignActiveOnce(pi, fallbackKey);
+			return SCRATCH_WORKERS_KEY;
+		}
+		const row = indexStore.findByKey(fallbackKey);
+		if (row && claimState(row.claimId, self) === "held-live") {
+			warnForeignActiveOnce(pi, fallbackKey);
+			return SCRATCH_WORKERS_KEY;
+		}
+		if (watch.key && normalizeKey(watch.key) !== normalizeKey(fallbackKey)) {
+			warnOwnerMismatchOnce(pi, watch.key, fallbackKey);
+		}
+		return fallbackKey;
+	}
+	if (watch.key) warnOwnerMismatchOnce(pi, watch.key, SCRATCH_WORKERS_KEY);
+	return SCRATCH_WORKERS_KEY;
 }
 
 /** Warned (watch -> owner) pairs this session. displaySummary persists the
@@ -246,8 +276,13 @@ export const CROSS_KEY_READ_ONLY_ACK_NOTE = "acking its rows";
  * Returns null when the write is allowed. */
 export function foreignLiveClaimRefusal(indexStore: IndexStore, key: string): string | null {
 	const trimmed = key.trim();
-	if (!trimmed || trimmed === SCRATCH_WORKERS_KEY) return null;
-	if (trimmed.startsWith("_") || trimmed.startsWith(".")) return null;
+	if (!trimmed || isScratchKey(trimmed)) return null;
+	// Explicit name gate (A5): reserved framework names and illegal shapes are
+	// refused unconditionally. The pre-AC-006 `_`/`.` prefix exemption returned
+	// null BEFORE findByKey, so a live `_tmp` key passed and reserved files could
+	// be used as key namespaces — there is no such bypass left.
+	const nameRefusal = keyNameRefusal(trimmed);
+	if (nameRefusal) return reservedKeyRefusal(trimmed, nameRefusal);
 	const claim = indexStore.findByKey(trimmed)?.claimId.trim() ?? "";
 	if (!claim) return null;
 	if (claimState(claim, windowClaimId()) !== "held-live") return null;
@@ -258,6 +293,17 @@ export function foreignLiveClaimRefusal(indexStore: IndexStore, key: string): st
 		`Refused: ${CROSS_KEY_READ_ONLY_SURFACES.join(", ")}, ${CROSS_KEY_READ_ONLY_ACK_NOTE}.\n` +
 		`To act on it, take it over first: switch_key { key: "${trimmed}" } ` +
 		"(ask the user before stealing a live claim)."
+	);
+}
+
+/** Refusal text for a key NAME that fails the shape/reserved gate (AC-006):
+ * there is no owner to negotiate with — the name itself is unusable, so the
+ * cross-key escape hatch (switch_key) does not apply. */
+function reservedKeyRefusal(key: string, refusal: KeyNameRefusal): string {
+	return (
+		`[${CROSS_KEY_READ_ONLY}] key '${key}' is refused (${refusal.code}): ${refusal.message}.\n` +
+		`Allowed: names matching ^[A-Za-z0-9][A-Za-z0-9._-]*$ that are not reserved framework names (${RESERVED_INDEX_NAMES.join(", ")}).\n` +
+		`Refused: ${CROSS_KEY_READ_ONLY_SURFACES.join(", ")}, ${CROSS_KEY_READ_ONLY_ACK_NOTE}.`
 	);
 }
 
@@ -273,6 +319,10 @@ export interface TakeoverResult {
 	 * claims to have passed. Non-blocking — claiming a broken key to fix it
 	 * is legitimate; the warnings make the breakage visible immediately. */
 	audit: string[];
+	/** Present when ok=false: the key NAME was refused by the shared
+	 * shape/reserved gate (AC-006, stable `keyNameRefusal` code) rather than a
+	 * live foreign claim. */
+	refusal?: string;
 	/** Result of mirroring the claim into {key}/pm-state.md's '- Claim-Id:'
 	 * line (mw-worker-visibility-gate D-107/D-108); undefined when the claim
 	 * itself failed. A failed mirror never flips `ok` — the index row is
@@ -294,11 +344,27 @@ export async function takeOverKey(
 	const self = windowClaimId();
 	const outcome = await indexStore.claim(key, self, (id) => claimState(id, self) === "held-live", { force });
 	const audit = outcome.ok ? phaseAuditWarnings(agenticdocRoot, key, outcome.entry.phase) : [];
+	// Case-variant audit (design-role-key-identity §5.1 / DD-07d): the claim hit a
+	// stored row spelled differently only by case, so the window now owns
+	// `<stored>` while the user typed `<key>`. Surface it on the existing audit
+	// channel (every takeOverKey caller already notifies `result.audit`) instead
+	// of letting the substitution stay invisible.
+	if (outcome.caseVariantOf) {
+		audit.push(`[KEY] case-variant '${key}' -> stored '${outcome.caseVariantOf}'`);
+	}
 	// Mirror the claim into {key}/pm-state.md's '- Claim-Id:' line (D-108):
 	// every path that flips the index row's Claim column must also sync the
 	// mirror, or the two sources diverge. Failure is non-fatal by design.
 	const claimSync = outcome.ok ? syncPmStateClaimId(agenticdocRoot, key, self) : undefined;
-	return { ok: outcome.ok, blockedBy: outcome.blockedBy, claimId: self, created: outcome.created, audit, claimSync };
+	return {
+		ok: outcome.ok,
+		blockedBy: outcome.blockedBy,
+		refusal: outcome.refusal,
+		claimId: self,
+		created: outcome.created,
+		audit,
+		claimSync,
+	};
 }
 
 /** One-line warning for a claim whose pm-state.md mirror sync failed
@@ -857,6 +923,16 @@ export function registerPmKeyCommands(
 					);
 					return;
 				}
+				// Name gate (AC-006): a reserved/illegal name must never be registered,
+				// so it is refused here (before the claim) with a readable code.
+				const newNameRefusal = keyNameRefusal(keyName);
+				if (newNameRefusal) {
+					ctx.ui.notify(
+						`Key '${keyName}' is refused (${newNameRefusal.code}): ${newNameRefusal.message}.`,
+						"warning",
+					);
+					return;
+				}
 				// Route through the atomic claim: auto-create + demote other active
 				// rows (single-active discipline) in one locked step.
 				const result = await takeOverKey(indexStore, keyName, false, agenticdocRoot);
@@ -883,6 +959,13 @@ export function registerPmKeyCommands(
 				}
 				const result = await takeOverKey(indexStore, keyName, force, agenticdocRoot);
 				if (!result.ok) {
+					if (result.refusal) {
+						ctx.ui.notify(
+							`Key '${keyName}' is refused (${result.refusal}): reserved framework names and illegal key shapes cannot be claimed.`,
+							"warning",
+						);
+						return;
+					}
 					ctx.ui.notify(
 						`Key '${keyName}' is claimed by another live window (${result.blockedBy}). Use /pm-key switch ${keyName} --force to take it over.`,
 						"warning",
@@ -1342,8 +1425,45 @@ const WRITE_INTENT_QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [
 	["「", "」"],
 ];
 const WRITE_INTENT_ENGLISH_VERBS = new Set(["write", "save", "create", "append", "output to", "into"]);
-const WRITE_INTENT_PATH_RE =
-	/(?:[A-Za-z]:[\\/]|\.{1,2}\/)?[A-Za-z0-9_.][A-Za-z0-9_./-]*\.(?:md|py|ts|tsx|js|json|ya?ml|log|txt|ps1|sh)\b/;
+
+/** Anchored token after a write verb (A3 fix, AC-004): a wide character class
+ * with NO extension enumeration — the shape judge below decides whether a
+ * candidate is a path. New languages/config types cannot re-open the leak. */
+const WRITE_INTENT_TOKEN_RE = /^[A-Za-z0-9_.\\/~:-]+/;
+
+/** Non-path prose forms that would otherwise scan as a path shape: `e.g.` /
+ * `i.e.` are abbreviations, not files. */
+const WRITE_INTENT_ABBREVIATIONS = new Set(["e.g", "i.e", "etc", "vs", "cf"]);
+
+/** Extension-less target names the shape layer must still refuse (AC-004,
+ * `Makefile` class). A finite name table — never a bare-token fail-closed
+ * (that was measured at 35% false positives on the writeless corpus). */
+const WRITE_INTENT_DENY_NAMES = new Set([
+	"Makefile",
+	"makefile",
+	"GNUmakefile",
+	"Dockerfile",
+	"Containerfile",
+	"Rakefile",
+	"Gemfile",
+	"Procfile",
+	"Vagrantfile",
+	"Justfile",
+	"Brewfile",
+]);
+
+/** Shapes that name a path rather than prose (AC-004). Membership in this set
+ * is what makes step 5 of the judge refuse an out-of-surface candidate. */
+const WRITE_TARGET_PATH_SHAPES: ReadonlySet<WriteTargetShape> = new Set([
+	"sep",
+	"dot-lead",
+	"drive-relative",
+	"ads",
+	"colon",
+	"ext",
+	"deny-name",
+	"exists",
+]);
 const WRITE_SURFACE_SECTION_RE = new RegExp(
 	`${WRITE_SURFACE_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s\\S]*?${WRITE_SURFACE_MARKER_END.replace(
 		/[.*+?^${}()|[\]\\]/g,
@@ -1356,6 +1476,42 @@ export interface WriteIntentHit {
 	verb: string;
 	path: string;
 	clause: string;
+}
+
+/** Shape classes for one candidate token (AC-004). The first four (`punct`,
+ * `version`, `abbrev`, `bare`) are non-candidates: prose, not write targets. */
+export type WriteTargetShape =
+	| "punct"
+	| "version"
+	| "abbrev"
+	| "bare"
+	| "sep"
+	| "dot-lead"
+	| "drive-relative"
+	| "ads"
+	| "colon"
+	| "ext"
+	| "deny-name"
+	| "exists";
+
+/** Verdict of the target axis (AC-003/AC-004). `rule` exists only when
+ * allowed=false: `deny` = the deny prefix table fired, `scope` = a path-shaped
+ * target outside the write surface. */
+export interface WriteTargetJudge {
+	allowed: boolean;
+	shape: WriteTargetShape;
+	rule?: "deny" | "scope";
+	detail?: string;
+}
+
+/** Write-surface context for judgeWriteTarget (AC-003/AC-004). `keyDir` and
+ * `trueRoot` activate the deny prefix table (same table as worker-mode.ts);
+ * omitted, only containment + shape evaluation run. */
+export interface PmWriteSurfaceCtx {
+	taskDir: string;
+	projectRoot: string;
+	keyDir?: string;
+	trueRoot?: string;
 }
 
 /** Find `verb` in `clause`; English verbs match on word boundaries so
@@ -1402,9 +1558,14 @@ export function collectWriteIntentHits(text: string): WriteIntentHit[] {
 				const gap = /^\s*[`"']?\s*/.exec(after);
 				const gapLen = gap ? gap[0].length : 0;
 				if (gapLen > WRITE_INTENT_PATH_WINDOW) continue;
-				const pm = WRITE_INTENT_PATH_RE.exec(after.slice(gapLen));
-				if (!pm || pm.index !== 0) continue;
-				const pathToken = pm[0];
+				// Anchored token discovery (A3 fix, AC-004): no extension enumeration and
+				// no `pm.index !== 0` discard branch. A non-matching token means only
+				// that this verb has no candidate in this clause — never that the whole
+				// clause is abandoned, and never a forward scan into later prose.
+				const pm = WRITE_INTENT_TOKEN_RE.exec(after.slice(gapLen));
+				if (pm === null) continue;
+				const pathToken = pm[0].replace(/[.]+$/, "");
+				if (pathToken === "") continue;
 				const before = low.slice(Math.max(0, pos - 20), pos);
 				if (WRITE_INTENT_NEGATIONS.some((n) => before.includes(n))) continue;
 				if (WRITE_INTENT_READ_MARKERS.some((r) => low.includes(r))) continue;
@@ -1418,16 +1579,90 @@ export function collectWriteIntentHits(text: string): WriteIntentHit[] {
 	return hits;
 }
 
-/** May this role legitimately write `pathToken`? worker_file basenames,
- * framework-owned names, and the task's own directory all pass (whitelist). */
-export function isWhitelistedWriteTarget(pathToken: string, ctx: { taskDir: string; projectRoot: string }): boolean {
-	const normalized = pathToken.replace(/\\/g, "/");
-	const base = normalized.slice(normalized.lastIndexOf("/") + 1);
-	if (WORKER_FILE_NAME_RE.test(base)) return true;
-	if (FRAMEWORK_TASK_BASENAMES.includes(base)) return true;
-	const resolved = path.resolve(ctx.projectRoot, pathToken);
-	const own = path.resolve(ctx.taskDir);
-	return resolved === own || resolved.startsWith(`${own}${path.sep}`);
+/** Shape classification for one candidate token (AC-004). Ordered so the
+ * pointed Win32 forms (`drive-relative`, `ads`) are labelled before the `ext`
+ * rule can swallow them; trailing dots/spaces are stripped first (Win32
+ * CreateFile semantics). Read-only (`existsSync`). */
+export function classifyWriteTargetShape(pathToken: string, ctx: { projectRoot: string }): WriteTargetShape {
+	const t = pathToken.replace(/[.\s]+$/, "");
+	if (t === "" || !/[A-Za-z0-9]/.test(t)) return "punct";
+	if (/^\d+(\.\d+)+$/.test(t)) return "version";
+	if (WRITE_INTENT_ABBREVIATIONS.has(t.toLowerCase())) return "abbrev";
+	if (/[\\/]/.test(t)) return "sep";
+	if (/^\.[A-Za-z0-9_]/.test(t)) return "dot-lead";
+	if (/::/.test(t)) return "ads";
+	if (/^[A-Za-z]:(?![\\/])/.test(t)) return "drive-relative";
+	if (t.includes(":")) return "colon";
+	if (/\.[A-Za-z0-9]{1,8}$/.test(t)) return "ext";
+	if (WRITE_INTENT_DENY_NAMES.has(t)) return "deny-name";
+	if (fs.existsSync(path.resolve(ctx.projectRoot, t))) return "exists";
+	return "bare";
+}
+
+/** Bidirectional equality (worker-mode.ts `samePath` semantics). */
+function samePath(a: string, b: string): boolean {
+	return isSameOrUnder(a, b) && isSameOrUnder(b, a);
+}
+
+/** PM-side deny prefix table: same six rules and priority as
+ * `worker-mode.ts::bashWriteDenyReason`, parameterized by `keyDir`/`trueRoot`.
+ * `target` must already be normalized by `normalizeForCompare`. Returns the
+ * machine-readable rule name, or null when the target is not denied. */
+function pmWriteDenyReason(ctx: PmWriteSurfaceCtx, target: string): string | null {
+	const keyDir = ctx.keyDir;
+	const trueRoot = ctx.trueRoot;
+	if (keyDir !== undefined) {
+		if (samePath(target, path.join(keyDir, "pm-state.md"))) return "pm-state.md";
+		const workersDir = path.join(keyDir, "workers");
+		if (isSameOrUnder(workersDir, target)) {
+			const first = path.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
+			if (first.startsWith("_workers")) return "workers/_workers*";
+		}
+	}
+	if (trueRoot !== undefined && samePath(target, path.join(trueRoot, "_index.parallel"))) return "_index.parallel";
+	if (
+		trueRoot !== undefined &&
+		keyDir !== undefined &&
+		isSameOrUnder(trueRoot, target) &&
+		!isSameOrUnder(keyDir, target)
+	) {
+		return "other key dir / .agenticdoc root";
+	}
+	if (isSameOrUnder(path.join(ctx.projectRoot, "packages"), target)) return "packages/**";
+	if (isSameOrUnder(path.join(ctx.projectRoot, ".git"), target)) return ".git/**";
+	return null;
+}
+
+/** Target-axis verdict (AC-003/AC-004), evaluation order:
+ *   1. deny prefixes (absolute priority, mirrors worker-mode.ts)
+ *   2. own task dir — realpath + segment boundary (read-scope.ts reuse)
+ *   3. basename channel — ONLY for a token with no directory component, so a
+ *      whitelisted basename can never whitelist a foreign directory (A4 fix)
+ *   4. path shape => refuse (fail-closed, A3 fix)
+ *   5. non-candidate prose => pass untouched
+ * The `!hasDirComponent` precondition (not `shape === "bare"`) is load-bearing:
+ * `output.md`/`report.md` are `ext`-shaped and must still use the channel. */
+export function judgeWriteTarget(pathToken: string, ctx: PmWriteSurfaceCtx): WriteTargetJudge {
+	const shape = classifyWriteTargetShape(pathToken, ctx);
+	const target = normalizeForCompare(ctx.projectRoot, pathToken);
+	const task = normalizeForCompare(ctx.projectRoot, ctx.taskDir);
+	const denied = pmWriteDenyReason(ctx, target);
+	if (denied !== null) return { allowed: false, shape, rule: "deny", detail: `denied:${denied}` };
+	if (isSameOrUnder(task, target)) return { allowed: true, shape };
+	const hasDirComponent = /[\\/]/.test(pathToken);
+	if (!hasDirComponent && (WORKER_FILE_NAME_RE.test(pathToken) || FRAMEWORK_TASK_BASENAMES.includes(pathToken))) {
+		return { allowed: true, shape };
+	}
+	if (WRITE_TARGET_PATH_SHAPES.has(shape)) {
+		return { allowed: false, shape, rule: "scope", detail: "outside-write-surface" };
+	}
+	return { allowed: true, shape };
+}
+
+/** Boolean wrapper of {@link judgeWriteTarget} (AC-003/AC-004): may this role
+ * legitimately write `pathToken`? */
+export function isWhitelistedWriteTarget(pathToken: string, ctx: PmWriteSurfaceCtx): boolean {
+	return judgeWriteTarget(pathToken, ctx).allowed;
 }
 
 export interface WriteIntentVerdict {
@@ -1447,14 +1682,20 @@ export function judgeWriteIntent(input: {
 	taskDir: string;
 	projectRoot: string;
 	allowForeignWrite?: boolean;
+	/** Own key dir (`.agenticdoc/<key>`); activates the deny prefix table. */
+	keyDir?: string;
+	/** TRUE `.agenticdoc` root; activates the deny prefix table. */
+	trueRoot?: string;
 }): WriteIntentVerdict {
 	if (!isWritelessRole(input.type) || isShellRole(input.type)) return { ok: true, hits: [], violations: [] };
 	const hits = collectWriteIntentHits(input.description);
-	const violations = input.allowForeignWrite
-		? []
-		: hits.filter(
-				(hit) => !isWhitelistedWriteTarget(hit.path, { taskDir: input.taskDir, projectRoot: input.projectRoot }),
-			);
+	const ctx: PmWriteSurfaceCtx = {
+		taskDir: input.taskDir,
+		projectRoot: input.projectRoot,
+		keyDir: input.keyDir,
+		trueRoot: input.trueRoot,
+	};
+	const violations = input.allowForeignWrite ? [] : hits.filter((hit) => !isWhitelistedWriteTarget(hit.path, ctx));
 	return { ok: violations.length === 0, hits, violations };
 }
 
@@ -1668,15 +1909,12 @@ export function registerWorkerTools(
 			}
 			const ownerKey = resolveOwnerKeyWithSync(pi, indexStore, watch, key, agenticdocRoot);
 
-			// Cross-key write guard (AC-024): an explicit `key` naming a key another
-			// window holds live must refuse BEFORE any filesystem write — foreign keys
-			// are readable, never writable. The implicit path already degrades to
-			// _scratch inside resolveOwnerKeyWithSync, so only the explicit one needs
-			// the refusal (and only the explicit one can reach a foreign namespace).
-			if ((key ?? "").trim()) {
-				const refusal = foreignLiveClaimRefusal(indexStore, ownerKey);
-				if (refusal) return { content: [{ type: "text", text: refusal }], details: undefined };
-			}
+			// Cross-key write guard (AC-024/AC-006): unconditional (DD-07e) — the
+			// guard is the single write gate for every dispatch, explicit key or not.
+			// resolveOwnerKeyWithSync already degrades a foreign-live or reserved
+			// value to _scratch, so the implicit path gains no new refusal.
+			const refusal = foreignLiveClaimRefusal(indexStore, ownerKey);
+			if (refusal) return { content: [{ type: "text", text: refusal }], details: undefined };
 
 			const validCli = ["pi", "claude", "codex"];
 			if (!validCli.includes(cli)) {
@@ -1746,6 +1984,8 @@ export function registerWorkerTools(
 					description,
 					taskDir,
 					projectRoot: projectDir,
+					keyDir: path.join(agenticdocRoot, ownerKey),
+					trueRoot: agenticdocRoot,
 					allowForeignWrite,
 				});
 				if (!verdict.ok) {
@@ -1956,6 +2196,17 @@ export function registerSwitchKeyTool(
 			}
 			const result = await takeOverKey(indexStore, trimmed, force, agenticdocRoot);
 			if (!result.ok) {
+				if (result.refusal) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Key '${trimmed}' is refused (${result.refusal}): reserved framework names and illegal key shapes cannot be claimed.`,
+							},
+						],
+						details: undefined,
+					};
+				}
 				return {
 					content: [
 						{
@@ -2042,12 +2293,18 @@ export function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: string, i
 			if (!trimmedKey || !target) {
 				return { content: [{ type: "text", text: "key and target_phase are required." }], details: undefined };
 			}
-			if (trimmedKey.startsWith("_") || trimmedKey.startsWith(".")) {
+			// Same name gate as the guard and IndexStore.claim (AC-006, direction
+			// consistent): reserved names (incl. _scratch) and illegal shapes are not
+			// phase-tracked keys. `_scratch` keeps its historical wording.
+			const nameRefusal = keyNameRefusal(trimmedKey);
+			if (nameRefusal) {
+				const reason =
+					nameRefusal.code === "reserved-key-name" ? "has a reserved prefix" : `is refused (${nameRefusal.code})`;
 				return {
 					content: [
 						{
 							type: "text",
-							text: `Key '${trimmedKey}' has a reserved prefix and is not a phase-tracked AgenticTask key.`,
+							text: `Key '${trimmedKey}' ${reason} and is not a phase-tracked AgenticTask key.`,
 						},
 					],
 					details: undefined,
@@ -2202,6 +2459,8 @@ export function registerWorkerCommands(
 					description,
 					taskDir,
 					projectRoot: projectDir,
+					keyDir: path.join(agenticdocRoot, ownerKey),
+					trueRoot: agenticdocRoot,
 					allowForeignWrite: allowForeignWriteArg,
 				});
 				if (!verdict.ok) {

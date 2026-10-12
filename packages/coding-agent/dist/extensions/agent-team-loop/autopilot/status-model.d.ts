@@ -73,6 +73,29 @@ export interface AutopilotConfig {
      * effective_config EFFECTIVE_KEYS, so a machine-layer entry cannot
      * silently turn automation on. Any other value fails closed. */
     auto_gate_mode: string;
+    /** Launcher concurrency cap (T-18/D-027, AC-021): 1..64, default 8. Bounded
+     * by default — an absent value (and an explicit `None` on the Python side)
+     * must never mean "unbounded"; IN-3 spawned 66 workers at once that way. */
+    launcher_max_workers: number;
+    /** Max NEW queue rows one dispatch scan may add (T-17/D-026, AC-021). A
+     * quota of rows, not of tasks; the rest of the scan is refused + alarmed. */
+    dispatch_max_per_scan: number;
+    /** Doctor `queue-burst-shape` threshold (T-18/D-027): more than this many
+     * non-terminal rows AND > 90% of the queue non-terminal is the IN-3
+     * fingerprint (252 rows, 0 terminal). 10..10000, default 50. */
+    queue_alarm_delta: number;
+    /** G1 dedicated `l3abort:` re-roll cap (T-02/D-003, AC-003): 0..10, default
+     * 1. Counted on its own loop label, so it never spends the shared l3
+     * budget. */
+    l3_abort_retry_limit: number;
+    /** G2 pending-gate reminder threshold in minutes (T-02/D-007, AC-005):
+     * 1..1440, default 30. Capped at 24h so the active channel always fires
+     * before `mw doctor`'s 24h/72h text. */
+    gate_reminder_after_min: number;
+    /** G2 reminders per gate (T-02/D-007, AC-005): closed 1..2, default 2. The
+     * range max is 2 by design — a config can only lower the cap, never raise
+     * it past AC-005's "at most 2". */
+    gate_reminder_max: number;
 }
 export declare const DEFAULT_CONFIG: AutopilotConfig;
 export declare const BOOL_FIELDS: readonly ["enabled", "paused", "xkey_repair"];
@@ -154,6 +177,12 @@ export type RoadmapResult = {
 export declare function readRoadmap(projectDir: string): RoadmapResult;
 export declare const GATE_KINDS: readonly ["stage-confirm", "stage-close", "stalled", "budget-exhausted", "goal-change", "xkey-authorize"];
 export declare const GATE_STATUSES: readonly ["pending", "approved", "rejected"];
+/** Closed set of action types a gate may authorize (gates.py AUTHORIZES_ACTIONS,
+ * design D-011). This is the ONE TS declaration of the set — `gate-writer.ts`
+ * imports it, and `autopilot-gate-presentation.test.ts` locks it against the
+ * Python side, so the two languages can never drift into separate copies.
+ * `install` is deliberately excluded (no machine consumer). */
+export declare const AUTHORIZES_ACTIONS: readonly ["contract-change", "retry"];
 /** Canonical frontmatter field order (gates.py FRONTMATTER_FIELDS). The first
  * 12 names are the frozen base schema; the remaining 28 are the additive v2
  * set (design D1.1 1..26 + the consumption record). Both sides fail closed on
@@ -194,11 +223,20 @@ export interface GateRecord {
     expiresAt: string | null;
     defaultAction: string | null;
     outOfBandActions: string[];
+    /** G3 (D-011): recognized contract field OUTSIDE the frozen 40-name order,
+     * declared as a single-line JSON array. [] / absent = not authorized. */
+    authorizes: string[];
     gateSchema: number;
     answeredAt: string | null;
     answeredBy: string | null;
     note: string | null;
 }
+/** Single-line JSON substring fields (gates.py _JSON_LIST_FIELDS/_JSON_OBJ_FIELDS).
+ * `authorizes` is a recognized extension field: it is NOT in
+ * GATE_FRONTMATTER_FIELDS (frozen 40-name cross-language order), but the parse
+ * surface accepts it as a JSON-list field so Python and TS read the same
+ * shape (D-011 REVISED). */
+export declare const GATE_JSON_LIST_FIELDS: Set<string>;
 /** Parse one gate file into a GateRecord. Throws GateFormatError on any
  * frontmatter/schema violation — corrupt gate files surface as errors, never
  * as silently wrong queue entries (gates.py parse semantics). */
@@ -259,7 +297,9 @@ export declare function watermarkFromSince(timelinePath: string, sinceIso: strin
 /** Frontmatter scalar labels of one task.md (loop/attempt/origin/type...).
  * Lenient mirror of state.py parse_task_labels: a missing frontmatter or a
  * malformed line simply yields no label; nested blocks (read_scope lists)
- * are skipped, not parsed. */
+ * are skipped, not parsed. The header boundary comes from the single-source
+ * extractor (AC-005/P3) while the fenced-only semantics stay local: a task.md
+ * with no `---` fence has no autopilot labels here. */
 export declare function parseTaskLabels(taskMdPath: string): Map<string, string>;
 /** Per-loop used-round counts from task.md loop/attempt labels — the VC-020
  * parity surface with state.py used_rounds. A round = one distinct attempt
@@ -294,7 +334,24 @@ export interface GateView {
     id: string;
     kind: string;
     status: string;
+    /** Milliseconds since the gate file's `created_at` (D-009/AC-008), computed
+     * at derivation time. `null` when the timestamp is unavailable — never a
+     * fallback to `expires_at`: every historical (v1) gate lacks that field,
+     * so keying age off it would report "unknown" forever (D-007). */
+    ageMs: number | null;
 }
+/** Worker statuses that end a run — the `mw_common._TERMINAL_STATUSES` mirror
+ * (T-20/D-022: `done`, `failed`, `needs-clarification`, `lost`). A row in any
+ * of these is no longer in flight; `pending` and `running` are. */
+export declare const TERMINAL_WORKER_STATUSES: ReadonlySet<string>;
+/** G2 `BLOCKED_ON_HUMAN` truth table (T-05, design D-008): a project is
+ * blocked on a human when a pending gate exists AND no non-terminal worker
+ * row is in flight. Deliberately NOT `status == "running"` — a `pending` row
+ * starts on the next tick, so counting it as "in flight" avoids a false
+ * reminder. The third axis (`conductor still ticking`) is a TS render-time
+ * concern owned by `monitor.ts`'s `tickStale`; this is the file-only
+ * predicate both TS surfaces share, mirroring the Python truth table in T-07. */
+export declare function blockedOnHuman(pendingGates: number, nonTerminalRows: number): boolean;
 export interface TimelineWatermark {
     seq: number;
     ts: string;
@@ -334,7 +391,7 @@ export type StatusModelResult = {
  * an invalid config.json (D-110 fail-closed); a missing/parse-failed
  * roadmap, corrupt gate files, and an absent timeline all degrade to empty
  * views plus warnings. */
-export declare function deriveStatusModel(projectDir: string): StatusModelResult;
+export declare function deriveStatusModel(projectDir: string, nowMs?: number): StatusModelResult;
 /** Human-readable rendering of the SAME derivation that produced the --json
  * payload (view parity, VC-017): every number below is taken from the model
  * object, so the two views cannot drift. */

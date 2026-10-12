@@ -8,7 +8,15 @@
 import { APP_NAME } from "./config.js";
 import { configureHttpDispatcher } from "./core/http-dispatcher.js";
 import { main } from "./main.js";
-process.title = APP_NAME;
+// Claim the console title only when this process owns the terminal. On Windows
+// `process.title` is SetConsoleTitleW on the console we inherited, so a child
+// invocation with piped stdout (mw's `pi --list-models` capability probe, worker
+// spawns, RPC) would rename the parent pi window to "pi" and the TUI would not
+// take its own title back (mw-console-title-clobber). Interactive runs are
+// unaffected: their stdout is the terminal.
+if (process.stdout.isTTY) {
+    process.title = APP_NAME;
+}
 process.env.PI_CODING_AGENT = "true";
 process.env.AI_AGENT = "pi";
 process.emitWarning = (() => { });

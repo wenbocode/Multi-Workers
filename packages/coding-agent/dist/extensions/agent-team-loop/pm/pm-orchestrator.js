@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { autoStartMonitor, registerAutopilotCommands } from "../autopilot/console.js";
+import { stopMonitor } from "../autopilot/monitor.js";
+import { readConfig } from "../autopilot/status-model.js";
 import { registerRagTools } from "../rag/tools.js";
 import { AckStore } from "../shared/ack-store.js";
 import { registerMainWindowModel } from "../shared/dispatch-models.js";
@@ -11,6 +13,8 @@ import { agenticdocRoot as resolveAgenticdocRoot, SCRATCH_WORKERS_KEY } from "..
 import { dispatchDocGaps, readPhaseDocs } from "../shared/phase-docs.js";
 import { syncPmStateClaimId } from "../shared/pm-state-claim.js";
 import { registerPmStateGuard } from "../shared/pm-state-guard.js";
+import { evaluateRunIdentity } from "../shared/run-store.js";
+import { readTaskType } from "../shared/task-frontmatter.js";
 import { WorkerStore } from "../shared/worker-store.js";
 import { isGoalEstablished, readGoal } from "./goal-reader.js";
 import { StateManager } from "./state-manager.js";
@@ -18,7 +22,7 @@ import { dispatchTask } from "./task-dispatcher.js";
 import { applyWatchWidget, claimState, claimSyncWarningText, deliverPmAlert, deliverWorkerResult, displaySummary, makeScopedDocGateNotifier, ownerKeyOf, readOutputBody, readSpawnFailure, registerAdvancePhaseTool, registerMwCommands, registerMwTools, registerPmKeyCommands, registerPmSaveCommand, registerSwitchKeyTool, registerWatchCommand, registerWorkerCommands, registerWorkerTools, renderWatchLines, setWatchWidget, takeOverKey, WATCH_ENTRY_TYPE, windowClaimId, } from "./ui-bridge.js";
 const POLL_INTERVAL_MS = 4000; // < 5s per AC-001
 function isTerminal(status) {
-    return status === "done" || status === "failed" || status === "needs-clarification";
+    return status === "done" || status === "failed" || status === "needs-clarification" || status === "lost";
 }
 /** The phase-doc write/edit target, when the tool path resolves to
  * {agenticdocRoot}/{key}/spec.md | design.md | plan.md — the PM phase docs that
@@ -237,7 +241,10 @@ function pickWorkerRoute(taskContent) {
     // agent, not claude redirects (design D-005) — a claude worker requires an
     // explicit `cli` param on dispatch_worker / /worker, where missing
     // credentials fail per-task instead of silently degrading the route.
-    if (/^type:\s*codex/im.test(taskContent))
+    // The reading comes from the single-source header parser (AC-005/F-6): the
+    // old `/^type:\s*codex/im` full-text regex let one body line flip the
+    // dispatch CLI, outside the shared `type:` matrix.
+    if (readTaskType(taskContent).type === "codex")
         return { cli: "codex", provider: "" };
     return { cli: "pi", provider: "timi" };
 }
@@ -269,13 +276,184 @@ function isConductorTask(taskMdPath) {
         return false;
     }
 }
+/** Autopilot ledger path (shared with the Python conductor). */
+const AUTO_DECISIONS_FILE = "auto-decisions.jsonl";
+/** One-line human text for a refused dispatch scan (AC-020/AC-021). */
+export function describeDispatchAlarm(alarm) {
+    switch (alarm.kind) {
+        case "queue-rows-unparsable":
+            return `${alarm.count} unreadable row(s) in _workers.parallel — dispatch refused (fix the row; nothing was queued)${alarm.detail ? `: ${alarm.detail}` : ""}`;
+        case "queue-unreadable":
+            return `the queue looks empty while the work has already run (key ${alarm.detail ?? "?"}) — dispatch refused instead of re-running ${alarm.count} task(s)`;
+        case "dispatch-quota":
+            return `scan quota reached after ${alarm.count} task(s) — the rest of this scan was refused`;
+        case "out-of-scope":
+            return `${alarm.count} key(s) outside this window's scope were not scanned (${alarm.detail ?? "?"}) — read-only visible, never touched`;
+        case "run-ledger-conflict":
+            return `${alarm.count} task(s) already have a terminal run.json while the queue has no row for them — not re-queued${alarm.detail ? `: ${alarm.detail}` : ""}`;
+        case "no-product":
+            return `${alarm.count} read-only run(s) settled without a product — needs-clarification, awaiting human judgement${alarm.detail ? `: ${alarm.detail}` : ""}`;
+        case "write-scope-risk":
+            return `${alarm.count} write-scope residual-risk row(s) (blocked=false, risk=deny-basename)${alarm.detail ? ` on ${alarm.detail}` : ""} — the guard allowed them by contract; review the audited target`;
+    }
+}
+/** Append one machine-readable alarm row to the autopilot ledger
+ * (`.agenticdoc/_autopilot/auto-decisions.jsonl`, AC-020/AC-021). The shape
+ * mirrors the Python single writer (`conductor._append_auto_decision_row`):
+ * one JSON object per line, 1-based `seq`. Decision consumers filter on
+ * `phase == "decide"`, so `phase: "dispatch-alarm"` is invisible to them while
+ * staying visible to humans, `mw doctor` and later consumers. Best-effort by
+ * design: losing the alarm must never break dispatch. */
+export function recordDispatchAlarm(agenticdocRoot, alarm) {
+    try {
+        const ledger = path.join(agenticdocRoot, "_autopilot", AUTO_DECISIONS_FILE);
+        let seq = 1;
+        try {
+            seq =
+                fs
+                    .readFileSync(ledger, "utf8")
+                    .split("\n")
+                    .filter((l) => l.trim() !== "").length + 1;
+        }
+        catch {
+            seq = 1;
+        }
+        const row = { seq, phase: "dispatch-alarm", kind: alarm.kind, count: alarm.count, detail: alarm.detail ?? "" };
+        fs.mkdirSync(path.dirname(ledger), { recursive: true });
+        fs.appendFileSync(ledger, `${JSON.stringify(row)}\n`, "utf8");
+    }
+    catch (err) {
+        console.error(`[mw] dispatch alarm not recorded: ${err instanceof Error ? err.message : String(err)}`);
+    }
+}
+/** Count the write-guard residual-risk audit rows in one worker trace
+ * (AC-007/T-03): `[WRITE_SCOPE]` lines carrying BOTH `blocked=false` and
+ * `risk=deny-basename`. The filter is deliberately the two-field pair and never
+ * `rule=allow-unknown` alone (design-write-guard-landing §5.5): the unknown tier
+ * is the contract, the deny-list basename is the residual risk. Best-effort — a
+ * missing/unreadable trace is zero, never an error. */
+export function countWriteScopeResidualRisks(taskDir) {
+    let raw;
+    try {
+        raw = fs.readFileSync(path.join(taskDir, "trace.log"), "utf8");
+    }
+    catch {
+        return 0;
+    }
+    let count = 0;
+    for (const line of raw.split("\n")) {
+        if (!line.startsWith("[WRITE_SCOPE] "))
+            continue;
+        if (!line.includes("blocked=false"))
+            continue;
+        if (!line.includes("risk=deny-basename"))
+            continue;
+        count += 1;
+    }
+    return count;
+}
+/** PM-side exit for the write-guard residual risk (AC-007/DD-08): the worker
+ * was allowed through by contract, so the ledger row is the remaining defence.
+ * Reuses the single dispatch-alarm channel and its unchanged row shape; returns
+ * the number of residual-risk rows found (0 ⇒ nothing written). */
+export function recordWriteScopeResidualRisks(agenticdocRoot, taskKey, taskDir) {
+    const count = countWriteScopeResidualRisks(taskDir);
+    if (count === 0)
+        return 0;
+    recordDispatchAlarm(agenticdocRoot, { kind: "write-scope-risk", count, detail: taskKey });
+    return count;
+}
+/** Single-scan dispatch quota (AC-021). A scan that wants to queue more rows
+ * than this is looking at something it does not understand (IN-3 queued 252 in
+ * one scan and the launcher spawned 66 workers at once). */
+export const DEFAULT_DISPATCH_MAX_PER_SCAN = 3;
+/** `dispatch_max_per_scan` from the project's autopilot config (D-026/AC-021).
+ *
+ * An explicit `DispatchScanOptions.maxPerScan` wins (tests and refreshers);
+ * otherwise the project config decides. Read-only and fail-soft: a missing,
+ * unreadable or out-of-range config falls back to
+ * {@link DEFAULT_DISPATCH_MAX_PER_SCAN} — a broken file must never be able to
+ * disable the quota (the IN-3 direction of the failure is *more* dispatching,
+ * never less). */
+export function readDispatchMaxPerScan(agenticdocRoot) {
+    try {
+        const result = readConfig(path.dirname(agenticdocRoot));
+        if (!result.ok)
+            return DEFAULT_DISPATCH_MAX_PER_SCAN;
+        const value = result.config.dispatch_max_per_scan;
+        return Number.isInteger(value) && value >= 1 ? value : DEFAULT_DISPATCH_MAX_PER_SCAN;
+    }
+    catch {
+        return DEFAULT_DISPATCH_MAX_PER_SCAN;
+    }
+}
+/** Product evidence for {@link dispatchNewTasks}'s empty-queue guard (AC-020):
+ * files the worker itself writes into its own directory. A task dir holding
+ * only `task.md` has never run — that is a fresh project, not a lost queue. */
+function hasProductEvidence(taskDir) {
+    for (const name of ["output.md", "report.md", "run.json", "trace.log"]) {
+        if (fs.existsSync(path.join(taskDir, name)))
+            return true;
+    }
+    return false;
+}
 export async function dispatchNewTasks(workerStore, agenticdocRoot, opts = {}) {
     // Worker tasks live under {key}/workers/<task-key>/task.md (owner = AgenticTask
     // key) or _scratch/workers/<task-key>/task.md (keyless ad-hoc). Root-level
     // task dirs are no longer dispatched - they polluted the key namespace.
     if (!fs.existsSync(agenticdocRoot))
         return;
-    const dispatched = new Set(workerStore.readAll().map((e) => e.taskKey));
+    // Read the queue once, through `readQueue()`: its rows drive the
+    // already-queued set, and any unreadable row aborts the whole scan
+    // (AC-020/AC-023). This is the guard IN-3 lacked — the old code built the set
+    // from `readAll()`, so a row the parser silently dropped looked like a task
+    // that had never run and the entire project was re-queued (252 rows within
+    // one second, 2026-10-10T02:50:05Z, peak 66 concurrent workers).
+    const queue = workerStore.readQueue();
+    if (queue.unparsable.length > 0) {
+        opts.onAlarm?.({
+            kind: "queue-rows-unparsable",
+            count: queue.unparsable.length,
+            detail: queue.unparsable[0]?.reason,
+        });
+        return;
+    }
+    const dispatched = new Set(queue.rows.map((e) => e.taskKey));
+    const scope = opts.scope ?? "cli";
+    const maxPerScan = opts.maxPerScan ?? readDispatchMaxPerScan(agenticdocRoot);
+    const queueIsEmpty = queue.rows.length === 0;
+    let queued = 0;
+    // Visibility for the two "skipped, not refused" classes (T-19/T-20): keys
+    // outside this window's scope, and candidates whose product already ended the
+    // run. Both are aggregated per scan and go through the same alarm channel
+    // (once per kind per session at the wiring), so a healthy project sees at
+    // most one row per session instead of one per candidate.
+    const outOfScope = [];
+    const runRefused = [];
+    const flushScanAlarms = () => {
+        if (outOfScope.length > 0) {
+            opts.onAlarm?.({
+                kind: "out-of-scope",
+                count: outOfScope.length,
+                detail: `${outOfScope.slice(0, 3).join(",")}${outOfScope.length > 3 ? ",…" : ""}`,
+            });
+        }
+        if (runRefused.length > 0) {
+            // Aggregate, bounded: the PM needs to see WHICH tasks and WHY (the
+            // distinct reasons are what tells a stale ledger from a live run),
+            // without one ledger row per candidate.
+            const reasons = [...new Set(runRefused.map((r) => r.reason))].sort().join(",");
+            const shown = runRefused
+                .slice(0, 3)
+                .map((r) => `${r.taskKey}:${r.reason}${r.detail ? `(${r.detail})` : ""}`)
+                .join(",");
+            opts.onAlarm?.({
+                kind: "run-ledger-conflict",
+                count: runRefused.length,
+                detail: `${runRefused.length} refused (${reasons}): ${shown}${runRefused.length > 3 ? ",…" : ""}`,
+            });
+        }
+    };
     let owners;
     try {
         owners = fs.readdirSync(agenticdocRoot, { withFileTypes: true });
@@ -286,6 +464,14 @@ export async function dispatchNewTasks(workerStore, agenticdocRoot, opts = {}) {
     for (const owner of owners) {
         if (!owner.isDirectory() || owner.name.startsWith("."))
             continue;
+        // Scope (AC-019): the PM-side automatic scan only looks at the key this
+        // window watches plus the keyless scratch. Explicit callers (the `mw`
+        // command surface, refreshers, tests) stay global, which is why this is
+        // opt-in per call site instead of a hard restriction.
+        if (scope === "pm" && owner.name !== SCRATCH_WORKERS_KEY && owner.name !== opts.watchedKey) {
+            outOfScope.push(owner.name);
+            continue;
+        }
         const workersDir = path.join(agenticdocRoot, owner.name, "workers");
         let taskDirs;
         try {
@@ -314,10 +500,37 @@ export async function dispatchNewTasks(workerStore, agenticdocRoot, opts = {}) {
             // only queue writer; its reconciliation is the sole repair path.
             if (isConductorTask(taskMdPath))
                 continue;
+            // AC-022 (T-20): the product carries the run's own terminal state. A task
+            // whose run.json already ended is never re-queued (the queue row is a
+            // cache, the product is the truth) and a live run is never duplicated;
+            // more work on a finished task means a NEW task_key declaring
+            // `supersedes:`. Candidates without any run record keep the pre-T-20
+            // behaviour (zero backfill, P-018). The task.md read is lazy, so a
+            // candidate that already has a run record is decided without any read.
+            if (opts.runVerdict) {
+                const verdict = opts.runVerdict({
+                    taskKey,
+                    taskDir: path.join(workersDir, taskKey),
+                    readTaskContent: () => fs.readFileSync(taskMdPath, "utf8"),
+                });
+                if (!verdict.ok) {
+                    runRefused.push({ taskKey, reason: verdict.reason, detail: verdict.detail });
+                    continue;
+                }
+            }
             undispatched.push({ taskKey, taskMdPath });
         }
         if (undispatched.length === 0)
             continue;
+        // AC-020: an empty queue plus product evidence in the very tasks we are
+        // about to queue is the IN-3 shape — the queue lost its rows while the
+        // work had already run. Refuse the whole scan instead of re-running
+        // history; a real fresh project has no such evidence and dispatches.
+        if (queueIsEmpty && undispatched.some((t) => hasProductEvidence(path.dirname(t.taskMdPath)))) {
+            flushScanAlarms();
+            opts.onAlarm?.({ kind: "queue-unreadable", count: undispatched.length, detail: owner.name });
+            return;
+        }
         // Docs gate, phase-tiered (mw-worker-visibility-gate D-110): the tier comes
         // from the SCAN KEY's own phase (its pm-state '- Phase:' line), never from
         // this window's watch — the background scan and the dispatch_worker tool
@@ -339,6 +552,14 @@ export async function dispatchNewTasks(workerStore, agenticdocRoot, opts = {}) {
             }
         }
         for (const { taskKey, taskMdPath } of undispatched) {
+            // AC-021: one scan may queue at most `maxPerScan` rows. Exceeding the
+            // quota means the scan is looking at something it does not understand,
+            // not that hundreds of tasks need running.
+            if (queued >= maxPerScan) {
+                flushScanAlarms();
+                opts.onAlarm?.({ kind: "dispatch-quota", count: queued });
+                return;
+            }
             const taskContent = fs.readFileSync(taskMdPath, "utf8");
             const { cli, provider } = pickWorkerRoute(taskContent);
             const model = readModel(taskContent);
@@ -351,6 +572,7 @@ export async function dispatchNewTasks(workerStore, agenticdocRoot, opts = {}) {
                     model,
                     taskPath: taskMdPath,
                 }, workerStore);
+                queued += 1;
             }
             catch (err) {
                 // Fail-closed (mw-dual-workspace AC-007): an unusable target.yml
@@ -362,6 +584,7 @@ export async function dispatchNewTasks(workerStore, agenticdocRoot, opts = {}) {
             }
         }
     }
+    flushScanAlarms();
 }
 /** Continuation directive appended to terminal worker results: the finish
  * call wakes an idle PM (triggerTurn) — this line tells it what "continue the
@@ -393,6 +616,55 @@ function heartbeatStatsSuffix(taskDir, entry) {
         return ` (${formatHeartbeatAge(durMs)})`;
     return "";
 }
+/** Session entry type recording a delivered gate reminder. Read back on
+ * restart/resume so the same ledger row is never pushed twice (design D-010).
+ * Same mechanism as WATCH_ENTRY_TYPE / AUTOPILOT_SEEN_ENTRY_TYPE. */
+export const GATE_REMINDER_ENTRY_TYPE = "agent-team-loop:gate-reminder-seen";
+/** Read `phase:"remind"` rows from the autopilot ledger (read-only, D-005/
+ * D-006). Malformed / torn lines are skipped: a broken ledger must never take
+ * the poll loop down, and the conductor's per-line append makes a partial
+ * trailing line the only realistic failure. */
+function readGateReminders(agenticdocRoot) {
+    const ledger = path.join(agenticdocRoot, "_autopilot", AUTO_DECISIONS_FILE);
+    let raw;
+    try {
+        raw = fs.readFileSync(ledger, "utf8");
+    }
+    catch {
+        return []; // no ledger yet (producer absent or nothing recorded) — nothing to deliver
+    }
+    const out = [];
+    for (const line of raw.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed === "")
+            continue;
+        let parsed;
+        try {
+            parsed = JSON.parse(trimmed);
+        }
+        catch {
+            continue; // torn/partial line during a concurrent append
+        }
+        if (typeof parsed !== "object" || parsed === null)
+            continue;
+        const row = parsed;
+        if (row.phase !== "remind")
+            continue;
+        const gateId = typeof row.gate_id === "string" ? row.gate_id : "";
+        const reminderN = typeof row.reminder_n === "number" ? row.reminder_n : 0;
+        if (gateId === "" || reminderN <= 0)
+            continue;
+        out.push({
+            seq: typeof row.seq === "number" ? row.seq : 0,
+            gateId,
+            gateKind: typeof row.gate_kind === "string" ? row.gate_kind : "",
+            gateKey: typeof row.gate_key === "string" ? row.gate_key : "",
+            reminderN,
+            detail: typeof row.detail === "string" ? row.detail : "",
+        });
+    }
+    return out;
+}
 export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, ui, pollIntervalMs = POLL_INTERVAL_MS) {
     // Baseline snapshot: rows already terminal when this window opens are
     // history — never replay their summaries. Only transitions observed while
@@ -405,6 +677,30 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
     // per task, at the first mid/high convergence checkpoint.
     const escalated = new Set();
     let widgetShown = false;
+    // Pending-gate reminder delivery (AC-005/AC-018; design D-005/D-006/D-010).
+    // The conductor (Python) is the sole decider and writer; this loop is the
+    // only channel that wakes an idle PM (deliverPmAlert → triggerTurn). The same
+    // ledger row must never wake the PM twice:
+    //   - `reminderWatermark` = highest delivered ledger `seq`, persisted per
+    //     session as a pi entry: a restart/resume continues where it left off and
+    //     an append-only ledger row can never be re-delivered;
+    //   - `unsequencedSeen` is the process-local fallback for a row missing `seq`
+    //     (the conductor always sets it, so this is belt-and-braces only).
+    // The watermark starts at the ledger's high-water mark at window open, so a
+    // fresh window does not replay reminders that predate it (mirrors the
+    // `notified` worker baseline). `reminderHistoryRead` gates the one-shot
+    // resume path: when this session already recorded deliveries, the watermark
+    // drops back to the last recorded seq so rows appended while the window was
+    // down still reach the PM.
+    const unsequencedSeen = new Set();
+    let reminderWatermark = 0;
+    {
+        const rows = readGateReminders(agenticdocRoot);
+        for (const r of rows)
+            if (r.seq > reminderWatermark)
+                reminderWatermark = r.seq;
+    }
+    let reminderHistoryRead = false;
     return setInterval(() => {
         try {
             // Live bottom widget for the watched key (per-window state, NOT the
@@ -461,6 +757,12 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
                     continue;
                 // Task dir from the queue row taskPath: works for keyed {key}/workers/<task-key>/ and legacy root paths.
                 const taskDir = path.dirname(entry.taskPath);
+                // AC-007/DD-08 residual risk: a contract-allowed write whose basename
+                // still names a deny-list artifact is only observable here (the guard
+                // wrote `blocked=false risk=deny-basename` and moved on). Reuses the
+                // single dispatch-alarm ledger channel; `notified` above bounds it to
+                // once per task per session.
+                recordWriteScopeResidualRisks(agenticdocRoot, entry.taskKey, taskDir);
                 // Terminal readback (AC-014): inject the full output.md body into
                 // the conversation so worker results reach the PM without manual
                 // file reads. Falls through to the spawn-failure / no-output
@@ -483,6 +785,64 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
                         ? `${spawnFailure}。日志：${logPath}`
                         : `无 output.md 摘要（worker 可能崩溃/超时）。日志：${logPath}`}\n\n${PM_CONTINUE_HINT}`);
                 }
+            }
+            // Pending-gate reminders (appended last: the worker terminal-readback
+            // order above must not change). Read-only — the ledger belongs to the
+            // conductor; this branch never writes it.
+            const reminders = readGateReminders(agenticdocRoot);
+            if (!reminderHistoryRead) {
+                reminderHistoryRead = true;
+                let delivered = 0;
+                try {
+                    for (const e of ui.ctx?.sessionManager.getEntries() ?? []) {
+                        if (e.type !== "custom" || e.customType !== GATE_REMINDER_ENTRY_TYPE)
+                            continue;
+                        const data = e.data;
+                        if (typeof data?.seq === "number" && data.seq > delivered)
+                            delivered = data.seq;
+                    }
+                }
+                catch {
+                    // Session entries unavailable — treat this as a fresh window.
+                }
+                // Resume from the recorded point (may be below the open-time baseline,
+                // so rows appended while this window was down are still delivered);
+                // a fresh session keeps the no-replay baseline.
+                if (delivered > 0)
+                    reminderWatermark = delivered;
+            }
+            for (const reminder of reminders) {
+                // Multi-window scope (D-010): a keyed gate is only this window's
+                // business when it watches that key; keyless/stage-level gates fall
+                // through to the per-session watermark. A window watching nothing
+                // stays silent, like the worker summaries above.
+                if (!watch.key)
+                    continue;
+                if (reminder.gateKey !== "" && reminder.gateKey !== watch.key)
+                    continue;
+                const dedup = `${reminder.gateId}:${reminder.reminderN}`;
+                if (reminder.seq > 0) {
+                    // Session watermark: the row was delivered already (this tick or a
+                    // previous session) whenever its seq is not ahead of the mark.
+                    if (reminder.seq <= reminderWatermark)
+                        continue;
+                    reminderWatermark = reminder.seq;
+                }
+                else {
+                    if (unsequencedSeen.has(dedup))
+                        continue;
+                    unsequencedSeen.add(dedup);
+                }
+                // Persist the delivery so /new, /resume and restarts do not replay it.
+                pi.appendEntry(GATE_REMINDER_ENTRY_TYPE, {
+                    seq: reminder.seq,
+                    gateId: reminder.gateId,
+                    n: reminder.reminderN,
+                });
+                const scope = reminder.gateKey === "" ? "stage" : `key=${reminder.gateKey}`;
+                deliverPmAlert(pi, `[mw] 门提醒（${reminder.reminderN}）：gate ${reminder.gateId}（kind=${reminder.gateKind}，${scope}）已 pending 超阈，等待人工应答。` +
+                    `（判定由 conductor 完成；用 /autopilot gates 查看，/autopilot gate ${reminder.gateId} approve|reject 应答。）` +
+                    (reminder.detail ? ` ${reminder.detail}` : ""));
             }
         }
         catch {
@@ -539,7 +899,7 @@ export function pmActivate(pi) {
     registerPmSaveCommand(pi, indexStore, workerStore, watch, agenticdocRoot);
     registerMwCommands(pi, projectDir, workerStore, ackStore, watch, agenticdocRoot);
     registerMwTools(pi, projectDir);
-    registerAdvancePhaseTool(pi, projectDir);
+    registerAdvancePhaseTool(pi, projectDir, indexStore);
     registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, projectDir);
     registerSwitchKeyTool(pi, indexStore, watch, refreshWatch, agenticdocRoot);
     registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch, projectDir);
@@ -579,17 +939,49 @@ export function pmActivate(pi) {
     // Session teardown stops the loop (review m3): a fresh runtime re-runs
     // pmActivate and starts a new one, so this only removes the zombie that
     // would keep ticking against a disposed context after /reload or session
-    // replacement.
-    pi.on("session_shutdown", () => clearInterval(pollHandle));
+    // replacement. It also stops the autopilot monitor panel (AC-018/VC-023):
+    // the next session_start re-arms it via autoStartMonitor, so the panel is
+    // never left pointing at a disposed ctx (and no interval leaks). stopMonitor
+    // is a no-op when no panel is active — it never clears non-active state.
+    pi.on("session_shutdown", () => {
+        clearInterval(pollHandle);
+        stopMonitor();
+    });
     // After each agent turn, scan for new task.md files and dispatch them (AC-030).
     // Undocumented keys are skipped and reported once per session (docs gate).
-    // Gate broadcast is scoped to this window's watched key (AC-011) — the scan
-    // itself stays global, and blocking semantics are unchanged.
+    // Gate broadcast is scoped to this window's watched key (AC-011). The scan
+    // itself is scoped to that key too (AC-019): a PM turn must never re-queue
+    // another key's history — the whole-project view belongs to `mw` commands.
     const docGateWarned = new Set();
+    // Dispatch alarms are once per kind per session: a queue that stays broken
+    // must not append a ledger row or wake the PM on every settled turn.
+    const dispatchAlarmsSeen = new Set();
     pi.on("agent_settled", () => {
         dispatchNewTasks(workerStore, agenticdocRoot, {
             warnedKeys: docGateWarned,
             onDocGate: makeScopedDocGateNotifier(pi, watch),
+            scope: "pm",
+            watchedKey: watch.key,
+            // AC-022 (T-20): the product decides. A candidate whose own run.json
+            // already ended (or is still live) is refused before any queue write;
+            // `supersedes:` in task.md is the only way to replace a finished run, and
+            // the replaced directory is never touched. Every read is best-effort
+            // ("no information" ⇒ pre-T-20 behaviour, zero backfill).
+            runVerdict: (task) => evaluateRunIdentity({
+                taskDir: task.taskDir,
+                readTaskContent: task.readTaskContent,
+                resolveTaskDir: (key) => {
+                    const dir = path.join(path.dirname(task.taskDir), key);
+                    return fs.existsSync(dir) ? dir : undefined;
+                },
+            }),
+            onAlarm: (alarm) => {
+                if (dispatchAlarmsSeen.has(alarm.kind))
+                    return;
+                dispatchAlarmsSeen.add(alarm.kind);
+                recordDispatchAlarm(agenticdocRoot, alarm);
+                deliverPmAlert(pi, `[mw] dispatch 已拒绝：${describeDispatchAlarm(alarm)}`);
+            },
         }).catch(() => {
             // Dispatch errors are non-fatal — PM loop continues
         });

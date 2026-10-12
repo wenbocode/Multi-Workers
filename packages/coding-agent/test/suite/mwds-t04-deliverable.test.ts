@@ -26,10 +26,15 @@ import {
 } from "../../src/extensions/agent-team-loop/pm/pm-orchestrator.ts";
 import {
 	DELIVERABLE_PLACEHOLDERS,
+	findReferencedEvidence,
 	hasDeliverableEvidence,
+	hasNonPlaceholderProduct,
+	isPlaceholderBody,
 } from "../../src/extensions/agent-team-loop/shared/deliverable-evidence.ts";
+import { readOutputSections } from "../../src/extensions/agent-team-loop/shared/output-sections.ts";
 import { RUN_SCHEMA, type RunState, writeRunState } from "../../src/extensions/agent-team-loop/shared/run-store.ts";
 import { WorkerStore } from "../../src/extensions/agent-team-loop/shared/worker-store.ts";
+import { writeOutput } from "../../src/extensions/agent-team-loop/worker/output-writer.ts";
 import { workerModeActivate } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
 
 // ── corpus (VC-025) ──────────────────────────────────────────────────────────
@@ -53,6 +58,34 @@ const PLACEHOLDER_OUTPUT = [
 	"Process exited before output.md was written (crash or unexpected exit).",
 	"",
 ].join("\n");
+
+/**
+ * VC-035 (spec AC-009): the placeholder oracle pinned by an EXTERNAL member
+ * list. The pre-AC-009 assertion compared only `DELIVERABLE_PLACEHOLDERS.size`
+ * against a literal — a member swapped for a same-sized different string stayed
+ * green. These 16 strings are the producer source of truth (`worker/
+ * output-writer.ts` defaults + `worker/worker-mode.ts` exit paths), cross-checked
+ * by the writer-generated-file case below; the implementation set is only the
+ * left-hand side of the comparison.
+ */
+const EXPECTED_PLACEHOLDERS = [
+	"(no conclusion)",
+	"(no summary)",
+	"(none)",
+	"(no questions provided)",
+	"Task completed successfully.",
+	"Task failed.",
+	"Task was cancelled (exit 130).",
+	"(worker exited without writing output)",
+	"Process exited before output.md was written (crash or unexpected exit).",
+	"Task refused at startup (fail-closed).",
+	"Task refused (image capability).",
+	"Worker timed out (idle).",
+	"Worker timed out (wall).",
+	"Task failed during output writing.",
+	"Task completed.",
+	"See task output for details.",
+];
 
 const tempDirs: string[] = [];
 function mkdtemp(prefix: string): string {
@@ -143,7 +176,9 @@ describe("AC-006 channel order (reverse cases b/c/d)", () => {
 		const verdict = hasDeliverableEvidence(taskDir, "");
 		expect(verdict.delivered).toBe(false);
 		expect(verdict.channel).toBe("none");
-		expect(DELIVERABLE_PLACEHOLDERS.size).toBe(16); // 15 documented entries, idle/wall + (none) collapsed
+		// The placeholder oracle is no longer asserted here by `.size` (a
+		// self-count of the implementation constant); the exact-member
+		// assertion lives in `AC-009 assertion quality (VC-035)` below.
 	});
 
 	it("(d) a machine-line-only output.md (no report) is the output channel", () => {
@@ -154,6 +189,55 @@ describe("AC-006 channel order (reverse cases b/c/d)", () => {
 		const verdict = hasDeliverableEvidence(taskDir, "");
 		expect(verdict.delivered).toBe(true);
 		expect(verdict.channel).toBe("output");
+	});
+});
+
+// ── AC-009 assertion quality (VC-035) ────────────────────────────────────────
+
+/** Split `## <heading>` sections out of an output.md body (test-local helper;
+ * independent of `deliverable-evidence.ts`'s private splitter). */
+function outputSectionBodies(text: string): string[] {
+	const bodies: string[] = [];
+	let current: string[] | undefined;
+	for (const line of text.split(/\r?\n/)) {
+		if (line.startsWith("## ")) {
+			if (current) bodies.push(current.join("\n"));
+			current = [];
+			continue;
+		}
+		if (current) current.push(line);
+	}
+	if (current) bodies.push(current.join("\n"));
+	return bodies;
+}
+
+describe("AC-009 assertion quality (VC-035)", () => {
+	it("VC-035: the placeholder oracle equals the external 16-member list (not a self-count)", () => {
+		expect([...DELIVERABLE_PLACEHOLDERS].sort()).toEqual([...EXPECTED_PLACEHOLDERS].sort());
+	});
+
+	it("VC-035 control: a same-size member swap is caught (the old `.size == 16` was not)", () => {
+		const drifted = new Set(DELIVERABLE_PLACEHOLDERS);
+		drifted.delete("(none)");
+		drifted.add("(nope)");
+		// The pre-AC-009 criterion is still green on the drifted set ...
+		expect(drifted.size).toBe(16);
+		// ... while the member criterion fails.
+		expect(() => expect([...drifted].sort()).toEqual([...EXPECTED_PLACEHOLDERS].sort())).toThrow();
+	});
+
+	it("VC-035: the real writer's placeholder-only output is recognized by the oracle", () => {
+		const agenticdocRoot = path.join(mkdtemp("mwds-t04-vc035-"), ".agenticdoc");
+		for (const exitCode of [0, 1, 2, 130] as const) {
+			const taskKey = `t-${exitCode}`;
+			writeOutput({ taskKey, agenticdocRoot, exitCode, summary: "" });
+			const text = fs.readFileSync(path.join(agenticdocRoot, taskKey, "output.md"), "utf8");
+			const bodies = outputSectionBodies(text);
+			expect(bodies.length, `exit=${exitCode}`).toBeGreaterThan(0);
+			for (const body of bodies) {
+				expect(isPlaceholderBody(body), `exit=${exitCode} body=${JSON.stringify(body)}`).toBe(true);
+			}
+		}
 	});
 });
 
@@ -428,5 +512,56 @@ describe("AC-006 coexistence with the IN-3 dispatch guard (VC-029)", () => {
 		await dispatchNewTasks(freshStore, root, { onAlarm: (a) => freshAlarms.push(a) });
 		expect(freshAlarms).toEqual([]);
 		expect(freshStore.findByKey("t-1")?.status).toBe("pending");
+	});
+});
+
+// ── AC-008 deliverable-evidence branches (T-10 / BR-09, BR-10) ──────────────
+// Re-anchored coordinates: `shared/deliverable-evidence.ts:121-142`
+// (`sectionBodies`) vs `shared/output-sections.ts:66` (`SECTION_SPLIT_RE`), and
+// `deliverable-evidence.ts:155-168` (the `Number.isFinite(startedAtMs)`
+// freshness short-circuit). Parity is asserted explicitly, including the two
+// documented divergences.
+
+describe("AC-008 deliverable-evidence branches (BR-09/BR-10)", () => {
+	it("BR-09: the placeholder oracle and the section splitter diverge on `---`-only and heading-less text (pinned)", () => {
+		// The oracle keeps the harness `---` inside the body, so a `---`-only
+		// section is non-placeholder and the oracle reports a product; the output
+		// splitter strips the rule and yields an empty body.
+		expect(hasNonPlaceholderProduct("## Summary\n\n---\n")).toBe(true);
+		expect(readOutputSections("## Summary\n\n---\n").map((section) => section.body)).toEqual([""]);
+		// Heading-less free text: the oracle treats the whole text as one body; the
+		// section splitter produces no sections at all.
+		expect(hasNonPlaceholderProduct("delivered prose without a heading\n")).toBe(true);
+		expect(readOutputSections("delivered prose without a heading\n")).toEqual([]);
+		console.log("[VERIFY] AC-008/BR-09: hr_only_diverges=1 headingless_diverges=1");
+	});
+
+	it("BR-10: without run.json the evidence freshness axis is off (an old referenced file still delivers)", () => {
+		const keyDir = mkdtemp("mwds-t04-br10-");
+		const taskDir = path.join(keyDir, "workers", "t");
+		const evidence = path.join(keyDir, "evidence", "research");
+		fs.mkdirSync(evidence, { recursive: true });
+		const stale = path.join(evidence, "spec-old-20260101.md");
+		fs.writeFileSync(stale, "# old\n", "utf8");
+		fs.utimesSync(stale, new Date("2020-01-01T00:00:00Z"), new Date("2020-01-01T00:00:00Z"));
+		const text = "## TL;DR\n\nDONE — see evidence/research/spec-old-20260101.md\n";
+		// No run.json -> `startedAtMs` is NaN -> the mtime comparison is skipped.
+		expect(fs.existsSync(path.join(taskDir, "run.json"))).toBe(false);
+		expect(findReferencedEvidence(taskDir, text)).toBe("evidence/research/spec-old-20260101.md");
+		// Control (the T3 case owns the with-run.json direction): once a run record
+		// exists, the same stale file is rejected.
+		const runState: RunState = {
+			schema: RUN_SCHEMA,
+			task_key: "t",
+			run_id: "t@2026-01-01T00:00:00.000Z",
+			owner_key: "mwds-t04",
+			kind: "research",
+			status: "running",
+			started_at: new Date(Date.now() - 60_000).toISOString(),
+			artifacts: [],
+		};
+		writeRunState(taskDir, runState);
+		expect(findReferencedEvidence(taskDir, text)).toBeUndefined();
+		console.log("[VERIFY] AC-008/BR-10: no_run_json_off=1 with_run_json_rejected=1");
 	});
 });

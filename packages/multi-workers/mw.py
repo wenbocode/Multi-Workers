@@ -1786,15 +1786,18 @@ def _rag_audit_collect_calls(
 
 
 def _rag_task_meta(task_path: pathlib.Path) -> dict:
-    """task.md `type:` and `phase:` declarations (missing -> non-empty defaults)."""
-    task_type = ""
-    phase = ""
-    for raw in _rag_read_lines(task_path):
-        line = raw.strip()
-        if not task_type and line.startswith("type:"):
-            task_type = line[len("type:"):].strip()
-        elif not phase and line.startswith("phase:"):
-            phase = line[len("phase:"):].strip()
+    """task.md `type:` / `phase:` header declarations (missing -> "").
+
+    Both keys come from the AC-005 single source `mw_common.read_task_type` /
+    `read_task_header_scalar` (T-14): first value of the header region, BOM
+    stripped, body lines never win. Same judgement the worker uses, so role
+    attribution here cannot drift from the spawn-time role."""
+    try:
+        content = task_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {"type": "", "phase": ""}
+    task_type = mw_common.read_task_type(content).type or ""
+    phase = mw_common.read_task_header_scalar(content, "phase") or ""
     return {"type": task_type, "phase": phase}
 
 

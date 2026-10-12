@@ -1,4 +1,4 @@
-export type WorkerStatus = "pending" | "running" | "done" | "failed" | "needs-clarification";
+export type WorkerStatus = "pending" | "running" | "done" | "failed" | "needs-clarification" | "lost";
 /** Queue-row provenance (D-019/AC-021): `conductor` rows were dispatched by
  * the autopilot conductor, `manual` rows by a PM/TS dispatch. Row membership
  * is decided by this cell plus `taskPath` — never by the `ap-` task-key
@@ -36,10 +36,37 @@ export declare function workerOwnerKey(entry: WorkerEntry): string;
  * `origin` decides first — manual/legacy rows own no slot — and a conductor
  * row owns the key its `taskPath` anchors under. */
 export declare function workerBelongsToKey(entry: WorkerEntry, key: string): boolean;
+/** Why a raw queue line could not be read as a row. `cols` = the cell count fell
+ * outside the 7..9 window; `task-key` = the first cell is empty. */
+export type WorkerLineFailure = "cols" | "task-key";
+export interface UnparsableWorkerLine {
+    /** 0-based line index inside the queue file (headers and blanks included). */
+    index: number;
+    line: string;
+    reason: WorkerLineFailure;
+}
+export interface WorkerQueue {
+    rows: WorkerEntry[];
+    /** Non-empty, non-comment lines that are not readable rows. They are reported
+     * here instead of being dropped (AC-023), and the writer re-inserts them
+     * verbatim — an unreadable row can never turn into a silent deletion. */
+    unparsable: UnparsableWorkerLine[];
+    /** `mw-queue:vN` header value; 1 when the queue carries no header. */
+    version: number;
+}
+/** Reads the version header of one raw line, or `undefined` for anything else. */
+export declare function parseQueueHeader(line: string): number | undefined;
 export declare class WorkerStore {
     private readonly filePath;
     private readonly lockPath;
     constructor(agenticdocRoot: string);
+    /** Raw queue lines with the trailing newline dropped; `[]` when the file is
+     * absent or empty. Keeping the lines verbatim is what lets {@link upsert}
+     * rewrite one row without touching any other byte of the file (AC-023). */
+    private readRawLines;
+    /** The full queue read: rows, unreadable lines (counted, never dropped) and
+     * the declared layout version. Blank lines and `#` comments are neither. */
+    readQueue(): WorkerQueue;
     readAll(): WorkerEntry[];
     upsert(entry: WorkerEntry): Promise<void>;
     findByKey(taskKey: string): WorkerEntry | undefined;

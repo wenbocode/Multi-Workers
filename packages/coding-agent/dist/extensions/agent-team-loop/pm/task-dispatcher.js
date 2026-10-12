@@ -4,6 +4,7 @@ import { RAG_MARKER_V1, renderRagBlock } from "../rag/block.js";
 import { loadRagConfig } from "../rag/config.js";
 import { controlRootFromTaskPath } from "../shared/paths.js";
 import { renderToolchainCommand, resolveWorkspaceConfig } from "../shared/target-config.js";
+import { readTaskHeaderScalar, readTaskType } from "../shared/task-frontmatter.js";
 /** Sentinel opening the legacy (dual/single) profile block — makes
  * re-dispatch idempotent (the block is appended at most once per task.md).
  * Dual/single keep this marker and its rendered text byte-identical
@@ -110,11 +111,14 @@ function headerInt(content, header) {
     const value = Number(match[1]);
     return Number.isFinite(value) && value > 0 ? value : undefined;
 }
-/** Task metadata `renderRagBlock` needs, read from the task.md frontmatter. */
+/** Task metadata `renderRagBlock` needs, read from the task.md frontmatter.
+ * `type:`/`phase:` go through the single-source header parser (AC-005): the
+ * old `/^type:/m` and `/^phase:/m` regexes read the whole file, so a body line
+ * could inject a header key into the RAG render. */
 function parseRagTaskMeta(content) {
     return {
-        type: /^type:[ \t]*(.+?)[ \t]*$/m.exec(content)?.[1],
-        phase: /^phase:[ \t]*(.+?)[ \t]*$/m.exec(content)?.[1],
+        type: readTaskType(content).type,
+        phase: readTaskHeaderScalar(content, "phase"),
         chatBudget: headerInt(content, "rag_chat_budget:"),
         timeBudgetS: headerInt(content, "rag_time_budget_s:"),
     };

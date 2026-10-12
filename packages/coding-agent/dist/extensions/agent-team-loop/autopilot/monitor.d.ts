@@ -23,10 +23,15 @@
  *      interval singleton (D-001: independent from the watch poll loop,
  *      which is key-scoped). start renders the FIRST FRAME synchronously
  *      (AC-001 met with zero ticks), then re-reads every intervalMs. Read
- *      errors (transient rename/lock races) skip the tick silently — the
- *      panel keeps the last frame (§9). The `apply` callback is injected by
- *      console.ts (it wraps ctx.ui.setWidget), so this module holds no pi
- *      dependency — that is the test seam.
+ *      errors (transient rename/lock races) no longer drop the frame: the
+ *      tick emits a DEGRADED frame that reuses the last good payload and
+ *      carries the failure time + summary (AC-017/D-018). Every frame also
+ *      self-attests its freshness with an absolute collection stamp plus a
+ *      monotonic tick count, and the header raises STALE PANEL once the
+ *      stamp has not moved for more than PANEL_STALE_MISSED_CYCLES periods
+ *      (AC-015/D-017). The `apply` callback is injected by console.ts (it
+ *      wraps ctx.ui.setWidget), so this module holds no pi dependency —
+ *      that is the test seam.
  *
  * PURE READ-ONLY (AC-008): no fs write API anywhere in this file; the
  * on/off state lives only in module memory (AC-009), never in config.json.
@@ -38,6 +43,14 @@ import { type ConfigResult, type RoadmapResult, type TimelineEvent } from "./sta
 export declare const MONITOR_WIDGET_ID = "agent-team-loop-monitor";
 /** Poll cadence — the same 4s beat as the watch widget (spec §2.2). */
 export declare const MONITOR_INTERVAL_MS = 4000;
+/** G4 AC-015: how many refresh periods the frame stamp may sit still before
+ * the header must say STALE PANEL. AC-015 fixes the bound at "more than 3
+ * refresh periods". This is the panel-cadence instance of the conductor's
+ * `staleAfterMs = max(30s, pollMs*5)` / `tickStale` mechanism (a small
+ * multiple of the observed cadence) — deliberately not a re-use of that
+ * variable's VALUE, because the conductor beat and the panel refresh are
+ * separate clocks. */
+export declare const PANEL_STALE_MISSED_CYCLES = 3;
 export interface MonitorServe {
     running: boolean;
     pid: number | null;
@@ -130,6 +143,38 @@ export interface MonitorSnapshot {
     autopilot: MonitorAutopilot;
     workers: MonitorWorker[];
     gates: MonitorGate[];
+    /** G2 AC-007/AC-008 (design D-008/D-009): a pending gate exists AND no
+     * non-terminal worker row is in flight — the file-only truth table shared
+     * verbatim with the Python reminder (T-07, `blockedOnHuman` in
+     * status-model.ts). The third axis ("conductor still ticking") is TS-only
+     * and stays render-time: see the `BLOCKED_ON_HUMAN` line in
+     * {@link renderMonitorLines}, which also requires `!autopilot.tickStale`. */
+    blockedOnHuman: boolean;
+    /** G4 AC-015 (D-017): absolute wall-clock ms (`Date.now()`) of the LAST
+     * SUCCESSFUL collection behind this frame — NOT a frame-relative age (which
+     * is always 0 at render time and therefore proves nothing). A frozen panel
+     * stops advancing here, so this is the one in-frame fact that can tell a
+     * frozen frame from a live one. Absent on hand-built snapshots. */
+    collectedAtMs?: number;
+    /** G4 AC-015: monotonic count of successful collections since module load.
+     * Never reset by stop()/re-arm (`startMonitor`), so freshness cannot be
+     * faked by going back to 0 (D-017). */
+    tickCount?: number;
+    /** G4 AC-015: the frame's own stamp has not advanced for more than
+     * `PANEL_STALE_MISSED_CYCLES` refresh periods ⇒ the header says STALE
+     * PANEL. Set by the tick loop, the only place that knows the cadence and
+     * the wall clock. */
+    stale?: boolean;
+    /** G4 AC-015: `no refresh since <iso>, <duration>` when `stale`; rendered
+     * verbatim inside the header alert. */
+    staleDetail?: string;
+    /** G4 AC-017 (D-018): this frame is DEGRADED — the read threw, so the payload
+     * is the last good snapshot plus diagnostics (never a dropped frame). */
+    degraded?: boolean;
+    /** G4 AC-017: wall-clock ms of the failed read that produced this frame. */
+    lastErrorAtMs?: number;
+    /** G4 AC-017: one-line error summary (`name: message`, capped). */
+    lastError?: string;
 }
 /** Resolve one `evidence_refs` entry (`kind:relpath[#sha][@mtime_ns]`)
  * against the project's `.agenticdoc/` first, then the project root. */
@@ -176,7 +221,8 @@ export declare function deriveAutopilotPanel(projectDir: string, nowMs: number, 
  * present (0 running folds to the "workers: 0 running" header, 0 pending to
  * "gates: 0 pending") so the panel's height — and therefore the editor
  * layout — never flickers between ticks (§9). All lines cap at
- * MONITOR_LINE_MAX columns with an ellipsis.
+ * MONITOR_LINE_MAX columns with an ellipsis. The first line is the
+ * self-attesting header (see {@link monitorHeaderLine}).
  */
 export declare function renderMonitorLines(s: MonitorSnapshot): string[];
 export declare function isMonitorActive(): boolean;
@@ -184,9 +230,11 @@ export declare function isMonitorActive(): boolean;
  * Start the monitor. Idempotent: already active → true, nothing changes.
  * The FIRST FRAME renders synchronously before this returns (AC-001 with
  * zero ticks), then every `intervalMs` (default 4000ms) the state is
- * re-derived and re-rendered. A read that throws (transient file race)
- * skips that tick silently — the panel keeps the previous frame and the
- * next tick retries.
+ * re-derived and re-rendered. A read that throws no longer skips the tick: it
+ * emits a DEGRADED frame (last good payload + failure time + summary) so a
+ * failing panel can never be silently frozen (AC-017). A failure of the widget
+ * write itself is not recoverable from here — the next tick retries (re-arming
+ * after a session swap is T-12/D-019, not this task).
  */
 export declare function startMonitor(projectDir: string, apply: (lines: string[] | undefined) => void, opts?: {
     intervalMs?: number;

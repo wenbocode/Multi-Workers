@@ -11,14 +11,17 @@
  * section and the default C1 `write_scope:` header. `coding` and the other
  * write roles are untouched.
  *
- * The judgement is the rule set from the card: write verb + a path that starts
- * right after it, five allow-guards (negation / read-marker / fenced code /
- * quotation / PM attribution), then the whitelist (worker_file basenames,
- * framework-owned names, own task dir). The corpus replay below is the hard
+ * The judgement is the rule set from the card: write verb + the token right
+ * after it (gap <= 32, anchored character class — no extension enumeration),
+ * five allow-guards (negation / read-marker / fenced code / quotation / PM
+ * attribution), then the whitelist in ORDER: deny prefixes -> own task dir
+ * (realpath + segment boundary) -> no-dir-component basename channel (worker_file
+ * / framework names) -> path-shape refusal. The corpus replay below is the hard
  * acceptance: on every `.agenticdoc/<key>/workers/<taskKey>/task.md` in the
- * repo, the writeless-without-shell set must yield at most two hits and zero false
- * positives — the one true positive is the R22 incident card the rule exists
- * for.
+ * repo, the writeless-without-shell set must yield zero false positives — the hit
+ * COUNT is a growth quantity (RQ-3: 2 -> 13 after the shape axis, AC-004) and is
+ * logged, not asserted; the assertion is that the violation set is the one known
+ * R22 incident card (the rule exists for it).
  */
 
 import * as fs from "node:fs";
@@ -29,9 +32,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../src/core/extensions/types.ts";
 import {
 	applyWriteSurfaceContract,
+	classifyWriteTargetShape,
 	collectWriteIntentHits,
 	isWhitelistedWriteTarget,
 	judgeWriteIntent,
+	judgeWriteTarget,
 	registerWorkerCommands,
 	registerWorkerTools,
 	renderWriteSurfaceContract,
@@ -46,6 +51,7 @@ import {
 import { AckStore } from "../../src/extensions/agent-team-loop/shared/ack-store.ts";
 import { IndexStore } from "../../src/extensions/agent-team-loop/shared/index-store.ts";
 import { WorkerStore } from "../../src/extensions/agent-team-loop/shared/worker-store.ts";
+import { isSameOrUnder, normalizeForCompare } from "../../src/extensions/agent-team-loop/worker/read-scope.ts";
 import { WORKER_FILE_NAME_RE } from "../../src/extensions/agent-team-loop/worker/worker-file-tool.ts";
 import { isShellRole, isWritelessRole } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
 
@@ -211,7 +217,12 @@ function markerCount(text: string, marker: string): number {
 }
 
 const PROJECT = path.resolve(os.tmpdir(), "mwds-t02-project");
-const TASK_DIR = path.join(PROJECT, "k", "workers", "t02");
+// A4 fix (AC-003/VC-046): the fixture mirrors the REAL layout, so
+// `.agenticdoc/k/workers/t02/report.md` is the own-taskDir case it was meant to
+// be. Without the `.agenticdoc` segment the old basename-blind implementation
+// resolved it OUTSIDE the task dir and still returned true — the directory
+// blindness this axis removes.
+const TASK_DIR = path.join(PROJECT, ".agenticdoc", "k", "workers", "t02");
 
 function verdict(description: string, type = "review", allowForeignWrite = false) {
 	return judgeWriteIntent({ type, description, taskDir: TASK_DIR, projectRoot: PROJECT, allowForeignWrite });
@@ -451,6 +462,194 @@ describe("AC-005a whitelist (VC-015 /reverse b)", () => {
 	});
 });
 
+// ── VC-011: basename whitelist must not bypass the directory check (AC-003) ─
+
+describe("AC-003 directory blindness (VC-011)", () => {
+	it("a whitelisted basename does not whitelist a foreign directory", () => {
+		const negatives = [
+			"../other-key/workers/other-task/output.md",
+			".agenticdoc/other-key/workers/other-task/output.md",
+			"..\\o\\pm-state.md",
+			path.join(path.parse(PROJECT).root, "elsewhere", "trace.log"),
+		];
+		const bypassed = negatives.filter((token) =>
+			isWhitelistedWriteTarget(token, { taskDir: TASK_DIR, projectRoot: PROJECT }),
+		);
+		console.log(`[VERIFY] VC-011: dir_blind_bypass=${bypassed.length} checked=${negatives.length}`);
+		expect(bypassed).toEqual([]);
+	});
+
+	it("the own-taskDir relative form stays allowed (fixture semantics, VC-046)", () => {
+		expect(
+			isWhitelistedWriteTarget(".agenticdoc/k/workers/t02/report.md", { taskDir: TASK_DIR, projectRoot: PROJECT }),
+		).toBe(true);
+	});
+});
+
+// ── VC-015/016/018: target-shape axis (AC-004) ──────────────────────────────
+
+describe("AC-004 target-shape axis (VC-015)", () => {
+	const leakSamples = ["config.toml", "Makefile", ".env", "x.html", "x.rs"];
+
+	it("the five QG-B leak samples are refused (leak_caught=5/5)", () => {
+		const missed = leakSamples.filter((token) => verdict(`写入 ${token}`).ok);
+		console.log(`[VERIFY] VC-015: leak_caught=${leakSamples.length - missed.length}/${leakSamples.length}`);
+		expect(missed).toEqual([]);
+	});
+
+	it("controls: the framework channel stays open, the pre-existing extension case stays refused", () => {
+		expect(verdict("写入 report.md").ok).toBe(true);
+		expect(verdict("写入 a.ts").ok).toBe(false);
+	});
+});
+
+describe("AC-004 shape discovery (VC-016)", () => {
+	it("no-extension and non-enumerated extensions are discovered", () => {
+		for (const token of [".agenticdoc/_index.parallel", ".git/config", "packages/x.rs"]) {
+			const hits = collectWriteIntentHits(`写入 ${token}`);
+			expect(
+				hits.map((h) => h.path),
+				token,
+			).toContain(token);
+		}
+	});
+});
+
+describe("AC-004 bare tokens introduce no false positives (VC-018)", () => {
+	const proseTokens = ["your", "design", "mcp", "side", "surface", "message_update", "-pattern"];
+
+	it("prose words are discovered as tokens but pass the shape filter", () => {
+		const falsePositives = proseTokens.filter((token) => !verdict(`写入 ${token}`).ok);
+		console.log(`[VERIFY] VC-018: bare_token_fp=${falsePositives.length} checked=${proseTokens.length}`);
+		expect(falsePositives).toEqual([]);
+	});
+});
+
+// ── VC-012/013/017/019: the target axis internals (AC-003/AC-004) ────────────
+
+/** Real temp tree for the axis-internals cases; returns the write-surface ctx. */
+function axisCtx(): { root: string; keyDir: string; taskDir: string; ctx: Parameters<typeof judgeWriteTarget>[1] } {
+	const root = mkdtemp();
+	const agenticdocRoot = path.join(root, ".agenticdoc");
+	const keyDir = path.join(agenticdocRoot, "k");
+	const taskDir = path.join(keyDir, "workers", "t");
+	fs.mkdirSync(taskDir, { recursive: true });
+	return { root, keyDir, taskDir, ctx: { taskDir, projectRoot: root, keyDir, trueRoot: agenticdocRoot } };
+}
+
+describe("AC-004 containment uses one normalizer (read-scope parity, VC-012)", () => {
+	it("judgeWriteTarget matches read-scope containment on the `..` and segment-boundary matrix", () => {
+		const { root, keyDir, taskDir, ctx } = axisCtx();
+		const agenticdocRoot = path.join(root, ".agenticdoc");
+		const matrix: Array<{ p: string; want: boolean }> = [
+			{ p: path.join(taskDir, "report.md"), want: true },
+			{ p: path.join(taskDir, "..", "t2", "report.md"), want: false },
+			{ p: path.join(agenticdocRoot, "kk", "evidence", "x.md"), want: false },
+			{ p: path.join(keyDir, "workers", "t", "..", "t", "notes.md"), want: true },
+		];
+		for (const c of matrix) {
+			const parity = isSameOrUnder(normalizeForCompare(root, taskDir), normalizeForCompare(root, c.p));
+			expect(parity, c.p).toBe(c.want);
+			expect(judgeWriteTarget(c.p, ctx).allowed, c.p).toBe(c.want);
+		}
+		console.log(`[VERIFY] VC-012: parity_cases=${matrix.length} normalizer=read-scope`);
+	});
+});
+
+describe("AC-004 own surface and framework names still pass (VC-013)", () => {
+	it("own taskDir absolute + framework basenames are allowed under the deny table", () => {
+		const { taskDir, ctx } = axisCtx();
+		expect(judgeWriteTarget(path.join(taskDir, "notes.md"), ctx).allowed).toBe(true);
+		expect(judgeWriteTarget("report.md", ctx).allowed).toBe(true);
+		expect(judgeWriteTarget("report-adversarial.md", ctx).allowed).toBe(true);
+		expect(judgeWriteTarget("progress.md", ctx).allowed).toBe(true);
+		expect(judgeWriteTarget("output.md", ctx).allowed).toBe(true);
+		expect(judgeWriteTarget("trace.log", ctx).allowed).toBe(true);
+	});
+});
+
+describe("AC-004 deny prefix outranks the shape branch (VC-017)", () => {
+	it("pm-state.md / workers/_workers* / _index.parallel return rule=deny", () => {
+		const { root, keyDir, ctx } = axisCtx();
+		const agenticdocRoot = path.join(root, ".agenticdoc");
+		const cases: Array<{ token: string; detail: string }> = [
+			{ token: path.join(keyDir, "pm-state.md"), detail: "denied:pm-state.md" },
+			{ token: path.join(keyDir, "workers", "_workers.parallel"), detail: "denied:workers/_workers*" },
+			{ token: path.join(agenticdocRoot, "_index.parallel"), detail: "denied:_index.parallel" },
+			{
+				token: path.join(agenticdocRoot, "other-key", "pm-state.md"),
+				detail: "denied:other key dir / .agenticdoc root",
+			},
+		];
+		for (const c of cases) {
+			const judged = judgeWriteTarget(c.token, ctx);
+			expect(judged.allowed, c.token).toBe(false);
+			expect(judged.rule, c.token).toBe("deny");
+			expect(judged.detail, c.token).toBe(c.detail);
+		}
+		console.log(`[VERIFY] VC-017: deny_cases=${cases.length} deny_outranks_shape=true`);
+	});
+});
+
+describe("AC-004 shape table (VC-015/VC-019)", () => {
+	it("classifies the token without enumerating extensions", () => {
+		const { root, ctx } = axisCtx();
+		const shapes: Array<{ token: string; shape: string }> = [
+			{ token: "/", shape: "punct" },
+			{ token: "1.2.3", shape: "version" },
+			{ token: "e.g.", shape: "abbrev" },
+			{ token: "your", shape: "bare" },
+			{ token: "message_update", shape: "bare" },
+			{ token: "-pattern", shape: "bare" },
+			{ token: ".env", shape: "dot-lead" },
+			{ token: "config.toml", shape: "ext" },
+			{ token: "x.rs", shape: "ext" },
+			{ token: "Makefile", shape: "deny-name" },
+			{ token: "package.json::$DATA", shape: "ads" },
+			{ token: "C:foo.md", shape: "drive-relative" },
+			{ token: "packages/x.rs", shape: "sep" },
+		];
+		for (const c of shapes) expect(classifyWriteTargetShape(c.token, { projectRoot: root }), c.token).toBe(c.shape);
+		// Deny-name and shape-only refusal carry distinct rules (AC-008 branches).
+		expect(judgeWriteTarget("Makefile", ctx).rule).toBe("scope");
+		expect(judgeWriteTarget("config.toml", ctx).shape).toBe("ext");
+		console.log(`[VERIFY] VC-015: shape_table=${shapes.length} extensions_enumerated=0`);
+	});
+
+	it("Windows boundary rulings (VC-019): every form lands on the refusal side", () => {
+		const { taskDir, ctx } = axisCtx();
+		// W1: `..`/duplicate separators collapse lexically (own surface stays allowed).
+		expect(judgeWriteTarget(path.join(taskDir, ".", "..", "t", "output.md"), ctx).allowed).toBe(true);
+		// W3: drive-relative `C:foo` is unjudgeable statically => refuse.
+		expect(judgeWriteTarget("C:foo", ctx)).toMatchObject({ allowed: false, shape: "drive-relative" });
+		// W4: UNC share => path shape outside the surface => refuse.
+		expect(judgeWriteTarget("//server/share/x.md", ctx).allowed).toBe(false);
+		// W5: long-path prefix => path shape outside the surface => refuse.
+		expect(judgeWriteTarget("\\\\?\\H:\\x\\y.md", ctx).allowed).toBe(false);
+		// W6: trailing dot/space inside the own surface is still the own surface.
+		expect(judgeWriteTarget(path.join(taskDir, "report.md."), ctx).allowed).toBe(true);
+		expect(judgeWriteTarget("Makefile.", ctx)).toMatchObject({ allowed: false, shape: "deny-name" });
+		// W7: ADS stream form is labelled `ads` (before `ext`) and refused.
+		expect(judgeWriteTarget("x.md::$DATA", ctx)).toMatchObject({ allowed: false, shape: "ads" });
+		// W9: non-ASCII filenames are still outside the token character class.
+		//          Documented fail-open residual R-4 (no CJK in the extraction axis).
+		const cjk = collectWriteIntentHits("写入 报告.md");
+		console.log(`[VERIFY] VC-019: w9_cjk_hits=${cjk.length} (documented residual, fail-open)`);
+		expect(cjk).toEqual([]);
+	});
+
+	it("Windows case-insensitive containment (W2)", () => {
+		if (process.platform !== "win32") {
+			console.log("[VERIFY] VC-019: w2_skipped_non_win32");
+			return;
+		}
+		const { taskDir, ctx } = axisCtx();
+		const upper = path.join(taskDir.toUpperCase(), "REPORT.MD");
+		expect(judgeWriteTarget(upper, ctx).allowed).toBe(true);
+		console.log(`[VERIFY] VC-019: w2_case_fold path=${upper}`);
+	});
+});
+
 describe("AC-005a shell role research is not refused (VC-015 /reverse c)", () => {
 	it("research gets the contract section + default write_scope instead of a refusal", async () => {
 		const root = mkdtemp();
@@ -513,5 +712,62 @@ describe("AC-005a refusal text (VC-015)", () => {
 		expect(text).toContain("worker_file");
 		expect(text).toContain("allow_foreign_write");
 		expect(text).toContain("type: coding | repair | vision");
+	});
+});
+
+// ── AC-008 branch coverage + T-04 residuals (T-10 / BR-14, R-1…R-4, W9) ─────
+
+describe("AC-008/BR-14 shape-axis window bound (ui-bridge.ts:1402-1406)", () => {
+	it("a >32-char verb-to-path gap leaks by design; <=32 is discovered", () => {
+		// WRITE_INTENT_PATH_WINDOW = 32: gapLen > 32 is dropped (the documented
+		// window leak), so the boundary is pinned on both sides.
+		expect(collectWriteIntentHits(`写入${" ".repeat(32)}config.toml`).map((h) => h.path)).toEqual(["config.toml"]);
+		expect(collectWriteIntentHits(`写入${" ".repeat(33)}config.toml`).map((h) => h.path)).toEqual([]);
+		console.log("[VERIFY] AC-008/BR-14: gap_32_hit=1 gap_33_hit=0 window=32 documented_leak=1");
+	});
+});
+
+describe("AC-008 T-04 residuals R-1…R-4 / W9 (documented limitations)", () => {
+	it("R-1: path-shaped prose is refused (fail-closed, the safe direction)", () => {
+		const tokens = ["foo.bar", "and/or", "12:30", "write_scope:"];
+		const observed = tokens.map((token) => ({
+			token,
+			shape: classifyWriteTargetShape(token, { projectRoot: PROJECT }),
+			ok: verdict(`写入 ${token}`).ok,
+		}));
+		expect(observed).toEqual([
+			{ token: "foo.bar", shape: "ext", ok: false },
+			{ token: "and/or", shape: "sep", ok: false },
+			{ token: "12:30", shape: "colon", ok: false },
+			{ token: "write_scope:", shape: "colon", ok: false },
+		]);
+		console.log("[VERIFY] AC-008/R-1: path_shaped_prose_refused=4 fail_closed=1");
+	});
+
+	it("R-2: a path after a prose word in the same clause is not discovered (fail-open)", () => {
+		const text = "write your report to .agenticdoc/other/evidence/x.md";
+		expect(collectWriteIntentHits(text).map((h) => h.path)).toEqual(["your"]);
+		// `your` is a bare token: discovered, never refused. The later path is lost.
+		expect(verdict(text).ok).toBe(true);
+		console.log("[VERIFY] AC-008/R-2: hits=1 token=your later_path_lost=1 fail_open=1");
+	});
+
+	it("R-3: a new extension-less bare name is allowed; the 11-name deny table still refuses", () => {
+		expect(classifyWriteTargetShape("Taskfile", { projectRoot: PROJECT })).toBe("bare");
+		expect(verdict("写入 Taskfile").ok).toBe(true);
+		// Control: a name in the finite deny table is refused.
+		expect(classifyWriteTargetShape("Makefile", { projectRoot: PROJECT })).toBe("deny-name");
+		expect(verdict("写入 Makefile").ok).toBe(false);
+		console.log("[VERIFY] AC-008/R-3: Taskfile_allowed=1 Makefile_refused=1");
+	});
+
+	it("R-4/W9: a token that starts with a CJK character is not extracted (cjk_hits=0)", () => {
+		expect(collectWriteIntentHits("写入 报告.md")).toEqual([]);
+		// A CJK segment after an ASCII prefix truncates the token at the CJK char,
+		// so only the ASCII prefix is judged (and refused as a separator shape).
+		expect(collectWriteIntentHits("写入 .agenticdoc/keys/报告/evidence/x.md").map((h) => h.path)).toEqual([
+			".agenticdoc/keys/",
+		]);
+		console.log("[VERIFY] AC-008/R-4: cjk_start_hits=0 cjk_truncated_prefix=1");
 	});
 });

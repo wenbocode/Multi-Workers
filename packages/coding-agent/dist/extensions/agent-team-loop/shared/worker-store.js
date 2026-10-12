@@ -36,25 +36,39 @@ export function workerOwnerKey(entry) {
 export function workerBelongsToKey(entry, key) {
     return workerOrigin(entry) === "conductor" && workerOwnerKey(entry) === key;
 }
+/** `mw-queue:vN` version header (AC-023). Optional by design: a queue without
+ * a header reads as v1, and an existing header-less file is never rewritten to
+ * add one (P-018). Both readers skip `#` lines (`mw_common.parse_workers_file`
+ * does the same), so the header never changes row parsing. */
+const QUEUE_HEADER_RE = /^#\s*mw-queue:v(\d+)\s*$/;
+const QUEUE_HEADER_V2 = "# mw-queue:v2";
+/** Reads the version header of one raw line, or `undefined` for anything else. */
+export function parseQueueHeader(line) {
+    const match = QUEUE_HEADER_RE.exec(line.trim());
+    return match ? Number(match[1]) : undefined;
+}
 function parseWorkerLine(line) {
     const parts = line.split("|");
     // Tolerate legacy 7-column rows (no model), 8-column rows (no origin) and
     // the current 9-column layout (origin last).
     if (parts.length < WORKER_COLS_MIN || parts.length > WORKER_COLS_MAX)
-        return undefined;
+        return { ok: false, reason: "cols" };
     const [taskKey, status, cli, provider, taskPath, dispatchedAt, updatedAt, model, origin] = parts.map((s) => s.trim());
     if (!taskKey || taskKey.startsWith("#"))
-        return undefined;
+        return { ok: false, reason: "task-key" };
     return {
-        taskKey: taskKey ?? "",
-        status: (status ?? "pending"),
-        cli: cli ?? "",
-        provider: provider ?? "",
-        taskPath: taskPath ?? "",
-        dispatchedAt: dispatchedAt ?? "",
-        updatedAt: updatedAt ?? "",
-        model: model ?? "",
-        origin: origin === undefined || origin === "" ? undefined : normalizeWorkerOrigin(origin),
+        ok: true,
+        entry: {
+            taskKey: taskKey ?? "",
+            status: (status ?? "pending"),
+            cli: cli ?? "",
+            provider: provider ?? "",
+            taskPath: taskPath ?? "",
+            dispatchedAt: dispatchedAt ?? "",
+            updatedAt: updatedAt ?? "",
+            model: model ?? "",
+            origin: origin === undefined || origin === "" ? undefined : normalizeWorkerOrigin(origin),
+        },
     };
 }
 function serializeWorkerLine(entry) {
@@ -80,24 +94,69 @@ export class WorkerStore {
         this.filePath = path.join(agenticdocRoot, "_workers.parallel");
         this.lockPath = path.join(agenticdocRoot, "..", ".mw", "workers.lock");
     }
-    readAll() {
+    /** Raw queue lines with the trailing newline dropped; `[]` when the file is
+     * absent or empty. Keeping the lines verbatim is what lets {@link upsert}
+     * rewrite one row without touching any other byte of the file (AC-023). */
+    readRawLines() {
         if (!fs.existsSync(this.filePath))
             return [];
         const lines = fs.readFileSync(this.filePath, "utf8").split("\n");
-        return lines.map(parseWorkerLine).filter((e) => e !== undefined);
+        if (lines.length > 0 && lines[lines.length - 1] === "")
+            lines.pop();
+        return lines;
+    }
+    /** The full queue read: rows, unreadable lines (counted, never dropped) and
+     * the declared layout version. Blank lines and `#` comments are neither. */
+    readQueue() {
+        const rows = [];
+        const unparsable = [];
+        let version = 1;
+        for (const [index, line] of this.readRawLines().entries()) {
+            if (line.trim() === "")
+                continue;
+            if (line.trimStart().startsWith("#")) {
+                const header = parseQueueHeader(line);
+                if (header !== undefined && index === 0)
+                    version = header;
+                continue;
+            }
+            const parsed = parseWorkerLine(line);
+            if (parsed.ok)
+                rows.push(parsed.entry);
+            else
+                unparsable.push({ index, line, reason: parsed.reason });
+        }
+        return { rows, unparsable, version };
+    }
+    readAll() {
+        return this.readQueue().rows;
     }
     async upsert(entry) {
         const release = await acquireLock(this.lockPath);
         try {
-            const existing = this.readAll();
-            const idx = existing.findIndex((e) => e.taskKey === entry.taskKey);
+            const raw = this.readRawLines();
+            const replacement = serializeWorkerLine(entry);
+            const idx = raw.findIndex((line) => {
+                if (line.trim() === "" || line.trimStart().startsWith("#"))
+                    return false;
+                const parsed = parseWorkerLine(line);
+                return parsed.ok && parsed.entry.taskKey === entry.taskKey;
+            });
+            let lines;
             if (idx >= 0) {
-                existing[idx] = entry;
+                // In-place row replacement; every other line (including unreadable
+                // rows and comments) stays byte-identical.
+                lines = raw.map((line, i) => (i === idx ? replacement : line));
+            }
+            else if (raw.length === 0) {
+                // Brand-new queue: stamp the current layout version.
+                lines = [QUEUE_HEADER_V2, replacement];
             }
             else {
-                existing.push(entry);
+                // Existing file: append, and never add a header retroactively (P-018).
+                lines = [...raw, replacement];
             }
-            const content = `${existing.map(serializeWorkerLine).join("\n")}\n`;
+            const content = `${lines.join("\n")}\n`;
             const tmpPath = `${this.filePath}.tmp`;
             fs.writeFileSync(tmpPath, content, "utf8");
             fs.renameSync(tmpPath, this.filePath);

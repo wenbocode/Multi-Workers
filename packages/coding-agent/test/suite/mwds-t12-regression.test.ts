@@ -133,8 +133,8 @@ describe("seam C1/C2: write_scope header (T-02) consumed by the bash guard (T-03
 		expect(meta.writeScope).toEqual([`.agenticdoc/k/workers/${taskKey}`, ".agenticdoc/k/evidence"]);
 		const taskDir = path.join(p.agenticdocRoot, "k", "workers", taskKey);
 		const cfg = scopeConfig(p, taskDir, meta.writeScope);
-		expect(checkBashWriteScopeTarget(cfg, ".agenticdoc/k/evidence/x.md").allowed).toBe(true);
-		expect(checkBashWriteScopeTarget(cfg, `.agenticdoc/k/workers/${taskKey}/report.md`).allowed).toBe(true);
+		expect(checkBashWriteScopeTarget(cfg, ".agenticdoc/k/evidence/x.md", true).allowed).toBe(true);
+		expect(checkBashWriteScopeTarget(cfg, `.agenticdoc/k/workers/${taskKey}/report.md`, true).allowed).toBe(true);
 
 		// A narrower producer line excludes the key evidence tree: the consumer
 		// must honour it (intersection), not fall back to the default surface.
@@ -146,7 +146,7 @@ describe("seam C1/C2: write_scope header (T-02) consumed by the bash guard (T-03
 			path.join(p.agenticdocRoot, "k", "workers", narrowedKey),
 			narrowedMeta.writeScope,
 		);
-		const blocked = checkBashWriteScopeTarget(narrowedCfg, ".agenticdoc/k/evidence/x.md");
+		const blocked = checkBashWriteScopeTarget(narrowedCfg, ".agenticdoc/k/evidence/x.md", true);
 		expect(blocked.allowed).toBe(false);
 		expect(blocked.rule).toBe("write-scope");
 	});
@@ -161,6 +161,7 @@ describe("seam C1/C2: write_scope header (T-02) consumed by the bash guard (T-03
 			checkBashWriteScopeTarget(
 				scopeConfig(p, path.join(p.agenticdocRoot, "k", "workers", "t-absent"), absentMeta.writeScope),
 				".agenticdoc/k/evidence/x.md",
+				true,
 			).allowed,
 		).toBe(true);
 
@@ -173,6 +174,7 @@ describe("seam C1/C2: write_scope header (T-02) consumed by the bash guard (T-03
 		const verdict = checkBashWriteScopeTarget(
 			scopeConfig(p, blankDir, blankMeta.writeScope),
 			".agenticdoc/k/evidence/x.md",
+			true,
 		);
 		expect(verdict.allowed).toBe(false);
 		expect(verdict.rule).toBe("write-scope");

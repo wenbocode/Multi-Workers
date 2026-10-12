@@ -34,6 +34,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { IndexStore } from "../shared/index-store.ts";
+import { extractTaskHeader } from "../shared/task-frontmatter.ts";
 
 // ── Autopilot file-family paths (explicit, derived from projectDir) ─────────
 
@@ -1239,7 +1240,9 @@ const TASK_FM_LINE_RE = /^([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*?)[ \t]*$/;
 /** Frontmatter scalar labels of one task.md (loop/attempt/origin/type...).
  * Lenient mirror of state.py parse_task_labels: a missing frontmatter or a
  * malformed line simply yields no label; nested blocks (read_scope lists)
- * are skipped, not parsed. */
+ * are skipped, not parsed. The header boundary comes from the single-source
+ * extractor (AC-005/P3) while the fenced-only semantics stay local: a task.md
+ * with no `---` fence has no autopilot labels here. */
 export function parseTaskLabels(taskMdPath: string): Map<string, string> {
 	let text: string;
 	try {
@@ -1247,12 +1250,12 @@ export function parseTaskLabels(taskMdPath: string): Map<string, string> {
 	} catch {
 		return new Map();
 	}
+	const region = extractTaskHeader(text);
+	if (!region.fenced) return new Map();
 	const lines = text.split(/\r\n|\r|\n/);
-	if (lines.length === 0 || lines[0].trim() !== "---") return new Map();
 	const labels = new Map<string, string>();
-	for (let i = 1; i < lines.length; i++) {
-		const line = lines[i];
-		if (line.trim() === "---") break;
+	for (let i = region.startLine; i <= region.endLine; i++) {
+		const line = lines[i] ?? "";
 		const m = TASK_FM_LINE_RE.exec(line);
 		if (m === null) continue;
 		labels.set(m[1] ?? "", m[2] ?? "");

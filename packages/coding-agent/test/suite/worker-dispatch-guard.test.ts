@@ -549,3 +549,56 @@ describe("run identity wiring (T-20, AC-022)", () => {
 		}
 	});
 });
+
+// ── T-17/F-6: the dispatch route follows the header only ─────────────────────
+// QG-A found a seventh `type:` reader: `pm-orchestrator.ts` matched
+// `/^type:\s*codex/im` against the WHOLE task.md, so one body line could flip
+// the dispatch CLI away from pi (no TS guard survives on a codex worker). The
+// route now reads the shared single source (`readTaskType`).
+
+describe("T-17 F-6 dispatch route is header-only", () => {
+	function writeRawTask(root: string, key: string, taskKey: string, content: string): void {
+		const dir = path.join(root, key, "workers", taskKey);
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, "task.md"), content, "utf8");
+	}
+
+	it("a body-only `type: codex` line does not flip the dispatch CLI", async () => {
+		const root = mkdtemp();
+		writePhaseDocs(root, "k");
+		writeRawTask(root, "k", "t-body", "type: research\n\ndig into it\n\ntype: codex\n");
+		const store = new WorkerStore(root);
+
+		await dispatchNewTasks(store, root);
+
+		const row = store.findByKey("t-body");
+		expect(row?.cli).toBe("pi");
+		expect(row?.provider).toBe("timi");
+	});
+
+	it("a header `type: codex` still routes to the codex CLI", async () => {
+		const root = mkdtemp();
+		writePhaseDocs(root, "k");
+		writeRawTask(root, "k", "t-header", "type: codex\n\nbody\n");
+		const store = new WorkerStore(root);
+
+		await dispatchNewTasks(store, root);
+
+		const row = store.findByKey("t-header");
+		expect(row?.cli).toBe("codex");
+		expect(row?.provider).toBe("");
+	});
+
+	it("a header `type: review` wins over a body `type: codex`", async () => {
+		const root = mkdtemp();
+		writePhaseDocs(root, "k");
+		writeRawTask(root, "k", "t-review", "type: review\n\nbody\n\ntype: codex\n");
+		const store = new WorkerStore(root);
+
+		await dispatchNewTasks(store, root);
+
+		const row = store.findByKey("t-review");
+		expect(row?.cli).toBe("pi");
+		expect(row?.provider).toBe("timi");
+	});
+});

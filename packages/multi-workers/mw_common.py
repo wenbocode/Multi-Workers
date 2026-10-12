@@ -42,7 +42,7 @@ import shutil
 import subprocess
 import time
 import sys
-from typing import Mapping, Sequence
+from typing import Mapping, NamedTuple, Sequence
 
 try:
     import tomllib  # Python 3.11+
@@ -319,6 +319,143 @@ def resolve_dispatch_model(
     if window_model.strip() and model_value_compatible(cli, window_model):
         return window_model.strip(), "window"
     return "", "default"
+
+
+# ── task.md header parsing (AC-005 single source) ──────────────────────────
+#
+# Mirror of the TS single source `shared/task-frontmatter.ts` (DRQ-3 / AC-005):
+# the worker role is the FIRST `type:` of the header region, a BOM is stripped
+# first, and nothing below the header may flip it. launcher.py / mw.py read the
+# role from here; test_task_type_parity.py diffs this module against the real
+# TS module through node on the golden fixture and the whole task.md corpus, so
+# the two sides cannot drift silently.
+#
+# Boundary (TS parity, byte for byte):
+#   1. strip a leading U+FEFF (Python str.strip() does not eat it;
+#      launcher.py's old `^type:` regex therefore missed 7 historical books)
+#      and report it;
+#   2. fold \r\n/\r/U+2028/U+2029 to "\n" (T-19/C-15+C-16), drop one trailing empty, per-line trim;
+#   3. first line `---` -> first later `---` (unclosed falls through); else the
+#      first blank line; else the leading key/list-grammar run (truncated).
+
+# ECMAScript String.prototype.trim() whitespace + line terminators. Python's
+# str.strip() covers most of this but misses U+FEFF (which JS trims) and strips
+# \x1c-\x1f / \x85 (which JS does not); the explicit set keeps both sides
+# equal on hostile input.
+_JS_TRIM_CHARS = (
+    "\t\n\v\f\r \u00a0\ufeff\u2028\u2029"
+    "\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u202f\u205f\u3000"
+)
+
+_HEADER_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:")
+_HEADER_LIST_ITEM_RE = re.compile(r"^-\s")
+_TYPE_PREFIX = "type:"
+
+
+class TaskHeaderRegion(NamedTuple):
+    """Header line bounds (0-based, inclusive; start > end = no header).
+
+    `fenced` = the first line opened a `---` block that closed; `truncated` =
+    the region was cut by the header key grammar (no fence, no blank line);
+    `byte_order_mark` = the raw text began with U+FEFF (stripped before
+    parsing)."""
+
+    start_line: int
+    end_line: int
+    fenced: bool
+    truncated: bool
+    byte_order_mark: bool
+
+
+class TaskTypeReading(NamedTuple):
+    """`type:` value with provenance (mirror of TS `TaskTypeReading`).
+
+    `source` is one of `header` (value present), `invalid` (header line present
+    but empty), `body` (only the body carries `type:`; value deliberately not
+    returned), `missing` (neither). `bom_stripped` = the input began with a BOM."""
+
+    type: str | None
+    source: str
+    bom_stripped: bool
+
+
+def _split_task_lines(text: str) -> tuple[list[str], bool]:
+    """Trimmed lines in ONE `\n` index space + BOM flag (mirror of TS
+    `splitTaskLines`: CRLF/CR/U+2028/U+2029 fold to `\n`, trailing empty dropped)."""
+    bom = text.startswith("\ufeff")
+    lines = re.split(r"\r\n|[\r\n\u2028\u2029]", text[1:] if bom else text)
+    if len(lines) > 1 and lines[-1] == "":
+        lines.pop()
+    return [line.strip(_JS_TRIM_CHARS) for line in lines], bom
+
+
+def _region_from_lines(lines: list[str], bom: bool) -> TaskHeaderRegion:
+    if lines[0] == "---":
+        try:
+            close = lines.index("---", 1)
+        except ValueError:
+            close = -1
+        if close > 0:
+            return TaskHeaderRegion(1, close - 1, True, False, bom)
+    try:
+        blank = lines.index("")
+    except ValueError:
+        blank = -1
+    if blank >= 0:
+        return TaskHeaderRegion(0, blank - 1, False, False, bom)
+    end = 0
+    while end < len(lines) and (_HEADER_KEY_RE.match(lines[end]) or _HEADER_LIST_ITEM_RE.match(lines[end])):
+        end += 1
+    return TaskHeaderRegion(0, end - 1, False, True, bom)
+
+
+def read_task_header_region(text: str) -> tuple[list[str], TaskHeaderRegion]:
+    """(trimmed lines, header region) for one task.md document."""
+    lines, bom = _split_task_lines(text)
+    return lines, _region_from_lines(lines, bom)
+
+
+def read_task_header_scalar(text: str, key: str) -> str | None:
+    """First `key:` value inside the header region (`""` present-but-empty,
+    `None` absent); keys below the header boundary are never read."""
+    lines, region = read_task_header_region(text)
+    prefix = f"{key}:"
+    for i in range(region.start_line, region.end_line + 1):
+        line = lines[i]
+        if line.startswith(prefix) and _HEADER_KEY_RE.match(line):
+            return line[len(prefix):].strip(_JS_TRIM_CHARS)
+    return None
+
+
+def _body_type_lines(lines: list[str], region: TaskHeaderRegion) -> list[tuple[int, str]]:
+    out: list[tuple[int, str]] = []
+    for i in range(region.end_line + 1, len(lines)):
+        line = lines[i]
+        if line.startswith(_TYPE_PREFIX) and _HEADER_KEY_RE.match(line):
+            out.append((i + 1, line[len(_TYPE_PREFIX):].strip(_JS_TRIM_CHARS)))
+    return out
+
+
+def read_task_type(text: str) -> TaskTypeReading:
+    """Single-source `type:` reading (header first value wins, BOM stripped)."""
+    lines, bom = _split_task_lines(text)
+    region = _region_from_lines(lines, bom)
+    for i in range(region.start_line, region.end_line + 1):
+        line = lines[i]
+        if line.startswith(_TYPE_PREFIX) and _HEADER_KEY_RE.match(line):
+            value = line[len(_TYPE_PREFIX):].strip(_JS_TRIM_CHARS)
+            if value == "":
+                return TaskTypeReading(None, "invalid", bom)
+            return TaskTypeReading(value, "header", bom)
+    has_body_type = bool(_body_type_lines(lines, region))
+    return TaskTypeReading(None, "body" if has_body_type else "missing", bom)
+
+
+def scan_body_type_lines(text: str) -> list[tuple[int, str]]:
+    """Every `type:` line below the header region, (1-based line, value)."""
+    lines, region = read_task_header_region(text)
+    return _body_type_lines(lines, region)
 
 
 # ── RAG server config (.mw/rag-servers.yml + ~/.agents/rag-servers.yml) ────
