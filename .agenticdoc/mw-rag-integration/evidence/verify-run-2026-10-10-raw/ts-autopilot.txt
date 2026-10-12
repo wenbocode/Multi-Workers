@@ -1,0 +1,61 @@
+
+ RUN  v4.1.9 H:/git/Multi-Workers/packages/coding-agent
+
+······[VERIFY] P4: corpus_sha256=c97eeafc087bc2ef311d4422f84f8359ac5dd2f7f4ce73e1d8c0b4db4ddcf2b6 cases=55 categories=D1,D2,D3,D4,D5,D6
+·-[worker] start task=ap-dual-vc005 type=verifier phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[worker] start task=ap-dual-vc014 type=coding phases=1
+[worker] done exit=0 elapsed=0s tools=0 phases=1/1
+····[worker] start task=ap-t13-vc011 type=verifier phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[worker] start task=ap-goal-ap-roadmap-writer type=roadmap-writer phases=-
+[worker] start task=ap-goal-ap-phase-writer type=phase-writer phases=-
+[worker] start task=ap-goal-ap-verifier type=verifier phases=-
+[worker] start task=ap-t13-matrix type=verifier phases=-
+[worker] start task=ap-goal-ap-reviewer type=reviewer phases=-
+[worker] start task=ap-goal-ap-repair type=repair phases=-
+[worker] start task=ap-t13-nopath type=verifier phases=-
+[worker] refused task=ap-goal-ap-stale type=verifier-pro: Fail-closed (D-107/VC-023): this task carries origin: conductor but type 'verifier-pro' has no tool-allowlist entry — running it would fall back to the full tool set, which conductor dispatches never get. Registered types: coding, phase-writer, rag-research, repair, research, review, reviewer, roadmap-writer, verifier, vision.
+·····················[worker] start task=ap-goal-ap-stale type=verifier-pro phases=-
+[worker] start task=ap-t13-caps type=verifier phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[worker] refused task=ap-goal-ap-fb type=fallback: Fail-closed (D-107/VC-023): this task carries origin: conductor but type 'fallback' has no tool-allowlist entry — running it would fall back to the full tool set, which conductor dispatches never get. Registered types: coding, phase-writer, rag-research, repair, research, review, reviewer, roadmap-writer, verifier, vision.
+[worker] start task=ap-goal-ap-fb type=fallback phases=-
+[worker] start task=ap-t13-legacy type=verifier phases=-
+[worker] refused task=ap-goal-ap-noscope type=verifier: Fail-closed (D-106): verifier dispatches require a non-empty read_scope in task.md — without one the L2 containment boundary is undefined.
+[worker] start task=ap-goal-ap-noscope type=verifier phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[worker] refused task=ap-goal-ap-emptyscope type=verifier: Fail-closed (D-106): verifier dispatches require a non-empty read_scope in task.md — without one the L2 containment boundary is undefined.
+[worker] start task=ap-goal-ap-emptyscope type=verifier phases=-
+[worker] start task=ap-dual-vc011 type=verifier phases=-
+[worker] start task=m-coding type=coding phases=-
+[worker] start task=m-review type=review phases=-
+[worker] start task=m-research type=research phases=-
+[worker] start task=m-unknown type=mystery-type phases=-
+·······[worker] start task=m-verifier type=verifier phases=-
+[worker] start task=mwppe-union type=coding phases=-
+·······[worker] done exit=0 elapsed=0s tools=0
+[worker] start task=ap-goal-ap-start type=coding phases=-
+[worker] start task=ap-goal-ap-start type=coding phases=-
+[worker] start task=mwppe-deny type=coding phases=-
+·······[worker] start task=ap-goal-ap-l2 type=phase-writer phases=1
+·····[worker] done exit=0 elapsed=0s tools=0 phases=1/1
+·····························[worker] start task=t-alive type=coding phases=-
+···········[worker] start task=t-hang type=coding phases=-
+[worker] failed exit=1 elapsed=1m tools=0
+[worker] start task=t-hung-tool type=coding phases=-
+[worker] failed exit=1 elapsed=30m tools=1
+··············[VERIFY] VC-011: equal=true count=5 ordered=true dep_satisfied=2 pending_review_not_dep=true closed_legacy_dep=true subset=true
+··[VERIFY] VC-012: equal=true count=23
+·[VERIFY] P5: key_order_match=true defaults_match=true bool=3 list=1 str=1 enum=1 int=8
+··········x··[VERIFY] P1: crosslang_verdict_match=55/55
+·[VERIFY] P2: canonical_sha_match=32 sha256_equal=true
+····[VERIFY] P3: py_to_ts_idempotent=32 ts_to_py_idempotent=32
+··[VERIFY] P6: partial_single_key=29 raw_view_partial=true effective_view_14=true fields_covered=14
+·
+
+ Test Files  1 failed | 12 passed (13)
+      Tests  1 failed | 135 passed | 1 skipped (137)
+   Start at  11:09:54
+   Duration  87.12s (transform 3.69s, setup 0ms, import 6.32s, tests 63.98s, environment 1ms)
+

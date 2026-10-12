@@ -1,0 +1,29 @@
+
+ RUN  v4.1.9 H:/git/Multi-Workers/packages/coding-agent
+
+[VERIFY] VC-006: refused=true queue_delta=0 dir_exists=false
+[VERIFY] VC-016: auto_route=true type_unchanged=true explicit_model_untouched=true
+····[VERIFY] VC-008: failopen_ok=true queue_delta=1
+·········[VERIFY] VC-017: types=vision,review type_unchanged=true effective_vision=2 auto_route_fired=1
+·····[VERIFY] VC-007: queue_delta=1 images_line=yes order_ok=true
+···········································································································[worker] start task=w1 type=coding phases=-
+································[VERIFY] VC-001: alerts=1 owner_in_text=true trigger_turn=true dup=0
+[VERIFY] VC-002: undefined_alerts=0 empty_set_alerts=0
+····[VERIFY] VC-003: low_alerts=0 high_alerts=1 dup=0
+[worker] start task=t-hang type=coding phases=-
+[worker] failed exit=1 elapsed=1m tools=0
+[worker] start task=t-stream type=coding phases=-
+[worker] done exit=0 elapsed=3m tools=0
+···[worker] start task=t-phases type=coding phases=2
+[worker] failed exit=1 elapsed=1m tools=0 phases=0/2
+[worker] start task=t-order type=coding phases=-
+[worker] failed exit=1 elapsed=3m tools=0
+[worker] start task=w1 type=coding phases=-
+········································[VERIFY] VC-004: role_for_vision=vision mirror_ok=true
+·····
+
+ Test Files  4 passed (4)
+      Tests  209 passed (209)
+   Start at  11:17:03
+   Duration  38.29s (transform 2.07s, setup 0ms, import 8.03s, tests 31.73s, environment 0ms)
+

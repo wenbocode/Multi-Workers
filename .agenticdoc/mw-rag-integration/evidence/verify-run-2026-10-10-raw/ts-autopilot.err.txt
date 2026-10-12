@@ -1,0 +1,19 @@
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/suite/autopilot-gate-presentation.test.ts > layer A monitor gate lines (AC-012) > renders one line per pending gate with age and DRIFT, all <= 110 columns
+AssertionError: expected 'gates: 2 pending - gate-0008 (stage-c…' to contain 'DRIFT('
+
+Expected: "DRIFT("
+Received: "gates: 2 pending - gate-0008 (stage-close) stage=1 age=3h 55m -> /autopilot gate gate-0008 approve|reject"
+
+ ❯ test/suite/autopilot-gate-presentation.test.ts:492:25
+    490|    expect(gateLines).toHaveLength(2); // one line per gate
+    491|    expect(gateLines[0]).toContain("gates: 2 pending - gate-0008 (stage…
+    492|    expect(gateLines[0]).toContain("DRIFT(");
+       |                         ^
+    493|    expect(gateLines[1].startsWith("  · ")).toBe(true);
+    494|    expect(gateLines[1]).toContain("age="); // age is visible on the cl…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

@@ -1,0 +1,5 @@
+
+  packages\multi-workers\dist\extensions\agent-team-loop.js  930.1kb
+
+Done in 57ms
+Self-check OK: default export loads as a function (activate)

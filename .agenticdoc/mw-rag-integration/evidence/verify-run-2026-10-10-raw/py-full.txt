@@ -1,0 +1,964 @@
+[BASELINE] MATCH: test\golden\target-baseline\dual.json
+[VERIFY] VC-016: baseline_dual=identical
+.[BASELINE] MATCH: test\golden\target-baseline\single.json
+[VERIFY] VC-016: baseline_single=identical
+..................................................................................................................[PARITY] active-mode table cases=112 rows=[2, 3, 5, 6, 7, 8, 9, 10, 11, 12]
+[VERIFY] VC-017: table=rows-2-12 (rows 1/4 via entry tests + fixtures), parity=py-side
+......[VERIFY] VC-005: e2e_advance=0 target=C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_advance_targets_project_r0\proj\.agenticdoc\e2e-probe-702db38b
+.[VERIFY] VC-015: columns=7/8/9 ts_order_locked=true
+..{"cli": "pi", "dispatched_at": "2026-09-26T00:00:00.000Z", "model": "gpt-5", "origin": "manual", "provider": "timi", "status": "running", "task_key": "manual-task", "task_path": "H:/proj/.agenticdoc/k/workers/manual-task/task.md", "updated_at": "2026-09-26T00:00:00.000Z"}
+.[VERIFY] VC-027: distinguishable=true
+.[VERIFY] VC-028: fallback=path misjudged_conductor=false
+.[VERIFY] counterfactual-a: rows=6 judged=manual capacity=0 prefix_would_count=6
+.[VERIFY] call-sites: agree=3/3 rows=3
+..[VERIFY] counterfactual-b: header=timeout: 45 absent_when_unconfigured=true
+..[VERIFY] dispatch: origin=conductor timeout=45 row_verified=true
+.[VERIFY] counterfactual-a: reconcile_origin=conductor slotsUsed_after=1 slotsUsed_before_without_stamp=0 row_belongs_to_k1=True
+.[VERIFY] equivalence row=conductor/keyed/k1 key=k1 local=True canonical=True equal=True
+[VERIFY] equivalence row=conductor/keyed/k1 key=k2 local=False canonical=False equal=True
+[VERIFY] equivalence row=conductor/keyed/k1 key=k3 local=False canonical=False equal=True
+[VERIFY] equivalence row=conductor/keyed/k2 key=k1 local=False canonical=False equal=True
+[VERIFY] equivalence row=conductor/keyed/k2 key=k2 local=True canonical=True equal=True
+[VERIFY] equivalence row=conductor/keyed/k2 key=k3 local=False canonical=False equal=True
+[VERIFY] equivalence row=conductor/scratch key=k1 local=False canonical=False equal=True
+[VERIFY] equivalence row=conductor/scratch key=k2 local=False canonical=False equal=True
+[VERIFY] equivalence row=conductor/scratch key=k3 local=False canonical=False equal=True
+[VERIFY] equivalence row=manual/keyed key=k1 local=False canonical=False equal=True
+[VERIFY] equivalence row=manual/keyed key=k2 local=False canonical=False equal=True
+[VERIFY] equivalence row=manual/keyed key=k3 local=False canonical=False equal=True
+[VERIFY] equivalence row=legacy/no-origin/keyed-prefix key=k1 local=False canonical=False equal=True
+[VERIFY] equivalence row=legacy/no-origin/keyed-prefix key=k2 local=False canonical=False equal=True
+[VERIFY] equivalence row=legacy/no-origin/keyed-prefix key=k3 local=False canonical=False equal=True
+[VERIFY] equivalence row=legacy/no-origin/scratch key=k1 local=False canonical=False equal=True
+[VERIFY] equivalence row=legacy/no-origin/scratch key=k2 local=False canonical=False equal=True
+[VERIFY] equivalence row=legacy/no-origin/scratch key=k3 local=False canonical=False equal=True
+[VERIFY] equivalence row=legacy/no-origin/backslash key=k1 local=False canonical=False equal=True
+[VERIFY] equivalence row=legacy/no-origin/backslash key=k2 local=False canonical=False equal=True
+[VERIFY] equivalence row=legacy/no-origin/backslash key=k3 local=False canonical=False equal=True
+[VERIFY] equivalence row=unknown-origin key=k1 local=False canonical=False equal=True
+[VERIFY] equivalence row=unknown-origin key=k2 local=False canonical=False equal=True
+[VERIFY] equivalence row=unknown-origin key=k3 local=False canonical=False equal=True
+[VERIFY] equivalence row=empty-origin key=k1 local=False canonical=False equal=True
+[VERIFY] equivalence row=empty-origin key=k2 local=False canonical=False equal=True
+[VERIFY] equivalence row=empty-origin key=k3 local=False canonical=False equal=True
+[VERIFY] equivalence row=manual/other-key key=k1 local=False canonical=False equal=True
+[VERIFY] equivalence row=manual/other-key key=k2 local=False canonical=False equal=True
+[VERIFY] equivalence row=manual/other-key key=k3 local=False canonical=False equal=True
+[VERIFY] counterfactual-b: rows=10 pairs=30 mismatches=0 prefix_divergence_rows=7
+.[VERIFY] VC-009: audit_complete=0
+.[VERIFY] VC-009: audit_missing=1 gaps_nonempty=true
+.[VERIFY] VC-009: ac_extract=correct
+.[VERIFY] VC-009: decision_map_parity=true
+....[VERIFY] VC-036: falsifiable=6/6 predicates=6
+.[VERIFY] VC-036: stage_confirm_counterexample=goal-drift+structural
+.[VERIFY] VC-035: stage_close_proposition_can_be_false=true
+.[VERIFY] VC-035: tautology_rejected=true reason=proposition subject IS the trigger subje
+.[VERIFY] VC-035: engine_refused=true gate_status=pending
+.[VERIFY] VC-036: per_rule_false=6/6
+.[VERIFY] VC-036: budget_false_no_approve=true
+.[VERIFY] VC-025: reason_codes=45 stall_codes=12
+.[VERIFY] VC-025: call_sites=12 mapped_codes=12
+.[VERIFY] VC-025: gate_reason_code=l3-below counts=3/2/1
+.[VERIFY] VC-021: replay_misbound=false
+.[VERIFY] VC-021: data_payload=true legacy_fields=6
+.[VERIFY] VC-022: auto_actions=0 sidecars=0
+.[VERIFY] VC-033: state_delta=0 shadow_rows=1
+.[VERIFY] VC-021: fields=24 authority=conductor
+.[VERIFY] VC-023: live_approved=true consumed=1
+.[VERIFY] VC-034: gate_blocked=true refusal=shadow-gate-not-met
+.[VERIFY] VC-021: refusal=replay-misbound
+.[VERIFY] VC-020: breaker_persisted=true stopped_after_restart=true
+.[VERIFY] VC-019: capped=true
+.[VERIFY] VC-023: revoked_only_one=true remaining=1
+.[VERIFY] VC-046: authoritative_source=conductor answered_by=display-only
+.[VERIFY] VC-021: corrupt_sidecar=corrupt-sidecar disposition=escalate
+.[VERIFY] VC-045: drift_detected=true benign_touch=not-tampering
+.[VERIFY] VC-044: stage_close_blocked=true reconciliation_events=1
+.[VERIFY] VC-044: off_control_flow=unchanged
+..................................[VERIFY] VC-021: beat_when_disabled=2 idle_status=idle
+..[VERIFY] VC-021: gates_after_repeat=1 status=halted-goal-change
+...[VERIFY] VC-021: tick_error_survives=true
+....[VERIFY] VC-027: first_tick_immediate=true stdout=ok
+...[VERIFY] VC-027: decision_spawn=spawn decision_terminate=terminate
+.[mw serve] conductor spawned (PID 4242)
+[mw serve] conductor terminated (autopilot disabled)
+..[VERIFY] VC-007: phase_direct_writes=0 goal_writes=0 advance_via_script=1
+..[VERIFY] VC-010: round3_rows=0 gate_pending=true
+..[VERIFY] VC-013: budget=1 second_round_rows=0
+.[VERIFY] VC-015: claimed_rows=0 skip_events=1
+.[VERIFY] VC-016: phase_restored=execute artifact_mtimes_unchanged=3
+.[VERIFY] VC-008: stalled_artifacts=4 dep_rows=0 indep_rows=1
+....[VERIFY] VC-019: machine_events=3 null_keys=0
+..[VERIFY] VC-025: failure_form=exit1 retry_rounds=2 recovered=true
+.[VERIFY] VC-025: failure_form=spawn-watchdog stalled_k1=true other_key_rows=1
+.[VERIFY] VC-013: loop=task-retry budget=1 second_round_rows=0 escalated=stalled other_key_rows=1
+.....[VERIFY] VC-005: dossier_verdict=meets report=l3-report.md verdict_file=true
+[VERIFY] VC-012: verdict=meets qg_reports=1 achieved_bytes=587 advance_exit=0
+.[VERIFY] VC-012: verdict=below-twice repair_rounds=1 stalled=true
+.[VERIFY] VC-013: loop=l3 budget=1 second_round_rows=0 escalated=stalled verdict_persisted=true
+....[VERIFY] VC-024: start_lines=1 budgets_unchanged=true mtime_unchanged=true resumed_in_ticks=2
+.[VERIFY] VC-002: stderr_shape=advance_phase.py failure_lines=2
+.[VERIFY] VC-001: phase=DONE stalled_gates=0 gate_answered=0
+.[VERIFY] VC-002: prompt_contains_failure_lines=true prompt_equals_fixed_base_plus_lines=true
+.[VERIFY] VC-010: stalled_gates=0 gate_answered=0 phase=DONE
+.[VERIFY] VC-012: verdict=meets byte_equal=true
+.[VERIFY] VC-006: bytes_unchanged=true advance_exit=0
+.[VERIFY] VC-007: stalled=true l3_dispatches=1 verdict=meets
+.[VERIFY] VC-008: l3_dispatch_delta=0 streak_stall=true
+.[VERIFY] VC-009: advance_events_delta=0
+.[VERIFY] VC-011: max_answered_per_gate=1 gates_growth=0
+.[VERIFY] VC-013: marker_absent=true marker_count=0
+.[VERIFY] VC-013: marker_absent=false marker_count=1
+.[VERIFY] VC-013: marker_absent=true marker_count=0
+.[VERIFY] VC-006: sha_mismatch_no_overwrite=true draft_preserved=true resume_credit_used=true
+.[VERIFY] VC-005: verdict=below report_present=false meets=false done_in_calls=false
+.[VERIFY] VC-006: verdict=below veto_source=output.md-unqualified clean_report_whitewashes=false done_in_calls=false
+.[VERIFY] VC-007: stall_reason=fail-marker timeline=l3-verdict-fail provenance=fail_line repair_prompt=fail_line records=2 ok=true
+.[VERIFY] VC-004: verdict=meets done=true zero_fail_texts=3 false_below=false
+.[VERIFY] VC-004: verdict=below inline_zero_negation=did-not-exempt deciding_source=output.md done_in_calls=false
+..[VERIFY] VC-003: writer_rows=1 second_tick_rows=0
+.[VERIFY] VC-003: ticks=3 rows=0 pending_confirm_gates=1
+...[VERIFY] VC-005: dossier=1 close_gate_pending=true next_stage_rows=0
+.[VERIFY] VC-026: stalled_reject_unblocks_closure=true
+...[VERIFY] VC-026: proposals=2 third_proposal_rows=0
+..[VERIFY] VC-027: defaults_on_missing=true zero_footprint=true
+...............[VERIFY] VC-027: invalid_fail_closed=true
+.[VERIFY] VC-027: roundtrip=true atomic_no_tmp=true
+..[VERIFY] VC-016: default_config_keys=14 xkey_verify_cwd_default=''
+.[VERIFY] VC-016: partial_keys=1 default_keys=14 effective_keys=14 explicit_wins=7
+..[VERIFY] VC-003: non_ascii_bytes=394 verbatim=true
+.[VERIFY] VC-003: same_length_rewrite=9 cache_cleared=false
+.[VERIFY] VC-003: defensive_copy=true cache_write_coherent=true
+..[VERIFY] VC-027: advance_missing_framework=1 missing_framework_stderr=true
+.[VERIFY] VC-027: advance_stub_exit=0 advance_no_shell=true
+.[VERIFY] VC-027: advance_summary_passthrough=true
+.[VERIFY] VC-027: advance_exit_code_passthrough=true
+.[VERIFY] VC-027: advance_timeout=124
+..[VERIFY] VC-027: inconsistent_marker_skipped=true
+.[VERIFY] VC-027: fail_loud=1 readable=true
+.[VERIFY] VC-027: utf8_flags=2 argv_flags=true
+.[VERIFY] P4: corpus_sha256=c97eeafc087bc2ef311d4422f84f8359ac5dd2f7f4ce73e1d8c0b4db4ddcf2b6 cases=55 categories=['D1', 'D2', 'D3', 'D4', 'D5', 'D6']
+.[VERIFY] P1: crosslang_verdict_match=55/55
+.[VERIFY] P2: canonical_sha_match=32 sha256_equal=true
+.[VERIFY] P3: py_to_ts_idempotent=32 ts_to_py_idempotent=32
+.[VERIFY] P6: partial_single_key=29 raw_view_partial=true effective_view_14=true fields_covered=14
+....[CONTROL] answered-carrier: machine_authorized=1 prose_only=0 carrier_gate=gate-0001 healthy=True
+......[CONTROL] prose-detector=on: prose_only=1 issues=['cross-key repair request XKEY-2026-09-25-01 is authorized by prose only (decision: approved by user-via-pm-window at 2026-09-26T03:04:05+00:00) with no answered xkey-authorize gate (C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\pytest-of-wenbozhou\\pytest-9612\\test_control_remove_prose_dete0\\.agenticdoc\\_autopilot\\evidence\\cross-key-repair-request-20260925-n1.md) - treated as unauthorized (VC-048), raise/answer an xkey-authorize gate to authorize'] healthy=False
+[CONTROL] prose-detector=off: prose_only=0 issues=[] healthy=True
+.[CONTROL] link-answered-gate: before prose_only=1 after prose_only=0 after machine_authorized=1 after carrier=gate-0001
+.[VERIFY] T-24 crosskey-prose: requests=2 machine_authorized=1 prose_only=1 issues=1 fail_closed=true
+.[VERIFY] VC-023: registry_types=7 unknown_tools=0
+.[VERIFY] VC-019: conductor_dispatchable=true unknown_type_refused=true
+.[VERIFY] VC-023: parity_snapshot_types=7
+..[VERIFY] VC-023: optional_fields_omitted=true
+.[VERIFY] VC-023: rows=1 row_verified=true lock_cleaned=true timeline_dispatch=true
+.[VERIFY] VC-023: scratch_sentinel_key=true
+..[VERIFY] VC-023: unknown_rows=0 type_rejected_event=true no_fallback=true
+.[VERIFY] VC-023: verifier_scope_required=true verifier_with_scope_rows=1
+..[VERIFY] VC-013: single_no_yml_snapshot=true
+.[VERIFY] VC-013: deny_globs_line=true control_scope=true
+[VERIFY] VC-009: game_abs=true engine_abs=true
+.[VERIFY] VC-013: scopeless_deny_injected=true no_scope_forced=true
+....[VERIFY] VC-013: broken_yml_rows=0 fail_closed=true
+.[VERIFY] AC-010: fenced_block=byte-identical block_bytes=417 usage_line=usage: mw.py autopilot verify [-h] {set,show,clear} ... set_help_project_required=True
+.[VERIFY] AC-010: readme_anchors=12 missing=0
+.[VERIFY] AC-010: update_matrix_rows=1 layer=ÏîÄ¿/»úÆ÷
+.[VERIFY] AC-010: a1b=content anchor a2b=sourcemap anchor
+.[VERIFY] VC-009: fixture_red=1->0 chain=detected>ticketed>gate-raised>applied>verified>closed ledger_status=closed idempotent=True relaxed_assertion=False pass=true
+.[VERIFY] VC-010: fm_replay_red=1->0 targeted=1 failed -> green relaxed_assertion=False old_sha256=7f6d6462b366 new_sha256=2aef27415e89 pass=true
+.[VERIFY] VC-002: prose_shape=K-1 (no test_id/owner) tickets=0 gates=0 escalations=1 pass=true
+.[VERIFY] »úÆ÷²ãÂ·¾¶½âÎö£¨4 ÖÖ env ×éºÏ£©: file_override=1 file_missing_no_fallback=1 home_override=1 home_then_userprofile=1 zero_footprint=true
+.[VERIFY] Ö»¶ÁÁã×ã¼£: mw_dir=false agenticdoc_dir=false agents_dir=false
+.[VERIFY] Öð×Ö¶Î origin: machine_keys=2 run_state=default
+.[VERIFY] Öð×Ö¶Î origin: partial_project_keys=14 project_origin=project
+.[VERIFY] Ô­Ê¼¼ÓÔØÆ÷ vs ÍêÕûÊÓÍ¼: load_config_keys=1 effective_keys=14 effective_key_set=14
+.[VERIFY] Öð×Ö¶Î origin: project_wins=2 machine_wins=0
+.[VERIFY] ¿ÕÖµ¼´Î´¾ö¶¨ ÕæÖµ±í: case=1 project=[] machine=['m'] value=['m'] origin=machine
+.[VERIFY] ¿ÕÖµ¼´Î´¾ö¶¨ ÕæÖµ±í: case=2 project=['p'] machine=['m'] value=['p'] origin=project
+.[VERIFY] ¿ÕÖµ¼´Î´¾ö¶¨ ÕæÖµ±í: case=3 project=missing machine=['m'] value=['m'] origin=machine
+.[VERIFY] ¿ÕÖµ¼´Î´¾ö¶¨ ÕæÖµ±í: case=4 project=[] machine=missing value=[] origin=default
+.[VERIFY] ¿ÕÖµ¼´Î´¾ö¶¨ ÕæÖµ±í: case=5 project=[] machine=[] value=[] origin=default
+.[VERIFY] ¿ÕÖµ¼´Î´¾ö¶¨ ÕæÖµ±í: case=6 cwd_empty_machine=partition/machine cwd_set_machine=control/project
+.[VERIFY] Ô½ÓòÔ½½ç¸æ¾¯: out_of_domain=2 default_origins=2 project_origins=2 diagnostics=2
+.[VERIFY] ²ÄÁÏ»¯³¡¾°ÈÔÈ¡»úÆ÷²ã: project_keys=14 machine_cmd=['python', '-m', 'pytest', '-q'] machine_cwd=partition cmd_origin=machine
+.[VERIFY] »úÆ÷²ãÂ·¾¶½âÎö£¨4 ÖÖ env ×éºÏ£©: file_missing_no_fallback=true cmd=[]
+.[VERIFY] fail-soft diagnostics: out_of_domain=2 unknown_key=1 diagnostics=3
+.[VERIFY] fail-soft diagnostics: bad_field_dropped=xkey_verify_cmd sibling_applied=xkey_verify_cwd
+..[VERIFY] fail-soft diagnostics: broken_json=1 project_layer_intact=true
+..[VERIFY] Öð×Ö¶Î origin: machine_null_noop=true diagnostics=0
+..[VERIFY] fail-soft diagnostics: project_fail_closed=true machine_rescue=false
+.[VERIFY] fail-soft diagnostics: project_fail_closed=true machine_rescue=false
+.[VERIFY] fail-soft diagnostics: project_fail_closed=true machine_rescue=false
+.[VERIFY] fail-soft diagnostics: project_fail_closed=true machine_rescue=false
+.[VERIFY] fail-soft diagnostics: tick_status=ok machine_command_visible=true
+.[VERIFY] ÑéÊÕ»ã×Ü: ¿ÕÖµ¼´Î´¾ö¶¨ ÕæÖµ±í=8 ÀýÈ«ÂÌ ²ÄÁÏ»¯³¡¾°ÈÔÈ¡»úÆ÷²ã=true Ô½ÓòÔ½½ç¸æ¾¯=2 fail-soft ÓëÁã×ã¼£Î´»ØÍË=true
+....................................................[VERIFY] VC-043: stage=running replay_events=0 carrier=consumed_at/consumed_seq
+.[VERIFY] VC-043: stage=closed new_gates=0
+.[VERIFY] VC-031: reuse_safe=true gate=gate-0001
+..[VERIFY] VC-032: dedup=file_id flood_handled=true second_write=0
+.[VERIFY] VC-032: dedup=file_id flood_handled=true
+..[VERIFY] VC-029: five_digit_consumed=true
+..[VERIFY] VC-030: gate=gate-0001 key_status_writes=1 key_status=stalled
+..[VERIFY] VC-042: refused=1 dedup=true stage_status=closed
+...[VERIFY] VC-042: replay_refused=1 gate_answered=0 stage_status=closed
+.[VERIFY] VC-011: frontmatter_fields=40 base=12 v2=26 consumed=2 list_fields=2
+..[VERIFY] VC-038: required_unchanged=6 v2_optional=true
+.[VERIFY] VC-024: legacy_v1_parses=true gate_schema_default=1
+........................[VERIFY] VC-005: first_seq=1
+...[VERIFY] VC-005: seq=max_plus_one=true restart_rescan=true preset_0003_next=0004
+..[VERIFY] VC-005: roundtrip_fields=40 context_refs=3
+...[VERIFY] VC-005: encoding=utf8 lf_only=true
+....[VERIFY] VC-005: enumerate=3 pending=2 answered_by_audit=true
+....................[VERIFY] VC-005: corrupt_frontmatter=explicit_exception=true
+..[VERIFY] VC-005: kinds=6 rendered=6 roundtrip=6
+.[VERIFY] VC-026: statuses=pending,approved,rejected parse=true
+.[VERIFY] VC-026: reject_audit=answered_by+note preserved=true
+.[VERIFY] VC-026: stalled_reject=parseable kind=stalled key=k3
+.[VERIFY] VC-007: phase_direct_writes=0 goal_writes=0 advance_via_script=all files_scanned=15
+.[VERIFY] VC-007: runtime_advance_events=2 exit_codes=0,1 schema=exit=<n> on all
+.[VERIFY] VC-023: registry_parity=per-type-exact types=7 verifier_entry=explicit ts_buckets=['coding', 'fallback', 'research', 'review']
+.[VERIFY] VC-023: unknown_rows=0 rejection=type-rejected fallback=none
+.[VERIFY] VC-023: worker_fail_closed=1 ts_suite=autopilot-protocol.test.ts ts_run=passed manual_fallback=full-set
+.[VERIFY] VC-014: surfaces=4 token_set_ok=true
+.[VERIFY] VC-039: enum=1 dep_satisfied=0 dispatched=0 unknown_value_fail_closed=true
+.[VERIFY] VC-D2-02: dep_locked=true negative_control=dispatched
+.[VERIFY] VC-D2-03: pending_review_rows=0 negative_control=dispatched
+.[VERIFY] VC-039: blocked=true counterfactual_dossier=1
+.[VERIFY] VC-040: batched=2 counterfactual_batched=0
+.[VERIFY] VC-040: in_flight_excluded=true
+.[VERIFY] VC-041: escalated=1 state_unchanged=true counterfactual_escalated=0
+.[VERIFY] VC-041: fallback=created_at+48h state_unchanged=true
+.[VERIFY] VC-042: resume=running rework=running escalate=stalled done_exit=rejected closed_legacy_exit=rejected
+.[VERIFY] VC-042: approved=running rejected=running closed_legacy_produced=0 replay_idempotent=true
+.[VERIFY] VC-042: refused=1 dedup=true stage=closed
+.[VERIFY] VC-043: stage=closed new_gates=0
+.[VERIFY] VC-024: kinds=6 missing_fields=0 ttl_hours=48 default_action=escalate-to-human
+.[VERIFY] VC-024: missing_fields=0 healthy=true gates_text_line=0
+.[VERIFY] VC-045: snapshot_sha_matches=true replay_misbound=0
+.[VERIFY] VC-024: site=goal-change missing_fields=0 ttl_hours=48 reason_code=none healthy=true gates_text_line=0
+.[VERIFY] VC-045: site=goal-change snapshot_sha_matches=true replay_misbound=0
+.[VERIFY] VC-024: kinds=6 missing_fields=0 healthy=true
+.[VERIFY] VC-026: illegal=dropped config_event=1 legal=l3-no-verdict gate_created=true
+.[VERIFY] T-19: step1=pending-review gate=pending defer_rows=1 escalate_rows=0 step2=review-escalated{closure} stage_close=0 step3=running done_exit=0
+.[VERIFY] T-19: irreversible_kinds=4 xkey_status=stalled escalate_record=1
+.[VERIFY] T-19: off_bytes_identical=true key_status_line=> key-status: k1=stalled, k2=done
+.[VERIFY] T-19: in_flight_skips_deferral=true key_status=stalled
+.[VERIFY] T-21: shadow_row=defer/executed=false/mode=shadow gate_sha256_unchanged=true roadmap_sha256_unchanged=true decision_rows=1
+.[VERIFY] T-21: live_row=defer/executed=true/mode=live key_status=pending-review escalate_rows=0 decision_rows=1
+.[VERIFY] T-21: shadow_decisions_before=0 shadow_decisions_after=1 nights_before=0 nights_after=0
+.[VERIFY] T-21: stage_close=escalate defer_rows=0 decision_rows=1
+.F[VERIFY] VC-001: tasks=3 file_cap_lines=3 byte_cap_lines=3 order_ok=true ok=true
+.[VERIFY] VC-002: readFileCap=64 readByteCap=2097152 equals_config=true fallback_used=false ok=true
+.[VERIFY] VC-003: rerender_value=20 cap_literal_assignments=0 ok=true
+.[VERIFY] AC-004: file_cap=128 byte_cap=4194304 max_calls=57 max_bytes=913636 renders=true ge_2x=true ok=true
+.[VERIFY] AC-005: max_calls=57 max_bytes=913636 derived_rejections=0 tight_rejections=53 ok=true
+.[VERIFY] AC-006: dispatched_tasks=1 cap_lines=2 cap_equals_config=true restart_half=deferred_T-006 ok=true
+.[VERIFY] VC-007: byte_identical=true cap_lines=0 config_created=false ok=true
+.[VERIFY] VC-008: byte_identical=true cap_lines=0 dispatch_ok=true ok=true
+.[VERIFY] VC-009: cases=3 exceptions=0 dispatch_ok=3 cap_lines=0 config_contract_unchanged=true ok=true
+.[VERIFY] VC-010: cap_file_at=3 cap_byte_over=150 rendered=true ok=true
+.[VERIFY] VC-011: invalid_cases=5 unlimited_cases=0 fallback_defaults=true still_blocks=true ok=true
+.[VERIFY] VC-012: missing_section=below fail_row=below ok=true
+.F.[VERIFY] VC-009: zero_byte=true frozen_copy=true
+[VERIFY] VC-009-order: line_order=type<phase<images<model order_ok=true
+...[VERIFY] VC-001: roadmap_check_exit=0
+.[VERIFY] VC-001: cli_default_cwd_exit=0
+.[VERIFY] VC-001: single_key_stage_exit=0
+.[VERIFY] VC-001: roadmap_check_exit=1 missing_dep_reported=true
+.[VERIFY] VC-001: roadmap_check_exit=1 empty_goal_reported=true
+.[VERIFY] VC-001: roadmap_check_exit=1 key_status_mismatch_reported=true
+.[VERIFY] VC-001: zero_keys_exit=1
+.[VERIFY] VC-001: cross_stage_dep_exit=0 forward_dep_exit=1
+.[VERIFY] VC-001: self_dep_exit=1 cycle_exit=1
+.[VERIFY] VC-001: duplicate_key_exit=1
+.[VERIFY] VC-001: format_tolerance_exit=0
+.[VERIFY] VC-001: crlf_roundtrip=true
+...............[VERIFY] VC-001: parse_errors_explicit=14
+.[VERIFY] VC-001: missing_file_exit=1
+.[VERIFY] VC-001: stage_enum=true dep_graph=true
+.[VERIFY] VC-001: update_status_single_line=true
+.[VERIFY] VC-001: update_key_status_line_only=true
+.[VERIFY] VC-001: update_rejects_bad_input=true
+..................[VERIFY] VC-015: live=1 dead=1 stale=1 free=1 host_mismatch_dead=true self_not_blocking=true
+.[VERIFY] VC-016: phase_rows=3 legacy_5col=true
+..[VERIFY] VC-020: l2_rounds=2 repair_same_round_not_counted=true exec_rounds=1 roadmap_rounds=1 manual_invisible=true
+.[VERIFY] VC-020: attempt_fallback_dirs=2
+..[VERIFY] VC-024: start_lines=2 live_pids=1 malformed_ignored=true
+.[VERIFY] VC-024: orphans=1 slash_path_match=true manual_not_orphan=true
+..[VERIFY] VC-024: artifact_snapshot=true tasks_tracked=2
+..[VERIFY] VC-019: event_lines=14 per_type=all schema=valid
+.[VERIFY] VC-019: unknown_ev_accepted=true ev_filter=pass
+.[VERIFY] VC-019: seq_monotonic=true seq_recovery_no_regress=true seq_recovery_no_duplicate=true
+.[VERIFY] VC-019: seq_recovery_after_rotate=true
+.[VERIFY] VC-019: torn_tail_recovery=true skipped_counted=true
+.[VERIFY] VC-019: key_field_no_null=true key_sentinel_dash=true stage_number_key=true
+.[VERIFY] VC-019: rotate_rename=true rotated_files_unchanged=true
+.[VERIFY] VC-019: auto_threshold_rotate=true generations_kept=2
+.[VERIFY] VC-019: replay_order=old_to_new_to_current
+.[VERIFY] VC-019: watermark_filter=true
+.[VERIFY] VC-019: pruned_notice=true pruned_count=3
+.[VERIFY] VC-019: missing_chain_empty=true empty_chain_pruned_lower_bound=true
+.[VERIFY] VC-019: append_failure_tolerated=true seq_not_consumed=true
+.[VERIFY] VC-019: append_failure_os_level=true no_raise=true
+.[VERIFY] VC-019: newline_lf_only=true utf8_roundtrip=true
+.[VERIFY] VC-019: explicit_paths=true parent_autocreate=true
+.[VERIFY] VC-001: verdict=meets file_bytes=6 file_text=meets intermediate_below=true ok=true
+.[VERIFY] VC-002: report_sha_eq_a3=true report_sha_eq_a2=false dossier_row_ok=true ok=true
+.F[VERIFY] VC-004: verdict=below report_round=a3 report_sha_match=true upgraded=false ok=true
+.[VERIFY] VC-005: ticks=3 verdict_sha_changes=0 verdict_mtime_changes=0 report_sha_changes=0 direct_repeat_writes=0 uppercase_rewrites=0 ok=true
+..[VERIFY] VC-006: final_verdict=below dossier_row_below=true transient_meets_seen=true refresh_events>=1 ok=true
+.[VERIFY] VC-007: golden_bytes_equal=true header_literal=true column_order=true ok=true
+.[VERIFY] VC-008: none_returned=true dossier_none=true third_state_written=false ok=true
+..[VERIFY] VC-009: rules_asserted=4 parse_sha_unchanged=true md_section_sha_unchanged=true ok=true
+.[VERIFY] VC-001: suspect=false reasons=[] verdict=meets
+.[VERIFY] VC-002: suspect=true delta_substring=600.0s verdict=below terminal=below
+.[VERIFY] VC-003: suspect=true reason_bytes_equals=true t1=false
+.[VERIFY] VC-004: suspect=true reasons_nonempty=true report_sha_unchanged=true
+.[VERIFY] VC-005: a2_suspect=false a2_verdict=meets
+.[VERIFY] VC-006: abstain=true legacy_15_passed=true
+.[VERIFY] VC-007: value_domain_closed=true suspect_only_in_sidecar=true
+.[VERIFY] VC-008: forbids=true report_line_verbatim=true write_directives=0
+.[VERIFY] VC-009: dispatched=reviewer write_directives=0 next_stem=l3-a2
+.[VERIFY] VC-010: suspect_documented=true legacy_substrings=8
+.[VERIFY] VC-011: key_status=running refused_events>=1
+.[VERIFY] VC-012: key_status=done conductor_family=90 passed
+.[VERIFY] VC-013: parse_sha_match=true md_section_sha_match=true tuple_len=4
+.[VERIFY] VC-014: changed=1 below_to_meets=0 zero_write=true
+.[VERIFY] VC-020: replay_sha_stable=true replay_mtime_stable=true io_limit=true
+.[VERIFY] VC-021: failed_status=no-verdict no_source=no-verdict report_only=verdict
+.[VERIFY] VC-001: verdict=meets source=report.md pointer_eq_report=true pointer_eq_output=false ok=true
+.[VERIFY] VC-002: verdict=meets source=output.md pointer_eq_output=true priority_respected=true ok=true
+.[VERIFY] VC-003: verdict=below source=report.md pointer_eq_report=true dossier_below=true whitewash=false nonqual_veto=true ok=true
+.[VERIFY] VC-004: new_verdict=below frozen_parse=meets new_re_hit=true old_re_hit=false ok=true
+.[VERIFY] VC-005: verdict=below source=none l3_report_created=false qg_reports=0 pass_lines=0 ok=true
+.[VERIFY] VC-006: scope=fixture rounds=17 below_to_meets=4 meets_to_below=3 unchanged=10 false_meets=0 ok=true
+.[VERIFY] VC-007: parse_sha_unchanged=true md_section_sha_unchanged=true freshness_file_unchanged=true criteria_test_passed=true ok=true
+.[VERIFY] VC-008: scope=fixture config_unchanged=true missing_section_below=true old_only=0 new_only=4 superset=true four_rule_probes=true ok=true
+.[VERIFY] VC-009: dossier_verdict=meets dossier_report=l3-report.md report_bytes_eq_source=true ok=true
+[VERIFY] VC-010: transaction_non_below=true qg_from_report=true achieved_from_report=true output_only_text_absent=true ok=true
+.[VERIFY] VC-011: report_case_ref=true output_case_ref=true ok=true
+.[VERIFY] VC-012: failed_status_no_verdict=true both_absent_no_verdict=true report_only_meets=true ok=true
+.[VERIFY] VC-021: verdict=below slug_reports_used=0 source_order_ok=true ok=true
+.[VERIFY] VC-020: ticks=3 verdict_sha_changes=0 verdict_mtime_changes=0 report_sha_changes=0 direct_repeat_writes=0 ok=true
+.[VERIFY] VC-019: fallback_documented=true output_preferred=true both_sections_named=true fail_to_below_kept=true ok=true
+..[VERIFY] VC-013/014: table_rows=30 modes=['dual', 'partition', 'single'] argv_kinds=['embedded', 'multi', 'none', 'single', 'unknown']
+.[VERIFY] VC-013/014: row=partition-auto-0ph mode=partition selector=auto argv_kind=none outcome=expanded
+.[VERIFY] VC-013/014: row=partition-auto-1ph-control mode=partition selector=auto argv_kind=single outcome=expanded
+.[VERIFY] VC-013/014: row=partition-control-1ph mode=partition selector=control argv_kind=single outcome=expanded
+.[VERIFY] VC-013/014: row=partition-partition-1ph mode=partition selector=partition argv_kind=single outcome=expanded
+.[VERIFY] VC-013/014: row=partition-parent-1ph mode=partition selector=parent argv_kind=single outcome=expanded
+.[VERIFY] VC-013/014: row=partition-rootname-sdk-multi mode=partition selector=sdk argv_kind=multi outcome=expanded
+.[VERIFY] VC-013/014: row=partition-auto-multi mode=partition selector=auto argv_kind=multi outcome=expanded
+.[VERIFY] VC-013/014: row=partition-auto-undefined-game mode=partition selector=auto argv_kind=unknown outcome=fail-closed
+.[VERIFY] VC-013/014: row=partition-auto-undefined-python mode=partition selector=auto argv_kind=unknown outcome=fail-closed
+.[VERIFY] VC-013/014: row=partition-auto-embedded-partition mode=partition selector=auto argv_kind=embedded outcome=fail-closed
+.[VERIFY] VC-013/014: row=partition-auto-embedded-control mode=partition selector=auto argv_kind=embedded outcome=fail-closed
+.[VERIFY] VC-013/014: row=partition-unknown-selector-bogus mode=partition selector=bogus argv_kind=single outcome=fail-closed
+.[VERIFY] VC-013/014: row=partition-unconfigured-selector-engine mode=partition selector=engine argv_kind=single outcome=fail-closed
+.[VERIFY] VC-013/014: row=dual-auto-0ph mode=dual selector=auto argv_kind=none outcome=expanded
+.[VERIFY] VC-013/014: row=dual-auto-game-1ph mode=dual selector=auto argv_kind=single outcome=expanded
+.[VERIFY] VC-013/014: row=dual-game-1ph mode=dual selector=game argv_kind=single outcome=expanded
+.[VERIFY] VC-013/014: row=dual-engine-1ph mode=dual selector=engine argv_kind=single outcome=expanded
+.[VERIFY] VC-013/014: row=dual-control-multi mode=dual selector=control argv_kind=multi outcome=expanded
+.[VERIFY] VC-013/014: row=dual-auto-undefined-partition mode=dual selector=auto argv_kind=unknown outcome=fail-closed
+.[VERIFY] VC-013/014: row=dual-auto-embedded-game mode=dual selector=auto argv_kind=embedded outcome=fail-closed
+.[VERIFY] VC-013/014: row=dual-unknown-selector-parent mode=dual selector=parent argv_kind=single outcome=fail-closed
+.[VERIFY] VC-013/014: row=dual-unknown-selector-partition mode=dual selector=partition argv_kind=single outcome=fail-closed
+.[VERIFY] VC-013/014: row=single-auto-0ph mode=single selector=auto argv_kind=none outcome=expanded
+.[VERIFY] VC-013/014: row=single-control-1ph mode=single selector=control argv_kind=single outcome=expanded
+.[VERIFY] VC-013/014: row=single-auto-game-is-control mode=single selector=auto argv_kind=single outcome=expanded
+.[VERIFY] VC-013/014: row=single-game-selector-is-control mode=single selector=game argv_kind=single outcome=expanded
+.[VERIFY] VC-013/014: row=single-auto-undefined-partition mode=single selector=auto argv_kind=unknown outcome=fail-closed
+.[VERIFY] VC-013/014: row=single-auto-undefined-engine mode=single selector=auto argv_kind=unknown outcome=fail-closed
+.[VERIFY] VC-013/014: row=single-unknown-selector-partition mode=single selector=partition argv_kind=single outcome=fail-closed
+.[VERIFY] VC-013/014: row=single-auto-embedded-control mode=single selector=auto argv_kind=embedded outcome=fail-closed
+.[VERIFY] VC-014: control_token_verify_argv=accepted control_token_toolchain=missing-field
+.[VERIFY] VC-014: toolchain_unknown_passthrough=verbatim verify_argv_unknown=missing-field
+.[VERIFY] VC-014: unconfigured_token=engine kind=missing-field
+.[VERIFY] VC-013: e2_shape=partition roots_distinct=true auto_cwd=partition control_cwd=C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_e2_shape_partition_contro0\control
+.[VERIFY] VC-013: e2_live=partition cwd=H:\git\E2Feature parent=E:\UEMigrator
+.[VERIFY] VC-014: toolchain_parity_cases=44 render_toolchain_unchanged=true
+.[VERIFY] VC-013: case=partition cwd=C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_partition_verify_cwd_and_0\shard cwd_is_partition=True anchors=locate+sha+prompt+apply+existence control_decoy_untouched=true apply_target=partition coordination_root=control pass=true
+.[VERIFY] VC-013: case=invalid-selector kind=invalid-config verify_executed=false ticket_status=boundary_violation target_untouched=true pass=true
+.[VERIFY] VC-013: case=e2-shape mode=partition auto_cwd=C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_e2_shape_partition_defaul0\control control_eq_partition=True parent_cwd=C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_e2_shape_partition_defaul0\parent pass=true
+.[VERIFY] VC-013: case=e2-live cwd=H:\git\E2Feature pass=true
+.[VERIFY] VC-013: case=machine-layer project_cmd=[] machine_cmd=C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\python.exe -X utf8 -c print('1 passed in 0.01s') executed_cmd=C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\python.exe -X utf8 -c print('1 passed in 0.01s') consumed=true pass=true
+.[VERIFY] VC-013: case=repair-off tick_status=ok xkey_artifacts=0 verify_executed=false anchoring_calls=0 zero_change=true
+........................[VERIFY] VC-012: gates_for_ticket=1 ticks=5
+.[VERIFY] VC-008: xkey_artifacts=0 xkey_events=0
+.[VERIFY] VC-011-write: machine_line_in_prompt=True in_mandatory_section=True
+........................................[VERIFY] VC-012: parse_end_exit=0
+[VERIFY] VC-012: parse_end_exit=1
+[VERIFY] VC-012: parse_end_exit=2
+..[VERIFY] VC-012: parse_end_exit=None
+.........[VERIFY] VC-013: beat_guard=True, window=90
+..........................[VERIFY] VC-013: probe_yes=yes probe_no=no probe_unknown=unknown
+..........................................................[mw model set] review = timi/glm-5.3-air ¡ú C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_show_clear_roundtrip0\.mw\dispatch.yml
+[mw model set] coding = codex/gpt-5.6-sol ¡ú C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_show_clear_roundtrip0\.mw\dispatch.yml
+[mw model clear] removed review ¡ú C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_show_clear_roundtrip0\.mw\dispatch.yml
+[mw model clear] removed all roles ¡ú C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_show_clear_roundtrip0\.mw\dispatch.yml
+.....[mw model set] vision = timi/deepseek-v4-flash-vision-exp ¡ú C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_yes_writes_vision_role0\.mw\dispatch.yml
+....[mw model set] main = timi/glm-5.3 ¡ú C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_other_roles_never_probe0\.mw\dispatch.yml
+[mw model set] coding = timi/glm-5.3 ¡ú C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_other_roles_never_probe0\.mw\dispatch.yml
+[mw model set] review = timi/glm-5.3 ¡ú C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_other_roles_never_probe0\.mw\dispatch.yml
+[mw model set] research = timi/glm-5.3 ¡ú C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_other_roles_never_probe0\.mw\dispatch.yml
+.[VERIFY] VC-001: vision=timi/deepseek-v4-flash-vision-exp rc=0
+[mw model set] vision = timi/deepseek-v4-flash-vision-exp ¡ú C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_verify_vc0010\.mw\dispatch.yml
+.[VERIFY] VC-002: rc=nonzero roles=5
+.[VERIFY] VC-013: no_rc=1 yml_unchanged=true force_rc=0
+[mw model set] --force: image-capability probe skipped for timi/glm-5.3
+[mw model set] vision = timi/glm-5.3 ¡ú C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_verify_vc0130\.mw\dispatch.yml
+......[VERIFY] VC-010: doctor_rc=0 states=suggestion,ok,skip
+.[VERIFY] VC-015: show_images=yes/no/unknown rc=0
+.[VERIFY] VC-003: source=config:vision task_override=task
+......................[VERIFY] VC-014: segment_keys=11 read_only=True
+..[VERIFY] VC-024: parse_error_issue=True fix_hint=fix the frontmatter exit_code=1
+..[VERIFY] VC-024: alert=no expires_at/default_action ac_019=True
+......[VERIFY] VC-007: replay_prior=gate-0001 replay_issue=True
+...[VERIFY] VC-024: kinds=5 missing_fields=0 gates_text_line=0
+...[VERIFY] VC-014: healthy=True gates_line=absent
+...[VERIFY] VC-049: validated=True problems=1
+....[VERIFY] VC-014: zero_write=True entries=5
+..[VERIFY] VC-007: card_lines=14 fixed_order=1+13N
+...................................................[launcher] t001: model=(route default) source=default
+...[launcher] t001: model=(route default) source=default
+.........................[VERIFY] VC-009: starter_directive=present
+.......[VERIFY] VC-012: map=0-done,1-failed,2-nc, own_row=untouched
+.........[VERIFY] VC-013: silence_failed=1, fresh_untouched=1, beat_guard=skipped
+.[launcher] t003: model=(route default) source=default
+.[launcher] t001: model=(route default) source=default
+.[launcher] t001: model=(route default) source=default
+[VERIFY] VC-004: spawn-cwd=C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_dual_mode_cwd_is_game_roo0\game
+..[mw autopilot verify set] C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_stores_flag_shaped_to0\.agenticdoc\_autopilot\config.json
+  xkey_verify_cmd: ["-x", "--flag", "a b", "-", "--", "tail"]
+  xkey_verify_timeout_s: 1800
+  xkey_verify_cwd: (auto)
+  argv: ["-x", "--flag", "a b", "-", "--", "tail"]
+  cwd: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_stores_flag_shaped_to0
+[VERIFY] VC-001: argv_tokens=6 completed_keys=14 verbatim=True
+..[mw autopilot verify set] C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_is_byte_idempotent0\.agenticdoc\_autopilot\config.json
+  xkey_verify_cmd: ["python", "-m", "pytest", "-q"]
+  xkey_verify_timeout_s: 120
+  xkey_verify_cwd: (auto)
+  argv: ["python", "-m", "pytest", "-q"]
+  cwd: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_is_byte_idempotent0
+[mw autopilot verify set] C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_is_byte_idempotent0\.agenticdoc\_autopilot\config.json
+  xkey_verify_cmd: ["python", "-m", "pytest", "-q"]
+  xkey_verify_timeout_s: 120
+  xkey_verify_cwd: (auto)
+  argv: ["python", "-m", "pytest", "-q"]
+  cwd: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_is_byte_idempotent0
+[VERIFY] VC-002: idempotent_bytes=True size=408
+.[VERIFY] VC-001: misplaced_project=rejected file_unchanged=True
+..[VERIFY] VC-014: placeholder={bogus} refused=True
+.[VERIFY] VC-014: placeholder=a{b} refused=True
+.[VERIFY] VC-014: placeholder={control}/tests refused=True
+.[VERIFY] VC-013: invalid_cwd_root=rejected file_unchanged=True
+..[VERIFY] VC-011: lock_busy=return 1 file_unchanged=True
+.[VERIFY] VC-011: lock_holder=live process returncode=1 file_unchanged=True
+.[mw autopilot verify set] C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_releases_lock_on_succ0\.agenticdoc\_autopilot\config.json
+  xkey_verify_cmd: ["echo", "ok"]
+  xkey_verify_timeout_s: 1800
+  xkey_verify_cwd: (auto)
+  argv: ["echo", "ok"]
+  cwd: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_releases_lock_on_succ0
+..[mw autopilot verify clear] removed xkey_repair, xkey_verify_cmd, xkey_verify_timeout_s, xkey_verify_cwd ¡ú C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_removes_only_xkey_k0\.agenticdoc\_autopilot\config.json
+[VERIFY] VC-005: file_kept=True xkey_keys_removed=4 other_keys_intact=True
+.[VERIFY] VC-005: nothing_configured=no write mtime_unchanged=True
+...[VERIFY] VC-004: read_only=True mw_dir_created=False
+.[VERIFY] VC-004: origins=['default', 'machine', 'project'] diagnostics=1
+.[VERIFY] VC-004: expanded_control=C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_show_expands_argv_and_cwd0 cwd=C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_show_expands_argv_and_cwd0
+...[mw autopilot verify set] C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_show_does_not_create_mw_d0\.agenticdoc\_autopilot\config.json
+  xkey_verify_cmd: ["echo", "ok"]
+  xkey_verify_timeout_s: 1800
+  xkey_verify_cwd: (auto)
+  argv: ["echo", "ok"]
+  cwd: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_show_does_not_create_mw_d0
+config: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_show_does_not_create_mw_d0\.agenticdoc\_autopilot\config.json (exists)
+xkey_repair: false [project]
+xkey_verify_cmd: ["echo", "ok"] [project]
+xkey_verify_timeout_s: 1800 [project]
+xkey_verify_cwd: (auto) [default]
+argv: ["echo", "ok"]
+cwd: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_show_does_not_create_mw_d0
+.[VERIFY] VC-001: group_shape=autopilot verify set|show|clear missing_args_exit=2
+..[mw bootstrap] step 1/8: prerequisites (python, node, npm, git, credential route)
+[mw bootstrap] python 3.14.3, node v22.19.0, git ok; credential routes available: timi
+[mw bootstrap] step 2/8: npm ci/install --ignore-scripts
+[mw bootstrap] step 3/8: npm run build (root; the ai build fetches models.dev ¡ª network required)
+[mw bootstrap] step 4/8: npm link packages/coding-agent (global pi = this repo)
+[mw bootstrap] pi on PATH: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_rerun_with_existing_node_0\pi.CMD (0.99.0-test)
+[mw bootstrap] step 5/8: mw setup --build (extension bundle, global install, framework cache)
+[mw bootstrap] step 6/8: mw init C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_rerun_with_existing_node_0\project
+[mw bootstrap] step 7/8: skipped (already running (PID 4242))
+[mw bootstrap] step 8/8: mw doctor (full-chain verification)
+[doctor] healthy
+[mw bootstrap] done in 0s
+.....[mw bootstrap] step 1/8: prerequisites (python, node, npm, git, credential route)
+........[mw bootstrap] step 1/8: prerequisites (python, node, npm, git, credential route)
+[mw bootstrap] python 3.14.3, node v22.19.0, git ok; credential routes available: timi
+[mw bootstrap] step 2/8: npm ci/install --ignore-scripts
+[mw bootstrap] step 3/8: npm run build (root; the ai build fetches models.dev ¡ª network required)
+[mw bootstrap] step 4/8: npm link packages/coding-agent (global pi = this repo)
+[mw bootstrap] pi on PATH: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_doctor_issue_fails_bootst0\pi.CMD (0.99.0-test)
+[mw bootstrap] step 5/8: mw setup --build (extension bundle, global install, framework cache)
+[mw bootstrap] step 6/8: mw init C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_doctor_issue_fails_bootst0\project
+[mw bootstrap] step 7/8: skipped (already running (PID 4242))
+[mw bootstrap] step 8/8: mw doctor (full-chain verification)
+[doctor] healthy
+[mw bootstrap] finished with 1 issue(s) in 0s
+............[mw build] built ok
+[mw build] bundle: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_plain_build_never_touches0\b.js
+...[mw build] built ok
+[mw build] bundle: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_install_non_git_tree_skip0\agent-team-loop.js
+[mw build] agentictask-update extension installed: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_install_non_git_tree_skip0\ext\agentictask-update.ts
+[mw build] installed globally: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_install_non_git_tree_skip0\ext\agent-team-loop.js
+[mw build] dist rebuilt: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_install_non_git_tree_skip0\not-a-repo\packages\coding-agent\dist
+[mw build] Restart open pi windows to load the new bundle and dist.
+.....[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_creates_v2_template_a0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_creates_v2_template_a0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_creates_v2_template_a0\part
+[mw partition] vcs: -
+[VERIFY] VC-010: exit=0, mode=partition, omitted-fields=not-persisted
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_default_partition_is_0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_default_partition_is_0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_default_partition_is_0\control
+[mw partition] vcs: -
+[VERIFY] VC-010: default-partition=control-root-absolute
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_roots_and_vcs_persist0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_roots_and_vcs_persist0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_roots_and_vcs_persist0\part
+[mw partition] root sdk: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_roots_and_vcs_persist0\sdk
+[mw partition] root tools: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_roots_and_vcs_persist0\control\tools
+[mw partition] vcs: git
+[VERIFY] VC-010: roots+vcs persisted, relative-roots=control-anchored
+.[VERIFY] VC-011: exit=1 missing-parent, file=unchanged
+[VERIFY] VC-008: read_only_residual=0, wording=extended-writable-workspace
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_0\part
+[mw partition] vcs: -
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_1\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_1\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_1\part
+[mw partition] vcs: -
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_2\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_2\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_2\part
+[mw partition] vcs: -
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_3\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_3\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_3\part
+[mw partition] vcs: -
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_4\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_4\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_invalid_root_4\part
+[mw partition] vcs: -
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_missing_paths0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_missing_paths0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_missing_paths0\part
+[mw partition] vcs: -
+[VERIFY] VC-010: exit=1 missing-paths, yml=unchanged
+.[VERIFY] VC-010: exit=1 root-relation, yml=unchanged
+.[VERIFY] VC-010: exit=1 cross-env MW_PARTITION_PARENT, no-migration no-bak
+.[VERIFY] VC-010: exit=1 cross-env MW_PARTITION_ROOT, no-migration no-bak
+.[VERIFY] VC-010: exit=1 cross-env MW_TARGET_GAME, no-migration no-bak
+.[VERIFY] VC-010: exit=1 cross-env MW_TARGET_ENGINE, no-migration no-bak
+...[VERIFY] VC-010: migrated=v1-to-v2, bak=complete, content=preserved
+.[mw partition set] migrated v1 target.yml to v2 (all v1 fields moved into the dual block); backup: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_migrates_v1_single0\control\.agenticdoc\target.yml.bak
+[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_migrates_v1_single0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_migrates_v1_single0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_migrates_v1_single0\control
+[mw partition] vcs: -
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_v2_block_edit_preserv0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_v2_block_edit_preserv0\parent2
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_v2_block_edit_preserv0\part2
+[mw partition] vcs: -
+[mw partition] toolchain commands: build
+[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_v2_block_edit_preserv0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_v2_block_edit_preserv0\parent2
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_v2_block_edit_preserv0\part2
+[mw partition] root sdk: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_v2_block_edit_preserv0\sdk2
+[mw partition] vcs: git
+[mw partition] toolchain commands: build
+[VERIFY] VC-022: preserved=pass (hand sections + comments byte-identical)
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\part
+[mw partition] root sdk: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\sdk
+[mw partition] vcs: git
+[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\part
+[mw partition] root sdk: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\sdk
+[mw partition] vcs: git
+[mw partition set] migrated v1 target.yml to v2 (all v1 fields moved into the dual block); backup: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\sdk\.agenticdoc\target.yml.bak
+[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\sdk
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\part
+[mw partition] vcs: -
+[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\sdk
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_idempotent_bytes0\part
+[mw partition] vcs: -
+[VERIFY] VC-022: idempotent=pass (fresh + migrated paths)
+.[VERIFY] VC-022: atomic=pass (replace-failure ¡ú file intact, no residue)
+.[VERIFY] VC-012: set-output=deterministic (forwarded vs direct runs identical)
+..[VERIFY] FIX-4: no-file partition show = exit 1 + mode + set hint
+...[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_deletes_file_when_n0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_deletes_file_when_n0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_deletes_file_when_n0\control
+[mw partition] vcs: -
+[mw partition clear] removed partition block; no mode blocks remain ¡ª deleted C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_deletes_file_when_n0\control\.agenticdoc\target.yml
+[VERIFY] VC-011: clear=block-removed, no-blocks ¡ú file deleted
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_keeps_dual_block_an0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_keeps_dual_block_an0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_keeps_dual_block_an0\part
+[mw partition] vcs: -
+[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_keeps_dual_block_an0\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_keeps_dual_block_an0\game
+[mw target] engine root:  -
+[mw target] vcs: -  uproject: -
+[mw partition on] active: partition (takes effect on the next worker spawn; no serve restart needed)
+[mw partition clear] removed partition block, active: single (dual block kept)
+[mw target on] active: dual (takes effect on the next worker spawn; no serve restart needed)
+.[mw partition clear] no partition block ¡ª nothing to clear
+[mw partition clear] no partition block ¡ª nothing to clear
+[mw partition clear] no partition block ¡ª nothing to clear
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_rejects_cross_env0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_rejects_cross_env0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_rejects_cross_env0\part
+[mw partition] vcs: -
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_clear_v2_keeps_par0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_clear_v2_keeps_par0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_clear_v2_keeps_par0\part
+[mw partition] vcs: -
+[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_clear_v2_keeps_par0\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_clear_v2_keeps_par0\game
+[mw target] engine root:  -
+[mw target] vcs: -  uproject: -
+[mw target clear] removed dual block, active: single (partition block kept)
+[mw partition on] active: partition (takes effect on the next worker spawn; no serve restart needed)
+[VERIFY] FIX-6: target clear = dual-block-only, partition kept, active single
+.[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_clear_v2_only_dual0\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_clear_v2_only_dual0\game
+[mw target] engine root:  -
+[mw target] vcs: -  uproject: -
+[mw target clear] removed C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_clear_v2_only_dual0\control\.agenticdoc\target.yml ¡ª mode resolves to single
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_clear_v2_no_dual_b0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_clear_v2_no_dual_b0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_clear_v2_no_dual_b0\part
+[mw partition] vcs: -
+[mw target clear] no dual block ¡ª nothing to clear
+.[mw target clear] removed C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_clear_v1_still_unl0\control\.agenticdoc\target.yml ¡ª mode resolves to single
+.[VERIFY] FIX-7/FIX-10: non-mapping yml ('- a\n') = exit 1, file unchanged, no migration
+.[VERIFY] FIX-7/FIX-10: non-mapping yml ('null\n') = exit 1, file unchanged, no migration
+.[VERIFY] FIX-7/FIX-10: non-mapping yml ('~\n') = exit 1, file unchanged, no migration
+.[VERIFY] FIX-7/FIX-10: non-mapping yml ('42\n') = exit 1, file unchanged, no migration
+.[VERIFY] FIX-10: yaml-null top level = invalid-config, fail closed
+.[VERIFY] FIX-10: blank/empty yml (incl. BOM-only) = single/default (historical)
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_on_activates_partition_bl0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_on_activates_partition_bl0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_on_activates_partition_bl0\part
+[mw partition] vcs: -
+[mw partition off] active: single (partition block kept; takes effect on the next worker spawn)
+[mw partition on] active: partition (takes effect on the next worker spawn; no serve restart needed)
+[mw partition off] active: single (partition block kept; takes effect on the next worker spawn)
+[VERIFY] VC-023: on=active-flip, off=single-parked, block=kept
+...[mw partition off] partition mode is not active (no target.yml) ¡ª nothing to do
+[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_off_idempotent_when_not_a0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_off_idempotent_when_not_a0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_off_idempotent_when_not_a0\control
+[mw partition] vcs: -
+[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_off_idempotent_when_not_a0\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_off_idempotent_when_not_a0\game
+[mw target] engine root:  -
+[mw target] vcs: -  uproject: -
+[mw partition off] partition mode is not active (active: dual) ¡ª nothing to do
+.[VERIFY] VC-018: guard=exit-1 (target show ¡ú mw partition show)
+..[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_set_on_v1_writes_v0\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_set_on_v1_writes_v0\game2
+[mw target] engine root:  -
+[mw target] vcs: -  uproject: -
+[mw target] toolchain commands: build
+[VERIFY] VC-013: target-set-on-v1=v1-flat-format (zero change)
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_set_on_v2_writes_d0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_set_on_v2_writes_d0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_set_on_v2_writes_d0\part
+[mw partition] vcs: -
+[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_set_on_v2_writes_d0\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_set_on_v2_writes_d0\game
+[mw target] engine root:  C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_set_on_v2_writes_d0\engine
+[mw target] vcs: p4  uproject: Proj.uproject
+[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_set_on_v2_writes_d0\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_set_on_v2_writes_d0\game
+[mw target] engine root:  -
+[mw target] vcs: -  uproject: -
+.[mw partition set] migrated v1 target.yml to v2 (all v1 fields moved into the dual block); backup: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_on_off_symmetric0\control\.agenticdoc\target.yml.bak
+[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_on_off_symmetric0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_on_off_symmetric0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_on_off_symmetric0\part
+[mw partition] vcs: -
+[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_on_off_symmetric0\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_target_on_off_symmetric0\game
+[mw target] engine root:  -
+[mw target] vcs: -  uproject: -
+[mw target on] active: dual (takes effect on the next worker spawn; no serve restart needed)
+[mw target off] active: single (dual block kept; takes effect on the next worker spawn)
+[mw target off] dual mode is not active (no target.yml) ¡ª nothing to do
+[VERIFY] VC-023: target on/off symmetric (v2 flip/park, v1 exit-1)
+.[mw partition] mode: partition (source: target-yml)
+[mw partition] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_write_scope_is_target_yml0\control
+[mw partition] parent root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_write_scope_is_target_yml0\parent
+[mw partition] partition root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_write_scope_is_target_yml0\part
+[mw partition] vcs: -
+[mw partition off] active: single (partition block kept; takes effect on the next worker spawn)
+[mw partition on] active: partition (takes effect on the next worker spawn; no serve restart needed)
+[mw partition clear] removed partition block; no mode blocks remain ¡ª deleted C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_write_scope_is_target_yml0\control\.agenticdoc\target.yml
+.[mw serve] conductor spawned (PID 4242)
+[VERIFY] ¼ü´æÔÚÊ±ÐÐÎªÎ´±ä: enabled_true=spawn spawns=1
+.[VERIFY] È±¼üÎÄ¼þ²»±À£¨3 ÖÖ£©: shape={} raised=False decision=not-enabled
+.[VERIFY] È±¼üÎÄ¼þ²»±À£¨3 ÖÖ£©: shape=xkey-only raised=False decision=not-enabled
+.[VERIFY] È±¼üÎÄ¼þ²»±À£¨3 ÖÖ£©: shape=paused-only raised=False decision=not-enabled
+.[mw serve] conductor spawned (PID 4242)
+[VERIFY] È±¼üÎÄ¼þ²»±À£¨3 ÖÖ£©: default_source=DEFAULT_CONFIG['enabled'] spawns=1
+.[mw serve] conductor terminated (autopilot disabled)
+[VERIFY] ¼ü´æÔÚÊ±ÐÐÎªÎ´±ä: enabled_false=terminate pid_file_removed=True
+.[mw serve] conductor spawned (PID 4242)
+[VERIFY] ¼ü´æÔÚÊ±ÐÐÎªÎ´±ä: paused_present=supervision unchanged spawns=1
+.[VERIFY] clear ¶Ëµ½¶Ëºó²»±À: cli_exit=0 config={} supervise_step=not-enabled/no-raise
+..[VERIFY] ÏàÁÚÓ²ÏÂ±êÇåÀíÇåµ¥: load_config=still partial (frozen contract kept)
+.[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_creates_template_and_0\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_creates_template_and_0\game
+[mw target] engine root:  -
+[mw target] vcs: -  uproject: -
+[VERIFY] VC-010: dual-root=game
+.[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_existing_file_line_up0\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_existing_file_line_up0\game2
+[mw target] engine root:  -
+[mw target] vcs: p4  uproject: -
+[mw target] toolchain commands: build
+.[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_returns_single0\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_returns_single0\game
+[mw target] engine root:  -
+[mw target] vcs: -  uproject: -
+[mw target clear] removed C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_returns_single0\control\.agenticdoc\target.yml ¡ª mode resolves to single
+[VERIFY] VC-010: single-root=control
+.[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_write_scope_is_target_yml1\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_write_scope_is_target_yml1\game
+[mw target] engine root:  -
+[mw target] vcs: -  uproject: -
+[mw target clear] removed C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_write_scope_is_target_yml1\control\.agenticdoc\target.yml ¡ª mode resolves to single
+[VERIFY] VC-010: write-scope=target-yml-only dist-mtime-unchanged=true
+..[mw target] mode: dual (source: target-yml)
+[mw target] control root: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_validates_engine_and_0\control
+[mw target] game root:    C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_validates_engine_and_0\game
+[mw target] engine root:  -
+[mw target] vcs: -  uproject: Main.uproject
+.......[VERIFY] VC-008: parity_pass=true snapshot_equal=true keys=11
+[VERIFY] VC-005: allowlist_vision=read,write,edit,bash,find,grep,ls parity=true
+.[VERIFY] VC-006: spawn-cwd=C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_worker_cwd_partition_root0\shard
+..[launcher] t001: model=(route default) source=default
+..[VERIFY] FIX-11: head comments tolerated, window overflow malformed
+.[VERIFY] FIX-3: malformed-v2=failed, spawned=no, reason=profile-malformed
+.[VERIFY] VC-020: task=failed, reason=config_torn, spawned=no
+..[launcher] t001: model=(route default) source=default
+.[launcher] t001: model=(route default) source=default
+.[VERIFY] FIX-1: conductor task.md carries the v2 profile block
+.[VERIFY] FIX-1: post-dispatch active switch -> config torn, spawned=no
+...[VERIFY] FIX-13: partition_profile_parity=byte-identical
+.[VERIFY] VC-001: expanded=[entries, control, parent], legacy=unchanged
+.[VERIFY] VC-001: dedup=pass
+......[VERIFY] VC-009: checks=[parent_root,partition_root,root:*]
+..[VERIFY] VC-009: reprobe=on-fingerprint-change (env overlay)
+...........[VERIFY] VC-011: surfaces=6 failures=0
+.......[mw stop] not running (no PID or process not found)
+.[mw stop] warning: process 99999 did not exit in 30s
+.........[VERIFY] VC-014: status=done trace=rag-required-missing output_marked=true (TS worker face; audit-side detection read-only)
+....[VERIFY] VC-019: negative_exit=1 scan_boundary=rag-dir-only attribution=present writes=0
+....[VERIFY] VC-020: role_only=missing phase_only=missing call_without_citation=missing
+.[VERIFY] VC-021: degraded_flag=true trace_delta=rag-rewrite-degraded clean_delta=0
+.[VERIFY] VC-105: py_role=coding py_required=true type_literal=foobar server=S exit=1
+.................[VERIFY] VC-023: sync_installed=true sha_match=true activate_no_write=covered_by(T-04 VC-001)
+..........[VERIFY] VC-105: py_render_role=coding type_literal=foobar server=B
+..[VERIFY] VC-013: secret_hits=0 argv_clean=measured_in:test_rag_launcher error_redacted=true
+.[VERIFY] VC-024: field_merge=true array_replace=true null_delete=true origin_per_field=true
+.[VERIFY] VC-111: server=A source=docs rewrite=true
+.[VERIFY] VC-205: documented_rows=25 missing=0 extra=0 example_yaml_keys=34 unaccepted=0
+..[VERIFY] VC-205-accept: load_error=0 enabled=1 servers=1 role_keys=6 phase_keys=4
+.[VERIFY] VC-206: sections=3 servers_bytes=3808 target_bytes=1643 roots_bytes=724
+.[VERIFY] VC-209: phrases=3 verified_in_source=3 quoted_in_manual=3
+.[VERIFY] VC-201-enable: enabled=['example'] default=example
+...[VERIFY] VC-203-print: segments=3 servers_key=1 rag_key=1
+.[VERIFY] VC-201: created=3 list_exit=0 enabled=(none) servers=1
+.[VERIFY] VC-202: rerun_exit=1 rerun_untouched=1 force_exit=0 servers_sha_changed=1 target_sha_changed=1
+.[VERIFY] VC-203: dry_exit=0 print_exit=0 tree_equal=1 print_has_servers=1 print_has_rag=1
+.[VERIFY] VC-204: subprocess_exit=0 input_hits=0 stdin_hits=0
+.[VERIFY] VC-205: fields=15 mcp_cli_commented=1 skill_url_commented=1 both_active=1
+.[VERIFY] VC-207: machine_written=1 machine_under_temp_home=1 rerun_exit=1 machine_only_refusal=1
+.[VERIFY] VC-208: roots_written=1 digest_len=64 citations=1 missing=0 unverified=0 audit_exit=0
+.[VERIFY] VC-208-noROOTS: active_path_roots=0 digest_is_none=1
+.[VERIFY] VC-001: injected_vars=0
+..[VERIFY] VC-013: secret_hits=0 enabled=A disabled_token_absent=true
+...[VERIFY] VC-013: provider_creds=0 rag_token_envs=0
+.[VERIFY] VC-022: torn_refused=true unrelated_change_ok=true health_excluded=true
+..........[VERIFY] VC-022: golden_bytes=347 idempotent=true
+.[VERIFY] VC-022: torn_refused=true unrelated_change_ok=true health_excluded=true
+.[launcher] t013: model=(route default) source=default
+[VERIFY] VC-013: secret_hits=0 argv_clean=true token_in_env=true measured=spawn-argv
+.[VERIFY] VC-020: phase_empty_byte_identical=true golden_match=true
+.[VERIFY] VC-020: phase_written=true value=DESIGN
+.[VERIFY] VC-020: phase_written=true worker_reads_phase=true audit_consistent=true
+.[VERIFY] VC-020: unknown_phase_omitted=true scratch_omitted=true
+.[VERIFY] VC-020: audit_consistent=true phase=design required_missing=1
+.[VERIFY] VC-015: registry_entry=rag-research tool_count=11
+.[VERIFY] VC-015: parity_unchanged=pass tools=11 conductor_dispatchable=false
+.[VERIFY] VC-015: role=research
+.[VERIFY] VC-015: conductor_dispatch_refused=true queued=0 timeline=type-rejected
+.[VERIFY] VC-015: l0_untouched=true
+...........................OK: claimed 'key-a' with ClaimId=WENBOZHOU-PC4:66008
+.OK: claimed 'key-dead' with ClaimId=WENBOZHOU-PC4:66008
+OK: claimed 'key-live' with ClaimId=WENBOZHOU-PC4:66008
+....[VERIFY] VC-015: serve-meta-prefix=control-mw
+....[mw ue-toolchain] run: python -c "print('toolchain-ok')"
+[mw ue-toolchain] dir: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_ok_run_artifacts_and_verd0\control\.mw\toolchain-runs\20261010-112457-ping
+[mw ue-toolchain] exit=0 seconds=3.1 error_lines=0 watched_drift=0/1 â€” OK
+.[mw ue-toolchain] run: python -c "import sys; print('x.cpp(1): error C2039: boom'); sys.exit(2)"
+[mw ue-toolchain] dir: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_error_signature_and_bad_e0\control\.mw\toolchain-runs\20261010-112500-ping
+[mw ue-toolchain] exit=2 seconds=1.4 error_lines=1 watched_drift=0/0 â€” ATTENTION
+.[mw ue-toolchain] run: python -c "open(r'C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_watch_drift_fails_even_on0\game\\w.txt','a').write('x')"
+[mw ue-toolchain] dir: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_watch_drift_fails_even_on0\control\.mw\toolchain-runs\20261010-112501-ping
+[mw ue-toolchain] exit=0 seconds=3.2 error_lines=0 watched_drift=1/1 â€” ATTENTION
+.[mw ue-toolchain] run: python -c "import sys; print(sys.argv[1])" forwarded-arg
+[mw ue-toolchain] dir: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_extra_args_forwarded_verb0\control\.mw\toolchain-runs\20261010-112505-ping
+[mw ue-toolchain] exit=0 seconds=3.6 error_lines=0 watched_drift=0/0 â€” OK
+.[mw ue-toolchain] run: python -c "print('ok')"
+[mw ue-toolchain] dir: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_out_override_places_run_d0\evidence\runs\20261010-112508-ping
+[mw ue-toolchain] exit=0 seconds=1.6 error_lines=0 watched_drift=0/0 â€” OK
+...............................[VERIFY] VC-013: new_tests=15 failed=3 fail_closed_cases=5 ac_covered=14 real_tree_deps=0 self_audit=true stdout_archived=true ok=false
+[VERIFY] VC-015: pytest_failed=3 new_tests=17 ac_covered=12 fail_closed_cases=4 ok=false
+
+================================== FAILURES ===================================
+________ test_t21_shadow_then_live_flip_still_records_the_executed_row ________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-9612/test_t21_shadow_then_live_flip0')
+
+>   ???
+E   AssertionError: [{'budget': {'breaker': False, 'cooldown_s_left': 29.664237, 'key_cap': 2, 'key_used': 0, ...}, 'counterfactual_human': None, 'decided_at': '2026-10-10T03:16:26Z', 'decided_by': 'conductor', ...}]
+E   assert 0 == 1
+E    +  where 0 = len([])
+
+test_autopilot_pending_review.py:1313: AssertionError
+________________________ test_baseline_left_end_bound _________________________
+
+    def test_baseline_left_end_bound() -> None:
+        """The frozen pre-fix renderer equals the git HEAD blob (sha256) â€” the
+        byte-identical comparisons above are anchored to the real left end."""
+        if not HEAD_DISPATCH.is_file():
+            pytest.skip("frozen baseline copy not reachable (portable fallback in use)")
+        frozen = hashlib.sha256(HEAD_DISPATCH.read_bytes()).hexdigest()
+        git_blob = hashlib.sha256(_git("show", f"HEAD:{DISPATCH_RELATIVE}")).hexdigest()
+>       assert frozen == git_blob
+E       AssertionError: assert '219ed8090210...e9bd66bc8610a' == '6be60fe5ae42...0769643c91469'
+E         
+E         - 6be60fe5ae42646732a1ace23a704e95f9b588339c05fec51e70769643c91469
+E         + 219ed8090210630f5f2136b0f544900bc955309c60936ac351de9bd66bc8610a
+
+test_autopilot_readcap_injection.py:907: AssertionError
+_________________ test_true_below_without_resume_stays_below __________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-9612/test_true_below_without_resume0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000021F11DBA970>
+
+    def test_true_below_without_resume_stays_below(
+        tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _freeze_clock(monkeypatch)
+        project, _st, key_dir, _calls = _drive_to_first_stall(tmp_path, monkeypatch)
+        verdict = (key_dir / "l3-verdict.txt").read_text(encoding="utf-8").strip()
+        row = _dossier_row(project, "k1")
+        fixture_ok = verdict == "below" and "| below |" in row
+        assert fixture_ok, (verdict, row)
+    
+        # Real key: independent mirror recompute (no tested judgement imported),
+        # cross-checked against the T-001d frozen recompute evidence.
+        root = _e2feature_root()
+>       live_persisted, live_last, live_stale = _mirror_recompute_reverse_key(root)
+                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_autopilot_verdict_freshness.py:329: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+root = WindowsPath('H:/git/E2Feature')
+
+    def _mirror_recompute_reverse_key(root: pathlib.Path) -> tuple[str, str, bool]:
+        """(persisted, last_round_verdict, stale) for the real reverse anchor."""
+        key_dir = root / ".agenticdoc" / _REVERSE_KEY
+        rounds: dict[int, pathlib.Path] = {}
+        pattern = re.compile(r"^ap-" + re.escape(_REVERSE_KEY) + r"-l3-a(\d+)$")
+        for sub in sorted((key_dir / "workers").iterdir()):
+            match = pattern.match(sub.name)
+            if match and (sub / "output.md").is_file():
+                rounds[int(match.group(1))] = sub / "output.md"
+        assert rounds, f"no L3 rounds for {_REVERSE_KEY}"
+        verdict_by_round = {n: _mirror_parse_l3_output(p) for n, p in rounds.items()}
+        last_round = max(rounds)
+        last_verdict = verdict_by_round[last_round]
+        verdict_file = key_dir / "l3-verdict.txt"
+        assert verdict_file.is_file()
+        persisted = verdict_file.read_text(encoding="utf-8").strip().lower()
+        assert persisted in ("meets", "below")
+        report = key_dir / "l3-report.md"
+        assert report.is_file()
+        report_sha = _sha256_file(report)
+        report_matches = [
+            n for n, path in rounds.items() if _sha256_file(path) == report_sha
+        ]
+        stale = persisted != last_verdict
+>       assert last_round in report_matches, "latest report is not from the last round"
+E       AssertionError: latest report is not from the last round
+E       assert 3 in [2]
+
+test_autopilot_verdict_freshness.py:191: AssertionError
+=========================== short test summary info ===========================
+FAILED test_autopilot_pending_review.py::test_t21_shadow_then_live_flip_still_records_the_executed_row
+FAILED test_autopilot_readcap_injection.py::test_baseline_left_end_bound - As...
+FAILED test_autopilot_verdict_freshness.py::test_true_below_without_resume_stays_below
+3 failed, 1387 passed, 10 deselected in 975.25s (0:16:15)

@@ -1,0 +1,155 @@
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/extensions/agent-team-loop-vision-autoroute.test.ts > dispatch auto-route (mw-vision-role T-07) > an explicit text-only `model:` is never rewritten and walks the capability gate
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/extensions/agent-team-loop-vision-autoroute.test.ts:351:49
+    349|   expect(message).toContain(OTHER_TEXT_MODEL);
+    350|   expect(message).not.toContain(VISION_MODEL);
+    351|   expect(fs.existsSync(taskDir(fx.root, "t2"))).toBe(false);
+       |                                                 ^
+    352|   expect(fx.rows()).toBe(before);
+    353|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  test/extensions/agent-team-loop-vision-autoroute.test.ts > dispatch auto-route (mw-vision-role T-07) > an unconfigured `vision` role does not route and the gate refuses
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/extensions/agent-team-loop-vision-autoroute.test.ts:365:49
+    363|   expect(message).toContain("mw model set vision");
+    364|   expect(message).not.toContain("auto-route");
+    365|   expect(fs.existsSync(taskDir(fx.root, "t3"))).toBe(false);
+       |                                                 ^
+    366|   expect(fx.rows()).toBe(before);
+    367|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  test/extensions/agent-team-loop-vision-autoroute.test.ts > dispatch auto-route (mw-vision-role T-07) > a `vision` model that is not a definite 'yes' does not route (text-only and unknown)
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/extensions/agent-team-loop-vision-autoroute.test.ts:380:57
+    378|   expect(message).toContain("mw model set vision");
+    379|   expect(message).not.toContain("auto-route");
+    380|   expect(fs.existsSync(taskDir(textVision.root, "t4"))).toBe(false);
+       |                                                         ^
+    381|   expect(textVision.rows()).toBe(before);
+    382|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  test/extensions/agent-team-loop-vision-gate.test.ts > dispatch capability gate (mw-vision-role T-06) > VC-006: input:text + images:yes is refused with zero side effects
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/extensions/agent-team-loop-vision-gate.test.ts:272:21
+    270|   expect(message).toContain("mw model set vision");
+    271|   expect(message).toContain("images: no");
+    272|   expect(dirExists).toBe(false);
+       |                     ^
+    273|   expect(fx.rows()).toBe(before);
+    274|   process.stdout.write(`[VERIFY] VC-006: refused=true queue_delta=${fx…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+ FAIL  test/extensions/agent-team-loop-vision-gate.test.ts > dispatch capability gate (mw-vision-role T-06) > auto-detects an existing png reference with a text-only model and refuses
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/extensions/agent-team-loop-vision-gate.test.ts:318:49
+    316|   );
+    317|   expect(message).toContain("mw model set vision");
+    318|   expect(fs.existsSync(taskDir(fx.root, "t3"))).toBe(false);
+       |                                                 ^
+    319|   expect(fx.rows()).toBe(before);
+    320|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯
+
+ FAIL  test/extensions/agent-team-loop.test.ts > dispatch role + model override gate (mw-dispatch-role-escape) > VC-003: an override of a configured role default requires model_reason and is recorded
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/extensions/agent-team-loop.test.ts:5194:47
+    5192|   expect(refused).toContain("needs model_reason");
+    5193|   expect(refused).toContain("review=timi/gpt-5.6-sol");
+    5194|   expect(workerDirExists(missing.root, "t1")).toBe(false);
+       |                                               ^
+    5195|   fs.rmSync(missing.root, { recursive: true, force: true });
+    5196|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/8]⎯
+
+ FAIL  test/extensions/agent-team-loop.test.ts > dispatch role + model override gate (mw-dispatch-role-escape) > VC-006: an unresolvable configured role default fails closed; an explicit model is the escape hatch
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/extensions/agent-team-loop.test.ts:5259:47
+    5257|   const refused = await blocked.execute({ task_key: "t1", description:…
+    5258|   expect(refused).toContain("not found for provider 'timi'");
+    5259|   expect(workerDirExists(blocked.root, "t1")).toBe(false);
+       |                                               ^
+    5260|   fs.rmSync(blocked.root, { recursive: true, force: true });
+    5261|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/8]⎯
+
+ FAIL  test/extensions/agent-team-loop.test.ts > dispatch role + model override gate (mw-dispatch-role-escape) > VC-013: a BOM-prefixed dispatch.yml is read like PyYAML reads it
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/extensions/agent-team-loop.test.ts:5374:45
+    5372|   });
+    5373|   expect(refused).toContain("needs model_reason");
+    5374|   expect(workerDirExists(gated.root, "t1")).toBe(false);
+       |                                             ^
+    5375|   fs.rmSync(gated.root, { recursive: true, force: true });
+    5376|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/8]⎯
+

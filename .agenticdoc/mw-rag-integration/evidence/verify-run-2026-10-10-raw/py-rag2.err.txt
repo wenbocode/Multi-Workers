@@ -1,0 +1,41 @@
+[mw rag audit] Error: unknown rag server 'Z' in rag.enabled (available: S, U)
+[mw rag audit] Error: no such key directory: C:\Users\wenbozhou\AppData\Local\Temp\tmpzrfigqw9\.agenticdoc\no-such-key
+[mw rag audit] Error: project directory not found: C:\Users\WENBOZ~1\AppData\Local\Temp\tmpzrfigqw9\missing
+[mw rag sync] Error: unknown rag server 'Z' in rag.enabled (available: A, B)
+[launcher] spawn failed for 't001': config torn (rag): task.md fingerprint=436b6a35ff60162559fe45e07f80afbe4c7e1c3e044bb6cc3c17196356034950 != current 531889cb720288128cdb917b9855b36e34c5611f49c78d66783c3e2751d3638e (the enabled RAG server config or the path_roots file content changed after dispatch) — spawn refused; re-dispatch the task
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 51744)
+Traceback (most recent call last):
+  File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\socketserver.py", line 766, in __init__
+    self.handle()
+    ~~~~~~~~~~~^^
+  File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\http\server.py", line 496, in handle
+    self.handle_one_request()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\http\server.py", line 484, in handle_one_request
+    method()
+    ~~~~~~^^
+  File "H:\git\Multi-Workers\packages\multi-workers\test_rag_cli.py", line 113, in do_POST
+    self._send(
+    ~~~~~~~~~~^
+        {
+        ^
+    ...<4 lines>...
+        session="stub-session",
+        ^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "H:\git\Multi-Workers\packages\multi-workers\test_rag_cli.py", line 149, in _send
+    self.wfile.write(data)
+    ~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\socketserver.py", line 845, in write
+    self._sock.sendall(b)
+    ~~~~~~~~~~~~~~~~~~^^^
+ConnectionAbortedError: [WinError 10053] 你的主机中的软件中止了一个已建立的连接。
+----------------------------------------

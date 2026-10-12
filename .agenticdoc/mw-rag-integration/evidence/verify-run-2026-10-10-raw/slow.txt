@@ -1,0 +1,12 @@
+
+ RUN  v4.1.9 H:/git/Multi-Workers/packages/coding-agent
+
+[worker] start task=t-slow type=rag-research phases=-
+[worker] failed exit=1 elapsed=1m tools=0
+x
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  10:58:19
+   Duration  187.81s (transform 207ms, setup 0ms, import 407ms, tests 180.06s, environment 0ms)
+

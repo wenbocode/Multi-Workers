@@ -1,0 +1,29 @@
+[33m[PLUGIN_TIMINGS] [0mYour build spent significant time in plugin `externalize-deps`. See https://rolldown.rs/options/checks#plugintimings for more details.
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/suite/rag-e2e-slow.test.ts > VC-017 L2: 180s rag_chat under a 60s idle watchdog > worker survives the slow call; rag_call ms >= 180000; watchdog armed
+AssertionError: expected "Mock" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st Mock call:
+
+    Array [
+      1,
+    ]
+
+
+Number of calls: 1
+
+ ❯ test/suite/rag-e2e-slow.test.ts:209:25
+    207|     expect(SLOW_MS).toBeGreaterThanOrEqual(180_000);
+    208|     // Worker alive: the idle watchdog never fired its process.exit(1).
+    209|     expect(exitSpy).not.toHaveBeenCalled();
+       |                         ^
+    210|     // Heartbeat kept the idle watchdog fed.
+    211|     expect(pings).toBeGreaterThanOrEqual(4);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

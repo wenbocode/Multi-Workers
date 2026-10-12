@@ -1,0 +1,154 @@
+[launcher] Warning: dispatch.yml unreadable: while parsing a flow sequence
+  in "<unicode string>", line 1, column 9:
+    models: [broken
+            ^
+expected ',' or ']', but got '<stream end>'
+  in "<unicode string>", line 2, column 1:
+    
+    ^ — model defaults fall back to the window model / per-cli defaults
+[mw model set] Error: value must be 'prefix/model' (e.g. timi/glm-5.3), got 'noslash'
+[mw model set] Error: unknown prefix 'bogus' (valid: claude, claude_cli, codex, codex_cli, deepseek, timi, zai)
+[mw model set] Error: existing dispatch.yml is unusable (dispatch.yml unreadable: while parsing a flow sequence
+  in "<unicode string>", line 1, column 9:
+    models: [broken
+            ^
+expected ',' or ']', but got '<stream end>'
+  in "<unicode string>", line 2, column 1:
+    
+    ^) — fix or remove it before writing
+[mw model set] Error: --force is only valid for the 'vision' role (got 'coding'); it only skips the image-capability probe
+usage: python.exe -m pytest model set [-h] --project PROJECT [--force]
+                                      ROLE PROVIDER/MODEL
+python.exe -m pytest model set: error: argument ROLE: invalid choice: 'villain' (choose from main, coding, review, research, vision)
+[mw model set] Error: timi/glm-5.3 reports images=no — a 'vision' role model must accept image input
+[mw model set] Suggest: pick a vision-capable model, e.g. `mw model set vision timi/deepseek-v4-flash-vision-exp`, or override with `mw model set vision timi/glm-5.3 --force`
+[launcher] spawn failed for 't001': Timi credential is not available (env TIMI_API_KEY unset).
+[launcher] spawn failed for 't001': Required credential for route 'claude-cli' is not available (env ANTHROPIC_AUTH_TOKEN unset).
+[launcher] spawn failed for 't001': task.md not found: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_missing_task_md_marks_fai0\nowhere\task.md
+[launcher] spawn failed for 't001': Timi credential is not available (env TIMI_API_KEY unset).
+[launcher] status update failed for 't001': boom
+[launcher] archived stale entries: t001
+[launcher] reconcile: silence rule yielded for 't003' (another live launcher holds a fresh beat)
+[launcher] spawn failed for 't001': target.yml is unusable (invalid-yaml): target.yml is not valid YAML (C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_broken_target_yml_refuses0\.agenticdoc\target.yml): while parsing a flow sequence
+  in "<unicode string>", line 1, column 7:
+    mode: [unclosed
+          ^
+expected ',' or ']', but got '<stream end>'
+  in "<unicode string>", line 2, column 1:
+    
+    ^
+[mw autopilot verify set] Error: no argv given after '--' (use `clear` to remove the command)
+[mw autopilot verify set] Error: --timeout must be >= 1, got 0
+[mw autopilot verify set] Error: missing-field: verification command references undefined placeholder '{bogus}' (verify argv defines: {control}, {game}, {uproject}): {bogus}
+[mw autopilot verify set] Error: missing-field: verification command placeholder must occupy a whole argv element: a{b}
+[mw autopilot verify set] Error: missing-field: verification command placeholder must occupy a whole argv element: {control}/tests
+[mw autopilot verify set] Error: invalid-config: xkey_verify_cwd 'bogus-root' is not a valid root for single mode (valid: '' (auto), control)
+[mw autopilot verify set] Error: existing _autopilot/config.json is unusable (cannot read C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_refuses_unusable_exis0\.agenticdoc\_autopilot\config.json: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — fix or remove it before writing
+[mw autopilot verify set] Error: existing _autopilot/config.json is unusable (invalid _autopilot/config.json: unknown field(s): nope) — fix or remove it before writing
+[mw autopilot verify set] Error: invalid-config: target.yml: 'active' must be one of 'single', 'dual', 'partition', got 'nonsense'
+[mw autopilot verify clear] Error: existing _autopilot/config.json is unusable (cannot read C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_clear_refuses_unusable_ex0\.agenticdoc\_autopilot\config.json: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — fix or remove it before writing
+[mw bootstrap] Error: node >= 22.19.0 required (package.json engines.node), running unknown
+[mw partition set] Error: --root expects NAME=DIR, got 'noequalsign'
+[mw partition set] Error: --root name 'bad name' is invalid (must match [A-Za-z0-9_-]+ and must not be a reserved name: parent, partition, game, engine, uproject)
+[mw partition set] Error: --root name 'parent' is invalid (must match [A-Za-z0-9_-]+ and must not be a reserved name: parent, partition, game, engine, uproject)
+[mw partition set] Error: --root name 'sdk' given more than once
+[mw partition set] Error: --root expects NAME=DIR, got '=x'
+[mw partition set] Error: parent root not found: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_missing_paths0\nope
+[mw partition set] Error: partition root not found: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_missing_paths0\nope
+[mw partition set] Error: root 'sdk' not found: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_missing_paths0\nope
+[mw partition set] Error: root relation is invalid — parent (C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_root_relation0\control) and partition (C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_root_relation0\control) must not be equal or nested
+[mw partition set] Error: root relation is invalid — parent (C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_root_relation0\outer) and partition (C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_root_relation0\outer\inner) must not be equal or nested
+[mw partition set] Error: root relation is invalid — parent (C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_root_relation0\outer\inner) and partition (C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_root_relation0\outer) must not be equal or nested
+[mw partition set] Error: root relation is invalid — parent (C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_root_relation0) and partition (C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_rejects_root_relation0\control) must not be equal or nested
+[mw partition set] Error: cross env: MW_PARTITION_PARENT is set — unset MW_PARTITION_* / MW_TARGET_* before writing target.yml (env overrides are read-only activations, never persisted)
+[mw partition set] Error: cross env: MW_PARTITION_ROOT is set — unset MW_PARTITION_* / MW_TARGET_* before writing target.yml (env overrides are read-only activations, never persisted)
+[mw partition set] Error: cross env: MW_TARGET_GAME is set — unset MW_PARTITION_* / MW_TARGET_* before writing target.yml (env overrides are read-only activations, never persisted)
+[mw partition set] Error: cross env: MW_TARGET_ENGINE is set — unset MW_PARTITION_* / MW_TARGET_* before writing target.yml (env overrides are read-only activations, never persisted)
+[mw partition set] Error: target.yml is mixed format (v2 'active:' key together with v1 flat fields) — resolve the file to one format first
+[mw partition set] Error: target.yml is not valid YAML — fix or remove it first
+[mw partition set] Error: writing C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_atomic_write_never_tr0\control\.agenticdoc\target.yml failed: simulated rename failure
+[mw partition clear] Error: cross env: MW_TARGET_GAME is set — unset MW_PARTITION_* / MW_TARGET_* before changing target.yml
+[mw target on] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition on] Error (invalid-config): target.yml: top level must be a mapping
+[mw target off] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition off] Error (invalid-config): target.yml: top level must be a mapping
+[mw target clear] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition clear] Error (invalid-config): target.yml: top level must be a mapping
+[mw target on] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition on] Error (invalid-config): target.yml: top level must be a mapping
+[mw target off] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition off] Error (invalid-config): target.yml: top level must be a mapping
+[mw target clear] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition clear] Error (invalid-config): target.yml: top level must be a mapping
+[mw target on] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition on] Error (invalid-config): target.yml: top level must be a mapping
+[mw target off] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition off] Error (invalid-config): target.yml: top level must be a mapping
+[mw target clear] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition clear] Error (invalid-config): target.yml: top level must be a mapping
+[mw target on] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition on] Error (invalid-config): target.yml: top level must be a mapping
+[mw target off] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition off] Error (invalid-config): target.yml: top level must be a mapping
+[mw target clear] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition clear] Error (invalid-config): target.yml: top level must be a mapping
+[mw partition on] Error: no target.yml — run `mw partition set --parent <dir> --partition <dir>` first
+[mw partition on] Error: no partition block — run `mw partition set --parent <dir> --partition <dir>` first
+[mw partition on] Error: the partition block is missing field(s) parent, partition — run `mw partition set ...` first
+[mw target on] Error: no usable dual block (game root missing) — run `mw target set --game <dir> ...` first
+[mw target on] Error: no target.yml — run `mw target set --game <dir> ...` first
+[mw target set] Error: game root not found: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_missing_game_fails_cl0\nope
+[mw target set] Error: engine root not found: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_validates_engine_and_0\missing-engine
+[mw target set] Error: uproject not found: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_set_validates_engine_and_0\game\Nope.uproject
+[launcher] spawn failed for 't001': task.md v2 profile malformed (expected '[mw] mode: <single|dual|partition>' as the first line after the '<!-- mw-profile: v2 -->' marker) — spawn refused; re-dispatch the task
+[launcher] spawn failed for 't001': config torn: task.md profile mode 'partition' != active mode 'dual' (target.yml active switched after dispatch) — spawn refused; re-dispatch the task
+[launcher] spawn failed for 't001': config torn: task.md profile mode 'dual' != active mode 'partition' (target.yml active switched after dispatch) — spawn refused; re-dispatch the task
+[launcher] spawn failed for 't001': config torn: task.md profile mode 'partition' != active mode 'dual' (target.yml active switched after dispatch) — spawn refused; re-dispatch the task
+[mw rag audit] Error: unknown rag server 'Z' in rag.enabled (available: S, U)
+[mw rag audit] Error: no such key directory: C:\Users\wenbozhou\AppData\Local\Temp\tmpe52m9fvz\.agenticdoc\no-such-key
+[mw rag audit] Error: project directory not found: C:\Users\WENBOZ~1\AppData\Local\Temp\tmpe52m9fvz\missing
+[mw rag sync] Error: unknown rag server 'Z' in rag.enabled (available: A, B)
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 50817)
+Traceback (most recent call last):
+  File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\socketserver.py", line 766, in __init__
+    self.handle()
+    ~~~~~~~~~~~^^
+  File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\http\server.py", line 496, in handle
+    self.handle_one_request()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\http\server.py", line 484, in handle_one_request
+    method()
+    ~~~~~~^^
+  File "H:\git\Multi-Workers\packages\multi-workers\test_rag_cli.py", line 113, in do_POST
+    self._send(
+    ~~~~~~~~~~^
+        {
+        ^
+    ...<4 lines>...
+        session="stub-session",
+        ^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "H:\git\Multi-Workers\packages\multi-workers\test_rag_cli.py", line 149, in _send
+    self.wfile.write(data)
+    ~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\socketserver.py", line 845, in write
+    self._sock.sendall(b)
+    ~~~~~~~~~~~~~~~~~~^^^
+ConnectionAbortedError: [WinError 10053] 你的主机中的软件中止了一个已建立的连接。
+----------------------------------------
+[launcher] spawn failed for 't001': config torn (rag): task.md fingerprint=436b6a35ff60162559fe45e07f80afbe4c7e1c3e044bb6cc3c17196356034950 != current 531889cb720288128cdb917b9855b36e34c5611f49c78d66783c3e2751d3638e (the enabled RAG server config or the path_roots file content changed after dispatch) — spawn refused; re-dispatch the task
+[mw serve] FATAL: no route has credentials; refusing to start. Set at least one credential (env or configured file source) before mw serve.
+[mw serve] FATAL: no route has credentials; refusing to start. Set at least one credential (env or configured file source) before mw serve.
+CONFLICT: key 'key-live' is already active (ClaimId: WENBOZHOU-PC4:103076).
+Use --force to take over.
+CONFLICT: key 'key-legacy' is already active (ClaimId: 20260808-174558-3176).
+Use --force to take over.
+[mw ue-toolchain] Error: not a file: C:\Users\wenbozhou\AppData\Local\Temp\pytest-of-wenbozhou\pytest-9612\test_hash_missing_file_fails0\nope.txt

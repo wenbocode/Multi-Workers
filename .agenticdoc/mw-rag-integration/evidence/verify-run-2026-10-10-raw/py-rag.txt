@@ -1,0 +1,44 @@
+........[VERIFY] VC-014: status=done trace=rag-required-missing output_marked=true (TS worker face; audit-side detection read-only)
+....[VERIFY] VC-019: negative_exit=1 scan_boundary=rag-dir-only attribution=present writes=0
+....[VERIFY] VC-020: role_only=missing phase_only=missing call_without_citation=missing
+.[VERIFY] VC-021: degraded_flag=true trace_delta=rag-rewrite-degraded clean_delta=0
+.[VERIFY] VC-105: py_role=coding py_required=true type_literal=foobar server=S exit=1
+.................[VERIFY] VC-023: sync_installed=true sha_match=true activate_no_write=covered_by(T-04 VC-001)
+..........[VERIFY] VC-105: py_render_role=coding type_literal=foobar server=B
+..[VERIFY] VC-013: secret_hits=0 argv_clean=measured_in:test_rag_launcher error_redacted=true
+.[VERIFY] VC-024: field_merge=true array_replace=true null_delete=true origin_per_field=true
+.[VERIFY] VC-111: server=A source=docs rewrite=true
+.[VERIFY] VC-205: documented_rows=25 missing=0 extra=0 example_yaml_keys=34 unaccepted=0
+..[VERIFY] VC-205-accept: load_error=0 enabled=1 servers=1 role_keys=6 phase_keys=4
+.[VERIFY] VC-206: sections=3 servers_bytes=3808 target_bytes=1643 roots_bytes=724
+.[VERIFY] VC-209: phrases=3 verified_in_source=3 quoted_in_manual=3
+.[VERIFY] VC-201-enable: enabled=['example'] default=example
+...[VERIFY] VC-203-print: segments=3 servers_key=1 rag_key=1
+.[VERIFY] VC-201: created=3 list_exit=0 enabled=(none) servers=1
+.[VERIFY] VC-202: rerun_exit=1 rerun_untouched=1 force_exit=0 servers_sha_changed=1 target_sha_changed=1
+.[VERIFY] VC-203: dry_exit=0 print_exit=0 tree_equal=1 print_has_servers=1 print_has_rag=1
+.[VERIFY] VC-204: subprocess_exit=0 input_hits=0 stdin_hits=0
+.[VERIFY] VC-205: fields=15 mcp_cli_commented=1 skill_url_commented=1 both_active=1
+.[VERIFY] VC-207: machine_written=1 machine_under_temp_home=1 rerun_exit=1 machine_only_refusal=1
+.[VERIFY] VC-208: roots_written=1 digest_len=64 citations=1 missing=0 unverified=0 audit_exit=0
+.[VERIFY] VC-208-noROOTS: active_path_roots=0 digest_is_none=1
+.[VERIFY] VC-001: injected_vars=0
+..[VERIFY] VC-013: secret_hits=0 enabled=A disabled_token_absent=true
+...[VERIFY] VC-013: provider_creds=0 rag_token_envs=0
+.[VERIFY] VC-022: torn_refused=true unrelated_change_ok=true health_excluded=true
+..........[VERIFY] VC-022: golden_bytes=347 idempotent=true
+.[VERIFY] VC-022: torn_refused=true unrelated_change_ok=true health_excluded=true
+.[launcher] t013: model=(route default) source=default
+[VERIFY] VC-013: secret_hits=0 argv_clean=true token_in_env=true measured=spawn-argv
+.[VERIFY] VC-020: phase_empty_byte_identical=true golden_match=true
+.[VERIFY] VC-020: phase_written=true value=DESIGN
+.[VERIFY] VC-020: phase_written=true worker_reads_phase=true audit_consistent=true
+.[VERIFY] VC-020: unknown_phase_omitted=true scratch_omitted=true
+.[VERIFY] VC-020: audit_consistent=true phase=design required_missing=1
+.[VERIFY] VC-015: registry_entry=rag-research tool_count=11
+.[VERIFY] VC-015: parity_unchanged=pass tools=11 conductor_dispatchable=false
+.[VERIFY] VC-015: role=research
+.[VERIFY] VC-015: conductor_dispatch_refused=true queued=0 timeline=type-rejected
+.[VERIFY] VC-015: l0_untouched=true
+.
+96 passed in 139.88s (0:02:19)
