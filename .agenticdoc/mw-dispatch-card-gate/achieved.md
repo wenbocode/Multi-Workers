@@ -34,3 +34,4 @@
 15. **F-5**：Python label region fix 无跨语言测试（前 key 遗留）。
 16. **E2Feature 侧**：其 conductor 恢复推进靠**人工修复 `_roadmap.md`**；T-20 的容错/降级局部化/永不静默需**它自己的服务/conductor 重启**才生效（其 `serve.meta.code_dir` 直指本仓，无需安装）。
 17. **本 key 未做**：C-32/C-33/C-34 与队列单写入方的修复、`mw-claude-mirror-parity` 的 C-9 洞（PAUSED key）。
+18. **C-35（收口后运行期观察 2026-10-13）**：T-24 收窄在生产路径生效 —— 通知为 `2 key(s) with work but stale owner evidence — claim-free repair skipped, nothing written`（`agent-team-loop`、`mw-dispatch-reliability`，原因均为 `index 状态 idle`）。PM 独立核对被点名 9 个 task：7 个有历史终态产物（`ga-spec-review-1` output.md 09-07 19:32；`mw-dr-glm53`/`mw-dr-ok`/`mw-dr-pi-timi-test`/`mw-dr-live-claude` 08-28 21:01~21:12），3 个无产物（`mw-dr-live-claude2/3/4` —— 系 claude CLI 凭证缺失的按次失败，非「未派发工作」）；9 个均已不在活动队列（已 reap/ack），两 key 在 `_index.parallel` 均为 `idle` 且 Claim-Id 出自 8 月 ⇒ **跳过判定正确、零丢活**。**新登记**：`idle` key 中「有工作但无终态产物」的子集虽被正确跳过，但**除这一行中性提示外没有任何升级出口** —— 若其中确有真丢失的工作，只能靠人自己看见这行。修法方向：对「无终态产物」子集保持中性措辞但附可操作提示（如 `pm retry <key>`），或将其单列成独立 kind。
