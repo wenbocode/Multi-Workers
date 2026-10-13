@@ -140,8 +140,13 @@ def test_field_list_is_base_plus_28_in_frozen_order() -> None:
     assert list(fields[:12]) == list(BASE_FIELDS), "base 12 must not be reordered"
     assert list(fields[12:38]) == list(V2_FIELDS), "v2 order = D1.1 1..26"
     assert list(fields[38:40]) == list(CONSUMED_FIELDS)
+    # T-14: blocker_class is registered OUTSIDE this frozen order (parallel
+    # scalar extension), so the recognized surface is 41 while the exact
+    # 40-name order asserted above stays unchanged.
+    assert len(fields) + len(gates._SCALAR_EXTENSION_FIELDS) == 41
     assert len(fields) == 40
     assert len(set(fields)) == 40  # no duplicate names
+    assert "blocker_class" not in fields
     print(
         "[VERIFY] VC-011: frontmatter_fields=40 base=12 v2=26 consumed=2 "
         f"list_fields={len(gates._LIST_FIELDS)}"

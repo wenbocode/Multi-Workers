@@ -41,6 +41,15 @@ an absent gate_schema means 1 (legacy):
         cross-language 40-name lock (test_autopilot_gates.py:224,
         autopilot-gate-presentation.test.ts) is preserved. create() never
         renders it; the conductor materializes it on new gates (T-10).
+  blocker_class: closed-set scalar from BLOCKER_CLASSES = {paperwork,
+        judgment}, recognized OUTSIDE the frozen 40-name order
+        (mw-autopilot-gate-alarm-liveness T-14 / AC-007, design D6) via the
+        parallel _SCALAR_EXTENSION_FIELDS set. An absent/empty value parses as
+        None; the parser never folds it. The judgment layer
+        (conductor.blocker_class_of) folds None and every value other than an
+        explicit "paperwork" to "judgment" (fail-closed: an unclassified gate
+        is never auto-released). It must NOT join _JSON_LIST_FIELDS, whose
+        members are JSON-decoded.
   kind   in {stage-confirm, stage-close, stalled, budget-exhausted, goal-change,
             xkey-authorize}  (the closed set is GATE_KINDS; the TS mirror is
             status-model.ts GATE_KINDS — both sides validate fail-closed)
@@ -173,6 +182,20 @@ _JSON_LIST_FIELDS = frozenset(
 )
 _JSON_OBJ_FIELDS = frozenset({"goal_diff", "blast_radius"})
 
+# Scalar extension fields recognized OUTSIDE the frozen 40-name order - the
+# `authorizes` pattern (D-011) applied to a scalar. A scalar must NOT go into
+# _JSON_LIST_FIELDS: every member of that set is JSON-decoded by
+# optional_json(), which would raise GateFormatError on a bare value. The name
+# is declared here and only here.
+_SCALAR_EXTENSION_FIELDS = frozenset({"blocker_class"})
+
+# Closed set of blocker classes (AC-007, design D6). `paperwork` marks a
+# blockage whose evidence a machine can collect deterministically; `judgment`
+# marks everything else. The parser preserves the raw value (absent/empty ->
+# None) and the judgment layer folds None -> "judgment" (fail-closed: an
+# unclassified gate is never auto-released).
+BLOCKER_CLASSES: frozenset[str] = frozenset({"paperwork", "judgment"})
+
 # Closed set of action types a gate may authorize (D-011). `install` is
 # deliberately excluded: it has no machine consumer, and listing a consumerless
 # member would create a new semantic hole. Out-of-set members are rejected at
@@ -201,6 +224,19 @@ class GateFormatError(ValueError):
 
     Never swallowed silently: parse()/enumerate() raise it explicitly so the
     caller can skip the gate and record a timeline config event (design 9).
+    """
+
+
+class GateQueueUnreadable(OSError):
+    """The gates path cannot be walked as a directory queue (T-22 / R-4).
+
+    Distinct from `GateFormatError` (a corrupt gate FILE) and from a missing
+    directory (a legitimately empty queue): raised only when the path exists
+    but a directory scan cannot succeed - a regular file (ENOTDIR), a
+    permission error, or a transient IO error. Callers must make it visible
+    (conductor: timeline `config` event; doctor: `error`) instead of folding it
+    into "0 pending", matching the TS monitor's `queueState = "unreadable"`
+    verdict (AC-003).
     """
 
 
@@ -261,6 +297,9 @@ class Gate:
     default_action: str | None = None
     out_of_band_actions: list[object] | None = None
     authorizes: list[str] | None = None
+    # Scalar extension (T-14 / AC-007): raw parsed value, None when absent.
+    # The fail-safe `judgment` fold happens in the judgment layer, never here.
+    blocker_class: str | None = None
     gate_schema: int = GATE_SCHEMA_LEGACY
     consumed_at: str | None = None
     consumed_seq: int | None = None
@@ -331,6 +370,36 @@ def _write_atomic(path: pathlib.Path, content: str) -> None:
     tmp.replace(path)
 
 
+def queue_entries(gates_dir: pathlib.Path | str) -> list[pathlib.Path] | None:
+    """Sorted directory entries, or ``None`` when the directory is absent.
+
+    The single choke point for the three AC-003/R-4 cases, so no caller can
+    collapse them again:
+      * the path does not exist          -> ``None``   (legal: empty queue);
+      * it is a directory (empty or not) -> ``[...]``  (legal: empty queue);
+      * it exists but is not a readable directory (regular file, EACCES,
+        EBUSY, ...)                       -> ``GateQueueUnreadable``.
+
+    ``iterdir`` resolves the path type itself, so a regular file fails with
+    ENOTDIR instead of being mistaken for an absent (therefore empty) queue.
+    A missing path is a legal empty queue; any other failure is not "no
+    queue" and must stay visible (T-22 R-4).
+    """
+    gates_dir = pathlib.Path(gates_dir)
+    try:
+        return sorted(gates_dir.iterdir())
+    except FileNotFoundError:
+        return None
+    except NotADirectoryError as exc:
+        raise GateQueueUnreadable(
+            f"{gates_dir}: gate queue unreadable (path is not a directory): {exc}"
+        ) from exc
+    except OSError as exc:
+        raise GateQueueUnreadable(
+            f"{gates_dir}: gate queue unreadable: {exc}"
+        ) from exc
+
+
 # --- Creation -----------------------------------------------------------------
 
 
@@ -374,10 +443,11 @@ def _next_seq(gates_dir: pathlib.Path) -> int:
     Restart-safe by construction (no in-memory counter). The conductor is
     the sole gate creator, so there is no concurrent-allocation conflict.
     """
-    if not gates_dir.is_dir():
+    entries = queue_entries(gates_dir)
+    if entries is None:
         return 1
     highest = 0
-    for entry in gates_dir.iterdir():
+    for entry in entries:
         m = GATE_FILE_RE.match(entry.name)
         if m is not None:
             highest = max(highest, int(m.group(1)))
@@ -501,10 +571,15 @@ def _parse_frontmatter(text: str, path: pathlib.Path) -> dict[str, object]:
             )
         name = field.group(1)
         # FRONTMATTER_FIELDS is the frozen 40-name cross-language order;
-        # _JSON_LIST_FIELDS additionally declares the additive `authorizes`
-        # contract field (D-011), which must stay parseable without growing
-        # that frozen order.
-        if name not in FRONTMATTER_FIELDS and name not in _JSON_LIST_FIELDS:
+        # _JSON_LIST_FIELDS declares the additive `authorizes` contract field
+        # (D-011) and _SCALAR_EXTENSION_FIELDS declares the additive scalar
+        # `blocker_class` (T-14 / AC-007). Both must stay parseable without
+        # growing the frozen order; an unregistered name stays fail-closed.
+        if (
+            name not in FRONTMATTER_FIELDS
+            and name not in _JSON_LIST_FIELDS
+            and name not in _SCALAR_EXTENSION_FIELDS
+        ):
             raise GateFormatError(
                 f"{path}: unknown frontmatter field '{name}' (line {i + 1})"
             )
@@ -674,6 +749,12 @@ def _to_gate(fields: dict[str, object], path: pathlib.Path) -> Gate:
                 f"(expected one of: {', '.join(sorted(AUTHORIZES_ACTIONS))})"
             )
         authorizes = list(authorizes_raw)
+    blocker_class = optional("blocker_class")
+    if blocker_class is not None and blocker_class not in BLOCKER_CLASSES:
+        raise GateFormatError(
+            f"{path}: unknown blocker_class {blocker_class!r} "
+            f"(expected one of: {', '.join(sorted(BLOCKER_CLASSES))})"
+        )
 
     return Gate(
         id=gate_id,
@@ -715,6 +796,7 @@ def _to_gate(fields: dict[str, object], path: pathlib.Path) -> Gate:
         default_action=optional("default_action"),
         out_of_band_actions=optional_json("out_of_band_actions"),
         authorizes=authorizes,
+        blocker_class=blocker_class,
         gate_schema=gate_schema,
         consumed_at=optional_iso("consumed_at"),
         consumed_seq=optional_int("consumed_seq"),
@@ -748,12 +830,16 @@ def enumerate(gates_dir: pathlib.Path | str) -> list[Gate]:
     directory is an empty queue. Raises GateFormatError naming the offending
     file if any gate file is corrupt or its frontmatter id disagrees with its
     file name - the skip policy (timeline config event) belongs to the caller.
+    Raises GateQueueUnreadable when the path exists but cannot be scanned as a
+    directory (regular file, EACCES, ...) - that is NOT an empty queue and the
+    caller must surface it (T-22 R-4).
     """
     gates_dir = pathlib.Path(gates_dir)
-    if not gates_dir.is_dir():
+    entries = queue_entries(gates_dir)
+    if entries is None:
         return []
     found: list[tuple[int, str, Gate]] = []
-    for entry in sorted(gates_dir.iterdir()):
+    for entry in entries:
         m = GATE_FILE_RE.match(entry.name)
         if m is None or not entry.is_file():
             continue

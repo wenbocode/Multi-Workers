@@ -929,8 +929,13 @@ describe("config integer literals, mirror exports, and write lock (T-04)", () =>
 		expect(tsMachineOverridable).toHaveLength(2);
 		expect(tsMachineOverridable).not.toContain("auto_gate_mode");
 		expect(DEFAULT_CONFIG.xkey_verify_cwd).toBe("");
-		// Exported for the T-07 cross-language mirror check.
-		expect([...BOOL_FIELDS]).toEqual(["enabled", "paused", "xkey_repair"]);
+		// Exported for the T-07 cross-language mirror check. The fourth entry is
+		// the OPTIONAL `envelope_fallback` key: Python registers it in
+		// `_BOOL_FIELDS` (config.py :113) but deliberately keeps it OUT of the
+		// frozen 20-key DEFAULT_CONFIG (config.py :61-65), so the registry and the
+		// schema differ by exactly this one key — the 20-key assertion above stays.
+		expect([...BOOL_FIELDS]).toEqual(["enabled", "paused", "xkey_repair", "envelope_fallback"]);
+		expect(Object.keys(DEFAULT_CONFIG)).not.toContain("envelope_fallback");
 		expect([...LIST_FIELDS]).toEqual(["xkey_verify_cmd"]);
 		expect([...STR_FIELDS]).toEqual(["xkey_verify_cwd"]);
 		expect(Object.keys(INT_RANGES)).toEqual([

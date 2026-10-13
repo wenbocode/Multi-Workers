@@ -33,8 +33,10 @@ import {
 	type KeyNameRefusal,
 	keyNameRefusal,
 	normalizeKey,
+	parseSyntheticClaim,
 	RESERVED_INDEX_NAMES,
 	readIndexMdActive,
+	syntheticClaimLive,
 } from "../shared/index-store.ts";
 import type { DoctorJson, MwCliResult } from "../shared/mw-runner.ts";
 import {
@@ -94,7 +96,7 @@ export function resolveOwnerKeyWithSync(
 		if (indexStore.findByKey(watch.key)?.claimId === self) return watch.key;
 	}
 	const active = indexStore.activeEntry();
-	if (active && claimState(active.claimId, self) === "held-live") {
+	if (active && claimHeldByAnotherWriter(claimState(active.claimId, self))) {
 		warnForeignActiveOnce(pi, active.key);
 		return SCRATCH_WORKERS_KEY;
 	}
@@ -111,7 +113,7 @@ export function resolveOwnerKeyWithSync(
 			return SCRATCH_WORKERS_KEY;
 		}
 		const row = indexStore.findByKey(fallbackKey);
-		if (row && claimState(row.claimId, self) === "held-live") {
+		if (row && claimHeldByAnotherWriter(claimState(row.claimId, self))) {
 			warnForeignActiveOnce(pi, fallbackKey);
 			return SCRATCH_WORKERS_KEY;
 		}
@@ -246,17 +248,46 @@ function isPidAlive(pid: number): boolean {
 	}
 }
 
-export type ClaimState = "free" | "held-live" | "held-stale";
+export type ClaimState = "free" | "held-live" | "held-stale" | "held-conductor";
 
-/** Whether a key's claim blocks a takeover. "held-live" = another live window
- * (or a foreign host we cannot verify) holds it and --force is required. */
+/** Who holds a key's `_index.parallel` claim — deliberately a HOLDER verdict,
+ * not a takeover verdict (the two differ for exactly one holder):
+ *  - "held-live": another live window (or a foreign host whose liveness we
+ *    cannot verify) holds it. A takeover needs `--force`.
+ *  - "held-conductor": THIS host's autopilot conductor holds it through its
+ *    synthetic claim `autopilot@<host>:<pid>` (T-16). The conductor yields to
+ *    a human takeover on its next tick, so `takeOverKey` succeeds WITHOUT
+ *    `--force` (T-16b requirement 1).
+ *  - "held-stale": the holder is gone; "free": nobody (or this window).
+ *
+ * The synthetic branch is decided by index-store's shared parser
+ * (`parseSyntheticClaim` + `syntheticClaimLive`), never by a prefix test
+ * repeated here: the TS takeover guard and the Python conductor can then only
+ * drift through that one predicate (T-16b requirement 4). */
 export function claimState(claimId: string, self: string): ClaimState {
 	const trimmed = claimId.trim();
 	if (!trimmed || trimmed === self) return "free";
+	// Local conductor-owned claim (T-16). A synthetic claim from ANOTHER host is
+	// a different machine's conductor: it must not be stolen without --force, so
+	// it falls through to the ordinary foreign-host rule below (parseClaim reads
+	// "autopilot@host" as a host name and returns "held-live").
+	const synthetic = parseSyntheticClaim(trimmed);
+	if (synthetic !== undefined && synthetic.host === os.hostname()) {
+		return syntheticClaimLive(trimmed) ? "held-conductor" : "held-stale";
+	}
 	const c = parseClaim(trimmed);
 	if (!c) return "free"; // legacy/unparseable claim — stale
 	if (c.host !== os.hostname()) return "held-live"; // cannot verify liveness
 	return isPidAlive(c.pid) ? "held-live" : "held-stale";
+}
+
+/** Is the key held by someone OTHER than this window — a live human window
+ * ("held-live") or this host's conductor ("held-conductor")? Both keep the
+ * namespace foreign for the cross-key read/write guard (AC-024) and for
+ * owner-key resolution: the conductor is YIELDABLE, but only through the
+ * explicit `takeOverKey` path — never by a silent write into its key. */
+function claimHeldByAnotherWriter(state: ClaimState): boolean {
+	return state === "held-live" || state === "held-conductor";
 }
 
 /** Machine-readable refusal code for a cross-key write (AC-024). */
@@ -295,14 +326,25 @@ export function foreignLiveClaimRefusal(indexStore: IndexStore, key: string): st
 	if (nameRefusal) return reservedKeyRefusal(trimmed, nameRefusal);
 	const claim = indexStore.findByKey(trimmed)?.claimId.trim() ?? "";
 	if (!claim) return null;
-	if (claimState(claim, windowClaimId()) !== "held-live") return null;
+	const state = claimState(claim, windowClaimId());
+	if (!claimHeldByAnotherWriter(state)) return null;
+	// The holder is named exactly: a human window needs --force to be displaced
+	// from, while the conductor yields to a plain (non-forced) takeover. The
+	// refusal code is the same for both, so callers/tests keep one contract.
+	const holder =
+		state === "held-conductor"
+			? `by this host's autopilot conductor (synthetic claim ${claim})`
+			: `live by another window (claim ${claim})`;
+	const escapeHint =
+		state === "held-conductor"
+			? `switch_key { key: "${trimmed}" } (no force needed — the conductor yields to a human claim)`
+			: `switch_key { key: "${trimmed}" } (ask the user before stealing a live claim)`;
 	return (
-		`[${CROSS_KEY_READ_ONLY}] key '${trimmed}' is held live by another window (claim ${claim}) — ` +
+		`[${CROSS_KEY_READ_ONLY}] key '${trimmed}' is held ${holder} — ` +
 		"this window's view of it is read-only.\n" +
 		`Allowed: list_tasks { scope: "all" } or { scope: "key", key: "${trimmed}" }, mw_status, mw doctor, the watch panel.\n` +
 		`Refused: ${CROSS_KEY_READ_ONLY_SURFACES.join(", ")}, ${CROSS_KEY_READ_ONLY_ACK_NOTE}.\n` +
-		`To act on it, take it over first: switch_key { key: "${trimmed}" } ` +
-		"(ask the user before stealing a live claim)."
+		`To act on it, take it over first: ${escapeHint}`
 	);
 }
 

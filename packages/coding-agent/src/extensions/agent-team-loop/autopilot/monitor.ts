@@ -44,14 +44,22 @@ import { getMwStatus, readServeMeta, serveStaleness } from "../shared/mw-runner.
 import { type WorkerEntry, WorkerStore, workerBelongsToKey, workerOwnerKey } from "../shared/worker-store.ts";
 import {
 	BEAT_EV,
+	type BlockerClass,
 	blockedOnHuman,
+	blockerClassOf,
 	type ConfigResult,
 	configPath,
 	DEFAULT_CONFIG,
+	deriveGateReason,
+	GATE_SCOPE_UNRESOLVED,
+	type GateReason,
 	gatesDir,
+	isStageTerminal,
 	type RoadmapResult,
 	readConfig,
+	readGateReminders,
 	readRoadmap,
+	reminderCountForGate,
 	TERMINAL_WORKER_STATUSES,
 	type TimelineEvent,
 	timelinePath,
@@ -127,6 +135,51 @@ export interface MonitorGate {
 	evidenceRefs?: string[];
 	/** `DRIFT(...)` detail when an evidence mtime is newer than created_at. */
 	drift?: string | null;
+	/** AC-003 suppression reason derived from disk, or null when the gate is
+	 * due (the renderer then prints `reason=-`, never an empty value).
+	 * Optional so hand-built snapshots stay constructible. */
+	reason?: GateReason | null;
+	/** True when the gate's scope (stage/key + created_at) resolved against the
+	 * roadmap; false renders the orthogonal `unresolved-scope` marker. */
+	scopeResolved?: boolean;
+	/** `phase:"remind"` ledger rows for this gate (cap-axis input, AC-003). */
+	reminders?: number;
+	/** `gate_reminder_max` at collect time. */
+	reminderMax?: number;
+	/** T-14b: the RAW `blocker_class` value from the frontmatter line scan, or
+	 * `null` when the line is absent or blank (same shape as `reasonCode` — the
+	 * loose scan carries no field-presence bit). The parser never folds: the
+	 * `judgment` fold is applied at render time through {@link blockerClassOf},
+	 * the same function `status-model.ts` uses, so the two surfaces cannot
+	 * disagree about an unclassified (v1 legacy) gate. */
+	blockerClass?: string | null;
+}
+
+/** Gate-queue readability (AC-003 `gate-queue-unreadable`). `ok` = the whole
+ * directory scan succeeded (an absent gates directory is a legitimately empty
+ * queue); `partial` = the directory read but at least one gate file did not;
+ * `unreadable` = the directory scan itself failed. The old code degraded every
+ * failure to "0 pending", which printed "no gates" for "cannot read gates". */
+export type MonitorQueueState = "ok" | "partial" | "unreadable";
+
+/** One roadmap stage as the AC-016 main-gate line shows it. */
+export interface MonitorStage {
+	number: number;
+	title: string;
+	/** pending | approved | running | closed | closed-human | halted */
+	status: string;
+	/** The main gate currently blocking per-key dispatch in this stage
+	 * (stage-confirm / stage-close / stalled / budget-exhausted / goal-change),
+	 * or null when nothing is pending. `_stage_activation` gates ALL per-key
+	 * dispatch on a `running` stage (conductor.py:245-247/671). */
+	blockerKind: string | null;
+	blockerGateId: string | null;
+	/** How long the blocking gate has waited (ms), null when unknown. */
+	blockerAgeMs: number | null;
+	/** Keys frozen by a non-dispatching status (`_DISPATCH_SKIP_STATUSES`:
+	 * stalled / pending-review) — a freeze is not terminal, so the stage can
+	 * never close while one exists. */
+	frozenKeys: string[];
 }
 
 /** The auto-decision kill switch, read raw so the value stays visible even
@@ -181,6 +234,15 @@ export interface MonitorAutopilot {
 	stallTicks: number;
 	keys: MonitorKey[];
 	stalls: MonitorStall[];
+	/** AC-016 stage main-gate rows, derived from the same roadmap parse as
+	 * `keys`. Optional so hand-built snapshots stay constructible. */
+	stages?: MonitorStage[];
+	/** key → stage number (two-level gate→stage resolution input, AC-003). */
+	stageOfKey?: ReadonlyMap<string, number>;
+	/** stage number → roadmap status. */
+	stageStatusByNumber?: ReadonlyMap<number, string>;
+	/** stage number → title. */
+	stageTitleByNumber?: ReadonlyMap<number, string>;
 }
 
 export interface MonitorSnapshot {
@@ -189,6 +251,18 @@ export interface MonitorSnapshot {
 	autopilot: MonitorAutopilot;
 	workers: MonitorWorker[];
 	gates: MonitorGate[];
+	/** AC-003: readability of the gate queue this frame. `unreadable` means the
+	 * gate list above is NOT "no gates" but "could not read gates" — the panel
+	 * must say so instead of printing `0 pending`. Optional on hand-built
+	 * snapshots (absent = `ok`). */
+	queueState?: MonitorQueueState;
+	/** One-line detail of the queue read failure (per-file for `partial`). */
+	queueError?: string | null;
+	/** T-21 R-2: per-file failure samples behind `queueState`, so the panel can
+	 * print a failure COUNT (not just one message). Populated on the same pass as
+	 * `queueError`; optional on hand-built snapshots (absent = derive one sample
+	 * from `queueError`). */
+	queueFailures?: string[];
 	/** G2 AC-007/AC-008 (design D-008/D-009): a pending gate exists AND no
 	 * non-terminal worker row is in flight — the file-only truth table shared
 	 * verbatim with the Python reminder (T-07, `blockedOnHuman` in
@@ -225,19 +299,15 @@ export interface MonitorSnapshot {
 
 // ── Collect: readMonitorState (pure, read-only) ──────────────────────────────
 
-/** Scan one gate file's frontmatter for the fields the panel needs (D-004
- * line scan — no YAML dependency). Returns the gate only when it is
+/** Parse one gate file's frontmatter text for the fields the panel needs
+ * (D-004 line scan — no YAML dependency). Returns the gate only when it is
  * `status: pending` with a usable id/kind; anything else (answered gates,
  * non-gate or unparsable files) is skipped. Also captures `created_at`,
  * `reason_code` and `evidence_refs` so the panel can show age/reason and
- * compute the evidence-drift marker (AC-012). */
-function scanPendingGate(file: string): MonitorGate | null {
-	let text: string;
-	try {
-		text = fs.readFileSync(file, "utf8");
-	} catch {
-		return null;
-	}
+ * compute the evidence-drift marker (AC-012). Reading the file is the
+ * caller's job now, so a read failure can be surfaced as
+ * `gate-queue-unreadable` instead of silently dropping the gate (AC-003). */
+function parsePendingGateText(text: string): MonitorGate | null {
 	const lines = text.split(/\r\n|\r|\n/);
 	if (lines.length === 0 || lines[0].trim() !== "---") return null;
 	let id = "";
@@ -247,6 +317,7 @@ function scanPendingGate(file: string): MonitorGate | null {
 	let status = "";
 	let createdAt: string | null = null;
 	let reasonCode: string | null = null;
+	let blockerClass: string | null = null;
 	const evidenceRefs: string[] = [];
 	let activeList: string | null = null;
 	for (let i = 1; i < lines.length; i++) {
@@ -272,6 +343,10 @@ function scanPendingGate(file: string): MonitorGate | null {
 		else if (name === "stage") stage = /^-?\d+$/.test(value) ? Number.parseInt(value, 10) : null;
 		else if (name === "created_at") createdAt = value === "" ? null : value;
 		else if (name === "reason_code") reasonCode = value === "" ? null : value;
+		// T-14b: same shape as `reason_code` — verbatim when present, blank folds
+		// to null (the field's presenceness is kept out of this loose line scan;
+		// the closed-set/format checks belong to the strict `parseGateFile`).
+		else if (name === "blocker_class") blockerClass = value === "" ? null : value;
 		else if (name === "evidence_refs") {
 			if (value === "") {
 				activeList = "evidence_refs";
@@ -291,7 +366,7 @@ function scanPendingGate(file: string): MonitorGate | null {
 		}
 	}
 	if (status !== "pending" || id === "" || kind === "") return null;
-	return { id, kind, stage, key, createdAt, reasonCode, evidenceRefs, ageMs: null, drift: null };
+	return { id, kind, stage, key, createdAt, reasonCode, blockerClass, evidenceRefs, ageMs: null, drift: null };
 }
 
 /** Resolve one `evidence_refs` entry (`kind:relpath[#sha][@mtime_ns]`)
@@ -327,12 +402,22 @@ function gateDriftDetail(projectDir: string, gate: MonitorGate, createdAtMs: num
 	return "mtime>created_at";
 }
 
+/** Injection seam for readMonitorState (T-21 R-2 tests): the gate-directory
+ * scan and the per-file text read are the two failure points that produce
+ * `unreadable` / `partial`, and a single unreadable file cannot be constructed
+ * portably on every platform (Windows has no chmod-based read denial). Same
+ * injection pattern as {@link AutopilotPanelDeps}. */
+export interface MonitorStateDeps {
+	readGateDir?: (dir: string) => fs.Dirent[];
+	readGateText?: (file: string) => string;
+}
+
 /** Derive the full monitor snapshot from the file family. Read-only; every
  * individual source degrades to a safe default (missing pid file → not
  * running, missing config → never enabled, missing gates dir → empty queue)
  * instead of throwing — a half-present project still renders a full panel
  * (AC-007). */
-export function readMonitorState(projectDir: string, nowMs: number): MonitorSnapshot {
+export function readMonitorState(projectDir: string, nowMs: number, deps?: MonitorStateDeps): MonitorSnapshot {
 	// serve — mw-runner owns the pid-file liveness + staleness logic.
 	const status = getMwStatus(projectDir);
 	let serve: MonitorServe = { running: false, pid: null, stale: false, staleDetail: "", upMs: null };
@@ -401,11 +486,19 @@ export function readMonitorState(projectDir: string, nowMs: number): MonitorSnap
 	// unparsable dispatchedAt are dropped rather than shown wrong.
 	const workers: MonitorWorker[] = [];
 	let nonTerminalRows = 0;
+	// Non-terminal rows per owning key — the AC-003 `key-in-flight` axis. Unlike
+	// the `workers` list below (running only) this keeps `pending` rows in, the
+	// same non-terminal set `_is_in_flight` uses on the Python side.
+	const nonTerminalByKey = new Map<string, number>();
 	for (const entry of new WorkerStore(path.join(projectDir, ".agenticdoc")).readAll()) {
 		// In-flight means NON-TERMINAL, not merely `running`: a `pending` row
 		// starts on the next tick, so counting it prevents a false
 		// BLOCKED_ON_HUMAN (design D-008/F6, same set as _TERMINAL_STATUSES).
-		if (!TERMINAL_WORKER_STATUSES.has(entry.status)) nonTerminalRows += 1;
+		if (!TERMINAL_WORKER_STATUSES.has(entry.status)) {
+			nonTerminalRows += 1;
+			const owner = workerOwnerKey(entry);
+			nonTerminalByKey.set(owner, (nonTerminalByKey.get(owner) ?? 0) + 1);
+		}
 		if (entry.status !== "running") continue;
 		const dispatched = Date.parse(entry.dispatchedAt);
 		if (Number.isNaN(dispatched)) continue;
@@ -414,32 +507,107 @@ export function readMonitorState(projectDir: string, nowMs: number): MonitorSnap
 	workers.sort((a, b) => b.elapsedMs - a.elapsedMs || a.taskKey.localeCompare(b.taskKey));
 
 	// gates — pending queue only, seq order (the directory scan is the queue).
-	// Age and the evidence-drift marker are computed HERE (collect) so the
-	// renderer stays a pure function of the snapshot.
+	// Age, the evidence-drift marker AND the AC-003 suppression reason are
+	// computed HERE (collect) so the renderer stays a pure function of the
+	// snapshot. A readdir/readFile failure is NO LONGER folded into "empty
+	// queue": it becomes `queueState` so the panel can say
+	// `gate-queue-unreadable` instead of lying with `0 pending`.
 	const gates: MonitorGate[] = [];
+	let queueState: MonitorQueueState = "ok";
+	let queueError: string | null = null;
+	const queueFailures: string[] = [];
+	const gatesDirectory = gatesDir(projectDir);
+	let gateFiles: fs.Dirent[] = [];
 	try {
-		const dir = gatesDir(projectDir);
-		for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+		gateFiles = (deps?.readGateDir ?? ((dir: string) => fs.readdirSync(dir, { withFileTypes: true })))(
+			gatesDirectory,
+		);
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+			// Directory present but unreadable (EACCES/EPERM/EBUSY/ENOTDIR...). An
+			// absent directory is a legitimately empty queue; anything else is
+			// not "no gates" and must be said out loud (AC-003).
+			queueState = "unreadable";
+			queueFailures.push(errorSummary(err));
+			queueError = queueFailures[0];
+		}
+	}
+
+	const autopilotBase = deriveAutopilotPanel(projectDir, nowMs, workers);
+	const cfgResult = readConfig(projectDir);
+	const reminderMax = cfgResult.ok ? cfgResult.config.gate_reminder_max : DEFAULT_CONFIG.gate_reminder_max;
+	const afterMin = cfgResult.ok ? cfgResult.config.gate_reminder_after_min : DEFAULT_CONFIG.gate_reminder_after_min;
+	const reminders = readGateReminders(path.join(projectDir, ".agenticdoc"));
+
+	if (queueState === "ok") {
+		for (const entry of gateFiles) {
 			if (!entry.isFile() || !/^gate-\d+\.md$/.test(entry.name)) continue;
-			const gate = scanPendingGate(path.join(dir, entry.name));
+			const file = path.join(gatesDirectory, entry.name);
+			let text: string;
+			try {
+				text = (deps?.readGateText ?? ((f: string) => fs.readFileSync(f, "utf8")))(file);
+			} catch (err) {
+				queueState = "partial";
+				// T-21 R-2: keep EVERY failure sample (the old code overwrote the
+				// message per file, so a count was impossible) and re-derive the
+				// summary from the samples, so "n unreadable" is truthful.
+				queueFailures.push(`${entry.name}: ${errorSummary(err)}`);
+				queueError = formatQueueFailures(queueFailures);
+				continue;
+			}
+			const gate = parsePendingGateText(text);
 			if (gate === null) continue;
 			const createdMs = gate.createdAt === null || gate.createdAt === undefined ? null : Date.parse(gate.createdAt);
 			const createdKnown = createdMs !== null && !Number.isNaN(createdMs) ? createdMs : null;
 			gate.ageMs = createdKnown === null ? null : Math.max(0, nowMs - createdKnown);
 			gate.drift = gateDriftDetail(projectDir, gate, createdKnown);
+			// Two-level scope resolution, exactly like conductor.pending_gate_reminders:
+			// the gate's own `stage` snapshot first, then `stage_of_key` on its key.
+			const stageOfKey = autopilotBase.stageOfKey;
+			const resolvedStage =
+				gate.stage !== null ? gate.stage : gate.key !== "" ? (stageOfKey?.get(gate.key) ?? null) : null;
+			const stageStatus = resolvedStage === null ? undefined : autopilotBase.stageStatusByNumber?.get(resolvedStage);
+			gate.scopeResolved =
+				createdKnown !== null &&
+				(gate.stage !== null
+					? autopilotBase.stageStatusByNumber?.has(gate.stage) === true
+					: gate.key !== ""
+						? stageOfKey?.has(gate.key) === true
+						: false);
+			const remindersForGate = reminderCountForGate(reminders, gate.id);
+			gate.reminders = remindersForGate;
+			gate.reminderMax = reminderMax;
+			const thresholdMs = (remindersForGate + 1) * afterMin * 60_000;
+			const due = createdKnown === null ? null : nowMs - createdKnown >= thresholdMs;
+			gate.reason = deriveGateReason({
+				queueUnreadable: false,
+				inFlightForKey: gate.key === "" ? 0 : (nonTerminalByKey.get(gate.key) ?? 0),
+				reminders: remindersForGate,
+				reminderMax,
+				stageTerminal: isStageTerminal(stageStatus),
+				due,
+			});
 			gates.push(gate);
 		}
-	} catch {
-		// gates dir missing — empty queue
 	}
 	gates.sort((a, b) => a.id.localeCompare(b.id));
 
-	const autopilot = deriveAutopilotPanel(projectDir, nowMs, workers);
+	// AC-016 stage main-gate rows: `_stage_activation` returns True (and thus
+	// releases per-key dispatch) only when a stage is `running`; every other
+	// status stalls the whole tick. The rows below are the direct answer.
+	const autopilot: MonitorAutopilot = {
+		...autopilotBase,
+		stages: deriveMonitorStages(autopilotBase, gates),
+	};
 
 	// G2 AC-007 (D-008): the file-only truth table, shared verbatim with the
 	// Python reminder (T-07). Collected once here; the renderer adds the
-	// TS-only third axis (`!tickStale`) on top.
-	const blocked = blockedOnHuman(gates.length, nonTerminalRows);
+	// TS-only third axis (`!tickStale`) on top. The per-key axis (T-10/D2) is
+	// wired by T-11 in this caller; T-10 owns the derivation in status-model.ts.
+	const blocked = blockedOnHuman(gates.length, nonTerminalRows, {
+		gateKeys: gates.map((g) => g.key),
+		nonTerminalByKey,
+	});
 	// G4 AC-015 (D-017): stamp the frame here so ANY caller of readMonitorState
 	// gets a self-attesting snapshot; startMonitor then advances `tickCount`
 	// and re-stamps `collectedAtMs` with its own (possibly injected) clock.
@@ -449,10 +617,56 @@ export function readMonitorState(projectDir: string, nowMs: number): MonitorSnap
 		autopilot,
 		workers,
 		gates,
+		queueState,
+		queueError,
+		queueFailures,
 		blockedOnHuman: blocked,
 		collectedAtMs: nowMs,
 		tickCount: monitorTickCount,
 	};
+}
+
+/** Gate kinds that can hold the stage main gate, most-specific first (AC-016).
+ * `stage-confirm` blocks the START of a stage, `stage-close`/`stalled`/
+ * `budget-exhausted` block its COMPLETION, `goal-change` halts the project. */
+const STAGE_BLOCKER_KINDS = ["stage-confirm", "stage-close", "stalled", "budget-exhausted", "goal-change"];
+
+/** AC-016: one row per roadmap stage — status + the gate it is stuck on + how
+ * long + the frozen key list. Pure function of the already-collected payload.
+ * A `halted` stage renders as its own blocker (no gate can release it: only a
+ * human roadmap edit can, conductor.py `_stage_activation`). */
+function deriveMonitorStages(autopilot: MonitorAutopilot, gates: MonitorGate[]): MonitorStage[] {
+	const statusByNumber = autopilot.stageStatusByNumber ?? new Map<number, string>();
+	const stageOfKey = autopilot.stageOfKey ?? new Map<string, number>();
+	const goalChangeGate = gates.find((g) => g.kind === "goal-change");
+	const statuses = [...statusByNumber.entries()].sort((a, b) => a[0] - b[0]);
+	return statuses.map(([number, status]) => {
+		const frozenKeys = autopilot.keys
+			.filter((k) => k.status === "stalled" || k.status === "pending-review")
+			.filter((k) => stageOfKey.get(k.key) === number)
+			.map((k) => k.key)
+			.sort();
+		const candidates = gates.filter((g) => {
+			const resolved = g.stage !== null ? g.stage : g.key !== "" ? (stageOfKey.get(g.key) ?? null) : null;
+			return resolved === number;
+		});
+		// A pending goal-change gate halts every non-terminal stage project-wide
+		// (conductor.py `open_goal_change_gate`), so it is a candidate everywhere.
+		if (goalChangeGate !== undefined && status !== "closed" && status !== "closed-human") {
+			candidates.push(goalChangeGate);
+		}
+		candidates.sort((a, b) => STAGE_BLOCKER_KINDS.indexOf(a.kind) - STAGE_BLOCKER_KINDS.indexOf(b.kind));
+		const blocker = candidates[0];
+		return {
+			number,
+			title: autopilot.stageTitleByNumber?.get(number) ?? "",
+			status,
+			blockerKind: blocker?.kind ?? (status === "halted" ? "halted" : null),
+			blockerGateId: blocker?.id ?? null,
+			blockerAgeMs: blocker?.ageMs ?? null,
+			frozenKeys,
+		};
+	});
 }
 
 // ── Autopilot progress: deriveAutopilotPanel (AC-006/AC-007) ──────────────────
@@ -655,10 +869,23 @@ export function deriveAutopilotPanel(
 	const roadmap = (deps?.readRoadmapFile ?? readRoadmap)(projectDir);
 	const statusByKey = new Map<string, string>();
 	const depsByKey = new Map<string, string[]>();
+	const stageOfKey = new Map<string, number>();
+	const stageStatusByNumber = new Map<number, string>();
+	const stageTitleByNumber = new Map<number, string>();
 	if (roadmap.ok) {
 		for (const stage of roadmap.stages) {
+			stageStatusByNumber.set(stage.number, stage.status);
+			stageTitleByNumber.set(stage.number, stage.title);
 			for (const [key, status] of Object.entries(stage.keyStatus)) statusByKey.set(key, status);
-			for (const row of stage.keys) depsByKey.set(row.key, row.dependsOn);
+			for (const row of stage.keys) {
+				depsByKey.set(row.key, row.dependsOn);
+				stageOfKey.set(row.key, stage.number);
+			}
+			// A key-status entry without a keys-table row still resolves its stage
+			// (the two-level gate→stage rule reads whatever status facts exist).
+			for (const key of Object.keys(stage.keyStatus)) {
+				if (!stageOfKey.has(key)) stageOfKey.set(key, stage.number);
+			}
 		}
 	}
 	const phaseByKey = (deps?.readIndexPhases ?? defaultIndexPhases)(projectDir);
@@ -707,6 +934,9 @@ export function deriveAutopilotPanel(
 		stallTicks: config?.advance_stall_ticks ?? DEFAULT_CONFIG.advance_stall_ticks,
 		keys,
 		stalls: deriveAdvanceStalls(events, nowMs),
+		stageOfKey,
+		stageStatusByNumber,
+		stageTitleByNumber,
 	};
 }
 
@@ -714,6 +944,23 @@ export function deriveAutopilotPanel(
 
 function trunc(s: string, max: number): string {
 	return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+}
+
+/** T-21 R-2: `gate-0001.md: EACCES` for one failure, `2 files unreadable:
+ * gate-0001.md: EACCES; gate-0002.md: EBUSY` for many. The count is always
+ * explicit so a truncated line still states HOW MANY gate files are missing. */
+function formatQueueFailures(failures: readonly string[]): string {
+	if (failures.length === 1) return failures[0];
+	return `${failures.length} files unreadable: ${failures.join("; ")}`;
+}
+
+/** Failure samples of a partial/unreadable queue frame. Hand-built snapshots
+ * that only set `queueError` still get a one-sample list, so the renderer never
+ * has to special-case "no structured samples". */
+function queueFailureSamples(s: MonitorSnapshot): string[] {
+	if (s.queueFailures !== undefined && s.queueFailures.length > 0) return s.queueFailures;
+	if (s.queueError !== null && s.queueError !== undefined && s.queueError !== "") return [s.queueError];
+	return [];
 }
 
 /** "45s", "3m", "2h 3m" — coarse duration (serve uptime, stall age). */
@@ -753,6 +1000,157 @@ function monitorHeaderLine(s: MonitorSnapshot): string {
 		break;
 	}
 	return line;
+}
+
+// ── Gate-line compact encoding (T-10b, AC-001 x AC-012) ──────────────────────
+//
+// A Layer A gate line must fit MONITOR_LINE_MAX (110) columns while NEVER
+// losing three facts: evidence drift (existing AC-012 `DRIFT(` contract), the
+// suppression reason (AC-001) and the gate age (AC-001/AC-012). When a
+// combination does not fit, the line COMPRESSES those three instead of
+// dropping any of them, and drops only secondary fields with a visible
+// `+N` trace.
+//
+// ENCODING TABLE (code -> meaning)
+//   Drift (evidence mtime newer than created_at):
+//     ~D            drift present (compact mark; replaces the verbose
+//                   `DRIFT(mtime>created_at)` form — never dropped)
+//   Reason (deriveGateReason / GateReason -> compact code):
+//     R:queue       gate-queue-unreadable
+//     R:flight      key-in-flight
+//     R:cap         cap-reached
+//     R:term        stage-terminal
+//     R:notdue      not-due
+//     R:scope       unresolved-scope (orthogonal scope marker)
+//     R:due         no suppression (the gate is due; verbose `reason=-`)
+//   Blocker class (gates.py BLOCKER_CLASSES -> one-column mark, T-14b):
+//     J             judgment  = a human must decide (the FAIL-CLOSED fold of a
+//                   missing/blank/out-of-set `blocker_class` — v1 gates land here)
+//     P             paperwork = evidence is collectible, auto-release eligible
+//   Age (`formatDuration` -> compact):
+//     <n>s / <n>m / <n>h / <n>d   sub-minute / sub-hour / sub-day / days
+//                   (e.g. `3h 55m` -> `3h`, `12h 0m` -> `12h`, `2d`)
+//   Omitted secondary fields:
+//     +N            N secondary fields were compressed away on this line
+//
+// DETERMINISTIC FIT LADDER (first fit wins):
+//   1. answer tier: full `-> /autopilot gate <id> approve|reject`, then
+//      short `-> /autopilot gates`.
+//   2. compaction level: 0 = full age + full reason; 1 = compact age + full
+//      reason; 2 = compact age + compact reason. Drift is always `~D`.
+//   3. secondary keep threshold 0..5 (rank rises as value falls):
+//       1 ` code=<reason_code>`, 2 ` scope=unresolved-scope`,
+//       3 ` stage=N` / ` key=<key>`, 4 ` reminders=n/m`, 5 blocker mark (`J`/`P`).
+//      Every omitted secondary field is counted into the trailing `+N`.
+// The ladder prefers compacting a required field's FORMAT (cheap, reversible
+// from the encoding table) over dropping a whole secondary FIELD, and prefers
+// dropping secondary fields over shortening the recovery command.
+
+/** Compact drift marker (`~D` = evidence newer than `created_at`). */
+export const GATE_DRIFT_MARK = "~D";
+
+/** T-14b compact blocker-class marks. One column of payload (plus the token's
+ * leading space) is the entire budget the frozen 110-column contracts leave for
+ * an always-present classification, so the class is encoded exactly like the
+ * `~D` / `R:*` marks rather than as a `blocker=` field. `judgment` is the
+ * {@link blockerClassOf} fold of an absent/blank/out-of-set value, so a v1
+ * legacy gate can NEVER render as auto-releasable. */
+export const GATE_BLOCKER_MARK: Record<BlockerClass, string> = { judgment: "J", paperwork: "P" };
+
+/** Compact reason codes — the encode half of the table above. */
+export const GATE_REASON_CODE: Record<string, string> = {
+	"gate-queue-unreadable": "R:queue",
+	"key-in-flight": "R:flight",
+	"cap-reached": "R:cap",
+	"stage-terminal": "R:term",
+	"not-due": "R:notdue",
+	"unresolved-scope": "R:scope",
+};
+
+/** Secondary-field drop ranks (lower drops first). The required trio
+ * (`~D` / age / reason) has no rank here — it is never dropped. T-14b's
+ * `blocker` mark joins the same tier at rank 5: it is the LAST secondary to
+ * yield, because "auto-release or wait for a human" is the decision the panel
+ * exists to answer, while it still yields visibly (`+N`) under real pressure. */
+const GATE_DROP_RANK = { code: 1, scopeMarker: 2, scopeToken: 3, reminders: 4, blocker: 5 } as const;
+const GATE_MAX_DROP = 5;
+
+/** ` age=3h 55m` (verbose) or the empty string when `created_at` is unknown. */
+function gateAgeToken(ageMs: number | null | undefined, compact: boolean): string {
+	if (ageMs === null || ageMs === undefined) return "";
+	if (!compact) return ` age=${formatDuration(ageMs)}`;
+	const s = Math.max(0, Math.floor(ageMs / 1000));
+	if (s < 60) return ` age=${s}s`;
+	const m = Math.floor(s / 60);
+	if (m < 60) return ` age=${m}m`;
+	const h = Math.floor(m / 60);
+	if (h < 24) return ` age=${h}h`;
+	return ` age=${Math.floor(h / 24)}d`;
+}
+
+/** ` reason=-` (verbose) or ` R:xxx` (compact). Unknown runtime values keep the
+ * verbose form rather than mislabeling them as `R:due`. */
+function gateReasonToken(reason: GateReason | null | undefined, compact: boolean): string {
+	if (!compact) return ` reason=${reason ?? "-"}`;
+	if (reason === null || reason === undefined) return " R:due";
+	return ` ${GATE_REASON_CODE[reason] ?? `reason=${reason}`}`;
+}
+
+/**
+ * Render ONE pending gate as a Layer A row (AC-001/AC-012). Pure function of
+ * the collected gate + its position in the queue; the encoding table and the
+ * fit ladder above are the whole contract. `reason`, age and the `~D` drift
+ * mark are always present — only their encoding can change.
+ */
+export function renderPendingGateLine(gate: MonitorGate, index: number, total: number): string {
+	const head = index === 0 ? `gates: ${total} pending - ` : "  · ";
+	const base = `${head}${gate.id} (${gate.kind})`;
+	const drift = gate.drift !== null && gate.drift !== undefined ? ` ${GATE_DRIFT_MARK}` : "";
+	const optionals: Array<{ text: string; rank: number }> = [];
+	// T-14b: the folded blocker class is a secondary field in the same tier as
+	// `code=`/`scope=`/`stage=`/`key=`/`reminders=` below. It is pushed FIRST so
+	// it sits right after the kind (the classification is a headline fact) but
+	// carries the HIGHEST rank, so the fit ladder drops it only after every other
+	// secondary; every omitted optional — this one included — is counted into the
+	// trailing `+N`.
+	optionals.push({
+		text: ` ${GATE_BLOCKER_MARK[blockerClassOf({ blockerClass: gate.blockerClass ?? null })]}`,
+		rank: GATE_DROP_RANK.blocker,
+	});
+	if (gate.reasonCode !== null && gate.reasonCode !== undefined) {
+		optionals.push({ text: ` code=${gate.reasonCode}`, rank: GATE_DROP_RANK.code });
+	}
+	if (gate.scopeResolved === false) {
+		optionals.push({ text: ` scope=${GATE_SCOPE_UNRESOLVED}`, rank: GATE_DROP_RANK.scopeMarker });
+	}
+	const scope = gate.stage !== null ? ` stage=${gate.stage}` : gate.key !== "" ? ` key=${gate.key}` : "";
+	if (scope !== "") optionals.push({ text: scope, rank: GATE_DROP_RANK.scopeToken });
+	if (gate.reminders !== undefined && gate.reminders > 0) {
+		optionals.push({
+			text: ` reminders=${gate.reminders}/${gate.reminderMax ?? "?"}`,
+			rank: GATE_DROP_RANK.reminders,
+		});
+	}
+	const answers = [` -> /autopilot gate ${gate.id} approve|reject`, " -> /autopilot gates"];
+	for (const answer of answers) {
+		for (let level = 0; level <= 2; level++) {
+			const age = gateAgeToken(gate.ageMs, level >= 1);
+			const reason = gateReasonToken(gate.reason, level >= 2);
+			for (let keep = 0; keep <= GATE_MAX_DROP; keep++) {
+				const kept = optionals.filter((t) => t.rank > keep);
+				const omitted = optionals.length - kept.length;
+				const trace = omitted > 0 ? ` +${omitted}` : "";
+				const candidate = `${base}${drift}${kept.map((t) => t.text).join("")}${age}${reason}${answer}${trace}`;
+				if (candidate.length <= MONITOR_LINE_MAX) return candidate;
+			}
+		}
+	}
+	// Last resort (unreachable for gate ids/kinds within the panel's own
+	// bounds): keep the required trio + compact reason/age + the short recovery
+	// entry and shrink only the head — never the trio (AC-001 + AC-012).
+	const tail = `${drift}${gateAgeToken(gate.ageMs, true)}${gateReasonToken(gate.reason, true)}${answers[1] ?? ""}`;
+	const room = MONITOR_LINE_MAX - tail.length;
+	return `${trunc(base, Math.max(0, room))}${tail}`;
 }
 
 /**
@@ -876,36 +1274,66 @@ export function renderMonitorLines(s: MonitorSnapshot): string[] {
 		}
 	}
 
-	if (s.gates.length === 0) {
+	// AC-016 (D1): stage main-gate rows. Every roadmap stage is listed; the row
+	// is the direct answer to "why did per-key work stop?" when there is no
+	// individual gate to point at (a `pending`/`halted` stage stalls the whole
+	// tick — `_stage_activation` at conductor.py:671).
+	if (s.autopilot.stages !== undefined && s.autopilot.stages.length > 0) {
+		const stages = s.autopilot.stages;
+		const statusCount = (status: string): number => stages.filter((st) => st.status === status).length;
+		const summary = ["running", "pending", "halted", "closed", "closed-human", "approved"]
+			.map((status) => `${status} ${statusCount(status)}`)
+			.filter((bit) => !bit.endsWith(" 0"))
+			.join(", ");
+		lines.push(trunc(`stages: ${stages.length}${summary === "" ? "" : ` (${summary})`}`, MONITOR_LINE_MAX));
+		for (const st of stages) {
+			const bits = [`  · stage ${st.number} ${st.status}`];
+			if (st.blockerKind !== null) {
+				const gate = st.blockerGateId === null ? "" : ` ${st.blockerGateId}`;
+				bits.push(`waiting on ${st.blockerKind}${gate}`);
+				if (st.blockerAgeMs !== null) bits.push(`age=${formatDuration(st.blockerAgeMs)}`);
+			} else if (st.status !== "closed" && st.status !== "closed-human") {
+				bits.push("waiting on activation");
+			}
+			if (st.frozenKeys.length > 0) bits.push(`frozen ${st.frozenKeys.join(",")}`);
+			lines.push(trunc(bits.join(" | "), MONITOR_LINE_MAX));
+		}
+	}
+
+	if (s.queueState === "unreadable") {
+		// AC-003 (D3): an unreadable queue must NOT render as "0 pending".
+		lines.push(
+			trunc(`gates: gate-queue-unreadable (${s.queueError ?? "unknown error"}) -> /mw doctor`, MONITOR_LINE_MAX),
+		);
+	} else if (s.queueState === "partial" && s.gates.length === 0) {
+		// T-21 R-2 (QG counterexample): the directory scanned but every gate file
+		// it listed failed to read. That is "cannot read gates", NOT "no gates" —
+		// the old ladder fell straight into `gates: 0 pending` because the partial
+		// branch only ran after at least one gate rendered. The count + samples
+		// ride the head of the line so truncation can never erase them.
+		const samples = queueFailureSamples(s);
+		const detail = samples.length === 0 ? "unknown error" : `${samples.length} unreadable: ${samples.join("; ")}`;
+		lines.push(trunc(`gates: gate-queue-unreadable (${detail}) -> /mw doctor`, MONITOR_LINE_MAX));
+	} else if (s.gates.length === 0) {
 		lines.push("gates: 0 pending");
 	} else {
 		// One line per pending gate (AC-012): the first carries the count, the
-		// rest indent like the attention rows. age/reason/DRIFT are collected
-		// facts, never derived from the question prose. On overflow the optional
-		// tokens are dropped whole (reason -> age -> scope -> drift) so `id`,
-		// `kind` and the complete answer entry always survive (design D3.1).
+		// rest indent like the attention rows. Every line is a resident row
+		// (AC-001: no cap, no decay, no dedup). id/kind/age/reason/answer are
+		// collected facts, never derived from the question prose. The compact
+		// encoding + fit ladder (see the table above) keep DRIFT, reason and age
+		// visible under width pressure; secondary fields yield with a `+N` trace.
 		s.gates.forEach((g, index) => {
-			const head = index === 0 ? `gates: ${s.gates.length} pending - ` : "  · ";
-			const base = `${head}${g.id} (${g.kind})`;
-			const answer = ` -> /autopilot gate ${g.id} approve|reject`;
-			const tokens: Array<{ text: string; drop: number }> = [];
-			const scope = g.stage !== null ? ` stage=${g.stage}` : g.key !== "" ? ` key=${g.key}` : "";
-			if (scope !== "") tokens.push({ text: scope, drop: 3 });
-			if (g.ageMs !== null && g.ageMs !== undefined)
-				tokens.push({ text: ` age=${formatDuration(g.ageMs)}`, drop: 2 });
-			if (g.reasonCode !== null && g.reasonCode !== undefined)
-				tokens.push({ text: ` reason=${g.reasonCode}`, drop: 1 });
-			if (g.drift !== null && g.drift !== undefined) tokens.push({ text: ` DRIFT(${g.drift})`, drop: 4 });
-			let line = `${base}${tokens.map((t) => t.text).join("")}${answer}`;
-			for (const drop of [1, 2, 3, 4]) {
-				if (line.length <= MONITOR_LINE_MAX) break;
-				line = `${base}${tokens
-					.filter((t) => t.drop > drop)
-					.map((t) => t.text)
-					.join("")}${answer}`;
-			}
-			lines.push(trunc(line, MONITOR_LINE_MAX));
+			lines.push(renderPendingGateLine(g, index, s.gates.length));
 		});
+		if (s.queueState === "partial") {
+			const samples = queueFailureSamples(s);
+			const detail =
+				samples.length === 0
+					? "one gate file could not be read"
+					: `${samples.length} unreadable: ${samples.join("; ")}`;
+			lines.push(trunc(`  · gate-queue-unreadable: ${detail}`, MONITOR_LINE_MAX));
+		}
 	}
 
 	return lines;

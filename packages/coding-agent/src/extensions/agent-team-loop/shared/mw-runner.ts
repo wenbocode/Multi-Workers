@@ -194,10 +194,25 @@ export function stopMw(projectDir: string): boolean {
 
 // ── Serve staleness detection + restart (stale-serve fix) ──────────────────
 
-/** `.mw/serve.meta` written by mw serve at startup (pid + started_at_ms). */
+/** `.mw/serve.meta` written by mw serve at startup. T-13 added the code
+ * identity fields (commit / dirty / code_digest / schema / code_mtime_ms);
+ * every one is optional so a legacy meta (and an older writer) still parses. */
 export interface MwServeMeta {
 	pid: number;
 	startedAtMs: number;
+	/** The serve's own source tree — the staleness baseline. */
+	codeDir?: string;
+	/** Full 40-hex HEAD OID the serve was stamped with. */
+	commit?: string;
+	dirtyTracked?: number;
+	dirtyUntracked?: number;
+	/** Newest runtime-source mtime (ms) captured at serve start. */
+	codeMtimeMs?: number;
+	/** sha256 of the runtime file set (`sha256:<hex>`) — the authoritative
+	 * identity; absent on meta written before T-13. */
+	codeDigest?: string;
+	/** Identity schema version (absent == 0 == "predates the drift check"). */
+	schema?: number;
 }
 
 function serveMetaPath(projectDir: string): string {
@@ -207,9 +222,19 @@ function serveMetaPath(projectDir: string): string {
 export function readServeMeta(projectDir: string): MwServeMeta | null {
 	try {
 		const raw = fs.readFileSync(serveMetaPath(projectDir), "utf8");
-		const m = JSON.parse(raw) as { pid?: unknown; started_at_ms?: unknown };
+		const m = JSON.parse(raw) as Record<string, unknown>;
 		if (typeof m.pid !== "number" || typeof m.started_at_ms !== "number") return null;
-		return { pid: m.pid, startedAtMs: m.started_at_ms };
+		const meta: MwServeMeta = { pid: m.pid, startedAtMs: m.started_at_ms };
+		// Identity fields are optional: a missing key must never invalidate the
+		// whole stamp (legacy serve.meta carries only pid/started_at_ms/code_dir).
+		if (typeof m.code_dir === "string" && m.code_dir) meta.codeDir = m.code_dir;
+		if (typeof m.commit === "string" && m.commit) meta.commit = m.commit;
+		if (typeof m.dirty_tracked === "number") meta.dirtyTracked = m.dirty_tracked;
+		if (typeof m.dirty_untracked === "number") meta.dirtyUntracked = m.dirty_untracked;
+		if (typeof m.code_mtime_ms === "number") meta.codeMtimeMs = m.code_mtime_ms;
+		if (typeof m.code_digest === "string" && m.code_digest) meta.codeDigest = m.code_digest;
+		if (typeof m.schema === "number") meta.schema = m.schema;
+		return meta;
 	} catch {
 		return null;
 	}
@@ -219,7 +244,8 @@ export function readServeMeta(projectDir: string): MwServeMeta | null {
  * Newest mtime among mw runtime sources (.py + providers.json) — the serve
  * staleness baseline. Serves load these at startup, so any file newer than
  * the serve's start means the running serve predates current code. Skips
- * tests, dev scratch (`_*`), `__pycache__`, and `dist` (bundle output).
+ * tests (files `test_*` and the whole `test/` dir), dev scratch (`_*`),
+ * `__pycache__`, and `dist` (bundle output).
  */
 export function mwCodeNewestMtimeMs(mwPyOverride?: string): number | null {
 	const mwPy = mwPyOverride ?? findMwPy();
@@ -236,8 +262,11 @@ export function mwCodeNewestMtimeMs(mwPyOverride?: string): number | null {
 			if (e.isDirectory()) {
 				// .tmp holds the AgenticTask framework cache — not serve runtime
 				// code. A cache pull must not turn a healthy serve stale (parity
-				// with the Python side's _mw_code_newest_mtime skip set).
-				if (e.name === "__pycache__" || e.name === "dist" || e.name === ".tmp") continue;
+				// with the Python side's _mw_code_newest_mtime skip set). `test`
+				// is the same kind of false positive at directory scale: test/
+				// fixtures are the majority of the files under the mw tree, and
+				// editing one must not mark a healthy serve stale.
+				if (e.name === "__pycache__" || e.name === "dist" || e.name === ".tmp" || e.name === "test") continue;
 				walk(path.join(dir, e.name));
 				continue;
 			}
@@ -270,9 +299,18 @@ export interface ServeStaleness {
  * (no meta AND no PID file, or no mw source dir resolved).
  */
 export function serveStaleness(projectDir: string, codeMtimeMs?: number): ServeStaleness | undefined {
-	const codeMs = codeMtimeMs ?? mwCodeNewestMtimeMs();
+	const meta = readServeMeta(projectDir);
+	let codeMs: number | null = codeMtimeMs ?? null;
+	if (codeMs === null) {
+		// Baseline tree = the serve's own tree (meta.code_dir), never the
+		// checker's tree: MW_PY / the global `.mw-py-path` sidecar can point at
+		// a different checkout, and comparing across trees yields opposite
+		// verdicts (T-13 entry wiring; the mtime judge itself is unchanged).
+		if (meta?.codeDir) codeMs = mwCodeNewestMtimeMs(path.join(meta.codeDir, "mw.py"));
+		if (codeMs === null) codeMs = mwCodeNewestMtimeMs();
+	}
 	if (codeMs === null) return undefined;
-	let startedAtMs: number | null = readServeMeta(projectDir)?.startedAtMs ?? null;
+	let startedAtMs: number | null = meta?.startedAtMs ?? null;
 	if (startedAtMs === null) {
 		try {
 			startedAtMs = fs.statSync(pidFilePath(projectDir)).mtimeMs;
@@ -400,6 +438,22 @@ export interface DoctorJson {
 		fingerprint?: string | null;
 		probe?: Record<string, { reachable?: boolean; transport?: string; error?: string | null }>;
 		required_missing?: number;
+	};
+	/** Serve code identity (T-13/AC-005). `verdict == "drift"` makes doctor
+	 * exit 1; this call site tolerates that (it parses stdout regardless). */
+	serve_code?: {
+		running?: boolean;
+		verdict?: string;
+		reason?: string | null;
+		restart_required?: boolean;
+		tree?: string | null;
+		schema?: number | null;
+		expected_schema?: number;
+		commit_expected?: string | null;
+		commit_actual?: string | null;
+		drift_age_s?: number | null;
+		detail?: string;
+		fix?: string;
 	};
 	fix?: { applied?: unknown };
 	summary?: { healthy?: boolean; issues?: unknown; suggestions?: unknown };

@@ -159,7 +159,24 @@ function freshDefaults(): AutopilotConfig {
 	return { ...DEFAULT_CONFIG, xkey_verify_cmd: [...DEFAULT_CONFIG.xkey_verify_cmd] };
 }
 
-export const BOOL_FIELDS = ["enabled", "paused", "xkey_repair"] as const;
+// Mirror of the Python `_BOOL_FIELDS` registry (autopilot/config.py), including
+// the optional `envelope_fallback` escape hatch. It is deliberately NOT in
+// DEFAULT_CONFIG on either side: Python registers it in `_BOOL_FIELDS`, keeps it
+// out of the frozen 20-key schema (config.py docstring), validates it via
+// `_BOOL_FIELDS`, and reads it through `envelope_fallback_enabled`.
+export const BOOL_FIELDS = ["enabled", "paused", "xkey_repair", "envelope_fallback"] as const;
+
+/** Keys registered in a type registry but deliberately OUTSIDE the frozen
+ * 20-key DEFAULT_CONFIG — the TS mirror of Python's `ENVELOPE_FALLBACK_KEY`.
+ * Derived from the registries instead of hand-copied, so an optional key can
+ * never be registered on one side only. `validateConfigData` admits exactly
+ * these keys on top of the 20 defaults (config.py validate_config's
+ * `- {ENVELOPE_FALLBACK_KEY}` allowance), while DEFAULT_CONFIG and the merged
+ * read/write shape stay 20 keys: `saveConfig` never materializes an optional
+ * key (Python's effective view drops it too). */
+export const OPTIONAL_CONFIG_KEYS: readonly string[] = BOOL_FIELDS.filter(
+	(field) => !Object.hasOwn(DEFAULT_CONFIG, field),
+);
 
 /** field → list of non-empty strings — identical to config.py _LIST_FIELDS. */
 export const LIST_FIELDS = ["xkey_verify_cmd"] as const;
@@ -232,7 +249,7 @@ export function validateConfigData(data: unknown): string[] {
 	}
 	const cfg = data as Record<string, unknown>;
 	const errors: string[] = [];
-	const known = new Set<string>(Object.keys(DEFAULT_CONFIG));
+	const known = new Set<string>([...Object.keys(DEFAULT_CONFIG), ...OPTIONAL_CONFIG_KEYS]);
 	const unknown = Object.keys(cfg)
 		.filter((k) => !known.has(k))
 		.sort();
@@ -396,6 +413,30 @@ export function saveConfig(projectDir: string, config: AutopilotConfig): { ok: t
 
 export const STAGE_STATUSES = ["pending", "approved", "running", "closed", "closed-human", "halted"] as const;
 export const KEY_STATUSES = ["running", "done", "stalled", "closed-legacy", "pending-review"] as const;
+
+/** Stage-status rank — the exact mirror of `conductor.py::_STAGE_STATUS_RANK`
+ * (`pending`/`approved` = 0, `running` = 1, the terminal family = 2). The gate
+ * suppression axis (mw-autopilot-gate-alarm-liveness AC-003 `stage-terminal`)
+ * consumes this rank, the same one the Python stage-status write guard owns,
+ * so both languages share one definition of "terminal stage". */
+export const STAGE_STATUS_RANK: Record<string, number> = {
+	pending: 0,
+	approved: 0,
+	running: 1,
+	closed: 2,
+	"closed-human": 2,
+	halted: 2,
+};
+
+/** `conductor.py::_STAGE_TERMINAL_RANK` — the threshold of the absorbing
+ * terminal family. An unresolvable status (`undefined`/unknown) is NOT
+ * terminal (fail-open: a missing record must never suppress a reminder). */
+export const STAGE_TERMINAL_RANK = 2;
+
+export function isStageTerminal(status: string | undefined): boolean {
+	const rank = status === undefined ? undefined : STAGE_STATUS_RANK[status];
+	return rank !== undefined && rank >= STAGE_TERMINAL_RANK;
+}
 
 export interface RoadmapKey {
 	key: string;
@@ -644,6 +685,65 @@ export const GATE_KINDS = [
 	"xkey-authorize",
 ] as const;
 export const GATE_STATUSES = ["pending", "approved", "rejected"] as const;
+
+/** Closed six-value suppression-reason enum (mw-autopilot-gate-alarm-liveness
+ * AC-003 / design D3). The five suppression values are ordered by the exact
+ * funnel precedence of `conductor.pending_gate_reminders`
+ * (`gate-queue-unreadable > key-in-flight > cap-reached > stage-terminal >
+ * not-due`); `unresolved-scope` is deliberately orthogonal to suppression
+ * (AC-002: an unresolvable key/stage must NEVER silence a reminder) and is
+ * rendered as a scope marker beside `reason`, never as a `reason=` value. */
+export const GATE_REASONS = [
+	"gate-queue-unreadable",
+	"key-in-flight",
+	"cap-reached",
+	"stage-terminal",
+	"not-due",
+	"unresolved-scope",
+] as const;
+export type GateReason = (typeof GATE_REASONS)[number];
+
+/** The suppression subset in funnel order (highest priority first). */
+export const GATE_SUPPRESSION_PRIORITY = [
+	"gate-queue-unreadable",
+	"key-in-flight",
+	"cap-reached",
+	"stage-terminal",
+	"not-due",
+] as const satisfies readonly GateReason[];
+export type GateSuppressionReason = (typeof GATE_SUPPRESSION_PRIORITY)[number];
+
+/** The orthogonal scope marker: a fact about resolvability, not a suppression. */
+export const GATE_SCOPE_UNRESOLVED: GateReason = "unresolved-scope";
+
+/** Inputs of the pure suppression-reason derivation — all facts are read from
+ * disk in the same tick (no persisted suppression state, design D3).
+ *
+ * `due` is tri-state on purpose: `null` means the gate's `created_at` is
+ * unparsable, so "not due" would be a guess — the caller renders
+ * `reason=-` plus the `unresolved-scope` marker instead of inventing an
+ * answer (DRQ-2 C2 residual 5). */
+export interface GateReasonInput {
+	queueUnreadable: boolean;
+	inFlightForKey: number;
+	reminders: number;
+	reminderMax: number;
+	stageTerminal: boolean;
+	due: boolean | null;
+}
+
+/** Pure funnel judgment (AC-003): the first condition that actually stops the
+ * reminder wins, exactly as in `conductor.pending_gate_reminders`; `null`
+ * means "no suppression — the gate is due and would be reminded". */
+export function deriveGateReason(input: GateReasonInput): GateSuppressionReason | null {
+	if (input.queueUnreadable) return "gate-queue-unreadable";
+	if (input.inFlightForKey > 0) return "key-in-flight";
+	if (input.reminders + 1 > input.reminderMax) return "cap-reached";
+	if (input.stageTerminal) return "stage-terminal";
+	if (input.due === null) return null; // unknown anchor: the scope marker carries it
+	if (!input.due) return "not-due";
+	return null;
+}
 /** Closed set of action types a gate may authorize (gates.py AUTHORIZES_ACTIONS,
  * design D-011). This is the ONE TS declaration of the set — `gate-writer.ts`
  * imports it, and `autopilot-gate-presentation.test.ts` locks it against the
@@ -651,6 +751,24 @@ export const GATE_STATUSES = ["pending", "approved", "rejected"] as const;
  * `install` is deliberately excluded (no machine consumer). */
 export const AUTHORIZES_ACTIONS = ["contract-change", "retry"] as const;
 const AUTHORIZES_ACTION_SET = new Set<string>(AUTHORIZES_ACTIONS);
+
+/** Closed set of blocker classes (gates.py BLOCKER_CLASSES, T-14 / AC-007,
+ * design D6). `paperwork` = the blockage's evidence can be collected
+ * deterministically; `judgment` = everything else, including an absent field.
+ * This is the ONE TS declaration of the set — the cross-language lock in
+ * `autopilot-gate-presentation.test.ts` compares it with the Python side. */
+export const BLOCKER_CLASSES = ["judgment", "paperwork"] as const;
+export type BlockerClass = (typeof BLOCKER_CLASSES)[number];
+const BLOCKER_CLASS_SET = new Set<string>(BLOCKER_CLASSES);
+
+/** Judgment-layer fold of `blockerClass` (the TS mirror of
+ * `conductor.blocker_class_of`, T-14 / AC-007): only an explicit
+ * `"paperwork"` is paperwork; `null`/absent and every other value fold to
+ * `"judgment"` (fail-closed — an unclassified gate is never auto-released).
+ * Pure, so every derivation surface reads the same direction. */
+export function blockerClassOf(record: { blockerClass: string | null }): BlockerClass {
+	return record.blockerClass === "paperwork" ? "paperwork" : "judgment";
+}
 
 /** Canonical frontmatter field order (gates.py FRONTMATTER_FIELDS). The first
  * 12 names are the frozen base schema; the remaining 28 are the additive v2
@@ -738,6 +856,11 @@ export interface GateRecord {
 	/** G3 (D-011): recognized contract field OUTSIDE the frozen 40-name order,
 	 * declared as a single-line JSON array. [] / absent = not authorized. */
 	authorizes: string[];
+	/** T-14 / AC-007: recognized scalar field OUTSIDE the frozen 40-name
+	 * order. Raw parsed value; null when the field is absent. The `judgment`
+	 * fold is applied by `blockerClassOf` at the derivation layer, never in
+	 * the parser (absent and explicit-judgment stay distinguishable). */
+	blockerClass: string | null;
 	gateSchema: number;
 	answeredAt: string | null;
 	answeredBy: string | null;
@@ -764,6 +887,10 @@ export const GATE_JSON_LIST_FIELDS = new Set([
 	"authorizes",
 ]);
 const GATE_JSON_OBJ_FIELDS = new Set(["goal_diff", "blast_radius"]);
+/** Scalar extension fields recognized OUTSIDE the frozen 40-name order — the
+ * `authorizes` pattern applied to a scalar (T-14 / AC-007). A scalar must NOT
+ * join GATE_JSON_LIST_FIELDS: those members are JSON-decoded. */
+export const GATE_SCALAR_EXTENSION_FIELDS = new Set(["blocker_class"]);
 const GATE_FIELD_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
 const GATE_LIST_ITEM_RE = /^[ \t]+-[ \t]+(.*)$/;
 const GATE_NULL_LITERALS = new Set(["", "~", "-", "null", "Null", "NULL"]);
@@ -824,10 +951,14 @@ export function parseGateFile(text: string, file: string): GateRecord {
 		const field = GATE_FIELD_LINE_RE.exec(line);
 		if (field === null) throw new GateFormatError(`${file}: invalid frontmatter line ${i + 1}: '${line}'`);
 		const name = field[1] ?? "";
-		// The frozen 40-name order OR a recognized JSON-list extension field
-		// (`authorizes`) parses; anything else stays fail-closed (gates.py
-		// parse-surface membership check, D-011).
-		if (!(GATE_FRONTMATTER_FIELDS as readonly string[]).includes(name) && !GATE_JSON_LIST_FIELDS.has(name)) {
+		// The frozen 40-name order OR a recognized extension field (`authorizes`
+		// JSON list, `blocker_class` scalar) parses; anything else stays
+		// fail-closed (gates.py parse-surface membership check, D-011/AC-007).
+		if (
+			!(GATE_FRONTMATTER_FIELDS as readonly string[]).includes(name) &&
+			!GATE_JSON_LIST_FIELDS.has(name) &&
+			!GATE_SCALAR_EXTENSION_FIELDS.has(name)
+		) {
 			throw new GateFormatError(`${file}: unknown frontmatter field '${name}' (line ${i + 1})`);
 		}
 		if (seen.has(name)) throw new GateFormatError(`${file}: duplicate frontmatter field '${name}' (line ${i + 1})`);
@@ -921,6 +1052,14 @@ export function parseGateFile(text: string, file: string): GateRecord {
 			`${file}: unknown authorizes action(s) ${outOfSet.join(", ")} (expected one of: ${[...AUTHORIZES_ACTIONS].sort().join(", ")})`,
 		);
 	}
+	// T-14 / AC-007: closed-set scalar. An absent/blank value is null (kept
+	// unclassified); an out-of-set value is fail-closed, never ignored.
+	const blockerClass = optional("blocker_class");
+	if (blockerClass !== null && !BLOCKER_CLASS_SET.has(blockerClass)) {
+		throw new GateFormatError(
+			`${file}: unknown blocker_class '${blockerClass}' (expected one of: ${[...BLOCKER_CLASSES].sort().join(", ")})`,
+		);
+	}
 
 	const contextRefs = listValues.get("context_refs") ?? [];
 	const evidenceRefs = listValues.get("evidence_refs") ?? [];
@@ -989,6 +1128,7 @@ export function parseGateFile(text: string, file: string): GateRecord {
 		defaultAction: optional("default_action"),
 		outOfBandActions: jsonStringList("out_of_band_actions"),
 		authorizes,
+		blockerClass,
 		gateSchema,
 		answeredAt,
 		answeredBy: optional("answered_by"),
@@ -999,7 +1139,10 @@ export function parseGateFile(text: string, file: string): GateRecord {
 /** All gates in the directory, ordered by seq — the directory scan IS the
  * queue (D-105). A missing directory is an empty queue. Corrupt gate files
  * are reported in `errors` (the console surfaces them as warnings) and
- * excluded from the list, mirroring gates.py enumerate()'s explicit errors. */
+ * excluded from the list, mirroring gates.py enumerate()'s explicit errors.
+ * T-21 R-3: a `readdir` failure that is NOT ENOENT (EACCES/EPERM/EBUSY/ENOTDIR
+ * — e.g. the gates path is a plain file) is reported too: an unreadable queue
+ * must never render as `0 pending` (AC-003). */
 export function listGates(projectDir: string): { gates: GateRecord[]; errors: string[] } {
 	const dir = gatesDir(projectDir);
 	const errors: string[] = [];
@@ -1007,8 +1150,11 @@ export function listGates(projectDir: string): { gates: GateRecord[]; errors: st
 	let entries: fs.Dirent[];
 	try {
 		entries = fs.readdirSync(dir, { withFileTypes: true });
-	} catch {
-		return { gates: [], errors: [] };
+	} catch (err) {
+		// An absent directory is a legitimately empty queue; anything else is
+		// "cannot read the queue" and must be visible on the status surface.
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return { gates: [], errors: [] };
+		return { gates: [], errors: [`${dir}: ${String(err)}`] };
 	}
 	for (const entry of entries) {
 		const m = GATE_FILE_RE.exec(entry.name);
@@ -1034,6 +1180,77 @@ export function listGates(projectDir: string): { gates: GateRecord[]; errors: st
 	}
 	found.sort((a, b) => a.seq - b.seq || a.gate.id.localeCompare(b.gate.id));
 	return { gates: found.map((f) => f.gate), errors };
+}
+
+// ── auto-decisions ledger (reminder rows; cap axis input for AC-003) ────────
+
+/** One pending-gate reminder row from the autopilot ledger
+ * (`.agenticdoc/_autopilot/auto-decisions.jsonl`, design D-006). The Python
+ * conductor is the single writer and the only judge of "pending past
+ * threshold"; the read side never recomputes the decision (D-005 — one judge,
+ * no TS/Python threshold drift). Moved here (mw-autopilot-gate-alarm-liveness
+ * T-10 / DRQ-2) so BOTH the PM poll loop and the monitor panel read the same
+ * rows without a monitor → pm-orchestrator import cycle. */
+export interface GateReminder {
+	/** 1-based ledger position; the delivery watermark. */
+	seq: number;
+	gateId: string;
+	gateKind: string;
+	/** `gate.key`; "" for stage-level / keyless gates. */
+	gateKey: string;
+	/** 1-based reminder ordinal (1..`gate_reminder_max`, default 2). */
+	reminderN: number;
+	detail: string;
+}
+
+/** Read `phase:"remind"` rows from the autopilot ledger (read-only, D-005/
+ * D-006). `agenticdocRoot` is the `.agenticdoc/` directory (same parameter as
+ * the PM poll loop's original reader, so dual-root layouts stay byte-identical).
+ * Malformed / torn lines are skipped: a broken ledger must never take the poll
+ * loop down, and the conductor's per-line append makes a partial trailing line
+ * the only realistic failure. Returns `[]` when the ledger is absent. */
+export function readGateReminders(agenticdocRoot: string): GateReminder[] {
+	const ledger = path.join(agenticdocRoot, "_autopilot", "auto-decisions.jsonl");
+	let raw: string;
+	try {
+		raw = fs.readFileSync(ledger, "utf8");
+	} catch {
+		return []; // no ledger yet (producer absent or nothing recorded) — nothing to deliver
+	}
+	const out: GateReminder[] = [];
+	for (const line of raw.split("\n")) {
+		const trimmed = line.trim();
+		if (trimmed === "") continue;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(trimmed);
+		} catch {
+			continue; // torn/partial line during a concurrent append
+		}
+		if (typeof parsed !== "object" || parsed === null) continue;
+		const row = parsed as Record<string, unknown>;
+		if (row.phase !== "remind") continue;
+		const gateId = typeof row.gate_id === "string" ? row.gate_id : "";
+		const reminderN = typeof row.reminder_n === "number" ? row.reminder_n : 0;
+		if (gateId === "" || reminderN <= 0) continue;
+		out.push({
+			seq: typeof row.seq === "number" ? row.seq : 0,
+			gateId,
+			gateKind: typeof row.gate_kind === "string" ? row.gate_kind : "",
+			gateKey: typeof row.gate_key === "string" ? row.gate_key : "",
+			reminderN,
+			detail: typeof row.detail === "string" ? row.detail : "",
+		});
+	}
+	return out;
+}
+
+/** Reminders already recorded for one gate — the ledger is the cap axis's only
+ * authority (`conductor.py::_reminder_count`). Row count, not distinct
+ * `reminder_n`: a malformed duplicate row still consumed an append slot, and
+ * matching Python's counter is what keeps the two sides from drifting. */
+export function reminderCountForGate(reminders: readonly GateReminder[], gateId: string): number {
+	return reminders.filter((r) => r.gateId === gateId).length;
 }
 
 // ── timeline (mirror of autopilot/timeline.py query_events, D-109) ──────────
@@ -1346,15 +1563,35 @@ export interface GateView {
  * of these is no longer in flight; `pending` and `running` are. */
 export const TERMINAL_WORKER_STATUSES: ReadonlySet<string> = new Set(["done", "failed", "needs-clarification", "lost"]);
 
-/** G2 `BLOCKED_ON_HUMAN` truth table (T-05, design D-008): a project is
- * blocked on a human when a pending gate exists AND no non-terminal worker
- * row is in flight. Deliberately NOT `status == "running"` — a `pending` row
- * starts on the next tick, so counting it as "in flight" avoids a false
- * reminder. The third axis (`conductor still ticking`) is a TS render-time
- * concern owned by `monitor.ts`'s `tickStale`; this is the file-only
- * predicate both TS surfaces share, mirroring the Python truth table in T-07. */
-export function blockedOnHuman(pendingGates: number, nonTerminalRows: number): boolean {
-	return pendingGates > 0 && nonTerminalRows === 0;
+/** G2 `BLOCKED_ON_HUMAN` truth table (T-05, design D-008; per-key revision by
+ * mw-autopilot-gate-alarm-liveness T-10 / design D2). A gate is human-blocked
+ * when NO non-terminal worker row is in flight for that gate's OWN key.
+ * Deliberately NOT `status == "running"` — a `pending` row starts on the next
+ * tick, so counting it as "in flight" avoids a false reminder. An unresolvable
+ * scope (empty key, key off the roadmap) NEVER suppresses (fail-open, AC-002):
+ * such a gate is human-blocked by construction. The third axis (`conductor
+ * still ticking`) is a TS render-time concern owned by `monitor.ts`'s
+ * `tickStale`.
+ *
+ * BACK-COMPAT: callers that do not yet pass `perKey` keep the legacy
+ * project-level axis (`nonTerminalRows === 0`). The per-key axis is wired by
+ * T-11 in `monitor.ts` / `mw_common.py`; T-10 owns only this derivation. */
+export interface BlockedOnHumanPerKey {
+	/** Keys of the pending gates (null/"" = unresolved scope → fail-open). */
+	gateKeys: ReadonlyArray<string | null>;
+	/** Non-terminal worker rows per owning key (canonical ownership). */
+	nonTerminalByKey: ReadonlyMap<string, number>;
+}
+
+export function blockedOnHuman(pendingGates: number, nonTerminalRows: number, perKey?: BlockedOnHumanPerKey): boolean {
+	if (pendingGates === 0) return false;
+	if (perKey === undefined) return nonTerminalRows === 0; // legacy project-level axis
+	for (const raw of perKey.gateKeys) {
+		const key = (raw ?? "").trim();
+		if (key === "") return true; // unresolved scope → never suppressed (fail-open)
+		if ((perKey.nonTerminalByKey.get(key) ?? 0) === 0) return true;
+	}
+	return false;
 }
 
 export interface TimelineWatermark {
@@ -1386,6 +1623,11 @@ export interface StatusModel {
 	status: AutopilotStatus;
 	paused: boolean;
 	warnings: string[];
+	/** T-14 / AC-007: per-gate folded blocker class (id -> paperwork|judgment)
+	 * computed by the derivation layer via `blockerClassOf`. Kept out of the
+	 * locked `GateView` (`autopilot-console.test.ts` exact `toEqual`), and
+	 * optional so hand-built models stay constructible. */
+	gateBlockerClasses?: Record<string, BlockerClass>;
 }
 
 export type StatusModelResult = { ok: true; model: StatusModel } | { ok: false; error: string };
@@ -1473,6 +1715,11 @@ export function deriveStatusModel(projectDir: string, nowMs: number = Date.now()
 			ageMs: Number.isNaN(createdMs) ? null : Math.max(0, nowMs - createdMs),
 		};
 	});
+	// T-14 / AC-007: the TS derivation-layer fold. `None`/absent folds to
+	// `judgment` (the same direction as Python `gate_facts` /
+	// `auto_decision_for_rule`), so the two languages cannot disagree.
+	const gateBlockerClasses: Record<string, BlockerClass> = {};
+	for (const g of gateScan.gates) gateBlockerClasses[g.id] = blockerClassOf(g);
 
 	const head = queryTimeline(timelinePath(projectDir), 0).head;
 
@@ -1497,6 +1744,7 @@ export function deriveStatusModel(projectDir: string, nowMs: number = Date.now()
 			},
 			paused: config.paused,
 			warnings,
+			gateBlockerClasses,
 		},
 	};
 }
@@ -1534,7 +1782,11 @@ export function renderStatusText(model: StatusModel): string {
 	for (const g of status.gates) {
 		// D-009: pending age in the human row ("age=?" when unknown).
 		const age = g.ageMs === null ? "?" : formatCoarseAge(g.ageMs);
-		lines.push(`  ${g.id} ${g.kind} ${g.status} age=${age}`);
+		// T-14 / AC-007: surface the folded class so an operator can answer
+		// "who is holding this gate" from the status line itself.
+		const blocker = model.gateBlockerClasses?.[g.id];
+		const blockerToken = blocker === undefined ? "" : ` blocker=${blocker}`;
+		lines.push(`  ${g.id} ${g.kind} ${g.status} age=${age}${blockerToken}`);
 	}
 	lines.push(`timeline: seq=${status.timeline.seq} ts=${status.timeline.ts}`);
 	lines.push(

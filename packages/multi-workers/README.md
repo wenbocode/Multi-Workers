@@ -245,6 +245,32 @@ toolchain 模板不只是注入 task.md 的文档——PM 直执时用 `mw ue-to
 
 `mw autopilot contract-guard [--project P] [--key K] [--json]`：只读判定——冻结的 AC/VC 文本（`<key>/evidence/contract-freeze.json` 内容寻址锚）与已答复授权记录是否一致；无锚点、无 carrier 均按无授权处理。`mw autopilot contract-freeze --project P --key K [--block ac|vc|all] [--force] [--json]`：显式补/重冻锚点（conductor 在 `design`/`plan` 接受边界已幂等自动建立），只有 `--force` 才允许覆盖已变更块。`advance *->done` 前做机械身份检查，未授权改写 ⇒ `contract-refused` 事件 + `contract-unauthorized` stall。
 
+## Autopilot 可观测面与生效动作（mw-autopilot-gate-alarm-liveness）
+
+本 key 把 autopilot 从"靠推送、可能永久静默"改为"状态面恒可见 + 能自动就自动"：pending 门禁与 stage 主闸由**磁盘状态逐帧派生**（无 cap/衰减/去重，不依赖 timeline 事件），提醒按 key 抑制且被抑制也留痕，serve 能自证代码版本，`stage-close` 有确定性证据即自动放行、缺证据回落并点名。完整的 9 个可观测面（逐项 `path:line` 锚点）与失效边界见 **[`docs/autopilot-observability-guide.md`](docs/autopilot-observability-guide.md)**。
+
+**生效动作（必须先看）**：
+
+| 改动面 | 必须执行 |
+|--------|----------|
+| Python（`autopilot/**.py`、`mw.py`、`mw_common.py`） | **`/mw restart`**（每个项目各一次；conductor 是 serve 子进程，只在启动时 import） |
+| TS 扩展（`packages/coding-agent/src/extensions/agent-team-loop/**`） | **`mw build --install`（或 `/mw build`）+ `/mw restart` + `/reload`** |
+| 只读 CLI（`mw autopilot gates`、`mw status`、`mw doctor`） | 无需重启（每次新进程读磁盘） |
+
+**运行期实证**：TS 账本（`shared/change-ledger.ts`）修复在**旧 bundle** 下无效——源码改了、bundle 没重建 = 行为没变（T-16 终态仍报 4 条已修误判）。两侧 config schema 互相 fail-closed，触及 schema 的改动必须两侧同版本上线（先 `build --install`，再重启 serve）。
+
+可观测面速查：
+
+- **常驻状态面**：pending 行（id/kind/stage/key/age/抑制原因/scope 可解析性）+ **stage 主闸行**（stage 状态 + 卡在哪道门 + 已等时长 + 被冻结 key 列表）。插入点 `monitor.ts readMonitorState → renderMonitorLines`，stage 行 `deriveMonitorStages`。
+- **编码与预算**：`~D`（漂移）、`R:queue/R:flight/R:cap/R:term/R:notdue/R:scope`（原因短码）、紧凑 age、末列 `+N`（压缩掉几个次要字段）、`J`/`P`（blocker 类）、110 列 fit ladder（必显三件套永不丢）。
+- **抑制可视**：`key-in-flight / stage-terminal / cap-reached / not-due / unresolved-scope / gate-queue-unreadable` 六值（封闭枚举、派生不落盘、优先级=漏斗序）；被抑制每窗口一条 `phase:"remind-suppressed"` 台账行；cap 用尽只停"打断"、状态面标注"已达打断上限，仍待处理"；发射走 stderr + timeline 双通道。
+- **serve 漂移自证**：`.mw/serve.meta` 含 40 位 commit / dirty / `code_digest` / `schema`；`mw status`、`mw doctor`（exit 1）判 `STALE CODE` / `CAPABILITY DRIFT`；digest 相等而 commit 移动只记 `history-only`（不告警）；serve 环路 60s 自查、限频、**不自动重启**。
+- **`stage-close` 自动收证放行**：五判据全从磁盘现算（stage 可解析 / key 全终态 / 无在飞 / 无 reconciliation 争议 / dossier + 终态凭据齐备）；`answered_by="conductor-auto:<rule>"` + `phase:"decide"` 台账；缺证据回落并**点名缺失项**；默认 `auto_gate_mode=off` + shadow 门槛。
+- **re-attest / reject 二次确认**：re-attest = 新 gate + `context_refs: reattest-of:<id>`（编号不复用、原判定留痕）；`reject` 未 `--confirm-destructive` 在任何写之前拒绝（**状态机内不可逆；恢复 = 人工改 `_roadmap.md` 一行，代价无审计痕迹 + 轮次不退**）。
+- **`blocker_class`**：序外标量 `{paperwork, judgment}`（冻结 40 名序之外注册，标量平行集）；parser 保留 `None`、只有判定层折 `judgment`；monitor 以 `J`/`P` 一列显示。
+- **合成 claim**：`autopilot@<host>:<pid>` 创建/续期（60s 心跳）/按 serve 身份失效回收；人工 `switch_key` 优先且 conductor 让位留痕；外机合成 claim 不抢不覆盖；窗口重启复认领会落 `tookOverFromConductor` 痕迹。
+- **回收契约**：writeless 角色只把声明交付物当写入意向、`<key>/evidence/**` 新鲜交付物走磁盘通道、未展开变量 `malformed`；infra 白名单收窄为**文件级 basename**；声明了但磁盘不存在的路径走 **`## Ledger Unresolvable`** warn 段（不进 `extra`，也不静默）。
+
 ## xkey 验证命令（mw autopilot verify）
 
 `mw autopilot verify` 是 conductor 的 xkey 验证通道配置入口（四个键：`xkey_verify_cmd` / `xkey_verify_cwd` / `xkey_verify_timeout_s` / `xkey_repair`）。CLI 是项目文件的写者（锁内 read-modify-write）。

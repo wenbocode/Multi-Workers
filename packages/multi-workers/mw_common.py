@@ -2036,6 +2036,81 @@ def row_belongs_to(row: dict[str, str], key: str) -> bool:
     return worker_owner_key(row) == key
 
 
+# ── Synthetic claim axis (T-16 / AC-014 / D-013) ──────────────────────────────
+#
+# Route ① of AC-014: unattended autopilot must not equate "no human window has
+# claimed the key" with "no owner ⇒ skip". The conductor takes the key over
+# with a SYNTHETIC claim id written into the framework's existing claim cell
+# (`_index.parallel` ClaimId, the axis `worker_owner_key`/`state.claim_state`
+# already read) — no new file, no new column, no new format.
+#
+# The id carries the same `host:pid` tail every claim already has (both sides'
+# liveness parsers are pid based), prefixed with the owner marker `autopilot@`
+# so the synthetic/human distinction is a FIELD-LEVEL fact rather than an
+# inference from the pid. Only ONE claim cell writer exists per key
+# (`autopilot/index_parallel.py`), so the queue's single-writer invariant is
+# untouched.
+
+#: Owner marker of a conductor-owned (synthetic) claim id.
+SYNTHETIC_CLAIM_PREFIX = "autopilot@"
+
+#: Claim-cell values that mean "no claim" (framework writers use all three).
+CLAIM_PLACEHOLDERS = ("", "—", "-")
+
+_SYNTHETIC_CLAIM_RE = re.compile(r"^autopilot@([^:@]+):(\d+)$")
+
+
+def synthetic_claim_id(host: str, pid: int) -> str:
+    """`autopilot@<host>:<pid>` — the conductor's own claim identity."""
+    return f"{SYNTHETIC_CLAIM_PREFIX}{host}:{int(pid)}"
+
+
+def parse_synthetic_claim(claim_id: str) -> tuple[str, int] | None:
+    """``(host, pid)`` of a synthetic claim id, or ``None`` when not one.
+
+    Strict by construction: a human ``host:pid`` claim never matches (no
+    prefix) and a malformed ``autopilot@`` value is not silently adopted as a
+    claim (the caller treats ``None`` as "not a synthetic claim", and the
+    existing fail-closed claim parsers keep handling it).
+    """
+    m = _SYNTHETIC_CLAIM_RE.match((claim_id or "").strip())
+    if m is None:
+        return None
+    pid = int(m.group(2))
+    if pid <= 0:
+        return None
+    return m.group(1), pid
+
+
+def is_synthetic_claim(claim_id: str) -> bool:
+    """True when the claim cell is owned by the conductor (T-16)."""
+    return parse_synthetic_claim(claim_id) is not None
+
+
+def read_serve_identity(project_dir: pathlib.Path) -> dict[str, int] | None:
+    """`serve.meta` identity of the running service (T-13), or ``None``.
+
+    Returns ``{"pid": int, "started_at_ms": int}``. The synthetic claim binds
+    to `pid`, so a serve restart (pid changes) deterministically invalidates
+    every claim the previous instance wrote — no wall-clock guess. Pure read:
+    a missing/unreadable/schema-less meta yields ``None`` (the caller then
+    falls back to the conductor's own pid plus pid liveness).
+    """
+    try:
+        raw = (pathlib.Path(project_dir) / ".mw" / "serve.meta").read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    pid = data.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    started = data.get("started_at_ms")
+    started_ms = started if isinstance(started, int) and not isinstance(started, bool) else 0
+    return {"pid": pid, "started_at_ms": started_ms}
+
+
 def acquire_lock(lock_file: pathlib.Path, retries: int = 20, base_delay: float = 0.05) -> None:
     """Exclusive lock via O_CREAT|O_EXCL. Same protocol as the TS side."""
     lock_file.parent.mkdir(parents=True, exist_ok=True)
@@ -3277,15 +3352,54 @@ def _conductor_tick_fresh(project_dir: pathlib.Path) -> bool:
 
 
 def _blocked_on_human(project_dir: pathlib.Path, pending_count: int) -> bool:
-    """The three-axis `blocked_on_human` verdict (C8, design DD-10).
+    """The three-axis `blocked_on_human` verdict (C8, design DD-10), keyed
+    per gate (T-11/AC-002/D2).
+
+    Axis 2 is now per-key: a pending gate is explained away only by a
+    non-terminal worker row filed under THAT gate's own key. A gate whose key
+    cannot be resolved (the historical JCodingAss `stage-close` gates carry
+    `key:`) is never explained away by another key's work (fail-open) — the
+    same rule the conductor's reminder judgment uses, so the doctor surface
+    and the reminder emitter can never contradict each other about which
+    gates need a human. A missing queue or a missing key is a reason to SPEAK,
+    never a reason to stay quiet.
 
     Axes are checked in order and short-circuit; any unmet axis yields False.
-    Read-only: both extra inputs (`_doctor_queue`, the timeline tail) are pure
-    reads, so the doctor surface still creates nothing (AC-001 / VC-003).
+    Read-only: the queue read and the timeline tail are pure reads, so the
+    doctor surface still creates nothing (AC-001 / VC-003).
     """
     if pending_count <= 0:
         return False
-    if int(_doctor_queue(project_dir).get("non_terminal_count") or 0) > 0:
+    # Re-derive the pending gates' keys from disk rather than widening this
+    # function's signature: the doctor already parsed the queue, and the
+    # re-read keeps the caller's `pending_count` axis byte-identical.
+    gdir = pathlib.Path(project_dir).joinpath(*_GATE_DIR_REL)
+    try:
+        entries = sorted(entry for entry in gdir.iterdir() if entry.is_file())
+    except OSError:
+        entries = []
+    pending_keys: list[str] = []
+    for entry in entries:
+        if _GATE_FILE_RE.match(entry.name) is None:
+            continue
+        try:
+            gate = gate_protocol.parse(entry)
+        except (gate_protocol.GateFormatError, OSError):
+            continue
+        if gate.status == "pending":
+            pending_keys.append(gate.key or "")
+    if not pending_keys:
+        # The count says there is a pending gate but its key could not be
+        # re-read (transient race / unreadable file): fail open toward
+        # "a human is needed" instead of inventing an all-clear.
+        pending_keys = [""]
+    rows = parse_workers_queue(workers_path(project_dir))["rows"]
+    in_flight_keys = {
+        worker_owner_key(row)
+        for row in rows
+        if row.get("status") not in _TERMINAL_STATUSES
+    }
+    if all(key and key in in_flight_keys for key in pending_keys):
         return False
     return _conductor_tick_fresh(project_dir)
 
@@ -3321,10 +3435,20 @@ def _doctor_gates(project_dir: pathlib.Path) -> dict:
     contract_section = _contract_guard_scan(project_dir)
     if contract_section is not None:
         section["contract_guard"] = contract_section
-    if not section["exists"]:
+    # AC-003/R-4 (T-22): the three cases are distinct. A missing directory is
+    # a legally empty queue; a path that exists but is not a readable
+    # directory (regular file, EACCES, ...) is NOT "no queue" and surfaces as
+    # `error` - the same verdict the TS monitor renders as
+    # `gate-queue-unreadable`.
+    try:
+        raw_entries = gate_protocol.queue_entries(gates_dir)
+    except gate_protocol.GateQueueUnreadable as exc:
+        section["error"] = str(exc)
+        return section
+    if raw_entries is None:
         return section
     try:
-        entries = sorted(entry for entry in gates_dir.iterdir() if entry.is_file())
+        entries = sorted(entry for entry in raw_entries if entry.is_file())
     except OSError as exc:
         section["error"] = str(exc)
         return section

@@ -3,8 +3,11 @@
  * mw-autopilot-slot-capacity, AC-007/012/021/026; VC-008/014/027/028/037/038).
  *
  * Layer A (`monitor.ts`): one line per pending gate, every line <= 110
- * columns, `created_at` age visible, evidence-drift marker `DRIFT(` when an
- * evidence mtime is newer than the gate's created_at.
+ * columns, `created_at` age visible, evidence-drift mark `~D` (the compact
+ * encoding of the `DRIFT(` contract) when an evidence mtime is newer than the
+ * gate's created_at. Layer A never drops the drift mark, the reason or the
+ * age: it compresses their encoding and drops only secondary fields, leaving
+ * a trailing `+N` count (T-10b, mwgal-t10b-presentation-budget).
  * Layer B (`console.ts renderGateCards`): header + EXACTLY 13 lines per pending
  * gate, fixed order, every line <= 110 columns => total `1 + 13*N`.
  * Field mirror: `GATE_FRONTMATTER_FIELDS` equals Python
@@ -26,8 +29,10 @@ import { renderGateCards } from "../../src/extensions/agent-team-loop/autopilot/
 import { readMonitorState, renderMonitorLines } from "../../src/extensions/agent-team-loop/autopilot/monitor.ts";
 import {
 	AUTHORIZES_ACTIONS,
+	BLOCKER_CLASSES,
 	GATE_FRONTMATTER_FIELDS,
 	GATE_JSON_LIST_FIELDS,
+	GATE_SCALAR_EXTENSION_FIELDS,
 	gatesDir,
 	listGates,
 	MISSING_FIELD_SENTINEL,
@@ -225,7 +230,10 @@ describe("gate frontmatter mirror (VC-D6-06)", () => {
 		expect(match).not.toBeNull();
 		const pyFields = JSON.parse(match?.[1] ?? "[]") as string[];
 		expect(pyFields).toEqual([...GATE_FRONTMATTER_FIELDS]);
+		// T-14: blocker_class is an OUT-OF-ORDER scalar extension, so the frozen
+		// order stays 40 and the recognized surface becomes 41 (40 + 1).
 		expect(pyFields).toHaveLength(40);
+		expect(pyFields.length + GATE_SCALAR_EXTENSION_FIELDS.size).toBe(41);
 		// 12 frozen base names first, then the additive v2 set.
 		expect(pyFields.slice(0, 12)).toEqual([
 			"id",
@@ -253,6 +261,12 @@ describe("gate frontmatter mirror (VC-D6-06)", () => {
 			expect(GATE_FRONTMATTER_FIELDS).toHaveLength(40);
 			expect(GATE_FRONTMATTER_FIELDS).not.toContain("authorizes");
 			expect(GATE_JSON_LIST_FIELDS.has("authorizes")).toBe(true);
+			// T-14: `blocker_class` follows the same out-of-order pattern, as a
+			// SCALAR set (never the JSON-list set) - recognized surface = 41.
+			expect(GATE_SCALAR_EXTENSION_FIELDS.has("blocker_class")).toBe(true);
+			expect(GATE_JSON_LIST_FIELDS.has("blocker_class")).toBe(false);
+			expect(GATE_FRONTMATTER_FIELDS).not.toContain("blocker_class");
+			expect(GATE_FRONTMATTER_FIELDS.length + GATE_SCALAR_EXTENSION_FIELDS.size).toBe(41);
 
 			// A gate materialized with the field parses and the value is preserved.
 			const file = writeGate(root, {
@@ -281,14 +295,14 @@ describe("gate frontmatter mirror (VC-D6-06)", () => {
 		}
 	});
 
-	it("VC-012: the TS authorizes closed set and JSON-list registration mirror Python exactly", () => {
+	it("VC-012: the TS authorizes/blocker_class closed sets and registrations mirror Python exactly", () => {
 		const multiWorkers = fileURLToPath(new URL("../../../multi-workers/", import.meta.url));
 		const script = [
 			"import json, sys",
 			"sys.path.insert(0, sys.argv[1])",
 			"from autopilot import gates",
 			"print('AUTHORIZES_BEGIN')",
-			"print(json.dumps({'actions': sorted(gates.AUTHORIZES_ACTIONS), 'json_list': sorted(gates._JSON_LIST_FIELDS)}))",
+			"print(json.dumps({'actions': sorted(gates.AUTHORIZES_ACTIONS), 'json_list': sorted(gates._JSON_LIST_FIELDS), 'scalar_ext': sorted(gates._SCALAR_EXTENSION_FIELDS), 'blocker_classes': sorted(gates.BLOCKER_CLASSES)}))",
 			"print('AUTHORIZES_END')",
 		].join("\n");
 		const run = spawnSync(resolveRagPython(), ["-c", script, multiWorkers], { encoding: "utf8" });
@@ -296,9 +310,16 @@ describe("gate frontmatter mirror (VC-D6-06)", () => {
 		const stdout = run.stdout.replace(/\r\n/g, "\n");
 		const match = /AUTHORIZES_BEGIN\n(.*)\nAUTHORIZES_END/s.exec(stdout);
 		expect(match).not.toBeNull();
-		const py = JSON.parse(match?.[1] ?? "{}") as { actions: string[]; json_list: string[] };
+		const py = JSON.parse(match?.[1] ?? "{}") as {
+			actions: string[];
+			json_list: string[];
+			scalar_ext: string[];
+			blocker_classes: string[];
+		};
 		expect([...AUTHORIZES_ACTIONS].sort()).toEqual(py.actions);
 		expect([...GATE_JSON_LIST_FIELDS].sort()).toEqual(py.json_list);
+		expect([...GATE_SCALAR_EXTENSION_FIELDS].sort()).toEqual(py.scalar_ext);
+		expect([...BLOCKER_CLASSES].sort()).toEqual(py.blocker_classes);
 	});
 
 	it("parses a v2 gate with both evidence_refs encodings and rejects unknown fields", () => {
@@ -549,7 +570,9 @@ describe("layer A monitor gate lines (AC-012)", () => {
 			const gateLines = gateLinesOf(panel);
 			expect(gateLines).toHaveLength(2); // one line per gate
 			expect(gateLines[0]).toContain("gates: 2 pending - gate-0008 (stage-close)");
-			expect(gateLines[0]).toContain("DRIFT(");
+			expect(gateLines[0]).toContain("~D"); // AC-012 drift preserved via the compact mark
+			expect(gateLines[0]).toContain("age="); // AC-001: age stays visible
+			expect(gateLines[0]).toContain("reason="); // AC-001: reason stays visible
 			expect(gateLines[1].startsWith("  · ")).toBe(true);
 			expect(gateLines[1]).toContain("age="); // age is visible on the clean gate
 			expect(gateLines.join("\n")).toContain("-> /autopilot gate gate-0008 approve|reject");
@@ -572,7 +595,7 @@ describe("layer A monitor gate lines (AC-012)", () => {
 			});
 			const panel = renderMonitorLines(readMonitorState(root, NOW_MS));
 			expect(panel.join("\n")).toContain("gate-0008");
-			expect(panel.join("\n")).not.toContain("DRIFT(");
+			expect(panel.join("\n")).not.toContain("~D");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

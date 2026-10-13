@@ -42,6 +42,7 @@ from autopilot import config as _ap_config
 from autopilot import conductor as _ap_conductor
 from autopilot import contract_guard
 from autopilot import roadmap as _ap_roadmap
+from autopilot import timeline as _ap_timeline
 
 _SCRIPT_DIR = pathlib.Path(__file__).parent
 _LAUNCHER_PY = _SCRIPT_DIR / "launcher.py"
@@ -111,30 +112,82 @@ def _clear_stop_request(project_dir: pathlib.Path) -> None:
         pass
 
 
+# ── serve code identity (T-13 / AC-005: "is the serve running current code?") ─
+# Identity schema version. Bump whenever the field set or its semantics change:
+# a serve whose meta lacks (or predates) the current schema cannot be carrying
+# the current drift self-check, so `mw status` / `mw doctor` report "must
+# restart". A legacy meta (no `schema` key) reads as 0.
+SERVE_META_SCHEMA = 1
+# FS-timestamp slack for the legacy (pre-`code_digest`) mtime fallback — kept
+# from the original stale-serve fix (FS mtime granularity vs the wall stamp).
+_SERVE_META_MTIME_SLACK_MS = 2000
+# Serve-loop drift re-check interval. A module constant, not a config key
+# (AC-011); the comparison is a pure stat + one sha256 (~8 ms on this repo).
+_SERVE_DRIFT_CHECK_SEC = 60.0
+_RUNTIME_CODE_SUFFIXES = (".py", ".json")
+_GIT_TIMEOUT_SEC = 3
+
+
 def _serve_meta_path(project_dir: pathlib.Path) -> pathlib.Path:
     """Serve stamp for extension-side staleness detection (stale-serve fix):
-    the agent-team-loop extension compares started_at_ms against the mw source
-    tree's newest mtime — same pattern as doctor's bundle staleness check.
-    Removed on serve exit alongside the PID file."""
+    the agent-team-loop extension compares `started_at_ms` (and, since T-13,
+    the recorded `commit`/`code_digest`) against the mw source tree. Removed on
+    serve exit alongside the PID file."""
     return project_dir / ".mw" / "serve.meta"
 
 
-def _write_serve_meta(project_dir: pathlib.Path) -> None:
+def _serve_meta_identity(code_dir: pathlib.Path | None = None) -> dict:
+    """Collect the running code's identity for `serve.meta` (fail-open).
+
+    Every field degrades to None/"" — a missing git binary, a hung subprocess
+    (3 s timeout), an unreadable tree, or no runtime files at all are never a
+    reason to alert. Collection is pure file reads plus at most one git call
+    (`dirty`); the digest walk is ~8 ms on this repo.
+    """
+    tree = pathlib.Path(code_dir) if code_dir is not None else _SCRIPT_DIR
+    dirty = _git_dirty_counts(tree)
+    newest = _mw_code_newest_mtime(tree)
+    return {
+        "schema": SERVE_META_SCHEMA,
+        "commit": _git_head_oid(tree),
+        "dirty_tracked": None if dirty is None else dirty[0],
+        "dirty_untracked": None if dirty is None else dirty[1],
+        "code_mtime_ms": None if newest is None else int(newest * 1000),
+        "code_digest": _runtime_digest(tree),
+        "version": _framework_version(),
+    }
+
+
+def _write_serve_meta(project_dir: pathlib.Path, identity: dict | None = None) -> None:
+    """Atomically write the serve stamp (temp + os.replace, same volume).
+
+    `identity` is collected by the caller BEFORE `_write_pid`, so a slow or
+    hung git can never leave "PID file present, service not really up"; when
+    omitted (unit tests) it is collected here.
+    """
     meta = {
         "pid": os.getpid(),
         "started_at_ms": int(time.time() * 1000),
         "code_dir": str(_SCRIPT_DIR),
     }
+    meta.update(identity if identity is not None else _serve_meta_identity())
+    meta["written_at_ms"] = int(time.time() * 1000)
     p = _serve_meta_path(project_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(meta), encoding="utf-8")
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(meta), encoding="utf-8")
+    os.replace(tmp, p)
 
 
 def _remove_serve_meta(project_dir: pathlib.Path) -> None:
-    try:
-        _serve_meta_path(project_dir).unlink()
-    except FileNotFoundError:
-        pass
+    for p in (
+        _serve_meta_path(project_dir),
+        _serve_meta_path(project_dir).with_name("serve.meta.tmp"),
+    ):
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
 
 
 # ── Conductor supervision (D-101: conductor = mw serve third child) ─────────
@@ -268,9 +321,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
             exit_code = 1
             return 1
 
+        # Identity collection is deliberately BEFORE the PID file (T-13): a git
+        # call that hangs here would otherwise leave "mw.pid exists" true while
+        # launcher/conductor never spawn — the stale-serve failure shape.
+        identity = _serve_meta_identity()
         _write_pid(pid_path)
         wrote_pid = True
-        _write_serve_meta(project_dir)
+        _write_serve_meta(project_dir, identity)
+        print(f"[mw serve] code identity: {_format_serve_identity(identity)}", flush=True)
         # Build spawn kwargs: hide console window on Windows
         spawn_kwargs: dict = {}
         if sys.platform == "win32":
@@ -349,6 +407,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
                 intentional_stop.set()
             signal.signal(signal.SIGTERM, _on_sigterm)
 
+        drift_seen: set[tuple] = set()
+        drift_last = 0.0  # first iteration = the startup comparison
         try:
             while True:
                 if intentional_stop.is_set():
@@ -373,6 +433,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
                 conductor_proc = _conductor_supervise_step(
                     project_dir, conductor_proc, spawn_kwargs, conductor_log
                 )
+                # Code drift self-check (T-13/AC-005), throttled to 60 s. Only
+                # warns (stderr -> mw.log + timeline `config`); it never restarts
+                # (AC-006: TS owns interactive restart).
+                now_mono = time.monotonic()
+                if now_mono - drift_last >= _SERVE_DRIFT_CHECK_SEC:
+                    drift_last = now_mono
+                    _report_serve_code_drift(project_dir, drift_seen)
                 time.sleep(1)
         except KeyboardInterrupt:
             intentional_stop.set()
@@ -500,6 +567,17 @@ def cmd_status(args: argparse.Namespace) -> int:
         )
     else:
         print("[mw status] conductor: not running")
+    # Serve code identity (T-13/AC-005): the smallest fresh-process-side entry —
+    # a new `mw status` process reads serve.meta + the code tree, so it sees a
+    # stale serve that could never see itself. Exit code is unchanged (a stale
+    # serve is still a valid status read; `mw doctor` is the gating entry).
+    if pid is None:
+        print("[mw status] serve code: n/a (not running)")
+    else:
+        print(f"[mw status] serve code: {serve_code_verdict(project_dir)['detail']}")
+        mismatch = _serve_identity_mismatch(project_dir, pid)
+        if mismatch:
+            print(f"[mw status] {mismatch}")
     return 0 if pid is not None else 1
 
 
@@ -524,6 +602,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # RAG section (mw-rag-integration D-010): informational — a broken config
     # or an unreachable server never flips the healthy verdict.
     report["rag"] = _doctor_rag(project_dir)
+    # Serve code identity (T-13/AC-005): drift is an ISSUE (exit 1); the TS
+    # `doctorMw` caller tolerates exit 1 and still parses the JSON. Missing
+    # baseline fields are only a suggestion (never alert on absence).
+    serve_code = _serve_code_doctor_section(project_dir)
+    report["serve_code"] = serve_code
+    if serve_code["verdict"] == "drift":
+        report["summary"]["issues"].append(serve_code["detail"])
+        report["summary"]["healthy"] = False
+    elif serve_code["verdict"] == "undecidable":
+        report["summary"]["suggestions"].append(serve_code["detail"])
+    if serve_code.get("identity_mismatch"):
+        report["summary"]["suggestions"].append(serve_code["identity_mismatch"])
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
@@ -531,6 +621,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         rag = report.get("rag") or {}
         if rag.get("exists") or rag.get("enabled"):
             print(_format_rag_doctor_line(rag))
+        print(f"serve code: {serve_code['detail']}")
     return 0 if report["summary"]["healthy"] else 1
 
 
@@ -3564,6 +3655,8 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
     project_dir = pathlib.Path(args.project).resolve()
     if args.autopilot_action == "gates":
         return _ap_gates(args, project_dir)
+    if args.autopilot_action == "answer":
+        return _ap_answer(args, project_dir)
     if args.autopilot_action == "contract-guard":
         return _ap_contract_guard(args, project_dir)
     if args.autopilot_action == "contract-freeze":
@@ -3812,6 +3905,38 @@ def _ap_gates(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
             f"{request.get('request_id') or request['path']} is authorized by prose "
             f"only ({request['path']}) - treated as unauthorized (VC-048)"
         )
+    return 0
+
+
+def _ap_answer(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw autopilot answer --gate-id <id> (--approve|--reject) [--note N]
+    [--answered-by WHO] [--confirm-destructive]`: write one human gate answer.
+
+    Thin wrapper over `conductor.answer_gate_confirmed` (AC-009): a `reject` is
+    destructive and is refused without `--confirm-destructive`, with the
+    accurate consequence printed and NOTHING written. A confirmed answer uses
+    the same byte-preserving four-field rewrite as the TS `/autopilot gate`
+    writer, so `answered_by`/`answered_at`/the timeline audit is preserved."""
+    decision = "approve" if getattr(args, "approve", False) else "reject"
+    host = os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME") or "host"
+    answered_by = getattr(args, "answered_by", None) or f"mw-cli@{host}"
+    st = _ap_conductor.ConductorState(
+        _ap_timeline.Timeline(_ap_timeline.timeline_path(project_dir)),
+        _ap_conductor.goal_mtime_ns(project_dir),
+    )
+    result = _ap_conductor.answer_gate_confirmed(
+        project_dir, st, args.gate_id, decision,
+        answered_by=answered_by,
+        note=getattr(args, "note", None),
+        confirm=bool(getattr(args, "confirm_destructive", False)),
+    )
+    if not result.ok:
+        print(f"[mw autopilot answer] Error: {result.error}", file=sys.stderr)
+        return 1
+    print(
+        f"[mw autopilot answer] {result.gate_id} → {result.status} "
+        f"(answered_by={answered_by})"
+    )
     return 0
 
 
@@ -4094,13 +4219,27 @@ def _copy_agentictask_source(src: pathlib.Path, dst: pathlib.Path) -> None:
     )
 
 
-def _git(args: list[str], *, cwd: pathlib.Path | None = None) -> subprocess.CompletedProcess:
-    """Run a git command, capturing output. Never raises on non-zero exit."""
+def _git(
+    args: list[str], *, cwd: pathlib.Path | None = None, timeout: float | None = None
+) -> subprocess.CompletedProcess:
+    """Run a git command, capturing output. Never raises: a non-zero exit, a
+    missing binary, and a timeout all come back as a failure CompletedProcess
+    (every caller only inspects `returncode`). `timeout=None` keeps long
+    operations (fetch/pull/push) unbounded; identity collection passes 3 s."""
     cmd = ["git"]
     if cwd is not None:
         cmd += ["-C", str(cwd)]
     cmd += args
-    return subprocess.run(cmd, capture_output=True, text=True)
+    kwargs: dict = {"capture_output": True, "text": True}
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    if sys.platform == "win32":
+        # A windowless serve must not flash a console window for any child.
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+    try:
+        return subprocess.run(cmd, **kwargs)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return subprocess.CompletedProcess(cmd, 1, "", str(exc))
 
 
 def _validate_agentictask_install(dst: pathlib.Path) -> tuple[bool, str]:
@@ -5109,7 +5248,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
 # Adapter dirs install.py copies from <framework>/claude/ into <project>/.claude/
 # (mirror of CLAUDE_DIRS in the framework's install.py / diff-installed.py).
 _CLAUDE_ADAPTER_DIRS = ("commands", "agents", "skills", "scripts")
-_UPDATE_ENV_SKIP_DIRS = ("__pycache__", "dist", ".tmp")
+_UPDATE_ENV_SKIP_DIRS = ("__pycache__", "dist", ".tmp", "test")
 _UPDATE_ENV_MARKS = {"ok": "  ok ", "stale": "STALE", "warn": "WARN ", "info": "info ", "skip": "skip "}
 
 
@@ -5128,25 +5267,547 @@ def _newest_file_mtime(root: pathlib.Path) -> float | None:
     return newest
 
 
-def _mw_code_newest_mtime() -> float | None:
-    """Staleness baseline for a running serve — the Python mirror of the TS
-    side's mwCodeNewestMtimeMs: only runtime code (*.py|*.json), skipping
-    __pycache__/dist/.tmp and test_*/_* files. .tmp is excluded on both sides:
-    it is the framework cache, not serve runtime code (a cache pull must not
-    turn a healthy serve stale)."""
-    newest: float | None = None
-    for f in _SCRIPT_DIR.rglob("*"):
+def _runtime_code_files(root: pathlib.Path | None = None) -> list[pathlib.Path]:
+    """The serve's runtime code set: *.py|*.json under the tree, skipping
+    __pycache__/dist/.tmp and any `test`/`test_*`/`_*` entry. One definition
+    shared by the mtime baseline and the content digest, so "what counts as
+    code" cannot drift between the two judges."""
+    tree = pathlib.Path(root) if root is not None else _SCRIPT_DIR
+    out: list[pathlib.Path] = []
+    for f in tree.rglob("*"):
         if not f.is_file():
             continue
-        if any(part in _UPDATE_ENV_SKIP_DIRS for part in f.relative_to(_SCRIPT_DIR).parts[:-1]):
+        try:
+            rel = f.relative_to(tree)
+        except ValueError:
             continue
-        if f.suffix not in (".py", ".json"):
+        if any(part in _UPDATE_ENV_SKIP_DIRS for part in rel.parts[:-1]):
+            continue
+        if f.suffix not in _RUNTIME_CODE_SUFFIXES:
             continue
         if f.name.startswith("test_") or f.name.startswith("_"):
             continue
-        m = f.stat().st_mtime
+        out.append(f)
+    return out
+
+
+def _mw_code_newest_mtime(root: pathlib.Path | None = None) -> float | None:
+    """Staleness baseline for a running serve — the Python mirror of the TS
+    side's mwCodeNewestMtimeMs: only runtime code (*.py|*.json), skipping
+    __pycache__/dist/.tmp/test and test_*/_* files. `.tmp` is excluded on both
+    sides (the framework cache is not serve runtime code), and `test` is
+    excluded because 69% of the input files under this tree are fixtures —
+    editing a fixture must not turn a healthy serve stale. `root` defaults to
+    the checker's own tree; identity comparison always passes the meta tree."""
+    newest: float | None = None
+    for f in _runtime_code_files(root):
+        try:
+            m = f.stat().st_mtime
+        except OSError:
+            continue
         newest = m if newest is None else max(newest, m)
     return newest
+
+
+def _runtime_digest(root: pathlib.Path | None = None) -> str | None:
+    """sha256 over the runtime file set: sorted relative posix path + NUL +
+    raw bytes. Paths are in the digest (so delete/rename is visible where
+    mtime is blind); mtimes are NOT (a `touch` must not read as drift).
+    Cross-language contract: the TS mirror, if it grows one, must produce the
+    identical string. None when the set is empty/unreadable (fail-open)."""
+    tree = pathlib.Path(root) if root is not None else _SCRIPT_DIR
+    files = _runtime_code_files(tree)
+    if not files:
+        return None
+    h = hashlib.sha256()
+    try:
+        for f in sorted(files, key=lambda p: p.relative_to(tree).as_posix()):
+            h.update(f.relative_to(tree).as_posix().encode("utf-8"))
+            h.update(b"\0")
+            h.update(f.read_bytes())
+    except OSError:
+        return None
+    return "sha256:" + h.hexdigest()
+
+
+def _resolve_git_dir(start: pathlib.Path) -> pathlib.Path | None:
+    """Ascend from `start` to the containing `.git`, following a `gitdir:`
+    file (linked worktree) when present. Pure file reads, no git binary."""
+    try:
+        cur = pathlib.Path(start).resolve()
+    except OSError:
+        return None
+    for candidate in (cur, *cur.parents):
+        dotgit = candidate / ".git"
+        if dotgit.is_dir():
+            return dotgit
+        if dotgit.is_file():
+            try:
+                text = dotgit.read_text(encoding="utf-8", errors="replace").strip()
+            except OSError:
+                return None
+            if not text.lower().startswith("gitdir:"):
+                return None
+            target = text.split(":", 1)[1].strip()
+            path = pathlib.Path(target)
+            if not path.is_absolute():
+                path = (dotgit.parent / path).resolve()
+            return path
+    return None
+
+
+def _common_git_dir(git_dir: pathlib.Path) -> pathlib.Path | None:
+    """The `commondir` target (linked worktrees keep `packed-refs` there)."""
+    try:
+        text = (git_dir / "commondir").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    candidate = pathlib.Path(text)
+    if not candidate.is_absolute():
+        candidate = (git_dir / candidate).resolve()
+    return candidate
+
+
+def _packed_ref_oid(packed: pathlib.Path, ref: str) -> str | None:
+    try:
+        text = packed.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", "^")):
+            continue
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == ref and re.fullmatch(r"[0-9a-fA-F]{40}", parts[0]):
+            return parts[0].lower()
+    return None
+
+
+def _head_oid_from_git_dir(git_dir: pathlib.Path) -> str | None:
+    try:
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if re.fullmatch(r"[0-9a-fA-F]{40}", head):
+        return head.lower()  # detached HEAD
+    if not head.startswith("ref:"):
+        return None
+    ref = head.split(":", 1)[1].strip()
+    roots = [git_dir]
+    common = _common_git_dir(git_dir)
+    if common is not None and common != git_dir:
+        roots.append(common)
+    for root in roots:
+        try:
+            loose = root.joinpath(*ref.split("/")).read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if re.fullmatch(r"[0-9a-fA-F]{40}", loose):
+            return loose.lower()
+    for root in roots:
+        oid = _packed_ref_oid(root / "packed-refs", ref)
+        if oid:
+            return oid
+    return None
+
+
+def _git_head_oid(code_dir: pathlib.Path) -> str | None:
+    """Full 40-hex HEAD OID, comparable across writers.
+
+    Must NOT use `_git_head_short`: `rev-parse --short` returns a length that
+    varies with the object database (9 hex here vs 40 for a file read), so a
+    short form can never equal a full OID — reusing it would make every
+    comparison a permanent false drift. Pure file read first (no spawn), git
+    as a timeout-guarded fallback, None when neither works (fail-open)."""
+    git_dir = _resolve_git_dir(pathlib.Path(code_dir))
+    if git_dir is not None:
+        oid = _head_oid_from_git_dir(git_dir)
+        if oid:
+            return oid
+    r = _git(["rev-parse", "HEAD"], cwd=pathlib.Path(code_dir), timeout=_GIT_TIMEOUT_SEC)
+    if r is not None and r.returncode == 0:
+        oid = r.stdout.strip()
+        if re.fullmatch(r"[0-9a-fA-F]{40}", oid):
+            return oid.lower()
+    return None
+
+
+def _git_dirty_counts(repo: pathlib.Path) -> tuple[int, int] | None:
+    """(tracked_changes, untracked_files) or None when git is unavailable,
+    times out, or exits non-zero. Deliberately distinct from `_git_dirty`:
+    that one reports (0, 0) on failure, which is fine for its callers but
+    wrong for identity — "unknown" must not read as "clean"."""
+    r = _git(["status", "--porcelain"], cwd=pathlib.Path(repo), timeout=_GIT_TIMEOUT_SEC)
+    if r is None or r.returncode != 0:
+        return None
+    lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    tracked = sum(1 for ln in lines if not ln.startswith("??"))
+    return (tracked, len(lines) - tracked)
+
+
+def _read_serve_meta(project_dir: pathlib.Path) -> dict:
+    """serve.meta as a dict, tolerating absence, unreadable files, and the
+    half-written JSON an older non-atomic writer could leave behind."""
+    try:
+        data = json.loads(_serve_meta_path(project_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _as_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    return None
+
+
+def _same_path(a: object, b: object) -> bool:
+    try:
+        return os.path.normcase(str(pathlib.Path(str(a)).resolve())) == os.path.normcase(
+            str(pathlib.Path(str(b)).resolve())
+        )
+    except OSError:
+        return False
+
+
+def _iso_ms(ms: float | None) -> str:
+    if ms is None:
+        return "?"
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ms / 1000))
+
+
+def _fmt_duration(sec: float) -> str:
+    total = int(max(0, sec))
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    if days:
+        return f"{days}d{hours}h{minutes}m"
+    if hours:
+        return f"{hours}h{minutes}m"
+    return f"{minutes}m"
+
+
+def serve_code_verdict(
+    project_dir: pathlib.Path,
+    *,
+    checker_dir: pathlib.Path | None = None,
+    fallback_started_ms: float | None = None,
+) -> dict:
+    """Classify whether the running serve's code is the disk's code (AC-005).
+
+    Decision order: content (digest — authoritative; mtime only for legacy
+    meta) -> commit (legacy meta only, the AC-005 literal) -> capability
+    (`meta.schema < SERVE_META_SCHEMA` = "must restart") -> undecidable. The
+    baseline tree is always `meta.code_dir`, never the checker's own tree
+    (`same_tree=False` makes `capability` unknown instead of guessed). Never
+    raises and never alerts on missing fields (fail-open).
+    """
+    project_dir = pathlib.Path(project_dir)
+    checker = pathlib.Path(checker_dir) if checker_dir is not None else _SCRIPT_DIR
+    meta = _read_serve_meta(project_dir)
+    started_ms = _as_int(meta.get("started_at_ms"))
+    if started_ms is None and fallback_started_ms is not None:
+        started_ms = int(fallback_started_ms)
+    code_dir_raw = meta.get("code_dir")
+    tree = pathlib.Path(code_dir_raw) if isinstance(code_dir_raw, str) and code_dir_raw else checker
+    same_tree = _same_path(tree, checker)
+    expected_digest = meta.get("code_digest") if isinstance(meta.get("code_digest"), str) else None
+    expected_commit = meta.get("commit") if isinstance(meta.get("commit"), str) else None
+    schema = _as_int(meta.get("schema")) or 0
+    result: dict = {
+        "verdict": "undecidable",
+        "reason": None,
+        "restart_required": False,
+        "tree": str(tree),
+        "checker_tree": str(checker),
+        "same_tree": same_tree,
+        "serve_pid": _as_int(meta.get("pid")),
+        "schema": schema,
+        "expected_schema": SERVE_META_SCHEMA,
+        "started_at_ms": started_ms,
+        "base_ms": None,
+        "code_mtime_ms": None,
+        "drift_age_s": None,
+        "upper_bound": False,
+        "expected_commit": expected_commit,
+        "actual_commit": None,
+        "expected_digest": expected_digest,
+        "actual_digest": None,
+        "dirty_tracked": _as_int(meta.get("dirty_tracked")),
+        "dirty_untracked": _as_int(meta.get("dirty_untracked")),
+        "version": meta.get("version") if isinstance(meta.get("version"), str) else "",
+        "detail": "",
+        "fix": "/mw restart",
+    }
+    if not meta:
+        result["reason"] = "meta-missing"
+        result["detail"] = _serve_code_detail(result)
+        return result
+    if not tree.is_dir():
+        result["reason"] = "code-dir-missing"
+        result["detail"] = _serve_code_detail(result)
+        return result
+    base_ms = _as_int(meta.get("code_mtime_ms")) or started_ms
+    result["base_ms"] = base_ms
+    if base_ms is None:
+        result["reason"] = "no-baseline"
+        result["detail"] = _serve_code_detail(result)
+        return result
+
+    newest = _mw_code_newest_mtime(tree)
+    mtime_ms = None if newest is None else int(newest * 1000)
+    digest_now = _runtime_digest(tree)
+    commit_now = _git_head_oid(tree)
+    result["code_mtime_ms"] = mtime_ms
+    result["actual_digest"] = digest_now
+    result["actual_commit"] = commit_now
+
+    if expected_digest is not None:
+        content_changed = digest_now != expected_digest
+    else:
+        content_changed = mtime_ms is not None and mtime_ms > base_ms + _SERVE_META_MTIME_SLACK_MS
+    commit_moved = bool(expected_commit and commit_now and expected_commit != commit_now)
+    capability = (schema >= SERVE_META_SCHEMA) if same_tree else None
+    now_ms = int(time.time() * 1000)
+
+    if content_changed:
+        since = mtime_ms if mtime_ms is not None else base_ms
+        result.update(
+            verdict="drift",
+            reason="content-changed",
+            drift_age_s=max(0, (now_ms - since) // 1000),
+            upper_bound=mtime_ms is None,
+        )
+    elif commit_moved and expected_digest is None and capability is not False:
+        result.update(
+            verdict="drift",
+            reason="head-moved",
+            drift_age_s=max(0, (now_ms - base_ms) // 1000),
+            upper_bound=True,
+        )
+    if result["verdict"] != "drift" and capability is False:
+        result.update(
+            verdict="drift",
+            reason="schema-stale",
+            drift_age_s=max(0, (now_ms - base_ms) // 1000),
+            upper_bound=True,
+        )
+    if result["verdict"] == "drift":
+        result["restart_required"] = True
+    elif commit_moved:
+        result["verdict"] = "history-only"
+        result["reason"] = "head-moved"
+    elif digest_now is None or mtime_ms is None:
+        result["verdict"] = "undecidable"
+        result["reason"] = "tree-unreadable"
+    else:
+        result["verdict"] = "fresh"
+        result["reason"] = None
+    result["detail"] = _serve_code_detail(result)
+    return result
+
+
+def _serve_code_detail(v: dict) -> str:
+    """One-line, grep-stable status/detail string. Contains every required
+    element: expected/actual commit, drift duration, mtime pair, and the fix."""
+    exp = v["expected_commit"] or "(unavailable)"
+    act = v["actual_commit"] or "(unavailable)"
+    digest = v["actual_digest"]
+    digest_short = digest[7:19] if isinstance(digest, str) and digest.startswith("sha256:") else "(unavailable)"
+    dirty = (
+        "n/a"
+        if v["dirty_tracked"] is None
+        else f"{v['dirty_tracked']}/{v['dirty_untracked']}"
+    )
+    age = v["drift_age_s"]
+    age_txt = "-" if age is None else (">=" if v["upper_bound"] else "") + _fmt_duration(age)
+    if v["verdict"] == "drift":
+        head = {
+            "content-changed": "STALE CODE (content changed)",
+            "head-moved": "STALE CODE (head moved)",
+            "schema-stale": "CAPABILITY DRIFT (schema older than checker)",
+        }.get(v["reason"], "STALE CODE")
+    elif v["verdict"] == "history-only":
+        head = "fresh (history-only)"
+    elif v["verdict"] == "undecidable":
+        head = f"unverifiable ({v['reason']})"
+    else:
+        head = "fresh"
+    return (
+        f"{head}: tree={v['tree']} schema={v['schema']}/{v['expected_schema']} "
+        f"serve_pid={v['serve_pid']} started={_iso_ms(v['started_at_ms'])} "
+        f"code newest mtime={_iso_ms(v['code_mtime_ms'])} (base={_iso_ms(v['base_ms'])}) "
+        f"expected commit={exp} actual commit={act} drift_age={age_txt} "
+        f"dirty_at_start={dirty} version={v['version'] or '?'} digest={digest_short} fix: {v['fix']}"
+    )
+
+
+def _format_serve_identity(identity: dict) -> str:
+    """One startup line for .mw/mw.log: the identity the serve was stamped
+    with (mw.log is append-only across sessions, unlike conductor.log)."""
+    digest = identity.get("code_digest")
+    digest_short = digest[7:19] if isinstance(digest, str) and digest.startswith("sha256:") else "unavailable"
+    dirty = (
+        "n/a"
+        if identity.get("dirty_tracked") is None
+        else f"{identity['dirty_tracked']}/{identity['dirty_untracked']}"
+    )
+    return (
+        f"commit={identity.get('commit') or 'unavailable'} "
+        f"version={identity.get('version') or '?'} schema={identity.get('schema')} "
+        f"mtime={_iso_ms(identity.get('code_mtime_ms'))} digest={digest_short} dirty={dirty}"
+    )
+
+
+def _report_serve_code_drift(project_dir: pathlib.Path, seen: set) -> None:
+    """One drift comparison for the serve loop: stderr (-> .mw/mw.log) +
+    timeline `config`, rate-limited by `(code_dir, meta_commit, head_commit,
+    serve_pid)` — i.e. once per drift per serve lifetime. Python never
+    auto-restarts (the TS side owns interactive restart). Never raises: a
+    tick must not be able to kill serve."""
+    try:
+        verdict = serve_code_verdict(project_dir)
+        if verdict["verdict"] != "drift":
+            return
+        key = (
+            str(verdict["tree"]),
+            verdict["expected_commit"] or "-",
+            verdict["actual_commit"] or "-",
+            verdict["serve_pid"],
+        )
+        if key in seen:
+            return
+        seen.add(key)
+        # Both channels carry the identical `detail` (the timeline is the
+        # persistent record; stderr is the live one).
+        print(f"[mw serve] {verdict['detail']}", file=sys.stderr, flush=True)
+        _ap_timeline.Timeline(_ap_timeline.timeline_path(project_dir)).append(
+            "config", detail=verdict["detail"]
+        )
+    except Exception:  # noqa: BLE001 - the serve loop must survive any check failure
+        pass
+
+
+def _serve_code_doctor_section(project_dir: pathlib.Path) -> dict:
+    """`mw doctor` section for AC-005 (verdict/fields/fix)."""
+    pid = _check_pid(_pid_path(project_dir))
+    if pid is None:
+        return {
+            "running": False,
+            "verdict": "n/a",
+            "reason": "not-running",
+            "restart_required": False,
+            "tree": None,
+            "schema": None,
+            "expected_schema": SERVE_META_SCHEMA,
+            "commit_expected": None,
+            "commit_actual": None,
+            "code_mtime_ms": None,
+            "base_ms": None,
+            "drift_age_s": None,
+            "digest_expected": None,
+            "digest_actual": None,
+            "dirty_tracked": None,
+            "dirty_untracked": None,
+            "detail": "serve not running",
+            "fix": "/mw restart",
+        }
+    v = serve_code_verdict(project_dir)
+    return {
+        "running": True,
+        "verdict": v["verdict"],
+        "reason": v["reason"],
+        "restart_required": v["restart_required"],
+        "tree": v["tree"],
+        "schema": v["schema"],
+        "expected_schema": v["expected_schema"],
+        "commit_expected": v["expected_commit"],
+        "commit_actual": v["actual_commit"],
+        "code_mtime_ms": v["code_mtime_ms"],
+        "base_ms": v["base_ms"],
+        "drift_age_s": v["drift_age_s"],
+        "digest_expected": v["expected_digest"],
+        "digest_actual": v["actual_digest"],
+        "dirty_tracked": v["dirty_tracked"],
+        "dirty_untracked": v["dirty_untracked"],
+        "detail": v["detail"],
+        "fix": v["fix"],
+        "identity_mismatch": _serve_identity_mismatch(project_dir, pid),
+    }
+
+
+def _serve_identity_mismatch(project_dir: pathlib.Path, pid: int) -> str | None:
+    """Optional OS-probe cross-check of `meta.started_at_ms` (state face only).
+
+    Catches a leftover meta / recycled PID: the process the PID file names may
+    not be the process the meta describes. Informational — never an alarm
+    (PID reuse and clock skew are real false-positive sources)."""
+    started = _as_int(_read_serve_meta(project_dir).get("started_at_ms"))
+    if started is None:
+        return None
+    os_start = process_start_ms(pid)
+    if os_start is None or abs(os_start - started) <= 60_000:
+        return None
+    return (
+        f"serve identity mismatch (PID {pid} started {_iso_ms(os_start)} but "
+        f"serve.meta says {_iso_ms(started)}) - possible leftover meta or recycled PID"
+    )
+
+
+def process_start_ms(pid: int) -> int | None:
+    """OS-reported process start time (epoch ms), independent of serve.meta.
+
+    Optional +1 probe (design C9/E): cross-checks `meta.started_at_ms` to catch
+    a leftover meta / recycled PID. Windows via ctypes GetProcessTimes (the
+    same precedent as mw_common._is_alive_win32); POSIX via /proc/<pid>/stat.
+    Returns None whenever the platform path cannot answer.
+    """
+    if pid <= 0:
+        return None
+    if sys.platform == "win32":
+        import ctypes
+        import ctypes.wintypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return None
+        try:
+            creation = ctypes.wintypes.FILETIME()
+            exit_t = ctypes.wintypes.FILETIME()
+            kernel_t = ctypes.wintypes.FILETIME()
+            user_t = ctypes.wintypes.FILETIME()
+            if not kernel32.GetProcessTimes(
+                handle,
+                ctypes.byref(creation),
+                ctypes.byref(exit_t),
+                ctypes.byref(kernel_t),
+                ctypes.byref(user_t),
+            ):
+                return None
+            ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+            return ticks // 10_000 - 11_644_473_600_000  # 1601-01-01 -> epoch
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        stat = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        after = stat.rsplit(")", 1)[1].split()
+        start_ticks = int(after[19])
+        btime = 0
+        for line in pathlib.Path("/proc/stat").read_text(encoding="utf-8").splitlines():
+            if line.startswith("btime "):
+                btime = int(line.split()[1])
+                break
+        hz = os.sysconf("SC_CLK_TCK")
+        return btime * 1000 + int(start_ticks * 1000 / hz)
+    except (OSError, ValueError, IndexError):
+        return None
 
 
 def _update_git_counts(repo: pathlib.Path) -> dict | None:
@@ -5359,33 +6020,28 @@ def _check_update_env(project_dir: pathlib.Path) -> dict:
 
     # ── project layer ──
 
-    # A3 serve staleness (mirror of the extension's STALE CODE banner)
+    # A3 serve staleness (T-13/AC-005): the code_digest judge with meta.code_dir
+    # as the baseline tree, falling back to the legacy mtime judge for old meta.
     pid = _check_pid(_pid_path(project_dir))
     if pid is None:
         hint = "打开 pi 窗口自动启动，或 python mw.py start" if initialized else "项目未初始化"
         add("serve", "project", "info", "serve 未运行（PID 文件缺失或进程不在）", hint)
     else:
         meta_p = _serve_meta_path(project_dir)
-        started_ms: float | None = None
-        if meta_p.is_file():
-            try:
-                started_ms = float(json.loads(meta_p.read_text(encoding="utf-8")).get("started_at_ms", 0)) or None
-            except (json.JSONDecodeError, OSError):
-                started_ms = None
-        if started_ms is None:
-            try:
-                started_ms = (meta_p if meta_p.exists() else _pid_path(project_dir)).stat().st_mtime * 1000
-            except OSError:
-                started_ms = None
-        code_mtime = _mw_code_newest_mtime()
-        if started_ms is None or code_mtime is None:
-            add("serve", "project", "info", f"运行中 (PID {pid})；无法比较代码时间")
-        elif code_mtime * 1000 > started_ms + 2000:
-            add("serve", "project", "stale",
-                f"serve 启动 {_ts(started_ms / 1000)} 早于 mw 代码 {_ts(code_mtime)}（PID {pid}）",
-                "重启 serve（在飞 worker 由新 launcher 收养）", auto=True)
+        try:
+            fallback_ms = (meta_p if meta_p.exists() else _pid_path(project_dir)).stat().st_mtime * 1000
+        except OSError:
+            fallback_ms = None
+        v = serve_code_verdict(project_dir, fallback_started_ms=fallback_ms)
+        if v["verdict"] == "drift":
+            add("serve", "project", "stale", v["detail"],
+                "重启 serve（在飞 worker 由新 launcher 收养；本项目窗口 /mw restart）", auto=True)
+        elif v["verdict"] == "undecidable":
+            add("serve", "project", "info", f"运行中 (PID {pid})；无法判定代码漂移（{v['reason']}）")
         else:
-            add("serve", "project", "ok", f"运行中 (PID {pid})，代码新鲜")
+            commit = v["actual_commit"] or "(unavailable)"
+            add("serve", "project", "ok",
+                f"运行中 (PID {pid})，代码新鲜（{v['verdict']}，commit {commit[:9]}）")
 
     if not initialized:
         add("project", "project", "info", "项目未初始化（无 .agenticdoc）",
@@ -5707,6 +6363,27 @@ def _parse_args() -> argparse.Namespace:
     gates_p.add_argument(
         "--json", action="store_true", dest="as_json",
         help="Emit the doctor gate segment as JSON (layer-C machine exit)",
+    )
+    answer_p = autopilot_sub.add_parser(
+        "answer",
+        help="Write one human gate answer (reject is destructive and needs --confirm-destructive)",
+    )
+    answer_p.add_argument("--project", required=True, help="Project directory")
+    answer_p.add_argument("--gate-id", required=True, help="Gate id, e.g. gate-0001")
+    answer_decision = answer_p.add_mutually_exclusive_group(required=True)
+    answer_decision.add_argument("--approve", action="store_true", help="Approve the gate")
+    answer_decision.add_argument(
+        "--reject", action="store_true",
+        help="Reject the gate (destructive; needs --confirm-destructive)",
+    )
+    answer_p.add_argument("--note", default=None, help="Single-line answer note")
+    answer_p.add_argument(
+        "--answered-by", default=None,
+        help="Audit identity written to answered_by (default: mw-cli@host)",
+    )
+    answer_p.add_argument(
+        "--confirm-destructive", action="store_true", dest="confirm_destructive",
+        help="Second confirmation required to actually write a reject (AC-009)",
     )
     contract_guard_p = autopilot_sub.add_parser(
         "contract-guard",

@@ -11,8 +11,9 @@ VC-007 pending past threshold + no in-flight -> 1 ledger row + 1 event
 VC-008 the same gate is never reminded a third time — the count lives in the
        ledger, not the 200-event timeline tail (shorter than the 60-min gap)
 VC-009 answered gate -> zero residual
-VC-010 ANY non-terminal queue row (not just `running`) suppresses: EXECUTE's
-       sparse timeline is not "blocked on human"
+VC-010 ANY non-terminal queue row for the gate's OWN key (not just `running`)
+       suppresses; another key's work never silences this gate's reminder
+       (per-key, T-11/AC-002)
 """
 import datetime
 import dataclasses
@@ -90,9 +91,15 @@ def _age_gate(gate_file: pathlib.Path, minutes: float) -> None:
 
 
 def _write_workers(project: pathlib.Path, *statuses: str) -> None:
+    """Non-terminal rows owned by key `k1` (the fixture gate's own key).
+
+    Per-key suppression (T-11/AC-002) attributes a row to a gate only when the
+    row is filed under `.agenticdoc/k1/workers/...` with `origin: conductor`;
+    a bare `/tmp/task.md` row is `manual` and silences nothing."""
     rows = [
-        f"ap-k1-w{i} | {status} | pi | timi | /tmp/task.md "
-        f"| 2026-01-01T00:00:00Z | 2026-01-01T00:00:00Z | m"
+        f"ap-k1-w{i} | {status} | pi | timi "
+        f"| {project.as_posix()}/.agenticdoc/k1/workers/ap-k1-w{i}/task.md "
+        f"| 2026-01-01T00:00:00Z | 2026-01-01T00:00:00Z | m | conductor"
         for i, status in enumerate(statuses)
     ]
     (project / ".agenticdoc" / "_workers.parallel").write_text(
@@ -152,19 +159,41 @@ def test_pure_decision_three_conditions() -> None:
     )[0][1] == 2
     # condition 3: cap — already 2, never a 3rd
     assert conductor.pending_gate_reminders([gate], [], {"gate-0001": 2}, now, 30, 2) == []
-    # condition 2: any non-terminal row suppresses, terminal rows do not
-    assert conductor.pending_gate_reminders(
-        [gate], [{"status": "pending"}], {}, now, 30, 2
-    ) == []
-    assert conductor.pending_gate_reminders(
-        [gate], [{"status": "running"}], {}, now, 30, 2
-    ) == []
+    # condition 2 (per-key, T-11/AC-002): a non-terminal row for the gate's
+    # own key suppresses; a terminal row does not; another key's work never
+    # silences this gate, and an empty-key gate is never silenced at all.
+    k1_pending = {
+        "status": "pending",
+        "task_path": "/x/.agenticdoc/k1/workers/w/task.md",
+        "origin": "conductor",
+    }
+    k1_running = {
+        "status": "running",
+        "task_path": "/x/.agenticdoc/k1/workers/w/task.md",
+        "origin": "conductor",
+    }
+    k2_running = {
+        "status": "running",
+        "task_path": "/x/.agenticdoc/k2/workers/w/task.md",
+        "origin": "conductor",
+    }
+    assert conductor.pending_gate_reminders([gate], [k1_pending], {}, now, 30, 2) == []
+    assert conductor.pending_gate_reminders([gate], [k1_running], {}, now, 30, 2) == []
+    assert [
+        g.id
+        for g, _ in conductor.pending_gate_reminders([gate], [k2_running], {}, now, 30, 2)
+    ] == ["gate-0001"]
     assert [
         g.id
         for g, _ in conductor.pending_gate_reminders(
             [gate], [{"status": "done"}], {}, now, 30, 2
         )
     ] == ["gate-0001"]
+    keyless = _gate_at(now - 31 * 60, gate_id="gate-0004", kind="stage-close", key="")
+    assert [
+        g.id
+        for g, _ in conductor.pending_gate_reminders([keyless], [k1_running], {}, now, 30, 2)
+    ] == ["gate-0004"]
     # unparseable anchor never fires (fail-closed)
     broken = _gate_at(now - 31 * 60, gate_id="gate-0003")
     broken = dataclasses.replace(broken, created_at="not-a-date")

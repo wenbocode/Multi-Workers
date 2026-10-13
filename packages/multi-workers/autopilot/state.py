@@ -28,6 +28,10 @@ this machine against this checkout and cannot verify a foreign pid, and a
 conservative skip would let a crashed foreign window block a key forever.
 Live means: parseable ``host:pid`` AND host == this host AND pid alive.
 Unparseable (legacy) claim ids read back as stale (F9).
+
+Synthetic claims (T-16/AC-014, ``autopilot@<host>:<pid>``) reuse the same
+liveness rule with the host taken from behind the ``@``; the conductor passes
+its own id as ``self_id`` so its own takeover never blocks its own dispatch.
 """
 
 from __future__ import annotations
@@ -115,10 +119,24 @@ def claim_state(claim_id: str, self_id: str = "") -> str:
     live  — parseable host:pid, host == this host, pid alive
     dead  — parseable but foreign host or dead pid
     stale — unparseable (legacy claim ids; F9)
+
+    Synthetic claims (T-16/AC-014, `autopilot@<host>:<pid>`) read with the
+    SAME pid-liveness semantics: the host is the part after ``@``, so another
+    conductor instance's live claim is still `live` (and still blocks this
+    one), while this instance's own claim — passed as ``self_id`` — is `free`.
+    That self-identification is what keeps a conductor from skipping the keys
+    it just took over (requirement 6 of the card: the synthetic claim must not
+    turn into a self-block).
     """
     trimmed = (claim_id or "").strip()
     if not trimmed or trimmed in ("—", "-") or (self_id and trimmed == self_id):
         return CLAIM_FREE
+    synthetic = mw_common.parse_synthetic_claim(trimmed)
+    if synthetic is not None:
+        host, pid = synthetic
+        if host != socket.gethostname():
+            return CLAIM_DEAD  # conductor-side rule: foreign host is not live
+        return CLAIM_LIVE if mw_common._is_alive(pid) else CLAIM_DEAD
     m = _CLAIM_RE.match(trimmed)
     if not m:
         return CLAIM_STALE

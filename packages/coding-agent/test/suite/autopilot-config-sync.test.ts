@@ -10,6 +10,9 @@
  * P5 spawns the real Python module and compares the registry tables and the
  * 20-key defaults byte-for-byte (key set, key ORDER, default values, JSON types,
  * integer ranges, and closed-set enums) against the TS mirror in `status-model.ts`.
+ * It also classifies the OPTIONAL keys — registered in a type registry but
+ * deliberately left out of DEFAULT_CONFIG (`envelope_fallback`): the count is
+ * 21 registrations over the 20-key schema, never a mismatch.
  *
  * Fail-closed: a missing interpreter or a failing subprocess throws with stderr.
  */
@@ -25,6 +28,7 @@ import {
 	ENUM_FIELDS,
 	INT_RANGES,
 	LIST_FIELDS,
+	OPTIONAL_CONFIG_KEYS,
 	STR_FIELDS,
 } from "../../src/extensions/agent-team-loop/autopilot/status-model.ts";
 import { resolveRagPython } from "../../src/extensions/agent-team-loop/rag/cli-bridge.ts";
@@ -165,8 +169,13 @@ describe("autopilot config new-key mirror (P5)", () => {
 		expect(JSON.stringify(ENUM_FIELDS)).toBe(JSON.stringify(py.enum_fields));
 		expect(JSON.stringify(INT_RANGES)).toBe(JSON.stringify(py.int_ranges));
 
-		// The registries partition the 20 keys exactly (no field unclassified,
-		// none classified twice).
+		// The registries classify every one of the 20 DEFAULT_CONFIG keys exactly
+		// once, plus any registered-but-OPTIONAL key. Python registers
+		// `envelope_fallback` in `_BOOL_FIELDS` while deliberately keeping it out
+		// of DEFAULT_CONFIG (config.py :61-65/:113/:151), so the registration
+		// count is 21 while the frozen schema stays 20: 21 = 20 defaults + 1
+		// optional bool. The optional category is asserted explicitly so a future
+		// key that is registered on one side only cannot slip through.
 		const registered = [
 			...py.bool_fields,
 			...py.list_fields,
@@ -174,8 +183,25 @@ describe("autopilot config new-key mirror (P5)", () => {
 			...Object.keys(py.enum_fields),
 			...Object.keys(py.int_ranges),
 		];
-		expect(registered.length).toBe(py.keys.length);
-		expect([...registered].sort()).toEqual([...py.keys].sort());
+		const optionalPy = py.bool_fields.filter((field) => !py.keys.includes(field));
+		const optionalRegistered = [...new Set(registered.filter((field) => !py.keys.includes(field)))].sort();
+		expect(optionalRegistered, "optional keys must be registered BOOL_FIELDS").toEqual([...optionalPy].sort());
+		expect([...OPTIONAL_CONFIG_KEYS].sort(), "TS optional registry vs Python").toEqual([...optionalPy].sort());
+		expect(registered.length).toBe(py.keys.length + optionalRegistered.length);
+		expect([...registered].sort()).toEqual([...py.keys, ...optionalRegistered].sort());
+		// No key or optional field may be classified twice, and every default
+		// key must be classified.
+		const seen = new Set<string>();
+		for (const field of registered) {
+			expect(seen.has(field), `${field}: registered more than once`).toBe(false);
+			seen.add(field);
+		}
+		for (const key of py.keys) expect(seen.has(key), `${key}: unclassified`).toBe(true);
+		// The optional keys are exactly the ones outside the frozen schema.
+		for (const field of OPTIONAL_CONFIG_KEYS) {
+			expect(py.keys, `${field}: optional key must stay out of DEFAULT_CONFIG`).not.toContain(field);
+			expect(py.bool_fields, `${field}: optional key must be a registered bool`).toContain(field);
+		}
 
 		// Guards against the null-widening shortcut: the TS ranges must be
 		// tuples of numbers / null, never stringified bounds.
@@ -187,9 +213,9 @@ describe("autopilot config new-key mirror (P5)", () => {
 
 		process.stdout.write(
 			`[VERIFY] P5: key_order_match=true defaults_match=true ` +
-				`bool=${py.bool_fields.length} list=${py.list_fields.length} ` +
+				`keys=${py.keys.length} bool=${py.bool_fields.length} list=${py.list_fields.length} ` +
 				`str=${py.string_fields.length} enum=${Object.keys(py.enum_fields).length} ` +
-				`int=${Object.keys(py.int_ranges).length}\n`,
+				`int=${Object.keys(py.int_ranges).length} optional=${optionalRegistered.join(",")}\n`,
 		);
 	});
 });

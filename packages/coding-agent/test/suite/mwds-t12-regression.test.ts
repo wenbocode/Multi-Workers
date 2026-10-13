@@ -319,12 +319,18 @@ function writeBeat(root: string, ageMs: number): void {
 	fs.writeFileSync(path.join(dir, "timeline.jsonl"), `${line}\n`, "utf8");
 }
 
+/** One conductor-dispatched queue row filed under `.agenticdoc/<key>/workers/`
+ * — the canonical path shape `worker_owner_key`/`workerOwnerKey` anchor on
+ * (design D-019). The pre-T-11 fixture wrote `.agenticdoc/<key>/task.md`,
+ * which resolves to NO owner key at all, so it could not tell "another key is
+ * in flight" apart from "an unowned row"; the per-key assertions need the row
+ * to actually resolve to a key that is not the gate's. */
 function writeQueueRow(root: string, key: string, status: string): void {
-	const taskDir = path.join(root, ".agenticdoc", key);
+	const taskDir = path.join(root, ".agenticdoc", key, "workers", `${key}-w1`);
 	fs.mkdirSync(taskDir, { recursive: true });
 	fs.writeFileSync(path.join(taskDir, "task.md"), "type: coding\n\nwork\n", "utf8");
 	const row = [
-		key,
+		`ap-${key}-w1`,
 		status,
 		"pi",
 		"timi",
@@ -332,6 +338,7 @@ function writeQueueRow(root: string, key: string, status: string): void {
 		"2026-10-11T00:00:00Z",
 		"2026-10-11T00:00:00Z",
 		"timi/glm-5.3",
+		"conductor",
 	].join(" | ");
 	fs.writeFileSync(path.join(root, ".agenticdoc", "_workers.parallel"), `# mw-queue:v2\n${row}\n`, "utf8");
 }
@@ -366,14 +373,31 @@ const DOCTOR_BLOCKED_PROBE = [
 
 const STAGE_PROBE = [
 	"import mw_common",
-	"from autopilot import conductor, gates as gates_mod",
+	"from autopilot import conductor, gates as gates_mod, timeline",
 	"project = pathlib.Path(sys.argv[1])",
 	"pending = gates_mod.pending_gates(conductor.gates_dir(project))",
-	"stage_status, stage_of_key = conductor._gate_stage_context(project)",
+	"st = conductor.ConductorState(timeline.Timeline(timeline.timeline_path(project)), conductor.goal_mtime_ns(project))",
+	"stage_status, stage_of_key = conductor._gate_stage_context(project, st)",
 	"now = __import__('time').time()",
 	"due = conductor.pending_gate_reminders(pending, [], {}, now, 30, 3, stage_status, stage_of_key)",
 	"gates_section = mw_common._doctor_gates(project)",
 	'print("JSON:" + json.dumps({"reminders": len(due), "blocked_on_human": bool(gates_section["blocked_on_human"]), "pending_count": gates_section["pending_count"]}))',
+].join("\n");
+
+/** Drives the IO shell (not just the pure judgment) so the `remind-suppressed`
+ * ledger record is observed as the operator would see it: the reminder row,
+ * the suppression row and the fail-loud timeline alarm. */
+const REMIND_PROBE = [
+	"from autopilot import config, conductor, gates as gates_mod, timeline",
+	"project = pathlib.Path(sys.argv[1])",
+	"st = conductor.ConductorState(timeline.Timeline(timeline.timeline_path(project)), conductor.goal_mtime_ns(project))",
+	"conductor._remind_pending_gates(project, st, config.default_config())",
+	"ledger = conductor.auto_decision_rows(project)",
+	"reminded = [r for r in ledger if r.get('phase') == 'remind']",
+	"silenced = [r for r in ledger if r.get('phase') == 'remind-suppressed']",
+	"events = timeline.query_events(timeline.timeline_path(project)).events",
+	"alarms = [e for e in events if e.get('ev') == 'config' and 'gate reminder suppressed' in str(e.get('detail', ''))]",
+	'print("JSON:" + json.dumps({"reminded": len(reminded), "suppressed": len(silenced), "reasons": [r.get("reason") for r in silenced], "gate_keys": [r.get("gate_key") for r in silenced], "alarms": len(alarms), "detail": silenced[0]["detail"] if silenced else ""}))',
 ].join("\n");
 
 // ── seam 4: AC-001 doctor blocked_on_human ↔ panel same-source quantity ─────
@@ -412,15 +436,20 @@ describe("seam AC-001: doctor blocked_on_human and the panel quantity agree", ()
 		expect(py.blocked_on_human).toBe(false);
 	});
 
-	it("a non-terminal worker row makes both false", () => {
+	it("another key's in-flight row does not explain the k1 gate away: both stay blocked", () => {
+		// T-11/AC-002 per-key axis: the row is filed under `t-1`, the gate under
+		// `k1`, so the gate still needs a human. The pre-T-11 project-level axis
+		// let the t-1 row explain the k1 gate away (both false); that expectation
+		// was the old behavior, not the contract.
 		const root = mkdtemp("mwds-t12-boh-row-");
 		writeConfig(root);
 		writeGate(root, "gate-0001", 1, 0);
 		writeBeat(root, 0);
 		writeQueueRow(root, "t-1", "running");
 		const py = runPythonJson(DOCTOR_BLOCKED_PROBE, [root]);
-		expect(panelSaysBlocked(root)).toBe(false);
-		expect(py.blocked_on_human).toBe(false);
+		expect(panelSaysBlocked(root)).toBe(true);
+		expect(py.blocked_on_human).toBe(true);
+		expect(py.pending_count).toBe(1);
 	});
 });
 
@@ -449,5 +478,41 @@ describe("seam AC-002: T-09 stage suppression and the doctor gates section do no
 		const py = runPythonJson(STAGE_PROBE, [root]);
 		expect(py.reminders).toBe(1);
 		expect(py.blocked_on_human).toBe(true);
+	});
+});
+
+// ── seam AC-002: per-key in-flight suppression ↔ visible record (T-11) ──────
+
+describe("seam AC-002: the in-flight key decides the suppression, never the project", () => {
+	it("another key's in-flight row does not suppress the k1 gate: the reminder fires", () => {
+		const root = mkdtemp("mwds-t12-remind-other-");
+		writeConfig(root);
+		writeGate(root, "gate-0001", 1, 31);
+		writeQueueRow(root, "t-1", "running");
+		const py = runPythonJson(REMIND_PROBE, [root]);
+		console.log(
+			`[VERIFY] seam T-11 per-key other-key: reminded=${String(py.reminded)} suppressed=${String(py.suppressed)}`,
+		);
+		expect(py.reminded).toBe(1);
+		expect(py.suppressed).toBe(0);
+		expect(py.alarms).toBe(0);
+	});
+
+	it("the gate's own key in flight suppresses it and leaves a remind-suppressed record", () => {
+		const root = mkdtemp("mwds-t12-remind-same-");
+		writeConfig(root);
+		writeGate(root, "gate-0001", 1, 31);
+		writeQueueRow(root, "k1", "running");
+		const py = runPythonJson(REMIND_PROBE, [root]);
+		console.log(
+			`[VERIFY] seam T-11 per-key same-key: reminded=${String(py.reminded)} suppressed=${String(py.suppressed)} reasons=${JSON.stringify(py.reasons)}`,
+		);
+		expect(py.reminded).toBe(0);
+		expect(py.suppressed).toBe(1);
+		expect(py.reasons).toEqual(["key-in-flight"]);
+		expect(py.gate_keys).toEqual(["k1"]);
+		expect(py.alarms).toBe(1);
+		expect(String(py.detail)).toContain("gate reminder suppressed: gate-0001");
+		expect(String(py.detail)).toContain("act: /autopilot gate gate-0001");
 	});
 });

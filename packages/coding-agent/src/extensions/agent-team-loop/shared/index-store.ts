@@ -112,6 +112,35 @@ export type ConductorClaimState = "free" | "live" | "dead" | "stale";
 
 const CONDUCTOR_CLAIM_RE = /^([^:]+):(\d+)$/;
 
+/** Owner marker of a conductor-owned (synthetic) claim id (T-16 / AC-014 route
+ * ①): `autopilot@<host>:<pid>`. The prefix is the FIELD-LEVEL distinction from
+ * a human `host:pid` claim, so no reader has to infer ownership from a pid. */
+export const SYNTHETIC_CLAIM_PREFIX = "autopilot@";
+
+const SYNTHETIC_CLAIM_RE = /^autopilot@([^:@]+):(\d+)$/;
+
+/** Parsed synthetic claim id. */
+export interface SyntheticClaim {
+	host: string;
+	pid: number;
+}
+
+/** `(host, pid)` of a synthetic claim id (T-16). Mirrors the Python
+ * `mw_common.parse_synthetic_claim` on the accepted shape; a malformed
+ * `autopilot@...` value yields `undefined` (it is then judged by the ordinary
+ * legacy rules, never silently adopted as a claim). */
+export function parseSyntheticClaim(claimId: string): SyntheticClaim | undefined {
+	const m = SYNTHETIC_CLAIM_RE.exec((claimId ?? "").trim());
+	if (!m) return undefined;
+	const pid = Number(m[2]);
+	return Number.isInteger(pid) && pid > 0 ? { host: m[1] ?? "", pid } : undefined;
+}
+
+/** Is this claim id owned by the conductor rather than by a human window? */
+export function isSyntheticClaimId(claimId: string): boolean {
+	return parseSyntheticClaim(claimId) !== undefined;
+}
+
 function conductorPidAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
@@ -122,6 +151,14 @@ function conductorPidAlive(pid: number): boolean {
 	}
 }
 
+/** Is this conductor-owned claim still LIVE (same-host pid alive)? Used as
+ * owner evidence by {@link ownerEvidenceCurrent}; a dead synthetic claim is not
+ * evidence of anything and falls through to the ordinary gates. */
+export function syntheticClaimLive(claimId: string): boolean {
+	const synthetic = parseSyntheticClaim(claimId);
+	return synthetic !== undefined && synthetic.host === os.hostname() && conductorPidAlive(synthetic.pid);
+}
+
 /** Liveness verdict the Python conductor uses to decide whether a key's claim
  * blocks dispatch (`conductor.py`: `if claim == state.CLAIM_LIVE: ... continue`).
  *
@@ -130,7 +167,16 @@ function conductorPidAlive(pid: number): boolean {
  * ("cannot verify liveness"), while the conductor treats a foreign host as
  * `dead` ("conductor-side rule: foreign host is not live"). ORPHANED judgement
  * and the repair path must speak the CONDUCTOR's language, or a key the
- * conductor is happy to drive would be mis-labelled orphaned. */
+ * conductor is happy to drive would be mis-labelled orphaned.
+ *
+ * A SYNTHETIC claim (T-16, `autopilot@<host>:<pid>`) also reads `dead` here,
+ * deliberately: this verdict answers "does ANOTHER window own the key, so the
+ * automatic scan must not touch it?". The synthetic claim is the conductor's
+ * OWN takeover marker, so a `live` verdict would make the scan skip the key's
+ * undispatched work entirely (the C-35 symptom T-16 removes). The claim's real
+ * liveness is used instead as owner evidence by
+ * {@link ownerEvidenceCurrent}; the Python side passes its own id as `selfId`
+ * into `state.claim_state` and therefore never blocks itself. */
 export function conductorClaimState(claimId: string, selfId = ""): ConductorClaimState {
 	const trimmed = (claimId ?? "").trim();
 	if (!trimmed || trimmed === "—" || trimmed === "-" || (selfId !== "" && trimmed === selfId)) return "free";
@@ -244,7 +290,10 @@ export interface OwnerEvidenceVerdict {
  *   - a state document moved within {@link OWNER_EVIDENCE_FRESH_MS};
  *   - the index row's status is not `idle` / `done` (an `active` row is a live
  *     owner; `done` is terminal and must not be repaired);
- *   - the row's claim is conductor-`live` (this host, pid alive).
+ *   - the row's claim is conductor-`live` (this host, pid alive);
+ *   - the row's claim is a LIVE synthetic claim (T-16/AC-014: the conductor
+ *     took the key over, so the "no owner ⇒ stale evidence" verdict must not
+ *     apply — a stale synthetic claim is recycled by the conductor itself).
  *
  * Read-only; the caller decides what to do with the verdict. */
 export function ownerEvidenceCurrent(
@@ -254,6 +303,9 @@ export function ownerEvidenceCurrent(
 	now = Date.now(),
 	freshMs = OWNER_EVIDENCE_FRESH_MS,
 ): OwnerEvidenceVerdict {
+	if (row !== undefined && syntheticClaimLive(row.claimId)) {
+		return { current: true, hasStateDocs: true };
+	}
 	let hasStateDocs = false;
 	for (const doc of keyStateDocPaths(agenticdocRoot, key)) {
 		let stat: fs.Stats;

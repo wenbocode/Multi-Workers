@@ -221,6 +221,11 @@ class TestParseRoundTrip:
         # Count/order changed in mw-autopilot-slot-capacity (T-03): the schema
         # grew 12 -> 40 fields and create() now emits the v2 `gate_schema`
         # marker as the second line, so the emitted block is base 12 + marker.
+        # T-14 (mw-autopilot-gate-alarm-liveness / AC-007): `blocker_class` is
+        # registered OUTSIDE the frozen order as a parallel scalar extension,
+        # so the recognized field surface is now 41 (40 frozen + 1 extension)
+        # while the exact 40-name order below is preserved unchanged.
+        assert len(gates.FRONTMATTER_FIELDS) + len(gates._SCALAR_EXTENSION_FIELDS) == 41
         assert len(gates.FRONTMATTER_FIELDS) == 40
         assert keys == [
             gates.FRONTMATTER_FIELDS[0],

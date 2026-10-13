@@ -16,6 +16,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	diffLedger,
@@ -25,6 +26,9 @@ import {
 import { writeWorkerFile } from "../../src/extensions/agent-team-loop/worker/worker-file-tool.ts";
 
 const tempDirs: string[] = [];
+
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(TEST_DIR, "../../../..");
 
 function mkdtemp(): string {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "change-ledger-"));
@@ -79,7 +83,7 @@ describe("diffLedger — declared ⊆ recorded", () => {
 	it("a declared file with no write event is red and names the file", () => {
 		const trace = [`[WRITE_FILE] path=${LEDGER_FILE}`, `[WRITE_FILE] path=${FILE_TOOL}`].join("\n");
 
-		const ledger = diffLedger(report([LEDGER_FILE, FILE_TOOL, WORKER_MODE]), trace);
+		const ledger = diffLedger(report([LEDGER_FILE, FILE_TOOL, WORKER_MODE]), trace, { projectRoot: REPO_ROOT });
 
 		expect(ledger.declared).toEqual([LEDGER_FILE, FILE_TOOL, WORKER_MODE]);
 		expect(ledger.extra).toEqual([WORKER_MODE]);
@@ -92,7 +96,7 @@ describe("diffLedger — declared ⊆ recorded", () => {
 			"[END] 2026-09-01T00:10:00.000Z exit=0 elapsed=600s tools=12 phases=-",
 		].join("\n");
 
-		const ledger = diffLedger(report([WORKER_MODE]), legacyTrace);
+		const ledger = diffLedger(report([WORKER_MODE]), legacyTrace, { projectRoot: REPO_ROOT });
 
 		expect(ledger.recorded).toEqual([]);
 		expect(ledger.declared).toEqual([WORKER_MODE]);
@@ -128,6 +132,11 @@ describe("diffLedger — declared ⊆ recorded", () => {
 			declared: [],
 			recorded: [LEDGER_FILE],
 			extra: [],
+			// T-17b/T-17c: the ledger verdict carries the (empty) framework-infra and
+			// off-disk channels alongside the three T-05 fields. `toEqual` is exact,
+			// so the new fields must be named; the assertion itself is unchanged.
+			infra: [],
+			unresolvable: [],
 			unjudgeable: false,
 		});
 	});

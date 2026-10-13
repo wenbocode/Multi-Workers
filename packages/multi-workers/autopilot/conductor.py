@@ -38,6 +38,7 @@ import os
 import pathlib
 import re
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -50,7 +51,7 @@ if str(_PARENT) not in sys.path:
 
 import mw_common  # noqa: E402  (path bootstrapped above)
 
-from autopilot import advance, audit_evidence, closure, config, contract_guard, dispatch, effective_config, evidence, gates, roadmap, state, timeline  # noqa: E402
+from autopilot import advance, audit_evidence, closure, config, contract_guard, dispatch, effective_config, evidence, gates, index_parallel, roadmap, state, timeline  # noqa: E402
 
 # ── Phase machine constants (T-10) ──────────────────────────────────────────
 
@@ -75,6 +76,33 @@ _DISPATCH_SKIP_STATUSES = ("done", "stalled", "closed-legacy", "pending-review")
 # closed stage). Named so the closure predicate and the deferred-review
 # precondition share ONE definition.
 _STAGE_TERMINAL_STATUSES = ("done", "closed-legacy")
+
+# ── Re-attest + destructive-reject confirmation (AC-008 / AC-009, T-15) ─────
+
+# A re-attest is a NEW gate (never a reopened one): the link back to the
+# original judgement rides in the existing `context_refs` dimension, exactly
+# like `loop` / `request_id` do for `_gate_open` (RQ-2 §6.3 B1). Schema stays
+# untouched, no kind is added, and gate ids are never reused because
+# `gates.create` allocates `max(existing)+1`.
+REATTEST_REF_PREFIX = "reattest-of:"
+
+# Key statuses an APPROVED re-attest may reopen. `done` is deliberately absent
+# (a completed key must never be silently re-dispatched) and `running` needs no
+# write. The set deliberately does NOT require `stalled`: leaving
+# `closed-legacy` / `pending-review` is the whole point of the independent
+# consumer (AC-008; the `_apply_stalled_*` siblings hard-require `stalled`).
+_REATTEST_REOPEN_STATUSES = frozenset({"stalled", "closed-legacy", "pending-review"})
+
+# AC-009 accurate consequence statement, replacing the "选错就废掉一个 key"
+# overstatement: a rejected `stalled` gate writes `closed-legacy`, which is
+# irreversible *inside the state machine*, not a lost key. Recovery = one
+# manual `_roadmap.md` edit (one more when the stage is already closed); the
+# cost is 无审计痕迹（key-level revert 不落 trace）+ 轮次不退（another round
+# needs a fresh stall -> approve cycle).
+REJECT_CONSEQUENCE_STATEMENT = (
+    "状态机内不可逆；恢复 = 人工改 `_roadmap.md` 一行（stage 已 closed 时再改一行）；"
+    "代价 = 无审计痕迹 + 轮次不退"
+)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -177,6 +205,359 @@ def acquire_conductor_lock(
     raise ConductorLockHeld(f"{name}.lock held by a live holder (age {age:.0f}s)")
 
 
+# ── Synthetic claim: conductor-owned keys (T-16 / AC-014 route ①) ─────────────
+#
+# The conductor becomes the owner of "has work but no live claim" keys by
+# writing a synthetic claim id (`autopilot@<host>:<pid>`, mw_common's claim
+# axis) through `autopilot.index_parallel` — the single claim-cell writer. This
+# section owns the lifecycle only:
+#   create  — key has undispatched work, its claim cell is free/stale/dead and
+#             it is not held by a live human claim (never a `done` key);
+#   renew   — one heartbeat per `SYNTHETIC_CLAIM_HEARTBEAT_SEC` moving the
+#             row's `Updated` cell (idempotent: no event per beat);
+#   recycle — the bound identity is gone: host mismatch, dead pid, or a
+#             `serve.meta` whose pid (or `started_at_ms`) proves the serve
+#             instance restarted. Never a wall-clock TTL, never a human claim.
+# The claim pid is the SERVE pid when `.mw/serve.meta` (T-13) carries a live
+# one, else the conductor's own pid, so the identity face decides validity.
+
+#: Heartbeat/renewal period of a synthetic claim (seconds).
+SYNTHETIC_CLAIM_HEARTBEAT_SEC = 60.0
+
+#: Whitespace trimmed off an index status cell before comparison.
+_TRIM_STATUS = " \t\n\v\f\r"
+
+#: Process start of this conductor (module import ≈ process start). Used to
+#: detect an orphaned conductor whose serve has already been replaced.
+_PROCESS_STARTED_MS = int(time.time() * 1000)
+_SERVE_START_SLACK_MS = 5000
+
+
+def synthetic_claim_owner(project_root: pathlib.Path) -> tuple[str, int]:
+    """``(host, pid)`` this conductor binds its synthetic claims to.
+
+    The pid is the running serve's pid whenever the T-13 identity face
+    (`.mw/serve.meta`) names a live one, so a serve restart (pid changes)
+    invalidates every older claim deterministically. A missing/dead meta
+    falls back to this process's pid — liveness alone then decides, which is
+    still deterministic (a new conductor recycles claims of the old pid).
+    """
+    host = socket.gethostname()
+    identity = mw_common.read_serve_identity(project_root)
+    if identity is not None and mw_common._is_alive(identity["pid"]):
+        return host, identity["pid"]
+    return host, os.getpid()
+
+
+def _serve_instance_replaced(project_root: pathlib.Path) -> bool:
+    """True when `serve.meta` describes a serve instance younger than THIS
+    conductor — this process is a leftover of an older serve and must neither
+    create nor renew synthetic claims."""
+    identity = mw_common.read_serve_identity(project_root)
+    if identity is None:
+        return False
+    started = identity.get("started_at_ms") or 0
+    return bool(started) and started > _PROCESS_STARTED_MS + _SERVE_START_SLACK_MS
+
+
+def _foreign_synthetic_claim(claim_id: str) -> bool:
+    """Is this a synthetic claim owned by ANOTHER host's conductor (T-22/R-5)?
+
+    Mirrors the TS takeover guard's positive verdict
+    (`pm/ui-bridge.ts::claimState`): only `synthetic.host === os.hostname()`
+    is `held-conductor`; every other host falls through to `held-live`. A
+    foreign synthetic claim is therefore a live holder for this conductor -
+    never recycled, never overwritten, never dispatched over - so two hosts
+    cannot both hold the same key through the synthetic-claim mechanism.
+    """
+    parsed = mw_common.parse_synthetic_claim(claim_id)
+    if parsed is None:
+        return False
+    host, _pid = parsed
+    return host != socket.gethostname()
+
+
+def _synthetic_claim_stale(project_root: pathlib.Path, claim_id: str) -> bool:
+    """A synthetic claim that this conductor instance must recycle.
+
+    Deterministic (pid/serve identity), never a wall-clock guess:
+      * unparseable / non-positive pid => stale;
+      * a FOREIGN-host synthetic claim => NEVER stale: it is another machine's
+        conductor holding the key, so R-5 treats it as a live holder this
+        conductor must not recycle or overwrite (`_foreign_synthetic_claim`;
+        the caller also short-circuits it before this check);
+      * a bound pid different from this instance's identity pid (serve
+        restarted, another conductor owns it) => stale;
+      * a `serve.meta` whose pid is gone => the owning serve disappeared =>
+        stale (claim creation is refused in that state too);
+      * `serve.meta.started_at_ms` postdating this process => this conductor
+        is an orphan of a replaced serve => its claims are stale.
+    """
+    parsed = mw_common.parse_synthetic_claim(claim_id)
+    if parsed is None:
+        return True
+    if _foreign_synthetic_claim(claim_id):
+        return False  # R-5: another host's live holder, never ours to recycle
+    _host, pid = parsed
+    if pid <= 0:
+        return True
+    identity = mw_common.read_serve_identity(project_root)
+    if identity is not None and not mw_common._is_alive(identity["pid"]):
+        return True
+    exp_host, exp_pid = synthetic_claim_owner(project_root)
+    if _host != exp_host or pid != exp_pid:
+        return True
+    if not mw_common._is_alive(pid):
+        return True
+    return _serve_instance_replaced(project_root)
+
+
+def _human_claim_blocks_synthetic(claim_id: str) -> bool:
+    """Is a NON-synthetic claim cell off limits for the conductor?
+
+    Requirement 3 of the card: a human takeover wins immediately and must not
+    be fought back. A live local human claim is untouchable; a foreign-host
+    claim cannot be verified here and is therefore ALSO untouchable (the
+    conductor-side dispatch doctrine treats a foreign host as dead, but
+    stomping a remote window's claim is not what an unattended-run repair is
+    allowed to do). Legacy/unparseable claim ids (F9) and a local claim whose
+    pid is gone stay claimable — that is exactly the C-35 "stale owner" case.
+    """
+    trimmed = (claim_id or "").strip()
+    if not trimmed or trimmed in mw_common.CLAIM_PLACEHOLDERS:
+        return False
+    if mw_common.is_synthetic_claim(trimmed):
+        return False
+    m = re.match(r"^([^:@]+):(\d+)$", trimmed)
+    if m is None:
+        return False  # legacy id: stale by the F9 rule
+    host, pid_text = m.group(1), m.group(2)
+    pid = int(pid_text)
+    if pid <= 0:
+        return False
+    if host != socket.gethostname():
+        return True  # unverifiable foreign holder: never stomp it
+    return mw_common._is_alive(pid)
+
+
+def _key_undispatched_work(
+    project_root: pathlib.Path, key: str, queued: set[str]
+) -> list[str]:
+    """Task keys of `key` that exist on disk with no dispatch and no product.
+
+    The C-35 discriminator, mirrored from the TS scan's T-24 narrowing:
+      * already in `_workers.parallel` (any status) => dispatched, not work;
+      * `output.md` present => terminal product, history (T-24);
+      * `origin: conductor` => D-104, the conductor already owns that duty;
+      * a usable `run.json` (T-20 `evaluateRunIdentity`: terminal OR active) =>
+        it already ran, so it is never re-dispatched candidate work.
+    A bare directory with only `task.md` is work; a key with none is idle in the
+    C-35 sense and must stay skipped (card requirement 1/7⑥).
+    """
+    workers = pathlib.Path(project_root) / ".agenticdoc" / key / "workers"
+    if not workers.is_dir():
+        return []
+    out: list[str] = []
+    for task_md in sorted(workers.glob("*/task.md")):
+        task_key = task_md.parent.name
+        if task_key in queued:
+            continue
+        if (task_md.parent / "output.md").is_file():
+            continue
+        labels = state.parse_task_labels(task_md)
+        if (labels.get("origin") or "").strip() == mw_common.WORKER_ORIGIN_CONDUCTOR:
+            continue
+        if mw_common.read_run_status(task_md.parent) is not None:
+            continue
+        out.append(task_key)
+    return out
+
+
+def synthetic_claims_allowed(project_root: pathlib.Path) -> bool:
+    """May this conductor create/renew synthetic claims right now?
+
+    Fail-closed on every unresolvable identity: a `serve.meta` naming a dead
+    serve means the owner process disappeared (recycle-only), and a serve that
+    started after this process means this conductor is an orphan of an older
+    serve (never claim). No `serve.meta` at all (a manually started conductor)
+    keeps the previous behaviour: this process's pid plus pid liveness decide.
+    """
+    identity = mw_common.read_serve_identity(project_root)
+    if identity is not None and not mw_common._is_alive(identity["pid"]):
+        return False
+    return not _serve_instance_replaced(project_root)
+
+
+def maintain_synthetic_claims(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    rows: list[dict[str, str]],
+) -> str:
+    """Recycle/renew/create the conductor's synthetic claims (T-16/AC-014).
+
+    Runs every `orchestrate()` tick BEFORE the stage gate, so a stale claim is
+    recycled even while no stage is running. Returns the claim id this
+    instance owns ("" when it must not claim, e.g. an orphaned conductor), for
+    callers that need to read key states without tripping on their own claim.
+    Never raises: a locked read/write failure just leaves the next tick to
+    retry.
+
+    Three phases, in order — every one idempotent across ticks and restarts:
+      1. recycle: a synthetic claim that is not this instance's (stale
+         identity, or no instance may claim at all) is cleared, once;
+      2. adopt/renew: our own claim on disk is adopted silently (a conductor
+         restart must not re-announce it) and heartbeated when due;
+      3. yield/create: an observed human takeover is traced once and never
+         fought for; an ownerless key with undispatched work is claimed once.
+    """
+    project_root = pathlib.Path(project_root)
+    index_rows = state.read_index(project_root)
+    allowed = synthetic_claims_allowed(project_root)
+    own_id = ""
+    if allowed:
+        host, pid = synthetic_claim_owner(project_root)
+        own_id = mw_common.synthetic_claim_id(host, pid)
+    queued = {row.get("task_key", "") for row in rows}
+
+    for row in index_rows:
+        key = row.get("key", "")
+        if not key:
+            continue
+        claim = (row.get("claim_id") or "").strip()
+        if not mw_common.is_synthetic_claim(claim):
+            if key in st.synthetic_claims:
+                # A human/legacy claim replaced ours: yield immediately, once.
+                st.synthetic_claims.pop(key, None)
+                st.synthetic_renewed.pop(key, None)
+                _trace_human_hold(st, key, claim)
+            continue
+        if claim == own_id:
+            # Our live claim: adopt silently and heartbeat only when due.
+            st.synthetic_claims[key] = own_id
+            due = time.monotonic() - st.synthetic_renewed.get(key, 0.0)
+            if due >= SYNTHETIC_CLAIM_HEARTBEAT_SEC and index_parallel.set_claim(
+                project_root, key, claim_id=own_id, updated=mw_common.iso_now()
+            ):
+                st.synthetic_renewed[key] = time.monotonic()
+            continue
+        if _foreign_synthetic_claim(claim):
+            # R-5: another HOST's conductor owns this synthetic claim. It is a
+            # live holder (TS `claimState` -> held-live), so this conductor
+            # neither recycles nor overwrites it - not even when its own serve
+            # is gone (`allowed` False). Phase 3 traces the hold.
+            continue
+        if not allowed or _synthetic_claim_stale(project_root, claim):
+            if index_parallel.clear_claim(project_root, key):
+                st.timeline.append(
+                    "reconcile",
+                    key=key,
+                    detail=f"stale synthetic claim recycled: {claim}",
+                )
+            st.synthetic_claims.pop(key, None)
+            st.synthetic_renewed.pop(key, None)
+            row["claim_id"] = mw_common.CLAIM_PLACEHOLDERS[1]
+
+    if not own_id:
+        return ""
+
+    for row in index_rows:
+        key = row.get("key", "")
+        if not key:
+            continue
+        claim = (row.get("claim_id") or "").strip()
+        if claim == own_id:
+            continue
+        if (row.get("status", "") or "idle").strip(_TRIM_STATUS).lower() == "done":
+            continue  # closed key: history, never a takeover target
+        if _foreign_synthetic_claim(claim):
+            work = _key_undispatched_work(project_root, key, queued)
+            if work:
+                _trace_foreign_synthetic_hold(st, key, claim, work=len(work))
+            continue
+        if _human_claim_blocks_synthetic(claim):
+            work = _key_undispatched_work(project_root, key, queued)
+            if work:
+                _trace_human_hold(st, key, claim, work=len(work))
+            continue
+        work = _key_undispatched_work(project_root, key, queued)
+        if not work:
+            continue  # C-35's other half: idle without product stays skipped
+        if index_parallel.set_claim(
+            project_root, key, claim_id=own_id, status="active", updated=mw_common.iso_now()
+        ):
+            st.synthetic_claims[key] = own_id
+            st.synthetic_renewed[key] = time.monotonic()
+            previous = (
+                ""
+                if claim in mw_common.CLAIM_PLACEHOLDERS
+                else f" (previous claim {claim} was not live)"
+            )
+            st.timeline.append(
+                "reconcile",
+                key=key,
+                detail=(
+                    f"synthetic claim {own_id} accepted for "
+                    f"{len(work)} undispatched task(s){previous}"
+                ),
+            )
+    return own_id
+
+
+def _trace_human_hold(
+    st: ConductorState, key: str, claim: str, *, work: int | None = None
+) -> None:
+    """One durable trace per (key, human claim) for a human-held key.
+
+    Reuses the existing `skip` event name (no new vocabulary). The "yielded"
+    and "withheld" wordings share one dedup slot: a key the conductor yielded
+    to must not also announce that its claim was withheld.
+    """
+    if claim and st.synthetic_yielded.get(key) == claim:
+        return
+    if claim and st.synthetic_blocked.get(key) == claim:
+        return
+    if claim:
+        st.synthetic_yielded[key] = claim
+    if work is None:
+        detail = f"synthetic claim yielded to human claim {claim or '(released)'}"
+    else:
+        detail = (
+            f"synthetic claim withheld: {work} undispatched task(s), "
+            f"key held by human claim {claim or '(released)'}"
+        )
+    st.timeline.append("skip", key=key, detail=detail)
+
+
+def _trace_foreign_synthetic_hold(
+    st: ConductorState, key: str, claim: str, *, work: int | None = None
+) -> None:
+    """One durable `skip` trace per (key, foreign synthetic claim) (R-5).
+
+    Same event name and dedup slots as `_trace_human_hold` - a foreign
+    conductor's synthetic claim is a live holder, so the local conductor must
+    neither recycle nor overwrite it (nor dispatch over it in `orchestrate`).
+    The wording names the holder class so a reader can tell it apart from a
+    human hold, without inventing a new event name.
+    """
+    if claim and st.synthetic_yielded.get(key) == claim:
+        return
+    if claim and st.synthetic_blocked.get(key) == claim:
+        return
+    if claim:
+        st.synthetic_yielded[key] = claim
+    if work is None:
+        detail = (
+            "synthetic claim withheld: key held by foreign synthetic claim "
+            f"{claim} (another host)"
+        )
+    else:
+        detail = (
+            f"synthetic claim withheld: {work} undispatched task(s), key held "
+            f"by foreign synthetic claim {claim} (another host)"
+        )
+    st.timeline.append("skip", key=key, detail=detail)
+
+
 # ── Tick ──────────────────────────────────────────────────────────────────────
 
 
@@ -190,6 +571,16 @@ class ConductorState:
         # key -> claim_id already skip-notified (event spam control only;
         # the skip decision itself re-derives from files every tick)
         self.skipped_claims: dict[str, str] = {}
+        # T-16/AC-014 synthetic claims held/seen this session (event dedup +
+        # self-identification only — every decision re-derives from disk):
+        #   synthetic_claims  key -> the synthetic claim id this session wrote
+        #   synthetic_renewed key -> monotonic time of the last heartbeat write
+        #   synthetic_yielded key -> human claim id already traced as a yield
+        #   synthetic_blocked key -> human claim id already traced as a block
+        self.synthetic_claims: dict[str, str] = {}
+        self.synthetic_renewed: dict[str, float] = {}
+        self.synthetic_yielded: dict[str, str] = {}
+        self.synthetic_blocked: dict[str, str] = {}
 
 
 def open_goal_change_gate(project_root: pathlib.Path) -> bool:
@@ -228,6 +619,12 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
     rm_path = roadmap.roadmap_path(project_root)
     rows = mw_common.parse_workers_file(mw_common.workers_path(project_root))
 
+    # T-16/AC-014: synthetic claim lifecycle BEFORE the stage gate, so a stale
+    # claim is recycled (and an ownerless key taken over) even while no stage is
+    # running. The returned id is this conductor's own claim: reading key states
+    # with it keeps the conductor from skipping the keys it just took over.
+    synthetic_claim_self_id = maintain_synthetic_claims(project_root, st, rows)
+
     if not rm_path.is_file():
         # No roadmap yet — dispatch the roadmap-writer (fresh proposal).
         _dispatch_roadmap_writer(project_root, st, rows, stage_number=1)
@@ -247,7 +644,7 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
     if not _stage_activation(project_root, st, rm, rows):
         return
 
-    key_states = state.read_key_states(project_root)
+    key_states = state.read_key_states(project_root, self_id=synthetic_claim_self_id)
     rounds = state.used_rounds(_all_workers_dirs(project_root))
 
     # Cross-stage views: key -> deps, key -> status, key -> stage number.
@@ -273,6 +670,12 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
     # `done` or `closed-legacy`. Runs after the stalled handlers, which skip
     # `pending-review` keys by construction (they require status == "stalled").
     _apply_review_decisions(project_root, st, status_of, stage_of)
+
+    # AC-008 / T-15: answered re-attest gates (a NEW gate carrying
+    # `reattest-of:<id>` in `context_refs`) reopen the judgement independently
+    # of the key's current status. Runs after the single-purpose consumers
+    # above, which keep their own semantics; already-consumed gates are skipped.
+    _apply_reattests(project_root, st, status_of, stage_of)
 
     # Cross-key red aggregation (xkey-repair-mechanism D-010): fold the below
     # rounds' handoff registrations into the ledger, mint tickets and raise
@@ -319,12 +722,20 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
                 continue
             ks = key_states.get(key)
             claim = ks.claim if ks is not None else state.CLAIM_FREE
+            claim_id = ks.claim_id if ks is not None else ""
             if claim == state.CLAIM_LIVE:
                 if st.skipped_claims.get(key) != (ks.claim_id if ks else ""):
                     st.timeline.append(
                         "skip", key=key, detail=f"live foreign claim {ks.claim_id if ks else ''}"
                     )
                     st.skipped_claims[key] = ks.claim_id if ks else ""
+                continue
+            if _foreign_synthetic_claim(claim_id):
+                # R-5: another host's conductor holds this key through its
+                # synthetic claim. Treat it as a live holder and do not
+                # dispatch over it; the claim cell is never rewritten. The
+                # hold reuses the existing `skip` event/dedup slot.
+                _trace_foreign_synthetic_hold(st, key, claim_id)
                 continue
             if not _deps_satisfied(entry.depends_on, status_of):
                 continue
@@ -2508,6 +2919,19 @@ def _fix_writer_prompt(
 GATE_REMINDER_EVENT = "gate-reminder"
 _REMIND_PHASE = "remind"
 
+# Suppression records (T-11 / AC-004): when a reminder is withheld the gate
+# still gets one durable, readable record — a `phase:"remind-suppressed"`
+# ledger row plus a `config` timeline event and a stderr line (the one
+# fail-loud channel pair, `_emit_alarm`). The reason strings are exactly
+# T-10's closed enum values for the three state suppressors, so the Python
+# emitter and the TS status face can never disagree on the label. `not-due`
+# is NOT a suppression (nothing was withheld) and `gate-queue-unreadable` is
+# a queue-level fact, not a per-gate reason.
+_REMIND_SUPPRESSED_PHASE = "remind-suppressed"
+_SUPPRESS_KEY_IN_FLIGHT = "key-in-flight"
+_SUPPRESS_CAP = "cap-reached"
+_SUPPRESS_STAGE_TERMINAL = "stage-terminal"
+
 
 def _reminder_count(rows: list[dict], gate_id: str) -> int:
     """Reminders already recorded for one gate (ledger truth, D-006).
@@ -2532,42 +2956,64 @@ def pending_gate_reminders(
     max_reminders: int,
     stage_status: dict[int, str] | None = None,
     stage_of_key: dict[str, int] | None = None,
+    silenced: list[tuple[gates.Gate, int, str]] | None = None,
 ) -> list[tuple[gates.Gate, int]]:
-    """Pure decision (D-007/D-008): the `(gate, n)` pairs to remind about now.
+    """Pure decision (D-007/D-008 + T-11/AC-002): the `(gate, n)` pairs to
+    remind about now.
 
-    Four conditions must hold together:
-      1. `age >= n * after_min` minutes, anchored on the gate's own
-         `created_at` — never `expires_at` (every historical v1 gate lacks it);
-      2. no non-terminal `_workers.parallel` row: an EXECUTE-phase sparse
-         timeline is not a human-blocked gate (AC-007);
-      3. `n <= gate_reminder_max` (the cap config can only lower);
-      4. the gate does not provably belong to a terminal autopilot stage
+    The conditions are checked in funnel order — that order IS the attribution
+    priority the status face reports (AC-003), so the first condition that
+    silences a gate is the reason attached to its record:
+
+      1. the gate's OWN key has in-flight work (per-key, AC-002). An empty or
+         unresolvable key is never silenced this way: the historical
+         JCodingAss `gate-0007`/`gate-0008` are `stage-close` gates with an
+         empty key and must stay remindable (fail-open, D-015);
+      2. `n <= gate_reminder_max`. Past the cap no further INTERRUPT is sent —
+         the cap is an interruption budget, not a silence switch (AC-004); the
+         status face keeps the gate pending and marks "已达打断上限，仍待处理";
+      3. the gate does not provably belong to a terminal autopilot stage
          (AC-002). The gate→stage resolution is two-level: the gate's own
          `stage` snapshot first, then `stage_of_key` on the gate's `key`. A
          gate whose stage cannot be resolved (a global gate, a key off the
          roadmap, a dangling stage number, an unknown status) is NOT
          suppressed — a missing record must never silence a reminder. The
          terminal family is `rank >= _STAGE_TERMINAL_RANK`, the very rank the
-         stage-status write guard consumes, so the family has one definition.
+         stage-status write guard consumes, so the family has one definition;
+      4. `age >= n * after_min` minutes, anchored on the gate's own
+         `created_at` — never `expires_at` (every historical v1 gate lacks it).
     `stage_status`/`stage_of_key` are optional keyword inputs: when absent the
-    judgment has no stage facts, condition 4 never fires, and every pre-AC-002
+    judgment has no stage facts, condition 3 never fires, and every pre-AC-002
     caller stays byte-identical (fail-open, D-015).
+    `silenced` (T-11/AC-004) is an optional observation sink: when passed, each
+    gate skipped by conditions 1-3 appends `(gate, n, reason)`, `reason` drawn
+    from the closed enum above. It carries no state and changes no decision —
+    the IO shell uses it to leave one visible record per silenced gate, and it
+    keeps the funnel written exactly once so a reason can never drift from the
+    condition that actually fired.
     `pending` comes from `gates.pending_gates` (`status == "pending"`), so an
     answered gate drops out on the next tick with zero residual state (AC-006).
     """
-    if any(_is_in_flight(row) for row in rows):
-        return []
     due: list[tuple[gates.Gate, int]] = []
     for gate in pending:
         n = reminder_counts.get(gate.id, 0) + 1
+        key = gate.key or ""
+        if key and any(_is_in_flight(row) and _row_belongs_to(row, key) for row in rows):
+            if silenced is not None:
+                silenced.append((gate, n, _SUPPRESS_KEY_IN_FLIGHT))
+            continue
         if n > max_reminders:
+            if silenced is not None:
+                silenced.append((gate, n, _SUPPRESS_CAP))
             continue
         stage_number: int | None = gate.stage
-        if stage_number is None and stage_of_key is not None and gate.key:
-            stage_number = stage_of_key.get(gate.key)
+        if stage_number is None and stage_of_key is not None and key:
+            stage_number = stage_of_key.get(key)
         if stage_status is not None and stage_number is not None:
             rank = _STAGE_STATUS_RANK.get(stage_status.get(stage_number, ""))
             if rank is not None and rank >= _STAGE_TERMINAL_RANK:
+                if silenced is not None:
+                    silenced.append((gate, n, _SUPPRESS_STAGE_TERMINAL))
                 continue
         anchor = mw_common._gate_created_epoch(gate.created_at)  # noqa: SLF001 — same-package private (doctor precedent)
         if anchor is None or (now - anchor) < n * after_min * 60:
@@ -2594,6 +3040,29 @@ def pending_gate_reminders(
 _ROADMAP_ALARM_SEEN: set[tuple[str, int, str]] = set()
 
 
+def _emit_alarm(
+    st: ConductorState,
+    detail: str,
+    *,
+    ev: str = "config",
+    key: str | None = None,
+    stage: int | None = None,
+    data: dict | None = None,
+) -> None:
+    """The single fail-loud alarm channel pair (T-11/D4, T-20 precedent).
+
+    One operator-visible record on BOTH existing channels: stderr (`mw serve`
+    redirects the conductor's streams to `.mw/conductor.log`) and the timeline
+    (replayed by `/autopilot timeline`, surfaced by the panel). Every roadmap
+    alarm and every gate reminder/suppression goes through here, so an alarm
+    can never silently pick only one of the two, and no second channel is
+    invented (the `config` event name is existing vocabulary — a new name
+    would break the cross-language EVENT_TYPES parity lock).
+    """
+    print(f"[conductor] {detail}", file=sys.stderr, flush=True)
+    st.timeline.append(ev, key=key, stage=stage, detail=detail, data=data)
+
+
 def _roadmap_alarm_line(exc_text: str) -> int:
     """Line number named inside a RoadmapError, or -1 when it names none."""
     match = re.search(r"line (\d+)", exc_text)
@@ -2614,8 +3083,7 @@ def _emit_roadmap_failure(
         f"{context}: {path} - {exc} - fix: repair the reported line in {path} "
         f"(check: python autopilot/roadmap_check.py --project {project_root})"
     )
-    print(f"[conductor] {detail}", file=sys.stderr, flush=True)
-    st.timeline.append("config", detail=detail)
+    _emit_alarm(st, detail)
 
 
 def _emit_roadmap_warnings(
@@ -2634,8 +3102,7 @@ def _emit_roadmap_warnings(
             continue
         _ROADMAP_ALARM_SEEN.add(key)
         detail = f"roadmap parse warning: {warning.message()}"
-        print(f"[conductor] {detail}", file=sys.stderr, flush=True)
-        st.timeline.append("config", detail=detail)
+        _emit_alarm(st, detail)
         emitted += 1
     return emitted
 
@@ -2680,11 +3147,47 @@ def _gate_stage_context(
     )
 
 
+def _gate_waited_seconds(gate: gates.Gate, now: float) -> int | None:
+    """Seconds since the gate's own `created_at`, or None when unparsable.
+
+    The reminder anchor is always the gate's `created_at` (never `expires_at`,
+    absent on every historical v1 gate); None stays an honest "unknown" and is
+    never rendered as a number."""
+    anchor = mw_common._gate_created_epoch(gate.created_at)  # noqa: SLF001 — same-package private (doctor precedent)
+    return None if anchor is None else max(0, int(now - anchor))
+
+
+def _silence_bucket(gate: gates.Gate, now: float, after_min: int) -> int:
+    """Rate-limit ordinal for one suppression record (T-11/AC-004).
+
+    `floor(age_min / after_min)` — at most one record per gate per reminder
+    window. This is spam control only: the suppression itself, the gate's
+    pending state and the cap counter are all untouched, so a long silence can
+    never become invisible."""
+    waited_s = _gate_waited_seconds(gate, now)
+    if waited_s is None or after_min <= 0:
+        return 0
+    return (waited_s // 60) // after_min
+
+
+def _gate_action_hint(gate: gates.Gate) -> str:
+    """The actionable tail of every reminder/suppression emission (AC-004)."""
+    return f"-> act: /autopilot gate {gate.id} approve|reject --note <text>"
+
+
 def _remind_pending_gates(
     project_root: pathlib.Path, st: ConductorState, cfg: dict
 ) -> None:
     """IO shell for the pure reminder decision: read the queue / gate / ledger
-    facts, then append one ledger row + one `gate-reminder` per due gate.
+    facts, then (a) leave one visible record per silenced gate and (b) append
+    one ledger row + one `gate-reminder` per due gate.
+
+    Every emission goes through `_emit_alarm` (stderr + timeline), so neither a
+    reminder nor a suppression can be silent (T-11 requirements 2/3/5). Earlier
+    impls returned `[]` project-wide when ANY key had in-flight work, and the
+    withheld reminders left zero trace; the reason is now per-key and every
+    withheld reminder leaves a `remind-suppressed` row carrying gate id,
+    reason and waited time.
 
     A corrupt gate queue is skipped here (the same policy as `orchestrate`);
     `tick`'s own goal check records the accompanying config event."""
@@ -2697,18 +3200,69 @@ def _remind_pending_gates(
     rows = mw_common.parse_workers_file(mw_common.workers_path(project_root))
     ledger = auto_decision_rows(project_root)
     counts = {gate.id: _reminder_count(ledger, gate.id) for gate in pending}
+    seen_suppressed = {
+        (str(row.get("gate_id")), str(row.get("reason")), row.get("bucket"))
+        for row in ledger
+        if row.get("phase") == _REMIND_SUPPRESSED_PHASE
+    }
     stage_status, stage_of_key = _gate_stage_context(project_root, st)
     now = time.time()
     after_min = max(1, int(cfg.get("gate_reminder_after_min", 30)))
     max_reminders = max(1, int(cfg.get("gate_reminder_max", 2)))
-    for gate, n in pending_gate_reminders(
+    silenced: list[tuple[gates.Gate, int, str]] = []
+    due = pending_gate_reminders(
         pending, rows, counts, now, after_min, max_reminders,
         stage_status=stage_status,
         stage_of_key=stage_of_key,
-    ):
-        anchor = mw_common._gate_created_epoch(gate.created_at)  # noqa: SLF001
-        waited_s = 0 if anchor is None else max(0, int(now - anchor))
-        waited_min = waited_s // 60
+        silenced=silenced,
+    )
+    for gate, n, reason in silenced:
+        bucket = _silence_bucket(gate, now, after_min)
+        if (gate.id, reason, bucket) in seen_suppressed:
+            continue
+        waited_s = _gate_waited_seconds(gate, now)
+        waited_min = None if waited_s is None else waited_s // 60
+        waited = "?" if waited_min is None else f"{waited_min}m"
+        detail = (
+            f"gate reminder suppressed: {gate.id} {gate.kind} "
+            f"key={gate.key or '-'} pending {waited} reason={reason}"
+            + (" (已达打断上限，仍待处理)" if reason == _SUPPRESS_CAP else "")
+            + f" {_gate_action_hint(gate)}"
+        )
+        _append_auto_decision_row(project_root, {
+            "phase": _REMIND_SUPPRESSED_PHASE,
+            "gate_id": gate.id,
+            "gate_kind": gate.kind,
+            "gate_key": gate.key or "",
+            "reason": reason,
+            "bucket": bucket,
+            "reminder_n": n,
+            "waited_min": waited_min,
+            "suppressed_at": _iso_now(),
+            "detail": detail,
+        })
+        _emit_alarm(
+            st, detail,
+            key=gate.key or None,
+            stage=gate.stage,
+            data={
+                "gate_id": gate.id,
+                "gate_kind": gate.kind,
+                "gate_key": gate.key or "",
+                "reason": reason,
+                "waited_min": waited_min,
+                "bucket": bucket,
+                "suppressed": True,
+            },
+        )
+    for gate, n in due:
+        waited_s = _gate_waited_seconds(gate, now)
+        waited_min = 0 if waited_s is None else waited_s // 60
+        detail = (
+            f"gate reminder: {gate.id} {gate.kind} key={gate.key or '-'} "
+            f"pending {waited_min}m (reminder {n}/{max_reminders}) "
+            f"reason=- {_gate_action_hint(gate)}"
+        )
         _append_auto_decision_row(project_root, {
             "phase": _REMIND_PHASE,
             "gate_id": gate.id,
@@ -2718,20 +3272,18 @@ def _remind_pending_gates(
             "reminded_at": _iso_now(),
             "detail": f"pending {waited_min}m >= {n * after_min}m",
         })
-        st.timeline.append(
-            GATE_REMINDER_EVENT,
+        _emit_alarm(
+            st,
+            detail,
+            ev=GATE_REMINDER_EVENT,
             key=gate.key,
             stage=gate.stage,
-            detail=(
-                f"{gate.id} {gate.kind} pending {waited_min}m "
-                f"(reminder {n}/{max_reminders})"
-            ),
             data={
                 "gate_id": gate.id,
                 "gate_kind": gate.kind,
                 "gate_key": gate.key or "",
                 "reminder_n": n,
-                "waited_s": waited_s,
+                "waited_s": 0 if waited_s is None else waited_s,
                 "after_min": after_min,
             },
         )
@@ -2963,6 +3515,12 @@ def tick(project_root: pathlib.Path, st: ConductorState) -> str:
         # 4. Orchestration (T-10/T-11/T-12).
         orchestrate(project_root, st)
         return "ok"
+    except gates.GateQueueUnreadable as exc:
+        # AC-003/R-4: an unreadable gate queue (path is a regular file, EACCES,
+        # ...) must be SAID, never folded into "0 pending". One `config` event
+        # per tick keeps the degradation visible with no new event name.
+        st.timeline.append("config", detail=f"gate queue unreadable: {exc}")
+        return "error"
     except Exception as exc:  # noqa: BLE001 — §9: a tick never kills the loop
         st.timeline.append("config", detail=f"tick error: {exc!r}")
         return "error"
@@ -3081,6 +3639,13 @@ def _stamp_gate_defaults(
     if reason_code is not None and reason_code not in REASON_CODES:
         dropped.append("reason_code")
         del fields["reason_code"]
+    # T-14 / AC-007: the same executable closed-set guard for blocker_class.
+    # An out-of-set value is dropped (never written) rather than silently
+    # reaching the file; an absent value is left absent (None = unclassified).
+    blocker_class = fields.get("blocker_class")
+    if blocker_class is not None and blocker_class not in gates.BLOCKER_CLASSES:
+        dropped.append("blocker_class")
+        del fields["blocker_class"]
     if fields:
         _rewrite_gate_fields(path, fields)
     return dropped
@@ -3103,7 +3668,7 @@ def _log_dropped_gate_fields(
         stage=stage,
         detail=(
             f"gate {path.stem}: dropped out-of-set {', '.join(dropped)} "
-            "(not in REASON_CODES)"
+            "(closed-set guard)"
         ),
     )
 
@@ -3320,11 +3885,25 @@ def _apply_stalled_rejections(
     Mutates ``status_of`` in place so this tick's dependency checks already
     see the unblocked dependents.
 
+    AC-009 wording correction (T-15): this is the ONLY writer of
+    ``closed-legacy`` in the whole repository. The old "选错就废掉一个 key"
+    framing overstated the loss — the accurate statement is
+    :data:`REJECT_CONSEQUENCE_STATEMENT` (irreversible inside the state
+    machine; recovery = one manual ``_roadmap.md`` edit; cost = 无审计痕迹 +
+    轮次不退). Because it is destructive, the human answer path
+    :func:`answer_gate_confirmed` refuses an unconfirmed ``reject`` before any
+    byte is written.
+
     Consumption guard, symmetric with :func:`_apply_stalled_approvals`: a
     rejected gate whose answer was already applied must never rewrite
-    key-status again. Reachable because :func:`mark_stalled` only short-
-    circuits ``== "stalled"``, so a key can go ``closed-legacy → stalled``
-    and the unchanged gate would otherwise re-close it every tick."""
+    key-status again. The ``closed-legacy → stalled`` loop referenced by the
+    guard is code-level possible (``mark_stalled`` only short-circuits
+    ``== "stalled"``) but has NO conductor-internal path: every one of
+    ``mark_stalled``'s call sites sits behind the dispatch loop, which skips
+    ``_DISPATCH_SKIP_STATUSES`` (done / stalled / closed-legacy /
+    pending-review). Only an out-of-band ``_roadmap.md`` writer can put a
+    closed-legacy key back into the dispatch set — real data: 0 instances
+    (RQ-2 §2). The guard exists for that out-of-band case only."""
     consumed = _consumed_gate_ids(project_root)
     for gate in gates.enumerate(gates_dir(project_root)):
         if gate.kind != "stalled" or gate.status != "rejected":
@@ -3660,6 +4239,167 @@ def _apply_review_decisions(
         seq = st.timeline.append(
             "gate-answered", key=key,
             detail=f"{gate.id} {gate.status} → {key} {outcome}",
+        )
+        _mark_gate_consumed(project_root, st, gate, seq)
+
+
+# ── Re-attest: a new gate re-judging an old judgement (AC-008 / T-15) ─────
+#
+# The gate file is the append-only judgement record: an answered gate is never
+# reopened (RQ-2 §6.2: clearing `consumed_at` cannot un-consume a gate, and
+# overwriting a verdict breaks the AC lock protocol). Re-attest therefore mints
+# a NEW gate that points back at the old one through `context_refs`
+# (`reattest-of:<id>`); the original gate keeps its bytes and its WHO/WHEN
+# audit. The new gate starts `pending`, so nothing is inherited — the automatic
+# pass and/or a human re-evaluate it from today's evidence, which is what makes
+# AC-008's "证据刷新 ⇒ 可重评" true.
+
+def reattest_of(gate: gates.Gate) -> str | None:
+    """The original gate id a gate re-attests, or None.
+
+    Carrier = the D-005 `context_refs` list (schema unchanged); the first
+    `reattest-of:` ref wins. `_gate_open` already uses `context_refs` as a
+    dedup dimension, so no new field is needed."""
+    for ref in gate.context_refs:
+        if ref.startswith(REATTEST_REF_PREFIX):
+            value = ref[len(REATTEST_REF_PREFIX):].strip()
+            if value:
+                return value
+    return None
+
+
+def reattest_gate(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    original_gate_id: str,
+    *,
+    question: str | None = None,
+) -> pathlib.Path | None:
+    """Create a new gate that re-attests ``original_gate_id`` (AC-008).
+
+    Shape: same kind/stage/key as the original; ``context_refs`` = the
+    original's refs plus ``reattest-of:<original id>``. Schema unchanged, no
+    new kind, and `gates.create` allocates ``max(existing)+1`` so the gate id is
+    never reused/recycled (AC lock protocol). The original gate file is not
+    touched: its status/answered_by/answered_at/note remain the audit trail and
+    the new gate links back to it; the original verdict is also quoted in the
+    new gate's question, so the chain is readable without opening both files.
+
+    Idempotent by file truth: a pending gate already carrying
+    ``reattest-of:<id>`` is returned as-is (no duplicate gate). Returns None
+    for an unknown/malformed original id (one existing ``config`` event) or a
+    live-held gates lock (the caller retries).
+    """
+    try:
+        all_gates = gates.enumerate(gates_dir(project_root))
+    except gates.GateFormatError as exc:
+        st.timeline.append("config", detail=f"re-attest skipped, gate queue corrupt: {exc}")
+        return None
+    original = next((g for g in all_gates if g.id == original_gate_id), None)
+    if original is None:
+        st.timeline.append(
+            "config",
+            detail=f"re-attest refused: unknown gate {original_gate_id!r}",
+        )
+        return None
+    for gate in all_gates:
+        if gate.status == "pending" and reattest_of(gate) == original_gate_id:
+            return gate.path  # already re-attested; no duplicate gate
+    if question is None:
+        question = (
+            f"{original.kind} re-attest of {original.id} "
+            f"(original: {original.status}, answered_by={original.answered_by or '-'}) "
+            "— evidence may have changed; judge again (approve to release, "
+            "reject to keep the original verdict)"
+        )
+    refs = list(dict.fromkeys([
+        *original.context_refs, f"{REATTEST_REF_PREFIX}{original.id}",
+    ]))
+    return _create_gate(
+        project_root, st, original.kind, question,
+        key=original.key, stage=original.stage, refs=refs,
+    )
+
+
+def _apply_reattests(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    status_of: dict[str, str],
+    stage_of: dict[str, int],
+) -> None:
+    """Consume answered re-attest gates (AC-008).
+
+    Independent of :func:`_apply_stalled_approvals` / :func:`_apply_stalled_rejections`:
+    it identifies its answers by the ``reattest-of:<id>`` carrier, NOT by
+    ``status == "stalled"`` — the same split :func:`_apply_review_decisions`
+    makes for `pending-review`. On ``approved`` it reopens a blocked key
+    (``stalled`` / ``closed-legacy`` / ``pending-review``) to ``running``; on
+    ``rejected`` it leaves the key untouched (the original judgement stands).
+    Either way the answer is recorded with the existing ``gate-answered``
+    event plus the durable consumption record, so it is applied exactly once.
+
+    Stage-level re-attests (no key) are left to :func:`_consume_answered_gates`
+    and to the automatic pass, which already re-evaluate an approved
+    stage-close gate against today's evidence (T-12's five clauses)."""
+    consumed = _consumed_gate_ids(project_root)
+    for gate in gates.enumerate(gates_dir(project_root)):
+        if gate.status == "pending" or gate.id in consumed:
+            continue
+        original_id = reattest_of(gate)
+        if original_id is None:
+            continue  # not a re-attest gate
+        key = gate.key
+        if not key:
+            continue  # stage-level gate: the existing stage consumers own it
+        stage_number = stage_of.get(key)
+        if stage_number is None:
+            stage_number = gate.stage
+        if stage_number is None:
+            continue
+        current = status_of.get(key)
+        if gate.status == "approved" and current in _REATTEST_REOPEN_STATUSES:
+            try:
+                rm_path = roadmap.roadmap_path(project_root)
+                text = rm_path.read_text(encoding="utf-8")
+                new_text = roadmap.update_key_status(text, stage_number, key, "running")
+                if new_text != text:
+                    acquire_conductor_lock(project_root, "roadmap", st.timeline)
+                    try:
+                        rm_path.write_text(new_text, encoding="utf-8", newline="\n")
+                    finally:
+                        mw_common.release_lock(lock_file(project_root, "roadmap"))
+                    status_of[key] = "running"
+                    seq = st.timeline.append(
+                        "gate-answered", key=key,
+                        detail=(
+                            f"{gate.id} re-attest approved → {key} running "
+                            f"({REATTEST_REF_PREFIX}{original_id})"
+                        ),
+                    )
+                    st.timeline.append(
+                        "resume", key=key,
+                        detail=(
+                            f"{key} resumed by re-attest {gate.id} "
+                            f"(original {original_id}, was {current})"
+                        ),
+                    )
+                    _mark_gate_consumed(project_root, st, gate, seq)
+                    continue
+            except (roadmap.RoadmapError, OSError) as exc:
+                st.timeline.append(
+                    "config", key=key,
+                    detail=f"re-attest {gate.id} reopen failed: {exc!r}",
+                )
+                continue
+        # No state change: rejected (original verdict stands), already
+        # running/done, or the roadmap refused the write. Record the answer so
+        # the gate is consumed exactly once and the judgement stays visible.
+        seq = st.timeline.append(
+            "gate-answered", key=key,
+            detail=(
+                f"{gate.id} re-attest {gate.status} → {key} unchanged "
+                f"({current}) ({REATTEST_REF_PREFIX}{original_id})"
+            ),
         )
         _mark_gate_consumed(project_root, st, gate, seq)
 
@@ -5268,6 +6008,25 @@ def _xkey_apply_stage(
 
 # ── Stalled marking (four artifacts, F7/AC-006) ─────────────────────────────
 
+def _stall_blocker_class(project_root: pathlib.Path, key: str) -> str:
+    """Classify a fresh stalled gate (T-14 / AC-007 materialize point).
+
+    `paperwork` requires the achieved.md bad-draft marker to be present AND to
+    record an achieved-failure line - the deterministic .mw-achieved-baddraft
+    criterion AC-007 names. Every other state (no marker, malformed marker, no
+    achieved failure) is `judgment`: the classification is never optimistic
+    about a gate parked on a human decision. Never raises - a classification
+    failure must not break `mark_stalled`."""
+    try:
+        marker = closure.read_bad_draft_marker(project_root / ".agenticdoc" / key)
+        failures = marker.get("failures") if isinstance(marker, dict) else None
+        if isinstance(failures, list) and closure.has_achieved_failure(failures):
+            return "paperwork"
+    except Exception:  # noqa: BLE001 - classification never breaks the stall path
+        pass
+    return "judgment"
+
+
 def mark_stalled(
     project_root: pathlib.Path,
     st: ConductorState,
@@ -5305,6 +6064,10 @@ def mark_stalled(
         return
 
     machine_fields: dict[str, str] = {}
+    # T-14 / AC-007 materialize point: the gate carries an explicit
+    # blocker_class from the moment it is created. Legacy files lack the field
+    # (parser keeps None); this only writes new gates.
+    machine_fields["blocker_class"] = _stall_blocker_class(project_root, key)
     if reason_code is not None:
         machine_fields["reason_code"] = str(reason_code)
         if loop is not None:
@@ -5471,6 +6234,11 @@ STALL_REASON_CODES: tuple[str, ...] = (
 PREDICATE_REASON_CODES: tuple[str, ...] = (
     "stage-confirm-structural", "stage-confirm-goal-drift", "stage-confirm-ok",
     "stage-close-verdict", "stage-close-open-items", "stage-close-ok",
+    # T-12 / AC-015: the auto-release proposition is recomputed from disk, so
+    # every clause needs its own refusal code (missing record => never a pass).
+    "stage-close-stage-unknown", "stage-close-not-terminal",
+    "stage-close-in-flight", "stage-close-reconciliation",
+    "stage-close-dossier-missing", "stage-close-credentials-missing",
     "stalled-reason-drift", "stalled-count-drift", "stalled-undecidable",
     "stalled-false-negative", "stalled-not-false-negative",
     "budget-count-drift", "budget-gaps-cleared", "budget-ok",
@@ -5484,7 +6252,17 @@ ENGINE_REASON_CODES: tuple[str, ...] = (
     "tautology-rejected", "not-bound", "corrupt-sidecar", "replay-misbound",
     "evidence-drift", "breaker-tripped", "night-quota-exhausted",
     "key-quota-exhausted", "shadow-gate-not-met", "no-rule",
+    # T-14 / AC-007: the blocker_class fail-closed prefix (a stalled gate with
+    # no explicit `paperwork` classification is never auto-released).
+    "blocker-class-not-paperwork",
 )
+
+# Gate kinds whose automatic approval is additionally gated by `blocker_class`
+# (T-14 / AC-007, design D6). Only `stalled` carries a blocker_class producer
+# today; kinds outside this set keep their existing rule plane untouched (the
+# T-12 stage-close credential release is deliberately not gated by a field it
+# never writes).
+BLOCKER_CLASS_KINDS: frozenset[str] = frozenset({"stalled"})
 
 REASON_CODES: frozenset[str] = frozenset(
     (*STALL_REASON_CODES, *PREDICATE_REASON_CODES, *ENGINE_REASON_CODES)
@@ -5591,6 +6369,69 @@ def proposition_stage_close(facts: dict) -> PropositionResult:
             "stage-close-open-items", f"{len(open_items)} open item(s)"
         )
     return _prop_ok("stage-close-ok")
+
+
+def proposition_stage_close_credentials(facts: dict) -> PropositionResult:
+    """T-12 / AC-015 release proposition for `stage-close`.
+
+    All five clauses must hold together, and every one of them is recomputed
+    from disk by :func:`_stage_close_facts` — the gate merely being open is
+    never enough (the old `proposition_stage_close` guard read gate v2 fields
+    that have no producer, so it could only ever refuse):
+
+      1. the stage resolves on the roadmap;
+      2. every stage key is terminal (`done` / `closed-legacy`);
+      3. no in-flight worker row owns a stage key;
+      4. no done key is in an evidence-reconciliation dispute;
+      5. the close dossier is on disk and every key's terminal credentials
+         are present (`_done_credentials_present`).
+
+    Any missing record degrades to a FALSIFYING result (fail-closed); the
+    `detail` string names the missing items so the refusal is auditable
+    without a new ledger/event field."""
+    if not facts.get("stage_known"):
+        return _prop_fail(
+            "stage-close-stage-unknown",
+            f"stage {facts.get('stage')!r} not resolvable on the roadmap",
+        )
+    if not facts.get("keys_terminal"):
+        keys = facts.get("not_terminal_keys") or []
+        return _prop_fail(
+            "stage-close-not-terminal",
+            f"not terminal: {', '.join(keys) or '-'}",
+        )
+    if facts.get("in_flight_keys"):
+        return _prop_fail(
+            "stage-close-in-flight",
+            f"in-flight worker row(s): {', '.join(facts['in_flight_keys'])}",
+        )
+    if facts.get("reconciliation_blocking"):
+        missing = facts.get("missing_credentials") or {}
+        parts: list[str] = []
+        for key in facts.get("reconciliation_keys") or []:
+            absent = missing.get(key)
+            parts.append(
+                f"{key} ({', '.join(absent)})" if absent else str(key)
+            )
+        return _prop_fail(
+            "stage-close-reconciliation",
+            "evidence not bound for: " + ("; ".join(parts) or "-"),
+        )
+    if not facts.get("dossier_written"):
+        return _prop_fail(
+            "stage-close-dossier-missing",
+            f"missing {facts.get('dossier')}",
+        )
+    missing = facts.get("missing_credentials") or {}
+    if missing:
+        detail = "; ".join(
+            f"{key} ({', '.join(items)})"
+            for key, items in sorted(missing.items())
+        )
+        return _prop_fail("stage-close-credentials-missing", detail)
+    return _prop_ok(
+        "stage-close-ok", "stage terminal, no dispute, dossier + credentials present"
+    )
 
 
 def proposition_stalled(facts: dict) -> PropositionResult:
@@ -5707,6 +6548,11 @@ class AutoRule:
     approve_extra_reason: str | None = None
 
 
+# Closed-enum rule id for the one stage-close release rule (T-12 / AC-015).
+# It is the `<rule_id>` half of `answered_by="conductor-auto:<rule_id>"` and
+# of the gate's `auto_policy_id`, so it is a code constant, never derived.
+STAGE_CLOSE_AUTO_RULE_ID = "stage-close-credentials"
+
 RULES: tuple[AutoRule, ...] = (
     AutoRule(
         rule_id="stage-confirm-fact-guard",
@@ -5723,18 +6569,31 @@ RULES: tuple[AutoRule, ...] = (
         auto_action="guard",
     ),
     AutoRule(
-        rule_id="stage-close-fact-guard",
+        rule_id=STAGE_CLOSE_AUTO_RULE_ID,
         rule_version="1",
         gate_kind="stage-close",
-        trigger_subject="every key already terminal",
-        proposition_subject="every key final verdict meets|closed-legacy AND open_items empty",
-        proposition=proposition_stage_close,
+        trigger_subject="a stage-close gate is open",
+        proposition_subject=(
+            "every stage key terminal AND no in-flight worker row AND no "
+            "reconciliation dispute AND dossier on disk AND every key's "
+            "terminal credentials present"
+        ),
+        proposition=proposition_stage_close_credentials,
         counterexample=lambda: {
-            "verdicts_final": [{"key": "k1", "verdict": "below"}],
-            "open_items": [],
-            "status_of": {"k1": "done"},
+            "stage": 1,
+            "stage_known": True,
+            "keys": ["k1"],
+            "keys_terminal": True,
+            "not_terminal_keys": [],
+            "in_flight_keys": [],
+            "reconciliation_blocking": False,
+            "reconciliation_keys": [],
+            "dossier_written": True,
+            "missing_credentials": {
+                "k1": ["l3-verdict.txt=meets", "l3-report.md"]
+            },
         },
-        auto_action="guard",
+        auto_action="approve",
     ),
     AutoRule(
         rule_id="stalled-false-negative",
@@ -5841,6 +6700,14 @@ def auto_decision_for_rule(
         return "escalate", "tautology-rejected", result
     if not result.ok:
         return "escalate", result.reason_code, result
+    if rule.auto_action == "approve" and rule.gate_kind in BLOCKER_CLASS_KINDS:
+        # T-14 / AC-007 fail-closed prefix: only an explicit `paperwork`
+        # classification may reach an approve verdict. A missing field (None)
+        # and `judgment` both refuse here, so an unclassified stalled gate is
+        # never auto-released. The guard is one-way - it can veto but never
+        # approve: `paperwork` still has to satisfy the rule's own proposition.
+        if facts.get("blocker_class") != "paperwork":
+            return "escalate", "blocker-class-not-paperwork", result
     if rule.auto_action == "guard":
         return None, result.reason_code, result
     extra = rule.approve_extra
@@ -6062,6 +6929,118 @@ def _xkey_verify_facts(ticket: dict) -> dict:
     }
 
 
+def _stage_close_facts(
+    project_root: pathlib.Path, gate: gates.Gate, status_of: dict | None = None
+) -> dict:
+    """Machine facts for a `stage-close` gate (T-12 / AC-015).
+
+    `_stage_closure` creates these gates with no `machine_fields`, so a fact
+    plane that read the gate's own v2 fields would be permanently
+    unavailable (the T-08 finding: every existing stage-close gate carries
+    `verdicts_final: None`). Every clause is therefore recomputed from disk,
+    and ANY read failure leaves the falsifying default in place (fail-closed,
+    never a silent pass).
+
+    `status_of` is the tick's cross-stage key-status view (same source the old
+    stage-close branch used); when absent it is rederived from the roadmap.
+    """
+    facts: dict = {
+        "stage": gate.stage,
+        "stage_known": False,
+        "keys": [],
+        "keys_terminal": False,
+        "not_terminal_keys": [],
+        "in_flight_keys": [],
+        "reconciliation_blocking": False,
+        "reconciliation_keys": [],
+        "dossier_written": False,
+        "dossier": None,
+        "missing_credentials": {},
+    }
+    if gate.stage is None:
+        return facts  # a stage-level gate without a stage proves nothing
+    try:
+        rm = roadmap.load_roadmap(roadmap.roadmap_path(project_root))
+        stage = roadmap.stage_by_number(rm, gate.stage)
+    except (roadmap.RoadmapError, OSError):
+        return facts
+    if stage is None:
+        return facts
+    keys = [entry.key for entry in stage.keys]
+    if not keys:
+        return facts  # an empty stage is not a proof of closure either
+    facts["stage_known"] = True
+    facts["keys"] = keys
+    status_map = (
+        status_of if status_of is not None else _status_of_from_roadmap(project_root)
+    )
+    terminal = _STAGE_TERMINAL_STATUSES
+    facts["not_terminal_keys"] = [
+        key for key in keys if status_map.get(key) not in terminal
+    ]
+    facts["keys_terminal"] = not facts["not_terminal_keys"]
+    try:
+        rows = mw_common.parse_workers_file(mw_common.workers_path(project_root))
+    except OSError:
+        rows = []
+    facts["in_flight_keys"] = [
+        key
+        for key in keys
+        if any(
+            _is_in_flight(row) and _row_belongs_to(row, key) for row in rows
+        )
+    ]
+    # Terminal credentials per key (the D-008 five-article set) and, for the
+    # keys the reconciliation barrier judges (`done`), the on-disk binding
+    # resolution. `_key_evidence_resolution` is the barrier's own predicate
+    # without its timeline side effect, so the fact plane stays read-only.
+    missing_map: dict[str, list[str]] = {}
+    reconciliation_keys: list[str] = []
+    for key in keys:
+        try:
+            ok, absent = _done_credentials_present(project_root, key)
+        except Exception as exc:  # noqa: BLE001 - unreadable is not a pass
+            ok, absent = False, [f"credentials-unreadable:{exc!r}"]
+        if not ok:
+            missing_map[key] = list(absent)
+        if status_map.get(key) != "done":
+            continue
+        try:
+            resolution = _key_evidence_resolution(project_root, key)
+            bound = resolution.auto_release
+        except Exception:  # noqa: BLE001 - cannot prove => dispute
+            bound = False
+        if not bound:
+            reconciliation_keys.append(key)
+    facts["missing_credentials"] = missing_map
+    facts["reconciliation_keys"] = reconciliation_keys
+    facts["reconciliation_blocking"] = bool(reconciliation_keys)
+    dossier = (
+        pathlib.Path(project_root)
+        / ".agenticdoc" / "_autopilot" / "stages"
+        / f"stage-{gate.stage}-close.md"
+    )
+    facts["dossier"] = str(dossier)
+    facts["dossier_written"] = dossier.is_file()
+    return facts
+
+
+def blocker_class_of(gate: gates.Gate) -> str:
+    """Judgment-layer fold of `blocker_class` (T-14 / AC-007, design D6).
+
+    The parser keeps the raw value (None when the field is absent) so
+    "the file did not say" and "the file said judgment" stay distinguishable.
+    This IS the only place the fail-safe fold happens: an explicit
+    ``"paperwork"`` classifies as paperwork; every other value, including
+    None, folds to ``"judgment"``. Never raises - a corrupt or unknown value
+    must never turn into a health claim."""
+    return (
+        "paperwork"
+        if getattr(gate, "blocker_class", None) == "paperwork"
+        else "judgment"
+    )
+
+
 def gate_facts(
     project_root: pathlib.Path, gate: gates.Gate, status_of: dict | None = None
 ) -> dict:
@@ -6075,11 +7054,9 @@ def gate_facts(
             "current_goal_sha256": _goal_sha256(project_root),
         }
     if kind == "stage-close":
-        return {
-            "verdicts_final": gate.verdicts_final,
-            "open_items": gate.open_items,
-            "status_of": status_of if status_of is not None else _status_of_from_roadmap(project_root),
-        }
+        # T-12 / AC-015: recomputed from disk (`_stage_close_facts`), never a
+        # read-back of the gate's own (producer-less) v2 fields.
+        return _stage_close_facts(project_root, gate, status_of)
     if kind == "stalled":
         return {
             "reason_code_field": gate.reason_code,
@@ -6088,6 +7065,9 @@ def gate_facts(
             "round_limit": gate.round_limit,
             "credits_used": gate.credits_used,
             "false_negative_class": recompute_false_negative_class(project_root, gate),
+            # T-14 / AC-007: folded here (None -> judgment), consumed by
+            # auto_decision_for_rule's fail-closed prefix.
+            "blocker_class": blocker_class_of(gate),
         }
     if kind == "budget-exhausted":
         return {
@@ -6586,6 +7566,13 @@ def _rewrite_gate_fields(path: pathlib.Path, fields: dict[str, str]) -> None:
     tmp.replace(path)
 
 
+# Source class written into the gate's existing `answer_source` field on an
+# automatic answer. `auto_policy_id` carries the rule identity, so the two
+# fields (both inside the frozen 40-name order) name WHO answered and WHICH
+# policy released the gate - no new field is introduced (T-12 / AC-015).
+AUTO_ANSWER_SOURCE = "conductor-auto"
+
+
 def answer_gate_auto(
     project_root: pathlib.Path,
     st: ConductorState,
@@ -6606,6 +7593,8 @@ def answer_gate_auto(
             "status": status,
             "answered_at": decided_at,
             "answered_by": f"conductor-auto:{rule.rule_id}",
+            "answer_source": AUTO_ANSWER_SOURCE,
+            "auto_policy_id": f"{rule.rule_id}@{rule.rule_version}",
         })
         after = _gate_file_sha256(gate.path)
         if after is None:
@@ -6618,6 +7607,116 @@ def answer_gate_auto(
         return None
     finally:
         mw_common.release_lock(lock_file(project_root, "gates"))
+
+
+# ── Human answer with a destructive second confirmation (AC-009 / T-15) ───
+#
+# Rejecting a gate is destructive (`stalled` reject is the only `closed-legacy`
+# writer) and irreversible in-band, so a single keystroke must not commit it.
+# The answer path below refuses an unconfirmed `reject` BEFORE any write and
+# returns the accurate consequence (:data:`REJECT_CONSEQUENCE_STATEMENT`). The
+# confirmation guards the ANSWER, never the audit: a confirmed answer writes the
+# same four fields the TS `gate-writer` writes (`status`/`answered_at`/
+# `answered_by`/`note`), so `answered_by`/`answered_at`/timeline stay intact.
+
+HUMAN_ANSWER_STATUS_BY_DECISION: dict[str, str] = {
+    "approve": "approved",
+    "reject": "rejected",
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class GateAnswerResult:
+    """Outcome of :func:`answer_gate_confirmed` (refusals never raise)."""
+
+    ok: bool
+    gate_id: str
+    status: str | None = None
+    error: str | None = None
+
+
+def _render_answer_scalar(value: str) -> str:
+    """Render one answer field with the gates.py quoting contract (empty stays
+    the bare ``field:`` form the TS writer and parser both accept)."""
+    return "" if value == "" else gates._render_scalar(value)
+
+
+def answer_gate_confirmed(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    gate_id: str,
+    decision: str,
+    *,
+    answered_by: str,
+    note: str | None = None,
+    confirm: bool = False,
+    answered_at: str | None = None,
+) -> GateAnswerResult:
+    """Answer one PENDING gate as a human, with the AC-009 confirmation.
+
+    ``decision`` is ``approve`` / ``reject``. A ``reject`` is refused (no write,
+    nothing consumed, the accurate consequence in ``error``) unless
+    ``confirm=True``. A confirmed answer rewrites only
+    ``status``/``answered_at``/``answered_by``/``note``, byte-preserving every
+    other line exactly like the TS ``gate-writer``, so the existing audit is not
+    weakened. An already-answered gate is refused fail-closed: the judgement
+    record is append-only, and re-judging goes through a re-attest gate
+    (:func:`reattest_gate`)."""
+    if decision not in HUMAN_ANSWER_STATUS_BY_DECISION:
+        return GateAnswerResult(
+            False, gate_id, None,
+            f"unknown decision {decision!r} (expected approve or reject)",
+        )
+    if not isinstance(answered_by, str) or not answered_by.strip():
+        return GateAnswerResult(
+            False, gate_id, None, "answered_by must be a non-empty audit identity"
+        )
+    if decision == "reject" and not confirm:
+        return GateAnswerResult(
+            False, gate_id, None,
+            "reject refused without an explicit second confirmation: "
+            + REJECT_CONSEQUENCE_STATEMENT
+            + " - pass confirm=True (CLI: --confirm-destructive) to write it",
+        )
+    if not isinstance(gate_id, str) or not gates.GATE_ID_RE.match(gate_id):
+        return GateAnswerResult(
+            False, gate_id, None, f"bad gate id {gate_id!r} (expected gate-NNNN)"
+        )
+    try:
+        by_id = {gate.id: gate for gate in gates.enumerate(gates_dir(project_root))}
+    except gates.GateQueueUnreadable as exc:
+        return GateAnswerResult(False, gate_id, None, f"gate queue unreadable: {exc}")
+    except gates.GateFormatError as exc:
+        return GateAnswerResult(False, gate_id, None, f"gate queue corrupt: {exc}")
+    gate = by_id.get(gate_id)
+    if gate is None:
+        return GateAnswerResult(False, gate_id, None, f"unknown gate {gate_id}")
+    if gate.status != "pending":
+        return GateAnswerResult(
+            False, gate_id, None,
+            f"{gate_id} is already answered (status={gate.status}); "
+            "use reattest_gate to re-judge",
+        )
+    status = HUMAN_ANSWER_STATUS_BY_DECISION[decision]
+    try:
+        acquire_conductor_lock(project_root, "gates", st.timeline)
+    except ConductorLockHeld:
+        return GateAnswerResult(False, gate_id, None, "gates lock held; retry")
+    try:
+        _rewrite_gate_fields(gate.path, {
+            "status": status,
+            "answered_at": answered_at or _iso_now(),
+            "answered_by": _render_answer_scalar(answered_by),
+            "note": _render_answer_scalar(note or ""),
+        })
+    except (OSError, gates.GateFormatError) as exc:
+        st.timeline.append(
+            "config", key=gate.key, detail=f"human answer write failed for {gate_id}: {exc!r}"
+        )
+        return GateAnswerResult(False, gate_id, None, f"write failed: {exc}")
+    finally:
+        mw_common.release_lock(lock_file(project_root, "gates"))
+    return GateAnswerResult(True, gate_id, status)
 
 
 # ── The execution chain ────────────────────────────────────────────────────
@@ -6799,13 +7898,28 @@ def _build_auto_row(
     }
 
 
+def _auto_decision_detail(
+    gate: gates.Gate, decision: str, reason_code: str, detail: str
+) -> str:
+    """One timeline-detail line per automatic decision (T-12 / AC-015).
+
+    The refusal reason AND the missing-item summary both ride the EXISTING
+    `gate-auto-decision` event's `detail` field, so a fallback is visible on
+    the state/audit face without a new event name or ledger field."""
+    text = f"{gate.id} auto-{decision}: {reason_code}"
+    if detail:
+        text += f" ({_one_line(detail, 160)})"
+    return text
+
+
 def _record_auto_decision(
-    project_root: pathlib.Path, st: ConductorState, row: dict
+    project_root: pathlib.Path, st: ConductorState, row: dict, detail: str = ""
 ) -> None:
     _append_auto_decision_row(project_root, row)
     st.timeline.append(
         GATE_AUTO_DECISION_EVENT,
         key=(row.get("gate_key") or None),
+        detail=detail,
         data={key: value for key, value in row.items() if key != "seq"},
     )
 
@@ -6961,7 +8075,10 @@ def _auto_decide_one(
             gate_file_sha256_after=None,
             refusal_code=refusal,
         )
-        _record_auto_decision(project_root, st, row)
+        _record_auto_decision(
+            project_root, st, row,
+            detail=_auto_decision_detail(gate, decision, reason_code, prop.detail),
+        )
         return
 
     # live
@@ -6996,7 +8113,10 @@ def _auto_decide_one(
         gate_file_sha256_after=after,
         refusal_code=None if executed else (refusal or reason_code if decision == "escalate" else None),
     )
-    _record_auto_decision(project_root, st, row)
+    _record_auto_decision(
+        project_root, st, row,
+        detail=_auto_decision_detail(gate, decision, reason_code, prop.detail),
+    )
 
 
 def _auto_cooldown_left(gate: gates.Gate) -> float:

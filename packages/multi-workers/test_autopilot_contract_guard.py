@@ -184,8 +184,12 @@ def test_vc015_approval_requires_approved_machine_field_and_key(tmp_path: pathli
 
 def test_ac013_frozen_schema_and_create_render(tmp_path: pathlib.Path) -> None:
     assert len(gates._REQUIRED_FIELDS) == 6
+    # T-14: 40 frozen + 1 out-of-order scalar extension = 41 recognized names.
+    assert len(gates.FRONTMATTER_FIELDS) + len(gates._SCALAR_EXTENSION_FIELDS) == 41
     assert len(gates.FRONTMATTER_FIELDS) == 40
     assert "authorizes" not in gates.FRONTMATTER_FIELDS
+    assert "blocker_class" not in gates.FRONTMATTER_FIELDS
+    assert "blocker_class" in gates._SCALAR_EXTENSION_FIELDS
 
     p = gates.create(tmp_path / "gates", "stalled", "q?", [], stage=1, key="k")
     lines = p.read_text(encoding="utf-8").splitlines()

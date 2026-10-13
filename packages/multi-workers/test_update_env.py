@@ -76,7 +76,7 @@ def _make_project(project: pathlib.Path, source: pathlib.Path, *, clone: pathlib
     (project / ".mw").mkdir()
     (project / ".mw" / "serve.meta").write_text(
         json.dumps({"pid": 12345, "started_at_ms": int((time.time() + 3600) * 1000),
-                    "code_dir": "fake"}),
+                    "schema": mw.SERVE_META_SCHEMA}),
         encoding="utf-8",
     )
     clone.mkdir(parents=True)
