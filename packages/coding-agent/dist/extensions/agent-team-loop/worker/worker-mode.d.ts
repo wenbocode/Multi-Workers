@@ -1,6 +1,22 @@
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import { type RagRuntime } from "../rag/tools.ts";
 import type { TaskPhase } from "./phase-runner.ts";
+/**
+ * P-08 single source for the worker runtime's recognized vocabulary. This is
+ * the SAME constant the tool-layer envelope judge consults
+ * (`shared/dispatch-card.ts::DISPATCH_TYPE_VOCABULARY`), re-exported here so
+ * the runtime table (`TOOL_ALLOWLISTS`, plus the internal `default`/`fallback`
+ * buckets) and the gate can be locked together by
+ * `test/suite/dispatch-recovery-terminal.test.ts` instead of drifting. It is
+ * deliberately NOT `isRegisteredType`: that conductor fail-closed predicate
+ * must keep matching the Python REGISTRY entry-for-entry (T-17 L0).
+ */
+export declare const WORKER_TYPE_VOCABULARY: readonly string[];
+/** The worker runtime's registered type keys (the tool-table entries, minus the
+ * internal `fallback` bucket). Exported only so
+ * `test/suite/dispatch-recovery-terminal.test.ts` can lock the subset relation
+ * against {@link WORKER_TYPE_VOCABULARY} (P-08 single source). */
+export declare const REGISTERED_WORKER_TYPES: readonly string[];
 export declare function toolsForType(taskType: string): string[];
 /** `toolsForType` plus the narrow write channel for roles with no write/edit
  * tool (D-104/D-106). The allowlist table and `toolsForType` stay byte for
@@ -123,6 +139,11 @@ interface TaskMeta {
     ragChatBudget?: number;
     /** task.md `rag_time_budget_s:` header (positive int seconds), when present. */
     ragTimeBudgetS?: number;
+    /** AC-007/T-07 escape hatch: task.md `allow_foreign_write: true` (the
+     * audit-visible declaration T-02 records, also set by the
+     * `--allow-foreign-write` dispatch flag). `true` is the only value that
+     * opens the hatch; missing/false/any other value stays fail-closed. */
+    allowForeignWrite?: boolean;
     /** AC-010/T-12: structure of the C2 contract markers read back from this
      * task book (see {@link writeSurfaceMarkerState}). */
     writeSurfaceMarker: WriteSurfaceMarkerState;

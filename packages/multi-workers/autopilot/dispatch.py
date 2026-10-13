@@ -30,6 +30,7 @@ for ``verifier`` (D-106 containment) and omitted otherwise.
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import pathlib
 import re
@@ -256,6 +257,457 @@ def _read_scope_caps(project_root: pathlib.Path) -> tuple[int | None, int | None
     return caps[0], caps[1]
 
 
+# ── producer identity (mw-dispatch-card-gate T-13) ───────────────────────────
+#
+# Every conductor-produced task.md carries `<producer>@<version>` in its
+# header region so the service layer can tell a *stale producer* (an old
+# framework copy whose task.md shape predates the current envelope/extras
+# contract) apart from a genuinely missing section. Without the line both
+# look identical to the G-3 judge, and the incident's failure mode — every
+# dispatch of an unsynced project refused with `envelope missing: ...` — is
+# indistinguishable from a hand-written non-compliant card (AC-009/P-10).
+#
+# The version comes from the release train's own metadata, not a new constant:
+# the multi-workers Python tree has no package.json, and AGENTS.md pins all
+# packages to one lockstep version, so `packages/coding-agent/package.json`
+# (the pi release the bundle is built from) is the existing version source;
+# the repo-root `package.json` is the older second source.
+PRODUCER_NAME = "autopilot-conductor"
+PRODUCER_IDENTITY_KEY = "envelope_producer"
+_PRODUCER_VERSION_UNKNOWN = "unknown"
+
+
+def _repo_root() -> pathlib.Path:
+    """Repo root of this file: packages/multi-workers/autopilot/dispatch.py."""
+    return pathlib.Path(__file__).resolve().parents[3]
+
+
+def producer_version() -> str:
+    """Version of the release train this producer ships with.
+
+    Read from the existing metadata sources in order:
+    ``packages/coding-agent/package.json`` (the lockstep release version) then
+    the repo-root ``package.json``. ``"unknown"`` is a marker for an
+    unreadable source, never a version value: the header key is still written,
+    and the service layer treats a non-parsing value as "producer declared no
+    version" rather than guessing one.
+    """
+    for relative in ("packages/coding-agent/package.json", "package.json"):
+        try:
+            data = json.loads((_repo_root() / relative).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        value = data.get("version") if isinstance(data, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return _PRODUCER_VERSION_UNKNOWN
+
+
+def producer_identity() -> str:
+    """``<producer>@<version>`` for the task.md header line."""
+    return f"{PRODUCER_NAME}@{producer_version()}"
+
+
+# The value has no whitespace and is split on the FIRST `@`, so a producer
+# name may not contain `@` (it never does: `PRODUCER_NAME` is kebab-case).
+_PRODUCER_LINE_RE = re.compile(
+    rf"^{PRODUCER_IDENTITY_KEY}\s*:\s*(?P<producer>[^\s@|]+)@(?P<version>[^\s|]+)\s*$",
+    re.MULTILINE,
+)
+
+
+def parse_producer_identity(text: str) -> tuple[str, str] | None:
+    """``(producer, version)`` from a rendered task.md, or None when absent.
+
+    Shape (line-anchored, no whitespace inside the value):
+    ``envelope_producer: <producer>@<version>``. Public so the T-13 regression
+    and the T-14 service-layer consumer share exactly one parser — a second
+    parser would be a second way to disagree about "old producer".
+    """
+    match = _PRODUCER_LINE_RE.search(text)
+    if match is None:
+        return None
+    return match.group("producer"), match.group("version")
+
+
+# ── dispatch-card envelope injection (mw-dispatch-card-gate T-09/T-10) ───────
+#
+# T-02 gave every tool-generated task.md the canonical envelope (the three
+# section headings plus the bare `card_path:` / `card_sha256:` header lines).
+# The conductor wrote task.md directly (`render_task_md` -> `dispatch()`) with
+# only a frontmatter + prompt body — the exact shape the service-layer gate
+# used to exempt as "no signal", and therefore the producer the gate did not
+# actually cover. `render_task_md` renders the T-02 triple when given a `card`
+# input, and `dispatch()` builds that input from the dispatch's own card file
+# (`<key>/tasks/<stem>.md`) when one exists.
+#
+# T-09 injected the envelope only for card-backed dispatches and left the
+# card-less internal ones (L3 reviewer / repair / roadmap-writer / phase-
+# writer) byte-identical. That was the loophole the service gate's time
+# boundary (launcher.py `ENVELOPE_ENFORCE_SINCE`) then closed the hard way: a
+# card-less auto dispatch issued after the cutover is refused as "missing
+# sections", so the whole autopilot path stalls. T-10 makes the injection
+# unconditional: `dispatch()` synthesizes a non-empty canonical envelope from
+# the dispatch metadata when no card file exists (`synthesized_card` below),
+# so every conductor-produced task.md passes the same judge. The bare
+# `card_path:` / `card_sha256:` lines stay card-only — there is no card to
+# name for a synthesized one, and a phantom path would turn the T-06 card
+# audit red (`missing_cards`).
+ENVELOPE_CARD_SEED_DISCLAIMER = "以上为种子，不是探索上界；可自行检索补充上下文。"
+
+_DEFAULT_DELIVERABLES = (
+    "按任务书交付：report.md / output.md 必备段（结论 / 证据（含原始命令与输出）/ "
+    "改动清单（coding）或未覆盖面声明（review）/ 残留与未验证 / 上下文来源清单）；"
+    "coding 同时记录 trace.log 的写入事件。"
+)
+
+# Final requirements fallback: `_envelope_card_body` must never emit an empty
+# section (T-10 requirement 1: non-emptiness is guaranteed by construction).
+_DEFAULT_REQUIREMENTS = (
+    "判据（可判定）：任务书列出的目标逐项满足，产物在本轮 worker 目录可核；"
+    "[VERIFY] 证据与结论闭合，未满足不得声称完成。"
+)
+
+# Heading families for the card-section extraction, first hit wins (the same
+# deliverables > context > requirements order as the T-01 judge). Canonical
+# titles only — a card that uses a variant still gets its full body through
+# the post-first-heading fallback below.
+_CARD_SECTION_FAMILIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("deliverables", ("交付物", "交付", "预期产出", "预期产物", "产物", "输出", "证据")),
+    ("context", ("背景", "上下文", "问题", "现状", "动机", "根因", "目标", "描述", "输入", "范围")),
+    ("requirements", (
+        "要求", "任务", "契约", "验收", "验证", "完成判定", "完成判据", "判据",
+        "行为", "测试", "接口", "协议", "内容", "标准", "做法", "策略", "规范",
+        "实现", "步骤", "改动", "变更",
+    )),
+)
+
+_CARD_HEADING_RE = re.compile(r"^#{2,6}\s+(.*)$")
+
+# ── §1.2 type extras on the DERIVED task.md (T-13/F-02) ──────────────────────
+#
+# The service judge (`launcher.type_extras_missing`) reads the derived
+# task.md, but the producer only carried the three canonical sections: a card
+# declaring its extras as separate `##` headings had them dropped by
+# `extract_card_sections`, and a card-less synthesized dispatch had none at
+# all — either way the row is refused after the cutover. The fix mirrors the
+# TS generator (T-12 `renderCardSeedSections`):
+#
+#   1. every card heading outside the three envelope families is injected
+#      verbatim as its own `## <title>` section (`extract_card_extras`);
+#   2. any required item still absent is filled from the dispatch metadata
+#      (never an empty skeleton — T-10 requirement 1).
+#
+# Only the three canonical role types have an extras rule. The conductor's
+# registry types (phase-writer / repair / verifier / reviewer / roadmap-writer
+# / vision / rag-research) are in the single-source vocabulary and require
+# none, so this block is inert on every conductor-produced task.md.
+PRODUCER_EXTRA_ITEMS: dict[str, tuple[str, ...]] = {
+    "coding": ("写入允许面", "写入禁止面", "验收命令", "改动历史"),
+    "research": ("唯一证据文件",),
+    "review": ("审计目标", "未覆盖面声明"),
+}
+
+# Acceptance-command shapes worth lifting out of a card-less prompt. A miss is
+# not an error: the fallback names the task's own decidable criterion instead.
+_ACCEPTANCE_CMD_RE = re.compile(
+    r"`?((?:python(?:\s+-X\s+utf8)?\s+-m\s+pytest|pytest|npm\s+(?:run\s+)?test|"
+    r"pnpm\s+(?:run\s+)?test|yarn\s+test|npx\s+vitest|node\s+\S*vitest|"
+    r"cargo\s+test|go\s+test|make\s+\S+)[^\n`]*)",
+    re.IGNORECASE,
+)
+
+
+def _first_acceptance_command(prompt: str) -> str:
+    """First acceptance-looking command in a prompt, or "" (real metadata)."""
+    match = _ACCEPTANCE_CMD_RE.search(prompt)
+    return match.group(1).strip() if match else ""
+
+
+def _fallback_extra_line(item: str, worker_dir: str, prompt: str) -> str:
+    """One required extra's non-empty line, built from real dispatch metadata.
+
+    ``worker_dir`` is the round's own artifact directory (always available from
+    the card input's ``worker_dir`` key); the acceptance command is lifted from
+    the prompt. Nothing here is a placeholder: every clause states a fact about
+    this round (its worker dir, its trace log, its prompt) or a conservative
+    default rule ("undeclared paths are not written").
+    """
+    artifacts = f"{worker_dir}/" if worker_dir else "本轮 worker 目录"
+    if item == "写入允许面":
+        return (
+            f"写入允许面: {artifacts}（本轮产物）；项目源文件的改动面以「要求」段列出的"
+            "清单为准，未列出的路径不写。"
+        )
+    if item == "写入禁止面":
+        return "写入禁止面: 上述允许面之外的文件一律不写；任务书未声明的路径视为禁止。"
+    if item == "验收命令":
+        command = _first_acceptance_command(prompt)
+        if command:
+            return f"验收命令: {command}"
+        return (
+            "验收命令: 以「要求」段列出的判定源为准；无显式命令时以 [VERIFY] 证据与结论"
+            "闭合为验收判据。"
+        )
+    if item == "改动历史":
+        return f"改动历史: {artifacts}trace.log 的写入事件（[WRITE_FILE] / [WRITE_EDIT]）。"
+    if item == "审计目标":
+        target = _first_content_line(prompt) or "任务书「要求」段列出的审计问题"
+        return f"审计目标: {target}"
+    if item == "未覆盖面声明":
+        return (
+            "未覆盖面声明: 本轮未核对/未及的环境、分支或断言须在报告「未覆盖面」段逐条"
+            "列出，不得沉默略过。"
+        )
+    if item == "唯一证据文件":
+        return f"唯一证据文件: {artifacts}output.md（本轮唯一写入文件，其余只读）。"
+    # An item added to PRODUCER_EXTRA_ITEMS without a wording here must not
+    # become an empty skeleton: name the item and point at the real task body.
+    return f"{item}: 见「要求」段。"
+
+
+def card_digest(path: pathlib.Path | str) -> str:
+    """EOL-normalized sha256 of a card file.
+
+    Thin wrapper over :func:`mw_common.sha256_eol_normalized` so the conductor
+    renderer, the T-06 audit (`card_audit.card_digest`) and the TS leaf
+    `shared/card-digest.ts` all hash through the same frozen recipe (CRLF→LF,
+    then sha256).
+    """
+    return mw_common.sha256_eol_normalized(path)
+
+
+def _extract_card_parts(
+    text: str,
+) -> tuple[dict[str, str], list[dict[str, str]]]:
+    """(canonical sections, unclassified extra sections) of a card text.
+
+    Python mirror of T-02/T-12's `extractCardSections`: a heading family with a
+    non-empty body wins (first hit wins, an already-filled family does not
+    claim a later heading), then every still-empty section falls back to the
+    text after the first heading (or the whole text when there is no heading) —
+    content is never dropped. Every heading NOT used by that pass and carrying
+    a non-empty body is returned as an unclassified extra in document order
+    (the §1.2 `写入允许面` / `审计目标` / ... sections, F-02).
+    """
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    headings: list[tuple[int, str]] = []
+    for i, line in enumerate(lines):
+        match = _CARD_HEADING_RE.match(line.strip())
+        if match:
+            headings.append((i, match.group(1).strip()))
+    bodies = [
+        "\n".join(
+            lines[
+                headings[order][0] + 1 : (
+                    headings[order + 1][0] if order + 1 < len(headings) else len(lines)
+                )
+            ]
+        ).strip()
+        for order in range(len(headings))
+    ]
+
+    out = {"context": "", "requirements": "", "deliverables": ""}
+    used: set[int] = set()
+    for order, (_idx, title) in enumerate(headings):
+        body = bodies[order]
+        if not body:
+            continue
+        for section, tokens in _CARD_SECTION_FAMILIES:
+            if out[section] == "" and any(title.startswith(token) for token in tokens):
+                out[section] = body
+                used.add(order)
+                break
+    fallback = (
+        "\n".join(lines[headings[0][0] + 1 :]).strip() if headings else text.strip()
+    )
+    for section in out:
+        if out[section] == "":
+            out[section] = fallback
+    extras = [
+        {"title": headings[order][1], "body": bodies[order]}
+        for order in range(len(headings))
+        if order not in used and bodies[order]
+    ]
+    return out, extras
+
+
+def extract_card_sections(text: str) -> dict[str, str]:
+    """Canonical envelope sections of a card text (3-key shape, unchanged).
+
+    The unclassified §1.2 extras live in :func:`extract_card_extras` — kept
+    out of this return value so the caller contract stays the 3-key dict the
+    T-02/T-10 tests pin.
+    """
+    return _extract_card_parts(text)[0]
+
+
+def extract_card_extras(text: str) -> list[dict[str, str]]:
+    """Card headings outside the three envelope families, in document order.
+
+    Each entry is ``{"title": <heading text>, "body": <non-empty body>}``;
+    `_envelope_card_body` re-emits them verbatim as `## <title>` sections so a
+    card that declares its extras as headings is not false-rejected by the
+    service extras judge (F-02, mirror of the TS `CardSections.extras`).
+    """
+    return _extract_card_parts(text)[1]
+
+
+def dispatch_card(project_root: pathlib.Path, owner: str, stem: str) -> dict | None:
+    """The card input for one conductor dispatch, or None when the dispatch has
+    no card file.
+
+    The card identity is the D-111 execute-loop contract: the task card is
+    ``<key>/tasks/<stem>.md`` and the stem is the dispatch's own stem. Missing
+    file = no card (card-less internal dispatch), and the renderer then stays
+    byte-identical to the pre-T-09 output.
+
+    ``extras`` carries the card's unclassified headings (T-13/F-02) and
+    ``worker_dir`` the round's artifact directory, so the renderer can both
+    inject the card's own declarations and fill any still-missing §1.2 item
+    from real metadata (never an empty skeleton).
+    """
+    card_path = f"tasks/{stem}.md"
+    card_file = pathlib.Path(project_root) / ".agenticdoc" / owner / card_path
+    if not card_file.is_file():
+        return None
+    try:
+        text = card_file.read_text(encoding="utf-8", errors="replace")
+        sections, extras = _extract_card_parts(text)
+        digest = card_digest(card_file)
+    except OSError:
+        return None
+    return {
+        "path": card_path,
+        "sha256": digest,
+        "worker_dir": f".agenticdoc/{owner}/workers/{task_key_for(owner, stem)}",
+        "extras": extras,
+        **sections,
+    }
+
+
+def _envelope_card_body(card: dict, prompt: str, task_type: str = "") -> str:
+    """The canonical G-2 body: the three section headings plus the
+    seed-not-an-upper-bound disclaimer (T-02 contract C3 shape), the card's
+    unclassified §1.2 extras, and this type's still-missing extras (T-13).
+
+    Every section is non-empty by construction (T-10 requirement 1): a missing
+    context falls back to a synthesized autopilot sentence, empty requirements
+    fall back to the prompt and then to :data:`_DEFAULT_REQUIREMENTS`, and
+    empty deliverables fall back to :data:`_DEFAULT_DELIVERABLES`.
+
+    The extras half is inert for every conductor registry type (none has an
+    extras rule); for `coding`/`review`/`research` it guarantees the derived
+    task.md satisfies the service extras judge on its own (F-02).
+    """
+    context = str(card.get("context") or "").strip()
+    requirements = (
+        str(card.get("requirements") or "").strip()
+        or prompt.strip()
+        or _DEFAULT_REQUIREMENTS
+    )
+    deliverables = str(card.get("deliverables") or "").strip() or _DEFAULT_DELIVERABLES
+    if not context:
+        ref = str(card.get("path") or "").strip()
+        context = (
+            "本任务由 autopilot conductor 自动派发（种子）"
+            + (f"，来源卡片 {ref}" if ref else "")
+            + "；项目锚点见 .agenticdoc/goal.md，可自行只读检索补充。"
+        )
+    parts = [
+        "## 上下文", "", context, "",
+        "## 要求", "", requirements, "",
+        "## 交付格式", "", deliverables, "",
+    ]
+    for extra in card.get("extras") or ():
+        if not isinstance(extra, dict):
+            continue
+        title = str(extra.get("title") or "").strip()
+        body = str(extra.get("body") or "").strip()
+        if title and body:
+            parts += [f"## {title}", "", body, ""]
+    text = "\n".join([*parts, ENVELOPE_CARD_SEED_DISCLAIMER])
+    required = PRODUCER_EXTRA_ITEMS.get(task_type)
+    if not required:
+        return text
+    missing = [item for item in required if item not in text]
+    if not missing:
+        return text
+    worker_dir = str(card.get("worker_dir") or "").strip()
+    lines = [_fallback_extra_line(item, worker_dir, prompt) for item in missing]
+    return text.rstrip() + "\n\n" + "\n".join(lines)
+
+
+def _first_content_line(text: str) -> str:
+    """First non-empty line of a prompt, heading markers stripped."""
+    for raw in text.splitlines():
+        line = raw.strip().lstrip("#").strip()
+        if line:
+            return line
+    return ""
+
+
+def _synthesized_deliverables(worker_dir: str) -> str:
+    """Artifact path + shape for a card-less dispatch (T-10 requirement 1).
+
+    Deliberately phrased without the shared :data:`_DEFAULT_DELIVERABLES`
+    write-verb vocabulary: the L3/verifier provenance guard (F-P4 T1/T2)
+    treats any clause naming output.md/report.md or ``workers/`` together with
+    a write verb as a write directive on the deciding source, and a card-less
+    envelope body is scanned by that guard like any other dispatched task.md.
+    """
+    return (
+        f"交付格式：本轮产物集中在 {worker_dir}/，报告与输出文件"
+        "（report.md / output.md）按任务书列出的必备段成节"
+        "（结论 / 证据（含原始命令与输出）/ 审计未及范围 / 残留与未验证 / "
+        "上下文来源清单）。"
+    )
+
+
+def synthesized_card(
+    owner: str, stem: str, task_type: str, prompt: str, loop: str, attempt: int
+) -> dict:
+    """Card-less auto-dispatch envelope, synthesized from the dispatch metadata.
+
+    T-10 requirement 1: the L3 review/reprompt, repair, roadmap-writer and
+    phase-writer dispatches have no `tasks/<stem>.md` card, so there is no card
+    text to read. Instead of an empty skeleton, the three canonical sections
+    are built from what the conductor already knows (never nothing):
+
+    * context      — trigger/failure reason (the prompt's first line) plus the
+                     evidence paths (this round's worker dir + goal.md);
+    * requirements — the task prompt itself (the repair/proposal goal) plus an
+                     explicit decidable criterion;
+    * deliverables — the round's artifact path and the required section shape.
+
+    The returned dict has empty ``path`` / ``sha256`` on purpose: a card-less
+    dispatch must not name a card it does not have (the T-06 audit would flag
+    the phantom reference as ``missing_cards``).
+    """
+    task_key = task_key_for(owner, stem)
+    worker_dir = f".agenticdoc/{owner}/workers/{task_key}"
+    trigger = _first_content_line(prompt) or f"{task_type} 自动派发"
+    context = (
+        f"autopilot 自动派发（无任务卡；以下为种子，不是探索上界）。"
+        f"type={task_type}，loop={loop}，attempt={attempt}。"
+        f"触发/失败原因：{trigger}。"
+        f"证据路径：{worker_dir}/trace.log、{worker_dir}/worker.log "
+        f"及任务书要求段列出的判定源；项目锚点 .agenticdoc/goal.md。"
+    )
+    body = prompt.strip()
+    requirements = f"{body}\n\n{_DEFAULT_REQUIREMENTS}" if body else _DEFAULT_REQUIREMENTS
+    return {
+        "path": "",
+        "sha256": "",
+        # T-13: the round's artifact directory, so a missing §1.2 extra is
+        # filled from real metadata rather than an empty skeleton.
+        "worker_dir": worker_dir,
+        "context": context,
+        "requirements": requirements,
+        "deliverables": _synthesized_deliverables(worker_dir),
+    }
+
+
 def _worker_timeout_min(project_root: pathlib.Path) -> int | None:
     """`worker_timeout_min` for the rendered task.md, or None when unconfigured.
 
@@ -304,8 +756,16 @@ def render_task_md(
     rag_config: dict | None = None,
     task_meta: dict | None = None,
     worker_timeout_min: int | None = None,
+    card: dict | None = None,
 ) -> str:
     """Render one conductor task.md: frontmatter labels + prompt body.
+
+    ``card is not None`` is the dispatch-envelope presence marker (T-09/T-10;
+    ``card=None`` is the documented legacy/direct-unit-test shape the read-scope
+    byte-identity suite pins), and it also gates two T-13 additions: the
+    ``envelope_producer: <producer>@<version>`` header line and the §1.2 type
+    extras. Both are therefore always present on a real dispatch (``dispatch()``
+    always supplies a card) and never alter a legacy render.
 
     Every conductor dispatch carries origin/loop/attempt (design §4.1);
     read_scope renders as a YAML block list (verifier requires it —
@@ -343,17 +803,50 @@ def render_task_md(
     (:func:`_worker_timeout_min`) — worker-mode.ts gives the task.md header
     top priority in the wall chain, so an unconfigured render would pin every
     worker to the config default instead of the 60m harness default.
+
+    ``card`` (T-09) is the T-02-shaped envelope input ``{"path", "sha256",
+    "context", "requirements", "deliverables"}``: a non-empty ``path`` /
+    ``sha256`` renders the bare ``card_path:`` / ``card_sha256:`` header lines,
+    and the body becomes the canonical ``## 上下文`` / ``## 要求`` /
+    ``## 交付格式`` triple (missing section bodies fall back to the prompt /
+    a generic deliverable contract). ``card=None`` (legacy callers, direct
+    unit tests) keeps the pre-T-09 bytes exactly, which is why the byte
+    goldens for card-less internal dispatches stay valid.
+
+    T-13 additions, both gated by ``card is not None`` (the dispatch-envelope
+    presence marker): the optional ``extras`` list of ``{"title", "body"}``
+    card sections is re-emitted verbatim as ``## <title>`` sections, any
+    still-missing §1.2 item of ``task_type`` is filled from
+    ``card["worker_dir"]`` / the prompt, and the header carries
+    ``envelope_producer: <producer>@<version>`` (the service layer's
+    old-producer vs. genuinely-missing-section discriminator). ``card=None``
+    stays byte-identical, so the read-scope regression suite's frozen-renderer
+    comparisons hold.
     """
     lines = [
         "---",
         f"type: {task_type}",
     ]
+    card = card if isinstance(card, dict) else None
+    if card is not None:
+        card_path = str(card.get("path") or "").strip()
+        card_sha256 = str(card.get("sha256") or "").strip()
+        if card_path:
+            lines.append(f"card_path: {card_path}")
+        if card_sha256:
+            lines.append(f"card_sha256: {card_sha256}")
     if phase:
         lines.append(f"phase: {phase}")
     if images:   # None / "" -> zero bytes (AC-009); declared -> images: yes|no
         lines.append(f"images: {images}")
     if model:
         lines.append(f"model: {model}")
+    if card is not None:
+        # T-13: producer identity/version, machine-readable, next to the other
+        # attribution line (`origin: conductor`). It sits after the semantic
+        # headers (phase/images/model) so the `type:`-adjacent ordering the
+        # rag-phase contract pins stays byte-identical.
+        lines.append(f"{PRODUCER_IDENTITY_KEY}: {producer_identity()}")
     lines += [
         "origin: conductor",
         f"loop: {loop}",
@@ -371,7 +864,11 @@ def render_task_md(
     if deny_globs:
         lines.append("deny_globs:")
         lines.extend(f"  - '{item}'" for item in deny_globs)
-    lines += ["---", "", prompt.strip(), ""]
+    body = (
+        prompt.strip() if card is None
+        else _envelope_card_body(card, prompt, task_type)
+    )
+    lines += ["---", "", body, ""]
     content = "\n".join(lines) + "\n"
     if profile_block is not None:
         content = content.rstrip() + "\n\n" + profile_block + "\n"
@@ -608,6 +1105,15 @@ def dispatch(
             )
     read_file_cap, read_byte_cap = _read_scope_caps(project_root)
     timeout_min = _worker_timeout_min(project_root)
+    # T-10: every dispatch carries the T-02 envelope signal. A card-backed
+    # execute dispatch reads the card (`card_path`/`card_sha256` + its section
+    # bodies); a card-less internal dispatch (L3/repair/roadmap/phase-writer)
+    # gets a synthesized non-empty envelope (§synthesized_card) so it passes the
+    # service-layer judge too — the T-09 card-only injection left those rows
+    # refused after the `ENVELOPE_ENFORCE_SINCE` cutover.
+    envelope_card = dispatch_card(project_root, owner, stem)
+    if envelope_card is None:
+        envelope_card = synthesized_card(owner, stem, task_type, prompt, loop, attempt)
     content = render_task_md(
         task_type, prompt, loop=loop, attempt=attempt, read_scope=scope,
         deny_globs=globs, model=model, phase=_owner_phase(project_root, owner),
@@ -616,6 +1122,7 @@ def dispatch(
         read_file_cap=read_file_cap,
         read_byte_cap=read_byte_cap,
         worker_timeout_min=timeout_min,
+        card=envelope_card,
     )
 
     # 1. task.md (before the queue row — the crash gap is the orphan shape

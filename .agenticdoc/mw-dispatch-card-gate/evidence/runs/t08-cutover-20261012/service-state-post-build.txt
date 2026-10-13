@@ -1,0 +1,8 @@
+﻿=== T-08 post-build resident service state (2026-10-12T23:48:33.8863094+08:00) ===
+[mw status] running (PID 79536)
+[mw status] conductor: not running
+mw.pid: 79536
+serve.meta: {"pid": 79536, "started_at_ms": 1791789581837, "code_dir": "H:\\git\\Multi-Workers\\packages\\multi-workers"}
+--- process tree ---
+79536 python.exe started=10/12/2026 15:19:41 cmd=C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\python.exe H:\git\Multi-Workers\packages\multi-workers\mw.py serve --project=H:\git\Multi-Workers --pi-port=7001 --claude-port=7003 --poll-interval=5
+child 111984 python.exe cmd=C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\python.exe H:\git\Multi-Workers\packages\multi-workers\launcher.py --project=H:\git\Multi-Workers --poll-interval=5 --pi-port=7001 --claude-port=7003

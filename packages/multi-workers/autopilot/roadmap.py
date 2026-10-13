@@ -23,7 +23,17 @@ Semantics locked here:
   (D-105). RoadmapError covers: missing/unreadable file, no stage sections,
   malformed stage headers, missing required '> goal:'/'> status:' lines,
   status/key-status values outside their enums, malformed key-status
-  entries, malformed Keys-table rows, duplicate stage numbers / key rows.
+  entries, duplicate stage numbers / key rows, and a keys table with no
+  header row.
+- Keys-table row damage is localized (T-20) instead of failing the document:
+  a data row that splits into MORE cells than the header (an unescaped '|'
+  inside a cell) is RECOVERED by the fixed rule "first cell = key, last cell
+  = depends_on, every middle fragment rejoined with ' | ' as the role" and a
+  `RoadmapWarning` is recorded; a row that splits into FEWER cells is
+  unrecoverable and is skipped with a warning under the production default
+  (`load_roadmap(strict=False)`) while `parse_roadmap(strict=True)` keeps the
+  pre-T-20 raising behaviour. A backslash-escaped pipe inside a cell is
+  honoured as a literal pipe and does not split the row.
 - Stage order = order of appearance in the file. Dependency legality
   (validate_roadmap) is defined against that order: a dependency must point
   to a key in the same stage or an earlier stage.
@@ -90,6 +100,26 @@ class RoadmapError(Exception):
 
 
 @dataclass
+class RoadmapWarning:
+    """One localized keys-table problem that did NOT fail the whole document.
+
+    ``kind`` is ``recovered-pipe`` (a row with extra cells was rebuilt) or
+    ``skipped-row`` (an unrecoverable row was dropped). ``path`` is filled by
+    :func:`load_roadmap`; :func:`parse_roadmap` leaves it ``None``."""
+
+    lineno: int
+    stage: int
+    kind: str
+    reason: str
+    fix: str
+    path: str | None = None
+
+    def message(self) -> str:
+        where = f"{self.path}:{self.lineno}" if self.path else f"line {self.lineno}"
+        return f"{where} (stage {self.stage}) {self.reason}; fix: {self.fix}"
+
+
+@dataclass
 class RoadmapKey:
     """One row of a stage's Keys table."""
 
@@ -122,6 +152,7 @@ class Roadmap:
     generated_at: str | None = None
     goal_mtime: str | None = None
     stages: tuple[RoadmapStage, ...] = ()
+    warnings: tuple[RoadmapWarning, ...] = ()
 
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -133,16 +164,33 @@ def roadmap_path(project_dir: pathlib.Path | str) -> pathlib.Path:
 
 # ── Parsing ───────────────────────────────────────────────────────────────────
 
-def parse_roadmap(text: str) -> Roadmap:
+def parse_roadmap(text: str, *, strict: bool = True) -> Roadmap:
     """Parse roadmap markdown into a Roadmap. Raises RoadmapError on any
-    structural failure (explicit, never silent)."""
+    *structural* failure (explicit, never silent).
+
+    Row-level damage is localized instead of failing the whole document:
+
+    - a data row that splits into MORE cells than the declared header (an
+      unescaped '|' inside a cell) is RECOVERED: first cell = key, last cell
+      = depends_on, every middle fragment rejoined with ' | ' as the role;
+      a :class:`RoadmapWarning` of kind ``recovered-pipe`` records it.
+    - a data row that splits into FEWER cells than the header is unrecoverable.
+      ``strict=True`` (the back-compat default) raises as before;
+      ``strict=False`` (production: :func:`load_roadmap`) skips only that row
+      and records a ``skipped-row`` warning, so the rest of the table stays
+      usable.
+    - a keys table with no header row, or a document with no stage sections,
+      stays a structural RoadmapError (roadmap unavailable).
+    """
     stages: list[RoadmapStage] = []
     seen_stage_numbers: set[int] = set()
     doc_fields: dict[str, str] = {}
+    warnings: list[RoadmapWarning] = []
 
     cur: _StageBuilder | None = None
     in_keys_table = False
     table_header_seen = False
+    header_columns: int | None = None
 
     def finish_stage(builder: _StageBuilder) -> None:
         stages.append(builder.build())
@@ -162,6 +210,7 @@ def parse_roadmap(text: str) -> Roadmap:
                     cur.keys_table_seen = True
                     in_keys_table = True
                     table_header_seen = False
+                    header_columns = None
                 else:
                     # Any other subsection ends the keys table.
                     in_keys_table = False
@@ -196,11 +245,18 @@ def parse_roadmap(text: str) -> Roadmap:
                 cells = _split_table_row(line)
                 if cells and all(_SEPARATOR_CELL_RE.match(c) for c in cells):
                     continue  # |----|----| separator row
-                if not table_header_seen and _is_header_row(cells):
+                if not table_header_seen:
+                    if not _is_header_row(cells):
+                        raise RoadmapError(
+                            f"line {lineno} (stage {cur.number}): keys table has no header "
+                            "row before the first data row (expected "
+                            "'| key | role | depends_on |')"
+                        )
                     table_header_seen = True
+                    header_columns = len(cells)
                     continue
-                assert cur is not None
-                cur.add_key_row(cells, lineno)
+                assert header_columns is not None
+                cur.add_key_row(cells, lineno, header_columns, strict, warnings)
             # Pipe rows outside a keys table (prose tables) are ignored.
             continue
         if line.startswith(">"):
@@ -230,12 +286,19 @@ def parse_roadmap(text: str) -> Roadmap:
         generated_at=doc_fields.get("generated_at"),
         goal_mtime=doc_fields.get("goal_mtime"),
         stages=tuple(stages),
+        warnings=tuple(warnings),
     )
 
 
-def load_roadmap(path: pathlib.Path | str) -> Roadmap:
+def load_roadmap(path: pathlib.Path | str, *, strict: bool = False) -> Roadmap:
     """Read + parse a roadmap file. Raises RoadmapError when the file is
-    missing, unreadable, or structurally invalid."""
+    missing, unreadable, or *structurally* invalid.
+
+    The production default is the row-tolerant mode (``strict=False``): a
+    damaged keys-table row is recovered or skipped with a warning instead of
+    making the whole roadmap unavailable. Pass ``strict=True`` for the
+    pre-T-20 back-compat behaviour (which is also ``parse_roadmap``'s
+    default)."""
     p = pathlib.Path(path)
     if not p.exists():
         raise RoadmapError(f"roadmap file not found: {p}")
@@ -243,7 +306,10 @@ def load_roadmap(path: pathlib.Path | str) -> Roadmap:
         text = p.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
         raise RoadmapError(f"cannot read roadmap {p}: {e}") from e
-    return parse_roadmap(text)
+    rm = parse_roadmap(text, strict=strict)
+    for warning in rm.warnings:
+        warning.path = str(p)
+    return rm
 
 
 class _StageBuilder:
@@ -280,20 +346,91 @@ class _StageBuilder:
                 )
             self.key_status = _parse_key_status(value, lineno, self.number)
 
-    def add_key_row(self, cells: list[str], lineno: int) -> None:
-        if len(cells) != 3:
-            raise RoadmapError(
+    def add_key_row(
+        self,
+        cells: list[str],
+        lineno: int,
+        columns: int,
+        strict: bool,
+        warnings: list[RoadmapWarning],
+    ) -> None:
+        if len(cells) > columns:
+            # An unescaped '|' inside a cell split the row wide. Recover it by
+            # the fixed rule (T-20): first cell = key, last cell = depends_on,
+            # every middle fragment rejoined with ' | ' as the role.
+            key = cells[0]
+            role = " | ".join(cells[1:-1])
+            dep_cell = cells[-1]
+            warnings.append(RoadmapWarning(
+                lineno=lineno,
+                stage=self.number,
+                kind="recovered-pipe",
+                reason=(
+                    f"keys table row has {len(cells)} cells for a {columns}-column table "
+                    f"(an unescaped '|' inside a cell); recovered as key={key!r}, "
+                    f"role={role!r}, depends_on={dep_cell!r}"
+                ),
+                fix=(
+                    "replace the inner '|' with '/' in that cell (or escape it as '\\|') "
+                    "so the row stays 3 columns (key | role | depends_on)"
+                ),
+            ))
+            self._append_key(key, role, dep_cell, lineno, strict, warnings)
+            return
+        if len(cells) < columns:
+            message = (
                 f"line {lineno} (stage {self.number}): keys table row must have 3 columns "
                 f"(key | role | depends_on), got {len(cells)}: {cells!r}"
             )
-        key = cells[0]
+            if strict:
+                raise RoadmapError(message)
+            warnings.append(RoadmapWarning(
+                lineno=lineno,
+                stage=self.number,
+                kind="skipped-row",
+                reason=(
+                    f"keys table row truncated: got {len(cells)} cells for a "
+                    f"{columns}-column table; row skipped, other rows remain usable"
+                ),
+                fix=(
+                    "restore the missing cell(s) so the row has exactly 3 columns "
+                    "(key | role | depends_on)"
+                ),
+            ))
+            return
+        self._append_key(cells[0], cells[1], cells[2], lineno, strict, warnings)
+
+    def _append_key(
+        self,
+        key: str,
+        role: str,
+        dep_cell: str,
+        lineno: int,
+        strict: bool,
+        warnings: list[RoadmapWarning],
+    ) -> None:
         if not key:
-            raise RoadmapError(f"line {lineno} (stage {self.number}): keys table row has empty key cell")
+            message = f"line {lineno} (stage {self.number}): keys table row has empty key cell"
+            if strict:
+                raise RoadmapError(message)
+            warnings.append(RoadmapWarning(
+                lineno=lineno, stage=self.number, kind="skipped-row",
+                reason=f"{message}; row skipped",
+                fix="fill the key cell with the worker key name",
+            ))
+            return
         if key in self.seen_keys:
-            raise RoadmapError(f"line {lineno} (stage {self.number}): duplicate key row {key!r}")
+            message = f"line {lineno} (stage {self.number}): duplicate key row {key!r}"
+            if strict:
+                raise RoadmapError(message)
+            warnings.append(RoadmapWarning(
+                lineno=lineno, stage=self.number, kind="skipped-row",
+                reason=f"{message}; duplicate row skipped",
+                fix="remove or rename the duplicate key row",
+            ))
+            return
         self.seen_keys.add(key)
-        depends_on = _parse_depends_on(cells[2])
-        self.keys.append(RoadmapKey(key=key, role=cells[1], depends_on=depends_on))
+        self.keys.append(RoadmapKey(key=key, role=role, depends_on=_parse_depends_on(dep_cell)))
 
     def build(self) -> RoadmapStage:
         if self.goal is None:
@@ -317,9 +454,26 @@ def _split_table_row(line: str) -> list[str]:
     Bounding pipes are dropped; interior empty cells are preserved so column
     positions stay aligned (spec §5 trailing-space tolerance)."""
     body = line[1:] if line.startswith("|") else line
-    if body.endswith("|"):
+    if body.endswith("|") and not body.endswith("\\|"):
         body = body[:-1]
-    return [c.strip() for c in body.split("|")]
+    cells: list[str] = []
+    current: list[str] = []
+    escaped = False
+    for ch in body:
+        if escaped:
+            current.append(ch)
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == "|":
+            cells.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    if escaped:
+        current.append("\\")
+    cells.append("".join(current).strip())
+    return cells
 
 
 def _is_header_row(cells: list[str]) -> bool:
@@ -373,8 +527,15 @@ def _parse_key_status(value: str, lineno: int, stage_number: int) -> dict[str, s
 
 def validate_roadmap(roadmap: Roadmap) -> list[str]:
     """Semantic validation. Returns a list of human-readable problems
-    (empty list = valid). Structural failures already raised at parse time."""
-    problems: list[str] = []
+    (empty list = valid). Structural failures already raised at parse time.
+
+    Localized parse warnings (recovered / skipped keys-table rows) are part of
+    the returned problem list: the document stays USABLE, but the damage is
+    never silent (the doctor surfaces this list; the conductor also alarms on
+    its stderr + timeline channels)."""
+    problems: list[str] = [
+        f"roadmap parse warning: {warning.message()}" for warning in roadmap.warnings
+    ]
     key_stage: dict[str, int] = {}
 
     for idx, stage in enumerate(roadmap.stages):
@@ -505,7 +666,7 @@ def update_stage_status(text: str, stage_number: int, new_status: str) -> str:
         raise RoadmapError(
             f"invalid stage status {new_status!r} (expected one of: {', '.join(STAGE_STATUSES)})"
         )
-    _require_stage(parse_roadmap(text), stage_number)
+    _require_stage(parse_roadmap(text, strict=False), stage_number)
     return _rewrite_field_line(text, stage_number, "status", f"> status: {new_status}")
 
 
@@ -524,7 +685,7 @@ def update_key_status(text: str, stage_number: int, key: str, new_status: str) -
         raise RoadmapError(
             f"invalid key status {new_status!r} (expected one of: {', '.join(KEY_STATUSES)})"
         )
-    stage = _require_stage(parse_roadmap(text), stage_number)
+    stage = _require_stage(parse_roadmap(text, strict=False), stage_number)
     if key not in stage.key_names:
         raise RoadmapError(
             f"key {key!r} not in stage {stage_number} Keys table "

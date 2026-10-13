@@ -174,6 +174,53 @@ function writePhaseDocs(root: string, key: string): void {
 	fs.writeFileSync(path.join(research, "design-topic-2026-01-01.md"), "# research\n", "utf8");
 }
 
+/** A compliant dispatch card (T-02: `type:` + the three envelope sections)
+ * written under `<root>/<key>/tasks/`; returns its absolute path. */
+function writeCompliantCard(root: string, key = "_scratch", name = "T-00-fixture.md"): string {
+	const dir = path.join(root, key, "tasks");
+	fs.mkdirSync(dir, { recursive: true });
+	const cardPath = path.join(dir, name);
+	fs.writeFileSync(
+		cardPath,
+		[
+			"type: coding",
+			"",
+			"# fixture card",
+			"",
+			"## 上下文",
+			"",
+			"任务投递链需要卡。种子锚点 .agenticdoc/goal.md；判据入口 pm/ui-bridge.ts:1969。",
+			"",
+			"## 要求",
+			"",
+			"AC-001 判据成立。",
+			"",
+			"## 交付格式",
+			"",
+			"report.md。",
+			"",
+			"## 写入允许面",
+			"",
+			"仅本任务目录下的 task.md、output.md 与 report.md。",
+			"",
+			"## 写入禁止面",
+			"",
+			"本任务目录之外的任何路径，含其它 key、packages/**、.agenticdoc/_index.parallel 与 _workers.parallel。",
+			"",
+			"## 验收命令",
+			"",
+			"node ../../node_modules/vitest/dist/cli.js --run test/extensions/agent-team-loop.test.ts",
+			"",
+			"## 改动历史",
+			"",
+			"见本任务 trace.log 写入事件与 report.md 的改动清单。",
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	return cardPath;
+}
+
 function fakeCmdPi(): {
 	pi: ExtensionAPI;
 	commands: Map<string, (args: string, ctx: ExtensionCommandContext) => Promise<void>>;
@@ -1672,10 +1719,11 @@ describe("dispatchNewTasks keyed workers scan", () => {
 		registerWorkerTools(pi, ws, new AckStore(root), is, root, watch);
 		const tool = tools.get("dispatch_worker");
 		if (!tool) throw new Error("dispatch_worker not registered");
+		const card = writeCompliantCard(root, "vc3-active");
 
 		const r1 = await tool.execute(
 			"id1",
-			{ task_key: "t1", description: "work" },
+			{ task_key: "t1", card_path: card, description: "work" },
 			undefined,
 			undefined,
 			fakeCmdCtx().ctx,
@@ -1690,7 +1738,13 @@ describe("dispatchNewTasks keyed workers scan", () => {
 		expect(warns[0]?.content).toContain("vc3-active");
 
 		// Second dispatch under the same divergence: no repeat warning.
-		await tool.execute("id2", { task_key: "t2", description: "work" }, undefined, undefined, fakeCmdCtx().ctx);
+		await tool.execute(
+			"id2",
+			{ task_key: "t2", card_path: card, description: "work" },
+			undefined,
+			undefined,
+			fakeCmdCtx().ctx,
+		);
 		expect(sent.filter((m) => m.content.includes("owner-key mismatch"))).toHaveLength(1);
 		fs.rmSync(root, { recursive: true, force: true });
 	});
@@ -1709,10 +1763,11 @@ describe("dispatchNewTasks keyed workers scan", () => {
 		registerWorkerTools(pi, ws, new AckStore(root), is, root, watch);
 		const tool = tools.get("dispatch_worker");
 		if (!tool) throw new Error("dispatch_worker not registered");
+		const card = writeCompliantCard(root, "k-own");
 
 		const r = await tool.execute(
 			"id1",
-			{ task_key: "t1", description: "work" },
+			{ task_key: "t1", card_path: card, description: "work" },
 			undefined,
 			undefined,
 			fakeCmdCtx().ctx,
@@ -1740,10 +1795,11 @@ describe("dispatchNewTasks keyed workers scan", () => {
 			registerWorkerTools(pi, ws, new AckStore(root), is, root, watch);
 			const tool = tools.get("dispatch_worker");
 			if (!tool) throw new Error("dispatch_worker not registered");
+			const card = writeCompliantCard(root, "_scratch");
 
 			const r = await tool.execute(
 				"id1",
-				{ task_key: "t2", description: "work" },
+				{ task_key: "t2", card_path: card, description: "work" },
 				undefined,
 				undefined,
 				fakeCmdCtx().ctx,
@@ -3231,7 +3287,7 @@ describe("task scope isolation (mw-task-scope-isolation: AC-001..AC-007)", () =>
 
 		const r = await dispatch.execute(
 			"id",
-			{ task_key: "x-task", description: "work", key: "key-b" },
+			{ task_key: "x-task", card_path: writeCompliantCard(root, "key-b"), description: "work", key: "key-b" },
 			undefined,
 			undefined,
 			fakeCmdCtx().ctx,
@@ -3744,9 +3800,10 @@ describe("pm-key takeover claims", () => {
 		expect(ws.readAll()).toHaveLength(0);
 
 		// _scratch: the ad-hoc escape hatch, no docs needed.
+		const scratchCard = writeCompliantCard(root, "_scratch");
 		const r2 = await tool.execute(
 			"id2",
-			{ task_key: "t2", description: "work", key: "_scratch" },
+			{ task_key: "t2", card_path: scratchCard, description: "work", key: "_scratch" },
 			undefined,
 			undefined,
 			fakeCmdCtx().ctx,
@@ -3758,7 +3815,7 @@ describe("pm-key takeover claims", () => {
 		writePhaseDocs(root, "doc-key");
 		const r3 = await tool.execute(
 			"id3",
-			{ task_key: "t3", description: "work", key: "doc-key" },
+			{ task_key: "t3", card_path: writeCompliantCard(root, "doc-key"), description: "work", key: "doc-key" },
 			undefined,
 			undefined,
 			fakeCmdCtx().ctx,
@@ -3770,7 +3827,7 @@ describe("pm-key takeover claims", () => {
 		// review type field, queue row keeps cli=claude, provider stays empty).
 		const r4 = await tool.execute(
 			"id4",
-			{ task_key: "t4", description: "work", cli: "claude", key: "_scratch" },
+			{ task_key: "t4", card_path: scratchCard, description: "work", cli: "claude", key: "_scratch" },
 			undefined,
 			undefined,
 			fakeCmdCtx().ctx,
@@ -5376,6 +5433,7 @@ describe("dispatch role + model override gate (mw-dispatch-role-escape)", () => 
 		registerWorkerTools(pi, ws, new AckStore(root), is, root, { key: "k" }, root);
 		const tool = tools.get("dispatch_worker");
 		if (!tool) throw new Error("dispatch_worker not registered");
+		const cardPath = writeCompliantCard(root, "k");
 		return {
 			root,
 			execute: async (params, registry) => {
@@ -5383,7 +5441,8 @@ describe("dispatch role + model override gate (mw-dispatch-role-escape)", () => 
 					registry === undefined
 						? fakeCmdCtx().ctx
 						: ({ ...fakeCmdCtx().ctx, modelRegistry: registry } as unknown as ExtensionContext);
-				return (await tool.execute("id", params, undefined, undefined, ctx)).content[0]?.text ?? "";
+				const withCard = { card_path: cardPath, ...params };
+				return (await tool.execute("id", withCard, undefined, undefined, ctx)).content[0]?.text ?? "";
 			},
 		};
 	}
@@ -5403,6 +5462,8 @@ describe("dispatch role + model override gate (mw-dispatch-role-escape)", () => 
 		registerWorkerCommands(pi, ws, is, root, { key: "k" }, root);
 		const handler = commands.get("worker");
 		if (!handler) throw new Error("/worker not registered");
+		writeCompliantCard(root, "k");
+		const cardRel = "k/tasks/T-00-fixture.md";
 		return {
 			root,
 			run: async (args, registry) => {
@@ -5411,7 +5472,8 @@ describe("dispatch role + model override gate (mw-dispatch-role-escape)", () => 
 					registry === undefined
 						? ctx
 						: ({ ...ctx, modelRegistry: registry } as unknown as ExtensionCommandContext);
-				await handler(args, withRegistry);
+				const withCard = args.replace(/^(\S+)\s*/, `$1 --card ${cardRel} `);
+				await handler(withCard, withRegistry);
 				return notifications;
 			},
 		};
@@ -5663,10 +5725,20 @@ describe("dispatch role + model override gate (mw-dispatch-role-escape)", () => 
 		fs.rmSync(gated.root, { recursive: true, force: true });
 	});
 
-	it("VC-010: a legacy dispatch (no type/model) writes byte-identical frontmatter", async () => {
+	it("VC-010: a legacy dispatch (no type/model) writes only the type + card header lines", async () => {
 		const legacy = await setupTool();
 		await legacy.execute({ task_key: "t1", description: "work" });
-		expect(taskMdOf(legacy.root, "t1")).toBe("type: coding\n\nwork\n");
+		const md = taskMdOf(legacy.root, "t1");
+		const lines = md.split("\n");
+		expect(lines[0]).toBe("type: coding");
+		expect(lines[1]).toBe("card_path: tasks/T-00-fixture.md");
+		expect(lines[2]).toMatch(/^card_sha256: [0-9a-f]{64}$/);
+		// T-02 changes the body shape (card seed injection), but the legacy
+		// frontmatter discipline still holds: no phase / model / model-reason.
+		expect(md).not.toMatch(/^phase:/m);
+		expect(md).not.toMatch(/^model:/m);
+		expect(md).not.toMatch(/^model-reason:/m);
+		expect(md).toContain("work");
 		fs.rmSync(legacy.root, { recursive: true, force: true });
 	});
 });

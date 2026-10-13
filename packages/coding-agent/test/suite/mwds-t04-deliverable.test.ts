@@ -429,7 +429,23 @@ describe("AC-006 settle fold (VC-026/VC-027/VC-028)", () => {
 
 	it("(f) delivered read-only settle: exit=0, done, zero no-product rows", async () => {
 		const fx = makeFixture("research");
-		fs.writeFileSync(path.join(fx.taskDir, "report.md"), "# report\n\nfound it\n".repeat(10), "utf8");
+		// T-07: a delivered read-only run is judged by the AC-003 recovery
+		// contract, so the fixture report carries the four required sections.
+		fs.writeFileSync(
+			path.join(fx.taskDir, "report.md"),
+			[
+				"## 结论",
+				"found it",
+				"## 证据",
+				"[VERIFY] v=1",
+				"## 残留与未验证",
+				"none",
+				"## 上下文来源",
+				"test",
+				"",
+			].join("\n"),
+			"utf8",
+		);
 		const worker = await startWorker(fx);
 		settle(worker, "done");
 

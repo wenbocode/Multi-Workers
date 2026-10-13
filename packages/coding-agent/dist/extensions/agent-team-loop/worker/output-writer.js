@@ -1,5 +1,17 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { diffLedger } from "../shared/change-ledger.js";
+import { readTaskType } from "../shared/task-frontmatter.js";
+import { checkRecovery } from "./output-sections.js";
+/** Never-throwing read (the product files may not exist yet). */
+function readFileSafe(filePath) {
+    try {
+        return fs.readFileSync(filePath, "utf8");
+    }
+    catch {
+        return "";
+    }
+}
 function outputDir(taskKey, agenticdocRoot) {
     const resolved = path.resolve(agenticdocRoot, taskKey);
     const root = path.resolve(agenticdocRoot);
@@ -27,10 +39,86 @@ export function headline(summary) {
     s = s.replace(/\s+/g, " ");
     return s === "" ? "(no conclusion)" : truncLine(s, 100);
 }
+/** Header `type:` of the worker's `task.md`, or undefined when the file is
+ * missing / carries no header value. `readTaskType` never reads a body line, so
+ * the legacy double-header form cannot hand this predicate the wrong role. */
+function typeFromTaskMd(dir) {
+    try {
+        const reading = readTaskType(fs.readFileSync(path.join(dir, "task.md"), "utf8"));
+        return reading.source === "header" ? reading.type : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+/**
+ * The agent-authored product text the contracts judge: the worker's own report
+ * (`report.md`) when present, else the harness/agent product (`output.md`),
+ * else the settle summary. `report.md` first because design §3.1 puts the
+ * coding `改动清单` there, and a coding worker's final reply can be terse while
+ * its report is complete (judging the reply alone would false-flip it). */
+function agentProductText(dir, summary) {
+    for (const name of ["report.md", "output.md"]) {
+        const text = readFileSafe(path.join(dir, name));
+        if (text.trim() !== "")
+            return text;
+    }
+    return summary;
+}
+/**
+ * Compute a run's terminal gaps in one place (T-07 requirements 1 + 6): the
+ * AC-003 recovery contract over the agent product and the AC-004 change ledger
+ * (`diffLedger`) over the report + trace. A migration book (no `task.md`
+ * header `type:`) is never judged (P-07/P-09). A trace with zero
+ * `[WRITE_FILE]` events and a non-empty declaration is *unjudgeable*
+ * (`unjudgeableFiles`, T-12/F-04) — never a clean pass.
+ */
+export function readTerminalGaps(opts) {
+    const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
+    const type = opts.type ?? typeFromTaskMd(dir);
+    if (type === undefined)
+        return { judged: false, missingSections: [], unrecordedFiles: [], unjudgeableFiles: [], ok: true };
+    const productText = agentProductText(dir, opts.summary);
+    const missingSections = opts.judgeRecovery === false ? [] : checkRecovery(productText, type).missing;
+    const traceText = readFileSafe(path.join(dir, "trace.log"));
+    const ledger = diffLedger(productText, traceText);
+    const unjudgeableFiles = ledger.unjudgeable ? ledger.declared : [];
+    return {
+        judged: true,
+        missingSections,
+        unrecordedFiles: ledger.extra,
+        unjudgeableFiles,
+        ok: missingSections.length === 0 && ledger.extra.length === 0 && unjudgeableFiles.length === 0,
+    };
+}
 export function writeOutput(opts) {
     const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
     fs.mkdirSync(dir, { recursive: true });
     const outputPath = path.join(dir, "output.md");
+    // T-04 recovery contract (AC-003 / design §3.2) + T-07 change ledger
+    // (AC-004): judge the AGENT-authored product text — what output.md /
+    // report.md already carry, or the final reply — BEFORE writing. The harness
+    // block this call adds must never be the thing that satisfies (or hides) the
+    // contract. Migration: only a dispatch that carries a header `type:` is
+    // judged, so historical/manual task books and the legacy unit callers that
+    // pass no type keep their byte-identical output (P-07). `opts.terminalGaps`
+    // lets the settle path pass the verdict it already used for the exit code,
+    // so the product and the run status can never disagree.
+    const gaps = opts.terminalGaps ??
+        readTerminalGaps({ taskKey: opts.taskKey, agenticdocRoot: opts.agenticdocRoot, summary: opts.summary });
+    // The readback line the PM actually consumes is the FIRST line of
+    // `## Questions` (pm/ui-bridge.ts readTerminalDetail), so the missing section
+    // names have to ride that line — not a later paragraph the widget never reads.
+    const gapNote = gaps.missingSections.length > 0 ? `缺失段：${gaps.missingSections.join("、")}` : "";
+    // AC-004 (T-07 requirement 6): report-declared files the trace never recorded
+    // as written are a red verdict, named on the same readback line and in their
+    // own `## Ledger Gaps` section.
+    const ledgerNote = gaps.unrecordedFiles.length > 0 ? `未记录写入：${gaps.unrecordedFiles.join("、")}` : "";
+    // T-12/F-04: a zero-event trace with a declaration is unjudgeable — name it
+    // on the readback line so the PM sees why the ledger verdict is absent
+    // instead of reading a false green (or a false red).
+    const unjudgeableNote = gaps.unjudgeableFiles.length > 0 ? `未记录写入（不可判）：${gaps.unjudgeableFiles.join("、")}` : "";
+    const terminalNote = [gapNote, ledgerNote, unjudgeableNote].filter((note) => note !== "").join("；");
     const sections = [];
     // TL;DR first section (D-005): single-line conclusion on every exit path,
     // ahead of the verbatim ## Summary (readOutputSummary regex compatibility).
@@ -47,17 +135,27 @@ export function writeOutput(opts) {
         if (deliverables.length > 0)
             sections.push(`## Deliverables\n\n${deliverables.join("\n")}`);
         sections.push(`## Verification Steps\n\n${opts.verificationSteps || "(none)"}`);
-        sections.push(`## Exit Reason\n\n${opts.exitReason || "Task completed successfully."}`);
+        sections.push(`## Exit Reason\n\n${opts.exitReason || "Task completed successfully."}${terminalNote ? ` | ${terminalNote}` : ""}`);
     }
     else if (opts.exitCode === 1) {
-        sections.push(`## Exit Reason\n\n${opts.exitReason || "Task failed."}`);
+        sections.push(`## Exit Reason\n\n${opts.exitReason || "Task failed."}${terminalNote ? ` | ${terminalNote}` : ""}`);
     }
     else if (opts.exitCode === 2) {
-        sections.push(`## Questions\n\n${opts.questions || "(no questions provided)"}`);
+        sections.push(`## Questions\n\n${opts.questions || "(no questions provided)"}${terminalNote ? ` | ${terminalNote}` : ""}`);
     }
     else if (opts.exitCode === 130) {
-        sections.push(`## Exit Reason\n\nTask was cancelled (exit 130).`);
+        sections.push(`## Exit Reason\n\nTask was cancelled (exit 130).${terminalNote ? ` | ${terminalNote}` : ""}`);
     }
+    // A `done` product that misses required sections / declares unrecorded
+    // writes must not read as a clean completion, and a `needs-clarification`
+    // run must still carry the `## Ledger Gaps` diff the PM has to chase — so the
+    // named gaps are product sections on EVERY exit path (T-07 requirements 1/6).
+    if (gapNote)
+        sections.push(`## Recovery Gaps\n\n${gapNote}`);
+    if (ledgerNote)
+        sections.push(`## Ledger Gaps\n\n${ledgerNote}`);
+    if (unjudgeableNote)
+        sections.push(`## Ledger Unjudgeable\n\n${unjudgeableNote}`);
     // D-117 (output.md clobber): task templates direct workers to write
     // deliverables and machine-readable lines into output.md (VERDICT=/TASKS=
     // first lines, conductor [VERIFY] rows, L3 verdict sections) — a full
@@ -69,14 +167,8 @@ export function writeOutput(opts) {
     // match anywhere in the file. Empty/missing files keep today's format
     // (the agent never wrote). worker-mode guarantees one writeOutput call
     // per process (outputWritten guard), so the merge cannot compound.
-    let existing = "";
-    try {
-        existing = fs.readFileSync(outputPath, "utf8");
-    }
-    catch {
-        existing = "";
-    }
     const body = `${opts.runMarker ? `${opts.runMarker}\n\n` : ""}${sections.join("\n\n")}\n`;
+    const existing = readFileSafe(outputPath);
     fs.writeFileSync(outputPath, existing.trim() === "" ? body : `${existing.trimEnd()}\n\n---\n\n${body}`, "utf8");
 }
 export function appendTrace(taskKey, agenticdocRoot, line) {

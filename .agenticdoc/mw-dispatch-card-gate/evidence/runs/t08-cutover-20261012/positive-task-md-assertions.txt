@@ -1,0 +1,26 @@
+$ python -X utf8 .agenticdoc/mw-dispatch-card-gate/evidence/runs/t08-cutover-20261012/scripts/verify_positive.py
+=== task.md: H:\git\Multi-Workers\.agenticdoc\mw-dispatch-card-gate\evidence\runs\t08-cutover-20261012\fixture\pos\.agenticdoc\mw-dispatch-card-gate\workers\T-08-cutover-and-runtime-evidence\task.md
+=== header (first 10 lines) ===
+---
+type: coding
+card_path: tasks/T-08-cutover-and-runtime-evidence.md
+card_sha256: 8ce48e8a9ee5a2a6386628808bdf2af1f59081f4a5d707e7866ccbda685b19e8
+envelope_producer: autopilot-conductor@0.83.0
+origin: conductor
+loop: exec:mw-dispatch-card-gate:T-08-cutover-and-runtime-evidence
+attempt: 1
+---
+
+=== assertion 1: three traceability lines on disk ===
+  card_path:           card_path: tasks/T-08-cutover-and-runtime-evidence.md
+  card_sha256:         card_sha256: 8ce48e8a9ee5a2a6386628808bdf2af1f59081f4a5d707e7866ccbda685b19e8
+  envelope_producer:   envelope_producer: autopilot-conductor@0.83.0
+=== assertion 2: canonical sections + coding extras ===
+  inspect_envelope ok=True type=coding missing=[]
+  detected={'context': 'heading:上下文', 'requirements': 'heading:要求', 'deliverables': 'heading:交付格式'}
+  type_extras_missing('coding')=[]
+=== assertion 3: card_audit classification ===
+  dispatched=[{'worker': 'workers/T-08-cutover-and-runtime-evidence', 'card_path': 'tasks/T-08-cutover-and-runtime-evidence.md', 'card': 'tasks/T-08-cutover-and-runtime-evidence.md', 'in_cards': True}]
+  unlisted_after_boundary=[]
+  missing_cards=[] tampered_cards=[]
+  has_findings=False (expect False)

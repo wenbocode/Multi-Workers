@@ -23,6 +23,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
+import { appendWriteFileEvent, repoRelativePath } from "../shared/change-ledger.js";
 /** Tool name registered with pi (D-101). */
 export const WORKER_FILE_TOOL = "worker_file";
 /** Maximum accepted content size, in UTF-8 bytes (D-101; not code units). */
@@ -61,6 +62,10 @@ export function writeWorkerFile(taskDir, file, content, mode) {
     else {
         fs.writeFileSync(target, content, "utf8");
     }
+    // T-05/AC-004 change history: one machine event per successful write, path
+    // only (never content). After the fs call, so a rejected/failed write leaves
+    // no event. Best-effort: a trace append failure never fails the write.
+    appendWriteFileEvent(path.join(taskDir, "trace.log"), repoRelativePath(target));
     return { ok: true, path: target, bytes };
 }
 /** Register the narrow write tool for a writeless worker role (D-109). */

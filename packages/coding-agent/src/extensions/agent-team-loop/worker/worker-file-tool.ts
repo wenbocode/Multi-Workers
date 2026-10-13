@@ -25,6 +25,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
+import { appendWriteFileEvent, repoRelativePath } from "../shared/change-ledger.ts";
 
 /** Tool name registered with pi (D-101). */
 export const WORKER_FILE_TOOL = "worker_file";
@@ -75,6 +76,10 @@ export function writeWorkerFile(
 	} else {
 		fs.writeFileSync(target, content, "utf8");
 	}
+	// T-05/AC-004 change history: one machine event per successful write, path
+	// only (never content). After the fs call, so a rejected/failed write leaves
+	// no event. Best-effort: a trace append failure never fails the write.
+	appendWriteFileEvent(path.join(taskDir, "trace.log"), repoRelativePath(target));
 	return { ok: true, path: target, bytes };
 }
 

@@ -387,12 +387,13 @@ catch (e) {
     if (err.code !== "ENOENT")
         throw e;
 }
+const buildVersion = typeof __PI_CODING_AGENT_VERSION__ === "string" ? __PI_CODING_AGENT_VERSION__.trim() : "";
 const piConfigName = pkg.piConfig?.name;
 export const PACKAGE_NAME = pkg.name || "@earendil-works/pi-coding-agent";
 export const APP_NAME = piConfigName || "pi";
 export const APP_TITLE = piConfigName ? APP_NAME : "π";
 export const CONFIG_DIR_NAME = pkg.piConfig?.configDir || ".pi";
-export const VERSION = pkg.version || "0.0.0";
+export const VERSION = buildVersion || pkg.version || "0.0.0";
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;

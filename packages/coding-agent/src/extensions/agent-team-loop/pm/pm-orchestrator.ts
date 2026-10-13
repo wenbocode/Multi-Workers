@@ -6,9 +6,23 @@ import { stopMonitor } from "../autopilot/monitor.ts";
 import { readConfig } from "../autopilot/status-model.ts";
 import { registerRagTools } from "../rag/tools.ts";
 import { AckStore } from "../shared/ack-store.ts";
+import {
+	ENVELOPE_SECTION_LABELS,
+	ENVELOPE_SECTIONS,
+	inspectEnvelope,
+	isKnownDispatchType,
+	typeExtrasMissing,
+} from "../shared/dispatch-card.ts";
 import { registerMainWindowModel } from "../shared/dispatch-models.ts";
 import { formatHeartbeatAge, readTaskProgress } from "../shared/heartbeat.ts";
-import { IndexStore } from "../shared/index-store.ts";
+import {
+	conductorClaimState,
+	type IndexEntry,
+	IndexStore,
+	keyHasOwnerTraces,
+	keyStateDocPaths,
+	ownerEvidenceCurrent,
+} from "../shared/index-store.ts";
 import { getMwStatus, initMw, serveStaleness, startMw, waitForMwStart } from "../shared/mw-runner.ts";
 import { agenticdocRoot as resolveAgenticdocRoot, SCRATCH_WORKERS_KEY } from "../shared/paths.ts";
 import { dispatchDocGaps, readPhaseDocs } from "../shared/phase-docs.ts";
@@ -16,7 +30,7 @@ import { syncPmStateClaimId } from "../shared/pm-state-claim.ts";
 import { registerPmStateGuard } from "../shared/pm-state-guard.ts";
 import { evaluateRunIdentity, type RunIdentityRefusal } from "../shared/run-store.ts";
 import { readTaskType } from "../shared/task-frontmatter.ts";
-import { type WorkerEntry, type WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
+import { type WorkerEntry, type WorkerStatus, WorkerStore, workerOwnerKey } from "../shared/worker-store.ts";
 import { isGoalEstablished, readGoal } from "./goal-reader.ts";
 import { StateManager } from "./state-manager.ts";
 import { dispatchTask } from "./task-dispatcher.ts";
@@ -394,8 +408,19 @@ export type DispatchAlarmKind =
 	| "dispatch-quota"
 	// A candidate outside this window's scope (AC-019/T-19): the PM must be able
 	// to see what it did NOT touch, aggregated per scan — visibility, not
-	// prohibition (the read side stays global, AC-024).
+	// prohibition (the read side stays global, AC-024). NOTICE, not a refusal:
+	// nothing was refused, these keys simply belong to somebody else. Since T-22
+	// the kind carries ONLY keys with no owner record at all (no index row AND no
+	// `pm-state.md` machine line / worker `trace.log`): the text names the exact
+	// human action (`switch_key` / `dispatch_worker(key=…)`) because a guessed
+	// index row would invent Phase/ClaimId/Deps facts.
 	| "out-of-scope"
+	// A registered key with undispatched work, no live claim and no live run
+	// (AC-011/T-19): its owner is gone and nothing will ever re-dispatch it —
+	// the conductor only skips CLAIM_LIVE keys and claiming one is forbidden
+	// (AUTOPILOT-HANDOFF §5 #13), so the scan repairs it claim-free. Actionable
+	// NOTICE, one per key per session, never a refusal.
+	| "orphaned-keys"
 	// A candidate whose product already ends the run while the ledger says
 	// nothing (AC-022/T-20): refused, never re-run.
 	| "run-ledger-conflict"
@@ -408,7 +433,15 @@ export type DispatchAlarmKind =
 	// determinable (`allow-unknown`) while its basename still names a deny-list
 	// artifact (`pm-state.md`, `_workers*`). The guard itself cannot block;
 	// observability is the only remaining defence (design DD-08).
-	| "write-scope-risk";
+	| "write-scope-risk"
+	// A registered key whose repair evidence is STALE (T-24/C-30): the index row
+	// is `idle`/`done` (or its claim is an old legacy Claim-Id) and the key's own
+	// state documents have not moved in the freshness window. C-30 measured the
+	// framework treating an`idle` key's months-old worker dirs as undispatched
+	// work and queuing them claim-free. Such a key is NEVER repaired — repairing
+	// a foreign idle key is exactly the cross-key pollution C-30 exposed — and
+	// only one neutral notice is emitted (key, judged work, why not repaired).
+	| "orphan-repair-skipped";
 
 export interface DispatchAlarm {
 	kind: DispatchAlarmKind;
@@ -416,10 +449,26 @@ export interface DispatchAlarm {
 	detail?: string;
 }
 
+/** Alarm kinds that are NOT refusals — the scan made a scope/ownership
+ * observation. Their text must stay neutral (`[mw] dispatch 提示：…`); only
+ * real refusal kinds may say `[mw] dispatch 已拒绝：…` (AC-011/T-19). */
+export const NOTICE_DISPATCH_ALARM_KINDS: ReadonlySet<DispatchAlarmKind> = new Set([
+	"out-of-scope",
+	"orphaned-keys",
+	"orphan-repair-skipped",
+]);
+
+/** Is this alarm a notice (neutral wording) rather than a refusal? */
+export function isNoticeDispatchAlarm(kind: DispatchAlarmKind): boolean {
+	return NOTICE_DISPATCH_ALARM_KINDS.has(kind);
+}
+
 /** Autopilot ledger path (shared with the Python conductor). */
 const AUTO_DECISIONS_FILE = "auto-decisions.jsonl";
 
-/** One-line human text for a refused dispatch scan (AC-020/AC-021). */
+/** One-line human text for a refused dispatch scan (AC-020/AC-021). Notice
+ * kinds carry neutral wording; the verdict prefix is added by
+ * {@link formatDispatchAlarm} (AC-011/T-19). */
 export function describeDispatchAlarm(alarm: DispatchAlarm): string {
 	switch (alarm.kind) {
 		case "queue-rows-unparsable":
@@ -433,9 +482,17 @@ export function describeDispatchAlarm(alarm: DispatchAlarm): string {
 		case "dispatch-quota":
 			return `scan quota reached after ${alarm.count} task(s) — the rest of this scan was refused`;
 		case "out-of-scope":
-			return `${alarm.count} key(s) outside this window's scope were not scanned (${
+			return `${alarm.count} key(s) with undispatched work but no owner record, outside this window's write scope (${
 				alarm.detail ?? "?"
-			}) — read-only visible, never touched`;
+			}) — scanned read-only, nothing written. Action required: register the key first (switch_key <key> or dispatch_worker(key=<key>)), then dispatch; its work sits in {key}/workers/<task-key>/task.md`;
+		case "orphaned-keys":
+			return `${alarm.count} orphaned key(s) with undispatched work, no live claim and no live run (${
+				alarm.detail ?? "?"
+			}) — claim-free repair dispatch applied (the conductor stays eligible); no _index.parallel claim was written`;
+		case "orphan-repair-skipped":
+			return `${alarm.count} key(s) with work but stale owner evidence — claim-free repair skipped, nothing written (${
+				alarm.detail ?? "?"
+			})`;
 		case "run-ledger-conflict":
 			return `${alarm.count} task(s) already have a terminal run.json while the queue has no row for them — not re-queued${
 				alarm.detail ? `: ${alarm.detail}` : ""
@@ -449,6 +506,14 @@ export function describeDispatchAlarm(alarm: DispatchAlarm): string {
 				alarm.detail ? ` on ${alarm.detail}` : ""
 			} — the guard allowed them by contract; review the audited target`;
 	}
+}
+
+/** The full PM alert line for one alarm (AC-011/T-19): only real refusal kinds
+ * carry the `已拒绝` verdict — a notice (`out-of-scope` / `orphaned-keys`) says
+ * `提示` and never reads as a refusal. */
+export function formatDispatchAlarm(alarm: DispatchAlarm): string {
+	const verdict = isNoticeDispatchAlarm(alarm.kind) ? "提示" : "已拒绝";
+	return `[mw] dispatch ${verdict}：${describeDispatchAlarm(alarm)}`;
 }
 
 /** Append one machine-readable alarm row to the autopilot ledger
@@ -547,6 +612,73 @@ function hasProductEvidence(taskDir: string): boolean {
 	return false;
 }
 
+/** T-24 req. 1b: the terminal product of a task run. A task dir that already
+ * holds `output.md` is HISTORY, never "undispatched work" — C-30's repair queued
+ * `ga-spec-review-1` / `mw-dr-glm53` / `mw-dr-keyed-probe` precisely because
+ * their months-old dirs had this file (the queue then reaped them `done` in 4s).
+ * Deliberately narrower than {@link hasProductEvidence}: only the worker's final
+ * product counts here, not `trace.log`/`run.json` (a fresh run may have a trace
+ * without an output yet). */
+function hasTerminalProduct(taskDir: string): boolean {
+	return fs.existsSync(path.join(taskDir, "output.md"));
+}
+
+/** Does the key's own current state (`pm-state.md` / `plan.md`) name this
+ * task-key (T-24 req. 1c)? Boundary-anchored so `task-1` never matches
+ * `task-12`. Read-only and best-effort: a missing/unreadable doc is no match. */
+function stateDocReferencesTask(agenticdocRoot: string, key: string, taskKey: string): boolean {
+	const boundary = "[^A-Za-z0-9._-]";
+	const escaped = taskKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const re = new RegExp(`(^|${boundary})${escaped}($|${boundary})`);
+	for (const doc of keyStateDocPaths(agenticdocRoot, key)) {
+		let text: string;
+		try {
+			text = fs.readFileSync(doc, "utf8");
+		} catch {
+			continue;
+		}
+		if (re.test(text)) return true;
+	}
+	return false;
+}
+
+/** Outcome of the T-24 scope narrowing for one out-of-scope key. */
+interface OrphanScopeVerdict {
+	/** Candidates that are genuinely undispatched work (req. 1). */
+	repairable: Array<{ taskKey: string; taskMdPath: string }>;
+	/** Present when the key must NOT be repaired (req. 2/3); the text is the
+	 * notice's `why not repairable` reason. */
+	blockReason?: string;
+}
+
+/** T-24 scope narrowing for one out-of-scope key (C-30). Two gates:
+ *
+ *   1. work (req. 1): drop every candidate whose dir already has `output.md`;
+ *      when the key publishes state documents AND its owner evidence is stale,
+ *      also drop candidates its own `pm-state.md` / `plan.md` does not name (1c);
+ *   2. owner evidence (req. 2): an `idle` / `done` index row with no fresh state
+ *      document and no live claim is stale — the key is history, never a repair
+ *      target (req. 3).
+ *
+ * The reference filter (1c) is applied only on the stale-evidence path: for a
+ * CURRENT owner the frozen T-19/T-22 contract deliberately repairs a trace-only
+ * key whose task is not yet written into its plan (a real in-flight task). See
+ * the T-24 report for this deviation from the card's unconditional 1c. */
+function judgeOrphanScope(
+	agenticdocRoot: string,
+	key: string,
+	candidates: Array<{ taskKey: string; taskMdPath: string }>,
+	row: IndexEntry | undefined,
+): OrphanScopeVerdict {
+	const live = candidates.filter(({ taskMdPath }) => !hasTerminalProduct(path.dirname(taskMdPath)));
+	const evidence = ownerEvidenceCurrent(agenticdocRoot, key, row);
+	if (evidence.current) return { repairable: live };
+	return {
+		repairable: live.filter(({ taskKey }) => stateDocReferencesTask(agenticdocRoot, key, taskKey)),
+		blockReason: evidence.reason ?? "owner 证据已过期",
+	};
+}
+
 export interface DispatchScanOptions {
 	/** Keys already warned about in this session — a key is reported at most once. */
 	warnedKeys?: Set<string>;
@@ -577,6 +709,243 @@ export interface DispatchScanOptions {
 	/** Alarm sink (AC-020/AC-021). Production wires it to the ledger row (and
 	 * from there to the PM alert); the scan itself never invents a write path. */
 	onAlarm?: (alarm: DispatchAlarm) => void;
+	/** ORPHANED keys already alerted in this session (AC-011/T-19) — the
+	 * `orphaned-keys` alarm is once per key per session, so a key that stays
+	 * orphaned does not re-wake the PM on every settled turn. */
+	orphanedWarned?: Set<string>;
+	/** Keys already reported by the (T-22) "has work, no owner record" notice —
+	 * once per key per session, mirroring `orphanedWarned`. The notice reuses the
+	 * `out-of-scope` kind; the scan still writes nothing for these keys (no
+	 * `_index.parallel` row, no queue row, no task-dir mutation). */
+	unregisteredWarned?: Set<string>;
+}
+
+// ── Claim-free orphan repair (AC-011/T-19) ─────────────────────────────────
+
+/** Marker/skeleton of the service-layer envelope fallback, byte-mirrored from
+ * `packages/multi-workers/launcher.py` (T-14, `envelope_fallback_inject`): the
+ * same marker keeps the injection idempotent, and the same `[ENVELOPE_FALLBACK]`
+ * audit token makes the fallback greppable on both sides. */
+export const ENVELOPE_FALLBACK_MARKER = "<!-- mw-envelope-fallback -->";
+export const ENVELOPE_FALLBACK_AUDIT = "[ENVELOPE_FALLBACK]";
+const ENVELOPE_FALLBACK_SECTION_BODY =
+	`${ENVELOPE_FALLBACK_AUDIT} 服务层兜底注入：原 producer 未提供本段。` +
+	"这是让该行可 spawn 的最小骨架，不是任务内容，也不改变任何写面判据；" +
+	"请以任务卡与 PM 指令为准，并在升级 producer 后重新派发。";
+const ENVELOPE_FALLBACK_EXTRA_LINES: Readonly<Record<string, string>> = {
+	写入允许面: `${ENVELOPE_FALLBACK_AUDIT} 写入允许面: 服务层兜底骨架（原 producer 未声明；写面判据不变）`,
+	写入禁止面: `${ENVELOPE_FALLBACK_AUDIT} 写入禁止面: 服务层兜底骨架（原 producer 未声明；写面判据不变）`,
+	验收命令: `${ENVELOPE_FALLBACK_AUDIT} 验收命令: 服务层兜底骨架（原 producer 未声明）`,
+	改动历史: `${ENVELOPE_FALLBACK_AUDIT} 改动历史: 服务层兜底骨架（原 producer 未声明）；trace.log 写入事件`,
+	唯一证据文件: `${ENVELOPE_FALLBACK_AUDIT} 唯一证据文件: 服务层兜底骨架（原 producer 未声明）`,
+	审计目标: `${ENVELOPE_FALLBACK_AUDIT} 审计目标: 服务层兜底骨架（原 producer 未声明）`,
+	未覆盖面声明: `${ENVELOPE_FALLBACK_AUDIT} 未覆盖面声明: 服务层兜底骨架（原 producer 未声明）`,
+};
+
+/** Canonical-envelope skeleton for a refused card, or `null` when the card
+ * cannot be made compliant without inventing facts (missing/unknown `type:`).
+ *
+ * AC-011e / T-14 semantics, re-implemented on the TS side so a claim-free
+ * repair does not depend on the project's `envelope_fallback` config (the very
+ * config an old-form project does not have): only the MISSING pieces are
+ * appended — the card's own frontmatter and body are untouched — and the
+ * result is re-judged before it is returned. A skeleton that still fails yields
+ * `null` and the caller stays fail-closed. Existing `[ENVELOPE_FALLBACK]`
+ * marker ⇒ idempotent passthrough. */
+export function synthesizeEnvelopeFallback(text: string): string | null {
+	if (text.includes(ENVELOPE_FALLBACK_MARKER)) return text;
+	const envelope = inspectEnvelope(text);
+	if (envelope.type === "" || !isKnownDispatchType(envelope.type)) return null;
+	const additions: string[] = [ENVELOPE_FALLBACK_MARKER];
+	for (const section of ENVELOPE_SECTIONS) {
+		if (!envelope.missing.includes(section)) continue;
+		additions.push("", `## ${ENVELOPE_SECTION_LABELS[section]}`, "", ENVELOPE_FALLBACK_SECTION_BODY);
+	}
+	for (const item of typeExtrasMissing(envelope.type, text)) {
+		const line = ENVELOPE_FALLBACK_EXTRA_LINES[item];
+		if (line === undefined) return null;
+		additions.push("", line);
+	}
+	if (additions.length === 1) return null; // nothing to inject
+	const injected = `${text.replace(/\n+$/, "")}\n${additions.join("\n")}\n`;
+	const after = inspectEnvelope(injected);
+	const extrasAfter = after.type === "" ? [] : typeExtrasMissing(after.type, injected);
+	if (!after.ok || extrasAfter.length > 0) return null;
+	return injected;
+}
+
+/** Outcome of one key's claim-free repair dispatch. */
+export interface OrphanRepairResult {
+	key: string;
+	/** Task keys actually queued (claim-free: only `_workers.parallel` moved). */
+	queued: string[];
+	/** Tasks the run-identity gate refused (terminal / active product). */
+	refused: Array<{ taskKey: string; reason: RunIdentityRefusal; detail?: string }>;
+	/** Old-form cards rewritten with the service-layer skeleton. */
+	synthesized: string[];
+	/** Old-form cards that could not be synthesized without inventing facts. */
+	unsynthesizable: string[];
+}
+
+export interface OrphanRepairOptions {
+	/** Single-call quota; defaults to the project's `dispatch_max_per_scan`. */
+	maxPerScan?: number;
+	/** Run-identity gate (AC-022); defaults to {@link evaluateRunIdentity} with
+	 * zero-backfill semantics (a candidate without a run record passes). */
+	runVerdict?: DispatchScanOptions["runVerdict"];
+}
+
+/** Default run-identity gate for the repair path: the product decides, exactly
+ * as the automatic scan's wiring does (`evaluateRunIdentity`, AC-022). */
+function defaultOrphanRunVerdict(
+	agenticdocRoot: string,
+	ownerKey: string,
+): NonNullable<DispatchScanOptions["runVerdict"]> {
+	return (task) =>
+		evaluateRunIdentity({
+			taskDir: task.taskDir,
+			readTaskContent: task.readTaskContent,
+			resolveTaskDir: (supersededKey) => {
+				const dir = path.join(agenticdocRoot, ownerKey, "workers", supersededKey);
+				return fs.existsSync(dir) ? dir : undefined;
+			},
+		});
+}
+
+/** Make one old-form task.md dispatchable through the service-layer skeleton,
+ * appending an `[ENVELOPE_FALLBACK]` audit fact to its trace.log. `"ok"` = the
+ * card already carries a complete envelope; `"synthesized"` = rewritten;
+ * `"unsynthesizable"` = missing/unknown `type:`, fail-closed. */
+function ensureServiceEnvelope(
+	taskMdPath: string,
+	key: string,
+	taskKey: string,
+): "ok" | "synthesized" | "unsynthesizable" {
+	let text: string;
+	try {
+		text = fs.readFileSync(taskMdPath, "utf8");
+	} catch {
+		return "unsynthesizable";
+	}
+	const envelope = inspectEnvelope(text);
+	if (envelope.ok && typeExtrasMissing(envelope.type, text).length === 0) return "ok";
+	const injected = synthesizeEnvelopeFallback(text);
+	if (injected === null) return "unsynthesizable";
+	try {
+		fs.writeFileSync(taskMdPath, injected, "utf8");
+		const audit =
+			`${ENVELOPE_FALLBACK_AUDIT} ${new Date().toISOString()} ${key}/${taskKey} ` +
+			"kind=repair synthesized=canonical-envelope-skeleton " +
+			"(claim-free orphan repair; envelope judgement only — write-face judgement unchanged)";
+		fs.appendFileSync(path.join(path.dirname(taskMdPath), "trace.log"), `${audit}\n`, "utf8");
+	} catch {
+		return "unsynthesizable";
+	}
+	return "synthesized";
+}
+
+/** Dispatch already-collected repair candidates and NEVER touch
+ * `_index.parallel` — the whole point of the repair path is that the key keeps
+ * its claim cell (dead/free), so `conductor.py`'s
+ * `if claim == state.CLAIM_LIVE: … continue` stays false and the conductor can
+ * resume driving the key at any time (AC-011). */
+async function dispatchOrphanCandidates(
+	workerStore: WorkerStore,
+	key: string,
+	candidates: Array<{ taskKey: string; taskMdPath: string }>,
+	maxPerScan: number,
+	runVerdict: NonNullable<DispatchScanOptions["runVerdict"]>,
+): Promise<OrphanRepairResult> {
+	const result: OrphanRepairResult = {
+		key,
+		queued: [],
+		refused: [],
+		synthesized: [],
+		unsynthesizable: [],
+	};
+	for (const { taskKey, taskMdPath } of candidates) {
+		if (result.queued.length >= maxPerScan) break;
+		const taskDir = path.dirname(taskMdPath);
+		const verdict = runVerdict({
+			taskKey,
+			taskDir,
+			readTaskContent: () => fs.readFileSync(taskMdPath, "utf8"),
+		});
+		if (!verdict.ok) {
+			result.refused.push({ taskKey, reason: verdict.reason, detail: verdict.detail });
+			continue;
+		}
+		const envelope = ensureServiceEnvelope(taskMdPath, key, taskKey);
+		if (envelope === "unsynthesizable") {
+			result.unsynthesizable.push(taskKey);
+			continue;
+		}
+		if (envelope === "synthesized") result.synthesized.push(taskKey);
+		const taskContent = fs.readFileSync(taskMdPath, "utf8");
+		const { cli, provider } = pickWorkerRoute(taskContent);
+		const model = readModel(taskContent);
+		try {
+			await dispatchTask({ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath }, workerStore);
+			result.queued.push(taskKey);
+		} catch (err) {
+			// Same fail-closed per-task isolation as the normal scan (AC-007): one
+			// unusable target.yml never blocks the rest of the repair.
+			console.error(
+				`[mw] orphan repair refused for ${taskKey}: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
+	}
+	return result;
+}
+
+/** Claim-free repair dispatch for one ORPHANED key (AC-011/T-19).
+ *
+ * Scans `{key}/workers/<task-key>/task.md`, skips already-queued and conductor-owned
+ * tasks, applies the run-identity gate, synthesizes the service-layer envelope
+ * for old-form cards (with an `[ENVELOPE_FALLBACK]` audit), and queues the
+ * candidate through {@link dispatchTask}. It never reads-modify-writes
+ * `_index.parallel`, so the conductor's eligibility predicate is untouched: the
+ * repair does not "take over" the key, it only unblocks its undispatched work. */
+export async function repairDispatchOrphanedKey(
+	workerStore: WorkerStore,
+	agenticdocRoot: string,
+	key: string,
+	opts: OrphanRepairOptions = {},
+): Promise<OrphanRepairResult> {
+	const empty: OrphanRepairResult = { key, queued: [], refused: [], synthesized: [], unsynthesizable: [] };
+	const queue = workerStore.readQueue();
+	const dispatched = new Set(queue.rows.map((e) => e.taskKey));
+	const maxPerScan = opts.maxPerScan ?? readDispatchMaxPerScan(agenticdocRoot);
+	const runVerdict = opts.runVerdict ?? defaultOrphanRunVerdict(agenticdocRoot, key);
+	let taskDirs: fs.Dirent[];
+	try {
+		taskDirs = fs.readdirSync(path.join(agenticdocRoot, key, "workers"), { withFileTypes: true });
+	} catch {
+		return empty;
+	}
+	const candidates: Array<{ taskKey: string; taskMdPath: string }> = [];
+	for (const taskDir of taskDirs) {
+		if (!taskDir.isDirectory() || taskDir.name.startsWith(".")) continue;
+		const taskKey = taskDir.name;
+		if (dispatched.has(taskKey)) continue;
+		const taskMdPath = path.join(agenticdocRoot, key, "workers", taskKey, "task.md");
+		if (!fs.existsSync(taskMdPath)) continue;
+		if (isConductorTask(taskMdPath)) continue;
+		candidates.push({ taskKey, taskMdPath });
+	}
+	if (candidates.length === 0) return empty;
+	return dispatchOrphanCandidates(workerStore, key, candidates, maxPerScan, runVerdict);
+}
+
+/** Does `key` have a live run? `run.json` pending/running (the worker's own
+ * product, AC-022) or a queue row pending/running (the ledger's cache) both
+ * count — an ORPHANED key must have neither (AC-011/T-19). */
+function keyHasLiveRun(rows: WorkerEntry[], key: string): boolean {
+	for (const row of rows) {
+		if (row.status !== "pending" && row.status !== "running") continue;
+		if (workerOwnerKey(row) === key) return true;
+	}
+	return false;
 }
 
 export async function dispatchNewTasks(
@@ -609,12 +978,22 @@ export async function dispatchNewTasks(
 	const queueIsEmpty = queue.rows.length === 0;
 	let queued = 0;
 
-	// Visibility for the two "skipped, not refused" classes (T-19/T-20): keys
-	// outside this window's scope, and candidates whose product already ended the
-	// run. Both are aggregated per scan and go through the same alarm channel
-	// (once per kind per session at the wiring), so a healthy project sees at
-	// most one row per session instead of one per candidate.
+	// Visibility for the "skipped, not refused" classes (T-19/T-20): keys
+	// outside this window's scope, ORPHANED keys, and candidates whose product
+	// already ended the run. They are aggregated per scan and go through the same
+	// alarm channel (once per kind per session at the wiring), so a healthy
+	// project sees at most one row per session instead of one per candidate.
 	const outOfScope: string[] = [];
+	// Only keys NOT already alerted this session (T-19: one `orphaned-keys`
+	// alarm per key per session — a key that stays orphaned must not re-wake the
+	// PM on every settled turn).
+	const orphanedFresh: string[] = [];
+	// T-24 (C-30): out-of-scope keys whose work was judged but whose owner
+	// evidence is stale (`idle`/`done` row, no fresh state doc, no live claim).
+	// They are NOT repaired; one neutral notice per key per session. `work` is
+	// the RAW candidate list (what was judged), not the narrowed list, so the
+	// PM can see which historical dirs triggered the judgement.
+	const orphanBlocked: Array<{ key: string; work: string[]; reason: string }> = [];
 	const runRefused: Array<{ taskKey: string; reason: RunIdentityRefusal; detail?: string }> = [];
 	const flushScanAlarms = (): void => {
 		if (outOfScope.length > 0) {
@@ -622,6 +1001,24 @@ export async function dispatchNewTasks(
 				kind: "out-of-scope",
 				count: outOfScope.length,
 				detail: `${outOfScope.slice(0, 3).join(",")}${outOfScope.length > 3 ? ",…" : ""}`,
+			});
+		}
+		if (orphanedFresh.length > 0) {
+			opts.onAlarm?.({
+				kind: "orphaned-keys",
+				count: orphanedFresh.length,
+				detail: `${orphanedFresh.slice(0, 3).join(",")}${orphanedFresh.length > 3 ? ",…" : ""}`,
+			});
+		}
+		if (orphanBlocked.length > 0) {
+			const shown = orphanBlocked
+				.slice(0, 3)
+				.map((b) => `${b.key}(工作=[${b.work.join(",")}]; 原因=${b.reason})`)
+				.join(", ");
+			opts.onAlarm?.({
+				kind: "orphan-repair-skipped",
+				count: orphanBlocked.length,
+				detail: `${shown}${orphanBlocked.length > 3 ? ",…" : ""}`,
 			});
 		}
 		if (runRefused.length > 0) {
@@ -648,16 +1045,13 @@ export async function dispatchNewTasks(
 		return;
 	}
 
+	const indexStore = new IndexStore(agenticdocRoot);
 	for (const owner of owners) {
 		if (!owner.isDirectory() || owner.name.startsWith(".")) continue;
-		// Scope (AC-019): the PM-side automatic scan only looks at the key this
-		// window watches plus the keyless scratch. Explicit callers (the `mw`
-		// command surface, refreshers, tests) stay global, which is why this is
-		// opt-in per call site instead of a hard restriction.
-		if (scope === "pm" && owner.name !== SCRATCH_WORKERS_KEY && owner.name !== opts.watchedKey) {
-			outOfScope.push(owner.name);
-			continue;
-		}
+		// T-19: every owner directory is READ (the ownership scan is global and
+		// read-only); the WRITE right is decided per key below. `scope: "cli"`
+		// callers keep the historical whole-project behaviour.
+		const inScope = scope === "cli" || owner.name === SCRATCH_WORKERS_KEY || owner.name === opts.watchedKey;
 		const workersDir = path.join(agenticdocRoot, owner.name, "workers");
 		let taskDirs: fs.Dirent[];
 		try {
@@ -700,6 +1094,71 @@ export async function dispatchNewTasks(
 				}
 			}
 			undispatched.push({ taskKey, taskMdPath });
+		}
+		if (!inScope) {
+			// Ownership classification only (T-19/T-22) — never write an
+			// out-of-scope key from the automatic scan. A live claim (conductor
+			// language: `state.CLAIM_LIVE`) means somebody else owns it; a live run
+			// means it is already executing. Otherwise the key is a repair candidate
+			// ONLY when it carries owner evidence: an `_index.parallel` row (T-19) OR
+			// the key's own owner traces (`pm-state.md` machine lines / a worker
+			// `trace.log`, T-22) — the row may have been lost to index rotation or the
+			// non-atomic `dispatch_worker(key=…)` create-then-register pair. A bare
+			// directory holding only `task.md` files is NOT ORPHANED: there is no
+			// owner fact to reconstruct a row from, so it stays an actionable,
+			// once-per-key notice and the scan writes nothing.
+			const row = indexStore.findByKey(owner.name);
+			if (row !== undefined && conductorClaimState(row.claimId) === "live") continue; // owned elsewhere — never write
+			if (row === undefined && !keyHasOwnerTraces(agenticdocRoot, owner.name)) {
+				if (
+					undispatched.some((t) => !hasTerminalProduct(path.dirname(t.taskMdPath))) &&
+					opts.watchedKey !== undefined &&
+					!(opts.unregisteredWarned?.has(owner.name) ?? false)
+				) {
+					opts.unregisteredWarned?.add(owner.name);
+					outOfScope.push(owner.name);
+				}
+				continue;
+			}
+			if (keyHasLiveRun(queue.rows, owner.name)) continue; // running — not orphaned
+			if (undispatched.length === 0) continue; // nothing to repair
+			// T-24 (C-30): narrow the work (drop dirs with a terminal `output.md`;
+			// for a stale owner, require the key's own state to name the task) and
+			// require the owner evidence to still be current. A key whose only
+			// evidence is an `idle`/`done` row with stale state docs is history:
+			// never repaired, one neutral notice (req. 2/3). The reference filter
+			// is part of the block path only — see the T-24 report.
+			const scopeVerdict = judgeOrphanScope(agenticdocRoot, owner.name, undispatched, row);
+			if (scopeVerdict.blockReason !== undefined) {
+				if (!(opts.orphanedWarned?.has(owner.name) ?? false)) {
+					opts.orphanedWarned?.add(owner.name);
+					orphanBlocked.push({
+						key: owner.name,
+						work: undispatched.map((t) => t.taskKey),
+						reason: scopeVerdict.blockReason,
+					});
+				}
+				continue;
+			}
+			if (scopeVerdict.repairable.length === 0) continue; // only history left
+			if (queued >= maxPerScan) {
+				flushScanAlarms();
+				opts.onAlarm?.({ kind: "dispatch-quota", count: queued });
+				return;
+			}
+			const repair = await dispatchOrphanCandidates(
+				workerStore,
+				owner.name,
+				scopeVerdict.repairable,
+				maxPerScan - queued,
+				opts.runVerdict ?? defaultOrphanRunVerdict(agenticdocRoot, owner.name),
+			);
+			queued += repair.queued.length;
+			if (!(opts.orphanedWarned?.has(owner.name) ?? false)) {
+				opts.orphanedWarned?.add(owner.name);
+				orphanedFresh.push(owner.name);
+			}
+			continue;
 		}
 		if (undispatched.length === 0) continue;
 		// AC-020: an empty queue plus product evidence in the very tasks we are
@@ -1167,19 +1626,29 @@ export function pmActivate(pi: ExtensionAPI): void {
 
 	// After each agent turn, scan for new task.md files and dispatch them (AC-030).
 	// Undocumented keys are skipped and reported once per session (docs gate).
-	// Gate broadcast is scoped to this window's watched key (AC-011). The scan
-	// itself is scoped to that key too (AC-019): a PM turn must never re-queue
-	// another key's history — the whole-project view belongs to `mw` commands.
+	// Gate broadcast is scoped to this window's watched key (AC-011). The SCAN
+	// is global and read-only (T-19): the write right covers this window's key,
+	// `_scratch`, and ORPHANED keys (claim-free repair).
 	const docGateWarned = new Set<string>();
-	// Dispatch alarms are once per kind per session: a queue that stays broken
-	// must not append a ledger row or wake the PM on every settled turn.
+	// Dispatch alarms are once per kind per session for the REFUSAL kinds: a
+	// queue that stays broken must not append a ledger row or wake the PM on
+	// every settled turn. `orphaned-keys` is deduped per KEY inside the scan
+	// (`orphanedWarned`), so a newly orphaned key is still reported immediately
+	// while a key that stays orphaned is not re-reported every turn.
 	const dispatchAlarmsSeen = new Set<DispatchAlarmKind>();
+	const orphanedWarned = new Set<string>();
+	// T-22: `out-of-scope` notice dedup is per KEY (not per kind): a key left
+	// unregistered with undispatched work must be reported once per session, not
+	// on every settled turn, while a DIFFERENT key can still surface later.
+	const unregisteredWarned = new Set<string>();
 	pi.on("agent_settled", () => {
 		dispatchNewTasks(workerStore, agenticdocRoot, {
 			warnedKeys: docGateWarned,
 			onDocGate: makeScopedDocGateNotifier(pi, watch),
 			scope: "pm",
 			watchedKey: watch.key,
+			orphanedWarned,
+			unregisteredWarned,
 			// AC-022 (T-20): the product decides. A candidate whose own run.json
 			// already ended (or is still live) is refused before any queue write;
 			// `supersedes:` in task.md is the only way to replace a finished run, and
@@ -1195,10 +1664,15 @@ export function pmActivate(pi: ExtensionAPI): void {
 					},
 				}),
 			onAlarm: (alarm) => {
-				if (dispatchAlarmsSeen.has(alarm.kind)) return;
-				dispatchAlarmsSeen.add(alarm.kind);
+				// The per-kind gate is for refusals only; a notice (`orphaned-keys`)
+				// is already deduped per key by the scan and must still reach the PM
+				// when a DIFFERENT key becomes orphaned later in the session.
+				if (!isNoticeDispatchAlarm(alarm.kind)) {
+					if (dispatchAlarmsSeen.has(alarm.kind)) return;
+					dispatchAlarmsSeen.add(alarm.kind);
+				}
 				recordDispatchAlarm(agenticdocRoot, alarm);
-				deliverPmAlert(pi, `[mw] dispatch 已拒绝：${describeDispatchAlarm(alarm)}`);
+				deliverPmAlert(pi, formatDispatchAlarm(alarm));
 			},
 		}).catch(() => {
 			// Dispatch errors are non-fatal — PM loop continues

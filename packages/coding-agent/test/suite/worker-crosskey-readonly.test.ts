@@ -125,6 +125,39 @@ function runningRow(root: string, key: string, taskKey: string): WorkerEntry {
 
 const FOREIGN = "mw-foreign";
 
+/** T-02: a compliant dispatch card (absolute path — the tool fixtures leave
+ * projectDir at its default). */
+function writeDispatchIssueCard(root: string): string {
+	const dir = path.join(root, "tasks-fixture");
+	fs.mkdirSync(dir, { recursive: true });
+	const cardPath = path.join(dir, "T-00-fixture.md");
+	fs.writeFileSync(
+		cardPath,
+		[
+			"type: research",
+			"",
+			"## 上下文",
+			"",
+			"crosskey fixture。种子锚点 .agenticdoc/goal.md；守卫入口 pm/ui-bridge.ts:82。",
+			"",
+			"## 要求",
+			"",
+			"AC-001 成立。",
+			"",
+			"## 交付格式",
+			"",
+			"report.md。",
+			"",
+			"## 唯一证据文件",
+			"",
+			"evidence/research/spec-crosskey-2026-01-01.md。",
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	return cardPath;
+}
+
 describe("cross-key writes are refused (AC-024)", () => {
 	it("dispatch_worker refuses an explicit foreign live key and writes nothing", async () => {
 		const root = mkdtemp();
@@ -166,6 +199,7 @@ describe("cross-key writes are refused (AC-024)", () => {
 		registerWorkerTools(pi, store, new AckStore(root), new IndexStore(root), root, { key: "mw-mine" });
 		const tool = tools.get("dispatch_worker");
 		if (!tool) throw new Error("dispatch_worker not registered");
+		const card = writeDispatchIssueCard(root);
 
 		for (const [taskKey, key] of [
 			["t-new", "mw-new"],
@@ -173,7 +207,7 @@ describe("cross-key writes are refused (AC-024)", () => {
 		] as const) {
 			const r = await tool.execute(
 				`id-${taskKey}`,
-				{ task_key: taskKey, description: "work", type: "research", key },
+				{ task_key: taskKey, card_path: card, description: "work", type: "research", key },
 				undefined,
 				undefined,
 				fakeToolCtx(),
@@ -511,7 +545,7 @@ describe("AC-008 key-identity branches (BR-07/BR-08)", () => {
 
 		const r = await tool.execute(
 			"id-implicit",
-			{ task_key: "t-implicit", description: "work", type: "research" },
+			{ task_key: "t-implicit", card_path: writeDispatchIssueCard(root), description: "work", type: "research" },
 			undefined,
 			undefined,
 			fakeToolCtx(),

@@ -140,20 +140,52 @@ def test_running_and_pending_are_distinct(tmp_path: pathlib.Path) -> None:
 # ── VC-014: missing run.json dispatches unchanged (zero backfill) ─────────────
 
 def test_missing_run_json_dispatches_byte_identically(tmp_path: pathlib.Path) -> None:
+    """No `run.json` -> the historical dispatch path (zero backfill).
+
+    Rebaselined 2026-10-12 (mw-dispatch-card-gate T-10): the conductor now
+    injects the canonical envelope for every dispatch, so the literal moved off
+    the pre-T-10 bare-prompt shape; the assertion stays byte-exact.
+
+    Rebaselined 2026-10-12 again (mw-dispatch-card-gate T-13): the dispatched
+    task.md now carries the producer identity line (the service layer's
+    old-producer vs. missing-section discriminator). Only that line was added;
+    the producer name is pinned literally and the version comes from the same
+    lockstep metadata source the producer reads.
+    """
     result = _dispatch(tmp_path)
     assert result.ok is True and result.row_verified is True
     assert result.task_md is not None and result.task_md.is_file()
-    # Literal from render_task_md (no phase/model/scope/target.yml): proving
-    # the no-run.json path is word-for-word the pre-change rendering.
     assert result.task_md.read_text(encoding="utf-8") == (
         "---\n"
         "type: phase-writer\n"
+        f"envelope_producer: autopilot-conductor@{dispatch.producer_version()}\n"
         "origin: conductor\n"
         "loop: exec:k1:t10\n"
         "attempt: 1\n"
         "---\n"
         "\n"
+        "## 上下文\n"
+        "\n"
+        "autopilot 自动派发（无任务卡；以下为种子，不是探索上界）。"
+        "type=phase-writer，loop=exec:k1:t10，attempt=1。触发/失败原因：Implement the change.。"
+        "证据路径：.agenticdoc/k1/workers/ap-k1-t10/trace.log、"
+        ".agenticdoc/k1/workers/ap-k1-t10/worker.log 及任务书要求段列出的判定源；"
+        "项目锚点 .agenticdoc/goal.md。\n"
+        "\n"
+        "## 要求\n"
+        "\n"
         "Implement the change.\n"
+        "\n"
+        "判据（可判定）：任务书列出的目标逐项满足，产物在本轮 worker 目录可核；"
+        "[VERIFY] 证据与结论闭合，未满足不得声称完成。\n"
+        "\n"
+        "## 交付格式\n"
+        "\n"
+        "交付格式：本轮产物集中在 .agenticdoc/k1/workers/ap-k1-t10/，报告与输出文件"
+        "（report.md / output.md）按任务书列出的必备段成节（结论 / 证据（含原始命令与输出）/ "
+        "审计未及范围 / 残留与未验证 / 上下文来源清单）。\n"
+        "\n"
+        "以上为种子，不是探索上界；可自行检索补充上下文。\n"
         "\n"
     )
     rows = mw_common.parse_workers_file(mw_common.workers_path(tmp_path))

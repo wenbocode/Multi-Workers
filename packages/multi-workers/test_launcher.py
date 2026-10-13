@@ -17,6 +17,44 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
+# A canonical, envelope-compliant `coding` task.md for the shared fixtures.
+# T-12/F-03 made the service boundary cross-check the artifact (canonical
+# headings / mtime), and the T-12 envelope contract requires the type extras,
+# so a pending-row fixture must be a real dispatch shape instead of the old
+# bare "type: coding\nDo something useful." stub. Reconcile tests that need a
+# stale mtime age the directory explicitly (`_age_task_dir`).
+_COMPLIANT_TASK_MD = (
+    "type: coding\n"
+    "\n"
+    "## 上下文\n"
+    "\n"
+    "背景：launcher 测试夹具；种子锚点 .agenticdoc/goal.md，判据 packages/multi-workers/launcher.py:1。\n"
+    "\n"
+    "## 要求\n"
+    "\n"
+    "Do something useful. AC-001 判据成立。\n"
+    "\n"
+    "## 交付格式\n"
+    "\n"
+    "产物 report.md。\n"
+    "\n"
+    "## 写入允许面\n"
+    "\n"
+    "仅本任务目录。\n"
+    "\n"
+    "## 写入禁止面\n"
+    "\n"
+    "其他 key 与 packages/**。\n"
+    "\n"
+    "## 验收命令\n"
+    "\n"
+    "python -X utf8 -m pytest packages/multi-workers -q\n"
+    "\n"
+    "## 改动历史\n"
+    "\n"
+    "trace.log 写入事件。\n"
+)
+
 import launcher
 import mw_common
 from launcher import (
@@ -67,7 +105,7 @@ def task_file(tmp_path: pathlib.Path) -> pathlib.Path:
     # Real convention: .agenticdoc/{key}/workers/<task_key>/task.md (4 levels).
     t = tmp_path / ".agenticdoc" / "test-key" / "workers" / "t001" / "task.md"
     t.parent.mkdir(parents=True, exist_ok=True)
-    t.write_text("type: coding\nDo something useful.", encoding="utf-8")
+    t.write_text(_COMPLIANT_TASK_MD, encoding="utf-8")
     return t
 
 
@@ -691,7 +729,7 @@ def _make_worker_dir(tmp_path: pathlib.Path, key: str) -> pathlib.Path:
     """Worker task dir with a real task.md (queue-row convention)."""
     d = tmp_path / ".agenticdoc" / "test-key" / "workers" / key
     d.mkdir(parents=True, exist_ok=True)
-    (d / "task.md").write_text("type: coding\nDo something useful.", encoding="utf-8")
+    (d / "task.md").write_text(_COMPLIANT_TASK_MD, encoding="utf-8")
     return d
 
 

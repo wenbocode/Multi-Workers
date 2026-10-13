@@ -16,7 +16,9 @@ import {
 	type RagRuntime,
 	registerRagTools,
 } from "../rag/tools.ts";
+import { appendWriteFileEvent, repoRelativePath } from "../shared/change-ledger.ts";
 import { hasDeliverableEvidence } from "../shared/deliverable-evidence.ts";
+import { DISPATCH_TYPE_VOCABULARY } from "../shared/dispatch-card.ts";
 import { roleForTaskType } from "../shared/dispatch-models.ts";
 import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
@@ -47,6 +49,7 @@ import {
 	appendToolError,
 	appendTrace,
 	formatMachineCheckpoint,
+	readTerminalGaps,
 	type WriteOutputOpts,
 	writeOutput,
 } from "./output-writer.ts";
@@ -109,6 +112,26 @@ const TOOL_ALLOWLISTS: Record<string, string[]> = {
 function isRegisteredType(taskType: string): boolean {
 	return taskType !== "fallback" && taskType in TOOL_ALLOWLISTS;
 }
+
+/**
+ * P-08 single source for the worker runtime's recognized vocabulary. This is
+ * the SAME constant the tool-layer envelope judge consults
+ * (`shared/dispatch-card.ts::DISPATCH_TYPE_VOCABULARY`), re-exported here so
+ * the runtime table (`TOOL_ALLOWLISTS`, plus the internal `default`/`fallback`
+ * buckets) and the gate can be locked together by
+ * `test/suite/dispatch-recovery-terminal.test.ts` instead of drifting. It is
+ * deliberately NOT `isRegisteredType`: that conductor fail-closed predicate
+ * must keep matching the Python REGISTRY entry-for-entry (T-17 L0).
+ */
+export const WORKER_TYPE_VOCABULARY: readonly string[] = DISPATCH_TYPE_VOCABULARY;
+
+/** The worker runtime's registered type keys (the tool-table entries, minus the
+ * internal `fallback` bucket). Exported only so
+ * `test/suite/dispatch-recovery-terminal.test.ts` can lock the subset relation
+ * against {@link WORKER_TYPE_VOCABULARY} (P-08 single source). */
+export const REGISTERED_WORKER_TYPES: readonly string[] = Object.keys(TOOL_ALLOWLISTS).filter(
+	(type) => type !== "fallback",
+);
 
 export function toolsForType(taskType: string): string[] {
 	return TOOL_ALLOWLISTS[taskType] ?? TOOL_ALLOWLISTS.fallback ?? [];
@@ -305,6 +328,11 @@ interface TaskMeta {
 	ragChatBudget?: number;
 	/** task.md `rag_time_budget_s:` header (positive int seconds), when present. */
 	ragTimeBudgetS?: number;
+	/** AC-007/T-07 escape hatch: task.md `allow_foreign_write: true` (the
+	 * audit-visible declaration T-02 records, also set by the
+	 * `--allow-foreign-write` dispatch flag). `true` is the only value that
+	 * opens the hatch; missing/false/any other value stays fail-closed. */
+	allowForeignWrite?: boolean;
 	/** AC-010/T-12: structure of the C2 contract markers read back from this
 	 * task book (see {@link writeSurfaceMarkerState}). */
 	writeSurfaceMarker: WriteSurfaceMarkerState;
@@ -355,6 +383,7 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 	let readByteCap: number | undefined;
 	let ragChatBudget: number | undefined;
 	let ragTimeBudgetS: number | undefined;
+	let allowForeignWrite: boolean | undefined;
 
 	for (const line of lines) {
 		const trimmed = line.trim();
@@ -452,6 +481,11 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 			const v = Number(trimmed.slice(RAG_TIME_BUDGET_HEADER.length).trim());
 			if (Number.isFinite(v) && v > 0) ragTimeBudgetS = v;
 		}
+		// AC-007/T-07 escape hatch: only the literal `true` (case-insensitive)
+		// opens the hatch; every other value (including absent) is fail-closed.
+		if (trimmed.startsWith("allow_foreign_write:")) {
+			allowForeignWrite = trimmed.slice("allow_foreign_write:".length).trim().toLowerCase() === "true";
+		}
 		if (trimmed.startsWith("- name:")) {
 			currentPhase = { name: trimmed.slice("- name:".length).trim(), prompt: "" };
 			phases.push(currentPhase);
@@ -492,6 +526,7 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 		readByteCap,
 		ragChatBudget,
 		ragTimeBudgetS,
+		allowForeignWrite,
 		writeSurfaceMarker: writeSurfaceMarkerState(content),
 	};
 }
@@ -1694,6 +1729,25 @@ function appendWriteScopeSummary(taskKey: string, agenticdocRoot: string, counts
 	}
 }
 
+/** Append one machine `[ESCAPE_HATCH] allow_foreign_write=<task_key>
+ * target=<path>` audit line (AC-007/T-07). Written for every foreign write the
+ * declared escape hatch lets through the bash write-surface guard, so the
+ * exception is never silent. Best-effort like every other trace append: a
+ * diagnostic failure must never break the write it audits. */
+function appendEscapeHatchTraceLine(taskKey: string, agenticdocRoot: string, target: string): void {
+	try {
+		const dir = path.resolve(agenticdocRoot, taskKey);
+		fs.mkdirSync(dir, { recursive: true });
+		fs.appendFileSync(
+			path.join(dir, "trace.log"),
+			`[ESCAPE_HATCH] allow_foreign_write=${taskKey} target=${target}\n`,
+			"utf8",
+		);
+	} catch {
+		// Diagnostic append — a failure must never break the write itself
+	}
+}
+
 // ── Idle-kill evidence (T-04/VC-004) ─────────────────────────────────────────
 
 /** Structured evidence emitted before any idle kill (VC-004/AC-005). Every
@@ -2186,6 +2240,16 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 					writeScopeCounts.allowDetermined += 1;
 					continue;
 				}
+				// AC-007/T-07 escape hatch: a declared, human-accepted foreign write is
+				// allowed and audited; missing/false stays fail-closed. The hard deny
+				// list (other keys, packages/**, .git/**, pm-state.md, _workers*) is an
+				// isolation red line (AC-008) and is deliberately NOT widened — the
+				// hatch covers an external target, not the framework's own files.
+				if (meta.allowForeignWrite === true && verdict.rule !== "deny") {
+					writeScopeCounts.allowDetermined += 1;
+					appendEscapeHatchTraceLine(meta.taskKey, meta.agenticdocRoot, candidate.target);
+					continue;
+				}
 				writeScopeCounts.deny += 1;
 				appendBashWriteScopeTraceLine(meta.taskKey, meta.agenticdocRoot, {
 					ts: new Date().toISOString(),
@@ -2257,6 +2321,16 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	let writeCount = 0;
 	const writeTargets = new Set<string>();
 	const readCounts = new Map<string, number>();
+	// T-05/AC-004: write/edit target keyed by toolCallId. `tool_execution_end`
+	// carries no args, so the path captured at start is what a successful end
+	// records; every end path (error included) clears the entry.
+	const pendingWriteTargets = new Map<string, string>();
+	// T-12/F-04: the KNOWN write targets of a shell command, captured at start
+	// (the end event carries no args) so a successful bash write is recorded as
+	// a change-history event too. Without this a coding worker that writes only
+	// through bash left the trace with zero events and the ⊆ judgement went
+	// blind (or false-red an honest declaration).
+	const pendingBashWrites = new Map<string, string[]>();
 	pi.on("tool_execution_start", (event) => {
 		toolCallCount++;
 		toolsUsed.add(event.toolName);
@@ -2275,12 +2349,43 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		} else if (WRITE_TOOLS.has(event.toolName)) {
 			writeCount++;
 			if (target) writeTargets.add(target);
+			pendingWriteTargets.set(event.toolCallId, target);
+		} else if (event.toolName === "bash") {
+			const command = (event.args as { command?: unknown } | undefined)?.command;
+			if (typeof command === "string" && command.trim() !== "") {
+				pendingBashWrites.set(
+					event.toolCallId,
+					extractBashWriteCandidates(command).map((candidate) => candidate.target),
+				);
+			}
 		}
 		appendTrace(meta.taskKey, meta.agenticdocRoot, `tool_call ${event.toolName}`);
 		appendTool(meta.taskKey, meta.agenticdocRoot, event.toolName, target);
 	});
 	pi.on("tool_execution_end", (event) => {
-		if (!event.isError) return;
+		const writeTarget = pendingWriteTargets.get(event.toolCallId);
+		pendingWriteTargets.delete(event.toolCallId);
+		const bashWrites = pendingBashWrites.get(event.toolCallId);
+		pendingBashWrites.delete(event.toolCallId);
+		if (!event.isError) {
+			// T-05/AC-004 change history: one `[WRITE_FILE] path=<repo-relative>`
+			// event per SUCCESSFUL write/edit, path only (never content). A failed
+			// call falls through to the [TOOL_ERR] branch and records nothing.
+			const tracePath = path.join(path.resolve(meta.agenticdocRoot, meta.taskKey), "trace.log");
+			if (writeTarget !== undefined && writeTarget !== "") {
+				appendWriteFileEvent(tracePath, repoRelativePath(writeTarget));
+			}
+			// T-12/F-04: a successful shell command records its known write
+			// targets as the same change-history events, so the bash channel is no
+			// longer invisible to the ledger. Unclassifiable commands record
+			// nothing (the extractor's documented fail-open) — the caller then
+			// sees an unjudgeable trace rather than a false green.
+			for (const bashTarget of bashWrites ?? []) {
+				if (bashTarget === "") continue;
+				appendWriteFileEvent(tracePath, repoRelativePath(bashTarget));
+			}
+			return;
+		}
 		toolErrorCount++;
 		appendToolError(meta.taskKey, meta.agenticdocRoot, event.toolName, toolErrorText(event.result));
 	});
@@ -2615,11 +2720,44 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		const evidence = isWritelessRole(meta.type)
 			? hasDeliverableEvidence(taskDir, lastAssistantText)
 			: { delivered: true, channel: "none" as const, detail: "write role" };
-		const exitCode: 0 | 2 = evidence.delivered ? 0 : 2;
+		// AC-003/AC-004 terminal flip (T-07): the recovery contract and the change
+		// ledger are judged HERE, before the single write-out, and folded into the
+		// exit code — so the output.md marker, `## Questions`, run.json.status and
+		// `[END] exit=` all carry the same verdict. Migration: a task book without
+		// a header `type:` is never judged (P-07/P-09), and a trace with no
+		// `[WRITE_FILE]` event yields no ledger gap.
+		// Recovery scope: a writeless role's reply IS its deliverable, so it is
+		// always judged; a write role is judged once it produced a `report.md`
+		// product — otherwise the AC-006/C5 exemption stands (a coding run's
+		// deliverable is the repository, and its terse settle summary is not a
+		// report). The change ledger below is judged for every role.
+		let reportProduct = false;
+		try {
+			reportProduct = fs.statSync(path.join(taskDir, "report.md")).size > 0;
+		} catch {
+			reportProduct = false;
+		}
+		const gaps = readTerminalGaps({
+			taskKey: meta.taskKey,
+			agenticdocRoot: meta.agenticdocRoot,
+			summary: buildSummary(),
+			judgeRecovery: isWritelessRole(meta.type) || reportProduct,
+		});
+		const exitCode: 0 | 2 = evidence.delivered && gaps.ok ? 0 : 2;
 		// AC-007/DD-09: carry the settle-time artifacts into the product so a
 		// `## Deliverables` section can list them (the writer drops output.md and
 		// progress.md, and omits the section when nothing is left).
 		const effort = `writes=${writesLabel()}`;
+		const gapReason = gaps.missingSections.length > 0 ? `missing section(s): ${gaps.missingSections.join(", ")}` : "";
+		const ledgerReason =
+			gaps.unrecordedFiles.length > 0 ? `unrecorded write(s): ${gaps.unrecordedFiles.join(", ")}` : "";
+		// T-12/F-04: zero write events with a declaration is unjudgeable, not a
+		// pass — name it so the settle reason and the exit code agree.
+		const unjudgeableReason =
+			gaps.unjudgeableFiles.length > 0
+				? `unjudgeable write(s) (trace has no [WRITE_FILE] event): ${gaps.unjudgeableFiles.join(", ")}`
+				: "";
+		const gapsReason = [gapReason, ledgerReason, unjudgeableReason].filter((part) => part !== "").join("; ");
 		writeOutputGuarded({
 			taskKey: meta.taskKey,
 			agenticdocRoot: meta.agenticdocRoot,
@@ -2628,9 +2766,16 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			changedFiles: collectArtifacts(taskDir),
 			verificationSteps: "See task output for details.",
 			exitReason: evidence.delivered
-				? `Agent settled after ${toolCallCount} tool call(s). ${effort}`
+				? gaps.ok
+					? `Agent settled after ${toolCallCount} tool call(s). ${effort}`
+					: `Agent settled after ${toolCallCount} tool call(s) without a recoverable product (${gapsReason}). ${effort}`
 				: `Agent settled after ${toolCallCount} tool call(s) without a deliverable: ${evidence.detail} ${effort}`,
-			questions: evidence.delivered ? undefined : `no-product: ${evidence.detail}`,
+			questions: evidence.delivered
+				? gaps.ok
+					? undefined
+					: `recovery-incomplete: ${gapsReason}`
+				: `no-product: ${evidence.detail}`,
+			terminalGaps: gaps,
 		});
 		if (!evidence.delivered) {
 			// The ledger root is the TRUE `.agenticdoc` root (meta.trueAgenticdocRoot),

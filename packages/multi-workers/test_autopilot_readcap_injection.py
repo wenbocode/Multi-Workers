@@ -923,7 +923,7 @@ def test_render_task_md_signature_shape() -> None:
     # commit order or the other (verified on a clean checkout of 7a864c1c7, where
     # only the three params below were present), so pin the known ordered prefix
     # and reject anything outside the known set.
-    _KNOWN_EXTRA = ["read_file_cap", "read_byte_cap", "images", "worker_timeout_min"]
+    _KNOWN_EXTRA = ["read_file_cap", "read_byte_cap", "images", "worker_timeout_min", "card"]
     assert extra[:3] == ["read_file_cap", "read_byte_cap", "images"], extra
     assert set(extra) <= set(_KNOWN_EXTRA), extra
     assert removed == [], removed
@@ -999,21 +999,32 @@ def test_vc009_images_zero_byte_and_position() -> None:
 #   test_autopilot_config.py    17 -> 20 config keys (G1/G2: l3_abort_retry_limit,
 #                               gate_reminder_after_min, gate_reminder_max), plus
 #                               the single-key accept / out-of-range reject cases.
+# Re-frozen again 2026-10-12 during mw-dispatch-card-gate T-10:
+#   test_autopilot_dispatch.py  the single-mode no-yml snapshot moved from the
+#                               bare-prompt bytes to the canonical T-10 envelope
+#                               (unconditional injection: card-less auto
+#                               dispatches now carry the synthesized sections).
+# Re-frozen again 2026-10-12 during mw-dispatch-card-gate T-13:
+#   test_autopilot_dispatch.py  the same snapshot gained the producer identity
+#                               line (envelope_producer: <producer>@<version>),
+#                               and its docstring records the rebaseline. Only
+#                               that one line moved; no assertion was relaxed
+#                               or removed.
 # The assertion is byte-exact and unchanged in strength; only its recorded left
 # end moved off the pre-change git HEAD.
 _GOLDEN_REGRESSION_SHA256 = {
     "test_autopilot_config.py":
         "27b222b9d166325b536a27c01f106b9304d360ecfab451bbe8082324fd973f40",
     "test_autopilot_dispatch.py":
-        "66cf1f5f6658c8e50284e7fd761cbaebd415f2e4b2216f15d7fb81680b73e902",
+        "a084ed658e43a4374055e5ba6008dd36b4d9762bc79bfbfece90cf3234a009c6",
 }
 
 
 def test_existing_regression_files_untouched() -> None:
     """AC-015 / D-012: the two pre-existing regression files (golden left end
     for AC-007/AC-008) are byte-unchanged vs their frozen golden sha256
-    (re-frozen 2026-09-26, T-14). Assertion-only (no [VERIFY] line): the hashes
-    are recorded in the runner's result JSON."""
+    (test_autopilot_dispatch.py re-frozen 2026-10-12, T-10). Assertion-only (no
+    [VERIFY] line): the hashes are recorded in the runner's result JSON."""
     for name, gold in _GOLDEN_REGRESSION_SHA256.items():
         live = hashlib.sha256((MODULE_DIR / name).read_bytes()).hexdigest()
         assert live == gold, (name, live, gold)

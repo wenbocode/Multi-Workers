@@ -10,6 +10,7 @@ Fake CLI contract: the task prompt carries directives the fake understands:
   SLEEP<ms>    sleep n milliseconds first
 Each invocation appends invocation-NNN.txt under $FAKE_MARK_DIR.
 """
+import datetime
 import json
 import os
 import pathlib
@@ -208,7 +209,14 @@ def _make_task(
     task_dir.mkdir(parents=True, exist_ok=True)
     task_md = task_dir / "task.md"
     task_md.write_text(f"type: coding\n\n{prompt}\n", encoding="utf-8")
-    now = mw_common.iso_now()
+    # T-09 fixture data: this is a legacy-shaped card (no canonical envelope),
+    # so the row must predate ENVELOPE_ENFORCE_SINCE to stay exempt. The
+    # criterion is not loosened — only the fixture's creation time moves.
+    # T-12/F-03 adds a second cross-check (task.md mtime vs the row timestamp),
+    # so pin the FILE time to the same fixture instant too.
+    now = "2026-08-14T00:00:00+00:00"
+    pinned = datetime.datetime.fromisoformat(now).timestamp()
+    os.utime(task_md, (pinned, pinned))
     row = mw_common.serialize_entry({
         "task_key": key, "status": "pending", "cli": cli, "provider": provider,
         "task_path": str(task_md), "dispatched_at": now, "updated_at": now,

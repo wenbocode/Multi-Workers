@@ -50,14 +50,26 @@ export declare function autoTakeOverFromDoc(pi: ExtensionAPI, indexStore: IndexS
  * another live window took it over in the meantime. */
 export declare function restoreWatch(pi: ExtensionAPI, watch: PmWatchState, indexStore: IndexStore, workerStore: WorkerStore, ackStore: AckStore, agenticdocRoot: string, ctx: ExtensionContext): Promise<void>;
 /** Why a dispatch scan refused to queue anything (AC-020/AC-021). */
-export type DispatchAlarmKind = "queue-rows-unparsable" | "queue-unreadable" | "dispatch-quota" | "out-of-scope" | "run-ledger-conflict" | "no-product" | "write-scope-risk";
+export type DispatchAlarmKind = "queue-rows-unparsable" | "queue-unreadable" | "dispatch-quota" | "out-of-scope" | "orphaned-keys" | "run-ledger-conflict" | "no-product" | "write-scope-risk" | "orphan-repair-skipped";
 export interface DispatchAlarm {
     kind: DispatchAlarmKind;
     count: number;
     detail?: string;
 }
-/** One-line human text for a refused dispatch scan (AC-020/AC-021). */
+/** Alarm kinds that are NOT refusals — the scan made a scope/ownership
+ * observation. Their text must stay neutral (`[mw] dispatch 提示：…`); only
+ * real refusal kinds may say `[mw] dispatch 已拒绝：…` (AC-011/T-19). */
+export declare const NOTICE_DISPATCH_ALARM_KINDS: ReadonlySet<DispatchAlarmKind>;
+/** Is this alarm a notice (neutral wording) rather than a refusal? */
+export declare function isNoticeDispatchAlarm(kind: DispatchAlarmKind): boolean;
+/** One-line human text for a refused dispatch scan (AC-020/AC-021). Notice
+ * kinds carry neutral wording; the verdict prefix is added by
+ * {@link formatDispatchAlarm} (AC-011/T-19). */
 export declare function describeDispatchAlarm(alarm: DispatchAlarm): string;
+/** The full PM alert line for one alarm (AC-011/T-19): only real refusal kinds
+ * carry the `已拒绝` verdict — a notice (`out-of-scope` / `orphaned-keys`) says
+ * `提示` and never reads as a refusal. */
+export declare function formatDispatchAlarm(alarm: DispatchAlarm): string;
 /** Append one machine-readable alarm row to the autopilot ledger
  * (`.agenticdoc/_autopilot/auto-decisions.jsonl`, AC-020/AC-021). The shape
  * mirrors the Python single writer (`conductor._append_auto_decision_row`):
@@ -127,7 +139,65 @@ export interface DispatchScanOptions {
     /** Alarm sink (AC-020/AC-021). Production wires it to the ledger row (and
      * from there to the PM alert); the scan itself never invents a write path. */
     onAlarm?: (alarm: DispatchAlarm) => void;
+    /** ORPHANED keys already alerted in this session (AC-011/T-19) — the
+     * `orphaned-keys` alarm is once per key per session, so a key that stays
+     * orphaned does not re-wake the PM on every settled turn. */
+    orphanedWarned?: Set<string>;
+    /** Keys already reported by the (T-22) "has work, no owner record" notice —
+     * once per key per session, mirroring `orphanedWarned`. The notice reuses the
+     * `out-of-scope` kind; the scan still writes nothing for these keys (no
+     * `_index.parallel` row, no queue row, no task-dir mutation). */
+    unregisteredWarned?: Set<string>;
 }
+/** Marker/skeleton of the service-layer envelope fallback, byte-mirrored from
+ * `packages/multi-workers/launcher.py` (T-14, `envelope_fallback_inject`): the
+ * same marker keeps the injection idempotent, and the same `[ENVELOPE_FALLBACK]`
+ * audit token makes the fallback greppable on both sides. */
+export declare const ENVELOPE_FALLBACK_MARKER = "<!-- mw-envelope-fallback -->";
+export declare const ENVELOPE_FALLBACK_AUDIT = "[ENVELOPE_FALLBACK]";
+/** Canonical-envelope skeleton for a refused card, or `null` when the card
+ * cannot be made compliant without inventing facts (missing/unknown `type:`).
+ *
+ * AC-011e / T-14 semantics, re-implemented on the TS side so a claim-free
+ * repair does not depend on the project's `envelope_fallback` config (the very
+ * config an old-form project does not have): only the MISSING pieces are
+ * appended — the card's own frontmatter and body are untouched — and the
+ * result is re-judged before it is returned. A skeleton that still fails yields
+ * `null` and the caller stays fail-closed. Existing `[ENVELOPE_FALLBACK]`
+ * marker ⇒ idempotent passthrough. */
+export declare function synthesizeEnvelopeFallback(text: string): string | null;
+/** Outcome of one key's claim-free repair dispatch. */
+export interface OrphanRepairResult {
+    key: string;
+    /** Task keys actually queued (claim-free: only `_workers.parallel` moved). */
+    queued: string[];
+    /** Tasks the run-identity gate refused (terminal / active product). */
+    refused: Array<{
+        taskKey: string;
+        reason: RunIdentityRefusal;
+        detail?: string;
+    }>;
+    /** Old-form cards rewritten with the service-layer skeleton. */
+    synthesized: string[];
+    /** Old-form cards that could not be synthesized without inventing facts. */
+    unsynthesizable: string[];
+}
+export interface OrphanRepairOptions {
+    /** Single-call quota; defaults to the project's `dispatch_max_per_scan`. */
+    maxPerScan?: number;
+    /** Run-identity gate (AC-022); defaults to {@link evaluateRunIdentity} with
+     * zero-backfill semantics (a candidate without a run record passes). */
+    runVerdict?: DispatchScanOptions["runVerdict"];
+}
+/** Claim-free repair dispatch for one ORPHANED key (AC-011/T-19).
+ *
+ * Scans `{key}/workers/<task-key>/task.md`, skips already-queued and conductor-owned
+ * tasks, applies the run-identity gate, synthesizes the service-layer envelope
+ * for old-form cards (with an `[ENVELOPE_FALLBACK]` audit), and queues the
+ * candidate through {@link dispatchTask}. It never reads-modify-writes
+ * `_index.parallel`, so the conductor's eligibility predicate is untouched: the
+ * repair does not "take over" the key, it only unblocks its undispatched work. */
+export declare function repairDispatchOrphanedKey(workerStore: WorkerStore, agenticdocRoot: string, key: string, opts?: OrphanRepairOptions): Promise<OrphanRepairResult>;
 export declare function dispatchNewTasks(workerStore: WorkerStore, agenticdocRoot: string, opts?: DispatchScanOptions): Promise<void>;
 /** Session entry type recording a delivered gate reminder. Read back on
  * restart/resume so the same ledger row is never pushed twice (design D-010).

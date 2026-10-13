@@ -167,13 +167,47 @@ async function runWorkerCommand(
 	root: string,
 	args: string,
 	watchKey: string | undefined = undefined,
+	cardKey?: string,
 ): Promise<{ notifications: NotifyRecord[]; store: WorkerStore; tools: Map<string, { execute: ToolExecute }> }> {
 	const { pi, commands, tools, notifications, ctx } = fakePi();
 	const store = new WorkerStore(root);
 	registerWorkerCommands(pi, store, new IndexStore(root), root, { key: watchKey }, root);
 	const handler = commands.get("worker");
 	if (!handler) throw new Error("/worker not registered");
-	await handler(args, ctx);
+	// T-02: allowed-key fixtures opt in with a compliant card + --card flag; the
+	// refusal fixtures must stay card-free so their before/after tree snapshot is
+	// untouched by fixture setup.
+	let effectiveArgs = args;
+	if (cardKey !== undefined) {
+		const taskDir = path.join(root, cardKey, "tasks");
+		fs.mkdirSync(taskDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(taskDir, "T-00-fixture.md"),
+			[
+				"type: research",
+				"",
+				"## 上下文",
+				"",
+				"worker guard fixture。种子锚点 .agenticdoc/goal.md；作用点 pm/ui-bridge.ts:82 的只读守卫。",
+				"",
+				"## 要求",
+				"",
+				"AC-001 成立。",
+				"",
+				"## 交付格式",
+				"",
+				"report.md。",
+				"",
+				"## 唯一证据文件",
+				"",
+				"evidence/research/spec-worker-guard-2026-01-01.md。",
+				"",
+			].join("\n"),
+			"utf8",
+		);
+		effectiveArgs = args.replace(/^(\S+)\s*/, `$1 --card ${cardKey}/tasks/T-00-fixture.md `);
+	}
+	await handler(effectiveArgs, ctx);
 	return { notifications, store, tools };
 }
 
@@ -215,7 +249,12 @@ describe("AC-003 allowed keys (VC-010)", () => {
 		const root = mkdtemp();
 		writeOwnClaim(root, "mw-mine");
 		writePhaseDocs(root, "mw-mine");
-		const { notifications, store } = await runWorkerCommand(root, "pi --type research --key mw-mine work", "mw-mine");
+		const { notifications, store } = await runWorkerCommand(
+			root,
+			"pi --type research --key mw-mine work",
+			"mw-mine",
+			"mw-mine",
+		);
 
 		expect(notifications.some((n) => n.message.includes(CROSS_KEY_READ_ONLY))).toBe(false);
 		expect(notifications.some((n) => n.message.includes("Dispatched pi worker"))).toBe(true);
@@ -228,7 +267,12 @@ describe("AC-003 allowed keys (VC-010)", () => {
 	it("unclaimed key passes (new-key bootstrap)", async () => {
 		const root = mkdtemp();
 		writePhaseDocs(root, "mw-new");
-		const { notifications, store } = await runWorkerCommand(root, "pi --type research --key mw-new work");
+		const { notifications, store } = await runWorkerCommand(
+			root,
+			"pi --type research --key mw-new work",
+			undefined,
+			"mw-new",
+		);
 
 		expect(notifications.some((n) => n.message.includes(CROSS_KEY_READ_ONLY))).toBe(false);
 		expect(notifications.some((n) => n.message.includes("Dispatched pi worker"))).toBe(true);
@@ -239,7 +283,12 @@ describe("AC-003 allowed keys (VC-010)", () => {
 
 	it("_scratch passes", async () => {
 		const root = mkdtemp();
-		const { notifications, store } = await runWorkerCommand(root, "pi --type research --key _scratch work");
+		const { notifications, store } = await runWorkerCommand(
+			root,
+			"pi --type research --key _scratch work",
+			undefined,
+			"_scratch",
+		);
 
 		expect(notifications.some((n) => n.message.includes(CROSS_KEY_READ_ONLY))).toBe(false);
 		expect(notifications.some((n) => n.message.includes("Dispatched pi worker"))).toBe(true);

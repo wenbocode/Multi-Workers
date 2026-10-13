@@ -36,6 +36,7 @@ import {
 	writeDispatchTaskMd,
 } from "../../src/extensions/agent-team-loop/pm/ui-bridge.ts";
 import {
+	type BashWriteCandidate,
 	type BashWriteScopeConfig,
 	type BashWriteScopeVerdict,
 	checkBashWriteScopeTarget,

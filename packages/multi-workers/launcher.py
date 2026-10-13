@@ -35,6 +35,7 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import mw_common
+from autopilot import config as autopilot_config
 from mw_common import (
     acquire_lock as _acquire_lock,
     load_providers as _load_providers,
@@ -67,6 +68,40 @@ def _record_spawn_failure(entry: dict[str, str], msg: str) -> None:
             fh.write(f"[launcher] spawn failed ({mw_common.iso_now()}): {msg}\n")
     except OSError:
         pass  # best-effort; the launcher.log line still carries the reason
+
+
+def _record_envelope_failure(
+    entry: dict[str, str],
+    reason: str,
+    guidance: list[str] | None = None,
+) -> None:
+    """Persist an envelope refusal into the task's worker.log (T-03/T-14).
+
+    The exact line required by the card is
+    ``[launcher] envelope missing: <items> (<path>)`` — the queue row only
+    carries a status, so without this the failed row would be undiagnosable.
+    T-14 adds optional ``guidance`` lines (one actionable upgrade pointer for
+    the skew/legacy branches) written right after the reason. Never raises
+    (best-effort, same family as _record_spawn_failure).
+    """
+    try:
+        log_path = _worker_log_path(entry)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(f"[launcher] {reason}\n")
+            for line in guidance or []:
+                fh.write(f"[launcher] {line}\n")
+            # T-09: a row with no creation timestamp is judged fail-closed and
+            # can never show up in the boundary arithmetic afterwards, so
+            # stamp the inspection time into the same failure record.
+            if not _row_created_raw(entry):
+                fh.write(
+                    f"[launcher] envelope created={mw_common.iso_now()} "
+                    "(row carried no creation timestamp)\n"
+                )
+    except OSError:
+        pass
+    print(f"[launcher] {entry['task_key']}: {reason}", file=sys.stderr, flush=True)
 
 
 def _record_reconcile(entry: dict[str, str], reason: str) -> None:
@@ -475,6 +510,805 @@ def _validate_task_path(project_dir: pathlib.Path, task_path: str) -> None:
             ".agenticdoc/{key}/workers/<task_key>/task.md (or _scratch/workers/...); "
             "the .agenticdoc root belongs to AgenticTask keys"
         )
+
+
+# ── Dispatch envelope gate (G-3, mw-dispatch-card-gate T-03) ──────────────────
+#
+# The service layer is the only queue consumer that sees all four dispatch
+# producers (dispatch_worker, /worker, conductor direct writes, hand-written
+# rows), so it re-checks the envelope contract on its own — no TS import. The
+# constants and the judgement below are a line-for-line Python mirror of the
+# frozen TS leaf `packages/coding-agent/src/extensions/agent-team-loop/shared/
+# dispatch-card.ts` (T-01); the shared source is the card corpus research
+# (evidence/research/spec-card-format-corpus-20261012.md §0.2). A parity test
+# drives the real TS module through node and diffs the two verdicts, so the
+# mirror cannot drift silently (P-04).
+#
+# Migration rule (T-03 signal, superseded by T-09's time boundary): T-03
+# judged only cards that declared a signal (a canonical G-2 section heading or
+# a `card_path:` header), which left exactly the two tool-bypassing producers
+# — conductor direct writes and hand-written rows — uncovered, since they
+# simply omit the signal. T-09 keeps that signal definition
+# (:func:`_envelope_declaring`, now inert) but moves the decision to the queue
+# row's creation time versus ENVELOPE_ENFORCE_SINCE: before the boundary a
+# historical dispatch is exempt; at/after it every row is judged (fail-closed).
+# The strict-titles over-refusal that motivated the original opt-in is handled
+# by the cutover date (history is never re-judged), not by the signal.
+
+# Cutover boundary for the service-layer envelope gate (T-09). A queue row
+# created before this UTC date is a historical dispatch and stays exempt
+# (P-07/P-09); a row created at/after it is judged whether or not the card
+# declares a signal. This is a one-time migration boundary, not a runtime
+# toggle: it is deliberately a constant (no env knob) so a stray environment
+# variable cannot silently disable the gate.
+ENVELOPE_ENFORCE_SINCE: str = "2026-10-12"
+
+ENVELOPE_SECTIONS: tuple[str, ...] = ("context", "requirements", "deliverables")
+
+ENVELOPE_SECTION_LABELS: dict[str, str] = {
+    "context": "上下文",
+    "requirements": "要求",
+    "deliverables": "交付格式",
+}
+
+# Heading families, ordered (first hit wins): deliverables > context >
+# requirements (mirror of ENVELOPE_HEADING_FAMILIES).
+ENVELOPE_HEADING_FAMILIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("deliverables", (
+        "交付物", "交付", "预期产出", "预期产物", "产物", "输出", "证据格式",
+        "证据", "报告要求", "回执", "Deliverable", "Expected Output", "Artifact",
+    )),
+    ("context", (
+        "背景", "上下文", "问题", "现状", "动机", "根因", "缺陷", "偏差",
+        "目标", "描述", "输入", "前置", "范围",
+        "Context", "Motivation", "Rationale", "Why", "Goal", "Objective",
+        "Description", "Input", "Scope",
+    )),
+    ("requirements", (
+        "要求", "任务", "契约", "验收", "验证", "完成判定", "完成判据", "判据",
+        "行为", "测试", "接口", "用例", "协议", "内容", "标准", "做法", "策略",
+        "断言", "规范", "编码", "对照", "反例", "反向", "必须", "实现", "步骤",
+        "改动", "变更", "Acceptance Criteria", "Requirement", "Expected Behavior",
+        "[VERIFY]", "AC ", "VC ", "TDD",
+    )),
+)
+
+# Paragraph-semantic fallback hints, scanned line-wise over the whole text.
+ENVELOPE_BODY_HINTS: dict[str, re.Pattern[str]] = {
+    "context": re.compile(r"背景|动机|原因|由于|因为|现状|痛点|为什么|为何|根因"),
+    "requirements": re.compile(r"AC-\d+|VC-\d+", re.IGNORECASE),
+    "deliverables": re.compile(r"report\.md|progress\.md|output\.md|evidence/|回执"),
+}
+
+# Bullet/field key predicates for the paragraph-semantic fallback.
+ENVELOPE_BULLET_KEYS: dict[str, re.Pattern[str]] = {
+    "context": re.compile(r"^(背景|动机|问题|现状|范围|规格|目的|前提)$"),
+    "requirements": re.compile(r"要求|规格|验收|必须|步骤|实现|改动|协议|契约|条件"),
+    "deliverables": re.compile(r"产物|交付|佐证|证据|输出|结果|报告"),
+}
+
+# Type-specific extra item names (design §1.2), in reporting order.
+CODING_EXTRA_SECTIONS: tuple[str, ...] = ("写入允许面", "写入禁止面", "验收命令", "改动历史")
+RESEARCH_EXTRA_SECTIONS: tuple[str, ...] = ("唯一证据文件",)
+REVIEW_EXTRA_SECTIONS: tuple[str, ...] = ("审计目标", "未覆盖面声明")
+
+TYPE_EXTRA_SECTIONS: dict[str, tuple[str, ...]] = {
+    "coding": CODING_EXTRA_SECTIONS,
+    "research": RESEARCH_EXTRA_SECTIONS,
+    "review": REVIEW_EXTRA_SECTIONS,
+}
+
+# Legitimate PM-dispatchable roles with no T-01 extra rules: they pass the
+# extras check instead of being reported as unknown (the design §1.2 extras
+# for them are out of T-01's card scope, so the service layer must not invent
+# a stricter rule — P-04).
+TYPES_WITHOUT_EXTRA_RULES: tuple[str, ...] = ("vision", "rag-research")
+
+# Single-source dispatch type vocabulary (mirror of the TS
+# `DISPATCH_TYPE_VOCABULARY` in `shared/dispatch-card.ts`, T-07/P-08). Every
+# in-use role is known; `type_extras_missing` only names a genuinely unknown
+# value. The Python mirror must move with the TS tuple or the T-27 cross-
+# language parity test goes red (T-07 owns the TS side, this file owns the
+# mirror — its write surface forbids launcher.py).
+DISPATCH_TYPE_VOCABULARY: tuple[str, ...] = (
+    "coding", "review", "research", "rag-research", "vision",
+    "verifier", "reviewer", "repair", "phase-writer", "roadmap-writer", "codex",
+)
+
+# Item-name patterns for type_extras_missing; keys mirror TYPE_EXTRA_SECTIONS.
+TYPE_EXTRA_PATTERNS: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
+    "coding": (
+        ("写入允许面", re.compile(r"写入允许面|允许写入|允许写|写入范围|写面|write_scope|allow[-_ ]?write", re.IGNORECASE)),
+        ("写入禁止面", re.compile(r"写入禁止面|禁止写入|禁止写|不得写|写入禁区|禁止范围|deny[-_ ]?write|forbid", re.IGNORECASE)),
+        ("验收命令", re.compile(r"验收命令|验证命令|验收标准|验收判据|验收方式|验收|完成判据|acceptance", re.IGNORECASE)),
+        ("改动历史", re.compile(r"改动历史|改动清单|变更历史|写入事件|trace\.log|write[-_ ]?history|change[-_ ]?log", re.IGNORECASE)),
+    ),
+    "research": (
+        ("唯一证据文件", re.compile(r"唯一证据文件|唯一证据|唯一产物|仅此一写|sole[-_ ]?evidence", re.IGNORECASE)),
+    ),
+    "review": (
+        ("审计目标", re.compile(r"审计目标|审计问题|审计对象|审计范围|审计维度|问题域|要回答|audit[-_ ]?(target|scope|question)", re.IGNORECASE)),
+        ("未覆盖面声明", re.compile(r"未覆盖面|未覆盖声明|未覆盖范围|未及范围|未查看|未探索|未涉及|not[-_ ]?covered|out[-_ ]?of[-_ ]?scope", re.IGNORECASE)),
+    ),
+}
+
+_HEADING_RE = re.compile(r"^(#{2,6})\s+(.*)$")
+_BULLET_LABEL_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*)?([^:：]{1,48}?)(?:\*\*)?\s*[:：]")
+_FIELD_LABEL_RE = re.compile(r"^\s*(?:\*\*)?([A-Za-z_][A-Za-z0-9_.-]{0,40})(?:\*\*)?\s*:")
+_CARD_TYPE_RE = re.compile(r"(?:^|[\s|｜>*+-])type:\s*([^\s|｜]+)")
+_ENVELOPE_CARD_PATH_RE = re.compile(r"^card_path:[ \t]*\S", re.MULTILINE)
+# The exact headings the G-2 generator injects (T-02): their presence is the
+# new-dispatch opt-in. Legacy/conductor task.md files do not carry them, so
+# they stay exempt (design P-03: over-refusal is a contract violation too).
+_ENVELOPE_CANONICAL_HEADING_RE = re.compile(
+    r"^[ \t]*#{2,6}[ \t]*(?:上下文|要求|交付格式)[ \t]*#*[ \t]*$", re.MULTILINE
+)
+
+
+def _envelope_split_lines(text: str) -> list[str]:
+    """Same newline folding as the TS `splitLines` (BOM strip, CR/CRLF/U+2028
+    /U+2029 -> LF, drop one trailing empty line, trim every line)."""
+    body = text[1:] if text.startswith("\ufeff") else text
+    lines = re.sub(r"\r\n?|[\u2028\u2029]", "\n", body).split("\n")
+    if len(lines) > 1 and lines[-1] == "":
+        lines.pop()
+    return [line.strip() for line in lines]
+
+
+def _read_card_type(lines: list[str]) -> str:
+    """First `type:` in the card prologue (lines before the first H2+ heading).
+
+    A body-level `type:` never flips the role (mirror of the TS `readCardType`
+    / the F-10 body-type exclusion)."""
+    end = len(lines)
+    for i, line in enumerate(lines):
+        if _HEADING_RE.match(line):
+            end = i
+            break
+    for i in range(end):
+        match = _CARD_TYPE_RE.search(lines[i])
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _strip_numbering(text: str) -> str:
+    """Strip a leading `1.` / `1.2.` / `(2)` / `A.` / `一、` numbering prefix."""
+    out = text.strip()
+    out = re.sub(r"^[（(]\s*[0-9A-Za-z一二三四五六七八九十]+\s*[)）]\s*", "", out)
+    out = re.sub(r"^[0-9]+(?:\.[0-9]+)*\s*[.、)）]\s*", "", out)
+    out = re.sub(r"^[A-Za-z]\s*[.、)）]\s*", "", out)
+    out = re.sub(r"^[一二三四五六七八九十]+\s*[、.)）]\s*", "", out)
+    return out.strip()
+
+
+def _classify_heading(heading: str) -> str | None:
+    """First heading family the heading belongs to (deliverables > context > req)."""
+    lower = heading.lower()
+    for section, tokens in ENVELOPE_HEADING_FAMILIES:
+        for token in tokens:
+            if lower.startswith(token.lower()):
+                return section
+    return None
+
+
+def _label_of(line: str) -> str | None:
+    """A bullet/field label in the card (`- 允许写：…`, `write_scope: …`)."""
+    bullet = _BULLET_LABEL_RE.match(line)
+    if bullet:
+        return bullet.group(1).strip()
+    field = _FIELD_LABEL_RE.match(line)
+    if field:
+        return field.group(1).strip()
+    return None
+
+
+def _any_label_matches(lines: list[str], key_re: re.Pattern[str]) -> bool:
+    for line in lines:
+        label = _label_of(line)
+        if label is not None and key_re.search(label):
+            return True
+    return False
+
+
+def _collect_headings(lines: list[str]) -> list[tuple[int, str, int]]:
+    """(level, stripped text, line index) for every H2..H6 heading."""
+    headings: list[tuple[int, str, int]] = []
+    for i, line in enumerate(lines):
+        match = _HEADING_RE.match(line)
+        if match:
+            headings.append((len(match.group(1)), _strip_numbering(match.group(2)), i))
+    return headings
+
+
+def _body_semantic_hit(section: str, lines: list[str]) -> bool:
+    if any(ENVELOPE_BODY_HINTS[section].search(line) for line in lines):
+        return True
+    return _any_label_matches(lines, ENVELOPE_BULLET_KEYS[section])
+
+
+def _detect_sections(lines: list[str]) -> dict[str, str]:
+    """Wide (T1e) detection: a heading family with a non-empty body, else the
+    paragraph-semantic fallback (body hint or bullet/field key)."""
+    detected: dict[str, str] = {section: "" for section in ENVELOPE_SECTIONS}
+    headings = _collect_headings(lines)
+    for i, (level, text, line_no) in enumerate(headings):
+        section = _classify_heading(text)
+        if section is None or detected[section] != "":
+            continue
+        end = len(lines)
+        for j in range(i + 1, len(headings)):
+            if headings[j][0] <= level:
+                end = headings[j][2]
+                break
+        if any(lines[k] != "" for k in range(line_no + 1, end)):
+            detected[section] = f"heading:{text}"
+    for section in ENVELOPE_SECTIONS:
+        if detected[section] == "" and _body_semantic_hit(section, lines):
+            detected[section] = "semantics"
+    return detected
+
+
+def inspect_envelope(text: str) -> tuple[bool, list[str], str, dict[str, str]]:
+    """(ok, missing, type, detected) — Python mirror of the TS `inspectEnvelope`.
+
+    Judgement only; the caller decides the action. A missing `type:` and every
+    undetected section are named by their stable key (`type`, `context`, ...).
+    """
+    lines = _envelope_split_lines(text)
+    task_type = _read_card_type(lines)
+    detected = _detect_sections(lines)
+    missing: list[str] = []
+    if task_type == "":
+        missing.append("type")
+    for section in ENVELOPE_SECTIONS:
+        if detected[section] == "":
+            missing.append(section)
+    return (not missing, missing, task_type, detected)
+
+
+def type_extras_missing(task_type: str, text: str) -> list[str]:
+    """Item names for the declared type's missing extras (mirror of TS).
+
+    A known vocabulary role without extra rules (`vision`, `rag-research`, and
+    the runtime registry roles `verifier` / `repair` / `phase-writer` / ... )
+    passes; only a genuinely unknown type returns `["unknown-type:<type>"]`.
+    """
+    patterns = TYPE_EXTRA_PATTERNS.get(task_type)
+    if patterns is None:
+        # P-08 (T-07): every in-use role is in the single-source vocabulary, so
+        # it passes the extras check; only a genuinely unknown value is named.
+        return [] if task_type in DISPATCH_TYPE_VOCABULARY else [f"unknown-type:{task_type}"]
+    lines = _envelope_split_lines(text)
+    missing: list[str] = []
+    for item, pattern in patterns:
+        if item in text:
+            continue
+        if _any_label_matches(lines, pattern):
+            continue
+        heading_hit = False
+        for line in lines:
+            heading = _HEADING_RE.match(line)
+            if heading and pattern.search(_strip_numbering(heading.group(2))):
+                heading_hit = True
+                break
+        if not heading_hit:
+            missing.append(item)
+    return missing
+
+
+def has_canonical_envelope(text: str) -> bool:
+    """True when `text` carries a G-2 canonical section heading.
+
+    The canonical `上下文 / 要求 / 交付格式` triple is the shape every current
+    generator injects (T-02 `writeDispatchTaskMd`, T-10 `render_task_md`), so a
+    task.md carrying it has been through a live writer (or was forged that
+    way). Public and shared with `card_audit.audit()` (T-12/F-06) so the service
+    boundary and the traceability audit cannot drift on the "this is a
+    new-shape dispatch" signal.
+    """
+    return _ENVELOPE_CANONICAL_HEADING_RE.search(text) is not None
+
+
+def _envelope_declaring(text: str) -> bool:
+    """True when the card declares the envelope signal (canonical heading or
+    a `card_path:` header).
+
+    Historical only: T-09 moved the *decision to judge* from this signal to
+    the row's creation time versus :data:`ENVELOPE_ENFORCE_SINCE`
+    (:func:`_envelope_enforced`), because the signal itself was the loophole
+    — a card that simply omitted both shapes bypassed the gate. The function
+    is retained as the named definition of the signal (audits/tests) and is
+    no longer consulted by :func:`_envelope_refusal`.
+    """
+    if _ENVELOPE_CARD_PATH_RE.search(text):
+        return True
+    return has_canonical_envelope(text)
+
+
+def _row_created_raw(entry: dict[str, str]) -> str:
+    """The row's creation timestamp (raw string), or "" when it has none.
+
+    T-12/F-03: the `created` field was dead code — `mw_common.parse_worker_line`
+    never produces that key and no writer stamps it — so the priority branch is
+    removed rather than kept unexercised. `dispatched_at` is the one creation
+    time every producer writes. `updated_at` stays deliberately absent: reaps
+    and reconciles rewrite it, so it is not a creation time and must not move a
+    historical row past the cutover.
+    """
+    return (entry.get("dispatched_at") or "").strip()
+
+
+def envelope_enforce_since_epoch() -> float:
+    """`ENVELOPE_ENFORCE_SINCE` as a POSIX timestamp (UTC midnight).
+
+    Public so `card_audit` (T-12/F-06) uses the same constant and the same
+    arithmetic as the service gate — one boundary, not two.
+    """
+    ts = _parse_utc_ts(ENVELOPE_ENFORCE_SINCE)
+    # The constant is a module literal; a parse failure would be a bug, but
+    # fail closed (every row judged) rather than silently open the gate.
+    return ts.timestamp() if ts is not None else 0.0
+
+
+def _envelope_enforced(entry: dict[str, str]) -> bool:
+    """True when this pending row must pass the envelope gate (T-09/T-12).
+
+    The decision is the row's creation time versus
+    :data:`ENVELOPE_ENFORCE_SINCE`, cross-checked against the artifact because
+    the bare row timestamps are hand-writable plain text in
+    `_workers.parallel` (T-12/F-03):
+
+    * a task.md that already carries a G-2 canonical heading has been through a
+      current generator, so the row is judged unconditionally;
+    * a task.md whose mtime is later than the row's own `dispatched_at` cannot
+      predate the dispatch, so the row timestamp is not trusted and the row is
+      judged unconditionally;
+    * otherwise a row created before the boundary is a historical dispatch and
+      stays exempt; at/after it every row is judged.
+
+    A row with no parseable creation time cannot prove it is old, so it is
+    judged (fail-closed).
+    """
+    task_path = (entry.get("task_path") or "").strip()
+    task_md = pathlib.Path(task_path) if task_path else None
+    text = ""
+    if task_md is not None:
+        try:
+            text = task_md.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+    if text and has_canonical_envelope(text):
+        return True
+    created = _parse_utc_ts(_row_created_raw(entry))
+    if created is None:
+        return True
+    if task_md is not None:
+        try:
+            mtime = task_md.stat().st_mtime
+        except OSError:
+            mtime = None
+        if mtime is not None and mtime > created.timestamp():
+            return True
+    return created.timestamp() >= envelope_enforce_since_epoch()
+
+
+def _envelope_missing_items(text: str) -> tuple[list[str], list[str], list[str], str]:
+    """(missing_keys, extras, display_items, task_type) — the T-09 naming.
+
+    ``display_items`` is what the row reason and worker.log carry: the
+    localized section labels plus the raw extra names (mirror of the T-03
+    format). Single source so the T-09 reason text cannot drift between
+    :func:`_envelope_refusal` and the T-14 classifier.
+    """
+    _ok, missing, task_type, _detected = inspect_envelope(text)
+    extras = type_extras_missing(task_type, text) if task_type else []
+    items = [
+        ENVELOPE_SECTION_LABELS[item] if item in ENVELOPE_SECTION_LABELS
+        else ("type:" if item == "type" else item)
+        for item in missing
+    ]
+    items.extend(extras)
+    return (missing, extras, items, task_type)
+
+
+# ── Producer identity / version skew (mw-dispatch-card-gate T-14, AC-009) ─────
+#
+# The gate above lives in the *global* service (this file) while the injection
+# that satisfies it lives in each project's framework copy
+# (`autopilot/dispatch.py::render_task_md`): two version domains (P-10). A
+# service that enforces the gate while a project copy is still old refuses
+# every dispatch of that key, which is indistinguishable from autopilot being
+# dead (incident `autopilot-producer-paralysis-20261012`: 675 done / 33 failed
+# / 0 pending / 0 running, queue file untouched for two days). T-14 keeps the
+# fail-closed default and adds: (b) a *distinguishable, loud* skew verdict with
+# an upgrade pointer, (c) the same loud guidance for a legacy/unknown producer,
+# one aggregate alarm per key per poll, an explicit default-off escape hatch
+# that injects a canonical skeleton, and a narrowed blast radius (a skew only
+# ever affects the one rejected row).
+
+# Machine-readable producer identity line written by the dispatch producer in
+# the task.md header area: `envelope_producer: <producer-id>@<version>` (T-13).
+# Missing => legacy/unknown producer (branch c).
+_ENVELOPE_PRODUCER_LINE_RE = re.compile(
+    r"^[ \t]*envelope_producer[ \t]*:[ \t]*(\S+)[ \t]*$", re.MULTILINE
+)
+
+# Baseline a producer version is compared against: the same cutover boundary
+# that gates enforcement (single source — deliberately no second date).
+ENVELOPE_PRODUCER_BASELINE: str = ENVELOPE_ENFORCE_SINCE
+
+# Dotted-numeric producer versions (`0.83.0`) are compared against the pi
+# framework release this service ships with — the existing version source the
+# producer identity is expected to use (`packages/coding-agent/package.json`,
+# lockstep with the multi-workers service). "" when the file is unavailable,
+# in which case a numeric version is *not provably* old and the row keeps the
+# plain `envelope missing` refusal: a current producer is never mislabelled as
+# skew (which would re-create the paralysis this card exists to prevent).
+_FRAMEWORK_PACKAGE_JSON = (
+    pathlib.Path(__file__).resolve().parent.parent / "coding-agent" / "package.json"
+)
+
+
+def _framework_version() -> str:
+    """pi framework version from the existing source, or "" when unavailable."""
+    try:
+        data = json.loads(_FRAMEWORK_PACKAGE_JSON.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    version = data.get("version") if isinstance(data, dict) else None
+    return version.strip() if isinstance(version, str) else ""
+
+
+ENVELOPE_PRODUCER_BASELINE_SEMVER: str = _framework_version()
+
+# Calendar stamp (`2026-10-12`, `2026-10-12T14:03:00Z`) or dotted numeric
+# release (`0.83.0`). The two families are never compared against each other.
+_PRODUCER_DATE_RE = re.compile(
+    r"(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?Z?"
+)
+_PRODUCER_NUMERIC_RE = re.compile(r"\d+(?:\.\d+)*")
+
+
+def producer_identity(text: str) -> tuple[str, str]:
+    """(producer_id, version) from the identity line, or ("", "").
+
+    The PM-fixed contract is `envelope_producer: <id>@<version>`; a line whose
+    value carries no `@` still proves a producer identity exists (branch b),
+    it just has no comparable version. Callers that need "is there a line at
+    all" (to separate branch b from branch c) use
+    :func:`has_producer_identity`.
+    """
+    match = _ENVELOPE_PRODUCER_LINE_RE.search(text)
+    if match is None:
+        return ("", "")
+    raw = match.group(1)
+    producer_id, sep, version = raw.partition("@")
+    return (producer_id, version if sep else "")
+
+
+def has_producer_identity(text: str) -> bool:
+    """True when the card carries the machine-readable producer identity line."""
+    return _ENVELOPE_PRODUCER_LINE_RE.search(text) is not None
+
+
+def _producer_version_key(version: str) -> tuple[int, tuple[int, ...]] | None:
+    """Orderable key for a recognized producer version, or None.
+
+    Family 0 = calendar stamp (compared to :data:`ENVELOPE_PRODUCER_BASELINE`),
+    family 1 = dotted numeric release (compared to
+    :data:`ENVELOPE_PRODUCER_BASELINE_SEMVER`). Anything else is unrecognized —
+    including the all-zero placeholder `0.0.0`: a producer that cannot read its
+    own version source renders it (C-31, the bundled extension cannot resolve
+    `package.json`), so it is a *missing* version, never a release older than
+    the baseline.
+    """
+    text = version.strip()
+    if not text:
+        return None
+    date_match = _PRODUCER_DATE_RE.fullmatch(text)
+    if date_match:
+        y, mo, d, hh, mm, ss = date_match.groups()
+        return (0, (int(y), int(mo), int(d), int(hh or 0), int(mm or 0), int(ss or 0)))
+    if _PRODUCER_NUMERIC_RE.fullmatch(text):
+        parts = tuple(int(part) for part in text.split("."))
+        if not any(parts):
+            return None  # `0.0.0` / `0` => version source unreadable
+        return (1, parts)
+    return None
+
+
+def producer_version_is_unknown(version: str) -> bool:
+    """True when `version` is the all-zero/no-version placeholder (C-31).
+
+    `0.0.0` and the empty version (an identity line without `@<version>`) are
+    not comparable releases. They keep the fail-closed `envelope missing`
+    refusal and are annotated `producer-version-unknown` in the reason so the
+    state is explicable; they are never labelled `producer-skew`.
+    """
+    text = version.strip()
+    if text == "":
+        return True
+    if not _PRODUCER_NUMERIC_RE.fullmatch(text):
+        return False
+    return not any(int(part) for part in text.split("."))
+
+
+# The annotating token for an all-zero/absent producer version (C-31): it keeps
+# the reason greppable without re-introducing the false `producer-skew` label.
+_PRODUCER_VERSION_UNKNOWN_MARKER = "producer-version-unknown"
+
+
+def producer_version_before_baseline(version: str) -> bool:
+    """True only when `version` is *provably* older than the service baseline.
+
+    Provable means the same recognized family on both sides: a calendar stamp
+    older than :data:`ENVELOPE_PRODUCER_BASELINE`, or a dotted numeric release
+    older than :data:`ENVELOPE_PRODUCER_BASELINE_SEMVER`. An unknown shape — or
+    a numeric release with no known framework version to compare to — is not
+    provably old, so the row keeps the plain `envelope missing` refusal
+    (fail-closed, never a false skew label on a current producer).
+    """
+    key = _producer_version_key(version)
+    if key is None:
+        return False
+    family, parts = key
+    baseline = (
+        ENVELOPE_PRODUCER_BASELINE if family == 0 else ENVELOPE_PRODUCER_BASELINE_SEMVER
+    )
+    base = _producer_version_key(baseline)
+    return base is not None and base[0] == family and parts < base[1]
+
+
+# Escape hatch (T-14 requirement 3, default OFF via the config key). The marker
+# keeps the injection idempotent across polls.
+_ENVELOPE_FALLBACK_MARKER = "<!-- mw-envelope-fallback -->"
+_ENVELOPE_FALLBACK_AUDIT = "[ENVELOPE_FALLBACK]"
+_ENVELOPE_FALLBACK_SECTION_BODY = (
+    f"{_ENVELOPE_FALLBACK_AUDIT} 服务层兜底注入：原 producer 未提供本段。"
+    "这是让该行可 spawn 的最小骨架，不是任务内容，也不改变任何写面判据；"
+    "请以任务卡与 PM 指令为准，并在升级 producer 后重新派发。"
+)
+_ENVELOPE_FALLBACK_EXTRA_LINES: dict[str, str] = {
+    "写入允许面": f"{_ENVELOPE_FALLBACK_AUDIT} 写入允许面: 服务层兜底骨架（原 producer 未声明；写面判据不变）",
+    "写入禁止面": f"{_ENVELOPE_FALLBACK_AUDIT} 写入禁止面: 服务层兜底骨架（原 producer 未声明；写面判据不变）",
+    "验收命令": f"{_ENVELOPE_FALLBACK_AUDIT} 验收命令: 服务层兜底骨架（原 producer 未声明）",
+    "改动历史": f"{_ENVELOPE_FALLBACK_AUDIT} 改动历史: 服务层兜底骨架（原 producer 未声明）；trace.log 写入事件",
+    "唯一证据文件": f"{_ENVELOPE_FALLBACK_AUDIT} 唯一证据文件: 服务层兜底骨架（原 producer 未声明）",
+    "审计目标": f"{_ENVELOPE_FALLBACK_AUDIT} 审计目标: 服务层兜底骨架（原 producer 未声明）",
+    "未覆盖面声明": f"{_ENVELOPE_FALLBACK_AUDIT} 未覆盖面声明: 服务层兜底骨架（原 producer 未声明）",
+}
+
+
+def _upgrade_pointer() -> str:
+    """One-line actionable fix for a version-domain mismatch (AC-009b)."""
+    return (
+        "upgrade this project's framework copy (the renderer that writes "
+        "task.md — normally the installed agent-team-loop bundle / the "
+        "project's autopilot/dispatch.py) and re-dispatch; or set "
+        "`envelope_fallback: true` in .agenticdoc/_autopilot/config.json "
+        "(default off) to let the service inject a canonical skeleton for this run"
+    )
+
+
+def classify_envelope_refusal(entry: dict[str, str]) -> dict | None:
+    """Full T-14 classification of one card's envelope gate outcome.
+
+    None => branch (a): the card passes and may spawn. Otherwise a dict whose
+    ``kind`` is one of
+
+    * ``"skew"`` (b) — a producer identity line whose version predates the
+      service baseline: the reason is a greppable ``failed(producer-skew ...)``
+      plus a one-line upgrade pointer;
+    * ``"legacy"`` (c) — no identity line at all: T-09 fail-closed is
+      unchanged, but the refusal is loud (guidance written next to it);
+    * ``"missing"`` — an identity line that is not provably old: the plain
+      T-09 refusal, unchanged. An all-zero/absent version (`0.0.0`, C-31) lands
+      here with a `producer-version-unknown` annotation (never `skew`).
+
+    ``missing_keys``/``extras``/``items`` keep the T-09 naming;
+    ``text``/``task_type`` feed the escape-hatch injection. A file that exists
+    but cannot be read returns None (the missing/unreadable-file semantics are
+    not the envelope's concern).
+    """
+    task_path = entry["task_path"]
+    try:
+        text = pathlib.Path(task_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    missing_keys, extras, items, task_type = _envelope_missing_items(text)
+    if not items:
+        return None
+    producer_id, version = producer_identity(text)
+    producer = f"{producer_id}@{version}" if has_producer_identity(text) else ""
+    if not has_producer_identity(text):
+        kind = "legacy"
+    elif producer_version_before_baseline(version):
+        kind = "skew"
+    else:
+        kind = "missing"
+    if kind == "skew":
+        reason = (
+            f"failed(producer-skew {producer} baseline={ENVELOPE_PRODUCER_BASELINE}): "
+            f"envelope missing: {', '.join(items)} ({task_path})"
+        )
+        guidance = [
+            "envelope-skew guidance: producer "
+            f"{producer} predates the service baseline {ENVELOPE_PRODUCER_BASELINE} "
+            f"and its task.md has no canonical envelope — {_upgrade_pointer()}"
+        ]
+    elif kind == "legacy":
+        reason = f"envelope missing: {', '.join(items)} ({task_path})"
+        guidance = [
+            "envelope guidance: task.md carries neither a canonical envelope nor an "
+            "`envelope_producer:` identity line (legacy/unknown producer) — "
+            f"{_upgrade_pointer()}"
+        ]
+    else:
+        unknown_note = (
+            f" {_PRODUCER_VERSION_UNKNOWN_MARKER}"
+            if producer_version_is_unknown(version)
+            else ""
+        )
+        reason = (
+            f"envelope missing: {', '.join(items)} ({task_path}) "
+            f"[producer={producer}{unknown_note} not provably older than baseline="
+            f"{ENVELOPE_PRODUCER_BASELINE}]"
+        )
+        guidance = []
+    return {
+        "kind": kind,
+        "reason": reason,
+        "producer": producer,
+        "baseline": ENVELOPE_PRODUCER_BASELINE,
+        "guidance": guidance,
+        "text": text,
+        "task_type": task_type,
+        "missing_keys": missing_keys,
+        "extras": extras,
+        "items": items,
+    }
+
+
+def _envelope_refusal(entry: dict[str, str]) -> str | None:
+    """The envelope refusal line for one card, or None when it passes.
+
+    Judgement only — the caller owns the failed row + the worker.log write.
+    The caller first decides *whether* to judge (:func:`_envelope_enforced`,
+    the T-09 time boundary); this function no longer consults the card's own
+    signal, so a legacy-shaped card at/after the boundary is judged too. A
+    file that exists but cannot be read is left to the existing spawn path
+    (the missing/unreadable-file semantics are not the envelope's concern).
+
+    T-14: the reason is the branch-specific string from
+    :func:`classify_envelope_refusal` — branch (c) keeps the exact T-09 text,
+    branch (b) is the greppable ``failed(producer-skew ...)`` line.
+    """
+    verdict = classify_envelope_refusal(entry)
+    return None if verdict is None else verdict["reason"]
+
+
+def envelope_fallback_inject(text: str) -> str | None:
+    """Canonical-envelope skeleton for a refused card, or None when the card
+    cannot be made compliant without inventing facts (missing/unknown `type:`).
+
+    Only the *missing* pieces are appended, never a rewrite: the card's own
+    frontmatter (including `allow_foreign_write:`) and body are untouched, so
+    the hatch affects the envelope judgement only. The result is re-judged
+    before it is returned; a skeleton that still fails yields None and the
+    caller stays fail-closed.
+    """
+    if _ENVELOPE_FALLBACK_MARKER in text:
+        return text  # already injected by an earlier poll (idempotent)
+    missing_keys, extras, _items, task_type = _envelope_missing_items(text)
+    if "type" in missing_keys or task_type == "":
+        return None
+    if task_type not in DISPATCH_TYPE_VOCABULARY:
+        return None
+    additions: list[str] = [_ENVELOPE_FALLBACK_MARKER]
+    for section in ENVELOPE_SECTIONS:
+        if section in missing_keys:
+            additions += [
+                "",
+                f"## {ENVELOPE_SECTION_LABELS[section]}",
+                "",
+                _ENVELOPE_FALLBACK_SECTION_BODY,
+            ]
+    for item in extras:
+        line = _ENVELOPE_FALLBACK_EXTRA_LINES.get(item)
+        if line is None:
+            return None
+        additions += ["", line]
+    if len(additions) == 1:
+        return None  # nothing to inject
+    injected = text.rstrip("\n") + "\n" + "\n".join(additions) + "\n"
+    _ok, missing_after, type_after, _detected = inspect_envelope(injected)
+    extras_after = type_extras_missing(type_after, injected) if type_after else []
+    if missing_after or extras_after:
+        return None
+    return injected
+
+
+def _record_envelope_fallback(entry: dict[str, str], verdict: dict) -> None:
+    """Audit one hatch-allowed row (T-14 requirement 3): a greppable
+    `[ENVELOPE_FALLBACK]` fact in the task's worker.log."""
+    line = (
+        f"{_ENVELOPE_FALLBACK_AUDIT} {mw_common.iso_now()} {entry['task_key']} "
+        f"kind={verdict['kind']} producer={verdict['producer'] or '(none)'} "
+        f"baseline={verdict['baseline']} injected=canonical-envelope-skeleton "
+        "(envelope_fallback=true; envelope judgement only — write-face judgement unchanged)"
+    )
+    try:
+        log_path = _worker_log_path(entry)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(f"[launcher] {line}\n")
+    except OSError:
+        pass
+    print(f"[launcher] {entry['task_key']}: {line}", file=sys.stderr, flush=True)
+
+
+def _try_envelope_fallback(
+    entry: dict[str, str], verdict: dict, project_dir: pathlib.Path
+) -> bool:
+    """Apply the T-14 escape hatch: inject + audit; True means "let it spawn".
+
+    Only (b) skew and (c) legacy are down-gradable; the plain `missing`
+    verdict is a producer that is not provably old and keeps the default
+    refusal. Any failure (hatch off, uninjectable card, write error, skeleton
+    still non-compliant) returns False so the caller records the refusal and
+    the row goes `failed` — never a silent spawn.
+    """
+    if verdict["kind"] not in ("skew", "legacy"):
+        return False
+    if not autopilot_config.envelope_fallback_enabled(project_dir):
+        return False
+    injected = envelope_fallback_inject(verdict["text"])
+    if injected is None:
+        return False
+    try:
+        pathlib.Path(entry["task_path"]).write_text(injected, encoding="utf-8")
+    except OSError:
+        return False
+    _record_envelope_fallback(entry, verdict)
+    return True
+
+
+def _emit_envelope_skew_alarms(
+    skew_rows: dict[str, list[tuple[dict[str, str], str]]],
+) -> None:
+    """One aggregate alarm per key per poll (T-14 requirement 2).
+
+    `skew_rows` maps owner key -> the rejected skew rows of THIS poll. Exactly
+    one line per key (never one per row), carrying the key, the row count, the
+    producer identities, the baseline and the upgrade pointer. Written to
+    stderr — which `mw serve` captures into `.mw/launcher.log`, the existing
+    doctor-readable diagnostic surface — and persisted once into the first
+    row's trace.log and worker.log, because launcher.log is truncated per serve
+    session and the queue row itself carries no reason text.
+    """
+    for key in sorted(skew_rows):
+        rows = skew_rows[key]
+        producers = sorted({producer for _entry, producer in rows if producer})
+        line = (
+            f"[ENVELOPE-SKEW] key={key} refused_rows={len(rows)} "
+            f"producer={', '.join(producers) or '(unknown)'} "
+            f"baseline={ENVELOPE_PRODUCER_BASELINE} "
+            f"(service framework {ENVELOPE_PRODUCER_BASELINE_SEMVER or 'unknown'}) — "
+            "project framework copy did not inject the canonical envelope, its "
+            "dispatches are refused (fail-closed, other rows/keys unaffected). "
+            + _upgrade_pointer()
+        )
+        print(f"[launcher] {line}", file=sys.stderr, flush=True)
+        first = rows[0][0]
+        try:
+            _record_trace_line(first, f"[LAUNCHER] {mw_common.iso_now()} {line}")
+            log_path = _worker_log_path(first)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(f"[launcher] {line}\n")
+        except Exception:  # noqa: BLE001 — an alarm must never break the poll
+            pass  # best-effort; stderr/launcher.log already carries it
 
 
 def _starter_prompt(task_path: str) -> str:
@@ -888,12 +1722,18 @@ def _poll_once(
     # forgotten argument.
     limit = max_workers if max_workers is not None else mw_common.launcher_max_workers(project_dir)
 
+    # Capture the pre-archive view so the "task.md not found" archive stays
+    # observable (requirement 3: the stale path must not be silent).
+    pre_archive = _parse_workers_file(_workers_path(project_dir))
     archived = mw_common.archive_stale_entries(project_dir)
     if archived:
-        print(
-            f"[launcher] archived stale entries: {', '.join(archived)}",
-            file=sys.stderr, flush=True,
-        )
+        paths = {e["task_key"]: e["task_path"] for e in pre_archive}
+        for key in archived:
+            print(
+                f"[launcher] archived stale (task.md not found): {key} "
+                f"({paths.get(key, '?')})",
+                file=sys.stderr, flush=True,
+            )
 
     # Reap finished processes
     finished = [k for k, p in running_procs.items() if p.poll() is not None]
@@ -947,8 +1787,12 @@ def _poll_once(
             )
         except Exception as exc:  # noqa: BLE001 — never mask the poll loop
             print(f"[launcher] {key}: ack convergence failed: {exc}", file=sys.stderr, flush=True)
+    # T-14 requirement 2: skew refusals of THIS poll, grouped by owner key, so
+    # the alarm is one aggregate line per key instead of one per row.
+    skew_rows: dict[str, list[tuple[dict[str, str], str]]] = {}
     for entry in entries:
         key = entry["task_key"]
+        fallback_verdict: dict | None = None
         if entry["status"] != "pending":
             continue
         if key in running_procs:
@@ -966,11 +1810,47 @@ def _poll_once(
             except Exception:  # noqa: BLE001 — never mask the poll loop
                 pass
             continue
+        # G-3 service-layer envelope fallback (T-03): the only layer that sees
+        # conductor direct writes and hand-written queue rows. A non-compliant
+        # card is never spawned and never silently archived — the row goes
+        # failed and the reason is persisted to the task's worker.log.
+        # T-09: the judge applies to every row created at/after the cutover
+        # boundary, not only to cards that happen to declare a signal.
+        if _envelope_enforced(entry):
+            verdict = classify_envelope_refusal(entry)
+            if verdict is not None:
+                # T-14 requirement 3: the explicit, default-off escape hatch
+                # injects a canonical skeleton + audits and lets the row spawn.
+                if _try_envelope_fallback(entry, verdict, project_dir):
+                    fallback_verdict = verdict
+                else:
+                    _record_envelope_failure(
+                        entry, verdict["reason"], verdict["guidance"]
+                    )
+                    try:
+                        _update_status(project_dir, key, "failed")
+                    except Exception:  # noqa: BLE001 — never mask the poll loop
+                        pass
+                    if verdict["kind"] == "skew":
+                        skew_rows.setdefault(
+                            mw_common.worker_owner_key(entry), []
+                        ).append((entry, verdict["producer"]))
+                    # T-14 requirement 4: a refusal only ever affects THIS row —
+                    # no return/raise, so the same key's other rows and every
+                    # other key keep being polled in this same cycle.
+                    continue
         if len(running_procs) >= limit:
             if not any(q["task_key"] == key for q in pending_queue):
                 pending_queue.append(entry)  # AC-007
             continue
         _spawn(entry, project_dir, config, running_procs, log_handles)
+        if fallback_verdict is not None:
+            # Re-append the audit fact: _spawn truncates worker.log, so the
+            # pre-spawn write in _try_envelope_fallback does not survive the
+            # normal (immediately spawned) path.
+            _record_envelope_fallback(entry, fallback_verdict)
+    if skew_rows:
+        _emit_envelope_skew_alarms(skew_rows)
 
 
 def run(

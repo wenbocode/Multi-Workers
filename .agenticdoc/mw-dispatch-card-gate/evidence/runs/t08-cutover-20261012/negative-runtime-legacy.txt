@@ -1,0 +1,11 @@
+$ python -X utf8 .agenticdoc/mw-dispatch-card-gate/evidence/runs/t08-cutover-20261012/scripts/run_launcher_evidence.py neg-legacy negative-runtime-legacy
+=== fixture: H:\git\Multi-Workers\.agenticdoc\mw-dispatch-card-gate\evidence\runs\t08-cutover-20261012\fixture\neg-legacy
+=== queue file (raw) ===
+mwd-neg-legacy | failed | pi | timi | H:\git\Multi-Workers\.agenticdoc\mw-dispatch-card-gate\evidence\runs\t08-cutover-20261012\fixture\neg-legacy\.agenticdoc\mw-dispatch-card-gate\workers\mwd-neg-legacy\task.md | 2026-10-12T15:42:31+00:00 | 2026-10-12T15:42:42+00:00 |  | conductor
+=== spawn marker present: False ===
+=== launcher output (negative-runtime-legacy.launcher.log, raw) ===
+[launcher] max_workers=8 (bounded; AC-021)
+[launcher] mwd-neg-legacy: envelope missing: 上下文, 要求, 交付格式, 写入允许面, 写入禁止面, 验收命令, 改动历史 (H:\git\Multi-Workers\.agenticdoc\mw-dispatch-card-gate\evidence\runs\t08-cutover-20261012\fixture\neg-legacy\.agenticdoc\mw-dispatch-card-gate\workers\mwd-neg-legacy\task.md)
+=== worker.log: mwd-neg-legacy (raw) ===
+[launcher] envelope missing: 上下文, 要求, 交付格式, 写入允许面, 写入禁止面, 验收命令, 改动历史 (H:\git\Multi-Workers\.agenticdoc\mw-dispatch-card-gate\evidence\runs\t08-cutover-20261012\fixture\neg-legacy\.agenticdoc\mw-dispatch-card-gate\workers\mwd-neg-legacy\task.md)
+[launcher] envelope guidance: task.md carries neither a canonical envelope nor an `envelope_producer:` identity line (legacy/unknown producer) — upgrade this project's framework copy (the renderer that writes task.md — normally the installed agent-team-loop bundle / the project's autopilot/dispatch.py) and re-dispatch; or set `envelope_fallback: true` in .agenticdoc/_autopilot/config.json (default off) to let the service inject a canonical skeleton for this run

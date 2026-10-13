@@ -206,6 +206,7 @@ async function setupTool(models: Record<string, string>): Promise<ToolFixture> {
 	registerWorkerTools(pi, ws, new AckStore(root), is, root, { key: "k" }, root);
 	const tool = tools.get("dispatch_worker");
 	if (!tool) throw new Error("dispatch_worker not registered");
+	const cardPath = writeCompliantCard(root);
 	return {
 		root,
 		rows: () => new WorkerStore(root).readAll().length,
@@ -215,7 +216,8 @@ async function setupTool(models: Record<string, string>): Promise<ToolFixture> {
 				registryValue === undefined
 					? base
 					: ({ ...base, modelRegistry: registryValue } as unknown as ExtensionContext);
-			return (await tool.execute("id", params, undefined, undefined, ctx)).content[0]?.text ?? "";
+			const withCard = { card_path: cardPath, ...params };
+			return (await tool.execute("id", withCard, undefined, undefined, ctx)).content[0]?.text ?? "";
 		},
 	};
 }
@@ -239,6 +241,8 @@ async function setupCommand(models: Record<string, string>): Promise<CommandFixt
 	registerWorkerCommands(pi, ws, is, root, { key: "k" }, root);
 	const handler = commands.get("worker");
 	if (!handler) throw new Error("/worker not registered");
+	writeCompliantCard(root);
+	const cardRel = "k/tasks/T-00-fixture.md";
 	return {
 		root,
 		rows: () => new WorkerStore(root).readAll().length,
@@ -248,7 +252,8 @@ async function setupCommand(models: Record<string, string>): Promise<CommandFixt
 				registryValue === undefined
 					? ctx
 					: ({ ...ctx, modelRegistry: registryValue } as unknown as ExtensionCommandContext);
-			await handler(args, withRegistry);
+			const withCard = args.replace(/^(\S+)\s*/, `$1 --card ${cardRel} `);
+			await handler(withCard, withRegistry);
 			return notifications;
 		},
 	};
@@ -272,6 +277,51 @@ function plantPng(root: string, rel: string): void {
 	const abs = path.join(root, rel);
 	fs.mkdirSync(path.dirname(abs), { recursive: true });
 	fs.writeFileSync(abs, "\x89PNG\r\n\x1a\n", "utf8");
+}
+
+/** T-02: a compliant dispatch card under `<root>/k/tasks/`; the fixtures inject
+ * its `card_path` so the tool-layer envelope gate passes. */
+function writeCompliantCard(root: string, key = "k"): string {
+	const dir = path.join(root, key, "tasks");
+	fs.mkdirSync(dir, { recursive: true });
+	const cardPath = path.join(dir, "T-00-fixture.md");
+	fs.writeFileSync(
+		cardPath,
+		[
+			"type: coding",
+			"",
+			"## 上下文",
+			"",
+			"vision role fixture。种子锚点 .agenticdoc/goal.md；判据入口 pm/ui-bridge.ts:1969。",
+			"",
+			"## 要求",
+			"",
+			"AC-001 成立。",
+			"",
+			"## 交付格式",
+			"",
+			"report.md。",
+			"",
+			"## 写入允许面",
+			"",
+			"仅本任务目录下的 task.md、output.md 与 report.md。",
+			"",
+			"## 写入禁止面",
+			"",
+			"本任务目录之外的任何路径，含其它 key、packages/**、.agenticdoc/_index.parallel 与 _workers.parallel。",
+			"",
+			"## 验收命令",
+			"",
+			"node ../../node_modules/vitest/dist/cli.js --run test/extensions/agent-team-loop-vision-autoroute.test.ts",
+			"",
+			"## 改动历史",
+			"",
+			"见本任务 trace.log 写入事件与 report.md 的改动清单。",
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	return cardPath;
 }
 
 /** Types whose AC-017 parameterized case already ran (evidence collector). */
@@ -406,8 +456,13 @@ describe("dispatch auto-route (mw-vision-role T-07)", () => {
 		);
 		expect(message).toContain("Dispatched worker 't5'");
 		expect(message).not.toContain("auto-route");
-		const [frontmatter] = taskMdOf(fx.root, "t5").split("\n\n");
-		expect(frontmatter).toBe("type: review\nphase: EXECUTE");
+		const head = taskMdOf(fx.root, "t5").split("\n\n")[0] ?? "";
+		const headLines = head.split("\n");
+		// The model plan keeps the legacy head bytes; T-02 appends only the bare
+		// card header lines in the same prologue.
+		expect(headLines.slice(0, 2)).toEqual(["type: review", "phase: EXECUTE"]);
+		expect(headLines[2]).toBe("card_path: tasks/T-00-fixture.md");
+		expect(headLines[3]).toMatch(/^card_sha256: [0-9a-f]{64}$/);
 		expect(fx.rows()).toBe(before + 1);
 
 		const plan = planDispatchFrontmatter({

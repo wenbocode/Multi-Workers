@@ -4304,12 +4304,19 @@ _EXT_SRC_REL = (
 # so no Windows backslash ever lands inside a JS string literal. Mirrors the
 # format/target/external contract of build-extension.sh (ESM so the host's
 # jiti.import(path, {default:true}) unwraps the activate() function reliably).
+#
+# MW_VERSION is the packages/coding-agent/package.json version injected through
+# `define` (C-31): a bundled module cannot resolve that package.json at runtime,
+# so config.ts's `pkg.version` read fell back to "0.0.0" and the producer
+# identity line became incomparable. The define inlines the real version
+# literal into the emitted bundle.
 _BUILD_NODE_SCRIPT = r"""
 const esbuild = require('esbuild');
 const { createJiti } = require('jiti');
 const url = require('url');
 const SRC = process.env.MW_SRC;
 const OUT = process.env.MW_OUT;
+const VERSION = process.env.MW_VERSION || '';
 esbuild.build({
   entryPoints: [SRC],
   bundle: true,
@@ -4318,6 +4325,7 @@ esbuild.build({
   format: 'esm',
   target: 'node18',
   external: ['node:*'],
+  define: { __PI_CODING_AGENT_VERSION__: JSON.stringify(VERSION) },
   logLevel: 'warning',
 }).then(() => {
   const j = createJiti(url.pathToFileURL(process.cwd() + '/').href, { moduleCache: false });
@@ -4327,30 +4335,52 @@ esbuild.build({
     console.error('Self-check FAILED: host loader expects a function, got ' + typeof f);
     process.exit(1);
   }
-  console.log('built + self-check OK (' + (f.name || 'anon') + ')');
+  console.log('built + self-check OK (' + (f.name || 'anon') + ')' + (VERSION ? ' version=' + VERSION : ''));
 }).catch((e) => {
   console.error('Build FAILED: ' + ((e && e.message) || e));
   process.exit(1);
 });
 """
 
+# The version source the injected bundle literal and the service baseline share
+# (single source: packages/coding-agent/package.json, lockstep releases).
+_FRAMEWORK_PACKAGE_JSON_REL = pathlib.Path("packages") / "coding-agent" / "package.json"
+
 
 def _repo_root() -> pathlib.Path:
     return _SCRIPT_DIR.parent.parent
 
 
-def _build_bundle() -> tuple[bool, str]:
+def _framework_version() -> str:
+    """Version literal injected into the extension bundle, or "" when unreadable.
+
+    Best-effort: a missing/unparseable package.json leaves the define empty, so
+    config.ts falls back to its runtime read exactly as before.
+    """
+    try:
+        data = json.loads((_repo_root() / _FRAMEWORK_PACKAGE_JSON_REL).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    version = data.get("version") if isinstance(data, dict) else None
+    return version.strip() if isinstance(version, str) else ""
+
+
+def _build_bundle(out: pathlib.Path | None = None) -> tuple[bool, str]:
     """Compile the agent-team-loop extension bundle with esbuild and self-check
     that it loads as a function (the host loader contract).
 
-    Pure Python + node: no bash, no msys `pwd -W`, and cwd-independent — all
-    paths derive from mw.py's own location, so ANY pi window can rebuild mw
-    regardless of its working directory. node runs with cwd=repo root so that
-    require('esbuild')/require('jiti') resolve from the repo's node_modules.
+    `out` defaults to the tracked bundle path (`<mw>/dist/extensions/
+    agent-team-loop.js`); tests pass a temporary path so the real artifact is
+    never touched. Pure Python + node: no bash, no msys `pwd -W`, and
+    cwd-independent — all paths derive from mw.py's own location, so ANY pi
+    window can rebuild mw regardless of its working directory. node runs with
+    cwd=repo root so that require('esbuild')/require('jiti') resolve from the
+    repo's node_modules.
     """
     repo_root = _repo_root()
     src = repo_root / _EXT_SRC_REL
-    out = _bundle_path()
+    if out is None:
+        out = _bundle_path()
     if not src.is_file():
         return False, f"extension source not found: {src}"
     node = shutil.which("node")
@@ -4361,6 +4391,7 @@ def _build_bundle() -> tuple[bool, str]:
     env = dict(os.environ)
     env["MW_SRC"] = str(src)
     env["MW_OUT"] = str(out)
+    env["MW_VERSION"] = _framework_version()
     result = subprocess.run(  # noqa: S603
         [node, "-e", _BUILD_NODE_SCRIPT],
         cwd=str(repo_root),

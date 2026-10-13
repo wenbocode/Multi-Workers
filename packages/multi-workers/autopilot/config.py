@@ -59,6 +59,12 @@ Field set and defaults (D-110):
                                     only lower, never raise, AC-005's "at most
                                     two reminders" contract.)
 
+One optional key sits outside :data:`DEFAULT_CONFIG`: ``envelope_fallback``
+(bool, default false when absent). It is the T-14 service-layer envelope
+escape hatch, validated like every other boolean but deliberately kept out of
+the frozen 20-key schema and the TS parity table (read via
+:func:`envelope_fallback_enabled`).
+
 :func:`cached_load` is a thin alias of :func:`load_config` plus a JSON
 round-trip defensive copy. It no longer caches by mtime/size, so an external
 edit of equal byte length is always picked up on the next poll.
@@ -98,7 +104,14 @@ DEFAULT_CONFIG: dict = {
 }
 
 # bool must be rejected before the int rules (bool is an int subclass).
-_BOOL_FIELDS = ("enabled", "paused", "xkey_repair")
+#
+# The T-14 service-layer escape hatch (mw-dispatch-card-gate AC-009/P-10) is a
+# validated boolean that is deliberately NOT a member of DEFAULT_CONFIG: the
+# frozen 20-key project schema (D-110) and the TS <-> Python parity table stay
+# untouched, while a project can still opt in explicitly. It is read by the
+# launcher's envelope gate via :func:`envelope_fallback_enabled`.
+ENVELOPE_FALLBACK_KEY = "envelope_fallback"
+_BOOL_FIELDS = ("enabled", "paused", "xkey_repair", ENVELOPE_FALLBACK_KEY)
 _LIST_FIELDS = ("xkey_verify_cmd",)
 _STRING_FIELDS = ("xkey_verify_cwd",)
 _ENUM_FIELDS: dict[str, tuple[str, ...]] = {
@@ -136,7 +149,7 @@ def validate_config(cfg: object) -> None:
     if not isinstance(cfg, dict):
         raise ConfigError("config root must be a JSON object")
     errors: list[str] = []
-    unknown = sorted(set(cfg) - set(DEFAULT_CONFIG))
+    unknown = sorted(set(cfg) - set(DEFAULT_CONFIG) - {ENVELOPE_FALLBACK_KEY})
     if unknown:
         errors.append(f"unknown field(s): {', '.join(unknown)}")
     for field in _BOOL_FIELDS:
@@ -213,6 +226,22 @@ def save_config(project_root: pathlib.Path, cfg: dict) -> pathlib.Path:
     )
     tmp_path.replace(path)
     return path
+
+
+def envelope_fallback_enabled(project_root: pathlib.Path) -> bool:
+    """True only when ``envelope_fallback: true`` is explicitly set (T-14).
+
+    The launcher's envelope gate is fail-closed by default; this knob is the
+    explicit operator escape hatch that lets the service inject a canonical
+    envelope skeleton for a legacy/skewed producer instead of refusing the
+    row. Anything other than an explicit ``true`` - an absent file, an absent
+    key, a wrong type, an unreadable or invalid file - is False (closed): the
+    loader's :class:`ConfigError` never propagates into the poll loop.
+    """
+    try:
+        return load_config(project_root).get(ENVELOPE_FALLBACK_KEY) is True
+    except ConfigError:
+        return False
 
 
 def cached_load(project_root: pathlib.Path) -> dict:

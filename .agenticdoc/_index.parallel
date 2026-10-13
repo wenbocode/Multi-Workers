@@ -54,3 +54,5 @@
 | mw-dispatch-settle-gates | idle | DONE | WENBOZHOU-PC4:117296 |  |  | 2026-10-11T15:16:26.879Z |
 | mw-guard-form-hardening | idle | DONE | WENBOZHOU-PC4:117296 |  |  | 2026-10-12 15:27 |
 | mw-console-title-clobber | idle | DONE | — |  |  | 2026-10-11 23:23 |
+| mw-claude-mirror-parity | idle | SPEC | WENBOZHOU-PC4:117296 |  |  | 2026-10-12T08:25:23.097Z |
+| mw-dispatch-card-gate | active | DONE | WENBOZHOU-PC4:117296 |  |  | 2026-10-13 11:18 |

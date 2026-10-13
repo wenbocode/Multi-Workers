@@ -314,8 +314,18 @@ def _write_target_yml(
 def test_dispatch_single_mode_no_yml_snapshot(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression lock: with no target.yml the dispatch output is
-    byte-identical to the pre-dual-workspace rendering."""
+    """Regression lock: with no target.yml the dispatch output is the canonical
+    T-10 envelope rendering (no dual-workspace additions).
+
+    Rebaselined 2026-10-12 (mw-dispatch-card-gate T-10): the conductor now
+    injects the canonical envelope for every dispatch, including the card-less
+    auto dispatches, so the byte golden moved off the pre-T-10 shape.
+
+    Rebaselined 2026-10-12 again (mw-dispatch-card-gate T-13): the dispatched
+    task.md carries the machine-readable producer identity line. Only that one
+    line was added — every other byte is unchanged; the producer name is pinned
+    literally and the version comes from the same lockstep metadata source the
+    producer reads (``test_mwds_t13_producer_paralysis`` pins the value)."""
     _clear_target_env(monkeypatch)
     result = dispatch.dispatch(
         tmp_path, "k1", "snap", "verifier", "Verify.",
@@ -325,6 +335,7 @@ def test_dispatch_single_mode_no_yml_snapshot(
     expected = (
         "---\n"
         "type: verifier\n"
+        f"envelope_producer: autopilot-conductor@{dispatch.producer_version()}\n"
         "origin: conductor\n"
         "loop: l2:k1\n"
         "attempt: 1\n"
@@ -332,7 +343,28 @@ def test_dispatch_single_mode_no_yml_snapshot(
         "  - .agenticdoc/k1\n"
         "---\n"
         "\n"
+        "## 上下文\n"
+        "\n"
+        "autopilot 自动派发（无任务卡；以下为种子，不是探索上界）。"
+        "type=verifier，loop=l2:k1，attempt=1。触发/失败原因：Verify.。"
+        "证据路径：.agenticdoc/k1/workers/ap-k1-snap/trace.log、"
+        ".agenticdoc/k1/workers/ap-k1-snap/worker.log 及任务书要求段列出的判定源；"
+        "项目锚点 .agenticdoc/goal.md。\n"
+        "\n"
+        "## 要求\n"
+        "\n"
         "Verify.\n"
+        "\n"
+        "判据（可判定）：任务书列出的目标逐项满足，产物在本轮 worker 目录可核；"
+        "[VERIFY] 证据与结论闭合，未满足不得声称完成。\n"
+        "\n"
+        "## 交付格式\n"
+        "\n"
+        "交付格式：本轮产物集中在 .agenticdoc/k1/workers/ap-k1-snap/，报告与输出文件"
+        "（report.md / output.md）按任务书列出的必备段成节（结论 / 证据（含原始命令与输出）/ "
+        "审计未及范围 / 残留与未验证 / 上下文来源清单）。\n"
+        "\n"
+        "以上为种子，不是探索上界；可自行检索补充上下文。\n"
         "\n"
     )
     assert result.task_md is not None

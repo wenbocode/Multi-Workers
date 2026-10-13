@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { acquireLock } from "./file-lock.js";
 import { SCRATCH_WORKERS_KEY } from "./paths.js";
@@ -84,6 +85,158 @@ export function keyNameRefusal(key) {
         };
     }
     return null;
+}
+const CONDUCTOR_CLAIM_RE = /^([^:]+):(\d+)$/;
+function conductorPidAlive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch (err) {
+        // EPERM: the process exists but is not ours — still alive. ESRCH: gone.
+        return err.code === "EPERM";
+    }
+}
+/** Liveness verdict the Python conductor uses to decide whether a key's claim
+ * blocks dispatch (`conductor.py`: `if claim == state.CLAIM_LIVE: ... continue`).
+ *
+ * This is deliberately NOT `ui-bridge.ts::claimState`: that one is the
+ * takeover guard and conservatively reports a FOREIGN host as `held-live`
+ * ("cannot verify liveness"), while the conductor treats a foreign host as
+ * `dead` ("conductor-side rule: foreign host is not live"). ORPHANED judgement
+ * and the repair path must speak the CONDUCTOR's language, or a key the
+ * conductor is happy to drive would be mis-labelled orphaned. */
+export function conductorClaimState(claimId, selfId = "") {
+    const trimmed = (claimId ?? "").trim();
+    if (!trimmed || trimmed === "—" || trimmed === "-" || (selfId !== "" && trimmed === selfId))
+        return "free";
+    const match = CONDUCTOR_CLAIM_RE.exec(trimmed);
+    if (!match)
+        return "stale";
+    const pid = Number(match[2]);
+    if (!Number.isInteger(pid) || pid <= 0)
+        return "stale";
+    if (match[1] !== os.hostname())
+        return "dead";
+    return conductorPidAlive(pid) ? "live" : "dead";
+}
+// ── Owner evidence for the widened ORPHANED admission (T-22 / AC-011) ──────
+/** Maximum depth the owner-trace scan descends into a key's `workers/` tree.
+ * Worker task dirs are `workers/<task-key>/`, so depth 1 is the normal shape;
+ * the cap keeps a pathological tree from turning a read-only scan into a walk
+ * of the whole disk. */
+const OWNER_TRACE_MAX_DEPTH = 3;
+/** Does a `trace.log` exist anywhere under `workersDir`? A worker only ever
+ * writes `trace.log` from inside its own task dir, so its existence is a durable
+ * "this key has had an owner" fact even when `_index.parallel` lost the key's row
+ * (index rotation, concurrent whole-file rewrite, or the non-atomic
+ * `dispatch_worker(key=…)` create-then-register pair). Read-only and best-effort:
+ * an unreadable directory reads as "no trace". */
+function hasWorkerTraceLog(workersDir, depth) {
+    let entries;
+    try {
+        entries = fs.readdirSync(workersDir, { withFileTypes: true });
+    }
+    catch {
+        return false;
+    }
+    for (const entry of entries) {
+        if (entry.isFile() && entry.name === "trace.log")
+            return true;
+    }
+    if (depth >= OWNER_TRACE_MAX_DEPTH)
+        return false;
+    for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith("."))
+            continue;
+        if (hasWorkerTraceLog(path.join(workersDir, entry.name), depth + 1))
+            return true;
+    }
+    return false;
+}
+/** Owner evidence LOCAL to a key namespace (T-22 / AC-011): the `_index.parallel`
+ * row is gone, but the key itself still carries owner-authored facts. Final,
+ * testable predicate (the report quotes this verbatim):
+ *
+ *   `{agenticdocRoot}/{key}/pm-state.md` has a `- Claim-Id:` or `- Phase:`
+ *   line, OR `{agenticdocRoot}/{key}/workers/<task-key>/trace.log` exists (any
+ *   depth under `workers/`).
+ *
+ * The pm-state lines are the framework machine interface (`state-manager.ts` /
+ * `advance_phase.py` write them) and `trace.log` is only ever written by a
+ * worker that actually ran — both survive a lost index row.
+ *
+ * A bare directory holding only `task.md` files is NOT owner evidence: there is
+ * no fact to reconstruct the row from, so it stays a notice-only case (T-22
+ * req. 3). This predicate NEVER reads or writes `_index.parallel`; it only feeds
+ * the admission decision — the scan still refuses to write any index row
+ * (req. 4), so guessing a row's Phase/ClaimId/Deps is impossible by
+ * construction. */
+export function keyHasOwnerTraces(agenticdocRoot, key) {
+    const keyDir = path.join(agenticdocRoot, key);
+    try {
+        const pmState = fs.readFileSync(path.join(keyDir, "pm-state.md"), "utf8");
+        if (/^- (?:Claim-Id|Phase):/m.test(pmState))
+            return true;
+    }
+    catch {
+        // missing/unreadable pm-state.md — fall through to the trace scan
+    }
+    return hasWorkerTraceLog(path.join(keyDir, "workers"), 0);
+}
+// ── Owner-evidence currency (T-24 / C-30) ──────────────────────────────────
+/** Freshness window for a key's own state documents (T-24/C-30): how recently
+ * `pm-state.md` / `plan.md` must have moved for a claim-free repair to treat
+ * the owner as still present. C-30 measured an `idle` key whose only evidence
+ * was a legacy August Claim-Id and whose worker dirs were months old, yet the
+ * T-22 widened admission still called it ORPHANED. */
+export const OWNER_EVIDENCE_FRESH_MS = 14 * 24 * 60 * 60 * 1000;
+/** The two key-level state documents a live owner writes (the framework's
+ * machine interface for `pm-state.md`, the human plan for `plan.md`). */
+export function keyStateDocPaths(agenticdocRoot, key) {
+    const keyDir = path.join(agenticdocRoot, key);
+    return [path.join(keyDir, "pm-state.md"), path.join(keyDir, "plan.md")];
+}
+/** Is a key's owner evidence still CURRENT (T-24 req. 2)? The repair path used
+ * to accept any T-19 index row or T-22 owner trace, so an `idle` key carrying a
+ * months-old legacy Claim-Id stayed repairable forever. Evidence is current when
+ * ANY holds:
+ *
+ *   - the key publishes no `pm-state.md` / `plan.md` (nothing to be stale against;
+ *     the durable row/trace is the only fact there is, T-19/T-22 semantics);
+ *   - a state document moved within {@link OWNER_EVIDENCE_FRESH_MS};
+ *   - the index row's status is not `idle` / `done` (an `active` row is a live
+ *     owner; `done` is terminal and must not be repaired);
+ *   - the row's claim is conductor-`live` (this host, pid alive).
+ *
+ * Read-only; the caller decides what to do with the verdict. */
+export function ownerEvidenceCurrent(agenticdocRoot, key, row, now = Date.now(), freshMs = OWNER_EVIDENCE_FRESH_MS) {
+    let hasStateDocs = false;
+    for (const doc of keyStateDocPaths(agenticdocRoot, key)) {
+        let stat;
+        try {
+            stat = fs.statSync(doc);
+        }
+        catch {
+            continue; // missing/unreadable — not a state document this key publishes
+        }
+        hasStateDocs = true;
+        if (now - stat.mtimeMs <= freshMs)
+            return { current: true, hasStateDocs };
+    }
+    if (!hasStateDocs)
+        return { current: true, hasStateDocs: false };
+    if (row !== undefined && row.status !== "idle" && row.status !== "done") {
+        return { current: true, hasStateDocs };
+    }
+    if (row !== undefined && conductorClaimState(row.claimId) === "live") {
+        return { current: true, hasStateDocs };
+    }
+    return {
+        current: false,
+        hasStateDocs,
+        reason: row === undefined ? "无 index 行且 pm-state 未近期更新" : `index 状态 ${row.status}`,
+    };
 }
 const INDEX_COLS = 7;
 function parseIndexLine(line) {

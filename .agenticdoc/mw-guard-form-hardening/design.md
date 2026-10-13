@@ -319,6 +319,6 @@ TS 三份**物理共享**；Python 两份**同语义 + 一致性测试**（无�
 - **C-24 计数更正**：`task-frontmatter` 63→**65**（基线 59）；`corpus_py_md5_eq_ts_md5` 330/330 → **332/332**；T-20 自报 434 而 PM 实测 **433**（以实测为准）。
 - **C-25**：锚点门禁正则不覆盖 `.js` / `~` 路径（覆盖缺口，非产品缺陷）。
 - **C-26**：审计行 `target=` 删除 `\` 分隔符（`cmd=` 保留原文）⇒ 不可回放；拦截结论不受影响。
-- **VC-024 契约的实测印证**：bash 写面守卫注册条件 `isShellRole && isWritelessRole`（`worker-mode.ts:2149`；注释 `:2316`）。冒烟 v3（research）**6/6 拦**并留 `[WRITE_SCOPE]`×6 + `[WRITE_SCOPE_SUMMARY]`；两次 `coding` 角色负向冒烟属**测试设计错误**（写角色按契约不注册守卫）。
+- **VC-024 契约的实测印证**：bash 写面守卫注册条件 `isShellRole && isWritelessRole`（`worker/worker-mode.ts:747`；注释 `worker/worker-mode.ts:747`）。冒烟 v3（research）**6/6 拦**并留 `[WRITE_SCOPE]`×6 + `[WRITE_SCOPE_SUMMARY]`；两次 `coding` 角色负向冒烟属**测试设计错误**（写角色按契约不注册守卫）。
 - **环境限制**：`bash` 工具后端 = PowerShell 5.1（`~/.pi/agent/settings.json: shellPath`），本机无 Git bash；唯一 `bash.exe` 为 WSL 转发器且无发行版 ⇒ `.exe`/真实 bash 语义**无法本机端到端冒烟**，仅单元测试覆盖。
 - **cutover 事实**：全局扩展 1,043,634 B、sha256 `0FE644319ACB25F5B16F1CD29FF2559281C78A71518B27A99E3435DDC4E026E9`；`packages/coding-agent/dist` 与 `packages/multi-workers/dist` 同步重建；运行期装载面经独立读取确认为新代码。

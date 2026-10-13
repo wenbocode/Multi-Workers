@@ -107,6 +107,33 @@ function readOutput(fx: Fixture): string {
 	return fs.readFileSync(path.join(fx.taskDir, "output.md"), "utf8");
 }
 
+// T-07: report products must satisfy the AC-003 recovery contract, which the
+// settle path now folds into the run status. Headings alone satisfy the broad
+// alias criterion; the empty 改动清单 heading keeps the AC-004 ledger gap empty.
+const COMPLETE_CODING_REPORT = [
+	"## 结论",
+	"ok",
+	"## 证据",
+	"[VERIFY] v=1",
+	"## 残留与未验证",
+	"none",
+	"## 上下文来源",
+	"test",
+	"## 改动清单",
+	"",
+].join("\n");
+const COMPLETE_RESEARCH_REPORT = [
+	"## 结论",
+	"ok",
+	"## 证据",
+	"[VERIFY] v=1",
+	"## 残留与未验证",
+	"none",
+	"## 上下文来源",
+	"test",
+	"",
+].join("\n");
+
 // ── VC-031: no deliverables ⇒ section omitted whole ─────────────────────────
 
 describe("AC-007 no-deliverable settle (VC-031)", () => {
@@ -138,7 +165,9 @@ describe("AC-007 deliverable section (VC-032)", () => {
 		// A pre-existing agent-written output.md (D-117 merge) plus the two
 		// machine products must never be listed as deliverables.
 		fs.writeFileSync(path.join(fx.taskDir, "output.md"), "VERDICT=pass\n", "utf8");
-		fs.writeFileSync(path.join(fx.taskDir, "report.md"), "# report\n\nfindings\n", "utf8");
+		// T-07: a write role that ships a report.md is judged by the recovery
+		// contract, so the fixture report carries the five required sections.
+		fs.writeFileSync(path.join(fx.taskDir, "report.md"), COMPLETE_CODING_REPORT, "utf8");
 		fs.writeFileSync(path.join(fx.taskDir, "progress.md"), "CKPT 1m ...\n", "utf8");
 		fs.writeFileSync(path.join(fx.taskDir, "phase-1-impl.md"), "# phase 1\n", "utf8");
 
@@ -175,7 +204,7 @@ describe("AC-007 exit-reason effort (VC-033)", () => {
 		// 8 calls: the last one is the report write.
 		for (let i = 0; i < 7; i++)
 			worker.emit("tool_execution_start", { toolName: "read", toolCallId: `r${i}`, args: {} });
-		fs.writeFileSync(path.join(fx.taskDir, "report.md"), "# report\n", "utf8");
+		fs.writeFileSync(path.join(fx.taskDir, "report.md"), COMPLETE_CODING_REPORT, "utf8");
 		writeTool(worker, "w0", path.join(fx.taskDir, "report.md"));
 		settle(worker, "implemented");
 
@@ -200,7 +229,7 @@ describe("AC-007 exit-reason effort (VC-033)", () => {
 	it("VC-033 (c''): a progress.md-only run reports writes=progress.md", async () => {
 		const fx = makeFixture("research");
 		const worker = await startWorker(fx);
-		fs.writeFileSync(path.join(fx.taskDir, "report.md"), "# report\n", "utf8");
+		fs.writeFileSync(path.join(fx.taskDir, "report.md"), COMPLETE_RESEARCH_REPORT, "utf8");
 		writeTool(worker, "w1", path.join(fx.taskDir, "progress.md"));
 		settle(worker, "done");
 		// A delivered read-only run is exit 0, so ## Exit Reason is written.

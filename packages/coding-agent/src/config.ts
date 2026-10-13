@@ -484,12 +484,28 @@ try {
 	if (err.code !== "ENOENT") throw e;
 }
 
+/**
+ * Build-time injected pi version (C-31).
+ *
+ * `mw.py::_build_bundle` compiles the agent-team-loop bundle with esbuild
+ * `define: { __PI_CODING_AGENT_VERSION__: "<packages/coding-agent/package.json
+ * version>" }`. A bundled module cannot resolve that package.json at runtime
+ * (its `import.meta.url` points at the install dir), so the `pkg` read above
+ * yields `{}` there and `VERSION` used to collapse to `"0.0.0"` — which made
+ * the T-18 producer identity line's version incomparable. The injected literal
+ * takes precedence; in the unbundled source tree (and in any bundle built
+ * without the define) the identifier is undeclared and the `typeof` guard
+ * falls through to the runtime read.
+ */
+declare const __PI_CODING_AGENT_VERSION__: string | undefined;
+const buildVersion = typeof __PI_CODING_AGENT_VERSION__ === "string" ? __PI_CODING_AGENT_VERSION__.trim() : "";
+
 const piConfigName: string | undefined = pkg.piConfig?.name;
 export const PACKAGE_NAME: string = pkg.name || "@earendil-works/pi-coding-agent";
 export const APP_NAME: string = piConfigName || "pi";
 export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
-export const VERSION: string = pkg.version || "0.0.0";
+export const VERSION: string = buildVersion || pkg.version || "0.0.0";
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;

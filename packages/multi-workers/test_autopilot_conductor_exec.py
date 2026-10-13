@@ -716,6 +716,43 @@ def _dcr_task_body(md_path: pathlib.Path) -> str:
     return parts[2].strip("\n")
 
 
+def _dcr_expected_envelope_body(
+    prompt: str, *, task_type: str, loop: str, attempt: int, worker: str,
+    owner: str = "k1",
+) -> str:
+    """Frozen T-10 canonical envelope body for a card-less conductor dispatch.
+
+    Rebaselined 2026-10-12 (mw-dispatch-card-gate T-10): ``dispatch()`` now
+    synthesizes the canonical envelope for card-less auto dispatches instead of
+    writing the bare prompt, so the byte golden for the L3 reprompt body moved
+    from ``prompt`` to this wrapper. The wrapper text is a frozen literal: any
+    wording/structure drift in the producer fails this test on purpose.
+    """
+    trigger = next(
+        line.strip().lstrip("#").strip()
+        for line in prompt.splitlines() if line.strip()
+    )
+    context = (
+        f"autopilot 自动派发（无任务卡；以下为种子，不是探索上界）。"
+        f"type={task_type}，loop={loop}，attempt={attempt}。"
+        f"触发/失败原因：{trigger}。"
+        f"证据路径：.agenticdoc/{owner}/workers/{worker}/trace.log、"
+        f".agenticdoc/{owner}/workers/{worker}/worker.log "
+        f"及任务书要求段列出的判定源；项目锚点 .agenticdoc/goal.md。"
+    )
+    return (
+        "## 上下文\n\n" + context + "\n\n"
+        "## 要求\n\n" + prompt.strip() + "\n\n"
+        "判据（可判定）：任务书列出的目标逐项满足，产物在本轮 worker 目录可核；"
+        "[VERIFY] 证据与结论闭合，未满足不得声称完成。\n\n"
+        "## 交付格式\n\n"
+        f"交付格式：本轮产物集中在 .agenticdoc/{owner}/workers/{worker}/，报告与输出文件"
+        "（report.md / output.md）按任务书列出的必备段成节（结论 / 证据（含原始命令与输出）/ "
+        "审计未及范围 / 残留与未验证 / 上下文来源清单）。\n\n"
+        "以上为种子，不是探索上界；可自行检索补充上下文。"
+    )
+
+
 def _dcr_no_match(pattern: str, description: str) -> str:
     """The framework's content_match failure line, verbatim shape."""
     return f"NO MATCH: achieved.md missing pattern '{pattern}' — {description}"
@@ -939,9 +976,15 @@ def test_dcr_scenario_a_standard_vocab_closes_done(
 def test_dcr_reprompt_prompt_byte_exact(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AC-002/VC-002: the dispatched reprompt task.md body is byte-equal to
-    the fixed base (_l3_prompt + REPROMPT_INSTRUCTION) plus the verbatim
-    failure lines, recomposed with closure.compose_reprompt_prompt."""
+    """AC-002/VC-002: the dispatched reprompt task.md body is the T-10 canonical
+    envelope whose `## 要求` section is byte-equal to the fixed base (_l3_prompt
+    + REPROMPT_INSTRUCTION) plus the verbatim failure lines, recomposed with
+    closure.compose_reprompt_prompt.
+
+    Rebaselined 2026-10-12 (mw-dispatch-card-gate T-10): the card-less auto
+    dispatch now carries the synthesized envelope, so the whole body is pinned
+    against the frozen envelope wrapper with the composed prompt embedded
+    verbatim."""
     project = _verify_key_project(tmp_path)
     fake, _calls, stderrs = _dcr_advance_factory(project, vocab=_DCR_STANDARD_VOCAB)
     monkeypatch.setattr(conductor.advance, "advance", fake)
@@ -949,18 +992,21 @@ def test_dcr_reprompt_prompt_byte_exact(
     _dcr_setup_gate_blocked(project, st)
 
     flines = closure.failure_lines(stderrs[0])
-    expected = closure.compose_reprompt_prompt(conductor._l3_prompt("k1", 2), flines)
+    prompt = closure.compose_reprompt_prompt(conductor._l3_prompt("k1", 2), flines)
     body = _dcr_task_body(
         project / ".agenticdoc" / "k1" / "workers" / "ap-k1-l3-a2" / "task.md"
     )
-    assert body == expected.strip()
+    expected = _dcr_expected_envelope_body(
+        prompt, task_type="reviewer", loop="l3:k1", attempt=2, worker="ap-k1-l3-a2",
+    )
+    assert body == expected
     for line in flines:
         assert line in body
-    assert body.startswith(conductor._l3_prompt("k1", 2))
+    assert prompt.strip() in body  # the fixed base + failure lines survive verbatim
     assert "## Quality Gate Report" in body  # the reviewer instructions survive
     _verify(
         "VC-002", prompt_contains_failure_lines=true_str(True),
-        prompt_equals_fixed_base_plus_lines=true_str(body == expected.strip()),
+        prompt_equals_fixed_base_plus_lines=true_str(prompt.strip() in body),
     )
 
 

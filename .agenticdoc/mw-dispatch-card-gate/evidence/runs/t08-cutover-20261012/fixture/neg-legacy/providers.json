@@ -1,0 +1,17 @@
+{
+  "credentials": {
+    "timi": {
+      "sources": [
+        {
+          "env": "TIMI_API_KEY"
+        }
+      ]
+    }
+  },
+  "providers": {
+    "timi": {
+      "api_key_env": "TIMI_API_KEY",
+      "credential": "timi"
+    }
+  }
+}

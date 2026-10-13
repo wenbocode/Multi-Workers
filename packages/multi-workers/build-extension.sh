@@ -12,6 +12,12 @@ REPO_ROOT="$(pwd -W 2>/dev/null || pwd)"
 SRC="$REPO_ROOT/packages/coding-agent/src/extensions/agent-team-loop/index.ts"
 OUT="$REPO_ROOT/packages/multi-workers/dist/extensions/agent-team-loop.js"
 
+# C-31: inject the pi version literal into the bundle. A bundled module cannot
+# resolve packages/coding-agent/package.json at runtime, so config.ts's
+# `pkg.version` read would fall back to "0.0.0" and the producer identity line
+# would be incomparable. Same define as mw.py::_build_bundle.
+VERSION="$(node -p "require('$REPO_ROOT/packages/coding-agent/package.json').version" 2>/dev/null || true)"
+
 mkdir -p "$(dirname "$OUT")"
 
 node -e "
@@ -29,6 +35,7 @@ esbuild.build({
   format: 'esm',
   target: 'node18',
   external: ['node:*'],
+  define: { __PI_CODING_AGENT_VERSION__: '$VERSION' },
   logLevel: 'info',
 }).catch(() => process.exit(1));
 "

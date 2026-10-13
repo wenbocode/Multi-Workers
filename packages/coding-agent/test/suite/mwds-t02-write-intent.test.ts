@@ -155,23 +155,95 @@ function fakePi(): FakePi {
 async function runWorkerCommand(
 	root: string,
 	args: string,
+	cardKey?: string,
 ): Promise<{ notifications: NotifyRecord[]; store: WorkerStore }> {
 	const { pi, commands, notifications, ctx } = fakePi();
 	const store = new WorkerStore(root);
 	registerWorkerCommands(pi, store, new IndexStore(root), root, { key: "_scratch" }, root);
 	const handler = commands.get("worker");
 	if (!handler) throw new Error("/worker not registered");
-	await handler(args, ctx);
+	let effectiveArgs = args;
+	if (cardKey !== undefined) {
+		// T-02: success fixtures opt in with a compliant card; refusal fixtures
+		// stay card-free so their before/after snapshotTree stays unchanged.
+		const taskDir = path.join(root, cardKey, "tasks");
+		fs.mkdirSync(taskDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(taskDir, "T-00-fixture.md"),
+			[
+				"type: review",
+				"",
+				"## 上下文",
+				"",
+				"write-intent fixture。种子锚点 .agenticdoc/goal.md；判据入口 pm/ui-bridge.ts:1402。",
+				"",
+				"## 要求",
+				"",
+				"AC-001 成立。",
+				"",
+				"## 交付格式",
+				"",
+				"report.md。",
+				"",
+				"## 审计目标",
+				"",
+				"回答「写面判据是否可被形式满足」，对照 pm/ui-bridge.ts:1402 的窗口边界。",
+				"",
+				"## 未覆盖面声明",
+				"",
+				"未覆盖 Windows 长路径前缀下的重定向语义。",
+				"",
+			].join("\n"),
+			"utf8",
+		);
+		effectiveArgs = args.replace(/^(\S+)\s*/, `$1 --card ${cardKey}/tasks/T-00-fixture.md `);
+	}
+	await handler(effectiveArgs, ctx);
 	return { notifications, store };
 }
 
-async function runDispatchWorker(root: string, params: Record<string, unknown>): Promise<string> {
+async function runDispatchWorker(root: string, params: Record<string, unknown>, cardKey?: string): Promise<string> {
 	const { pi, tools, ctx } = fakePi();
 	const store = new WorkerStore(root);
 	registerWorkerTools(pi, store, new AckStore(root), new IndexStore(root), root, { key: "_scratch" }, root);
 	const tool = tools.get("dispatch_worker");
 	if (!tool) throw new Error("dispatch_worker not registered");
-	const result = await tool.execute("id", params, undefined, undefined, ctx as unknown as ExtensionContext);
+	let effectiveParams = params;
+	if (cardKey !== undefined) {
+		const taskDir = path.join(root, cardKey, "tasks");
+		fs.mkdirSync(taskDir, { recursive: true });
+		const cardPath = path.join(taskDir, "T-00-fixture.md");
+		fs.writeFileSync(
+			cardPath,
+			[
+				"type: review",
+				"",
+				"## 上下文",
+				"",
+				"write-intent fixture。种子锚点 .agenticdoc/goal.md；判据入口 pm/ui-bridge.ts:1402。",
+				"",
+				"## 要求",
+				"",
+				"AC-001 成立。",
+				"",
+				"## 交付格式",
+				"",
+				"report.md。",
+				"",
+				"## 审计目标",
+				"",
+				"回答「写面判据是否可被形式满足」，对照 pm/ui-bridge.ts:1402 的窗口边界。",
+				"",
+				"## 未覆盖面声明",
+				"",
+				"未覆盖 Windows 长路径前缀下的重定向语义。",
+				"",
+			].join("\n"),
+			"utf8",
+		);
+		effectiveParams = { card_path: cardPath, ...params };
+	}
+	const result = await tool.execute("id", effectiveParams, undefined, undefined, ctx as unknown as ExtensionContext);
 	return result.content[0]?.text ?? "";
 }
 
@@ -275,6 +347,48 @@ describe("AC-005a corpus replay (VC-015)", () => {
 	});
 });
 
+// ── AC-010/C-29: the injected write-surface marker must not trip its own guard ─
+
+describe("AC-010 self-injection is not a write order (C-29)", () => {
+	const REAL_TARGET = ".agenticdoc/other/evidence/x.md";
+
+	it("the marker bytes yield no hits in either form (inline / cross-line)", () => {
+		const inline = `${WRITE_SURFACE_MARKER}\n${WRITE_SURFACE_MARKER_END}`;
+		const crossLine = "<!--\nmw-write-surface: v1\n-->\n<!--\n/mw-write-surface: v1\n-->";
+		expect(collectWriteIntentHits(inline)).toEqual([]);
+		expect(collectWriteIntentHits(crossLine)).toEqual([]);
+		console.log(
+			`[VERIFY] AC-010: marker_inline_hits=${collectWriteIntentHits(inline).length} marker_crossline_hits=${collectWriteIntentHits(crossLine).length}`,
+		);
+	});
+
+	it("the real contract section no longer produces the -surface: false positive", () => {
+		const section = renderWriteSurfaceContract("review", undefined);
+		const paths = collectWriteIntentHits(section).map((h) => h.path);
+		expect(paths).not.toContain("-surface:");
+		expect(verdict(section).ok).toBe(true);
+		console.log(
+			`[VERIFY] AC-010: contract_section_paths=[${paths.join(",")}] surface_fp=${paths.includes("-surface:")} verdict_ok=${verdict(section).ok}`,
+		);
+	});
+
+	it("a real path inside the comment is not a hit (strip, not a marker-name skip)", () => {
+		expect(collectWriteIntentHits("<!-- 例如 src/a.ts 会被改 -->")).toEqual([]);
+		expect(collectWriteIntentHits(`<!-- 写入 ${REAL_TARGET} -->`)).toEqual([]);
+		console.log("[VERIFY] AC-010: path_in_comment_hits=0 verb_in_comment_hits=0");
+	});
+
+	it("a real target outside the comment still hits (same line / adjacent / interleaved)", () => {
+		const sameLine = `说明 <!-- mw-write-surface: v1 --> 写入 ${REAL_TARGET}`;
+		const adjacent = `<!-- mw-write-surface: v1 -->\n写入 ${REAL_TARGET}`;
+		const interleaved = `写入 <!-- 备注 --> ${REAL_TARGET}`;
+		expect(collectWriteIntentHits(sameLine).map((h) => h.path)).toContain(REAL_TARGET);
+		expect(collectWriteIntentHits(adjacent).map((h) => h.path)).toContain(REAL_TARGET);
+		expect(collectWriteIntentHits(interleaved).map((h) => h.path)).toContain(REAL_TARGET);
+		console.log(`[VERIFY] AC-010: same_line_hit=1 adjacent_hit=1 interleaved_hit=1 target=${REAL_TARGET}`);
+	});
+});
+
 // ── VC-016: read usages are not write orders ────────────────────────────────
 
 describe("AC-005a read usage (VC-016)", () => {
@@ -309,7 +423,11 @@ describe("AC-005a write roles zero impact (VC-017)", () => {
 
 	it("a coding dispatch keeps the pre-C2 bytes (no contract section, no write_scope)", async () => {
 		const root = mkdtemp();
-		const notes = await runWorkerCommand(root, "pi --type coding --key _scratch 把结论写到 packages/foo/bar.ts");
+		const notes = await runWorkerCommand(
+			root,
+			"pi --type coding --key _scratch 把结论写到 packages/foo/bar.ts",
+			"_scratch",
+		);
 		expect(notes.notifications.some((n) => n.message.includes("Dispatched"))).toBe(true);
 		const taskKey = soleTaskKey(root, "_scratch");
 		const md = readTaskMd(root, "_scratch", taskKey);
@@ -397,7 +515,11 @@ describe("AC-005a contract section (VC-019)", () => {
 
 	it("a review role with no write mention still gets the contract section and no write_scope", async () => {
 		const root = mkdtemp();
-		const notes = await runWorkerCommand(root, "pi --type review --key _scratch 分析 X 的失败原因，给出判定");
+		const notes = await runWorkerCommand(
+			root,
+			"pi --type review --key _scratch 分析 X 的失败原因，给出判定",
+			"_scratch",
+		);
 		expect(notes.notifications.some((n) => n.message.includes("Dispatched"))).toBe(true);
 		const taskKey = soleTaskKey(root, "_scratch");
 		const md = readTaskMd(root, "_scratch", taskKey);
@@ -656,6 +778,7 @@ describe("AC-005a shell role research is not refused (VC-015 /reverse c)", () =>
 		const notes = await runWorkerCommand(
 			root,
 			"pi --type research --key _scratch 输出到 .agenticdoc/other/evidence/x.md",
+			"_scratch",
 		);
 		expect(notes.notifications.some((n) => n.message.includes("Dispatched"))).toBe(true);
 		const taskKey = soleTaskKey(root, "_scratch");
@@ -676,6 +799,7 @@ describe("AC-005a escape hatch allow_foreign_write (VC-019 /reverse e)", () => {
 		const notes = await runWorkerCommand(
 			root,
 			"pi --type review --key _scratch --allow-foreign-write 写到 .agenticdoc/other/evidence/x.md",
+			"_scratch",
 		);
 		expect(notes.notifications.some((n) => n.message.includes("Dispatched"))).toBe(true);
 		const taskKey = soleTaskKey(root, "_scratch");

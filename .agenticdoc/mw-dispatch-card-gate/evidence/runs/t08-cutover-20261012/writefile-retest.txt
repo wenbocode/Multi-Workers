@@ -1,0 +1,14 @@
+$ python -X utf8 t08-cutover-20261012/scripts/run_writefile_retest.py
+=== fresh pi process (new global bundle) pid=171096 rc=None found_write_file=True elapsed=10.0s
+=== fixture task.md: H:\git\Multi-Workers\.agenticdoc\mw-dispatch-card-gate\evidence\runs\t08-cutover-20261012\fixture\writefile\.agenticdoc\mw-dispatch-card-gate\workers\mwd-writefile-retest\task.md
+=== trace.log (raw) ===
+[START] pid=8572
+[START] 2026-10-12T15:44:13.943Z task=mwd-writefile-retest type=coding phases=-
+[MODEL] 2026-10-12T15:44:13.992Z model=deepseek-v4.1-flash
+[FLOW] 2026-10-12T15:44:16.970Z tool_call read
+[TOOL] 2026-10-12T15:44:16.970Z read H:\git\Multi-Workers\.agenticdoc\mw-dispatch-card-gate\evidence\runs\t08-cutove…
+[FLOW] 2026-10-12T15:44:20.126Z tool_call write
+[TOOL] 2026-10-12T15:44:20.126Z write H:/git/Multi-Workers/.agenticdoc/mw-dispatch-card-gate/evidence/runs/t08-cutove…
+[WRITE_FILE] path=.agenticdoc/mw-dispatch-card-gate/workers/mwd-writefile-retest/notes.txt
+=== worker stdout (raw, tail) ===
+[worker] start task=mwd-writefile-retest type=coding phases=-

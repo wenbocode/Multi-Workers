@@ -327,7 +327,15 @@ export interface PmWriteSurfaceCtx {
     trueRoot?: string;
 }
 /** Write-intent hits that survive the five allow-guards (AC-005a). Pure over
- * text so the corpus replay and the unit cases share one implementation. */
+ * text so the corpus replay and the unit cases share one implementation.
+ *
+ * HTML comments are stripped structurally (AC-010 / C-29) before any verb or
+ * token matching: the framework's own injected markers
+ * (`<!-- mw-write-surface: v1 -->` / `<!-- /mw-write-surface: v1 -->`) contain
+ * the English verb `write`, whose anchored token scan would otherwise read
+ * `-surface:` as a colon-shaped target and refuse the producer's honest
+ * artifact. Stripping the whole comment span (inline and multi-line) removes
+ * every comment-borne mention — never a marker-name special case. */
 export declare function collectWriteIntentHits(text: string): WriteIntentHit[];
 /** Shape classification for one candidate token (AC-004). Ordered so the
  * pointed Win32 forms (`drive-relative`, `ads`) are labelled before the `ext`
@@ -387,6 +395,108 @@ export declare function renderWriteSurfaceContract(type: string, writeScope: str
  * the leading frontmatter block. Applying it twice is a byte-level fixed point
  * and leaves exactly one marker pair. */
 export declare function applyWriteSurfaceContract(taskMdText: string, type: string, writeScope: string | undefined): string;
+/** Machine-readable refusal code for a missing/incomplete dispatch card. */
+export declare const DISPATCH_CARD_CODE = "dispatch-card";
+/** Paired markers around the card-derived body section (idempotent injection,
+ * same "strip old region → reinsert" mechanism as the write-surface contract). */
+export declare const CARD_SEED_MARKER = "<!-- mw-dispatch-card: v1 -->";
+export declare const CARD_SEED_MARKER_END = "<!-- /mw-dispatch-card: v1 -->";
+/** The mandatory seed disclaimer demanded by design §2.2: the injected card is
+ * a seed, never an upper bound on what the worker may read. */
+export declare const CARD_SEED_DISCLAIMER = "\u4EE5\u4E0A\u4E3A\u79CD\u5B50\uFF0C\u4E0D\u662F\u63A2\u7D22\u4E0A\u754C\uFF1B\u53EF\u81EA\u884C\u68C0\u7D22\u8865\u5145\u4E0A\u4E0B\u6587";
+/** One card section the envelope judge does not classify: the §1.2 per-type
+ * extras (`写入允许面` / `写入禁止面` / `验收命令` / `改动历史`). Kept so the seed
+ * can inject them into the derived task.md (T-12/F-02). */
+export interface CardExtraSection {
+    title: string;
+    body: string;
+}
+/** The three envelope bodies injected into the generated task.md, plus the
+ * card's unclassified sections (the §1.2 type extras) so the derived task.md
+ * passes the SAME extras judge the service layer (G-3) runs. */
+export interface CardSections {
+    context: string;
+    requirements: string;
+    deliverables: string;
+    /** Card sections outside the three envelope families, in document order. */
+    extras: CardExtraSection[];
+}
+/**
+ * Extract the three envelope bodies from a card (T-02, contract C3).
+ *
+ * Heading-based slicing mirrors T-01's judgement: the first heading of a family
+ * with a non-empty body wins, body runs to the next heading of the same or
+ * higher level. A section T-01 accepted only through the wide semantic fallback
+ * (headingless card) has no slice to take, so the whole post-prologue card body
+ * is used as its content — the seed is delivered rather than dropped. This
+ * never re-judges the envelope; `readEnvelope` already owns the verdict.
+ */
+export declare function extractCardSections(cardText: string): CardSections;
+/** Render the marker-paired card seed block (T-02, contract C3). */
+export declare function renderCardSeedSections(sections: CardSections): string;
+/** Idempotent card-seed application: any existing marker region is removed,
+ * then the canonical block is prepended to the body. Applying it twice is a
+ * byte-level fixed point and leaves exactly one marker pair. */
+export declare function applyCardSeedSections(bodyText: string, sections: CardSections): string;
+/** T-18 (VC-003 producer identity): this generator's id for the task.md header.
+ *
+ * The service layer (`launcher.py` `producer_identity`, T-14/AC-009) reads
+ * `envelope_producer: <producer-id>@<version>` to tell a *stale producer* (an
+ * old framework copy whose task.md shape predates the current envelope/extras
+ * contract) apart from a genuinely missing section. The id names this tool
+ * path so it is distinct from the Python conductor's `autopilot-conductor`
+ * (`dispatch.py` `PRODUCER_NAME`). */
+export declare const DISPATCH_PRODUCER_ID = "agent-team-loop-pm";
+/** Machine-readable key of the identity line (`dispatch.py` `PRODUCER_IDENTITY_KEY`). */
+export declare const ENVELOPE_PRODUCER_KEY = "envelope_producer";
+/** `<producer-id>@<version>` for the header line.
+ *
+ * The version is the pi release train's own, read at module load from
+ * `packages/coding-agent/package.json` through `config.ts` `VERSION` — the same
+ * existing version source `dispatch.py::producer_version()` prefers (and the
+ * lockstep version `launcher.py` compares a dotted-numeric producer version
+ * against); never a new constant. Shape is byte-compatible with the Python
+ * renderer (`f"{PRODUCER_IDENTITY_KEY}: {producer_identity()}"`) and the service
+ * parser (`^[ \t]*envelope_producer[ \t]*:[ \t]*(\S+)[ \t]*$`). */
+export declare function envelopeProducerIdentity(): string;
+/**
+ * Normalize a dispatch's card reference to the key-relative `tasks/<name>.md`
+ * form the traceability audit (T-06 `card_audit.py`) reads. A card outside the
+ * owner key's `tasks/` dir falls back to a repo-relative posix path; the last
+ * resort is the bare basename so a header is always written.
+ */
+export declare function normalizeCardPathForHeader(cardPathInput: string, ownerKey: string, agenticdocRoot: string, projectDir: string): string;
+/** Resolved dispatch-card gate result (T-02, contract C3). */
+export interface DispatchCardGate {
+    ok: boolean;
+    /** Absolute path the reference resolved to (named in every refusal). */
+    resolvedPath: string;
+    /** Missing envelope items, `readEnvelope` keys and/or §1.2 extra names. */
+    missing: string[];
+    /** Normalized `tasks/<name>.md` header value (empty when ok=false). */
+    headerPath: string;
+    /** EOL-normalized sha256 (empty when ok=false). */
+    sha256: string;
+    /** Extracted seed bodies (empty strings when ok=false). */
+    sections: CardSections;
+}
+/**
+ * G-1 tool-layer gate (design §4): resolve the card path, judge the envelope
+ * with T-01's `readEnvelope`, then the per-type §1.2 extras on the CARD TEXT
+ * (the same `typeExtrasMissing` the service layer runs on the derived task.md,
+ * T-12/F-02) and the seed minimum (`seedItemsMissing`, T-12/F-05), and only
+ * then digest + extract the seed. Never judges content quality; a refusal is a
+ * plain report the caller turns into text (zero side effects).
+ */
+export declare function readDispatchCard(input: {
+    cardPath: string;
+    ownerKey: string;
+    agenticdocRoot: string;
+    projectDir: string;
+}): DispatchCardGate;
+/** Refusal text for an incomplete card (AC-007 fail-closed): names the code,
+ * the missing items and the exact card path; says nothing was written. */
+export declare function dispatchCardRefusal(gate: DispatchCardGate): string;
 /** Single write point for one dispatch's task.md (contract C4). Both dispatch
  * entries — the `dispatch_worker` tool and the `/worker` command — go through
  * here so the pipeline (frontmatter merge, contract-section injection, mkdir,
@@ -412,6 +522,16 @@ export declare function writeDispatchTaskMd(deps: {
     injectWriteSurface?: boolean;
     /** AC-005a escape hatch: record `allow_foreign_write: true` for audit. */
     allowForeignWrite?: boolean;
+    /** T-02 (contract C3): the judged dispatch card. Adds the bare
+     * `card_path:` / `card_sha256:` header lines (plus the T-18
+     * `envelope_producer:` identity line) and prepends the card-derived
+     * `## 上下文` / `## 要求` / `## 交付格式` seed block (idempotent). Omitted
+     * keeps the pre-T-02 byte shape for direct callers. */
+    card?: {
+        headerPath: string;
+        sha256: string;
+        sections: CardSections;
+    };
 }): {
     ok: true;
     path: string;

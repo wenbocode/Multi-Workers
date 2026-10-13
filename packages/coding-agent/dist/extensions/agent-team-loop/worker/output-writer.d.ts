@@ -3,6 +3,12 @@ export interface WriteOutputOpts {
     agenticdocRoot: string;
     exitCode: 0 | 1 | 2 | 130;
     summary: string;
+    /** Role type (T-04 recovery contract). Optional: when omitted the worker's
+     * `task.md` header `type:` is used; when neither is available the recovery
+     * contract is not applied (legacy/manual task book, migration-compatible).
+     * `worker-mode.ts` passes no type today, so the task.md lookup is the live
+     * path for real runs. */
+    type?: string;
     /** Deliverables observed at settle time (AC-007/DD-09). The historical name
      * is kept for the frozen call sites, but the list is now rendered as
      * `## Deliverables` (the machine-generated products `output.md` and
@@ -19,6 +25,29 @@ export interface WriteOutputOpts {
      * `---` separator — so the marker can never displace an agent-written
      * machine-readable first line (VERDICT=/TASKS=, D-117 contract). */
     runMarker?: string;
+    /** T-07 terminal verdict, computed once by the caller (`worker-mode.ts`
+     * `finishSuccess`) so the exit code and the product it writes cannot
+     * disagree. When omitted, {@link readTerminalGaps} is called here (the
+     * direct/test callers keep that path). */
+    terminalGaps?: TerminalGaps;
+}
+/** The two judgeable gap classes at a run's terminal write (T-07).
+ *
+ * `missingSections` — the AC-003 recovery contract: required `output.md`
+ * sections with no alias hit. `unrecordedFiles` — the AC-004 change ledger:
+ * files the report's `改动清单` declares that the trace never recorded as
+ * written (`diffLedger().extra`). `judged: false` is the migration state (no
+ * `task.md` or no header `type:`) where neither contract applies (P-07/P-09). */
+export interface TerminalGaps {
+    judged: boolean;
+    missingSections: string[];
+    unrecordedFiles: string[];
+    /** T-12/F-04: report-declared files on a trace with ZERO write events — the
+     * ledger cannot be judged. Named on the readback line and in the product so
+     * the run is not mistaken for a clean pass. */
+    unjudgeableFiles: string[];
+    /** True iff every gap list is empty. */
+    ok: boolean;
 }
 /** Single-line conclusion extracted from a summary (D-005): first non-empty
  * line, leading markdown markers stripped in a loop, whitespace collapsed,
@@ -28,6 +57,26 @@ export interface WriteOutputOpts {
  * (AC-009 write half) so done-row widget details are single-line conclusions;
  * the verbatim `## Summary` section keeps readOutputSummary compatible. */
 export declare function headline(summary: string): string;
+/**
+ * Compute a run's terminal gaps in one place (T-07 requirements 1 + 6): the
+ * AC-003 recovery contract over the agent product and the AC-004 change ledger
+ * (`diffLedger`) over the report + trace. A migration book (no `task.md`
+ * header `type:`) is never judged (P-07/P-09). A trace with zero
+ * `[WRITE_FILE]` events and a non-empty declaration is *unjudgeable*
+ * (`unjudgeableFiles`, T-12/F-04) — never a clean pass.
+ */
+export declare function readTerminalGaps(opts: {
+    taskKey: string;
+    agenticdocRoot: string;
+    summary: string;
+    type?: string;
+    /** AC-003 recovery contract applies to this run. Default `true`. The settle
+     * path passes `true` for a writeless role (its reply IS the deliverable) and
+     * for a write role that actually produced a `report.md` product; a write
+     * role with no report product keeps the AC-006/C5 exemption (its deliverable
+     * is the repository). The change ledger (AC-004) is always judged. */
+    judgeRecovery?: boolean;
+}): TerminalGaps;
 export declare function writeOutput(opts: WriteOutputOpts): void;
 export declare function appendTrace(taskKey: string, agenticdocRoot: string, line: string): void;
 /** Task start marker: `[START] ts task=<key> type=<type> phases=<n|->`. */

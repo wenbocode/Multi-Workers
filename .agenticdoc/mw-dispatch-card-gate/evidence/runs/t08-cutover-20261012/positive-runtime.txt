@@ -1,0 +1,13 @@
+$ python -X utf8 .agenticdoc/mw-dispatch-card-gate/evidence/runs/t08-cutover-20261012/scripts/run_launcher_evidence.py pos positive-runtime
+=== fixture: H:\git\Multi-Workers\.agenticdoc\mw-dispatch-card-gate\evidence\runs\t08-cutover-20261012\fixture\pos
+=== queue file (raw) ===
+T-08-cutover-and-runtime-evidence | running | pi | timi | H:\git\Multi-Workers\.agenticdoc\mw-dispatch-card-gate\evidence\runs\t08-cutover-20261012\fixture\pos\.agenticdoc\mw-dispatch-card-gate\workers\T-08-cutover-and-runtime-evidence\task.md | 2026-10-12T15:42:31+00:00 | 2026-10-12T15:42:31+00:00 |  | conductor
+=== spawn marker present: True ===
+STUB_PI_SPAWNED
+argv=--provider timi --model glm-5.3 -p "Read your task file at H:\git\Multi-Workers\.agenticdoc\mw-dispatch-card-gate\evidence\runs\t08-cutover-20261012\fixture\pos\.agenticdoc\mw-dispatch-card-gate\workers\T-08-cutover-and-runtime-evidence\task.md and execute it end-to-end. It is self-contained: full instructions, context and acceptance criteria. Do not ask for the task body; report results when done. Your final reply MUST open with a one-line conclusion: status plus key result or blocker."
+PI_WORKER_TASK=H:\git\Multi-Workers\.agenticdoc\mw-dispatch-card-gate\evidence\runs\t08-cutover-20261012\fixture\pos\.agenticdoc\mw-dispatch-card-gate\workers\T-08-cutover-and-runtime-evidence\task.md
+=== launcher output (positive-runtime.launcher.log, raw) ===
+[launcher] max_workers=8 (bounded; AC-021)
+[launcher] T-08-cutover-and-runtime-evidence: model=(route default) source=default
+=== worker.log: T-08-cutover-and-runtime-evidence (raw) ===
+

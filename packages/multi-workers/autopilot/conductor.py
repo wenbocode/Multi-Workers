@@ -235,8 +235,12 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
     try:
         rm = roadmap.load_roadmap(rm_path)
     except roadmap.RoadmapError as exc:
-        st.timeline.append("config", detail=f"roadmap unreadable: {exc}")
+        _emit_roadmap_failure(
+            project_root, st, exc,
+            context="dispatch: roadmap unreadable, tick skipped",
+        )
         return
+    _emit_roadmap_warnings(project_root, st, rm)
 
     # §5.1 G: stage branch. No running stage → activation work only; a
     # running stage releases the per-key machine below.
@@ -2572,28 +2576,104 @@ def pending_gate_reminders(
     return due
 
 
+# ── Roadmap parse alarms (T-20) ──────────────────────────────────────────
+#
+# A broken keys-table row must never disable a capability that has nothing to
+# do with that row. The E2Feature incident: one unescaped '|' inside a cell
+# split a 3-column row into 4, the whole roadmap was judged unavailable, and
+# that single failure silently disabled stage-terminal suppression AND (through
+# `orchestrate`) every dispatch for two days. `roadmap.load_roadmap` now
+# recovers or skips the damaged row; these helpers turn its `RoadmapWarning`s
+# and any remaining structural `RoadmapError` into ONE operator-visible alarm
+# per (file, line, kind) per conductor session, on the two existing visible
+# channels: stderr (`.mw/conductor.log` under `mw serve`) and the timeline
+# `config` event (replayed by `/autopilot timeline`, surfaced by the panel).
+# No new log file is invented.
+
+#: (file, line, kind) already announced this session (process lifetime).
+_ROADMAP_ALARM_SEEN: set[tuple[str, int, str]] = set()
+
+
+def _roadmap_alarm_line(exc_text: str) -> int:
+    """Line number named inside a RoadmapError, or -1 when it names none."""
+    match = re.search(r"line (\d+)", exc_text)
+    return int(match.group(1)) if match else -1
+
+
+def _emit_roadmap_failure(
+    project_root: pathlib.Path, st: ConductorState, exc: Exception, *, context: str
+) -> None:
+    """One deduplicated operator-visible alarm for a structural roadmap failure
+    (file path + line + reason + fix), delivered on stderr and the timeline."""
+    path = str(roadmap.roadmap_path(project_root))
+    key = (path, _roadmap_alarm_line(str(exc)), "structural")
+    if key in _ROADMAP_ALARM_SEEN:
+        return
+    _ROADMAP_ALARM_SEEN.add(key)
+    detail = (
+        f"{context}: {path} - {exc} - fix: repair the reported line in {path} "
+        f"(check: python autopilot/roadmap_check.py --project {project_root})"
+    )
+    print(f"[conductor] {detail}", file=sys.stderr, flush=True)
+    st.timeline.append("config", detail=detail)
+
+
+def _emit_roadmap_warnings(
+    project_root: pathlib.Path, st: ConductorState, rm: roadmap.Roadmap
+) -> int:
+    """Announce each recovered/skipped keys-table row once per session.
+
+    Returns the number of newly announced warnings. The damage stays a fact
+    (never swallowed): every recovered or skipped row gets one operator-visible
+    alarm carrying file path + line + reason + fix."""
+    emitted = 0
+    for warning in rm.warnings:
+        path = warning.path or str(roadmap.roadmap_path(project_root))
+        key = (path, warning.lineno, warning.kind)
+        if key in _ROADMAP_ALARM_SEEN:
+            continue
+        _ROADMAP_ALARM_SEEN.add(key)
+        detail = f"roadmap parse warning: {warning.message()}"
+        print(f"[conductor] {detail}", file=sys.stderr, flush=True)
+        st.timeline.append("config", detail=detail)
+        emitted += 1
+    return emitted
+
+
 def _gate_stage_context(
     project_root: pathlib.Path,
+    st: ConductorState,
 ) -> tuple[dict[int, str] | None, dict[str, int] | None]:
     """The stage facts one reminder pass needs, read from the roadmap ONCE
     (AC-002 / DD-11): `(stage_status, stage_of_key)`.
 
-    A missing or unparseable roadmap degrades to `(None, None)`, which the
-    pure judgment reads as "no suppression" (fail-open, D-015). The degraded
-    state is announced once per pass on stderr — `mw serve` redirects the
-    conductor's streams to `.mw/conductor.log` — so it is visible rather than
-    silent, and the tick never raises: `roadmap.load_roadmap` reports every
-    missing/unreadable/structurally-invalid file as `RoadmapError`."""
+    A missing or structurally-unparseable roadmap degrades to `(None, None)`,
+    which the pure judgment reads as "no suppression" (fail-open, D-015). The
+    degraded state is announced once per (file, line) on stderr and the
+    timeline — `mw serve` redirects the conductor's streams to
+    `.mw/conductor.log`, and `/autopilot timeline` replays the config event —
+    so it is visible rather than silent, and the tick never raises.
+
+    Row-level keys-table damage is NOT structural anymore (T-20):
+    `roadmap.load_roadmap` recovers an unescaped '|' row and skips an
+    unrecoverable one, so a single bad row can no longer disable
+    stage-terminal suppression. Only `roadmap.RoadmapError` (missing file,
+    no stages, missing header, bad enum, ...) degrades the facts."""
     try:
         rm = roadmap.load_roadmap(roadmap.roadmap_path(project_root))
     except roadmap.RoadmapError as exc:
-        print(
-            "[conductor] gate reminders: roadmap unavailable, "
-            f"stage-terminal suppression disabled this tick: {exc}",
-            file=sys.stderr,
-            flush=True,
+        _emit_roadmap_failure(
+            project_root, st, exc,
+            context=(
+                "gate reminders: roadmap unavailable, "
+                "stage-terminal suppression disabled this tick"
+            ),
         )
         return None, None
+    # The document IS usable: announce recovered/skipped rows without
+    # disabling anything that is unrelated to them (T-20 degradation
+    # localization).
+    _emit_roadmap_warnings(project_root, st, rm)
     return (
         {stage.number: stage.status for stage in rm.stages if stage.status is not None},
         roadmap.stage_of_key(rm),
@@ -2617,7 +2697,7 @@ def _remind_pending_gates(
     rows = mw_common.parse_workers_file(mw_common.workers_path(project_root))
     ledger = auto_decision_rows(project_root)
     counts = {gate.id: _reminder_count(ledger, gate.id) for gate in pending}
-    stage_status, stage_of_key = _gate_stage_context(project_root)
+    stage_status, stage_of_key = _gate_stage_context(project_root, st)
     now = time.time()
     after_min = max(1, int(cfg.get("gate_reminder_after_min", 30)))
     max_reminders = max(1, int(cfg.get("gate_reminder_max", 2)))

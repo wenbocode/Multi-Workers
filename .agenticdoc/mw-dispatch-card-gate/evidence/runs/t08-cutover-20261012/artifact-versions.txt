@@ -1,0 +1,54 @@
+=== T-08 cutover build artifacts (recorded 2026-10-12T23:49+08:00) ===
+
+Machine / versions
+  node:      v22.x (PATH `node`)
+  python:    3.x (PATH `python`)
+  framework: 0.83.0  (packages/coding-agent/package.json :: version; lockstep with the
+                      multi-workers service version used as ENVELOPE_PRODUCER_BASELINE_SEMVER)
+
+--- repo bundle (built by `mw build`) ---
+packages/multi-workers/dist/extensions/agent-team-loop.js
+  len=1073639
+  sha256=A5B0FC9C3F77294325DD4E47A960A2BCF03B5D0BD6B3811E39969A01A4104932
+  mtime=2026-10-12T23:49:14.9478501+08:00
+
+--- global installed bundle (`mw build --install` target) ---
+C:\Users\wenbozhou\.pi\agent\extensions\agent-team-loop.js
+  len=1073639
+  sha256=A5B0FC9C3F77294325DD4E47A960A2BCF03B5D0BD6B3811E39969A01A4104932
+  mtime=2026-10-12T23:49:14.9478501+08:00
+  (identical sha256 to the repo bundle => the install copied the fresh build)
+
+--- packages/coding-agent/dist (rebuilt by `npm run build`) ---
+latest dist file mtime: 2026-10-12T23:49:17.54+08:00
+new modules present (rebuilt):
+  dist/extensions/agent-team-loop/shared/dispatch-card.js    (T-01 envelope judge)
+  dist/extensions/agent-team-loop/shared/card-digest.js      (T-06 sha256)
+  dist/extensions/agent-team-loop/shared/change-ledger.js    (T-05 write events)
+  dist/extensions/agent-team-loop/worker/output-sections.js  (T-04/T-10 recovery)
+  dist/extensions/agent-team-loop/worker/output-writer.js    (rebuilt)
+  dist/extensions/agent-team-loop/worker/worker-mode.js      (rebuilt)
+  dist/extensions/agent-team-loop/worker/worker-file-tool.js (rebuilt)
+
+--- pre-cutover resident service state (recorded 2026-10-12T23:48:33+08:00) ---
+[mw status] running (PID 79536)
+[mw status] conductor: not running
+mw.pid: 79536
+serve.meta: {"pid": 79536, "started_at_ms": 1791789581837, "code_dir": "H:\\git\\Multi-Workers\\packages\\multi-workers"}
+Process 79536 (python.exe) started=10/12/2026 15:19:41
+  cmd=... mw.py serve --project=H:\git\Multi-Workers --pi-port=7001 --claude-port=7003 --poll-interval=5
+launcher child: PID 111984 (python.exe) cmd=... launcher.py --project=H:\git\Multi-Workers --poll-interval=5 --pi-port=7001 --claude-port=7003
+=> the LIVE serve/launcher were started 15:19, BEFORE the T-14 launcher.py edit (22:48) and
+   before this build (23:49). The resident process therefore runs the OLD service-layer code
+   until PM executes `/mw restart` + `/reload` (see report.md "PM command list").
+
+--- source mtimes of the cutover surface ---
+launcher.py             2026-10-12 22:48:52
+autopilot/dispatch.py   2026-10-12 22:47:27
+autopilot/config.py     2026-10-12 22:35:54
+autopilot/card_audit.py 2026-10-12 21:55:08
+
+--- `mw doctor` bundle freshness (raw line) ---
+bundle: global mtime 2026-10-12T23:37:43.994374, source newest 2026-10-12T22:59:30.719388, stale=False
+(doctor was run after the first build; the re-run at 23:49 keeps the bundle byte-identical,
+ sha256 unchanged, so `stale=False` still holds.)

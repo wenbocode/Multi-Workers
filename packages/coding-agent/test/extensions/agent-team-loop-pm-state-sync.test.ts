@@ -276,6 +276,46 @@ describe("dispatch entrances read the owner key's phase (D-101/D-110)", () => {
 		try {
 			writePhaseOnly(root, "vc12-key", "SPEC");
 			writeSpecSide(root, "vc12-key");
+			// T-02: a compliant card so the envelope gate passes.
+			const cardDir = path.join(root, "vc12-key", "tasks");
+			fs.mkdirSync(cardDir, { recursive: true });
+			const cardPath = path.join(cardDir, "T-00-fixture.md");
+			fs.writeFileSync(
+				cardPath,
+				[
+					"type: coding",
+					"",
+					"## 上下文",
+					"",
+					"phase fixture。种子锚点 .agenticdoc/goal.md；判据入口 pm/ui-bridge.ts:1969。",
+					"",
+					"## 要求",
+					"",
+					"AC-001 成立。",
+					"",
+					"## 交付格式",
+					"",
+					"report.md。",
+					"",
+					"## 写入允许面",
+					"",
+					"仅本任务目录下的 task.md、output.md 与 report.md。",
+					"",
+					"## 写入禁止面",
+					"",
+					"本任务目录之外的任何路径，含其它 key、packages/**、.agenticdoc/_index.parallel 与 _workers.parallel。",
+					"",
+					"## 验收命令",
+					"",
+					"node ../../node_modules/vitest/dist/cli.js --run test/extensions/agent-team-loop-pm-state-sync.test.ts",
+					"",
+					"## 改动历史",
+					"",
+					"见本任务 trace.log 写入事件与 report.md 的改动清单。",
+					"",
+				].join("\n"),
+				"utf8",
+			);
 			const ws = new WorkerStore(root);
 			const is = new IndexStore(root);
 			const { pi, tools } = fakeToolPi();
@@ -285,7 +325,7 @@ describe("dispatch entrances read the owner key's phase (D-101/D-110)", () => {
 
 			const r = await tool.execute(
 				"id-vc12",
-				{ task_key: "t-vc12", description: "work", type: "coding", key: "vc12-key" },
+				{ task_key: "t-vc12", card_path: cardPath, description: "work", type: "coding", key: "vc12-key" },
 				undefined,
 				undefined,
 				fakeToolCtx(),

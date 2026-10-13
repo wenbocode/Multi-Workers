@@ -2,8 +2,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Type } from "typebox";
+import { VERSION } from "../../../config.js";
 import { validateRagEnabled } from "../rag/tools.js";
 import { runAgenticScript } from "../shared/agentic-scripts.js";
+import { cardDigest } from "../shared/card-digest.js";
+import { ENVELOPE_HEADING_FAMILIES, ENVELOPE_SECTION_LABELS, readEnvelope, seedItemsMissing, typeExtrasMissing, } from "../shared/dispatch-card.js";
 import { DISPATCHABLE_TYPES, detectImageNeed, modelImageCapability, readRoleModel, roleForTaskType, validateModelValue, } from "../shared/dispatch-models.js";
 import { acquireLock } from "../shared/file-lock.js";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.js";
@@ -1262,9 +1265,17 @@ function pathInsideQuotation(clause, pathToken) {
     return false;
 }
 /** Write-intent hits that survive the five allow-guards (AC-005a). Pure over
- * text so the corpus replay and the unit cases share one implementation. */
+ * text so the corpus replay and the unit cases share one implementation.
+ *
+ * HTML comments are stripped structurally (AC-010 / C-29) before any verb or
+ * token matching: the framework's own injected markers
+ * (`<!-- mw-write-surface: v1 -->` / `<!-- /mw-write-surface: v1 -->`) contain
+ * the English verb `write`, whose anchored token scan would otherwise read
+ * `-surface:` as a colon-shaped target and refuse the producer's honest
+ * artifact. Stripping the whole comment span (inline and multi-line) removes
+ * every comment-borne mention — never a marker-name special case. */
 export function collectWriteIntentHits(text) {
-    const body = text.replace(/```[\s\S]*?```/g, "");
+    const body = text.replace(/<!--[\s\S]*?-->/g, "").replace(/```[\s\S]*?```/g, "");
     const hits = [];
     for (const line of body.split(/\r?\n/)) {
         for (const clause of line.split(/[。；！？;]/)) {
@@ -1480,6 +1491,255 @@ function mergeWriteScope(frontmatter, writeScope) {
         return frontmatter;
     return `${frontmatter.replace(/\r?\n$/, "")}\n${line}\n`;
 }
+// ── Dispatch-card envelope injection (T-02, contract C3) ────────────────────
+/** Machine-readable refusal code for a missing/incomplete dispatch card. */
+export const DISPATCH_CARD_CODE = "dispatch-card";
+/** Paired markers around the card-derived body section (idempotent injection,
+ * same "strip old region → reinsert" mechanism as the write-surface contract). */
+export const CARD_SEED_MARKER = "<!-- mw-dispatch-card: v1 -->";
+export const CARD_SEED_MARKER_END = "<!-- /mw-dispatch-card: v1 -->";
+/** The mandatory seed disclaimer demanded by design §2.2: the injected card is
+ * a seed, never an upper bound on what the worker may read. */
+export const CARD_SEED_DISCLAIMER = "以上为种子，不是探索上界；可自行检索补充上下文";
+const CARD_HEADING_RE = /^(#{2,6})\s+(.*)$/;
+/** Strip a leading `1.` / `1.2.` / `(2)` / `A.` / `一、` numbering prefix
+ * (same rule as `shared/dispatch-card.ts::stripNumbering`). */
+function stripCardHeadingNumbering(text) {
+    let out = text.trim();
+    out = out.replace(/^[（(]\s*[0-9A-Za-z一二三四五六七八九十]+\s*[)）]\s*/, "");
+    out = out.replace(/^[0-9]+(?:\.[0-9]+)*\s*[.、)）]\s*/, "");
+    out = out.replace(/^[A-Za-z]\s*[.、)）]\s*/, "");
+    out = out.replace(/^[一二三四五六七八九十]+\s*[、.)）]\s*/, "");
+    return out.trim();
+}
+/** First heading family a card heading belongs to (same vocabulary/order as
+ * T-01's `classifyHeading`, so extraction can never disagree with the gate). */
+function classifyCardHeading(heading) {
+    const lower = heading.toLowerCase();
+    for (const [section, tokens] of ENVELOPE_HEADING_FAMILIES) {
+        for (const token of tokens) {
+            if (lower.startsWith(token.toLowerCase()))
+                return section;
+        }
+    }
+    return undefined;
+}
+/**
+ * Extract the three envelope bodies from a card (T-02, contract C3).
+ *
+ * Heading-based slicing mirrors T-01's judgement: the first heading of a family
+ * with a non-empty body wins, body runs to the next heading of the same or
+ * higher level. A section T-01 accepted only through the wide semantic fallback
+ * (headingless card) has no slice to take, so the whole post-prologue card body
+ * is used as its content — the seed is delivered rather than dropped. This
+ * never re-judges the envelope; `readEnvelope` already owns the verdict.
+ */
+export function extractCardSections(cardText) {
+    const raw = cardText.replace(/\r\n?|[\u2028\u2029]/g, "\n").split("\n");
+    const lines = raw.map((line) => line.trim());
+    const headings = [];
+    for (let i = 0; i < lines.length; i++) {
+        const match = CARD_HEADING_RE.exec(lines[i] ?? "");
+        if (match)
+            headings.push({ level: match[1]?.length ?? 2, text: stripCardHeadingNumbering(match[2] ?? ""), line: i });
+    }
+    const out = { context: "", requirements: "", deliverables: "", extras: [] };
+    /** Body of heading `index` (to the next same-or-higher heading). */
+    const bodyOf = (index) => {
+        const heading = headings[index];
+        if (heading === undefined)
+            return "";
+        let end = lines.length;
+        for (let j = index + 1; j < headings.length; j++) {
+            const next = headings[j];
+            if (next !== undefined && next.level <= heading.level) {
+                end = next.line;
+                break;
+            }
+        }
+        return raw
+            .slice(heading.line + 1, end)
+            .join("\n")
+            .trim();
+    };
+    const used = new Set();
+    for (let i = 0; i < headings.length; i++) {
+        const heading = headings[i];
+        if (heading === undefined)
+            continue;
+        const section = classifyCardHeading(heading.text);
+        if (section === undefined || out[section] !== "")
+            continue;
+        const body = bodyOf(i);
+        if (body !== "") {
+            out[section] = body;
+            used.add(i);
+        }
+    }
+    // T-12/F-02: every remaining card heading with a body is a §1.2 extra. It is
+    // injected into the derived task.md verbatim so the service-layer extras judge
+    // sees the same declaration and a compliant card is not false-rejected.
+    for (let i = 0; i < headings.length; i++) {
+        const heading = headings[i];
+        if (heading === undefined || used.has(i))
+            continue;
+        const body = bodyOf(i);
+        if (body !== "")
+            out.extras.push({ title: heading.text, body });
+    }
+    const firstHeading = headings[0];
+    const fallback = raw
+        .slice(firstHeading === undefined ? 0 : firstHeading.line + 1)
+        .join("\n")
+        .trim();
+    for (const section of ["context", "requirements", "deliverables"]) {
+        if (out[section] === "")
+            out[section] = fallback;
+    }
+    return out;
+}
+/** Render the marker-paired card seed block (T-02, contract C3). */
+export function renderCardSeedSections(sections) {
+    const parts = [
+        CARD_SEED_MARKER,
+        "## 上下文",
+        "",
+        sections.context.trim(),
+        "",
+        "## 要求",
+        "",
+        sections.requirements.trim(),
+        "",
+        "## 交付格式",
+        "",
+        sections.deliverables.trim(),
+        "",
+    ];
+    for (const extra of sections.extras) {
+        parts.push(`## ${extra.title}`, "", extra.body.trim(), "");
+    }
+    parts.push(CARD_SEED_DISCLAIMER, CARD_SEED_MARKER_END);
+    return parts.join("\n");
+}
+/** Card-seed region matcher for idempotent re-application (marker → marker). */
+const CARD_SEED_SECTION_RE = new RegExp(`${CARD_SEED_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s\\S]*?${CARD_SEED_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\n*`, "g");
+/** Idempotent card-seed application: any existing marker region is removed,
+ * then the canonical block is prepended to the body. Applying it twice is a
+ * byte-level fixed point and leaves exactly one marker pair. */
+export function applyCardSeedSections(bodyText, sections) {
+    const cleaned = bodyText.replace(CARD_SEED_SECTION_RE, "").replace(/^\n+/, "");
+    return `${renderCardSeedSections(sections)}\n\n${cleaned}`;
+}
+/** T-18 (VC-003 producer identity): this generator's id for the task.md header.
+ *
+ * The service layer (`launcher.py` `producer_identity`, T-14/AC-009) reads
+ * `envelope_producer: <producer-id>@<version>` to tell a *stale producer* (an
+ * old framework copy whose task.md shape predates the current envelope/extras
+ * contract) apart from a genuinely missing section. The id names this tool
+ * path so it is distinct from the Python conductor's `autopilot-conductor`
+ * (`dispatch.py` `PRODUCER_NAME`). */
+export const DISPATCH_PRODUCER_ID = "agent-team-loop-pm";
+/** Machine-readable key of the identity line (`dispatch.py` `PRODUCER_IDENTITY_KEY`). */
+export const ENVELOPE_PRODUCER_KEY = "envelope_producer";
+/** `<producer-id>@<version>` for the header line.
+ *
+ * The version is the pi release train's own, read at module load from
+ * `packages/coding-agent/package.json` through `config.ts` `VERSION` — the same
+ * existing version source `dispatch.py::producer_version()` prefers (and the
+ * lockstep version `launcher.py` compares a dotted-numeric producer version
+ * against); never a new constant. Shape is byte-compatible with the Python
+ * renderer (`f"{PRODUCER_IDENTITY_KEY}: {producer_identity()}"`) and the service
+ * parser (`^[ \t]*envelope_producer[ \t]*:[ \t]*(\S+)[ \t]*$`). */
+export function envelopeProducerIdentity() {
+    return `${DISPATCH_PRODUCER_ID}@${VERSION}`;
+}
+/** Merge the bare `card_path:` / `card_sha256:` / `envelope_producer:` header
+ * lines into the same header region as `type:` (no `---` fence — the live PM
+ * convention). The identity line is appended last so the existing
+ * `card_path:` / `card_sha256:` line positions other suites pin stay fixed. */
+function mergeCardHeader(frontmatter, cardPath, cardSha256) {
+    const header = frontmatter.replace(/\r?\n$/, "");
+    return (`${header}\ncard_path: ${cardPath}\ncard_sha256: ${cardSha256}\n` +
+        `${ENVELOPE_PRODUCER_KEY}: ${envelopeProducerIdentity()}\n`);
+}
+/**
+ * Normalize a dispatch's card reference to the key-relative `tasks/<name>.md`
+ * form the traceability audit (T-06 `card_audit.py`) reads. A card outside the
+ * owner key's `tasks/` dir falls back to a repo-relative posix path; the last
+ * resort is the bare basename so a header is always written.
+ */
+export function normalizeCardPathForHeader(cardPathInput, ownerKey, agenticdocRoot, projectDir) {
+    const resolved = path.isAbsolute(cardPathInput)
+        ? path.resolve(cardPathInput)
+        : path.resolve(projectDir, cardPathInput);
+    const keyTasksDir = path.join(agenticdocRoot, ownerKey, "tasks");
+    if (isSameOrUnder(keyTasksDir, resolved))
+        return `tasks/${path.basename(resolved)}`;
+    const rel = path.relative(projectDir, resolved);
+    if (rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel))
+        return rel.split(path.sep).join("/");
+    return path.basename(resolved);
+}
+const EMPTY_CARD_SECTIONS = { context: "", requirements: "", deliverables: "", extras: [] };
+/**
+ * G-1 tool-layer gate (design §4): resolve the card path, judge the envelope
+ * with T-01's `readEnvelope`, then the per-type §1.2 extras on the CARD TEXT
+ * (the same `typeExtrasMissing` the service layer runs on the derived task.md,
+ * T-12/F-02) and the seed minimum (`seedItemsMissing`, T-12/F-05), and only
+ * then digest + extract the seed. Never judges content quality; a refusal is a
+ * plain report the caller turns into text (zero side effects).
+ */
+export function readDispatchCard(input) {
+    const raw = input.cardPath.trim();
+    const resolvedPath = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(input.projectDir, raw);
+    const empty = {
+        ok: false,
+        resolvedPath,
+        missing: [],
+        headerPath: "",
+        sha256: "",
+        sections: EMPTY_CARD_SECTIONS,
+    };
+    if (raw === "")
+        return { ...empty, missing: ["card_path"] };
+    const envelope = readEnvelope(resolvedPath);
+    if (!envelope.ok)
+        return { ...empty, missing: envelope.missing };
+    let text;
+    try {
+        text = fs.readFileSync(resolvedPath, "utf8");
+    }
+    catch {
+        return { ...empty, missing: ["file"] };
+    }
+    // T-12/F-02: judge the per-type extras on the CARD TEXT here so G-1 and G-3
+    // are the same criterion (the derived task.md carries these sections too).
+    // T-12/F-05: the seed minimum is a G-1 requirement. Any gap refuses and names
+    // the item; nothing is written.
+    const missing = [...(envelope.type === "" ? [] : typeExtrasMissing(envelope.type, text)), ...seedItemsMissing(text)];
+    if (missing.length > 0)
+        return { ...empty, missing };
+    return {
+        ok: true,
+        resolvedPath,
+        missing: [],
+        headerPath: normalizeCardPathForHeader(raw, input.ownerKey, input.agenticdocRoot, input.projectDir),
+        sha256: cardDigest(resolvedPath),
+        sections: extractCardSections(text),
+    };
+}
+/** Refusal text for an incomplete card (AC-007 fail-closed): names the code,
+ * the missing items and the exact card path; says nothing was written. */
+export function dispatchCardRefusal(gate) {
+    const labels = gate.missing
+        .filter((item) => item in ENVELOPE_SECTION_LABELS)
+        .map((item) => ENVELOPE_SECTION_LABELS[item]);
+    return (`[${DISPATCH_CARD_CODE}] dispatch refused: card '${gate.resolvedPath}' is not a complete dispatch envelope ` +
+        `(missing=[${gate.missing.join(", ")}]).\n` +
+        (labels.length > 0 ? `Missing sections: ${labels.join(" / ")}.\n` : "") +
+        "Required: type + 上下文/要求/交付格式; per type: coding(写入允许面/写入禁止面/验收命令/改动历史), research(唯一证据文件), review(审计目标/未覆盖面声明); seeds: a goal.md reference and at least one path:line reference.\n" +
+        "Fix the card at that path (or pass a different card_path), then re-dispatch; nothing was written.");
+}
 /** Single write point for one dispatch's task.md (contract C4). Both dispatch
  * entries — the `dispatch_worker` tool and the `/worker` command — go through
  * here so the pipeline (frontmatter merge, contract-section injection, mkdir,
@@ -1490,11 +1750,14 @@ function mergeWriteScope(frontmatter, writeScope) {
  * fills in the write-surface contract section (C2) and `injected` reports
  * whether this call wrote one. */
 export function writeDispatchTaskMd(deps, input) {
-    const frontmatter = mergeAllowForeignWrite(mergeWriteScope(input.frontmatter, input.writeScope), input.allowForeignWrite);
+    let frontmatter = mergeAllowForeignWrite(mergeWriteScope(input.frontmatter, input.writeScope), input.allowForeignWrite);
+    if (input.card)
+        frontmatter = mergeCardHeader(frontmatter, input.card.headerPath, input.card.sha256);
     const taskDir = workerTaskDir(deps.agenticdocRoot, deps.ownerKey, input.taskKey);
     fs.mkdirSync(taskDir, { recursive: true });
     const taskMdPath = path.join(taskDir, "task.md");
-    const plain = `${frontmatter}\n${input.body}\n`;
+    const body = input.card ? applyCardSeedSections(input.body, input.card.sections) : input.body;
+    const plain = `${frontmatter}\n${body}\n`;
     const content = input.injectWriteSurface ? applyWriteSurfaceContract(plain, input.type, input.writeScope) : plain;
     fs.writeFileSync(taskMdPath, content, "utf8");
     return { ok: true, path: taskMdPath, injected: input.injectWriteSurface === true };
@@ -1513,6 +1776,9 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
         parameters: Type.Object({
             task_key: Type.String({
                 description: "Unique kebab-case key for this task (e.g. 'fix-login-bug', 'add-auth-endpoint'). Must be unique across tasks in this project.",
+            }),
+            card_path: Type.String({
+                description: "REQUIRED. Path to the dispatch card (task book) this worker is generated from — relative to the repo root or absolute, e.g. '.agenticdoc/<key>/tasks/T-02-slug.md'. The card must carry the dispatch envelope (type + 上下文 / 要求 / 交付格式), the per-type extras (coding: 写入允许面/写入禁止面/验收命令/改动历史; research: 唯一证据文件; review: 审计目标/未覆盖面声明), and the seed minimum (a goal.md reference plus at least one path:line reference); an incomplete or missing card refuses the dispatch with zero side effects. The card's envelope, extras and context are injected as the seed (not an upper bound on what the worker may read) and recorded via card_path/card_sha256 in task.md for traceability.",
             }),
             description: Type.String({
                 description: "Full task description and instructions for the worker agent.",
@@ -1540,7 +1806,7 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
             })),
         }),
         execute: async (_toolCallId, params, _signal, _onUpdate, _context) => {
-            const { task_key, description, cli = "pi", model, model_reason, type, images, key, allow_foreign_write, } = params;
+            const { task_key, card_path, description, cli = "pi", model, model_reason, type, images, key, allow_foreign_write, } = params;
             // RAG dispatcher gate (VC-003): an unusable rag config (e.g. `enabled`
             // naming an undefined server) must refuse BEFORE any task.md is created
             // and before the queue row lands.
@@ -1638,6 +1904,19 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
                     };
                 }
             }
+            // G-1 tool-layer envelope gate (T-02, design §4): the card must exist and
+            // carry the §1 envelope + §1.2 type extras BEFORE any task.md is written
+            // or a queue row lands. Placed after the earlier guards so their own
+            // refusals stay byte-identical; still decisively before mkdir/queue.
+            const cardGate = readDispatchCard({
+                cardPath: card_path ?? "",
+                ownerKey,
+                agenticdocRoot,
+                projectDir,
+            });
+            if (!cardGate.ok) {
+                return { content: [{ type: "text", text: dispatchCardRefusal(cardGate) }], details: undefined };
+            }
             // Model plan: validate the effective value and enforce the override
             // reason BEFORE any filesystem write (a refusal must leave no task dir).
             const modelPlan = planDispatchFrontmatter({
@@ -1663,6 +1942,7 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
                 writeScope: writelessRole && isShellRole(typeField) ? renderDefaultWriteScope(ownerKey, task_key) : undefined,
                 injectWriteSurface: writelessRole,
                 allowForeignWrite,
+                card: { headerPath: cardGate.headerPath, sha256: cardGate.sha256, sections: cardGate.sections },
             });
             const taskMdPath = written.path;
             await dispatchTask({ taskKey: task_key, status: "pending", cli, provider, model: model ?? "", taskPath: taskMdPath }, workerStore);
@@ -1941,9 +2221,9 @@ export function registerAdvancePhaseTool(pi, projectDir, indexStore) {
  * Usage: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] [--key <name>] <desc>
  */
 export function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot, watch, projectDir = path.dirname(agenticdocRoot)) {
-    const USAGE = "Usage: /worker <claude|codex|pi> [--type coding|review|research|rag-research|vision] [--model <id>] [--reason <text>] [--key <name>] [--allow-foreign-write] <task description>";
+    const USAGE = "Usage: /worker <claude|codex|pi> --card <card-path> [--type coding|review|research|rag-research|vision] [--model <id>] [--reason <text>] [--key <name>] [--allow-foreign-write] <task description>";
     pi.registerCommand("worker", {
-        description: "Spawn a worker: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] <task description>",
+        description: "Spawn a worker: /worker <claude|codex|pi> --card <card-path> [--type <t>] [--model <id>] [--reason <text>] <task description>",
         handler: async (args, ctx) => {
             const parts = args.trim().split(/\s+/);
             const cli = (parts[0] ?? "").toLowerCase();
@@ -1953,9 +2233,10 @@ export function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRo
             let modelReason = "";
             let typeArg = "";
             let keyArg = "";
+            let cardArg = "";
             let imagesArg;
             let allowForeignWriteArg = false;
-            while (["--model", "--type", "--reason", "--key", "--images", "--allow-foreign-write"].includes(parts[idx] ?? "")) {
+            while (["--card", "--model", "--type", "--reason", "--key", "--images", "--allow-foreign-write"].includes(parts[idx] ?? "")) {
                 const flag = parts[idx];
                 if (flag === "--allow-foreign-write") {
                     allowForeignWriteArg = true;
@@ -1968,7 +2249,9 @@ export function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRo
                     ctx.ui.notify(USAGE, "warning");
                     return;
                 }
-                if (flag === "--model")
+                if (flag === "--card")
+                    cardArg = value;
+                else if (flag === "--model")
                     model = value;
                 else if (flag === "--type")
                     typeArg = value;
@@ -2053,6 +2336,19 @@ export function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRo
                 ctx.ui.notify(`Worker dispatch blocked ('${ownerKey}'): ${docGaps.join("; ")}. Generate the phase docs first or dispatch under _scratch.`, "warning");
                 return;
             }
+            // G-1 tool-layer envelope gate (T-02): same decision function as the
+            // dispatch_worker tool — an incomplete/missing card refuses before
+            // mkdir/task.md/queue with zero side effects.
+            const cardGate = readDispatchCard({
+                cardPath: cardArg,
+                ownerKey,
+                agenticdocRoot,
+                projectDir,
+            });
+            if (!cardGate.ok) {
+                ctx.ui.notify(dispatchCardRefusal(cardGate), "warning");
+                return;
+            }
             // Model plan before any write: a refusal must leave no task dir.
             const modelPlan = planDispatchFrontmatter({
                 cwd: projectDir,
@@ -2078,6 +2374,7 @@ export function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRo
                 writeScope: writelessRole && isShellRole(typeField) ? renderDefaultWriteScope(ownerKey, taskKey) : undefined,
                 injectWriteSurface: writelessRole,
                 allowForeignWrite: allowForeignWriteArg,
+                card: { headerPath: cardGate.headerPath, sha256: cardGate.sha256, sections: cardGate.sections },
             });
             const taskMdPath = written.path;
             // Dispatch directly to _workers.parallel
