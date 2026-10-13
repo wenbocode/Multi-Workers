@@ -36,8 +36,9 @@
  * PURE READ-ONLY (AC-008): no fs write API anywhere in this file; the
  * on/off state lives only in module memory (AC-009), never in config.json.
  */
+import * as fs from "node:fs";
 import { type WorkerEntry } from "../shared/worker-store.ts";
-import { type ConfigResult, type RoadmapResult, type TimelineEvent } from "./status-model.ts";
+import { type BlockerClass, type ConfigResult, type GateReason, type RoadmapResult, type TimelineEvent } from "./status-model.ts";
 /** Widget id for the monitor panel (the watch widget is
  * "agent-team-loop-watch" — the two coexist, D-003). */
 export declare const MONITOR_WIDGET_ID = "agent-team-loop-monitor";
@@ -97,6 +98,49 @@ export interface MonitorGate {
     evidenceRefs?: string[];
     /** `DRIFT(...)` detail when an evidence mtime is newer than created_at. */
     drift?: string | null;
+    /** AC-003 suppression reason derived from disk, or null when the gate is
+     * due (the renderer then prints `reason=-`, never an empty value).
+     * Optional so hand-built snapshots stay constructible. */
+    reason?: GateReason | null;
+    /** True when the gate's scope (stage/key + created_at) resolved against the
+     * roadmap; false renders the orthogonal `unresolved-scope` marker. */
+    scopeResolved?: boolean;
+    /** `phase:"remind"` ledger rows for this gate (cap-axis input, AC-003). */
+    reminders?: number;
+    /** `gate_reminder_max` at collect time. */
+    reminderMax?: number;
+    /** T-14b: the RAW `blocker_class` value from the frontmatter line scan, or
+     * `null` when the line is absent or blank (same shape as `reasonCode` — the
+     * loose scan carries no field-presence bit). The parser never folds: the
+     * `judgment` fold is applied at render time through {@link blockerClassOf},
+     * the same function `status-model.ts` uses, so the two surfaces cannot
+     * disagree about an unclassified (v1 legacy) gate. */
+    blockerClass?: string | null;
+}
+/** Gate-queue readability (AC-003 `gate-queue-unreadable`). `ok` = the whole
+ * directory scan succeeded (an absent gates directory is a legitimately empty
+ * queue); `partial` = the directory read but at least one gate file did not;
+ * `unreadable` = the directory scan itself failed. The old code degraded every
+ * failure to "0 pending", which printed "no gates" for "cannot read gates". */
+export type MonitorQueueState = "ok" | "partial" | "unreadable";
+/** One roadmap stage as the AC-016 main-gate line shows it. */
+export interface MonitorStage {
+    number: number;
+    title: string;
+    /** pending | approved | running | closed | closed-human | halted */
+    status: string;
+    /** The main gate currently blocking per-key dispatch in this stage
+     * (stage-confirm / stage-close / stalled / budget-exhausted / goal-change),
+     * or null when nothing is pending. `_stage_activation` gates ALL per-key
+     * dispatch on a `running` stage (conductor.py:245-247/671). */
+    blockerKind: string | null;
+    blockerGateId: string | null;
+    /** How long the blocking gate has waited (ms), null when unknown. */
+    blockerAgeMs: number | null;
+    /** Keys frozen by a non-dispatching status (`_DISPATCH_SKIP_STATUSES`:
+     * stalled / pending-review) — a freeze is not terminal, so the stage can
+     * never close while one exists. */
+    frozenKeys: string[];
 }
 /** The auto-decision kill switch, read raw so the value stays visible even
  * while the TS config mirror does not yet declare `auto_gate_mode` (T-03 owns
@@ -136,6 +180,15 @@ export interface MonitorAutopilot {
     stallTicks: number;
     keys: MonitorKey[];
     stalls: MonitorStall[];
+    /** AC-016 stage main-gate rows, derived from the same roadmap parse as
+     * `keys`. Optional so hand-built snapshots stay constructible. */
+    stages?: MonitorStage[];
+    /** key → stage number (two-level gate→stage resolution input, AC-003). */
+    stageOfKey?: ReadonlyMap<string, number>;
+    /** stage number → roadmap status. */
+    stageStatusByNumber?: ReadonlyMap<number, string>;
+    /** stage number → title. */
+    stageTitleByNumber?: ReadonlyMap<number, string>;
 }
 export interface MonitorSnapshot {
     serve: MonitorServe;
@@ -143,6 +196,18 @@ export interface MonitorSnapshot {
     autopilot: MonitorAutopilot;
     workers: MonitorWorker[];
     gates: MonitorGate[];
+    /** AC-003: readability of the gate queue this frame. `unreadable` means the
+     * gate list above is NOT "no gates" but "could not read gates" — the panel
+     * must say so instead of printing `0 pending`. Optional on hand-built
+     * snapshots (absent = `ok`). */
+    queueState?: MonitorQueueState;
+    /** One-line detail of the queue read failure (per-file for `partial`). */
+    queueError?: string | null;
+    /** T-21 R-2: per-file failure samples behind `queueState`, so the panel can
+     * print a failure COUNT (not just one message). Populated on the same pass as
+     * `queueError`; optional on hand-built snapshots (absent = derive one sample
+     * from `queueError`). */
+    queueFailures?: string[];
     /** G2 AC-007/AC-008 (design D-008/D-009): a pending gate exists AND no
      * non-terminal worker row is in flight — the file-only truth table shared
      * verbatim with the Python reminder (T-07, `blockedOnHuman` in
@@ -179,12 +244,21 @@ export interface MonitorSnapshot {
 /** Resolve one `evidence_refs` entry (`kind:relpath[#sha][@mtime_ns]`)
  * against the project's `.agenticdoc/` first, then the project root. */
 export declare function evidenceFilePath(projectDir: string, ref: string): string | null;
+/** Injection seam for readMonitorState (T-21 R-2 tests): the gate-directory
+ * scan and the per-file text read are the two failure points that produce
+ * `unreadable` / `partial`, and a single unreadable file cannot be constructed
+ * portably on every platform (Windows has no chmod-based read denial). Same
+ * injection pattern as {@link AutopilotPanelDeps}. */
+export interface MonitorStateDeps {
+    readGateDir?: (dir: string) => fs.Dirent[];
+    readGateText?: (file: string) => string;
+}
 /** Derive the full monitor snapshot from the file family. Read-only; every
  * individual source degrades to a safe default (missing pid file → not
  * running, missing config → never enabled, missing gates dir → empty queue)
  * instead of throwing — a half-present project still renders a full panel
  * (AC-007). */
-export declare function readMonitorState(projectDir: string, nowMs: number): MonitorSnapshot;
+export declare function readMonitorState(projectDir: string, nowMs: number, deps?: MonitorStateDeps): MonitorSnapshot;
 /** Bounded tail read of the current timeline file — the TS mirror of
  * autopilot/timeline.py tail_events. Rotated generations are deliberately
  * not consulted (this answers "what just happened") and the window keeps the
@@ -216,6 +290,24 @@ export interface AutopilotPanelDeps {
  * degrades to a safe default instead of throwing — a half-present project
  * still renders a full panel). Pure read-only. */
 export declare function deriveAutopilotPanel(projectDir: string, nowMs: number, workers: MonitorWorker[], deps?: AutopilotPanelDeps): MonitorAutopilot;
+/** Compact drift marker (`~D` = evidence newer than `created_at`). */
+export declare const GATE_DRIFT_MARK = "~D";
+/** T-14b compact blocker-class marks. One column of payload (plus the token's
+ * leading space) is the entire budget the frozen 110-column contracts leave for
+ * an always-present classification, so the class is encoded exactly like the
+ * `~D` / `R:*` marks rather than as a `blocker=` field. `judgment` is the
+ * {@link blockerClassOf} fold of an absent/blank/out-of-set value, so a v1
+ * legacy gate can NEVER render as auto-releasable. */
+export declare const GATE_BLOCKER_MARK: Record<BlockerClass, string>;
+/** Compact reason codes — the encode half of the table above. */
+export declare const GATE_REASON_CODE: Record<string, string>;
+/**
+ * Render ONE pending gate as a Layer A row (AC-001/AC-012). Pure function of
+ * the collected gate + its position in the queue; the encoding table and the
+ * fit ladder above are the whole contract. `reason`, age and the `~D` drift
+ * mark are always present — only their encoding can change.
+ */
+export declare function renderPendingGateLine(gate: MonitorGate, index: number, total: number): string;
 /**
  * Render the snapshot as the fixed-section panel. Every section is always
  * present (0 running folds to the "workers: 0 running" header, 0 pending to

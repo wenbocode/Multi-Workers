@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { diffLedger } from "../shared/change-ledger.js";
+import { collectMalformedCandidates, diffLedger } from "../shared/change-ledger.js";
+import { readRunState } from "../shared/run-store.js";
 import { readTaskType } from "../shared/task-frontmatter.js";
 import { checkRecovery } from "./output-sections.js";
 /** Never-throwing read (the product files may not exist yet). */
@@ -65,6 +66,21 @@ function agentProductText(dir, summary) {
     }
     return summary;
 }
+/** `run.json.started_at` as epoch ms, or undefined when the run record is
+ * absent/legacy. Used by the T-17/C-36b deliverable freshness probe. */
+function runStartedAtMs(dir) {
+    const startedAt = readRunState(dir)?.started_at;
+    if (typeof startedAt !== "string")
+        return undefined;
+    const ms = Date.parse(startedAt);
+    return Number.isFinite(ms) ? ms : undefined;
+}
+/** The worker key's `evidence/` tree (C-36b deliverable channel):
+ * `<agenticdocRoot>/<taskKey>` is `<keyDir>/workers/<name>` by construction, so
+ * the key dir is two levels up in both the worker-mode and the test layouts. */
+function deliverableDir(taskDir) {
+    return path.join(path.dirname(path.dirname(taskDir)), "evidence");
+}
 /**
  * Compute a run's terminal gaps in one place (T-07 requirements 1 + 6): the
  * AC-003 recovery contract over the agent product and the AC-004 change ledger
@@ -77,17 +93,52 @@ export function readTerminalGaps(opts) {
     const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
     const type = opts.type ?? typeFromTaskMd(dir);
     if (type === undefined)
-        return { judged: false, missingSections: [], unrecordedFiles: [], unjudgeableFiles: [], ok: true };
+        return {
+            judged: false,
+            missingSections: [],
+            unrecordedFiles: [],
+            unjudgeableFiles: [],
+            malformedFiles: [],
+            infraFiles: [],
+            unresolvableFiles: [],
+            ok: true,
+        };
     const productText = agentProductText(dir, opts.summary);
     const missingSections = opts.judgeRecovery === false ? [] : checkRecovery(productText, type).missing;
     const traceText = readFileSafe(path.join(dir, "trace.log"));
-    const ledger = diffLedger(productText, traceText);
-    const unjudgeableFiles = ledger.unjudgeable ? ledger.declared : [];
+    // T-17: pass the role + the key's evidence tree + the run clock, so a
+    // writeless role's outside-taskDir deliverable is reconciled from disk
+    // (C-36a/b) instead of judged as an unrecorded read reference.
+    const ledger = diffLedger(productText, traceText, {
+        role: type,
+        deliverableDir: deliverableDir(dir),
+        runStartedAtMs: runStartedAtMs(dir),
+        projectRoot: opts.projectRoot,
+    });
+    // T-17b/T-17c: an infra-only or unresolvable-only zero-event declaration is
+    // trivially green (see `diffLedger`), and a framework/ghost path must never
+    // ride the unjudgeable gap list either — only the judgeable (existing,
+    // non-infra) declarations are named.
+    const infraSet = new Set(ledger.infra);
+    const unresolvableSet = new Set(ledger.unresolvable);
+    const unjudgeableFiles = ledger.unjudgeable
+        ? ledger.declared.filter((file) => !infraSet.has(file) && !unresolvableSet.has(file))
+        : [];
+    // C-36c: warn-only path hygiene — the malformed sample is visible but it
+    // never enters a gap list and never flips `ok`.
+    const malformedFiles = collectMalformedCandidates(productText);
     return {
         judged: true,
         missingSections,
         unrecordedFiles: ledger.extra,
         unjudgeableFiles,
+        malformedFiles,
+        // T-17b: framework-owned infrastructure writes are named for visibility
+        // but never judged (they are not this worker's writes).
+        infraFiles: ledger.infra,
+        // T-17c: declared paths not on disk are named for visibility but never
+        // judged (a nonexistent file cannot be a write).
+        unresolvableFiles: ledger.unresolvable,
         ok: missingSections.length === 0 && ledger.extra.length === 0 && unjudgeableFiles.length === 0,
     };
 }
@@ -118,6 +169,33 @@ export function writeOutput(opts) {
     // on the readback line so the PM sees why the ledger verdict is absent
     // instead of reading a false green (or a false red).
     const unjudgeableNote = gaps.unjudgeableFiles.length > 0 ? `未记录写入（不可判）：${gaps.unjudgeableFiles.join("、")}` : "";
+    // T-17/C-36c: warn-only path hygiene. Deliberately NOT folded into
+    // `terminalNote` — a malformed token is a formatting warning, not a gap, so
+    // it must never read as a failure on the `## Questions` readback line.
+    const malformedNote = gaps.malformedFiles.length > 0 ? `格式异常（warn，不影响判定）：${gaps.malformedFiles.join("、")}` : "";
+    if (malformedNote !== "") {
+        appendTrace(opts.taskKey, opts.agenticdocRoot, `ledger-malformed count=${gaps.malformedFiles.length} samples=${gaps.malformedFiles.join(",")}`);
+    }
+    // T-17b/C-36 fourth class: framework-owned infrastructure paths the report
+    // named are NOT this worker's writes, so they are excluded from the ledger
+    // judgement. Same warn shape as `malformed` — a `## Ledger Infra` section
+    // plus a `[FLOW]` trace line — so the exclusion is visible, not silent, and
+    // never reads as a failure on the `## Questions` readback line.
+    const infraNote = gaps.infraFiles.length > 0 ? `框架基础设施写入（warn，不计入判定）：${gaps.infraFiles.join("、")}` : "";
+    if (infraNote !== "") {
+        appendTrace(opts.taskKey, opts.agenticdocRoot, `ledger-infra count=${gaps.infraFiles.length} samples=${gaps.infraFiles.join(",")}`);
+    }
+    // T-17c: a declared path with no file on disk cannot be a write, so it is
+    // excluded from the ledger judgement — never from the report. Same warn shape
+    // as `malformed`/`infra`: a `## Ledger Unresolvable` section plus a `[FLOW]`
+    // trace line, so the exclusion is visible, not silent, and never reads as a
+    // failure on the `## Questions` readback line.
+    const unresolvableNote = gaps.unresolvableFiles.length > 0
+        ? `不可解析声明（磁盘不存在，warn，不计入判定）：${gaps.unresolvableFiles.join("、")}`
+        : "";
+    if (unresolvableNote !== "") {
+        appendTrace(opts.taskKey, opts.agenticdocRoot, `ledger-unresolvable count=${gaps.unresolvableFiles.length} samples=${gaps.unresolvableFiles.join(",")}`);
+    }
     const terminalNote = [gapNote, ledgerNote, unjudgeableNote].filter((note) => note !== "").join("；");
     const sections = [];
     // TL;DR first section (D-005): single-line conclusion on every exit path,
@@ -156,6 +234,12 @@ export function writeOutput(opts) {
         sections.push(`## Ledger Gaps\n\n${ledgerNote}`);
     if (unjudgeableNote)
         sections.push(`## Ledger Unjudgeable\n\n${unjudgeableNote}`);
+    if (malformedNote)
+        sections.push(`## Ledger Malformed\n\n${malformedNote}`);
+    if (infraNote)
+        sections.push(`## Ledger Infra\n\n${infraNote}`);
+    if (unresolvableNote)
+        sections.push(`## Ledger Unresolvable\n\n${unresolvableNote}`);
     // D-117 (output.md clobber): task templates direct workers to write
     // deliverables and machine-readable lines into output.md (VERDICT=/TASKS=
     // first lines, conductor [VERIFY] rows, L3 verdict sections) — a full

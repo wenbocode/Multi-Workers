@@ -203,6 +203,23 @@ export declare function dispatchNewTasks(workerStore: WorkerStore, agenticdocRoo
  * restart/resume so the same ledger row is never pushed twice (design D-010).
  * Same mechanism as WATCH_ENTRY_TYPE / AUTOPILOT_SEEN_ENTRY_TYPE. */
 export declare const GATE_REMINDER_ENTRY_TYPE = "agent-team-loop:gate-reminder-seen";
+/** Session entry type recording a DROPPED gate reminder (mw-autopilot-gate-
+ * alarm-liveness AC-010): "no watch", "other key" and "read error" drops must
+ * leave a visible record, never vanish silently. Deliberately a SEPARATE type
+ * and WITHOUT `seq`: the delivery resume path reads `e.data?.seq` from
+ * {@link GATE_REMINDER_ENTRY_TYPE} entries to advance `reminderWatermark`, so a
+ * drop record carrying a `seq` would suppress the real delivery that follows
+ * it (DRQ-2 C5 counter-example). */
+export declare const GATE_REMINDER_DROPPED_ENTRY_TYPE = "agent-team-loop:gate-reminder-dropped";
+/** Record one dropped reminder into the session (visible via the transcript /
+ * session file). Deduplicated per `${gateId}:${n}:${reason}` for this process:
+ * the poll loop runs every 4 s, so an undeduped drop would append an entry per
+ * tick forever. `reason` is one of the three literal drop causes. */
+export declare function recordDroppedGateReminder(pi: ExtensionAPI, seen: Set<string>, reminder: {
+    gateId: string;
+    reminderN: number;
+    gateKey: string;
+}, reason: "no-watch" | "other-key" | "read-error", error?: string): void;
 export declare function startWorkerPollLoop(pi: ExtensionAPI, workerStore: WorkerStore, ackStore: AckStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, ui: PmUiHolder, pollIntervalMs?: number): NodeJS.Timeout;
 /** Marker opening the injected parallel-protocol block, and the idempotency
  * guard: a handler that already sees it in the chained system prompt must not

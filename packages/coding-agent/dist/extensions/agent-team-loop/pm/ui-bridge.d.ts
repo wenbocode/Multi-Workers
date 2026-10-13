@@ -54,9 +54,21 @@ export declare const WATCH_ENTRY_TYPE = "agent-team-loop:watch";
  * another window can tell whether a key's claim is still held by a live
  * process (pid check) before taking it over. */
 export declare function windowClaimId(): string;
-export type ClaimState = "free" | "held-live" | "held-stale";
-/** Whether a key's claim blocks a takeover. "held-live" = another live window
- * (or a foreign host we cannot verify) holds it and --force is required. */
+export type ClaimState = "free" | "held-live" | "held-stale" | "held-conductor";
+/** Who holds a key's `_index.parallel` claim — deliberately a HOLDER verdict,
+ * not a takeover verdict (the two differ for exactly one holder):
+ *  - "held-live": another live window (or a foreign host whose liveness we
+ *    cannot verify) holds it. A takeover needs `--force`.
+ *  - "held-conductor": THIS host's autopilot conductor holds it through its
+ *    synthetic claim `autopilot@<host>:<pid>` (T-16). The conductor yields to
+ *    a human takeover on its next tick, so `takeOverKey` succeeds WITHOUT
+ *    `--force` (T-16b requirement 1).
+ *  - "held-stale": the holder is gone; "free": nobody (or this window).
+ *
+ * The synthetic branch is decided by index-store's shared parser
+ * (`parseSyntheticClaim` + `syntheticClaimLive`), never by a prefix test
+ * repeated here: the TS takeover guard and the Python conductor can then only
+ * drift through that one predicate (T-16b requirement 4). */
 export declare function claimState(claimId: string, self: string): ClaimState;
 /** Machine-readable refusal code for a cross-key write (AC-024). */
 export declare const CROSS_KEY_READ_ONLY = "cross-key-read-only";

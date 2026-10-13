@@ -51,9 +51,56 @@
  * behaviour. The existence probe is read-only and resolves against the worker's
  * cwd (`LedgerOptions.projectRoot` overrides it for non-cwd callers).
  *
+ * T-17 (role-aware ledger, C-36a/b/c): a writeless role's report is a survey —
+ * it is full of paths it READ. When `LedgerOptions.role` is a writeless type,
+ * the declaration set is therefore rebuilt (C-36a): the task's deliverable
+ * (fresh files under the key's `evidence/` tree, `LedgerOptions.deliverableDir`)
+ * plus real change-list declarations; surveyed paths elsewhere are read
+ * references. The deliverable may sit outside taskDir,
+ * so it is reconciled from disk (existence + run-window freshness,
+ * `LedgerOptions.runStartedAtMs`) rather than being invisible (C-36b). Path
+ * hygiene (C-36c): unexpanded variables/`%VAR%` and unparseable paths stay
+ * `malformed` — warn-only, never declared, never recorded. With no `role` the
+ * historical all-roles semantics are byte-for-byte unchanged.
+ *
  * Attribution stays per-worker by construction: the recorded side is only the
  * caller's own `traceText` (the worker's `[WRITE_FILE]` events) — no repo-wide
  * `git status`/diff ever enters this module.
+ *
+ * T-17b (C-36 fourth class): framework-owned infrastructure writes are not
+ * worker writes. `_workers.parallel`, the index, the worker's own
+ * `run.json`/`trace.log`/`output.md`, `serve.meta` and `pm-state.md` all have
+ * mtimes inside (or just after) a worker's run window, so mtime can never
+ * attribute them; `INFRA_BASENAMES` does it by OWNERSHIP. They are removed from
+ * `extra` and reported in `ChangeLedger.infra` instead (warn-only), which is
+ * what stops the T-12 false red `未记录写入：_workers.parallel` without
+ * loosening a real out-of-scope write (P-03).
+ *
+ * T-21 R-1 (C-37): the exemption is FILE-level only. T-17b's path-SEGMENT rule
+ * (`_autopilot/**`, `.mw/**`) exempted whole trees, so a worker declaring its
+ * own gate answer (`_autopilot/gates/gate-0007.md`), the roadmap or the shadow
+ * decision ledger was classified infra — a real out-of-scope control-plane
+ * write silently downgraded to a warn. Conductor/launcher state trees are now
+ * judged like any other repo path: existing + declared + unrecorded ⇒ RED. The
+ * framework files that must stay infra (the worker's own run record/trace/
+ * product, the shared queue/index, `serve.meta`, `pm-state.md`) are all covered
+ * by `INFRA_BASENAMES`.
+ *
+ * T-17c (C-36 fifth class): "declared but not on disk" is not a write. The T-16
+ * terminal named four unrecorded writes; all four were false positives, two of
+ * them new shapes — `update_index.py` (a ghost file name harvested from code
+ * text the report quoted) and `os.replace` (a Python identifier, seven
+ * occurrences in `conductor.py`, never a path). The judgement is a filesystem
+ * FACT, not a token shape: a worker cannot write a file that does not exist, so
+ * a declared-but-unrecorded path with no file/directory on disk is excluded
+ * from `extra` and surfaced warn-only (`ChangeLedger.unresolvable`, the
+ * `## Ledger Unresolvable` product section + a `[FLOW] ledger-unresolvable`
+ * trace line), exactly like T-17b's infra class. Shape heuristics are explicitly
+ * forbidden here — `os.replace` is shape-identical to a real dotless basename
+ * declaration, and mtime cannot attribute a write (T-17b); existence is the
+ * only sound discriminator. The P-03 counterweight is unchanged: a real
+ * out-of-scope write leaves an existing file, so a declared existing
+ * non-infrastructure path the trace never recorded still lands in `extra`.
  */
 /** Machine event marker. One line per successful write, `path=` is the only
  * field (a path may contain spaces, so the value runs to end of line). */
@@ -73,12 +120,100 @@ export declare function appendWriteFileEvent(tracePath: string, filePath: string
 export declare function repoRelativePath(target: string, base?: string): string;
 /** Recorded write paths, in file order, de-duplicated. Never throws. */
 export declare function parseWriteFileEvents(traceText: string): string[];
+/** Roles with no `write`/`edit` tool (`worker-mode.ts::isWritelessRole`, which
+ * this leaf module cannot import without a cycle). Kept as the ledger's own
+ * classification; the T-17 regression test locks the set against the runtime
+ * allowlist so the two cannot drift (P-08 single source by test). */
+export declare const WRITELESS_LEDGER_ROLES: ReadonlySet<string>;
+/** Is `role` a writeless task type (C-36a role split)? */
+export declare function isWritelessLedgerRole(role: string | undefined): boolean;
+/**
+ * T-17b (C-36 fourth class): framework-owned infrastructure writes.
+ *
+ * A worker's report routinely names files the FRAMEWORK writes — the queue
+ * ledger, the index, the worker's own run record / trace / product, the PM's
+ * state mirror. Their mtimes naturally fall inside (or just after) the worker's
+ * run window: `_workers.parallel` is appended by the launcher while the worker
+ * runs, and the queue file may be rewritten again after it exits. An mtime
+ * window therefore CANNOT attribute a write — the only sound discriminator is
+ * OWNERSHIP, i.e. this static table of files the framework writes itself.
+ *
+ * The T-12 live incident made the defect concrete: `mwgal-t12-stage-close-auto`
+ * (coding) was charged `未记录写入：_workers.parallel` although its `trace.log`
+ * contains ZERO `_workers.parallel` hits, the file exists, and its mtime
+ * (19:23:30 local) is AFTER the worker's run window (19:07–19:20 local) — it is
+ * the launcher's queue, not the worker's write.
+ *
+ * Entries are matched by basename (case-folded) or, for the conductor/launcher
+ * state trees, by path segment. Every entry names the producing side:
+ *   - `_workers.parallel` / `_workers.stale.parallel` — `shared/worker-store.ts:152`
+ *     (`WorkerStore`), the Python launcher and conductor
+ *     (`packages/multi-workers/mw_common.py`); queue rows are appended outside
+ *     any worker process.
+ *   - `_index.parallel` / `_index.md` — `shared/index-store.ts:334`/`:530`
+ *     (`IndexStore`), `update_index.py`/`advance_phase.py`.
+ *   - `task.md` — dispatched by the PM before the worker starts
+ *     (`pm/ui-bridge.ts::writeDispatchTaskMd`).
+ *   - `run.json` — `shared/run-store.ts::writeRunState` (the worker's own run
+ *     identity; the Python launcher may only add `lost`, `mw_common.mark_run_lost`).
+ *   - `trace.log` — `worker/output-writer.ts` (`appendTrace`,
+ *     `appendLifecycleLine`, `appendHeartbeat`), `shared/change-ledger.ts`
+ *     (`appendWriteFileEvent`), `worker/worker-mode.ts`.
+ *   - `output.md` — `worker/output-writer.ts::writeOutput`.
+ *   - `report.md` / `report-<slug>.md` / `progress.md` — the `worker_file`
+ *     channel (`worker/worker-file-tool.ts`), the harness product contract.
+ *   - `phase-<n>.md` — `worker/phase-runner.ts::writePhaseFile`.
+ *   - `stage-<n>*.md` — the key's stage products (`shared/run-store.ts::collectArtifacts`).
+ *   - `worker.log` — the launcher's stdout redirect (`worker/worker-mode.ts:567`,
+ *     `pm/ui-bridge.ts::FRAMEWORK_TASK_BASENAMES`).
+ *   - `serve.meta` — `mw serve` startup (`shared/mw-runner.ts:219`).
+ *   - `pm-state.md` — the PM's key mirror (`pm/ui-bridge.ts:1006`).
+ *
+ * T-21 R-1: the conductor's `_autopilot/**` tree (`_roadmap.md`, `timeline.jsonl`,
+ * `auto-decisions.jsonl`, `gates/**`, `tickets/**`, `xkey/ledger.json`) and the
+ * launcher's `.mw/**` locks/pids are deliberately NOT here. They are written
+ * only by the conductor / `mw serve` (`shared/xkey-gate-guard.ts:39`), so a
+ * worker declaring one of them is exactly the C-37 out-of-scope signal the
+ * ledger exists to surface (QG R-1 counterexample: a coding worker answering
+ * its own `_autopilot/gates/gate-0007.md`). Exempting them by path segment
+ * would silently warn-only that write and, with it, the R-6 shadow-history
+ * forgery chain. A bare `auto-decisions.jsonl` stays non-infra for the same
+ * reason — and it keeps the T-17 writeless survey verdict (a READ reference,
+ * C-36a) byte-identical.
+ *
+ * These paths are excluded from the coding `extra` judgement and surfaced on a
+ * warn-only channel instead (`TerminalGaps.infraFiles`, `## Ledger Infra`), so
+ * the suppression is visible and never falsifying. The P-03 counterweight is
+ * unchanged: a declared NON-infrastructure repo path the trace never recorded
+ * stays red.
+ */
+export declare const INFRA_BASENAMES: ReadonlySet<string>;
+/** Is `filePath` a framework-owned infrastructure path (T-17b, narrowed to
+ * file level by T-21 R-1)? Case-folded: a Windows worktree spells the same file
+ * with a different case. Only the basename participates — no directory inside
+ * the path can exempt a file, so `_autopilot/**` and `.mw/**` are judgeable. */
+export declare function isInfrastructurePath(filePath: string): boolean;
 /** Options shared by the ledger extractors. */
 export interface LedgerOptions {
     /** Root the T-25 dotless existence arbitration resolves against. Defaults to
      * `process.cwd()` — the launcher starts every worker with `cwd` set to the
      * project root, so a repo-relative declaration resolves against the repo. */
     projectRoot?: string;
+    /** Task role from the `task.md` header `type:` (T-17/AC-004). When it is a
+     * writeless role, the ledger judges only the task's declared deliverable and
+     * explicit write declarations; every other path in the report is a read
+     * reference (C-36a). Omitted ⇒ the historical all-roles behaviour, byte for
+     * byte (unit callers and legacy books). */
+    role?: string;
+    /** Absolute path of the worker's key `evidence/` tree — the writeless
+     * deliverable channel (C-36b). Only references that resolve under it are
+     * candidate deliverables; references to other keys/repos stay read
+     * references. */
+    deliverableDir?: string;
+    /** Epoch ms the run started (`run.json.started_at`). A deliverable whose
+     * mtime predates the run is a pre-existing read reference, not this run's
+     * product (C-36b anti-forgery). Omitted ⇒ existence is enough. */
+    runStartedAtMs?: number;
 }
 /** Remove every non-declarative span from report text (T-21 requirement 4): the
  * marker contract sections, all HTML comments, and fenced code blocks. The
@@ -96,12 +231,28 @@ export interface ChangeLedger {
      * malformed tokens are not declarations (see `collectMalformedCandidates`). */
     declared: string[];
     /** Files the trace records as successfully written, normalized,
-     * de-duplicated. */
+     * de-duplicated — plus (writeless roles only) the fresh deliverable files the
+     * key's `evidence/` tree verifiably holds, so an outside-taskDir product is
+     * reconciled instead of invisible (C-36b). */
     recorded: string[];
     /** declared \ recorded — non-empty means the report claims a file the trace
      * never saw written (AC-004 red). Empty when the trace carries no
-     * `[WRITE_FILE]` line at all (migration compatibility). */
+     * `[WRITE_FILE]` line at all (migration compatibility). Framework-owned
+     * infrastructure paths (T-17b) and paths that do not exist on disk (T-17c)
+     * are EXCLUDED here and reported in `infra` / `unresolvable`. */
     extra: string[];
+    /** T-17b: declared-but-unrecorded paths that are framework-owned
+     * infrastructure (`isInfrastructurePath`). Excluded from `extra` and `ok`,
+     * surfaced warn-only (the `## Ledger Infra` product section + a `[FLOW]`
+     * trace line) so the suppression is visible instead of silent. */
+    infra: string[];
+    /** T-17c: declared-but-unrecorded paths with no file/directory on disk
+     * (checked against `LedgerOptions.projectRoot`, the worker's cwd in
+     * production). Such a path cannot be a write this run performed, so it is
+     * excluded from `extra` and `ok` and surfaced warn-only (the
+     * `## Ledger Unresolvable` product section + a `[FLOW]` trace line). The
+     * discriminator is existence only — never the token's shape. */
+    unresolvable: string[];
     /** T-12/F-04: the report declares files but the trace recorded ZERO write
      * events. That trace cannot be judged: it is either a legacy trace (T-05
      * predates it) or a run whose writes all went through an unclassifiable

@@ -67,17 +67,33 @@ export declare function waitForStart(statusFn: () => {
  * Returns true if the command was executed.
  */
 export declare function stopMw(projectDir: string): boolean;
-/** `.mw/serve.meta` written by mw serve at startup (pid + started_at_ms). */
+/** `.mw/serve.meta` written by mw serve at startup. T-13 added the code
+ * identity fields (commit / dirty / code_digest / schema / code_mtime_ms);
+ * every one is optional so a legacy meta (and an older writer) still parses. */
 export interface MwServeMeta {
     pid: number;
     startedAtMs: number;
+    /** The serve's own source tree — the staleness baseline. */
+    codeDir?: string;
+    /** Full 40-hex HEAD OID the serve was stamped with. */
+    commit?: string;
+    dirtyTracked?: number;
+    dirtyUntracked?: number;
+    /** Newest runtime-source mtime (ms) captured at serve start. */
+    codeMtimeMs?: number;
+    /** sha256 of the runtime file set (`sha256:<hex>`) — the authoritative
+     * identity; absent on meta written before T-13. */
+    codeDigest?: string;
+    /** Identity schema version (absent == 0 == "predates the drift check"). */
+    schema?: number;
 }
 export declare function readServeMeta(projectDir: string): MwServeMeta | null;
 /**
  * Newest mtime among mw runtime sources (.py + providers.json) — the serve
  * staleness baseline. Serves load these at startup, so any file newer than
  * the serve's start means the running serve predates current code. Skips
- * tests, dev scratch (`_*`), `__pycache__`, and `dist` (bundle output).
+ * tests (files `test_*` and the whole `test/` dir), dev scratch (`_*`),
+ * `__pycache__`, and `dist` (bundle output).
  */
 export declare function mwCodeNewestMtimeMs(mwPyOverride?: string): number | null;
 export interface ServeStaleness {
@@ -205,6 +221,22 @@ export interface DoctorJson {
             error?: string | null;
         }>;
         required_missing?: number;
+    };
+    /** Serve code identity (T-13/AC-005). `verdict == "drift"` makes doctor
+     * exit 1; this call site tolerates that (it parses stdout regardless). */
+    serve_code?: {
+        running?: boolean;
+        verdict?: string;
+        reason?: string | null;
+        restart_required?: boolean;
+        tree?: string | null;
+        schema?: number | null;
+        expected_schema?: number;
+        commit_expected?: string | null;
+        commit_actual?: string | null;
+        drift_age_s?: number | null;
+        detail?: string;
+        fix?: string;
     };
     fix?: {
         applied?: unknown;

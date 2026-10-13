@@ -35,6 +35,26 @@ export declare function keyNameRefusal(key: string): KeyNameRefusal | null;
  * ONLY skip condition); `"dead"` — foreign host or dead pid; `"stale"` —
  * unparseable (legacy). */
 export type ConductorClaimState = "free" | "live" | "dead" | "stale";
+/** Owner marker of a conductor-owned (synthetic) claim id (T-16 / AC-014 route
+ * ①): `autopilot@<host>:<pid>`. The prefix is the FIELD-LEVEL distinction from
+ * a human `host:pid` claim, so no reader has to infer ownership from a pid. */
+export declare const SYNTHETIC_CLAIM_PREFIX = "autopilot@";
+/** Parsed synthetic claim id. */
+export interface SyntheticClaim {
+    host: string;
+    pid: number;
+}
+/** `(host, pid)` of a synthetic claim id (T-16). Mirrors the Python
+ * `mw_common.parse_synthetic_claim` on the accepted shape; a malformed
+ * `autopilot@...` value yields `undefined` (it is then judged by the ordinary
+ * legacy rules, never silently adopted as a claim). */
+export declare function parseSyntheticClaim(claimId: string): SyntheticClaim | undefined;
+/** Is this claim id owned by the conductor rather than by a human window? */
+export declare function isSyntheticClaimId(claimId: string): boolean;
+/** Is this conductor-owned claim still LIVE (same-host pid alive)? Used as
+ * owner evidence by {@link ownerEvidenceCurrent}; a dead synthetic claim is not
+ * evidence of anything and falls through to the ordinary gates. */
+export declare function syntheticClaimLive(claimId: string): boolean;
 /** Liveness verdict the Python conductor uses to decide whether a key's claim
  * blocks dispatch (`conductor.py`: `if claim == state.CLAIM_LIVE: ... continue`).
  *
@@ -43,7 +63,16 @@ export type ConductorClaimState = "free" | "live" | "dead" | "stale";
  * ("cannot verify liveness"), while the conductor treats a foreign host as
  * `dead` ("conductor-side rule: foreign host is not live"). ORPHANED judgement
  * and the repair path must speak the CONDUCTOR's language, or a key the
- * conductor is happy to drive would be mis-labelled orphaned. */
+ * conductor is happy to drive would be mis-labelled orphaned.
+ *
+ * A SYNTHETIC claim (T-16, `autopilot@<host>:<pid>`) also reads `dead` here,
+ * deliberately: this verdict answers "does ANOTHER window own the key, so the
+ * automatic scan must not touch it?". The synthetic claim is the conductor's
+ * OWN takeover marker, so a `live` verdict would make the scan skip the key's
+ * undispatched work entirely (the C-35 symptom T-16 removes). The claim's real
+ * liveness is used instead as owner evidence by
+ * {@link ownerEvidenceCurrent}; the Python side passes its own id as `selfId`
+ * into `state.claim_state` and therefore never blocks itself. */
 export declare function conductorClaimState(claimId: string, selfId?: string): ConductorClaimState;
 /** Owner evidence LOCAL to a key namespace (T-22 / AC-011): the `_index.parallel`
  * row is gone, but the key itself still carries owner-authored facts. Final,
@@ -97,7 +126,10 @@ export interface OwnerEvidenceVerdict {
  *   - a state document moved within {@link OWNER_EVIDENCE_FRESH_MS};
  *   - the index row's status is not `idle` / `done` (an `active` row is a live
  *     owner; `done` is terminal and must not be repaired);
- *   - the row's claim is conductor-`live` (this host, pid alive).
+ *   - the row's claim is conductor-`live` (this host, pid alive);
+ *   - the row's claim is a LIVE synthetic claim (T-16/AC-014: the conductor
+ *     took the key over, so the "no owner ⇒ stale evidence" verdict must not
+ *     apply — a stale synthetic claim is recycled by the conductor itself).
  *
  * Read-only; the caller decides what to do with the verdict. */
 export declare function ownerEvidenceCurrent(agenticdocRoot: string, key: string, row: IndexEntry | undefined, now?: number, freshMs?: number): OwnerEvidenceVerdict;

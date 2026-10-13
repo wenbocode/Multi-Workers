@@ -46,6 +46,28 @@ export interface TerminalGaps {
      * ledger cannot be judged. Named on the readback line and in the product so
      * the run is not mistaken for a clean pass. */
     unjudgeableFiles: string[];
+    /** T-17/C-36c: malformed path tokens (unexpanded `$VAR`/`%VAR%` residue and
+     * unparseable paths). WARN-ONLY: surfaced in a `## Ledger Malformed` product
+     * section and a trace line, never part of `ok` and never a gap. */
+    malformedFiles: string[];
+    /** T-17b/C-36 fourth class: declared-but-unrecorded paths that are
+     * framework-owned infrastructure (`_workers.parallel`, the index, the run
+     * record / trace / product, `serve.meta`, `pm-state.md`). T-21 R-1 narrowed
+     * this to FILE-level ownership: the conductor's `_autopilot/**` control
+     * plane is judgeable and lands in `unrecordedFiles` (red) instead.
+     * WARN-ONLY, exactly like `malformedFiles`: surfaced in a `## Ledger Infra`
+     * product section and a `[FLOW]` trace line, never part of `ok` and never a
+     * gap — these are framework writes, not worker writes. */
+    infraFiles: string[];
+    /** T-17c/C-36 fifth class: declared-but-unrecorded paths that do not exist on
+     * disk (`update_index.py` — a ghost name harvested from code text;
+     * `os.replace` — a Python identifier). A path with no file/directory on disk
+     * cannot be a write this run performed, so it is WARN-ONLY like the infra
+     * class: surfaced in a `## Ledger Unresolvable` product section and a
+     * `[FLOW] ledger-unresolvable` trace line, never part of `ok` and never a
+     * gap. The classification reads the filesystem (existence), never the
+     * token's shape. */
+    unresolvableFiles: string[];
     /** True iff every gap list is empty. */
     ok: boolean;
 }
@@ -70,6 +92,11 @@ export declare function readTerminalGaps(opts: {
     agenticdocRoot: string;
     summary: string;
     type?: string;
+    /** Root the T-17c existence probe (and the T-25 dotless arbitration)
+     * resolves declared paths against. Defaults to `process.cwd()` — the
+     * launcher starts every worker with `cwd` set to the project root, so the
+     * production default is already correct; non-cwd callers (tests) pass it. */
+    projectRoot?: string;
     /** AC-003 recovery contract applies to this run. Default `true`. The settle
      * path passes `true` for a writeless role (its reply IS the deliverable) and
      * for a write role that actually produced a `report.md` product; a write

@@ -15381,11 +15381,11 @@ function ragFingerprint(config, enabledOnly) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/rag/evidence.ts
-import * as path8 from "node:path";
+import * as path9 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/output-writer.ts
-import * as fs5 from "node:fs";
-import * as path7 from "node:path";
+import * as fs6 from "node:fs";
+import * as path8 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/change-ledger.ts
 import * as fs4 from "node:fs";
@@ -15442,18 +15442,65 @@ var LEDGER_SECTION_ALIASES = [
   "\u53D8\u66F4",
   "\u4FEE\u6539\u6587\u4EF6"
 ];
+var WRITELESS_LEDGER_ALIASES = [
+  "\u6539\u52A8\u6E05\u5355",
+  "\u53D8\u66F4\u6E05\u5355",
+  "\u6539\u52A8\u5386\u53F2",
+  "\u53D8\u66F4\u5386\u53F2",
+  "\u4FEE\u6539\u6E05\u5355",
+  "\u4FEE\u6539\u6587\u4EF6",
+  "changed files",
+  "files changed"
+];
+var WRITELESS_LEDGER_ROLES = /* @__PURE__ */ new Set([
+  "research",
+  "review",
+  "verifier",
+  "reviewer",
+  "rag-research"
+]);
+function isWritelessLedgerRole(role) {
+  return role !== void 0 && WRITELESS_LEDGER_ROLES.has(role);
+}
+var INFRA_BASENAMES = /* @__PURE__ */ new Set([
+  "_workers.parallel",
+  "_workers.stale.parallel",
+  "_index.parallel",
+  "_index.md",
+  "task.md",
+  "run.json",
+  "trace.log",
+  "output.md",
+  "report.md",
+  "progress.md",
+  "worker.log",
+  "serve.meta",
+  "pm-state.md"
+]);
+var INFRA_BASENAME_RES = [/^report-.+\.md$/, /^phase-.+\.md$/, /^stage-\d+.*\.md$/];
+function isInfrastructurePath(filePath) {
+  const normalized = normalizePath2(filePath).toLowerCase();
+  if (normalized === "") return false;
+  const base = normalized.slice(normalized.lastIndexOf("/") + 1);
+  if (INFRA_BASENAMES.has(base)) return true;
+  return INFRA_BASENAME_RES.some((re) => re.test(base));
+}
+var UNEXPANDED_VARIABLE_RE = /\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*|[0-9])|%[A-Za-z_][A-Za-z0-9_]*%/;
+function hasUnexpandedVariable(token) {
+  return UNEXPANDED_VARIABLE_RE.test(token);
+}
 var HEADING_RE = /^\s*#{1,6}\s+(.*)$/;
-function isLedgerHeading(line) {
+function isLedgerHeading(line, aliases = LEDGER_SECTION_ALIASES) {
   const heading = HEADING_RE.exec(line);
   if (heading === null) return false;
   const title = heading[1].toLowerCase();
-  return LEDGER_SECTION_ALIASES.some((alias) => title.includes(alias.toLowerCase()));
+  return aliases.some((alias) => title.includes(alias.toLowerCase()));
 }
-function extractLedgerBody(reportText) {
+function extractLedgerBody(reportText, aliases = LEDGER_SECTION_ALIASES) {
   const lines = reportText.split(/\r?\n/);
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (isLedgerHeading(lines[i])) {
+    if (isLedgerHeading(lines[i], aliases)) {
       start = i + 1;
       break;
     }
@@ -15466,7 +15513,7 @@ function extractLedgerBody(reportText) {
   }
   return body.join("\n");
 }
-var TOKEN_SPLIT_RE = /[^\s`"'()[\]{}<>,;，；：、]+/g;
+var TOKEN_SPLIT_RE = /[^\s`"'()[\]<>,;，；：、]+/g;
 var BASENAME_WITH_EXT_RE = /^[^/\s]+\.[A-Za-z][A-Za-z0-9]{0,7}$/;
 var PATH_SHAPE_RE = /^(?:[A-Za-z]:)?\/?(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\/?$/;
 function isPathCandidate(token) {
@@ -15483,6 +15530,63 @@ function isPathCandidate(token) {
 }
 function isSeparatorBearing(token) {
   return token.includes("/") || token.includes("\\");
+}
+function isUnder(base, target) {
+  const clean = (p) => path6.resolve(p).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const b = clean(base);
+  const t = clean(target);
+  return t === b || t.startsWith(`${b}/`);
+}
+function resolveDeliverablePath(token, projectRoot, deliverableDir2) {
+  if (hasUnexpandedVariable(token)) return void 0;
+  const stripped = token.replace(/[（(][^（）()]*[）)]$/, "");
+  const forms = stripped === token || stripped === "" ? [token] : [stripped, token];
+  const keyDir = path6.dirname(deliverableDir2);
+  for (const form of forms) {
+    const candidates = path6.isAbsolute(form) ? [form] : [path6.resolve(projectRoot, form), path6.resolve(keyDir, form)];
+    for (const candidate of candidates) {
+      if (!isUnder(deliverableDir2, candidate)) continue;
+      try {
+        if (fs4.statSync(candidate).isFile()) return candidate;
+      } catch {
+      }
+    }
+  }
+  return void 0;
+}
+function isFreshDeliverable(abs, runStartedAtMs2) {
+  if (runStartedAtMs2 === void 0 || !Number.isFinite(runStartedAtMs2)) return true;
+  try {
+    return fs4.statSync(abs).mtimeMs >= runStartedAtMs2;
+  } catch {
+    return false;
+  }
+}
+function verbEndsAtWordBoundary(line, end) {
+  const next = line[end];
+  return next === void 0 || !/[A-Za-z0-9_]/.test(next);
+}
+function collectWritelessDeclarations(reportText, options) {
+  const declared = [];
+  const delivered = [];
+  const projectRoot = options.projectRoot ?? process.cwd();
+  if (options.deliverableDir !== void 0) {
+    const deliverableDir2 = path6.resolve(options.deliverableDir);
+    for (const line of reportText.split(/\r?\n/)) {
+      for (const token of lineTokens(line)) {
+        const abs = resolveDeliverablePath(token, projectRoot, deliverableDir2);
+        if (abs === void 0 || !isFreshDeliverable(abs, options.runStartedAtMs)) continue;
+        const rel = repoRelativePath(abs, projectRoot);
+        if (!declared.includes(rel)) declared.push(rel);
+        if (!delivered.includes(rel)) delivered.push(rel);
+      }
+    }
+  }
+  const body = extractLedgerBody(reportText, WRITELESS_LEDGER_ALIASES);
+  for (const file of collectDeclared(body, options.projectRoot)) {
+    if (!declared.includes(file)) declared.push(file);
+  }
+  return { declared, delivered };
 }
 function existsOnDisk(token, projectRoot) {
   try {
@@ -15632,6 +15736,7 @@ function declarationItems(body) {
     }
     for (const match2 of line.matchAll(DECLARATION_VERB_RE)) {
       const at = (match2.index ?? 0) + match2[0].length;
+      if (!verbEndsAtWordBoundary(line, at)) continue;
       const rest = line.slice(at).replace(DECLARATION_GAP_RE, "");
       const token = lineTokens(rest)[0];
       if (token === void 0) continue;
@@ -15655,15 +15760,50 @@ function collectDeclared(body, projectRoot) {
   }
   return out;
 }
-function diffLedger(reportText, traceText, options) {
-  const recorded = parseWriteFileEvents(traceText);
+function collectMalformedCandidates(reportText) {
   const body = extractLedgerBody(stripNonDeclarativeSpans(reportText));
-  const declared = dedupe(collectDeclared(body, options?.projectRoot));
-  if (recorded.length === 0) {
-    return { declared, recorded, extra: [], unjudgeable: declared.length > 0 };
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const line of body.split(/\r?\n/)) {
+    for (const token of lineTokens(line)) {
+      const variable = hasUnexpandedVariable(token);
+      if (!isSeparatorBearing(token) && !variable) continue;
+      if (!variable && !/[^/\\]/.test(token)) continue;
+      if (isPathCandidate(token)) continue;
+      if (seen.has(token)) continue;
+      seen.add(token);
+      out.push(token);
+    }
   }
-  const extra = declared.filter((file) => !recorded.some((recordedFile) => samePath(file, recordedFile)));
-  return { declared, recorded, extra, unjudgeable: false };
+  return out;
+}
+function diffLedger(reportText, traceText, options) {
+  const recordedEvents = parseWriteFileEvents(traceText);
+  const stripped = stripNonDeclarativeSpans(reportText);
+  let declared;
+  let delivered = [];
+  if (isWritelessLedgerRole(options?.role)) {
+    const writeless = collectWritelessDeclarations(stripped, options ?? {});
+    declared = dedupe(writeless.declared);
+    delivered = writeless.delivered;
+  } else {
+    const body = extractLedgerBody(stripped);
+    declared = dedupe(collectDeclared(body, options?.projectRoot));
+  }
+  const recorded = dedupe([...recordedEvents, ...delivered]);
+  const unrecorded = declared.filter((file) => !recorded.some((recordedFile) => samePath(file, recordedFile)));
+  const infra = [];
+  const unresolvable = [];
+  const judgeable = [];
+  for (const file of unrecorded) {
+    if (isInfrastructurePath(file)) infra.push(file);
+    else if (existsOnDisk(file, options?.projectRoot)) judgeable.push(file);
+    else unresolvable.push(file);
+  }
+  if (recorded.length === 0) {
+    return { declared, recorded, extra: [], infra, unresolvable, unjudgeable: judgeable.length > 0 };
+  }
+  return { declared, recorded, extra: judgeable, infra, unresolvable, unjudgeable: false };
 }
 function dedupe(values) {
   const seen = /* @__PURE__ */ new Set();
@@ -15674,6 +15814,123 @@ function dedupe(values) {
     out.push(value);
   }
   return out;
+}
+
+// packages/coding-agent/src/extensions/agent-team-loop/shared/run-store.ts
+import * as fs5 from "node:fs";
+import * as path7 from "node:path";
+var RUN_FILE_NAME = "run.json";
+var RUN_SCHEMA = 1;
+var RUN_TERMINAL_STATUSES = /* @__PURE__ */ new Set(["done", "failed", "needs-clarification", "lost"]);
+function runPath(taskDir) {
+  return path7.join(taskDir, RUN_FILE_NAME);
+}
+function readRunState(taskDir) {
+  let raw;
+  try {
+    raw = fs5.readFileSync(runPath(taskDir), "utf8");
+  } catch {
+    return void 0;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return void 0;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return void 0;
+  const record = parsed;
+  const status = record.status;
+  const taskKey = record.task_key;
+  if (typeof status !== "string" || status === "" || typeof taskKey !== "string" || taskKey === "") return void 0;
+  return parsed;
+}
+function runStateKind(state) {
+  if (state === void 0) return "unknown";
+  if (RUN_TERMINAL_STATUSES.has(state.status)) return "terminal";
+  if (state.status === "running" || state.status === "pending") return "active";
+  return "unknown";
+}
+function isTerminalRunStatus(status) {
+  return status !== void 0 && RUN_TERMINAL_STATUSES.has(status);
+}
+function newRunId(taskKey, now = /* @__PURE__ */ new Date()) {
+  return `${taskKey}@${now.toISOString()}`;
+}
+function runMarker(state) {
+  return `<!-- mw-run: ${state.run_id} status=${state.status} -->`;
+}
+function collectArtifacts(taskDir) {
+  const names = [];
+  for (const fixed of ["output.md", "report.md", "progress.md"]) {
+    try {
+      if (fs5.statSync(path7.join(taskDir, fixed)).isFile()) names.push(fixed);
+    } catch {
+    }
+  }
+  try {
+    for (const entry of fs5.readdirSync(taskDir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      if (/^phase-.*\.md$/.test(entry.name) || /^stage-\d+.*\.md$/.test(entry.name)) names.push(entry.name);
+    }
+  } catch {
+  }
+  return names.sort();
+}
+function appendRunNote(taskDir, message) {
+  try {
+    fs5.appendFileSync(path7.join(taskDir, "trace.log"), `[FLOW] ${(/* @__PURE__ */ new Date()).toISOString()} ${message}
+`, "utf8");
+  } catch {
+  }
+}
+function writeRunState(taskDir, state) {
+  try {
+    fs5.mkdirSync(taskDir, { recursive: true });
+    const target = runPath(taskDir);
+    const tmp = `${target}.tmp`;
+    fs5.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}
+`, "utf8");
+    fs5.renameSync(tmp, target);
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendRunNote(taskDir, `[RUN] run.json write failed (${state.status}): ${message}`);
+    return { ok: false, error: message };
+  }
+}
+function parseSupersedes(taskContent) {
+  const match2 = /^supersedes:[ \t]*(\S+)[ \t\r]*$/m.exec(taskContent);
+  const key = match2?.[1]?.trim();
+  return key ? key : void 0;
+}
+function evaluateRunIdentity(input) {
+  const read = input.readState ?? readRunState;
+  const own = read(input.taskDir);
+  const kind = runStateKind(own);
+  if (kind === "terminal") {
+    return {
+      ok: false,
+      reason: "run-terminal",
+      detail: `status=${own?.status} run_id=${own?.run_id ?? "?"}`
+    };
+  }
+  if (kind === "active") {
+    return {
+      ok: false,
+      reason: "run-active",
+      detail: `status=${own?.status} run_id=${own?.run_id ?? "?"}`
+    };
+  }
+  const target = parseSupersedes(input.readTaskContent());
+  if (target === void 0) return { ok: true };
+  const targetDir = input.resolveTaskDir(target);
+  if (targetDir === void 0) return { ok: false, reason: "supersede-unknown", detail: target };
+  const targetKind = runStateKind(read(targetDir));
+  if (targetKind !== "terminal") {
+    return { ok: false, reason: "supersede-not-terminal", detail: `${target}:${targetKind}` };
+  }
+  return { ok: true };
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/task-frontmatter.ts
@@ -15783,15 +16040,15 @@ function checkRecovery(text, type) {
 // packages/coding-agent/src/extensions/agent-team-loop/worker/output-writer.ts
 function readFileSafe(filePath) {
   try {
-    return fs5.readFileSync(filePath, "utf8");
+    return fs6.readFileSync(filePath, "utf8");
   } catch {
     return "";
   }
 }
 function outputDir(taskKey, agenticdocRoot2) {
-  const resolved = path7.resolve(agenticdocRoot2, taskKey);
-  const root = path7.resolve(agenticdocRoot2);
-  if (!resolved.startsWith(`${root}${path7.sep}`) && resolved !== root) {
+  const resolved = path8.resolve(agenticdocRoot2, taskKey);
+  const root = path8.resolve(agenticdocRoot2);
+  if (!resolved.startsWith(`${root}${path8.sep}`) && resolved !== root) {
     throw new Error(`Invalid taskKey: path traversal detected in "${taskKey}"`);
   }
   return resolved;
@@ -15808,7 +16065,7 @@ function headline(summary) {
 }
 function typeFromTaskMd(dir) {
   try {
-    const reading = readTaskType(fs5.readFileSync(path7.join(dir, "task.md"), "utf8"));
+    const reading = readTaskType(fs6.readFileSync(path8.join(dir, "task.md"), "utf8"));
     return reading.source === "header" ? reading.type : void 0;
   } catch {
     return void 0;
@@ -15816,37 +16073,94 @@ function typeFromTaskMd(dir) {
 }
 function agentProductText(dir, summary) {
   for (const name of ["report.md", "output.md"]) {
-    const text = readFileSafe(path7.join(dir, name));
+    const text = readFileSafe(path8.join(dir, name));
     if (text.trim() !== "") return text;
   }
   return summary;
+}
+function runStartedAtMs(dir) {
+  const startedAt = readRunState(dir)?.started_at;
+  if (typeof startedAt !== "string") return void 0;
+  const ms = Date.parse(startedAt);
+  return Number.isFinite(ms) ? ms : void 0;
+}
+function deliverableDir(taskDir) {
+  return path8.join(path8.dirname(path8.dirname(taskDir)), "evidence");
 }
 function readTerminalGaps(opts) {
   const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
   const type = opts.type ?? typeFromTaskMd(dir);
   if (type === void 0)
-    return { judged: false, missingSections: [], unrecordedFiles: [], unjudgeableFiles: [], ok: true };
+    return {
+      judged: false,
+      missingSections: [],
+      unrecordedFiles: [],
+      unjudgeableFiles: [],
+      malformedFiles: [],
+      infraFiles: [],
+      unresolvableFiles: [],
+      ok: true
+    };
   const productText = agentProductText(dir, opts.summary);
   const missingSections = opts.judgeRecovery === false ? [] : checkRecovery(productText, type).missing;
-  const traceText = readFileSafe(path7.join(dir, "trace.log"));
-  const ledger = diffLedger(productText, traceText);
-  const unjudgeableFiles = ledger.unjudgeable ? ledger.declared : [];
+  const traceText = readFileSafe(path8.join(dir, "trace.log"));
+  const ledger = diffLedger(productText, traceText, {
+    role: type,
+    deliverableDir: deliverableDir(dir),
+    runStartedAtMs: runStartedAtMs(dir),
+    projectRoot: opts.projectRoot
+  });
+  const infraSet = new Set(ledger.infra);
+  const unresolvableSet = new Set(ledger.unresolvable);
+  const unjudgeableFiles = ledger.unjudgeable ? ledger.declared.filter((file) => !infraSet.has(file) && !unresolvableSet.has(file)) : [];
+  const malformedFiles = collectMalformedCandidates(productText);
   return {
     judged: true,
     missingSections,
     unrecordedFiles: ledger.extra,
     unjudgeableFiles,
+    malformedFiles,
+    // T-17b: framework-owned infrastructure writes are named for visibility
+    // but never judged (they are not this worker's writes).
+    infraFiles: ledger.infra,
+    // T-17c: declared paths not on disk are named for visibility but never
+    // judged (a nonexistent file cannot be a write).
+    unresolvableFiles: ledger.unresolvable,
     ok: missingSections.length === 0 && ledger.extra.length === 0 && unjudgeableFiles.length === 0
   };
 }
 function writeOutput(opts) {
   const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
-  fs5.mkdirSync(dir, { recursive: true });
-  const outputPath = path7.join(dir, "output.md");
+  fs6.mkdirSync(dir, { recursive: true });
+  const outputPath = path8.join(dir, "output.md");
   const gaps = opts.terminalGaps ?? readTerminalGaps({ taskKey: opts.taskKey, agenticdocRoot: opts.agenticdocRoot, summary: opts.summary });
   const gapNote = gaps.missingSections.length > 0 ? `\u7F3A\u5931\u6BB5\uFF1A${gaps.missingSections.join("\u3001")}` : "";
   const ledgerNote = gaps.unrecordedFiles.length > 0 ? `\u672A\u8BB0\u5F55\u5199\u5165\uFF1A${gaps.unrecordedFiles.join("\u3001")}` : "";
   const unjudgeableNote = gaps.unjudgeableFiles.length > 0 ? `\u672A\u8BB0\u5F55\u5199\u5165\uFF08\u4E0D\u53EF\u5224\uFF09\uFF1A${gaps.unjudgeableFiles.join("\u3001")}` : "";
+  const malformedNote = gaps.malformedFiles.length > 0 ? `\u683C\u5F0F\u5F02\u5E38\uFF08warn\uFF0C\u4E0D\u5F71\u54CD\u5224\u5B9A\uFF09\uFF1A${gaps.malformedFiles.join("\u3001")}` : "";
+  if (malformedNote !== "") {
+    appendTrace(
+      opts.taskKey,
+      opts.agenticdocRoot,
+      `ledger-malformed count=${gaps.malformedFiles.length} samples=${gaps.malformedFiles.join(",")}`
+    );
+  }
+  const infraNote = gaps.infraFiles.length > 0 ? `\u6846\u67B6\u57FA\u7840\u8BBE\u65BD\u5199\u5165\uFF08warn\uFF0C\u4E0D\u8BA1\u5165\u5224\u5B9A\uFF09\uFF1A${gaps.infraFiles.join("\u3001")}` : "";
+  if (infraNote !== "") {
+    appendTrace(
+      opts.taskKey,
+      opts.agenticdocRoot,
+      `ledger-infra count=${gaps.infraFiles.length} samples=${gaps.infraFiles.join(",")}`
+    );
+  }
+  const unresolvableNote = gaps.unresolvableFiles.length > 0 ? `\u4E0D\u53EF\u89E3\u6790\u58F0\u660E\uFF08\u78C1\u76D8\u4E0D\u5B58\u5728\uFF0Cwarn\uFF0C\u4E0D\u8BA1\u5165\u5224\u5B9A\uFF09\uFF1A${gaps.unresolvableFiles.join("\u3001")}` : "";
+  if (unresolvableNote !== "") {
+    appendTrace(
+      opts.taskKey,
+      opts.agenticdocRoot,
+      `ledger-unresolvable count=${gaps.unresolvableFiles.length} samples=${gaps.unresolvableFiles.join(",")}`
+    );
+  }
   const terminalNote = [gapNote, ledgerNote, unjudgeableNote].filter((note) => note !== "").join("\uFF1B");
   const sections = [];
   sections.push(`## TL;DR
@@ -15894,12 +16208,21 @@ ${ledgerNote}`);
   if (unjudgeableNote) sections.push(`## Ledger Unjudgeable
 
 ${unjudgeableNote}`);
+  if (malformedNote) sections.push(`## Ledger Malformed
+
+${malformedNote}`);
+  if (infraNote) sections.push(`## Ledger Infra
+
+${infraNote}`);
+  if (unresolvableNote) sections.push(`## Ledger Unresolvable
+
+${unresolvableNote}`);
   const body = `${opts.runMarker ? `${opts.runMarker}
 
 ` : ""}${sections.join("\n\n")}
 `;
   const existing = readFileSafe(outputPath);
-  fs5.writeFileSync(outputPath, existing.trim() === "" ? body : `${existing.trimEnd()}
+  fs6.writeFileSync(outputPath, existing.trim() === "" ? body : `${existing.trimEnd()}
 
 ---
 
@@ -15907,16 +16230,16 @@ ${body}`, "utf8");
 }
 function appendTrace(taskKey, agenticdocRoot2, line) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs5.mkdirSync(dir, { recursive: true });
-  const tracePath = path7.join(dir, "trace.log");
+  fs6.mkdirSync(dir, { recursive: true });
+  const tracePath = path8.join(dir, "trace.log");
   const ts = (/* @__PURE__ */ new Date()).toISOString();
-  fs5.appendFileSync(tracePath, `[FLOW] ${ts} ${line}
+  fs6.appendFileSync(tracePath, `[FLOW] ${ts} ${line}
 `, "utf8");
 }
 function appendLifecycleLine(taskKey, agenticdocRoot2, line) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs5.mkdirSync(dir, { recursive: true });
-  fs5.appendFileSync(path7.join(dir, "trace.log"), `${line}
+  fs6.mkdirSync(dir, { recursive: true });
+  fs6.appendFileSync(path8.join(dir, "trace.log"), `${line}
 `, "utf8");
 }
 function truncLine(s, max) {
@@ -15965,8 +16288,8 @@ function formatMachineCheckpoint(opts) {
 }
 function appendProgressLine(taskKey, agenticdocRoot2, line) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs5.mkdirSync(dir, { recursive: true });
-  fs5.appendFileSync(path7.join(dir, "progress.md"), `${line}
+  fs6.mkdirSync(dir, { recursive: true });
+  fs6.appendFileSync(path8.join(dir, "progress.md"), `${line}
 `, "utf8");
 }
 function appendError(taskKey, agenticdocRoot2, message) {
@@ -15988,17 +16311,17 @@ function appendEnd(taskKey, agenticdocRoot2, opts) {
 }
 function appendGoalCheck(taskKey, agenticdocRoot2, phaseNum, goalMtimeMs) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs5.mkdirSync(dir, { recursive: true });
-  const tracePath = path7.join(dir, "trace.log");
-  fs5.appendFileSync(tracePath, `[GOAL_CHECK] phase=${phaseNum} goal_mtime=${goalMtimeMs}
+  fs6.mkdirSync(dir, { recursive: true });
+  const tracePath = path8.join(dir, "trace.log");
+  fs6.appendFileSync(tracePath, `[GOAL_CHECK] phase=${phaseNum} goal_mtime=${goalMtimeMs}
 `, "utf8");
 }
 function appendHeartbeat(taskKey, agenticdocRoot2, phase) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs5.mkdirSync(dir, { recursive: true });
-  const tracePath = path7.join(dir, "trace.log");
+  fs6.mkdirSync(dir, { recursive: true });
+  const tracePath = path8.join(dir, "trace.log");
   const ts = (/* @__PURE__ */ new Date()).toISOString();
-  fs5.appendFileSync(tracePath, `[HEARTBEAT] ${ts} task=${taskKey} phase=${phase}
+  fs6.appendFileSync(tracePath, `[HEARTBEAT] ${ts} task=${taskKey} phase=${phase}
 `, "utf8");
 }
 
@@ -16033,8 +16356,8 @@ function ragRequiredMissingLine(e) {
   return `${RAG_REQUIRED_MISSING} role=${e.role} phase=${e.phase} server=${e.server}`;
 }
 function appendEvidence(taskDir, line) {
-  const resolved = path8.resolve(taskDir);
-  appendTrace(path8.basename(resolved), path8.dirname(resolved), line);
+  const resolved = path9.resolve(taskDir);
+  appendTrace(path9.basename(resolved), path9.dirname(resolved), line);
 }
 function redactSecrets(text, tokenEnvNames) {
   let redacted = text;
@@ -16048,12 +16371,12 @@ function redactSecrets(text, tokenEnvNames) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/rag/research-doc.ts
-import * as fs7 from "node:fs";
-import * as path10 from "node:path";
+import * as fs8 from "node:fs";
+import * as path11 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/rag/adapter.ts
-import * as fs6 from "node:fs";
-import * as path9 from "node:path";
+import * as fs7 from "node:fs";
+import * as path10 from "node:path";
 var DEFAULT_ROLE = "engine";
 var GRAPH_TOOLS = /* @__PURE__ */ new Set(["rag_graph", "rag_impact"]);
 var CHAT_TOOLS = /* @__PURE__ */ new Set(["rag_chat"]);
@@ -16119,7 +16442,7 @@ function loadPathRoots(pathRootsFile) {
   if (pathRootsFile === null || pathRootsFile.length === 0) return null;
   let text;
   try {
-    text = fs6.readFileSync(pathRootsFile, "utf8");
+    text = fs7.readFileSync(pathRootsFile, "utf8");
   } catch (error) {
     const code = error.code;
     if (code === "ENOENT" || code === "ENOTDIR") return null;
@@ -16166,8 +16489,8 @@ function resolveLocalPath(filePath, roots) {
     };
   }
   const normalizedRelative = relative10.trim().replace(/\\/g, "/").replace(/^\/+/, "");
-  const root = path9.resolve(roots[role]);
-  const resolved = path9.resolve(root, normalizedRelative);
+  const root = path10.resolve(roots[role]);
+  const resolved = path10.resolve(root, normalizedRelative);
   if (!isInside(root, resolved)) {
     return {
       localPath: null,
@@ -16178,16 +16501,16 @@ function resolveLocalPath(filePath, roots) {
   }
   let exists = false;
   try {
-    exists = fs6.statSync(resolved).isFile();
+    exists = fs7.statSync(resolved).isFile();
   } catch {
     exists = false;
   }
   return { localPath: resolved, exists, lineHint: null, reason: exists ? null : "file missing" };
 }
 function isInside(root, candidate) {
-  const relative10 = path9.relative(root, candidate);
+  const relative10 = path10.relative(root, candidate);
   if (relative10 === "") return true;
-  if (path9.isAbsolute(relative10)) return false;
+  if (path10.isAbsolute(relative10)) return false;
   return relative10.split(/[\\/]/)[0] !== "..";
 }
 var RAG_TOOL_MAP = {
@@ -16360,16 +16683,16 @@ function buildItem(server, source, filePath, lineStart, symbolName, qualifiedNam
 var RESEARCH_DOC_SECTIONS = ["\u67E5\u8BE2", "\u7ED3\u8BBA", "\u5F15\u7528", "\u672A\u89E3\u51B3", "\u5FEB\u7167", "\u5F71\u54CD\u9762"];
 var RESEARCH_DOC_HEADINGS = RESEARCH_DOC_SECTIONS.map((section) => `## ${section}`);
 function researchDocDir(keyDir) {
-  return path10.join(keyDir, "rag");
+  return path11.join(keyDir, "rag");
 }
 function listResearchDocs(keyDir) {
   let names;
   try {
-    names = fs7.readdirSync(researchDocDir(keyDir));
+    names = fs8.readdirSync(researchDocDir(keyDir));
   } catch {
     return [];
   }
-  return names.filter((name) => name.endsWith(".md") && !name.startsWith(".")).map((name) => path10.join(researchDocDir(keyDir), name)).sort();
+  return names.filter((name) => name.endsWith(".md") && !name.startsWith(".")).map((name) => path11.join(researchDocDir(keyDir), name)).sort();
 }
 function splitResearchDocSections(text) {
   const sections = /* @__PURE__ */ new Map();
@@ -16434,7 +16757,7 @@ function collectCitations(lines) {
 function validateResearchDoc(keyDir) {
   const findings = [];
   const docs = listResearchDocs(keyDir);
-  const named = docs.filter((doc) => path10.basename(doc, ".md").includes("-"));
+  const named = docs.filter((doc) => path11.basename(doc, ".md").includes("-"));
   const docPath = named[0] ?? docs[0] ?? null;
   if (docPath === null) {
     findings.push("no research document at rag/<server>-<slug>.md");
@@ -16450,9 +16773,9 @@ function validateResearchDoc(keyDir) {
     };
   }
   if (!named.includes(docPath)) {
-    findings.push(`research doc '${path10.basename(docPath)}' does not match <server>-<slug>.md`);
+    findings.push(`research doc '${path11.basename(docPath)}' does not match <server>-<slug>.md`);
   }
-  const sections = splitResearchDocSections(fs7.readFileSync(docPath, "utf8"));
+  const sections = splitResearchDocSections(fs8.readFileSync(docPath, "utf8"));
   const headings = [];
   const missingSections = [];
   for (const section of RESEARCH_DOC_SECTIONS) {
@@ -16493,8 +16816,8 @@ import * as fs10 from "node:fs";
 import * as path13 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/worker-file-tool.ts
-import * as fs8 from "node:fs";
-import * as path11 from "node:path";
+import * as fs9 from "node:fs";
+import * as path12 from "node:path";
 var WORKER_FILE_TOOL = "worker_file";
 var WORKER_FILE_MAX_BYTES = 64 * 1024;
 var WORKER_FILE_NAME_RE = /^(?:progress\.md|report\.md|report[-.][a-z0-9][a-z0-9._-]{0,40}\.md)$/;
@@ -16512,14 +16835,14 @@ function writeWorkerFile(taskDir, file, content, mode) {
       reason: `content too large: ${bytes} bytes > ${WORKER_FILE_MAX_BYTES} bytes (UTF-8)`
     };
   }
-  fs8.mkdirSync(taskDir, { recursive: true });
-  const target = path11.join(taskDir, file);
+  fs9.mkdirSync(taskDir, { recursive: true });
+  const target = path12.join(taskDir, file);
   if (mode === "append") {
-    fs8.appendFileSync(target, content, "utf8");
+    fs9.appendFileSync(target, content, "utf8");
   } else {
-    fs8.writeFileSync(target, content, "utf8");
+    fs9.writeFileSync(target, content, "utf8");
   }
-  appendWriteFileEvent(path11.join(taskDir, "trace.log"), repoRelativePath(target));
+  appendWriteFileEvent(path12.join(taskDir, "trace.log"), repoRelativePath(target));
   return { ok: true, path: target, bytes };
 }
 function registerWorkerFileTool(pi, taskDir) {
@@ -16554,123 +16877,6 @@ function registerWorkerFileTool(pi, taskDir) {
       };
     }
   });
-}
-
-// packages/coding-agent/src/extensions/agent-team-loop/shared/run-store.ts
-import * as fs9 from "node:fs";
-import * as path12 from "node:path";
-var RUN_FILE_NAME = "run.json";
-var RUN_SCHEMA = 1;
-var RUN_TERMINAL_STATUSES = /* @__PURE__ */ new Set(["done", "failed", "needs-clarification", "lost"]);
-function runPath(taskDir) {
-  return path12.join(taskDir, RUN_FILE_NAME);
-}
-function readRunState(taskDir) {
-  let raw;
-  try {
-    raw = fs9.readFileSync(runPath(taskDir), "utf8");
-  } catch {
-    return void 0;
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return void 0;
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return void 0;
-  const record = parsed;
-  const status = record.status;
-  const taskKey = record.task_key;
-  if (typeof status !== "string" || status === "" || typeof taskKey !== "string" || taskKey === "") return void 0;
-  return parsed;
-}
-function runStateKind(state) {
-  if (state === void 0) return "unknown";
-  if (RUN_TERMINAL_STATUSES.has(state.status)) return "terminal";
-  if (state.status === "running" || state.status === "pending") return "active";
-  return "unknown";
-}
-function isTerminalRunStatus(status) {
-  return status !== void 0 && RUN_TERMINAL_STATUSES.has(status);
-}
-function newRunId(taskKey, now = /* @__PURE__ */ new Date()) {
-  return `${taskKey}@${now.toISOString()}`;
-}
-function runMarker(state) {
-  return `<!-- mw-run: ${state.run_id} status=${state.status} -->`;
-}
-function collectArtifacts(taskDir) {
-  const names = [];
-  for (const fixed of ["output.md", "report.md", "progress.md"]) {
-    try {
-      if (fs9.statSync(path12.join(taskDir, fixed)).isFile()) names.push(fixed);
-    } catch {
-    }
-  }
-  try {
-    for (const entry of fs9.readdirSync(taskDir, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      if (/^phase-.*\.md$/.test(entry.name) || /^stage-\d+.*\.md$/.test(entry.name)) names.push(entry.name);
-    }
-  } catch {
-  }
-  return names.sort();
-}
-function appendRunNote(taskDir, message) {
-  try {
-    fs9.appendFileSync(path12.join(taskDir, "trace.log"), `[FLOW] ${(/* @__PURE__ */ new Date()).toISOString()} ${message}
-`, "utf8");
-  } catch {
-  }
-}
-function writeRunState(taskDir, state) {
-  try {
-    fs9.mkdirSync(taskDir, { recursive: true });
-    const target = runPath(taskDir);
-    const tmp = `${target}.tmp`;
-    fs9.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}
-`, "utf8");
-    fs9.renameSync(tmp, target);
-    return { ok: true };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    appendRunNote(taskDir, `[RUN] run.json write failed (${state.status}): ${message}`);
-    return { ok: false, error: message };
-  }
-}
-function parseSupersedes(taskContent) {
-  const match2 = /^supersedes:[ \t]*(\S+)[ \t\r]*$/m.exec(taskContent);
-  const key = match2?.[1]?.trim();
-  return key ? key : void 0;
-}
-function evaluateRunIdentity(input) {
-  const read = input.readState ?? readRunState;
-  const own = read(input.taskDir);
-  const kind = runStateKind(own);
-  if (kind === "terminal") {
-    return {
-      ok: false,
-      reason: "run-terminal",
-      detail: `status=${own?.status} run_id=${own?.run_id ?? "?"}`
-    };
-  }
-  if (kind === "active") {
-    return {
-      ok: false,
-      reason: "run-active",
-      detail: `status=${own?.status} run_id=${own?.run_id ?? "?"}`
-    };
-  }
-  const target = parseSupersedes(input.readTaskContent());
-  if (target === void 0) return { ok: true };
-  const targetDir = input.resolveTaskDir(target);
-  if (targetDir === void 0) return { ok: false, reason: "supersede-unknown", detail: target };
-  const targetKind = runStateKind(read(targetDir));
-  if (targetKind !== "terminal") {
-    return { ok: false, reason: "supersede-not-terminal", detail: `${target}:${targetKind}` };
-  }
-  return { ok: true };
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/deliverable-evidence.ts
@@ -20444,7 +20650,15 @@ function readServeMeta(projectDir) {
     const raw = fs17.readFileSync(serveMetaPath(projectDir), "utf8");
     const m = JSON.parse(raw);
     if (typeof m.pid !== "number" || typeof m.started_at_ms !== "number") return null;
-    return { pid: m.pid, startedAtMs: m.started_at_ms };
+    const meta = { pid: m.pid, startedAtMs: m.started_at_ms };
+    if (typeof m.code_dir === "string" && m.code_dir) meta.codeDir = m.code_dir;
+    if (typeof m.commit === "string" && m.commit) meta.commit = m.commit;
+    if (typeof m.dirty_tracked === "number") meta.dirtyTracked = m.dirty_tracked;
+    if (typeof m.dirty_untracked === "number") meta.dirtyUntracked = m.dirty_untracked;
+    if (typeof m.code_mtime_ms === "number") meta.codeMtimeMs = m.code_mtime_ms;
+    if (typeof m.code_digest === "string" && m.code_digest) meta.codeDigest = m.code_digest;
+    if (typeof m.schema === "number") meta.schema = m.schema;
+    return meta;
   } catch {
     return null;
   }
@@ -20462,7 +20676,7 @@ function mwCodeNewestMtimeMs(mwPyOverride) {
     }
     for (const e of entries) {
       if (e.isDirectory()) {
-        if (e.name === "__pycache__" || e.name === "dist" || e.name === ".tmp") continue;
+        if (e.name === "__pycache__" || e.name === "dist" || e.name === ".tmp" || e.name === "test") continue;
         walk(path21.join(dir, e.name));
         continue;
       }
@@ -20480,9 +20694,14 @@ function mwCodeNewestMtimeMs(mwPyOverride) {
   return newest > 0 ? newest : null;
 }
 function serveStaleness(projectDir, codeMtimeMs) {
-  const codeMs = codeMtimeMs ?? mwCodeNewestMtimeMs();
+  const meta = readServeMeta(projectDir);
+  let codeMs = codeMtimeMs ?? null;
+  if (codeMs === null) {
+    if (meta?.codeDir) codeMs = mwCodeNewestMtimeMs(path21.join(meta.codeDir, "mw.py"));
+    if (codeMs === null) codeMs = mwCodeNewestMtimeMs();
+  }
   if (codeMs === null) return void 0;
-  let startedAtMs = readServeMeta(projectDir)?.startedAtMs ?? null;
+  let startedAtMs = meta?.startedAtMs ?? null;
   if (startedAtMs === null) {
     try {
       startedAtMs = fs17.statSync(pidFilePath(projectDir)).mtimeMs;
@@ -20751,6 +20970,13 @@ function keyNameRefusal(key) {
   return null;
 }
 var CONDUCTOR_CLAIM_RE = /^([^:]+):(\d+)$/;
+var SYNTHETIC_CLAIM_RE = /^autopilot@([^:@]+):(\d+)$/;
+function parseSyntheticClaim(claimId) {
+  const m = SYNTHETIC_CLAIM_RE.exec((claimId ?? "").trim());
+  if (!m) return void 0;
+  const pid = Number(m[2]);
+  return Number.isInteger(pid) && pid > 0 ? { host: m[1] ?? "", pid } : void 0;
+}
 function conductorPidAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -20758,6 +20984,10 @@ function conductorPidAlive(pid) {
   } catch (err) {
     return err.code === "EPERM";
   }
+}
+function syntheticClaimLive(claimId) {
+  const synthetic = parseSyntheticClaim(claimId);
+  return synthetic !== void 0 && synthetic.host === os3.hostname() && conductorPidAlive(synthetic.pid);
 }
 function conductorClaimState(claimId, selfId = "") {
   const trimmed = (claimId ?? "").trim();
@@ -20802,6 +21032,9 @@ function keyStateDocPaths(agenticdocRoot2, key) {
   return [path24.join(keyDir, "pm-state.md"), path24.join(keyDir, "plan.md")];
 }
 function ownerEvidenceCurrent(agenticdocRoot2, key, row, now = Date.now(), freshMs = OWNER_EVIDENCE_FRESH_MS) {
+  if (row !== void 0 && syntheticClaimLive(row.claimId)) {
+    return { current: true, hasStateDocs: true };
+  }
   let hasStateDocs = false;
   for (const doc of keyStateDocPaths(agenticdocRoot2, key)) {
     let stat;
@@ -21643,7 +21876,7 @@ function resolveOwnerKeyWithSync(pi, indexStore, watch, explicit, agenticdocRoot
     if (indexStore.findByKey(watch.key)?.claimId === self) return watch.key;
   }
   const active = indexStore.activeEntry();
-  if (active && claimState(active.claimId, self) === "held-live") {
+  if (active && claimHeldByAnotherWriter(claimState(active.claimId, self))) {
     warnForeignActiveOnce(pi, active.key);
     return SCRATCH_WORKERS_KEY;
   }
@@ -21654,7 +21887,7 @@ function resolveOwnerKeyWithSync(pi, indexStore, watch, explicit, agenticdocRoot
       return SCRATCH_WORKERS_KEY;
     }
     const row = indexStore.findByKey(fallbackKey);
-    if (row && claimState(row.claimId, self) === "held-live") {
+    if (row && claimHeldByAnotherWriter(claimState(row.claimId, self))) {
       warnForeignActiveOnce(pi, fallbackKey);
       return SCRATCH_WORKERS_KEY;
     }
@@ -21729,10 +21962,17 @@ function isPidAlive(pid) {
 function claimState(claimId, self) {
   const trimmed = claimId.trim();
   if (!trimmed || trimmed === self) return "free";
+  const synthetic = parseSyntheticClaim(trimmed);
+  if (synthetic !== void 0 && synthetic.host === os4.hostname()) {
+    return syntheticClaimLive(trimmed) ? "held-conductor" : "held-stale";
+  }
   const c = parseClaim(trimmed);
   if (!c) return "free";
   if (c.host !== os4.hostname()) return "held-live";
   return isPidAlive(c.pid) ? "held-live" : "held-stale";
+}
+function claimHeldByAnotherWriter(state) {
+  return state === "held-live" || state === "held-conductor";
 }
 var CROSS_KEY_READ_ONLY = "cross-key-read-only";
 var CROSS_KEY_READ_ONLY_SURFACES = ["dispatch_worker", "/worker", "advance_phase"];
@@ -21744,11 +21984,14 @@ function foreignLiveClaimRefusal(indexStore, key) {
   if (nameRefusal) return reservedKeyRefusal(trimmed, nameRefusal);
   const claim = indexStore.findByKey(trimmed)?.claimId.trim() ?? "";
   if (!claim) return null;
-  if (claimState(claim, windowClaimId()) !== "held-live") return null;
-  return `[${CROSS_KEY_READ_ONLY}] key '${trimmed}' is held live by another window (claim ${claim}) \u2014 this window's view of it is read-only.
+  const state = claimState(claim, windowClaimId());
+  if (!claimHeldByAnotherWriter(state)) return null;
+  const holder = state === "held-conductor" ? `by this host's autopilot conductor (synthetic claim ${claim})` : `live by another window (claim ${claim})`;
+  const escapeHint = state === "held-conductor" ? `switch_key { key: "${trimmed}" } (no force needed \u2014 the conductor yields to a human claim)` : `switch_key { key: "${trimmed}" } (ask the user before stealing a live claim)`;
+  return `[${CROSS_KEY_READ_ONLY}] key '${trimmed}' is held ${holder} \u2014 this window's view of it is read-only.
 Allowed: list_tasks { scope: "all" } or { scope: "key", key: "${trimmed}" }, mw_status, mw doctor, the watch panel.
 Refused: ${CROSS_KEY_READ_ONLY_SURFACES.join(", ")}, ${CROSS_KEY_READ_ONLY_ACK_NOTE}.
-To act on it, take it over first: switch_key { key: "${trimmed}" } (ask the user before stealing a live claim).`;
+To act on it, take it over first: ${escapeHint}`;
 }
 function reservedKeyRefusal(key, refusal) {
   return `[${CROSS_KEY_READ_ONLY}] key '${key}' is refused (${refusal.code}): ${refusal.message}.
@@ -23856,7 +24099,10 @@ var DEFAULT_CONFIG = {
 function freshDefaults() {
   return { ...DEFAULT_CONFIG, xkey_verify_cmd: [...DEFAULT_CONFIG.xkey_verify_cmd] };
 }
-var BOOL_FIELDS = ["enabled", "paused", "xkey_repair"];
+var BOOL_FIELDS = ["enabled", "paused", "xkey_repair", "envelope_fallback"];
+var OPTIONAL_CONFIG_KEYS = BOOL_FIELDS.filter(
+  (field) => !Object.hasOwn(DEFAULT_CONFIG, field)
+);
 var LIST_FIELDS = ["xkey_verify_cmd"];
 var STR_FIELDS = ["xkey_verify_cwd"];
 var ENUM_FIELDS = {
@@ -23898,7 +24144,7 @@ function validateConfigData(data) {
   }
   const cfg = data;
   const errors = [];
-  const known = new Set(Object.keys(DEFAULT_CONFIG));
+  const known = /* @__PURE__ */ new Set([...Object.keys(DEFAULT_CONFIG), ...OPTIONAL_CONFIG_KEYS]);
   const unknown = Object.keys(cfg).filter((k) => !known.has(k)).sort();
   if (unknown.length > 0) errors.push(`unknown field(s): ${unknown.join(", ")}`);
   for (const field of BOOL_FIELDS) {
@@ -24023,6 +24269,19 @@ function saveConfig(projectDir, config) {
 }
 var STAGE_STATUSES = ["pending", "approved", "running", "closed", "closed-human", "halted"];
 var KEY_STATUSES = ["running", "done", "stalled", "closed-legacy", "pending-review"];
+var STAGE_STATUS_RANK = {
+  pending: 0,
+  approved: 0,
+  running: 1,
+  closed: 2,
+  "closed-human": 2,
+  halted: 2
+};
+var STAGE_TERMINAL_RANK = 2;
+function isStageTerminal(status) {
+  const rank = status === void 0 ? void 0 : STAGE_STATUS_RANK[status];
+  return rank !== void 0 && rank >= STAGE_TERMINAL_RANK;
+}
 var STAGE_PREFIX_RE = /^##\s*Stage\b/;
 var STAGE_HEADER_RE = /^##\s*Stage\s+(\d+)\s*:\s*(.+)$/;
 var ROADMAP_FIELD_RE = /^>\s*([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/;
@@ -24220,8 +24479,23 @@ var GATE_KINDS = [
   "xkey-authorize"
 ];
 var GATE_STATUSES = ["pending", "approved", "rejected"];
+var GATE_SCOPE_UNRESOLVED = "unresolved-scope";
+function deriveGateReason(input) {
+  if (input.queueUnreadable) return "gate-queue-unreadable";
+  if (input.inFlightForKey > 0) return "key-in-flight";
+  if (input.reminders + 1 > input.reminderMax) return "cap-reached";
+  if (input.stageTerminal) return "stage-terminal";
+  if (input.due === null) return null;
+  if (!input.due) return "not-due";
+  return null;
+}
 var AUTHORIZES_ACTIONS = ["contract-change", "retry"];
 var AUTHORIZES_ACTION_SET = new Set(AUTHORIZES_ACTIONS);
+var BLOCKER_CLASSES = ["judgment", "paperwork"];
+var BLOCKER_CLASS_SET = new Set(BLOCKER_CLASSES);
+function blockerClassOf(record) {
+  return record.blockerClass === "paperwork" ? "paperwork" : "judgment";
+}
 var GATE_FRONTMATTER_FIELDS = [
   "id",
   "kind",
@@ -24279,6 +24553,7 @@ var GATE_JSON_LIST_FIELDS = /* @__PURE__ */ new Set([
   "authorizes"
 ]);
 var GATE_JSON_OBJ_FIELDS = /* @__PURE__ */ new Set(["goal_diff", "blast_radius"]);
+var GATE_SCALAR_EXTENSION_FIELDS = /* @__PURE__ */ new Set(["blocker_class"]);
 var GATE_FIELD_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
 var GATE_LIST_ITEM_RE = /^[ \t]+-[ \t]+(.*)$/;
 var GATE_NULL_LITERALS = /* @__PURE__ */ new Set(["", "~", "-", "null", "Null", "NULL"]);
@@ -24330,7 +24605,7 @@ function parseGateFile(text, file) {
     const field = GATE_FIELD_LINE_RE.exec(line);
     if (field === null) throw new GateFormatError(`${file}: invalid frontmatter line ${i + 1}: '${line}'`);
     const name = field[1] ?? "";
-    if (!GATE_FRONTMATTER_FIELDS.includes(name) && !GATE_JSON_LIST_FIELDS.has(name)) {
+    if (!GATE_FRONTMATTER_FIELDS.includes(name) && !GATE_JSON_LIST_FIELDS.has(name) && !GATE_SCALAR_EXTENSION_FIELDS.has(name)) {
       throw new GateFormatError(`${file}: unknown frontmatter field '${name}' (line ${i + 1})`);
     }
     if (seen.has(name)) throw new GateFormatError(`${file}: duplicate frontmatter field '${name}' (line ${i + 1})`);
@@ -24421,6 +24696,12 @@ function parseGateFile(text, file) {
       `${file}: unknown authorizes action(s) ${outOfSet.join(", ")} (expected one of: ${[...AUTHORIZES_ACTIONS].sort().join(", ")})`
     );
   }
+  const blockerClass = optional("blocker_class");
+  if (blockerClass !== null && !BLOCKER_CLASS_SET.has(blockerClass)) {
+    throw new GateFormatError(
+      `${file}: unknown blocker_class '${blockerClass}' (expected one of: ${[...BLOCKER_CLASSES].sort().join(", ")})`
+    );
+  }
   const contextRefs = listValues.get("context_refs") ?? [];
   const evidenceRefs = listValues.get("evidence_refs") ?? [];
   const id = required("id");
@@ -24485,6 +24766,7 @@ function parseGateFile(text, file) {
     defaultAction: optional("default_action"),
     outOfBandActions: jsonStringList("out_of_band_actions"),
     authorizes,
+    blockerClass,
     gateSchema,
     answeredAt,
     answeredBy: optional("answered_by"),
@@ -24498,8 +24780,9 @@ function listGates(projectDir) {
   let entries;
   try {
     entries = fs30.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return { gates: [], errors: [] };
+  } catch (err) {
+    if (err.code === "ENOENT") return { gates: [], errors: [] };
+    return { gates: [], errors: [`${dir}: ${String(err)}`] };
   }
   for (const entry of entries) {
     const m = GATE_FILE_RE.exec(entry.name);
@@ -24525,6 +24808,44 @@ function listGates(projectDir) {
   }
   found.sort((a, b) => a.seq - b.seq || a.gate.id.localeCompare(b.gate.id));
   return { gates: found.map((f) => f.gate), errors };
+}
+function readGateReminders(agenticdocRoot2) {
+  const ledger = path32.join(agenticdocRoot2, "_autopilot", "auto-decisions.jsonl");
+  let raw;
+  try {
+    raw = fs30.readFileSync(ledger, "utf8");
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (typeof parsed !== "object" || parsed === null) continue;
+    const row = parsed;
+    if (row.phase !== "remind") continue;
+    const gateId = typeof row.gate_id === "string" ? row.gate_id : "";
+    const reminderN = typeof row.reminder_n === "number" ? row.reminder_n : 0;
+    if (gateId === "" || reminderN <= 0) continue;
+    out.push({
+      seq: typeof row.seq === "number" ? row.seq : 0,
+      gateId,
+      gateKind: typeof row.gate_kind === "string" ? row.gate_kind : "",
+      gateKey: typeof row.gate_key === "string" ? row.gate_key : "",
+      reminderN,
+      detail: typeof row.detail === "string" ? row.detail : ""
+    });
+  }
+  return out;
+}
+function reminderCountForGate(reminders, gateId) {
+  return reminders.filter((r) => r.gateId === gateId).length;
 }
 var EVENT_TYPES = /* @__PURE__ */ new Set([
   "beat",
@@ -24719,8 +25040,15 @@ function usedRounds(workersDirs) {
 }
 var STATUS_SCHEMA = "autopilot-status/1";
 var TERMINAL_WORKER_STATUSES = /* @__PURE__ */ new Set(["done", "failed", "needs-clarification", "lost"]);
-function blockedOnHuman(pendingGates, nonTerminalRows) {
-  return pendingGates > 0 && nonTerminalRows === 0;
+function blockedOnHuman(pendingGates, nonTerminalRows, perKey) {
+  if (pendingGates === 0) return false;
+  if (perKey === void 0) return nonTerminalRows === 0;
+  for (const raw of perKey.gateKeys) {
+    const key = (raw ?? "").trim();
+    if (key === "") return true;
+    if ((perKey.nonTerminalByKey.get(key) ?? 0) === 0) return true;
+  }
+  return false;
 }
 function currentStage(stages) {
   if (stages.length === 0) return void 0;
@@ -24783,6 +25111,8 @@ function deriveStatusModel(projectDir, nowMs = Date.now()) {
       ageMs: Number.isNaN(createdMs) ? null : Math.max(0, nowMs - createdMs)
     };
   });
+  const gateBlockerClasses = {};
+  for (const g of gateScan.gates) gateBlockerClasses[g.id] = blockerClassOf(g);
   const head = queryTimeline(timelinePath(projectDir), 0).head;
   return {
     ok: true,
@@ -24804,7 +25134,8 @@ function deriveStatusModel(projectDir, nowMs = Date.now()) {
         }
       },
       paused: config.paused,
-      warnings
+      warnings,
+      gateBlockerClasses
     }
   };
 }
@@ -24833,7 +25164,9 @@ function renderStatusText(model) {
   lines.push(`gates: ${status.gates.length} total, ${pending.length} pending`);
   for (const g of status.gates) {
     const age = g.ageMs === null ? "?" : formatCoarseAge(g.ageMs);
-    lines.push(`  ${g.id} ${g.kind} ${g.status} age=${age}`);
+    const blocker = model.gateBlockerClasses?.[g.id];
+    const blockerToken = blocker === void 0 ? "" : ` blocker=${blocker}`;
+    lines.push(`  ${g.id} ${g.kind} ${g.status} age=${age}${blockerToken}`);
   }
   lines.push(`timeline: seq=${status.timeline.seq} ts=${status.timeline.ts}`);
   lines.push(
@@ -25112,13 +25445,7 @@ function readAutoGateMode(projectDir) {
   }
   return "off";
 }
-function scanPendingGate(file) {
-  let text;
-  try {
-    text = fs33.readFileSync(file, "utf8");
-  } catch {
-    return null;
-  }
+function parsePendingGateText(text) {
   const lines = text.split(/\r\n|\r|\n/);
   if (lines.length === 0 || lines[0].trim() !== "---") return null;
   let id = "";
@@ -25128,6 +25455,7 @@ function scanPendingGate(file) {
   let status = "";
   let createdAt = null;
   let reasonCode = null;
+  let blockerClass = null;
   const evidenceRefs = [];
   let activeList = null;
   for (let i = 1; i < lines.length; i++) {
@@ -25153,6 +25481,7 @@ function scanPendingGate(file) {
     else if (name === "stage") stage = /^-?\d+$/.test(value) ? Number.parseInt(value, 10) : null;
     else if (name === "created_at") createdAt = value === "" ? null : value;
     else if (name === "reason_code") reasonCode = value === "" ? null : value;
+    else if (name === "blocker_class") blockerClass = value === "" ? null : value;
     else if (name === "evidence_refs") {
       if (value === "") {
         activeList = "evidence_refs";
@@ -25170,7 +25499,7 @@ function scanPendingGate(file) {
     }
   }
   if (status !== "pending" || id === "" || kind === "") return null;
-  return { id, kind, stage, key, createdAt, reasonCode, evidenceRefs, ageMs: null, drift: null };
+  return { id, kind, stage, key, createdAt, reasonCode, blockerClass, evidenceRefs, ageMs: null, drift: null };
 }
 function evidenceFilePath(projectDir, ref) {
   const body = ref.replace(/^[^:]*:/, "");
@@ -25196,7 +25525,7 @@ function gateDriftDetail(projectDir, gate, createdAtMs) {
   if (!Number.isFinite(newestMs) || newestMs <= createdAtMs) return null;
   return "mtime>created_at";
 }
-function readMonitorState(projectDir, nowMs) {
+function readMonitorState(projectDir, nowMs, deps) {
   const status = getMwStatus(projectDir);
   let serve = { running: false, pid: null, stale: false, staleDetail: "", upMs: null };
   if (status.running) {
@@ -25254,8 +25583,13 @@ function readMonitorState(projectDir, nowMs) {
   };
   const workers = [];
   let nonTerminalRows = 0;
+  const nonTerminalByKey = /* @__PURE__ */ new Map();
   for (const entry of new WorkerStore(path34.join(projectDir, ".agenticdoc")).readAll()) {
-    if (!TERMINAL_WORKER_STATUSES.has(entry.status)) nonTerminalRows += 1;
+    if (!TERMINAL_WORKER_STATUSES.has(entry.status)) {
+      nonTerminalRows += 1;
+      const owner = workerOwnerKey(entry);
+      nonTerminalByKey.set(owner, (nonTerminalByKey.get(owner) ?? 0) + 1);
+    }
     if (entry.status !== "running") continue;
     const dispatched = Date.parse(entry.dispatchedAt);
     if (Number.isNaN(dispatched)) continue;
@@ -25263,33 +25597,116 @@ function readMonitorState(projectDir, nowMs) {
   }
   workers.sort((a, b) => b.elapsedMs - a.elapsedMs || a.taskKey.localeCompare(b.taskKey));
   const gates = [];
+  let queueState = "ok";
+  let queueError = null;
+  const queueFailures = [];
+  const gatesDirectory = gatesDir(projectDir);
+  let gateFiles = [];
   try {
-    const dir = gatesDir(projectDir);
-    for (const entry of fs33.readdirSync(dir, { withFileTypes: true })) {
+    gateFiles = (deps?.readGateDir ?? ((dir) => fs33.readdirSync(dir, { withFileTypes: true })))(
+      gatesDirectory
+    );
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      queueState = "unreadable";
+      queueFailures.push(errorSummary(err));
+      queueError = queueFailures[0];
+    }
+  }
+  const autopilotBase = deriveAutopilotPanel(projectDir, nowMs, workers);
+  const cfgResult = readConfig(projectDir);
+  const reminderMax = cfgResult.ok ? cfgResult.config.gate_reminder_max : DEFAULT_CONFIG.gate_reminder_max;
+  const afterMin = cfgResult.ok ? cfgResult.config.gate_reminder_after_min : DEFAULT_CONFIG.gate_reminder_after_min;
+  const reminders = readGateReminders(path34.join(projectDir, ".agenticdoc"));
+  if (queueState === "ok") {
+    for (const entry of gateFiles) {
       if (!entry.isFile() || !/^gate-\d+\.md$/.test(entry.name)) continue;
-      const gate = scanPendingGate(path34.join(dir, entry.name));
+      const file = path34.join(gatesDirectory, entry.name);
+      let text;
+      try {
+        text = (deps?.readGateText ?? ((f) => fs33.readFileSync(f, "utf8")))(file);
+      } catch (err) {
+        queueState = "partial";
+        queueFailures.push(`${entry.name}: ${errorSummary(err)}`);
+        queueError = formatQueueFailures(queueFailures);
+        continue;
+      }
+      const gate = parsePendingGateText(text);
       if (gate === null) continue;
       const createdMs = gate.createdAt === null || gate.createdAt === void 0 ? null : Date.parse(gate.createdAt);
       const createdKnown = createdMs !== null && !Number.isNaN(createdMs) ? createdMs : null;
       gate.ageMs = createdKnown === null ? null : Math.max(0, nowMs - createdKnown);
       gate.drift = gateDriftDetail(projectDir, gate, createdKnown);
+      const stageOfKey = autopilotBase.stageOfKey;
+      const resolvedStage = gate.stage !== null ? gate.stage : gate.key !== "" ? stageOfKey?.get(gate.key) ?? null : null;
+      const stageStatus = resolvedStage === null ? void 0 : autopilotBase.stageStatusByNumber?.get(resolvedStage);
+      gate.scopeResolved = createdKnown !== null && (gate.stage !== null ? autopilotBase.stageStatusByNumber?.has(gate.stage) === true : gate.key !== "" ? stageOfKey?.has(gate.key) === true : false);
+      const remindersForGate = reminderCountForGate(reminders, gate.id);
+      gate.reminders = remindersForGate;
+      gate.reminderMax = reminderMax;
+      const thresholdMs = (remindersForGate + 1) * afterMin * 6e4;
+      const due = createdKnown === null ? null : nowMs - createdKnown >= thresholdMs;
+      gate.reason = deriveGateReason({
+        queueUnreadable: false,
+        inFlightForKey: gate.key === "" ? 0 : nonTerminalByKey.get(gate.key) ?? 0,
+        reminders: remindersForGate,
+        reminderMax,
+        stageTerminal: isStageTerminal(stageStatus),
+        due
+      });
       gates.push(gate);
     }
-  } catch {
   }
   gates.sort((a, b) => a.id.localeCompare(b.id));
-  const autopilot = deriveAutopilotPanel(projectDir, nowMs, workers);
-  const blocked = blockedOnHuman(gates.length, nonTerminalRows);
+  const autopilot = {
+    ...autopilotBase,
+    stages: deriveMonitorStages(autopilotBase, gates)
+  };
+  const blocked = blockedOnHuman(gates.length, nonTerminalRows, {
+    gateKeys: gates.map((g) => g.key),
+    nonTerminalByKey
+  });
   return {
     serve,
     conductor,
     autopilot,
     workers,
     gates,
+    queueState,
+    queueError,
+    queueFailures,
     blockedOnHuman: blocked,
     collectedAtMs: nowMs,
     tickCount: monitorTickCount
   };
+}
+var STAGE_BLOCKER_KINDS = ["stage-confirm", "stage-close", "stalled", "budget-exhausted", "goal-change"];
+function deriveMonitorStages(autopilot, gates) {
+  const statusByNumber = autopilot.stageStatusByNumber ?? /* @__PURE__ */ new Map();
+  const stageOfKey = autopilot.stageOfKey ?? /* @__PURE__ */ new Map();
+  const goalChangeGate = gates.find((g) => g.kind === "goal-change");
+  const statuses = [...statusByNumber.entries()].sort((a, b) => a[0] - b[0]);
+  return statuses.map(([number, status]) => {
+    const frozenKeys = autopilot.keys.filter((k) => k.status === "stalled" || k.status === "pending-review").filter((k) => stageOfKey.get(k.key) === number).map((k) => k.key).sort();
+    const candidates = gates.filter((g) => {
+      const resolved = g.stage !== null ? g.stage : g.key !== "" ? stageOfKey.get(g.key) ?? null : null;
+      return resolved === number;
+    });
+    if (goalChangeGate !== void 0 && status !== "closed" && status !== "closed-human") {
+      candidates.push(goalChangeGate);
+    }
+    candidates.sort((a, b) => STAGE_BLOCKER_KINDS.indexOf(a.kind) - STAGE_BLOCKER_KINDS.indexOf(b.kind));
+    const blocker = candidates[0];
+    return {
+      number,
+      title: autopilot.stageTitleByNumber?.get(number) ?? "",
+      status,
+      blockerKind: blocker?.kind ?? (status === "halted" ? "halted" : null),
+      blockerGateId: blocker?.id ?? null,
+      blockerAgeMs: blocker?.ageMs ?? null,
+      frozenKeys
+    };
+  });
 }
 function readTimelineTail(file, opts) {
   const maxBytes = opts?.maxBytes ?? 512 * 1024;
@@ -25436,10 +25853,21 @@ function deriveAutopilotPanel(projectDir, nowMs, workers, deps) {
   const roadmap = (deps?.readRoadmapFile ?? readRoadmap)(projectDir);
   const statusByKey = /* @__PURE__ */ new Map();
   const depsByKey = /* @__PURE__ */ new Map();
+  const stageOfKey = /* @__PURE__ */ new Map();
+  const stageStatusByNumber = /* @__PURE__ */ new Map();
+  const stageTitleByNumber = /* @__PURE__ */ new Map();
   if (roadmap.ok) {
     for (const stage of roadmap.stages) {
+      stageStatusByNumber.set(stage.number, stage.status);
+      stageTitleByNumber.set(stage.number, stage.title);
       for (const [key, status] of Object.entries(stage.keyStatus)) statusByKey.set(key, status);
-      for (const row of stage.keys) depsByKey.set(row.key, row.dependsOn);
+      for (const row of stage.keys) {
+        depsByKey.set(row.key, row.dependsOn);
+        stageOfKey.set(row.key, stage.number);
+      }
+      for (const key of Object.keys(stage.keyStatus)) {
+        if (!stageOfKey.has(key)) stageOfKey.set(key, stage.number);
+      }
     }
   }
   const phaseByKey = (deps?.readIndexPhases ?? defaultIndexPhases)(projectDir);
@@ -25484,11 +25912,23 @@ function deriveAutopilotPanel(projectDir, nowMs, workers, deps) {
     slotsMax: config?.max_parallel_keys ?? DEFAULT_CONFIG.max_parallel_keys,
     stallTicks: config?.advance_stall_ticks ?? DEFAULT_CONFIG.advance_stall_ticks,
     keys,
-    stalls: deriveAdvanceStalls(events, nowMs)
+    stalls: deriveAdvanceStalls(events, nowMs),
+    stageOfKey,
+    stageStatusByNumber,
+    stageTitleByNumber
   };
 }
 function trunc2(s, max) {
   return s.length <= max ? s : `${s.slice(0, max - 1)}\u2026`;
+}
+function formatQueueFailures(failures) {
+  if (failures.length === 1) return failures[0];
+  return `${failures.length} files unreadable: ${failures.join("; ")}`;
+}
+function queueFailureSamples(s) {
+  if (s.queueFailures !== void 0 && s.queueFailures.length > 0) return s.queueFailures;
+  if (s.queueError !== null && s.queueError !== void 0 && s.queueError !== "") return [s.queueError];
+  return [];
 }
 function formatDuration(ms) {
   const s = Math.max(0, Math.floor(ms / 1e3));
@@ -25518,6 +25958,75 @@ function monitorHeaderLine(s) {
     break;
   }
   return line;
+}
+var GATE_DRIFT_MARK = "~D";
+var GATE_BLOCKER_MARK = { judgment: "J", paperwork: "P" };
+var GATE_REASON_CODE = {
+  "gate-queue-unreadable": "R:queue",
+  "key-in-flight": "R:flight",
+  "cap-reached": "R:cap",
+  "stage-terminal": "R:term",
+  "not-due": "R:notdue",
+  "unresolved-scope": "R:scope"
+};
+var GATE_DROP_RANK = { code: 1, scopeMarker: 2, scopeToken: 3, reminders: 4, blocker: 5 };
+var GATE_MAX_DROP = 5;
+function gateAgeToken(ageMs, compact) {
+  if (ageMs === null || ageMs === void 0) return "";
+  if (!compact) return ` age=${formatDuration(ageMs)}`;
+  const s = Math.max(0, Math.floor(ageMs / 1e3));
+  if (s < 60) return ` age=${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return ` age=${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return ` age=${h}h`;
+  return ` age=${Math.floor(h / 24)}d`;
+}
+function gateReasonToken(reason, compact) {
+  if (!compact) return ` reason=${reason ?? "-"}`;
+  if (reason === null || reason === void 0) return " R:due";
+  return ` ${GATE_REASON_CODE[reason] ?? `reason=${reason}`}`;
+}
+function renderPendingGateLine(gate, index, total) {
+  const head = index === 0 ? `gates: ${total} pending - ` : "  \xB7 ";
+  const base = `${head}${gate.id} (${gate.kind})`;
+  const drift = gate.drift !== null && gate.drift !== void 0 ? ` ${GATE_DRIFT_MARK}` : "";
+  const optionals = [];
+  optionals.push({
+    text: ` ${GATE_BLOCKER_MARK[blockerClassOf({ blockerClass: gate.blockerClass ?? null })]}`,
+    rank: GATE_DROP_RANK.blocker
+  });
+  if (gate.reasonCode !== null && gate.reasonCode !== void 0) {
+    optionals.push({ text: ` code=${gate.reasonCode}`, rank: GATE_DROP_RANK.code });
+  }
+  if (gate.scopeResolved === false) {
+    optionals.push({ text: ` scope=${GATE_SCOPE_UNRESOLVED}`, rank: GATE_DROP_RANK.scopeMarker });
+  }
+  const scope = gate.stage !== null ? ` stage=${gate.stage}` : gate.key !== "" ? ` key=${gate.key}` : "";
+  if (scope !== "") optionals.push({ text: scope, rank: GATE_DROP_RANK.scopeToken });
+  if (gate.reminders !== void 0 && gate.reminders > 0) {
+    optionals.push({
+      text: ` reminders=${gate.reminders}/${gate.reminderMax ?? "?"}`,
+      rank: GATE_DROP_RANK.reminders
+    });
+  }
+  const answers = [` -> /autopilot gate ${gate.id} approve|reject`, " -> /autopilot gates"];
+  for (const answer of answers) {
+    for (let level = 0; level <= 2; level++) {
+      const age = gateAgeToken(gate.ageMs, level >= 1);
+      const reason = gateReasonToken(gate.reason, level >= 2);
+      for (let keep = 0; keep <= GATE_MAX_DROP; keep++) {
+        const kept = optionals.filter((t) => t.rank > keep);
+        const omitted = optionals.length - kept.length;
+        const trace = omitted > 0 ? ` +${omitted}` : "";
+        const candidate = `${base}${drift}${kept.map((t) => t.text).join("")}${age}${reason}${answer}${trace}`;
+        if (candidate.length <= MONITOR_LINE_MAX) return candidate;
+      }
+    }
+  }
+  const tail = `${drift}${gateAgeToken(gate.ageMs, true)}${gateReasonToken(gate.reason, true)}${answers[1] ?? ""}`;
+  const room = MONITOR_LINE_MAX - tail.length;
+  return `${trunc2(base, Math.max(0, room))}${tail}`;
 }
 function renderMonitorLines(s) {
   const lines = [monitorHeaderLine(s)];
@@ -25608,28 +26117,43 @@ function renderMonitorLines(s) {
       lines.push(trunc2(`  \xB7 ${w.taskKey}  ${Math.ceil(w.elapsedMs / 6e4)}m`, MONITOR_LINE_MAX));
     }
   }
-  if (s.gates.length === 0) {
+  if (s.autopilot.stages !== void 0 && s.autopilot.stages.length > 0) {
+    const stages = s.autopilot.stages;
+    const statusCount = (status) => stages.filter((st) => st.status === status).length;
+    const summary = ["running", "pending", "halted", "closed", "closed-human", "approved"].map((status) => `${status} ${statusCount(status)}`).filter((bit) => !bit.endsWith(" 0")).join(", ");
+    lines.push(trunc2(`stages: ${stages.length}${summary === "" ? "" : ` (${summary})`}`, MONITOR_LINE_MAX));
+    for (const st of stages) {
+      const bits = [`  \xB7 stage ${st.number} ${st.status}`];
+      if (st.blockerKind !== null) {
+        const gate = st.blockerGateId === null ? "" : ` ${st.blockerGateId}`;
+        bits.push(`waiting on ${st.blockerKind}${gate}`);
+        if (st.blockerAgeMs !== null) bits.push(`age=${formatDuration(st.blockerAgeMs)}`);
+      } else if (st.status !== "closed" && st.status !== "closed-human") {
+        bits.push("waiting on activation");
+      }
+      if (st.frozenKeys.length > 0) bits.push(`frozen ${st.frozenKeys.join(",")}`);
+      lines.push(trunc2(bits.join(" | "), MONITOR_LINE_MAX));
+    }
+  }
+  if (s.queueState === "unreadable") {
+    lines.push(
+      trunc2(`gates: gate-queue-unreadable (${s.queueError ?? "unknown error"}) -> /mw doctor`, MONITOR_LINE_MAX)
+    );
+  } else if (s.queueState === "partial" && s.gates.length === 0) {
+    const samples = queueFailureSamples(s);
+    const detail = samples.length === 0 ? "unknown error" : `${samples.length} unreadable: ${samples.join("; ")}`;
+    lines.push(trunc2(`gates: gate-queue-unreadable (${detail}) -> /mw doctor`, MONITOR_LINE_MAX));
+  } else if (s.gates.length === 0) {
     lines.push("gates: 0 pending");
   } else {
     s.gates.forEach((g, index) => {
-      const head = index === 0 ? `gates: ${s.gates.length} pending - ` : "  \xB7 ";
-      const base = `${head}${g.id} (${g.kind})`;
-      const answer = ` -> /autopilot gate ${g.id} approve|reject`;
-      const tokens = [];
-      const scope = g.stage !== null ? ` stage=${g.stage}` : g.key !== "" ? ` key=${g.key}` : "";
-      if (scope !== "") tokens.push({ text: scope, drop: 3 });
-      if (g.ageMs !== null && g.ageMs !== void 0)
-        tokens.push({ text: ` age=${formatDuration(g.ageMs)}`, drop: 2 });
-      if (g.reasonCode !== null && g.reasonCode !== void 0)
-        tokens.push({ text: ` reason=${g.reasonCode}`, drop: 1 });
-      if (g.drift !== null && g.drift !== void 0) tokens.push({ text: ` DRIFT(${g.drift})`, drop: 4 });
-      let line = `${base}${tokens.map((t) => t.text).join("")}${answer}`;
-      for (const drop of [1, 2, 3, 4]) {
-        if (line.length <= MONITOR_LINE_MAX) break;
-        line = `${base}${tokens.filter((t) => t.drop > drop).map((t) => t.text).join("")}${answer}`;
-      }
-      lines.push(trunc2(line, MONITOR_LINE_MAX));
+      lines.push(renderPendingGateLine(g, index, s.gates.length));
     });
+    if (s.queueState === "partial") {
+      const samples = queueFailureSamples(s);
+      const detail = samples.length === 0 ? "one gate file could not be read" : `${samples.length} unreadable: ${samples.join("; ")}`;
+      lines.push(trunc2(`  \xB7 gate-queue-unreadable: ${detail}`, MONITOR_LINE_MAX));
+    }
   }
   return lines;
 }
@@ -26401,11 +26925,14 @@ async function restoreWatch(pi, watch, indexStore, workerStore, ackStore, agenti
   if (!data?.key) return;
   const key = data.key;
   watch.key = key;
+  let tookOverFromConductor;
   if (data.claimed) {
     const row = indexStore.findByKey(key);
     if (row) {
       const self = windowClaimId();
-      if (claimState(row.claimId, self) === "held-live") {
+      const previousClaim = row.claimId.trim();
+      const holder = claimState(previousClaim, self);
+      if (holder === "held-live") {
         ctx.ui.notify(
           `[mw] key '${key}' is claimed by another window (${row.claimId}) \u2014 watching only.`,
           "warning"
@@ -26424,6 +26951,13 @@ async function restoreWatch(pi, watch, indexStore, workerStore, ackStore, agenti
           const sync = syncPmStateClaimId(agenticdocRoot2, key, self);
           const syncWarning = claimSyncWarningText(key, sync);
           if (syncWarning !== "") ctx.ui.notify(syncWarning, "warning");
+          if (holder === "held-conductor") {
+            tookOverFromConductor = previousClaim;
+            displaySummary(
+              pi,
+              `[mw] \u7A97\u53E3\u91CD\u542F\u6062\u590D\uFF1Akey '${key}' \u539F\u7531\u672C\u673A autopilot conductor \u63A5\u7BA1\uFF08\u5408\u6210 claim ${previousClaim}\uFF09\uFF0C\u5DF2\u6539\u7531\u672C\u7A97\u53E3\u63A5\u7BA1\uFF08${self}\uFF09\u3002\u4EBA\u5DE5\u4F18\u5148\uFF0Cconductor \u4E0B\u6B21 tick \u8BA9\u4F4D\u4E14\u4E0D\u518D\u62A2\u56DE\uFF1B\u8BB0\u5F55\u9762\uFF1A_index.parallel \u7684 Claim \u5355\u5143 + \u672C session \u7684 agent-team-loop:watch entry\uFF08tookOverFromConductor\uFF09\u3002`
+            );
+          }
         }
       }
     }
@@ -26432,7 +26966,11 @@ async function restoreWatch(pi, watch, indexStore, workerStore, ackStore, agenti
     ctx,
     renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot2, key, watch.dispatchedTaskKeys)
   );
-  pi.appendEntry(WATCH_ENTRY_TYPE, { key, claimed: data.claimed ?? false });
+  pi.appendEntry(WATCH_ENTRY_TYPE, {
+    key,
+    claimed: data.claimed ?? false,
+    ...tookOverFromConductor === void 0 ? {} : { tookOverFromConductor }
+  });
   const pmStatePath = path37.join(agenticdocRoot2, key, "pm-state.md");
   if (fs36.existsSync(pmStatePath)) {
     const updated = fs36.statSync(pmStatePath).mtime.toISOString();
@@ -26893,40 +27431,18 @@ function heartbeatStatsSuffix(taskDir, entry) {
   return "";
 }
 var GATE_REMINDER_ENTRY_TYPE = "agent-team-loop:gate-reminder-seen";
-function readGateReminders(agenticdocRoot2) {
-  const ledger = path37.join(agenticdocRoot2, "_autopilot", AUTO_DECISIONS_FILE);
-  let raw;
-  try {
-    raw = fs36.readFileSync(ledger, "utf8");
-  } catch {
-    return [];
-  }
-  const out = [];
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed === "") continue;
-    let parsed;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-    if (typeof parsed !== "object" || parsed === null) continue;
-    const row = parsed;
-    if (row.phase !== "remind") continue;
-    const gateId = typeof row.gate_id === "string" ? row.gate_id : "";
-    const reminderN = typeof row.reminder_n === "number" ? row.reminder_n : 0;
-    if (gateId === "" || reminderN <= 0) continue;
-    out.push({
-      seq: typeof row.seq === "number" ? row.seq : 0,
-      gateId,
-      gateKind: typeof row.gate_kind === "string" ? row.gate_kind : "",
-      gateKey: typeof row.gate_key === "string" ? row.gate_key : "",
-      reminderN,
-      detail: typeof row.detail === "string" ? row.detail : ""
-    });
-  }
-  return out;
+var GATE_REMINDER_DROPPED_ENTRY_TYPE = "agent-team-loop:gate-reminder-dropped";
+function recordDroppedGateReminder(pi, seen, reminder, reason, error) {
+  const dedup = `${reminder.gateId}:${reminder.reminderN}:${reason}`;
+  if (seen.has(dedup)) return;
+  seen.add(dedup);
+  pi.appendEntry(GATE_REMINDER_DROPPED_ENTRY_TYPE, {
+    gateId: reminder.gateId,
+    n: reminder.reminderN,
+    gateKey: reminder.gateKey,
+    reason,
+    ...error === void 0 ? {} : { error }
+  });
 }
 function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRoot2, watch, ui, pollIntervalMs = POLL_INTERVAL_MS) {
   const notified = new Set(
@@ -26935,6 +27451,7 @@ function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRo
   const escalated = /* @__PURE__ */ new Set();
   let widgetShown = false;
   const unsequencedSeen = /* @__PURE__ */ new Set();
+  const droppedRemindersSeen = /* @__PURE__ */ new Set();
   let reminderWatermark = 0;
   {
     const rows = readGateReminders(agenticdocRoot2);
@@ -27009,8 +27526,14 @@ ${PM_CONTINUE_HINT}`
         if (delivered > 0) reminderWatermark = delivered;
       }
       for (const reminder of reminders) {
-        if (!watch.key) continue;
-        if (reminder.gateKey !== "" && reminder.gateKey !== watch.key) continue;
+        if (!watch.key) {
+          recordDroppedGateReminder(pi, droppedRemindersSeen, reminder, "no-watch");
+          continue;
+        }
+        if (reminder.gateKey !== "" && reminder.gateKey !== watch.key) {
+          recordDroppedGateReminder(pi, droppedRemindersSeen, reminder, "other-key");
+          continue;
+        }
         const dedup = `${reminder.gateId}:${reminder.reminderN}`;
         if (reminder.seq > 0) {
           if (reminder.seq <= reminderWatermark) continue;
@@ -27030,7 +27553,14 @@ ${PM_CONTINUE_HINT}`
           `[mw] \u95E8\u63D0\u9192\uFF08${reminder.reminderN}\uFF09\uFF1Agate ${reminder.gateId}\uFF08kind=${reminder.gateKind}\uFF0C${scope}\uFF09\u5DF2 pending \u8D85\u9608\uFF0C\u7B49\u5F85\u4EBA\u5DE5\u5E94\u7B54\u3002\uFF08\u5224\u5B9A\u7531 conductor \u5B8C\u6210\uFF1B\u7528 /autopilot gates \u67E5\u770B\uFF0C/autopilot gate ${reminder.gateId} approve|reject \u5E94\u7B54\u3002\uFF09` + (reminder.detail ? ` ${reminder.detail}` : "")
         );
       }
-    } catch {
+    } catch (err) {
+      recordDroppedGateReminder(
+        pi,
+        droppedRemindersSeen,
+        { gateId: "-", reminderN: 0, gateKey: "" },
+        "read-error",
+        err instanceof Error ? err.message : String(err)
+      );
     }
   }, pollIntervalMs);
 }
@@ -27909,7 +28439,7 @@ function xkeyGuardedDir(root) {
 function xkeySubtreeDir(root) {
   return path40.join(xkeyGuardedDir(root), XKEY_DIR);
 }
-function isUnder(parent, child) {
+function isUnder2(parent, child) {
   const p = fold3(path40.normalize(parent));
   const c = fold3(path40.normalize(child));
   if (c === p) return true;
@@ -27919,7 +28449,7 @@ function isUnder(parent, child) {
 function isXkeyGatePath(root, rawPath, cwd = process.cwd()) {
   if (typeof rawPath !== "string" || rawPath === "") return false;
   const target = path40.resolve(cwd, expandTildePath3(rawPath));
-  if (isUnder(xkeyGuardedDir(root), target) && !isUnder(xkeySubtreeDir(root), target)) return true;
+  if (isUnder2(xkeyGuardedDir(root), target) && !isUnder2(xkeySubtreeDir(root), target)) return true;
   return guardedFragmentPresent(toForwardSlashes3(fold3(target)), AUTOPILOT_DIR_FRAGMENT);
 }
 var WRITE_VERB_RE2 = /\b(rm|rmdir|rd|del|erase|mv|move|ren|rename|cp|copy|rsync|install|dd|tee|shred|truncate|touch|chmod|chown|ln)\b/i;

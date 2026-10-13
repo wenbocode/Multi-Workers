@@ -186,7 +186,24 @@ export function readServeMeta(projectDir) {
         const m = JSON.parse(raw);
         if (typeof m.pid !== "number" || typeof m.started_at_ms !== "number")
             return null;
-        return { pid: m.pid, startedAtMs: m.started_at_ms };
+        const meta = { pid: m.pid, startedAtMs: m.started_at_ms };
+        // Identity fields are optional: a missing key must never invalidate the
+        // whole stamp (legacy serve.meta carries only pid/started_at_ms/code_dir).
+        if (typeof m.code_dir === "string" && m.code_dir)
+            meta.codeDir = m.code_dir;
+        if (typeof m.commit === "string" && m.commit)
+            meta.commit = m.commit;
+        if (typeof m.dirty_tracked === "number")
+            meta.dirtyTracked = m.dirty_tracked;
+        if (typeof m.dirty_untracked === "number")
+            meta.dirtyUntracked = m.dirty_untracked;
+        if (typeof m.code_mtime_ms === "number")
+            meta.codeMtimeMs = m.code_mtime_ms;
+        if (typeof m.code_digest === "string" && m.code_digest)
+            meta.codeDigest = m.code_digest;
+        if (typeof m.schema === "number")
+            meta.schema = m.schema;
+        return meta;
     }
     catch {
         return null;
@@ -196,7 +213,8 @@ export function readServeMeta(projectDir) {
  * Newest mtime among mw runtime sources (.py + providers.json) — the serve
  * staleness baseline. Serves load these at startup, so any file newer than
  * the serve's start means the running serve predates current code. Skips
- * tests, dev scratch (`_*`), `__pycache__`, and `dist` (bundle output).
+ * tests (files `test_*` and the whole `test/` dir), dev scratch (`_*`),
+ * `__pycache__`, and `dist` (bundle output).
  */
 export function mwCodeNewestMtimeMs(mwPyOverride) {
     const mwPy = mwPyOverride ?? findMwPy();
@@ -215,8 +233,11 @@ export function mwCodeNewestMtimeMs(mwPyOverride) {
             if (e.isDirectory()) {
                 // .tmp holds the AgenticTask framework cache — not serve runtime
                 // code. A cache pull must not turn a healthy serve stale (parity
-                // with the Python side's _mw_code_newest_mtime skip set).
-                if (e.name === "__pycache__" || e.name === "dist" || e.name === ".tmp")
+                // with the Python side's _mw_code_newest_mtime skip set). `test`
+                // is the same kind of false positive at directory scale: test/
+                // fixtures are the majority of the files under the mw tree, and
+                // editing one must not mark a healthy serve stale.
+                if (e.name === "__pycache__" || e.name === "dist" || e.name === ".tmp" || e.name === "test")
                     continue;
                 walk(path.join(dir, e.name));
                 continue;
@@ -248,10 +269,21 @@ export function mwCodeNewestMtimeMs(mwPyOverride) {
  * (no meta AND no PID file, or no mw source dir resolved).
  */
 export function serveStaleness(projectDir, codeMtimeMs) {
-    const codeMs = codeMtimeMs ?? mwCodeNewestMtimeMs();
+    const meta = readServeMeta(projectDir);
+    let codeMs = codeMtimeMs ?? null;
+    if (codeMs === null) {
+        // Baseline tree = the serve's own tree (meta.code_dir), never the
+        // checker's tree: MW_PY / the global `.mw-py-path` sidecar can point at
+        // a different checkout, and comparing across trees yields opposite
+        // verdicts (T-13 entry wiring; the mtime judge itself is unchanged).
+        if (meta?.codeDir)
+            codeMs = mwCodeNewestMtimeMs(path.join(meta.codeDir, "mw.py"));
+        if (codeMs === null)
+            codeMs = mwCodeNewestMtimeMs();
+    }
     if (codeMs === null)
         return undefined;
-    let startedAtMs = readServeMeta(projectDir)?.startedAtMs ?? null;
+    let startedAtMs = meta?.startedAtMs ?? null;
     if (startedAtMs === null) {
         try {
             startedAtMs = fs.statSync(pidFilePath(projectDir)).mtimeMs;

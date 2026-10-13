@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { autoStartMonitor, registerAutopilotCommands } from "../autopilot/console.js";
 import { stopMonitor } from "../autopilot/monitor.js";
-import { readConfig } from "../autopilot/status-model.js";
+import { readConfig, readGateReminders } from "../autopilot/status-model.js";
 import { registerRagTools } from "../rag/tools.js";
 import { AckStore } from "../shared/ack-store.js";
 import { ENVELOPE_SECTION_LABELS, ENVELOPE_SECTIONS, inspectEnvelope, isKnownDispatchType, typeExtrasMissing, } from "../shared/dispatch-card.js";
@@ -191,13 +191,34 @@ export async function restoreWatch(pi, watch, indexStore, workerStore, ackStore,
         return;
     const key = data.key;
     watch.key = key;
+    // T-16c: the restart restore path may take a key back from THIS host's
+    // conductor (a `held-conductor` synthetic claim is yieldable — T-16b). That
+    // handover is correct (human priority) but must not be silent: the goal is
+    // that "who took the key from the conductor, and when" stays explainable.
+    // Recorded on existing surfaces only — no new event name, no new entry type:
+    //   * the `_index.parallel` Claim cell (and the pm-state.md mirror) flips to
+    //     this window — the state surface;
+    //   * `tookOverFromConductor` rides the EXISTING `agent-team-loop:watch`
+    //     session entry shape, giving the durable machine-readable act record;
+    //   * a transcript notice via the existing `displaySummary` channel states
+    //     the holder change out loud (passive — it never spends an agent turn).
+    // The timeline is deliberately NOT written here: it has a single writer (the
+    // conductor, `timeline.py` D-109) and a second seq counter would corrupt it.
+    // Set only in the `held-conductor` branch, so a second restart (row now this
+    // window's, or stale) leaves exactly the same record count — idempotent by
+    // construction.
+    let tookOverFromConductor;
     if (data.claimed) {
         const row = indexStore.findByKey(key);
         if (row) {
             const self = windowClaimId();
-            if (claimState(row.claimId, self) === "held-live") {
+            const previousClaim = row.claimId.trim();
+            const holder = claimState(previousClaim, self);
+            if (holder === "held-live") {
                 // Another window took over while this one was closed — keep the
                 // watch (display-only) and say so; do not touch the shared row.
+                // Unchanged by T-16c (requirement 3): a truly live foreign claim
+                // is still never taken silently.
                 ctx.ui.notify(`[mw] key '${key}' is claimed by another window (${row.claimId}) — watching only.`, "warning");
             }
             else {
@@ -221,13 +242,26 @@ export async function restoreWatch(pi, watch, indexStore, workerStore, ackStore,
                     const syncWarning = claimSyncWarningText(key, sync);
                     if (syncWarning !== "")
                         ctx.ui.notify(syncWarning, "warning");
+                    if (holder === "held-conductor") {
+                        tookOverFromConductor = previousClaim;
+                        displaySummary(pi, `[mw] 窗口重启恢复：key '${key}' 原由本机 autopilot conductor 接管（合成 claim ${previousClaim}），` +
+                            `已改由本窗口接管（${self}）。人工优先，conductor 下次 tick 让位且不再抢回；` +
+                            "记录面：_index.parallel 的 Claim 单元 + 本 session 的 agent-team-loop:watch entry（tookOverFromConductor）。");
+                    }
                 }
             }
         }
     }
     setWatchWidget(ctx, renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, key, watch.dispatchedTaskKeys));
     // Re-stamp the entry so it lands in the (possibly new) session file.
-    pi.appendEntry(WATCH_ENTRY_TYPE, { key, claimed: data.claimed ?? false });
+    // T-16c: `tookOverFromConductor` (the pre-takeover synthetic claim id) is
+    // added ONLY on the handover restore, so the act record is exactly one entry
+    // regardless of how often the window restarts afterwards.
+    pi.appendEntry(WATCH_ENTRY_TYPE, {
+        key,
+        claimed: data.claimed ?? false,
+        ...(tookOverFromConductor === undefined ? {} : { tookOverFromConductor }),
+    });
     // Saved working context (pm-save): point the user at it — a notice, never
     // an injected instruction (same principle as evidenceReviewNotice: the
     // framework flags, the user decides whether the agent reads it).
@@ -982,50 +1016,30 @@ function heartbeatStatsSuffix(taskDir, entry) {
  * restart/resume so the same ledger row is never pushed twice (design D-010).
  * Same mechanism as WATCH_ENTRY_TYPE / AUTOPILOT_SEEN_ENTRY_TYPE. */
 export const GATE_REMINDER_ENTRY_TYPE = "agent-team-loop:gate-reminder-seen";
-/** Read `phase:"remind"` rows from the autopilot ledger (read-only, D-005/
- * D-006). Malformed / torn lines are skipped: a broken ledger must never take
- * the poll loop down, and the conductor's per-line append makes a partial
- * trailing line the only realistic failure. */
-function readGateReminders(agenticdocRoot) {
-    const ledger = path.join(agenticdocRoot, "_autopilot", AUTO_DECISIONS_FILE);
-    let raw;
-    try {
-        raw = fs.readFileSync(ledger, "utf8");
-    }
-    catch {
-        return []; // no ledger yet (producer absent or nothing recorded) — nothing to deliver
-    }
-    const out = [];
-    for (const line of raw.split("\n")) {
-        const trimmed = line.trim();
-        if (trimmed === "")
-            continue;
-        let parsed;
-        try {
-            parsed = JSON.parse(trimmed);
-        }
-        catch {
-            continue; // torn/partial line during a concurrent append
-        }
-        if (typeof parsed !== "object" || parsed === null)
-            continue;
-        const row = parsed;
-        if (row.phase !== "remind")
-            continue;
-        const gateId = typeof row.gate_id === "string" ? row.gate_id : "";
-        const reminderN = typeof row.reminder_n === "number" ? row.reminder_n : 0;
-        if (gateId === "" || reminderN <= 0)
-            continue;
-        out.push({
-            seq: typeof row.seq === "number" ? row.seq : 0,
-            gateId,
-            gateKind: typeof row.gate_kind === "string" ? row.gate_kind : "",
-            gateKey: typeof row.gate_key === "string" ? row.gate_key : "",
-            reminderN,
-            detail: typeof row.detail === "string" ? row.detail : "",
-        });
-    }
-    return out;
+/** Session entry type recording a DROPPED gate reminder (mw-autopilot-gate-
+ * alarm-liveness AC-010): "no watch", "other key" and "read error" drops must
+ * leave a visible record, never vanish silently. Deliberately a SEPARATE type
+ * and WITHOUT `seq`: the delivery resume path reads `e.data?.seq` from
+ * {@link GATE_REMINDER_ENTRY_TYPE} entries to advance `reminderWatermark`, so a
+ * drop record carrying a `seq` would suppress the real delivery that follows
+ * it (DRQ-2 C5 counter-example). */
+export const GATE_REMINDER_DROPPED_ENTRY_TYPE = "agent-team-loop:gate-reminder-dropped";
+/** Record one dropped reminder into the session (visible via the transcript /
+ * session file). Deduplicated per `${gateId}:${n}:${reason}` for this process:
+ * the poll loop runs every 4 s, so an undeduped drop would append an entry per
+ * tick forever. `reason` is one of the three literal drop causes. */
+export function recordDroppedGateReminder(pi, seen, reminder, reason, error) {
+    const dedup = `${reminder.gateId}:${reminder.reminderN}:${reason}`;
+    if (seen.has(dedup))
+        return;
+    seen.add(dedup);
+    pi.appendEntry(GATE_REMINDER_DROPPED_ENTRY_TYPE, {
+        gateId: reminder.gateId,
+        n: reminder.reminderN,
+        gateKey: reminder.gateKey,
+        reason,
+        ...(error === undefined ? {} : { error }),
+    });
 }
 export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, ui, pollIntervalMs = POLL_INTERVAL_MS) {
     // Baseline snapshot: rows already terminal when this window opens are
@@ -1055,6 +1069,8 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
     // drops back to the last recorded seq so rows appended while the window was
     // down still reach the PM.
     const unsequencedSeen = new Set();
+    // AC-010: dropped reminders leave a visible record; dedup is process-local.
+    const droppedRemindersSeen = new Set();
     let reminderWatermark = 0;
     {
         const rows = readGateReminders(agenticdocRoot);
@@ -1177,11 +1193,16 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
                 // Multi-window scope (D-010): a keyed gate is only this window's
                 // business when it watches that key; keyless/stage-level gates fall
                 // through to the per-session watermark. A window watching nothing
-                // stays silent, like the worker summaries above.
-                if (!watch.key)
+                // stays silent, like the worker summaries above — but AC-010 forbids
+                // a SILENT drop, so each discard is recorded first.
+                if (!watch.key) {
+                    recordDroppedGateReminder(pi, droppedRemindersSeen, reminder, "no-watch");
                     continue;
-                if (reminder.gateKey !== "" && reminder.gateKey !== watch.key)
+                }
+                if (reminder.gateKey !== "" && reminder.gateKey !== watch.key) {
+                    recordDroppedGateReminder(pi, droppedRemindersSeen, reminder, "other-key");
                     continue;
+                }
                 const dedup = `${reminder.gateId}:${reminder.reminderN}`;
                 if (reminder.seq > 0) {
                     // Session watermark: the row was delivered already (this tick or a
@@ -1207,8 +1228,11 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
                     (reminder.detail ? ` ${reminder.detail}` : ""));
             }
         }
-        catch {
-            // Transient I/O error (e.g. EACCES during concurrent rename) — skip this tick
+        catch (err) {
+            // Transient I/O error (e.g. EACCES during concurrent rename) — skip this
+            // tick, but AC-010 forbids a silent drop: leave one visible read-error
+            // record (deduplicated, no `seq`, so it cannot advance the watermark).
+            recordDroppedGateReminder(pi, droppedRemindersSeen, { gateId: "-", reminderN: 0, gateKey: "" }, "read-error", err instanceof Error ? err.message : String(err));
         }
     }, pollIntervalMs);
 }
