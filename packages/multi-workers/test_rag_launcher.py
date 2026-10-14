@@ -379,7 +379,12 @@ class TestDispatchRagBlock(RagLauncherTest):
         text = first.task_md.read_text(encoding="utf-8")  # type: ignore[union-attr]
         self.assertIn(mc.RAG_MARKER_V1, text)
         self.assertTrue(text.endswith(GOLDEN_BLOCK_TEXT + "\n"))
-        # Re-dispatch over the existing task.md is byte-identical.
+        # Re-dispatch over the existing task.md is byte-identical. The row must be
+        # TERMINAL first: the identity-level guard (MDC M-04, autopilot/dispatch.py)
+        # refuses a second dispatch while the same task_key is still in flight, so
+        # this exercises the legitimate re-dispatch path; the guard's own refusal is
+        # pinned by test/test_write_face_dispatch.py.
+        mc.update_status(self.root, first.task_key, "done")
         second = dispatch_mod.dispatch(
             self.root, "k1", "t07", "repair", "Do the RAG work.",
             loop="L", attempt=1,

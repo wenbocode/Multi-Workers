@@ -182,7 +182,7 @@
   3. 删除 skip 时检查**参数名/arity/节位置**三类「时间差伪影」，不要只删标记。
 - 关联：P-014（取证不可核/构造用例须标注）；本条是同一家族在**测试侧**的形态。
 
-## P-017 `npm run check` 会全仓 `--write`——多会话并行时是破坏性命令（2026-09-26，xkey-repair-mechanism T-05）
+## P-017 `npm run check` 会全仓 `--write`——多会话并行时是破坏性命令（2026-09-26，xkey-repair-mechanism T-05；**[高危] 2026-10-14 复发**）
 
 - 现象：`npm run check` 的第一条是 `biome check --write --error-on-warnings .`，**带 `--write` 且作用域是全仓**。多窗口/多会话共用同一 cwd 时，它会就地改写**其他会话正在编辑的**文件（格式化/修可自动修的 lint），且改写后对方毫无感知——比「跑测试」危险得多。
 - 根因：AGENTS.md 规定「After code changes: npm run check」，但没写明该命令自带全仓写权限；单会话模型下无害，多会话并行模型下越界。
@@ -191,6 +191,7 @@
   2. 必须跑时，先 `git status --porcelain` 确认工作树里没有别人的未提交改动，或只对有改动的文件定向跑 biome；
   3. 不要为了「跑一下 check」而先 stash/clean——那会破坏他人未提交工作（禁手）。
 - 关联：P-015（多会话/多进程资源契约家族）；AGENTS.md Commands 节。
+- **[高危] 复发（2026-10-14，mw-dynamic-concurrency 收口）**：按 AGENTS.md 跑了根 `npm run check`，biome 报 `Checked 1161 files. Fixed 10 files.`，落点为 18:21:10–11 的 10 个文件，其中**含别的 session 正在写的** `worker/worker-mode.ts`、`shared/write-face.ts`、`pm/pm-orchestrator.ts`（跨 key 热文件）——越过了本 key 的写面。exit 0 且无 error/warning 残留 ⇒ 仅格式化 + 安全修复，**未回退**（回退会破坏他人在飞工作）。规则②「先确认工作树里没有别人的未提交改动」在本仓**几乎不可能满足**（多窗口是常态），故收口期实际口径修正为：**纯 Python/文档改动不跑 `npm run check`；改动含 TS 时只对本次改动的文件定向跑 `npx biome check --write <files…>`，不跑根脚本。**
 
 ## P-018 给共享读取函数加「兜底合并」会覆盖更早 key 的冻结判据（2026-09-26，mw-autopilot-verify-cli，D-004 撤回）
 
@@ -264,3 +265,121 @@
   2. PM 吸收回执时，对"机器证据"类声称做**抽样复核**（grep 坐标是否存在），不要只看它是否合理。本 key 收口期就是这么发现这条的。
   3. 验收侧的**充分性判据必须由独立角色按编号逐条执行**（本例是 QG worker），不能让产出者自证。
 - 关联：P-014（证据假信号）、P-019/P-023（预期值/证据行必须实测）、P-024（机器生成物必须自检形状）。
+
+## P-026 派发卡有两道静默门槛：类型专属项必须在 `## ` 标题体内，且种子最小要求含字面 `name.ext:NNN`（2026-10-13，mw-worktree-junction-guard T-W01/W-02/W-04 首派被拒）
+
+- 事实：本 key 首派三个 worker **全部被拒**、零副作用（不写 `task.md`），返回 `missing=[seed:path:line]`；更早一轮是类型专属段被丢：`写入允许面/写入禁止面/验收命令/改动历史` 只写在卡片引言的 bullet 里，而种子注入 `renderCardSeedSections`（`pm/ui-bridge.ts:1880-1930`）只搬运 `## 上下文`/`## 要求`/`## 交付格式` 三个标题体**以及携带正文的额外标题**，引言 bullet 被静默丢弃。
+- 原因：校验在两侧各有一份（Python `launcher.py:770 type_extras_missing`、TS `shared/dispatch-card.ts` 的 `readEnvelope`/`typeExtrasMissing`/`seedItemsMissing`），拒绝无害但只在 `dispatch_worker` 的返回里可见。
+- 硬规则：
+  1. 类型专属项（coding：写入允许面/写入禁止面/验收命令/改动历史；research：唯一证据文件；review：审计目标/未覆盖面声明）**必须各自成 `## ` 标题且正文非空**。
+  2. 种子最小需一条**字面** `name.ext:NNN`（`PATH_LINE_RE`），`` `:273` `` 这类裸行号不算。
+  3. 写卡后先自检这两条再派；被拒时按 `missing=[...]` 逐条补，并知道拒绝没改任何文件。
+- 关联：P-020（写临时文件）、本 key W-01/W-02/W-04。
+
+## P-027 8.3 短名与长名是同一路径的两个拼写 —— 只归一化一侧必然误判（2026-10-13，mw-worktree-junction-guard 两次踩中）
+
+- 事实：W-02 的 `classify_link_target` 把 `WENBOZ~1` 与 `wenbozhou` 当两个目录 ⇒ 正常链被判 `foreign`；W-03 的 `_is_within` 同因把 `%TEMP%` 下所有链判成“目标在仓外”（两侧 `realpath` 修正）。附带：读 reparse point 目标要**剥 `\\?\` 前缀**（spec 坑点 9：不剥时本仓 5/5 顶层链被算成仓外，第一版探测因此得 0）。
+- 原因：`mw.py` 会 `resolve()` `--project`（长名），而 junction 的 `os.readlink` 保留**创建时**拼写，`%TEMP%` 本机就是短名。单元夹具两侧同拼写 ⇒ 掩盖；只有 CLI / `%TEMP%` 级夹具暴露。
+- 硬规则：
+  1. 路径身份比较**两侧都归一**（`realpath`+`normcase`+`normpath`），不能只归一输入侧。
+  2. 归一“链接自身”时只对**父目录** realpath（`realpath` 会跟随 junction 到目标），最终分量保持原拼写。
+  3. 新夹具至少一个走真实 CLI / 真实 `%TEMP%` 的用例。
+- 关联：P-023（夹具必须来自真代码路径）、本 key spec 坑点 9/13。
+
+## P-028 崩检会把“安静但存活”的 worker 反复报成 failed —— 回读必须以 `run.json` 为准（2026-10-13，mw-worktree-junction-guard W-03/W-08 各 20 条伪块）
+
+- 事实：回读里出现 **20 条**“Process exited before output.md was written”，而 `run.json` 只有**一次** run（W-08：started 16:14:36 → ended 16:25:26，`status=done`）；回读头部还写了假的 `(28s)`。worker 只在收尾写 `output.md`，中途 11 分钟无输出 ⇒ 崩检反复开火。
+- 危害：PM 若按 failed 自动重派，会**丢掉整轮工作**并对同一批文件造成并发写（本 key 全是“同一文件只能一个写者”的任务）。
+- 硬规则：
+  1. 吸收终态前先读 `workers/<task>/run.json` 的 `status`/`started_at`/`ended_at`，再对 `output.md` 与 `worker.log` 的 `[worker] done exit=0 elapsed=... tools=...` 行。
+  2. failed 块 **≥2 条且时间戳落在同一 run 区间内** ⇒ 判为伪块，不得据此重派。
+  3. 真 failed（无 `output.md` 且 `run.json` 非 done）才走重试/排查。
+- 关联：mw-dispatch-reliability 的崩检判据（本 key 未修，属遗留）。
+
+## P-029 `mw.py` 的 `_repo_root()` 返回**安装脚本所在仓**而非 cwd ⇒ 夹具无法用真实 CLI 驱动（2026-10-13，mw-worktree-junction-guard T-W08）
+
+- 事实：想在 `%TEMP%` 夹具里跑 `python mw.py worktree add/rm` 做端到端，发现 `mw.py:4502 _repo_root()` 返回脚本自身仓库（真 checkout）⇒ 真实 CLI 会打到真树。改用 `worktree_cmd.cmd_worktree(...)` 的 DI 面（`repo_root`/`git`/`npm_hydrate` 注入）完成 AC-012，并把 `npm_hydrate` 置为硬失败以杜绝 npm。
+- 硬规则：
+  1. “在夹具里跑 mw 真命令”的测试先确认目标解析基准；本仓目前必须走 DI 面。
+  2. 需 CLI 级覆盖时只允许**只读子命令**（如 `mw doctor --project <夹具>`），或先把 `--project`/`repo_root` 参数化（本 key 未做，记遗留）。
+  3. 夹具里禁止真实 npm；注水用注入函数替代。
+- 关联：P-023、本 key T-W08 的两条 documented deviation。
+
+## P-030 `git grep` 默认不搜未跟踪文件 —— “全仓恰好 N 处”会失真（2026-10-13，mw-worktree-junction-guard 复核 G1 时）
+
+- 事实：统计 `pi.on("tool_call")` 注册点时 `git grep` 给出 6（与既有证据一致），但新建的 `worktree-junction-guard.ts:180` 未被计入 ⇒ 真实是 7；加 `--untracked` 后一致。
+- 硬规则：计数/枚举类结论必须 `git grep --untracked`，或在结论里写明“仅已跟踪文件”；新文件未入库时会静默漏算。
+- 关联：P-025（结论要可定位复核）。
+
+## P-031 复核 D-10「14 条链」不变量时，找错目录会得到 0，看起来像灾难性回归（2026-10-13，mw-worktree-junction-guard 收口复核 W-11）
+
+- 事实：收口时用两条自写脚本复核“本仓仍有 14 个 junction”，分别扫 `packages/*/node_modules`（`os.path.islink`）和 `Get-ChildItem packages -Recurse -Depth 3`，两条都返回 **0**，一度像是 14 条链全没了。实际是**位置假设错了**：本仓的 14 条链全在**仓根** `node_modules/` —— 5 条 `node_modules/pi-extension-*` + 9 条 `node_modules/@earendil-works/*` → `packages/*`；`packages/*/node_modules` 下确实一条都没有。
+- 权威口径（三条互证，任一条即可定案）：
+  1. `Get-ChildItem node_modules -Force | ? LinkType` 得 5；`Get-ChildItem node_modules/@earendil-works -Force | ? LinkType` 得 9。
+  2. `package-lock.json` 里 `"link": true` 的条目恰好 14 条（路径即 `node_modules/pi-extension-*`、`node_modules/@earendil-works/*`）。
+  3. `packages/multi-workers/mw.py doctor` 的 `worktree_links` 段零 findings（D-10 期望集减法 14-14=0）。
+- 硬规则：
+  1. 复核“链还在不在”一律以**仓根 `node_modules` + lockfile `link: true`** 两个口径对齐；不要凭直觉扫 `packages/*/node_modules`。
+  2. 自写计数脚本返回 0（或与基线差一个数量级）时，先怀疑**扫描路径/判据**（junction 不是 symlink：PowerShell 看 `LinkType`、Python 3.8+ 可看 `os.lstat().st_reparse_tag`），再怀疑现场。
+  3. 结论未定案前不要向用户报“回归”；先换第二条独立口径。
+- 关联：P-025（结论可定位复核）、P-027（8.3 短名/别名类假象同理）。
+
+## P-032 全量 `./test.sh` 在本机 Windows 上会无超时挂死（2026-10-14，mw-worktree-junction-guard 收口复核；**[高危] 2026-10-14 复发，换了一种失败形态**）
+
+- 事实：收口时跑全量非 e2e 套件，直到 **7h14m** 才被发现卡住：wrapper（PowerShell）CPU=0，真正执行的是它的 bash 子进程，其 fork 出的 `vitest --run`（**无文件参数** = 包级全量跑法）7 小时只累计 **22.9s CPU**，而输出文件自启动后第 15 分钟起再无更新（末行 = 一段点进度 + `[VERIFY] VC-021`）。已按进程树终止 wrapper → bash → 卡住的 vitest。
+- 硬规则：
+  1. **不要裸跑全量 `./test.sh`**（本机）。按包 + 显式文件列表跑；确需全量时套墙钟超时（`Start-Process` + 外部计时，或 git-bash 的 `timeout`），并在跑完后立刻核对**输出文件 LastWriteTime** 与**子进程累计 CPU**。
+  2. 区分「卡住」与「慢」的口径 = 输出 mtime 停滞 **且** 子进程累计 CPU 近乎不动（本例 22.9s / 7h）。
+  3. 终止按进程树：先 wrapper、再 bash、最后它 fork 的 `vitest --run`；**动手前**先核对每个 node 进程的 parent pid 与启动时间——同机常有其它 key 的 worker/pi 进程（本次 `mw-dynamic-concurrency` 就有 worker 在跑，误杀会打断别人的活）。
+  4. 收口对照的替代口径：只跑**触及文件**的定向套件（本例 vitest 38 / pytest 172），并在 `achieved.md` 明文写出「全量对照未完成 + 原因」，不要把定向绿说成全量绿。
+- 关联：P-025（结论要可定位复核）、框架台账 **FW-008**。
+- **[高危] 复发（2026-10-14，mw-dynamic-concurrency 收口）**：本次 `bash ./test.sh` **秒退 exit 1**（与 7h 挂死不同的形态）：本机 `bash` 落到 WSL，而 **WSL 未安装任何发行版**，stderr 只有 `wsl.exe --install <Distro>` 提示（输出见 `_scratch/evidence/mdc-test-sh-20261014.txt`，501 B）。结论：本机 `./test.sh` **不可达**（不是红、不是慢，是环境阻断）。收口时按 AGENTS.md 的回落路径用**包根显式文件列表** + 全量 `python -m pytest -q` 替代，并在 `achieved.md` 明文写「全量 TS 对照未完成 + 原因」，不得把定向绿说成全量绿。
+
+## P-033 卡片过闸 ≠ 生成的 task.md 过闸：launcher 的信封门槛在 **spawn 阶段**（2026-10-14，mw-write-face-guard B0 首派 2/2 全灭）
+
+- 事实：本 key 首派两个 coding worker，`dispatch_worker` **返回成功**（记录了 `card_path`/`card_sha256`，卡内也有 `- 写入允许面:` / `- 写入禁止面:` 两行），但两个 worker 分别在 **4s / 1s** 内 `failed`、无 `output.md`；`worker.log` 只有一行：`[launcher] envelope missing: 写入禁止面 (<task.md>) [producer=agent-team-loop-pm@0.83.0 not provably older than baseline=2026-10-12]`。队列留下两条 failed 行，需 ack + 换新 task_key 重派（同 key 重派会产生第二行，破坏“一 task_key 一行”的读回校验）。
+- 原因：与 P-026 同族但**门槛层次不同**。P-026 记的是“首派被拒、零副作用”（TS 侧整体拒绝）；本次是 **TS 侧放行、Python spawn 侧不放行**：卡片级 `typeExtrasMissing` 的 label 匹配器认 `- 写入禁止面: ...` 这种 bullet 行，而生成的 task.md 由 `renderCardSeedSections` 只搬运 `## ` 标题体 + 携带正文的额外标题，**引言 bullet 被静默丢弃** ⇒ 生成的 task.md 里没有那两行，`launcher.type_extras_missing` 只好判缺。**卡片自身过闸，不等于它生成的 task.md 过闸。**
+- 危害：两道门槛都在“派发前”这一层话术里，容易被当成同一道；一旦在卡里把专属项写成 bullet，失败会以“worker 崩溃”的形式出现在回读里（无 output.md + 极短 elapsed），误导 PM 去重派或调 timeout。
+- 硬规则：
+  1. 与 P-026 同：类型专属项（coding：写入允许面/写入禁止面/验收命令/改动历史；research：唯一证据文件；review：审计目标/未覆盖面声明）**必须各自成 `## ` 标题且正文非空**；写卡模板不要用引言 bullet 描述它们。
+  2. **派发前跑 spawn 侧自检（两行，本次采用）**：生成的 task.md 与卡文件同构，故直接对卡文件自检即可——
+     ```
+     cd packages/multi-workers; python -c "import launcher,pathlib; t=pathlib.Path(r'<card>').read_text(encoding='utf-8'); ok,m,ty,det=launcher.inspect_envelope(t); print('missing=',m,'extras=',launcher.type_extras_missing(ty,t))"
+     ```
+     两个列表都必须为空；`dispatch_worker` 的成功返回**不能**作为这道检查的替代。
+  2b. 上面的自检**不覆盖种子要求**（那是 TS 侧 `seedItemsMissing`，`launcher` 不管）：卡里必须含**字面 `goal.md`** 与至少一个**字面 `name.ext:NNN`**（`` `dispatch.py:1156` `` 算，`` `:1156` `` 不算）。本 key 写第三张卡时就又在 `missing=[seed:goal.md]` 上被拒一次（零副作用）——因为前两张卡写了「目标锚点: `.agenticdoc/goal.md`」，第三张忘了。**写卡模板里就把这一行固定下来**，不要靠记。
+  3. 失败症状识别：`worker.log` 只有一行 `[launcher] envelope missing: ...` + elapsed **1–4s** + 无 `output.md`/`run.json` ⇒ 是信封拒绝，不是 worker 质量问题；不要读 trace.log 找 worker 报错，也不要双倍 timeout 重派，改卡后换新 task_key 重派。
+  4. 信封拒绝**零副作用**（不建 taskDir、不写 output.md），所以改卡重派是安全的；但**队列行已经写进去了**（failed），必须 `ack_worker_result` 收口，否则一直挂在本窗口未处理区。
+- 关联：P-026（同族、卡片侧）、P-028（failed 伪块判据——本条是**真的** failed：有 launcher 拒绝行且无 trace/run）、P-017（派发链的静默门槛家族）。
+
+## P-034 同一 task_key 会被**重复激活**并污染同一份产物，三层都不报警（2026-10-14，mw-write-face-guard 的 wfg-i03）
+
+- 事实：`wfg-i03-dispatch-refusal` 真身（pid 95260）从未崩溃，34 分钟后 `exit 0 / status=done`；但同一 task_key 另有 **12 个进程**在 03:11:56–03:36:28 之间重复进入 Worker 模式：各自写 `[START] pid=`、覆盖 `run.json`、并在退出时把一块 `status=failed` 写进**同一个 `output.md`**（13 个 `mw-run` 块 = 12 failed + 1 done，每个 failed 块的 run_id 恰好比同次激活的 START 早 1 ms ⇒ 是**副本自己**写的）。副本都没有 `[MODEL]` 行/心跳 ⇒ 激活后未绑定模型即天折。PM 据此误判为"崩溃重启循环、无法收敛"，实际交付完整。
+- 排除（都有反证）：launcher 只 spawn 过一次（`worker.log` 一次 `"wb"` 截断后成对 start/done；队列行 `updated_at` 从 03:06:16 到 03:40:29 未变，而每次 spawn 必刷该字段，`launcher.py:2017` → `mw_common.py:2175`）；conductor 无 roadmap、timeline 零事件；worker 的 151 条 TOOL 里没有 `pi` 调用；该任务新测试的子进程是 `sys.executable`（python）；对照同形状的 11 个 `woc-*` 任务全部 `starts=1`；全 session 目录无第 13 个 session。
+- 机制（代码可证）：激活只看继承来的 `PI_WORKER_TASK`（`worker-mode.ts:1891` → `:1909` → `:1940`），**没有"同 task 是否已有活着的 run"守卫**；该 env 全仓只有 `launcher.py::_build_env` 设置（所以继承到它的 pi 子进程会被当成同一任务的 run）；`writeRunState` 与 `output.md` 的写都没有归属校验；launcher 的去重只是**本进程内存**（`launcher.py:2009`），跨进程无效。
+- 危害：产物的**展示面被别的 run 写脏**（假 failed 块），且"终态不可重启"只在派发侧有门、激活侧没有；PM 若按 failed 重派会并发写同一批文件。**未定论**：是哪个组件起的这 12 个进程（必须现场抓 — Windows pid 会回收；捕获器设计见证据文档 §7）。
+- 硬规则：
+  1. 任何"同一 task 的产物"判读，**先读 `run.json` 的 `status`/`started_at`/`ended_at`，再看 `output.md` 尾部**；`output.md` 里出现多个 `mw-run` 块时，`status=failed` 的块数与 `trace.log` 的 `[START]` 对数一起数，>1 即为重复激活（P-028 的加强版：那里是伪块，这里是**真写了假块**）。
+  2. 看到"长时间无产出 + 尾部 failed 块"不要直接判 worker 质量或加 timeout；先核 launcher 侧三条（`worker.log` 是否成对 start/done、队列行 `updated_at` 是否在动、`.mw/launcher.log` 该任务有几条 model 行）。
+  3. 长任务（≥30 分钟量级）的验收/取证要给现场捕获器留位置：新 `[START] pid=` 一出现就抓 `Win32_Process` 的 `ParentProcessId`/`CommandLine`，事后无法补。
+- 关联：P-028（假 failed 块的读法）、`_scratch/evidence/wfg-i03-duplicate-activation-20261014.md`（完整时间线 + 13 次激活表 + RF-1..RF-4 待修项）、`_scratch/evidence/readback-push-scope-gap-20261014.md`（同家族、独立）。
+
+## P-035 回读里的「路径形态（warn，不影响判定）」段不是 worker 缺陷（2026-10-14，mw-write-face-guard W-07 回读）
+
+- 事实：W-07 的终态回读出现 `## 路径形态（warn，不影响判定）：write_face:\n、\n、dir/、a/{b、c}/**、packages/x/**`。生产者是 `packages/coding-agent/src/extensions/agent-team-loop/worker/output-writer.ts` 的 `gaps.malformedFiles` 形态检查（C-36c，**warn-only**，只被列进 `## 路径形态` 段，不参与判定）。被检查的是 worker **自报的文件清单**；本次列表里混进了写面条目串（含 `,`、换行、`{}`），于是被判"形态非法"。
+- 危害：容易被读成"worker 报了坏路径"或"台账格式坏了"而去修 worker / 重派；实际判定未受影响。反向风险更大：**任何把写面条目原样嵌进逗号分隔或路径列表的产物**（台账行、审计行、改动清单）都会触发同一类 warn，甚至真的把条目切成多个字段（与 D-112「逗号不是模式内容」同一根因）。
+- 硬规则：
+  1. 回读里出现该 warn 段时，先看它列的 token 是不是**写面/glob 条目**：是则判为报告形态问题，**不影响 done/failed 判定**，不要据此重派。
+  2. 把写面条目写进任何**分隔符承载**的结构（逗号分隔行、路径列表、台账列）之前，必须转义或改走块列表形态（`  - <entry>` / 反引号包裹）；不要假定条目里没有 `,`、换行、`{}`。
+  3. 修这条 warn 的形态检查属于输出契约族（`worker/output-writer.ts` 的路径抽取），**不要**在写面族的卡里去改它。
+- 关联：D-112/D-113（逗号不作内容、渲染器回退块列表）、P-034（产物被别的 run 写脏的读法）、`plan.md` §7.2。
+
+## P-036 两套全量 pytest 并发跑会造出「幻影红」——失败集必须串行对照（2026-10-14，mw-dynamic-concurrency M-04/M-05 吸收期）
+
+- 事实：PM 与 worker 各自跑全量 `python -m pytest -q` 重叠时，我这一轮得到 `8 failed`（基线 6 条），多出的 2 条里 `test_rag_init.py::RagInitTest::test_vc204_zero_interaction` **单独跑 12 passed**、换一轮后消失；worker 那轮也出现 5 failed + 2 errors 的同类幻影（`test_in3_queue_replay` / `test_update_index_key_refusal` / `test_worktree_cmd` / `test_worktree_e2e`），隔离复跑 **82 passed**。同期还混着一条**真红**（`test_rag_launcher.py::test_dispatch_end_to_end_is_stable`，属 M-04 的合法作废）——幻影与真红在总数上不可区分。
+- 机制：全量套件共享临时目录 / 锁 / 端口 / `.mw/*` 心跳文件，两套并跑互相踩；失败与并发无因果关系，但**现象与真红同形**，只有逐条隔离复跑才能分开。
+- 硬规则：
+  1. 全量套件**同一时刻只跑一套**；派发卡里写明「你的全量跑不得与其它全量跑并发」（M-06 卡已写）。
+  2. 吸收期拿到全量失败集，先**逐条隔离复跑**再归因；单条复跑转绿 ⇒ 判幻影，不计入回归。
+  3. 汇报口径写「失败**集** == 基线 N 条」，不要写总数相等——总数会被幻影扰动，失败集才是判据。
+- 关联：P-032（全量对照的本机口径）、P-025（结论要可定位复核）、`plan.md` §7.4/§7.6。

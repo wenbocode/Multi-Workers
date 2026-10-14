@@ -60,15 +60,36 @@ export declare class WorkerStore {
     private readonly filePath;
     private readonly lockPath;
     constructor(agenticdocRoot: string);
+    /** The queue file this store reads and writes. Exposed so a caller that must
+     * stay inside the store's own critical section (the PM dispatcher derives the
+     * write-face base from the `.agenticdoc` root) anchors on the SAME path
+     * instead of re-deriving — and possibly drifting from — this construction
+     * (D-114). */
+    get queuePath(): string;
+    /** The store's exclusive queue lock (`<agenticdocRoot>/../.mw/workers.lock`).
+     * A caller that already holds it must use {@link upsertWithinLock}, never
+     * {@link upsert} (a nested `acquireLock` backs off and then raises). */
+    get lockFilePath(): string;
     /** Raw queue lines with the trailing newline dropped; `[]` when the file is
-     * absent or empty. Keeping the lines verbatim is what lets {@link upsert}
-     * rewrite one row without touching any other byte of the file (AC-023). */
+     * absent or empty. Keeping the lines verbatim is what lets
+     * {@link upsertWithinLock} rewrite one row without touching any other byte
+     * of the file (AC-023). */
     private readRawLines;
     /** The full queue read: rows, unreadable lines (counted, never dropped) and
      * the declared layout version. Blank lines and `#` comments are neither. */
     readQueue(): WorkerQueue;
     readAll(): WorkerEntry[];
     upsert(entry: WorkerEntry): Promise<void>;
+    /** Lock-free upsert: the single implementation of the queue write — row
+     * format, replace-by-task-key, `# mw-queue:v2` on a brand-new queue, and
+     * tmp+rename. {@link upsert} is "take the lock, call this, release".
+     *
+     * PRECONDITION: the caller already holds {@link lockFilePath}
+     * (`.mw/workers.lock`). This method does NOT acquire the lock and does NOT
+     * release it. Calling it without the lock is a data race; calling
+     * {@link upsert} while holding the lock deadlocks (nested `acquireLock`
+     * backs off and then raises, RQ-D3). */
+    upsertWithinLock(entry: WorkerEntry): void;
     findByKey(taskKey: string): WorkerEntry | undefined;
 }
 //# sourceMappingURL=worker-store.d.ts.map

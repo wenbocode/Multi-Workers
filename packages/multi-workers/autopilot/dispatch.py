@@ -13,12 +13,24 @@ Task identity (D-111): the queue task key is ``ap-{owner}-{stem}``. The
 ``ap-`` prefix is globally unique to conductor dispatches — manual task keys
 can never collide with it, and stale/legacy rows stay distinguishable.
 
-Dispatch transaction (D-102): the task.md is written first, then the queue
-row under ``.mw/workers.lock`` (O_CREAT|O_EXCL, mw_common protocol), then a
-read-back verifies the row. The two writes are deliberately non-atomic: a
-crash between them leaves exactly the orphan shape (task.md with
-``origin: conductor`` and no row) that per-tick reconciliation re-inserts as
-pending with the same loop/attempt — no round consumed, no work duplicated.
+Dispatch transaction (D-102, revised by mw-write-face-guard W-03/AC-014): the
+``.mw/workers.lock`` (O_CREAT|O_EXCL, mw_common protocol) critical section now
+covers the write-face judgement, the task.md write, and the queue row — the
+gate reads the live queue, so judgement and row write must not be separable
+(the old order wrote task.md *outside* the lock and left a check-then-act
+window). After the lock is released a read-back verifies the row. The two
+writes stay deliberately non-atomic *inside* the lock: a crash between them
+leaves exactly the orphan shape (task.md with ``origin: conductor`` and no
+row) that per-tick reconciliation re-inserts as pending with the same
+loop/attempt — no round consumed, no work duplicated.
+
+Write-face gate (D-001/D-003/D-008): a dispatch whose rendered task.md
+declares no ``write_face:`` head is serial-only (audit + no parallel with a
+same-owner in-flight worker) but never rejected; a parse-time-invalid face or
+a provable overlap with an in-flight same-owner worker is refused with zero
+side effects (no taskDir, no task.md, no queue row). Card-less internal
+dispatches (L3/repair/roadmap/phase-writer) are exempt from the serial-only
+refusal — see :func:`_write_face_verdict`.
 
 task.md frontmatter (worker protocol extension, backward compatible):
 ``origin: conductor`` makes the TS dispatcher skip the task (D-104) and is
@@ -47,6 +59,7 @@ import mw_common  # noqa: E402  (path bootstrapped above)
 from autopilot import config as autopilot_config  # noqa: E402
 from autopilot import effective_config  # noqa: E402
 from autopilot import timeline as timeline_mod  # noqa: E402
+from autopilot import write_face as write_face_mod  # noqa: E402
 
 # ── Typed registry (D-107) ────────────────────────────────────────────────────
 
@@ -822,12 +835,22 @@ def render_task_md(
     old-producer vs. genuinely-missing-section discriminator). ``card=None``
     stays byte-identical, so the read-scope regression suite's frozen-renderer
     comparisons hold.
+
+    ``write_face:`` (mw-write-face-guard W-03/D-001): the card's
+    ``## 写入允许面`` entries render as ONE header line (``write_face: a, b``;
+    a declared-but-empty section renders the ``-`` undeclared marker). The
+    line is emitted only when the card carries that section, so every
+    card-less render stays byte-identical; :func:`render_write_face_line` is
+    the single renderer and :func:`write_face.parse_write_face` the single
+    parser, so the two are the same source (the round trip is pinned in
+    ``test/test_write_face_dispatch.py``).
     """
     lines = [
         "---",
         f"type: {task_type}",
     ]
     card = card if isinstance(card, dict) else None
+    write_face_entries = _card_write_face_entries(card)
     if card is not None:
         card_path = str(card.get("path") or "").strip()
         card_sha256 = str(card.get("sha256") or "").strip()
@@ -864,6 +887,11 @@ def render_task_md(
     if deny_globs:
         lines.append("deny_globs:")
         lines.extend(f"  - '{item}'" for item in deny_globs)
+    if write_face_entries is not None:
+        lines.append(
+            render_write_face_line(write_face_entries)
+            if write_face_entries else "write_face: -"
+        )
     body = (
         prompt.strip() if card is None
         else _envelope_card_body(card, prompt, task_type)
@@ -961,6 +989,252 @@ def _timeline_key(owner: str) -> str | None:
     return None if owner == SCRATCH_OWNER else owner
 
 
+# ── write-face gate (mw-write-face-guard W-03, D-001..D-008) ──────────────────
+
+#: Card section whose entries become the task.md `write_face:` head (D-001).
+WRITE_FACE_CARD_SECTION = "写入允许面"
+
+#: Stable audit event kinds (D-008; W-06/doctor counts them).  A refused
+#: dispatch emits `write-face-rejected` (parse-time) or `write-face-overlap`;
+#: `write-face-undeclared` records the D-003 serial-only decision.
+WRITE_FACE_AUDIT_UNDECLARED = "write-face-undeclared"
+WRITE_FACE_AUDIT_OVERLAP = "write-face-overlap"
+WRITE_FACE_AUDIT_REJECTED = "write-face-rejected"
+
+_BACKTICK_SPAN_RE = re.compile(r"`([^`]+)`")
+
+
+def write_face_case_insensitive() -> bool:
+    """Explicit case mode for the write-face operator (D-006/AC-007).
+
+    Never inferred inside the operator: the single platform helper lives at the
+    call site, so the frozen corpus can pin both modes on either platform.
+    """
+    return os.name == "nt"
+
+
+def write_face_base(project_root: pathlib.Path) -> str:
+    """Base for every write-face parse: the same root `mw_common.workers_path`
+    anchors, i.e. the `.agenticdoc` parent (card requirement 7)."""
+    return str(project_root)
+
+
+def _card_write_face_entries(card: dict | None) -> list[str] | None:
+    """Raw entries of a card's `## 写入允许面` section.
+
+    ``None`` = the section is absent (undeclared; no `write_face:` line is
+    rendered). A present-but-entry-less section yields ``[]`` (the renderer
+    then writes the ``-`` undeclared marker, D-001/§3.3). Entries keep the
+    operator's single-`/` syntax verbatim: the renderer must not transform what
+    the parser will normalize, or the two would stop being the same source
+    (requirement 9). The section body itself is never part of the render —
+    only these extracted entries are.
+    """
+    if not isinstance(card, dict):
+        return None
+    for extra in card.get("extras") or ():
+        if not isinstance(extra, dict):
+            continue
+        title = str(extra.get("title") or "").strip()
+        if not title.startswith(WRITE_FACE_CARD_SECTION):
+            continue
+        entries: list[str] = []
+        for raw in str(extra.get("body") or "").splitlines():
+            item = raw.strip()
+            if not item:
+                continue
+            if item[0] in "-*+":
+                item = item[1:].strip()
+            span = _BACKTICK_SPAN_RE.search(item)
+            if span is not None:
+                item = span.group(1).strip()
+            else:
+                item = re.split(r"[\s（(]", item, maxsplit=1)[0].strip()
+            if item and item != "-":
+                entries.append(item)
+        return entries
+    return None
+
+
+def render_write_face_line(entries: Sequence[str]) -> str:
+    """The task.md `write_face:` head value for a non-empty entry list.
+
+    The contract is D-113's round trip — ``parse_write_face`` of this string
+    yields exactly `entries` (normalized, order included).  Two carrier shapes
+    serve it:
+
+    * no entry contains `,` -> the historical single line
+      ``write_face: a, b`` (byte-identical to the pre-D-113 renderer);
+    * any entry contains `,` -> the design §3.1 block-list carrier
+      ``write_face:\n  - a\n  - b``, one entry per list item.  D-112 makes
+      `,` an unconditional single-line separator that brackets/braces/quotes
+      never shield, so a comma-bearing entry (e.g. the legal `a/{b,c}/**`)
+      cannot survive the single line; the block form is the §3.1 equivalent
+      and ``parse_write_face`` reads each list item as one whole entry.
+
+    The returned string MAY contain newlines (the block shape).  The sole
+    caller, :func:`render_task_md`, appends it as one element of its `lines`
+    list, so the block shape lands as a valid multi-line head and the call
+    site does not change.
+
+    `entries` is non-empty by contract — the caller writes ``write_face: -``
+    for a declared-but-empty face.
+    """
+    values = [str(entry).strip() for entry in entries]
+    if any("," in entry for entry in values):
+        return "write_face:\n" + "\n".join(f"  - {entry}" for entry in values)
+    return "write_face: " + ", ".join(values)
+
+
+def _write_face_audit(
+    timeline: timeline_mod.Timeline | None, owner: str, ev: str, detail: str
+) -> None:
+    """Append one write-face audit event (D-008), never raising."""
+    if timeline is not None:
+        timeline.append(ev, key=_timeline_key(owner), detail=detail)
+
+
+def _parse_inflight_write_face(
+    row: dict[str, str], *, base: str, case_insensitive: bool
+) -> write_face_mod.ParseResult | write_face_mod.WriteFace:
+    """The in-flight worker's own task.md `write_face:` head.
+
+    A missing/unreadable task.md is "no information" (``Undeclared``), never a
+    guessed face: D-003 says a side that did not declare cannot prove an
+    overlap, so the caller must not refuse on it.
+    """
+    path = str(row.get("task_path") or "").strip()
+    if not path:
+        return write_face_mod.Undeclared()
+    try:
+        text = pathlib.Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return write_face_mod.Undeclared()
+    return write_face_mod.parse_write_face(
+        text, base=base, case_insensitive=case_insensitive
+    )
+
+
+def _write_face_verdict(
+    project_root: pathlib.Path,
+    owner: str,
+    task_key: str,
+    content: str,
+    *,
+    card_backed: bool,
+    timeline: timeline_mod.Timeline | None,
+) -> DispatchResult | None:
+    """D-001..D-008 gate, called INSIDE the `workers.lock` critical section.
+
+    Returns a zero-side-effect refusal (`ok=False`, no taskDir / task.md / queue
+    row) when this dispatch must not be queued, or ``None`` to proceed.
+
+    The in-flight set is recomputed here from the live queue file (AC-008 — no
+    queue column is added, D-004); ``mw_common.parse_workers_file`` is the
+    lock-free reader (a second ``acquire_lock`` while already holding the lock
+    backs off for 14.6h and then raises, RQ-D3).
+
+    Card-less one-shot internal dispatches (L3 / repair / roadmap / phase-writer
+    — the RQ-W2 §1.1 call-site list) are exempt from the D-003 serial-only
+    *refusal* but still audited and dispatched normally: they carry no card the
+    author could declare a face on, and the conductor treats a refused internal
+    dispatch as a failure (`mark_stalled` / `return result.ok`), so refusing one
+    would manufacture a permanent failure. A card-backed dispatch stays
+    author-fixable, so its undeclared face is held serial-only.
+    """
+    base = write_face_base(project_root)
+    case_insensitive = write_face_case_insensitive()
+    parsed = write_face_mod.parse_write_face(
+        content, base=base, case_insensitive=case_insensitive
+    )
+    rows = mw_common.parse_workers_file(mw_common.workers_path(project_root))
+    in_flight = [
+        row for row in rows
+        if str(row.get("task_key", "")) != task_key
+        # Same-owner predicate, origin-independent (mw_common.worker_owner_key
+        # :2012; the conductor's `row_belongs_to` :2026 is conductor-only).
+        and mw_common.worker_owner_key(row) == owner
+        # The one existing terminal-status set (mw_common.py:168; the
+        # conductor's single `_is_in_flight`, conductor.py:3540) — no local
+        # set is invented.
+        and str(row.get("status", "")) not in mw_common._TERMINAL_STATUSES  # noqa: SLF001
+    ]
+
+    if isinstance(parsed, write_face_mod.Refused):
+        _write_face_audit(
+            timeline, owner, WRITE_FACE_AUDIT_REJECTED,
+            f"{task_key}: {parsed.code} {parsed.detail}".rstrip(),
+        )
+        return DispatchResult(
+            ok=False,
+            reason=f"{parsed.code}: {parsed.detail}".rstrip(": "),
+            task_key=task_key,
+            task_md=None,
+            row_verified=False,
+        )
+
+    if isinstance(parsed, write_face_mod.Undeclared):
+        # Audit coverage: a card-backed dispatch is always author-fixable; a
+        # card-less one is audited only when the serial-only rule is actually
+        # in play, so a no-contention internal dispatch stays byte-identical to
+        # the pre-D-003 flow (which is what keeps the AC-017 event-count
+        # assertions of the existing suite green).
+        if in_flight or card_backed:
+            _write_face_audit(
+                timeline, owner, WRITE_FACE_AUDIT_UNDECLARED,
+                f"{task_key}: write_face undeclared; {len(in_flight)} same-owner "
+                f"worker(s) in flight",
+            )
+        if in_flight and card_backed:
+            return DispatchResult(
+                ok=False,
+                reason=(
+                    "write-face-undeclared: serial-only "
+                    f"({len(in_flight)} same-owner worker(s) in flight)"
+                ),
+                task_key=task_key,
+                task_md=None,
+                row_verified=False,
+            )
+        return None
+
+    for row in in_flight:
+        other_key = str(row.get("task_key", ""))
+        other_face = _parse_inflight_write_face(
+            row, base=base, case_insensitive=case_insensitive
+        )
+        if not isinstance(other_face, write_face_mod.WriteFace):
+            continue  # a side that did not declare cannot prove an overlap (D-003)
+        result = write_face_mod.overlap(parsed, other_face)
+        if result is None:
+            continue
+        if isinstance(result, write_face_mod.Conflict):
+            detail = (
+                f"{task_key}: overlap with {other_key} at {result.sample} "
+                f"({result.rule} vs {result.other})"
+            )
+            reason = (
+                f"write-face-overlap: overlap-with:{other_key} "
+                f"sample={result.sample}"
+            )
+        else:
+            # D-006 conservative fallback: an undecidable pair IS an overlap.
+            detail = (
+                f"{task_key}: undecidable overlap with {other_key} "
+                f"({result.reason}: {result.detail}) treated as overlap"
+            )
+            reason = (
+                f"write-face-overlap: overlap-with:{other_key} "
+                f"unsupported={result.reason}"
+            )
+        _write_face_audit(timeline, owner, WRITE_FACE_AUDIT_OVERLAP, detail)
+        return DispatchResult(
+            ok=False, reason=reason, task_key=task_key, task_md=None,
+            row_verified=False,
+        )
+    return None
+
+
 def dispatch(
     project_root: pathlib.Path,
     owner: str,
@@ -975,16 +1249,27 @@ def dispatch(
     model: str = "",
     timeline: timeline_mod.Timeline | None = None,
 ) -> DispatchResult:
-    """Dispatch one typed worker task: write task.md, then the queue row
-    under workers.lock, then verify the row by reading it back.
+    """Dispatch one typed worker task: run the write-face gate, write task.md
+    and the queue row under one workers.lock critical section, then verify the
+    row by reading it back.
 
-    Rejections (zero queue rows, timeline type-rejected event):
+    Rejections (zero queue rows, zero task.md, timeline event):
       - unregistered type (never a tool-set fallback, GC-8/D-107)
       - verifier without a non-empty read_scope (D-106)
       - unusable target.yml (mw-dual-workspace fail-closed: never a silently
         un-injected task.md; event kind target-config-rejected)
       - `run.json` already terminal or `running` (AC-004/DD-12, checked
         first, with zero side effects: no task dir, no queue row)
+      - write-face parse refusal (event `write-face-rejected`), a provable
+        overlap with an in-flight same-owner worker (`write-face-overlap`), or
+        an undeclared face that must stay serial-only (`write-face-undeclared`)
+        - AC-014: the judgement, the task.md write and the row write share one
+        `workers.lock` critical section, so a refusal cannot leave a task dir.
+      - the same `task_key` already has a non-terminal row in the live queue
+        (`duplicate-dispatch:`, MDC M-04): identity-level, judged inside the
+        same critical section, and zero-side-effect like the write-face
+        refusal. A terminal old row (done/failed/...) still re-dispatches
+        through the upsert, so a retry of the same identity is not sealed off.
     On success a ``dispatch`` timeline event is appended (AC-017: every
     dispatch leaves a timeline trace), when a timeline writer is given.
     """
@@ -1111,9 +1396,11 @@ def dispatch(
     # gets a synthesized non-empty envelope (§synthesized_card) so it passes the
     # service-layer judge too — the T-09 card-only injection left those rows
     # refused after the `ENVELOPE_ENFORCE_SINCE` cutover.
-    envelope_card = dispatch_card(project_root, owner, stem)
-    if envelope_card is None:
-        envelope_card = synthesized_card(owner, stem, task_type, prompt, loop, attempt)
+    card_backed = dispatch_card(project_root, owner, stem)
+    envelope_card = (
+        card_backed if card_backed is not None
+        else synthesized_card(owner, stem, task_type, prompt, loop, attempt)
+    )
     content = render_task_md(
         task_type, prompt, loop=loop, attempt=attempt, read_scope=scope,
         deny_globs=globs, model=model, phase=_owner_phase(project_root, owner),
@@ -1125,18 +1412,15 @@ def dispatch(
         card=envelope_card,
     )
 
-    # 1. task.md (before the queue row — the crash gap is the orphan shape
-    #    that reconciliation heals; see module docstring / D-102).
-    task_dir.mkdir(parents=True, exist_ok=True)
-    task_md = task_dir / "task.md"
-    task_md.write_text(content, encoding="utf-8", newline="\n")
-
-    # 2. queue row under workers.lock — upsert by task_key: replace the
-    #    first existing row (a retry requeues the same identity; matches the
-    #    TS-side WorkerStore.upsert, so no duplicate-key rows ever appear)
-    #    or append when the key is new.
+    # 1. queue-row fields — precomputed; the task.md itself is written INSIDE
+    #    the workers.lock critical section below (AC-014/D-005). The write-face
+    #    judgement reads the live queue, so the judgement, the task.md write
+    #    and the row write must share one critical section; the path is
+    #    computed here but the file is not created until the gate passes (a
+    #    refusal leaves no taskDir).
     wpath = mw_common.workers_path(project_root)
     lock = mw_common.lock_path(project_root)
+    task_md = task_dir / "task.md"
     row = {
         "task_key": task_key,
         "status": "pending",
@@ -1155,6 +1439,10 @@ def dispatch(
     try:
         mw_common.acquire_lock(lock)
     except (OSError, RuntimeError) as exc:
+        # RQ-D3 §2 / AC-014: task.md is no longer written before the lock, so
+        # this returned path names a file that was never created. The field
+        # shape stays unchanged (DispatchResult.task_md); only its guarantee
+        # moved — `ok=False` always means "nothing was written".
         return DispatchResult(
             ok=False,
             reason=f"lock-unavailable: {exc}",
@@ -1163,23 +1451,89 @@ def dispatch(
             row_verified=False,
         )
     try:
-        wpath.parent.mkdir(parents=True, exist_ok=True)
-        # Queue write goes through mw_common.upsert_worker_row (content fully
-        # precomputed, then tmp + os.replace): a serialization error must
-        # never truncate _workers.parallel — open("w") truncates before the
-        # write expression is evaluated (pitfalls P-003 / PM defect #50).
-        # Slot-preserving (T-18/AC-023): the dispatcher rewrites only its own
-        # row, so rows no parser can read are never silently deleted (the
-        # third Python writer of the IN-3 amplifier F4).
-        mw_common.upsert_worker_row(wpath, row)
-    except OSError as exc:
-        return DispatchResult(
-            ok=False,
-            reason=f"queue-write-failed: {exc}",
-            task_key=task_key,
-            task_md=task_md,
-            row_verified=False,
+        # AC-014: the write-face gate runs under the SAME lock as the row
+        # write. Nothing inside this section may acquire a lock again (RQ-D3:
+        # a nested acquire backs off for 14.6h and then raises).
+        refusal = _write_face_verdict(
+            project_root, owner, task_key, content,
+            card_backed=card_backed is not None, timeline=timeline,
         )
+        if refusal is not None:
+            return refusal  # zero side effects: no taskDir, no task.md, no row
+
+        # MDC M-04: identity-level duplicate-dispatch guard, INSIDE the same
+        # `workers.lock` critical section (and after the write-face gate) so
+        # the judgement, the task.md write and the row write stay one atomic
+        # step. `upsert_worker_row` replaces a row by `task_key` without ever
+        # asking whether the old row is still in flight: a second dispatch of
+        # a live identity would overwrite the in-flight row with a fresh
+        # `pending` one and rewrite its task.md — the mechanism behind the
+        # RF-1..RF-4 duplicate activation (same identity, two worker
+        # instances, one shared `output.md`).
+        #
+        # The criterion is identity, never row count: under upsert semantics
+        # the row count is always 1, so only "is this task_key already
+        # non-terminal" can tell a duplicate from a requeue. The terminal set
+        # is the single `mw_common._TERMINAL_STATUSES` (the one source already
+        # used by `_write_face_verdict` above and by the conductor's
+        # `_is_in_flight`) — never a local set. A terminal old row still
+        # re-dispatches through upsert (a retry reuses the same identity), so
+        # the retry path is not sealed off.
+        #
+        # Zero side effects, exactly like the write-face refusal above: no
+        # taskDir, no task.md, no queue row, and no second `dispatch` timeline
+        # event (the event vocabulary is frozen; the refusal is observable as
+        # the missing `dispatch` event plus the `duplicate-dispatch:` reason).
+        # No lock is acquired here — nesting `acquire_lock` while holding it
+        # backs off for 14.6h and then raises (RQ-D3).
+        duplicate = next(
+            (
+                row for row in mw_common.parse_workers_file(wpath)
+                if str(row.get("task_key", "")) == task_key
+                and str(row.get("status", "")) not in mw_common._TERMINAL_STATUSES  # noqa: SLF001
+            ),
+            None,
+        )
+        if duplicate is not None:
+            return DispatchResult(
+                ok=False,
+                reason=(
+                    f"duplicate-dispatch: {task_key} already in flight "
+                    f"({duplicate.get('status', '')})"
+                ),
+                task_key=task_key,
+                task_md=None,
+                row_verified=False,
+            )
+
+        # 1a. task.md (before the queue row — the crash gap is the orphan
+        #     shape that reconciliation heals; see module docstring / D-102).
+        task_dir.mkdir(parents=True, exist_ok=True)
+        task_md.write_text(content, encoding="utf-8", newline="\n")
+
+        # 2. queue row under workers.lock — upsert by task_key: replace the
+        #    first existing row (a retry requeues the same identity; matches
+        #    the TS-side WorkerStore.upsert, so no duplicate-key rows ever
+        #    appear) or append when the key is new.
+        try:
+            wpath.parent.mkdir(parents=True, exist_ok=True)
+            # Queue write goes through mw_common.upsert_worker_row (content
+            # fully precomputed, then tmp + os.replace): a serialization error
+            # must never truncate _workers.parallel — open("w") truncates
+            # before the write expression is evaluated (pitfalls P-003 / PM
+            # defect #50). Slot-preserving (T-18/AC-023): the dispatcher
+            # rewrites only its own row, so rows no parser can read are never
+            # silently deleted (the third Python writer of the IN-3 amplifier
+            # F4).
+            mw_common.upsert_worker_row(wpath, row)
+        except OSError as exc:
+            return DispatchResult(
+                ok=False,
+                reason=f"queue-write-failed: {exc}",
+                task_key=task_key,
+                task_md=task_md,
+                row_verified=False,
+            )
     finally:
         mw_common.release_lock(lock)
 

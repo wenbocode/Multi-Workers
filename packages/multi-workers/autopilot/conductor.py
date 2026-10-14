@@ -51,7 +51,7 @@ if str(_PARENT) not in sys.path:
 
 import mw_common  # noqa: E402  (path bootstrapped above)
 
-from autopilot import advance, audit_evidence, closure, config, contract_guard, dispatch, effective_config, evidence, gates, index_parallel, roadmap, state, timeline  # noqa: E402
+from autopilot import advance, audit_evidence, closure, config, contract_guard, dispatch, effective_config, evidence, gates, index_parallel, roadmap, state, task_graph, timeline, write_face  # noqa: E402
 
 # ── Phase machine constants (T-10) ──────────────────────────────────────────
 
@@ -638,6 +638,14 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
         )
         return
     _emit_roadmap_warnings(project_root, st, rm)
+    # AC-010 (mw-dynamic-concurrency M-02): the key-layer dependency graph is
+    # validated INSIDE the tick (today only CLI/doctor ran `validate_roadmap`),
+    # so a dangling/cyclic/forward dependency becomes operator-visible instead
+    # of a silent permanent lock. Observation only: no problem here suppresses
+    # or authorizes a dispatch, so the fail-closed behaviour is unchanged. The
+    # audit reuses the existing `config` event + alarm channel (never a new
+    # event name) and is deduplicated per problem so a 4s tick cannot flood.
+    _emit_roadmap_validation(project_root, st, rm)
 
     # §5.1 G: stage branch. No running stage → activation work only; a
     # running stage releases the per-key machine below.
@@ -1533,6 +1541,27 @@ def _advance_failure_streak(
     return count, hist, snippet
 
 
+def _timed_advance(
+    key: str,
+    phase: str,
+    project_root: pathlib.Path,
+    *,
+    summary: str,
+) -> tuple[int, str, str, int]:
+    """One `advance.advance()` call plus its wall-clock blocking cost (AC-013).
+
+    The conductor compares the sum of these `ms` values against the sum of
+    tick wall-clock time (`window_share = Σ advance_ms / Σ tick_ms`) to decide
+    whether the synchronous subprocess is the concurrency bottleneck. Returns
+    the historical `(code, out, err)` triple plus `ms`; an exception still
+    propagates exactly as before (the callers' existing handling is unchanged).
+    """
+    started = time.monotonic()
+    code, out, err = advance.advance(key, phase, project_root, summary=summary)
+    ms = int(round((time.monotonic() - started) * 1000))
+    return code, out, err, ms
+
+
 def _record_advance_result(
     project_root: pathlib.Path,
     st: ConductorState,
@@ -1541,6 +1570,8 @@ def _record_advance_result(
     code: int,
     err: str,
     cfg: dict,
+    *,
+    ms: int | None = None,
 ) -> None:
     """Log one advance attempt and bound the retry loop (AC-002/AC-003).
 
@@ -1551,11 +1582,22 @@ def _record_advance_result(
     the four-artifact path freezes it (``orchestrate`` skips stalled keys), so
     the loop stops instead of retrying every tick until a human notices.
     """
+    # AC-013 (mw-dynamic-concurrency M-02): the wall-clock cost of the
+    # synchronous `advance.advance()` (advance.py subprocess, 120s timeout)
+    # rides in the OPTIONAL structured `data` payload, never in `detail`.
+    # The detail sentence is a frozen wire shape: `_advance_failure_streak`
+    # parses it with an anchored `^(\S+) exit=(\d+)(?: class=(\S+))?$` and
+    # the done-closure tests assert it byte-for-byte, so appending to it would
+    # be a real regression. `data` is additive (the six-field line schema of
+    # legacy events stays byte-identical) and needs no new event name.
+    payload = {"ms": int(ms)} if ms is not None else None
     if code == 0:
-        st.timeline.append("advance", key=key, detail=f"{edge} exit=0")
+        st.timeline.append("advance", key=key, detail=f"{edge} exit=0", data=payload)
         return
     cls = _classify_advance_failure(err)
-    st.timeline.append("advance", key=key, detail=f"{edge} exit={code} class={cls}")
+    st.timeline.append(
+        "advance", key=key, detail=f"{edge} exit={code} class={cls}", data=payload
+    )
     st.timeline.append(
         "config", key=key, detail=f"advance {edge} failed: {_one_line(err, 200)}"
     )
@@ -1618,9 +1660,11 @@ def _advance_key(
         blocking += _missing_plan_tasks(key_dir)
     if not blocking:
         summary = f"autopilot L1 clean at {phase}"
-        code, _out, err = advance.advance(key, nxt, project_root, summary=summary)
+        code, _out, err, ms = _timed_advance(
+            key, nxt, project_root, summary=summary
+        )
         _record_advance_result(
-            project_root, st, key, f"{phase}->{nxt}", code, err, cfg
+            project_root, st, key, f"{phase}->{nxt}", code, err, cfg, ms=ms
         )
         if code == 0 and nxt == "done":
             _mark_key_done(project_root, st, key, rm_path)
@@ -1714,15 +1758,187 @@ def _plan_text(key_dir: pathlib.Path) -> str:
         return ""
 
 
-def _plan_task_order(stems: list[str], plan: str) -> list[str]:
+def _plan_task_order(
+    stems: list[str],
+    plan: str,
+    deps_by_stem: dict[str, tuple[str, ...]] | None = None,
+) -> list[str]:
     """Execution order: plan appearance order when parseable, else stem
-    lexicographic; plan-unmentioned (orphan) tasks go last (D-111)."""
+    lexicographic; plan-unmentioned (orphan) tasks go last (D-111).
+
+    ``deps_by_stem`` (mw-dynamic-concurrency M-02) is the validated task
+    dependency graph from :mod:`autopilot.task_graph`. When given, the
+    plan/orphan order is refined by a STABLE topological sort (a prerequisite
+    precedes its dependents; the plan/orphan position is the tie-break), so
+    frontier consumption never starts a dependent before its prerequisite. A
+    cycle (already a V-problem, so normally unreachable) degrades to the
+    historical plan order. Omitting the argument keeps the two-argument
+    behaviour byte-for-byte."""
+    base = _plan_task_order_base(stems, plan)
+    if not deps_by_stem:
+        return base
+    return _stable_dependency_order(base, deps_by_stem)
+
+
+def _plan_task_order_base(stems: list[str], plan: str) -> list[str]:
+    """Plan appearance order, orphan-last (the historical D-111 order)."""
     if not plan:
         return sorted(stems)
     mentioned = [(plan.find(s), s) for s in stems if s in plan]
     mentioned.sort()
     orphans = sorted(s for s in stems if s not in plan)
     return [s for _, s in mentioned] + orphans
+
+
+def _stable_dependency_order(
+    order: list[str], deps_by_stem: dict[str, tuple[str, ...]]
+) -> list[str]:
+    """Kahn topological sort that keeps ``order`` as the tie-break.
+
+    Only edges between two declared stems count (an unknown prerequisite
+    cannot block here; the graph validator owns that judgement). A cycle
+    returns ``order`` unchanged — fail-closed to the historical plan order
+    rather than an arbitrary permutation."""
+    position = {stem: index for index, stem in enumerate(order)}
+    known = set(position)
+    indegree = {stem: 0 for stem in order}
+    dependents: dict[str, list[str]] = {stem: [] for stem in order}
+    for stem in order:
+        for dep in deps_by_stem.get(stem, ()):
+            dep = str(dep)
+            if dep in known and dep != stem:
+                indegree[stem] += 1
+                dependents[dep].append(stem)
+    ready = sorted(
+        (stem for stem in order if indegree[stem] == 0),
+        key=lambda stem: position[stem],
+    )
+    out: list[str] = []
+    while ready:
+        stem = ready.pop(0)
+        out.append(stem)
+        for dependent in dependents[stem]:
+            indegree[dependent] -= 1
+            if indegree[dependent] == 0:
+                ready.append(dependent)
+                ready.sort(key=lambda item: position[item])
+    if len(out) != len(order):
+        return list(order)  # cycle: already a V-problem; stay on plan order
+    return out
+
+
+def _read_task_cards(
+    tasks_dir: pathlib.Path, stems: list[str]
+) -> tuple[dict[str, str], bool]:
+    """Card text per stem for the dependency parser.
+
+    ``read_failed`` is True when any card is unreadable: that is missing
+    dependency data, so the caller fails closed to serial (AC-003), never
+    silently treats the card as dependency-free."""
+    cards: dict[str, str] = {}
+    read_failed = False
+    for stem in stems:
+        try:
+            cards[stem] = (tasks_dir / f"{stem}.md").read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            cards[stem] = ""
+            read_failed = True
+    return cards, read_failed
+
+
+#: Dispatch refusals that mean "wait for the next tick", not "author error":
+#: these are the **dispatch-wait class** refusals. Two sources feed it: the
+#: write-face gate's serial-only / overlap limiter (mw-write-face-guard W-03,
+#: `dispatch._write_face_verdict`), which refuses because a same-owner worker is
+#: in flight, and the identity-level duplicate-dispatch guard (MDC M-04,
+#: `dispatch.dispatch`), which refuses because this `task_key` already has a
+#: non-terminal row. `execute_loop` waits for the next tick instead of stalling
+#: the key; the parse-time write-face refusals (`write-face-empty` /
+#: `-invalid-entry` / `-escape` / `-outside-base`) stay author errors and keep
+#: the historical stall path.
+_WRITE_FACE_WAIT_REFUSALS = ("write-face-overlap", "write-face-undeclared", "duplicate-dispatch")
+
+
+#: (tasks dir, key) -> problem signatures already announced this session.
+_TASK_GRAPH_ALARM_SEEN: dict[tuple[str, str], set[str]] = {}
+
+
+def _write_face_wait_reason(reason: str) -> bool:
+    """True when a dispatch refusal is the write-face serial-only/overlap
+    limiter rather than an author error."""
+    return str(reason).startswith(_WRITE_FACE_WAIT_REFUSALS)
+
+
+def _declared_write_face(
+    project_root: pathlib.Path, key: str, stem: str
+) -> write_face.WriteFace | None:
+    """The card's declared write face, or ``None`` when it declares none.
+
+    WFG D-003 + plan §6 (mw-dynamic-concurrency): a card without a declared
+    face is **serial-only** and must never be treated as "no overlap".  The
+    declaration is read with WFG's own seam (``dispatch``'s card section ->
+    ``render_write_face_line`` -> ``write_face.parse_write_face``), never a
+    re-implementation; the overlap judgement itself stays in
+    ``dispatch._write_face_verdict``.  A present-but-unparseable declaration
+    also yields ``None`` (serial, fail-closed)."""
+    extract = getattr(dispatch, "_card_write_face_entries", None)
+    if extract is None:  # the WFG private seam moved: do not guess, stay serial
+        return None
+    card = dispatch.dispatch_card(pathlib.Path(project_root), key, stem)
+    entries = extract(card)
+    if not entries:
+        return None  # no section, or present-but-empty -> undeclared
+    parsed = write_face.parse_write_face(
+        dispatch.render_write_face_line(entries),
+        base=dispatch.write_face_base(pathlib.Path(project_root)),
+        case_insensitive=dispatch.write_face_case_insensitive(),
+    )
+    return parsed if isinstance(parsed, write_face.WriteFace) else None
+
+
+def _audit_task_graph_problems(
+    project_root: pathlib.Path,
+    st: ConductorState,
+    key: str,
+    graph: task_graph.TaskGraph,
+    read_failed: bool,
+) -> int:
+    """Announce each unusable-task-graph problem once, then stop repeating.
+
+    AC-003/AC-009 (mw-dynamic-concurrency M-02): any V1-V7 problem, any
+    ambiguity, or an unreadable card makes the whole key fall back to serial
+    (the caller enforces the "start one" part). The damage must be visible
+    (an audit line) but must never become a per-tick flood, so the same
+    problem is announced once and only re-announced after it was fixed and
+    recurred. Reuses the existing `config` event through `_emit_alarm` — no
+    new timeline event name."""
+    path = str(pathlib.Path(project_root) / ".agenticdoc" / key / "tasks")
+    seen_key = (path, key)
+    problems: list[str] = []
+    if read_failed:
+        problems.append("unreadable task card: dependency data unavailable")
+    for problem in graph.problems:
+        token = problem.token or problem.snippet
+        problems.append(f"{problem.kind}:{problem.card_id}@{problem.line}:{token}")
+    seen = _TASK_GRAPH_ALARM_SEEN.get(seen_key, set())
+    emitted = 0
+    for detail in problems:
+        if detail in seen:
+            continue
+        _emit_alarm(
+            st,
+            f"task graph unusable for {key}: {detail}; "
+            "falling back to serial (plan order)",
+            key=key,
+        )
+        emitted += 1
+    if problems:
+        _TASK_GRAPH_ALARM_SEEN[seen_key] = set(problems)
+    else:
+        _TASK_GRAPH_ALARM_SEEN.pop(seen_key, None)
+    return emitted
 
 
 def _exec_prompt(key: str, stem: str) -> str:
@@ -1742,14 +1958,23 @@ def execute_loop(
     rows: list[dict],
     rounds: dict[str, int],
 ) -> bool:
-    """EXECUTE task loop (D-111): ``tasks/`` is the execution contract.
+    """EXECUTE task loop (D-111 + D-102/D-104).
 
     - task identity = the tasks/ file stem; queue key ``ap-{key}-{stem}``
       (attempt 1), retries ``ap-{key}-{stem}-a<N>`` — same loop label
       ``exec:{key}:{stem}``, so used_rounds counts real attempts
-    - per-key serial (one in-flight exec task); completion = a family row
-      with status done; failure (exit≠0 / watchdog / spawn, AC-023) consumes
-      the loop budget and escalates to stalled when spent
+    - the task dependency graph (card header ``deps:``, M-01 module) decides
+      which stems are READY; the per-key upper bound decides how many may run
+      at once: ``started = min(max_workers_per_key, |frontier|)`` (D-102).
+      The write-face gate stays the parallel-safety source of truth: a
+      dispatch it refuses as serial-only/overlap simply ends this tick's
+      batch (wait), never a stall.
+    - any V1-V7 problem / ambiguity / unreadable card folds the WHOLE key back
+      to serial (start exactly one, in plan order) and is announced once
+      (AC-003/AC-009) — no partial activation, no default amplification
+    - completion = every family row with status done; failure (exit≠0 /
+      watchdog / spawn, AC-023) consumes the loop budget and escalates to
+      stalled when spent
     - all tasks done → advance execute→verify (the framework gate re-checks
       tasks/ non-empty)
     """
@@ -1758,17 +1983,84 @@ def execute_loop(
     files = sorted(tasks_dir.glob("*.md")) if tasks_dir.is_dir() else []
     if not files:
         return False  # nothing to execute — the tasks→execute gate owns this
+    stems = [f.stem for f in files]
     budget = max(1, int(cfg["round_budget"]))
     # Human approvals of a stalled gate grant one extra attempt each (AC-013).
     credits = _resume_credits(project_root, key)
     plan = _plan_text(key_dir)
-    for stem in _plan_task_order([f.stem for f in files], plan):
+    # D-102: per-key upper bound. A missing key (older materialized config)
+    # degrades gracefully to 4; the floor 1 is the kill switch (AC-006).
+    cap = max(1, int(cfg.get("max_workers_per_key", 4)))
+
+    # D-104 / AC-003/AC-009: validate the task graph first. Any problem (or an
+    # unreadable card = missing dependency data) is fail-closed: the whole key
+    # runs serially this tick, announced once per distinct problem.
+    cards, read_failed = _read_task_cards(tasks_dir, stems)
+    graph = task_graph.validate_task_graph(cards, stems)
+    deps_by_stem: dict[str, tuple[str, ...]] | None
+    if graph.plan_is_serializable and not read_failed:
+        deps_by_stem = graph.deps_by_id
+        cap_used = cap
+    else:
+        _audit_task_graph_problems(project_root, st, key, graph, read_failed)
+        deps_by_stem = None
+        cap_used = 1  # serial fallback: exactly one task starts
+
+    order = _plan_task_order(stems, plan, deps_by_stem)
+    done_stems = {
+        stem for stem in stems
+        if any(r["status"] == "done" for r in _family_rows(rows, key, stem))
+    }
+    if len(done_stems) == len(stems):
+        code, _out, err, ms = _timed_advance(
+            key, "verify", project_root,
+            summary="autopilot EXECUTE tasks complete",
+        )
+        _record_advance_result(
+            project_root, st, key, "execute->verify", code, err, cfg, ms=ms
+        )
+        return False
+
+    inflight_stems = {
+        stem for stem in stems
+        if any(_is_in_flight(r) for r in _family_rows(rows, key, stem))
+    }
+    # The parallel task frontier: dependency-ready, not terminal, not already
+    # in flight, consumed in the validated order. `cap_used == 1` when the
+    # graph is unusable, which makes the same loop the serial fallback.
+    ready = (
+        set(task_graph.frontier(deps_by_stem, done_stems))
+        if deps_by_stem is not None
+        else set(stems)  # fail-closed: unusable dependency data → plan order
+    )
+    frontier = [
+        stem for stem in order
+        if stem in ready and stem not in done_stems and stem not in inflight_stems
+    ]
+    if deps_by_stem is not None and frontier:
+        # Plan §6 / AC-003: an undeclared (or unparseable) write face is
+        # serial-only, so it never enters the parallel frontier — otherwise an
+        # undeclared card could start first and a later declared card would be
+        # allowed to join it (the gate cannot prove an overlap against an
+        # undeclared side). If nothing on the frontier declares a usable face,
+        # run serially (start one), never amplify.
+        declared = [
+            stem for stem in frontier
+            if _declared_write_face(project_root, key, stem) is not None
+        ]
+        if declared:
+            frontier = declared
+        else:
+            cap_used = 1
+    limit = min(cap_used, len(frontier))
+    if len(inflight_stems) >= limit:
+        return False  # at the effective cap (or nothing ready) — wait a tick
+
+    dispatched_any = False
+    for stem in frontier:
+        if len(inflight_stems) >= cap_used:
+            break  # upper bound reached
         loop = f"exec:{key}:{stem}"
-        fam = _family_rows(rows, key, stem)
-        if any(r["status"] == "done" for r in fam):
-            continue  # task complete
-        if any(_is_in_flight(r) for r in fam):
-            return False  # per-key serial: wait for the in-flight task
         used = rounds.get(loop, 0)
         if used >= budget + credits:
             mark_stalled(
@@ -1777,12 +2069,7 @@ def execute_loop(
                 reason_code="exec-exhausted", loop=loop,
                 used_rounds=used, round_limit=budget, credits_used=credits,
             )
-            return False
-        if plan and stem not in plan:
-            st.timeline.append(
-                "config", key=key,
-                detail=f"orphan task {stem} (not referenced by plan.md) dispatched",
-            )
+            return dispatched_any
         retry = used > 0
         stem_arg = f"{stem}-a{used + 1}" if retry else stem
         result = dispatch.dispatch(
@@ -1791,18 +2078,27 @@ def execute_loop(
             loop=loop, attempt=used + 1, timeline=st.timeline,
         )
         if not result.ok:
+            if _write_face_wait_reason(result.reason):
+                # Write-face serial-only / overlap: this stem cannot run beside
+                # an in-flight same-owner worker. Wait for the next tick; the
+                # gate already wrote its own audit event, and stalling here
+                # would manufacture a permanent failure for a normal cap.
+                return dispatched_any
             mark_stalled(
                 project_root, st, key,
                 f"exec dispatch refused at {stem} attempt {used + 1}",
                 reason_code="exec-dispatch-refused", loop=loop,
                 used_rounds=used, round_limit=budget, credits_used=credits,
             )
-        return result.ok
-    code, _out, err = advance.advance(
-        key, "verify", project_root, summary="autopilot EXECUTE tasks complete"
-    )
-    _record_advance_result(project_root, st, key, "execute->verify", code, err, cfg)
-    return False
+            return False
+        if plan and stem not in plan:
+            st.timeline.append(
+                "config", key=key,
+                detail=f"orphan task {stem} (not referenced by plan.md) dispatched",
+            )
+        inflight_stems.add(stem)
+        dispatched_any = True
+    return dispatched_any
 
 
 # ── VERIFY: L3 review loop + done transaction (D-108/D-112, T-12) ────────────
@@ -2746,12 +3042,12 @@ def _done_transaction(
         if not _append_pass_line(project_root, st, key, qg_path):
             return "gated", ""  # lock held — retry next tick
         # 5. advance done (framework gates re-verify the 三件套)
-        code, _out, err = advance.advance(
+        code, _out, err, ms = _timed_advance(
             key, "done", project_root, summary="autopilot L3 meets"
         )
         _record_advance_result(
             project_root, st, key, "verify->done", code, err,
-            _load_effective_config(project_root),
+            _load_effective_config(project_root), ms=ms,
         )
         if code != 0:
             # Failure scene: declare the rejected draft so a later round may
@@ -3103,6 +3399,47 @@ def _emit_roadmap_warnings(
         _ROADMAP_ALARM_SEEN.add(key)
         detail = f"roadmap parse warning: {warning.message()}"
         _emit_alarm(st, detail)
+        emitted += 1
+    return emitted
+
+
+#: (roadmap path, problem text) already announced this session (process lifetime).
+_ROADMAP_VALIDATION_SEEN: set[tuple[str, str]] = set()
+
+
+def _emit_roadmap_validation(
+    project_root: pathlib.Path, st: ConductorState, rm: roadmap.Roadmap
+) -> int:
+    """Announce each roadmap SEMANTIC problem once (AC-010, M-02).
+
+    `roadmap.validate_roadmap` (dangling / self / forward-stage / cycle /
+    duplicate key / empty goal / key-status mismatch) is the same validator the
+    CLI and doctor run; until now the conductor never called it, so a broken key
+    graph was a silent permanent lock. This is observation only — it never
+    suppresses or authorizes a dispatch, so the fail-closed direction is
+    unchanged. Parse warnings are skipped here because
+    :func:`_emit_roadmap_warnings` already surfaces them (no double alarm).
+
+    Deduplicated per (path, problem): a 4s tick cannot flood; a problem that is
+    fixed and later recurs is announced again. Returns the number of newly
+    announced problems.
+    """
+    path = str(roadmap.roadmap_path(project_root))
+    problems = [
+        problem for problem in roadmap.validate_roadmap(rm)
+        if not problem.startswith("roadmap parse warning:")
+    ]
+    current = {(path, problem) for problem in problems}
+    for seen in [item for item in _ROADMAP_VALIDATION_SEEN if item[0] == path]:
+        if seen not in current:
+            _ROADMAP_VALIDATION_SEEN.discard(seen)  # fixed: allow a recurrence
+    emitted = 0
+    for problem in problems:
+        item = (path, problem)
+        if item in _ROADMAP_VALIDATION_SEEN:
+            continue
+        _ROADMAP_VALIDATION_SEEN.add(item)
+        _emit_alarm(st, f"roadmap validation: {problem}")
         emitted += 1
     return emitted
 

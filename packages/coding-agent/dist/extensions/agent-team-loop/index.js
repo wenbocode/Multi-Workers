@@ -1,6 +1,7 @@
 import { pmActivate } from "./pm/pm-orchestrator.js";
 import { registerImplementationGate } from "./shared/implementation-gate.js";
 import { registerProtectedConfigGuard } from "./shared/protected-config.js";
+import { registerWorktreeJunctionGuard } from "./shared/worktree-junction-guard.js";
 import { registerXkeyGateGuard } from "./shared/xkey-gate-guard.js";
 import { workerModeActivate } from "./worker/worker-mode.js";
 // Defense against a double-load: if the same bundle is loaded twice in one host
@@ -51,6 +52,15 @@ export async function activate(pi) {
     // EVERY mode, same position as the protected-config guard: after the
     // double-load flag, before the PM/Worker mode branches.
     registerImplementationGate(pi);
+    // Worktree junction guard (mw-worktree-junction-guard G1, AC-001/002/003):
+    // `git worktree remove --force <path>` walks THROUGH reparse points and
+    // deletes the link target (the 2026-10-09 incident removed 3,456 tracked
+    // files from the shared tree). The guard resolves the operand, scans the
+    // target tree, and blocks when it cannot prove the tree is free of reparse
+    // points, pointing at the `mw worktree rm <path>` replacement command.
+    // Registered in EVERY mode, same position as the other guards: after the
+    // double-load flag, before the PM/Worker mode branches.
+    registerWorktreeJunctionGuard(pi);
     if (process.env.PI_WORKER_TASK) {
         await workerModeActivate(pi);
     }

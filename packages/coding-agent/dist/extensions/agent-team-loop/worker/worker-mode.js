@@ -17,6 +17,7 @@ import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.j
 import { controlRootFromTaskPath } from "../shared/paths.js";
 import { collectArtifacts, isTerminalRunStatus, newRunId, parseSupersedes, RUN_SCHEMA, runMarker, writeRunState, } from "../shared/run-store.js";
 import { findTypeEscalation, readTaskType, scanBodyTypeLines } from "../shared/task-frontmatter.js";
+import { parseWriteFace, parseWriteFaceEntries, writeFacesOverlap, } from "../shared/write-face.js";
 import { appendCheckpoint, appendEnd, appendError, appendGoalCheck, appendHeartbeat, appendModel, appendPhase, appendProgressLine, appendStart, appendTimeout, appendTool, appendToolError, appendTrace, formatMachineCheckpoint, readTerminalGaps, writeOutput, } from "./output-writer.js";
 import { goalMtime, writePhaseFile } from "./phase-runner.js";
 import { applyParentRootUnion, checkReadScopeCall, isSameOrUnder, normalizeForCompare, parentRootFromTaskContent, readScopeConfigFromMeta, } from "./read-scope.js";
@@ -101,6 +102,13 @@ export function isShellRole(taskType) {
 export function isWritelessRole(taskType) {
     const tools = activeToolsForType(taskType);
     return !tools.includes("write") && !tools.includes("edit");
+}
+/** Does this role carry a `write`/`edit` tool (D-115 rule 6)? The runtime
+ * write-surface guard must cover these roles on the `write`/`edit` channel even
+ * when they have no `bash` (`roadmap-writer` was unguarded before D-115). */
+export function hasWriteTools(taskType) {
+    const tools = activeToolsForType(taskType);
+    return tools.includes("write") || tools.includes("edit");
 }
 /** Checkpoint self-assessment steer text, split by role (D-104/VC-004).
  * - `hasWriteTools === true`: the pre-change wording byte for byte — the
@@ -279,12 +287,16 @@ export function parseTaskMd(taskPath) {
                 inDenyGlobsList = false;
             }
         }
-        // write_scope (contract C1, T-02 → T-03): the producer renders the
-        // one-line comma form (`write_scope: a, b`); the read_scope/deny_globs
-        // YAML block-list form is accepted too, so the two consumer paths cannot
-        // drift apart. A present-but-blank value stays defined as [] (fail-closed,
-        // mirroring read_scope); an absent header leaves the field undefined and
-        // the consumer falls back to the default surface.
+        // write_scope (contract C1, T-02 → T-03; D-115 legacy carrier): the
+        // producer renders the one-line comma form (`write_scope: a, b`); the
+        // read_scope/deny_globs YAML block-list form is accepted too, so the two
+        // consumer paths cannot drift apart. A present-but-blank value stays defined
+        // as [] (fail-closed, mirroring read_scope); an absent header leaves the
+        // field undefined and the consumer falls back to the default surface. D-115:
+        // for writeless roles this stays the declared face byte for byte; for
+        // writable roles it is the fallback carrier (and a narrowing constraint when
+        // `write_face:` is also present). The gate-v2 `write_scope` field is a
+        // DIFFERENT semantic (`blast_radius`) and never feeds this parse.
         if (trimmed.startsWith("write_scope:")) {
             const rest = trimmed.slice("write_scope:".length).trim();
             if (rest) {
@@ -364,6 +376,15 @@ export function parseTaskMd(taskPath) {
     const agenticdocRoot = path.dirname(path.dirname(taskPath));
     const taskKey = path.basename(path.dirname(taskPath));
     const trueAgenticdocRoot = path.dirname(path.dirname(agenticdocRoot));
+    // D-115 carrier convergence: parse the authoritative `write_face:` head with
+    // the shared operator (D-009/AC-007) so the runtime allow face cannot drift
+    // from the dispatch-time overlap operator. Entries are normalized
+    // project-root-relative, so the runtime re-parse against the worker cwd is
+    // base-independent. `write_scope` parsing above is untouched.
+    const writeFaceParsed = parseWriteFace(content, {
+        base: path.dirname(trueAgenticdocRoot),
+        caseInsensitive: process.platform === "win32",
+    });
     return {
         type: taskType,
         phase,
@@ -377,6 +398,8 @@ export function parseTaskMd(taskPath) {
         readScope,
         denyGlobs,
         writeScope,
+        writeFaceEntries: writeFaceParsed.kind === "declared" ? [...writeFaceParsed.face.entries] : undefined,
+        writeFaceRejected: writeFaceParsed.kind === "rejected" ? writeFaceParsed.code : undefined,
         readFileCap,
         readByteCap,
         ragChatBudget,
@@ -590,6 +613,22 @@ export function tokenizeShellCommand(command) {
             hasWord = true;
             append(command[i + 1], false);
             i += 2;
+            continue;
+        }
+        // PowerShell here-strings (`@'...'@` / `@"..."@`, AC-013): the body is
+        // data, never shell source. Without this the body's apostrophes mis-pair
+        // the quote state below and a literal `>` inside becomes a live redirect
+        // (measured false block: pattern=redirect target=<script fragment>).
+        // Deliberately lenient about the closing `'@` line-start rule: finding the
+        // first `${quote}@` can only make more of the command inert (a miss), and
+        // never turns data into a target (P1).
+        if (ch === "@" && !hasWord && (command[i + 1] === "'" || command[i + 1] === '"')) {
+            const close = `${command[i + 1]}@`;
+            const closeAt = command.indexOf(close, i + 2);
+            const end = closeAt === -1 ? command.length : closeAt + close.length;
+            hasWord = true;
+            word += command.slice(i, end);
+            i = end;
             continue;
         }
         if (ch === " " || ch === "\t") {
@@ -925,6 +964,15 @@ function skipWrapperPrefix(tokens, start) {
     }
     return { index: i, placeholders };
 }
+/** Flag-shaped redirect operand (`> --glob`) is probe/placeholder text, not a
+ * statically known file path — the AC-013 false-block family
+ * (`Write-Output a <term> --glob x` measured `target=--glob`). P1 applies: a
+ * miss on a genuinely `-` named file is preferable to a false block. Only
+ * redirect operands are filtered; `rm -- -weird.txt` style positionals keep
+ * their exact-target contract. */
+function isFlagLikeRedirectTarget(text) {
+    return text.length > 1 && text.startsWith("-");
+}
 /** Recursive extractor over already-tokenized words. `opaqueTokens` are runtime
  * placeholders (`{}`, `xargs -I R`): a target containing one is not statically
  * determinable and is marked non-verbatim (fail-open). */
@@ -967,11 +1015,12 @@ function extractFromTokens(tokens, depth, out, opaqueTokens) {
                 if (next === undefined)
                     continue;
                 if (!next.operator) {
-                    add(next, "redirect");
+                    if (!isFlagLikeRedirectTarget(next.text))
+                        add(next, "redirect");
                     continue;
                 }
                 const after = list[i + 2];
-                if (after !== undefined && !after.operator) {
+                if (after !== undefined && !after.operator && !isFlagLikeRedirectTarget(after.text)) {
                     if (next.text === "|")
                         add(after, "redirect-clobber");
                     else if (next.text === "&" && !/^\d+$/.test(after.text) && after.text !== "-") {
@@ -1344,7 +1393,10 @@ function samePath(a, b) {
 }
 const GLOB_MAGIC_RE = /[*?[\]{}]/;
 /** Absolute deny reason for a resolved target, or null. The deny list is
- * checked first and can never be widened by a `write_scope:` header. */
+ * checked first and can never be widened by a `write_scope:` header. The
+ * `packages/**` entry is writeless-only (D-007 / spec risk 10): for a
+ * writable role it is the normal work surface, while the isolation entries
+ * (framework files, other keys, `.git/**`) stay absolute for every role. */
 function bashWriteDenyReason(config, target) {
     const workersDir = path.join(config.keyDir, "workers");
     if (samePath(target, path.join(config.keyDir, "pm-state.md")))
@@ -1359,8 +1411,9 @@ function bashWriteDenyReason(config, target) {
     if (isSameOrUnder(config.trueRoot, target) && !isSameOrUnder(config.keyDir, target)) {
         return "other key dir / .agenticdoc root";
     }
-    if (isSameOrUnder(path.join(config.projectRoot, "packages"), target))
+    if (config.roleClass !== "writable" && isSameOrUnder(path.join(config.projectRoot, "packages"), target)) {
         return "packages/**";
+    }
     if (isSameOrUnder(path.join(config.projectRoot, ".git"), target))
         return ".git/**";
     return null;
@@ -1384,12 +1437,91 @@ function matchesWriteScopeEntry(config, entry, absoluteTarget) {
     }
     return isSameOrUnder(normalizeForCompare(config.projectRoot, normalized), absoluteTarget);
 }
-/** The bash write-surface verdict for one extracted target: a non-verbatim
- * target is not statically determinable (`allow-unknown`, fail-open); otherwise
- * the deny list comes first (absolute priority), then the default surface (own
- * taskDir + `<key>/evidence`), then the task's `write_scope:` intersection when
- * the header is present. */
-export function checkBashWriteScopeTarget(config, rawTarget, verbatim) {
+/** Is `absoluteTarget` inside the authoritative `write_face:` allow face
+ * (D-115)? The judgement goes through the SAME shared operator the dispatch
+ * gate uses (D-009/AC-007): the concrete target is parsed as a one-entry face
+ * and intersected with the declared face, so `*`/`**`/`{a,b}`/case-mode/`..`
+ * can never diverge between the two sides. A target the operator cannot place
+ * (parse refusal, `..` escape, outside base, equal to the base) is NOT allowed
+ * — fail-closed, never a silent widening. Only a PROVABLE conflict
+ * (`WriteFaceConflict`, carries a `sample`) admits the target: the conservative
+ * `{unsupported}` result means "could not decide" and must block here (the
+ * dispatch gate reads it as overlap, i.e. refuse, D-006/D-111). */
+function matchesWriteFaceTarget(face, absoluteTarget) {
+    const targetFace = parseWriteFaceEntries([absoluteTarget], {
+        // Use the declared face's OWN base so the operator's base-equality check
+        // can never fail open (`incomparable-base` is treated as overlap).
+        base: face.base,
+        caseInsensitive: face.caseInsensitive,
+    });
+    if (targetFace.kind !== "declared")
+        return false;
+    const result = writeFacesOverlap(targetFace.face, face);
+    return result !== null && "sample" in result;
+}
+/** Compare one carrier entry for the dual-carrier audit flag only (never for
+ * the allow decision): lexical separator/dot normalization, order-insensitive. */
+function normalizeCarrierEntry(entry) {
+    return entry
+        .trim()
+        .replaceAll("\\", "/")
+        .split("/")
+        .filter((segment) => segment !== "" && segment !== ".")
+        .join("/");
+}
+function carriersUnequal(writeFaceEntries, writeScopeEntries) {
+    const a = writeFaceEntries
+        .map(normalizeCarrierEntry)
+        .filter((entry) => entry !== "")
+        .sort();
+    const b = writeScopeEntries
+        .map(normalizeCarrierEntry)
+        .filter((entry) => entry !== "")
+        .sort();
+    if (a.length !== b.length)
+        return true;
+    return a.some((entry, index) => entry !== b[index]);
+}
+/** D-115 rule 3 audit: both allow carriers are present. The runtime face is
+ * their INTERSECTION (the legacy carrier can only narrow, never widen), and the
+ * fact is never silent. Written once per task before the first agent turn;
+ * best-effort like every other trace append. */
+function appendWriteFaceCarrierTraceLine(taskKey, agenticdocRoot, info) {
+    try {
+        const dir = path.resolve(agenticdocRoot, taskKey);
+        fs.mkdirSync(dir, { recursive: true });
+        const rejected = info.rejected === undefined ? "" : ` write_face_rejected=${info.rejected}`;
+        const writeFace = JSON.stringify(info.writeFace);
+        const writeScope = JSON.stringify(info.writeScope);
+        const unequal = String(info.unequal);
+        fs.appendFileSync(path.join(dir, "trace.log"), `[WRITE_FACE] ${new Date().toISOString()} carrier=dual unequal=${unequal} ` +
+            `write_face=${writeFace} write_scope=${writeScope}${rejected} ` +
+            `detail=write_face and write_scope both present, unequal=${unequal}; ` +
+            `write_face=${writeFace} write_scope=${writeScope}; declared face = intersection ` +
+            "(legacy write_scope can only narrow)\n", "utf8");
+    }
+    catch {
+        // Diagnostic append — a failure must never break the guard.
+    }
+}
+/** The write-surface verdict for one extracted target: a non-verbatim target is
+ * not statically determinable (`allow-unknown`, fail-open); otherwise the deny
+ * list comes first (absolute priority), then the role-classified default face,
+ * then the declared allow carriers (D-115).
+ *
+ * - writeless (research): default face = own taskDir + `<key>/evidence/**`, and
+ *   a declared `write_scope:` intersects it (historical behavior, byte for
+ *   byte). The authoritative `write_face:` carrier is never consulted here.
+ * - writable (coding/repair/phase-writer/vision/fallback/roadmap-writer):
+ *   default face = the working tree, because `packages/**` is the role's work
+ *   surface (D-007). The declared face is the authoritative `write_face:` when
+ *   present, the legacy `write_scope:` when it is absent, and their
+ *   INTERSECTION when both are present (fail-closed: the legacy carrier can
+ *   only narrow). The own taskDir/evidence stay writable either way.
+ *
+ * `toolLabel` only phrases the block reason (`bash` keeps the historical
+ * "bash write" wording for the research audit line). */
+export function checkBashWriteScopeTarget(config, rawTarget, verbatim, toolLabel = "bash") {
     if (!verbatim) {
         const basename = rawTarget.split(/[\\/]/).pop() ?? "";
         const risk = basename === "pm-state.md" || basename.startsWith("_workers") ? "deny-basename" : undefined;
@@ -1401,9 +1533,11 @@ export function checkBashWriteScopeTarget(config, rawTarget, verbatim) {
             risk,
         };
     }
+    const writable = config.roleClass === "writable";
     const target = normalizeForCompare(config.projectRoot, rawTarget);
     const evidenceDir = path.join(config.keyDir, "evidence");
-    const allowedLabel = `${config.taskDir} or ${evidenceDir}`;
+    const allowedLabel = writable ? config.projectRoot : `${config.taskDir} or ${evidenceDir}`;
+    const verb = toolLabel === "bash" ? "bash write" : toolLabel;
     const denied = bashWriteDenyReason(config, target);
     if (denied !== null) {
         return {
@@ -1411,30 +1545,65 @@ export function checkBashWriteScopeTarget(config, rawTarget, verbatim) {
             rule: "deny",
             detail: `denied:${denied}`,
             target: rawTarget,
-            reason: `write-scope: blocked bash write to ${rawTarget}: ${denied} is on the denied write list ` +
+            reason: `write-scope: blocked ${verb} to ${rawTarget}: ${denied} is on the denied write list ` +
                 `[rule=deny]; allowed: ${allowedLabel}`,
         };
     }
-    if (!isSameOrUnder(config.taskDir, target) && !isSameOrUnder(evidenceDir, target)) {
+    const inOwnSandbox = isSameOrUnder(config.taskDir, target) || isSameOrUnder(evidenceDir, target);
+    // Role-classified default face (D-007). The writable face is the repo root;
+    // its realpath is taken so a junctioned cwd cannot make the containment check
+    // depend on the unnormalized spelling.
+    const insideDefaultFace = writable
+        ? isSameOrUnder(normalizeForCompare(config.projectRoot, config.projectRoot), target)
+        : inOwnSandbox;
+    if (!insideDefaultFace) {
         return {
             allowed: false,
             rule: "scope",
             detail: "outside-allowed-surface",
             target: rawTarget,
-            reason: `write-scope: blocked bash write to ${rawTarget}: outside the worker write surface ` +
+            reason: `write-scope: blocked ${verb} to ${rawTarget}: outside the worker write surface ` +
                 `[rule=scope]; allowed: ${allowedLabel}`,
         };
     }
-    if (config.writeScope !== undefined &&
-        !config.writeScope.some((entry) => matchesWriteScopeEntry(config, entry, target))) {
-        return {
-            allowed: false,
-            rule: "write-scope",
-            detail: "outside-declared-write-scope",
-            target: rawTarget,
-            reason: `write-scope: blocked bash write to ${rawTarget}: outside the task's declared write_scope ` +
-                `[rule=write-scope]; allowed: ${allowedLabel}`,
-        };
+    // Declared allow carriers narrow the default face (D-115). The
+    // authoritative `write_face:` face is the primary carrier; the legacy
+    // `write_scope:` entries apply as a fallback (writable role without a
+    // `write_face:` head) and/or as an additional narrowing constraint when both
+    // carriers are present (intersection, fail-closed: the legacy carrier can
+    // only narrow, never widen). For writable roles the own sandbox stays
+    // writable (the worker's own output/evidence artifacts), which keeps a
+    // declaration from false-blocking its bookkeeping. Writeless roles never get
+    // `writeFace`, so this reduces byte for byte to the historical
+    // `write_scope:` narrowing.
+    if (!(writable && inOwnSandbox)) {
+        const declaredFacePresent = config.writeFace !== undefined || config.writeFaceRejected === true;
+        const declaredScopePresent = config.writeScope !== undefined;
+        if (declaredFacePresent || declaredScopePresent) {
+            const inWriteFace = config.writeFace !== undefined && matchesWriteFaceTarget(config.writeFace, target);
+            const inWriteScope = config.writeScope === undefined ||
+                config.writeScope.some((entry) => matchesWriteScopeEntry(config, entry, target));
+            if (declaredFacePresent && !inWriteFace) {
+                return {
+                    allowed: false,
+                    rule: "write-scope",
+                    detail: config.writeFaceRejected === true ? "write-face-rejected" : "outside-declared-write-face",
+                    target: rawTarget,
+                    reason: `write-scope: blocked ${verb} to ${rawTarget}: outside the task's declared write_face ` +
+                        `[rule=write-scope]; allowed: ${allowedLabel}`,
+                };
+            }
+            if (declaredScopePresent && !inWriteScope) {
+                return {
+                    allowed: false,
+                    rule: "write-scope",
+                    detail: "outside-declared-write-scope",
+                    target: rawTarget,
+                    reason: `write-scope: blocked ${verb} to ${rawTarget}: outside the task's declared write_scope ` +
+                        `[rule=write-scope]; allowed: ${allowedLabel}`,
+                };
+            }
+        }
     }
     return { allowed: true, target: rawTarget };
 }
@@ -1806,8 +1975,8 @@ export async function workerModeActivate(pi) {
     // write/edit tool get `worker_file` registered — a structural gate mirroring
     // `registerRagTools`'s disabled→skip. OUTSIDE the RAG try/catch on purpose:
     // a broken RAG config must not swallow a read-only role's only channel.
-    const hasWriteTools = toolsForType(meta.type).includes("write");
-    if (!hasWriteTools) {
+    const hasWriteTool = toolsForType(meta.type).includes("write");
+    if (!hasWriteTool) {
         registerWorkerFileTool(pi, workerTaskDir);
     }
     if (ragRuntime !== null) {
@@ -1859,23 +2028,62 @@ export async function workerModeActivate(pi) {
             return { block: true, reason: verdict.reason };
         });
     }
-    // Bash write-surface guard (AC-005b / contract C3): a role with `bash` but no
-    // write/edit tool (today: `research` only) could bypass its narrow
-    // `worker_file` channel through a shell command. Known write patterns are
-    // classified, their targets resolved, and only targets outside the worker's
-    // write surface are blocked. The surface is the default (own taskDir +
-    // `<key>/evidence/**`), narrowed by the task's `write_scope:` header when the
-    // producer (T-02) rendered one. Pure-read and unclassifiable commands pass
-    // silently (P1: a miss is preferable to a false block).
-    const bashWriteScopeConfig = isShellRole(meta.type) && isWritelessRole(meta.type)
+    // Runtime write-surface guard (AC-004 / AC-005b / contract C3 → D-007 IP-1b,
+    // carrier convergence D-115): every role with a `write`/`edit` tool OR a
+    // `bash` tool gets it, and the shell-like ones are covered on both channels in
+    // this single `tool_call` handler. Bash commands are classified by the
+    // write-face lexer; a `write`/`edit` call contributes its literal `path`. A
+    // target is accepted only when it stays inside the role-classified surface:
+    // the deny list first (absolute priority), then the default face, then the
+    // declared allow carriers (D-115: authoritative `write_face:`, legacy
+    // `write_scope:` only as fallback/narrowing). `writeless` roles (today:
+    // `research`) keep the historical face byte for byte (own taskDir +
+    // `<key>/evidence/**`, `packages/**` denied); `writable` roles get the
+    // working tree as their default face, because `packages/**` is their work
+    // surface, not a red line (spec risk 10). Pure-read and unclassifiable bash
+    // commands pass silently (P1: a miss is preferable to a false block). The
+    // handler never touches the `tool_execution_start/end` accounting branch.
+    const roleClass = isWritelessRole(meta.type) ? "writeless" : "writable";
+    // D-115 carrier resolution: the authoritative `write_face:` face is re-parsed
+    // against the worker cwd (the same shared operator as the dispatch gate), and
+    // only writable roles consult it — writeless roles keep `write_scope:` byte
+    // for byte and never see `write_face`.
+    const writeFaceEntries = roleClass === "writable" ? meta.writeFaceEntries : undefined;
+    let declaredWriteFace;
+    if (writeFaceEntries !== undefined && writeFaceEntries.length > 0) {
+        const parsed = parseWriteFaceEntries(writeFaceEntries, {
+            base: process.cwd(),
+            caseInsensitive: process.platform === "win32",
+        });
+        if (parsed.kind === "declared")
+            declaredWriteFace = parsed.face;
+    }
+    const declaredWriteFaceRejected = roleClass === "writable" &&
+        declaredWriteFace === undefined &&
+        (meta.writeFaceRejected !== undefined || meta.writeFaceEntries !== undefined);
+    const bashWriteScopeConfig = hasWriteTools(meta.type) || isShellRole(meta.type)
         ? {
             projectRoot: process.cwd(), // launcher spawns workers with cwd = project root
             taskDir,
             keyDir: path.dirname(meta.agenticdocRoot),
             trueRoot: meta.trueAgenticdocRoot,
             writeScope: meta.writeScope,
+            roleClass,
+            writeFace: declaredWriteFace,
+            writeFaceRejected: declaredWriteFaceRejected || undefined,
         }
         : undefined;
+    // D-115 rule 3: two carriers present ⇒ the runtime allow face is their
+    // intersection and the fact is audited on trace.log (never silent).
+    if ((declaredWriteFace !== undefined || declaredWriteFaceRejected) && meta.writeScope !== undefined) {
+        const faceEntries = declaredWriteFace?.entries ?? [];
+        appendWriteFaceCarrierTraceLine(meta.taskKey, meta.agenticdocRoot, {
+            writeFace: faceEntries,
+            writeScope: meta.writeScope,
+            unequal: carriersUnequal(faceEntries, meta.writeScope),
+            rejected: declaredWriteFace === undefined ? meta.writeFaceRejected : undefined,
+        });
+    }
     // AC-007/T-03 outcome counters: mutated by the guard below, consumed by
     // `recordEnd` for the `[WRITE_SCOPE_SUMMARY]` line. Declared outside the
     // `if` so the settle path can read them.
@@ -1883,55 +2091,92 @@ export async function workerModeActivate(pi) {
     if (bashWriteScopeConfig) {
         const config = bashWriteScopeConfig;
         pi.on("tool_call", (event) => {
-            if (event.toolName !== "bash")
-                return undefined;
-            const command = event.input?.command;
-            if (typeof command !== "string" || command.trim() === "")
-                return undefined;
-            for (const candidate of extractBashWriteCandidates(command)) {
-                const verdict = checkBashWriteScopeTarget(config, candidate.target, candidate.verbatim);
-                if (verdict.rule === "allow-unknown") {
-                    // Contract cost (F1–F3): not blockable — audit first, then continue.
-                    writeScopeCounts.allowUnknown += 1;
+            if (event.toolName === "bash") {
+                // The bash sub-judgement stays installed only for roles that actually
+                // carry `bash` (D-115 rule 6): a writable bash-less role
+                // (`roadmap-writer`) gets the `write`/`edit` branch alone.
+                if (!isShellRole(meta.type))
+                    return undefined;
+                const command = event.input?.command;
+                if (typeof command !== "string" || command.trim() === "")
+                    return undefined;
+                for (const candidate of extractBashWriteCandidates(command)) {
+                    const verdict = checkBashWriteScopeTarget(config, candidate.target, candidate.verbatim);
+                    if (verdict.rule === "allow-unknown") {
+                        // Contract cost (F1–F3): not blockable — audit first, then continue.
+                        writeScopeCounts.allowUnknown += 1;
+                        appendBashWriteScopeTraceLine(meta.taskKey, meta.agenticdocRoot, {
+                            ts: new Date().toISOString(),
+                            blocked: false,
+                            rule: "allow-unknown",
+                            detail: verdict.detail ?? "target-not-statically-determinable",
+                            risk: verdict.risk,
+                            target: candidate.target,
+                            pattern: candidate.pattern,
+                            command,
+                        });
+                        continue;
+                    }
+                    if (verdict.allowed) {
+                        writeScopeCounts.allowDetermined += 1;
+                        continue;
+                    }
+                    // AC-007/T-07 escape hatch: a declared, human-accepted foreign write is
+                    // allowed and audited; missing/false stays fail-closed. The hard deny
+                    // list (other keys, .git/**, pm-state.md, _workers*) is an isolation red
+                    // line (AC-008) and is deliberately NOT widened — the hatch covers an
+                    // external target, not the framework's own files. (`packages/**` is
+                    // writeless-only, so it is not part of that list for writable roles.)
+                    if (meta.allowForeignWrite === true && verdict.rule !== "deny") {
+                        writeScopeCounts.allowDetermined += 1;
+                        appendEscapeHatchTraceLine(meta.taskKey, meta.agenticdocRoot, candidate.target);
+                        continue;
+                    }
+                    writeScopeCounts.deny += 1;
                     appendBashWriteScopeTraceLine(meta.taskKey, meta.agenticdocRoot, {
                         ts: new Date().toISOString(),
-                        blocked: false,
-                        rule: "allow-unknown",
-                        detail: verdict.detail ?? "target-not-statically-determinable",
-                        risk: verdict.risk,
+                        blocked: true,
+                        rule: verdict.rule ?? "scope",
+                        detail: verdict.detail ?? "blocked",
                         target: candidate.target,
                         pattern: candidate.pattern,
                         command,
                     });
-                    continue;
+                    return { block: true, reason: verdict.reason };
                 }
-                if (verdict.allowed) {
-                    writeScopeCounts.allowDetermined += 1;
-                    continue;
-                }
-                // AC-007/T-07 escape hatch: a declared, human-accepted foreign write is
-                // allowed and audited; missing/false stays fail-closed. The hard deny
-                // list (other keys, packages/**, .git/**, pm-state.md, _workers*) is an
-                // isolation red line (AC-008) and is deliberately NOT widened — the
-                // hatch covers an external target, not the framework's own files.
-                if (meta.allowForeignWrite === true && verdict.rule !== "deny") {
-                    writeScopeCounts.allowDetermined += 1;
-                    appendEscapeHatchTraceLine(meta.taskKey, meta.agenticdocRoot, candidate.target);
-                    continue;
-                }
-                writeScopeCounts.deny += 1;
-                appendBashWriteScopeTraceLine(meta.taskKey, meta.agenticdocRoot, {
-                    ts: new Date().toISOString(),
-                    blocked: true,
-                    rule: verdict.rule ?? "scope",
-                    detail: verdict.detail ?? "blocked",
-                    target: candidate.target,
-                    pattern: candidate.pattern,
-                    command,
-                });
-                return { block: true, reason: verdict.reason };
+                return undefined;
             }
-            return undefined;
+            // D-007 IP-1b: the same verdict for the literal `write`/`edit` target
+            // (`event.input.path`). These tools are only in a writable role's
+            // allowlist, so the writeless default face never sees them; a writable
+            // role's declared face narrows outside its own sandbox.
+            if (event.toolName !== "write" && event.toolName !== "edit")
+                return undefined;
+            const toolLabel = event.toolName === "write" ? "write" : "edit";
+            const rawPath = event.input?.path;
+            if (typeof rawPath !== "string" || rawPath.trim() === "")
+                return undefined;
+            const verdict = checkBashWriteScopeTarget(config, rawPath, true, toolLabel);
+            if (verdict.allowed) {
+                writeScopeCounts.allowDetermined += 1;
+                return undefined;
+            }
+            if (meta.allowForeignWrite === true && verdict.rule !== "deny") {
+                writeScopeCounts.allowDetermined += 1;
+                appendEscapeHatchTraceLine(meta.taskKey, meta.agenticdocRoot, rawPath);
+                return undefined;
+            }
+            writeScopeCounts.deny += 1;
+            appendBashWriteScopeTraceLine(meta.taskKey, meta.agenticdocRoot, {
+                ts: new Date().toISOString(),
+                blocked: true,
+                rule: verdict.rule ?? "scope",
+                detail: verdict.detail ?? "blocked",
+                target: rawPath,
+                pattern: toolLabel,
+                command: `${toolLabel} ${rawPath}`,
+            });
+            return { block: true, reason: verdict.reason };
         });
     }
     const inFlightTools = new Map();
@@ -2073,9 +2318,10 @@ export async function workerModeActivate(pi) {
             phaseDone: meta.phases ? completedPhaseIdx : undefined,
             phaseTotal,
         });
-        // AC-007/T-03: one machine summary per guarded run, after the last audit
-        // row and before the terminal status is persisted. Write roles register no
-        // guard and stay byte-identical (VC-024).
+        // AC-007/T-03 (D-115 rule 7): one machine summary per guarded run, after
+        // the last audit row and before the terminal status is persisted. Every
+        // role with a `write`/`edit` tool or `bash` is guarded now, so every such
+        // role writes exactly one line.
         if (bashWriteScopeConfig) {
             appendWriteScopeSummary(meta.taskKey, meta.agenticdocRoot, writeScopeCounts);
         }
@@ -2179,7 +2425,7 @@ export async function workerModeActivate(pi) {
         // Machine line: written by code (D-104/D-105) for roles with no write tool;
         // the self-assessment line goes through worker_file or the reply, per role.
         // Write roles keep the pre-change behavior byte for byte (no [machine] line).
-        if (!hasWriteTools) {
+        if (!hasWriteTool) {
             appendProgressLine(meta.taskKey, meta.agenticdocRoot, formatMachineCheckpoint({
                 elapsedMs,
                 reads: readCount,
@@ -2199,7 +2445,7 @@ export async function workerModeActivate(pi) {
             elapsedMs,
             budgetMs,
             progressPath: path.join(taskDir, "progress.md"),
-            hasWriteTools,
+            hasWriteTools: hasWriteTool,
             narrowTool: WORKER_FILE_TOOL,
         }), { deliverAs: "followUp" });
     }

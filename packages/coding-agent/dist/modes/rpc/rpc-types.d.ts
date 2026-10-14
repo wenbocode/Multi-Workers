@@ -428,6 +428,7 @@ export type RpcExtensionUIRequest = {
     widgetKey: string;
     widgetLines: string[] | undefined;
     widgetPlacement?: "aboveEditor" | "belowEditor";
+    widgetOrder?: number;
 } | {
     type: "extension_ui_request";
     id: string;

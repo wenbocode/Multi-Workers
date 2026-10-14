@@ -65,7 +65,8 @@ export const DEFAULT_CONFIG = {
     enabled: false,
     paused: false,
     poll_interval_sec: 4,
-    max_parallel_keys: 2,
+    max_parallel_keys: 8,
+    max_workers_per_key: 4,
     round_budget: 2,
     worker_timeout_min: 30,
     l2_read_file_cap: 8,
@@ -92,16 +93,16 @@ function freshDefaults() {
 // Mirror of the Python `_BOOL_FIELDS` registry (autopilot/config.py), including
 // the optional `envelope_fallback` escape hatch. It is deliberately NOT in
 // DEFAULT_CONFIG on either side: Python registers it in `_BOOL_FIELDS`, keeps it
-// out of the frozen 20-key schema (config.py docstring), validates it via
+// out of the frozen 21-key schema (config.py docstring), validates it via
 // `_BOOL_FIELDS`, and reads it through `envelope_fallback_enabled`.
 export const BOOL_FIELDS = ["enabled", "paused", "xkey_repair", "envelope_fallback"];
 /** Keys registered in a type registry but deliberately OUTSIDE the frozen
- * 20-key DEFAULT_CONFIG — the TS mirror of Python's `ENVELOPE_FALLBACK_KEY`.
+ * 21-key DEFAULT_CONFIG — the TS mirror of Python's `ENVELOPE_FALLBACK_KEY`.
  * Derived from the registries instead of hand-copied, so an optional key can
  * never be registered on one side only. `validateConfigData` admits exactly
- * these keys on top of the 20 defaults (config.py validate_config's
+ * these keys on top of the 21 defaults (config.py validate_config's
  * `- {ENVELOPE_FALLBACK_KEY}` allowance), while DEFAULT_CONFIG and the merged
- * read/write shape stay 20 keys: `saveConfig` never materializes an optional
+ * read/write shape stay 21 keys: `saveConfig` never materializes an optional
  * key (Python's effective view drops it too). */
 export const OPTIONAL_CONFIG_KEYS = BOOL_FIELDS.filter((field) => !Object.hasOwn(DEFAULT_CONFIG, field));
 /** field → list of non-empty strings — identical to config.py _LIST_FIELDS. */
@@ -116,7 +117,8 @@ export const ENUM_FIELDS = {
 /** field → [min, max|null] — identical to config.py _INT_RANGES. */
 export const INT_RANGES = {
     poll_interval_sec: [1, 5],
-    max_parallel_keys: [2, null],
+    max_parallel_keys: [1, null],
+    max_workers_per_key: [1, null],
     round_budget: [1, null],
     worker_timeout_min: [1, null],
     l2_read_file_cap: [1, null],
@@ -251,6 +253,7 @@ export function readConfig(projectDir) {
         paused: boolOf("paused"),
         poll_interval_sec: intOf("poll_interval_sec"),
         max_parallel_keys: intOf("max_parallel_keys"),
+        max_workers_per_key: intOf("max_workers_per_key"),
         round_budget: intOf("round_budget"),
         worker_timeout_min: intOf("worker_timeout_min"),
         l2_read_file_cap: intOf("l2_read_file_cap"),
@@ -283,6 +286,7 @@ export function saveConfig(projectDir, config) {
         paused: config.paused,
         poll_interval_sec: config.poll_interval_sec,
         max_parallel_keys: config.max_parallel_keys,
+        max_workers_per_key: config.max_workers_per_key,
         round_budget: config.round_budget,
         worker_timeout_min: config.worker_timeout_min,
         l2_read_file_cap: config.l2_read_file_cap,
@@ -1410,6 +1414,7 @@ export function deriveStatusModel(projectDir, nowMs = Date.now()) {
                     poll_interval_sec: config.poll_interval_sec,
                     round_budget: config.round_budget,
                     max_parallel_keys: config.max_parallel_keys,
+                    max_workers_per_key: config.max_workers_per_key,
                 },
             },
             paused: config.paused,
@@ -1461,6 +1466,7 @@ export function renderStatusText(model) {
     lines.push(`timeline: seq=${status.timeline.seq} ts=${status.timeline.ts}`);
     lines.push(`config: enabled=${status.config.enabled} | poll_interval_sec=${status.config.poll_interval_sec}` +
         ` | round_budget=${status.config.round_budget} | max_parallel_keys=${status.config.max_parallel_keys}` +
+        ` | max_workers_per_key=${status.config.max_workers_per_key}` +
         `${paused ? " | paused" : ""}`);
     for (const w of warnings)
         lines.push(`warning: ${w}`);

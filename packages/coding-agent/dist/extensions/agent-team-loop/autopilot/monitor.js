@@ -57,6 +57,13 @@ export const MONITOR_INTERVAL_MS = 4000;
 export const PANEL_STALE_MISSED_CYCLES = 3;
 /** Panel line width cap (same as the watch widget's WATCH_LINE_MAX). */
 const MONITOR_LINE_MAX = 110;
+/** `conductor.py::_DISPATCH_SKIP_STATUSES` mirror: a key in one of these key
+ * statuses is never dispatched this tick, so it can never be on the
+ * dependency frontier (AC-005). */
+const DISPATCH_SKIP_STATUSES = new Set(["done", "stalled", "closed-legacy", "pending-review"]);
+/** `conductor.py::_DEP_SATISFIED` mirror: only these dependency statuses
+ * release a downstream key. */
+const DEP_SATISFIED_STATUSES = new Set(["done", "closed-legacy"]);
 /** The auto-decision kill switch, read raw so the value stays visible even
  * while the TS config mirror does not yet declare `auto_gate_mode` (T-03 owns
  * the key on the Python side). Missing/unreadable config = off. */
@@ -279,6 +286,12 @@ export function readMonitorState(projectDir, nowMs, deps) {
     // the `workers` list below (running only) this keeps `pending` rows in, the
     // same non-terminal set `_is_in_flight` uses on the Python side.
     const nonTerminalByKey = new Map();
+    // AC-012 / D-106: the `slotsUsed` source of truth, the SAME predicate the
+    // conductor's `_is_in_flight` + `_row_belongs_to` pair applies — non-terminal
+    // (so `pending` counts) AND origin=conductor AND a `.agenticdoc/<key>/` path
+    // owner (so `manual`/legacy rows own no slot). Built here where the full row
+    // set is read, because `workers` below is running-only.
+    const conductorInflightKeys = new Set();
     for (const entry of new WorkerStore(path.join(projectDir, ".agenticdoc")).readAll()) {
         // In-flight means NON-TERMINAL, not merely `running`: a `pending` row
         // starts on the next tick, so counting it prevents a false
@@ -287,6 +300,8 @@ export function readMonitorState(projectDir, nowMs, deps) {
             nonTerminalRows += 1;
             const owner = workerOwnerKey(entry);
             nonTerminalByKey.set(owner, (nonTerminalByKey.get(owner) ?? 0) + 1);
+            if (owner !== "" && workerBelongsToKey(entry, owner))
+                conductorInflightKeys.add(owner);
         }
         if (entry.status !== "running")
             continue;
@@ -321,7 +336,7 @@ export function readMonitorState(projectDir, nowMs, deps) {
             queueError = queueFailures[0];
         }
     }
-    const autopilotBase = deriveAutopilotPanel(projectDir, nowMs, workers);
+    const autopilotBase = deriveAutopilotPanel(projectDir, nowMs, workers, undefined, conductorInflightKeys);
     const cfgResult = readConfig(projectDir);
     const reminderMax = cfgResult.ok ? cfgResult.config.gate_reminder_max : DEFAULT_CONFIG.gate_reminder_max;
     const afterMin = cfgResult.ok ? cfgResult.config.gate_reminder_after_min : DEFAULT_CONFIG.gate_reminder_after_min;
@@ -637,7 +652,7 @@ function defaultIndexPhases(projectDir) {
 /** Derive the autopilot section from the file family (AC-007: every source
  * degrades to a safe default instead of throwing — a half-present project
  * still renders a full panel). Pure read-only. */
-export function deriveAutopilotPanel(projectDir, nowMs, workers, deps) {
+export function deriveAutopilotPanel(projectDir, nowMs, workers, deps, conductorInflightKeys) {
     const configResult = (deps?.readConfigFile ?? readConfig)(projectDir);
     const config = configResult.ok ? configResult.config : null;
     const roadmap = (deps?.readRoadmapFile ?? readRoadmap)(projectDir);
@@ -690,10 +705,43 @@ export function deriveAutopilotPanel(projectDir, nowMs, workers, deps) {
             blockedBy: (depsByKey.get(key) ?? []).filter((dep) => !["done", "closed-legacy"].includes(statusByKey.get(dep) ?? "")),
         });
     }
+    // AC-005 |F|: the dependency frontier — keys in a `running` stage whose key
+    // status is not dispatch-skipped and whose deps are all satisfied. The
+    // conductor additionally requires a free claim (`state.read_key_states`),
+    // which this view does not read, so the panel's frontier is an
+    // over-approximation (`frontierSize >= |F_conductor|`) and `eff` is an
+    // upper bound; equation `eff == min(cap, |F|)` holds on the panel's own |F|.
+    let frontierSize = 0;
+    if (roadmap.ok) {
+        for (const stage of roadmap.stages) {
+            if (stage.status !== "running")
+                continue;
+            for (const row of stage.keys) {
+                const keyStatus = stage.keyStatus[row.key] ?? "running";
+                if (DISPATCH_SKIP_STATUSES.has(keyStatus))
+                    continue;
+                const depsSatisfied = row.dependsOn.every((dep) => DEP_SATISFIED_STATUSES.has(statusByKey.get(dep) ?? ""));
+                if (depsSatisfied)
+                    frontierSize += 1;
+            }
+        }
+    }
+    const slotsCap = config?.max_parallel_keys ?? DEFAULT_CONFIG.max_parallel_keys;
+    // AC-012 / D-106: prefer the caller's conductor-equivalent in-flight set
+    // (built from ALL non-terminal rows, so `pending` counts and `manual` does
+    // not). Direct callers that pass no set keep the historical running-only
+    // worker scan, so the panel degrades to its old value instead of "0".
+    const inflightOwners = new Set(conductorInflightKeys ?? []);
+    if (conductorInflightKeys === undefined) {
+        for (const w of workers) {
+            const owner = workerOwnerKey(w);
+            if (owner !== "" && workerBelongsToKey(w, owner))
+                inflightOwners.add(owner);
+        }
+    }
     const busyKeys = new Set();
-    for (const w of workers) {
-        const owner = workerOwnerKey(w);
-        if (owner !== "" && allKeys.includes(owner) && workerBelongsToKey(w, owner))
+    for (const owner of inflightOwners) {
+        if (allKeys.includes(owner))
             busyKeys.add(owner);
     }
     return {
@@ -703,7 +751,10 @@ export function deriveAutopilotPanel(projectDir, nowMs, workers, deps) {
         tickAgeMs,
         tickStale: tickAgeMs !== null && tickAgeMs > staleAfterMs,
         slotsUsed: busyKeys.size,
-        slotsMax: config?.max_parallel_keys ?? DEFAULT_CONFIG.max_parallel_keys,
+        slotsMax: slotsCap,
+        slotsCap,
+        slotsEffective: Math.min(slotsCap, frontierSize),
+        frontierSize,
         stallTicks: config?.advance_stall_ticks ?? DEFAULT_CONFIG.advance_stall_ticks,
         keys,
         stalls: deriveAdvanceStalls(events, nowMs),
@@ -986,6 +1037,13 @@ export function renderMonitorLines(s) {
         lines.push(trunc(`autopilot: ${tick}${stale} | slots ${a.slotsUsed}/${a.slotsMax} | ` +
             `keys ${a.keys.length} (running ${count("running")}, stalled ${count("stalled")}, ` +
             `done ${count("done")}) | stall-ticks ${a.stallTicks}`, MONITOR_LINE_MAX));
+        // AC-005: the two concurrency quantities on their own row so the 110-column
+        // cap can never truncate them off the (already long) summary line, and so
+        // no existing row's content or order changes. `cap` = config upper bound,
+        // `eff` = min(cap, |F|) for THIS snapshot.
+        if (a.slotsEffective !== undefined && a.frontierSize !== undefined) {
+            lines.push(trunc(`autopilot: cap ${a.slotsCap ?? a.slotsMax} | eff ${a.slotsEffective} (frontier ${a.frontierSize})`, MONITOR_LINE_MAX));
+        }
         // G2 AC-008 (VC-011): first-glance "is a human actually the blocker?"
         // marker — a pending gate with zero non-terminal workers. The third
         // truth-table axis is render-time: a stale tick already prints STALE on

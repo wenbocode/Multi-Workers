@@ -46,7 +46,12 @@ export interface AutopilotConfig {
     enabled: boolean;
     paused: boolean;
     poll_interval_sec: number;
+    /** Key-layer concurrency UPPER BOUND (D-101): the effective concurrency is
+     * min(this, dependency frontier). Floor 1 is the kill switch. */
     max_parallel_keys: number;
+    /** Per-key concurrency UPPER BOUND (D-102): how many workers one key may
+     * run at once. Floor 1 = one worker per key at a time. */
+    max_workers_per_key: number;
     round_budget: number;
     worker_timeout_min: number;
     l2_read_file_cap: number;
@@ -100,12 +105,12 @@ export interface AutopilotConfig {
 export declare const DEFAULT_CONFIG: AutopilotConfig;
 export declare const BOOL_FIELDS: readonly ["enabled", "paused", "xkey_repair", "envelope_fallback"];
 /** Keys registered in a type registry but deliberately OUTSIDE the frozen
- * 20-key DEFAULT_CONFIG — the TS mirror of Python's `ENVELOPE_FALLBACK_KEY`.
+ * 21-key DEFAULT_CONFIG — the TS mirror of Python's `ENVELOPE_FALLBACK_KEY`.
  * Derived from the registries instead of hand-copied, so an optional key can
  * never be registered on one side only. `validateConfigData` admits exactly
- * these keys on top of the 20 defaults (config.py validate_config's
+ * these keys on top of the 21 defaults (config.py validate_config's
  * `- {ENVELOPE_FALLBACK_KEY}` allowance), while DEFAULT_CONFIG and the merged
- * read/write shape stay 20 keys: `saveConfig` never materializes an optional
+ * read/write shape stay 21 keys: `saveConfig` never materializes an optional
  * key (Python's effective view drops it too). */
 export declare const OPTIONAL_CONFIG_KEYS: readonly string[];
 /** field → list of non-empty strings — identical to config.py _LIST_FIELDS. */
@@ -483,6 +488,7 @@ export interface StatusConfigView {
     poll_interval_sec: number;
     round_budget: number;
     max_parallel_keys: number;
+    max_workers_per_key: number;
 }
 /** The versioned `/autopilot status --json` payload (design §4.1, D-109 N8).
  * Field set and shapes are locked by the design example. */

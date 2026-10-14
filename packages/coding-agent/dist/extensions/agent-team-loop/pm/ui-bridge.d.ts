@@ -471,6 +471,30 @@ export declare const ENVELOPE_PRODUCER_KEY = "envelope_producer";
  * renderer (`f"{PRODUCER_IDENTITY_KEY}: {producer_identity()}"`) and the service
  * parser (`^[ \t]*envelope_producer[ \t]*:[ \t]*(\S+)[ \t]*$`). */
 export declare function envelopeProducerIdentity(): string;
+/** Card section heading whose entries become the task.md `write_face:` head
+ * (`dispatch.py` `WRITE_FACE_CARD_SECTION`, design D-001). */
+export declare const WRITE_FACE_CARD_SECTION = "\u5199\u5165\u5141\u8BB8\u9762";
+/** Raw entries of a card's `## 写入允许面` section — the TS mirror of
+ * `dispatch.py::_card_write_face_entries` (W-03), reading the card sections
+ * this file already extracted ({@link CardSections.extras}) instead of
+ * re-parsing the card.
+ *
+ * `null` = the section is absent (undeclared; no `write_face:` line is
+ * rendered). A present-but-entry-less section yields `[]` (the renderer then
+ * writes the `-` undeclared marker, D-001/§3.3). Entries keep the author's
+ * single-`/` syntax verbatim — the renderer must not transform what the
+ * parser will normalize, or the two would stop being the same source. */
+export declare function cardWriteFaceEntries(sections: CardSections): string[] | null;
+/** The task.md `write_face:` head value for a non-empty entry list — the TS
+ * mirror of `dispatch.py::render_write_face_line` (D-113).
+ *
+ * No entry contains `,` -> the historical single line `write_face: a, b`; any
+ * entry contains `,` -> the design §3.1 block-list carrier
+ * `write_face:\n  - a\n  - b` (one entry per item), because `,` is an
+ * unconditional single-line separator that brackets/braces never shield.
+ * `entries` is non-empty by contract — the caller writes `write_face: -` for a
+ * declared-but-empty face. */
+export declare function renderWriteFaceLine(entries: readonly string[]): string;
 /**
  * Normalize a dispatch's card reference to the key-relative `tasks/<name>.md`
  * form the traceability audit (T-06 `card_audit.py`) reads. A card outside the

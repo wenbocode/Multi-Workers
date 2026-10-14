@@ -477,6 +477,8 @@ export class InteractiveMode {
 	// Extension widgets (components rendered above/below the editor)
 	private extensionWidgetsAbove = new Map<string, Component & { dispose?(): void }>();
 	private extensionWidgetsBelow = new Map<string, Component & { dispose?(): void }>();
+	/** Explicit sort key per widget (ascending). Absent = 0; ties keep registration order. */
+	private extensionWidgetOrder = new Map<string, number>();
 	private widgetContainerAbove!: Container;
 	private widgetContainerBelow!: Container;
 
@@ -2095,16 +2097,19 @@ export class InteractiveMode {
 		options?: ExtensionWidgetOptions,
 	): void {
 		const placement = options?.placement ?? "aboveEditor";
-		const removeExisting = (map: Map<string, Component & { dispose?(): void }>) => {
-			const existing = map.get(key);
-			if (existing?.dispose) existing.dispose();
-			map.delete(key);
-		};
-
-		removeExisting(this.extensionWidgetsAbove);
-		removeExisting(this.extensionWidgetsBelow);
+		const order = options?.order ?? 0;
+		const targetMap = placement === "belowEditor" ? this.extensionWidgetsBelow : this.extensionWidgetsAbove;
+		const otherMap = placement === "belowEditor" ? this.extensionWidgetsAbove : this.extensionWidgetsBelow;
+		// A key lives in exactly one placement: a placement flip disposes the old instance.
+		const moved = otherMap.get(key);
+		if (moved?.dispose) moved.dispose();
+		otherMap.delete(key);
 
 		if (content === undefined) {
+			const existing = targetMap.get(key);
+			if (existing?.dispose) existing.dispose();
+			targetMap.delete(key);
+			this.extensionWidgetOrder.delete(key);
 			this.renderWidgets();
 			return;
 		}
@@ -2126,8 +2131,13 @@ export class InteractiveMode {
 			component = content(this.ui, theme);
 		}
 
-		const targetMap = placement === "belowEditor" ? this.extensionWidgetsBelow : this.extensionWidgetsAbove;
+		// Replace in place: Map.set on an existing key keeps its iteration position, so a
+		// periodic refresh never reorders widgets. The old delete-then-set moved the key to
+		// the end of the map, which made two pollers with different beats flip positions.
+		const existing = targetMap.get(key);
+		if (existing?.dispose) existing.dispose();
 		targetMap.set(key, component);
+		this.extensionWidgetOrder.set(key, order);
 		this.renderWidgets();
 	}
 
@@ -2140,6 +2150,7 @@ export class InteractiveMode {
 		}
 		this.extensionWidgetsAbove.clear();
 		this.extensionWidgetsBelow.clear();
+		this.extensionWidgetOrder.clear();
 		this.renderWidgets();
 	}
 
@@ -2207,7 +2218,17 @@ export class InteractiveMode {
 		if (leadingSpacer) {
 			container.addChild(new Spacer(1));
 		}
-		for (const component of widgets.values()) {
+		// Explicit `order` first (ascending), then registration order (Map iteration order,
+		// which survives in-place replacement).
+		let registrationIndex = 0;
+		const ordered = [...widgets.entries()]
+			.map(([key, component]) => ({ key, component, registrationIndex: registrationIndex++ }))
+			.sort((a, b) => {
+				const orderA = this.extensionWidgetOrder.get(a.key) ?? 0;
+				const orderB = this.extensionWidgetOrder.get(b.key) ?? 0;
+				return orderA !== orderB ? orderA - orderB : a.registrationIndex - b.registrationIndex;
+			});
+		for (const { component } of ordered) {
 			container.addChild(component);
 		}
 	}

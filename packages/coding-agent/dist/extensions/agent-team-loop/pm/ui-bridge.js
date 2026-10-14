@@ -745,7 +745,9 @@ function elsewhereAggregateLine(all, extraTaskKeys, watchKey, agenticdocRoot) {
 export function setWatchWidget(ctx, lines) {
     if (!ctx.hasUI)
         return;
-    ctx.ui.setWidget(WATCH_WIDGET_KEY, lines, { placement: "belowEditor" });
+    // order 10 keeps the watch panel BELOW the autopilot monitor (order 0) in the
+    // same belowEditor placement, independent of which poller refreshed last.
+    ctx.ui.setWidget(WATCH_WIDGET_KEY, lines, { placement: "belowEditor", order: 10 });
 }
 /** Render (or clear) the widget via the session_start-captured context.
  * No-op before session start or in headless runs. */
@@ -1690,14 +1692,104 @@ export const ENVELOPE_PRODUCER_KEY = "envelope_producer";
 export function envelopeProducerIdentity() {
     return `${DISPATCH_PRODUCER_ID}@${VERSION}`;
 }
+/** Card section heading whose entries become the task.md `write_face:` head
+ * (`dispatch.py` `WRITE_FACE_CARD_SECTION`, design D-001). */
+export const WRITE_FACE_CARD_SECTION = "写入允许面";
+/** First backtick span of an entry line (`dispatch.py` `_BACKTICK_SPAN_RE`). */
+const WRITE_FACE_BACKTICK_SPAN_RE = /`([^`]+)`/;
+/** Raw entries of a card's `## 写入允许面` section — the TS mirror of
+ * `dispatch.py::_card_write_face_entries` (W-03), reading the card sections
+ * this file already extracted ({@link CardSections.extras}) instead of
+ * re-parsing the card.
+ *
+ * `null` = the section is absent (undeclared; no `write_face:` line is
+ * rendered). A present-but-entry-less section yields `[]` (the renderer then
+ * writes the `-` undeclared marker, D-001/§3.3). Entries keep the author's
+ * single-`/` syntax verbatim — the renderer must not transform what the
+ * parser will normalize, or the two would stop being the same source. */
+export function cardWriteFaceEntries(sections) {
+    for (const extra of sections.extras) {
+        const title = (extra.title ?? "").trim();
+        if (!title.startsWith(WRITE_FACE_CARD_SECTION))
+            continue;
+        const entries = [];
+        for (const raw of (extra.body ?? "").split(/\r\n|\r|\n/)) {
+            let item = raw.trim();
+            if (item === "")
+                continue;
+            if ("-*+".includes(item[0] ?? ""))
+                item = item.slice(1).trim();
+            const span = WRITE_FACE_BACKTICK_SPAN_RE.exec(item);
+            if (span !== null) {
+                item = (span[1] ?? "").trim();
+            }
+            else {
+                item = (item.split(/[\s（(]/, 1)[0] ?? "").trim();
+            }
+            if (item !== "" && item !== "-")
+                entries.push(item);
+        }
+        return entries;
+    }
+    return null;
+}
+/** The task.md `write_face:` head value for a non-empty entry list — the TS
+ * mirror of `dispatch.py::render_write_face_line` (D-113).
+ *
+ * No entry contains `,` -> the historical single line `write_face: a, b`; any
+ * entry contains `,` -> the design §3.1 block-list carrier
+ * `write_face:\n  - a\n  - b` (one entry per item), because `,` is an
+ * unconditional single-line separator that brackets/braces never shield.
+ * `entries` is non-empty by contract — the caller writes `write_face: -` for a
+ * declared-but-empty face. */
+export function renderWriteFaceLine(entries) {
+    const values = entries.map((entry) => entry.trim());
+    if (values.some((entry) => entry.includes(","))) {
+        return `write_face:\n${values.map((entry) => `  - ${entry}`).join("\n")}`;
+    }
+    return `write_face: ${values.join(", ")}`;
+}
 /** Merge the bare `card_path:` / `card_sha256:` / `envelope_producer:` header
  * lines into the same header region as `type:` (no `---` fence — the live PM
  * convention). The identity line is appended last so the existing
- * `card_path:` / `card_sha256:` line positions other suites pin stay fixed. */
-function mergeCardHeader(frontmatter, cardPath, cardSha256) {
+ * `card_path:` / `card_sha256:` line positions other suites pin stay fixed.
+ *
+ * W-08 (D-001): when the card declares a `## 写入允许面` section, its entries
+ * are rendered as the task.md `write_face:` head line, byte-identical to
+ * `dispatch.py::render_write_face_line` (a declared-but-empty section renders
+ * the `-` undeclared marker; the block-list carrier is used when an entry
+ * contains `,`). A card without the section keeps the pre-W-08 bytes. */
+function mergeCardHeader(frontmatter, cardPath, cardSha256, sections) {
     const header = frontmatter.replace(/\r?\n$/, "");
+    const writeFaceEntries = cardWriteFaceEntries(sections);
+    const writeFaceLine = writeFaceEntries === null
+        ? ""
+        : `${writeFaceEntries.length > 0 ? renderWriteFaceLine(writeFaceEntries) : "write_face: -"}\n`;
     return (`${header}\ncard_path: ${cardPath}\ncard_sha256: ${cardSha256}\n` +
-        `${ENVELOPE_PRODUCER_KEY}: ${envelopeProducerIdentity()}\n`);
+        `${ENVELOPE_PRODUCER_KEY}: ${envelopeProducerIdentity()}\n${writeFaceLine}`);
+}
+/** D-008 zero side effects for the tool/command dispatch channel: the caller
+ * created this task dir in the SAME invocation (an existing dir is refused
+ * earlier / the key is `manual-<timestamp>`), and the gate runs before any
+ * profile injection, so removing it restores the pre-dispatch state. */
+function cleanupRefusedTaskDir(taskPath) {
+    try {
+        fs.rmSync(path.dirname(taskPath), { recursive: true, force: true });
+    }
+    catch {
+        // Best effort: the refusal report is what matters.
+    }
+}
+/** Render a write-face refusal / D-003 deferral for the user-facing channel
+ * (D-008: the PM audit channel is the dispatch return value). */
+function writeFaceRefusalText(taskKey, refusal) {
+    if (refusal.code === "write-face-undeclared") {
+        return (`Worker dispatch of '${taskKey}' held serial-only: the card declares no 写入允许面` +
+            ` (write_face undeclared, D-003) and ${refusal.inFlight ?? 0} same-key worker(s) are in flight. ` +
+            "Nothing was queued. Re-dispatch once the in-flight worker reaches a terminal status, or declare the card's 写入允许面.");
+    }
+    return (`Worker dispatch of '${taskKey}' refused: ${refusal.reason}. ` +
+        "Nothing was written (no task dir, no queue row). Narrow the card's 写入允许面 so it does not overlap an in-flight same-key worker, then re-dispatch.");
 }
 /**
  * Normalize a dispatch's card reference to the key-relative `tasks/<name>.md`
@@ -1788,8 +1880,9 @@ export function dispatchCardRefusal(gate) {
  * whether this call wrote one. */
 export function writeDispatchTaskMd(deps, input) {
     let frontmatter = mergeAllowForeignWrite(mergeWriteScope(input.frontmatter, input.writeScope), input.allowForeignWrite);
-    if (input.card)
-        frontmatter = mergeCardHeader(frontmatter, input.card.headerPath, input.card.sha256);
+    if (input.card) {
+        frontmatter = mergeCardHeader(frontmatter, input.card.headerPath, input.card.sha256, input.card.sections);
+    }
     const taskDir = workerTaskDir(deps.agenticdocRoot, deps.ownerKey, input.taskKey);
     fs.mkdirSync(taskDir, { recursive: true });
     const taskMdPath = path.join(taskDir, "task.md");
@@ -1982,7 +2075,11 @@ export function registerWorkerTools(pi, workerStore, ackStore, indexStore, agent
                 card: { headerPath: cardGate.headerPath, sha256: cardGate.sha256, sections: cardGate.sections },
             });
             const taskMdPath = written.path;
-            await dispatchTask({ taskKey: task_key, status: "pending", cli, provider, model: model ?? "", taskPath: taskMdPath }, workerStore);
+            const outcome = await dispatchTask({ taskKey: task_key, status: "pending", cli, provider, model: model ?? "", taskPath: taskMdPath }, workerStore);
+            if (!outcome.ok) {
+                cleanupRefusedTaskDir(taskMdPath);
+                return { content: [{ type: "text", text: writeFaceRefusalText(task_key, outcome) }], details: undefined };
+            }
             // Record the dispatch on this window's state (mw-task-scope-isolation) so
             // list_tasks / ack keep owning tasks that did NOT land under the watched
             // key (explicit cross-key dispatch, or the global-active fallback).
@@ -2415,7 +2512,12 @@ export function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRo
             });
             const taskMdPath = written.path;
             // Dispatch directly to _workers.parallel
-            await dispatchTask({ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath }, workerStore);
+            const outcome = await dispatchTask({ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath }, workerStore);
+            if (!outcome.ok) {
+                cleanupRefusedTaskDir(taskMdPath);
+                ctx.ui.notify(writeFaceRefusalText(taskKey, outcome), "warning");
+                return;
+            }
             ctx.ui.notify(`Dispatched ${cli} worker (${taskKey}) under key '${ownerKey}' [type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}].`, "info");
         },
     });

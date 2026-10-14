@@ -550,7 +550,7 @@ function cmdMonitor(ctx, projectDir, deps, rest) {
         return;
     }
     const apply = (lines) => {
-        ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor" });
+        ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor", order: 0 });
     };
     if (arg === "off" || (arg === "" && isMonitorActive())) {
         const stopped = stopMonitor(apply);
@@ -613,7 +613,7 @@ export function autoStartMonitor(ctx, projectDir, deps = {}) {
     if (!cfg.ok || !cfg.config.enabled)
         return false;
     startMonitor(projectDir, (lines) => {
-        ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor" });
+        ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor", order: 0 });
     }, { intervalMs: deps.monitorIntervalMs, readState: deps.readMonitorState });
     monitorCtx = ctx;
     return true;

@@ -130,6 +130,7 @@ export async function runRpcMode(runtimeHost) {
                     widgetKey: key,
                     widgetLines: content,
                     widgetPlacement: options?.placement,
+                    widgetOrder: options?.order,
                 });
             }
             // Component factories are not supported in RPC mode - would need TUI access

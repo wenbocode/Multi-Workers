@@ -177,6 +177,17 @@ export interface MonitorAutopilot {
     tickStale: boolean;
     slotsUsed: number;
     slotsMax: number;
+    /** Config key-layer upper bound (AC-005). Same value as `slotsMax`, kept as
+     * its own field so the panel can print `cap` independent of the `U/M`
+     * summary slot. Optional so hand-built snapshots stay constructible. */
+    slotsCap?: number;
+    /** This tick's effective key-layer concurrency: `min(cap, |F|)` (AC-005).
+     * Optional so hand-built snapshots stay constructible. */
+    slotsEffective?: number;
+    /** Dependency-frontier size `|F|` (AC-005): running-stage keys whose key
+     * status is not dispatch-skipped and whose deps are all satisfied.
+     * Optional so hand-built snapshots stay constructible. */
+    frontierSize?: number;
     stallTicks: number;
     keys: MonitorKey[];
     stalls: MonitorStall[];
@@ -289,7 +300,7 @@ export interface AutopilotPanelDeps {
 /** Derive the autopilot section from the file family (AC-007: every source
  * degrades to a safe default instead of throwing — a half-present project
  * still renders a full panel). Pure read-only. */
-export declare function deriveAutopilotPanel(projectDir: string, nowMs: number, workers: MonitorWorker[], deps?: AutopilotPanelDeps): MonitorAutopilot;
+export declare function deriveAutopilotPanel(projectDir: string, nowMs: number, workers: MonitorWorker[], deps?: AutopilotPanelDeps, conductorInflightKeys?: ReadonlySet<string>): MonitorAutopilot;
 /** Compact drift marker (`~D` = evidence newer than `created_at`). */
 export declare const GATE_DRIFT_MARK = "~D";
 /** T-14b compact blocker-class marks. One column of payload (plus the token's

@@ -348,6 +348,8 @@ export function describeDispatchAlarm(alarm) {
             return `${alarm.count} read-only run(s) settled without a product — needs-clarification, awaiting human judgement${alarm.detail ? `: ${alarm.detail}` : ""}`;
         case "write-scope-risk":
             return `${alarm.count} write-scope residual-risk row(s) (blocked=false, risk=deny-basename)${alarm.detail ? ` on ${alarm.detail}` : ""} — the guard allowed them by contract; review the audited target`;
+        case "write-face-refusal":
+            return `write_face gate refused ${alarm.count} task(s)${alarm.detail ? `: ${alarm.detail}` : ""} — not queued`;
     }
 }
 /** The full PM alert line for one alarm (AC-011/T-19): only real refusal kinds
@@ -422,6 +424,30 @@ export function recordWriteScopeResidualRisks(agenticdocRoot, taskKey, taskDir) 
         return 0;
     recordDispatchAlarm(agenticdocRoot, { kind: "write-scope-risk", count, detail: taskKey });
     return count;
+}
+/** The one-line ledger detail for a PM-side write-face refusal (AC-003/D-008).
+ * `DispatchRefusal.reason` is byte-identical to the conductor's
+ * `DispatchResult.reason`, so it already carries the stable refusal `code`, the
+ * `overlap-with:<task_key>` pair and the conflict `sample` when the gate could
+ * prove one. The refused task key prefixes it because the alarm row has no key
+ * column of its own. */
+export function writeFaceRefusalDetail(taskKey, refusal) {
+    return `${taskKey}: ${refusal.reason}`;
+}
+/** Consume one non-ok `DispatchOutcome` on the PM dispatch path (AC-003/D-008,
+ * card T-W-I13): the refusal is a zero-side-effect return value, so the caller
+ * must NOT count the task as queued. It is turned into a durable ledger row
+ * through the single {@link recordDispatchAlarm} channel (best-effort by
+ * design: a lossy audit must never break dispatch) plus a short human-visible
+ * PM alert. The two are deliberately separate — the alert is not the audit. */
+function reportWriteFaceRefusal(agenticdocRoot, taskKey, refusal, onRefusal) {
+    const alarm = {
+        kind: "write-face-refusal",
+        count: 1,
+        detail: writeFaceRefusalDetail(taskKey, refusal),
+    };
+    recordDispatchAlarm(agenticdocRoot, alarm);
+    onRefusal?.(formatDispatchAlarm(alarm));
 }
 /** Single-scan dispatch quota (AC-021). A scan that wants to queue more rows
  * than this is looking at something it does not understand (IN-3 queued 252 in
@@ -613,7 +639,7 @@ function ensureServiceEnvelope(taskMdPath, key, taskKey) {
  * its claim cell (dead/free), so `conductor.py`'s
  * `if claim == state.CLAIM_LIVE: … continue` stays false and the conductor can
  * resume driving the key at any time (AC-011). */
-async function dispatchOrphanCandidates(workerStore, key, candidates, maxPerScan, runVerdict) {
+async function dispatchOrphanCandidates(workerStore, agenticdocRoot, key, candidates, maxPerScan, runVerdict, onRefusal) {
     const result = {
         key,
         queued: [],
@@ -645,8 +671,15 @@ async function dispatchOrphanCandidates(workerStore, key, candidates, maxPerScan
         const { cli, provider } = pickWorkerRoute(taskContent);
         const model = readModel(taskContent);
         try {
-            await dispatchTask({ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath }, workerStore);
-            result.queued.push(taskKey);
+            const outcome = await dispatchTask({ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath }, workerStore);
+            if (outcome.ok) {
+                result.queued.push(taskKey);
+            }
+            else {
+                // AC-003/D-008: a refused task is never counted as queued, and the
+                // refusal leaves its own durable ledger row (best-effort).
+                reportWriteFaceRefusal(agenticdocRoot, taskKey, outcome, onRefusal);
+            }
         }
         catch (err) {
             // Same fail-closed per-task isolation as the normal scan (AC-007): one
@@ -693,7 +726,7 @@ export async function repairDispatchOrphanedKey(workerStore, agenticdocRoot, key
     }
     if (candidates.length === 0)
         return empty;
-    return dispatchOrphanCandidates(workerStore, key, candidates, maxPerScan, runVerdict);
+    return dispatchOrphanCandidates(workerStore, agenticdocRoot, key, candidates, maxPerScan, runVerdict, opts.onRefusal);
 }
 /** Does `key` have a live run? `run.json` pending/running (the worker's own
  * product, AC-022) or a queue row pending/running (the ledger's cache) both
@@ -908,7 +941,7 @@ export async function dispatchNewTasks(workerStore, agenticdocRoot, opts = {}) {
                 opts.onAlarm?.({ kind: "dispatch-quota", count: queued });
                 return;
             }
-            const repair = await dispatchOrphanCandidates(workerStore, owner.name, scopeVerdict.repairable, maxPerScan - queued, opts.runVerdict ?? defaultOrphanRunVerdict(agenticdocRoot, owner.name));
+            const repair = await dispatchOrphanCandidates(workerStore, agenticdocRoot, owner.name, scopeVerdict.repairable, maxPerScan - queued, opts.runVerdict ?? defaultOrphanRunVerdict(agenticdocRoot, owner.name), opts.onRefusal);
             queued += repair.queued.length;
             if (!(opts.orphanedWarned?.has(owner.name) ?? false)) {
                 opts.orphanedWarned?.add(owner.name);
@@ -960,7 +993,7 @@ export async function dispatchNewTasks(workerStore, agenticdocRoot, opts = {}) {
             const { cli, provider } = pickWorkerRoute(taskContent);
             const model = readModel(taskContent);
             try {
-                await dispatchTask({
+                const outcome = await dispatchTask({
                     taskKey,
                     status: "pending",
                     cli,
@@ -968,7 +1001,15 @@ export async function dispatchNewTasks(workerStore, agenticdocRoot, opts = {}) {
                     model,
                     taskPath: taskMdPath,
                 }, workerStore);
-                queued += 1;
+                if (outcome.ok) {
+                    queued += 1;
+                }
+                else {
+                    // AC-003/D-008: a write-face refusal is a return value, not a
+                    // throw — counting it as queued would both falsify the quota and
+                    // leave the refusal without any durable trace.
+                    reportWriteFaceRefusal(agenticdocRoot, taskKey, outcome, opts.onRefusal);
+                }
             }
             catch (err) {
                 // Fail-closed (mw-dual-workspace AC-007): an unusable target.yml
@@ -1357,6 +1398,9 @@ export function pmActivate(pi) {
             scope: "pm",
             watchedKey: watch.key,
             orphanedWarned,
+            // Per-task write-face refusals are recorded by the scan itself (one
+            // ledger row each, never deduped); this only delivers the human alert.
+            onRefusal: (text) => deliverPmAlert(pi, text),
             unregisteredWarned,
             // AC-022 (T-20): the product decides. A candidate whose own run.json
             // already ended (or is still live) is refused before any queue write;

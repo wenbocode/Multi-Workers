@@ -864,12 +864,20 @@ describe("VC-010: watch + monitor widgets coexist on one window (distinct ids, n
 		const root = mkdtemp();
 		// One window = one shared UI: every setWidget lands in a keyed store.
 		const store = new Map<string, string[] | undefined>();
-		const calls: Array<{ key: string; content: string[] | undefined; options?: { placement?: string } }> = [];
+		const calls: Array<{
+			key: string;
+			content: string[] | undefined;
+			options?: { placement?: string; order?: number };
+		}> = [];
 		const ctx = {
 			hasUI: true,
 			ui: {
 				notify: () => {},
-				setWidget: (key: string, content: string[] | undefined, options?: { placement?: string }) => {
+				setWidget: (
+					key: string,
+					content: string[] | undefined,
+					options?: { placement?: string; order?: number },
+				) => {
 					store.set(key, content);
 					calls.push({ key, content, options });
 				},
@@ -908,6 +916,10 @@ describe("VC-010: watch + monitor widgets coexist on one window (distinct ids, n
 			expect(store.get("agent-team-loop-monitor")?.join("\n")).toContain("serve: PID 27572 fresh");
 			// Both widgets stack below the editor (design D-003).
 			expect(calls.every((c) => c.options?.placement === "belowEditor")).toBe(true);
+			// mw-widget-order-stability: the monitor paints ABOVE the watch panel via an
+			// explicit order, so the two 4s pollers can no longer flip positions.
+			expect(calls.find((c) => c.key === "agent-team-loop-monitor")?.options?.order).toBe(0);
+			expect(calls.find((c) => c.key === "agent-team-loop-watch")?.options?.order).toBe(10);
 
 			// Interleaved refresh — one monitor tick, then a watch refresh:
 			// each re-render touches only its own id; both frames stay live.

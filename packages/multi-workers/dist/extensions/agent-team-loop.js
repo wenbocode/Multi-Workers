@@ -43,8 +43,8 @@ var require_windows = __commonJS({
   "node_modules/isexe/windows.js"(exports, module) {
     module.exports = isexe;
     isexe.sync = sync;
-    var fs40 = __require("fs");
-    function checkPathExt(path41, options) {
+    var fs41 = __require("fs");
+    function checkPathExt(path42, options) {
       var pathext = options.pathExt !== void 0 ? options.pathExt : process.env.PATHEXT;
       if (!pathext) {
         return true;
@@ -55,25 +55,25 @@ var require_windows = __commonJS({
       }
       for (var i = 0; i < pathext.length; i++) {
         var p = pathext[i].toLowerCase();
-        if (p && path41.substr(-p.length).toLowerCase() === p) {
+        if (p && path42.substr(-p.length).toLowerCase() === p) {
           return true;
         }
       }
       return false;
     }
-    function checkStat(stat, path41, options) {
+    function checkStat(stat, path42, options) {
       if (!stat.isSymbolicLink() && !stat.isFile()) {
         return false;
       }
-      return checkPathExt(path41, options);
+      return checkPathExt(path42, options);
     }
-    function isexe(path41, options, cb) {
-      fs40.stat(path41, function(er, stat) {
-        cb(er, er ? false : checkStat(stat, path41, options));
+    function isexe(path42, options, cb) {
+      fs41.stat(path42, function(er, stat) {
+        cb(er, er ? false : checkStat(stat, path42, options));
       });
     }
-    function sync(path41, options) {
-      return checkStat(fs40.statSync(path41), path41, options);
+    function sync(path42, options) {
+      return checkStat(fs41.statSync(path42), path42, options);
     }
   }
 });
@@ -83,14 +83,14 @@ var require_mode = __commonJS({
   "node_modules/isexe/mode.js"(exports, module) {
     module.exports = isexe;
     isexe.sync = sync;
-    var fs40 = __require("fs");
-    function isexe(path41, options, cb) {
-      fs40.stat(path41, function(er, stat) {
+    var fs41 = __require("fs");
+    function isexe(path42, options, cb) {
+      fs41.stat(path42, function(er, stat) {
         cb(er, er ? false : checkStat(stat, options));
       });
     }
-    function sync(path41, options) {
-      return checkStat(fs40.statSync(path41), options);
+    function sync(path42, options) {
+      return checkStat(fs41.statSync(path42), options);
     }
     function checkStat(stat, options) {
       return stat.isFile() && checkMode(stat, options);
@@ -114,7 +114,7 @@ var require_mode = __commonJS({
 // node_modules/isexe/index.js
 var require_isexe = __commonJS({
   "node_modules/isexe/index.js"(exports, module) {
-    var fs40 = __require("fs");
+    var fs41 = __require("fs");
     var core;
     if (process.platform === "win32" || global.TESTING_WINDOWS) {
       core = require_windows();
@@ -123,7 +123,7 @@ var require_isexe = __commonJS({
     }
     module.exports = isexe;
     isexe.sync = sync;
-    function isexe(path41, options, cb) {
+    function isexe(path42, options, cb) {
       if (typeof options === "function") {
         cb = options;
         options = {};
@@ -132,17 +132,17 @@ var require_isexe = __commonJS({
         if (typeof Promise !== "function") {
           throw new TypeError("callback not provided");
         }
-        return new Promise(function(resolve19, reject) {
-          isexe(path41, options || {}, function(er, is) {
+        return new Promise(function(resolve20, reject) {
+          isexe(path42, options || {}, function(er, is) {
             if (er) {
               reject(er);
             } else {
-              resolve19(is);
+              resolve20(is);
             }
           });
         });
       }
-      core(path41, options || {}, function(er, is) {
+      core(path42, options || {}, function(er, is) {
         if (er) {
           if (er.code === "EACCES" || options && options.ignoreErrors) {
             er = null;
@@ -152,9 +152,9 @@ var require_isexe = __commonJS({
         cb(er, is);
       });
     }
-    function sync(path41, options) {
+    function sync(path42, options) {
       try {
-        return core.sync(path41, options || {});
+        return core.sync(path42, options || {});
       } catch (er) {
         if (options && options.ignoreErrors || er.code === "EACCES") {
           return false;
@@ -170,7 +170,7 @@ var require_isexe = __commonJS({
 var require_which = __commonJS({
   "node_modules/which/which.js"(exports, module) {
     var isWindows = process.platform === "win32" || process.env.OSTYPE === "cygwin" || process.env.OSTYPE === "msys";
-    var path41 = __require("path");
+    var path42 = __require("path");
     var COLON = isWindows ? ";" : ":";
     var isexe = require_isexe();
     var getNotFoundError = (cmd) => Object.assign(new Error(`not found: ${cmd}`), { code: "ENOENT" });
@@ -203,27 +203,27 @@ var require_which = __commonJS({
         opt = {};
       const { pathEnv, pathExt, pathExtExe } = getPathInfo(cmd, opt);
       const found = [];
-      const step = (i) => new Promise((resolve19, reject) => {
+      const step = (i) => new Promise((resolve20, reject) => {
         if (i === pathEnv.length)
-          return opt.all && found.length ? resolve19(found) : reject(getNotFoundError(cmd));
+          return opt.all && found.length ? resolve20(found) : reject(getNotFoundError(cmd));
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-        const pCmd = path41.join(pathPart, cmd);
+        const pCmd = path42.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
-        resolve19(subStep(p, i, 0));
+        resolve20(subStep(p, i, 0));
       });
-      const subStep = (p, i, ii) => new Promise((resolve19, reject) => {
+      const subStep = (p, i, ii) => new Promise((resolve20, reject) => {
         if (ii === pathExt.length)
-          return resolve19(step(i + 1));
+          return resolve20(step(i + 1));
         const ext2 = pathExt[ii];
         isexe(p + ext2, { pathExt: pathExtExe }, (er, is) => {
           if (!er && is) {
             if (opt.all)
               found.push(p + ext2);
             else
-              return resolve19(p + ext2);
+              return resolve20(p + ext2);
           }
-          return resolve19(subStep(p, i, ii + 1));
+          return resolve20(subStep(p, i, ii + 1));
         });
       });
       return cb ? step(0).then((res) => cb(null, res), cb) : step(0);
@@ -235,7 +235,7 @@ var require_which = __commonJS({
       for (let i = 0; i < pathEnv.length; i++) {
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-        const pCmd = path41.join(pathPart, cmd);
+        const pCmd = path42.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
         for (let j = 0; j < pathExt.length; j++) {
           const cur = p + pathExt[j];
@@ -283,7 +283,7 @@ var require_path_key = __commonJS({
 var require_resolveCommand = __commonJS({
   "node_modules/cross-spawn/lib/util/resolveCommand.js"(exports, module) {
     "use strict";
-    var path41 = __require("path");
+    var path42 = __require("path");
     var which = require_which();
     var getPathKey = require_path_key();
     function resolveCommandAttempt(parsed, withoutPathExt) {
@@ -301,7 +301,7 @@ var require_resolveCommand = __commonJS({
       try {
         resolved = which.sync(parsed.command, {
           path: env[getPathKey({ env })],
-          pathExt: withoutPathExt ? path41.delimiter : void 0
+          pathExt: withoutPathExt ? path42.delimiter : void 0
         });
       } catch (e) {
       } finally {
@@ -310,7 +310,7 @@ var require_resolveCommand = __commonJS({
         }
       }
       if (resolved) {
-        resolved = path41.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
+        resolved = path42.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
       }
       return resolved;
     }
@@ -364,8 +364,8 @@ var require_shebang_command = __commonJS({
       if (!match2) {
         return null;
       }
-      const [path41, argument] = match2[0].replace(/#! ?/, "").split(" ");
-      const binary = path41.split("/").pop();
+      const [path42, argument] = match2[0].replace(/#! ?/, "").split(" ");
+      const binary = path42.split("/").pop();
       if (binary === "env") {
         return argument;
       }
@@ -378,16 +378,16 @@ var require_shebang_command = __commonJS({
 var require_readShebang = __commonJS({
   "node_modules/cross-spawn/lib/util/readShebang.js"(exports, module) {
     "use strict";
-    var fs40 = __require("fs");
+    var fs41 = __require("fs");
     var shebangCommand = require_shebang_command();
     function readShebang(command) {
       const size = 150;
       const buffer = Buffer.alloc(size);
       let fd;
       try {
-        fd = fs40.openSync(command, "r");
-        fs40.readSync(fd, buffer, 0, size, 0);
-        fs40.closeSync(fd);
+        fd = fs41.openSync(command, "r");
+        fs41.readSync(fd, buffer, 0, size, 0);
+        fs41.closeSync(fd);
       } catch (e) {
       }
       return shebangCommand(buffer.toString());
@@ -400,7 +400,7 @@ var require_readShebang = __commonJS({
 var require_parse = __commonJS({
   "node_modules/cross-spawn/lib/parse.js"(exports, module) {
     "use strict";
-    var path41 = __require("path");
+    var path42 = __require("path");
     var resolveCommand = require_resolveCommand();
     var escape2 = require_escape();
     var readShebang = require_readShebang();
@@ -425,7 +425,7 @@ var require_parse = __commonJS({
       const needsShell = !isExecutableRegExp.test(commandFile);
       if (parsed.options.forceShell || needsShell) {
         const needsDoubleEscapeMetaChars = isCmdShimRegExp.test(commandFile);
-        parsed.command = path41.normalize(parsed.command);
+        parsed.command = path42.normalize(parsed.command);
         parsed.command = escape2.command(parsed.command);
         parsed.args = parsed.args.map((arg) => escape2.argument(arg, needsDoubleEscapeMetaChars));
         const shellCommand = [parsed.command].concat(parsed.args).join(" ");
@@ -521,7 +521,7 @@ var require_cross_spawn = __commonJS({
       enoent.hookChildProcess(spawned, parsed);
       return spawned;
     }
-    function spawnSync4(command, args, options) {
+    function spawnSync5(command, args, options) {
       const parsed = parse3(command, args, options);
       const result = cp.spawnSync(parsed.command, parsed.args, parsed.options);
       result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
@@ -529,7 +529,7 @@ var require_cross_spawn = __commonJS({
     }
     module.exports = spawn4;
     module.exports.spawn = spawn4;
-    module.exports.sync = spawnSync4;
+    module.exports.sync = spawnSync5;
     module.exports._parse = parse3;
     module.exports._enoent = enoent;
   }
@@ -612,17 +612,17 @@ var require_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    function visit_(key, node, visitor, path41) {
-      const ctrl = callVisitor(key, node, visitor, path41);
+    function visit_(key, node, visitor, path42) {
+      const ctrl = callVisitor(key, node, visitor, path42);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path41, ctrl);
-        return visit_(key, ctrl, visitor, path41);
+        replaceNode(key, path42, ctrl);
+        return visit_(key, ctrl, visitor, path42);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path41 = Object.freeze(path41.concat(node));
+          path42 = Object.freeze(path42.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = visit_(i, node.items[i], visitor, path41);
+            const ci = visit_(i, node.items[i], visitor, path42);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -633,13 +633,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path41 = Object.freeze(path41.concat(node));
-          const ck = visit_("key", node.key, visitor, path41);
+          path42 = Object.freeze(path42.concat(node));
+          const ck = visit_("key", node.key, visitor, path42);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = visit_("value", node.value, visitor, path41);
+          const cv = visit_("value", node.value, visitor, path42);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -660,17 +660,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node, visitor, path41) {
-      const ctrl = await callVisitor(key, node, visitor, path41);
+    async function visitAsync_(key, node, visitor, path42) {
+      const ctrl = await callVisitor(key, node, visitor, path42);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path41, ctrl);
-        return visitAsync_(key, ctrl, visitor, path41);
+        replaceNode(key, path42, ctrl);
+        return visitAsync_(key, ctrl, visitor, path42);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path41 = Object.freeze(path41.concat(node));
+          path42 = Object.freeze(path42.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = await visitAsync_(i, node.items[i], visitor, path41);
+            const ci = await visitAsync_(i, node.items[i], visitor, path42);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -681,13 +681,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path41 = Object.freeze(path41.concat(node));
-          const ck = await visitAsync_("key", node.key, visitor, path41);
+          path42 = Object.freeze(path42.concat(node));
+          const ck = await visitAsync_("key", node.key, visitor, path42);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = await visitAsync_("value", node.value, visitor, path41);
+          const cv = await visitAsync_("value", node.value, visitor, path42);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -714,23 +714,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node, visitor, path41) {
+    function callVisitor(key, node, visitor, path42) {
       if (typeof visitor === "function")
-        return visitor(key, node, path41);
+        return visitor(key, node, path42);
       if (identity.isMap(node))
-        return visitor.Map?.(key, node, path41);
+        return visitor.Map?.(key, node, path42);
       if (identity.isSeq(node))
-        return visitor.Seq?.(key, node, path41);
+        return visitor.Seq?.(key, node, path42);
       if (identity.isPair(node))
-        return visitor.Pair?.(key, node, path41);
+        return visitor.Pair?.(key, node, path42);
       if (identity.isScalar(node))
-        return visitor.Scalar?.(key, node, path41);
+        return visitor.Scalar?.(key, node, path42);
       if (identity.isAlias(node))
-        return visitor.Alias?.(key, node, path41);
+        return visitor.Alias?.(key, node, path42);
       return void 0;
     }
-    function replaceNode(key, path41, node) {
-      const parent = path41[path41.length - 1];
+    function replaceNode(key, path42, node) {
+      const parent = path42[path42.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node;
       } else if (identity.isPair(parent)) {
@@ -1340,10 +1340,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path41, value) {
+    function collectionFromPath(schema, path42, value) {
       let v = value;
-      for (let i = path41.length - 1; i >= 0; --i) {
-        const k = path41[i];
+      for (let i = path42.length - 1; i >= 0; --i) {
+        const k = path42[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -1362,7 +1362,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path41) => path41 == null || typeof path41 === "object" && !!path41[Symbol.iterator]().next().done;
+    var isEmptyPath = (path42) => path42 == null || typeof path42 === "object" && !!path42[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -1392,11 +1392,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path41, value) {
-        if (isEmptyPath(path41))
+      addIn(path42, value) {
+        if (isEmptyPath(path42))
           this.add(value);
         else {
-          const [key, ...rest] = path41;
+          const [key, ...rest] = path42;
           const node = this.get(key, true);
           if (identity.isCollection(node))
             node.addIn(rest, value);
@@ -1410,8 +1410,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path41) {
-        const [key, ...rest] = path41;
+      deleteIn(path42) {
+        const [key, ...rest] = path42;
         if (rest.length === 0)
           return this.delete(key);
         const node = this.get(key, true);
@@ -1425,8 +1425,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path41, keepScalar) {
-        const [key, ...rest] = path41;
+      getIn(path42, keepScalar) {
+        const [key, ...rest] = path42;
         const node = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node) ? node.value : node;
@@ -1444,8 +1444,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path41) {
-        const [key, ...rest] = path41;
+      hasIn(path42) {
+        const [key, ...rest] = path42;
         if (rest.length === 0)
           return this.has(key);
         const node = this.get(key, true);
@@ -1455,8 +1455,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path41, value) {
-        const [key, ...rest] = path41;
+      setIn(path42, value) {
+        const [key, ...rest] = path42;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -1590,16 +1590,16 @@ var require_foldFlowLines = __commonJS({
         onFold();
       let res = text.slice(0, folds[0]);
       for (let i2 = 0; i2 < folds.length; ++i2) {
-        const fold4 = folds[i2];
+        const fold5 = folds[i2];
         const end2 = folds[i2 + 1] || text.length;
-        if (fold4 === 0)
+        if (fold5 === 0)
           res = `
 ${indent}${text.slice(0, end2)}`;
         else {
-          if (mode === FOLD_QUOTED && escapedFolds[fold4])
-            res += `${text[fold4]}\\`;
+          if (mode === FOLD_QUOTED && escapedFolds[fold5])
+            res += `${text[fold5]}\\`;
           res += `
-${indent}${text.slice(fold4 + 1, end2)}`;
+${indent}${text.slice(fold5 + 1, end2)}`;
         }
       }
       return res;
@@ -3971,9 +3971,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path41, value) {
+      addIn(path42, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path41, value);
+          this.contents.addIn(path42, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -4048,14 +4048,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path41) {
-        if (Collection.isEmptyPath(path41)) {
+      deleteIn(path42) {
+        if (Collection.isEmptyPath(path42)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path41) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path42) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -4070,10 +4070,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path41, keepScalar) {
-        if (Collection.isEmptyPath(path41))
+      getIn(path42, keepScalar) {
+        if (Collection.isEmptyPath(path42))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path41, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path42, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -4084,10 +4084,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path41) {
-        if (Collection.isEmptyPath(path41))
+      hasIn(path42) {
+        if (Collection.isEmptyPath(path42))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path41) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path42) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -4104,13 +4104,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path41, value) {
-        if (Collection.isEmptyPath(path41)) {
+      setIn(path42, value) {
+        if (Collection.isEmptyPath(path42)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path41), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path42), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path41, value);
+          this.contents.setIn(path42, value);
         }
       }
       /**
@@ -4949,7 +4949,7 @@ var require_resolve_block_scalar = __commonJS({
       if (!header)
         return { value: "", type: null, comment: "", range: [start, start, start] };
       const type = header.mode === ">" ? Scalar.Scalar.BLOCK_FOLDED : Scalar.Scalar.BLOCK_LITERAL;
-      const lines = scalar.source ? splitLines2(scalar.source) : [];
+      const lines = scalar.source ? splitLines3(scalar.source) : [];
       let chompStart = lines.length;
       for (let i = lines.length - 1; i >= 0; --i) {
         const content = lines[i][1];
@@ -5107,7 +5107,7 @@ var require_resolve_block_scalar = __commonJS({
       }
       return { mode, indent, chomp, comment, length };
     }
-    function splitLines2(source) {
+    function splitLines3(source) {
       const split = source.split(/\n( *)/);
       const first = split[0];
       const m = first.match(/^( *)/);
@@ -5237,8 +5237,8 @@ var require_resolve_flow_scalar = __commonJS({
         if (ch === "\r" && source[i + 1] === "\n")
           continue;
         if (ch === "\n") {
-          const { fold: fold4, offset } = foldNewline(source, i);
-          res += fold4;
+          const { fold: fold5, offset } = foldNewline(source, i);
+          res += fold5;
           i = offset;
         } else if (ch === "\\") {
           let next = source[++i];
@@ -5278,19 +5278,19 @@ var require_resolve_flow_scalar = __commonJS({
       return res;
     }
     function foldNewline(source, offset) {
-      let fold4 = "";
+      let fold5 = "";
       let ch = source[offset + 1];
       while (ch === " " || ch === "	" || ch === "\n" || ch === "\r") {
         if (ch === "\r" && source[offset + 2] !== "\n")
           break;
         if (ch === "\n")
-          fold4 += "\n";
+          fold5 += "\n";
         offset += 1;
         ch = source[offset + 1];
       }
-      if (!fold4)
-        fold4 = " ";
-      return { fold: fold4, offset };
+      if (!fold5)
+        fold5 = " ";
+      return { fold: fold5, offset };
     }
     var escapeCodes = {
       "0": "\0",
@@ -6070,9 +6070,9 @@ var require_cst_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    visit.itemAtPath = (cst, path41) => {
+    visit.itemAtPath = (cst, path42) => {
       let item = cst;
-      for (const [field, index] of path41) {
+      for (const [field, index] of path42) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -6081,23 +6081,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit.parentCollection = (cst, path41) => {
-      const parent = visit.itemAtPath(cst, path41.slice(0, -1));
-      const field = path41[path41.length - 1][0];
+    visit.parentCollection = (cst, path42) => {
+      const parent = visit.itemAtPath(cst, path42.slice(0, -1));
+      const field = path42[path42.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path41, item, visitor) {
-      let ctrl = visitor(item, path41);
+    function _visit(path42, item, visitor) {
+      let ctrl = visitor(item, path42);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path41.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path42.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -6108,10 +6108,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path41);
+            ctrl = ctrl(item, path42);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path41) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path42) : ctrl;
     }
     exports.visit = visit;
   }
@@ -7413,14 +7413,14 @@ var require_parser = __commonJS({
             case "scalar":
             case "single-quoted-scalar":
             case "double-quoted-scalar": {
-              const fs40 = this.flowScalar(this.type);
+              const fs41 = this.flowScalar(this.type);
               if (atNextItem || it.value) {
-                map.items.push({ start, key: fs40, sep: [] });
+                map.items.push({ start, key: fs41, sep: [] });
                 this.onKeyLine = true;
               } else if (it.sep) {
-                this.stack.push(fs40);
+                this.stack.push(fs41);
               } else {
-                Object.assign(it, { key: fs40, sep: [] });
+                Object.assign(it, { key: fs41, sep: [] });
                 this.onKeyLine = true;
               }
               return;
@@ -7548,13 +7548,13 @@ var require_parser = __commonJS({
             case "scalar":
             case "single-quoted-scalar":
             case "double-quoted-scalar": {
-              const fs40 = this.flowScalar(this.type);
+              const fs41 = this.flowScalar(this.type);
               if (!it || it.value)
-                fc.items.push({ start: [], key: fs40, sep: [] });
+                fc.items.push({ start: [], key: fs41, sep: [] });
               else if (it.sep)
-                this.stack.push(fs40);
+                this.stack.push(fs41);
               else
-                Object.assign(it, { key: fs40, sep: [] });
+                Object.assign(it, { key: fs41, sep: [] });
               return;
             }
             case "flow-map-end":
@@ -7871,9 +7871,9 @@ import * as fs34 from "node:fs";
 import * as path35 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
-import * as fs29 from "node:fs";
+import * as fs31 from "node:fs";
 import * as os4 from "node:os";
-import * as path31 from "node:path";
+import * as path33 from "node:path";
 
 // node_modules/typebox/build/system/memory/memory.mjs
 var memory_exports = {};
@@ -17604,6 +17604,565 @@ function controlRootFromTaskPath(taskPath) {
   return path16.dirname(agenticdocRoot2);
 }
 
+// packages/coding-agent/src/extensions/agent-team-loop/shared/write-face.ts
+var WRITE_FACE_EMPTY = "write-face-empty";
+var WRITE_FACE_INVALID_ENTRY = "write-face-invalid-entry";
+var WRITE_FACE_ESCAPE = "write-face-escape";
+var WRITE_FACE_OUTSIDE_BASE = "write-face-outside-base";
+var WRITE_FACE_EMPTY_DETAIL = "present-but-empty write_face head";
+var MAX_TOKEN_RUN = 256;
+var MAX_GLOB_SEGMENTS = 512;
+var MAX_PRODUCT_STATES = 1 << 16;
+var MAX_SEG_BFS_STATES = 1 << 16;
+var MAX_BRACE_DEPTH = 8;
+var MAX_BRACE_EXPANSIONS = 256;
+var ANY_SEGMENT = "**";
+var PROBE = buildProbe();
+function buildProbe() {
+  const out = [];
+  for (const ch of "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-") out.push(ch);
+  for (let code = 33; code < 127; code++) out.push(String.fromCharCode(code));
+  for (let code = 128; code < 512; code++) out.push(String.fromCharCode(code));
+  return out;
+}
+function normalizeSeparators(text) {
+  return text.replace(/\\/g, "/");
+}
+function fold(text, caseInsensitive) {
+  return caseInsensitive ? text.toLowerCase() : text;
+}
+function eq(a, b, caseInsensitive) {
+  if (a === b) return true;
+  return caseInsensitive && a.toLowerCase() === b.toLowerCase();
+}
+function isAbsolutePath(p) {
+  return p.startsWith("/") || /^[A-Za-z]:\//.test(p);
+}
+function toRelative(p, base, caseInsensitive) {
+  const b = normalizeSeparators(base).replace(/\/+$/, "");
+  if (eq(p, b, caseInsensitive)) return "";
+  if (fold(p, caseInsensitive).startsWith(fold(`${b}/`, caseInsensitive))) return p.slice(b.length + 1);
+  return null;
+}
+function collapseDoubleStar(segments) {
+  const out = [];
+  for (const seg of segments) {
+    if (seg === ANY_SEGMENT && out.length > 0 && out[out.length - 1] === ANY_SEGMENT) continue;
+    out.push(seg);
+  }
+  return out;
+}
+function splitLines2(text) {
+  return text.replace(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/g, "\n").split("\n");
+}
+var BLOCK_ITEM_RE = /^[ \t]+-[ \t]*(.*)$/;
+function findHead(lines, name) {
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx];
+    if (!line.startsWith(name)) continue;
+    const tail = line.slice(name.length);
+    const m = /^[ \t]*:(.*)$/.exec(tail);
+    if (m === null) continue;
+    const rest = m[1].trim();
+    if (rest !== "") return { value: rest, block: null };
+    const items = [];
+    let k = idx + 1;
+    while (k < lines.length) {
+      const item = BLOCK_ITEM_RE.exec(lines[k]);
+      if (item === null) break;
+      items.push(item[1].trim());
+      k++;
+    }
+    return { value: "", block: items.length > 0 ? items : null };
+  }
+  return null;
+}
+function splitSingleLine(value) {
+  const s = value.trim();
+  if (s.length >= 2 && s[0] === s[s.length - 1] && (s[0] === '"' || s[0] === "'")) return [s.slice(1, -1)];
+  return s.split(",");
+}
+function findAltStart(text) {
+  let inClass = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inClass) {
+      if (c === "]") inClass = false;
+      continue;
+    }
+    if (c === "[") {
+      inClass = true;
+      continue;
+    }
+    if (c === "{") return { kind: "brace", start: i, end: matchClose(text, i, "{", "}") };
+    if (c === "@" && i + 1 < text.length && text[i + 1] === "(")
+      return { kind: "alt", start: i, end: matchClose(text, i + 1, "(", ")") };
+  }
+  return null;
+}
+function matchClose(text, openIdx, opener, closer) {
+  let depth = 0;
+  let inClass = false;
+  for (let i = openIdx; i < text.length; i++) {
+    const c = text[i];
+    if (inClass) {
+      if (c === "]") inClass = false;
+      continue;
+    }
+    if (c === "[") {
+      inClass = true;
+      continue;
+    }
+    if (c === opener) depth++;
+    else if (c === closer) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return null;
+}
+function splitTopLevel(body, sep11) {
+  const parts = [];
+  let current = "";
+  let braceDepth = 0;
+  let parenDepth = 0;
+  let inClass = false;
+  for (const c of body) {
+    if (inClass) {
+      current += c;
+      if (c === "]") inClass = false;
+      continue;
+    }
+    if (c === "[") {
+      inClass = true;
+      current += c;
+      continue;
+    }
+    if (c === "{") braceDepth++;
+    else if (c === "}") braceDepth--;
+    else if (c === "(") parenDepth++;
+    else if (c === ")") parenDepth--;
+    if (c === sep11 && braceDepth === 0 && parenDepth === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += c;
+  }
+  parts.push(current);
+  return parts;
+}
+function expandAlts(text) {
+  const out = [];
+  let ok = true;
+  const stack = [{ text, depth: 0 }];
+  while (stack.length > 0) {
+    const cur = stack.pop();
+    if (cur === void 0) break;
+    const found = findAltStart(cur.text);
+    if (found === null) {
+      out.push(cur.text);
+      if (out.length > MAX_BRACE_EXPANSIONS) {
+        ok = false;
+        break;
+      }
+      continue;
+    }
+    if (found.end === null || cur.depth + 1 > MAX_BRACE_DEPTH) {
+      ok = false;
+      out.push(cur.text);
+      continue;
+    }
+    const body = found.kind === "brace" ? cur.text.slice(found.start + 1, found.end) : cur.text.slice(found.start + 2, found.end);
+    const sep11 = found.kind === "brace" ? "," : "|";
+    const parts = splitTopLevel(body, sep11);
+    if (parts.length === 1) {
+      ok = false;
+      out.push(cur.text);
+      continue;
+    }
+    for (let p = parts.length - 1; p >= 0; p--) {
+      stack.push({
+        text: cur.text.slice(0, found.start) + parts[p] + cur.text.slice(found.end + 1),
+        depth: cur.depth + 1
+      });
+    }
+  }
+  return { alternatives: out, ok };
+}
+function parseClass2(seg, start) {
+  const n = seg.length;
+  let i = start + 1;
+  let negated = false;
+  if (i < n && (seg[i] === "!" || seg[i] === "^")) {
+    negated = true;
+    i++;
+  }
+  const chars = [];
+  let first = true;
+  while (i < n) {
+    const c = seg[i];
+    if (c === "]" && !first) {
+      if (chars.length === 0) return null;
+      return { token: { kind: "class", members: chars, negated }, next: i + 1 };
+    }
+    if (c === "]" && first) {
+      chars.push("]");
+      first = false;
+      i++;
+      continue;
+    }
+    if (i + 2 < n && seg[i + 1] === "-" && seg[i + 2] !== "]") {
+      const lo = seg[i];
+      const hi = seg[i + 2];
+      if (lo.charCodeAt(0) > hi.charCodeAt(0)) return null;
+      for (let code = lo.charCodeAt(0); code <= hi.charCodeAt(0); code++) chars.push(String.fromCharCode(code));
+      first = false;
+      i += 3;
+      continue;
+    }
+    chars.push(c);
+    first = false;
+    i++;
+  }
+  return null;
+}
+function tokenizeSegment(seg) {
+  const tokens = [];
+  const n = seg.length;
+  let i = 0;
+  while (i < n) {
+    const c = seg[i];
+    if (c === "*") {
+      if (i + 1 < n && seg[i + 1] === "(") return null;
+      tokens.push({ kind: "star" });
+      i++;
+    } else if (c === "?") {
+      if (i + 1 < n && seg[i + 1] === "(") return null;
+      tokens.push({ kind: "qmark" });
+      i++;
+    } else if (c === "[") {
+      const parsed = parseClass2(seg, i);
+      if (parsed === null) return null;
+      tokens.push(parsed.token);
+      i = parsed.next;
+    } else if (c === "]" || c === "}" || c === "{") {
+      return null;
+    } else if ((c === "+" || c === "!") && i + 1 < n && seg[i + 1] === "(") {
+      return null;
+    } else {
+      tokens.push({ kind: "lit", ch: c });
+      i++;
+    }
+  }
+  if (tokens.length === 0) return null;
+  return tokens;
+}
+function hasBareBang(text) {
+  let inClass = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inClass) {
+      if (c === "]") inClass = false;
+      continue;
+    }
+    if (c === "[") {
+      inClass = true;
+      continue;
+    }
+    if (c === "!") {
+      if (!(i + 1 < text.length && text[i + 1] === "(")) return true;
+    }
+  }
+  return false;
+}
+function hasTopLevelComma(text) {
+  let braceDepth = 0;
+  let parenDepth = 0;
+  let inClass = false;
+  for (const c of text) {
+    if (inClass) {
+      if (c === "]") inClass = false;
+      continue;
+    }
+    if (c === "[") {
+      inClass = true;
+      continue;
+    }
+    if (c === "{") braceDepth++;
+    else if (c === "}") braceDepth--;
+    else if (c === "(") parenDepth++;
+    else if (c === ")") parenDepth--;
+    else if (c === "," && braceDepth === 0 && parenDepth === 0) return true;
+  }
+  return false;
+}
+function compileNormalized(norm) {
+  const { alternatives, ok } = expandAlts(norm);
+  const globs = [];
+  for (const text of alternatives) {
+    let unsupported = !ok;
+    const segments = [];
+    for (const seg of text.split("/")) {
+      if (seg === "" || seg === ".") continue;
+      if (seg === "..") return { kind: "rejected", code: WRITE_FACE_ESCAPE };
+      if (seg === ANY_SEGMENT) {
+        if (segments.length > 0 && segments[segments.length - 1].kind === "any") continue;
+        segments.push({ kind: "any" });
+        continue;
+      }
+      const tokens = tokenizeSegment(seg);
+      if (tokens === null) {
+        unsupported = true;
+        segments.push({ kind: "pattern", tokens: [] });
+        continue;
+      }
+      if (tokens.length > MAX_TOKEN_RUN) unsupported = true;
+      segments.push({ kind: "pattern", tokens });
+    }
+    if (segments.length === 0) return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
+    if (segments.length > MAX_GLOB_SEGMENTS) unsupported = true;
+    globs.push({ text, segments, unsupported });
+  }
+  if (globs.length === 0) return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
+  return { kind: "ok", globs };
+}
+function normalizeEntry(raw, base, caseInsensitive) {
+  let entry = raw.trim();
+  if (entry === "" || entry === "-") return { kind: "skip" };
+  if (entry.length >= 2 && entry[0] === entry[entry.length - 1] && (entry[0] === '"' || entry[0] === "'")) {
+    entry = entry.slice(1, -1);
+  }
+  if (hasTopLevelComma(entry)) return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
+  if (entry.includes('"') || entry.includes("'")) return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
+  entry = normalizeSeparators(entry);
+  if (hasBareBang(entry)) return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
+  if (isAbsolutePath(entry)) {
+    const rel = toRelative(entry, base, caseInsensitive);
+    if (rel === null) return { kind: "rejected", code: WRITE_FACE_OUTSIDE_BASE };
+    entry = rel;
+  }
+  const segments = [];
+  for (const seg of entry.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") return { kind: "rejected", code: WRITE_FACE_ESCAPE };
+    segments.push(seg);
+  }
+  const collapsed = collapseDoubleStar(segments);
+  if (collapsed.length === 0) return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
+  const norm = collapsed.join("/");
+  const compiled = compileNormalized(norm);
+  if (compiled.kind === "rejected") return compiled;
+  return { kind: "ok", globs: compiled.globs, norm };
+}
+function normalizeEntries(rawEntries, base, caseInsensitive, label) {
+  const globs = [];
+  const entries = [];
+  for (const raw of rawEntries) {
+    const r = normalizeEntry(raw, base, caseInsensitive);
+    if (r.kind === "skip") continue;
+    if (r.kind === "rejected") return { kind: "rejected", code: r.code, detail: `${label} '${raw}'` };
+    globs.push(...r.globs);
+    entries.push(r.norm);
+  }
+  return { kind: "ok", globs, entries };
+}
+function buildFace(rawAllow, rawDeny, opts) {
+  if (rawAllow.length === 0) return { kind: "rejected", code: WRITE_FACE_EMPTY, detail: WRITE_FACE_EMPTY_DETAIL };
+  const allow = normalizeEntries(rawAllow, opts.base, opts.caseInsensitive, "entry");
+  if (allow.kind === "rejected") return allow;
+  if (allow.entries.length === 0) return { kind: "rejected", code: WRITE_FACE_EMPTY, detail: WRITE_FACE_EMPTY_DETAIL };
+  const denyNormalized = normalizeEntries(rawDeny, opts.base, opts.caseInsensitive, "deny entry");
+  if (denyNormalized.kind === "rejected") return denyNormalized;
+  const face = {
+    allow: allow.globs,
+    entries: allow.entries,
+    deny: denyNormalized.entries,
+    base: opts.base,
+    caseInsensitive: opts.caseInsensitive
+  };
+  return { kind: "declared", face };
+}
+function parseWriteFace(text, opts) {
+  const lines = splitLines2(text);
+  const allowHead = findHead(lines, "write_face");
+  if (allowHead === null) return { kind: "undeclared" };
+  if (allowHead.block === null && allowHead.value.trim() === "-") return { kind: "undeclared" };
+  const rawAllow = allowHead.block !== null ? allowHead.block : splitSingleLine(allowHead.value);
+  const denyHead = findHead(lines, "write_face_deny");
+  let rawDeny = [];
+  if (denyHead !== null && !(denyHead.block === null && denyHead.value.trim() === "-")) {
+    rawDeny = denyHead.block !== null ? denyHead.block : splitSingleLine(denyHead.value);
+  }
+  return buildFace(rawAllow, rawDeny, opts);
+}
+function parseWriteFaceEntries(entries, opts, denyEntries = []) {
+  return buildFace(entries, denyEntries, opts);
+}
+function tokenAllows(tok, ch, caseInsensitive) {
+  if (tok.kind === "lit") return eq(tok.ch, ch, caseInsensitive);
+  if (tok.kind === "class") {
+    const member = tok.members.some((c) => eq(c, ch, caseInsensitive));
+    return tok.negated ? !member : member;
+  }
+  return true;
+}
+function commonChar(ta, tb, caseInsensitive) {
+  if (ta.kind === "lit") return { kind: "ok", value: tokenAllows(tb, ta.ch, caseInsensitive) ? ta.ch : null };
+  if (tb.kind === "lit") return { kind: "ok", value: tokenAllows(ta, tb.ch, caseInsensitive) ? tb.ch : null };
+  if (ta.kind === "class" && !ta.negated) {
+    for (const c of ta.members) if (tokenAllows(tb, c, caseInsensitive)) return { kind: "ok", value: c };
+    return { kind: "ok", value: null };
+  }
+  if (tb.kind === "class" && !tb.negated) {
+    for (const c of tb.members) if (tokenAllows(ta, c, caseInsensitive)) return { kind: "ok", value: c };
+    return { kind: "ok", value: null };
+  }
+  for (const c of PROBE)
+    if (tokenAllows(ta, c, caseInsensitive) && tokenAllows(tb, c, caseInsensitive)) return { kind: "ok", value: c };
+  return { kind: "unsupported", reason: "segment-pattern-probe-exhausted" };
+}
+function segOverlap(a, b, caseInsensitive) {
+  if (a.length > MAX_TOKEN_RUN || b.length > MAX_TOKEN_RUN)
+    return { kind: "unsupported", reason: "segment-pattern-length-limit" };
+  const key = (i, j, consumed) => `${i},${j},${consumed ? 1 : 0}`;
+  const parent = /* @__PURE__ */ new Map();
+  const charIn = /* @__PURE__ */ new Map();
+  const start = key(0, 0, false);
+  parent.set(start, null);
+  charIn.set(start, "");
+  const queue = [{ i: 0, j: 0, consumed: false }];
+  for (let head = 0; head < queue.length; head++) {
+    const { i, j, consumed } = queue[head];
+    const state = key(i, j, consumed);
+    if (i === a.length && j === b.length && consumed) {
+      const chars = [];
+      let cur = state;
+      while (cur !== null) {
+        chars.push(charIn.get(cur) ?? "");
+        cur = parent.get(cur) ?? null;
+      }
+      chars.reverse();
+      return { kind: "ok", value: chars.join("") };
+    }
+    const push = (ni, nj, nConsumed, ch) => {
+      const k = key(ni, nj, nConsumed);
+      if (!parent.has(k)) {
+        parent.set(k, state);
+        charIn.set(k, ch);
+        queue.push({ i: ni, j: nj, consumed: nConsumed });
+      }
+    };
+    if (i < a.length && a[i].kind === "star") push(i + 1, j, consumed, "");
+    if (j < b.length && b[j].kind === "star") push(i, j + 1, consumed, "");
+    if (i < a.length && j < b.length) {
+      const ta = a[i];
+      const tb = b[j];
+      if (ta.kind === "star" && tb.kind === "star") {
+        push(i, j, true, "x");
+      } else {
+        const ch = commonChar(ta, tb, caseInsensitive);
+        if (ch.kind === "unsupported") return ch;
+        if (ch.kind === "ok" && ch.value !== null) {
+          const ni = ta.kind === "star" ? i : i + 1;
+          const nj = tb.kind === "star" ? j : j + 1;
+          push(ni, nj, true, ch.value);
+        }
+      }
+    }
+    if (parent.size > MAX_SEG_BFS_STATES) return { kind: "unsupported", reason: "segment-pattern-state-limit" };
+  }
+  return { kind: "none" };
+}
+function segmentExample(tokens, caseInsensitive) {
+  const r = segOverlap(tokens, tokens, caseInsensitive);
+  if (r.kind === "ok") return r;
+  if (r.kind === "unsupported") return r;
+  return { kind: "unsupported", reason: "segment-pattern-empty" };
+}
+function globsOverlap(ga, gb, caseInsensitive) {
+  const la = ga.length;
+  const lb = gb.length;
+  if ((la + 1) * (lb + 1) > MAX_PRODUCT_STATES) return { kind: "unsupported", reason: "glob-product-state-limit" };
+  const key = (i, j, consumed) => `${i},${j},${consumed ? 1 : 0}`;
+  const parent = /* @__PURE__ */ new Map();
+  const segIn = /* @__PURE__ */ new Map();
+  const start = key(0, 0, false);
+  parent.set(start, null);
+  segIn.set(start, null);
+  const queue = [{ i: 0, j: 0, consumed: false }];
+  for (let head = 0; head < queue.length; head++) {
+    const { i, j, consumed } = queue[head];
+    const state = key(i, j, consumed);
+    if (i === la && j === lb && consumed) {
+      const segments = [];
+      let cur = state;
+      while (cur !== null) {
+        const witness = segIn.get(cur);
+        if (witness !== null && witness !== void 0) segments.push(witness);
+        cur = parent.get(cur) ?? null;
+      }
+      segments.reverse();
+      return { kind: "ok", value: segments };
+    }
+    const push = (ni, nj, nConsumed, witness) => {
+      const k = key(ni, nj, nConsumed);
+      if (!parent.has(k)) {
+        parent.set(k, state);
+        segIn.set(k, witness);
+        queue.push({ i: ni, j: nj, consumed: nConsumed });
+      }
+    };
+    if (i < la && ga[i].kind === "any") push(i + 1, j, consumed, null);
+    if (j < lb && gb[j].kind === "any") push(i, j + 1, consumed, null);
+    if (i < la && j < lb) {
+      const sa = ga[i];
+      const sb = gb[j];
+      if (sa.kind === "any" && sb.kind === "any") {
+        push(i, j, true, "x");
+      } else if (sa.kind === "any" && sb.kind === "pattern") {
+        const witness = segmentExample(sb.tokens, caseInsensitive);
+        if (witness.kind === "unsupported") return witness;
+        push(i, j + 1, true, witness.value);
+      } else if (sa.kind === "pattern" && sb.kind === "any") {
+        const witness = segmentExample(sa.tokens, caseInsensitive);
+        if (witness.kind === "unsupported") return witness;
+        push(i + 1, j, true, witness.value);
+      } else if (sa.kind === "pattern" && sb.kind === "pattern") {
+        const witness = segOverlap(sa.tokens, sb.tokens, caseInsensitive);
+        if (witness.kind === "unsupported") return witness;
+        if (witness.kind === "ok") push(i + 1, j + 1, true, witness.value);
+      }
+    }
+  }
+  return { kind: "none" };
+}
+function writeFacesOverlap(a, b) {
+  const baseA = fold(normalizeSeparators(a.base).replace(/\/+$/, ""), a.caseInsensitive);
+  const baseB = fold(normalizeSeparators(b.base).replace(/\/+$/, ""), b.caseInsensitive);
+  if (baseA !== baseB) return { unsupported: "incomparable-base" };
+  if (a.caseInsensitive !== b.caseInsensitive) return { unsupported: "incomparable-case-mode" };
+  const caseInsensitive = a.caseInsensitive;
+  let deferred = null;
+  for (const ga of a.allow) {
+    for (const gb of b.allow) {
+      if (ga.unsupported || gb.unsupported) {
+        deferred = deferred ?? "unsupported-syntax";
+        continue;
+      }
+      const witness = globsOverlap(ga.segments, gb.segments, caseInsensitive);
+      if (witness.kind === "unsupported") {
+        deferred = deferred ?? witness.reason;
+        continue;
+      }
+      if (witness.kind === "none") continue;
+      return { sample: witness.value.join("/"), rule: ga.text, other: gb.text, reason: "write-face-overlap" };
+    }
+  }
+  if (deferred !== null) return { unsupported: deferred };
+  return null;
+}
+
 // packages/coding-agent/src/extensions/agent-team-loop/worker/phase-runner.ts
 import * as fs14 from "node:fs";
 import * as path17 from "node:path";
@@ -17795,6 +18354,10 @@ function isWritelessRole(taskType) {
   const tools = activeToolsForType(taskType);
   return !tools.includes("write") && !tools.includes("edit");
 }
+function hasWriteTools(taskType) {
+  const tools = activeToolsForType(taskType);
+  return tools.includes("write") || tools.includes("edit");
+}
 function checkpointSteerText(opts) {
   if (opts.hasWriteTools) {
     return `[mw checkpoint] \u8FD0\u884C ${formatHeartbeatAge(opts.elapsedMs)}\uFF08\u603B\u9884\u7B97 ${formatHeartbeatAge(
@@ -17970,6 +18533,10 @@ function parseTaskMd(taskPath) {
   const agenticdocRoot2 = path19.dirname(path19.dirname(taskPath));
   const taskKey = path19.basename(path19.dirname(taskPath));
   const trueAgenticdocRoot = path19.dirname(path19.dirname(agenticdocRoot2));
+  const writeFaceParsed = parseWriteFace(content, {
+    base: path19.dirname(trueAgenticdocRoot),
+    caseInsensitive: process.platform === "win32"
+  });
   return {
     type: taskType,
     phase,
@@ -17983,6 +18550,8 @@ function parseTaskMd(taskPath) {
     readScope,
     denyGlobs,
     writeScope,
+    writeFaceEntries: writeFaceParsed.kind === "declared" ? [...writeFaceParsed.face.entries] : void 0,
+    writeFaceRejected: writeFaceParsed.kind === "rejected" ? writeFaceParsed.code : void 0,
     readFileCap,
     readByteCap,
     ragChatBudget,
@@ -18129,6 +18698,15 @@ function tokenizeShellCommand(command) {
       hasWord = true;
       append(command[i + 1], false);
       i += 2;
+      continue;
+    }
+    if (ch === "@" && !hasWord && (command[i + 1] === "'" || command[i + 1] === '"')) {
+      const close = `${command[i + 1]}@`;
+      const closeAt = command.indexOf(close, i + 2);
+      const end = closeAt === -1 ? command.length : closeAt + close.length;
+      hasWord = true;
+      word += command.slice(i, end);
+      i = end;
       continue;
     }
     if (ch === " " || ch === "	") {
@@ -18427,6 +19005,9 @@ function skipWrapperPrefix(tokens, start) {
   }
   return { index: i, placeholders };
 }
+function isFlagLikeRedirectTarget(text) {
+  return text.length > 1 && text.startsWith("-");
+}
 function extractFromTokens(tokens, depth, out, opaqueTokens) {
   const add = (source, pattern, verbatimOverride) => {
     const value = (typeof source === "string" ? source : source.text).trim();
@@ -18459,11 +19040,11 @@ function extractFromTokens(tokens, depth, out, opaqueTokens) {
         const next = list[i + 1];
         if (next === void 0) continue;
         if (!next.operator) {
-          add(next, "redirect");
+          if (!isFlagLikeRedirectTarget(next.text)) add(next, "redirect");
           continue;
         }
         const after = list[i + 2];
-        if (after !== void 0 && !after.operator) {
+        if (after !== void 0 && !after.operator && !isFlagLikeRedirectTarget(after.text)) {
           if (next.text === "|") add(after, "redirect-clobber");
           else if (next.text === "&" && !/^\d+$/.test(after.text) && after.text !== "-") {
             add(after, "redirect-fd-target");
@@ -18790,7 +19371,9 @@ function bashWriteDenyReason(config, target) {
   if (isSameOrUnder(config.trueRoot, target) && !isSameOrUnder(config.keyDir, target)) {
     return "other key dir / .agenticdoc root";
   }
-  if (isSameOrUnder(path19.join(config.projectRoot, "packages"), target)) return "packages/**";
+  if (config.roleClass !== "writable" && isSameOrUnder(path19.join(config.projectRoot, "packages"), target)) {
+    return "packages/**";
+  }
   if (isSameOrUnder(path19.join(config.projectRoot, ".git"), target)) return ".git/**";
   return null;
 }
@@ -18810,10 +19393,47 @@ function matchesWriteScopeEntry(config, entry, absoluteTarget) {
   }
   return isSameOrUnder(normalizeForCompare(config.projectRoot, normalized), absoluteTarget);
 }
-function checkBashWriteScopeTarget(config, rawTarget, verbatim) {
+function matchesWriteFaceTarget(face, absoluteTarget) {
+  const targetFace = parseWriteFaceEntries([absoluteTarget], {
+    // Use the declared face's OWN base so the operator's base-equality check
+    // can never fail open (`incomparable-base` is treated as overlap).
+    base: face.base,
+    caseInsensitive: face.caseInsensitive
+  });
+  if (targetFace.kind !== "declared") return false;
+  const result = writeFacesOverlap(targetFace.face, face);
+  return result !== null && "sample" in result;
+}
+function normalizeCarrierEntry(entry) {
+  return entry.trim().replaceAll("\\", "/").split("/").filter((segment) => segment !== "" && segment !== ".").join("/");
+}
+function carriersUnequal(writeFaceEntries, writeScopeEntries) {
+  const a = writeFaceEntries.map(normalizeCarrierEntry).filter((entry) => entry !== "").sort();
+  const b = writeScopeEntries.map(normalizeCarrierEntry).filter((entry) => entry !== "").sort();
+  if (a.length !== b.length) return true;
+  return a.some((entry, index) => entry !== b[index]);
+}
+function appendWriteFaceCarrierTraceLine(taskKey, agenticdocRoot2, info) {
+  try {
+    const dir = path19.resolve(agenticdocRoot2, taskKey);
+    fs16.mkdirSync(dir, { recursive: true });
+    const rejected = info.rejected === void 0 ? "" : ` write_face_rejected=${info.rejected}`;
+    const writeFace = JSON.stringify(info.writeFace);
+    const writeScope = JSON.stringify(info.writeScope);
+    const unequal = String(info.unequal);
+    fs16.appendFileSync(
+      path19.join(dir, "trace.log"),
+      `[WRITE_FACE] ${(/* @__PURE__ */ new Date()).toISOString()} carrier=dual unequal=${unequal} write_face=${writeFace} write_scope=${writeScope}${rejected} detail=write_face and write_scope both present, unequal=${unequal}; write_face=${writeFace} write_scope=${writeScope}; declared face = intersection (legacy write_scope can only narrow)
+`,
+      "utf8"
+    );
+  } catch {
+  }
+}
+function checkBashWriteScopeTarget(config, rawTarget, verbatim, toolLabel = "bash") {
   if (!verbatim) {
-    const basename11 = rawTarget.split(/[\\/]/).pop() ?? "";
-    const risk = basename11 === "pm-state.md" || basename11.startsWith("_workers") ? "deny-basename" : void 0;
+    const basename12 = rawTarget.split(/[\\/]/).pop() ?? "";
+    const risk = basename12 === "pm-state.md" || basename12.startsWith("_workers") ? "deny-basename" : void 0;
     return {
       allowed: true,
       rule: "allow-unknown",
@@ -18822,9 +19442,11 @@ function checkBashWriteScopeTarget(config, rawTarget, verbatim) {
       risk
     };
   }
+  const writable = config.roleClass === "writable";
   const target = normalizeForCompare(config.projectRoot, rawTarget);
   const evidenceDir = path19.join(config.keyDir, "evidence");
-  const allowedLabel = `${config.taskDir} or ${evidenceDir}`;
+  const allowedLabel = writable ? config.projectRoot : `${config.taskDir} or ${evidenceDir}`;
+  const verb = toolLabel === "bash" ? "bash write" : toolLabel;
   const denied = bashWriteDenyReason(config, target);
   if (denied !== null) {
     return {
@@ -18832,26 +19454,45 @@ function checkBashWriteScopeTarget(config, rawTarget, verbatim) {
       rule: "deny",
       detail: `denied:${denied}`,
       target: rawTarget,
-      reason: `write-scope: blocked bash write to ${rawTarget}: ${denied} is on the denied write list [rule=deny]; allowed: ${allowedLabel}`
+      reason: `write-scope: blocked ${verb} to ${rawTarget}: ${denied} is on the denied write list [rule=deny]; allowed: ${allowedLabel}`
     };
   }
-  if (!isSameOrUnder(config.taskDir, target) && !isSameOrUnder(evidenceDir, target)) {
+  const inOwnSandbox = isSameOrUnder(config.taskDir, target) || isSameOrUnder(evidenceDir, target);
+  const insideDefaultFace = writable ? isSameOrUnder(normalizeForCompare(config.projectRoot, config.projectRoot), target) : inOwnSandbox;
+  if (!insideDefaultFace) {
     return {
       allowed: false,
       rule: "scope",
       detail: "outside-allowed-surface",
       target: rawTarget,
-      reason: `write-scope: blocked bash write to ${rawTarget}: outside the worker write surface [rule=scope]; allowed: ${allowedLabel}`
+      reason: `write-scope: blocked ${verb} to ${rawTarget}: outside the worker write surface [rule=scope]; allowed: ${allowedLabel}`
     };
   }
-  if (config.writeScope !== void 0 && !config.writeScope.some((entry) => matchesWriteScopeEntry(config, entry, target))) {
-    return {
-      allowed: false,
-      rule: "write-scope",
-      detail: "outside-declared-write-scope",
-      target: rawTarget,
-      reason: `write-scope: blocked bash write to ${rawTarget}: outside the task's declared write_scope [rule=write-scope]; allowed: ${allowedLabel}`
-    };
+  if (!(writable && inOwnSandbox)) {
+    const declaredFacePresent = config.writeFace !== void 0 || config.writeFaceRejected === true;
+    const declaredScopePresent = config.writeScope !== void 0;
+    if (declaredFacePresent || declaredScopePresent) {
+      const inWriteFace = config.writeFace !== void 0 && matchesWriteFaceTarget(config.writeFace, target);
+      const inWriteScope = config.writeScope === void 0 || config.writeScope.some((entry) => matchesWriteScopeEntry(config, entry, target));
+      if (declaredFacePresent && !inWriteFace) {
+        return {
+          allowed: false,
+          rule: "write-scope",
+          detail: config.writeFaceRejected === true ? "write-face-rejected" : "outside-declared-write-face",
+          target: rawTarget,
+          reason: `write-scope: blocked ${verb} to ${rawTarget}: outside the task's declared write_face [rule=write-scope]; allowed: ${allowedLabel}`
+        };
+      }
+      if (declaredScopePresent && !inWriteScope) {
+        return {
+          allowed: false,
+          rule: "write-scope",
+          detail: "outside-declared-write-scope",
+          target: rawTarget,
+          reason: `write-scope: blocked ${verb} to ${rawTarget}: outside the task's declared write_scope [rule=write-scope]; allowed: ${allowedLabel}`
+        };
+      }
+    }
   }
   return { allowed: true, target: rawTarget };
 }
@@ -19103,8 +19744,8 @@ async function workerModeActivate(pi) {
   } catch (err) {
     writeWorkerLogLine(`[worker] rag disabled: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const hasWriteTools = toolsForType(meta.type).includes("write");
-  if (!hasWriteTools) {
+  const hasWriteTool = toolsForType(meta.type).includes("write");
+  if (!hasWriteTool) {
     registerWorkerFileTool(pi, workerTaskDir2);
   }
   if (ragRuntime !== null) {
@@ -19145,59 +19786,109 @@ async function workerModeActivate(pi) {
       return { block: true, reason: verdict.reason };
     });
   }
-  const bashWriteScopeConfig = isShellRole(meta.type) && isWritelessRole(meta.type) ? {
+  const roleClass = isWritelessRole(meta.type) ? "writeless" : "writable";
+  const writeFaceEntries = roleClass === "writable" ? meta.writeFaceEntries : void 0;
+  let declaredWriteFace;
+  if (writeFaceEntries !== void 0 && writeFaceEntries.length > 0) {
+    const parsed = parseWriteFaceEntries(writeFaceEntries, {
+      base: process.cwd(),
+      caseInsensitive: process.platform === "win32"
+    });
+    if (parsed.kind === "declared") declaredWriteFace = parsed.face;
+  }
+  const declaredWriteFaceRejected = roleClass === "writable" && declaredWriteFace === void 0 && (meta.writeFaceRejected !== void 0 || meta.writeFaceEntries !== void 0);
+  const bashWriteScopeConfig = hasWriteTools(meta.type) || isShellRole(meta.type) ? {
     projectRoot: process.cwd(),
     // launcher spawns workers with cwd = project root
     taskDir,
     keyDir: path19.dirname(meta.agenticdocRoot),
     trueRoot: meta.trueAgenticdocRoot,
-    writeScope: meta.writeScope
+    writeScope: meta.writeScope,
+    roleClass,
+    writeFace: declaredWriteFace,
+    writeFaceRejected: declaredWriteFaceRejected || void 0
   } : void 0;
+  if ((declaredWriteFace !== void 0 || declaredWriteFaceRejected) && meta.writeScope !== void 0) {
+    const faceEntries = declaredWriteFace?.entries ?? [];
+    appendWriteFaceCarrierTraceLine(meta.taskKey, meta.agenticdocRoot, {
+      writeFace: faceEntries,
+      writeScope: meta.writeScope,
+      unequal: carriersUnequal(faceEntries, meta.writeScope),
+      rejected: declaredWriteFace === void 0 ? meta.writeFaceRejected : void 0
+    });
+  }
   const writeScopeCounts = { allowDetermined: 0, deny: 0, allowUnknown: 0 };
   if (bashWriteScopeConfig) {
     const config = bashWriteScopeConfig;
     pi.on("tool_call", (event) => {
-      if (event.toolName !== "bash") return void 0;
-      const command = event.input?.command;
-      if (typeof command !== "string" || command.trim() === "") return void 0;
-      for (const candidate of extractBashWriteCandidates(command)) {
-        const verdict = checkBashWriteScopeTarget(config, candidate.target, candidate.verbatim);
-        if (verdict.rule === "allow-unknown") {
-          writeScopeCounts.allowUnknown += 1;
+      if (event.toolName === "bash") {
+        if (!isShellRole(meta.type)) return void 0;
+        const command = event.input?.command;
+        if (typeof command !== "string" || command.trim() === "") return void 0;
+        for (const candidate of extractBashWriteCandidates(command)) {
+          const verdict2 = checkBashWriteScopeTarget(config, candidate.target, candidate.verbatim);
+          if (verdict2.rule === "allow-unknown") {
+            writeScopeCounts.allowUnknown += 1;
+            appendBashWriteScopeTraceLine(meta.taskKey, meta.agenticdocRoot, {
+              ts: (/* @__PURE__ */ new Date()).toISOString(),
+              blocked: false,
+              rule: "allow-unknown",
+              detail: verdict2.detail ?? "target-not-statically-determinable",
+              risk: verdict2.risk,
+              target: candidate.target,
+              pattern: candidate.pattern,
+              command
+            });
+            continue;
+          }
+          if (verdict2.allowed) {
+            writeScopeCounts.allowDetermined += 1;
+            continue;
+          }
+          if (meta.allowForeignWrite === true && verdict2.rule !== "deny") {
+            writeScopeCounts.allowDetermined += 1;
+            appendEscapeHatchTraceLine(meta.taskKey, meta.agenticdocRoot, candidate.target);
+            continue;
+          }
+          writeScopeCounts.deny += 1;
           appendBashWriteScopeTraceLine(meta.taskKey, meta.agenticdocRoot, {
             ts: (/* @__PURE__ */ new Date()).toISOString(),
-            blocked: false,
-            rule: "allow-unknown",
-            detail: verdict.detail ?? "target-not-statically-determinable",
-            risk: verdict.risk,
+            blocked: true,
+            rule: verdict2.rule ?? "scope",
+            detail: verdict2.detail ?? "blocked",
             target: candidate.target,
             pattern: candidate.pattern,
             command
           });
-          continue;
+          return { block: true, reason: verdict2.reason };
         }
-        if (verdict.allowed) {
-          writeScopeCounts.allowDetermined += 1;
-          continue;
-        }
-        if (meta.allowForeignWrite === true && verdict.rule !== "deny") {
-          writeScopeCounts.allowDetermined += 1;
-          appendEscapeHatchTraceLine(meta.taskKey, meta.agenticdocRoot, candidate.target);
-          continue;
-        }
-        writeScopeCounts.deny += 1;
-        appendBashWriteScopeTraceLine(meta.taskKey, meta.agenticdocRoot, {
-          ts: (/* @__PURE__ */ new Date()).toISOString(),
-          blocked: true,
-          rule: verdict.rule ?? "scope",
-          detail: verdict.detail ?? "blocked",
-          target: candidate.target,
-          pattern: candidate.pattern,
-          command
-        });
-        return { block: true, reason: verdict.reason };
+        return void 0;
       }
-      return void 0;
+      if (event.toolName !== "write" && event.toolName !== "edit") return void 0;
+      const toolLabel = event.toolName === "write" ? "write" : "edit";
+      const rawPath = event.input?.path;
+      if (typeof rawPath !== "string" || rawPath.trim() === "") return void 0;
+      const verdict = checkBashWriteScopeTarget(config, rawPath, true, toolLabel);
+      if (verdict.allowed) {
+        writeScopeCounts.allowDetermined += 1;
+        return void 0;
+      }
+      if (meta.allowForeignWrite === true && verdict.rule !== "deny") {
+        writeScopeCounts.allowDetermined += 1;
+        appendEscapeHatchTraceLine(meta.taskKey, meta.agenticdocRoot, rawPath);
+        return void 0;
+      }
+      writeScopeCounts.deny += 1;
+      appendBashWriteScopeTraceLine(meta.taskKey, meta.agenticdocRoot, {
+        ts: (/* @__PURE__ */ new Date()).toISOString(),
+        blocked: true,
+        rule: verdict.rule ?? "scope",
+        detail: verdict.detail ?? "blocked",
+        target: rawPath,
+        pattern: toolLabel,
+        command: `${toolLabel} ${rawPath}`
+      });
+      return { block: true, reason: verdict.reason };
     });
   }
   const inFlightTools = /* @__PURE__ */ new Map();
@@ -19381,7 +20072,7 @@ async function workerModeActivate(pi) {
       risk
     });
     lastCheckpoint = { risk, reads: readCount, writes: writeCount, phases: phasesStr };
-    if (!hasWriteTools) {
+    if (!hasWriteTool) {
       appendProgressLine(
         meta.taskKey,
         meta.agenticdocRoot,
@@ -19401,7 +20092,7 @@ async function workerModeActivate(pi) {
         elapsedMs,
         budgetMs,
         progressPath: path19.join(taskDir2, "progress.md"),
-        hasWriteTools,
+        hasWriteTools: hasWriteTool,
         narrowTool: WORKER_FILE_TOOL
       }),
       { deliverAs: "followUp" }
@@ -19941,7 +20632,7 @@ async function callCli(cliEntry, name, args, opts) {
   const interpreter = resolveRagPython(opts.env);
   const server = cliEntry.cliEntry;
   if (opts.signal.aborted) throw cliError("timeout", server, name, "call cancelled before spawn");
-  return await new Promise((resolve19, reject) => {
+  return await new Promise((resolve20, reject) => {
     const child = spawn2(interpreter, argv, {
       cwd: cliEntry.dir,
       env: opts.env,
@@ -19999,7 +20690,7 @@ async function callCli(cliEntry, name, args, opts) {
           return;
         }
         try {
-          resolve19(JSON.parse(text));
+          resolve20(JSON.parse(text));
         } catch {
           reject(cliError("protocol", server, name, "cli stdout is not valid JSON", detail));
         }
@@ -20629,7 +21320,7 @@ async function waitForStart(statusFn, timeoutMs, stableMs, pollMs = 250) {
     } else {
       stableSince = null;
     }
-    await new Promise((resolve19) => setTimeout(resolve19, pollMs));
+    await new Promise((resolve20) => setTimeout(resolve20, pollMs));
   }
   return statusFn().running;
 }
@@ -20720,7 +21411,7 @@ async function restartSequence(isRunning, requestStop, start, waitUp, timeoutMs,
     requestStop();
     const deadline = Date.now() + timeoutMs;
     while (isRunning() && Date.now() < deadline) {
-      await new Promise((resolve19) => setTimeout(resolve19, pollMs));
+      await new Promise((resolve20) => setTimeout(resolve20, pollMs));
     }
     if (isRunning()) return "stop-failed";
   }
@@ -20902,7 +21593,7 @@ async function acquireLock(lockPath, opts = {}) {
   throw new Error(`Could not acquire lock at ${lockPath}`);
 }
 function sleep(ms) {
-  return new Promise((resolve19) => setTimeout(resolve19, ms));
+  return new Promise((resolve20) => setTimeout(resolve20, ms));
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/index-store.ts
@@ -21637,8 +22328,1139 @@ var StateManager = class {
 };
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts
+import * as fs30 from "node:fs";
+import * as path32 from "node:path";
+
+// packages/coding-agent/src/extensions/agent-team-loop/autopilot/status-model.ts
 import * as fs28 from "node:fs";
 import * as path30 from "node:path";
+function autopilotDir(projectDir) {
+  return path30.join(projectDir, ".agenticdoc", "_autopilot");
+}
+function roadmapPath(projectDir) {
+  return path30.join(autopilotDir(projectDir), "_roadmap.md");
+}
+function gatesDir(projectDir) {
+  return path30.join(autopilotDir(projectDir), "gates");
+}
+function timelinePath(projectDir) {
+  return path30.join(autopilotDir(projectDir), "timeline.jsonl");
+}
+function configPath(projectDir) {
+  return path30.join(autopilotDir(projectDir), "config.json");
+}
+function gatesLockPath(projectDir) {
+  return path30.join(projectDir, ".mw", "gates.lock");
+}
+function configLockPath(projectDir) {
+  return path30.join(projectDir, ".mw", "autopilot-config.lock");
+}
+var DEFAULT_CONFIG = {
+  enabled: false,
+  paused: false,
+  poll_interval_sec: 4,
+  max_parallel_keys: 8,
+  max_workers_per_key: 4,
+  round_budget: 2,
+  worker_timeout_min: 30,
+  l2_read_file_cap: 8,
+  l2_read_byte_cap: 65536,
+  advance_stall_ticks: 5,
+  xkey_repair: false,
+  xkey_verify_cmd: [],
+  xkey_verify_timeout_s: 1800,
+  xkey_verify_cwd: "",
+  auto_gate_mode: "off",
+  launcher_max_workers: 8,
+  dispatch_max_per_scan: 3,
+  queue_alarm_delta: 50,
+  l3_abort_retry_limit: 1,
+  gate_reminder_after_min: 30,
+  gate_reminder_max: 2
+};
+function freshDefaults() {
+  return { ...DEFAULT_CONFIG, xkey_verify_cmd: [...DEFAULT_CONFIG.xkey_verify_cmd] };
+}
+var BOOL_FIELDS = ["enabled", "paused", "xkey_repair", "envelope_fallback"];
+var OPTIONAL_CONFIG_KEYS = BOOL_FIELDS.filter(
+  (field) => !Object.hasOwn(DEFAULT_CONFIG, field)
+);
+var LIST_FIELDS = ["xkey_verify_cmd"];
+var STR_FIELDS = ["xkey_verify_cwd"];
+var ENUM_FIELDS = {
+  auto_gate_mode: ["off", "shadow", "live"]
+};
+var INT_RANGES = {
+  poll_interval_sec: [1, 5],
+  max_parallel_keys: [1, null],
+  max_workers_per_key: [1, null],
+  round_budget: [1, null],
+  worker_timeout_min: [1, null],
+  l2_read_file_cap: [1, null],
+  l2_read_byte_cap: [1, null],
+  advance_stall_ticks: [1, 50],
+  xkey_verify_timeout_s: [1, null],
+  launcher_max_workers: [1, 64],
+  dispatch_max_per_scan: [1, 64],
+  queue_alarm_delta: [10, 1e4],
+  l3_abort_retry_limit: [0, 10],
+  gate_reminder_after_min: [1, 1440],
+  gate_reminder_max: [1, 2]
+};
+var INT_LITERAL_RE = /^-?(?:0|[1-9]\d*)$/;
+var IntegerLiteralError = class extends Error {
+  constructor(field, literal) {
+    super(`invalid _autopilot/config.json: ${field}: expected an integer literal, got ${literal}`);
+    this.name = "IntegerLiteralError";
+  }
+};
+function configReviver(key, value, context) {
+  if (typeof value !== "number" || !Number.isInteger(value)) return value;
+  if (!Object.hasOwn(INT_RANGES, key)) return value;
+  const source = context?.source;
+  if (source !== void 0 && !INT_LITERAL_RE.test(source)) throw new IntegerLiteralError(key, source);
+  return value;
+}
+function validateConfigData(data) {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    return ["config root must be a JSON object"];
+  }
+  const cfg = data;
+  const errors = [];
+  const known = /* @__PURE__ */ new Set([...Object.keys(DEFAULT_CONFIG), ...OPTIONAL_CONFIG_KEYS]);
+  const unknown = Object.keys(cfg).filter((k) => !known.has(k)).sort();
+  if (unknown.length > 0) errors.push(`unknown field(s): ${unknown.join(", ")}`);
+  for (const field of BOOL_FIELDS) {
+    if (field in cfg && typeof cfg[field] !== "boolean") {
+      errors.push(`${field}: expected true/false, got ${JSON.stringify(cfg[field])}`);
+    }
+  }
+  for (const field of LIST_FIELDS) {
+    if (!(field in cfg)) continue;
+    const value = cfg[field];
+    if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item !== "")) {
+      errors.push(`${field}: expected a list of non-empty strings, got ${JSON.stringify(value)}`);
+    }
+  }
+  for (const field of STR_FIELDS) {
+    if (field in cfg && typeof cfg[field] !== "string") {
+      errors.push(`${field}: expected string, got ${JSON.stringify(cfg[field])}`);
+    }
+  }
+  for (const [field, allowed] of Object.entries(ENUM_FIELDS)) {
+    if (!(field in cfg)) continue;
+    const value = cfg[field];
+    if (typeof value !== "string" || !allowed.includes(value)) {
+      errors.push(`${field}: expected one of ${allowed.join(", ")}, got ${JSON.stringify(value)}`);
+    }
+  }
+  for (const [field, [lo, hi]] of Object.entries(INT_RANGES)) {
+    if (!(field in cfg)) continue;
+    const value = cfg[field];
+    if (typeof value !== "number" || !Number.isInteger(value)) {
+      errors.push(`${field}: expected integer, got ${JSON.stringify(value)}`);
+      continue;
+    }
+    if (value < lo) errors.push(`${field}: must be >= ${lo}, got ${value}`);
+    if (hi !== null && value > hi) errors.push(`${field}: must be <= ${hi}, got ${value}`);
+  }
+  return errors;
+}
+function readConfig(projectDir) {
+  const file = configPath(projectDir);
+  let raw;
+  try {
+    raw = fs28.readFileSync(file, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return { ok: true, config: freshDefaults() };
+    return { ok: false, error: `cannot read ${file}: ${String(err)}` };
+  }
+  let data;
+  try {
+    data = JSON.parse(raw, configReviver);
+  } catch (err) {
+    if (err instanceof IntegerLiteralError) return { ok: false, error: err.message };
+    return { ok: false, error: `cannot parse ${file}: ${String(err)}` };
+  }
+  const errors = validateConfigData(data);
+  if (errors.length > 0) return { ok: false, error: `invalid _autopilot/config.json: ${errors.join("; ")}` };
+  const cfg = data;
+  const boolOf = (name) => typeof cfg[name] === "boolean" ? cfg[name] : DEFAULT_CONFIG[name];
+  const intOf = (name) => typeof cfg[name] === "number" ? cfg[name] : DEFAULT_CONFIG[name];
+  const listOf = (name) => Array.isArray(cfg[name]) ? cfg[name] : [...DEFAULT_CONFIG[name]];
+  const strOf = (name) => typeof cfg[name] === "string" ? cfg[name] : DEFAULT_CONFIG[name];
+  const merged = {
+    enabled: boolOf("enabled"),
+    paused: boolOf("paused"),
+    poll_interval_sec: intOf("poll_interval_sec"),
+    max_parallel_keys: intOf("max_parallel_keys"),
+    max_workers_per_key: intOf("max_workers_per_key"),
+    round_budget: intOf("round_budget"),
+    worker_timeout_min: intOf("worker_timeout_min"),
+    l2_read_file_cap: intOf("l2_read_file_cap"),
+    l2_read_byte_cap: intOf("l2_read_byte_cap"),
+    advance_stall_ticks: intOf("advance_stall_ticks"),
+    xkey_repair: boolOf("xkey_repair"),
+    xkey_verify_cmd: listOf("xkey_verify_cmd"),
+    xkey_verify_timeout_s: intOf("xkey_verify_timeout_s"),
+    xkey_verify_cwd: strOf("xkey_verify_cwd"),
+    auto_gate_mode: strOf("auto_gate_mode"),
+    launcher_max_workers: intOf("launcher_max_workers"),
+    dispatch_max_per_scan: intOf("dispatch_max_per_scan"),
+    queue_alarm_delta: intOf("queue_alarm_delta"),
+    l3_abort_retry_limit: intOf("l3_abort_retry_limit"),
+    gate_reminder_after_min: intOf("gate_reminder_after_min"),
+    gate_reminder_max: intOf("gate_reminder_max")
+  };
+  return { ok: true, config: merged };
+}
+function saveConfig(projectDir, config) {
+  const errors = validateConfigData(config);
+  if (errors.length > 0) return { ok: false, error: `invalid _autopilot/config.json: ${errors.join("; ")}` };
+  const ordered = {
+    enabled: config.enabled,
+    paused: config.paused,
+    poll_interval_sec: config.poll_interval_sec,
+    max_parallel_keys: config.max_parallel_keys,
+    max_workers_per_key: config.max_workers_per_key,
+    round_budget: config.round_budget,
+    worker_timeout_min: config.worker_timeout_min,
+    l2_read_file_cap: config.l2_read_file_cap,
+    l2_read_byte_cap: config.l2_read_byte_cap,
+    advance_stall_ticks: config.advance_stall_ticks,
+    xkey_repair: config.xkey_repair,
+    xkey_verify_cmd: [...config.xkey_verify_cmd],
+    xkey_verify_timeout_s: config.xkey_verify_timeout_s,
+    xkey_verify_cwd: config.xkey_verify_cwd,
+    auto_gate_mode: config.auto_gate_mode,
+    launcher_max_workers: config.launcher_max_workers,
+    dispatch_max_per_scan: config.dispatch_max_per_scan,
+    queue_alarm_delta: config.queue_alarm_delta,
+    l3_abort_retry_limit: config.l3_abort_retry_limit,
+    gate_reminder_after_min: config.gate_reminder_after_min,
+    gate_reminder_max: config.gate_reminder_max
+  };
+  const file = configPath(projectDir);
+  try {
+    fs28.mkdirSync(path30.dirname(file), { recursive: true });
+    const tmp = `${file}.tmp`;
+    fs28.writeFileSync(tmp, `${JSON.stringify(ordered, null, 2)}
+`, "utf8");
+    fs28.renameSync(tmp, file);
+  } catch (err) {
+    return { ok: false, error: `cannot write ${file}: ${String(err)}` };
+  }
+  return { ok: true };
+}
+var STAGE_STATUSES = ["pending", "approved", "running", "closed", "closed-human", "halted"];
+var KEY_STATUSES = ["running", "done", "stalled", "closed-legacy", "pending-review"];
+var STAGE_STATUS_RANK = {
+  pending: 0,
+  approved: 0,
+  running: 1,
+  closed: 2,
+  "closed-human": 2,
+  halted: 2
+};
+var STAGE_TERMINAL_RANK = 2;
+function isStageTerminal(status) {
+  const rank = status === void 0 ? void 0 : STAGE_STATUS_RANK[status];
+  return rank !== void 0 && rank >= STAGE_TERMINAL_RANK;
+}
+var STAGE_PREFIX_RE = /^##\s*Stage\b/;
+var STAGE_HEADER_RE = /^##\s*Stage\s+(\d+)\s*:\s*(.+)$/;
+var ROADMAP_FIELD_RE = /^>\s*([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/;
+var SEPARATOR_CELL_RE = /^:?-+:?$/;
+function splitTableRow(line) {
+  let body = line.startsWith("|") ? line.slice(1) : line;
+  if (body.endsWith("|")) body = body.slice(0, -1);
+  return body.split("|").map((c) => c.trim());
+}
+function isKeysHeaderRow(cells) {
+  return cells.length === 3 && cells[0].toLowerCase() === "key" && cells[1].toLowerCase() === "role" && cells[2].toLowerCase() === "depends_on";
+}
+function parseDependsOn(cell) {
+  const trimmed = cell.trim();
+  if (trimmed === "" || trimmed === "-") return [];
+  const deps = [];
+  for (const part of trimmed.split(",")) {
+    const p = part.trim();
+    if (p !== "" && p !== "-") deps.push(p);
+  }
+  return deps;
+}
+function parseRoadmapText(text) {
+  const warnings = [];
+  const stages = [];
+  let cur = null;
+  let inKeysTable = false;
+  let tableHeaderSeen = false;
+  const finish = () => {
+    if (cur === null) return;
+    if (!cur.seenFields.has("status")) {
+      warnings.push(`stage ${cur.stage.number}: missing '> status:' line (shown as pending)`);
+      cur.stage.status = "pending";
+    }
+    if (!cur.seenFields.has("goal")) {
+      warnings.push(`stage ${cur.stage.number}: missing '> goal:' line`);
+    }
+    stages.push(cur.stage);
+    cur = null;
+  };
+  const lines = text.split(/\r\n|\r|\n/);
+  for (let lineno = 1; lineno <= lines.length; lineno++) {
+    const line = lines[lineno - 1].trim();
+    if (line === "") continue;
+    if (line.startsWith("#")) {
+      if (line.startsWith("###")) {
+        const heading = line.replace(/^#+/, "").trim();
+        if (cur !== null && heading.toLowerCase() === "keys") {
+          inKeysTable = true;
+          tableHeaderSeen = false;
+        } else {
+          inKeysTable = false;
+        }
+        continue;
+      }
+      if (line.startsWith("##")) {
+        if (STAGE_PREFIX_RE.test(line)) {
+          const m = STAGE_HEADER_RE.exec(line);
+          if (m === null) {
+            warnings.push(`line ${lineno}: malformed stage header (expected '## Stage <number>: <title>')`);
+            finish();
+            inKeysTable = false;
+            continue;
+          }
+          finish();
+          cur = {
+            stage: {
+              number: Number(m[1]),
+              title: (m[2] ?? "").trim(),
+              goal: "",
+              status: "pending",
+              keyStatus: {},
+              keys: []
+            },
+            seenKeys: /* @__PURE__ */ new Set(),
+            seenFields: /* @__PURE__ */ new Set()
+          };
+        } else {
+          finish();
+        }
+        inKeysTable = false;
+        continue;
+      }
+      inKeysTable = false;
+      continue;
+    }
+    if (line.startsWith("|")) {
+      if (cur !== null && inKeysTable) {
+        const cells = splitTableRow(line);
+        if (cells.length > 0 && cells.every((c) => SEPARATOR_CELL_RE.test(c))) continue;
+        if (!tableHeaderSeen && isKeysHeaderRow(cells)) {
+          tableHeaderSeen = true;
+          continue;
+        }
+        if (cells.length !== 3) {
+          warnings.push(
+            `line ${lineno} (stage ${cur.stage.number}): keys table row must have 3 columns (key | role | depends_on), got ${cells.length}`
+          );
+          continue;
+        }
+        const key = cells[0] ?? "";
+        if (key === "") {
+          warnings.push(`line ${lineno} (stage ${cur.stage.number}): keys table row has empty key cell`);
+          continue;
+        }
+        if (cur.seenKeys.has(key)) {
+          warnings.push(`line ${lineno} (stage ${cur.stage.number}): duplicate key row '${key}'`);
+          continue;
+        }
+        cur.seenKeys.add(key);
+        cur.stage.keys.push({ key, role: cells[1] ?? "", dependsOn: parseDependsOn(cells[2] ?? "") });
+      }
+      continue;
+    }
+    if (line.startsWith(">")) {
+      const m = ROADMAP_FIELD_RE.exec(line);
+      const name = m?.[1] ?? "";
+      const value = (m?.[2] ?? "").trim();
+      if (cur !== null) {
+        if (name === "goal" || name === "status" || name === "key-status") {
+          if (cur.seenFields.has(name)) {
+            warnings.push(
+              `line ${lineno} (stage ${cur.stage.number}): duplicate '> ${name}:' line (last one wins)`
+            );
+          } else {
+            cur.seenFields.add(name);
+          }
+          if (name === "goal") cur.stage.goal = value;
+          else if (name === "status") {
+            if (!STAGE_STATUSES.includes(value)) {
+              warnings.push(`line ${lineno} (stage ${cur.stage.number}): invalid status '${value}'`);
+            }
+            cur.stage.status = value;
+          } else {
+            parseKeyStatusLine(value, cur.stage, lineno, warnings);
+          }
+        }
+        inKeysTable = false;
+      }
+      continue;
+    }
+    inKeysTable = false;
+  }
+  finish();
+  if (stages.length === 0) warnings.push("no '## Stage <number>: <title>' sections found");
+  return { stages, warnings };
+}
+function parseKeyStatusLine(value, stage, lineno, warnings) {
+  for (const part of value.split(",")) {
+    const entry = part.trim();
+    if (entry === "") continue;
+    const eq2 = entry.indexOf("=");
+    if (eq2 <= 0) {
+      warnings.push(
+        `line ${lineno} (stage ${stage.number}): malformed key-status entry '${entry}' (expected <key>=<status>)`
+      );
+      continue;
+    }
+    const key = entry.slice(0, eq2).trim();
+    const status = entry.slice(eq2 + 1).trim();
+    if (key === "") {
+      warnings.push(
+        `line ${lineno} (stage ${stage.number}): malformed key-status entry '${entry}' (expected <key>=<status>)`
+      );
+      continue;
+    }
+    if (!KEY_STATUSES.includes(status)) {
+      warnings.push(`line ${lineno} (stage ${stage.number}): key '${key}' has invalid status '${status}'`);
+    }
+    if (key in stage.keyStatus) {
+      warnings.push(
+        `line ${lineno} (stage ${stage.number}): duplicate key-status entry for '${key}' (last one wins)`
+      );
+    }
+    stage.keyStatus[key] = status;
+  }
+}
+function readRoadmap(projectDir) {
+  const file = roadmapPath(projectDir);
+  let text;
+  try {
+    text = fs28.readFileSync(file, "utf8");
+  } catch {
+    return { ok: false, error: `roadmap file not found: ${file}` };
+  }
+  const parse3 = parseRoadmapText(text);
+  return { ok: true, stages: parse3.stages, warnings: parse3.warnings };
+}
+var GATE_KINDS = [
+  "stage-confirm",
+  "stage-close",
+  "stalled",
+  "budget-exhausted",
+  "goal-change",
+  "xkey-authorize"
+];
+var GATE_STATUSES = ["pending", "approved", "rejected"];
+var GATE_SCOPE_UNRESOLVED = "unresolved-scope";
+function deriveGateReason(input) {
+  if (input.queueUnreadable) return "gate-queue-unreadable";
+  if (input.inFlightForKey > 0) return "key-in-flight";
+  if (input.reminders + 1 > input.reminderMax) return "cap-reached";
+  if (input.stageTerminal) return "stage-terminal";
+  if (input.due === null) return null;
+  if (!input.due) return "not-due";
+  return null;
+}
+var AUTHORIZES_ACTIONS = ["contract-change", "retry"];
+var AUTHORIZES_ACTION_SET = new Set(AUTHORIZES_ACTIONS);
+var BLOCKER_CLASSES = ["judgment", "paperwork"];
+var BLOCKER_CLASS_SET = new Set(BLOCKER_CLASSES);
+function blockerClassOf(record) {
+  return record.blockerClass === "paperwork" ? "paperwork" : "judgment";
+}
+var GATE_FRONTMATTER_FIELDS = [
+  "id",
+  "kind",
+  "stage",
+  "key",
+  "created_at",
+  "created_by",
+  "question",
+  "context_refs",
+  "status",
+  "answered_at",
+  "answered_by",
+  "note",
+  "reason_code",
+  "evidence_refs",
+  "loop",
+  "used_rounds",
+  "round_limit",
+  "credits_used",
+  "observed_at",
+  "verdicts_final",
+  "open_items",
+  "subject_sha256",
+  "roadmap_validation",
+  "proposal_sha256",
+  "goal_sha256",
+  "constraints",
+  "goal_sha256_before",
+  "goal_sha256_after",
+  "goal_diff",
+  "write_scope",
+  "blast_radius",
+  "answer_source",
+  "auto_policy_id",
+  "expires_at",
+  "evidence_anchor_mtime_ns",
+  "default_action",
+  "out_of_band_actions",
+  "gate_schema",
+  "consumed_at",
+  "consumed_seq"
+];
+var MISSING_FIELD_SENTINEL = "unknown (no field)";
+var GateFormatError = class extends Error {
+};
+var GATE_FILE_RE = /^gate-(\d+)\.md$/;
+var GATE_LIST_FIELDS = /* @__PURE__ */ new Set(["context_refs", "evidence_refs"]);
+var GATE_JSON_LIST_FIELDS = /* @__PURE__ */ new Set([
+  "verdicts_final",
+  "open_items",
+  "roadmap_validation",
+  "constraints",
+  "write_scope",
+  "out_of_band_actions",
+  "authorizes"
+]);
+var GATE_JSON_OBJ_FIELDS = /* @__PURE__ */ new Set(["goal_diff", "blast_radius"]);
+var GATE_SCALAR_EXTENSION_FIELDS = /* @__PURE__ */ new Set(["blocker_class"]);
+var GATE_FIELD_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
+var GATE_LIST_ITEM_RE = /^[ \t]+-[ \t]+(.*)$/;
+var GATE_NULL_LITERALS = /* @__PURE__ */ new Set(["", "~", "-", "null", "Null", "NULL"]);
+function gateScalar(raw, file, lineno) {
+  if (raw === void 0) return null;
+  if (raw.startsWith("'")) {
+    if (raw.length < 2 || !raw.endsWith("'")) {
+      throw new GateFormatError(`${file}: unterminated single-quoted scalar (line ${lineno}): '${raw}'`);
+    }
+    return raw.slice(1, -1).replaceAll("''", "'");
+  }
+  if (raw.startsWith('"')) {
+    throw new GateFormatError(`${file}: double-quoted scalars are not supported (line ${lineno}): '${raw}'`);
+  }
+  if (GATE_NULL_LITERALS.has(raw)) return null;
+  return raw;
+}
+function isIsoTimestamp(value) {
+  return !Number.isNaN(Date.parse(value));
+}
+function parseGateFile(text, file) {
+  const lines = text.split(/\r\n|\r|\n/);
+  if (lines.length === 0 || lines[0].trim() !== "---") {
+    throw new GateFormatError(`${file}: frontmatter must open with a '---' line`);
+  }
+  const fields = /* @__PURE__ */ new Map();
+  const listValues = /* @__PURE__ */ new Map();
+  for (const name of GATE_LIST_FIELDS) listValues.set(name, []);
+  const seen = /* @__PURE__ */ new Set();
+  let activeList = null;
+  let closed = false;
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === "---") {
+      closed = true;
+      break;
+    }
+    if (activeList !== null) {
+      const item = GATE_LIST_ITEM_RE.exec(line);
+      if (item !== null) {
+        const ref = gateScalar(item[1], file, i + 1);
+        if (ref === null || ref === "")
+          throw new GateFormatError(`${file}: empty ${activeList} item (line ${i + 1})`);
+        listValues.get(activeList)?.push(ref);
+        continue;
+      }
+      activeList = null;
+    }
+    const field = GATE_FIELD_LINE_RE.exec(line);
+    if (field === null) throw new GateFormatError(`${file}: invalid frontmatter line ${i + 1}: '${line}'`);
+    const name = field[1] ?? "";
+    if (!GATE_FRONTMATTER_FIELDS.includes(name) && !GATE_JSON_LIST_FIELDS.has(name) && !GATE_SCALAR_EXTENSION_FIELDS.has(name)) {
+      throw new GateFormatError(`${file}: unknown frontmatter field '${name}' (line ${i + 1})`);
+    }
+    if (seen.has(name)) throw new GateFormatError(`${file}: duplicate frontmatter field '${name}' (line ${i + 1})`);
+    seen.add(name);
+    const raw = field[2];
+    if (GATE_LIST_FIELDS.has(name)) {
+      if (raw === void 0 || raw === "") {
+        fields.set(name, null);
+        activeList = name;
+      } else if (raw === "[]") {
+        fields.set(name, null);
+      } else if (raw.startsWith("'")) {
+        const scalar = gateScalar(raw, file, i + 1);
+        let decoded;
+        try {
+          decoded = JSON.parse(scalar ?? "");
+        } catch {
+          throw new GateFormatError(
+            `${file}: ${name} must be a block list, [] or a single-line JSON array (line ${i + 1})`
+          );
+        }
+        if (!Array.isArray(decoded) || !decoded.every((x) => typeof x === "string" && x !== "")) {
+          throw new GateFormatError(`${file}: ${name} JSON array must contain non-empty strings (line ${i + 1})`);
+        }
+        listValues.set(name, decoded);
+      } else {
+        throw new GateFormatError(`${file}: ${name} must be a block list or [] (line ${i + 1})`);
+      }
+    } else {
+      fields.set(name, gateScalar(raw, file, i + 1));
+    }
+  }
+  if (!closed) throw new GateFormatError(`${file}: frontmatter never closes with a '---' line`);
+  const required = (name) => {
+    const value = fields.get(name);
+    if (typeof value !== "string" || value === "") {
+      throw new GateFormatError(`${file}: field '${name}' must be a non-empty string`);
+    }
+    return value;
+  };
+  const optional = (name) => {
+    const value = fields.get(name) ?? null;
+    return typeof value === "string" && value !== "" ? value : null;
+  };
+  const intField = (name) => {
+    const value = optional(name);
+    if (value === null) return null;
+    if (!/^-?\d+$/.test(value))
+      throw new GateFormatError(`${file}: field '${name}' must be an integer, got '${value}'`);
+    return Number.parseInt(value, 10);
+  };
+  const isoField = (name, value) => {
+    if (value !== null && !isIsoTimestamp(value)) {
+      throw new GateFormatError(`${file}: ${name} is not an ISO-8601 timestamp: '${value}'`);
+    }
+    return value;
+  };
+  const jsonField = (name, wantArray) => {
+    const value = optional(name);
+    if (value === null) return null;
+    let decoded;
+    try {
+      decoded = JSON.parse(value);
+    } catch {
+      throw new GateFormatError(
+        `${file}: field '${name}' must be a single-line JSON ${wantArray ? "array" : "object"}`
+      );
+    }
+    const isArray = Array.isArray(decoded);
+    const isObject2 = typeof decoded === "object" && decoded !== null && !isArray;
+    if (wantArray && !isArray || !wantArray && !isObject2) {
+      throw new GateFormatError(`${file}: field '${name}' must decode to a JSON ${wantArray ? "array" : "object"}`);
+    }
+    return decoded;
+  };
+  const jsonStringList = (name) => {
+    const decoded = jsonField(name, true);
+    if (decoded === null) return [];
+    if (!Array.isArray(decoded) || !decoded.every((x) => typeof x === "string")) {
+      throw new GateFormatError(`${file}: field '${name}' JSON array must contain strings`);
+    }
+    return decoded;
+  };
+  const authorizes = jsonStringList("authorizes");
+  const outOfSet = [...new Set(authorizes.filter((action) => !AUTHORIZES_ACTION_SET.has(action)))].sort();
+  if (outOfSet.length > 0) {
+    throw new GateFormatError(
+      `${file}: unknown authorizes action(s) ${outOfSet.join(", ")} (expected one of: ${[...AUTHORIZES_ACTIONS].sort().join(", ")})`
+    );
+  }
+  const blockerClass = optional("blocker_class");
+  if (blockerClass !== null && !BLOCKER_CLASS_SET.has(blockerClass)) {
+    throw new GateFormatError(
+      `${file}: unknown blocker_class '${blockerClass}' (expected one of: ${[...BLOCKER_CLASSES].sort().join(", ")})`
+    );
+  }
+  const contextRefs = listValues.get("context_refs") ?? [];
+  const evidenceRefs = listValues.get("evidence_refs") ?? [];
+  const id = required("id");
+  if (!/^gate-\d+$/.test(id)) throw new GateFormatError(`${file}: id must match 'gate-<digits>', got '${id}'`);
+  const kind = required("kind");
+  if (!GATE_KINDS.includes(kind)) {
+    throw new GateFormatError(`${file}: unknown kind '${kind}' (expected one of: ${GATE_KINDS.join(", ")})`);
+  }
+  const status = required("status");
+  if (!GATE_STATUSES.includes(status)) {
+    throw new GateFormatError(`${file}: unknown status '${status}' (expected one of: ${GATE_STATUSES.join(", ")})`);
+  }
+  const stageRaw = optional("stage");
+  let stage = null;
+  if (stageRaw !== null) {
+    if (!/^-?\d+$/.test(stageRaw)) throw new GateFormatError(`${file}: stage must be an integer, got '${stageRaw}'`);
+    stage = Number.parseInt(stageRaw, 10);
+  }
+  const createdAt = required("created_at");
+  if (!isIsoTimestamp(createdAt)) {
+    throw new GateFormatError(`${file}: created_at is not an ISO-8601 timestamp: '${createdAt}'`);
+  }
+  const answeredAt = isoField("answered_at", optional("answered_at"));
+  required("created_by");
+  const question = required("question");
+  for (const name of GATE_JSON_LIST_FIELDS) jsonField(name, true);
+  for (const name of GATE_JSON_OBJ_FIELDS) jsonField(name, false);
+  intField("evidence_anchor_mtime_ns");
+  intField("consumed_seq");
+  isoField("consumed_at", optional("consumed_at"));
+  let gateSchema = intField("gate_schema");
+  if (gateSchema === null) gateSchema = 1;
+  if (gateSchema !== 1 && gateSchema !== 2) {
+    throw new GateFormatError(`${file}: gate_schema must be one of 1, 2, got ${gateSchema}`);
+  }
+  return {
+    id,
+    kind,
+    status,
+    stage,
+    key: optional("key"),
+    question,
+    createdAt,
+    path: file,
+    contextRefs,
+    evidenceRefs,
+    reasonCode: optional("reason_code"),
+    observedAt: isoField("observed_at", optional("observed_at")),
+    subjectSha256: optional("subject_sha256"),
+    proposalSha256: optional("proposal_sha256"),
+    goalSha256: optional("goal_sha256"),
+    loop: optional("loop"),
+    usedRounds: intField("used_rounds"),
+    roundLimit: intField("round_limit"),
+    creditsUsed: intField("credits_used"),
+    verdictsFinal: jsonField("verdicts_final", true),
+    openItems: jsonField("open_items", true),
+    roadmapValidation: jsonField("roadmap_validation", true),
+    constraints: jsonStringList("constraints"),
+    answerSource: optional("answer_source"),
+    expiresAt: isoField("expires_at", optional("expires_at")),
+    defaultAction: optional("default_action"),
+    outOfBandActions: jsonStringList("out_of_band_actions"),
+    authorizes,
+    blockerClass,
+    gateSchema,
+    answeredAt,
+    answeredBy: optional("answered_by"),
+    note: optional("note")
+  };
+}
+function listGates(projectDir) {
+  const dir = gatesDir(projectDir);
+  const errors = [];
+  const found = [];
+  let entries;
+  try {
+    entries = fs28.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    if (err.code === "ENOENT") return { gates: [], errors: [] };
+    return { gates: [], errors: [`${dir}: ${String(err)}`] };
+  }
+  for (const entry of entries) {
+    const m = GATE_FILE_RE.exec(entry.name);
+    if (m === null || !entry.isFile()) continue;
+    const file = path30.join(dir, entry.name);
+    let text;
+    try {
+      text = fs28.readFileSync(file, "utf8");
+    } catch (err) {
+      errors.push(`${file}: ${String(err)}`);
+      continue;
+    }
+    try {
+      const gate = parseGateFile(text, file);
+      if (gate.id !== entry.name.replace(/\.md$/, "")) {
+        errors.push(`${file}: frontmatter id '${gate.id}' does not match file name`);
+        continue;
+      }
+      found.push({ seq: Number(m[1]), gate });
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  found.sort((a, b) => a.seq - b.seq || a.gate.id.localeCompare(b.gate.id));
+  return { gates: found.map((f) => f.gate), errors };
+}
+function readGateReminders(agenticdocRoot2) {
+  const ledger = path30.join(agenticdocRoot2, "_autopilot", "auto-decisions.jsonl");
+  let raw;
+  try {
+    raw = fs28.readFileSync(ledger, "utf8");
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (typeof parsed !== "object" || parsed === null) continue;
+    const row = parsed;
+    if (row.phase !== "remind") continue;
+    const gateId = typeof row.gate_id === "string" ? row.gate_id : "";
+    const reminderN = typeof row.reminder_n === "number" ? row.reminder_n : 0;
+    if (gateId === "" || reminderN <= 0) continue;
+    out.push({
+      seq: typeof row.seq === "number" ? row.seq : 0,
+      gateId,
+      gateKind: typeof row.gate_kind === "string" ? row.gate_kind : "",
+      gateKey: typeof row.gate_key === "string" ? row.gate_key : "",
+      reminderN,
+      detail: typeof row.detail === "string" ? row.detail : ""
+    });
+  }
+  return out;
+}
+function reminderCountForGate(reminders, gateId) {
+  return reminders.filter((r) => r.gateId === gateId).length;
+}
+var EVENT_TYPES = /* @__PURE__ */ new Set([
+  "beat",
+  "dispatch",
+  "worker-terminal",
+  "advance",
+  "gate-created",
+  "gate-answered",
+  "stalled",
+  "skip",
+  "stage-close",
+  "config",
+  "goal-halt",
+  "goal-snapshot",
+  "type-rejected",
+  "target-config-rejected",
+  "reconcile",
+  "resume",
+  "l3-no-verdict",
+  // Gate redesign (mw-autopilot-slot-capacity, D-005/D-006/D-009): names are
+  // pre-admitted in lockstep with autopilot/timeline.py EVENT_TYPES so the
+  // parity test locks both sides; the producers land in T-07/T-08. Unused
+  // vocabulary is inert — the set is a console include-set, not a gate.
+  "gate-auto-decision",
+  "gate-auto-revoke",
+  "review-decided",
+  "review-escalated",
+  "evidence-reconciliation",
+  "stage-reopen-refused",
+  // Gate verdict hardening (mw-gate-verdict-hardening, T-05, design D-002/
+  // D-016): the TS half of the T-03 vocabulary. Names are verbatim from
+  // timeline.py EVENT_TYPES; the parity test asserts set equality, so
+  // neither side may rename or prefix them. Producers land in T-01/T-07/
+  // T-10 — pre-admitted vocabulary is safe (include-set, not a gate).
+  "l3-aborted",
+  "gate-reminder",
+  "contract-refused",
+  // Gate verdict hardening (mw-gate-verdict-hardening, T-23, AC-025): the TS
+  // half of the Python `contract-frozen` anchor event. The parity test asserts
+  // set equality, so the name is verbatim from timeline.py EVENT_TYPES.
+  "contract-frozen"
+]);
+var BEAT_EV = "beat";
+function nonBeatFilter() {
+  const filter2 = new Set(EVENT_TYPES);
+  filter2.delete(BEAT_EV);
+  return filter2;
+}
+function rotationChain(timelinePath2) {
+  const dir = path30.dirname(timelinePath2);
+  const prefix = `${path30.basename(timelinePath2)}.`;
+  let entries;
+  try {
+    entries = fs28.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const found = [];
+  for (const entry of entries) {
+    if (!entry.name.startsWith(prefix)) continue;
+    const suffix = entry.name.slice(prefix.length);
+    if (/^\d+$/.test(suffix) && entry.isFile()) {
+      found.push({ gen: Number(suffix), file: path30.join(dir, entry.name) });
+    }
+  }
+  found.sort((a, b) => b.gen - a.gen);
+  return found.map((f) => f.file);
+}
+function readTimelineEvents(file) {
+  let data;
+  try {
+    data = fs28.readFileSync(file);
+  } catch {
+    return { events: [], skipped: 0 };
+  }
+  const events = [];
+  let skipped = 0;
+  for (const raw of data.toString("utf8").split("\n")) {
+    const line = raw.trim();
+    if (line === "") continue;
+    let obj;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      skipped += 1;
+      continue;
+    }
+    if (typeof obj !== "object" || obj === null) {
+      skipped += 1;
+      continue;
+    }
+    const rec = obj;
+    const seq = rec.seq;
+    if (typeof seq !== "number" || !Number.isInteger(seq)) {
+      skipped += 1;
+      continue;
+    }
+    const event = {
+      ts: typeof rec.ts === "string" ? rec.ts : "",
+      seq,
+      ev: typeof rec.ev === "string" ? rec.ev : "",
+      key: typeof rec.key === "string" ? rec.key : "-",
+      stage: typeof rec.stage === "number" && Number.isInteger(rec.stage) ? rec.stage : null,
+      detail: typeof rec.detail === "string" ? rec.detail : ""
+    };
+    if (typeof rec.data === "object" && rec.data !== null && !Array.isArray(rec.data)) {
+      event.data = rec.data;
+    }
+    events.push(event);
+  }
+  return { events, skipped };
+}
+function queryTimeline(timelinePath2, watermark, evFilter) {
+  const mark = Number.isInteger(watermark) && watermark > 0 ? watermark : 0;
+  const all = [];
+  let skipped = 0;
+  for (const source of [...rotationChain(timelinePath2), timelinePath2]) {
+    const result = readTimelineEvents(source);
+    all.push(...result.events);
+    skipped += result.skipped;
+  }
+  all.sort((a, b) => a.seq - b.seq);
+  const last = all.length > 0 ? all[all.length - 1] : void 0;
+  let pruned;
+  if (all.length > 0) {
+    pruned = Math.max(0, all[0].seq - mark - 1);
+  } else {
+    pruned = mark > 0 ? mark : 0;
+  }
+  const events = all.filter((e) => e.seq > mark && (evFilter === void 0 || evFilter.has(e.ev)));
+  return { events, pruned, skipped, head: last === void 0 ? void 0 : { seq: last.seq, ts: last.ts } };
+}
+function watermarkFromSince(timelinePath2, sinceIso) {
+  const since = Date.parse(sinceIso);
+  if (Number.isNaN(since)) return 0;
+  let mark = 0;
+  for (const source of [...rotationChain(timelinePath2), timelinePath2]) {
+    for (const ev of readTimelineEvents(source).events) {
+      const ts = Date.parse(ev.ts);
+      if (!Number.isNaN(ts) && ts <= since && ev.seq > mark) mark = ev.seq;
+    }
+  }
+  return mark;
+}
+var TASK_FM_LINE_RE = /^([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*?)[ \t]*$/;
+function parseTaskLabels(taskMdPath) {
+  let text;
+  try {
+    text = fs28.readFileSync(taskMdPath, "utf8");
+  } catch {
+    return /* @__PURE__ */ new Map();
+  }
+  const region = extractTaskHeader(text);
+  if (!region.fenced) return /* @__PURE__ */ new Map();
+  const lines = text.split(/\r\n|\r|\n/);
+  const labels = /* @__PURE__ */ new Map();
+  for (let i = region.startLine; i <= region.endLine; i++) {
+    const line = lines[i] ?? "";
+    const m = TASK_FM_LINE_RE.exec(line);
+    if (m === null) continue;
+    labels.set(m[1] ?? "", m[2] ?? "");
+  }
+  return labels;
+}
+function usedRounds(workersDirs) {
+  const units = /* @__PURE__ */ new Map();
+  for (const workersDir of workersDirs) {
+    let entries;
+    try {
+      entries = fs28.readdirSync(workersDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    const names = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    for (const name of names) {
+      const labels = parseTaskLabels(path30.join(workersDir, name, "task.md"));
+      const loop = labels.get("loop");
+      if (loop === void 0 || loop === "") continue;
+      const attempt = (labels.get("attempt") ?? "").trim();
+      const unit = attempt !== "" ? attempt : `@${name}`;
+      let attempts = units.get(loop);
+      if (attempts === void 0) {
+        attempts = /* @__PURE__ */ new Set();
+        units.set(loop, attempts);
+      }
+      attempts.add(unit);
+    }
+  }
+  const result = /* @__PURE__ */ new Map();
+  for (const [loop, attempts] of units) result.set(loop, attempts.size);
+  return result;
+}
+var STATUS_SCHEMA = "autopilot-status/1";
+var TERMINAL_WORKER_STATUSES = /* @__PURE__ */ new Set(["done", "failed", "needs-clarification", "lost"]);
+function blockedOnHuman(pendingGates, nonTerminalRows, perKey) {
+  if (pendingGates === 0) return false;
+  if (perKey === void 0) return nonTerminalRows === 0;
+  for (const raw of perKey.gateKeys) {
+    const key = (raw ?? "").trim();
+    if (key === "") return true;
+    if ((perKey.nonTerminalByKey.get(key) ?? 0) === 0) return true;
+  }
+  return false;
+}
+function currentStage(stages) {
+  if (stages.length === 0) return void 0;
+  const running = stages.find((s) => s.status === "running");
+  if (running !== void 0) return running;
+  const open = stages.find((s) => s.status !== "closed" && s.status !== "closed-human");
+  return open ?? stages[stages.length - 1];
+}
+function keyRounds(perLoop, key, budget) {
+  let l2 = 0;
+  let l3 = 0;
+  let retry = 0;
+  for (const [loop, used] of perLoop) {
+    if (loop.startsWith(`l2:${key}:`)) l2 = Math.max(l2, used);
+    else if (loop === `l3:${key}`) l3 = Math.max(l3, used);
+    else if (loop.startsWith(`exec:${key}:`) || loop === `repair:${key}`) retry = Math.max(retry, used);
+  }
+  return {
+    l2: { used: l2, max: budget },
+    l3: { used: l3, max: budget },
+    retry: { used: retry, max: budget }
+  };
+}
+function deriveStatusModel(projectDir, nowMs = Date.now()) {
+  const cfg = readConfig(projectDir);
+  if (!cfg.ok) return cfg;
+  const config = cfg.config;
+  const warnings = [];
+  const roadmap = readRoadmap(projectDir);
+  if (roadmap.ok) {
+    warnings.push(...roadmap.warnings);
+  } else {
+    warnings.push(roadmap.error);
+  }
+  const stage = currentStage(roadmap.ok ? roadmap.stages : []);
+  const agenticdoc = path30.join(projectDir, ".agenticdoc");
+  const phaseByKey = new Map(new IndexStore(agenticdoc).readAll().map((e) => [e.key, e.phase]));
+  const keys = [];
+  if (stage !== void 0) {
+    for (const row of stage.keys) {
+      const perLoop = usedRounds([path30.join(agenticdoc, row.key, "workers")]);
+      keys.push({
+        key: row.key,
+        phase: phaseByKey.get(row.key) ?? "\u2014",
+        // key-status line absent (fresh proposal) → the only non-terminal
+        // enum value, "running" (D-105 KEY_STATUSES has no "pending").
+        state: stage.keyStatus[row.key] ?? "running",
+        rounds: keyRounds(perLoop, row.key, config.round_budget)
+      });
+    }
+  }
+  const gateScan = listGates(projectDir);
+  warnings.push(...gateScan.errors);
+  const gates = gateScan.gates.map((g) => {
+    const createdMs = Date.parse(g.createdAt);
+    return {
+      id: g.id,
+      kind: g.kind,
+      status: g.status,
+      ageMs: Number.isNaN(createdMs) ? null : Math.max(0, nowMs - createdMs)
+    };
+  });
+  const gateBlockerClasses = {};
+  for (const g of gateScan.gates) gateBlockerClasses[g.id] = blockerClassOf(g);
+  const head = queryTimeline(timelinePath(projectDir), 0).head;
+  return {
+    ok: true,
+    model: {
+      status: {
+        schema: STATUS_SCHEMA,
+        stage: {
+          current: stage === void 0 ? 0 : stage.number,
+          status: stage === void 0 ? "none" : stage.status,
+          keys
+        },
+        gates,
+        timeline: head === void 0 ? { seq: 0, ts: "" } : { seq: head.seq, ts: head.ts },
+        config: {
+          enabled: config.enabled,
+          poll_interval_sec: config.poll_interval_sec,
+          round_budget: config.round_budget,
+          max_parallel_keys: config.max_parallel_keys,
+          max_workers_per_key: config.max_workers_per_key
+        }
+      },
+      paused: config.paused,
+      warnings,
+      gateBlockerClasses
+    }
+  };
+}
+function formatCoarseAge(ms) {
+  const s = Math.max(0, Math.floor(ms / 1e3));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+function renderStatusText(model) {
+  const { status, paused, warnings } = model;
+  const lines = [];
+  if (status.stage.current > 0) {
+    lines.push(`stage ${status.stage.current} (${status.stage.status})`);
+    for (const k of status.stage.keys) {
+      lines.push(
+        `  ${k.key} | phase=${k.phase} | state=${k.state} | L2 ${k.rounds.l2.used}/${k.rounds.l2.max} | L3 ${k.rounds.l3.used}/${k.rounds.l3.max} | retry ${k.rounds.retry.used}/${k.rounds.retry.max}`
+      );
+    }
+    if (status.stage.keys.length === 0) lines.push("  (no keys)");
+  } else {
+    lines.push("stage: none (no roadmap \u2014 autopilot not initialized or no stages parsed)");
+  }
+  const pending = status.gates.filter((g) => g.status === "pending");
+  lines.push(`gates: ${status.gates.length} total, ${pending.length} pending`);
+  for (const g of status.gates) {
+    const age = g.ageMs === null ? "?" : formatCoarseAge(g.ageMs);
+    const blocker = model.gateBlockerClasses?.[g.id];
+    const blockerToken = blocker === void 0 ? "" : ` blocker=${blocker}`;
+    lines.push(`  ${g.id} ${g.kind} ${g.status} age=${age}${blockerToken}`);
+  }
+  lines.push(`timeline: seq=${status.timeline.seq} ts=${status.timeline.ts}`);
+  lines.push(
+    `config: enabled=${status.config.enabled} | poll_interval_sec=${status.config.poll_interval_sec} | round_budget=${status.config.round_budget} | max_parallel_keys=${status.config.max_parallel_keys} | max_workers_per_key=${status.config.max_workers_per_key}${paused ? " | paused" : ""}`
+  );
+  for (const w of warnings) lines.push(`warning: ${w}`);
+  return lines.join("\n");
+}
 
 // packages/coding-agent/src/extensions/agent-team-loop/rag/block.ts
 var RAG_MARKER_V1 = "<!-- mw-rag: v1 -->";
@@ -21677,6 +23499,160 @@ function renderRagBlock(config, meta) {
   return lines.join("\n");
 }
 
+// packages/coding-agent/src/extensions/agent-team-loop/shared/worker-store.ts
+import * as fs29 from "node:fs";
+import * as path31 from "node:path";
+var WORKER_COLS_MIN = 7;
+var WORKER_COLS_MAX = 9;
+var WORKER_PATH_KEY_RE = /(?:^|[\\/])\.agenticdoc[\\/]([^\\/]+)[\\/]workers[\\/]/;
+function normalizeWorkerOrigin(raw) {
+  return (raw ?? "").trim().toLowerCase() === "conductor" ? "conductor" : "manual";
+}
+function workerOrigin(entry) {
+  return entry.origin ?? "manual";
+}
+function workerOwnerKey(entry) {
+  return WORKER_PATH_KEY_RE.exec(entry.taskPath)?.[1] ?? "";
+}
+function workerBelongsToKey(entry, key) {
+  return workerOrigin(entry) === "conductor" && workerOwnerKey(entry) === key;
+}
+var QUEUE_HEADER_RE = /^#\s*mw-queue:v(\d+)\s*$/;
+var QUEUE_HEADER_V2 = "# mw-queue:v2";
+function parseQueueHeader(line) {
+  const match2 = QUEUE_HEADER_RE.exec(line.trim());
+  return match2 ? Number(match2[1]) : void 0;
+}
+function parseWorkerLine(line) {
+  const parts = line.split("|");
+  if (parts.length < WORKER_COLS_MIN || parts.length > WORKER_COLS_MAX) return { ok: false, reason: "cols" };
+  const [taskKey, status, cli, provider, taskPath, dispatchedAt, updatedAt, model, origin] = parts.map(
+    (s) => s.trim()
+  );
+  if (!taskKey || taskKey.startsWith("#")) return { ok: false, reason: "task-key" };
+  return {
+    ok: true,
+    entry: {
+      taskKey: taskKey ?? "",
+      status: status ?? "pending",
+      cli: cli ?? "",
+      provider: provider ?? "",
+      taskPath: taskPath ?? "",
+      dispatchedAt: dispatchedAt ?? "",
+      updatedAt: updatedAt ?? "",
+      model: model ?? "",
+      origin: origin === void 0 || origin === "" ? void 0 : normalizeWorkerOrigin(origin)
+    }
+  };
+}
+function serializeWorkerLine(entry) {
+  return [
+    entry.taskKey,
+    entry.status,
+    entry.cli,
+    entry.provider,
+    entry.taskPath,
+    entry.dispatchedAt,
+    entry.updatedAt,
+    entry.model ?? "",
+    workerOrigin(entry)
+  ].join(" | ");
+}
+var WorkerStore = class {
+  constructor(agenticdocRoot2) {
+    this.filePath = path31.join(agenticdocRoot2, "_workers.parallel");
+    this.lockPath = path31.join(agenticdocRoot2, "..", ".mw", "workers.lock");
+  }
+  /** The queue file this store reads and writes. Exposed so a caller that must
+   * stay inside the store's own critical section (the PM dispatcher derives the
+   * write-face base from the `.agenticdoc` root) anchors on the SAME path
+   * instead of re-deriving — and possibly drifting from — this construction
+   * (D-114). */
+  get queuePath() {
+    return this.filePath;
+  }
+  /** The store's exclusive queue lock (`<agenticdocRoot>/../.mw/workers.lock`).
+   * A caller that already holds it must use {@link upsertWithinLock}, never
+   * {@link upsert} (a nested `acquireLock` backs off and then raises). */
+  get lockFilePath() {
+    return this.lockPath;
+  }
+  /** Raw queue lines with the trailing newline dropped; `[]` when the file is
+   * absent or empty. Keeping the lines verbatim is what lets
+   * {@link upsertWithinLock} rewrite one row without touching any other byte
+   * of the file (AC-023). */
+  readRawLines() {
+    if (!fs29.existsSync(this.filePath)) return [];
+    const lines = fs29.readFileSync(this.filePath, "utf8").split("\n");
+    if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+    return lines;
+  }
+  /** The full queue read: rows, unreadable lines (counted, never dropped) and
+   * the declared layout version. Blank lines and `#` comments are neither. */
+  readQueue() {
+    const rows = [];
+    const unparsable = [];
+    let version = 1;
+    for (const [index, line] of this.readRawLines().entries()) {
+      if (line.trim() === "") continue;
+      if (line.trimStart().startsWith("#")) {
+        const header = parseQueueHeader(line);
+        if (header !== void 0 && index === 0) version = header;
+        continue;
+      }
+      const parsed = parseWorkerLine(line);
+      if (parsed.ok) rows.push(parsed.entry);
+      else unparsable.push({ index, line, reason: parsed.reason });
+    }
+    return { rows, unparsable, version };
+  }
+  readAll() {
+    return this.readQueue().rows;
+  }
+  async upsert(entry) {
+    const release = await acquireLock(this.lockPath);
+    try {
+      this.upsertWithinLock(entry);
+    } finally {
+      release();
+    }
+  }
+  /** Lock-free upsert: the single implementation of the queue write — row
+   * format, replace-by-task-key, `# mw-queue:v2` on a brand-new queue, and
+   * tmp+rename. {@link upsert} is "take the lock, call this, release".
+   *
+   * PRECONDITION: the caller already holds {@link lockFilePath}
+   * (`.mw/workers.lock`). This method does NOT acquire the lock and does NOT
+   * release it. Calling it without the lock is a data race; calling
+   * {@link upsert} while holding the lock deadlocks (nested `acquireLock`
+   * backs off and then raises, RQ-D3). */
+  upsertWithinLock(entry) {
+    const raw = this.readRawLines();
+    const replacement = serializeWorkerLine(entry);
+    const idx = raw.findIndex((line) => {
+      if (line.trim() === "" || line.trimStart().startsWith("#")) return false;
+      const parsed = parseWorkerLine(line);
+      return parsed.ok && parsed.entry.taskKey === entry.taskKey;
+    });
+    let lines;
+    if (idx >= 0) {
+      lines = raw.map((line, i) => i === idx ? replacement : line);
+    } else if (raw.length === 0) {
+      lines = [QUEUE_HEADER_V2, replacement];
+    } else {
+      lines = [...raw, replacement];
+    }
+    const content = `${lines.join("\n")}
+`;
+    const tmpPath = `${this.filePath}.tmp`;
+    fs29.writeFileSync(tmpPath, content, "utf8");
+    fs29.renameSync(tmpPath, this.filePath);
+  }
+  findByKey(taskKey) {
+    return this.readAll().find((e) => e.taskKey === taskKey);
+  }
+};
+
 // packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts
 var PROFILE_MARK = "<!-- mw-profile: v1 -->";
 var PROFILE_MARK_V2 = "<!-- mw-profile: v2 -->";
@@ -21687,7 +23663,7 @@ function renderProfileBlock(config, ignoreEnforced) {
   const lines = [
     PROFILE_MARK,
     "[mw] Workspace profile (target.yml essentials, injected at dispatch;",
-    `full file: ${path30.join(config.controlRoot, ".agenticdoc", "target.yml")})`
+    `full file: ${path32.join(config.controlRoot, ".agenticdoc", "target.yml")})`
   ];
   if (config.mode === "dual") {
     lines.push(`Control workspace: ${config.controlRoot}`);
@@ -21717,7 +23693,7 @@ function renderProfileBlock(config, ignoreEnforced) {
     }
     if (contract.docs.length > 0) {
       lines.push("- docs (references, not inlined):");
-      for (const doc of contract.docs) lines.push(`  - ${path30.resolve(config.controlRoot, doc)}`);
+      for (const doc of contract.docs) lines.push(`  - ${path32.resolve(config.controlRoot, doc)}`);
     }
   }
   return lines.join("\n");
@@ -21765,7 +23741,7 @@ function renderPartitionProfileBlock(config, ignoreEnforced) {
     PROFILE_MARK_V2,
     `[mw] mode: ${config.mode}`,
     "[mw] Workspace profile (target.yml essentials, injected at dispatch;",
-    `full file: ${path30.join(config.controlRoot, ".agenticdoc", "target.yml")})`,
+    `full file: ${path32.join(config.controlRoot, ".agenticdoc", "target.yml")})`,
     `Control workspace: ${config.controlRoot}`,
     `Parent root (extended workspace, writable): ${config.parentRoot}`,
     `Partition root (worker cwd): ${config.partitionRoot}`
@@ -21798,7 +23774,7 @@ function renderPartitionProfileBlock(config, ignoreEnforced) {
     }
     if (contract.docs.length > 0) {
       lines.push("- docs (references, not inlined):");
-      for (const doc of contract.docs) lines.push(`  - ${path30.resolve(config.controlRoot, doc)}`);
+      for (const doc of contract.docs) lines.push(`  - ${path32.resolve(config.controlRoot, doc)}`);
     }
   }
   return lines.join("\n");
@@ -21821,7 +23797,7 @@ function injectWorkspaceProfile(taskPath) {
   const config = resolveWorkspaceConfig(controlRoot);
   let original;
   try {
-    original = fs28.readFileSync(taskPath, "utf8");
+    original = fs30.readFileSync(taskPath, "utf8");
   } catch (err) {
     console.error(
       `[mw] profile injection skipped for ${taskPath}: ${err instanceof Error ? err.message : String(err)}`
@@ -21853,17 +23829,102 @@ ${renderProfileBlock(config, !ownDenyGlobs)}
 
 ${ragBlock}
 `;
-  if (out !== original) fs28.writeFileSync(taskPath, out, "utf8");
+  if (out !== original) fs30.writeFileSync(taskPath, out, "utf8");
 }
 async function dispatchTask(entry, store) {
-  injectWorkspaceProfile(entry.taskPath);
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const full = {
     ...entry,
     dispatchedAt: now,
     updatedAt: now
   };
-  await store.upsert(full);
+  const base = writeFaceBase(path32.dirname(store.queuePath));
+  const caseInsensitive = writeFaceCaseInsensitive();
+  const release = await acquireLock(store.lockFilePath);
+  try {
+    let content = "";
+    try {
+      content = fs30.readFileSync(entry.taskPath, "utf8");
+    } catch {
+    }
+    const refusal = writeFaceVerdict({ entry, content, store, base, caseInsensitive });
+    if (refusal !== null) return refusal;
+    injectWorkspaceProfile(entry.taskPath);
+    store.upsertWithinLock(full);
+  } finally {
+    release();
+  }
+  return { ok: true };
+}
+function writeFaceBase(agenticdocRoot2) {
+  return path32.resolve(agenticdocRoot2, "..");
+}
+function writeFaceCaseInsensitive() {
+  return process.platform === "win32";
+}
+function parseInflightWriteFace(taskPath, base, caseInsensitive) {
+  if (taskPath.trim() === "") return null;
+  let text;
+  try {
+    text = fs30.readFileSync(taskPath, "utf8");
+  } catch {
+    return null;
+  }
+  const parsed = parseWriteFace(text, { base, caseInsensitive });
+  return parsed.kind === "declared" ? parsed.face : null;
+}
+function writeFaceVerdict(input) {
+  const taskKey = input.entry.taskKey;
+  const parsed = parseWriteFace(input.content, { base: input.base, caseInsensitive: input.caseInsensitive });
+  const cardBacked = (readTaskHeaderScalar(input.content, "card_path") ?? "") !== "";
+  const ownerKey = workerOwnerKey({ taskPath: input.entry.taskPath });
+  const inFlight = ownerKey === "" ? [] : input.store.readQueue().rows.filter(
+    (row) => row.taskKey !== taskKey && workerOwnerKey(row) === ownerKey && !TERMINAL_WORKER_STATUSES.has(row.status)
+  );
+  if (parsed.kind === "rejected") {
+    const tail = parsed.detail === void 0 ? "" : ` ${parsed.detail}`;
+    return {
+      ok: false,
+      code: parsed.code,
+      reason: parsed.detail === void 0 ? parsed.code : `${parsed.code}: ${parsed.detail}`,
+      detail: `${taskKey}: ${parsed.code}${tail}`
+    };
+  }
+  if (parsed.kind === "undeclared") {
+    if (inFlight.length === 0 || !cardBacked) return null;
+    return {
+      ok: false,
+      code: "write-face-undeclared",
+      serialOnly: true,
+      inFlight: inFlight.length,
+      reason: `write-face-undeclared: serial-only (${inFlight.length} same-owner worker(s) in flight)`,
+      detail: `${taskKey}: write_face undeclared; ${inFlight.length} same-owner worker(s) in flight`
+    };
+  }
+  for (const row of inFlight) {
+    const otherFace = parseInflightWriteFace(row.taskPath, input.base, input.caseInsensitive);
+    if (otherFace === null) continue;
+    const result = writeFacesOverlap(parsed.face, otherFace);
+    if (result === null) continue;
+    if ("unsupported" in result) {
+      return {
+        ok: false,
+        code: "write-face-overlap",
+        overlapWith: row.taskKey,
+        reason: `write-face-overlap: overlap-with:${row.taskKey} unsupported=${result.unsupported}`,
+        detail: `${taskKey}: undecidable overlap with ${row.taskKey} (${result.unsupported}) treated as overlap`
+      };
+    }
+    return {
+      ok: false,
+      code: "write-face-overlap",
+      overlapWith: row.taskKey,
+      sample: result.sample,
+      reason: `write-face-overlap: overlap-with:${row.taskKey} sample=${result.sample}`,
+      detail: `${taskKey}: overlap with ${row.taskKey} at ${result.sample} (${result.rule} vs ${result.other})`
+    };
+  }
+  return null;
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
@@ -22037,18 +24098,18 @@ function trunc(s, max) {
   return s.length <= max ? s : `${s.slice(0, max - 1)}\u2026`;
 }
 function ownerKeyOf(entry, agenticdocRoot2) {
-  const rel = path31.relative(agenticdocRoot2, path31.normalize(entry.taskPath));
-  return rel.split(path31.sep)[0] ?? "";
+  const rel = path33.relative(agenticdocRoot2, path33.normalize(entry.taskPath));
+  return rel.split(path33.sep)[0] ?? "";
 }
 function ownedByThisWindow(entry, watch, agenticdocRoot2) {
   return ownerKeyOf(entry, agenticdocRoot2) === watch.key || watch.dispatchedTaskKeys?.has(entry.taskKey) === true;
 }
 var OUTPUT_READBACK_MAX = 2e4;
 function readOutputBody(taskDir) {
-  const outputPath = path31.join(taskDir, "output.md");
+  const outputPath = path33.join(taskDir, "output.md");
   let content;
   try {
-    content = fs29.readFileSync(outputPath, "utf8").trim();
+    content = fs31.readFileSync(outputPath, "utf8").trim();
   } catch {
     return void 0;
   }
@@ -22059,11 +24120,11 @@ function readOutputBody(taskDir) {
 \u2026(truncated \u2014 full report: ${outputPath})`;
 }
 function readSpawnFailure(taskDir) {
-  const logPath = path31.join(taskDir, "worker.log");
+  const logPath = path33.join(taskDir, "worker.log");
   try {
-    const stat = fs29.statSync(logPath);
+    const stat = fs31.statSync(logPath);
     if (stat.size > 64 * 1024) return void 0;
-    const lines = fs29.readFileSync(logPath, "utf8").split("\n");
+    const lines = fs31.readFileSync(logPath, "utf8").split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (line.startsWith("[launcher] spawn failed")) return line;
@@ -22076,9 +24137,9 @@ function readSpawnFailure(taskDir) {
 var WORKER_LOG_TAIL_MAX = 256 * 1024;
 function readWorkerLogTail(taskDir) {
   try {
-    const stat = fs29.statSync(path31.join(taskDir, "worker.log"));
+    const stat = fs31.statSync(path33.join(taskDir, "worker.log"));
     if (stat.size > WORKER_LOG_TAIL_MAX) return void 0;
-    const lines = fs29.readFileSync(path31.join(taskDir, "worker.log"), "utf8").split("\n");
+    const lines = fs31.readFileSync(path33.join(taskDir, "worker.log"), "utf8").split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (line !== "") return line;
@@ -22191,7 +24252,7 @@ function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot2, ke
     let detail = "";
     let model = "";
     if (e.status === "running") {
-      const prog = readTaskProgress(path31.dirname(e.taskPath));
+      const prog = readTaskProgress(path33.dirname(e.taskPath));
       model = prog?.model ?? "";
       const hb = prog?.heartbeat;
       if (hb) {
@@ -22210,8 +24271,8 @@ function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot2, ke
     } else if (e.status === "pending") {
       model = e.model;
     } else {
-      model = readTaskProgress(path31.dirname(e.taskPath))?.model ?? "";
-      detail = readTerminalDetail(path31.dirname(e.taskPath), e.status);
+      model = readTaskProgress(path33.dirname(e.taskPath))?.model ?? "";
+      detail = readTerminalDetail(path33.dirname(e.taskPath), e.status);
     }
     const badge2 = model ? ` [${model}]` : "";
     return trunc(`  ${STATUS_GLYPH[e.status]} ${e.taskKey}${badge2}${detail ? ` \u2014 ${detail}` : ""}`, WATCH_LINE_MAX);
@@ -22270,7 +24331,7 @@ function elsewhereAggregateLine(all, extraTaskKeys, watchKey, agenticdocRoot2) {
     const countText = AGGREGATE_STATUS_ORDER.filter((s) => counts[s] > 0).map((s) => `${counts[s]} ${s}`).join(", ");
     let highRisk = 0;
     for (const e of group) {
-      if (e.status === "running" && readTaskProgress(path31.dirname(e.taskPath))?.checkpoint?.risk === "high") {
+      if (e.status === "running" && readTaskProgress(path33.dirname(e.taskPath))?.checkpoint?.risk === "high") {
         highRisk++;
       }
     }
@@ -22280,7 +24341,7 @@ function elsewhereAggregateLine(all, extraTaskKeys, watchKey, agenticdocRoot2) {
 }
 function setWatchWidget(ctx, lines) {
   if (!ctx.hasUI) return;
-  ctx.ui.setWidget(WATCH_WIDGET_KEY, lines, { placement: "belowEditor" });
+  ctx.ui.setWidget(WATCH_WIDGET_KEY, lines, { placement: "belowEditor", order: 10 });
 }
 function applyWatchWidget(ui, lines) {
   if (!ui.ctx) return;
@@ -22385,8 +24446,8 @@ function registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agenticdocRo
   });
 }
 async function writeSessionSnapshot(agenticdocRoot2, key, lines) {
-  const statePath = path31.join(agenticdocRoot2, key, "pm-state.md");
-  const content = fs29.existsSync(statePath) ? fs29.readFileSync(statePath, "utf8") : `# PM State: ${key}
+  const statePath = path33.join(agenticdocRoot2, key, "pm-state.md");
+  const content = fs31.existsSync(statePath) ? fs31.readFileSync(statePath, "utf8") : `# PM State: ${key}
 
 ## Notes
 `;
@@ -22403,12 +24464,12 @@ ${section}`) : `${content.trimEnd()}
 ## Notes
 
 ${section}`;
-  fs29.mkdirSync(path31.dirname(statePath), { recursive: true });
+  fs31.mkdirSync(path33.dirname(statePath), { recursive: true });
   const release = await acquireLock(`${statePath}.lock`);
   try {
     const tmpPath = `${statePath}.tmp`;
-    fs29.writeFileSync(tmpPath, next, "utf8");
-    fs29.renameSync(tmpPath, statePath);
+    fs31.writeFileSync(tmpPath, next, "utf8");
+    fs31.renameSync(tmpPath, statePath);
   } finally {
     release();
   }
@@ -22442,7 +24503,7 @@ function registerPmSaveCommand(pi, indexStore, workerStore, watch, agenticdocRoo
       lines.push("(agent: fill in below \u2014 \u5F53\u524D\u5DE5\u4F5C\u8109\u7EDC / \u5173\u952E\u51B3\u7B56 / \u8FDB\u884C\u4E2D / \u4E0B\u4E00\u6B65)");
       const statePath = await writeSessionSnapshot(agenticdocRoot2, key, lines);
       ctx.ui.notify(
-        `Saved session snapshot to ${path31.relative(agenticdocRoot2, statePath)} \u2014 asking the agent to fill in the working context.`,
+        `Saved session snapshot to ${path33.relative(agenticdocRoot2, statePath)} \u2014 asking the agent to fill in the working context.`,
         "info"
       );
       pi.sendUserMessage(
@@ -22759,7 +24820,7 @@ function classifyWriteTargetShape(pathToken, ctx) {
   if (t.includes(":")) return "colon";
   if (/\.[A-Za-z0-9]{1,8}$/.test(t)) return "ext";
   if (WRITE_INTENT_DENY_NAMES.has(t)) return "deny-name";
-  if (fs29.existsSync(path31.resolve(ctx.projectRoot, t))) return "exists";
+  if (fs31.existsSync(path33.resolve(ctx.projectRoot, t))) return "exists";
   return "bare";
 }
 function samePath3(a, b) {
@@ -22769,19 +24830,19 @@ function pmWriteDenyReason(ctx, target) {
   const keyDir = ctx.keyDir;
   const trueRoot = ctx.trueRoot;
   if (keyDir !== void 0) {
-    if (samePath3(target, path31.join(keyDir, "pm-state.md"))) return "pm-state.md";
-    const workersDir = path31.join(keyDir, "workers");
+    if (samePath3(target, path33.join(keyDir, "pm-state.md"))) return "pm-state.md";
+    const workersDir = path33.join(keyDir, "workers");
     if (isSameOrUnder(workersDir, target)) {
-      const first = path31.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
+      const first = path33.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
       if (first.startsWith("_workers")) return "workers/_workers*";
     }
   }
-  if (trueRoot !== void 0 && samePath3(target, path31.join(trueRoot, "_index.parallel"))) return "_index.parallel";
+  if (trueRoot !== void 0 && samePath3(target, path33.join(trueRoot, "_index.parallel"))) return "_index.parallel";
   if (trueRoot !== void 0 && keyDir !== void 0 && isSameOrUnder(trueRoot, target) && !isSameOrUnder(keyDir, target)) {
     return "other key dir / .agenticdoc root";
   }
-  if (isSameOrUnder(path31.join(ctx.projectRoot, "packages"), target)) return "packages/**";
-  if (isSameOrUnder(path31.join(ctx.projectRoot, ".git"), target)) return ".git/**";
+  if (isSameOrUnder(path33.join(ctx.projectRoot, "packages"), target)) return "packages/**";
+  if (isSameOrUnder(path33.join(ctx.projectRoot, ".git"), target)) return ".git/**";
   return null;
 }
 function judgeWriteTarget(pathToken, ctx) {
@@ -22977,26 +25038,72 @@ var ENVELOPE_PRODUCER_KEY = "envelope_producer";
 function envelopeProducerIdentity() {
   return `${DISPATCH_PRODUCER_ID}@${VERSION}`;
 }
-function mergeCardHeader(frontmatter, cardPath, cardSha256) {
+var WRITE_FACE_CARD_SECTION = "\u5199\u5165\u5141\u8BB8\u9762";
+var WRITE_FACE_BACKTICK_SPAN_RE = /`([^`]+)`/;
+function cardWriteFaceEntries(sections) {
+  for (const extra of sections.extras) {
+    const title = (extra.title ?? "").trim();
+    if (!title.startsWith(WRITE_FACE_CARD_SECTION)) continue;
+    const entries = [];
+    for (const raw of (extra.body ?? "").split(/\r\n|\r|\n/)) {
+      let item = raw.trim();
+      if (item === "") continue;
+      if ("-*+".includes(item[0] ?? "")) item = item.slice(1).trim();
+      const span = WRITE_FACE_BACKTICK_SPAN_RE.exec(item);
+      if (span !== null) {
+        item = (span[1] ?? "").trim();
+      } else {
+        item = (item.split(/[\s（(]/, 1)[0] ?? "").trim();
+      }
+      if (item !== "" && item !== "-") entries.push(item);
+    }
+    return entries;
+  }
+  return null;
+}
+function renderWriteFaceLine(entries) {
+  const values = entries.map((entry) => entry.trim());
+  if (values.some((entry) => entry.includes(","))) {
+    return `write_face:
+${values.map((entry) => `  - ${entry}`).join("\n")}`;
+  }
+  return `write_face: ${values.join(", ")}`;
+}
+function mergeCardHeader(frontmatter, cardPath, cardSha256, sections) {
   const header = frontmatter.replace(/\r?\n$/, "");
+  const writeFaceEntries = cardWriteFaceEntries(sections);
+  const writeFaceLine = writeFaceEntries === null ? "" : `${writeFaceEntries.length > 0 ? renderWriteFaceLine(writeFaceEntries) : "write_face: -"}
+`;
   return `${header}
 card_path: ${cardPath}
 card_sha256: ${cardSha256}
 ${ENVELOPE_PRODUCER_KEY}: ${envelopeProducerIdentity()}
-`;
+${writeFaceLine}`;
+}
+function cleanupRefusedTaskDir(taskPath) {
+  try {
+    fs31.rmSync(path33.dirname(taskPath), { recursive: true, force: true });
+  } catch {
+  }
+}
+function writeFaceRefusalText(taskKey, refusal) {
+  if (refusal.code === "write-face-undeclared") {
+    return `Worker dispatch of '${taskKey}' held serial-only: the card declares no \u5199\u5165\u5141\u8BB8\u9762 (write_face undeclared, D-003) and ${refusal.inFlight ?? 0} same-key worker(s) are in flight. Nothing was queued. Re-dispatch once the in-flight worker reaches a terminal status, or declare the card's \u5199\u5165\u5141\u8BB8\u9762.`;
+  }
+  return `Worker dispatch of '${taskKey}' refused: ${refusal.reason}. Nothing was written (no task dir, no queue row). Narrow the card's \u5199\u5165\u5141\u8BB8\u9762 so it does not overlap an in-flight same-key worker, then re-dispatch.`;
 }
 function normalizeCardPathForHeader(cardPathInput, ownerKey, agenticdocRoot2, projectDir) {
-  const resolved = path31.isAbsolute(cardPathInput) ? path31.resolve(cardPathInput) : path31.resolve(projectDir, cardPathInput);
-  const keyTasksDir = path31.join(agenticdocRoot2, ownerKey, "tasks");
-  if (isSameOrUnder(keyTasksDir, resolved)) return `tasks/${path31.basename(resolved)}`;
-  const rel = path31.relative(projectDir, resolved);
-  if (rel !== "" && !rel.startsWith("..") && !path31.isAbsolute(rel)) return rel.split(path31.sep).join("/");
-  return path31.basename(resolved);
+  const resolved = path33.isAbsolute(cardPathInput) ? path33.resolve(cardPathInput) : path33.resolve(projectDir, cardPathInput);
+  const keyTasksDir = path33.join(agenticdocRoot2, ownerKey, "tasks");
+  if (isSameOrUnder(keyTasksDir, resolved)) return `tasks/${path33.basename(resolved)}`;
+  const rel = path33.relative(projectDir, resolved);
+  if (rel !== "" && !rel.startsWith("..") && !path33.isAbsolute(rel)) return rel.split(path33.sep).join("/");
+  return path33.basename(resolved);
 }
 var EMPTY_CARD_SECTIONS = { context: "", requirements: "", deliverables: "", extras: [] };
 function readDispatchCard(input) {
   const raw = input.cardPath.trim();
-  const resolvedPath = path31.isAbsolute(raw) ? path31.resolve(raw) : path31.resolve(input.projectDir, raw);
+  const resolvedPath = path33.isAbsolute(raw) ? path33.resolve(raw) : path33.resolve(input.projectDir, raw);
   const empty = {
     ok: false,
     resolvedPath,
@@ -23010,7 +25117,7 @@ function readDispatchCard(input) {
   if (!envelope.ok) return { ...empty, missing: envelope.missing };
   let text;
   try {
-    text = fs29.readFileSync(resolvedPath, "utf8");
+    text = fs31.readFileSync(resolvedPath, "utf8");
   } catch {
     return { ...empty, missing: ["file"] };
   }
@@ -23036,19 +25143,21 @@ function writeDispatchTaskMd(deps, input) {
     mergeWriteScope(input.frontmatter, input.writeScope),
     input.allowForeignWrite
   );
-  if (input.card) frontmatter = mergeCardHeader(frontmatter, input.card.headerPath, input.card.sha256);
+  if (input.card) {
+    frontmatter = mergeCardHeader(frontmatter, input.card.headerPath, input.card.sha256, input.card.sections);
+  }
   const taskDir = workerTaskDir(deps.agenticdocRoot, deps.ownerKey, input.taskKey);
-  fs29.mkdirSync(taskDir, { recursive: true });
-  const taskMdPath = path31.join(taskDir, "task.md");
+  fs31.mkdirSync(taskDir, { recursive: true });
+  const taskMdPath = path33.join(taskDir, "task.md");
   const body = input.card ? applyCardSeedSections(input.body, input.card.sections) : input.body;
   const plain = `${frontmatter}
 ${body}
 `;
   const content = input.injectWriteSurface ? applyWriteSurfaceContract(plain, input.type, input.writeScope) : plain;
-  fs29.writeFileSync(taskMdPath, content, "utf8");
+  fs31.writeFileSync(taskMdPath, content, "utf8");
   return { ok: true, path: taskMdPath, injected: input.injectWriteSurface === true };
 }
-function registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot2, watch, projectDir = path31.dirname(agenticdocRoot2)) {
+function registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot2, watch, projectDir = path33.dirname(agenticdocRoot2)) {
   pi.registerTool({
     name: "dispatch_worker",
     label: "dispatch_worker",
@@ -23147,7 +25256,7 @@ ${DOC_GATE_HINT}`
         };
       }
       const taskDir = workerTaskDir(agenticdocRoot2, ownerKey, task_key);
-      if (fs29.existsSync(taskDir)) {
+      if (fs31.existsSync(taskDir)) {
         return {
           content: [
             {
@@ -23167,7 +25276,7 @@ ${DOC_GATE_HINT}`
           description,
           taskDir,
           projectRoot: projectDir,
-          keyDir: path31.join(agenticdocRoot2, ownerKey),
+          keyDir: path33.join(agenticdocRoot2, ownerKey),
           trueRoot: agenticdocRoot2,
           allowForeignWrite
         });
@@ -23225,10 +25334,14 @@ ${DOC_GATE_HINT}`
         }
       );
       const taskMdPath = written.path;
-      await dispatchTask(
+      const outcome = await dispatchTask(
         { taskKey: task_key, status: "pending", cli, provider, model: model ?? "", taskPath: taskMdPath },
         workerStore
       );
+      if (!outcome.ok) {
+        cleanupRefusedTaskDir(taskMdPath);
+        return { content: [{ type: "text", text: writeFaceRefusalText(task_key, outcome) }], details: void 0 };
+      }
       if (watch.dispatchedTaskKeys === void 0) watch.dispatchedTaskKeys = /* @__PURE__ */ new Set();
       watch.dispatchedTaskKeys.add(task_key);
       return {
@@ -23461,7 +25574,7 @@ function registerAdvancePhaseTool(pi, projectDir, indexStore) {
     }
   });
 }
-function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, watch, projectDir = path31.dirname(agenticdocRoot2)) {
+function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, watch, projectDir = path33.dirname(agenticdocRoot2)) {
   const USAGE2 = "Usage: /worker <claude|codex|pi> --card <card-path> [--type coding|review|research|rag-research|vision] [--model <id>] [--reason <text>] [--key <name>] [--allow-foreign-write] <task description>";
   pi.registerCommand("worker", {
     description: "Spawn a worker: /worker <claude|codex|pi> --card <card-path> [--type <t>] [--model <id>] [--reason <text>] <task description>",
@@ -23540,7 +25653,7 @@ function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, wa
           description,
           taskDir,
           projectRoot: projectDir,
-          keyDir: path31.join(agenticdocRoot2, ownerKey),
+          keyDir: path33.join(agenticdocRoot2, ownerKey),
           trueRoot: agenticdocRoot2,
           allowForeignWrite: allowForeignWriteArg
         });
@@ -23601,7 +25714,15 @@ function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, wa
         }
       );
       const taskMdPath = written.path;
-      await dispatchTask({ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath }, workerStore);
+      const outcome = await dispatchTask(
+        { taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath },
+        workerStore
+      );
+      if (!outcome.ok) {
+        cleanupRefusedTaskDir(taskMdPath);
+        ctx.ui.notify(writeFaceRefusalText(taskKey, outcome), "warning");
+        return;
+      }
       ctx.ui.notify(
         `Dispatched ${cli} worker (${taskKey}) under key '${ownerKey}' [type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}].`,
         "info"
@@ -24048,1135 +26169,7 @@ ${r.output}`, "info");
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/autopilot/gate-writer.ts
-import * as fs31 from "node:fs";
-
-// packages/coding-agent/src/extensions/agent-team-loop/autopilot/status-model.ts
-import * as fs30 from "node:fs";
-import * as path32 from "node:path";
-function autopilotDir(projectDir) {
-  return path32.join(projectDir, ".agenticdoc", "_autopilot");
-}
-function roadmapPath(projectDir) {
-  return path32.join(autopilotDir(projectDir), "_roadmap.md");
-}
-function gatesDir(projectDir) {
-  return path32.join(autopilotDir(projectDir), "gates");
-}
-function timelinePath(projectDir) {
-  return path32.join(autopilotDir(projectDir), "timeline.jsonl");
-}
-function configPath(projectDir) {
-  return path32.join(autopilotDir(projectDir), "config.json");
-}
-function gatesLockPath(projectDir) {
-  return path32.join(projectDir, ".mw", "gates.lock");
-}
-function configLockPath(projectDir) {
-  return path32.join(projectDir, ".mw", "autopilot-config.lock");
-}
-var DEFAULT_CONFIG = {
-  enabled: false,
-  paused: false,
-  poll_interval_sec: 4,
-  max_parallel_keys: 2,
-  round_budget: 2,
-  worker_timeout_min: 30,
-  l2_read_file_cap: 8,
-  l2_read_byte_cap: 65536,
-  advance_stall_ticks: 5,
-  xkey_repair: false,
-  xkey_verify_cmd: [],
-  xkey_verify_timeout_s: 1800,
-  xkey_verify_cwd: "",
-  auto_gate_mode: "off",
-  launcher_max_workers: 8,
-  dispatch_max_per_scan: 3,
-  queue_alarm_delta: 50,
-  l3_abort_retry_limit: 1,
-  gate_reminder_after_min: 30,
-  gate_reminder_max: 2
-};
-function freshDefaults() {
-  return { ...DEFAULT_CONFIG, xkey_verify_cmd: [...DEFAULT_CONFIG.xkey_verify_cmd] };
-}
-var BOOL_FIELDS = ["enabled", "paused", "xkey_repair", "envelope_fallback"];
-var OPTIONAL_CONFIG_KEYS = BOOL_FIELDS.filter(
-  (field) => !Object.hasOwn(DEFAULT_CONFIG, field)
-);
-var LIST_FIELDS = ["xkey_verify_cmd"];
-var STR_FIELDS = ["xkey_verify_cwd"];
-var ENUM_FIELDS = {
-  auto_gate_mode: ["off", "shadow", "live"]
-};
-var INT_RANGES = {
-  poll_interval_sec: [1, 5],
-  max_parallel_keys: [2, null],
-  round_budget: [1, null],
-  worker_timeout_min: [1, null],
-  l2_read_file_cap: [1, null],
-  l2_read_byte_cap: [1, null],
-  advance_stall_ticks: [1, 50],
-  xkey_verify_timeout_s: [1, null],
-  launcher_max_workers: [1, 64],
-  dispatch_max_per_scan: [1, 64],
-  queue_alarm_delta: [10, 1e4],
-  l3_abort_retry_limit: [0, 10],
-  gate_reminder_after_min: [1, 1440],
-  gate_reminder_max: [1, 2]
-};
-var INT_LITERAL_RE = /^-?(?:0|[1-9]\d*)$/;
-var IntegerLiteralError = class extends Error {
-  constructor(field, literal) {
-    super(`invalid _autopilot/config.json: ${field}: expected an integer literal, got ${literal}`);
-    this.name = "IntegerLiteralError";
-  }
-};
-function configReviver(key, value, context) {
-  if (typeof value !== "number" || !Number.isInteger(value)) return value;
-  if (!Object.hasOwn(INT_RANGES, key)) return value;
-  const source = context?.source;
-  if (source !== void 0 && !INT_LITERAL_RE.test(source)) throw new IntegerLiteralError(key, source);
-  return value;
-}
-function validateConfigData(data) {
-  if (typeof data !== "object" || data === null || Array.isArray(data)) {
-    return ["config root must be a JSON object"];
-  }
-  const cfg = data;
-  const errors = [];
-  const known = /* @__PURE__ */ new Set([...Object.keys(DEFAULT_CONFIG), ...OPTIONAL_CONFIG_KEYS]);
-  const unknown = Object.keys(cfg).filter((k) => !known.has(k)).sort();
-  if (unknown.length > 0) errors.push(`unknown field(s): ${unknown.join(", ")}`);
-  for (const field of BOOL_FIELDS) {
-    if (field in cfg && typeof cfg[field] !== "boolean") {
-      errors.push(`${field}: expected true/false, got ${JSON.stringify(cfg[field])}`);
-    }
-  }
-  for (const field of LIST_FIELDS) {
-    if (!(field in cfg)) continue;
-    const value = cfg[field];
-    if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item !== "")) {
-      errors.push(`${field}: expected a list of non-empty strings, got ${JSON.stringify(value)}`);
-    }
-  }
-  for (const field of STR_FIELDS) {
-    if (field in cfg && typeof cfg[field] !== "string") {
-      errors.push(`${field}: expected string, got ${JSON.stringify(cfg[field])}`);
-    }
-  }
-  for (const [field, allowed] of Object.entries(ENUM_FIELDS)) {
-    if (!(field in cfg)) continue;
-    const value = cfg[field];
-    if (typeof value !== "string" || !allowed.includes(value)) {
-      errors.push(`${field}: expected one of ${allowed.join(", ")}, got ${JSON.stringify(value)}`);
-    }
-  }
-  for (const [field, [lo, hi]] of Object.entries(INT_RANGES)) {
-    if (!(field in cfg)) continue;
-    const value = cfg[field];
-    if (typeof value !== "number" || !Number.isInteger(value)) {
-      errors.push(`${field}: expected integer, got ${JSON.stringify(value)}`);
-      continue;
-    }
-    if (value < lo) errors.push(`${field}: must be >= ${lo}, got ${value}`);
-    if (hi !== null && value > hi) errors.push(`${field}: must be <= ${hi}, got ${value}`);
-  }
-  return errors;
-}
-function readConfig(projectDir) {
-  const file = configPath(projectDir);
-  let raw;
-  try {
-    raw = fs30.readFileSync(file, "utf8");
-  } catch (err) {
-    if (err.code === "ENOENT") return { ok: true, config: freshDefaults() };
-    return { ok: false, error: `cannot read ${file}: ${String(err)}` };
-  }
-  let data;
-  try {
-    data = JSON.parse(raw, configReviver);
-  } catch (err) {
-    if (err instanceof IntegerLiteralError) return { ok: false, error: err.message };
-    return { ok: false, error: `cannot parse ${file}: ${String(err)}` };
-  }
-  const errors = validateConfigData(data);
-  if (errors.length > 0) return { ok: false, error: `invalid _autopilot/config.json: ${errors.join("; ")}` };
-  const cfg = data;
-  const boolOf = (name) => typeof cfg[name] === "boolean" ? cfg[name] : DEFAULT_CONFIG[name];
-  const intOf = (name) => typeof cfg[name] === "number" ? cfg[name] : DEFAULT_CONFIG[name];
-  const listOf = (name) => Array.isArray(cfg[name]) ? cfg[name] : [...DEFAULT_CONFIG[name]];
-  const strOf = (name) => typeof cfg[name] === "string" ? cfg[name] : DEFAULT_CONFIG[name];
-  const merged = {
-    enabled: boolOf("enabled"),
-    paused: boolOf("paused"),
-    poll_interval_sec: intOf("poll_interval_sec"),
-    max_parallel_keys: intOf("max_parallel_keys"),
-    round_budget: intOf("round_budget"),
-    worker_timeout_min: intOf("worker_timeout_min"),
-    l2_read_file_cap: intOf("l2_read_file_cap"),
-    l2_read_byte_cap: intOf("l2_read_byte_cap"),
-    advance_stall_ticks: intOf("advance_stall_ticks"),
-    xkey_repair: boolOf("xkey_repair"),
-    xkey_verify_cmd: listOf("xkey_verify_cmd"),
-    xkey_verify_timeout_s: intOf("xkey_verify_timeout_s"),
-    xkey_verify_cwd: strOf("xkey_verify_cwd"),
-    auto_gate_mode: strOf("auto_gate_mode"),
-    launcher_max_workers: intOf("launcher_max_workers"),
-    dispatch_max_per_scan: intOf("dispatch_max_per_scan"),
-    queue_alarm_delta: intOf("queue_alarm_delta"),
-    l3_abort_retry_limit: intOf("l3_abort_retry_limit"),
-    gate_reminder_after_min: intOf("gate_reminder_after_min"),
-    gate_reminder_max: intOf("gate_reminder_max")
-  };
-  return { ok: true, config: merged };
-}
-function saveConfig(projectDir, config) {
-  const errors = validateConfigData(config);
-  if (errors.length > 0) return { ok: false, error: `invalid _autopilot/config.json: ${errors.join("; ")}` };
-  const ordered = {
-    enabled: config.enabled,
-    paused: config.paused,
-    poll_interval_sec: config.poll_interval_sec,
-    max_parallel_keys: config.max_parallel_keys,
-    round_budget: config.round_budget,
-    worker_timeout_min: config.worker_timeout_min,
-    l2_read_file_cap: config.l2_read_file_cap,
-    l2_read_byte_cap: config.l2_read_byte_cap,
-    advance_stall_ticks: config.advance_stall_ticks,
-    xkey_repair: config.xkey_repair,
-    xkey_verify_cmd: [...config.xkey_verify_cmd],
-    xkey_verify_timeout_s: config.xkey_verify_timeout_s,
-    xkey_verify_cwd: config.xkey_verify_cwd,
-    auto_gate_mode: config.auto_gate_mode,
-    launcher_max_workers: config.launcher_max_workers,
-    dispatch_max_per_scan: config.dispatch_max_per_scan,
-    queue_alarm_delta: config.queue_alarm_delta,
-    l3_abort_retry_limit: config.l3_abort_retry_limit,
-    gate_reminder_after_min: config.gate_reminder_after_min,
-    gate_reminder_max: config.gate_reminder_max
-  };
-  const file = configPath(projectDir);
-  try {
-    fs30.mkdirSync(path32.dirname(file), { recursive: true });
-    const tmp = `${file}.tmp`;
-    fs30.writeFileSync(tmp, `${JSON.stringify(ordered, null, 2)}
-`, "utf8");
-    fs30.renameSync(tmp, file);
-  } catch (err) {
-    return { ok: false, error: `cannot write ${file}: ${String(err)}` };
-  }
-  return { ok: true };
-}
-var STAGE_STATUSES = ["pending", "approved", "running", "closed", "closed-human", "halted"];
-var KEY_STATUSES = ["running", "done", "stalled", "closed-legacy", "pending-review"];
-var STAGE_STATUS_RANK = {
-  pending: 0,
-  approved: 0,
-  running: 1,
-  closed: 2,
-  "closed-human": 2,
-  halted: 2
-};
-var STAGE_TERMINAL_RANK = 2;
-function isStageTerminal(status) {
-  const rank = status === void 0 ? void 0 : STAGE_STATUS_RANK[status];
-  return rank !== void 0 && rank >= STAGE_TERMINAL_RANK;
-}
-var STAGE_PREFIX_RE = /^##\s*Stage\b/;
-var STAGE_HEADER_RE = /^##\s*Stage\s+(\d+)\s*:\s*(.+)$/;
-var ROADMAP_FIELD_RE = /^>\s*([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/;
-var SEPARATOR_CELL_RE = /^:?-+:?$/;
-function splitTableRow(line) {
-  let body = line.startsWith("|") ? line.slice(1) : line;
-  if (body.endsWith("|")) body = body.slice(0, -1);
-  return body.split("|").map((c) => c.trim());
-}
-function isKeysHeaderRow(cells) {
-  return cells.length === 3 && cells[0].toLowerCase() === "key" && cells[1].toLowerCase() === "role" && cells[2].toLowerCase() === "depends_on";
-}
-function parseDependsOn(cell) {
-  const trimmed = cell.trim();
-  if (trimmed === "" || trimmed === "-") return [];
-  const deps = [];
-  for (const part of trimmed.split(",")) {
-    const p = part.trim();
-    if (p !== "" && p !== "-") deps.push(p);
-  }
-  return deps;
-}
-function parseRoadmapText(text) {
-  const warnings = [];
-  const stages = [];
-  let cur = null;
-  let inKeysTable = false;
-  let tableHeaderSeen = false;
-  const finish = () => {
-    if (cur === null) return;
-    if (!cur.seenFields.has("status")) {
-      warnings.push(`stage ${cur.stage.number}: missing '> status:' line (shown as pending)`);
-      cur.stage.status = "pending";
-    }
-    if (!cur.seenFields.has("goal")) {
-      warnings.push(`stage ${cur.stage.number}: missing '> goal:' line`);
-    }
-    stages.push(cur.stage);
-    cur = null;
-  };
-  const lines = text.split(/\r\n|\r|\n/);
-  for (let lineno = 1; lineno <= lines.length; lineno++) {
-    const line = lines[lineno - 1].trim();
-    if (line === "") continue;
-    if (line.startsWith("#")) {
-      if (line.startsWith("###")) {
-        const heading = line.replace(/^#+/, "").trim();
-        if (cur !== null && heading.toLowerCase() === "keys") {
-          inKeysTable = true;
-          tableHeaderSeen = false;
-        } else {
-          inKeysTable = false;
-        }
-        continue;
-      }
-      if (line.startsWith("##")) {
-        if (STAGE_PREFIX_RE.test(line)) {
-          const m = STAGE_HEADER_RE.exec(line);
-          if (m === null) {
-            warnings.push(`line ${lineno}: malformed stage header (expected '## Stage <number>: <title>')`);
-            finish();
-            inKeysTable = false;
-            continue;
-          }
-          finish();
-          cur = {
-            stage: {
-              number: Number(m[1]),
-              title: (m[2] ?? "").trim(),
-              goal: "",
-              status: "pending",
-              keyStatus: {},
-              keys: []
-            },
-            seenKeys: /* @__PURE__ */ new Set(),
-            seenFields: /* @__PURE__ */ new Set()
-          };
-        } else {
-          finish();
-        }
-        inKeysTable = false;
-        continue;
-      }
-      inKeysTable = false;
-      continue;
-    }
-    if (line.startsWith("|")) {
-      if (cur !== null && inKeysTable) {
-        const cells = splitTableRow(line);
-        if (cells.length > 0 && cells.every((c) => SEPARATOR_CELL_RE.test(c))) continue;
-        if (!tableHeaderSeen && isKeysHeaderRow(cells)) {
-          tableHeaderSeen = true;
-          continue;
-        }
-        if (cells.length !== 3) {
-          warnings.push(
-            `line ${lineno} (stage ${cur.stage.number}): keys table row must have 3 columns (key | role | depends_on), got ${cells.length}`
-          );
-          continue;
-        }
-        const key = cells[0] ?? "";
-        if (key === "") {
-          warnings.push(`line ${lineno} (stage ${cur.stage.number}): keys table row has empty key cell`);
-          continue;
-        }
-        if (cur.seenKeys.has(key)) {
-          warnings.push(`line ${lineno} (stage ${cur.stage.number}): duplicate key row '${key}'`);
-          continue;
-        }
-        cur.seenKeys.add(key);
-        cur.stage.keys.push({ key, role: cells[1] ?? "", dependsOn: parseDependsOn(cells[2] ?? "") });
-      }
-      continue;
-    }
-    if (line.startsWith(">")) {
-      const m = ROADMAP_FIELD_RE.exec(line);
-      const name = m?.[1] ?? "";
-      const value = (m?.[2] ?? "").trim();
-      if (cur !== null) {
-        if (name === "goal" || name === "status" || name === "key-status") {
-          if (cur.seenFields.has(name)) {
-            warnings.push(
-              `line ${lineno} (stage ${cur.stage.number}): duplicate '> ${name}:' line (last one wins)`
-            );
-          } else {
-            cur.seenFields.add(name);
-          }
-          if (name === "goal") cur.stage.goal = value;
-          else if (name === "status") {
-            if (!STAGE_STATUSES.includes(value)) {
-              warnings.push(`line ${lineno} (stage ${cur.stage.number}): invalid status '${value}'`);
-            }
-            cur.stage.status = value;
-          } else {
-            parseKeyStatusLine(value, cur.stage, lineno, warnings);
-          }
-        }
-        inKeysTable = false;
-      }
-      continue;
-    }
-    inKeysTable = false;
-  }
-  finish();
-  if (stages.length === 0) warnings.push("no '## Stage <number>: <title>' sections found");
-  return { stages, warnings };
-}
-function parseKeyStatusLine(value, stage, lineno, warnings) {
-  for (const part of value.split(",")) {
-    const entry = part.trim();
-    if (entry === "") continue;
-    const eq = entry.indexOf("=");
-    if (eq <= 0) {
-      warnings.push(
-        `line ${lineno} (stage ${stage.number}): malformed key-status entry '${entry}' (expected <key>=<status>)`
-      );
-      continue;
-    }
-    const key = entry.slice(0, eq).trim();
-    const status = entry.slice(eq + 1).trim();
-    if (key === "") {
-      warnings.push(
-        `line ${lineno} (stage ${stage.number}): malformed key-status entry '${entry}' (expected <key>=<status>)`
-      );
-      continue;
-    }
-    if (!KEY_STATUSES.includes(status)) {
-      warnings.push(`line ${lineno} (stage ${stage.number}): key '${key}' has invalid status '${status}'`);
-    }
-    if (key in stage.keyStatus) {
-      warnings.push(
-        `line ${lineno} (stage ${stage.number}): duplicate key-status entry for '${key}' (last one wins)`
-      );
-    }
-    stage.keyStatus[key] = status;
-  }
-}
-function readRoadmap(projectDir) {
-  const file = roadmapPath(projectDir);
-  let text;
-  try {
-    text = fs30.readFileSync(file, "utf8");
-  } catch {
-    return { ok: false, error: `roadmap file not found: ${file}` };
-  }
-  const parse3 = parseRoadmapText(text);
-  return { ok: true, stages: parse3.stages, warnings: parse3.warnings };
-}
-var GATE_KINDS = [
-  "stage-confirm",
-  "stage-close",
-  "stalled",
-  "budget-exhausted",
-  "goal-change",
-  "xkey-authorize"
-];
-var GATE_STATUSES = ["pending", "approved", "rejected"];
-var GATE_SCOPE_UNRESOLVED = "unresolved-scope";
-function deriveGateReason(input) {
-  if (input.queueUnreadable) return "gate-queue-unreadable";
-  if (input.inFlightForKey > 0) return "key-in-flight";
-  if (input.reminders + 1 > input.reminderMax) return "cap-reached";
-  if (input.stageTerminal) return "stage-terminal";
-  if (input.due === null) return null;
-  if (!input.due) return "not-due";
-  return null;
-}
-var AUTHORIZES_ACTIONS = ["contract-change", "retry"];
-var AUTHORIZES_ACTION_SET = new Set(AUTHORIZES_ACTIONS);
-var BLOCKER_CLASSES = ["judgment", "paperwork"];
-var BLOCKER_CLASS_SET = new Set(BLOCKER_CLASSES);
-function blockerClassOf(record) {
-  return record.blockerClass === "paperwork" ? "paperwork" : "judgment";
-}
-var GATE_FRONTMATTER_FIELDS = [
-  "id",
-  "kind",
-  "stage",
-  "key",
-  "created_at",
-  "created_by",
-  "question",
-  "context_refs",
-  "status",
-  "answered_at",
-  "answered_by",
-  "note",
-  "reason_code",
-  "evidence_refs",
-  "loop",
-  "used_rounds",
-  "round_limit",
-  "credits_used",
-  "observed_at",
-  "verdicts_final",
-  "open_items",
-  "subject_sha256",
-  "roadmap_validation",
-  "proposal_sha256",
-  "goal_sha256",
-  "constraints",
-  "goal_sha256_before",
-  "goal_sha256_after",
-  "goal_diff",
-  "write_scope",
-  "blast_radius",
-  "answer_source",
-  "auto_policy_id",
-  "expires_at",
-  "evidence_anchor_mtime_ns",
-  "default_action",
-  "out_of_band_actions",
-  "gate_schema",
-  "consumed_at",
-  "consumed_seq"
-];
-var MISSING_FIELD_SENTINEL = "unknown (no field)";
-var GateFormatError = class extends Error {
-};
-var GATE_FILE_RE = /^gate-(\d+)\.md$/;
-var GATE_LIST_FIELDS = /* @__PURE__ */ new Set(["context_refs", "evidence_refs"]);
-var GATE_JSON_LIST_FIELDS = /* @__PURE__ */ new Set([
-  "verdicts_final",
-  "open_items",
-  "roadmap_validation",
-  "constraints",
-  "write_scope",
-  "out_of_band_actions",
-  "authorizes"
-]);
-var GATE_JSON_OBJ_FIELDS = /* @__PURE__ */ new Set(["goal_diff", "blast_radius"]);
-var GATE_SCALAR_EXTENSION_FIELDS = /* @__PURE__ */ new Set(["blocker_class"]);
-var GATE_FIELD_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
-var GATE_LIST_ITEM_RE = /^[ \t]+-[ \t]+(.*)$/;
-var GATE_NULL_LITERALS = /* @__PURE__ */ new Set(["", "~", "-", "null", "Null", "NULL"]);
-function gateScalar(raw, file, lineno) {
-  if (raw === void 0) return null;
-  if (raw.startsWith("'")) {
-    if (raw.length < 2 || !raw.endsWith("'")) {
-      throw new GateFormatError(`${file}: unterminated single-quoted scalar (line ${lineno}): '${raw}'`);
-    }
-    return raw.slice(1, -1).replaceAll("''", "'");
-  }
-  if (raw.startsWith('"')) {
-    throw new GateFormatError(`${file}: double-quoted scalars are not supported (line ${lineno}): '${raw}'`);
-  }
-  if (GATE_NULL_LITERALS.has(raw)) return null;
-  return raw;
-}
-function isIsoTimestamp(value) {
-  return !Number.isNaN(Date.parse(value));
-}
-function parseGateFile(text, file) {
-  const lines = text.split(/\r\n|\r|\n/);
-  if (lines.length === 0 || lines[0].trim() !== "---") {
-    throw new GateFormatError(`${file}: frontmatter must open with a '---' line`);
-  }
-  const fields = /* @__PURE__ */ new Map();
-  const listValues = /* @__PURE__ */ new Map();
-  for (const name of GATE_LIST_FIELDS) listValues.set(name, []);
-  const seen = /* @__PURE__ */ new Set();
-  let activeList = null;
-  let closed = false;
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.trim() === "---") {
-      closed = true;
-      break;
-    }
-    if (activeList !== null) {
-      const item = GATE_LIST_ITEM_RE.exec(line);
-      if (item !== null) {
-        const ref = gateScalar(item[1], file, i + 1);
-        if (ref === null || ref === "")
-          throw new GateFormatError(`${file}: empty ${activeList} item (line ${i + 1})`);
-        listValues.get(activeList)?.push(ref);
-        continue;
-      }
-      activeList = null;
-    }
-    const field = GATE_FIELD_LINE_RE.exec(line);
-    if (field === null) throw new GateFormatError(`${file}: invalid frontmatter line ${i + 1}: '${line}'`);
-    const name = field[1] ?? "";
-    if (!GATE_FRONTMATTER_FIELDS.includes(name) && !GATE_JSON_LIST_FIELDS.has(name) && !GATE_SCALAR_EXTENSION_FIELDS.has(name)) {
-      throw new GateFormatError(`${file}: unknown frontmatter field '${name}' (line ${i + 1})`);
-    }
-    if (seen.has(name)) throw new GateFormatError(`${file}: duplicate frontmatter field '${name}' (line ${i + 1})`);
-    seen.add(name);
-    const raw = field[2];
-    if (GATE_LIST_FIELDS.has(name)) {
-      if (raw === void 0 || raw === "") {
-        fields.set(name, null);
-        activeList = name;
-      } else if (raw === "[]") {
-        fields.set(name, null);
-      } else if (raw.startsWith("'")) {
-        const scalar = gateScalar(raw, file, i + 1);
-        let decoded;
-        try {
-          decoded = JSON.parse(scalar ?? "");
-        } catch {
-          throw new GateFormatError(
-            `${file}: ${name} must be a block list, [] or a single-line JSON array (line ${i + 1})`
-          );
-        }
-        if (!Array.isArray(decoded) || !decoded.every((x) => typeof x === "string" && x !== "")) {
-          throw new GateFormatError(`${file}: ${name} JSON array must contain non-empty strings (line ${i + 1})`);
-        }
-        listValues.set(name, decoded);
-      } else {
-        throw new GateFormatError(`${file}: ${name} must be a block list or [] (line ${i + 1})`);
-      }
-    } else {
-      fields.set(name, gateScalar(raw, file, i + 1));
-    }
-  }
-  if (!closed) throw new GateFormatError(`${file}: frontmatter never closes with a '---' line`);
-  const required = (name) => {
-    const value = fields.get(name);
-    if (typeof value !== "string" || value === "") {
-      throw new GateFormatError(`${file}: field '${name}' must be a non-empty string`);
-    }
-    return value;
-  };
-  const optional = (name) => {
-    const value = fields.get(name) ?? null;
-    return typeof value === "string" && value !== "" ? value : null;
-  };
-  const intField = (name) => {
-    const value = optional(name);
-    if (value === null) return null;
-    if (!/^-?\d+$/.test(value))
-      throw new GateFormatError(`${file}: field '${name}' must be an integer, got '${value}'`);
-    return Number.parseInt(value, 10);
-  };
-  const isoField = (name, value) => {
-    if (value !== null && !isIsoTimestamp(value)) {
-      throw new GateFormatError(`${file}: ${name} is not an ISO-8601 timestamp: '${value}'`);
-    }
-    return value;
-  };
-  const jsonField = (name, wantArray) => {
-    const value = optional(name);
-    if (value === null) return null;
-    let decoded;
-    try {
-      decoded = JSON.parse(value);
-    } catch {
-      throw new GateFormatError(
-        `${file}: field '${name}' must be a single-line JSON ${wantArray ? "array" : "object"}`
-      );
-    }
-    const isArray = Array.isArray(decoded);
-    const isObject2 = typeof decoded === "object" && decoded !== null && !isArray;
-    if (wantArray && !isArray || !wantArray && !isObject2) {
-      throw new GateFormatError(`${file}: field '${name}' must decode to a JSON ${wantArray ? "array" : "object"}`);
-    }
-    return decoded;
-  };
-  const jsonStringList = (name) => {
-    const decoded = jsonField(name, true);
-    if (decoded === null) return [];
-    if (!Array.isArray(decoded) || !decoded.every((x) => typeof x === "string")) {
-      throw new GateFormatError(`${file}: field '${name}' JSON array must contain strings`);
-    }
-    return decoded;
-  };
-  const authorizes = jsonStringList("authorizes");
-  const outOfSet = [...new Set(authorizes.filter((action) => !AUTHORIZES_ACTION_SET.has(action)))].sort();
-  if (outOfSet.length > 0) {
-    throw new GateFormatError(
-      `${file}: unknown authorizes action(s) ${outOfSet.join(", ")} (expected one of: ${[...AUTHORIZES_ACTIONS].sort().join(", ")})`
-    );
-  }
-  const blockerClass = optional("blocker_class");
-  if (blockerClass !== null && !BLOCKER_CLASS_SET.has(blockerClass)) {
-    throw new GateFormatError(
-      `${file}: unknown blocker_class '${blockerClass}' (expected one of: ${[...BLOCKER_CLASSES].sort().join(", ")})`
-    );
-  }
-  const contextRefs = listValues.get("context_refs") ?? [];
-  const evidenceRefs = listValues.get("evidence_refs") ?? [];
-  const id = required("id");
-  if (!/^gate-\d+$/.test(id)) throw new GateFormatError(`${file}: id must match 'gate-<digits>', got '${id}'`);
-  const kind = required("kind");
-  if (!GATE_KINDS.includes(kind)) {
-    throw new GateFormatError(`${file}: unknown kind '${kind}' (expected one of: ${GATE_KINDS.join(", ")})`);
-  }
-  const status = required("status");
-  if (!GATE_STATUSES.includes(status)) {
-    throw new GateFormatError(`${file}: unknown status '${status}' (expected one of: ${GATE_STATUSES.join(", ")})`);
-  }
-  const stageRaw = optional("stage");
-  let stage = null;
-  if (stageRaw !== null) {
-    if (!/^-?\d+$/.test(stageRaw)) throw new GateFormatError(`${file}: stage must be an integer, got '${stageRaw}'`);
-    stage = Number.parseInt(stageRaw, 10);
-  }
-  const createdAt = required("created_at");
-  if (!isIsoTimestamp(createdAt)) {
-    throw new GateFormatError(`${file}: created_at is not an ISO-8601 timestamp: '${createdAt}'`);
-  }
-  const answeredAt = isoField("answered_at", optional("answered_at"));
-  required("created_by");
-  const question = required("question");
-  for (const name of GATE_JSON_LIST_FIELDS) jsonField(name, true);
-  for (const name of GATE_JSON_OBJ_FIELDS) jsonField(name, false);
-  intField("evidence_anchor_mtime_ns");
-  intField("consumed_seq");
-  isoField("consumed_at", optional("consumed_at"));
-  let gateSchema = intField("gate_schema");
-  if (gateSchema === null) gateSchema = 1;
-  if (gateSchema !== 1 && gateSchema !== 2) {
-    throw new GateFormatError(`${file}: gate_schema must be one of 1, 2, got ${gateSchema}`);
-  }
-  return {
-    id,
-    kind,
-    status,
-    stage,
-    key: optional("key"),
-    question,
-    createdAt,
-    path: file,
-    contextRefs,
-    evidenceRefs,
-    reasonCode: optional("reason_code"),
-    observedAt: isoField("observed_at", optional("observed_at")),
-    subjectSha256: optional("subject_sha256"),
-    proposalSha256: optional("proposal_sha256"),
-    goalSha256: optional("goal_sha256"),
-    loop: optional("loop"),
-    usedRounds: intField("used_rounds"),
-    roundLimit: intField("round_limit"),
-    creditsUsed: intField("credits_used"),
-    verdictsFinal: jsonField("verdicts_final", true),
-    openItems: jsonField("open_items", true),
-    roadmapValidation: jsonField("roadmap_validation", true),
-    constraints: jsonStringList("constraints"),
-    answerSource: optional("answer_source"),
-    expiresAt: isoField("expires_at", optional("expires_at")),
-    defaultAction: optional("default_action"),
-    outOfBandActions: jsonStringList("out_of_band_actions"),
-    authorizes,
-    blockerClass,
-    gateSchema,
-    answeredAt,
-    answeredBy: optional("answered_by"),
-    note: optional("note")
-  };
-}
-function listGates(projectDir) {
-  const dir = gatesDir(projectDir);
-  const errors = [];
-  const found = [];
-  let entries;
-  try {
-    entries = fs30.readdirSync(dir, { withFileTypes: true });
-  } catch (err) {
-    if (err.code === "ENOENT") return { gates: [], errors: [] };
-    return { gates: [], errors: [`${dir}: ${String(err)}`] };
-  }
-  for (const entry of entries) {
-    const m = GATE_FILE_RE.exec(entry.name);
-    if (m === null || !entry.isFile()) continue;
-    const file = path32.join(dir, entry.name);
-    let text;
-    try {
-      text = fs30.readFileSync(file, "utf8");
-    } catch (err) {
-      errors.push(`${file}: ${String(err)}`);
-      continue;
-    }
-    try {
-      const gate = parseGateFile(text, file);
-      if (gate.id !== entry.name.replace(/\.md$/, "")) {
-        errors.push(`${file}: frontmatter id '${gate.id}' does not match file name`);
-        continue;
-      }
-      found.push({ seq: Number(m[1]), gate });
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
-    }
-  }
-  found.sort((a, b) => a.seq - b.seq || a.gate.id.localeCompare(b.gate.id));
-  return { gates: found.map((f) => f.gate), errors };
-}
-function readGateReminders(agenticdocRoot2) {
-  const ledger = path32.join(agenticdocRoot2, "_autopilot", "auto-decisions.jsonl");
-  let raw;
-  try {
-    raw = fs30.readFileSync(ledger, "utf8");
-  } catch {
-    return [];
-  }
-  const out = [];
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed === "") continue;
-    let parsed;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-    if (typeof parsed !== "object" || parsed === null) continue;
-    const row = parsed;
-    if (row.phase !== "remind") continue;
-    const gateId = typeof row.gate_id === "string" ? row.gate_id : "";
-    const reminderN = typeof row.reminder_n === "number" ? row.reminder_n : 0;
-    if (gateId === "" || reminderN <= 0) continue;
-    out.push({
-      seq: typeof row.seq === "number" ? row.seq : 0,
-      gateId,
-      gateKind: typeof row.gate_kind === "string" ? row.gate_kind : "",
-      gateKey: typeof row.gate_key === "string" ? row.gate_key : "",
-      reminderN,
-      detail: typeof row.detail === "string" ? row.detail : ""
-    });
-  }
-  return out;
-}
-function reminderCountForGate(reminders, gateId) {
-  return reminders.filter((r) => r.gateId === gateId).length;
-}
-var EVENT_TYPES = /* @__PURE__ */ new Set([
-  "beat",
-  "dispatch",
-  "worker-terminal",
-  "advance",
-  "gate-created",
-  "gate-answered",
-  "stalled",
-  "skip",
-  "stage-close",
-  "config",
-  "goal-halt",
-  "goal-snapshot",
-  "type-rejected",
-  "target-config-rejected",
-  "reconcile",
-  "resume",
-  "l3-no-verdict",
-  // Gate redesign (mw-autopilot-slot-capacity, D-005/D-006/D-009): names are
-  // pre-admitted in lockstep with autopilot/timeline.py EVENT_TYPES so the
-  // parity test locks both sides; the producers land in T-07/T-08. Unused
-  // vocabulary is inert — the set is a console include-set, not a gate.
-  "gate-auto-decision",
-  "gate-auto-revoke",
-  "review-decided",
-  "review-escalated",
-  "evidence-reconciliation",
-  "stage-reopen-refused",
-  // Gate verdict hardening (mw-gate-verdict-hardening, T-05, design D-002/
-  // D-016): the TS half of the T-03 vocabulary. Names are verbatim from
-  // timeline.py EVENT_TYPES; the parity test asserts set equality, so
-  // neither side may rename or prefix them. Producers land in T-01/T-07/
-  // T-10 — pre-admitted vocabulary is safe (include-set, not a gate).
-  "l3-aborted",
-  "gate-reminder",
-  "contract-refused",
-  // Gate verdict hardening (mw-gate-verdict-hardening, T-23, AC-025): the TS
-  // half of the Python `contract-frozen` anchor event. The parity test asserts
-  // set equality, so the name is verbatim from timeline.py EVENT_TYPES.
-  "contract-frozen"
-]);
-var BEAT_EV = "beat";
-function nonBeatFilter() {
-  const filter2 = new Set(EVENT_TYPES);
-  filter2.delete(BEAT_EV);
-  return filter2;
-}
-function rotationChain(timelinePath2) {
-  const dir = path32.dirname(timelinePath2);
-  const prefix = `${path32.basename(timelinePath2)}.`;
-  let entries;
-  try {
-    entries = fs30.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const found = [];
-  for (const entry of entries) {
-    if (!entry.name.startsWith(prefix)) continue;
-    const suffix = entry.name.slice(prefix.length);
-    if (/^\d+$/.test(suffix) && entry.isFile()) {
-      found.push({ gen: Number(suffix), file: path32.join(dir, entry.name) });
-    }
-  }
-  found.sort((a, b) => b.gen - a.gen);
-  return found.map((f) => f.file);
-}
-function readTimelineEvents(file) {
-  let data;
-  try {
-    data = fs30.readFileSync(file);
-  } catch {
-    return { events: [], skipped: 0 };
-  }
-  const events = [];
-  let skipped = 0;
-  for (const raw of data.toString("utf8").split("\n")) {
-    const line = raw.trim();
-    if (line === "") continue;
-    let obj;
-    try {
-      obj = JSON.parse(line);
-    } catch {
-      skipped += 1;
-      continue;
-    }
-    if (typeof obj !== "object" || obj === null) {
-      skipped += 1;
-      continue;
-    }
-    const rec = obj;
-    const seq = rec.seq;
-    if (typeof seq !== "number" || !Number.isInteger(seq)) {
-      skipped += 1;
-      continue;
-    }
-    const event = {
-      ts: typeof rec.ts === "string" ? rec.ts : "",
-      seq,
-      ev: typeof rec.ev === "string" ? rec.ev : "",
-      key: typeof rec.key === "string" ? rec.key : "-",
-      stage: typeof rec.stage === "number" && Number.isInteger(rec.stage) ? rec.stage : null,
-      detail: typeof rec.detail === "string" ? rec.detail : ""
-    };
-    if (typeof rec.data === "object" && rec.data !== null && !Array.isArray(rec.data)) {
-      event.data = rec.data;
-    }
-    events.push(event);
-  }
-  return { events, skipped };
-}
-function queryTimeline(timelinePath2, watermark, evFilter) {
-  const mark = Number.isInteger(watermark) && watermark > 0 ? watermark : 0;
-  const all = [];
-  let skipped = 0;
-  for (const source of [...rotationChain(timelinePath2), timelinePath2]) {
-    const result = readTimelineEvents(source);
-    all.push(...result.events);
-    skipped += result.skipped;
-  }
-  all.sort((a, b) => a.seq - b.seq);
-  const last = all.length > 0 ? all[all.length - 1] : void 0;
-  let pruned;
-  if (all.length > 0) {
-    pruned = Math.max(0, all[0].seq - mark - 1);
-  } else {
-    pruned = mark > 0 ? mark : 0;
-  }
-  const events = all.filter((e) => e.seq > mark && (evFilter === void 0 || evFilter.has(e.ev)));
-  return { events, pruned, skipped, head: last === void 0 ? void 0 : { seq: last.seq, ts: last.ts } };
-}
-function watermarkFromSince(timelinePath2, sinceIso) {
-  const since = Date.parse(sinceIso);
-  if (Number.isNaN(since)) return 0;
-  let mark = 0;
-  for (const source of [...rotationChain(timelinePath2), timelinePath2]) {
-    for (const ev of readTimelineEvents(source).events) {
-      const ts = Date.parse(ev.ts);
-      if (!Number.isNaN(ts) && ts <= since && ev.seq > mark) mark = ev.seq;
-    }
-  }
-  return mark;
-}
-var TASK_FM_LINE_RE = /^([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*?)[ \t]*$/;
-function parseTaskLabels(taskMdPath) {
-  let text;
-  try {
-    text = fs30.readFileSync(taskMdPath, "utf8");
-  } catch {
-    return /* @__PURE__ */ new Map();
-  }
-  const region = extractTaskHeader(text);
-  if (!region.fenced) return /* @__PURE__ */ new Map();
-  const lines = text.split(/\r\n|\r|\n/);
-  const labels = /* @__PURE__ */ new Map();
-  for (let i = region.startLine; i <= region.endLine; i++) {
-    const line = lines[i] ?? "";
-    const m = TASK_FM_LINE_RE.exec(line);
-    if (m === null) continue;
-    labels.set(m[1] ?? "", m[2] ?? "");
-  }
-  return labels;
-}
-function usedRounds(workersDirs) {
-  const units = /* @__PURE__ */ new Map();
-  for (const workersDir of workersDirs) {
-    let entries;
-    try {
-      entries = fs30.readdirSync(workersDir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    const names = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
-    for (const name of names) {
-      const labels = parseTaskLabels(path32.join(workersDir, name, "task.md"));
-      const loop = labels.get("loop");
-      if (loop === void 0 || loop === "") continue;
-      const attempt = (labels.get("attempt") ?? "").trim();
-      const unit = attempt !== "" ? attempt : `@${name}`;
-      let attempts = units.get(loop);
-      if (attempts === void 0) {
-        attempts = /* @__PURE__ */ new Set();
-        units.set(loop, attempts);
-      }
-      attempts.add(unit);
-    }
-  }
-  const result = /* @__PURE__ */ new Map();
-  for (const [loop, attempts] of units) result.set(loop, attempts.size);
-  return result;
-}
-var STATUS_SCHEMA = "autopilot-status/1";
-var TERMINAL_WORKER_STATUSES = /* @__PURE__ */ new Set(["done", "failed", "needs-clarification", "lost"]);
-function blockedOnHuman(pendingGates, nonTerminalRows, perKey) {
-  if (pendingGates === 0) return false;
-  if (perKey === void 0) return nonTerminalRows === 0;
-  for (const raw of perKey.gateKeys) {
-    const key = (raw ?? "").trim();
-    if (key === "") return true;
-    if ((perKey.nonTerminalByKey.get(key) ?? 0) === 0) return true;
-  }
-  return false;
-}
-function currentStage(stages) {
-  if (stages.length === 0) return void 0;
-  const running = stages.find((s) => s.status === "running");
-  if (running !== void 0) return running;
-  const open = stages.find((s) => s.status !== "closed" && s.status !== "closed-human");
-  return open ?? stages[stages.length - 1];
-}
-function keyRounds(perLoop, key, budget) {
-  let l2 = 0;
-  let l3 = 0;
-  let retry = 0;
-  for (const [loop, used] of perLoop) {
-    if (loop.startsWith(`l2:${key}:`)) l2 = Math.max(l2, used);
-    else if (loop === `l3:${key}`) l3 = Math.max(l3, used);
-    else if (loop.startsWith(`exec:${key}:`) || loop === `repair:${key}`) retry = Math.max(retry, used);
-  }
-  return {
-    l2: { used: l2, max: budget },
-    l3: { used: l3, max: budget },
-    retry: { used: retry, max: budget }
-  };
-}
-function deriveStatusModel(projectDir, nowMs = Date.now()) {
-  const cfg = readConfig(projectDir);
-  if (!cfg.ok) return cfg;
-  const config = cfg.config;
-  const warnings = [];
-  const roadmap = readRoadmap(projectDir);
-  if (roadmap.ok) {
-    warnings.push(...roadmap.warnings);
-  } else {
-    warnings.push(roadmap.error);
-  }
-  const stage = currentStage(roadmap.ok ? roadmap.stages : []);
-  const agenticdoc = path32.join(projectDir, ".agenticdoc");
-  const phaseByKey = new Map(new IndexStore(agenticdoc).readAll().map((e) => [e.key, e.phase]));
-  const keys = [];
-  if (stage !== void 0) {
-    for (const row of stage.keys) {
-      const perLoop = usedRounds([path32.join(agenticdoc, row.key, "workers")]);
-      keys.push({
-        key: row.key,
-        phase: phaseByKey.get(row.key) ?? "\u2014",
-        // key-status line absent (fresh proposal) → the only non-terminal
-        // enum value, "running" (D-105 KEY_STATUSES has no "pending").
-        state: stage.keyStatus[row.key] ?? "running",
-        rounds: keyRounds(perLoop, row.key, config.round_budget)
-      });
-    }
-  }
-  const gateScan = listGates(projectDir);
-  warnings.push(...gateScan.errors);
-  const gates = gateScan.gates.map((g) => {
-    const createdMs = Date.parse(g.createdAt);
-    return {
-      id: g.id,
-      kind: g.kind,
-      status: g.status,
-      ageMs: Number.isNaN(createdMs) ? null : Math.max(0, nowMs - createdMs)
-    };
-  });
-  const gateBlockerClasses = {};
-  for (const g of gateScan.gates) gateBlockerClasses[g.id] = blockerClassOf(g);
-  const head = queryTimeline(timelinePath(projectDir), 0).head;
-  return {
-    ok: true,
-    model: {
-      status: {
-        schema: STATUS_SCHEMA,
-        stage: {
-          current: stage === void 0 ? 0 : stage.number,
-          status: stage === void 0 ? "none" : stage.status,
-          keys
-        },
-        gates,
-        timeline: head === void 0 ? { seq: 0, ts: "" } : { seq: head.seq, ts: head.ts },
-        config: {
-          enabled: config.enabled,
-          poll_interval_sec: config.poll_interval_sec,
-          round_budget: config.round_budget,
-          max_parallel_keys: config.max_parallel_keys
-        }
-      },
-      paused: config.paused,
-      warnings,
-      gateBlockerClasses
-    }
-  };
-}
-function formatCoarseAge(ms) {
-  const s = Math.max(0, Math.floor(ms / 1e3));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
-}
-function renderStatusText(model) {
-  const { status, paused, warnings } = model;
-  const lines = [];
-  if (status.stage.current > 0) {
-    lines.push(`stage ${status.stage.current} (${status.stage.status})`);
-    for (const k of status.stage.keys) {
-      lines.push(
-        `  ${k.key} | phase=${k.phase} | state=${k.state} | L2 ${k.rounds.l2.used}/${k.rounds.l2.max} | L3 ${k.rounds.l3.used}/${k.rounds.l3.max} | retry ${k.rounds.retry.used}/${k.rounds.retry.max}`
-      );
-    }
-    if (status.stage.keys.length === 0) lines.push("  (no keys)");
-  } else {
-    lines.push("stage: none (no roadmap \u2014 autopilot not initialized or no stages parsed)");
-  }
-  const pending = status.gates.filter((g) => g.status === "pending");
-  lines.push(`gates: ${status.gates.length} total, ${pending.length} pending`);
-  for (const g of status.gates) {
-    const age = g.ageMs === null ? "?" : formatCoarseAge(g.ageMs);
-    const blocker = model.gateBlockerClasses?.[g.id];
-    const blockerToken = blocker === void 0 ? "" : ` blocker=${blocker}`;
-    lines.push(`  ${g.id} ${g.kind} ${g.status} age=${age}${blockerToken}`);
-  }
-  lines.push(`timeline: seq=${status.timeline.seq} ts=${status.timeline.ts}`);
-  lines.push(
-    `config: enabled=${status.config.enabled} | poll_interval_sec=${status.config.poll_interval_sec} | round_budget=${status.config.round_budget} | max_parallel_keys=${status.config.max_parallel_keys}${paused ? " | paused" : ""}`
-  );
-  for (const w of warnings) lines.push(`warning: ${w}`);
-  return lines.join("\n");
-}
-
-// packages/coding-agent/src/extensions/agent-team-loop/autopilot/gate-writer.ts
+import * as fs32 from "node:fs";
 var GATE_FIELD_LINE_RE2 = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
 var ANSWER_FIELDS = ["status", "answered_at", "answered_by", "note", "authorizes"];
 var PLAIN_SCALAR_RE = /^[A-Za-z0-9][A-Za-z0-9_./:+@()-]*$/;
@@ -25279,7 +26272,7 @@ async function answerGate(opts) {
   try {
     let content;
     try {
-      content = fs31.readFileSync(opts.gateFile, "utf8");
+      content = fs32.readFileSync(opts.gateFile, "utf8");
     } catch (err) {
       return { ok: false, error: `gate file not readable: ${opts.gateFile} (${String(err)})` };
     }
@@ -25287,8 +26280,8 @@ async function answerGate(opts) {
     if (!rewritten.ok) return { ok: false, error: rewritten.error };
     try {
       const tmp = `${opts.gateFile}.tmp`;
-      fs31.writeFileSync(tmp, rewritten.content, "utf8");
-      fs31.renameSync(tmp, opts.gateFile);
+      fs32.writeFileSync(tmp, rewritten.content, "utf8");
+      fs32.renameSync(tmp, opts.gateFile);
     } catch (err) {
       return { ok: false, error: `cannot write ${opts.gateFile}: ${String(err)}` };
     }
@@ -25301,139 +26294,12 @@ async function answerGate(opts) {
 // packages/coding-agent/src/extensions/agent-team-loop/autopilot/monitor.ts
 import * as fs33 from "node:fs";
 import * as path34 from "node:path";
-
-// packages/coding-agent/src/extensions/agent-team-loop/shared/worker-store.ts
-import * as fs32 from "node:fs";
-import * as path33 from "node:path";
-var WORKER_COLS_MIN = 7;
-var WORKER_COLS_MAX = 9;
-var WORKER_PATH_KEY_RE = /(?:^|[\\/])\.agenticdoc[\\/]([^\\/]+)[\\/]workers[\\/]/;
-function normalizeWorkerOrigin(raw) {
-  return (raw ?? "").trim().toLowerCase() === "conductor" ? "conductor" : "manual";
-}
-function workerOrigin(entry) {
-  return entry.origin ?? "manual";
-}
-function workerOwnerKey(entry) {
-  return WORKER_PATH_KEY_RE.exec(entry.taskPath)?.[1] ?? "";
-}
-function workerBelongsToKey(entry, key) {
-  return workerOrigin(entry) === "conductor" && workerOwnerKey(entry) === key;
-}
-var QUEUE_HEADER_RE = /^#\s*mw-queue:v(\d+)\s*$/;
-var QUEUE_HEADER_V2 = "# mw-queue:v2";
-function parseQueueHeader(line) {
-  const match2 = QUEUE_HEADER_RE.exec(line.trim());
-  return match2 ? Number(match2[1]) : void 0;
-}
-function parseWorkerLine(line) {
-  const parts = line.split("|");
-  if (parts.length < WORKER_COLS_MIN || parts.length > WORKER_COLS_MAX) return { ok: false, reason: "cols" };
-  const [taskKey, status, cli, provider, taskPath, dispatchedAt, updatedAt, model, origin] = parts.map(
-    (s) => s.trim()
-  );
-  if (!taskKey || taskKey.startsWith("#")) return { ok: false, reason: "task-key" };
-  return {
-    ok: true,
-    entry: {
-      taskKey: taskKey ?? "",
-      status: status ?? "pending",
-      cli: cli ?? "",
-      provider: provider ?? "",
-      taskPath: taskPath ?? "",
-      dispatchedAt: dispatchedAt ?? "",
-      updatedAt: updatedAt ?? "",
-      model: model ?? "",
-      origin: origin === void 0 || origin === "" ? void 0 : normalizeWorkerOrigin(origin)
-    }
-  };
-}
-function serializeWorkerLine(entry) {
-  return [
-    entry.taskKey,
-    entry.status,
-    entry.cli,
-    entry.provider,
-    entry.taskPath,
-    entry.dispatchedAt,
-    entry.updatedAt,
-    entry.model ?? "",
-    workerOrigin(entry)
-  ].join(" | ");
-}
-var WorkerStore = class {
-  constructor(agenticdocRoot2) {
-    this.filePath = path33.join(agenticdocRoot2, "_workers.parallel");
-    this.lockPath = path33.join(agenticdocRoot2, "..", ".mw", "workers.lock");
-  }
-  /** Raw queue lines with the trailing newline dropped; `[]` when the file is
-   * absent or empty. Keeping the lines verbatim is what lets {@link upsert}
-   * rewrite one row without touching any other byte of the file (AC-023). */
-  readRawLines() {
-    if (!fs32.existsSync(this.filePath)) return [];
-    const lines = fs32.readFileSync(this.filePath, "utf8").split("\n");
-    if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-    return lines;
-  }
-  /** The full queue read: rows, unreadable lines (counted, never dropped) and
-   * the declared layout version. Blank lines and `#` comments are neither. */
-  readQueue() {
-    const rows = [];
-    const unparsable = [];
-    let version = 1;
-    for (const [index, line] of this.readRawLines().entries()) {
-      if (line.trim() === "") continue;
-      if (line.trimStart().startsWith("#")) {
-        const header = parseQueueHeader(line);
-        if (header !== void 0 && index === 0) version = header;
-        continue;
-      }
-      const parsed = parseWorkerLine(line);
-      if (parsed.ok) rows.push(parsed.entry);
-      else unparsable.push({ index, line, reason: parsed.reason });
-    }
-    return { rows, unparsable, version };
-  }
-  readAll() {
-    return this.readQueue().rows;
-  }
-  async upsert(entry) {
-    const release = await acquireLock(this.lockPath);
-    try {
-      const raw = this.readRawLines();
-      const replacement = serializeWorkerLine(entry);
-      const idx = raw.findIndex((line) => {
-        if (line.trim() === "" || line.trimStart().startsWith("#")) return false;
-        const parsed = parseWorkerLine(line);
-        return parsed.ok && parsed.entry.taskKey === entry.taskKey;
-      });
-      let lines;
-      if (idx >= 0) {
-        lines = raw.map((line, i) => i === idx ? replacement : line);
-      } else if (raw.length === 0) {
-        lines = [QUEUE_HEADER_V2, replacement];
-      } else {
-        lines = [...raw, replacement];
-      }
-      const content = `${lines.join("\n")}
-`;
-      const tmpPath = `${this.filePath}.tmp`;
-      fs32.writeFileSync(tmpPath, content, "utf8");
-      fs32.renameSync(tmpPath, this.filePath);
-    } finally {
-      release();
-    }
-  }
-  findByKey(taskKey) {
-    return this.readAll().find((e) => e.taskKey === taskKey);
-  }
-};
-
-// packages/coding-agent/src/extensions/agent-team-loop/autopilot/monitor.ts
 var MONITOR_WIDGET_ID = "agent-team-loop-monitor";
 var MONITOR_INTERVAL_MS = 4e3;
 var PANEL_STALE_MISSED_CYCLES = 3;
 var MONITOR_LINE_MAX = 110;
+var DISPATCH_SKIP_STATUSES = /* @__PURE__ */ new Set(["done", "stalled", "closed-legacy", "pending-review"]);
+var DEP_SATISFIED_STATUSES = /* @__PURE__ */ new Set(["done", "closed-legacy"]);
 function readAutoGateMode(projectDir) {
   try {
     const parsed = JSON.parse(fs33.readFileSync(configPath(projectDir), "utf8"));
@@ -25584,11 +26450,13 @@ function readMonitorState(projectDir, nowMs, deps) {
   const workers = [];
   let nonTerminalRows = 0;
   const nonTerminalByKey = /* @__PURE__ */ new Map();
+  const conductorInflightKeys = /* @__PURE__ */ new Set();
   for (const entry of new WorkerStore(path34.join(projectDir, ".agenticdoc")).readAll()) {
     if (!TERMINAL_WORKER_STATUSES.has(entry.status)) {
       nonTerminalRows += 1;
       const owner = workerOwnerKey(entry);
       nonTerminalByKey.set(owner, (nonTerminalByKey.get(owner) ?? 0) + 1);
+      if (owner !== "" && workerBelongsToKey(entry, owner)) conductorInflightKeys.add(owner);
     }
     if (entry.status !== "running") continue;
     const dispatched = Date.parse(entry.dispatchedAt);
@@ -25613,7 +26481,7 @@ function readMonitorState(projectDir, nowMs, deps) {
       queueError = queueFailures[0];
     }
   }
-  const autopilotBase = deriveAutopilotPanel(projectDir, nowMs, workers);
+  const autopilotBase = deriveAutopilotPanel(projectDir, nowMs, workers, void 0, conductorInflightKeys);
   const cfgResult = readConfig(projectDir);
   const reminderMax = cfgResult.ok ? cfgResult.config.gate_reminder_max : DEFAULT_CONFIG.gate_reminder_max;
   const afterMin = cfgResult.ok ? cfgResult.config.gate_reminder_after_min : DEFAULT_CONFIG.gate_reminder_after_min;
@@ -25847,7 +26715,7 @@ function defaultIndexPhases(projectDir) {
     return /* @__PURE__ */ new Map();
   }
 }
-function deriveAutopilotPanel(projectDir, nowMs, workers, deps) {
+function deriveAutopilotPanel(projectDir, nowMs, workers, deps, conductorInflightKeys) {
   const configResult = (deps?.readConfigFile ?? readConfig)(projectDir);
   const config = configResult.ok ? configResult.config : null;
   const roadmap = (deps?.readRoadmapFile ?? readRoadmap)(projectDir);
@@ -25897,10 +26765,29 @@ function deriveAutopilotPanel(projectDir, nowMs, workers, deps) {
       )
     });
   }
+  let frontierSize = 0;
+  if (roadmap.ok) {
+    for (const stage of roadmap.stages) {
+      if (stage.status !== "running") continue;
+      for (const row of stage.keys) {
+        const keyStatus = stage.keyStatus[row.key] ?? "running";
+        if (DISPATCH_SKIP_STATUSES.has(keyStatus)) continue;
+        const depsSatisfied = row.dependsOn.every((dep) => DEP_SATISFIED_STATUSES.has(statusByKey.get(dep) ?? ""));
+        if (depsSatisfied) frontierSize += 1;
+      }
+    }
+  }
+  const slotsCap = config?.max_parallel_keys ?? DEFAULT_CONFIG.max_parallel_keys;
+  const inflightOwners = new Set(conductorInflightKeys ?? []);
+  if (conductorInflightKeys === void 0) {
+    for (const w of workers) {
+      const owner = workerOwnerKey(w);
+      if (owner !== "" && workerBelongsToKey(w, owner)) inflightOwners.add(owner);
+    }
+  }
   const busyKeys = /* @__PURE__ */ new Set();
-  for (const w of workers) {
-    const owner = workerOwnerKey(w);
-    if (owner !== "" && allKeys.includes(owner) && workerBelongsToKey(w, owner)) busyKeys.add(owner);
+  for (const owner of inflightOwners) {
+    if (allKeys.includes(owner)) busyKeys.add(owner);
   }
   return {
     enabled: config?.enabled ?? false,
@@ -25909,7 +26796,10 @@ function deriveAutopilotPanel(projectDir, nowMs, workers, deps) {
     tickAgeMs,
     tickStale: tickAgeMs !== null && tickAgeMs > staleAfterMs,
     slotsUsed: busyKeys.size,
-    slotsMax: config?.max_parallel_keys ?? DEFAULT_CONFIG.max_parallel_keys,
+    slotsMax: slotsCap,
+    slotsCap,
+    slotsEffective: Math.min(slotsCap, frontierSize),
+    frontierSize,
     stallTicks: config?.advance_stall_ticks ?? DEFAULT_CONFIG.advance_stall_ticks,
     keys,
     stalls: deriveAdvanceStalls(events, nowMs),
@@ -26073,6 +26963,14 @@ function renderMonitorLines(s) {
         MONITOR_LINE_MAX
       )
     );
+    if (a.slotsEffective !== void 0 && a.frontierSize !== void 0) {
+      lines.push(
+        trunc2(
+          `autopilot: cap ${a.slotsCap ?? a.slotsMax} | eff ${a.slotsEffective} (frontier ${a.frontierSize})`,
+          MONITOR_LINE_MAX
+        )
+      );
+    }
     if (s.blockedOnHuman && !a.tickStale) {
       lines.push(
         trunc2(
@@ -26680,7 +27578,7 @@ function cmdMonitor(ctx, projectDir, deps, rest) {
     return;
   }
   const apply = (lines) => {
-    ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor" });
+    ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor", order: 0 });
   };
   if (arg === "off" || arg === "" && isMonitorActive()) {
     const stopped = stopMonitor(apply);
@@ -26713,7 +27611,7 @@ function autoStartMonitor(ctx, projectDir, deps = {}) {
   startMonitor(
     projectDir,
     (lines) => {
-      ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor" });
+      ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor", order: 0 });
     },
     { intervalMs: deps.monitorIntervalMs, readState: deps.readMonitorState }
   );
@@ -27028,6 +27926,8 @@ function describeDispatchAlarm(alarm) {
       return `${alarm.count} read-only run(s) settled without a product \u2014 needs-clarification, awaiting human judgement${alarm.detail ? `: ${alarm.detail}` : ""}`;
     case "write-scope-risk":
       return `${alarm.count} write-scope residual-risk row(s) (blocked=false, risk=deny-basename)${alarm.detail ? ` on ${alarm.detail}` : ""} \u2014 the guard allowed them by contract; review the audited target`;
+    case "write-face-refusal":
+      return `write_face gate refused ${alarm.count} task(s)${alarm.detail ? `: ${alarm.detail}` : ""} \u2014 not queued`;
   }
 }
 function formatDispatchAlarm(alarm) {
@@ -27072,6 +27972,18 @@ function recordWriteScopeResidualRisks(agenticdocRoot2, taskKey, taskDir) {
   if (count2 === 0) return 0;
   recordDispatchAlarm(agenticdocRoot2, { kind: "write-scope-risk", count: count2, detail: taskKey });
   return count2;
+}
+function writeFaceRefusalDetail(taskKey, refusal) {
+  return `${taskKey}: ${refusal.reason}`;
+}
+function reportWriteFaceRefusal(agenticdocRoot2, taskKey, refusal, onRefusal) {
+  const alarm = {
+    kind: "write-face-refusal",
+    count: 1,
+    detail: writeFaceRefusalDetail(taskKey, refusal)
+  };
+  recordDispatchAlarm(agenticdocRoot2, alarm);
+  onRefusal?.(formatDispatchAlarm(alarm));
 }
 var DEFAULT_DISPATCH_MAX_PER_SCAN = 3;
 function readDispatchMaxPerScan(agenticdocRoot2) {
@@ -27183,7 +28095,7 @@ function ensureServiceEnvelope(taskMdPath, key, taskKey) {
   }
   return "synthesized";
 }
-async function dispatchOrphanCandidates(workerStore, key, candidates, maxPerScan, runVerdict) {
+async function dispatchOrphanCandidates(workerStore, agenticdocRoot2, key, candidates, maxPerScan, runVerdict, onRefusal) {
   const result = {
     key,
     queued: [],
@@ -27213,8 +28125,15 @@ async function dispatchOrphanCandidates(workerStore, key, candidates, maxPerScan
     const { cli, provider } = pickWorkerRoute(taskContent);
     const model = readModel(taskContent);
     try {
-      await dispatchTask({ taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath }, workerStore);
-      result.queued.push(taskKey);
+      const outcome = await dispatchTask(
+        { taskKey, status: "pending", cli, provider, model, taskPath: taskMdPath },
+        workerStore
+      );
+      if (outcome.ok) {
+        result.queued.push(taskKey);
+      } else {
+        reportWriteFaceRefusal(agenticdocRoot2, taskKey, outcome, onRefusal);
+      }
     } catch (err) {
       console.error(
         `[mw] orphan repair refused for ${taskKey}: ${err instanceof Error ? err.message : String(err)}`
@@ -27353,10 +28272,12 @@ async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
       }
       const repair = await dispatchOrphanCandidates(
         workerStore,
+        agenticdocRoot2,
         owner.name,
         scopeVerdict.repairable,
         maxPerScan - queued,
-        opts.runVerdict ?? defaultOrphanRunVerdict(agenticdocRoot2, owner.name)
+        opts.runVerdict ?? defaultOrphanRunVerdict(agenticdocRoot2, owner.name),
+        opts.onRefusal
       );
       queued += repair.queued.length;
       if (!(opts.orphanedWarned?.has(owner.name) ?? false)) {
@@ -27393,7 +28314,7 @@ async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
       const { cli, provider } = pickWorkerRoute(taskContent);
       const model = readModel(taskContent);
       try {
-        await dispatchTask(
+        const outcome = await dispatchTask(
           {
             taskKey,
             status: "pending",
@@ -27404,7 +28325,11 @@ async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
           },
           workerStore
         );
-        queued += 1;
+        if (outcome.ok) {
+          queued += 1;
+        } else {
+          reportWriteFaceRefusal(agenticdocRoot2, taskKey, outcome, opts.onRefusal);
+        }
       } catch (err) {
         console.error(`[mw] dispatch refused for ${taskKey}: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -27633,6 +28558,9 @@ ${PARALLEL_PROTOCOL}` };
       scope: "pm",
       watchedKey: watch.key,
       orphanedWarned,
+      // Per-task write-face refusals are recorded by the scan itself (one
+      // ledger row each, never deduped); this only delivers the human alert.
+      onRefusal: (text) => deliverPmAlert(pi, text),
       unregisteredWarned,
       // AC-022 (T-20): the product decides. A candidate whose own run.json
       // already ended (or is still live) is refused before any queue write;
@@ -27734,139 +28662,8 @@ ${PARALLEL_PROTOCOL}` };
 import * as fs37 from "node:fs";
 import * as os5 from "node:os";
 import * as path38 from "node:path";
-var IS_WIN322 = process.platform === "win32";
-var ENV_GATE_ROOT = "MW_IMPL_GATE_ROOT";
-var ENV_WORKER_TASK = "PI_WORKER_TASK";
-var AGENTICDOC_DIR2 = ".agenticdoc";
-var INDEX_FILE = "_index.parallel";
-var MINI_SPEC_FILE = "mini-spec.md";
-var GATE_LOG_FILE = "_impl_gate.log";
-var MINI_SPEC_FRESH_MS = 24 * 60 * 60 * 1e3;
-var PACKAGES_DIR = "packages";
-var CODE_EXTENSIONS = [".ts", ".tsx", ".js", ".cjs", ".mjs", ".py"];
-var CODE_EXCLUDED_SEGMENTS = ["node_modules", "dist", ".tmp"];
-var WRITE_VERBS = /* @__PURE__ */ new Set(["tee", "cp", "mv", "rm", "sed"]);
-var GATE_EXPLANATION = "Create a key first: run /agentic (the AgenticTask flow), or write .agenticdoc/<key>/spec.md \u2014 update_index.py claim then records this window (host:pid) as the owner. For a trivial fix use the mini fast path: write .agenticdoc/<key>/mini-spec.md, then retry this tool call (the pass is audited to .agenticdoc/_impl_gate.log).";
-function fold(p) {
-  return IS_WIN322 ? p.toLowerCase() : p;
-}
-function toForwardSlashes(p) {
-  return p.replaceAll("\\", "/");
-}
-function expandTildePath(p) {
-  if (p === "~") return os5.homedir();
-  if (p.startsWith("~/") || p.startsWith("~\\")) {
-    return path38.join(os5.homedir(), p.slice(2));
-  }
-  return p;
-}
-function isExistingDir(absPath) {
-  try {
-    return fs37.statSync(absPath).isDirectory();
-  } catch {
-    return false;
-  }
-}
-function defaultReadTextFile(absPath) {
-  try {
-    return fs37.readFileSync(absPath, "utf8");
-  } catch {
-    return void 0;
-  }
-}
-function resolveGateRoot(env = process.env) {
-  const raw = env[ENV_GATE_ROOT];
-  if (typeof raw === "string" && raw !== "") {
-    return path38.resolve(expandTildePath(raw));
-  }
-  return process.cwd();
-}
-function currentClaimId() {
-  return `${os5.hostname()}:${process.pid}`;
-}
-function codePathRel(absPath, root) {
-  const target = toForwardSlashes(fold(path38.normalize(absPath)));
-  const prefix = `${toForwardSlashes(fold(path38.normalize(root)))}/${PACKAGES_DIR}/`;
-  if (!target.startsWith(prefix)) return void 0;
-  return target.slice(prefix.length);
-}
-function isCodePathAbs(absPath, root) {
-  const rel = codePathRel(absPath, root);
-  if (rel === void 0 || rel === "") return false;
-  const ext2 = path38.extname(rel).toLowerCase();
-  if (!CODE_EXTENSIONS.includes(ext2)) return false;
-  const segments = rel.split("/");
-  return !segments.some((s) => CODE_EXCLUDED_SEGMENTS.includes(s));
-}
-function isCodePath(rawPath, root = resolveGateRoot(), cwd = process.cwd()) {
-  if (typeof rawPath !== "string" || rawPath === "") return false;
-  return isCodePathAbs(path38.resolve(cwd, expandTildePath(rawPath)), root);
-}
-function splitTableRow2(line) {
-  let cells = line.split("|").map((c) => c.trim());
-  if (cells.length > 0 && cells[0] === "") cells = cells.slice(1);
-  if (cells.length > 0 && cells[cells.length - 1] === "") cells = cells.slice(0, -1);
-  return cells;
-}
-function isSeparatorRow(cells) {
-  return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c));
-}
-function parseIndexRows(content) {
-  let header;
-  const dataRows = [];
-  for (const line of content.split(/\r?\n/)) {
-    const t = line.trim();
-    if (!t.startsWith("|")) continue;
-    const cells = splitTableRow2(t);
-    if (header === void 0) {
-      if (!isSeparatorRow(cells)) header = cells;
-    } else if (!isSeparatorRow(cells)) {
-      dataRows.push(cells);
-    }
-  }
-  if (header === void 0) return void 0;
-  const keyIdx = header.findIndex((c) => c.toLowerCase() === "key");
-  const statusIdx = header.findIndex((c) => c.toLowerCase() === "status");
-  const claimIdx = header.findIndex((c) => c.toLowerCase() === "claimid");
-  if (keyIdx < 0 || statusIdx < 0 || claimIdx < 0) return void 0;
-  return dataRows.map((cells) => ({
-    key: cells[keyIdx] ?? "",
-    status: cells[statusIdx] ?? "",
-    claimId: cells[claimIdx] ?? ""
-  }));
-}
-function hasActiveKeyClaim(root, claimId, readIndexFile = defaultReadTextFile) {
-  const wanted = claimId.trim().toLowerCase();
-  if (wanted === "") return false;
-  const content = readIndexFile(path38.join(root, AGENTICDOC_DIR2, INDEX_FILE));
-  if (content === void 0) return false;
-  const rows = parseIndexRows(content);
-  if (rows === void 0) return false;
-  return rows.some((r) => r.status.toLowerCase() === "active" && r.claimId.toLowerCase() === wanted);
-}
-function findFreshMiniSpec(root, now = Date.now(), maxAgeMs = MINI_SPEC_FRESH_MS) {
-  let entries;
-  try {
-    entries = fs37.readdirSync(path38.join(root, AGENTICDOC_DIR2), { withFileTypes: true });
-  } catch {
-    return void 0;
-  }
-  let best;
-  let bestMtime = Number.NEGATIVE_INFINITY;
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-    const candidate = path38.join(root, AGENTICDOC_DIR2, entry.name, MINI_SPEC_FILE);
-    try {
-      const mtime = fs37.statSync(candidate).mtimeMs;
-      if (now - mtime <= maxAgeMs && mtime > bestMtime) {
-        best = candidate;
-        bestMtime = mtime;
-      }
-    } catch {
-    }
-  }
-  return best;
-}
+
+// packages/coding-agent/src/extensions/agent-team-loop/shared/bash-segments.ts
 function readHeredocDelimiter(command, start) {
   let i = start;
   const n = command.length;
@@ -28075,6 +28872,141 @@ function parseBashSegments(command) {
   if (current.words.length > 0 || current.redirectTargets.length > 0) segments.push(current);
   return segments;
 }
+
+// packages/coding-agent/src/extensions/agent-team-loop/shared/implementation-gate.ts
+var IS_WIN322 = process.platform === "win32";
+var ENV_GATE_ROOT = "MW_IMPL_GATE_ROOT";
+var ENV_WORKER_TASK = "PI_WORKER_TASK";
+var AGENTICDOC_DIR2 = ".agenticdoc";
+var INDEX_FILE = "_index.parallel";
+var MINI_SPEC_FILE = "mini-spec.md";
+var GATE_LOG_FILE = "_impl_gate.log";
+var MINI_SPEC_FRESH_MS = 24 * 60 * 60 * 1e3;
+var PACKAGES_DIR = "packages";
+var CODE_EXTENSIONS = [".ts", ".tsx", ".js", ".cjs", ".mjs", ".py"];
+var CODE_EXCLUDED_SEGMENTS = ["node_modules", "dist", ".tmp"];
+var WRITE_VERBS = /* @__PURE__ */ new Set(["tee", "cp", "mv", "rm", "sed"]);
+var GATE_EXPLANATION = "Create a key first: run /agentic (the AgenticTask flow), or write .agenticdoc/<key>/spec.md \u2014 update_index.py claim then records this window (host:pid) as the owner. For a trivial fix use the mini fast path: write .agenticdoc/<key>/mini-spec.md, then retry this tool call (the pass is audited to .agenticdoc/_impl_gate.log).";
+function fold2(p) {
+  return IS_WIN322 ? p.toLowerCase() : p;
+}
+function toForwardSlashes(p) {
+  return p.replaceAll("\\", "/");
+}
+function expandTildePath(p) {
+  if (p === "~") return os5.homedir();
+  if (p.startsWith("~/") || p.startsWith("~\\")) {
+    return path38.join(os5.homedir(), p.slice(2));
+  }
+  return p;
+}
+function isExistingDir(absPath) {
+  try {
+    return fs37.statSync(absPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function defaultReadTextFile(absPath) {
+  try {
+    return fs37.readFileSync(absPath, "utf8");
+  } catch {
+    return void 0;
+  }
+}
+function resolveGateRoot(env = process.env) {
+  const raw = env[ENV_GATE_ROOT];
+  if (typeof raw === "string" && raw !== "") {
+    return path38.resolve(expandTildePath(raw));
+  }
+  return process.cwd();
+}
+function currentClaimId() {
+  return `${os5.hostname()}:${process.pid}`;
+}
+function codePathRel(absPath, root) {
+  const target = toForwardSlashes(fold2(path38.normalize(absPath)));
+  const prefix = `${toForwardSlashes(fold2(path38.normalize(root)))}/${PACKAGES_DIR}/`;
+  if (!target.startsWith(prefix)) return void 0;
+  return target.slice(prefix.length);
+}
+function isCodePathAbs(absPath, root) {
+  const rel = codePathRel(absPath, root);
+  if (rel === void 0 || rel === "") return false;
+  const ext2 = path38.extname(rel).toLowerCase();
+  if (!CODE_EXTENSIONS.includes(ext2)) return false;
+  const segments = rel.split("/");
+  return !segments.some((s) => CODE_EXCLUDED_SEGMENTS.includes(s));
+}
+function isCodePath(rawPath, root = resolveGateRoot(), cwd = process.cwd()) {
+  if (typeof rawPath !== "string" || rawPath === "") return false;
+  return isCodePathAbs(path38.resolve(cwd, expandTildePath(rawPath)), root);
+}
+function splitTableRow2(line) {
+  let cells = line.split("|").map((c) => c.trim());
+  if (cells.length > 0 && cells[0] === "") cells = cells.slice(1);
+  if (cells.length > 0 && cells[cells.length - 1] === "") cells = cells.slice(0, -1);
+  return cells;
+}
+function isSeparatorRow(cells) {
+  return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c));
+}
+function parseIndexRows(content) {
+  let header;
+  const dataRows = [];
+  for (const line of content.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t.startsWith("|")) continue;
+    const cells = splitTableRow2(t);
+    if (header === void 0) {
+      if (!isSeparatorRow(cells)) header = cells;
+    } else if (!isSeparatorRow(cells)) {
+      dataRows.push(cells);
+    }
+  }
+  if (header === void 0) return void 0;
+  const keyIdx = header.findIndex((c) => c.toLowerCase() === "key");
+  const statusIdx = header.findIndex((c) => c.toLowerCase() === "status");
+  const claimIdx = header.findIndex((c) => c.toLowerCase() === "claimid");
+  if (keyIdx < 0 || statusIdx < 0 || claimIdx < 0) return void 0;
+  return dataRows.map((cells) => ({
+    key: cells[keyIdx] ?? "",
+    status: cells[statusIdx] ?? "",
+    claimId: cells[claimIdx] ?? ""
+  }));
+}
+function hasActiveKeyClaim(root, claimId, readIndexFile = defaultReadTextFile) {
+  const wanted = claimId.trim().toLowerCase();
+  if (wanted === "") return false;
+  const content = readIndexFile(path38.join(root, AGENTICDOC_DIR2, INDEX_FILE));
+  if (content === void 0) return false;
+  const rows = parseIndexRows(content);
+  if (rows === void 0) return false;
+  return rows.some((r) => r.status.toLowerCase() === "active" && r.claimId.toLowerCase() === wanted);
+}
+function findFreshMiniSpec(root, now = Date.now(), maxAgeMs = MINI_SPEC_FRESH_MS) {
+  let entries;
+  try {
+    entries = fs37.readdirSync(path38.join(root, AGENTICDOC_DIR2), { withFileTypes: true });
+  } catch {
+    return void 0;
+  }
+  let best;
+  let bestMtime = Number.NEGATIVE_INFINITY;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const candidate = path38.join(root, AGENTICDOC_DIR2, entry.name, MINI_SPEC_FILE);
+    try {
+      const mtime = fs37.statSync(candidate).mtimeMs;
+      if (now - mtime <= maxAgeMs && mtime > bestMtime) {
+        best = candidate;
+        bestMtime = mtime;
+      }
+    } catch {
+    }
+  }
+  return best;
+}
 function stripEnvAssignments(words) {
   let i = 0;
   while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i] ?? "")) i += 1;
@@ -28249,7 +29181,7 @@ var IS_WIN323 = process.platform === "win32";
 var PROTECTED_CONFIG_FILES = ["auth.json", "models.json", "settings.json", "oauth.json"];
 var ENV_AGENT_DIR2 = "PI_CODING_AGENT_DIR";
 var GUARD_EXPLANATION = "~/.pi/agent/{auth,models,settings,oauth}.json are cross-window config shared by every live pi session (credentials hot-reload per window). Modifying them from a running session breaks the other windows (2026-09-15 incident: clearing auth.json broke every open window with 'Provider is not configured'). Reads are allowed. To change credentials/models/settings: close pi windows and edit from a plain terminal, or use pi /login (core flow, outside the tool layer).";
-function fold2(p) {
+function fold3(p) {
   return IS_WIN323 ? p.toLowerCase() : p;
 }
 function toForwardSlashes2(p) {
@@ -28283,9 +29215,9 @@ function protectedConfigPaths(agentDir) {
 }
 function isProtectedConfigPath(agentDir, rawPath, cwd = process.cwd()) {
   if (typeof rawPath !== "string" || rawPath === "") return false;
-  const target = fold2(path39.normalize(path39.resolve(cwd, expandTildePath2(rawPath))));
-  if (target === fold2(path39.normalize(agentDir))) return true;
-  return protectedConfigPaths(agentDir).some((p) => target === fold2(path39.normalize(p)));
+  const target = fold3(path39.normalize(path39.resolve(cwd, expandTildePath2(rawPath))));
+  if (target === fold3(path39.normalize(agentDir))) return true;
+  return protectedConfigPaths(agentDir).some((p) => target === fold3(path39.normalize(p)));
 }
 function expandCommandReferences(command, agentDir) {
   const home = os6.homedir();
@@ -28300,15 +29232,15 @@ function expandCommandReferences(command, agentDir) {
   return s;
 }
 function bashScanText(command, agentDir) {
-  return toForwardSlashes2(fold2(expandCommandReferences(command, agentDir)));
+  return toForwardSlashes2(fold3(expandCommandReferences(command, agentDir)));
 }
 function protectedReferences(scan, agentDir) {
-  const homeFrag = `${toForwardSlashes2(fold2(os6.homedir()))}/.pi/agent`;
-  const dirFrag = toForwardSlashes2(fold2(path39.normalize(agentDir)));
+  const homeFrag = `${toForwardSlashes2(fold3(os6.homedir()))}/.pi/agent`;
+  const dirFrag = toForwardSlashes2(fold3(path39.normalize(agentDir)));
   const refs = [];
   if (fragmentPresent(scan, homeFrag)) refs.push(homeFrag);
   if (dirFrag !== homeFrag && fragmentPresent(scan, dirFrag)) refs.push(dirFrag);
-  const homeAbs = toForwardSlashes2(fold2(os6.homedir()));
+  const homeAbs = toForwardSlashes2(fold3(os6.homedir()));
   const cdHome = new RegExp(`(?:^|[\\s;&|(])cd\\s+["']?${escapeRegExp(homeAbs)}["']?${boundary()}`);
   if (cdHome.test(scan) && fragmentPresent(scan, ".pi/agent")) {
     refs.push(`${homeFrag} (relative after cd ~)`);
@@ -28390,10 +29322,544 @@ function registerProtectedConfigGuard(pi) {
   });
 }
 
-// packages/coding-agent/src/extensions/agent-team-loop/shared/xkey-gate-guard.ts
+// packages/coding-agent/src/extensions/agent-team-loop/shared/worktree-junction-guard.ts
+import { spawnSync as spawnSync4 } from "node:child_process";
 import * as fs39 from "node:fs";
 import * as os7 from "node:os";
 import * as path40 from "node:path";
+var MAX_SCAN_ENTRIES = 2e5;
+var GIT_GLOBAL_VALUE_OPTIONS = /* @__PURE__ */ new Set(["--git-dir", "--work-tree", "--namespace", "--exec-path"]);
+var ASSIGNMENT_RE = /^([^=\s]+)=(.*)$/;
+function decideWorktreeRemove(command, cwd, env) {
+  if (typeof command !== "string" || command === "") return notRemove();
+  const segments = parseBashSegments(command);
+  const table = createVarTable(env);
+  let effectiveCwd = cwd;
+  let cwdMissing;
+  for (const segment of segments) {
+    const words = segment.words;
+    if (words.length === 0) continue;
+    const assignment = readAssignmentStatement(words);
+    if (assignment !== void 0) {
+      storeAssignment(table, assignment.name, assignment.value);
+      continue;
+    }
+    const location = readLocationTarget(words);
+    if (location !== void 0) {
+      if (location.target === "") {
+        cwdMissing = location.verb;
+        effectiveCwd = void 0;
+        continue;
+      }
+      const expanded2 = expandToken(location.target, table);
+      if (expanded2.missing !== void 0) {
+        cwdMissing = expanded2.missing;
+        effectiveCwd = void 0;
+      } else if (effectiveCwd !== void 0) {
+        effectiveCwd = path40.resolve(effectiveCwd, expandTilde(expanded2.value));
+        cwdMissing = void 0;
+      }
+      continue;
+    }
+    const invocation = parseGitInvocation(words);
+    if (invocation === void 0 || invocation.subcommand !== "worktree") {
+      const deletion = parseDeleteInvocation(words);
+      if (deletion !== void 0) {
+        let verdict;
+        for (const rawToken2 of deletion) {
+          const current = decideDeletePenetration(rawToken2, effectiveCwd, cwdMissing, table);
+          if (current.block) return current;
+          verdict ??= current;
+        }
+        if (verdict !== void 0) return verdict;
+      }
+      continue;
+    }
+    const action = invocation.args[0] ?? "";
+    if (action !== "remove" && action !== "rm") continue;
+    for (const inline of invocation.leadingAssignments) storeAssignment(table, inline.name, inline.value);
+    const operands = collectOperands(invocation.args.slice(1));
+    if (operands.length !== 1) {
+      return {
+        block: true,
+        reason: `[mw-worktree-guard] blocked: git worktree ${action} \u9700\u8981\u4E14\u4EC5\u9700\u8981\u4E00\u4E2A\u76EE\u6807\uFF0C\u5B9E\u9645\u8BC6\u522B\u5230 ${operands.length} \u4E2A\uFF1B\u5220\u9664\u9762\u65E0\u6CD5\u5B9A\u6B7B\uFF0C\u6309 fail-closed \u62D2\u7EDD\u3002`,
+        hits: [],
+        basis: "bare-name-ambiguous"
+      };
+    }
+    const rawToken = operands[0] ?? "";
+    let base = effectiveCwd;
+    if (invocation.base !== void 0) {
+      const expandedBase = expandToken(invocation.base, table);
+      if (expandedBase.missing !== void 0) return unresolvedVerdict(expandedBase.missing, rawToken);
+      base = path40.resolve(effectiveCwd ?? cwd, expandTilde(expandedBase.value));
+    }
+    if (base === void 0) return unresolvedVerdict(cwdMissing ?? "cwd", rawToken);
+    if (rawToken.includes("$(") || rawToken.includes("`")) return globVerdict(rawToken);
+    const expanded = expandToken(rawToken, table);
+    if (expanded.missing !== void 0) return unresolvedVerdict(expanded.missing, rawToken);
+    const value = expanded.value;
+    if (hasGlobOrSubstitution(value)) return globVerdict(rawToken);
+    if (hasTrailingSeparator(value)) return globVerdict(rawToken);
+    if (isBareName(value)) return decideBareName(value, base);
+    return scanVerdict(path40.resolve(base, expandTilde(value)));
+  }
+  return notRemove();
+}
+function registerWorktreeJunctionGuard(pi) {
+  pi.on("tool_call", (event, ctx) => {
+    if (event.toolName !== "bash") return void 0;
+    const command = event.input.command;
+    if (typeof command !== "string" || command === "") return void 0;
+    const verdict = decideWorktreeRemove(command, ctx.cwd, process.env);
+    if (!verdict.block) return void 0;
+    recordWorktreeGuardBlockTrace("bash", verdict.target ?? command);
+    return { block: true, reason: verdict.reason };
+  });
+  pi.on("user_bash", (event) => {
+    const command = event.command;
+    if (typeof command !== "string" || command === "") return void 0;
+    const verdict = decideWorktreeRemove(command, event.cwd, process.env);
+    if (!verdict.block) return void 0;
+    recordWorktreeGuardBlockTrace("user_bash", verdict.target ?? command);
+    return {
+      result: {
+        output: verdict.reason ?? "[mw-worktree-guard] blocked",
+        exitCode: 1,
+        cancelled: false,
+        truncated: false
+      }
+    };
+  });
+}
+function scanTree(root) {
+  let rootStat;
+  try {
+    rootStat = fs39.lstatSync(root);
+  } catch (err) {
+    if (errorCode(err) === "ENOENT") return { absent: true, hits: [] };
+    return { absent: false, hits: [], error: errorCode(err) };
+  }
+  const hits = [];
+  if (rootStat.isSymbolicLink()) hits.push(root);
+  const stack = rootStat.isDirectory() ? [root] : [];
+  let entries = 0;
+  while (stack.length > 0) {
+    const dir = stack.pop() ?? "";
+    let listing;
+    try {
+      listing = fs39.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      return { absent: false, hits, error: errorCode(err) };
+    }
+    for (const entry of listing) {
+      entries += 1;
+      if (entries > MAX_SCAN_ENTRIES) return { absent: false, hits, error: "entry-budget" };
+      const full = path40.join(dir, entry.name);
+      let isLink;
+      try {
+        isLink = fs39.lstatSync(full).isSymbolicLink();
+      } catch (err) {
+        return { absent: false, hits, error: errorCode(err) };
+      }
+      if (isLink) {
+        hits.push(full);
+        continue;
+      }
+      if (entry.isDirectory()) stack.push(full);
+    }
+  }
+  return { absent: false, hits };
+}
+function scanVerdict(target) {
+  const outcome = scanTree(target);
+  if (outcome.absent) return { block: false, hits: [], basis: "target-absent", target };
+  if (outcome.error !== void 0) return scanErrorVerdict(target, outcome.error, outcome.hits);
+  if (outcome.hits.length > 0) return reparsePointVerdict(target, outcome.hits);
+  return { block: false, hits: [], basis: "resolved", target };
+}
+function hasPenetratingForm(value) {
+  return /[*?[]/.test(value) || /[\\/]$/.test(value);
+}
+function deleteScanRoot(value) {
+  const match2 = /[*?[]/.exec(value);
+  if (match2 === null || match2.index === void 0) return value;
+  const prefix = value.slice(0, match2.index);
+  if (prefix === "") return ".";
+  if (/[\\/]$/.test(prefix)) return prefix;
+  return path40.dirname(prefix);
+}
+function decideDeletePenetration(rawToken, base, cwdMissing, table) {
+  const expanded = expandToken(rawToken, table);
+  if (expanded.missing !== void 0) {
+    return hasPenetratingForm(rawToken) ? unresolvedVerdict(expanded.missing, rawToken) : notRemove();
+  }
+  const value = expanded.value;
+  if (!hasPenetratingForm(value)) return notRemove();
+  if (value.includes("$(") || value.includes("`")) return deleteGlobVerdict(rawToken);
+  if (base === void 0) return unresolvedVerdict(cwdMissing ?? "cwd", rawToken);
+  const target = path40.resolve(base, expandTilde(deleteScanRoot(value)));
+  const outcome = scanTree(target);
+  if (outcome.absent) return { block: false, hits: [], basis: "target-absent", target };
+  if (outcome.error !== void 0) return scanErrorVerdict(target, outcome.error, outcome.hits);
+  if (outcome.hits.length === 0) return { block: false, hits: [], basis: "resolved", target };
+  if (isRegisteredWorktree(target)) return reparsePointVerdict(target, outcome.hits);
+  return deletePenetrationVerdict(target, outcome.hits);
+}
+function isRegisteredWorktree(target) {
+  const listing = listWorktrees(target);
+  if (listing.error !== void 0 || listing.paths === void 0) return false;
+  const wanted = canonicalComparePath(target);
+  let matches = 0;
+  for (const listed of listing.paths) {
+    if (canonicalComparePath(listed) === wanted) matches += 1;
+  }
+  return matches === 1;
+}
+function canonicalComparePath(value) {
+  const dir = path40.dirname(value);
+  let realDir;
+  try {
+    realDir = fs39.realpathSync.native(dir);
+  } catch {
+    realDir = path40.resolve(dir);
+  }
+  const joined = path40.join(realDir, path40.basename(value));
+  return process.platform === "win32" ? joined.toLowerCase() : joined;
+}
+function decideBareName(token, base) {
+  const listing = listWorktrees(base);
+  if (listing.error !== void 0) return scanErrorVerdict(void 0, listing.error, []);
+  const matches = (listing.paths ?? []).filter((p) => path40.basename(p).toLowerCase() === token.toLowerCase());
+  if (matches.length === 0) return { block: false, hits: [], basis: "target-absent" };
+  if (matches.length > 1) {
+    return {
+      block: true,
+      reason: `[mw-worktree-guard] blocked: worktree \u88F8\u540D ${token} \u5728 git \u5DE5\u4F5C\u6811\u6CE8\u518C\u8868\u4E2D\u5339\u914D\u5230 ${matches.length} \u9879\uFF0C\u5220\u9664\u9762\u65E0\u6CD5\u5B9A\u6B7B\uFF1B\u8BF7\u6539\u7528\u5B8C\u6574\u5B57\u9762\u8DEF\u5F84\u540E\u91CD\u8BD5\u3002`,
+      hits: [],
+      basis: "bare-name-ambiguous"
+    };
+  }
+  return scanVerdict(path40.resolve(matches[0] ?? ""));
+}
+function listWorktrees(base) {
+  const result = spawnSync4("git", ["-C", base, "worktree", "list", "--porcelain"], {
+    encoding: "utf8",
+    windowsHide: true
+  });
+  if (result.error) return { error: "git-spawn" };
+  if (result.status !== 0) return { error: `git-${result.status ?? "signal"}` };
+  const paths = (result.stdout ?? "").split(/\r?\n/).filter((line) => line.startsWith("worktree ")).map((line) => line.slice("worktree ".length).trim()).filter((line) => line !== "");
+  return { paths };
+}
+function parseGitInvocation(words) {
+  let i = 0;
+  const leadingAssignments = [];
+  while (i < words.length) {
+    const word = words[i] ?? "";
+    if (word.includes("/") || word.includes("\\")) break;
+    const match2 = ASSIGNMENT_RE.exec(word);
+    if (!match2 || (match2[1] ?? "") === "") break;
+    leadingAssignments.push({ name: normalizeVarName(match2[1] ?? ""), value: match2[2] ?? "" });
+    i += 1;
+  }
+  if (i >= words.length) return void 0;
+  if (basenameLower(words[i] ?? "") !== "git") return void 0;
+  i += 1;
+  let base;
+  while (i < words.length) {
+    const word = words[i] ?? "";
+    if (word === "-C") {
+      if (i + 1 < words.length) {
+        base = words[i + 1] ?? "";
+        i += 2;
+      } else {
+        i += 1;
+      }
+      continue;
+    }
+    if (word.startsWith("-C") && word.length > 2) {
+      base = word.slice(2);
+      i += 1;
+      continue;
+    }
+    if (word === "-c") {
+      i += 2;
+      continue;
+    }
+    if (GIT_GLOBAL_VALUE_OPTIONS.has(word)) {
+      i += 2;
+      continue;
+    }
+    if (word.startsWith("-")) {
+      i += 1;
+      continue;
+    }
+    return { base, subcommand: word, args: words.slice(i + 1), leadingAssignments };
+  }
+  return void 0;
+}
+function readAssignmentStatement(words) {
+  if (words.length >= 3 && words[1] === "=") {
+    const name = normalizeVarName(words[0] ?? "");
+    if (name !== "") return { name, value: words.slice(2).join(" ") };
+    return void 0;
+  }
+  if (words.length === 1) {
+    const word = words[0] ?? "";
+    if (word.includes("/") || word.includes("\\")) return void 0;
+    const match2 = ASSIGNMENT_RE.exec(word);
+    if (match2 && (match2[1] ?? "") !== "") {
+      return { name: normalizeVarName(match2[1] ?? ""), value: match2[2] ?? "" };
+    }
+  }
+  return void 0;
+}
+var LOCATION_VERBS = /* @__PURE__ */ new Set(["cd", "set-location", "pushd", "sl", "chdir"]);
+var PATH_PARAMETERS = /* @__PURE__ */ new Set(["-path", "-literalpath"]);
+function readLocationTarget(words) {
+  const verb = basenameLower(words[0] ?? "");
+  if (!LOCATION_VERBS.has(verb)) return void 0;
+  for (let i = 1; i < words.length; i += 1) {
+    const word = words[i] ?? "";
+    if (word === "/d" || word === "/D") continue;
+    if (word.startsWith("-")) {
+      const eq2 = word.indexOf("=");
+      if (eq2 > 1 && PATH_PARAMETERS.has(word.slice(0, eq2).toLowerCase())) {
+        return { verb, target: word.slice(eq2 + 1) };
+      }
+      continue;
+    }
+    return { verb, target: word };
+  }
+  return { verb, target: "" };
+}
+function collectOperands(args) {
+  const operands = [];
+  let endOfOptions = false;
+  for (const arg of args) {
+    if (!endOfOptions) {
+      if (arg === "--") {
+        endOfOptions = true;
+        continue;
+      }
+      if (arg.startsWith("-")) continue;
+    }
+    operands.push(arg);
+  }
+  return operands;
+}
+var DELETE_VERBS = /* @__PURE__ */ new Set(["rm", "remove-item", "ri", "del", "erase", "rd", "rmdir"]);
+function parseDeleteInvocation(words) {
+  const head = basenameLower(words[0] ?? "");
+  if (!DELETE_VERBS.has(head)) return void 0;
+  return collectOperands(words.slice(1));
+}
+function basenameLower(word) {
+  const base = path40.basename(word).toLowerCase();
+  return base.endsWith(".exe") ? base.slice(0, -4) : base;
+}
+function createVarTable(env) {
+  const envLower = /* @__PURE__ */ new Map();
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === "string") envLower.set(key.toLowerCase(), value);
+  }
+  return { locals: /* @__PURE__ */ new Map(), envLower };
+}
+function storeAssignment(table, name, rawValue) {
+  const expanded = expandToken(rawValue, table);
+  table.locals.set(name.toLowerCase(), expanded.missing === void 0 ? expanded.value : null);
+}
+function normalizeVarName(raw) {
+  let name = raw.trim();
+  if (name.startsWith("$")) name = name.slice(1);
+  if (/^env:/i.test(name)) name = name.slice(4);
+  return name;
+}
+function lookupVar(table, rawName) {
+  const key = normalizeVarName(rawName).toLowerCase();
+  if (table.locals.has(key)) {
+    const value = table.locals.get(key);
+    return value === null || value === void 0 ? { found: false, value: "" } : { found: true, value };
+  }
+  const envValue = table.envLower.get(key);
+  if (envValue !== void 0) return { found: true, value: envValue };
+  return { found: false, value: "" };
+}
+function expandToken(token, table) {
+  let out = "";
+  let i = 0;
+  while (i < token.length) {
+    const c = token.charAt(i);
+    if (c === "$") {
+      if (token.charAt(i + 1) === "{") {
+        const close = token.indexOf("}", i + 2);
+        if (close > i + 2) {
+          const name = token.slice(i + 2, close);
+          const resolved = lookupVar(table, name);
+          if (!resolved.found) return { value: out, missing: normalizeVarName(name) };
+          out += resolved.value;
+          i = close + 1;
+          continue;
+        }
+      }
+      const envMatch = /^env:([A-Za-z0-9_()]+)/i.exec(token.slice(i + 1));
+      if (envMatch) {
+        const name = envMatch[1] ?? "";
+        const resolved = lookupVar(table, name);
+        if (!resolved.found) return { value: out, missing: normalizeVarName(name) };
+        out += resolved.value;
+        i += 1 + envMatch[0].length;
+        continue;
+      }
+      const plainMatch = /^([A-Za-z_][A-Za-z0-9_]*)/.exec(token.slice(i + 1));
+      if (plainMatch) {
+        const name = plainMatch[1] ?? "";
+        const resolved = lookupVar(table, name);
+        if (!resolved.found) return { value: out, missing: normalizeVarName(name) };
+        out += resolved.value;
+        i += 1 + plainMatch[0].length;
+        continue;
+      }
+      out += c;
+      i += 1;
+      continue;
+    }
+    if (c === "%") {
+      const close = token.indexOf("%", i + 1);
+      if (close > i + 1) {
+        const name = token.slice(i + 1, close);
+        if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+          const resolved = lookupVar(table, name);
+          if (!resolved.found) return { value: out, missing: normalizeVarName(name) };
+          out += resolved.value;
+          i = close + 1;
+          continue;
+        }
+      }
+      out += c;
+      i += 1;
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return { value: out };
+}
+function hasGlobOrSubstitution(value) {
+  return /[*?[]/.test(value) || value.includes("$(") || value.includes("`");
+}
+function hasTrailingSeparator(value) {
+  return /[\\/]$/.test(value);
+}
+function isBareName(value) {
+  if (value === "" || value === "." || value === "..") return false;
+  if (value.includes("/") || value.includes("\\")) return false;
+  if (/^[A-Za-z]:/.test(value)) return false;
+  return true;
+}
+function expandTilde(value) {
+  if (value === "~") return os7.homedir();
+  if (value.startsWith("~/") || value.startsWith("~\\")) return path40.join(os7.homedir(), value.slice(2));
+  return value;
+}
+function notRemove() {
+  return { block: false, hits: [], basis: "not-remove" };
+}
+function reparsePointVerdict(target, hits) {
+  const example = hits[0] ?? target;
+  const linkTarget = readLinkTarget(example);
+  const reason = `[mw-worktree-guard] blocked: ${target} \u5185\u6709 ${hits.length} \u4E2A reparse point\uFF08\u793A\u4F8B ${example} -> ${linkTarget}\uFF09\uFF1B
+\u76F4\u63A5\u6267\u884C git worktree remove \u4F1A\u7A7F\u900F\u5E76\u5220\u9664\u76EE\u6807\u771F\u6811\u5185\u5BB9\u3002\u8BF7\u6539\u7528\uFF1A
+  mw worktree rm "${target}"`;
+  return { block: true, reason, target, hits, basis: "reparse-point" };
+}
+function unresolvedVerdict(name, rawToken) {
+  return {
+    block: true,
+    reason: `[mw-worktree-guard] blocked: worktree \u76EE\u6807 ${rawToken} \u542B\u65E0\u6CD5\u89E3\u6790\u7684\u53D8\u91CF ${name}\uFF1B\u65E0\u6CD5\u8BC1\u660E\u76EE\u6807\u6811\u5185\u65E0 reparse point\u3002\u8BF7\u663E\u5F0F\u7ED9\u51FA\u53EF\u89E3\u6790\u7684 worktree \u8DEF\u5F84\u540E\u91CD\u8BD5\u3002`,
+    hits: [],
+    basis: `unresolved:${name}`
+  };
+}
+function globVerdict(rawToken) {
+  return {
+    block: true,
+    reason: `[mw-worktree-guard] blocked: worktree \u76EE\u6807 ${rawToken} \u542B\u901A\u914D\u3001\u547D\u4EE4\u66FF\u6362\u6216\u5C3E\u5206\u9694\u7B26\uFF1B\`<link>/\`\u3001\`<link>/*\` \u8FD9\u7C7B\u5F62\u6001\u4F1A\u8BA9 git worktree remove \u7A7F\u900F\u94FE\u63A5\u5220\u9664\u771F\u6811\u5185\u5BB9\u3002\u8BF7\u6539\u7528\u5B57\u9762 worktree \u8DEF\u5F84\u540E\u91CD\u8BD5\u3002`,
+    hits: [],
+    basis: "glob"
+  };
+}
+function scanErrorVerdict(target, code, hits) {
+  return {
+    block: true,
+    reason: `[mw-worktree-guard] blocked: \u65E0\u6CD5\u5B8C\u6574\u679A\u4E3E worktree ${target ?? "<unknown>"}\uFF08${code}\uFF09\uFF1B\u65E0\u6CD5\u8BC1\u660E\u5176\u4E2D\u65E0 reparse point\uFF0C\u6309 fail-closed \u62D2\u7EDD\u6267\u884C git worktree remove\u3002`,
+    target,
+    hits,
+    basis: `scan-error:${code}`
+  };
+}
+var MAX_PENETRATION_LINES = 3;
+function deletePenetrationVerdict(target, hits) {
+  const listed = hits.slice(0, MAX_PENETRATION_LINES);
+  const chains = listed.map((link) => `  ${link} -> ${readLinkTarget(link)}`);
+  const prescriptions = listed.map((link) => `  cmd /c rmdir "${link}"`);
+  const remaining = hits.length - listed.length;
+  const tail = remaining > 0 ? `\uFF08\u53E6\u6709 ${remaining} \u6761\u672A\u5217\u51FA\uFF0C\u8BF7\u5BF9\u6BCF\u4E2A\u547D\u4E2D\u7684\u94FE\u6267\u884C\u540C\u4E00\u6761 rmdir \u540E\u91CD\u8BD5\uFF09` : "";
+  const reason = `[mw-worktree-guard] blocked: \u8BE5\u5220\u9664\u5F62\u6001\uFF08\u5C3E\u5206\u9694\u7B26\u6216\u901A\u914D\uFF09\u4F1A\u7A7F\u900F reparse point\uFF0C\u5220\u9664\u94FE\u63A5\u6307\u5411\u7684\u771F\u6811\u5185\u5BB9\u3002\u76EE\u6807 ${target} \u5185\u547D\u4E2D ${hits.length} \u4E2A reparse point\uFF1A
+${chains.join("\n")}
+\u8BF7\u5148\u9010\u6761\u6458\u94FE\uFF08\u65E0 /S\u3001\u65E0\u5C3E\u5206\u9694\u7B26\uFF09\uFF0C\u518D\u91CD\u8BD5\u539F\u5220\u9664\u547D\u4EE4${tail}\uFF1A
+${prescriptions.join("\n")}`;
+  return { block: true, reason, target, hits, basis: "delete-penetration" };
+}
+function readLinkTarget(link) {
+  try {
+    return stripExtendedPrefix(fs39.readlinkSync(link));
+  } catch {
+    return "<unreadable>";
+  }
+}
+function deleteGlobVerdict(rawToken) {
+  return {
+    block: true,
+    reason: `[mw-worktree-guard] blocked: \u5220\u9664\u76EE\u6807 ${rawToken} \u542B\u547D\u4EE4\u66FF\u6362\uFF0C\u65E0\u6CD5\u9759\u6001\u89E3\u6790\uFF1B\`<link>/\`\u3001\`<link>/*\` \u8FD9\u7C7B\u5F62\u6001\u4F1A\u7A7F\u900F\u94FE\u63A5\u5220\u9664\u771F\u6811\u5185\u5BB9\uFF0C\u6309 fail-closed \u62D2\u7EDD\u3002`,
+    hits: [],
+    basis: "glob"
+  };
+}
+function stripExtendedPrefix(value) {
+  if (value.startsWith("\\\\?\\")) return value.slice(4);
+  if (value.startsWith("\\??\\")) return value.slice(4);
+  return value;
+}
+function errorCode(err) {
+  if (err !== null && typeof err === "object" && "code" in err) {
+    const code = err.code;
+    if (typeof code === "string") return code;
+  }
+  return "unknown";
+}
+function recordWorktreeGuardBlockTrace(toolName, detail) {
+  const taskPath = process.env.PI_WORKER_TASK;
+  if (!taskPath) return;
+  try {
+    const dir = path40.dirname(path40.resolve(taskPath));
+    fs39.mkdirSync(dir, { recursive: true });
+    const first = detail.split("\n")[0] ?? "";
+    fs39.appendFileSync(
+      path40.join(dir, "trace.log"),
+      `[WORKTREE_GUARD] ${(/* @__PURE__ */ new Date()).toISOString()} blocked tool=${toolName} target=${first}
+`,
+      "utf8"
+    );
+  } catch {
+  }
+}
+
+// packages/coding-agent/src/extensions/agent-team-loop/shared/xkey-gate-guard.ts
+import * as fs40 from "node:fs";
+import * as os8 from "node:os";
+import * as path41 from "node:path";
 var IS_WIN324 = process.platform === "win32";
 var ENV_GATE_ROOT2 = "MW_XKEY_GATE_ROOT";
 var AGENTICDOC_DIR3 = ".agenticdoc";
@@ -28401,7 +29867,7 @@ var AUTOPILOT_DIR = "_autopilot";
 var XKEY_DIR = "xkey";
 var AUTOPILOT_DIR_FRAGMENT = `${AGENTICDOC_DIR3}/${AUTOPILOT_DIR}`;
 var GUARD_EXPLANATION2 = "Autopilot state (.agenticdoc/_autopilot/**) is the conductor's audit and control channel: gates/** are answered only by a human (via the /autopilot gate console or by editing the file from outside the agent), and timeline.jsonl / config.json / auto-decisions.jsonl are written only by the conductor. An agent tool call must not write them. To propose a change, write .agenticdoc/_autopilot/xkey/evidence/<request_id>/proposal.md instead - the conductor validates proposals and applies them; ledger.json and tickets/ stay with the conductor. Reads remain allowed.";
-function fold3(p) {
+function fold4(p) {
   return IS_WIN324 ? p.toLowerCase() : p;
 }
 function toForwardSlashes3(p) {
@@ -28420,37 +29886,37 @@ function guardedFragmentPresent(scan, fragment) {
   return new RegExp(guardedFragmentPattern(fragment)).test(scan);
 }
 function expandTildePath3(p) {
-  if (p === "~") return os7.homedir();
+  if (p === "~") return os8.homedir();
   if (p.startsWith("~/") || p.startsWith("~\\")) {
-    return path40.join(os7.homedir(), p.slice(2));
+    return path41.join(os8.homedir(), p.slice(2));
   }
   return p;
 }
 function resolveXkeyGateRoot(env = process.env) {
   const raw = env[ENV_GATE_ROOT2];
   if (typeof raw === "string" && raw !== "") {
-    return path40.resolve(expandTildePath3(raw));
+    return path41.resolve(expandTildePath3(raw));
   }
   return process.cwd();
 }
 function xkeyGuardedDir(root) {
-  return path40.join(root, AGENTICDOC_DIR3, AUTOPILOT_DIR);
+  return path41.join(root, AGENTICDOC_DIR3, AUTOPILOT_DIR);
 }
 function xkeySubtreeDir(root) {
-  return path40.join(xkeyGuardedDir(root), XKEY_DIR);
+  return path41.join(xkeyGuardedDir(root), XKEY_DIR);
 }
 function isUnder2(parent, child) {
-  const p = fold3(path40.normalize(parent));
-  const c = fold3(path40.normalize(child));
+  const p = fold4(path41.normalize(parent));
+  const c = fold4(path41.normalize(child));
   if (c === p) return true;
-  const prefix = p.endsWith(path40.sep) ? p : p + path40.sep;
+  const prefix = p.endsWith(path41.sep) ? p : p + path41.sep;
   return c.startsWith(prefix);
 }
 function isXkeyGatePath(root, rawPath, cwd = process.cwd()) {
   if (typeof rawPath !== "string" || rawPath === "") return false;
-  const target = path40.resolve(cwd, expandTildePath3(rawPath));
+  const target = path41.resolve(cwd, expandTildePath3(rawPath));
   if (isUnder2(xkeyGuardedDir(root), target) && !isUnder2(xkeySubtreeDir(root), target)) return true;
-  return guardedFragmentPresent(toForwardSlashes3(fold3(target)), AUTOPILOT_DIR_FRAGMENT);
+  return guardedFragmentPresent(toForwardSlashes3(fold4(target)), AUTOPILOT_DIR_FRAGMENT);
 }
 var WRITE_VERB_RE2 = /\b(rm|rmdir|rd|del|erase|mv|move|ren|rename|cp|copy|rsync|install|dd|tee|shred|truncate|touch|chmod|chown|ln)\b/i;
 var POWERSHELL_WRITE_RE2 = /\b(remove-item|move-item|copy-item|rename-item|new-item|set-content|add-content|clear-content|out-file)\b/i;
@@ -28461,10 +29927,10 @@ var INLINE_CODE_RE2 = /\b(python3?|node)\b[^\n;&|]*(\s-c\b|\s-e\b|\s--eval\b|<<)
 var INLINE_WRITE_MARKER_RE2 = /(['"][wa]['"]|writefile|write_file|unlink|rmsync|rmtree|os\.remove|os\.rename|shutil\.(move|copy|copyfile)|truncate\(|appendfile|open\([^)]*,\s*['"][wa]['"])/i;
 function checkXkeyGateBashCommand(root, command) {
   if (typeof command !== "string" || command === "") return { prohibited: false };
-  const scan = toForwardSlashes3(fold3(command));
+  const scan = toForwardSlashes3(fold4(command));
   const refs = [];
   if (guardedFragmentPresent(scan, AUTOPILOT_DIR_FRAGMENT)) refs.push(AUTOPILOT_DIR_FRAGMENT);
-  const dirFrag = toForwardSlashes3(fold3(path40.normalize(xkeyGuardedDir(root))));
+  const dirFrag = toForwardSlashes3(fold4(path41.normalize(xkeyGuardedDir(root))));
   if (dirFrag !== AUTOPILOT_DIR_FRAGMENT && guardedFragmentPresent(scan, dirFrag)) refs.push(dirFrag);
   if (refs.length === 0) return { prohibited: false };
   const constructs = [];
@@ -28486,11 +29952,11 @@ function checkXkeyGateBashCommand(root, command) {
 function recordXkeyGateBlockTrace(toolName, detail, taskPathEnv = process.env.PI_WORKER_TASK) {
   if (!taskPathEnv) return;
   try {
-    const dir = path40.dirname(path40.resolve(taskPathEnv));
-    fs39.mkdirSync(dir, { recursive: true });
+    const dir = path41.dirname(path41.resolve(taskPathEnv));
+    fs40.mkdirSync(dir, { recursive: true });
     const first = detail.split("\n")[0] ?? "";
-    fs39.appendFileSync(
-      path40.join(dir, "trace.log"),
+    fs40.appendFileSync(
+      path41.join(dir, "trace.log"),
       `[XKEY_GATE] ${(/* @__PURE__ */ new Date()).toISOString()} blocked tool=${toolName} target=${first}
 `,
       "utf8"
@@ -28541,6 +30007,7 @@ async function activate(pi) {
   registerProtectedConfigGuard(pi);
   registerXkeyGateGuard(pi);
   registerImplementationGate(pi);
+  registerWorktreeJunctionGuard(pi);
   if (process.env.PI_WORKER_TASK) {
     await workerModeActivate(pi);
   } else {

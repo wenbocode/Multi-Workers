@@ -13,7 +13,11 @@ Field set and defaults (D-110):
     enabled            bool    false
     paused             bool    false
     poll_interval_sec  int     4    (1..5; AC-019 beat budget caps this at 5)
-    max_parallel_keys  int     2    (floor 2)
+    max_parallel_keys  int     8    (key-layer upper bound; effective concurrency
+                                    = min(this, dependency frontier). floor 1 is
+                                    the kill switch: 1 = one key at a time)
+    max_workers_per_key int    4    (per-key upper bound, floor 1; how many
+                                    workers one key may run at once, D-102)
     round_budget       int     2    (single source for AC-011 test overrides)
     worker_timeout_min int     30
     l2_read_file_cap   int     8
@@ -62,7 +66,7 @@ Field set and defaults (D-110):
 One optional key sits outside :data:`DEFAULT_CONFIG`: ``envelope_fallback``
 (bool, default false when absent). It is the T-14 service-layer envelope
 escape hatch, validated like every other boolean but deliberately kept out of
-the frozen 20-key schema and the TS parity table (read via
+the frozen 21-key schema and the TS parity table (read via
 :func:`envelope_fallback_enabled`).
 
 :func:`cached_load` is a thin alias of :func:`load_config` plus a JSON
@@ -84,7 +88,8 @@ DEFAULT_CONFIG: dict = {
     "enabled": False,
     "paused": False,
     "poll_interval_sec": 4,
-    "max_parallel_keys": 2,
+    "max_parallel_keys": 8,
+    "max_workers_per_key": 4,
     "round_budget": 2,
     "worker_timeout_min": 30,
     "l2_read_file_cap": 8,
@@ -107,7 +112,7 @@ DEFAULT_CONFIG: dict = {
 #
 # The T-14 service-layer escape hatch (mw-dispatch-card-gate AC-009/P-10) is a
 # validated boolean that is deliberately NOT a member of DEFAULT_CONFIG: the
-# frozen 20-key project schema (D-110) and the TS <-> Python parity table stay
+# frozen 21-key project schema (D-110) and the TS <-> Python parity table stay
 # untouched, while a project can still opt in explicitly. It is read by the
 # launcher's envelope gate via :func:`envelope_fallback_enabled`.
 ENVELOPE_FALLBACK_KEY = "envelope_fallback"
@@ -119,7 +124,8 @@ _ENUM_FIELDS: dict[str, tuple[str, ...]] = {
 }
 _INT_RANGES: dict[str, tuple[int, int | None]] = {
     "poll_interval_sec": (1, 5),
-    "max_parallel_keys": (2, None),
+    "max_parallel_keys": (1, None),
+    "max_workers_per_key": (1, None),
     "round_budget": (1, None),
     "worker_timeout_min": (1, None),
     "l2_read_file_cap": (1, None),
@@ -198,7 +204,7 @@ def load_config(project_root: pathlib.Path) -> dict:
     return the raw data itself: a partial file yields exactly the keys it
     actually carries, never a silent default fill.
 
-    Consumers that need the complete 20-key view must use
+    Consumers that need the complete 21-key view must use
     :func:`default_config` or :func:`autopilot.effective_config.load_effective`;
     a key a human may have omitted must be read with ``.get(...)``, not by
     subscripting."""

@@ -1,11 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { TERMINAL_WORKER_STATUSES } from "../autopilot/status-model.ts";
 import { RAG_MARKER_V1, type RagTaskMeta, renderRagBlock } from "../rag/block.ts";
 import { loadRagConfig } from "../rag/config.ts";
+import { acquireLock } from "../shared/file-lock.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
 import { renderToolchainCommand, resolveWorkspaceConfig, type WorkspaceConfig } from "../shared/target-config.ts";
 import { readTaskHeaderScalar, readTaskType } from "../shared/task-frontmatter.ts";
-import type { WorkerEntry, WorkerStore } from "../shared/worker-store.ts";
+import { type WorkerEntry, type WorkerStore, workerOwnerKey } from "../shared/worker-store.ts";
+import { parseWriteFace, type WriteFace, type WriteFaceRejectCode, writeFacesOverlap } from "../shared/write-face.ts";
 
 /** Sentinel opening the legacy (dual/single) profile block — makes
  * re-dispatch idempotent (the block is appended at most once per task.md).
@@ -288,13 +291,197 @@ function injectWorkspaceProfile(taskPath: string): void {
 export async function dispatchTask(
 	entry: Omit<WorkerEntry, "dispatchedAt" | "updatedAt">,
 	store: WorkerStore,
-): Promise<void> {
-	injectWorkspaceProfile(entry.taskPath);
+): Promise<DispatchOutcome> {
 	const now = new Date().toISOString();
 	const full: WorkerEntry = {
 		...entry,
 		dispatchedAt: now,
 		updatedAt: now,
 	};
-	await store.upsert(full);
+	// The judgement, the profile injection and the row write share ONE
+	// `.mw/workers.lock` critical section (D-005/AC-014), anchored on the SAME
+	// queue/lock paths this store was constructed with (so the call site cannot
+	// drift from `worker-store.ts`). `WorkerStore.upsert` may NOT be called
+	// while this lock is held (a nested `acquireLock` backs off for 14.6h then
+	// raises, RQ-D3), so the row write goes through the store's own lock-free
+	// entry point (D-114: one writer implementation, no byte-mirror).
+	const base = writeFaceBase(path.dirname(store.queuePath));
+	const caseInsensitive = writeFaceCaseInsensitive();
+
+	const release = await acquireLock(store.lockFilePath);
+	try {
+		let content = "";
+		try {
+			content = fs.readFileSync(entry.taskPath, "utf8");
+		} catch {
+			// Unreadable task.md is "no information" (undeclared), never a
+			// guessed face (D-003).
+		}
+		const refusal = writeFaceVerdict({ entry, content, store, base, caseInsensitive });
+		if (refusal !== null) return refusal;
+
+		injectWorkspaceProfile(entry.taskPath);
+		store.upsertWithinLock(full);
+	} finally {
+		release();
+	}
+	return { ok: true };
+}
+
+// ── write-face gate (mw-write-face-guard W-08/D-001..D-008) ─────────────────
+
+/** Stable PM-side refusal codes. `write-face-overlap` / `write-face-undeclared`
+ * are the conductor's codes (`dispatch.py:1173/1198/1208`); the remaining
+ * values are the parse-time codes the shared operator emits, which the
+ * conductor refuses with the same code (`dispatch.py:1164`). */
+export type DispatchRefusalCode = "write-face-overlap" | "write-face-undeclared" | WriteFaceRejectCode;
+
+/** A zero-side-effect dispatch refusal / D-003 deferral (D-008). The PM audit
+ * channel is this return value (the conductor writes `timeline.jsonl`). */
+export interface DispatchRefusal {
+	ok: false;
+	code: DispatchRefusalCode;
+	/** `overlap-with:<task_key>` payload (overlap refusals only). */
+	overlapWith?: string;
+	/** Lexically-provable conflict sample path (provable overlap only). */
+	sample?: string;
+	/** D-003: serial-only deferral, not an invalid task. */
+	serialOnly?: boolean;
+	/** Number of same-owner in-flight workers (undeclared deferral only). */
+	inFlight?: number;
+	/** Machine reason, byte-identical to the conductor's `DispatchResult.reason`. */
+	reason: string;
+	/** Human audit line, byte-identical to the conductor's timeline detail. */
+	detail: string;
+}
+
+/** The PM dispatch result: `{ ok: true }` queued (or idempotently re-queued);
+ * a {@link DispatchRefusal} wrote nothing. */
+export type DispatchOutcome = { ok: true } | DispatchRefusal;
+
+/** Base for every write-face parse: the `.agenticdoc` parent — the same root
+ * `WorkerStore` anchors its queue under. Given at the call site, never
+ * inferred inside the operator (D-006/AC-007; mirrors
+ * `dispatch.py::write_face_base`). */
+export function writeFaceBase(agenticdocRoot: string): string {
+	return path.resolve(agenticdocRoot, "..");
+}
+
+/** Explicit case mode for the write-face operator (D-006/AC-007): mirrors
+ * `dispatch.py::write_face_case_insensitive` (`os.name == "nt"`). */
+export function writeFaceCaseInsensitive(): boolean {
+	return process.platform === "win32";
+}
+
+/** The in-flight worker's own task.md `write_face:` head, or `null` when it is
+ * missing / unreadable / undeclared — a side that did not declare cannot prove
+ * an overlap (D-003; mirrors `dispatch.py::_parse_inflight_write_face`). */
+function parseInflightWriteFace(taskPath: string, base: string, caseInsensitive: boolean): WriteFace | null {
+	if (taskPath.trim() === "") return null;
+	let text: string;
+	try {
+		text = fs.readFileSync(taskPath, "utf8");
+	} catch {
+		return null;
+	}
+	const parsed = parseWriteFace(text, { base, caseInsensitive });
+	return parsed.kind === "declared" ? parsed.face : null;
+}
+
+/** D-001..D-008 gate, called INSIDE the `workers.lock` critical section.
+ * Returns `null` to proceed, or a zero-side-effect refusal. The in-flight set
+ * is recomputed in place from the live queue (AC-008; no queue column is
+ * added) using the single owner predicate and the single terminal-status set. */
+function writeFaceVerdict(input: {
+	entry: Omit<WorkerEntry, "dispatchedAt" | "updatedAt">;
+	content: string;
+	store: WorkerStore;
+	base: string;
+	caseInsensitive: boolean;
+}): DispatchRefusal | null {
+	const taskKey = input.entry.taskKey;
+	const parsed = parseWriteFace(input.content, { base: input.base, caseInsensitive: input.caseInsensitive });
+	// A card-backed dispatch carries `card_path:`; a hand-written internal /
+	// orphan task does not. Only a card-backed undeclared face is held
+	// serial-only — a card-less dispatch has no author surface to fix, so
+	// refusing it would manufacture a permanent stall (dispatch.py
+	// `_write_face_verdict` card-less exemption).
+	const cardBacked = (readTaskHeaderScalar(input.content, "card_path") ?? "") !== "";
+
+	const ownerKey = workerOwnerKey({ taskPath: input.entry.taskPath } as WorkerEntry);
+	// `workerOwnerKey` is "" when the task path is not under
+	// `.agenticdoc/<key>/workers/` (the contract an unanchored path violates).
+	// An unknown owner cannot establish a same-owner set, and grouping every
+	// unknown under "" would invent overlap that is not provable — the same
+	// direction as D-003 (no information is not evidence of a conflict).
+	const inFlight =
+		ownerKey === ""
+			? []
+			: input.store
+					.readQueue()
+					.rows.filter(
+						(row) =>
+							row.taskKey !== taskKey &&
+							workerOwnerKey(row) === ownerKey &&
+							!TERMINAL_WORKER_STATUSES.has(row.status),
+					);
+
+	if (parsed.kind === "rejected") {
+		// `reason` mirrors the conductor's `DispatchResult.reason`
+		// (`dispatch.py:1169`: `f"{code}: {detail}"`), so the PM audit line
+		// derived from it (`writeFaceRefusalDetail` ->
+		// `.agenticdoc/_autopilot/auto-decisions.jsonl`) carries the same
+		// refusal detail as the conductor's `timeline.jsonl` event. `detail`
+		// keeps the conductor's timeline shape (`_write_face_audit`:
+		// `"<task_key>: <code> <detail>"`). Both degrade to the bare `code`
+		// when the operator supplies no detail — never `"code: undefined"`.
+		const tail = parsed.detail === undefined ? "" : ` ${parsed.detail}`;
+		return {
+			ok: false,
+			code: parsed.code,
+			reason: parsed.detail === undefined ? parsed.code : `${parsed.code}: ${parsed.detail}`,
+			detail: `${taskKey}: ${parsed.code}${tail}`,
+		};
+	}
+
+	if (parsed.kind === "undeclared") {
+		// D-003: an undeclared card-backed face is serial-only. With no same-owner
+		// worker in flight there is nothing to serialize against, so the dispatch
+		// proceeds (byte-identical to the pre-gate flow).
+		if (inFlight.length === 0 || !cardBacked) return null;
+		return {
+			ok: false,
+			code: "write-face-undeclared",
+			serialOnly: true,
+			inFlight: inFlight.length,
+			reason: `write-face-undeclared: serial-only (${inFlight.length} same-owner worker(s) in flight)`,
+			detail: `${taskKey}: write_face undeclared; ${inFlight.length} same-owner worker(s) in flight`,
+		};
+	}
+
+	for (const row of inFlight) {
+		const otherFace = parseInflightWriteFace(row.taskPath, input.base, input.caseInsensitive);
+		if (otherFace === null) continue; // D-003: cannot prove an overlap
+		const result = writeFacesOverlap(parsed.face, otherFace);
+		if (result === null) continue;
+		if ("unsupported" in result) {
+			// D-006 conservative fallback: an undecidable pair IS an overlap.
+			return {
+				ok: false,
+				code: "write-face-overlap",
+				overlapWith: row.taskKey,
+				reason: `write-face-overlap: overlap-with:${row.taskKey} unsupported=${result.unsupported}`,
+				detail: `${taskKey}: undecidable overlap with ${row.taskKey} (${result.unsupported}) treated as overlap`,
+			};
+		}
+		return {
+			ok: false,
+			code: "write-face-overlap",
+			overlapWith: row.taskKey,
+			sample: result.sample,
+			reason: `write-face-overlap: overlap-with:${row.taskKey} sample=${result.sample}`,
+			detail: `${taskKey}: overlap with ${row.taskKey} at ${result.sample} (${result.rule} vs ${result.other})`,
+		};
+	}
+	return null;
 }

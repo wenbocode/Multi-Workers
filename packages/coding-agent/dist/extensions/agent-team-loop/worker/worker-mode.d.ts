@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import { type RagRuntime } from "../rag/tools.ts";
+import { type WriteFace, type WriteFaceRejectCode } from "../shared/write-face.ts";
 import type { TaskPhase } from "./phase-runner.ts";
 /**
  * P-08 single source for the worker runtime's recognized vocabulary. This is
@@ -30,6 +31,10 @@ export declare function isShellRole(taskType: string): boolean;
  * only through the narrow `worker_file` channel, so bash is the one structural
  * hole left for the AC-005b write-surface guard. */
 export declare function isWritelessRole(taskType: string): boolean;
+/** Does this role carry a `write`/`edit` tool (D-115 rule 6)? The runtime
+ * write-surface guard must cover these roles on the `write`/`edit` channel even
+ * when they have no `bash` (`roadmap-writer` was unguarded before D-115). */
+export declare function hasWriteTools(taskType: string): boolean;
 /** Checkpoint self-assessment steer text, split by role (D-104/VC-004).
  * - `hasWriteTools === true`: the pre-change wording byte for byte — the
  *   agent appends its own CKPT line to progress.md with its write tool.
@@ -129,8 +134,22 @@ interface TaskMeta {
     denyGlobs?: string[];
     /** write_scope entries (contract C1/T-03), project-root relative. Present →
      * the AC-005b bash write surface is narrowed to the intersection with the
-     * default (own taskDir + `<key>/evidence/**`); absent → default surface. */
+     * default (own taskDir + `<key>/evidence/**`); absent → default surface.
+     * D-115: legacy carrier — for writeless roles it stays the only declared
+     * face (byte for byte); for writable roles it is a fallback when the
+     * authoritative `write_face:` head is absent, and an additional narrowing
+     * constraint when both carriers are present. */
     writeScope?: string[];
+    /** D-115 authoritative allow carrier: normalized `write_face:` entries
+     * (project-root relative, comma/block-list form both normalized). Undefined
+     * when the head is absent, `-` (undeclared) or refused (`writeFaceRejected`).
+     * Writable roles re-parse these against the worker cwd, so the runtime face
+     * keeps the shared operator's semantics (D-009/AC-007). */
+    writeFaceEntries?: string[];
+    /** A `write_face:` head that is present but refused (fail-closed). Only the
+     * writable role path consults this: no target outside the own sandbox is
+     * allowed by the authoritative carrier. */
+    writeFaceRejected?: WriteFaceRejectCode;
     /** l2_read_file_cap frontmatter (positive int), when present. */
     readFileCap?: number;
     /** l2_read_byte_cap frontmatter (positive int), when present. */
@@ -159,7 +178,12 @@ interface TaskMeta {
  * manual/legacy task books (the section is opt-in and conductor-rendered task
  * books never carry it), so absence is deliberately not flagged. Only markers
  * that occupy a whole line count: the section is line-joined, and an inline
- * mention in prose (a task book quoting the marker) is not a section. */
+ * mention in prose (a task book quoting the marker) is not a section.
+ *
+ * D-115 rule 5: this is a structure MARKER only — it never participates in the
+ * allow decision (the authoritative allow carrier is `write_face:`; `write_scope:`
+ * is the legacy carrier, all other `write_scope`-named fields are a DIFFERENT
+ * semantic). */
 export type WriteSurfaceMarkerState = "absent" | "ok" | "malformed";
 export declare function writeSurfaceMarkerState(content: string): WriteSurfaceMarkerState;
 export declare function parseTaskMd(taskPath: string): TaskMeta;
@@ -179,7 +203,7 @@ export interface BashWriteCandidate {
  * is the non-blocking token for a target that is not statically determinable
  * (see `checkBashWriteScopeTarget`), not a block reason. */
 export type BashWriteScopeRule = "deny" | "scope" | "write-scope" | "allow-unknown";
-/** Enforcement config for one writeless+shell worker. */
+/** Enforcement config for one shell worker's runtime write surface. */
 export interface BashWriteScopeConfig {
     /** Worker cwd = project root (launcher guarantee). */
     projectRoot: string;
@@ -192,7 +216,28 @@ export interface BashWriteScopeConfig {
     /** `write_scope:` entries (project-root relative): undefined = header
      * absent (the default surface), [] = present-but-blank (fail-closed). */
     writeScope: string[] | undefined;
+    /** Role class (D-007 / spec risk 10). `"writable"` = the role carries a
+     * `write`/`edit` tool (its normal work surface is the repo, including
+     * `packages/**`); `"writeless"` = it only reaches bash/`worker_file`. The
+     * two need different default and deny faces: the writeless face is the own
+     * taskDir + `<key>/evidence/**` with `packages/**` denied, which would
+     * false-block every legitimate coding write. Absent defaults to the
+     * historical writeless face, so pure-function callers (and the `research`
+     * path) stay byte-identical. */
+    roleClass?: WriteSurfaceRoleClass;
+    /** D-115 authoritative `write_face:` face, parsed with the shared operator
+     * (D-009/AC-007) against the worker cwd. Present only for writable roles
+     * whose task.md declares a parseable head. `undefined` + `writeFaceRejected`
+     * = the head was present but refused (fail-closed: nothing outside the own
+     * sandbox is allowed by this carrier). Writeless roles never receive it, so
+     * their `write_scope:` behavior stays byte for byte (D-115 rule 2). */
+    writeFace?: WriteFace;
+    /** A `write_face:` head that was present but refused by the shared parser
+     * (D-115 fail-closed). */
+    writeFaceRejected?: boolean;
 }
+/** Write-surface role classes (D-007). */
+export type WriteSurfaceRoleClass = "writeless" | "writable";
 /** Verdict for one extracted target. */
 export interface BashWriteScopeVerdict {
     allowed: boolean;
@@ -221,12 +266,24 @@ export declare function tokenizeShellCommand(command: string): ShellToken[];
 /** Extract the KNOWN write targets of a bash command. An empty result means
  * "not a recognized write" — the caller must allow it (P1, DD-03). */
 export declare function extractBashWriteCandidates(command: string): BashWriteCandidate[];
-/** The bash write-surface verdict for one extracted target: a non-verbatim
- * target is not statically determinable (`allow-unknown`, fail-open); otherwise
- * the deny list comes first (absolute priority), then the default surface (own
- * taskDir + `<key>/evidence`), then the task's `write_scope:` intersection when
- * the header is present. */
-export declare function checkBashWriteScopeTarget(config: BashWriteScopeConfig, rawTarget: string, verbatim: boolean): BashWriteScopeVerdict;
+/** The write-surface verdict for one extracted target: a non-verbatim target is
+ * not statically determinable (`allow-unknown`, fail-open); otherwise the deny
+ * list comes first (absolute priority), then the role-classified default face,
+ * then the declared allow carriers (D-115).
+ *
+ * - writeless (research): default face = own taskDir + `<key>/evidence/**`, and
+ *   a declared `write_scope:` intersects it (historical behavior, byte for
+ *   byte). The authoritative `write_face:` carrier is never consulted here.
+ * - writable (coding/repair/phase-writer/vision/fallback/roadmap-writer):
+ *   default face = the working tree, because `packages/**` is the role's work
+ *   surface (D-007). The declared face is the authoritative `write_face:` when
+ *   present, the legacy `write_scope:` when it is absent, and their
+ *   INTERSECTION when both are present (fail-closed: the legacy carrier can
+ *   only narrow). The own taskDir/evidence stay writable either way.
+ *
+ * `toolLabel` only phrases the block reason (`bash` keeps the historical
+ * "bash write" wording for the research audit line). */
+export declare function checkBashWriteScopeTarget(config: BashWriteScopeConfig, rawTarget: string, verbatim: boolean, toolLabel?: "bash" | "write" | "edit"): BashWriteScopeVerdict;
 /** Structured evidence emitted before any idle kill (VC-004/AC-005). Every
  * field is part of the contract: which tool was in flight (or `none`), how long
  * it had been running, the threshold that produced the verdict, and the last

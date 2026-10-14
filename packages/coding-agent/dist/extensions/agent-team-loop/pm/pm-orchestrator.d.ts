@@ -3,6 +3,7 @@ import { AckStore } from "../shared/ack-store.ts";
 import { IndexStore } from "../shared/index-store.ts";
 import { type RunIdentityRefusal } from "../shared/run-store.ts";
 import { WorkerStore } from "../shared/worker-store.ts";
+import { type DispatchRefusal } from "./task-dispatcher.ts";
 import { type PmUiHolder, type PmWatchState } from "./ui-bridge.ts";
 export type PhaseDocName = "spec.md" | "design.md" | "plan.md";
 /** The key a phase-doc write/edit belongs to (see docWriteTarget). */
@@ -50,7 +51,7 @@ export declare function autoTakeOverFromDoc(pi: ExtensionAPI, indexStore: IndexS
  * another live window took it over in the meantime. */
 export declare function restoreWatch(pi: ExtensionAPI, watch: PmWatchState, indexStore: IndexStore, workerStore: WorkerStore, ackStore: AckStore, agenticdocRoot: string, ctx: ExtensionContext): Promise<void>;
 /** Why a dispatch scan refused to queue anything (AC-020/AC-021). */
-export type DispatchAlarmKind = "queue-rows-unparsable" | "queue-unreadable" | "dispatch-quota" | "out-of-scope" | "orphaned-keys" | "run-ledger-conflict" | "no-product" | "write-scope-risk" | "orphan-repair-skipped";
+export type DispatchAlarmKind = "queue-rows-unparsable" | "queue-unreadable" | "dispatch-quota" | "out-of-scope" | "orphaned-keys" | "run-ledger-conflict" | "no-product" | "write-scope-risk" | "orphan-repair-skipped" | "write-face-refusal";
 export interface DispatchAlarm {
     kind: DispatchAlarmKind;
     count: number;
@@ -90,6 +91,13 @@ export declare function countWriteScopeResidualRisks(taskDir: string): number;
  * Reuses the single dispatch-alarm channel and its unchanged row shape; returns
  * the number of residual-risk rows found (0 ⇒ nothing written). */
 export declare function recordWriteScopeResidualRisks(agenticdocRoot: string, taskKey: string, taskDir: string): number;
+/** The one-line ledger detail for a PM-side write-face refusal (AC-003/D-008).
+ * `DispatchRefusal.reason` is byte-identical to the conductor's
+ * `DispatchResult.reason`, so it already carries the stable refusal `code`, the
+ * `overlap-with:<task_key>` pair and the conflict `sample` when the gate could
+ * prove one. The refused task key prefixes it because the alarm row has no key
+ * column of its own. */
+export declare function writeFaceRefusalDetail(taskKey: string, refusal: DispatchRefusal): string;
 /** Single-scan dispatch quota (AC-021). A scan that wants to queue more rows
  * than this is looking at something it does not understand (IN-3 queued 252 in
  * one scan and the launcher spawned 66 workers at once). */
@@ -139,6 +147,12 @@ export interface DispatchScanOptions {
     /** Alarm sink (AC-020/AC-021). Production wires it to the ledger row (and
      * from there to the PM alert); the scan itself never invents a write path. */
     onAlarm?: (alarm: DispatchAlarm) => void;
+    /** Human-visible PM alert for a per-task write-face refusal (AC-003/D-008).
+     * Deliberately separate from {@link DispatchScanOptions.onAlarm}: the refusal
+     * row is already persisted by the scan through `recordDispatchAlarm` (one per
+     * refused task, never deduped), so this callback only carries the short
+     * `formatDispatchAlarm` text to the PM. */
+    onRefusal?: (text: string) => void;
     /** ORPHANED keys already alerted in this session (AC-011/T-19) — the
      * `orphaned-keys` alarm is once per key per session, so a key that stays
      * orphaned does not re-wake the PM on every settled turn. */
@@ -188,6 +202,9 @@ export interface OrphanRepairOptions {
     /** Run-identity gate (AC-022); defaults to {@link evaluateRunIdentity} with
      * zero-backfill semantics (a candidate without a run record passes). */
     runVerdict?: DispatchScanOptions["runVerdict"];
+    /** Human-visible PM alert for a per-task write-face refusal; see
+     * {@link DispatchScanOptions.onRefusal}. */
+    onRefusal?: DispatchScanOptions["onRefusal"];
 }
 /** Claim-free repair dispatch for one ORPHANED key (AC-011/T-19).
  *

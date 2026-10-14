@@ -679,7 +679,7 @@ function cmdMonitor(
 		return;
 	}
 	const apply = (lines: string[] | undefined): void => {
-		ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor" });
+		ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor", order: 0 });
 	};
 	if (arg === "off" || (arg === "" && isMonitorActive())) {
 		const stopped = stopMonitor(apply);
@@ -748,7 +748,7 @@ export function autoStartMonitor(ctx: ExtensionContext, projectDir: string, deps
 	startMonitor(
 		projectDir,
 		(lines: string[] | undefined): void => {
-			ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor" });
+			ctx.ui.setWidget(MONITOR_WIDGET_ID, lines, { placement: "belowEditor", order: 0 });
 		},
 		{ intervalMs: deps.monitorIntervalMs, readState: deps.readMonitorState },
 	);

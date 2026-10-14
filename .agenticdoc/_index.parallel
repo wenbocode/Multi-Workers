@@ -49,11 +49,14 @@
 | mw-vision-role | idle | DONE | WENBOZHOU-PC4:8152 |  |  | 2026-10-09T08:40:50.732Z |
 | mw-gate-verdict-hardening | idle | DONE | WENBOZHOU-PC4:117296 |  |  | 2026-10-10 19:22 |
 | mw-workspace-incident-probe | idle | DONE | WENBOZHOU-PC4:162452 |  |  | 2026-10-13 11:43 |
-| mw-worktree-junction-guard | active | DESIGN | WENBOZHOU-PC4:162452 |  |  | 2026-10-13 12:02 |
+| mw-worktree-junction-guard | idle | DONE | WENBOZHOU-PC4:162452 |  |  | 2026-10-14T02:17:41.834Z |
 | mw-ack-verify-stdout | idle | DONE | WENBOZHOU-PC4:1768 |  |  | 2026-10-11 17:42 |
 | mw-dispatch-settle-gates | idle | DONE | WENBOZHOU-PC4:117296 |  |  | 2026-10-11T15:16:26.879Z |
 | mw-guard-form-hardening | idle | DONE | WENBOZHOU-PC4:117296 |  |  | 2026-10-12 15:27 |
 | mw-console-title-clobber | idle | DONE | — |  |  | 2026-10-11 23:23 |
 | mw-claude-mirror-parity | idle | SPEC | WENBOZHOU-PC4:117296 |  |  | 2026-10-12T08:25:23.097Z |
 | mw-dispatch-card-gate | idle | DONE | WENBOZHOU-PC4:117296 |  |  | 2026-10-13T03:37:18.182Z |
-| mw-autopilot-gate-alarm-liveness | idle | DONE | WENBOZHOU-PC4:117296 |  |  | 2026-10-13 22:05 |
+| mw-autopilot-gate-alarm-liveness | idle | DONE | WENBOZHOU-PC4:117296 |  |  | 2026-10-13T15:17:36.217Z |
+| mw-write-face-guard | idle | DONE | WENBOZHOU-PC4:8740 |  | Machine-readable write-face declarations + dispatch-layer overlap refusal (prerequisite for dynamic concurrency) | 2026-10-14T08:24:37.000Z |
+| mw-dynamic-concurrency | active | DONE | WENBOZHOU-PC4:8740 | mw-write-face-guard | Dependency-driven dynamic concurrency: key-layer frontier + per-key task DAG, config becomes an upper bound | 2026-10-14 18:24 |
+| mw-worker-output-contract | idle | PLAN | WENBOZHOU-PC4:162452 |  |  | 2026-10-14 12:08 |

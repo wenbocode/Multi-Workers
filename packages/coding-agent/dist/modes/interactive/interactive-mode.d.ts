@@ -108,6 +108,8 @@ export declare class InteractiveMode {
     private extensionTerminalInputSubscriptions;
     private extensionWidgetsAbove;
     private extensionWidgetsBelow;
+    /** Explicit sort key per widget (ascending). Absent = 0; ties keep registration order. */
+    private extensionWidgetOrder;
     private widgetContainerAbove;
     private widgetContainerBelow;
     private customFooter;

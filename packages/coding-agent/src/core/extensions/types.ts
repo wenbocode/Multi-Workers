@@ -107,6 +107,9 @@ export type WidgetPlacement = "aboveEditor" | "belowEditor";
 export interface ExtensionWidgetOptions {
 	/** Where the widget is rendered. Defaults to "aboveEditor". */
 	placement?: WidgetPlacement;
+	/** Sort key within a placement (ascending; lower renders closer to the editor).
+	 * Defaults to 0; widgets with equal order keep their registration order. */
+	order?: number;
 }
 
 /** Raw terminal input listener for extensions. */

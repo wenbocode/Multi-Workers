@@ -202,6 +202,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					widgetKey: key,
 					widgetLines: content as string[] | undefined,
 					widgetPlacement: options?.placement,
+					widgetOrder: options?.order,
 				} as RpcExtensionUIRequest);
 			}
 			// Component factories are not supported in RPC mode - would need TUI access
