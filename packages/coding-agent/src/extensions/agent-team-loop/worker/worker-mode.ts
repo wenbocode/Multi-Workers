@@ -25,6 +25,7 @@ import { findNonEmptyReport, hasDeliverableEvidence } from "../shared/deliverabl
 import { DISPATCH_TYPE_VOCABULARY } from "../shared/dispatch-card.ts";
 import { roleForTaskType } from "../shared/dispatch-models.ts";
 import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.ts";
+import { MW_RUN_DETACHED_TOOL, registerRunDetachedTool } from "../shared/run-detached.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
 import {
 	collectArtifacts,
@@ -166,6 +167,12 @@ export function toolsForType(taskType: string): string[] {
  * roles get a copy with `worker_file` appended. */
 export function activeToolsForType(taskType: string): string[] {
 	const base = toolsForType(taskType);
+	const tools = base.includes("write") ? base : [...base, WORKER_FILE_TOOL];
+	// mw_run_detached is a spawn surface: only shell roles (base carries
+	// `bash`) get it. Read-only roles stay without it so the AC-005b bash
+	// write-surface guard cannot be bypassed (design D-005). Never goes into
+	// TOOL_ALLOWLISTS (T-17 parity lock).
+	return tools.includes("bash") ? [...tools, MW_RUN_DETACHED_TOOL] : tools;
 	return base.includes("write") ? base : [...base, WORKER_FILE_TOOL];
 }
 
@@ -2778,6 +2785,14 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		});
 	} catch (err) {
 		writeWorkerLogLine(`[worker] rag disabled: ${err instanceof Error ? err.message : String(err)}`);
+	// run-detached surface (D-005): registered in BOTH activate paths (the
+	// registerRagTools precedent) so PM and worker windows can dispatch
+	// background commands. The allowlist gate above decides visibility.
+	try {
+		registerRunDetachedTool(pi, controlRoot);
+	} catch (err) {
+		writeWorkerLogLine(`[worker] run-detached disabled: ${err instanceof Error ? err.message : String(err)}`);
+	}
 	}
 	// Narrow write channel (D-101/D-104/D-106): roles whose allowlist has no
 	// write/edit tool get `worker_file` registered — a structural gate mirroring

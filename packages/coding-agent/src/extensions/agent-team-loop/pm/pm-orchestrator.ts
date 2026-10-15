@@ -28,6 +28,7 @@ import { agenticdocRoot as resolveAgenticdocRoot, SCRATCH_WORKERS_KEY } from "..
 import { dispatchDocGaps, readPhaseDocs } from "../shared/phase-docs.ts";
 import { syncPmStateClaimId } from "../shared/pm-state-claim.ts";
 import { registerPmStateGuard } from "../shared/pm-state-guard.ts";
+import { registerRunDetachedTool } from "../shared/run-detached.ts";
 import { evaluateRunIdentity, type RunIdentityRefusal } from "../shared/run-store.ts";
 import { readTaskType } from "../shared/task-frontmatter.ts";
 import { type WorkerEntry, type WorkerStatus, WorkerStore, workerOwnerKey } from "../shared/worker-store.ts";
@@ -1769,6 +1770,14 @@ export function pmActivate(pi: ExtensionAPI): void {
 		registerRagTools(pi, projectDir);
 	} catch (err) {
 		console.error(`[mw] rag tools disabled: ${err instanceof Error ? err.message : String(err)}`);
+	}
+	// run-detached surface (D-005): registered in BOTH activate paths (the
+	// registerRagTools precedent) so PM and worker windows can dispatch
+	// background commands; the worker allowlist gate decides visibility.
+	try {
+		registerRunDetachedTool(pi, projectDir);
+	} catch (err) {
+		console.error(`[mw] run-detached disabled: ${err instanceof Error ? err.message : String(err)}`);
 	}
 	registerWatchCommand(pi, watch, refreshWatch, indexStore);
 	// Autopilot console (T-15): /autopilot status|gates|gate|timeline|enable|

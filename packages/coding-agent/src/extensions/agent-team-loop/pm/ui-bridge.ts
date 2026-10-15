@@ -60,6 +60,7 @@ import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.ts";
 import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "../shared/phase-docs.ts";
 import { type PmStateClaimSyncResult, syncPmStateClaimId } from "../shared/pm-state-claim.ts";
 import { PHASE_ORDER, phaseAuditWarnings } from "../shared/pm-state-guard.ts";
+import { type RunDetachedOptions, type RunDetachedResult, runDetachedMw } from "../shared/run-detached.ts";
 import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 import {
 	classifyWriteTargetShape,
@@ -3366,7 +3367,7 @@ export async function runMwModelCommand(
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
 export const MW_COMMAND_DESCRIPTION =
-	"Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / ack";
+	"Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / run-detached / ack";
 
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
@@ -3427,6 +3428,104 @@ export async function runMwRagCommand(
 	const result = runner(projectDir, [parsed.sub, ...parsed.rest]);
 	const formatted = formatRagOutput(result.output, result.code);
 	ctx.ui.notify(formatted.text, formatted.level);
+}
+
+/** Parsed `/mw run-detached` flags + command argv (D-005/AC-008). */
+export interface RunDetachedCommandFlags {
+	cwd?: string;
+	run_dir?: string;
+	timeout_min?: number;
+	heartbeat_s?: number;
+	cmd: string[];
+}
+
+/**
+ * Parse `/mw run-detached [--cwd <dir>] [--run-dir <dir>]
+ * [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...>`. Pure and CLI-free
+ * (the rag VC-307 precedent): a missing `--`, an empty command, an unknown
+ * flag, or a flag without a value returns a structured usage error so the
+ * caller rejects before any spawn. The argv after `--` passes through
+ * verbatim — shared/run-detached.ts (and Python) stays the single source of
+ * flag semantics.
+ */
+export function parseRunDetachedArgs(
+	raw: string,
+): { ok: true; flags: RunDetachedCommandFlags } | { ok: false; error: string } {
+	const parts = splitCommandLine(raw);
+	const flags: RunDetachedCommandFlags = { cmd: [] };
+	let i = 0;
+	let afterSep = false;
+	while (i < parts.length) {
+		const part = parts[i] ?? "";
+		if (afterSep) {
+			flags.cmd.push(part);
+			i++;
+			continue;
+		}
+		if (part === "--") {
+			afterSep = true;
+			i++;
+			continue;
+		}
+		const eq = part.indexOf("=");
+		const flag = eq === -1 ? part : part.slice(0, eq);
+		const inline = eq === -1 ? undefined : part.slice(eq + 1);
+		if (flag === "--cwd" || flag === "--run-dir" || flag === "--timeout-min" || flag === "--heartbeat-s") {
+			const value = inline ?? parts[i + 1];
+			if (value === undefined || value === "") {
+				return { ok: false, error: `Usage: /mw run-detached: ${flag} needs a value` };
+			}
+			if (flag === "--cwd") flags.cwd = value;
+			else if (flag === "--run-dir") flags.run_dir = value;
+			else if (flag === "--timeout-min") {
+				const n = Number(value);
+				if (Number.isNaN(n)) {
+					return { ok: false, error: `Usage: /mw run-detached: --timeout-min needs a number, got '${value}'` };
+				}
+				flags.timeout_min = n;
+			} else {
+				const n = Number(value);
+				if (Number.isNaN(n)) {
+					return { ok: false, error: `Usage: /mw run-detached: --heartbeat-s needs a number, got '${value}'` };
+				}
+				flags.heartbeat_s = n;
+			}
+			i += eq === -1 ? 2 : 1;
+			continue;
+		}
+		return {
+			ok: false,
+			error: `Usage: /mw run-detached: unknown option '${part}' — use --cwd/--run-dir/--timeout-min/--heartbeat-s and put the command after '--'`,
+		};
+	}
+	if (!afterSep || flags.cmd.length === 0) {
+		return { ok: false, error: "Usage: /mw run-detached: no command after '--'" };
+	}
+	return { ok: true, flags };
+}
+
+/** /mw run-detached — background command dispatch (D-005/AC-008). Thin wrapper
+ * over shared/run-detached.ts; the runner is injectable for tests (the rag
+ * precedent). The 4-field handoff summary matches the mw_run_detached tool
+ * 文案 byte for byte; failures notify a structured error and never throw. */
+export async function runMwRunDetachedCommand(
+	ctx: ExtensionCommandContext,
+	projectDir: string,
+	raw: string,
+	runner: (opts: RunDetachedOptions) => RunDetachedResult = runDetachedMw,
+): Promise<void> {
+	const parsed = parseRunDetachedArgs(raw);
+	if (!parsed.ok) {
+		ctx.ui.notify(parsed.error, "warning");
+		return;
+	}
+	const result = runner({ ...parsed.flags, cwd: parsed.flags.cwd ?? projectDir });
+	if (!result.ok) {
+		ctx.ui.notify(result.error, "error");
+		return;
+	}
+	const { pid, marker, heartbeat, log } = result.handle;
+	ctx.ui.notify(`dispatched pid=${pid} marker=${marker} heartbeat=${heartbeat} log=${log}`, "info");
 }
 
 export function registerMwCommands(
@@ -3578,6 +3677,14 @@ export function registerMwCommands(
 				return;
 			}
 
+			if (sub === "run-detached") {
+				// Background command dispatch (D-005/AC-008) — thin wrapper over
+				// shared/run-detached.ts; parsing stays here (usage-first), the
+				// handoff contract and spawn stay in the shared single source.
+				await runMwRunDetachedCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
+				return;
+			}
+
 			if (sub === "ack") {
 				// Ack terminal worker results (AC-004): <task-key> acks one row,
 				// all acks every unacked terminal row THIS WINDOW owns
@@ -3605,7 +3712,7 @@ export function registerMwCommands(
 			}
 
 			ctx.ui.notify(
-				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | rag <sub> | ack <task-key>|all",
+				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | rag <sub> | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
 				"warning",
 			);
 		},
