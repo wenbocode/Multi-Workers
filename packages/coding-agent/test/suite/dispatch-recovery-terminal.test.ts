@@ -82,6 +82,23 @@ const COMPLETE_RESEARCH = [
 /** Same report minus 上下文来源: the discriminating missing section. */
 const MISSING_CONTEXT_SOURCES = COMPLETE_RESEARCH.replace(/## 上下文来源[\s\S]*$/, "");
 
+/** T-13/D-015: a delivered (inline [VERIFY]) reply missing a SUBSTANTIVE
+ * section — the shape that must get one self-check round under option C (a
+ * reply missing only the mechanical 上下文来源 has substantive=[], so the round
+ * is correctly skipped and the run goes straight to the I2-backfilled
+ * judgement). */
+const MISSING_RESIDUAL = [
+	"## 结论",
+	"查清了。",
+	"",
+	"## 证据",
+	"[VERIFY] VC-t07: probe -> ok",
+	"",
+	"## 上下文来源",
+	"spec.md:1",
+	"",
+].join("\n");
+
 interface Fixture {
 	projectRoot: string;
 	trueRoot: string;
@@ -104,21 +121,30 @@ function makeFixture(type: string | undefined, extraFrontmatter: string[] = []):
 	return { projectRoot, trueRoot, keyDir, taskDir };
 }
 
+interface SentMessage {
+	text: string;
+	deliverAs?: string;
+}
+
 interface FakeWorker {
 	pi: ExtensionAPI;
 	emit: (name: string, payload?: unknown) => void;
 	toolCall: (toolName: string, input: Record<string, unknown>) => { block?: boolean; reason?: string } | undefined;
+	sent: SentMessage[];
 }
 
 function fakeWorkerPi(): FakeWorker {
 	const handlers = new Map<string, Array<(e: unknown) => unknown>>();
+	const sent: SentMessage[] = [];
 	const pi = {
 		on: (name: string, cb: (e: unknown) => unknown) => {
 			const list = handlers.get(name) ?? [];
 			list.push(cb);
 			handlers.set(name, list);
 		},
-		sendUserMessage: () => {},
+		sendUserMessage: (text: string, opts?: { deliverAs?: string }) => {
+			sent.push({ text, deliverAs: opts?.deliverAs });
+		},
 		setActiveTools: () => {},
 		registerTool: () => {},
 	};
@@ -136,6 +162,7 @@ function fakeWorkerPi(): FakeWorker {
 			}
 			return undefined;
 		},
+		sent,
 	};
 }
 
@@ -156,23 +183,37 @@ function readRun(fx: Fixture): RunState {
 	return JSON.parse(fs.readFileSync(path.join(fx.taskDir, "run.json"), "utf8")) as RunState;
 }
 
+function readTrace(fx: Fixture): string {
+	try {
+		return fs.readFileSync(path.join(fx.taskDir, "trace.log"), "utf8");
+	} catch {
+		return "";
+	}
+}
+
 // ── 1. AC-003 terminal flip ──────────────────────────────────────────────────
 
 describe("AC-003 terminal flip (T-07 requirement 1)", () => {
-	it("a delivered but incomplete report flips done -> needs-clarification and names the missing section", async () => {
+	it("T-13/D-015: a delivered reply missing a substantive section gets one self-check round, then settles done", async () => {
 		const fx = makeFixture("research");
 		const worker = await startWorker(fx);
-		settle(worker, MISSING_CONTEXT_SOURCES);
-
+		// First settle: the reply IS the deliverable (inline [VERIFY], no file
+		// on disk) but misses a substantive section — under option C this must
+		// fire the round (run stays running) instead of a false exit=2.
+		settle(worker, MISSING_RESIDUAL);
+		console.log(`[VC-T13-1] first settle sent=${worker.sent.length} status=${readRun(fx).status}`);
+		expect(readRun(fx).status).toBe("running");
+		expect(worker.sent).toHaveLength(1);
+		expect(worker.sent[0]?.deliverAs).toBe("followUp");
+		expect(worker.sent[0]?.text).toContain("残留与未验证");
+		expect(readTrace(fx)).toMatch(/recovery-gap missing=残留与未验证 selfcheck=pending/);
+		// Second settle completes the report: the run lands done.
+		settle(worker, COMPLETE_RESEARCH);
 		const run = readRun(fx);
-		console.log(`[VC-T07-1] incomplete exit=${run.exit} status=${run.status}`);
-		expect(run.status).toBe("needs-clarification");
-		expect(run.exit).toBe(2);
-
-		const detail = readTerminalDetail(fx.taskDir, "needs-clarification");
-		console.log(`[VC-T07-1] readback="${detail}"`);
-		expect(detail).toContain("上下文来源");
-		expect(detail).toContain("缺失段：");
+		console.log(`[VC-T13-1] second settle exit=${run.exit} status=${run.status}`);
+		expect(run.exit).toBe(0);
+		expect(run.status).toBe("done");
+		expect(worker.sent).toHaveLength(1);
 	});
 
 	it("a complete report settles done", async () => {
@@ -288,6 +329,11 @@ describe("AC-004 ledger gaps (T-07 requirement 6)", () => {
 
 	it("a declared-but-unrecorded file flips the run and lands in ## Ledger Gaps", async () => {
 		const fx = makeFixture("research");
+		// T-17c: the declared-but-unrecorded `src/z.ts` must exist on disk to be a
+		// real (off-ledger) write; a nonexistent path is warn-only now.
+		const outOfScope = path.join(fx.projectRoot, "src", "z.ts");
+		fs.mkdirSync(path.dirname(outOfScope), { recursive: true });
+		fs.writeFileSync(outOfScope, "// out of scope\n", "utf8");
 		fs.writeFileSync(path.join(fx.taskDir, "report.md"), COMPLETE_WITH_LEDGER, "utf8");
 		// One recorded write (src/a.ts); src/z.ts is only declared.
 		fs.writeFileSync(path.join(fx.taskDir, "trace.log"), "[WRITE_FILE] path=src/a.ts\n", "utf8");
@@ -307,6 +353,13 @@ describe("AC-004 ledger gaps (T-07 requirement 6)", () => {
 
 	it("T-12/F-04: a trace with no [WRITE_FILE] event and a declaration is unjudgeable, not green", async () => {
 		const fx = makeFixture("research");
+		// T-17c: both declared files must exist for the empty trace to be
+		// unjudgeable; an off-disk declaration has no write to reconcile.
+		for (const rel of ["src/a.ts", "src/z.ts"]) {
+			const abs = path.join(fx.projectRoot, rel);
+			fs.mkdirSync(path.dirname(abs), { recursive: true });
+			fs.writeFileSync(abs, "// declared\n", "utf8");
+		}
 		fs.writeFileSync(path.join(fx.taskDir, "report.md"), COMPLETE_WITH_LEDGER, "utf8");
 		const worker = await startWorker(fx);
 		settle(worker, "done");
@@ -378,12 +431,17 @@ describe("AC-004 ledger gaps (T-07 requirement 6)", () => {
 
 	it("readTerminalGaps is the single verdict both the status and the product use", () => {
 		const fx = makeFixture("research");
+		// T-17c: the unrecorded declaration names a real file (existence gate).
+		const outOfScope = path.join(fx.projectRoot, "src", "z.ts");
+		fs.mkdirSync(path.dirname(outOfScope), { recursive: true });
+		fs.writeFileSync(outOfScope, "// out of scope\n", "utf8");
 		fs.writeFileSync(path.join(fx.taskDir, "report.md"), COMPLETE_WITH_LEDGER, "utf8");
 		fs.writeFileSync(path.join(fx.taskDir, "trace.log"), "[WRITE_FILE] path=src/a.ts\n", "utf8");
 		const gaps = readTerminalGaps({
 			taskKey: "mwd-t07/workers/t07-worker",
 			agenticdocRoot: fx.trueRoot,
 			summary: "",
+			projectRoot: fx.projectRoot,
 		});
 		expect(gaps.judged).toBe(true);
 		expect(gaps.missingSections).toEqual([]);

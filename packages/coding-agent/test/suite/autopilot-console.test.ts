@@ -391,7 +391,15 @@ describe("status model derivation (VC-017 / AC-015)", () => {
 			// timeline group: the last-seen watermark {seq, ts}
 			expect(s.timeline).toEqual({ seq: 9, ts: "2026-09-08T12:00:08+00:00" });
 			// config group: round_budget is the rounds max source (AC-011)
-			expect(s.config).toEqual({ enabled: true, poll_interval_sec: 4, round_budget: 2, max_parallel_keys: 2 });
+			expect(s.config).toEqual({
+				enabled: true,
+				poll_interval_sec: 4,
+				round_budget: 2,
+				// The fixture writes max_parallel_keys: 2 explicitly; the per-key
+				// bound is absent and falls back to the default 4.
+				max_parallel_keys: 2,
+				max_workers_per_key: 4,
+			});
 			expect(result.model.paused).toBe(false);
 			// A clean fixture parses without a single warning.
 			expect(result.model.warnings).toEqual([]);
@@ -423,6 +431,7 @@ describe("status model derivation (VC-017 / AC-015)", () => {
 			expect(text).toContain(`poll_interval_sec=${s.config.poll_interval_sec}`);
 			expect(text).toContain(`round_budget=${s.config.round_budget}`);
 			expect(text).toContain(`max_parallel_keys=${s.config.max_parallel_keys}`);
+			expect(text).toContain(`max_workers_per_key=${s.config.max_workers_per_key}`);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -448,7 +457,13 @@ describe("status model derivation (VC-017 / AC-015)", () => {
 					stage: { current: 0, status: "none", keys: [] },
 					gates: [{ id: "gate-0099", kind: "stalled", status: "pending", ageMs: null }],
 					timeline: { seq: 0, ts: "" },
-					config: { enabled: true, poll_interval_sec: 4, round_budget: 2, max_parallel_keys: 2 },
+					config: {
+						enabled: true,
+						poll_interval_sec: 4,
+						round_budget: 2,
+						max_parallel_keys: 2,
+						max_workers_per_key: 4,
+					},
 				},
 				paused: false,
 				warnings: [],
@@ -482,7 +497,13 @@ describe("status model derivation (VC-017 / AC-015)", () => {
 			expect(s.stage).toEqual({ current: 0, status: "none", keys: [] });
 			expect(s.gates).toEqual([]);
 			expect(s.timeline).toEqual({ seq: 0, ts: "" });
-			expect(s.config).toEqual({ enabled: false, poll_interval_sec: 4, round_budget: 2, max_parallel_keys: 2 });
+			expect(s.config).toEqual({
+				enabled: false,
+				poll_interval_sec: 4,
+				round_budget: 2,
+				max_parallel_keys: 8,
+				max_workers_per_key: 4,
+			});
 			// The missing roadmap surfaces as a warning in the human view.
 			expect(result.model.warnings.join("\n")).toContain("roadmap file not found");
 		} finally {
@@ -823,7 +844,7 @@ describe("config read/write (D-110)", () => {
 			expect(read.ok).toBe(false);
 			if (!read.ok) expect(read.error).toContain("poll_interval_sec");
 
-			const tooLow = saveConfig(root, { ...DEFAULT_CONFIG, max_parallel_keys: 1 });
+			const tooLow = saveConfig(root, { ...DEFAULT_CONFIG, max_parallel_keys: 0 });
 			expect(tooLow.ok).toBe(false);
 			const unknown = saveConfig(root, { ...DEFAULT_CONFIG, extra: "x" } as unknown as Parameters<
 				typeof saveConfig
@@ -905,10 +926,11 @@ describe("config integer literals, mirror exports, and write lock (T-04)", () =>
 		}
 	});
 
-	it("AC-006/AC-012: the 20-key mirror registers the G5/G6 + G1/G2 keys last and exports the registries", () => {
+	it("AC-006/AC-012: the 21-key mirror registers the G5/G6 + G1/G2 keys last and exports the registries", () => {
 		// Count changed 13 -> 14 (slot-capacity T-03), 14 -> 17 (mw-gate-verdict-hardening T-18),
-		// 17 -> 20 (T-02: l3_abort_retry_limit / gate_reminder_after_min / gate_reminder_max).
-		expect(Object.keys(DEFAULT_CONFIG)).toHaveLength(20);
+		// 17 -> 20 (T-02: l3_abort_retry_limit / gate_reminder_after_min / gate_reminder_max),
+		// 20 -> 21 (MDC M-03: max_workers_per_key inserted after max_parallel_keys).
+		expect(Object.keys(DEFAULT_CONFIG)).toHaveLength(21);
 		// T-18 then T-02 append after auto_gate_mode (config.py DEFAULT_CONFIG order).
 		expect(Object.keys(DEFAULT_CONFIG).at(-1)).toBe("gate_reminder_max");
 		expect(Object.keys(DEFAULT_CONFIG).at(-2)).toBe("gate_reminder_after_min");
@@ -932,8 +954,8 @@ describe("config integer literals, mirror exports, and write lock (T-04)", () =>
 		// Exported for the T-07 cross-language mirror check. The fourth entry is
 		// the OPTIONAL `envelope_fallback` key: Python registers it in
 		// `_BOOL_FIELDS` (config.py :113) but deliberately keeps it OUT of the
-		// frozen 20-key DEFAULT_CONFIG (config.py :61-65), so the registry and the
-		// schema differ by exactly this one key — the 20-key assertion above stays.
+		// frozen 21-key DEFAULT_CONFIG (config.py :61-65) so the registry and the
+		// schema differ by exactly this one key — the 21-key assertion above stays.
 		expect([...BOOL_FIELDS]).toEqual(["enabled", "paused", "xkey_repair", "envelope_fallback"]);
 		expect(Object.keys(DEFAULT_CONFIG)).not.toContain("envelope_fallback");
 		expect([...LIST_FIELDS]).toEqual(["xkey_verify_cmd"]);
@@ -941,6 +963,7 @@ describe("config integer literals, mirror exports, and write lock (T-04)", () =>
 		expect(Object.keys(INT_RANGES)).toEqual([
 			"poll_interval_sec",
 			"max_parallel_keys",
+			"max_workers_per_key",
 			"round_budget",
 			"worker_timeout_min",
 			"l2_read_file_cap",
@@ -1253,7 +1276,8 @@ describe("/autopilot command set (VC-017 / AC-015 / AC-016 / AC-025)", () => {
 				enabled: true,
 				paused: false,
 				poll_interval_sec: 4,
-				max_parallel_keys: 2,
+				max_parallel_keys: 8,
+				max_workers_per_key: 4,
 				round_budget: 2,
 				worker_timeout_min: 30,
 				l2_read_file_cap: 8,
@@ -1272,8 +1296,9 @@ describe("/autopilot command set (VC-017 / AC-015 / AC-016 / AC-025)", () => {
 				gate_reminder_max: 2,
 			});
 			// Count changed 13 -> 14 (slot-capacity T-03), 14 -> 17 (mw-gate-verdict-hardening T-18),
-			// 17 -> 20 (T-02: l3_abort_retry_limit / gate_reminder_after_min / gate_reminder_max).
-			expect(Object.keys(enabled)).toHaveLength(20);
+			// 17 -> 20 (T-02: l3_abort_retry_limit / gate_reminder_after_min / gate_reminder_max),
+			// 20 -> 21 (MDC M-03: max_workers_per_key).
+			expect(Object.keys(enabled)).toHaveLength(21);
 			// Same shape config.py save_config writes: indent-2 + trailing newline.
 			expect(fs.readFileSync(configFile, "utf8").endsWith("}\n")).toBe(true);
 

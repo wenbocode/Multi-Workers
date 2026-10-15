@@ -101,6 +101,9 @@ function terminalGaps(taskKey: string, reportText: string, traceText: string): R
 			summary: "done",
 			type: "coding",
 			judgeRecovery: false,
+			// T-17c: the declared repo files are resolved against the repo root,
+			// not the package cwd the test runner happens to use.
+			projectRoot: REPO_ROOT,
 		});
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
@@ -219,7 +222,9 @@ describe("T-23 requirement 3b — a real unrecorded write is still red", () => {
 	const declared = "packages/multi-workers/launcher.py";
 
 	it("diffLedger: declared launcher.py without a [WRITE_FILE] event lands in extra", () => {
-		const ledger = diffLedger(report("改动清单", [`- ${declared} — 越界声明`]), trace([ALLOWED_TEST_FILE]));
+		const ledger = diffLedger(report("改动清单", [`- ${declared} — 越界声明`]), trace([ALLOWED_TEST_FILE]), {
+			projectRoot: REPO_ROOT,
+		});
 		console.log(`[VERIFY] T23-3b declared=[${ledger.declared.join(",")}] extra=[${ledger.extra.join(",")}]`);
 		expect(ledger.declared).toEqual([declared]);
 		expect(ledger.extra).toEqual([declared]);

@@ -492,8 +492,8 @@ describe("T-21 contract locks", () => {
 		expect(Object.keys(result.model.status.gates[0] ?? {}).sort()).toEqual(["ageMs", "id", "kind", "status"]);
 	});
 
-	it("no config key was added (AC-011): the default set stays at 20", () => {
+	it("one config key was added by MDC M-03: the default set moves to 21", () => {
 		console.log(`[VERIFY] T21-lock-config keys=${Object.keys(DEFAULT_CONFIG).length}`);
-		expect(Object.keys(DEFAULT_CONFIG)).toHaveLength(20);
+		expect(Object.keys(DEFAULT_CONFIG)).toHaveLength(21);
 	});
 });

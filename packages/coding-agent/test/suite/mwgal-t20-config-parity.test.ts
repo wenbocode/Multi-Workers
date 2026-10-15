@@ -17,7 +17,7 @@
  *     NOT be a `DEFAULT_CONFIG` key (Python truth, checked differentially);
  *   - `validateConfigData` must accept the optional key with the same verdict
  *     as `config.validate_config`, and must still refuse anything else;
- *   - `readConfig` / `saveConfig` must keep the canonical 20-key shape, so the
+ *   - `readConfig` / `saveConfig` must keep the canonical 21-key shape, so the
  *     optional key never leaks into the materialized config (Python's
  *     effective view drops it too).
  *
@@ -139,14 +139,14 @@ describe("optional autopilot config key parity (T-20)", () => {
 
 		// Python truth: exactly one optional key, and it is the envelope hatch.
 		expect(optionalPy).toEqual([py.envelope_fallback_key]);
-		expect(py.keys).toHaveLength(20);
+		expect(py.keys).toHaveLength(21);
 		expect(py.bool_fields).toHaveLength(4);
 
 		// TS truth: the derived optional registry matches Python item-for-item.
 		expect([...OPTIONAL_CONFIG_KEYS].sort()).toEqual([...optionalPy].sort());
 		for (const field of OPTIONAL_CONFIG_KEYS) {
 			expect([...BOOL_FIELDS], `${field}: registered as a bool`).toContain(field);
-			expect(Object.keys(DEFAULT_CONFIG), `${field}: outside the 20-key schema`).not.toContain(field);
+			expect(Object.keys(DEFAULT_CONFIG), `${field}: outside the 21-key schema`).not.toContain(field);
 			expect(
 				(DEFAULT_CONFIG as unknown as Record<string, unknown>)[field],
 				`${field}: no materialized default`,
@@ -187,13 +187,13 @@ describe("optional autopilot config key parity (T-20)", () => {
 		process.stdout.write(`[VERIFY] T-20: optional_key_verdicts_mirror_python=${good.length + bad.length + 1}\n`);
 	});
 
-	it("readConfig accepts the optional key and still yields the canonical 20-key merged shape", () => {
+	it("readConfig accepts the optional key and still yields the canonical 21-key merged shape", () => {
 		const root = mkdtemp();
 		writeRawConfig(root, '{"envelope_fallback": true}');
 		const read = readConfig(root);
 		expect(read.ok).toBe(true);
 		if (read.ok) {
-			expect(Object.keys(read.config), "merged view stays 20 keys").toHaveLength(20);
+			expect(Object.keys(read.config), "merged view stays 21 keys").toHaveLength(21);
 			expect(Object.keys(read.config)).not.toContain("envelope_fallback");
 			expect(read.config.enabled).toBe(false); // unset fields keep defaults
 		}
@@ -206,16 +206,16 @@ describe("optional autopilot config key parity (T-20)", () => {
 		expect(bogusRead.ok).toBe(false);
 		if (!bogusRead.ok) expect(bogusRead.error).toContain("unknown field(s): envelope_fallback_typo");
 
-		process.stdout.write(`[VERIFY] T-20: optional_key_accepted=true merged_keys=20 unknown_still_refused=true\n`);
+		process.stdout.write(`[VERIFY] T-20: optional_key_accepted=true merged_keys=21 unknown_still_refused=true\n`);
 	});
 
-	it("saveConfig never materializes the optional key (canonical 20-key write)", () => {
+	it("saveConfig never materializes the optional key (canonical 21-key write)", () => {
 		const root = mkdtemp();
 		const saved = saveConfig(root, { ...DEFAULT_CONFIG });
 		expect(saved.ok).toBe(true);
 		const file = path.join(root, ".agenticdoc", "_autopilot", "config.json");
 		const written = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
-		expect(Object.keys(written), "written config stays 20 keys").toHaveLength(20);
+		expect(Object.keys(written), "written config stays 21 keys").toHaveLength(21);
 		expect(Object.keys(written)).not.toContain("envelope_fallback");
 		expect(Object.keys(written)).toEqual(Object.keys(DEFAULT_CONFIG));
 

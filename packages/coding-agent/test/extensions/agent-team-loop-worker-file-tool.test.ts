@@ -25,11 +25,13 @@ import { type TSchema, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import { WORKER_FILE_BASENAME_ALT } from "../../src/extensions/agent-team-loop/shared/write-surface.ts";
 import {
 	isAllowedWorkerFile,
 	registerWorkerFileTool,
 	WORKER_FILE_MAX_BYTES,
 	WORKER_FILE_NAME_RE,
+	WORKER_FILE_PATH_RE,
 	WORKER_FILE_TOOL,
 	writeWorkerFile,
 } from "../../src/extensions/agent-team-loop/worker/worker-file-tool.ts";
@@ -324,7 +326,12 @@ describe("registerWorkerFileTool (D-109 / §4.1)", () => {
 		expect(compiled.Check({ file: "progress.md", content: "" })).toBe(false);
 
 		const schema = tool.parameters as { properties?: { file?: { pattern?: string } } };
-		expect(schema.properties?.file?.pattern).toBe(WORKER_FILE_NAME_RE.source);
+		// W1 (mw-worker-output-contract): the schema pre-filter is the path
+		// pattern (basename + evidence), and it is derived from the same basename
+		// alternative as WORKER_FILE_NAME_RE — one literal, two layers.
+		expect(schema.properties?.file?.pattern).toBe(WORKER_FILE_PATH_RE.source);
+		expect(WORKER_FILE_PATH_RE.source).toContain(WORKER_FILE_BASENAME_ALT);
+		expect(WORKER_FILE_NAME_RE.source).toContain(WORKER_FILE_BASENAME_ALT);
 
 		verify("[VERIFY] D-102/D-109: schema_pattern_single_source=true additional_properties_rejected=true");
 	});

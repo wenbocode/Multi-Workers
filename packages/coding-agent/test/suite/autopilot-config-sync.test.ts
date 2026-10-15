@@ -8,11 +8,11 @@
  * goes green (P-016: no hollow cases).
  *
  * P5 spawns the real Python module and compares the registry tables and the
- * 20-key defaults byte-for-byte (key set, key ORDER, default values, JSON types,
+ * 21-key defaults byte-for-byte (key set, key ORDER, default values, JSON types,
  * integer ranges, and closed-set enums) against the TS mirror in `status-model.ts`.
  * It also classifies the OPTIONAL keys — registered in a type registry but
  * deliberately left out of DEFAULT_CONFIG (`envelope_fallback`): the count is
- * 21 registrations over the 20-key schema, never a mismatch.
+ * 22 registrations over the 21-key schema, never a mismatch.
  *
  * Fail-closed: a missing interpreter or a failing subprocess throws with stderr.
  */
@@ -39,8 +39,8 @@ const CORPUS_FILE = fileURLToPath(
 const MULTI_WORKERS_DIR = fileURLToPath(new URL("../../../multi-workers/", import.meta.url));
 
 /** Frozen by T-07; any edit to the corpus must be a deliberate re-freeze. */
-const FROZEN_CORPUS_SHA256 = "1e27f59396c4076575743ea0bb71b05371b8532322adfb4c8bfa3c20ade4744a";
-const FROZEN_CORPUS_COUNT = 73;
+const FROZEN_CORPUS_SHA256 = "f5b60e81cd690930cc9afb4ef1ccdee6bd8d517e6d40521a3f1b84e65a13e9c1";
+const FROZEN_CORPUS_COUNT = 77;
 
 interface CorpusCase {
 	id: string;
@@ -169,11 +169,11 @@ describe("autopilot config new-key mirror (P5)", () => {
 		expect(JSON.stringify(ENUM_FIELDS)).toBe(JSON.stringify(py.enum_fields));
 		expect(JSON.stringify(INT_RANGES)).toBe(JSON.stringify(py.int_ranges));
 
-		// The registries classify every one of the 20 DEFAULT_CONFIG keys exactly
+		// The registries classify every one of the 21 DEFAULT_CONFIG keys exactly
 		// once, plus any registered-but-OPTIONAL key. Python registers
 		// `envelope_fallback` in `_BOOL_FIELDS` while deliberately keeping it out
 		// of DEFAULT_CONFIG (config.py :61-65/:113/:151), so the registration
-		// count is 21 while the frozen schema stays 20: 21 = 20 defaults + 1
+		// count is 22 while the frozen schema stays 21: 22 = 21 defaults + 1
 		// optional bool. The optional category is asserted explicitly so a future
 		// key that is registered on one side only cannot slip through.
 		const registered = [

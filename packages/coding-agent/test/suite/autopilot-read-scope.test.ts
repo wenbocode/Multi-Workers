@@ -749,7 +749,9 @@ describe("partition parent-root union (mw-partition-parent-extended)", () => {
 			process.env.PI_WORKER_TASK = path.join(taskDir, "task.md");
 			const worker = fakeWorkerPi();
 			await workerModeActivate(worker.pi);
-			expect(worker.interceptorCount()).toBe(1);
+			// Two `tool_call` handlers: the read-scope interceptor plus the
+			// write-face guard a `type: coding` task now installs (D-007/D-115).
+			expect(worker.interceptorCount()).toBe(2);
 
 			// In-scope read passes.
 			expect(worker.toolCall("read", { path: "allowed/file.txt" })).toBeUndefined();
@@ -806,7 +808,9 @@ describe("partition parent-root union (mw-partition-parent-extended)", () => {
 			process.env.PI_WORKER_TASK = path.join(taskDir, "task.md");
 			const worker = fakeWorkerPi();
 			await workerModeActivate(worker.pi);
-			expect(worker.interceptorCount()).toBe(1);
+			// Two `tool_call` handlers: the read-scope interceptor plus the
+			// write-face guard a `type: coding` task now installs (D-007/D-115).
+			expect(worker.interceptorCount()).toBe(2);
 
 			// Parent path matching a deny glob blocks even though the parent root
 			// is in the allowed scope (deny first).

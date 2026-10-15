@@ -104,7 +104,7 @@ describe("T-21 requirement 5 — five judgement cases", () => {
 		const text = report("改动清单", [
 			"- packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts — 越界新增",
 		]);
-		const ledger = diffLedger(text, trace(["src/unrelated.ts"]));
+		const ledger = diffLedger(text, trace(["src/unrelated.ts"]), { projectRoot: REPO_ROOT });
 		expect(ledger.declared).toEqual(["packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts"]);
 		expect(ledger.extra).toEqual(["packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts"]);
 		console.log(`[VERIFY] T21-① out_of_scope_extra=${ledger.extra.length}`);
@@ -148,7 +148,9 @@ describe("T-21 requirement 5 — five judgement cases", () => {
 		// Per-worker isolation, the other direction: the same report judged
 		// against the CONCURRENT worker's trace must not become green — no
 		// repo-wide evidence is accepted.
-		const crossWorker = diffLedger(report("改动清单", T18_LEDGER_BODY), trace(T19_DECLARED));
+		const crossWorker = diffLedger(report("改动清单", T18_LEDGER_BODY), trace(T19_DECLARED), {
+			projectRoot: REPO_ROOT,
+		});
 		expect(crossWorker.extra).toEqual(T18_DECLARED);
 		console.log(`[VERIFY] T21-③ own_trace_extra=0 cross_trace_extra=${crossWorker.extra.length}`);
 	});
@@ -311,7 +313,7 @@ function loadCorpus(): CorpusRow[] {
 			reportText,
 			traceText,
 			before: readBeforeList(fs.readFileSync(outputPath, "utf8")),
-			after: diffLedger(reportText, traceText).extra,
+			after: diffLedger(reportText, traceText, { projectRoot: REPO_ROOT }).extra,
 			malformed: collectMalformedCandidates(reportText),
 		});
 	}
@@ -354,7 +356,7 @@ describe("T-21 requirement 6 — real corpus (T-18 / T-19), before vs after", ()
 		if (!available) return;
 		const t18 = rows.find((r) => r.worker === "mwd-t18-ts-producer-identity");
 		const t19 = rows.find((r) => r.worker === "mwd-t19-orphan-ownership");
-		expect(diffLedger(t18?.reportText ?? "", t18?.traceText ?? "").extra).toEqual([]);
-		expect(diffLedger(t19?.reportText ?? "", t19?.traceText ?? "").extra).toEqual([]);
+		expect(diffLedger(t18?.reportText ?? "", t18?.traceText ?? "", { projectRoot: REPO_ROOT }).extra).toEqual([]);
+		expect(diffLedger(t19?.reportText ?? "", t19?.traceText ?? "", { projectRoot: REPO_ROOT }).extra).toEqual([]);
 	});
 });

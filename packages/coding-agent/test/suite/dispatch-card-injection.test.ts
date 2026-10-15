@@ -178,12 +178,17 @@ const EXPECTED_EXTRAS = [
 	{ title: "改动历史", body: "见 trace.log 写入事件与 report.md 改动清单。" },
 ];
 
-/** The seed sections the compliant card yields (extraction input). */
+/** The seed sections the compliant card yields (extraction input). T-13/D-015:
+ * the real dispatch path (readDispatchCard) carries the card's `type:` into the
+ * seed, so the byte-pinned expected below includes the `## 交付段契约（本角色）`
+ * checklist — for `coding` that is the base four + `改动清单`.
+ */
 const EXPECTED_SECTIONS = {
 	context: CARD_CONTEXT,
 	requirements: CARD_REQUIREMENTS,
 	deliverables: CARD_DELIVERABLES,
 	extras: EXPECTED_EXTRAS,
+	type: CARD_TYPE,
 };
 
 /** Write a card under `<root>/<key>/tasks/<name>` and return its absolute path. */
@@ -246,7 +251,10 @@ describe("dispatch card injection (G-2)", () => {
 		// conductor's `autopilot-conductor`; version is the existing source
 		// (`packages/coding-agent/package.json` via config.ts VERSION).
 		const producerLine = `${ENVELOPE_PRODUCER_KEY}: ${DISPATCH_PRODUCER_ID}@${VERSION}`;
-		const frontmatter = `type: coding\ncard_path: tasks/${CARD_NAME}\ncard_sha256: ${sha}\n${producerLine}\n`;
+		// PM-side write-face head line (T-W-I08/D-113): rendered from the card's
+		// `## 写入允许面` body, single-line form, header's last line.
+		const writeFaceLine = "write_face: 仅本任务目录。";
+		const frontmatter = `type: coding\ncard_path: tasks/${CARD_NAME}\ncard_sha256: ${sha}\n${producerLine}\n${writeFaceLine}\n`;
 		const seed = renderCardSeedSections(EXPECTED_SECTIONS);
 		const expected = `${frontmatter}\n${seed}\n\n${description}\n`;
 
@@ -268,6 +276,7 @@ describe("dispatch card injection (G-2)", () => {
 			`card_path: tasks/${CARD_NAME}`,
 			`card_sha256: ${sha}`,
 			producerLine,
+			writeFaceLine,
 		]);
 		expect(actual.split("\n").some((line) => line.trim() === "---")).toBe(false);
 		// Section bodies are the card's bodies, not the description.

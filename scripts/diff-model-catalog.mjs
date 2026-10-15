@@ -1,9 +1,19 @@
 #!/usr/bin/env node
 
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	copyFileSync,
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { detachNodeModulesLink } from "./detach-node-modules-link.mjs";
 
 function printUsage() {
 	console.log(`Usage: node scripts/diff-model-catalog.mjs [--thinking] [provider ...]
@@ -144,6 +154,13 @@ function writeChangedLines(output) {
 	if (changedLines.length > 0) process.stdout.write(`${changedLines.join("\n")}\n`);
 }
 
+function printManualDetachHint(baselineWorktree) {
+	const link = join(baselineWorktree, "node_modules");
+	console.error("[diff-model-catalog] Detach the link manually to unblock removal:");
+	console.error(process.platform === "win32" ? `  cmd /c rmdir "${link}"` : `  rm "${link}"`);
+	console.error(`[diff-model-catalog] Then remove ${baselineWorktree} and ${temporaryRoot}, and run "git -C ${repoRoot} worktree prune".`);
+}
+
 try {
 	run("git", ["worktree", "add", "--detach", baselineWorktree, "HEAD"], { cwd: repoRoot });
 	worktreeAdded = true;
@@ -230,12 +247,26 @@ try {
 		}
 	}
 } finally {
+	let worktreeSitePreserved = false;
 	if (worktreeAdded) {
-		try {
-			run("git", ["worktree", "remove", "--force", baselineWorktree], { cwd: repoRoot });
-		} catch (error) {
-			console.error(error instanceof Error ? error.message : String(error));
+		const detachResult = detachNodeModulesLink(baselineWorktree);
+		if (detachResult.status === "failed") {
+			worktreeSitePreserved = true;
+			process.exitCode = 1;
+			console.error(
+				`[diff-model-catalog] Refusing to run "git worktree remove --force" on ${baselineWorktree}: ${detachResult.reason}`,
+			);
+			printManualDetachHint(baselineWorktree);
+		}
+		if (!worktreeSitePreserved) {
+			try {
+				run("git", ["worktree", "remove", "--force", baselineWorktree], { cwd: repoRoot });
+			} catch (error) {
+				console.error(error instanceof Error ? error.message : String(error));
+			}
 		}
 	}
-	rmSync(temporaryRoot, { recursive: true, force: true });
+	if (!worktreeSitePreserved) {
+		rmSync(temporaryRoot, { recursive: true, force: true });
+	}
 }

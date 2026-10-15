@@ -69,10 +69,19 @@ const COMPLETE_RESEARCH = [
 /** All of it except 上下文来源 (the discriminating missing section). */
 const MISSING_CONTEXT_SOURCES = COMPLETE_RESEARCH.replace(/## 上下文来源[\s\S]*$/, "");
 
-/** An incomplete report that also carries no delivery signal — the real
- * incident shape (content, but not a recoverable product): the run settles
- * needs-clarification and the read-back must name the missing sections. */
-const INCOMPLETE_REPORT = ["## 结论", "需要澄清。", "", "## 上下文来源", "spec.md:12", ""].join("\n");
+/** An incomplete report that still carries a delivery signal — under
+ * T-13/D-015 (option C) this delivered-but-missing shape fires one self-check
+ * round; a repeated settle on the same gap then lands the terminal
+ * needs-clarification verdict with the named missing sections. */
+const INCOMPLETE_REPORT = [
+	"## 结论",
+	"需要澄清。",
+	"",
+	"## 上下文来源",
+	"spec.md:12",
+	"",
+	"[VERIFY] VC-AC003: reply-only signal",
+].join("\n");
 
 const COMPLETE_CODING = `${COMPLETE_RESEARCH}\n## 改动清单\n- src/a.ts\n`;
 const COMPLETE_REVIEW = `${COMPLETE_RESEARCH}\n## 未覆盖面声明\n未覆盖 src/b.ts。\n`;
@@ -227,22 +236,32 @@ describe("writeOutput recovery enforcement", () => {
 interface FakeWorker {
 	pi: ExtensionAPI;
 	emit: (name: string, payload?: unknown) => void;
+	sent: SentMessage[];
+}
+
+interface SentMessage {
+	text: string;
+	deliverAs?: string;
 }
 
 function fakeWorkerPi(): FakeWorker {
 	const handlers = new Map<string, Array<(e: unknown) => unknown>>();
+	const sent: SentMessage[] = [];
 	const pi = {
 		on: (name: string, cb: (e: unknown) => unknown) => {
 			const list = handlers.get(name) ?? [];
 			list.push(cb);
 			handlers.set(name, list);
 		},
-		sendUserMessage: () => {},
+		sendUserMessage: (text: string, opts?: { deliverAs?: string }) => {
+			sent.push({ text, deliverAs: opts?.deliverAs });
+		},
 		setActiveTools: () => {},
 		registerTool: () => {},
 	};
 	return {
 		pi: pi as unknown as ExtensionAPI,
+		sent,
 		emit: (name: string, payload?: unknown) => {
 			for (const cb of handlers.get(name) ?? []) cb(payload);
 		},
@@ -279,13 +298,25 @@ describe("recovery contract at settle (AC-003)", () => {
 		expect(readTerminalDetail(fx.taskDir, "done")).not.toBe("");
 	});
 
-	it("missing section => needs-clarification and the read-back names it", async () => {
+	it("missing section => one self-check round, then the terminal needs-clarification names it verbatim", async () => {
 		const fx = makeFixture("research");
 		const worker = await startWorker(fx);
+		// First settle: the reply is delivered (inline [VERIFY], no file on
+		// disk) but misses substantive sections — option C fires the round.
+		settle(worker, INCOMPLETE_REPORT);
+
+		const first = readRun(fx);
+		console.log(`[VC-AC003] incomplete first settle: sent=${worker.sent.length} status=${first.status}`);
+		expect(first.status).toBe("running");
+		expect(worker.sent).toHaveLength(1);
+		expect(worker.sent[0]?.deliverAs).toBe("followUp");
+		expect(worker.sent[0]?.text).toContain("证据");
+		// Second settle repeats the same gap: the run lands needs-clarification
+		// and the read-back names the missing sections verbatim.
 		settle(worker, INCOMPLETE_REPORT);
 
 		const run = readRun(fx);
-		console.log(`[VC-AC003] incomplete settle: exit=${run.exit} status=${run.status}`);
+		console.log(`[VC-AC003] incomplete second settle: exit=${run.exit} status=${run.status}`);
 		expect(run.status).toBe("needs-clarification");
 		expect(run.exit).toBe(2);
 
@@ -293,6 +324,6 @@ describe("recovery contract at settle (AC-003)", () => {
 		console.log(`[VC-AC003] nc_detail="${detail}"`);
 		expect(detail).toContain("证据");
 		expect(detail).toContain("残留与未验证");
-		expect(readOutputSection(fx.taskDir, "Questions")).toContain("缺失段：");
+		expect(readOutputSection(fx.taskDir, "Questions")).toContain("缺失段：证据、残留与未验证");
 	});
 });

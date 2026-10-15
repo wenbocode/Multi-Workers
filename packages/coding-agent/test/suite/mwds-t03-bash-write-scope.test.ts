@@ -363,17 +363,32 @@ describe("AC-005b write_scope header (VC-023)", () => {
 	});
 });
 
-// ── VC-024: coding-like roles unaffected ─────────────────────────────────────
+// ── VC-024: guarded write roles (D-115 rule 7) ─────────────────────────────────────
 
-describe("AC-005b zero impact on write roles (VC-024)", () => {
+describe("AC-005b guarded write roles (VC-024, D-115 rule 7)", () => {
 	for (const type of ["coding", "repair", "vision"]) {
-		it(`VC-024: ${type} registers no write-scope guard and its bash commands pass`, async () => {
+		it(`VC-024: ${type} registers the write-scope guard; declared-face writes pass and off-face writes block`, async () => {
 			const fx = makeFixture();
-			const worker = await startWorker(fx, type);
-			expect(worker.interceptorCount()).toBe(0);
-			expect(worker.toolCall("bash", { command: "echo x > .agenticdoc/mwds-t03/pm-state.md" })).toBeUndefined();
+			const worker = await startWorker(fx, type, ["write_face: packages/coding-agent/**"]);
+			// D-115 rule 7 reverses the old "no guard for write roles" contract:
+			// every writable shell role is guarded now.
+			expect(worker.interceptorCount()).toBe(1);
+			// The preserved substance of the old assertion: legitimate bash work is
+			// not false-blocked by the widened guard.
 			expect(worker.toolCall("bash", { command: "mkdir -p packages/coding-agent/foo" })).toBeUndefined();
-			expect(writeScopeTraceLines(fx.taskDir)).toHaveLength(0);
+			expect(worker.toolCall("bash", { command: "echo x > packages/coding-agent/src/out.ts" })).toBeUndefined();
+			// NEW positive: an off-face write (inside the working tree, outside the
+			// declared write_face) is blocked by the authoritative carrier.
+			const offFace = worker.toolCall("bash", { command: "mkdir -p packages/other/foo" });
+			expect(offFace?.block).toBe(true);
+			expect(offFace?.reason).toContain("rule=write-scope");
+			// The isolation red lines stay absolute for writable roles too.
+			const deny = worker.toolCall("bash", { command: "echo x > .agenticdoc/mwds-t03/pm-state.md" });
+			expect(deny?.block).toBe(true);
+			expect(deny?.reason).toContain("rule=deny");
+			const lines = writeScopeTraceLines(fx.taskDir);
+			expect(lines).toHaveLength(2);
+			expect(lines.some((line) => line.includes("detail=outside-declared-write-face"))).toBe(true);
 			settle(worker);
 		});
 	}
@@ -1094,17 +1109,22 @@ describe("AC-007 write-scope audit line + summary (VC-029/VC-030)", () => {
 		expect(audit.filter((line) => line.includes("risk=deny-basename"))).toHaveLength(2);
 	});
 
-	it("the summary is written once at recordEnd and only for the writeless guard role", async () => {
-		const guarded = makeFixture();
-		const worker = await startWorker(guarded, "research");
-		expect(summaryLines(guarded.taskDir)).toHaveLength(0); // before settle
-		settle(worker);
-		expect(summaryLines(guarded.taskDir)).toHaveLength(1);
-
-		const writable = makeFixture();
-		const coder = await startWorker(writable, "coding");
-		settle(coder);
-		expect(summaryLines(writable.taskDir)).toHaveLength(0);
+	it("the summary is written once at recordEnd for every guarded role (D-115 rule 7)", async () => {
+		// Every role with `write`/`edit` or `bash` is guarded now, so every one of
+		// them writes exactly one [WRITE_SCOPE_SUMMARY] line at settle.
+		for (const type of ["research", "coding", "repair", "vision", "phase-writer", "roadmap-writer"]) {
+			const fx = makeFixture();
+			const worker = await startWorker(fx, type);
+			expect(summaryLines(fx.taskDir), type).toHaveLength(0); // before settle
+			settle(worker);
+			expect(summaryLines(fx.taskDir), type).toHaveLength(1);
+		}
+		// An unguarded read-only role registers no guard and writes none.
+		const review = makeFixture();
+		const reviewer = await startWorker(review, "review");
+		expect(reviewer.interceptorCount()).toBe(0);
+		settle(reviewer);
+		expect(summaryLines(review.taskDir)).toHaveLength(0);
 	});
 });
 

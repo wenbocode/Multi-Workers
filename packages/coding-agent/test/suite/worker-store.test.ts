@@ -14,6 +14,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { acquireLock } from "../../src/extensions/agent-team-loop/shared/file-lock.ts";
 import {
 	normalizeWorkerOrigin,
 	type WorkerEntry,
@@ -118,6 +119,76 @@ describe("worker-store origin column (T-12)", () => {
 		expect(cells).toHaveLength(9);
 		expect(cells[8]).toBe("manual");
 		expect(store.findByKey("manual-task")?.origin).toBe("manual");
+	});
+});
+
+describe("single queue writer: upsertWithinLock (D-114)", () => {
+	it("writes the same bytes as upsert while the caller holds the lock", async () => {
+		// Root A: caller-held lock + the lock-free entry point.
+		const rootA = path.join(mkdtemp(), ".agenticdoc");
+		fs.mkdirSync(rootA, { recursive: true });
+		const storeA = new WorkerStore(rootA);
+		const row = entry({ taskKey: "w-single", taskPath: keyedPath("k", "w-single") });
+		const release = await acquireLock(storeA.lockFilePath);
+		try {
+			// New queue: first line is the v2 header.
+			storeA.upsertWithinLock(row);
+			// In-place replacement: one row, origin column last, no append.
+			storeA.upsertWithinLock(entry({ ...row, status: "done" }));
+		} finally {
+			release();
+		}
+		const rawA = fs.readFileSync(storeA.queuePath, "utf8");
+
+		// Root B: the ordinary lock-taking upsert, same two calls.
+		const rootB = path.join(mkdtemp(), ".agenticdoc");
+		fs.mkdirSync(rootB, { recursive: true });
+		const storeB = new WorkerStore(rootB);
+		await storeB.upsert(row);
+		await storeB.upsert(entry({ ...row, status: "done" }));
+		const rawB = fs.readFileSync(storeB.queuePath, "utf8");
+
+		expect(rawA).toBe(rawB);
+		const lines = rawA.trimEnd().split("\n");
+		expect(lines[0]).toBe("# mw-queue:v2");
+		expect(lines).toHaveLength(2);
+		const cells = (lines[1] ?? "").split(" | ");
+		expect(cells).toHaveLength(9);
+		expect(cells[0]).toBe("w-single");
+		expect(cells[1]).toBe("done");
+		expect(cells[8]).toBe("manual");
+	});
+
+	it("does not take or release the lock (upsert still owns acquisition)", async () => {
+		const root = path.join(mkdtemp(), ".agenticdoc");
+		fs.mkdirSync(root, { recursive: true });
+		const store = new WorkerStore(root);
+		const release = await acquireLock(store.lockFilePath);
+		try {
+			store.upsertWithinLock(entry({ taskKey: "w-locked", taskPath: keyedPath("k", "w-locked") }));
+			// The entry point left OUR lock in place: had it acquired/released the
+			// lock itself, the lock file would be gone here.
+			expect(fs.existsSync(store.lockFilePath)).toBe(true);
+		} finally {
+			release();
+		}
+		expect(fs.existsSync(store.lockFilePath)).toBe(false);
+		expect(store.findByKey("w-locked")?.status).toBe("running");
+	});
+
+	it("upsert still acquires the lock before writing", async () => {
+		const root = path.join(mkdtemp(), ".agenticdoc");
+		fs.mkdirSync(root, { recursive: true });
+		const store = new WorkerStore(root);
+		const release = await acquireLock(store.lockFilePath);
+		const pending = store.upsert(entry({ taskKey: "w-wait", taskPath: keyedPath("k", "w-wait") }));
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		// While the lock is held, upsert is still backing off: nothing written.
+		expect(fs.existsSync(store.queuePath)).toBe(false);
+		release();
+		await pending;
+		expect(fs.existsSync(store.lockFilePath)).toBe(false);
+		expect(store.findByKey("w-wait")?.taskKey).toBe("w-wait");
 	});
 });
 
