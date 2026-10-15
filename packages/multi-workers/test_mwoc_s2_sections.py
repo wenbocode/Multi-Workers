@@ -76,12 +76,14 @@ CARD_TEMPLATE = (
     "## 交付物\n\nreport.md / output.md。\n"
 )
 
-#: Card-declared report roles (the checklist scope) and the internal /
-#: out-of-scope roles that must stay uninjected (requirement 2).
-CONTRACT_TYPES = ("coding", "research", "review")
+#: Card-declared report roles + the writable internal conductor roles that
+#: produce report products (injected), versus the internal / out-of-scope
+#: roles that must stay uninjected (requirement 2).
+CONTRACT_TYPES = (
+    "coding", "research", "review", "phase-writer", "roadmap-writer",
+)
 NON_CONTRACT_TYPES = (
-    "vision", "rag-research",
-    "verifier", "reviewer", "repair", "phase-writer", "roadmap-writer",
+    "vision", "rag-research", "verifier", "reviewer", "repair",
 )
 
 

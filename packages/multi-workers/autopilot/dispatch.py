@@ -618,15 +618,25 @@ RECOVERY_TYPE_SECTIONS: dict[str, tuple[str, ...]] = {
     "review": ("未覆盖面声明",),
 }
 
-# The card types whose task.md carries the checklist. Deliberately the three
-# card-declared report roles (the same keys as :data:`PRODUCER_EXTRA_ITEMS`):
-# their product IS the sectioned report the recovery contract judges. The
-# internal conductor roles (`verifier` / `reviewer` / `repair` / `phase-writer`
-# / `roadmap-writer`) settle a verdict or an artifact, not that report, and the
-# `vision` / `rag-research` buckets are out of the contract's scope — injecting
-# a section list there would announce a contract the role does not carry
-# (requirement 2: 无契约段角色不注入，不硬塞空段名).
-RECOVERY_CONTRACT_TYPES: tuple[str, ...] = ("coding", "research", "review")
+# The card types whose task.md carries the checklist: the three card-declared
+# report roles (the same keys as :data:`PRODUCER_EXTRA_ITEMS`) plus the two
+# writable internal conductor roles (`phase-writer` / `roadmap-writer`). The
+# latter settle an artifact but DO produce a `report.md` product along the way,
+# and the settle judge (worker-mode.ts `judgeRecoveryHere`) judges any write
+# role once `hasReportProduct` is true — E2Feature gate-0032 shipped exactly
+# this trap: a phase-writer wrote a free-form report.md, the judge fail-closed
+# on missing section aliases, and the loop stalled after burning both attempts
+# despite byte-correct deliverables. Injecting the checklist is inert for a
+# settle that produces no report product (`hasReportProduct=False` never
+# triggers the section judgement), so over-inclusion costs nothing.
+# The remaining internal roles (`verifier` / `reviewer` / `repair`) settle a
+# verdict on the reply/summary, not a sectioned report — they stay
+# uninjected. The `vision` / `rag-research` buckets are out of the contract's
+# scope — injecting a section list there would announce a contract the role
+# does not carry (requirement 2: 无契约段角色不注入，不硬塞空段名).
+RECOVERY_CONTRACT_TYPES: tuple[str, ...] = (
+    "coding", "research", "review", "phase-writer", "roadmap-writer",
+)
 
 #: Fixed heading of the injected checklist section.
 RECOVERY_CONTRACT_HEADING = "## 交付段契约（本角色）"
