@@ -12,6 +12,7 @@ Subcommands:
   setup  — one-time machine bootstrap: clone framework + install extension globally
   bootstrap — fresh-machine one-shot: prereqs → npm ci → build → link pi → setup → init → start → doctor
   update-env — incremental self-check over the update anchors (UPDATE.md); --apply runs the safe fixes
+  run-detached — detached background command runner: hidden-console supervisor + heartbeat/marker evidence
   ue-toolchain — dual-mode UE toolchain discipline (UE game dev: game repo + engine source repo, MSVC/UBT): run a configured command with evidence, discover UE targets, EOL-normalized hashing
 """
 
@@ -31,6 +32,7 @@ import time
 import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import console_run
 
 import mw_common
 import rag_templates
@@ -498,14 +500,31 @@ def cmd_start(args: argparse.Namespace) -> int:
         cmd.append(f"--deepseek-port={args.deepseek_port}")
 
     if sys.platform == "win32":
-        # START /B equivalent: CREATE_NEW_PROCESS_GROUP + DETACHED_PROCESS + CREATE_NO_WINDOW
-        import subprocess as _sp
+        # Design M1 (evidence/research/design-win32-console-semantics-20261015.md):
+        # with a console-less parent, CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+        # gives the child a *hidden* console (GetConsoleProcessList > 0) that
+        # every descendant inherits — the whole serve tree is covered
+        # structurally, even for future spawn sites that forget a flag.
+        # No DETACHED_PROCESS: it leaves the tree console-less (M3: NO_WINDOW is
+        # ignored in the DETACHED combo) and grandchildren pop windows (M2).
 
-        proc = _sp.Popen(  # noqa: S603
-            cmd,
-            creationflags=_sp.DETACHED_PROCESS | _sp.CREATE_NEW_PROCESS_GROUP | _sp.CREATE_NO_WINDOW,
-            close_fds=True,
-        )
+        # Redirect serve's own stdio to .mw/serve-console.log (append): under
+        # the old DETACHED mode this output vanished without a trace.
+        serve_log_dir = pathlib.Path(args.project) / ".mw"
+        serve_log_dir.mkdir(parents=True, exist_ok=True)
+        serve_log_fh = open(serve_log_dir / "serve-console.log", "ab")
+        try:
+            proc = subprocess.Popen(  # noqa: S603
+                cmd,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
+                close_fds=True,
+                stdout=serve_log_fh,
+                stderr=serve_log_fh,
+            )
+        finally:
+            # The child owns its duplicated handles; close ours even on spawn
+            # failure so a repeated `mw start` cannot leak file handles.
+            serve_log_fh.close()
     else:
         proc = subprocess.Popen(  # noqa: S603
             cmd,
@@ -6897,10 +6916,34 @@ def _parse_args() -> argparse.Namespace:
                              help="Emit the machine-readable audit report")
     rag_audit_p.add_argument("--out", default=None, metavar="FILE",
                              help="Write the JSON report to FILE (default: no file is written)")
+    run_detached_p = sub.add_parser(
+        "run-detached",
+        help="Detached background command runner: spawn CMD in a hidden console "
+             "with heartbeat + marker evidence (win32 flag contract, posix "
+             "start_new_session)",
+    )
+    run_detached_p.add_argument("--cwd", default=None, metavar="DIR",
+                                help="Working directory for the command (default: current)")
+    run_detached_p.add_argument("--run-dir", default=None, metavar="DIR",
+                                help="Evidence run dir (default: <cwd>/.mw/runs/run-<timestamp>; "
+                                     "an existing dir gets a -N suffix)")
+    run_detached_p.add_argument("--timeout-min", type=float, default=None, metavar="MIN",
+                                help="Kill the command tree after MIN minutes (marker rc=124, "
+                                     "timed_out=true; default: no timeout)")
+    run_detached_p.add_argument("--heartbeat-s", type=float, default=5, metavar="SEC",
+                                help="Heartbeat write interval in seconds (default: %(default)s)")
+    run_detached_p.add_argument("argv", nargs=argparse.REMAINDER, metavar="CMD",
+                                help="Command argv after '--' (stored verbatim, no shell)")
+
 
     return parser.parse_args()
 
 
+    if len(sys.argv) > 1 and sys.argv[1] == "_run_supervisor":
+        # Internal detached-runner supervisor. Never registered as an argparse
+        # subcommand (stays out of --help); console_run's CLI spawns it as
+        # `python mw.py _run_supervisor --run-dir D ... -- <cmd...>`.
+        sys.exit(console_run.run_supervisor_entry(sys.argv[2:]))
 if __name__ == "__main__":
     args = _parse_args()
     dispatch = {
@@ -6922,6 +6965,7 @@ if __name__ == "__main__":
         "update-env": cmd_update_env,
         "ue-toolchain": cmd_toolchain,
         "worktree": cmd_worktree,
+        "run-detached": console_run.cmd_run_detached,
         "rag": cmd_rag,
     }
     sys.exit(dispatch[args.subcommand](args))
