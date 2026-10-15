@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { collectMalformedCandidates, diffLedger } from "../shared/change-ledger.ts";
 import { readRunState } from "../shared/run-store.ts";
 import { readTaskType } from "../shared/task-frontmatter.ts";
-import { checkRecovery } from "./output-sections.ts";
+import { checkRecovery, isMechanicalSection, recoverySectionsFor } from "./output-sections.ts";
 
 export interface WriteOutputOpts {
 	taskKey: string;
@@ -131,18 +131,203 @@ function typeFromTaskMd(dir: string): string | undefined {
 	}
 }
 
-/**
- * The agent-authored product text the contracts judge: the worker's own report
- * (`report.md`) when present, else the harness/agent product (`output.md`),
- * else the settle summary. `report.md` first because design §3.1 puts the
- * coding `改动清单` there, and a coding worker's final reply can be terse while
- * its report is complete (judging the reply alone would false-flip it). */
-function agentProductText(dir: string, summary: string): string {
-	for (const name of ["report.md", "output.md"]) {
-		const text = readFileSafe(path.join(dir, name));
-		if (text.trim() !== "") return text;
+/** Role-slug report basename shape (AC-015; same form `writesLabel` and
+ * `WORKER_FILE_NAME_RE` treat as a first-class product). */
+const SLUG_REPORT_RE = /^report-.+\.md$/;
+
+/** Non-empty `report-<slug>.md` files in `dir`, newest mtime first (AC-015).
+ * Ties break by name so the order is deterministic across filesystems; an
+ * unreadable/empty file is not a candidate. */
+function slugReportsByMtime(dir: string): string[] {
+	let names: string[];
+	try {
+		names = fs.readdirSync(dir);
+	} catch {
+		return [];
 	}
-	return summary;
+	const files: Array<{ file: string; mtimeMs: number }> = [];
+	for (const name of names) {
+		if (!SLUG_REPORT_RE.test(name)) continue;
+		const file = path.join(dir, name);
+		try {
+			const stat = fs.statSync(file);
+			if (!stat.isFile() || stat.size === 0) continue;
+			files.push({ file, mtimeMs: stat.mtimeMs });
+		} catch {
+			// Unreadable => not a candidate.
+		}
+	}
+	files.sort((a, b) => b.mtimeMs - a.mtimeMs || a.file.localeCompare(b.file));
+	return files.map((entry) => entry.file);
+}
+
+/**
+ * The one file the recovery judgement will read (AC-015 order): `report.md` →
+ * `report-<slug>.md` (newest first) → `output.md`, each skipped when missing or
+ * empty. `undefined` means no product is on disk and the judgement falls back
+ * to the settle summary — the I2 backfill cannot append to a summary, so that
+ * state is fail-closed (design §4.3).
+ */
+export function judgedProductFile(dir: string): string | undefined {
+	const canonical = path.join(dir, "report.md");
+	if (readFileSafe(canonical).trim() !== "") return canonical;
+	const slug = slugReportsByMtime(dir)[0];
+	if (slug !== undefined) return slug;
+	const output = path.join(dir, "output.md");
+	if (readFileSafe(output).trim() !== "") return output;
+	return undefined;
+}
+
+/**
+ * The agent-authored product text the contracts judge (AC-015 order).
+ * `report.md` first because design §3.1 puts the coding `改动清单` there, and a
+ * coding worker's final reply can be terse while its report is complete
+ * (judging the reply alone would false-flip it).
+ */
+export function agentProductText(dir: string, summary: string): string {
+	const file = judgedProductFile(dir);
+	return file === undefined ? summary : readFileSafe(file);
+}
+
+/**
+ * Does a role's report product exist (AC-015 second entry point)? A non-empty
+ * `report.md` OR `report-<slug>.md` — the SAME candidate set `agentProductText`
+ * reads, so the `judgeRecovery` gate and the judged text cannot disagree. Before
+ * AC-015 this predicate only `statSync`ed `report.md`, so a write role that
+ * produced only `report-<slug>.md` was never judged at all.
+ */
+export function hasReportProduct(dir: string): boolean {
+	if (readFileSafe(path.join(dir, "report.md")).trim() !== "") return true;
+	return slugReportsByMtime(dir).length > 0;
+}
+
+/**
+ * The recovery verdict on the CURRENT product text, before the mechanical
+ * backfill and before the terminal write (the AC-004 self-check gate). Empty
+ * for a legacy book (`type === undefined`, P-07/P-09).
+ */
+export function currentRecoveryMissing(opts: {
+	taskKey: string;
+	agenticdocRoot: string;
+	summary: string;
+	type: string | undefined;
+}): string[] {
+	if (opts.type === undefined) return [];
+	const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
+	return checkRecovery(agentProductText(dir, opts.summary), opts.type).missing;
+}
+
+/** Idempotency marker of the framework's mechanical `## 上下文来源` append. */
+export const MECHANICAL_CONTEXT_MARKER = "<!-- mw-mechanical-context-sources: v1 -->";
+
+/** `task.md` header scalar (the same `^[ \t]*key[ \t]*:.*$` shape the service
+ * layer uses); `""` when absent. */
+function taskHeaderScalar(dir: string, key: string): string {
+	const text = readFileSafe(path.join(dir, "task.md"));
+	const match = new RegExp(`^[ \\t]*${key}[ \\t]*:[ \\t]*(\\S+)[ \\t]*$`, "m").exec(text);
+	return match?.[1] ?? "";
+}
+
+/** Read targets recorded in `trace.log` (`[TOOL] <ts> <read|find|grep|ls>
+ * <target>`) — at most five, de-duplicated, in first-seen order. */
+function traceReadTargets(traceText: string): string[] {
+	const out: string[] = [];
+	for (const line of traceText.split(/\r?\n/)) {
+		const match = /^\[TOOL\] \S+ (?:read|find|grep|ls) (.+)$/.exec(line);
+		if (match === null) continue;
+		const target = (match[1] ?? "").trim();
+		if (target !== "" && !out.includes(target)) out.push(target);
+		if (out.length >= 5) break;
+	}
+	return out;
+}
+
+/** The mechanical section body: framework-held facts only (card path/sha, the
+ * product path, and up to five trace read sources). Never a substantive
+ * judgement (R2). */
+function renderMechanicalSections(dir: string, target: string, names: string[]): string {
+	const cardPath = taskHeaderScalar(dir, "card_path");
+	const cardSha = taskHeaderScalar(dir, "card_sha256");
+	const reads = traceReadTargets(readFileSafe(path.join(dir, "trace.log")));
+	const card = cardPath === "" ? "`task.md`" : `\`${cardPath}\`${cardSha === "" ? "" : `（sha256 \`${cardSha}\`）`}`;
+	const sources = reads.length > 0 ? reads : ["task.md"];
+	return [
+		"",
+		"",
+		...names.flatMap((name) => [`## ${name}`, ""]),
+		MECHANICAL_CONTEXT_MARKER,
+		"",
+		"> 本节由框架按已掌握事实机械补齐（settle 判定之前）；不含实质判断。",
+		"",
+		`- 任务卡：${card}`,
+		`- 产物：\`${path.basename(target)}\``,
+		`- 读取来源：${sources.map((source) => `\`${source}\``).join("、")}`,
+		"",
+	].join("\n");
+}
+
+export interface MechanicalContextSourcesResult {
+	/** Every required section is present after the attempt (empty `missing`). */
+	ok: boolean;
+	/** The mechanical section was appended by this call. */
+	appended: boolean;
+	/** Required sections still missing after the attempt (empty iff `ok`). */
+	missing: string[];
+	/** The file the append targeted, when a product candidate exists. */
+	target?: string;
+	/** Why the attempt could not satisfy the contract (fail-closed, design §4.3). */
+	reason?: "no-product-file" | "not-writable" | "already-marked" | "still-missing";
+}
+
+/**
+ * I2 mechanical backfill (AC-005): append the mechanical `## 上下文来源` section
+ * to the file the judgement will read, BEFORE the judgement runs, so the judged
+ * text and the landed product cannot diverge (invariant I1). Only the
+ * `MECHANICAL_SECTIONS` whitelist is ever appended (R2). Three failure classes
+ * are fail-closed (design §4.3): no product file on disk (the judgement would
+ * run on the settle summary), a product that cannot be written, and a product
+ * that still misses the section after the append. Pure append + idempotent
+ * marker: an existing marker means the file was already backfilled, so nothing
+ * is written a second time.
+ */
+export function appendMechanicalContextSources(opts: {
+	taskKey: string;
+	agenticdocRoot: string;
+	summary: string;
+	type: string | undefined;
+}): MechanicalContextSourcesResult {
+	if (opts.type === undefined) return { ok: true, appended: false, missing: [] };
+	const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
+	const mechanical = recoverySectionsFor(opts.type).filter((name) => isMechanicalSection(name));
+	if (mechanical.length === 0) return { ok: true, appended: false, missing: [] };
+	const target = judgedProductFile(dir);
+	if (target === undefined) {
+		const missing = checkRecovery(agentProductText(dir, opts.summary), opts.type).missing;
+		return { ok: missing.length === 0, appended: false, missing, reason: "no-product-file" };
+	}
+	const before = readFileSafe(target);
+	const preMissing = checkRecovery(before, opts.type).missing;
+	const toFill = mechanical.filter((name) => preMissing.includes(name));
+	if (toFill.length === 0) {
+		return { ok: preMissing.length === 0, appended: false, missing: preMissing, target };
+	}
+	if (before.includes(MECHANICAL_CONTEXT_MARKER)) {
+		// Marker present without the section: the file was tampered with / the
+		// marker was copied. Never append twice; stay fail-closed.
+		return { ok: preMissing.length === 0, appended: false, missing: preMissing, target, reason: "already-marked" };
+	}
+	let appended = false;
+	try {
+		fs.appendFileSync(target, renderMechanicalSections(dir, target, toFill), "utf8");
+		appended = true;
+	} catch {
+		return { ok: false, appended: false, missing: preMissing, target, reason: "not-writable" };
+	}
+	const postMissing = checkRecovery(readFileSafe(target), opts.type).missing;
+	if (postMissing.some((name) => toFill.includes(name))) {
+		return { ok: false, appended, missing: postMissing, target, reason: "still-missing" };
+	}
+	return { ok: postMissing.length === 0, appended, missing: postMissing, target };
 }
 
 /** `run.json.started_at` as epoch ms, or undefined when the run record is

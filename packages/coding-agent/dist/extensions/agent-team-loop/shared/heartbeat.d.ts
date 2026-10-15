@@ -38,6 +38,17 @@ export interface CheckpointInfo {
     repeatTop: number;
     /** Machine divergence heuristic (advisory — the PM decides). */
     risk: "low" | "mid" | "high";
+    /** T-04/AC-009: distinct landing targets recorded in the change ledger
+     * (`[WRITE_FILE]` grammar, writeless roles only). Undefined on old lines /
+     * write-role lines, which carry no landing suffix. */
+    land?: number;
+    /** T-04/AC-009: age of the newest landing in seconds; undefined when no
+     * landing target exists on disk (`last_land=-`). */
+    lastLandingS?: number;
+    /** T-04/AC-009: a non-empty product exists on disk (writeless suffix). */
+    artifactPresent?: boolean;
+    /** T-04/AC-009: `progress.md` carries the role's own completion record. */
+    progressDone?: boolean;
 }
 /** Structured progress parsed from a worker task's trace.log: lifecycle
  * ([START]/[END] — exact runtime + exit status), the last [TOOL] action, the

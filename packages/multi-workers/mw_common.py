@@ -2732,6 +2732,144 @@ def _doctor_bundle() -> dict:
     }
 
 
+#: AC-016 (mw-worktree-junction-guard, decisions D-15/D-18) activation
+#: self-check marker set. Each marker is a literal only the G1/G6 guard emits
+#: from its bundled decision code, so its presence in a bundle is evidence the
+#: capability (not just its prescription text) was bundled:
+#:
+#:   * `reparse-point` - the guard's own `basis` vocabulary value (design §3.2:
+#:     "basis values are a fixed vocabulary"): `scanVerdict` emits it whenever
+#:     it classifies a target tree. Measured 2026-10-14: exactly 1 hit in a
+#:     fresh esbuild of `index.ts`, absent before deployment.
+#:   * `user_bash` - the G6/AC-014 hook registration (`pi.on("user_bash")`);
+#:     measured 2 hits per bundle. D-18: the single `reparse-point` marker stayed
+#:     green when the `user_bash` hook was deleted, so the decision marker alone
+#:     cannot prove the `!`/RPC channel is guarded.
+#:
+#: `has_marker` is True only when *every* marker is present (D-18).
+ACTIVATION_MARKERS: tuple[str, ...] = ("reparse-point", "user_bash")
+
+#: The extension source directory that identifies a project as the checkout
+#: owning this guard. The activation self-check only applies there: for an
+#: arbitrary project the two deployment targets are not this key's artifacts,
+#: and every frozen doctor test (`test_doctor_gates.py`, `test_serve_doctor.py`)
+#: runs on a fixture outside the checkout, so a project-agnostic check would
+#: flip their `healthy` assertions (and, with `PI_CODING_AGENT_DIR` scoped to a
+#: fixture, report a "missing global bundle" that is not a deployment defect).
+_EXT_SRC_REL = ("packages", "coding-agent", "src", "extensions", "agent-team-loop")
+
+
+def _activation_bundle_paths(project_dir: pathlib.Path) -> list[pathlib.Path] | None:
+    """The two AC-016 deployment targets, or ``None`` when the check does not
+    apply to `project_dir` (see `_EXT_SRC_REL`).
+
+    ① the tracked build artifact `packages/multi-workers/dist/extensions/`
+    ``agent-team-loop.js``; ② the global/installed bundle
+    ``<PI_CODING_AGENT_DIR|~/.pi/agent>/extensions/agent-team-loop.js``.
+    """
+    project_dir = pathlib.Path(project_dir)
+    if not project_dir.joinpath(*_EXT_SRC_REL).is_dir():
+        return None
+    return [
+        project_dir / "packages" / "multi-workers" / "dist" / "extensions"
+        / "agent-team-loop.js",
+        global_ext_dir() / "agent-team-loop.js",
+    ]
+
+
+def _activation_copy_role(path: pathlib.Path) -> str:
+    """Which deployment copy a bundle path is (D-18 C9 wording fix).
+
+    The two AC-016 targets have different roles and therefore different
+    failure meanings: the tracked build artifact under
+    ``packages/multi-workers/dist/extensions/`` is staging that pi never
+    loads (a finding there means `mw build` has not run), while the copy
+    under the pi agent dir is the bundle pi actually loads (a finding there
+    means `mw build --install` has not run).
+    """
+    normalized = os.path.normcase(os.path.normpath(str(path)))
+    dist_marker = os.path.normcase(os.path.join("multi-workers", "dist", "extensions"))
+    return "dist" if dist_marker in normalized else "installed"
+
+
+def _activation_fix(role: str) -> str:
+    """Fix command for a copy's missing/absent guard (D-18 C9)."""
+    return "mw build" if role == "dist" else "mw build --install"
+
+
+def _activation_scan(bundle_paths) -> dict:
+    """AC-016: does each bundle carry *every* G1/G6 capability marker?
+
+    D-18: the markers are judged independently (`entry["markers"]`), and
+    `entry["has_marker"]` is True only when all of them are present, so a
+    bundle that dropped the `user_bash` hook is a finding even though the
+    decision marker survives. `entry["missing_markers"]` names the absent
+    ones for the issue/text faces.
+
+    Fail-open-to-verdict: a stat/read/decoding failure never raises; the entry
+    records the error and the per-marker verdicts stay ``None`` ("cannot
+    confirm"), which the issue face renders as unverifiable rather than as
+    "deployed". A missing file is a finding too (it is not silently skipped).
+    """
+    checked: list[dict] = []
+    missing: list[str] = []
+    for raw in bundle_paths:
+        path = pathlib.Path(raw)
+        entry: dict = {
+            "path": str(path),
+            "role": _activation_copy_role(path),
+            "exists": False,
+            "has_marker": None,
+            "markers": {marker: None for marker in ACTIVATION_MARKERS},
+            "missing_markers": [],
+            "error": None,
+        }
+        try:
+            entry["exists"] = os.path.lexists(str(path))
+        except OSError as exc:  # pragma: no cover - os.path.lexists rarely raises
+            entry["error"] = str(exc)
+        if entry["exists"]:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError, ValueError) as exc:
+                entry["error"] = str(exc)
+            else:
+                for marker in ACTIVATION_MARKERS:
+                    entry["markers"][marker] = marker in text
+                entry["missing_markers"] = [
+                    marker for marker in ACTIVATION_MARKERS
+                    if entry["markers"][marker] is not True
+                ]
+                entry["has_marker"] = not entry["missing_markers"]
+        else:
+            entry["error"] = "file missing"
+        if entry["has_marker"] is not True:
+            missing.append(str(path))
+        checked.append(entry)
+    return {
+        "applicable": True,
+        "markers": list(ACTIVATION_MARKERS),
+        "checked": checked,
+        "missing": missing,
+        "ok": not missing,
+    }
+
+
+def _doctor_activation(project_dir: pathlib.Path) -> dict:
+    """AC-016 activation section. Silent ``applicable: False`` outside the
+    checkout that owns the extension source; otherwise `_activation_scan`."""
+    paths = _activation_bundle_paths(project_dir)
+    if paths is None:
+        return {
+            "applicable": False,
+            "markers": list(ACTIVATION_MARKERS),
+            "checked": [],
+            "missing": [],
+            "ok": True,
+        }
+    return _activation_scan(paths)
+
+
 def _source_desc(source: dict) -> str:
     if not source:
         return "native"
@@ -3522,6 +3660,16 @@ def _gates_text_alerted(section: dict) -> bool:
     return False
 
 
+# AC-010 action (3) upgrade window (mw-worktree-junction-guard T-W09). A
+# `collapse` event is only upgraded to an issue while it is at most one hour
+# old: the launcher rewrites `.mw/tree-watch.json` on every sample, so a fresh
+# event is the live fingerprint, while an old event is history. Keeping the
+# event on disk after the window closes preserves the design §6.1 "event
+# persists, still traceable" property without making every later `mw doctor`
+# run permanently red (a stale alert is a new false-positive surface).
+TREE_WATCH_ISSUE_WINDOW_SEC = 3600
+
+
 def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
     issues: list[str] = []
     suggestions: list[str] = []
@@ -3742,6 +3890,149 @@ def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
         suggestions.append(
             f"launcher.log has {report['launcher_log']['error_count']} error line(s) - inspect the tail"
         )
+    # AC-009 (mw-worktree-junction-guard T-W03): a leftover junction pointing
+    # into this repo is a real hazard (the incident form), and a registry entry
+    # whose link vanished is a silent loss of the cleanup handle. One issue per
+    # finding, carrying path + kind; an empty section adds nothing (reverse
+    # control: a clean repo keeps rc unchanged).
+    worktree_links = report.get("worktree_links") or {}
+    for entry in worktree_links.get("leftover") or []:
+        issues.append(
+            f"worktree-leftover ({entry['kind']}): {entry['path']} -> {entry['target']} - "
+            "a junction pointing into this repo survived its worktree; clear it with "
+            "'mw worktree rm <worktree>' before it is reused or removed (AC-009)"
+        )
+    for entry in worktree_links.get("stale_entries") or []:
+        issues.append(
+            f"worktree-stale-entry ({entry['kind']}): registry entry {entry['path']} -> "
+            f"{entry['target']} has no link on disk - re-run 'mw worktree add --link-deps' "
+            "or drop the entry (AC-009)"
+        )
+    # AC-015 (mw-worktree-junction-guard T-W13/D-14): a corrupt/unreadable
+    # registry is folded into the section by `_registry_domain`; without this
+    # consumption the text face only printed on `count>0` and the issue list
+    # ignored the field, so a broken registry was silent (contradicting design
+    # §5.1 "bad file => raise, never silently read as an empty table"). The
+    # error summary and the registry path are both in the issue because the
+    # path is what a reader needs to fix or remove.
+    registry_error = worktree_links.get("registry_error")
+    if registry_error:
+        issues.append(
+            f"worktree-registry-error: {registry_error} - the junction registry at "
+            f"{worktree_links.get('registry_path')} could not be read, so leftover-link "
+            "detection is degraded (fail-closed); fix or remove the file (AC-015)"
+        )
+    # AC-016 (mw-worktree-junction-guard T-W13/D-15): activation self-check. A
+    # bundle without the G1 capability marker means the guard exists in source
+    # but is not deployed to the runtime pi actually loads. The section is only
+    # built for a checkout owning the extension source
+    # (`_activation_bundle_paths`); a minimal report without the key stays
+    # silent. The serve-side half of AC-016 is covered by the existing
+    # `serve code: STALE CODE` verdict in `mw.py cmd_doctor` - reused there,
+    # not duplicated here.
+    activation = report.get("activation") or {}
+    if activation.get("applicable"):
+        for entry in activation.get("checked") or []:
+            if entry.get("has_marker") is True:
+                continue
+            role = entry.get("role") or "installed"
+            fix = _activation_fix(role)
+            if entry.get("exists") is False:
+                detail = "bundle file missing"
+            elif entry.get("error"):
+                detail = f"unverifiable ({entry['error']})"
+            else:
+                # D-18: name the marker(s) that are actually absent so a reader
+                # can tell a dropped `user_bash` hook from a dropped decision
+                # marker instead of getting one generic "guard not deployed".
+                names = ", ".join(
+                    f"'{marker}'" for marker in entry.get("missing_markers") or []
+                )
+                detail = f"capability marker(s) absent: {names}"
+            # D-18 C9: the two copies have different roles, so the same finding
+            # means a different missing step. The dist copy is staging pi never
+            # loads; only the installed copy is the runtime bundle.
+            if role == "dist":
+                meaning = (
+                    "this is the tracked build artifact under packages/multi-workers/dist "
+                    "(pi does not load this copy), so it only means 'mw build' has not run"
+                )
+            else:
+                meaning = (
+                    "this is the installed bundle pi actually loads, so it means "
+                    "'mw build --install' has not run"
+                )
+            issues.append(
+                f"guard-not-deployed: {entry.get('path')} - {detail}; {meaning}; "
+                f"run '{fix}' (AC-016)"
+            )
+    # design §6.1 AC-010 action (3) (mw-worktree-junction-guard T-W09): the
+    # resident watch already alarms on a tracked-file collapse, but the alarm
+    # only reaches `.mw/launcher.log`. When the same sampling window also moved
+    # the junction inventory (the incident fingerprint: teardown + reify), the
+    # event is upgraded here so a `mw doctor` reader sees it and rc flips.
+    # Fail-open-to-verdict, like the registry read above: a missing / corrupt /
+    # wrong-typed state file or event is silently skipped, never raised - the
+    # doctor must always produce a verdict. The project root is derived from
+    # the adjacent `worktree_links.registry_path` (`<project>/.mw/...`); the
+    # local `import tree_watch` follows the `import worktree_doctor` precedent
+    # in `doctor_report` and keeps this consumption point self-contained.
+    try:
+        import tree_watch
+    except ImportError:  # pragma: no cover - same-dir module, mirrors doctor_report
+        tree_watch = None
+    registry_path = worktree_links.get("registry_path")
+    watched_project = (
+        pathlib.Path(registry_path).parent.parent
+        if isinstance(registry_path, str) and registry_path
+        else None
+    )
+    state: dict = {}
+    if tree_watch is not None and watched_project is not None:
+        try:
+            loaded = json.loads(
+                tree_watch.state_path(watched_project).read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, ValueError):
+            loaded = {}
+        if isinstance(loaded, dict):
+            state = loaded
+    raw_events = state.get("events")
+    if tree_watch is not None and watched_project is not None and isinstance(raw_events, list):
+        now = time.time()
+        for event in raw_events:
+            if not isinstance(event, dict) or event.get("kind") != "collapse":
+                continue
+            ts = event.get("ts")
+            if ts is None:
+                # Older events carry no per-event stamp; the state file's
+                # top-level `ts` is that sample's sampling time.
+                ts = state.get("ts")
+            if isinstance(ts, bool) or not isinstance(ts, (int, float)):
+                continue
+            age = now - float(ts)
+            if age < 0 or age > TREE_WATCH_ISSUE_WINDOW_SEC:
+                continue
+            raw_delta = event.get("link_delta")
+            if not isinstance(raw_delta, dict):
+                continue
+            counts = {
+                key: raw_delta.get(key, 0) for key in ("removed", "changed", "added")
+            }
+            if any(isinstance(value, bool) or not isinstance(value, int) for value in counts.values()):
+                continue
+            if sum(counts.values()) <= 0:
+                continue
+            issues.append(
+                f"tree-watch-collapse: tracked-file collapse (ts={ts}, "
+                f"deleted_non_dist={event.get('deleted_non_dist')}, "
+                f"delta={event.get('delta')}) with a same-window junction-inventory "
+                f"change (removed/changed/added="
+                f"{counts['removed']}/{counts['changed']}/{counts['added']}) - "
+                "the AC-010 incident fingerprint (teardown + reify); inspect "
+                f"{tree_watch.state_path(watched_project)} and clear leftovers with "
+                "'mw worktree rm'"
+            )
     return issues, suggestions
 
 
@@ -3750,6 +4041,7 @@ def doctor_report(
     fix: bool = False,
     config: dict | None = None,
     stale_after_sec: int = 90,
+    worktree_scan_roots: list[str] | None = None,
 ) -> dict:
     """Full diagnostic snapshot. Local-only checks (no network), <5s.
 
@@ -3782,6 +4074,19 @@ def doctor_report(
             f"pi settings.json shellPath {report['pi_shell']['status']}: "
             f"{report['pi_shell']['shell_path']}"
         )
+    # AC-009 (mw-worktree-junction-guard T-W03): leftover junction scan. The
+    # import is deliberately function-local: worktree_registry imports mw_common
+    # at module top level, so a module-level import of worktree_doctor (which
+    # imports worktree_registry) would close an import cycle. doctor_report is a
+    # runtime entry point, so the local import is safe and cheap (sys.modules).
+    import worktree_doctor
+    report["worktree_links"] = worktree_doctor.build_section(
+        project_dir, scan_roots=worktree_scan_roots
+    )
+    # AC-016 (T-W13/D-15): activation self-check for the two deployed bundles.
+    # Built here (the doctor assembly face) so `_doctor_issues` only consumes a
+    # section and remains silent when handed a minimal report.
+    report["activation"] = _doctor_activation(project_dir)
     issues, suggestions = _doctor_issues(report)
     report["summary"] = {"healthy": not issues, "issues": issues, "suggestions": suggestions}
     return report
@@ -3915,6 +4220,51 @@ def format_doctor_text(report: dict) -> str:
             f"{len(gates_section.get('drift') or [])} drift{prose_suffix}{contract_suffix})"
             f"{blocked_suffix}"
         )
+    # AC-009 (T-W03): leftover junction rows; emitted only when the section has
+    # findings, so a clean repo keeps the historical text byte-identical.
+    worktree_links = report.get("worktree_links")
+    if worktree_links and worktree_links.get("count"):
+        for entry in worktree_links.get("leftover") or []:
+            lines.append(
+                f"worktree_links: LEFTOVER ({entry['kind']}) {entry['path']} -> {entry['target']}"
+            )
+        for entry in worktree_links.get("stale_entries") or []:
+            lines.append(
+                f"worktree_links: STALE-ENTRY ({entry['kind']}) {entry['path']} -> {entry['target']}"
+            )
+    # AC-015 (T-W13/D-14): a corrupt registry must print even when `count==0`
+    # (zero findings because the read failed is exactly the case that used to
+    # be silent). Reverse control: a healthy/absent registry adds no line.
+    if worktree_links and worktree_links.get("registry_error"):
+        lines.append(
+            f"worktree_links: REGISTRY-ERROR {worktree_links.get('registry_path')}: "
+            f"{worktree_links['registry_error']}"
+        )
+    # AC-016 (T-W13/D-15): activation rows; emitted only for bundles without the
+    # marker, so a deployed runtime keeps the historical output byte-identical.
+    activation = report.get("activation")
+    if activation and activation.get("applicable"):
+        for entry in activation.get("checked") or []:
+            if entry.get("has_marker") is True:
+                continue
+            # D-18 C9: name the right fix per copy (dist = staging, installed =
+            # the runtime bundle pi loads).
+            fix = _activation_fix(entry.get("role") or "installed")
+            path = entry.get("path")
+            if entry.get("exists") is False:
+                lines.append(f"activation: MISSING {path} - run '{fix}'")
+                continue
+            if entry.get("error"):
+                lines.append(
+                    f"activation: UNVERIFIABLE ({entry['error']}) {path} - run '{fix}'"
+                )
+                continue
+            # D-18: one row per absent marker, each naming the marker so the
+            # missing `user_bash` hook is visible on its own.
+            for marker in entry.get("missing_markers") or []:
+                lines.append(
+                    f"activation: MARKER-ABSENT '{marker}' {path} - run '{fix}'"
+                )
     # pi shellPath row (fresh-machine shell bootstrap)
     pi_shell = report.get("pi_shell")
     if pi_shell is not None:

@@ -13,7 +13,7 @@ const START_LINE_RE = /^\[START\] (\S+) task=\S+ type=\S+ phases=(\S+)$/;
 const MODEL_LINE_RE = /^\[MODEL\] (\S+) model=(\S+)$/;
 const END_LINE_RE = /^\[END\] (\S+) exit=(\d+) elapsed=(\d+)s tools=(\d+) phases=(\S+)$/;
 const TOOL_LINE_RE = /^\[TOOL\] (\S+) (\S+)(?: (.*))?$/;
-const CHECKPOINT_LINE_RE = /^\[CHECKPOINT\] (\S+) elapsed=(\d+)s reads=(\d+) writes=(\d+) phases=(\S+) uniq_targets=(\d+) repeat_top=(\d+) risk=(low|mid|high)$/;
+const CHECKPOINT_LINE_RE = /^\[CHECKPOINT\] (\S+) elapsed=(\d+)s reads=(\d+) writes=(\d+) phases=(\S+) uniq_targets=(\d+) repeat_top=(\d+) risk=(low|mid|high)(?: land=(\d+) last_land=(\S+) artifact=(yes|no) done=(yes|no))?$/;
 /** Human-readable age for heartbeat display: "15s", "3m", "2h". Shared by
  * the watch widget's `hb` field and terminal-summary runtime stats. */
 export function formatHeartbeatAge(ms) {
@@ -94,7 +94,7 @@ export function readTaskProgress(taskDir) {
         }
         const ck = CHECKPOINT_LINE_RE.exec(line);
         if (ck) {
-            checkpoint = {
+            const info = {
                 ts: ck[1] ?? "",
                 elapsedS: Number(ck[2]),
                 reads: Number(ck[3]),
@@ -104,6 +104,22 @@ export function readTaskProgress(taskDir) {
                 repeatTop: Number(ck[7]),
                 risk: ck[8] ?? "low",
             };
+            // T-04/AC-009: the optional landing suffix, emitted for writeless roles
+            // only. Absent (old bundles / write roles) ⇒ the fields stay undefined.
+            if (ck[9] !== undefined) {
+                info.land = Number(ck[9]);
+                const lastLand = ck[10];
+                if (lastLand !== undefined && lastLand !== "-") {
+                    const seconds = Number(lastLand.replace(/s$/, ""));
+                    if (Number.isFinite(seconds))
+                        info.lastLandingS = seconds;
+                }
+            }
+            if (ck[11] !== undefined)
+                info.artifactPresent = ck[11] === "yes";
+            if (ck[12] !== undefined)
+                info.progressDone = ck[12] === "yes";
+            checkpoint = info;
         }
     }
     const heartbeat = hbCount > 0

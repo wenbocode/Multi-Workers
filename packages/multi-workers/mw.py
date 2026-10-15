@@ -34,6 +34,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import mw_common
 import rag_templates
+import worktree_cmd
 from mw_common import (
     check_pid as _check_pid,
     port_is_bound as _port_is_bound,
@@ -595,13 +596,29 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         else pathlib.Path(__file__).parent / "providers.json"
     )
     config = mw_common.load_providers(providers_path)
-    report = mw_common.doctor_report(project_dir, fix=args.fix, config=config, stale_after_sec=args.stale_after)
+    raw_scan_roots = getattr(args, "worktree_scan_roots", None)
+    worktree_scan_roots = (
+        [part for part in str(raw_scan_roots).split(";") if part.strip()]
+        if raw_scan_roots
+        else None
+    )
+    report = mw_common.doctor_report(
+        project_dir,
+        fix=args.fix,
+        config=config,
+        stale_after_sec=args.stale_after,
+        worktree_scan_roots=worktree_scan_roots,
+    )
     # Conductor section (D-101): informational like worker_liveness — a not
     # running conductor (autopilot disabled) is not an issue.
     report["conductor"] = _ap_conductor.conductor_status(project_dir)
     # RAG section (mw-rag-integration D-010): informational — a broken config
     # or an unreachable server never flips the healthy verdict.
     report["rag"] = _doctor_rag(project_dir)
+    # Write-face refusal surface (mw-write-face-guard W-15, AC-006): purely
+    # informational — a refusal is normal gate behaviour, so neither 0 nor N
+    # refusals may flip the healthy verdict (it never enters `issues`).
+    report["write_face"] = _doctor_write_face(project_dir)
     # Serve code identity (T-13/AC-005): drift is an ISSUE (exit 1); the TS
     # `doctorMw` caller tolerates exit 1 and still parses the JSON. Missing
     # baseline fields are only a suggestion (never alert on absence).
@@ -621,6 +638,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         rag = report.get("rag") or {}
         if rag.get("exists") or rag.get("enabled"):
             print(_format_rag_doctor_line(rag))
+        print(_format_write_face_doctor_line(report["write_face"]))
         print(f"serve code: {serve_code['detail']}")
     return 0 if report["summary"]["healthy"] else 1
 
@@ -2416,6 +2434,191 @@ def _format_rag_doctor_line(section: dict) -> str:
     return (
         f"rag: enabled={', '.join(enabled)}; probe={state}; "
         f"fingerprint={fingerprint}; skill={skill_status}{required}"
+    )
+
+
+# ── Write-face refusal surface (mw-write-face-guard W-15 / AC-006) ──────────
+
+#: Conductor audit event family (`autopilot/dispatch.py` WRITE_FACE_AUDIT_*).
+#: `write-face-overlap` / `write-face-undeclared` are themselves the stable
+#: code; `write-face-rejected` is a container that carries the parse-time code
+#: in its detail (card requirement 4).
+_WRITE_FACE_EVENT_PREFIX = "write-face-"
+_WRITE_FACE_RECENT_LIMIT = 5
+#: by_code bucket for a row whose code could not be read from its name/detail
+#: (the row is still counted — requirement 4 forbids dropping it).
+_WRITE_FACE_UNKNOWN_CODE = "unknown"
+
+
+def _write_face_detail_parts(detail: str) -> tuple[str | None, str]:
+    """Split an audit detail into ``(task_key, rest)`` on the FIRST ``": "``.
+
+    Both audit channels prefix the refused task key and their tail carries
+    further colons (PM `"<key>: write-face-overlap: overlap-with:<key>"`),
+    so ``split(":")`` would truncate the reason (card requirement 4).
+    """
+    head, sep, rest = detail.partition(": ")
+    if not sep:
+        return None, detail
+    return (head or None), rest
+
+
+def _parse_write_face_event(event: dict) -> dict:
+    """One conductor timeline `write-face-*` event -> a `recent` entry.
+
+    Only the event name is guaranteed.  The shipped overlap/undeclared shapes
+    are read for their side fields; a `write-face-rejected` container is read
+    for its code.  An unexpected detail still yields a counted row whose
+    unread fields stay ``None`` (never dropped).
+    """
+    ev = str(event.get("ev") or "")
+    detail = str(event.get("detail") or "")
+    task_key, rest = _write_face_detail_parts(detail)
+    code: str | None = None
+    overlap_with: str | None = None
+    sample: str | None = None
+    if ev == "write-face-overlap":
+        code = ev
+        marker = "overlap with "
+        index = rest.find(marker)
+        if index >= 0:
+            tail = rest[index + len(marker):]
+            other, at_sep, after = tail.partition(" at ")
+            overlap_with = other.split(" (", 1)[0].strip() or None
+            if at_sep:
+                sample = after.split(" (", 1)[0].strip() or None
+    elif ev == "write-face-undeclared":
+        code = ev
+    else:
+        # `write-face-rejected` (or a future write-face-* container): the
+        # detail is `"<code> <operator detail>"`.
+        code = rest.split(" ", 1)[0].strip() or None
+    return {
+        "source": "conductor",
+        "ts": None,
+        "task_key": task_key,
+        "code": code,
+        "overlap_with": overlap_with,
+        "sample": sample,
+    }
+
+
+def _parse_write_face_ledger_row(row: dict) -> dict | None:
+    """One `auto-decisions.jsonl` row -> a `recent` entry, or ``None`` when
+    the row is not a write-face refusal.
+
+    `recordDispatchAlarm` (pm-orchestrator.ts) writes
+    ``{seq, phase: "dispatch-alarm", kind, count, detail}`` with no key
+    column: the refused task key prefixes `detail` and the tail is the
+    byte-identical conductor refusal reason.  `write-scope-risk` shares the
+    channel but is not a refusal, so it must not enter the refusal counts
+    (card requirement 4).
+    """
+    if str(row.get("phase") or "") != "dispatch-alarm":
+        return None
+    if str(row.get("kind") or "") != "write-face-refusal":
+        return None
+    detail = str(row.get("detail") or "")
+    task_key, reason = _write_face_detail_parts(detail)
+    overlap = re.search(r"overlap-with:(\S+)", reason)
+    sample = re.search(r"sample=(\S+)", reason)
+    return {
+        "source": "pm",
+        "ts": None,
+        "task_key": task_key,
+        "code": reason.partition(":")[0].strip() or None,
+        "overlap_with": overlap.group(1) if overlap else None,
+        "sample": sample.group(1) if sample else None,
+    }
+
+
+def _doctor_write_face(project_dir: pathlib.Path) -> dict:
+    """Read-only write-face refusal surface for `mw doctor` (AC-006).
+
+    Two independent audit channels, each already scoped to write-face:
+
+    * conductor — timeline events named ``write-face-*``; `query_events`
+      walks the rotated generations too, so history is not lost;
+    * PM — `auto-decisions.jsonl` rows with ``phase == "dispatch-alarm"``
+      and ``kind == "write-face-refusal"`` (`conductor.auto_decision_rows`
+      is the tolerant single reader: torn lines skipped, absent file empty).
+
+    Zero writes, zero locks, no influence on `summary`/`issues`: a refusal is
+    normal gate behaviour, so 0 and N are both healthy.  Every read is
+    fail-soft — a broken source contributes nothing (never raises).
+    """
+    project_dir = pathlib.Path(project_dir)
+    by_code: dict[str, int] = {}
+    by_source = {"conductor": 0, "pm": 0}
+    # (recency sort key, entry).  Conductor events carry a timestamp; the PM
+    # ledger has none, so those rows sort as the oldest and only fill the
+    # window when fewer than `_WRITE_FACE_RECENT_LIMIT` timestamped events
+    # exist.  The key's tail keeps equal-second events in seq order.
+    ranked: list[tuple[tuple[bool, str, str, int], dict]] = []
+
+    try:
+        events = _ap_timeline.query_events(
+            _ap_timeline.timeline_path(project_dir)
+        ).events
+    except Exception:  # noqa: BLE001 — the surface must never break doctor
+        events = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        ev = str(event.get("ev") or "")
+        if not ev.startswith(_WRITE_FACE_EVENT_PREFIX):
+            continue
+        entry = _parse_write_face_event(event)
+        ts = event.get("ts")
+        entry["ts"] = str(ts) if ts else None
+        by_source["conductor"] += 1
+        code = entry.get("code") or _WRITE_FACE_UNKNOWN_CODE
+        by_code[code] = by_code.get(code, 0) + 1
+        ranked.append(
+            (
+                (entry["ts"] is not None, entry["ts"] or "", "conductor",
+                 int(event.get("seq") or 0)),
+                entry,
+            )
+        )
+
+    try:
+        rows = _ap_conductor.auto_decision_rows(project_dir)
+    except Exception:  # noqa: BLE001 — ditto
+        rows = []
+    for row in rows:
+        entry = _parse_write_face_ledger_row(row) if isinstance(row, dict) else None
+        if entry is None:
+            continue
+        by_source["pm"] += 1
+        code = entry.get("code") or _WRITE_FACE_UNKNOWN_CODE
+        by_code[code] = by_code.get(code, 0) + 1
+        ranked.append(((False, "", "pm", int(row.get("seq") or 0)), entry))
+
+    ranked.sort(key=lambda item: item[0])
+    recent = [entry for _, entry in ranked[-_WRITE_FACE_RECENT_LIMIT:]]
+    recent.reverse()  # newest first
+    return {
+        "total": by_source["conductor"] + by_source["pm"],
+        "by_code": dict(sorted(by_code.items())),
+        "by_source": by_source,
+        "recent": recent,
+    }
+
+
+def _format_write_face_doctor_line(section: dict) -> str:
+    total = int(section.get("total") or 0)
+    by_source = section.get("by_source") or {}
+    if not total:
+        return "write-face: no gate refusals (conductor=0, pm=0)"
+    codes = ", ".join(
+        f"{code}={count}"
+        for code, count in sorted((section.get("by_code") or {}).items())
+    )
+    return (
+        f"write-face: {total} gate refusal(s) "
+        f"(conductor={int(by_source.get('conductor') or 0)}, "
+        f"pm={int(by_source.get('pm') or 0)}); by_code={codes}"
     )
 
 
@@ -4935,6 +5138,28 @@ def _run_stream(cmd: list[str], *, cwd: pathlib.Path) -> bool:
     return result.returncode == 0
 
 
+def _npm_hydrate(target_root: pathlib.Path) -> bool:
+    """Repo-standard dependency hydration: `npm ci --ignore-scripts` on a fresh
+    tree, `npm install --ignore-scripts` when node_modules already exists.
+
+    Single source of truth for the install vector shared by `mw bootstrap`
+    step 2 and `mw worktree add` (design decision D-6) so the two can never
+    drift. `--ignore-scripts` is a repo hard rule (lifecycle scripts need an
+    explicit review). cmd[0] is a resolved executable because Windows Popen
+    does not apply PATHEXT resolution.
+    """
+    npm = shutil.which("npm")
+    if npm is None:
+        return False
+    target_root = pathlib.Path(target_root)
+    install_cmd = [
+        npm,
+        "install" if (target_root / "node_modules").is_dir() else "ci",
+        "--ignore-scripts",
+    ]
+    return _run_stream(install_cmd, cwd=target_root)
+
+
 def _run_capture(cmd: list[str], *, timeout: float = 60.0) -> str | None:
     """Short child with captured stdout (version probes). None = failed."""
     try:
@@ -5102,8 +5327,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         skip(2, "--fast")
     else:
         step(2, "npm ci/install --ignore-scripts")
-        install_cmd = [npm, "install" if node_modules.is_dir() else "ci", "--ignore-scripts"]
-        if not _run_stream(install_cmd, cwd=repo_root):
+        if not _npm_hydrate(repo_root):
             return fail("npm install failed — see the output above")
 
     # 3. repo build (all packages, dependency order)
@@ -6246,6 +6470,18 @@ def cmd_update_env(args: argparse.Namespace) -> int:
     return 0 if report["summary"]["healthy"] else 1
 
 
+def cmd_worktree(args: argparse.Namespace) -> int:
+    """`mw worktree add|rm|list` (G2): the ONLY legitimate way to clean up a
+    linked worktree that may carry reparse points. The six-step rm transaction
+    and its dependency injection live in worktree_cmd.py."""
+    return worktree_cmd.cmd_worktree(
+        args,
+        repo_root=_repo_root(),
+        git=_git,
+        npm_hydrate=_npm_hydrate,
+    )
+
+
 def _add_serve_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--project", required=True, help="Project directory")
     parser.add_argument("--pi-port", type=int, default=7001)
@@ -6279,6 +6515,11 @@ def _parse_args() -> argparse.Namespace:
     doctor_p.add_argument("--stale-after", type=int, default=90, metavar="SEC",
                           help="Worker heartbeat staleness threshold in seconds (default: %(default)s, "
                                "in sync with the TS HEARTBEAT_STALE_MS constant)")
+    doctor_p.add_argument("--worktree-scan-roots", default=None, metavar="DIR1;DIR2",
+                          help="AC-009 opt-in domain (c): semicolon-separated roots to hunt for "
+                               "<root>/<worktree>/node_modules junctions pointing back into this "
+                               "repo (default: off; the registry and <repo>/node_modules domains "
+                               "always run without this flag)")
 
     target_p = sub.add_parser(
         "target",
@@ -6527,6 +6768,45 @@ def _parse_args() -> argparse.Namespace:
                               help="git fetch origin in the framework cache + skill clone first "
                                    "(refresh the origin refs the behind/ahead counts use)")
 
+    worktree_p = sub.add_parser(
+        "worktree",
+        help="Linked-worktree lifecycle with reparse-point safety: add (no junction "
+             "by default), rm (six-step transaction; no step-skipping switch), "
+             "list (registry + git worktree list merged view)",
+    )
+    worktree_sub = worktree_p.add_subparsers(dest="worktree_action", required=True)
+    wt_add_p = worktree_sub.add_parser(
+        "add",
+        help="Create a detached linked worktree; --link-deps creates and registers "
+             "the <path>/node_modules junction instead of installing dependencies",
+    )
+    wt_add_p.add_argument("path", metavar="PATH", help="Worktree path to create")
+    wt_add_p.add_argument("--project", default=None, metavar="DIR",
+                          help="Control workspace for the registry (default: this repo root)")
+    wt_add_p.add_argument("--ref", default="HEAD", metavar="REF",
+                          help="Commit-ish to check out (default: %(default)s)")
+    wt_add_p.add_argument("--link-deps", dest="link_deps", action="store_true",
+                          help="Junction <path>/node_modules -> <repo>/node_modules instead of "
+                               "installing; the link is registered (AC-008)")
+    wt_add_p.add_argument("--dry-run", dest="dry_run", action="store_true",
+                          help="Print the plan and exit without writing anything")
+    wt_add_p.add_argument("--json", action="store_true", help="Emit the machine-readable result")
+    wt_rm_p = worktree_sub.add_parser(
+        "rm",
+        help="Remove a linked worktree via the fixed six-step transaction "
+             "(enumerate, validate, unlink, recheck, remove, report); an abort "
+             "preserves the scene and there is no --force/--continue switch",
+    )
+    wt_rm_p.add_argument("path", metavar="PATH", help="Linked worktree path to remove")
+    wt_rm_p.add_argument("--project", default=None, metavar="DIR",
+                         help="Control workspace for the registry (default: this repo root)")
+    wt_rm_p.add_argument("--json", action="store_true", help="Emit the machine-readable six-step report")
+    wt_list_p = worktree_sub.add_parser(
+        "list", help="Read-only merged view: registry entries + git worktree list --porcelain")
+    wt_list_p.add_argument("--project", default=None, metavar="DIR",
+                           help="Control workspace for the registry (default: this repo root)")
+    wt_list_p.add_argument("--json", action="store_true", help="Emit the merged view as JSON")
+
     toolchain_p = sub.add_parser(
         "ue-toolchain",
         help="Dual-mode UE toolchain discipline (practice guide; UE game dev: game repo + "
@@ -6641,6 +6921,7 @@ if __name__ == "__main__":
         "bootstrap": cmd_bootstrap,
         "update-env": cmd_update_env,
         "ue-toolchain": cmd_toolchain,
+        "worktree": cmd_worktree,
         "rag": cmd_rag,
     }
     sys.exit(dispatch[args.subcommand](args))

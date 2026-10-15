@@ -295,10 +295,8 @@
       ],
       "payload_text": "{\"max_parallel_keys\": 1}",
       "expected": {
-        "verdict": "reject",
-        "error_fields": [
-          "max_parallel_keys"
-        ]
+        "verdict": "accept",
+        "error_fields": []
       }
     },
     {
@@ -870,6 +868,54 @@
         "error_fields": [
           "gate_reminder_max"
         ]
+      }
+    },
+    {
+      "id": "range-max-parallel-below-floor",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"max_parallel_keys\": 0}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "max_parallel_keys"
+        ]
+      }
+    },
+    {
+      "id": "partial-key-max_workers_per_key",
+      "categories": [
+        "D2"
+      ],
+      "payload_text": "{\"max_workers_per_key\": 4}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
+      }
+    },
+    {
+      "id": "range-max-workers-per-key-low",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"max_workers_per_key\": 0}",
+      "expected": {
+        "verdict": "reject",
+        "error_fields": [
+          "max_workers_per_key"
+        ]
+      }
+    },
+    {
+      "id": "range-max-workers-per-key-min",
+      "categories": [
+        "D5"
+      ],
+      "payload_text": "{\"max_workers_per_key\": 1}",
+      "expected": {
+        "verdict": "accept",
+        "error_fields": []
       }
     }
   ]

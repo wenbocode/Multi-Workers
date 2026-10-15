@@ -80,6 +80,71 @@ export interface TerminalGaps {
  * the verbatim `## Summary` section keeps readOutputSummary compatible. */
 export declare function headline(summary: string): string;
 /**
+ * The one file the recovery judgement will read (AC-015 order): `report.md` →
+ * `report-<slug>.md` (newest first) → `output.md`, each skipped when missing or
+ * empty. `undefined` means no product is on disk and the judgement falls back
+ * to the settle summary — the I2 backfill cannot append to a summary, so that
+ * state is fail-closed (design §4.3).
+ */
+export declare function judgedProductFile(dir: string): string | undefined;
+/**
+ * The agent-authored product text the contracts judge (AC-015 order).
+ * `report.md` first because design §3.1 puts the coding `改动清单` there, and a
+ * coding worker's final reply can be terse while its report is complete
+ * (judging the reply alone would false-flip it).
+ */
+export declare function agentProductText(dir: string, summary: string): string;
+/**
+ * Does a role's report product exist (AC-015 second entry point)? A non-empty
+ * `report.md` OR `report-<slug>.md` — the SAME candidate set `agentProductText`
+ * reads, so the `judgeRecovery` gate and the judged text cannot disagree. Before
+ * AC-015 this predicate only `statSync`ed `report.md`, so a write role that
+ * produced only `report-<slug>.md` was never judged at all.
+ */
+export declare function hasReportProduct(dir: string): boolean;
+/**
+ * The recovery verdict on the CURRENT product text, before the mechanical
+ * backfill and before the terminal write (the AC-004 self-check gate). Empty
+ * for a legacy book (`type === undefined`, P-07/P-09).
+ */
+export declare function currentRecoveryMissing(opts: {
+    taskKey: string;
+    agenticdocRoot: string;
+    summary: string;
+    type: string | undefined;
+}): string[];
+/** Idempotency marker of the framework's mechanical `## 上下文来源` append. */
+export declare const MECHANICAL_CONTEXT_MARKER = "<!-- mw-mechanical-context-sources: v1 -->";
+export interface MechanicalContextSourcesResult {
+    /** Every required section is present after the attempt (empty `missing`). */
+    ok: boolean;
+    /** The mechanical section was appended by this call. */
+    appended: boolean;
+    /** Required sections still missing after the attempt (empty iff `ok`). */
+    missing: string[];
+    /** The file the append targeted, when a product candidate exists. */
+    target?: string;
+    /** Why the attempt could not satisfy the contract (fail-closed, design §4.3). */
+    reason?: "no-product-file" | "not-writable" | "already-marked" | "still-missing";
+}
+/**
+ * I2 mechanical backfill (AC-005): append the mechanical `## 上下文来源` section
+ * to the file the judgement will read, BEFORE the judgement runs, so the judged
+ * text and the landed product cannot diverge (invariant I1). Only the
+ * `MECHANICAL_SECTIONS` whitelist is ever appended (R2). Three failure classes
+ * are fail-closed (design §4.3): no product file on disk (the judgement would
+ * run on the settle summary), a product that cannot be written, and a product
+ * that still misses the section after the append. Pure append + idempotent
+ * marker: an existing marker means the file was already backfilled, so nothing
+ * is written a second time.
+ */
+export declare function appendMechanicalContextSources(opts: {
+    taskKey: string;
+    agenticdocRoot: string;
+    summary: string;
+    type: string | undefined;
+}): MechanicalContextSourcesResult;
+/**
  * Compute a run's terminal gaps in one place (T-07 requirements 1 + 6): the
  * AC-003 recovery contract over the agent product and the AC-004 change ledger
  * (`diffLedger`) over the report + trace. A migration book (no `task.md`

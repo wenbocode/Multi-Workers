@@ -121,7 +121,7 @@ def test_set_stores_flag_shaped_tokens_verbatim(
     assert set(stored) == set(_cfg.DEFAULT_CONFIG)
     # Count changed 13 -> 14 (slot-capacity T-03), 14 -> 17 (mw-gate-verdict-hardening T-18),
     # 17 -> 20 (mw-gate-verdict-hardening T-02 G1/G2 keys).
-    assert len(stored) == 20
+    assert len(stored) == 21
     _verify("VC-001", argv_tokens=len(tokens), completed_keys=len(stored), verbatim=True)
 
 

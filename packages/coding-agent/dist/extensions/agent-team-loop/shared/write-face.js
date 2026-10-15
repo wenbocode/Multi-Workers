@@ -11,7 +11,9 @@
  *
  * The repository already has five "one path vs one pattern" predicates
  * (`worker/read-scope.ts:isSameOrUnder`/`isWithinScope`/`matchedDenyGlob`,
- * `worker/worker-mode.ts:matchesWriteScopeEntry`, Python `xkey.py:fnmatch`);
+ * `shared/write-surface.ts:matchesWriteScopeEntry` — moved there from
+ * `worker/worker-mode.ts` by mw-worker-output-contract T-10 —, Python
+ * `xkey.py:fnmatch`);
  * none of them is a glob x glob operator, so this module is new. `minimatch`
  * is only the single-path semantic baseline — it is NEVER called here; the
  * intersection is the hand-written epsilon-NFA product below.

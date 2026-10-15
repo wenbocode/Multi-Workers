@@ -599,10 +599,80 @@ def dispatch_card(project_root: pathlib.Path, owner: str, stem: str) -> dict | N
     }
 
 
+# ── S2 recovery-contract checklist (mw-worker-output-contract T-06, AC-003) ───
+#
+# The card-declared report roles get their `output.md` / `report.md` section
+# contract injected into the task.md body, so the worker knows the required
+# sections BEFORE it starts instead of being stopped at settle with
+# `missing section(s): …` (AC-003; design §4.4). The section names are the
+# write-side contract of `packages/coding-agent/src/extensions/agent-team-loop/
+# worker/output-sections.ts`: the base four every report role must carry
+# (`RECOVERY_SECTIONS`) plus the role extra (`RECOVERY_TYPE_SECTIONS`).
+# Python cannot import a TS module, so the two tuples below are a verbatim
+# mirror; `test_mwoc_s2_sections.py::test_recovery_tables_match_the_ts_source`
+# parses the real TS source and fails on any drift — never two free-running
+# copies (requirement 3).
+RECOVERY_SECTIONS: tuple[str, ...] = ("结论", "证据", "残留与未验证", "上下文来源")
+RECOVERY_TYPE_SECTIONS: dict[str, tuple[str, ...]] = {
+    "coding": ("改动清单",),
+    "review": ("未覆盖面声明",),
+}
+
+# The card types whose task.md carries the checklist. Deliberately the three
+# card-declared report roles (the same keys as :data:`PRODUCER_EXTRA_ITEMS`):
+# their product IS the sectioned report the recovery contract judges. The
+# internal conductor roles (`verifier` / `reviewer` / `repair` / `phase-writer`
+# / `roadmap-writer`) settle a verdict or an artifact, not that report, and the
+# `vision` / `rag-research` buckets are out of the contract's scope — injecting
+# a section list there would announce a contract the role does not carry
+# (requirement 2: 无契约段角色不注入，不硬塞空段名).
+RECOVERY_CONTRACT_TYPES: tuple[str, ...] = ("coding", "research", "review")
+
+#: Fixed heading of the injected checklist section.
+RECOVERY_CONTRACT_HEADING = "## 交付段契约（本角色）"
+
+
+def recovery_sections_for(task_type: str) -> tuple[str, ...]:
+    """Checklist of ``task_type``: the base four plus its role extra.
+
+    Mirror of the TS ``recoverySectionsFor`` (``RECOVERY_SECTIONS`` +
+    ``RECOVERY_TYPE_SECTIONS[type]``); a type absent from the extra table
+    carries the base four only.
+    """
+    return RECOVERY_SECTIONS + RECOVERY_TYPE_SECTIONS.get(task_type, ())
+
+
+def recovery_contract_section(task_type: str) -> str:
+    """The ``## 交付段契约（本角色）`` block, or "" outside the report roles.
+
+    Every required section is rendered as a copyable ``## <段名>`` code span
+    (AC-003: 每段给出可复制的 ``## <段名>``), so the worker can paste the
+    heading verbatim. The names are the canonical ones the settle judge looks
+    for — never an invented alias. ``""`` for a type outside
+    :data:`RECOVERY_CONTRACT_TYPES` (and for an empty checklist), so a
+    card-backed render of an internal/out-of-scope role stays byte-identical.
+    """
+    if task_type not in RECOVERY_CONTRACT_TYPES:
+        return ""
+    sections = recovery_sections_for(task_type)
+    if not sections:
+        return ""
+    lines = [
+        RECOVERY_CONTRACT_HEADING,
+        "",
+        f"本角色（type: {task_type}）的恢复契约段：report.md / output.md 必须按下列标题"
+        "成节（可直接复制；缺任一段即 settle 判缺失）：",
+        "",
+    ]
+    lines.extend(f"- `## {name}`" for name in sections)
+    return "\n".join(lines)
+
+
 def _envelope_card_body(card: dict, prompt: str, task_type: str = "") -> str:
     """The canonical G-2 body: the three section headings plus the
     seed-not-an-upper-bound disclaimer (T-02 contract C3 shape), the card's
-    unclassified §1.2 extras, and this type's still-missing extras (T-13).
+    unclassified §1.2 extras, this type's still-missing extras (T-13), and the
+    S2 recovery-contract checklist (T-06/AC-003).
 
     Every section is non-empty by construction (T-10 requirement 1): a missing
     context falls back to a synthesized autopilot sentence, empty requirements
@@ -611,7 +681,11 @@ def _envelope_card_body(card: dict, prompt: str, task_type: str = "") -> str:
 
     The extras half is inert for every conductor registry type (none has an
     extras rule); for `coding`/`review`/`research` it guarantees the derived
-    task.md satisfies the service extras judge on its own (F-02).
+    task.md satisfies the service extras judge on its own (F-02). The
+    recovery-contract checklist (:func:`recovery_contract_section`) is
+    injected for those same report roles only — this function is the
+    card-backed branch of :func:`render_task_md`, so a `card=None` legacy
+    render never sees it.
     """
     context = str(card.get("context") or "").strip()
     requirements = (
@@ -639,11 +713,24 @@ def _envelope_card_body(card: dict, prompt: str, task_type: str = "") -> str:
         body = str(extra.get("body") or "").strip()
         if title and body:
             parts += [f"## {title}", "", body, ""]
-    text = "\n".join([*parts, ENVELOPE_CARD_SEED_DISCLAIMER])
+    # T-13 extras judgement runs on the card's own declarations BEFORE the
+    # S2 checklist is appended: the checklist names the recovery sections, it
+    # is not a declaration of the §1.2 extras, so it must not suppress a
+    # still-missing extras fallback line (`未覆盖面声明` is both a review
+    # recovery section and a review extra item — the names coincide by design).
+    declared_text = "\n".join(parts)
     required = PRODUCER_EXTRA_ITEMS.get(task_type)
+    missing = [item for item in required if item not in declared_text] if required else []
+    # S2/AC-003: the role's recovery-contract checklist. The presence guard
+    # makes the injection idempotent — a card that already declares the heading
+    # (or a re-render of an already-seeded body) is never given a second copy.
+    if RECOVERY_CONTRACT_HEADING not in declared_text:
+        contract = recovery_contract_section(task_type)
+        if contract:
+            parts += [contract, ""]
+    text = "\n".join([*parts, ENVELOPE_CARD_SEED_DISCLAIMER])
     if not required:
         return text
-    missing = [item for item in required if item not in text]
     if not missing:
         return text
     worker_dir = str(card.get("worker_dir") or "").strip()

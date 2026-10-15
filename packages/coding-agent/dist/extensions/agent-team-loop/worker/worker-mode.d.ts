@@ -85,6 +85,13 @@ export declare function resolveToolIdleMs(idleMs: number): number;
 export declare function checkpointAnchorMs(budgetMs: number): number;
 /** Deadline-steer time: budget minus min(5m, budget/4). */
 export declare function steerAtMs(budgetMs: number): number;
+/** T-04/AC-009: freshness floor for a landing — one minute, so a small smoke
+ * budget (anchor 60s) still has an exercisable window. */
+export declare const LAND_FRESH_FLOOR_MS = 60000;
+/** T-04/AC-009: how recent the newest landing must be to count as "fresh"
+ * (a writeless run that is still producing). `anchor/3` floored at 1m: the
+ * default anchor (30m) yields 10m, exactly the checkpoint refresh cadence. */
+export declare function landFreshMs(anchorMs: number): number;
 export interface ConvergenceSignals {
     elapsedMs: number;
     /** Checkpoint anchor (min(30m, budget/2)) — the point past which zero
@@ -95,6 +102,17 @@ export interface ConvergenceSignals {
     phasesDone: number;
     /** Highest per-target repeat count for reads. */
     repeatTop: number;
+    /** T-04/AC-009 writeless landing signals, sourced from `parseWriteFileEvents`
+     * (the change ledger the settle judgement reads — never `[TOOL] worker_file`
+     * counts). Undefined for write roles ⇒ the legacy rule below applies byte for
+     * byte; `landed: 0` is a signal, not an absence of one. */
+    landed?: number;
+    /** Age of the newest landing on disk (ms). Undefined = no surviving target. */
+    lastLandingAgeMs?: number;
+    /** A non-empty product exists on disk (channel-independent ground truth). */
+    artifactPresent?: boolean;
+    /** `progress.md` carries the role's own completion record. */
+    progressDone?: boolean;
 }
 /** Machine divergence heuristic (AC-004, advisory only — the PM with the
  * fullest context judges and decides):
@@ -102,8 +120,41 @@ export interface ConvergenceSignals {
  *   pattern (22 minutes of reads, generation never got time to land).
  * - mid: phase framework present but nothing completed past the anchor, or
  *   the same target read ≥4 times (spinning).
- * - low: writes advancing — implementation underway. */
+ * - low: writes advancing — implementation underway.
+ *
+ * T-04/AC-009: when the caller supplies landing signals (`landed !== undefined`,
+ * writeless roles), the counts `writes`/`uniq_targets` stop being the criterion
+ * (they are structurally 0 for those roles) and the ledger + disk facts decide:
+ * - W2a: a non-empty product on disk ⇒ low (strongest convergence evidence;
+ *   outranks a missed ledger event).
+ * - W1: nothing landed at all past the anchor ⇒ high (unchanged intent).
+ * - W2b: a fresh landing plus the role's own `converging=yes` note ⇒ low.
+ * - W3/W4: landed-but-stale (or nothing before the anchor) — only read spin or
+ *   stalled phases are mid, everything else is low. */
 export declare function computeRisk(s: ConvergenceSignals): "low" | "mid" | "high";
+/** T-04/AC-009: what the writeless checkpoint actually observes. */
+export interface LandingSignals {
+    /** Distinct `[WRITE_FILE]` targets (parseWriteFileEvents dedup). */
+    landed: number;
+    /** Age of the newest surviving landing; undefined = no target on disk. */
+    lastLandingAgeMs: number | undefined;
+    /** A non-empty product exists on disk. */
+    artifactPresent: boolean;
+    /** `progress.md` carries the role's own completion record. */
+    progressDone: boolean;
+}
+/** T-04/AC-009: landing signals for a writeless run, from the SAME ledger the
+ * settle judgement reads. `parseWriteFileEvents` (not the `[TOOL] worker_file`
+ * lines, not a second extractor) supplies the target set, so the two views
+ * cannot diverge; disk truth (non-empty artifact, surviving targets, fresh
+ * evidence) is the fallback when the ledger missed an event. Read-only. */
+export declare function collectLandingSignals(opts: {
+    taskDir: string;
+    traceText: string;
+    progressText: string;
+    startedAtMs: number;
+    nowMs: number;
+}): LandingSignals;
 interface TaskMeta {
     type: string;
     /** task.md `phase:` header (the phase axis of `required = role.require OR
@@ -263,9 +314,30 @@ interface ShellToken {
 /** Split a shell command into quote-aware tokens; control operators become
  * their own tokens, so `echo "a > b"` never yields a redirect. */
 export declare function tokenizeShellCommand(command: string): ShellToken[];
+/** AC-017(a) / design §5.1: **strip data regions before the lexer**. A
+ * PowerShell here-string body and a POSIX heredoc body are DATA: a literal `>`
+ * or `->` inside them must never become a redirect operator, and a quoted
+ * fragment inside them must never become a write target. The stripping is a
+ * separate, independently testable stage (called first by
+ * `extractBashWriteCandidates`), not a regex patch on the extractor's targets. */
+export declare function stripDataRegions(command: string): string;
 /** Extract the KNOWN write targets of a bash command. An empty result means
  * "not a recognized write" — the caller must allow it (P1, DD-03). */
 export declare function extractBashWriteCandidates(command: string): BashWriteCandidate[];
+/** AC-017 / design §5.2-5.3: the ledger-facing split of one command's
+ * extraction. `recorded` are targets from a write verb position that resolved
+ * to a literal (verbatim) path; `unresolved` are write-verb targets that stayed
+ * dynamic and are stated as `[WRITE_UNRESOLVED]` instead of being guessed. The
+ * non-file targets (`.`, `..`, `/`) are dropped here — the guard still consumes
+ * them for its scope judgement, but they are not change-history entries. */
+export interface LedgerWriteClassification {
+    recorded: string[];
+    unresolved: Array<{
+        pattern: string;
+        target: string;
+    }>;
+}
+export declare function classifyLedgerTargets(command: string): LedgerWriteClassification;
 /** The write-surface verdict for one extracted target: a non-verbatim target is
  * not statically determinable (`allow-unknown`, fail-open); otherwise the deny
  * list comes first (absolute priority), then the role-classified default face,
@@ -280,6 +352,15 @@ export declare function extractBashWriteCandidates(command: string): BashWriteCa
  *   present, the legacy `write_scope:` when it is absent, and their
  *   INTERSECTION when both are present (fail-closed: the legacy carrier can
  *   only narrow). The own taskDir/evidence stay writable either way.
+ *
+ * T-10: the ALLOW face (own taskDir + own-key `<key>/evidence/**`) is resolved
+ * by `shared/write-surface.ts::resolveOwnWriteTarget` — the same single source
+ * the dispatch predicate and `worker_file` use — so this guard owns no second
+ * path-domain/`write_scope` implementation. The SHELL basis is `project-root`:
+ * a bash target is a cwd-resolved literal, so a keyDir-relative `evidence/x.md`
+ * is refused (DR1 ruling, locked by tests — a designed difference, not a bug).
+ * The deny table stays the role-classified shell table (only it makes
+ * `packages/**` writeless-only).
  *
  * `toolLabel` only phrases the block reason (`bash` keeps the historical
  * "bash write" wording for the research audit line). */

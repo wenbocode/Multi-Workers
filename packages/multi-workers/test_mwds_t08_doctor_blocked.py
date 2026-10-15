@@ -65,6 +65,7 @@ def _gate_text(
     status: str = "pending",
     stage: int | None = 1,
     created_at: str | None = None,
+    key: str = "",
 ) -> str:
     """A minimal parser-valid gate file. `expires_at`/`default_action` are
     declared so the gate itself never fires I2 — the only variable under test
@@ -77,7 +78,7 @@ def _gate_text(
         "gate_schema: 2",
         f"kind: {kind}",
         f"stage: {'' if stage is None else stage}",
-        "key: ",
+        f"key: {key}",
         f"created_at: {created_at}",
         "created_by: conductor",
         "question: proceed?",
@@ -136,7 +137,10 @@ def _write_queue(project: pathlib.Path, rows: list[tuple[str, str, str]]) -> pat
 
 
 def _make_task_md(project: pathlib.Path, key: str) -> pathlib.Path:
-    task_dir = project / ".agenticdoc" / key
+    # The row must sit under `.agenticdoc/<key>/workers/...`: `worker_owner_key`
+    # (the canonical owner predicate) resolves a row's key from that path
+    # segment, which is what the per-key axis (T-11/AC-002) joins on.
+    task_dir = project / ".agenticdoc" / key / "workers" / f"ap-{key}-t01"
     task_dir.mkdir(parents=True, exist_ok=True)
     task_md = task_dir / "task.md"
     task_md.write_text("type: coding\n\nwork\n", encoding="utf-8", newline="\n")
@@ -248,7 +252,9 @@ def test_b_no_timeline_means_not_blocked(tmp_path: pathlib.Path) -> None:
 @pytest.mark.parametrize("status", ["running", "pending"])
 def test_c_non_terminal_row_forces_false(tmp_path: pathlib.Path, status: str) -> None:
     task_md = _make_task_md(tmp_path, "t-1")
-    _write_gate(tmp_path, "gate-0001", _gate_text("gate-0001"))
+    # the gate carries the row's key: another key's in-flight row must not
+    # explain this gate away (per-key axis, T-11/AC-002)
+    _write_gate(tmp_path, "gate-0001", _gate_text("gate-0001", key="t-1"))
     _write_beat(tmp_path, _iso_ago(0))
     _write_queue(tmp_path, [("t-1", status, str(task_md))])
     report = _report(tmp_path)
@@ -315,7 +321,7 @@ def test_e_missing_gates_dir_is_false(tmp_path: pathlib.Path) -> None:
 def test_f_doctor_is_zero_write(tmp_path: pathlib.Path, capsys) -> None:
     _make_service_running(tmp_path)
     task_md = _make_task_md(tmp_path, "t-1")
-    _write_gate(tmp_path, "gate-0001", _gate_text("gate-0001"))
+    _write_gate(tmp_path, "gate-0001", _gate_text("gate-0001", key="t-1"))
     _write_beat(tmp_path, _iso_ago(0))
     _write_queue(tmp_path, [("t-1", "running", str(task_md))])
     before = _tree_hashes(tmp_path)
@@ -375,7 +381,9 @@ def test_verify_marker(tmp_path: pathlib.Path, capsys) -> None:
         _write_gate(
             project,
             "gate-0001",
-            _gate_text("gate-0001", status="approved" if approved else "pending"),
+            _gate_text(
+                "gate-0001", status="approved" if approved else "pending", key="t-1"
+            ),
         )
         _write_beat(project, _iso_ago(stale_hours))
         if rows:

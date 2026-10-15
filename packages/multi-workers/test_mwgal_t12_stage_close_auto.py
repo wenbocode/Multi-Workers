@@ -653,10 +653,11 @@ def test_48h_fallback_escalates_but_never_closes_the_stage(
 # ── frozen surfaces: no new field / event / config key ──────────────────────
 
 def test_no_new_config_key_and_no_new_frozen_field() -> None:
-    """AC-011 / T-12 req. 8: the 20-key config schema, the frozen 40-name gate
+    """AC-011 / T-12 req. 8: the 21-key config schema, the frozen 40-name gate
     order and the gate-kind set are untouched by this change."""
     expected_config_keys = {
         "enabled", "paused", "poll_interval_sec", "max_parallel_keys",
+        "max_workers_per_key",
         "round_budget", "worker_timeout_min", "l2_read_file_cap",
         "l2_read_byte_cap", "advance_stall_ticks", "xkey_repair",
         "xkey_verify_cmd", "xkey_verify_timeout_s", "xkey_verify_cwd",

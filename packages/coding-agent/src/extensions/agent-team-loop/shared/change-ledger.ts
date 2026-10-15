@@ -134,6 +134,80 @@ export function appendWriteFileEvent(tracePath: string, filePath: string): void 
  * value. */
 const WRITE_FILE_LINE_RE = /^\[WRITE_FILE\][ \t]+path=(.+?)[ \t]*$/;
 
+/** AC-017/T-02: a shell write verb whose target cannot be statically resolved
+ * (`$VAR` with no literal binding, a glob, an opaque placeholder) is stated as
+ * this event instead of a `[WRITE_FILE]`. It is an explicit "a write happened,
+ * path unknown" record — NOT a recorded path: the reconciliation reads
+ * `[WRITE_FILE]` only, so this line can never fake a write, and the
+ * `unjudgeable` gate ("zero usable `[WRITE_FILE]` events") is not closed by it.
+ * Before this split the producer wrote every extracted target, resolved or not,
+ * as `[WRITE_FILE]`; a mis-lexed here-string body then entered the ledger as a
+ * valid path. */
+export const UNRESOLVED_WRITE_EVENT = "[WRITE_UNRESOLVED]";
+
+/** Fold CR/LF and other control characters to the two-character `\\n` text so an
+ * unresolved target can never split the event across physical trace lines (the
+ * measured footgun of the old unconditional recorder: a `\n`-bearing target
+ * wrote a truncated event plus junk continuation lines). */
+function oneLine(value: string): string {
+	return value.replace(/[\r\n\u0000-\u001f]+/g, "\\n");
+}
+
+/** The single source of the unresolved-event grammar (mirrors
+ * {@link formatWriteFileEvent}). */
+export function formatUnresolvedWriteEvent(pattern: string, target: string): string {
+	return `${UNRESOLVED_WRITE_EVENT} pattern=${pattern} target=${oneLine(target)}`;
+}
+
+/** Best-effort append of one `[WRITE_UNRESOLVED]` event (same contract as
+ * {@link appendWriteFileEvent}: a trace write failure never breaks the caller). */
+export function appendUnresolvedWriteEvent(tracePath: string, pattern: string, target: string): void {
+	try {
+		fs.mkdirSync(path.dirname(tracePath), { recursive: true });
+		fs.appendFileSync(tracePath, `${formatUnresolvedWriteEvent(pattern, target)}\n`, "utf8");
+	} catch {
+		// Diagnostic append — best effort.
+	}
+}
+
+/** One parsed `[WRITE_UNRESOLVED]` line. */
+export interface UnresolvedWriteEvent {
+	pattern: string;
+	target: string;
+}
+
+/** `[WRITE_UNRESOLVED] pattern=<label> target=<one-line>`; the pattern is a
+ * single token, the target runs to end of line (it may contain spaces). */
+const UNRESOLVED_WRITE_LINE_RE = /^\[WRITE_UNRESOLVED\][ \t]+pattern=(\S+)[ \t]+target=(.*)$/;
+
+/** Unresolved write statements, in file order. Never throws; a malformed line
+ * is skipped, and a `[WRITE_FILE]` line never matches (the two grammars are
+ * distinct, so a legacy consumer of `parseWriteFileEvents` ignores these). */
+export function parseUnresolvedWriteEvents(traceText: string): UnresolvedWriteEvent[] {
+	const out: UnresolvedWriteEvent[] = [];
+	for (const line of traceText.split(/\r?\n/)) {
+		const match = UNRESOLVED_WRITE_LINE_RE.exec(line);
+		if (match === null) continue;
+		out.push({ pattern: match[1], target: match[2] });
+	}
+	return out;
+}
+
+/** Is a parsed `[WRITE_FILE]` path a *usable* recorded event (AC-017(d))?
+ * The producer only emits a normalized path for a statically resolved target,
+ * so a machine event is a repo path token; a historical junk event from the
+ * pre-AC-017 recorder (`` `:1175 ``, `, .agenticdoc/_aut + opilot)`) is not one.
+ * Before this predicate any single garbage line closed the `unjudgeable` gate
+ * and could flip a run green. Shape is used here ONLY to withhold event
+ * validity (an unusable event makes the run *unjudgeable*, never a recorded
+ * write) — the positive signal (the write verb) is upstream in the extractor,
+ * so R9's "never shape alone" holds. */
+function isRecordedEventUsable(filePath: string, projectRoot?: string): boolean {
+	if (filePath === "") return false;
+	if (isPathCandidate(filePath)) return true;
+	return isExistingDotlessCandidate(filePath, projectRoot);
+}
+
 /** The repo-relative form of `target` when it sits under `base` (default: the
  * worker's cwd, which the launcher sets to the project root); otherwise the
  * path unchanged. Emitting a repo-relative path keeps the trace portable
@@ -336,14 +410,47 @@ function hasUnexpandedVariable(token: string): boolean {
 	return UNEXPANDED_VARIABLE_RE.test(token);
 }
 
-/** A heading line (ATX). */
-const HEADING_RE = /^\s*#{1,6}\s+(.*)$/;
+/** A heading line (ATX): capture 1 is the `#` run (the level), capture 2 the
+ * title. */
+const HEADING_RE = /^\s*(#{1,6})\s+(.*)$/;
 
+/** Section-number / list prefix a report may put before a section name
+ * (`### 7. 类型检查与改动面`, `- 改动清单`, `（1）变更清单`). Stripped before the
+ * alias comparison so the number cannot shadow the anchor. */
+const HEADING_PREFIX_RE = /^(?:\d+[.、)）]\s*|[（(]\s*\d+\s*[)）]\s*|[-*+]\s+|第\s*\d+\s*[章节]?\s*[.、]?\s*)+/;
+
+/** Clause separators inside a heading. The T-21 QG corpus heading
+ * `### 结论 6｜可度量：改动前后的期望变化…` declares via a clause, not the title
+ * head (`mwgal-t21-qg-fixes.test.ts` locks that verdict). */
+const TITLE_CLAUSE_RE = /[：:｜|]/;
+
+/** ASCII-only lower-case fold: heading and alias are compared in one case
+ * class, and the CJK bytes must not be touched by a locale fold. */
+function asciiLower(text: string): string {
+	return text.replace(/[A-Z]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) + 32));
+}
+
+/** Is `line` the report's declaration (change-list) section heading?
+ *
+ * T-11: the level-1 title is the report's own title, never a section — a real
+ * event's `# T-02 · 变更账本抽取器加固…` matched the broad `变更` alias and
+ * turned the document header (`card:` line, `目标锚点：.agenticdoc/goal.md`)
+ * into a declaration body. Only level >= 2 participates. The alias is then
+ * anchored: after stripping the section-number/list prefix, folding case and
+ * collapsing whitespace, it must start the title or one of its `：`/`｜`
+ * clauses. `includes` is gone, so `### 7. 类型检查与改动面` no longer matches,
+ * while `## 改动清单（本卡写面）` and `## 变更清单` still do. */
 function isLedgerHeading(line: string, aliases: readonly string[] = LEDGER_SECTION_ALIASES): boolean {
 	const heading = HEADING_RE.exec(line);
 	if (heading === null) return false;
-	const title = heading[1].toLowerCase();
-	return aliases.some((alias) => title.includes(alias.toLowerCase()));
+	if (heading[1].length < 2) return false; // H1 is the document title, not a section
+	const title = asciiLower(heading[2].replace(HEADING_PREFIX_RE, "").replace(/\s+/g, " ").trim());
+	if (title === "") return false;
+	const clauses = title.split(TITLE_CLAUSE_RE).map((clause) => clause.trim());
+	return aliases.some((alias) => {
+		const needle = asciiLower(alias);
+		return clauses.some((clause) => clause.startsWith(needle));
+	});
 }
 
 /** Section body of the `改动清单` block: from the heading to the next heading.
@@ -846,6 +953,10 @@ export function diffLedger(reportText: string, traceText: string, options?: Ledg
 		declared = dedupe(collectDeclared(body, options?.projectRoot));
 	}
 	const recorded = dedupe([...recordedEvents, ...delivered]);
+	// AC-017(d): the `unjudgeable` gate keys off USABLE events, not the raw line
+	// count (a garbage event must not close it). The `delivered` side counts too:
+	// a writeless run whose product is verified on disk is judgeable.
+	const usableEvents = dedupe(recordedEvents.filter((file) => isRecordedEventUsable(file, options?.projectRoot)));
 	// T-17b: split the declared-but-unrecorded set into framework infrastructure
 	// (warn-only, never a gap) and genuinely unrecorded worker writes (AC-004
 	// red). Ownership, not mtime: every infra file's mtime falls inside a
@@ -872,7 +983,7 @@ export function diffLedger(reportText: string, traceText: string, options?: Ledg
 	// is nothing to reconcile, so it is trivially green. An infra-only or
 	// unresolvable-only declaration has no real write to reconcile either, so the
 	// gate keys off the judgeable (existing, non-infra) declaration set.
-	if (recorded.length === 0) {
+	if (usableEvents.length === 0 && delivered.length === 0) {
 		return { declared, recorded, extra: [], infra, unresolvable, unjudgeable: judgeable.length > 0 };
 	}
 	return { declared, recorded, extra: judgeable, infra, unresolvable, unjudgeable: false };

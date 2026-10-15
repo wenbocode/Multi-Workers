@@ -113,6 +113,31 @@ export declare function formatWriteFileEvent(filePath: string): string;
  * "failed write ⇒ no event" is enforced by the caller only calling this after
  * success. */
 export declare function appendWriteFileEvent(tracePath: string, filePath: string): void;
+/** AC-017/T-02: a shell write verb whose target cannot be statically resolved
+ * (`$VAR` with no literal binding, a glob, an opaque placeholder) is stated as
+ * this event instead of a `[WRITE_FILE]`. It is an explicit "a write happened,
+ * path unknown" record — NOT a recorded path: the reconciliation reads
+ * `[WRITE_FILE]` only, so this line can never fake a write, and the
+ * `unjudgeable` gate ("zero usable `[WRITE_FILE]` events") is not closed by it.
+ * Before this split the producer wrote every extracted target, resolved or not,
+ * as `[WRITE_FILE]`; a mis-lexed here-string body then entered the ledger as a
+ * valid path. */
+export declare const UNRESOLVED_WRITE_EVENT = "[WRITE_UNRESOLVED]";
+/** The single source of the unresolved-event grammar (mirrors
+ * {@link formatWriteFileEvent}). */
+export declare function formatUnresolvedWriteEvent(pattern: string, target: string): string;
+/** Best-effort append of one `[WRITE_UNRESOLVED]` event (same contract as
+ * {@link appendWriteFileEvent}: a trace write failure never breaks the caller). */
+export declare function appendUnresolvedWriteEvent(tracePath: string, pattern: string, target: string): void;
+/** One parsed `[WRITE_UNRESOLVED]` line. */
+export interface UnresolvedWriteEvent {
+    pattern: string;
+    target: string;
+}
+/** Unresolved write statements, in file order. Never throws; a malformed line
+ * is skipped, and a `[WRITE_FILE]` line never matches (the two grammars are
+ * distinct, so a legacy consumer of `parseWriteFileEvents` ignores these). */
+export declare function parseUnresolvedWriteEvents(traceText: string): UnresolvedWriteEvent[];
 /** The repo-relative form of `target` when it sits under `base` (default: the
  * worker's cwd, which the launcher sets to the project root); otherwise the
  * path unchanged. Emitting a repo-relative path keeps the trace portable

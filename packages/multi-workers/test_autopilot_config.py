@@ -47,7 +47,7 @@ def true_str(b: bool) -> str:
         ({"poll_interval_sec": 0}, "poll_interval_sec"),
         ({"poll_interval_sec": "4"}, "poll_interval_sec"),
         ({"poll_interval_sec": True}, "poll_interval_sec"),
-        ({"max_parallel_keys": 1}, "max_parallel_keys"),
+        ({"max_parallel_keys": 0}, "max_parallel_keys"),
         ({"max_parallel_keys": "2"}, "max_parallel_keys"),
         ({"enabled": "yes"}, "enabled"),
         ({"paused": 1}, "paused"),
@@ -109,12 +109,14 @@ def test_save_rejects_invalid(tmp_path: pathlib.Path) -> None:
 
 # ── config: no cache short-circuit / defaults / encoding ─────────────────────
 
-def test_default_config_has_20_keys_in_order() -> None:
+def test_default_config_has_21_keys_in_order() -> None:
     # Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode),
     # 14 -> 17 in mw-gate-verdict-hardening T-18 (G5/G6: launcher_max_workers,
     # dispatch_max_per_scan, queue_alarm_delta), 17 -> 20 in T-02 (G1/G2:
-    # l3_abort_retry_limit, gate_reminder_after_min, gate_reminder_max).
-    assert len(cfg.DEFAULT_CONFIG) == 20
+    # l3_abort_retry_limit, gate_reminder_after_min, gate_reminder_max),
+    # 20 -> 21 in mw-dynamic-concurrency M-03 (max_workers_per_key inserted
+    # right after max_parallel_keys).
+    assert len(cfg.DEFAULT_CONFIG) == 21
     # T-02 appends the G1/G2 keys last, shifting the T-18 tail.
     assert list(cfg.DEFAULT_CONFIG)[-1] == "gate_reminder_max"
     assert list(cfg.DEFAULT_CONFIG)[-2] == "gate_reminder_after_min"
@@ -137,7 +139,7 @@ def test_default_config_has_20_keys_in_order() -> None:
 
 def test_partial_file_returns_only_written_keys(tmp_path: pathlib.Path) -> None:
     """load_config never fills defaults: a partial config.json yields exactly
-    the keys it carries. The complete 20-key view has its own sources
+    the keys it carries. The complete 21-key view has its own sources
     (default_config() / effective_config.load_effective)."""
     cfg.invalidate_cache()
     path = cfg.config_path(tmp_path)
@@ -147,11 +149,11 @@ def test_partial_file_returns_only_written_keys(tmp_path: pathlib.Path) -> None:
     assert set(loaded) == {"advance_stall_ticks"}
     assert loaded["advance_stall_ticks"] == 7
     assert "poll_interval_sec" not in loaded  # no default fill
-    # The complete 20-key view has its own sources.
+    # The complete 21-key view has its own sources.
     # Count changed 13 -> 14 (slot-capacity T-03), 14 -> 17 (mw-gate-verdict-hardening T-18),
-    # 17 -> 20 (T-02 G1/G2 keys).
-    assert len(cfg.default_config()) == 20
-    assert len(ec.load_effective(tmp_path).values) == 20
+    # 17 -> 20 (T-02 G1/G2 keys), 20 -> 21 (MDC M-03 max_workers_per_key).
+    assert len(cfg.default_config()) == 21
+    assert len(ec.load_effective(tmp_path).values) == 21
     _verify("VC-016", partial_keys=len(loaded), default_keys=len(cfg.default_config()),
             effective_keys=len(ec.load_effective(tmp_path).values),
             explicit_wins=loaded["advance_stall_ticks"])
@@ -185,7 +187,7 @@ def test_t02_key_single_payload_accepted(
     assert eff.origins[key] == "project"
     # The other keys still resolve to their built-in defaults.
     assert eff.values["gate_reminder_max"] == cfg.DEFAULT_CONFIG["gate_reminder_max"]
-    assert len(eff.values) == 20
+    assert len(eff.values) == 21
     _verify("VC-019", key=key, accepted=default, origin=eff.origins[key], bounds=bounds)
 
 

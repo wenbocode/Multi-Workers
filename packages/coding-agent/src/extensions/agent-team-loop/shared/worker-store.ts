@@ -153,9 +153,26 @@ export class WorkerStore {
 		this.lockPath = path.join(agenticdocRoot, "..", ".mw", "workers.lock");
 	}
 
+	/** The queue file this store reads and writes. Exposed so a caller that must
+	 * stay inside the store's own critical section (the PM dispatcher derives the
+	 * write-face base from the `.agenticdoc` root) anchors on the SAME path
+	 * instead of re-deriving — and possibly drifting from — this construction
+	 * (D-114). */
+	get queuePath(): string {
+		return this.filePath;
+	}
+
+	/** The store's exclusive queue lock (`<agenticdocRoot>/../.mw/workers.lock`).
+	 * A caller that already holds it must use {@link upsertWithinLock}, never
+	 * {@link upsert} (a nested `acquireLock` backs off and then raises). */
+	get lockFilePath(): string {
+		return this.lockPath;
+	}
+
 	/** Raw queue lines with the trailing newline dropped; `[]` when the file is
-	 * absent or empty. Keeping the lines verbatim is what lets {@link upsert}
-	 * rewrite one row without touching any other byte of the file (AC-023). */
+	 * absent or empty. Keeping the lines verbatim is what lets
+	 * {@link upsertWithinLock} rewrite one row without touching any other byte
+	 * of the file (AC-023). */
 	private readRawLines(): string[] {
 		if (!fs.existsSync(this.filePath)) return [];
 		const lines = fs.readFileSync(this.filePath, "utf8").split("\n");
@@ -190,32 +207,45 @@ export class WorkerStore {
 	async upsert(entry: WorkerEntry): Promise<void> {
 		const release = await acquireLock(this.lockPath);
 		try {
-			const raw = this.readRawLines();
-			const replacement = serializeWorkerLine(entry);
-			const idx = raw.findIndex((line) => {
-				if (line.trim() === "" || line.trimStart().startsWith("#")) return false;
-				const parsed = parseWorkerLine(line);
-				return parsed.ok && parsed.entry.taskKey === entry.taskKey;
-			});
-			let lines: string[];
-			if (idx >= 0) {
-				// In-place row replacement; every other line (including unreadable
-				// rows and comments) stays byte-identical.
-				lines = raw.map((line, i) => (i === idx ? replacement : line));
-			} else if (raw.length === 0) {
-				// Brand-new queue: stamp the current layout version.
-				lines = [QUEUE_HEADER_V2, replacement];
-			} else {
-				// Existing file: append, and never add a header retroactively (P-018).
-				lines = [...raw, replacement];
-			}
-			const content = `${lines.join("\n")}\n`;
-			const tmpPath = `${this.filePath}.tmp`;
-			fs.writeFileSync(tmpPath, content, "utf8");
-			fs.renameSync(tmpPath, this.filePath);
+			this.upsertWithinLock(entry);
 		} finally {
 			release();
 		}
+	}
+
+	/** Lock-free upsert: the single implementation of the queue write — row
+	 * format, replace-by-task-key, `# mw-queue:v2` on a brand-new queue, and
+	 * tmp+rename. {@link upsert} is "take the lock, call this, release".
+	 *
+	 * PRECONDITION: the caller already holds {@link lockFilePath}
+	 * (`.mw/workers.lock`). This method does NOT acquire the lock and does NOT
+	 * release it. Calling it without the lock is a data race; calling
+	 * {@link upsert} while holding the lock deadlocks (nested `acquireLock`
+	 * backs off and then raises, RQ-D3). */
+	upsertWithinLock(entry: WorkerEntry): void {
+		const raw = this.readRawLines();
+		const replacement = serializeWorkerLine(entry);
+		const idx = raw.findIndex((line) => {
+			if (line.trim() === "" || line.trimStart().startsWith("#")) return false;
+			const parsed = parseWorkerLine(line);
+			return parsed.ok && parsed.entry.taskKey === entry.taskKey;
+		});
+		let lines: string[];
+		if (idx >= 0) {
+			// In-place row replacement; every other line (including unreadable
+			// rows and comments) stays byte-identical.
+			lines = raw.map((line, i) => (i === idx ? replacement : line));
+		} else if (raw.length === 0) {
+			// Brand-new queue: stamp the current layout version.
+			lines = [QUEUE_HEADER_V2, replacement];
+		} else {
+			// Existing file: append, and never add a header retroactively (P-018).
+			lines = [...raw, replacement];
+		}
+		const content = `${lines.join("\n")}\n`;
+		const tmpPath = `${this.filePath}.tmp`;
+		fs.writeFileSync(tmpPath, content, "utf8");
+		fs.renameSync(tmpPath, this.filePath);
 	}
 
 	findByKey(taskKey: string): WorkerEntry | undefined {

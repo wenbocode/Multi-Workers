@@ -719,7 +719,14 @@ def test_goal_change_gate_carries_time_effectiveness_defaults(
         line for line in mw_common.format_doctor_text(report).splitlines()
         if line.startswith("gates:")
     ]
-    assert not gates_text_lines
+    # T-11/AC-002 (per-key blocked_on_human): the goal-change gate is global
+    # (no key), so no other key's in-flight row explains it away and a live
+    # conductor marks it BLOCKED_ON_HUMAN. That alert is about the missing
+    # HUMAN ANSWER, not the (now complete) time-effectiveness defaults, so the
+    # line is present and carries exactly the blocked suffix.
+    assert len(gates_text_lines) == 1, gates_text_lines
+    assert "BLOCKED_ON_HUMAN" in gates_text_lines[0]
+    assert "missing" not in gates_text_lines[0]
     _verify(
         "VC-024",
         site="goal-change",

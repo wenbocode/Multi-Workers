@@ -714,11 +714,12 @@ def test_closed_legacy_to_stalled_loop_is_not_reachable_from_the_conductor(
 # ── frozen surfaces: no new config key, no new kind, no new field ────────────
 
 def test_no_new_config_key_and_no_new_frozen_field() -> None:
-    """VC-9 (AC-008/AC-011 req. 7): the 20-key config schema, the frozen 40-name
+    """VC-9 (AC-008/AC-011 req. 7): the 21-key config schema, the frozen 40-name
     gate order and the closed gate-kind set are untouched; the re-attest carrier
     lives in the existing `context_refs` dimension."""
     expected_config_keys = {
         "enabled", "paused", "poll_interval_sec", "max_parallel_keys",
+        "max_workers_per_key",
         "round_budget", "worker_timeout_min", "l2_read_file_cap",
         "l2_read_byte_cap", "advance_stall_ticks", "xkey_repair",
         "xkey_verify_cmd", "xkey_verify_timeout_s", "xkey_verify_cwd",

@@ -21,9 +21,41 @@ import { isGoalEstablished, readGoal } from "./goal-reader.js";
 import { StateManager } from "./state-manager.js";
 import { dispatchTask } from "./task-dispatcher.js";
 import { applyWatchWidget, claimState, claimSyncWarningText, deliverPmAlert, deliverWorkerResult, displaySummary, makeScopedDocGateNotifier, ownerKeyOf, readOutputBody, readSpawnFailure, registerAdvancePhaseTool, registerMwCommands, registerMwTools, registerPmKeyCommands, registerPmSaveCommand, registerSwitchKeyTool, registerWatchCommand, registerWorkerCommands, registerWorkerTools, renderWatchLines, setWatchWidget, takeOverKey, WATCH_ENTRY_TYPE, windowClaimId, } from "./ui-bridge.js";
+/**
+ * Terminal-readback watermark semantics (AC-011 / AC-012 / AC-013):
+ *
+ * - `notified` (process-local Set, one per window session) is the DELIVERY
+ *   watermark: the open-time baseline ∪ rows consumed silently while no key is
+ *   watched (C3) ∪ rows actually delivered after the owner gate (C1). A row in
+ *   it is never delivered again by this window. A row whose owner key differs
+ *   from the watched key is deliberately NOT recorded, so taking over that key
+ *   later still delivers it exactly once.
+ * - `readbackDelivered` (process-local Set) is the subset of `notified` that was
+ *   actually delivered. It feeds ONLY the AC-012/AC-013 unread counter — it
+ *   never suppresses a delivery (the `notified` check does that).
+ * - `AckStore` (`_workers.acked`, project-level, persisted) is the PM's HANDLING
+ *   watermark, NOT a delivery ledger: `done` rows need no ack, an unacked row is
+ *   not therefore undelivered, `ack()` rewrites `ackedAt` on re-ack, and it is
+ *   read only for the widget/unread split. No branch ever replays a readback
+ *   because of ack state.
+ */
 const POLL_INTERVAL_MS = 4000; // < 5s per AC-001
 function isTerminal(status) {
     return status === "done" || status === "failed" || status === "needs-clarification" || status === "lost";
+}
+/** AC-012/AC-013 unread count: terminal queue rows whose readback this window
+ * never delivered and which the PM never acked. Pure; the caller supplies the
+ * already-read `acked` set so one tick reads `_workers.acked` at most once. */
+function countUnreadTerminal(entries, acked, readbackDelivered) {
+    let n = 0;
+    for (const e of entries) {
+        if (!isTerminal(e.status))
+            continue;
+        if (acked.has(e.taskKey) || readbackDelivered.has(e.taskKey))
+            continue;
+        n += 1;
+    }
+    return n;
 }
 /** The phase-doc write/edit target, when the tool path resolves to
  * {agenticdocRoot}/{key}/spec.md | design.md | plan.md — the PM phase docs that
@@ -1090,6 +1122,9 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
         .readAll()
         .filter((e) => isTerminal(e.status))
         .map((e) => e.taskKey));
+    // AC-011/AC-012: subset of `notified` actually delivered this session. Feeds the
+    // unread counter only (see the module note above) — never a suppression.
+    const readbackDelivered = new Set();
     // Running workers already escalated for divergence (AC-004): one PM wake
     // per task, at the first mid/high convergence checkpoint.
     const escalated = new Set();
@@ -1122,17 +1157,38 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
     let reminderHistoryRead = false;
     return setInterval(() => {
         try {
+            const entries = workerStore.readAll();
+            // AC-012/AC-013 unread counter input. `acked` is read only when the queue
+            // actually holds terminal rows, so a queue with none adds no I/O. The
+            // counter itself runs on the rows already read here (no second queue read).
+            const acked = entries.some((e) => isTerminal(e.status)) ? new Set(ackStore.readAll().keys()) : undefined;
             // Live bottom widget for the watched key (per-window state, NOT the
             // shared _index.parallel active set — every window decides its own key).
             if (watch.key) {
-                applyWatchWidget(ui, renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, watch.key, watch.dispatchedTaskKeys));
+                const lines = renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot, watch.key, watch.dispatchedTaskKeys);
+                // AC-012 (option B): an open-time terminal row is not replayed, but the
+                // unread tail keeps it visible until acked.
+                const unread = acked
+                    ? countUnreadTerminal(entries.filter((e) => ownerKeyOf(e, agenticdocRoot) === watch.key), acked, readbackDelivered)
+                    : 0;
+                if (unread > 0)
+                    lines.push(`  ${unread} unread — terminal result(s) not delivered this session`);
+                applyWatchWidget(ui, lines);
                 widgetShown = true;
             }
-            else if (widgetShown) {
-                applyWatchWidget(ui, undefined);
-                widgetShown = false;
+            else {
+                // AC-013: with no watched key the window renders at most ONE line — the
+                // unread count over the whole queue — and never broadcasts a message.
+                const unread = acked ? countUnreadTerminal(entries, acked, readbackDelivered) : 0;
+                if (unread > 0) {
+                    applyWatchWidget(ui, [`[mw] no watched key | ${unread} unread terminal result(s)`]);
+                    widgetShown = true;
+                }
+                else if (widgetShown) {
+                    applyWatchWidget(ui, undefined);
+                    widgetShown = false;
+                }
             }
-            const entries = workerStore.readAll();
             // Divergence escalation (AC-004): running workers past the convergence
             // checkpoint whose machine risk is mid/high wake the PM once per task
             // with the evidence — the PM (fullest context) decides continue /
@@ -1168,12 +1224,26 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
             for (const entry of entries) {
                 if (notified.has(entry.taskKey) || !isTerminal(entry.status))
                     continue;
-                notified.add(entry.taskKey);
-                // One-shot transcript summaries fire only for this window's watched
-                // key; without a watched key the window stays silent (no cross-window
-                // broadcast). The widget above still shows current state either way.
-                if (!watch.key || ownerKeyOf(entry, agenticdocRoot) !== watch.key)
+                // C3 — no watched key: stay silent (no cross-window broadcast), but
+                // consume the terminal transition for this session so adopting a key
+                // later cannot resurrect it (locked by "stays silent without a watched
+                // key and for tasks under other keys"). NOT counted as delivered: the
+                // AC-013 unread counter must still surface it.
+                if (!watch.key) {
+                    notified.add(entry.taskKey);
                     continue;
+                }
+                // C1 — another key's terminal row: not this window's business AND not
+                // consumed, so the owner window (or this window after a key takeover)
+                // still gets its one readback. No I/O on this path (R5).
+                if (ownerKeyOf(entry, agenticdocRoot) !== watch.key)
+                    continue;
+                // Owned + watched: account the delivery exactly once. This stays before
+                // `recordWriteScopeResidualRisks` below — `notified` is also the
+                // per-task-per-session bound for that alarm (`recordDispatchAlarm` has no
+                // dedup of its own).
+                notified.add(entry.taskKey);
+                readbackDelivered.add(entry.taskKey);
                 // Task dir from the queue row taskPath: works for keyed {key}/workers/<task-key>/ and legacy root paths.
                 const taskDir = path.dirname(entry.taskPath);
                 // AC-007/DD-08 residual risk: a contract-allowed write whose basename

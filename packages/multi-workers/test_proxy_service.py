@@ -15,6 +15,16 @@ from mw import cmd_serve, cmd_stop, _write_stop_request, _stop_request_path
 _MW_DIR = pathlib.Path(__file__).parent
 
 
+@pytest.fixture(autouse=True)
+def _stub_serve_identity_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T-13: cmd_serve collects the code identity (one git spawn) BEFORE writing
+    the PID file, and the serve loop re-checks drift every 60 s. These tests
+    fake ``subprocess.Popen`` for the served children, so stub the identity
+    probe and the drift tick to keep the fake-child queue aligned."""
+    monkeypatch.setattr(mw, "_serve_meta_identity", lambda *a, **k: {"schema": mw.SERVE_META_SCHEMA})
+    monkeypatch.setattr(mw, "_report_serve_code_drift", lambda *a, **k: None)
+
+
 # ── VC-011 static scan ────────────────────────────────────────────────────────
 
 def test_vc011_no_codex_proxy_7002():

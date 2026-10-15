@@ -44,6 +44,17 @@ export interface CheckpointInfo {
 	repeatTop: number;
 	/** Machine divergence heuristic (advisory — the PM decides). */
 	risk: "low" | "mid" | "high";
+	/** T-04/AC-009: distinct landing targets recorded in the change ledger
+	 * (`[WRITE_FILE]` grammar, writeless roles only). Undefined on old lines /
+	 * write-role lines, which carry no landing suffix. */
+	land?: number;
+	/** T-04/AC-009: age of the newest landing in seconds; undefined when no
+	 * landing target exists on disk (`last_land=-`). */
+	lastLandingS?: number;
+	/** T-04/AC-009: a non-empty product exists on disk (writeless suffix). */
+	artifactPresent?: boolean;
+	/** T-04/AC-009: `progress.md` carries the role's own completion record. */
+	progressDone?: boolean;
 }
 
 /** Structured progress parsed from a worker task's trace.log: lifecycle
@@ -82,7 +93,7 @@ const MODEL_LINE_RE = /^\[MODEL\] (\S+) model=(\S+)$/;
 const END_LINE_RE = /^\[END\] (\S+) exit=(\d+) elapsed=(\d+)s tools=(\d+) phases=(\S+)$/;
 const TOOL_LINE_RE = /^\[TOOL\] (\S+) (\S+)(?: (.*))?$/;
 const CHECKPOINT_LINE_RE =
-	/^\[CHECKPOINT\] (\S+) elapsed=(\d+)s reads=(\d+) writes=(\d+) phases=(\S+) uniq_targets=(\d+) repeat_top=(\d+) risk=(low|mid|high)$/;
+	/^\[CHECKPOINT\] (\S+) elapsed=(\d+)s reads=(\d+) writes=(\d+) phases=(\S+) uniq_targets=(\d+) repeat_top=(\d+) risk=(low|mid|high)(?: land=(\d+) last_land=(\S+) artifact=(yes|no) done=(yes|no))?$/;
 
 /** Human-readable age for heartbeat display: "15s", "3m", "2h". Shared by
  * the watch widget's `hb` field and terminal-summary runtime stats. */
@@ -161,7 +172,7 @@ export function readTaskProgress(taskDir: string): TaskProgress | undefined {
 		}
 		const ck = CHECKPOINT_LINE_RE.exec(line);
 		if (ck) {
-			checkpoint = {
+			const info: CheckpointInfo = {
 				ts: ck[1] ?? "",
 				elapsedS: Number(ck[2]),
 				reads: Number(ck[3]),
@@ -171,6 +182,19 @@ export function readTaskProgress(taskDir: string): TaskProgress | undefined {
 				repeatTop: Number(ck[7]),
 				risk: (ck[8] as CheckpointInfo["risk"]) ?? "low",
 			};
+			// T-04/AC-009: the optional landing suffix, emitted for writeless roles
+			// only. Absent (old bundles / write roles) ⇒ the fields stay undefined.
+			if (ck[9] !== undefined) {
+				info.land = Number(ck[9]);
+				const lastLand = ck[10];
+				if (lastLand !== undefined && lastLand !== "-") {
+					const seconds = Number(lastLand.replace(/s$/, ""));
+					if (Number.isFinite(seconds)) info.lastLandingS = seconds;
+				}
+			}
+			if (ck[11] !== undefined) info.artifactPresent = ck[11] === "yes";
+			if (ck[12] !== undefined) info.progressDone = ck[12] === "yes";
+			checkpoint = info;
 		}
 	}
 

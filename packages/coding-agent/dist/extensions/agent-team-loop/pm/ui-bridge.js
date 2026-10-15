@@ -17,8 +17,13 @@ import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.js";
 import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "../shared/phase-docs.js";
 import { syncPmStateClaimId } from "../shared/pm-state-claim.js";
 import { PHASE_ORDER, phaseAuditWarnings } from "../shared/pm-state-guard.js";
-import { isSameOrUnder, normalizeForCompare } from "../worker/read-scope.js";
-import { WORKER_FILE_NAME_RE } from "../worker/worker-file-tool.js";
+import { classifyWriteTargetShape, judgeWriteTarget as judgeSharedWriteTarget, WORKER_FILE_NAME_RE, } from "../shared/write-surface.js";
+import { RECOVERY_CONTRACT_HEADING, recoveryContractSection } from "../worker/output-sections.js";
+import { isSameOrUnder } from "../worker/read-scope.js";
+// W1 (mw-worker-output-contract): shape classification and the basename
+// whitelist moved to the write-surface single source; these re-exports keep the
+// existing `pm/ui-bridge.ts` importers byte-compatible.
+export { classifyWriteTargetShape } from "../shared/write-surface.js";
 import { isShellRole, isWritelessRole } from "../worker/worker-mode.js";
 import { StateManager } from "./state-manager.js";
 import { dispatchTask } from "./task-dispatcher.js";
@@ -1241,37 +1246,6 @@ const WRITE_INTENT_ENGLISH_VERBS = new Set(["write", "save", "create", "append",
  * with NO extension enumeration — the shape judge below decides whether a
  * candidate is a path. New languages/config types cannot re-open the leak. */
 const WRITE_INTENT_TOKEN_RE = /^[A-Za-z0-9_.\\/~:-]+/;
-/** Non-path prose forms that would otherwise scan as a path shape: `e.g.` /
- * `i.e.` are abbreviations, not files. */
-const WRITE_INTENT_ABBREVIATIONS = new Set(["e.g", "i.e", "etc", "vs", "cf"]);
-/** Extension-less target names the shape layer must still refuse (AC-004,
- * `Makefile` class). A finite name table — never a bare-token fail-closed
- * (that was measured at 35% false positives on the writeless corpus). */
-const WRITE_INTENT_DENY_NAMES = new Set([
-    "Makefile",
-    "makefile",
-    "GNUmakefile",
-    "Dockerfile",
-    "Containerfile",
-    "Rakefile",
-    "Gemfile",
-    "Procfile",
-    "Vagrantfile",
-    "Justfile",
-    "Brewfile",
-]);
-/** Shapes that name a path rather than prose (AC-004). Membership in this set
- * is what makes step 5 of the judge refuse an out-of-surface candidate. */
-const WRITE_TARGET_PATH_SHAPES = new Set([
-    "sep",
-    "dot-lead",
-    "drive-relative",
-    "ads",
-    "colon",
-    "ext",
-    "deny-name",
-    "exists",
-]);
 const WRITE_SURFACE_SECTION_RE = new RegExp(`${WRITE_SURFACE_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s\\S]*?${WRITE_SURFACE_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\n*`, "g");
 /** Find `verb` in `clause`; English verbs match on word boundaries so
  * `output-writer.ts` never reads as a `write` order. */
@@ -1354,97 +1328,30 @@ export function collectWriteIntentHits(text) {
     }
     return hits;
 }
-/** Shape classification for one candidate token (AC-004). Ordered so the
- * pointed Win32 forms (`drive-relative`, `ads`) are labelled before the `ext`
- * rule can swallow them; trailing dots/spaces are stripped first (Win32
- * CreateFile semantics). Read-only (`existsSync`). */
-export function classifyWriteTargetShape(pathToken, ctx) {
-    const t = pathToken.replace(/[.\s]+$/, "");
-    if (t === "" || !/[A-Za-z0-9]/.test(t))
-        return "punct";
-    if (/^\d+(\.\d+)+$/.test(t))
-        return "version";
-    if (WRITE_INTENT_ABBREVIATIONS.has(t.toLowerCase()))
-        return "abbrev";
-    if (/[\\/]/.test(t))
-        return "sep";
-    if (/^\.[A-Za-z0-9_]/.test(t))
-        return "dot-lead";
-    if (/::/.test(t))
-        return "ads";
-    if (/^[A-Za-z]:(?![\\/])/.test(t))
-        return "drive-relative";
-    if (t.includes(":"))
-        return "colon";
-    if (/\.[A-Za-z0-9]{1,8}$/.test(t))
-        return "ext";
-    if (WRITE_INTENT_DENY_NAMES.has(t))
-        return "deny-name";
-    if (fs.existsSync(path.resolve(ctx.projectRoot, t)))
-        return "exists";
-    return "bare";
-}
-/** Bidirectional equality (worker-mode.ts `samePath` semantics). */
-function samePath(a, b) {
-    return isSameOrUnder(a, b) && isSameOrUnder(b, a);
-}
-/** PM-side deny prefix table: same six rules and priority as
- * `worker-mode.ts::bashWriteDenyReason`, parameterized by `keyDir`/`trueRoot`.
- * `target` must already be normalized by `normalizeForCompare`. Returns the
- * machine-readable rule name, or null when the target is not denied. */
-function pmWriteDenyReason(ctx, target) {
-    const keyDir = ctx.keyDir;
-    const trueRoot = ctx.trueRoot;
-    if (keyDir !== undefined) {
-        if (samePath(target, path.join(keyDir, "pm-state.md")))
-            return "pm-state.md";
-        const workersDir = path.join(keyDir, "workers");
-        if (isSameOrUnder(workersDir, target)) {
-            const first = path.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
-            if (first.startsWith("_workers"))
-                return "workers/_workers*";
-        }
-    }
-    if (trueRoot !== undefined && samePath(target, path.join(trueRoot, "_index.parallel")))
-        return "_index.parallel";
-    if (trueRoot !== undefined &&
-        keyDir !== undefined &&
-        isSameOrUnder(trueRoot, target) &&
-        !isSameOrUnder(keyDir, target)) {
-        return "other key dir / .agenticdoc root";
-    }
-    if (isSameOrUnder(path.join(ctx.projectRoot, "packages"), target))
-        return "packages/**";
-    if (isSameOrUnder(path.join(ctx.projectRoot, ".git"), target))
-        return ".git/**";
-    return null;
-}
-/** Target-axis verdict (AC-003/AC-004), evaluation order:
- *   1. deny prefixes (absolute priority, mirrors worker-mode.ts)
- *   2. own task dir — realpath + segment boundary (read-scope.ts reuse)
- *   3. basename channel — ONLY for a token with no directory component, so a
- *      whitelisted basename can never whitelist a foreign directory (A4 fix)
- *   4. path shape => refuse (fail-closed, A3 fix)
- *   5. non-candidate prose => pass untouched
+/** Verdict of the target axis delegated to the shared write-surface predicate
+ * (`shared/write-surface.ts::judgeWriteTarget`, design §3; AC-016). This
+ * adapter only adds the two PM-only channels the predicate does not own: the
+ * framework basenames (`task.md`/`trace.log`/`output.md`/`run.json`/
+ * `worker.log`, which the framework itself writes) and the `WriteTargetJudge`
+ * shape/rule vocabulary. Evaluation order matches the historical one:
+ *   1. deny prefixes + own task dir + own-key `<key>/evidence/**` + worker_file
+ *      basenames + path-shape refusal — all from the shared predicate
+ *   2. framework basenames — PM prose channel only
+ *   3. non-candidate prose => pass untouched
  * The `!hasDirComponent` precondition (not `shape === "bare"`) is load-bearing:
  * `output.md`/`report.md` are `ext`-shaped and must still use the channel. */
 export function judgeWriteTarget(pathToken, ctx) {
     const shape = classifyWriteTargetShape(pathToken, ctx);
-    const target = normalizeForCompare(ctx.projectRoot, pathToken);
-    const task = normalizeForCompare(ctx.projectRoot, ctx.taskDir);
-    const denied = pmWriteDenyReason(ctx, target);
-    if (denied !== null)
-        return { allowed: false, shape, rule: "deny", detail: `denied:${denied}` };
-    if (isSameOrUnder(task, target))
+    const verdict = judgeSharedWriteTarget(pathToken, ctx);
+    if (verdict.allowed)
         return { allowed: true, shape };
+    if (verdict.rule === "deny")
+        return { allowed: false, shape, rule: "deny", detail: verdict.detail };
     const hasDirComponent = /[\\/]/.test(pathToken);
     if (!hasDirComponent && (WORKER_FILE_NAME_RE.test(pathToken) || FRAMEWORK_TASK_BASENAMES.includes(pathToken))) {
         return { allowed: true, shape };
     }
-    if (WRITE_TARGET_PATH_SHAPES.has(shape)) {
-        return { allowed: false, shape, rule: "scope", detail: "outside-write-surface" };
-    }
-    return { allowed: true, shape };
+    return { allowed: false, shape, rule: "scope", detail: verdict.detail ?? "outside-write-surface" };
 }
 /** Boolean wrapper of {@link judgeWriteTarget} (AC-003/AC-004): may this role
  * legitimately write `pathToken`? */
@@ -1637,7 +1544,22 @@ export function extractCardSections(cardText) {
     }
     return out;
 }
-/** Render the marker-paired card seed block (T-02, contract C3). */
+/** Render the marker-paired card seed block (T-02, contract C3).
+ *
+ * T-05/AC-003 (S2 TS half): for a card-backed render whose role is a
+ * card-declared WRITELESS report role, the role's `## 交付段契约（本角色）`
+ * checklist is appended inside the seed block (each required section as a
+ * copyable `## <name>`). The presence guard makes a card that already declares
+ * the heading a byte-level fixed point, so re-rendering (or the Python
+ * producer's identical `dispatch.py::_envelope_card_body` injection) cannot
+ * double-render the section.
+ *
+ * Scope note (2026-10-14, T-05; widened 2026-10-15, T-13/D-015 option C): the
+ * gate is now "the card declares a `type:`" — `recoveryContractSection` already
+ * returns `""` for types outside `RECOVERY_CONTRACT_TYPES` (no contract role
+ * stays byte-identical), so the checklist reaches every contract role the TS
+ * dispatch path produces, `coding` included. The `dispatch-card-injection.test.ts`
+ * coding fixture now carries the checklist in its pinned expected bytes. */
 export function renderCardSeedSections(sections) {
     const parts = [
         CARD_SEED_MARKER,
@@ -1656,6 +1578,10 @@ export function renderCardSeedSections(sections) {
     ];
     for (const extra of sections.extras) {
         parts.push(`## ${extra.title}`, "", extra.body.trim(), "");
+    }
+    const contract = sections.type !== undefined ? recoveryContractSection(sections.type) : "";
+    if (contract !== "" && !parts.includes(RECOVERY_CONTRACT_HEADING)) {
+        parts.push(contract, "");
     }
     parts.push(CARD_SEED_DISCLAIMER, CARD_SEED_MARKER_END);
     return parts.join("\n");
@@ -1854,7 +1780,10 @@ export function readDispatchCard(input) {
         missing: [],
         headerPath: normalizeCardPathForHeader(raw, input.ownerKey, input.agenticdocRoot, input.projectDir),
         sha256: cardDigest(resolvedPath),
-        sections: extractCardSections(text),
+        // T-05/AC-003: carry the card's `type:` into the seed so the S2 checklist
+        // can be rendered (a `CardSections` built directly from card text has no
+        // type and stays byte-identical).
+        sections: { ...extractCardSections(text), type: envelope.type },
     };
 }
 /** Refusal text for an incomplete card (AC-007 fail-closed): names the code,

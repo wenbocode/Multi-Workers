@@ -40,8 +40,11 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { WORKER_FILE_NAME_RE } from "../worker/worker-file-tool.ts";
 import { readRunState } from "./run-store.ts";
+// W1 (mw-worker-output-contract): the basename whitelist now lives in the
+// write-surface single source; importing it from worker-file-tool would pull the
+// tool module into the evidence reader.
+import { WORKER_FILE_NAME_RE } from "./write-surface.ts";
 
 /** Delivery channel that made the verdict. */
 export type DeliverableChannel = "report" | "output" | "artifact" | "none";

@@ -597,7 +597,7 @@ class TestFallbackConfigKey:
     def test_key_stays_outside_the_frozen_20_key_schema(self) -> None:
         config = launcher.autopilot_config
         assert config.ENVELOPE_FALLBACK_KEY not in config.DEFAULT_CONFIG
-        assert len(config.DEFAULT_CONFIG) == 20
+        assert len(config.DEFAULT_CONFIG) == 21
         assert config.ENVELOPE_FALLBACK_KEY in config._BOOL_FIELDS
 
 

@@ -35,6 +35,7 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import mw_common
+import tree_watch
 from autopilot import config as autopilot_config
 from mw_common import (
     acquire_lock as _acquire_lock,
@@ -1710,11 +1711,22 @@ def _poll_once(
     log_handles: dict[str, object],
     pending_queue: list[dict[str, str]],
     max_workers: int | None,
+    tree_watcher: tree_watch.TreeWatch | None = None,
 ) -> None:
     """One launcher poll cycle: beat, archive stale, reap, reconcile, discover, spawn."""
     # D-008: refresh this launcher's beat first — it is how another
     # launcher's silence rule knows we are live (and ours knows of them).
     mw_common.launcher_beat_write(project_dir, os.getpid())
+
+    # G4 tree watch (AC-010/AC-011): the sampler is cadence-gated inside
+    # TreeWatch (6 polls by default, PI_TREE_WATCH_SEC override, 0 = off) and
+    # never raises. `tree_watcher is None` for direct _poll_once callers
+    # (tests) keeps them side-effect free.
+    if tree_watcher is not None:
+        try:
+            tree_watch.emit_alarms(tree_watcher.tick())
+        except Exception as exc:  # noqa: BLE001 — a sampler must never break the poll
+            print(f"[launcher] tree watch error (continuing): {exc}", file=sys.stderr, flush=True)
 
     # T-18/D-027 (AC-021): `None` resolves to the configured cap, never to
     # "unbounded". A direct `_poll_once(..., None)` caller is bounded too, so
@@ -1870,6 +1882,8 @@ def run(
     """
     config = _load_providers(providers_path or (pathlib.Path(__file__).parent / "providers.json"))
     max_workers = max_workers if max_workers is not None else mw_common.launcher_max_workers(project_dir)
+    # G4: one sampler per launcher run; its poll counter lives across ticks.
+    tree_watcher = tree_watch.TreeWatch(project_dir, poll_interval)
 
     # Apply port overrides from CLI (--pi-port, --claude-port, etc.)
     if port_overrides:
@@ -1898,7 +1912,10 @@ def run(
 
     while True:
         try:
-            _poll_once(project_dir, config, running_procs, log_handles, pending_queue, max_workers)
+            _poll_once(
+                project_dir, config, running_procs, log_handles, pending_queue,
+                max_workers, tree_watcher,
+            )
         except Exception as exc:  # noqa: BLE001 — one bad poll must never kill the loop
             print(f"[launcher] poll error (continuing): {exc}", file=sys.stderr, flush=True)
 

@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { minimatch } from "minimatch";
 import { killTrackedDetachedChildren } from "../../../utils/shell.js";
 import { recordDispatchAlarm } from "../pm/pm-orchestrator.js";
 import { WRITE_SURFACE_MARKER, WRITE_SURFACE_MARKER_END } from "../pm/ui-bridge.js";
@@ -9,8 +8,8 @@ import { requiredFor } from "../rag/config.js";
 import { appendEvidence } from "../rag/evidence.js";
 import { researchDocEvidence, scanCitations, validateResearchDoc } from "../rag/research-doc.js";
 import { applyRagTools, RAG_CHAT_BUDGET_HEADER, RAG_TIME_BUDGET_HEADER, registerRagTools, } from "../rag/tools.js";
-import { appendWriteFileEvent, repoRelativePath } from "../shared/change-ledger.js";
-import { hasDeliverableEvidence } from "../shared/deliverable-evidence.js";
+import { appendUnresolvedWriteEvent, appendWriteFileEvent, parseWriteFileEvents, repoRelativePath, } from "../shared/change-ledger.js";
+import { findNonEmptyReport, hasDeliverableEvidence } from "../shared/deliverable-evidence.js";
 import { DISPATCH_TYPE_VOCABULARY } from "../shared/dispatch-card.js";
 import { roleForTaskType } from "../shared/dispatch-models.js";
 import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.js";
@@ -18,7 +17,9 @@ import { controlRootFromTaskPath } from "../shared/paths.js";
 import { collectArtifacts, isTerminalRunStatus, newRunId, parseSupersedes, RUN_SCHEMA, runMarker, writeRunState, } from "../shared/run-store.js";
 import { findTypeEscalation, readTaskType, scanBodyTypeLines } from "../shared/task-frontmatter.js";
 import { parseWriteFace, parseWriteFaceEntries, writeFacesOverlap, } from "../shared/write-face.js";
-import { appendCheckpoint, appendEnd, appendError, appendGoalCheck, appendHeartbeat, appendModel, appendPhase, appendProgressLine, appendStart, appendTimeout, appendTool, appendToolError, appendTrace, formatMachineCheckpoint, readTerminalGaps, writeOutput, } from "./output-writer.js";
+import { evidenceDirOf, matchesWriteScopeEntry, parseWriteScopeHeader, resolveOwnWriteTarget, resolveWriteSurfacePaths, } from "../shared/write-surface.js";
+import { isMechanicalSection } from "./output-sections.js";
+import { appendCheckpoint, appendEnd, appendError, appendGoalCheck, appendHeartbeat, appendMechanicalContextSources, appendModel, appendPhase, appendProgressLine, appendStart, appendTimeout, appendTool, appendToolError, appendTrace, currentRecoveryMissing, formatMachineCheckpoint, hasReportProduct, readTerminalGaps, writeOutput, } from "./output-writer.js";
 import { goalMtime, writePhaseFile } from "./phase-runner.js";
 import { applyParentRootUnion, checkReadScopeCall, isSameOrUnder, normalizeForCompare, parentRootFromTaskContent, readScopeConfigFromMeta, } from "./read-scope.js";
 import { registerWorkerFileTool, WORKER_FILE_TOOL } from "./worker-file-tool.js";
@@ -186,19 +187,145 @@ export function steerAtMs(budgetMs) {
 const READ_TOOLS = new Set(["read", "grep", "find", "ls", "glob"]);
 /** Write-ish tools for checkpoint convergence signals. */
 const WRITE_TOOLS = new Set(["write", "edit"]);
+/** T-04/AC-009: freshness floor for a landing — one minute, so a small smoke
+ * budget (anchor 60s) still has an exercisable window. */
+export const LAND_FRESH_FLOOR_MS = 60_000;
+/** T-04/AC-009: how recent the newest landing must be to count as "fresh"
+ * (a writeless run that is still producing). `anchor/3` floored at 1m: the
+ * default anchor (30m) yields 10m, exactly the checkpoint refresh cadence. */
+export function landFreshMs(anchorMs) {
+    return Math.max(LAND_FRESH_FLOOR_MS, Math.round(anchorMs / 3));
+}
 /** Machine divergence heuristic (AC-004, advisory only — the PM with the
  * fullest context judges and decides):
  * - high: past the anchor with ZERO writes — pure exploration, the cpr-007
  *   pattern (22 minutes of reads, generation never got time to land).
  * - mid: phase framework present but nothing completed past the anchor, or
  *   the same target read ≥4 times (spinning).
- * - low: writes advancing — implementation underway. */
+ * - low: writes advancing — implementation underway.
+ *
+ * T-04/AC-009: when the caller supplies landing signals (`landed !== undefined`,
+ * writeless roles), the counts `writes`/`uniq_targets` stop being the criterion
+ * (they are structurally 0 for those roles) and the ledger + disk facts decide:
+ * - W2a: a non-empty product on disk ⇒ low (strongest convergence evidence;
+ *   outranks a missed ledger event).
+ * - W1: nothing landed at all past the anchor ⇒ high (unchanged intent).
+ * - W2b: a fresh landing plus the role's own `converging=yes` note ⇒ low.
+ * - W3/W4: landed-but-stale (or nothing before the anchor) — only read spin or
+ *   stalled phases are mid, everything else is low. */
 export function computeRisk(s) {
+    if (s.landed !== undefined) {
+        const stalled = s.phasesTotal > 0 && s.phasesDone === 0 && s.elapsedMs >= s.anchorMs;
+        if (s.artifactPresent === true)
+            return "low";
+        if (s.landed === 0 && s.elapsedMs >= s.anchorMs)
+            return "high";
+        const fresh = s.lastLandingAgeMs !== undefined && s.lastLandingAgeMs <= landFreshMs(s.anchorMs);
+        if (s.landed > 0 && fresh && s.progressDone === true)
+            return "low";
+        return stalled || s.repeatTop >= 4 ? "mid" : "low";
+    }
     if (s.writes === 0 && s.elapsedMs >= s.anchorMs)
         return "high";
     if ((s.phasesTotal > 0 && s.phasesDone === 0 && s.elapsedMs >= s.anchorMs) || s.repeatTop >= 4)
         return "mid";
     return "low";
+}
+/** T-04/AC-009: the role's own completion record in progress.md — the heading
+ * report shape or the `CKPT <n>m converging=yes` self-assessment line the
+ * checkpoint steer asks for (`[machine]` lines are framework-written and do
+ * not count). */
+const PROGRESS_DONE_RE = /(^|\n)(?:##\s*完成记录|CKPT\s+\d+m\s+(?!\[machine\])(?=[^\n]*converging=yes))/;
+/** Bounded read-only scan of the key's `evidence/` tree (depth ≤5, ≤500
+ * entries, symlinks skipped) for a file fresher than the run start — the
+ * writeless deliverable channel lives outside taskDir. Returns the newest
+ * qualifying mtime, or undefined. */
+function newestEvidenceMtimeMs(keyDir, startedAtMs, nowMs) {
+    const maxDepth = 5;
+    const maxEntries = 500;
+    let visited = 0;
+    let newest;
+    const walk = (dir, depth) => {
+        if (depth > maxDepth || visited >= maxEntries)
+            return;
+        let entries;
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        }
+        catch {
+            return;
+        }
+        for (const entry of entries) {
+            if (visited >= maxEntries)
+                return;
+            visited++;
+            const abs = path.join(dir, entry.name);
+            if (entry.isSymbolicLink())
+                continue;
+            if (entry.isDirectory()) {
+                walk(abs, depth + 1);
+                continue;
+            }
+            if (!entry.isFile())
+                continue;
+            try {
+                const stat = fs.statSync(abs);
+                if (stat.size === 0 || stat.mtimeMs < startedAtMs)
+                    continue;
+                // T-12: a mtime past `nowMs` only means "just landed" (clock
+                // granularity / write-read race). Clamp it to `nowMs` (age 0)
+                // instead of dropping a real landing.
+                const mtimeMs = stat.mtimeMs > nowMs ? nowMs : stat.mtimeMs;
+                if (newest === undefined || mtimeMs > newest)
+                    newest = mtimeMs;
+            }
+            catch {
+                // Best-effort: an unreadable entry is not a landing.
+            }
+        }
+    };
+    walk(path.join(keyDir, "evidence"), 0);
+    return newest;
+}
+/** T-04/AC-009: landing signals for a writeless run, from the SAME ledger the
+ * settle judgement reads. `parseWriteFileEvents` (not the `[TOOL] worker_file`
+ * lines, not a second extractor) supplies the target set, so the two views
+ * cannot diverge; disk truth (non-empty artifact, surviving targets, fresh
+ * evidence) is the fallback when the ledger missed an event. Read-only. */
+export function collectLandingSignals(opts) {
+    const targets = parseWriteFileEvents(opts.traceText);
+    let newestMtimeMs;
+    const touch = (mtimeMs) => {
+        if (newestMtimeMs === undefined || mtimeMs > newestMtimeMs)
+            newestMtimeMs = mtimeMs;
+    };
+    let nonProgressLanded = false;
+    for (const target of targets) {
+        const abs = path.isAbsolute(target) ? target : path.resolve(process.cwd(), target);
+        try {
+            const stat = fs.statSync(abs);
+            if (!stat.isFile() || stat.size === 0)
+                continue;
+            // T-12: clamp a future mtime to `nowMs` (age 0) rather than
+            // skipping it — it is a landing, not a stale artifact.
+            touch(stat.mtimeMs > opts.nowMs ? opts.nowMs : stat.mtimeMs);
+            if (path.basename(abs) !== "progress.md")
+                nonProgressLanded = true;
+        }
+        catch {
+            // Not on disk — recorded but not a surviving landing.
+        }
+    }
+    const keyDir = path.dirname(path.dirname(opts.taskDir));
+    const evidenceMtimeMs = newestEvidenceMtimeMs(keyDir, opts.startedAtMs, opts.nowMs);
+    if (evidenceMtimeMs !== undefined)
+        touch(evidenceMtimeMs);
+    return {
+        landed: targets.length,
+        lastLandingAgeMs: newestMtimeMs === undefined ? undefined : Math.max(0, opts.nowMs - newestMtimeMs),
+        artifactPresent: findNonEmptyReport(opts.taskDir) !== undefined || nonProgressLanded || evidenceMtimeMs !== undefined,
+        progressDone: PROGRESS_DONE_RE.test(opts.progressText),
+    };
 }
 export function writeSurfaceMarkerState(content) {
     const lines = content.split(/\r?\n/).map((line) => line.trimEnd());
@@ -225,8 +352,6 @@ export function parseTaskMd(taskPath) {
     let inReadScopeList = false;
     let denyGlobs;
     let inDenyGlobsList = false;
-    let writeScope;
-    let inWriteScopeList = false;
     let readFileCap;
     let readByteCap;
     let ragChatBudget;
@@ -287,46 +412,11 @@ export function parseTaskMd(taskPath) {
                 inDenyGlobsList = false;
             }
         }
-        // write_scope (contract C1, T-02 → T-03; D-115 legacy carrier): the
-        // producer renders the one-line comma form (`write_scope: a, b`); the
-        // read_scope/deny_globs YAML block-list form is accepted too, so the two
-        // consumer paths cannot drift apart. A present-but-blank value stays defined
-        // as [] (fail-closed, mirroring read_scope); an absent header leaves the
-        // field undefined and the consumer falls back to the default surface. D-115:
-        // for writeless roles this stays the declared face byte for byte; for
-        // writable roles it is the fallback carrier (and a narrowing constraint when
-        // `write_face:` is also present). The gate-v2 `write_scope` field is a
-        // DIFFERENT semantic (`blast_radius`) and never feeds this parse.
-        if (trimmed.startsWith("write_scope:")) {
-            const rest = trimmed.slice("write_scope:".length).trim();
-            if (rest) {
-                writeScope = rest
-                    .split(",")
-                    .map((item) => item.trim())
-                    .map((item) => (item.startsWith('"') && item.endsWith('"')) || (item.startsWith("'") && item.endsWith("'"))
-                    ? item.slice(1, -1)
-                    : item)
-                    .filter((item) => item.length > 0);
-                inWriteScopeList = false;
-            }
-            else {
-                writeScope = [];
-                inWriteScopeList = true;
-            }
-        }
-        else if (inWriteScopeList && !inPhasePrompt) {
-            if (trimmed.startsWith("- ")) {
-                let item = trimmed.slice(2).trim();
-                if ((item.startsWith('"') && item.endsWith('"')) || (item.startsWith("'") && item.endsWith("'"))) {
-                    item = item.slice(1, -1);
-                }
-                if (item)
-                    writeScope?.push(item);
-            }
-            else {
-                inWriteScopeList = false;
-            }
-        }
+        // write_scope is parsed by the shared single implementation
+        // (`shared/write-surface.ts::parseWriteScopeHeader`, T-10) AFTER the loop, so
+        // the shell guard, `parseTaskMeta` and `worker_file` cannot drift apart. The
+        // gate-v2 `write_scope` field is a DIFFERENT semantic (`blast_radius`) and
+        // never feeds this parse.
         if (trimmed.startsWith("l2_read_file_cap:")) {
             const v = Number(trimmed.slice("l2_read_file_cap:".length).trim());
             if (Number.isFinite(v) && v > 0)
@@ -380,7 +470,8 @@ export function parseTaskMd(taskPath) {
     // the shared operator (D-009/AC-007) so the runtime allow face cannot drift
     // from the dispatch-time overlap operator. Entries are normalized
     // project-root-relative, so the runtime re-parse against the worker cwd is
-    // base-independent. `write_scope` parsing above is untouched.
+    // base-independent. `write_scope` is the shared single implementation (T-10).
+    const writeScope = parseWriteScopeHeader(content);
     const writeFaceParsed = parseWriteFace(content, {
         base: path.dirname(trueAgenticdocRoot),
         caseInsensitive: process.platform === "win32",
@@ -565,8 +656,9 @@ function appendReadScopeRejectionsSection(taskKey, agenticdocRoot, rejections) {
         // Best-effort at exit — nothing else we can do
     }
 }
-/** Live shell-expansion characters. Deliberately NOT `GLOB_MAGIC_RE`: that set
- * matches `write_scope:` entries, this one decides `verbatim` on command words. */
+/** Live shell-expansion characters. Deliberately NOT the `write_scope:`
+ * glob-magic set in `shared/write-surface.ts` (`GLOB_MAGIC_RE`): that set
+ * matches scope entries, this one decides `verbatim` on command words. */
 const LIVE_EXPANSION_CHARS = new Set(["$", "`", "*", "?", "[", "{"]);
 /** Split a shell command into quote-aware tokens; control operators become
  * their own tokens, so `echo "a > b"` never yields a redirect. */
@@ -836,6 +928,104 @@ const POWERSHELL_WRITE_COMMANDS = new Set([
     "remove-item",
 ]);
 const POWERSHELL_PATH_FLAGS = new Set(["-path", "-literalpath", "-filepath", "-destination"]);
+/** AC-017(b)/T-02: `.NET` static FILE/DIRECTORY write methods, mapped to the
+ * 0-based argument index that carries the target. This is the write-verb/target
+ * position signal (`[System.IO.File]::WriteAllText(path, contents)` — the
+ * target is argument 0, never "a path-looking substring"); the read methods
+ * (`ReadAllText`, `ReadAllLines`, `Exists`) are deliberately absent. The label
+ * is the single `net-file-api` pattern, preserved for the guard's audit line. */
+const NET_FILE_API_TARGETS = new Map([
+    ["writealltext", 0],
+    ["writealllines", 0],
+    ["writeallbytes", 0],
+    ["appendalltext", 0],
+    ["appendalllines", 0],
+    ["create", 0],
+    ["delete", 0],
+    ["move", 0],
+    ["replace", 0],
+    ["copy", 1],
+]);
+/** `[System.IO.File]::WriteAllText` (case-folded by `commandBasename`). */
+const NET_FILE_API_RE = /^\[system\.io\.(?:file|directory)\]::([a-z0-9_]+)$/;
+/** Argument groups of a `name(args)` call: the tokens between the opening `(`
+ * and its matching `)` split on top-level commas. The tokenizer makes `(`/`)`
+ * operators and keeps `,` inside a word token, so the split is done here. An
+ * empty result means the call shape was not found (fail-open: an unparsed call
+ * is not a recognized write). */
+function callArgumentGroups(tokens, start) {
+    const open = tokens[start];
+    if (open === undefined || !open.operator || open.text !== "(")
+        return [];
+    const groups = [[]];
+    let depth = 0;
+    for (let i = start + 1; i < tokens.length; i++) {
+        const token = tokens[i];
+        if (token.operator) {
+            if (token.text === "(")
+                depth += 1;
+            else if (token.text === ")") {
+                if (depth === 0)
+                    return groups;
+                depth -= 1;
+            }
+            groups[groups.length - 1].push(token);
+            continue;
+        }
+        // A comma is an argument separator, and the tokenizer glues it to the
+        // neighbouring word (`$path,` / `,arg` / `a,b`), so split on every comma.
+        const parts = token.text.split(",");
+        for (let p = 0; p < parts.length; p++) {
+            if (p > 0)
+                groups.push([]);
+            if (parts[p] !== "") {
+                groups[groups.length - 1].push({ text: parts[p], operator: false, verbatim: token.verbatim });
+            }
+        }
+    }
+    return groups;
+}
+/** Single-command literal value environment (design §5.2): `$x = "lit"`,
+ * `$x = 'lit'` and `NAME=lit` bind the name to a literal string. A value with a
+ * live expansion is NOT bound, so a target that still depends on one stays
+ * non-verbatim and lands in `[WRITE_UNRESOLVED]` instead of being guessed. */
+function literalBindings(tokens) {
+    const env = new Map();
+    const bind = (nameToken, value) => {
+        if (value === undefined || value.operator || !value.verbatim || value.text === "")
+            return;
+        const name = nameToken.startsWith("$") ? nameToken.slice(1) : nameToken;
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+            return;
+        env.set(name, value.text);
+    };
+    for (let i = 0; i + 2 < tokens.length; i++) {
+        if (tokens[i].operator || tokens[i + 1].operator || tokens[i + 1].text !== "=")
+            continue;
+        bind(tokens[i].text, tokens[i + 2]);
+    }
+    for (const token of tokens) {
+        if (token.operator || !token.verbatim)
+            continue;
+        const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.+)$/.exec(token.text);
+        if (match === null)
+            continue;
+        env.set(match[1], match[2]);
+    }
+    return env;
+}
+/** Resolve one write-verb operand to a literal target through {@link
+ * literalBindings}. A verbatim token is already literal; a `$name` with a
+ * binding becomes literal; anything else stays non-verbatim (fail-closed to
+ * `[WRITE_UNRESOLVED]`). */
+function resolveLiteralTarget(token, env) {
+    if (token.verbatim)
+        return { target: token.text, verbatim: true };
+    const name = token.text.startsWith("$") ? token.text.slice(1) : undefined;
+    if (name !== undefined && env.has(name))
+        return { target: env.get(name), verbatim: true };
+    return { target: token.text, verbatim: false };
+}
 /** Inline python/node write call sites; the LAST capture group is the path.
  * The bare `write_(text|bytes)` form is intentionally absent: it captures the
  * written CONTENT, not the path (historical false-positive `write_text('x')`). */
@@ -1362,6 +1552,20 @@ function extractCommand(tokens, start, depth, out, add, opaqueTokens) {
             break;
         }
         default: {
+            // AC-017(b): `.NET` static write methods. The member name is the write
+            // verb, its argument position the target position — the same positive
+            // signal as every other pattern, so a path-looking substring elsewhere in
+            // the command can never become a target.
+            const netMember = NET_FILE_API_RE.exec(commandName)?.[1];
+            if (netMember !== undefined && NET_FILE_API_TARGETS.has(netMember)) {
+                const groups = callArgumentGroups(tokens, commandIndex + 1);
+                const operand = groups[NET_FILE_API_TARGETS.get(netMember)]?.find((token) => !token.operator);
+                if (operand !== undefined) {
+                    const resolved = resolveLiteralTarget(operand, literalBindings(tokens));
+                    add(resolved.target, "net-file-api", resolved.verbatim);
+                }
+                break;
+            }
             if (!POWERSHELL_WRITE_COMMANDS.has(commandName))
                 break;
             for (let k = 0; k < operandTokens.length; k++) {
@@ -1381,22 +1585,188 @@ function extractCommand(tokens, start, depth, out, add, opaqueTokens) {
         }
     }
 }
+/** Heredoc openers of one physical line, quote- and arithmetic-aware: `<<<`
+ * (a here-string with no body) and `<<` inside `(( ))` (a shift) are not
+ * heredocs, and a quoted delimiter (`<<'EOF'`) is unquoted. */
+function heredocOpeners(line) {
+    const openers = [];
+    let quote = null;
+    let depth = 0;
+    let i = 0;
+    while (i < line.length) {
+        const ch = line[i];
+        if (quote !== null) {
+            if (ch === "\\" && quote === '"' && i + 1 < line.length) {
+                i += 2;
+                continue;
+            }
+            if (ch === quote)
+                quote = null;
+            i += 1;
+            continue;
+        }
+        if (ch === "'" || ch === '"') {
+            quote = ch;
+            i += 1;
+            continue;
+        }
+        if (ch === "(" && line[i + 1] === "(") {
+            depth += 1;
+            i += 2;
+            continue;
+        }
+        if (ch === ")" && line[i + 1] === ")" && depth > 0) {
+            depth -= 1;
+            i += 2;
+            continue;
+        }
+        if (ch === "<" && line[i + 1] === "<" && depth === 0) {
+            let run = i + 2;
+            while (line[run] === "<")
+                run += 1;
+            if (run > i + 2) {
+                i = run; // `<<<` here-string: single word, no body
+                continue;
+            }
+            let j = i + 2;
+            if (line[j] === "-")
+                j += 1;
+            while (line[j] === " " || line[j] === "\t")
+                j += 1;
+            let delimiter = "";
+            const q = line[j];
+            if (q === "'" || q === '"') {
+                const close = line.indexOf(q, j + 1);
+                if (close === -1)
+                    break;
+                delimiter = line.slice(j + 1, close);
+                j = close + 1;
+            }
+            else {
+                let k = j;
+                while (k < line.length && !/[\s;|&<>()]/.test(line[k]))
+                    k += 1;
+                delimiter = line.slice(j, k);
+                j = k;
+            }
+            if (delimiter === "") {
+                i += 1;
+                continue;
+            }
+            openers.push({ delimiter, start: i, end: j });
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    return openers;
+}
+/** A heredoc terminator line: the delimiter alone, tolerating a trailing `\r`
+ * (mixed EOL) and leading tabs (`<<-`). */
+function isHeredocTerminator(line, delimiter) {
+    return line.replace(/\r+$/, "").replace(/^\t+/, "") === delimiter;
+}
+/** Strip POSIX heredoc bodies (text level): each `<<DELIM`/`<<-DELIM` opener is
+ * removed from its line (a redirect after it survives) and every line up to
+ * and including the delimiter line is dropped. */
+function stripHeredocTextBodies(command) {
+    const lines = command.split("\n");
+    const kept = [];
+    let i = 0;
+    while (i < lines.length) {
+        const line = lines[i];
+        const openers = heredocOpeners(line);
+        if (openers.length === 0) {
+            kept.push(line);
+            i += 1;
+            continue;
+        }
+        let rebuilt = "";
+        let cursor = 0;
+        for (const opener of openers) {
+            rebuilt += line.slice(cursor, opener.start);
+            cursor = opener.end;
+        }
+        kept.push(rebuilt + line.slice(cursor));
+        i += 1;
+        for (const opener of openers) {
+            while (i < lines.length && !isHeredocTerminator(lines[i], opener.delimiter))
+                i += 1;
+            i += 1; // drop the delimiter line too
+        }
+    }
+    return kept.join("\n");
+}
+/** Strip PowerShell here-string regions (`@'…'@` / `@"…"@`, AC-013): the
+ * opening `@'`/`@"` and everything through the closing `'@`/`"@` is data, not
+ * shell source. An unterminated opener consumes to end of input — a miss,
+ * never a false operator. */
+function stripHereStrings(command) {
+    let out = "";
+    let i = 0;
+    while (i < command.length) {
+        const ch = command[i];
+        if (ch === "@" && (command[i + 1] === "'" || command[i + 1] === '"')) {
+            const close = `${command[i + 1]}@`;
+            // PowerShell requires the closing marker at the start of a line; a
+            // mid-line `'@` inside the body is data and must NOT close the region
+            // early (that leak was re-measured on the rq3 8 KB command).
+            const closeRe = new RegExp(`\\n[ \\t]*${close}`);
+            closeRe.lastIndex = i + 2;
+            const match = closeRe.exec(command);
+            out += " ";
+            i = match === null ? command.length : match.index + match[0].length;
+            continue;
+        }
+        out += ch;
+        i += 1;
+    }
+    return out;
+}
+/** AC-017(a) / design §5.1: **strip data regions before the lexer**. A
+ * PowerShell here-string body and a POSIX heredoc body are DATA: a literal `>`
+ * or `->` inside them must never become a redirect operator, and a quoted
+ * fragment inside them must never become a write target. The stripping is a
+ * separate, independently testable stage (called first by
+ * `extractBashWriteCandidates`), not a regex patch on the extractor's targets. */
+export function stripDataRegions(command) {
+    return stripHeredocTextBodies(stripHereStrings(command));
+}
 /** Extract the KNOWN write targets of a bash command. An empty result means
  * "not a recognized write" — the caller must allow it (P1, DD-03). */
 export function extractBashWriteCandidates(command) {
     const out = [];
-    extractFromTokens(tokenizeShellCommand(command), 0, out, new Set(["{}"]));
+    extractFromTokens(tokenizeShellCommand(stripDataRegions(command)), 0, out, new Set(["{}"]));
     return out;
+}
+export function classifyLedgerTargets(command) {
+    const recorded = [];
+    const unresolved = [];
+    for (const candidate of extractBashWriteCandidates(command)) {
+        const target = candidate.target.trim();
+        if (target === "" || target === "." || target === ".." || target === "/")
+            continue;
+        if (candidate.verbatim)
+            recorded.push(target);
+        else
+            unresolved.push({ pattern: candidate.pattern, target });
+    }
+    return { recorded, unresolved };
 }
 function samePath(a, b) {
     return isSameOrUnder(a, b) && isSameOrUnder(b, a);
 }
-const GLOB_MAGIC_RE = /[*?[\]{}]/;
 /** Absolute deny reason for a resolved target, or null. The deny list is
  * checked first and can never be widened by a `write_scope:` header. The
  * `packages/**` entry is writeless-only (D-007 / spec risk 10): for a
  * writable role it is the normal work surface, while the isolation entries
- * (framework files, other keys, `.git/**`) stay absolute for every role. */
+ * (framework files, other keys, `.git/**`) stay absolute for every role.
+ *
+ * T-10: this is deliberately the SHELL-channel role-classified table, not
+ * `shared/write-surface.ts::pmWriteDenyReason`. The two share the same six rule
+ * names and priority, but only this one is role-parameterized (`packages/**`
+ * must stay writable for `coding`/`repair`), so it cannot be the PM table under
+ * another name. The ALLOW face below is shared with the predicate instead. */
 function bashWriteDenyReason(config, target) {
     const workersDir = path.join(config.keyDir, "workers");
     if (samePath(target, path.join(config.keyDir, "pm-state.md")))
@@ -1417,25 +1787,6 @@ function bashWriteDenyReason(config, target) {
     if (isSameOrUnder(path.join(config.projectRoot, ".git"), target))
         return ".git/**";
     return null;
-}
-function matchesWriteScopeEntry(config, entry, absoluteTarget) {
-    const normalized = entry.trim();
-    if (normalized === "")
-        return false;
-    if (GLOB_MAGIC_RE.test(normalized)) {
-        const relative = path.relative(config.projectRoot, absoluteTarget).replaceAll("\\", "/");
-        const forward = absoluteTarget.replaceAll("\\", "/");
-        const glob = normalized.replaceAll("\\", "/");
-        if (minimatch(relative, glob) || minimatch(forward, glob))
-            return true;
-        if (glob.endsWith("/**")) {
-            const stripped = glob.slice(0, -3);
-            if (stripped !== "" && (minimatch(relative, stripped) || minimatch(forward, stripped)))
-                return true;
-        }
-        return false;
-    }
-    return isSameOrUnder(normalizeForCompare(config.projectRoot, normalized), absoluteTarget);
 }
 /** Is `absoluteTarget` inside the authoritative `write_face:` allow face
  * (D-115)? The judgement goes through the SAME shared operator the dispatch
@@ -1519,6 +1870,15 @@ function appendWriteFaceCarrierTraceLine(taskKey, agenticdocRoot, info) {
  *   INTERSECTION when both are present (fail-closed: the legacy carrier can
  *   only narrow). The own taskDir/evidence stay writable either way.
  *
+ * T-10: the ALLOW face (own taskDir + own-key `<key>/evidence/**`) is resolved
+ * by `shared/write-surface.ts::resolveOwnWriteTarget` — the same single source
+ * the dispatch predicate and `worker_file` use — so this guard owns no second
+ * path-domain/`write_scope` implementation. The SHELL basis is `project-root`:
+ * a bash target is a cwd-resolved literal, so a keyDir-relative `evidence/x.md`
+ * is refused (DR1 ruling, locked by tests — a designed difference, not a bug).
+ * The deny table stays the role-classified shell table (only it makes
+ * `packages/**` writeless-only).
+ *
  * `toolLabel` only phrases the block reason (`bash` keeps the historical
  * "bash write" wording for the research audit line). */
 export function checkBashWriteScopeTarget(config, rawTarget, verbatim, toolLabel = "bash") {
@@ -1535,7 +1895,19 @@ export function checkBashWriteScopeTarget(config, rawTarget, verbatim, toolLabel
     }
     const writable = config.roleClass === "writable";
     const target = normalizeForCompare(config.projectRoot, rawTarget);
-    const evidenceDir = path.join(config.keyDir, "evidence");
+    // T-10: the ALLOW face (own taskDir + own-key `<key>/evidence/**`) is the
+    // shared single source, resolved with the SHELL basis (`project-root` only):
+    // a bash target is a cwd-resolved literal, so a keyDir-relative
+    // `evidence/x.md` stays cwd-relative and is refused (DR1 — designed; see
+    // `shared/write-surface.ts::EvidenceBasis`). The deny table below stays the
+    // role-classified shell table (writeless-only `packages/**`).
+    const surfacePaths = resolveWriteSurfacePaths({
+        taskDir: config.taskDir,
+        keyDir: config.keyDir,
+        trueRoot: config.trueRoot,
+        projectRoot: config.projectRoot,
+    });
+    const evidenceDir = evidenceDirOf(surfacePaths);
     const allowedLabel = writable ? config.projectRoot : `${config.taskDir} or ${evidenceDir}`;
     const verb = toolLabel === "bash" ? "bash write" : toolLabel;
     const denied = bashWriteDenyReason(config, target);
@@ -1549,7 +1921,7 @@ export function checkBashWriteScopeTarget(config, rawTarget, verbatim, toolLabel
                 `[rule=deny]; allowed: ${allowedLabel}`,
         };
     }
-    const inOwnSandbox = isSameOrUnder(config.taskDir, target) || isSameOrUnder(evidenceDir, target);
+    const inOwnSandbox = resolveOwnWriteTarget(target, surfacePaths, { evidenceBasis: "project-root", basenameChannel: false }) !== null;
     // Role-classified default face (D-007). The writable face is the repo root;
     // its realpath is taken so a junctioned cwd cannot make the containment check
     // depend on the unnormalized spelling.
@@ -1582,7 +1954,7 @@ export function checkBashWriteScopeTarget(config, rawTarget, verbatim, toolLabel
         if (declaredFacePresent || declaredScopePresent) {
             const inWriteFace = config.writeFace !== undefined && matchesWriteFaceTarget(config.writeFace, target);
             const inWriteScope = config.writeScope === undefined ||
-                config.writeScope.some((entry) => matchesWriteScopeEntry(config, entry, target));
+                config.writeScope.some((entry) => matchesWriteScopeEntry(config.projectRoot, entry, target));
             if (declaredFacePresent && !inWriteFace) {
                 return {
                     allowed: false,
@@ -2254,7 +2626,7 @@ export async function workerModeActivate(pi) {
         else if (event.toolName === "bash") {
             const command = event.args?.command;
             if (typeof command === "string" && command.trim() !== "") {
-                pendingBashWrites.set(event.toolCallId, extractBashWriteCandidates(command).map((candidate) => candidate.target));
+                pendingBashWrites.set(event.toolCallId, classifyLedgerTargets(command));
             }
         }
         appendTrace(meta.taskKey, meta.agenticdocRoot, `tool_call ${event.toolName}`);
@@ -2273,15 +2645,18 @@ export async function workerModeActivate(pi) {
             if (writeTarget !== undefined && writeTarget !== "") {
                 appendWriteFileEvent(tracePath, repoRelativePath(writeTarget));
             }
-            // T-12/F-04: a successful shell command records its known write
-            // targets as the same change-history events, so the bash channel is no
-            // longer invisible to the ledger. Unclassifiable commands record
-            // nothing (the extractor's documented fail-open) — the caller then
-            // sees an unjudgeable trace rather than a false green.
-            for (const bashTarget of bashWrites ?? []) {
-                if (bashTarget === "")
-                    continue;
+            // T-12/F-04: a successful shell command records its resolved write
+            // targets as change-history events, so the bash channel is no longer
+            // invisible to the ledger. AC-017/T-02: only a STATICALLY RESOLVED
+            // target is a `[WRITE_FILE]`; an unresolved write verb is stated as
+            // `[WRITE_UNRESOLVED]` (a trace fact, never a recorded path). An
+            // unclassifiable command records nothing — the caller then sees an
+            // unjudgeable trace rather than a false green.
+            for (const bashTarget of bashWrites?.recorded ?? []) {
                 appendWriteFileEvent(tracePath, repoRelativePath(bashTarget));
+            }
+            for (const unresolvedWrite of bashWrites?.unresolved ?? []) {
+                appendUnresolvedWriteEvent(tracePath, unresolvedWrite.pattern, unresolvedWrite.target);
             }
             return;
         }
@@ -2347,6 +2722,7 @@ export async function workerModeActivate(pi) {
     const toolIdleMs = resolveToolIdleMs(idleMs);
     const riskAnchorMs = checkpointAnchorMs(budgetMs);
     let taskDone = false;
+    let selfCheckSent = false;
     let lastCheckpoint;
     let checkpointTimer;
     let steerTimer;
@@ -2396,6 +2772,36 @@ export async function workerModeActivate(pi) {
         killTrackedDetachedChildren();
         process.exit(1);
     }
+    /** T-04/AC-009: best-effort text read for the landing signals (a missing
+     * trace/progress file is simply "no signal"). */
+    function readTextBestEffort(file) {
+        try {
+            return fs.readFileSync(file, "utf8");
+        }
+        catch {
+            return "";
+        }
+    }
+    /** T-04/AC-009: the writeless `[CHECKPOINT]` line with the optional landing
+     * suffix. Mirrors `appendCheckpoint`'s base fields (worker/output-writer.ts is
+     * outside this task's write face) and appends `land=/last_land=/artifact=/
+     * done=`; `CHECKPOINT_LINE_RE` (shared/heartbeat.ts) accepts both forms. Write
+     * roles keep the byte-identical `appendCheckpoint` path. */
+    function appendLandingCheckpoint(opts) {
+        const lastLand = opts.landing.lastLandingAgeMs === undefined ? "-" : `${Math.round(opts.landing.lastLandingAgeMs / 1000)}s`;
+        const line = `[CHECKPOINT] ${new Date().toISOString()} elapsed=${Math.round(opts.elapsedMs / 1000)}s ` +
+            `reads=${opts.reads} writes=${opts.writes} phases=${opts.phases} uniq_targets=${opts.uniqTargets} ` +
+            `repeat_top=${opts.repeatTop} risk=${opts.risk} land=${opts.landing.landed} last_land=${lastLand} ` +
+            `artifact=${opts.landing.artifactPresent ? "yes" : "no"} done=${opts.landing.progressDone ? "yes" : "no"}`;
+        try {
+            const dir = path.resolve(meta.agenticdocRoot, meta.taskKey);
+            fs.mkdirSync(dir, { recursive: true });
+            fs.appendFileSync(path.join(dir, "trace.log"), `${line}\n`, "utf8");
+        }
+        catch {
+            // Diagnostic append — best effort, same contract as appendCheckpoint.
+        }
+    }
     /** Machine convergence evidence for the checkpoint line (AC-004). Risk is
      * advisory only — the PM (fullest context) judges and decides. */
     function writeCheckpoint() {
@@ -2404,6 +2810,18 @@ export async function workerModeActivate(pi) {
         for (const n of readCounts.values())
             repeatTop = Math.max(repeatTop, n);
         const phasesStr = phaseTotal > 0 ? `${completedPhaseIdx}/${phaseTotal}` : "-";
+        const taskDir = path.dirname(taskPath);
+        // T-04/AC-009: landing signals are writeless-only, so a write role's
+        // checkpoint does no extra I/O and its result stays byte-identical.
+        const landing = hasWriteTool
+            ? undefined
+            : collectLandingSignals({
+                taskDir,
+                traceText: readTextBestEffort(path.join(taskDir, "trace.log")),
+                progressText: readTextBestEffort(path.join(taskDir, "progress.md")),
+                startedAtMs: startedAt,
+                nowMs: startedAt + elapsedMs,
+            });
         const risk = computeRisk({
             elapsedMs,
             anchorMs: riskAnchorMs,
@@ -2411,16 +2829,31 @@ export async function workerModeActivate(pi) {
             phasesTotal: phaseTotal,
             phasesDone: completedPhaseIdx,
             repeatTop,
+            ...(landing ?? {}),
         });
-        appendCheckpoint(meta.taskKey, meta.agenticdocRoot, {
-            elapsedMs,
-            reads: readCount,
-            writes: writeCount,
-            phases: phasesStr,
-            uniqTargets: writeTargets.size,
-            repeatTop,
-            risk,
-        });
+        if (landing === undefined) {
+            appendCheckpoint(meta.taskKey, meta.agenticdocRoot, {
+                elapsedMs,
+                reads: readCount,
+                writes: writeCount,
+                phases: phasesStr,
+                uniqTargets: writeTargets.size,
+                repeatTop,
+                risk,
+            });
+        }
+        else {
+            appendLandingCheckpoint({
+                elapsedMs,
+                reads: readCount,
+                writes: writeCount,
+                phases: phasesStr,
+                uniqTargets: writeTargets.size,
+                repeatTop,
+                risk,
+                landing,
+            });
+        }
         lastCheckpoint = { risk, reads: readCount, writes: writeCount, phases: phasesStr };
         // Machine line: written by code (D-104/D-105) for roles with no write tool;
         // the self-assessment line goes through worker_file or the reply, per role.
@@ -2440,7 +2873,6 @@ export async function workerModeActivate(pi) {
         // processing" — followUp queues the steer as its own turn after the current
         // one, so in-flight work is never disrupted (smoke-validated 2026-09-09).
         // Both role branches keep followUp; only the wording differs (VC-004).
-        const taskDir = path.dirname(taskPath);
         pi.sendUserMessage(checkpointSteerText({
             elapsedMs,
             budgetMs,
@@ -2566,6 +2998,20 @@ export async function workerModeActivate(pi) {
             return "progress.md";
         return "none";
     }
+    /** T-05: the header `type:` the recovery contract judges (undefined on a
+     * legacy/manual book, P-07/P-09 — the same resolution `readTerminalGaps`
+     * performs when no type is passed). */
+    const judgedTypeReading = readTaskType(taskContent);
+    const judgedType = judgedTypeReading.source === "header" ? judgedTypeReading.type : undefined;
+    /** Is the AC-003 recovery contract applied to this run at all? A writeless
+     * role's reply IS its deliverable, so it is always judged; a write role is
+     * judged once it produced a report product (`report.md` or
+     * `report-<slug>.md`, AC-015) — otherwise the AC-006/C5 exemption stands (a
+     * coding run's deliverable is the repository, and its terse settle summary is
+     * not a report). */
+    function judgeRecoveryHere() {
+        return judgedType !== undefined && (isWritelessRole(meta.type) || hasReportProduct(taskDir));
+    }
     /** Success path. Does NOT process.exit: this handler runs inside pi's
      * agent_settled emit — returning lets pi's print mode resolve, print the
      * final assistant message to stdout (captured as worker.log), flush, and
@@ -2595,22 +3041,32 @@ export async function workerModeActivate(pi) {
         // a header `type:` is never judged (P-07/P-09), and a trace with no
         // `[WRITE_FILE]` event yields no ledger gap.
         // Recovery scope: a writeless role's reply IS its deliverable, so it is
-        // always judged; a write role is judged once it produced a `report.md`
-        // product — otherwise the AC-006/C5 exemption stands (a coding run's
-        // deliverable is the repository, and its terse settle summary is not a
-        // report). The change ledger below is judged for every role.
-        let reportProduct = false;
-        try {
-            reportProduct = fs.statSync(path.join(taskDir, "report.md")).size > 0;
-        }
-        catch {
-            reportProduct = false;
+        // always judged; a write role is judged once it produced a report product
+        // (`report.md` or `report-<slug>.md`, AC-015) — otherwise the AC-006/C5
+        // exemption stands (a coding run's deliverable is the repository, and its
+        // terse settle summary is not a report). The change ledger below is judged
+        // for every role.
+        const judgeRecovery = judgeRecoveryHere();
+        // T-05/I2 (AC-005): append the mechanical `## 上下文来源` to the file the
+        // judgement is about to read — BEFORE `readTerminalGaps`, so the judged text
+        // and the landed product cannot diverge (invariant I1). Only the mechanical
+        // whitelist is ever filled (R2); every failure class stays fail-closed.
+        if (judgeRecovery) {
+            const backfill = appendMechanicalContextSources({
+                taskKey: meta.taskKey,
+                agenticdocRoot: meta.agenticdocRoot,
+                summary: buildSummary(),
+                type: judgedType,
+            });
+            if (backfill.appended) {
+                appendTrace(meta.taskKey, meta.agenticdocRoot, `recovery-backfill section=上下文来源 target=${path.basename(backfill.target ?? "")} ok=${backfill.ok}`);
+            }
         }
         const gaps = readTerminalGaps({
             taskKey: meta.taskKey,
             agenticdocRoot: meta.agenticdocRoot,
             summary: buildSummary(),
-            judgeRecovery: isWritelessRole(meta.type) || reportProduct,
+            judgeRecovery,
         });
         const exitCode = evidence.delivered && gaps.ok ? 0 : 2;
         // AC-007/DD-09: carry the settle-time artifacts into the product so a
@@ -2669,6 +3125,52 @@ export async function workerModeActivate(pi) {
         recordEnd(exitCode);
         outputWritten = true;
     }
+    /** T-05/I1 (AC-004): the pre-settle self-check. On the final settle attempt
+     * the worker gets ONE structured gap (the missing section names, or nothing
+     * when `ok`) and is asked to fill it in its own product; the run then settles
+     * again on its actual text. Only substantive gaps trigger the turn — a
+     * mechanical-only gap is handled by the I2 backfill inside `finishSuccess`, so
+     * burning an agent turn for it would be pure cost. One turn per process.
+     * T-13/D-015 (option C): the round is gated on DELIVERED, not on a product
+     * file on disk — a writeless run whose reply IS its deliverable gets one
+     * chance to fix a substantive gap; an undelivered (no-product) settle keeps
+     * the immediate no-product verdict (AC-006/C5 alarm is never delayed). */
+    function settleOrSelfCheck() {
+        if (judgedType !== undefined && (isWritelessRole(meta.type) || hasReportProduct(taskDir))) {
+            const missing = currentRecoveryMissing({
+                taskKey: meta.taskKey,
+                agenticdocRoot: meta.agenticdocRoot,
+                summary: buildSummary(),
+                type: judgedType,
+            });
+            // Parseable machine record of the gap the worker is about to receive
+            // (AC-004): `[FLOW] <ts> recovery-gap missing=<a|b> selfcheck=<...>`.
+            appendTrace(meta.taskKey, meta.agenticdocRoot, `recovery-gap missing=${missing.length > 0 ? missing.join("|") : "-"} selfcheck=${selfCheckSent ? "sent" : "pending"}`);
+            const substantive = missing.filter((name) => !isMechanicalSection(name));
+            // T-13/D-015 (option C): the follow-up turn exists so the agent can fix
+            // the product the judgement will read. The gate is the SAME predicate
+            // finishSuccess uses for the deliverable verdict — for a writeless role
+            // that is `hasDeliverableEvidence(taskDir, lastAssistantText).delivered`
+            // (its reply IS its deliverable), for a write role the outer
+            // judgeRecoveryHere()/hasReportProduct guard already proves a product
+            // exists, so it is delivered by construction. A run that settled with
+            // no deliverable takes the AC-006/C5 no-product verdict instead —
+            // granting an extra turn would turn the no-product signal into an open
+            // loop. The parseable trace row above is still written for every judged
+            // settle.
+            const isDelivered = isWritelessRole(meta.type)
+                ? hasDeliverableEvidence(taskDir, lastAssistantText).delivered
+                : true;
+            if (!selfCheckSent && substantive.length > 0 && isDelivered) {
+                selfCheckSent = true;
+                // Reuse the checkpoint steer carrier (followUp): the agent is settled,
+                // so this queues one more turn instead of resuming mid-generation.
+                pi.sendUserMessage(`[mw recovery self-check] 你的产物缺少恢复契约段：${substantive.join("、")}。请在 report.md / output.md 中用 \`## <段名>\` 标题补上这些段落，然后重新收尾；本进程只自检一次，之后按实际产物判定。`, { deliverAs: "followUp" });
+                return;
+            }
+        }
+        finishSuccess();
+    }
     pi.on("agent_settled", () => {
         try {
             // AC-010②: this handler is the settle entry point; once finishSuccess has
@@ -2688,8 +3190,8 @@ export async function workerModeActivate(pi) {
                     nextPhaseIdx = 1;
                     return;
                 }
-                // No phases — write output and let pi exit naturally
-                finishSuccess();
+                // No phases — self-check, then write output and let pi exit naturally
+                settleOrSelfCheck();
                 return;
             }
             // A phase just completed: write its output file and goal-check trace
@@ -2712,7 +3214,7 @@ export async function workerModeActivate(pi) {
                 }
             }
             // All phases done (or no phases after initial settle)
-            finishSuccess();
+            settleOrSelfCheck();
         }
         catch (err) {
             taskDone = true;

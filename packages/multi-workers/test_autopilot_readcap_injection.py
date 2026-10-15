@@ -1010,11 +1010,18 @@ def test_vc009_images_zero_byte_and_position() -> None:
 #                               and its docstring records the rebaseline. Only
 #                               that one line moved; no assertion was relaxed
 #                               or removed.
+# Re-frozen again 2026-10-14 during mw-dynamic-concurrency M-03:
+#   test_autopilot_config.py    20 -> 21 config keys (max_workers_per_key)
+#                               and max_parallel_keys floor 2 -> 1 / default
+#                               2 -> 8, so the count/order lock had to move
+#                               with the schema. Only counts and the new-key
+#                               membership moved; no assertion was relaxed or
+#                               removed.
 # The assertion is byte-exact and unchanged in strength; only its recorded left
 # end moved off the pre-change git HEAD.
 _GOLDEN_REGRESSION_SHA256 = {
     "test_autopilot_config.py":
-        "27b222b9d166325b536a27c01f106b9304d360ecfab451bbe8082324fd973f40",
+        "ce52c20e53b043aa2c5e8b625b4f3bfb7d39b9abcd4a4b06649f8d380612e521",
     "test_autopilot_dispatch.py":
         "a084ed658e43a4374055e5ba6008dd36b4d9762bc79bfbfece90cf3234a009c6",
 }

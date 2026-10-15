@@ -5,6 +5,8 @@ import { type IndexStore } from "../shared/index-store.ts";
 import type { DoctorJson, MwCliResult } from "../shared/mw-runner.ts";
 import { type PmStateClaimSyncResult } from "../shared/pm-state-claim.ts";
 import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
+import { type WriteTargetShape } from "../shared/write-surface.ts";
+export { classifyWriteTargetShape, type WriteTargetShape } from "../shared/write-surface.ts";
 /** Owner key for a worker task — this window's own claim first, the shared
  * active pointer second. Explicit key wins (deliberate choice — no warning).
  * Otherwise, when this window watches a key whose _index.parallel row it
@@ -317,9 +319,6 @@ export interface WriteIntentHit {
     path: string;
     clause: string;
 }
-/** Shape classes for one candidate token (AC-004). The first four (`punct`,
- * `version`, `abbrev`, `bare`) are non-candidates: prose, not write targets. */
-export type WriteTargetShape = "punct" | "version" | "abbrev" | "bare" | "sep" | "dot-lead" | "drive-relative" | "ads" | "colon" | "ext" | "deny-name" | "exists";
 /** Verdict of the target axis (AC-003/AC-004). `rule` exists only when
  * allowed=false: `deny` = the deny prefix table fired, `scope` = a path-shaped
  * target outside the write surface. */
@@ -349,20 +348,16 @@ export interface PmWriteSurfaceCtx {
  * artifact. Stripping the whole comment span (inline and multi-line) removes
  * every comment-borne mention — never a marker-name special case. */
 export declare function collectWriteIntentHits(text: string): WriteIntentHit[];
-/** Shape classification for one candidate token (AC-004). Ordered so the
- * pointed Win32 forms (`drive-relative`, `ads`) are labelled before the `ext`
- * rule can swallow them; trailing dots/spaces are stripped first (Win32
- * CreateFile semantics). Read-only (`existsSync`). */
-export declare function classifyWriteTargetShape(pathToken: string, ctx: {
-    projectRoot: string;
-}): WriteTargetShape;
-/** Target-axis verdict (AC-003/AC-004), evaluation order:
- *   1. deny prefixes (absolute priority, mirrors worker-mode.ts)
- *   2. own task dir — realpath + segment boundary (read-scope.ts reuse)
- *   3. basename channel — ONLY for a token with no directory component, so a
- *      whitelisted basename can never whitelist a foreign directory (A4 fix)
- *   4. path shape => refuse (fail-closed, A3 fix)
- *   5. non-candidate prose => pass untouched
+/** Verdict of the target axis delegated to the shared write-surface predicate
+ * (`shared/write-surface.ts::judgeWriteTarget`, design §3; AC-016). This
+ * adapter only adds the two PM-only channels the predicate does not own: the
+ * framework basenames (`task.md`/`trace.log`/`output.md`/`run.json`/
+ * `worker.log`, which the framework itself writes) and the `WriteTargetJudge`
+ * shape/rule vocabulary. Evaluation order matches the historical one:
+ *   1. deny prefixes + own task dir + own-key `<key>/evidence/**` + worker_file
+ *      basenames + path-shape refusal — all from the shared predicate
+ *   2. framework basenames — PM prose channel only
+ *   3. non-candidate prose => pass untouched
  * The `!hasDirComponent` precondition (not `shape === "bare"`) is load-bearing:
  * `output.md`/`report.md` are `ext`-shaped and must still use the channel. */
 export declare function judgeWriteTarget(pathToken: string, ctx: PmWriteSurfaceCtx): WriteTargetJudge;
@@ -432,6 +427,11 @@ export interface CardSections {
     deliverables: string;
     /** Card sections outside the three envelope families, in document order. */
     extras: CardExtraSection[];
+    /** T-05/AC-003: the card's declared `type:`, set only by {@link readDispatchCard}
+     * (a directly constructed `CardSections` carries no type, so callers keep the
+     * pre-T-05 bytes). It drives the `## 交付段契约（本角色）` checklist in
+     * {@link renderCardSeedSections}. */
+    type?: string;
 }
 /**
  * Extract the three envelope bodies from a card (T-02, contract C3).
@@ -444,7 +444,22 @@ export interface CardSections {
  * never re-judges the envelope; `readEnvelope` already owns the verdict.
  */
 export declare function extractCardSections(cardText: string): CardSections;
-/** Render the marker-paired card seed block (T-02, contract C3). */
+/** Render the marker-paired card seed block (T-02, contract C3).
+ *
+ * T-05/AC-003 (S2 TS half): for a card-backed render whose role is a
+ * card-declared WRITELESS report role, the role's `## 交付段契约（本角色）`
+ * checklist is appended inside the seed block (each required section as a
+ * copyable `## <name>`). The presence guard makes a card that already declares
+ * the heading a byte-level fixed point, so re-rendering (or the Python
+ * producer's identical `dispatch.py::_envelope_card_body` injection) cannot
+ * double-render the section.
+ *
+ * Scope note (2026-10-14, T-05; widened 2026-10-15, T-13/D-015 option C): the
+ * gate is now "the card declares a `type:`" — `recoveryContractSection` already
+ * returns `""` for types outside `RECOVERY_CONTRACT_TYPES` (no contract role
+ * stays byte-identical), so the checklist reaches every contract role the TS
+ * dispatch path produces, `coding` included. The `dispatch-card-injection.test.ts`
+ * coding fixture now carries the checklist in its pinned expected bytes. */
 export declare function renderCardSeedSections(sections: CardSections): string;
 /** Idempotent card-seed application: any existing marker region is removed,
  * then the canonical block is prepended to the body. Applying it twice is a

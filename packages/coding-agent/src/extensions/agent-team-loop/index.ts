@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { pmActivate } from "./pm/pm-orchestrator.ts";
 import { registerImplementationGate } from "./shared/implementation-gate.ts";
 import { registerProtectedConfigGuard } from "./shared/protected-config.ts";
+import { registerWorktreeJunctionGuard } from "./shared/worktree-junction-guard.ts";
 import { registerXkeyGateGuard } from "./shared/xkey-gate-guard.ts";
 import { workerModeActivate } from "./worker/worker-mode.ts";
 
@@ -57,6 +58,16 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 	// EVERY mode, same position as the protected-config guard: after the
 	// double-load flag, before the PM/Worker mode branches.
 	registerImplementationGate(pi);
+
+	// Worktree junction guard (mw-worktree-junction-guard G1, AC-001/002/003):
+	// `git worktree remove --force <path>` walks THROUGH reparse points and
+	// deletes the link target (the 2026-10-09 incident removed 3,456 tracked
+	// files from the shared tree). The guard resolves the operand, scans the
+	// target tree, and blocks when it cannot prove the tree is free of reparse
+	// points, pointing at the `mw worktree rm <path>` replacement command.
+	// Registered in EVERY mode, same position as the other guards: after the
+	// double-load flag, before the PM/Worker mode branches.
+	registerWorktreeJunctionGuard(pi);
 
 	if (process.env.PI_WORKER_TASK) {
 		await workerModeActivate(pi);
