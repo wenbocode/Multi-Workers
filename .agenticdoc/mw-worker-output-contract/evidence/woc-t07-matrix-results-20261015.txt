@@ -1,0 +1,99 @@
+
+ RUN  v4.1.9 H:/git/Multi-Workers/packages/coding-agent
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-001 cross-entry consistency (judgement entry = candidate-set entry) > 'all five headings (coding) => ok'
+[VERIFY] AC-001 cross-entry {"type":"coding","judged":"C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\mwoc-matrix-y86YTj\\.agenticdoc\\mwoc-matrix\\workers\\matrix-worker\\report.md","predicateMissing":[],"gapsMissing":[],"predicateOk":true,"gapsOk":true}
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-001 cross-entry consistency (judgement entry = candidate-set entry) > 'missing 1 (证据)'
+[VERIFY] AC-001 cross-entry {"type":"coding","judged":"C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\mwoc-matrix-FsdqQN\\.agenticdoc\\mwoc-matrix\\workers\\matrix-worker\\report.md","predicateMissing":["证据"],"gapsMissing":["证据"],"predicateOk":false,"gapsOk":false}
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-001 cross-entry consistency (judgement entry = candidate-set entry) > 'missing 2 (证据 + 残留与未验证)'
+[VERIFY] AC-001 cross-entry {"type":"coding","judged":"C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\mwoc-matrix-jcvL3X\\.agenticdoc\\mwoc-matrix\\workers\\matrix-worker\\report.md","predicateMissing":["证据","残留与未验证"],"gapsMissing":["证据","残留与未验证"],"predicateOk":false,"gapsOk":false}
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-001 cross-entry consistency (judgement entry = candidate-set entry) > 'missing 5 (no headings at all)'
+[VERIFY] AC-001 cross-entry {"type":"coding","judged":"C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\mwoc-matrix-xqLQtx\\.agenticdoc\\mwoc-matrix\\workers\\matrix-worker\\report.md","predicateMissing":["结论","证据","残留与未验证","上下文来源","改动清单"],"gapsMissing":["结论","证据","残留与未验证","上下文来源","改动清单"],"predicateOk":false,"gapsOk":false}
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-001 cross-entry consistency (judgement entry = candidate-set entry) > 'body-only aliases, no heading => miss…'
+[VERIFY] AC-001 cross-entry {"type":"coding","judged":"C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\mwoc-matrix-5UGnPc\\.agenticdoc\\mwoc-matrix\\workers\\matrix-worker\\report.md","predicateMissing":["结论","证据","残留与未验证","上下文来源","改动清单"],"gapsMissing":["结论","证据","残留与未验证","上下文来源","改动清单"],"predicateOk":false,"gapsOk":false}
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-001 cross-entry consistency (judgement entry = candidate-set entry) > 'alias headings satisfy the sections'
+[VERIFY] AC-001 cross-entry {"type":"coding","judged":"C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\mwoc-matrix-ifSwPS\\.agenticdoc\\mwoc-matrix\\workers\\matrix-worker\\report.md","predicateMissing":[],"gapsMissing":[],"predicateOk":true,"gapsOk":true}
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-001 cross-entry consistency (judgement entry = candidate-set entry) > 'duplicate heading is still one presen…'
+[VERIFY] AC-001 cross-entry {"type":"coding","judged":"C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\mwoc-matrix-fdjvGP\\.agenticdoc\\mwoc-matrix\\workers\\matrix-worker\\report.md","predicateMissing":[],"gapsMissing":[],"predicateOk":true,"gapsOk":true}
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-001 cross-entry consistency (judgement entry = candidate-set entry) > 'blockquoted heading does not count'
+[VERIFY] AC-001 cross-entry {"type":"research","judged":"C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\mwoc-matrix-yyiPxp\\.agenticdoc\\mwoc-matrix\\workers\\matrix-worker\\report.md","predicateMissing":["结论","证据","残留与未验证","上下文来源"],"gapsMissing":["结论","证据","残留与未验证","上下文来源"],"predicateOk":false,"gapsOk":false}
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-015 candidate-set x judgement combinations > only report-<slug>.md: the slug is judged and the two entries agree
+[VERIFY] AC-015 slug-only judged=true missing=["上下文来源"] predicate=["上下文来源"]
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-015 candidate-set x judgement combinations > report.md + slug coexist: report.md wins, the slug content is ignored
+[VERIFY] AC-015 report+slug judged=report.md missing=[]
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-015 candidate-set x judgement combinations > only output.md: output.md is judged and the verdict comes from it
+[VERIFY] AC-015 output-only judged=output.md missing=["结论","证据","残留与未验证","上下文来源"]
+
+[worker] start task=matrix-worker type=research phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[worker] start task=matrix-worker type=research phases=-
+[worker] done exit=0 elapsed=0s tools=0
+[worker] start task=matrix-worker type=research phases=-
+[worker] done exit=0 elapsed=0s tools=0
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-015 candidate-set x judgement combinations > the settle exit agrees with the candidate-set verdict on all three forms
+[VERIFY] AC-015 settle exits slug=0 report+slug=0 output-only=0
+
+[worker] start task=mdc-rq1-dispatch-chain type=research phases=-
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-005 historical mechanical-only replay (3 cases, exit=2 -> exit=0) > mw-dynamic-concurrency/workers/mdc-rq1-dispatch-chain: missing only 上下文来源, then exit=2 -> exit=0
+[VERIFY] AC-005 replay pre task=mw-dynamic-concurrency/workers/mdc-rq1-dispatch-chain type=research missing=["上下文来源"]
+
+[worker] done exit=0 elapsed=0s tools=0
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-005 historical mechanical-only replay (3 cases, exit=2 -> exit=0) > mw-dynamic-concurrency/workers/mdc-rq1-dispatch-chain: missing only 上下文来源, then exit=2 -> exit=0
+[VERIFY] AC-005 replay post task=mw-dynamic-concurrency/workers/mdc-rq1-dispatch-chain exit=0 status=done
+
+·············[worker] start task=mwgf-drq3-role-key-design type=research phases=-
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-005 historical mechanical-only replay (3 cases, exit=2 -> exit=0) > mw-guard-form-hardening/workers/mwgf-drq3-role-key-design: missing only 上下文来源, then exit=2 -> exit=0
+[VERIFY] AC-005 replay pre task=mw-guard-form-hardening/workers/mwgf-drq3-role-key-design type=research missing=["上下文来源"]
+
+[worker] done exit=0 elapsed=0s tools=0
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-005 historical mechanical-only replay (3 cases, exit=2 -> exit=0) > mw-guard-form-hardening/workers/mwgf-drq3-role-key-design: missing only 上下文来源, then exit=2 -> exit=0
+[VERIFY] AC-005 replay post task=mw-guard-form-hardening/workers/mwgf-drq3-role-key-design exit=0 status=done
+
+·[worker] start task=mvr-rq5-awareness-surface type=research phases=-
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-005 historical mechanical-only replay (3 cases, exit=2 -> exit=0) > mw-vision-role/workers/mvr-rq5-awareness-surface: missing only 上下文来源, then exit=2 -> exit=0
+[VERIFY] AC-005 replay pre task=mw-vision-role/workers/mvr-rq5-awareness-surface type=research missing=["上下文来源"]
+
+[worker] done exit=0 elapsed=0s tools=0
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-005 historical mechanical-only replay (3 cases, exit=2 -> exit=0) > mw-vision-role/workers/mvr-rq5-awareness-surface: missing only 上下文来源, then exit=2 -> exit=0
+[VERIFY] AC-005 replay post task=mw-vision-role/workers/mvr-rq5-awareness-surface exit=0 status=done
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-017(a) data regions produce zero [WRITE_FILE] rows > the 13/55/319/336 char here-string forms each extract zero candidates
+[VERIFY] AC-017(a) candidate_counts=13:0,55:0,319:0,336:0
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-017(b) .NET file APIs extract exactly one event each > WriteAllText / AppendAllText each yield exactly one candidate
+[VERIFY] AC-017(b) write_all_text=1 append_all_text=1 write_all=[{"target":"src/a.ts","pattern":"net-file-api","verbatim":true}] append_all=[{"target":"evidence/x.md","pattern":"net-file-api","verbatim":true}]
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-017(b) .NET file APIs extract exactly one event each > a resolved .NET write lands as exactly one [WRITE_FILE] event
+[VERIFY] AC-017(b) recorded=["evidence/x.md"] events=["evidence/x.md"]
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-017(c) the --glob here-string no longer denies real writes > replays the three blocked rq1 commands as allow=2 deny=0 (was allow=0 deny=3)
+[VERIFY] AC-017(c) source=real-corpus allow=2 deny=0 allow_unknown=0
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-017(d) unjudgeable derives from USABLE events > a garbage [WRITE_FILE] line cannot close the gate (unjudgeable stays true)
+[VERIFY] AC-017(d) garbage_event raw_recorded=1 old_gate_closed=true new_unjudgeable=true
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-017(d) unjudgeable derives from USABLE events > a zero-event trace with a declaration stays unjudgeable; without one it is green
+[VERIFY] AC-017(d) zero_events declared_unjudgeable=true undeclared_unjudgeable=false
+
+stdout | test/suite/mwoc-matrix-t07.test.ts > AC-017(d) unjudgeable derives from USABLE events > a usable [WRITE_FILE] for the declared file is green
+[VERIFY] AC-017(d) usable_event unjudgeable=false
+
+···········
+
+ Test Files  1 passed (1)
+      Tests  25 passed (25)
+   Start at  12:23:05
+   Duration  1.05s (transform 403ms, setup 0ms, import 627ms, tests 304ms, environment 0ms)
+
+
+--- STDERR ---

@@ -1,0 +1,44 @@
+# T-05 / AC-010(a) · corpus before/after (2026-10-14)
+
+Command (read-only, re-runnable):
+
+```
+python -X utf8 .agenticdoc/mw-worker-output-contract/evidence/scripts/recovery-contract-corpus-stats.py
+```
+
+## After (T-05 implementation landed, this worker ran it)
+
+```
+corpus root: H:\git\Multi-Workers\.agenticdoc
+judged targets (workers/*/task.md header type: + non-empty report.md|output.md): n=463
+type distribution: {'review': 30, 'coding': 302, 'research': 130, 'vision': 1}
+tier A alias substring (current checkRecovery, includes): 178/463 = 38.4%
+tier A2 alias word-boundary variant:                     174/463 = 37.6%
+tier B heading H2 contains:                              63/463 = 13.6%
+tier B2 heading H2/H3 contains:                          67/463 = 14.5%
+flip alias-pass to H2/H3-heading-fail:                   111/463 = 24.0%
+heading-tier missing frequency: 上下文来源=362/463, 残留与未验证=311/463, 证据=124/463, 结论=86/463, 改动清单=72/463, 未覆盖面声明=22/463
+```
+
+## Before (recorded baselines; n drifted as parallel workers kept writing)
+
+| snapshot | n | tier A (whole-text alias) | tier B (H2 heading) | source |
+|---|---|---|---|---|
+| spec RQ-1 / task card | 433 | 145/433 = 33.5% | 35/433 = 8.1% | `evidence/research/spec-rq1-contract-corpus-20261014.md` |
+| DR6 design baseline | 437 | 152/437 = 34.8% | 37/437 = 8.5% (H2/H3 41/437 = 9.4%) | `evidence/research/design-rq6-verification-matrix-20261014.md` |
+
+## Reading
+
+The script's two tiers are STATIC (they do not import the TS code): tier A is the
+old whole-text `includes` predicate, tier B is a heading-only predicate close to
+the new H2档. The move from tier A to tier B is the AC-001 change itself, so the
+honest before/after pair is exactly the tier A → tier B delta in the SAME run:
+`178/463 = 38.4%` (old whole-text predicate) → `63/463 = 13.6%` (heading-only)
+on the current n=463 corpus. The task card's `145/433 = 33.5%` /
+`35/433 = 8.1%` pair is the n=433 baseline of the same delta (n drifts because
+parallel workers keep landing products — the task card already records `n=437`,
+and this run drifted to `n=463`).
+
+Historical products are NEVER an acceptance object (R1): these numbers are
+background only. The acceptance evidence is the new-product / replay evidence in
+this worker's `output.md` (AC-002 exit table, AC-005 replay 3/3, AC-004/I1).

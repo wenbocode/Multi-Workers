@@ -1,0 +1,29 @@
+T-07 AC-010(a) corpus comparison — 2026-10-15 (woc-t07-matrix)
+
+Command (re-runnable, read-only script):
+  python -X utf8 .agenticdoc/mw-worker-output-contract/evidence/scripts/recovery-contract-corpus-stats.py
+
+The four numbers (before × after, whole-text × heading):
+  before whole-text alias substring (tier A):  145/433 = 33.5%   (PM independent reproduction, task card / DR6)
+  before heading H2 only (tier B):             35/433  =  8.1%   (PM independent reproduction, task card / DR6)
+  after  whole-text alias substring (tier A):  180/465 = 38.7%   (this run, 2026-10-15)
+  after  heading H2 only (tier B):             65/465  = 14.0%   (this run, 2026-10-15)
+
+Raw output (this run, 2026-10-15):
+------------------------------------------------------------
+corpus root: H:\git\Multi-Workers\.agenticdoc
+judged targets (workers/*/task.md header type: + non-empty report.md|output.md): n=465
+type distribution: {'review': 30, 'coding': 304, 'research': 130, 'vision': 1}
+tier A alias substring (current checkRecovery, includes): 180/465 = 38.7%
+tier A2 alias word-boundary variant:                     176/465 = 37.8%
+tier B heading H2 contains:                              65/465 = 14.0%
+tier B2 heading H2/H3 contains:                          69/465 = 14.8%
+flip alias-pass to H2/H3-heading-fail:                   111/465 = 23.9%
+heading-tier missing frequency: 上下文来源=362/465, 残留与未验证=311/465, 证据=124/465, 结论=86/465, 改动清单=72/465, 未覆盖面声明=22/465
+------------------------------------------------------------
+
+Interpretation: the corpus is live (n drifted 433 -> 437 -> 463 -> 465 across
+measurements). Historical numbers are background only (R1): neither before nor
+after pass rates are an acceptance gate (AC-010(b) uses NEW products only).
+The heading-only tier stays far below the whole-text tier at every snapshot,
+which is why the H2-only predicate is only applied to new products.

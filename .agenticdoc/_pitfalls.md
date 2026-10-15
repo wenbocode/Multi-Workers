@@ -383,3 +383,44 @@
   2. 吸收期拿到全量失败集，先**逐条隔离复跑**再归因；单条复跑转绿 ⇒ 判幻影，不计入回归。
   3. 汇报口径写「失败**集** == 基线 N 条」，不要写总数相等——总数会被幻影扰动，失败集才是判据。
 - 关联：P-032（全量对照的本机口径）、P-025（结论要可定位复核）、`plan.md` §7.4/§7.6。
+
+## P-037 派发卡的行号引用在长文件里易漂移——用符号锚定，不用裸行号（2026-10-15，mw-worker-output-contract ACB-V1）
+
+- 事实：ACB-V1 卡写 worker-mode.ts:2584（settleOrSelfCheck），实际函数定义在 :3645（T-05/T-13 在该文件加了近千行）。worker 靠「函数全文件唯一」定位无歧义，但卡面行号已失效；T-05 时期 worker-mode.ts 关键函数位置也多次漂移（settle 段、抽取器段、检查点段都随批次增长移动）。
+- 危害：裸行号在活跃文件里是**易腐引用**——worker 若按行号找会找错位置；PM 复核时也容易拿旧行号比对。
+- 硬规则：
+  1. 派发卡 / 规格 / 设计文档里引用活跃代码一律用**符号锚定**（unction settleOrSelfCheck、export function renderCardSeedSections、judgedProductFile）而非行号；必须带行号时写「ile 中 符号（约 N 行，符号锚定）」。
+  2. 复核 worker 报告里的 ile:line 时，先确认该文件在该 worker 运行周期内是否被别的批次改过（mtime 检查），漂移则按符号重新定位。
+- 关联：P-025（结论要可定位复核）、本 key achieved.md 遗留 5。
+
+## P-038 抽取器误拦合法只读命令的现场（2026-10-15，mw-worker-output-contract T-02 吸收期）
+
+- 事实：change-ledger.ts 抽取器对 bash 事件用 includes 子串匹配 + 标题别名，T-02 的**报告正文**里出现与账本别名同形的 H1 标题（# T-02 · 变更账本抽取器加固…）时，被当作「声明体」读进账本——diffLedger 得出 declared=[] 的假缺口。同一时期 woc-t13-selfcheck-r2 的探针里，[TOOL_ERR] 中夹带的合法只读命令正文也曾触发账本路径误读。
+- 危害：账本判据（AC-017/unrecordedFiles）把「报告自称改了 X」误判为「真改了 X」，产生假 exit=2 或假缺口；PM 要花时间区分框架假阳与真缺陷。
+- 硬规则：
+  1. 判定类逻辑（账本、检查点、契约段）对**命令/事件正文**一律用结构判定（标题级别、锚定位置），不要对整篇做 includes 子串匹配。
+  2. 吸收 worker 的 
+eeds-clarification 时，先跑 diffLedger 复现再归因；标题别名撞车是已知形态（本 key D-011/D-012 已根因）。
+- 关联：P-026 邻近、_framework-reflect.md FW-001/FW-009 状态行、本 key T-11 卡。
+
+## P-039 
+otified 兼任每任务一次界的陷阱（2026-10-15，mw-worker-output-contract T-04/T-12 吸收期）
+
+- 事实：worker-mode.ts 里若干「每任务只发一次」的守卫（自检回合 selfCheckSent、告警 
+otified、恢复缺口提示）共享同一类布尔；T-13 把自检回合条件改为「已交付」后，
+otified/selfCheckSent 的置位顺序与 inishSuccess 的 	askDone 幂等守卫相互依赖——若把「发送过」与「处理过」混用，会出现「自检回合发了但第二次 settle 直接落终态」或「告警永远不重发」两类边界。
+- 危害：一次性守卫的语义（按事件 vs 按进程 vs 按判定）混用会引入难复现的时序缺陷；非确定性测试（T-04 flake）与此同族。
+- 硬规则：
+  1. 一次性守卫命名即声明语义：selfCheckSent（每进程一次）、	askDone（终态幂等）、
+otified（按告警类型一次）——实现里不得互换。
+  2. 修改任一「每任务一次」逻辑时，同时审视其它守卫的置位顺序，并跑连续 10 次该套件确认无 flake。
+- 关联：D-013/D-014（T-12 钳制）、本 key T-13 卡、achieved.md 遗留 3。
+## P-040 渲染标记残留与控制字符混入的防写（2026-10-15，mw-worker-output-contract T-09 收尾）
+
+- 事实：收尾期 PM 可见消息出现 <# ... :#> / <# ... </#> 包裹标记残留（消息层生成，仓库 0 处、未入文件）；同时 _pitfalls.md 追加时混入 x07（BEL）x2、x08（BS）x1，替换了 achieved.md 的 a 与 bash 的 b，git diff 溯源为本会话 bash heredoc 传输引入。修复后复扫 NONE。详见 evidence/incident-20261015-render-marker-residue.md。
+- 危害：文档字符被替换会改变语义；可见消息标记为纯噪声但扰民。
+- 硬规则：
+  1. 文档写入统一用 write 工具；不用 bash heredoc 写多行文档内容。
+  2. 任何文档写入后跑控制字符扫描（python: bytes <9 or 13<b<32 or b==127）并 git diff 核对，确认无混入再继续。
+  3. 可见消息不输出 <# ... :#> / <# ... </#> 包裹标记；工具调用前置说明用纯文本。
+- 关联：incident-20261015-render-marker-residue.md、P-037（行号漂移同批发现）。

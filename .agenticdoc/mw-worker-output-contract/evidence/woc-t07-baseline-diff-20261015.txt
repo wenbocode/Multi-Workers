@@ -1,0 +1,17 @@
+baseline tests=558 after tests=558
+NEW FAILURES (this change) = 0
+STILL FAILING (pre-existing) = 5
+  KEEP H:/git/Multi-Workers/packages/coding-agent/test/extensions/agent-team-loop-worker-file-tool.test.ts :: size and slug limits enforces the slug length boundary (41 allowed, 42 rejected)
+  KEEP H:/git/Multi-Workers/packages/coding-agent/test/extensions/agent-team-loop-worker-file-tool.test.ts :: writeWorkerFile (VC-005) VC-005: appends progress.md after a sentinel and writes report files; bytes match UTF-8 length
+  KEEP H:/git/Multi-Workers/packages/coding-agent/test/extensions/agent-team-loop.test.ts :: T-17/B-1 anchor integrity (VC-MWGF-038 / AC-011) every spec.md / design.md `file:line` reference is anchored to the current tree
+  KEEP H:/git/Multi-Workers/packages/coding-agent/test/suite/mwds-t02-write-intent.test.ts :: AC-005a corpus replay (VC-015) the writeless-without-shell corpus yields 0 false positives (hit set = known true positives only)
+  KEEP H:/git/Multi-Workers/packages/coding-agent/test/suite/mwds-t23-cutover-recheck.test.ts :: T-23 requirement 4 — same-source bundle sha expectation the card names the expected bundle sha256 (read-only script compares both copies)
+FIXED = 0
+MISSING FROM AFTER (not collected) = 7
+  MISS H:/git/Multi-Workers/packages/coding-agent/test/suite/dispatch-recovery-terminal.test.ts :: AC-003 terminal flip (T-07 requirement 1) a delivered but incomplete report flips done -> needs-clarification and names the missing section
+  MISS H:/git/Multi-Workers/packages/coding-agent/test/suite/mwds-t03-bash-write-scope.test.ts :: AC-005b zero impact on write roles (VC-024) VC-024: coding registers no write-scope guard and its bash commands pass
+  MISS H:/git/Multi-Workers/packages/coding-agent/test/suite/mwds-t03-bash-write-scope.test.ts :: AC-005b zero impact on write roles (VC-024) VC-024: repair registers no write-scope guard and its bash commands pass
+  MISS H:/git/Multi-Workers/packages/coding-agent/test/suite/mwds-t03-bash-write-scope.test.ts :: AC-005b zero impact on write roles (VC-024) VC-024: vision registers no write-scope guard and its bash commands pass
+  MISS H:/git/Multi-Workers/packages/coding-agent/test/suite/mwds-t03-bash-write-scope.test.ts :: AC-007 write-scope audit line + summary (VC-029/VC-030) the summary is written once at recordEnd and only for the writeless guard role
+  MISS H:/git/Multi-Workers/packages/coding-agent/test/suite/mwgal-t21-qg-fixes.test.ts :: T-21 contract locks no config key was added (AC-011): the default set stays at 20
+  MISS H:/git/Multi-Workers/packages/coding-agent/test/suite/output-recovery-contract.test.ts :: recovery contract at settle (AC-003) missing section => needs-clarification and the read-back names it
