@@ -82,6 +82,44 @@ python mw.py <子命令>
 | `target set/show/clear` | 双工作区配置（见下） |
 | `ue-toolchain run/targets/hash` | dual 模式 UE 工具链纪律（见下）：执行模板并留证（错误签名双判 + --watch 前后哈希）、发现 UE 构建目标名、EOL 归一化哈希 |
 | `model set/show/clear` | 派发模型默认值（见下） |
+| `run-detached [--cwd DIR] [--run-dir DIR] [--timeout-min N] [--heartbeat-s N] -- <cmd...>` | 后台命令唯一入口：隐藏控制台监督进程 + heartbeat/marker 证据（见下「Windows detached-run checklist」） |
+
+## Windows detached-run checklist
+
+> 事故依据（2026-10-15 控制台窗口风暴）与实证：`evidence/research/design-win32-console-semantics-20261015.md`（M1/M2/M3）。本清单是 spec AC-009 的文档交付面。
+
+### 三事实（Win32 console 语义）
+
+1. **`DETACHED_PROCESS` × `CREATE_NO_WINDOW` 互斥**：两者都要决定子进程的控制台归属，不能同时表达。
+2. **组合时 `DETACHED_PROCESS` 静默生效**：同时传 `DETACHED_PROCESS | CREATE_NO_WINDOW` 时 `CREATE_NO_WINDOW` 被忽略，子进程得到的是「无控制台」而非「隐藏控制台」——不报错，因此极易误判为安全。
+3. **后代进程窗口外溢**：一旦祖先处于「无控制台」，孙代（及更深）以 `creationflags=0` 裸 spawn 时，每个进程都会被分配新的可见控制台窗口（1:1 弹窗，owner = `WindowsTerminal.exe` / `OpenConsole.exe` / `conhost.exe`）。
+
+**判据（不要用 `GetConsoleWindow`）**：`GetConsoleWindow()` 对「隐藏控制台」和「无控制台」都返回 0，无法区分。唯一可靠判据是 `GetConsoleProcessList()` 的计数：隐藏控制台 `> 0`，无控制台 `== 0`。差分实测窗口用 EnumWindows 按 hwnd 去重 + owner exe 过滤（AC-001 verify 用此法）。
+
+### `mw run-detached`（后台命令唯一入口）
+
+```bash
+python mw.py run-detached [--cwd DIR] [--run-dir DIR] [--timeout-min N] [--heartbeat-s N] -- <cmd...>
+```
+
+派发后 stdout 恰 4 行 handoff（调用方按等号解析）：
+
+```
+[mw run-detached] pid=<supervisor_pid>
+marker=<run_dir>/marker.json
+heartbeat=<run_dir>/heartbeat.json
+log=<run_dir>/run.log
+```
+
+契约（spec AC-003/AC-004）：
+
+- `marker.json` = `{schema:"mw-run/1", rc, timed_out, started_at_ms, ended_at_ms, wall_sec, pid, argv}`，在监督进程退出前原子落盘；timeout 致死 `rc=124` + `timed_out=true`，spawn 失败 `rc=127` + `spawn_failed=true`。PM 轮询 marker 判定完成。
+- `heartbeat.json` = `{schema:"mw-heartbeat/1", pid, ts_ms}`，按 `--heartbeat-s`（默认 5s）原子更新；`run.log` 为子进程 stdout+stderr 合流。
+- win32 监督进程固定 `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP`（**绝不使用 `DETACHED_PROCESS`**），用户命令以 `flags=0` 继承其隐藏控制台；posix 用 `start_new_session=True`。
+- guard 默认注入（`MW_CONSOLE_GUARD=1` + `PYTHONPATH` 前置 guard 目录，仅 win32）；`MW_CONSOLE_GUARD=0` 显式退出。
+- 默认 run_dir：`<cwd>/.mw/runs/run-<YYYYMMDD-HHMMSS>/`；已存在时追加 `-N` 后缀。
+
+**Console guard 机制（L2）**：guard 是随框架发布的 `mw_console_guard/`（sitecustomize 风格），仅在 env 开关 `MW_CONSOLE_GUARD=1` 时激活，对子树内 `subprocess.Popen/run` 的 `creationflags=0` 调用 OR 上 `CREATE_NO_WINDOW`；显式传入 `CREATE_NEW_CONSOLE`/`DETACHED_PROCESS` 的调用原样保留，env 未设时零行为差异（fail-open）。
 
 ## 派发模型默认值
 
