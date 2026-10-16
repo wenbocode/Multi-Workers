@@ -387,6 +387,17 @@ export function writeOutput(opts) {
     else if (opts.exitCode === 2) {
         sections.push(`## Questions\n\n${opts.questions || "(no questions provided)"}${terminalNote ? ` | ${terminalNote}` : ""}`);
     }
+    else if (opts.exitCode === 3) {
+        // Model-exhausted terminal (design D6 / AC-001/AC-004/AC-010): the worker
+        // tripped its consecutive-error breaker. The Exit Reason opens with
+        // `model unavailable:` so the PM attributes the failure with zero text
+        // parsing, and the collected artifacts stay listed like any other
+        // terminal product (AC-010).
+        const deliverables = (opts.changedFiles ?? []).filter((f) => f !== "output.md" && f !== "progress.md");
+        if (deliverables.length > 0)
+            sections.push(`## Deliverables\n\n${deliverables.join("\n")}`);
+        sections.push(`## Exit Reason\n\n${opts.exitReason || "model unavailable: model error budget exhausted."}${terminalNote ? ` | ${terminalNote}` : ""}`);
+    }
     else if (opts.exitCode === 130) {
         sections.push(`## Exit Reason\n\nTask was cancelled (exit 130).${terminalNote ? ` | ${terminalNote}` : ""}`);
     }

@@ -402,7 +402,8 @@ export function targetMw(projectDir, args) {
 export function partitionMw(projectDir, args) {
     return runMwCli("partition", projectDir, args);
 }
-/** `mw.py model <args...>` — dispatch model defaults (show / set / clear). */
+/** `mw.py model <args...>` — dispatch model defaults (show / set / clear) and the
+ * ordered fallback chains (set-fallback / clear-fallback). */
 export function modelMw(projectDir, args) {
     return runMwCli("model", projectDir, args);
 }

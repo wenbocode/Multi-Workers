@@ -42,7 +42,7 @@ export declare const WORKER_FILE_BASENAME_ALT = "progress\\.md|report\\.md|repor
  * `evidence/**` face lives in {@link judgeWriteTarget}, never in this regex.
  */
 export declare const WORKER_FILE_NAME_RE: RegExp;
-export declare const WORKER_FILE_EVIDENCE_ALT = "(?:\\.agenticdoc/[A-Za-z0-9._-]+/)?evidence/(?!\\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/(?!\\.{1,2}(?:/|$))[A-Za-z0-9._-]+)*";
+export declare const WORKER_FILE_EVIDENCE_ALT = "(?:\\.agenticdoc/[A-Za-z0-9._-]+/)?evidence/[A-Za-z0-9._-]*[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]*[A-Za-z0-9_-][A-Za-z0-9._-]*)*";
 /** Schema-layer pattern: a worker_file basename OR an evidence path. */
 export declare const WORKER_FILE_PATH_RE: RegExp;
 /** Basename whitelist check (the name shared by worker-file-tool and its tests). */

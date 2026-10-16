@@ -4,6 +4,7 @@ import type { AckStore } from "../shared/ack-store.ts";
 import { type IndexStore } from "../shared/index-store.ts";
 import type { DoctorJson, MwCliResult } from "../shared/mw-runner.ts";
 import { type PmStateClaimSyncResult } from "../shared/pm-state-claim.ts";
+import { type RunDetachedOptions, type RunDetachedResult } from "../shared/run-detached.ts";
 import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 import { type WriteTargetShape } from "../shared/write-surface.ts";
 export { classifyWriteTargetShape, type WriteTargetShape } from "../shared/write-surface.ts";
@@ -673,11 +674,14 @@ export declare function runMwPartitionCommand(ctx: ExtensionCommandContext, proj
  * `mw.py model` (single source of parsing/validation/rendering); the runner is
  * injectable for tests. set/clear remind when the change takes effect:
  * worker roles on the next spawn (launcher resolves per spawn, no serve
- * restart), `main` at the next window start (session_start application). */
+ * restart), `main` at the next window start (session_start application).
+ * `set-fallback`/`clear-fallback` edit the ordered per-task-type fallback
+ * chain (mw-model-fallback-cli); the window face takes effect on the next
+ * worker spawn too, since the launcher reads the chain per spawn. */
 export declare function runMwModelCommand(ctx: ExtensionCommandContext, projectDir: string, argsText: string, runner?: (projectDir: string, args: string[]) => MwCliResult): Promise<void>;
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
-export declare const MW_COMMAND_DESCRIPTION = "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / ack";
+export declare const MW_COMMAND_DESCRIPTION = "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / run-detached / ack";
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
 export declare const RAG_OUTPUT_MAX_LINES = 30;
@@ -717,5 +721,34 @@ export declare function runMwRagCommand(ctx: ExtensionCommandContext, projectDir
     code: number;
     output: string;
 }): Promise<void>;
+/** Parsed `/mw run-detached` flags + command argv (D-005/AC-008). */
+export interface RunDetachedCommandFlags {
+    cwd?: string;
+    run_dir?: string;
+    timeout_min?: number;
+    heartbeat_s?: number;
+    cmd: string[];
+}
+/**
+ * Parse `/mw run-detached [--cwd <dir>] [--run-dir <dir>]
+ * [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...>`. Pure and CLI-free
+ * (the rag VC-307 precedent): a missing `--`, an empty command, an unknown
+ * flag, or a flag without a value returns a structured usage error so the
+ * caller rejects before any spawn. The argv after `--` passes through
+ * verbatim — shared/run-detached.ts (and Python) stays the single source of
+ * flag semantics.
+ */
+export declare function parseRunDetachedArgs(raw: string): {
+    ok: true;
+    flags: RunDetachedCommandFlags;
+} | {
+    ok: false;
+    error: string;
+};
+/** /mw run-detached — background command dispatch (D-005/AC-008). Thin wrapper
+ * over shared/run-detached.ts; the runner is injectable for tests (the rag
+ * precedent). The 4-field handoff summary matches the mw_run_detached tool
+ * 文案 byte for byte; failures notify a structured error and never throw. */
+export declare function runMwRunDetachedCommand(ctx: ExtensionCommandContext, projectDir: string, raw: string, runner?: (opts: RunDetachedOptions) => RunDetachedResult): Promise<void>;
 export declare function registerMwCommands(pi: ExtensionAPI, projectDir: string, workerStore: WorkerStore, ackStore: AckStore, watch: PmWatchState, agenticdocRoot: string): void;
 //# sourceMappingURL=ui-bridge.d.ts.map

@@ -17,6 +17,7 @@ import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.js";
 import { DOC_GATE_HINT, dispatchDocGaps, formatDocsBadge, readPhaseDocs } from "../shared/phase-docs.js";
 import { syncPmStateClaimId } from "../shared/pm-state-claim.js";
 import { PHASE_ORDER, phaseAuditWarnings } from "../shared/pm-state-guard.js";
+import { runDetachedMw } from "../shared/run-detached.js";
 import { classifyWriteTargetShape, judgeWriteTarget as judgeSharedWriteTarget, WORKER_FILE_NAME_RE, } from "../shared/write-surface.js";
 import { RECOVERY_CONTRACT_HEADING, recoveryContractSection } from "../worker/output-sections.js";
 import { isSameOrUnder } from "../worker/read-scope.js";
@@ -2717,7 +2718,10 @@ export async function runMwPartitionCommand(ctx, projectDir, argsText, runner = 
  * `mw.py model` (single source of parsing/validation/rendering); the runner is
  * injectable for tests. set/clear remind when the change takes effect:
  * worker roles on the next spawn (launcher resolves per spawn, no serve
- * restart), `main` at the next window start (session_start application). */
+ * restart), `main` at the next window start (session_start application).
+ * `set-fallback`/`clear-fallback` edit the ordered per-task-type fallback
+ * chain (mw-model-fallback-cli); the window face takes effect on the next
+ * worker spawn too, since the launcher reads the chain per spawn. */
 export async function runMwModelCommand(ctx, projectDir, argsText, runner = modelMw) {
     const parts = splitCommandLine(argsText);
     const action = parts[0] ?? "show";
@@ -2758,11 +2762,27 @@ export async function runMwModelCommand(ctx, projectDir, argsText, runner = mode
         ctx.ui.notify(r.ok ? r.output || "mw model clear: ok" : `mw model clear failed: ${r.error}`, r.ok ? "info" : "error");
         return;
     }
-    ctx.ui.notify("Usage: /mw model show | set <role> <prefix/model> | clear <role|all>", "warning");
+    if (action === "set-fallback" || action === "clear-fallback") {
+        const taskType = parts[1];
+        const expectsChain = action === "set-fallback";
+        const chain = parts[2];
+        if (!taskType || (expectsChain && (!chain || parts.length > 3)) || (!expectsChain && parts.length > 2)) {
+            ctx.ui.notify(expectsChain
+                ? "Usage: /mw model set-fallback <task-type> <prefix/model[,prefix/model...]> - 1..4 models, tried in order (e.g. /mw model set-fallback review timi/deepseek-v4.1-flash,zai/glm-5.3)"
+                : "Usage: /mw model clear-fallback <task-type>", "warning");
+            return;
+        }
+        // Thin wrapper: Python owns role/schema validation (same as set/clear).
+        const args = expectsChain ? [action, taskType, chain] : [action, taskType];
+        const r = runner(projectDir, args);
+        ctx.ui.notify(r.ok ? r.output || `mw model ${action}: ok` : `mw model ${action} failed: ${r.error}`, r.ok ? "info" : "error");
+        return;
+    }
+    ctx.ui.notify("Usage: /mw model show | set <role> <prefix/model> | clear <role|all> | set-fallback <task-type> <chain> | clear-fallback <task-type>", "warning");
 }
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
-export const MW_COMMAND_DESCRIPTION = "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / ack";
+export const MW_COMMAND_DESCRIPTION = "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / run-detached / ack";
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
 export const RAG_OUTPUT_MAX_LINES = 30;
@@ -2814,6 +2834,89 @@ export async function runMwRagCommand(ctx, projectDir, raw, runner = ragMw) {
     const result = runner(projectDir, [parsed.sub, ...parsed.rest]);
     const formatted = formatRagOutput(result.output, result.code);
     ctx.ui.notify(formatted.text, formatted.level);
+}
+/**
+ * Parse `/mw run-detached [--cwd <dir>] [--run-dir <dir>]
+ * [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...>`. Pure and CLI-free
+ * (the rag VC-307 precedent): a missing `--`, an empty command, an unknown
+ * flag, or a flag without a value returns a structured usage error so the
+ * caller rejects before any spawn. The argv after `--` passes through
+ * verbatim — shared/run-detached.ts (and Python) stays the single source of
+ * flag semantics.
+ */
+export function parseRunDetachedArgs(raw) {
+    const parts = splitCommandLine(raw);
+    const flags = { cmd: [] };
+    let i = 0;
+    let afterSep = false;
+    while (i < parts.length) {
+        const part = parts[i] ?? "";
+        if (afterSep) {
+            flags.cmd.push(part);
+            i++;
+            continue;
+        }
+        if (part === "--") {
+            afterSep = true;
+            i++;
+            continue;
+        }
+        const eq = part.indexOf("=");
+        const flag = eq === -1 ? part : part.slice(0, eq);
+        const inline = eq === -1 ? undefined : part.slice(eq + 1);
+        if (flag === "--cwd" || flag === "--run-dir" || flag === "--timeout-min" || flag === "--heartbeat-s") {
+            const value = inline ?? parts[i + 1];
+            if (value === undefined || value === "") {
+                return { ok: false, error: `Usage: /mw run-detached: ${flag} needs a value` };
+            }
+            if (flag === "--cwd")
+                flags.cwd = value;
+            else if (flag === "--run-dir")
+                flags.run_dir = value;
+            else if (flag === "--timeout-min") {
+                const n = Number(value);
+                if (Number.isNaN(n)) {
+                    return { ok: false, error: `Usage: /mw run-detached: --timeout-min needs a number, got '${value}'` };
+                }
+                flags.timeout_min = n;
+            }
+            else {
+                const n = Number(value);
+                if (Number.isNaN(n)) {
+                    return { ok: false, error: `Usage: /mw run-detached: --heartbeat-s needs a number, got '${value}'` };
+                }
+                flags.heartbeat_s = n;
+            }
+            i += eq === -1 ? 2 : 1;
+            continue;
+        }
+        return {
+            ok: false,
+            error: `Usage: /mw run-detached: unknown option '${part}' — use --cwd/--run-dir/--timeout-min/--heartbeat-s and put the command after '--'`,
+        };
+    }
+    if (!afterSep || flags.cmd.length === 0) {
+        return { ok: false, error: "Usage: /mw run-detached: no command after '--'" };
+    }
+    return { ok: true, flags };
+}
+/** /mw run-detached — background command dispatch (D-005/AC-008). Thin wrapper
+ * over shared/run-detached.ts; the runner is injectable for tests (the rag
+ * precedent). The 4-field handoff summary matches the mw_run_detached tool
+ * 文案 byte for byte; failures notify a structured error and never throw. */
+export async function runMwRunDetachedCommand(ctx, projectDir, raw, runner = runDetachedMw) {
+    const parsed = parseRunDetachedArgs(raw);
+    if (!parsed.ok) {
+        ctx.ui.notify(parsed.error, "warning");
+        return;
+    }
+    const result = runner({ ...parsed.flags, cwd: parsed.flags.cwd ?? projectDir });
+    if (!result.ok) {
+        ctx.ui.notify(result.error, "error");
+        return;
+    }
+    const { pid, marker, heartbeat, log } = result.handle;
+    ctx.ui.notify(`dispatched pid=${pid} marker=${marker} heartbeat=${heartbeat} log=${log}`, "info");
 }
 export function registerMwCommands(pi, projectDir, workerStore, ackStore, watch, agenticdocRoot) {
     pi.registerCommand("mw", {
@@ -2925,8 +3028,9 @@ export function registerMwCommands(pi, projectDir, workerStore, ackStore, watch,
                 return;
             }
             if (sub === "model") {
-                // Dispatch model defaults (mw.py model show/set/clear) — thin wrapper,
-                // Python stays the single source of parsing and validation.
+                // Dispatch model defaults + fallback chains (mw.py model show/set/clear/
+                // set-fallback/clear-fallback) — thin wrapper, Python stays the single
+                // source of parsing and validation.
                 await runMwModelCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
                 return;
             }
@@ -2935,6 +3039,13 @@ export function registerMwCommands(pi, projectDir, workerStore, ackStore, watch,
                 // Python stays the single source of parsing and validation; the exit
                 // code keeps its 0/1/2 meaning (audit 1 = findings, not failure).
                 await runMwRagCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
+                return;
+            }
+            if (sub === "run-detached") {
+                // Background command dispatch (D-005/AC-008) — thin wrapper over
+                // shared/run-detached.ts; parsing stays here (usage-first), the
+                // handoff contract and spawn stay in the shared single source.
+                await runMwRunDetachedCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
                 return;
             }
             if (sub === "ack") {
@@ -2963,7 +3074,7 @@ export function registerMwCommands(pi, projectDir, workerStore, ackStore, watch,
                 }
                 return;
             }
-            ctx.ui.notify("Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | rag <sub> | ack <task-key>|all", "warning");
+            ctx.ui.notify("Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | rag <sub> | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all", "warning");
         },
     });
 }

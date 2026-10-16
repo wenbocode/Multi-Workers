@@ -1,7 +1,7 @@
 export interface WriteOutputOpts {
     taskKey: string;
     agenticdocRoot: string;
-    exitCode: 0 | 1 | 2 | 130;
+    exitCode: 0 | 1 | 2 | 3 | 130;
     summary: string;
     /** Role type (T-04 recovery contract). Optional: when omitted the worker's
      * `task.md` header `type:` is used; when neither is available the recovery
@@ -236,7 +236,7 @@ export declare function appendProgressLine(taskKey: string, agenticdocRoot: stri
 /** Unexpected worker error marker: `[ERROR] ts <first line>`. */
 export declare function appendError(taskKey: string, agenticdocRoot: string, message: string): void;
 export interface EndTraceOpts {
-    exitCode: 0 | 1 | 2 | 130;
+    exitCode: 0 | 1 | 2 | 3 | 130;
     /** Total task runtime in ms. */
     elapsedMs: number;
     toolCalls: number;

@@ -270,7 +270,8 @@ export type MwCliResult = {
 export declare function targetMw(projectDir: string, args: string[]): MwCliResult;
 /** `mw.py partition <args...>` — partition-workspace config (set / show / clear / on / off). */
 export declare function partitionMw(projectDir: string, args: string[]): MwCliResult;
-/** `mw.py model <args...>` — dispatch model defaults (show / set / clear). */
+/** `mw.py model <args...>` — dispatch model defaults (show / set / clear) and the
+ * ordered fallback chains (set-fallback / clear-fallback). */
 export declare function modelMw(projectDir: string, args: string[]): MwCliResult;
 /** `mw.py rag` subcommands — must mirror mw.py `_RAG_ACTIONS`. Python stays the
  * single source of argument parsing/validation; this list only decides whether

@@ -384,6 +384,10 @@ export interface IdleKillEvidence {
     thresholdKind: "idle" | "tool_idle";
     /** Last source that refreshed the activity clock. */
     lastActivity: string;
+    /** True when the most recent assistant boundary was an error (design D4): a
+     * silent worker whose last message failed is a model-availability suspect,
+     * not a generic hang. */
+    lastModelError: boolean;
 }
 /** Append one machine `[IDLE_KILL]` line to trace.log. Returns false when the
  * line could not be written — the caller must then NOT kill ("no evidence ->
@@ -418,5 +422,36 @@ export interface RagRequiredCheck {
  */
 export declare function emitRagRequiredMissing(check: RagRequiredCheck): string | null;
 export declare function workerModeActivate(pi: ExtensionAPI): Promise<void>;
+/** `PI_WORKER_TRIED_MODELS` csv -> ordered, deduped model labels
+ * (`provider/model`). The launcher seeds it with the main model and every
+ * fallback it moved through, so the list is the audit chain the Exit Reason
+ * reports. */
+export declare function parseTriedModels(env: string | undefined): string[];
+/** Model-error text budget (design §4): every error string on trace.log and in
+ * `## Exit Reason` is collapsed to one line and capped at 200 chars, so a
+ * multi-line provider dump can never break the line-parsable trace or the PM
+ * readback. */
+export declare const MODEL_ERR_TEXT_MAX = 200;
+/** Collapse whitespace to one line and cap at {@link MODEL_ERR_TEXT_MAX}
+ * (ellipsis included in the cap). */
+export declare function truncateModelErrText(text: string): string;
+/** Model-error view of one boundary event's message (design D4). `undefined`
+ * when the message is not an assistant message: the activity clock must still
+ * be fed, and the most recent assistant fact is left unchanged. For an
+ * assistant message, `error` says whether that boundary was an error — which
+ * suppresses `touch` and arms the model-error state machine. */
+export interface AssistantBoundaryView {
+    error: boolean;
+    errorMessage?: string;
+}
+export declare function assistantBoundaryInfo(message: unknown): AssistantBoundaryView | undefined;
+/** One entry of the tried-model audit chain (AC-004). */
+export interface ModelErrChainEntry {
+    model: string;
+    runs: number;
+}
+/** AC-004 exit reason: `model unavailable: tried=<m>(<n>),... last=<err>`. The
+ * PM reads the tried chain and the final error text with zero text parsing. */
+export declare function formatModelUnavailableReason(entries: readonly ModelErrChainEntry[], lastError: string): string;
 export {};
 //# sourceMappingURL=worker-mode.d.ts.map

@@ -10,11 +10,13 @@ import { registerMainWindowModel } from "../shared/dispatch-models.js";
 import { formatHeartbeatAge, readTaskProgress } from "../shared/heartbeat.js";
 import { conductorClaimState, IndexStore, keyHasOwnerTraces, keyStateDocPaths, ownerEvidenceCurrent, } from "../shared/index-store.js";
 import { getMwStatus, initMw, serveStaleness, startMw, waitForMwStart } from "../shared/mw-runner.js";
+import { readLastProductSectionBody } from "../shared/output-sections.js";
 import { agenticdocRoot as resolveAgenticdocRoot, SCRATCH_WORKERS_KEY } from "../shared/paths.js";
 import { dispatchDocGaps, readPhaseDocs } from "../shared/phase-docs.js";
 import { syncPmStateClaimId } from "../shared/pm-state-claim.js";
 import { registerPmStateGuard } from "../shared/pm-state-guard.js";
-import { evaluateRunIdentity } from "../shared/run-store.js";
+import { registerRunDetachedTool } from "../shared/run-detached.js";
+import { evaluateRunIdentity, RUN_FILE_NAME } from "../shared/run-store.js";
 import { readTaskType } from "../shared/task-frontmatter.js";
 import { WorkerStore, workerOwnerKey } from "../shared/worker-store.js";
 import { isGoalEstablished, readGoal } from "./goal-reader.js";
@@ -350,6 +352,9 @@ export const NOTICE_DISPATCH_ALARM_KINDS = new Set([
     "out-of-scope",
     "orphaned-keys",
     "orphan-repair-skipped",
+    // AC-006: a run of model-error terminals refuses nothing — it is an
+    // observation about the model layer, so its text must read as `提示`.
+    "model-error",
 ]);
 /** Is this alarm a notice (neutral wording) rather than a refusal? */
 export function isNoticeDispatchAlarm(kind) {
@@ -382,6 +387,8 @@ export function describeDispatchAlarm(alarm) {
             return `${alarm.count} write-scope residual-risk row(s) (blocked=false, risk=deny-basename)${alarm.detail ? ` on ${alarm.detail}` : ""} — the guard allowed them by contract; review the audited target`;
         case "write-face-refusal":
             return `write_face gate refused ${alarm.count} task(s)${alarm.detail ? `: ${alarm.detail}` : ""} — not queued`;
+        case "model-error":
+            return `${alarm.count} consecutive worker run(s) ended with model-unavailable evidence${alarm.detail ? ` (latest: ${alarm.detail})` : ""} — the same key keeps settling against a failing model; check the provider route/credential or the fallback model list before the next dispatch`;
     }
 }
 /** The full PM alert line for one alarm (AC-011/T-19): only real refusal kinds
@@ -455,6 +462,72 @@ export function recordWriteScopeResidualRisks(agenticdocRoot, taskKey, taskDir) 
     if (count === 0)
         return 0;
     recordDispatchAlarm(agenticdocRoot, { kind: "write-scope-risk", count, detail: taskKey });
+    return count;
+}
+/** Exit-Reason prefix every model-exhausted worker writes (design §4; the
+ * worker-side T-01 half of this key). */
+export const MODEL_UNAVAILABLE_PREFIX = "model unavailable:";
+/** Consecutive model-error terminals before the PM records one `model-error`
+ * alarm (AC-006; K=2 per design §3.4/D7). */
+export const MODEL_ERROR_STREAK_K = 2;
+/** `run.json.model_exhausted === true` (design §4: the worker sets it on the
+ * model-exhausted terminal, exit 3). Read raw rather than through the shared
+ * `RunState` type because that field is added by the worker protocol (T-01) and
+ * `shared/run-store.ts` is not this file's write face; a missing, unreadable or
+ * malformed record is simply `false` (never throws — the poll loop calls this
+ * on every terminal row). */
+export function runModelExhausted(taskDir) {
+    let raw;
+    try {
+        raw = fs.readFileSync(path.join(taskDir, RUN_FILE_NAME), "utf8");
+    }
+    catch {
+        return false;
+    }
+    try {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+            return false;
+        return parsed.model_exhausted === true;
+    }
+    catch {
+        return false;
+    }
+}
+/** Does this terminal run carry model-unavailable evidence (AC-006/design
+ * §3.4)? Two independent sources, OR'd: the worker's own
+ * `run.json.model_exhausted` flag and the `## Exit Reason` body starting with
+ * `model unavailable:`. Reading failures degrade to `false`, never throw. */
+export function isModelErrorTerminal(taskDir) {
+    if (runModelExhausted(taskDir))
+        return true;
+    const reason = readLastProductSectionBody(taskDir, ["Exit Reason"]);
+    return (reason ?? "").trimStart().startsWith(MODEL_UNAVAILABLE_PREFIX);
+}
+/** Bump (model-error) or clear (every other terminal) one key's consecutive
+ * model-error streak. The pure half of AC-006, exported so tests can drive the
+ * sequence without standing up the poll loop. */
+export function bumpModelErrorStreak(streaks, key, modelError) {
+    if (!modelError) {
+        streaks.delete(key);
+        return 0;
+    }
+    const next = (streaks.get(key) ?? 0) + 1;
+    streaks.set(key, next);
+    return next;
+}
+/** PM-side model-error perception for one terminal worker row (AC-006, design
+ * §3.4/D7). Called once per terminal transition on the poll loop's ownership
+ * branch: bumps the owning key's streak, clears it on any non-model-error
+ * terminal, and records ONE `model-error` alarm row through the single
+ * dispatch-alarm channel once the streak reaches {@link MODEL_ERROR_STREAK_K}.
+ * `detail` is the task key of the terminal that triggered the alarm. PERCEPTION
+ * ONLY: the return value is never used to block or alter a re-dispatch. */
+export function recordModelErrorTerminal(agenticdocRoot, streakKey, taskKey, taskDir, streaks) {
+    const count = bumpModelErrorStreak(streaks, streakKey, isModelErrorTerminal(taskDir));
+    if (count < MODEL_ERROR_STREAK_K)
+        return count;
+    recordDispatchAlarm(agenticdocRoot, { kind: "model-error", count, detail: taskKey });
     return count;
 }
 /** The one-line ledger detail for a PM-side write-face refusal (AC-003/D-008).
@@ -1128,6 +1201,11 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
     // Running workers already escalated for divergence (AC-004): one PM wake
     // per task, at the first mid/high convergence checkpoint.
     const escalated = new Set();
+    // AC-006 (design §3.4/D7): consecutive model-error terminals per owned key,
+    // process-local for this PM window's lifetime. Keyed by the owning project key
+    // (not the task key) because the loop the alarm must expose spans DIFFERENT
+    // task keys of the same key; any non-model-error terminal clears the streak.
+    const modelErrorStreaks = new Map();
     let widgetShown = false;
     // Pending-gate reminder delivery (AC-005/AC-018; design D-005/D-006/D-010).
     // The conductor (Python) is the sole decider and writer; this loop is the
@@ -1252,6 +1330,11 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
                 // single dispatch-alarm ledger channel; `notified` above bounds it to
                 // once per task per session.
                 recordWriteScopeResidualRisks(agenticdocRoot, entry.taskKey, taskDir);
+                // AC-006/design §3.4 (D7): model-error perception for this terminal
+                // transition. Same `notified` dedup as the line above — one evaluation
+                // per task per session — and deliberately perception only: it records a
+                // ledger alarm and never touches the re-dispatch decision.
+                recordModelErrorTerminal(agenticdocRoot, ownerKeyOf(entry, agenticdocRoot), entry.taskKey, taskDir, modelErrorStreaks);
                 // Terminal readback (AC-014): inject the full output.md body into
                 // the conversation so worker results reach the PM without manual
                 // file reads. Falls through to the spawn-failure / no-output
@@ -1408,6 +1491,15 @@ export function pmActivate(pi) {
     }
     catch (err) {
         console.error(`[mw] rag tools disabled: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // run-detached surface (D-005): registered in BOTH activate paths (the
+    // registerRagTools precedent) so PM and worker windows can dispatch
+    // background commands; the worker allowlist gate decides visibility.
+    try {
+        registerRunDetachedTool(pi, projectDir);
+    }
+    catch (err) {
+        console.error(`[mw] run-detached disabled: ${err instanceof Error ? err.message : String(err)}`);
     }
     registerWatchCommand(pi, watch, refreshWatch, indexStore);
     // Autopilot console (T-15): /autopilot status|gates|gate|timeline|enable|

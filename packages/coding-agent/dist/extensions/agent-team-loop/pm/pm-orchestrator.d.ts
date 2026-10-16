@@ -51,7 +51,7 @@ export declare function autoTakeOverFromDoc(pi: ExtensionAPI, indexStore: IndexS
  * another live window took it over in the meantime. */
 export declare function restoreWatch(pi: ExtensionAPI, watch: PmWatchState, indexStore: IndexStore, workerStore: WorkerStore, ackStore: AckStore, agenticdocRoot: string, ctx: ExtensionContext): Promise<void>;
 /** Why a dispatch scan refused to queue anything (AC-020/AC-021). */
-export type DispatchAlarmKind = "queue-rows-unparsable" | "queue-unreadable" | "dispatch-quota" | "out-of-scope" | "orphaned-keys" | "run-ledger-conflict" | "no-product" | "write-scope-risk" | "orphan-repair-skipped" | "write-face-refusal";
+export type DispatchAlarmKind = "queue-rows-unparsable" | "queue-unreadable" | "dispatch-quota" | "out-of-scope" | "orphaned-keys" | "run-ledger-conflict" | "no-product" | "write-scope-risk" | "orphan-repair-skipped" | "write-face-refusal" | "model-error";
 export interface DispatchAlarm {
     kind: DispatchAlarmKind;
     count: number;
@@ -91,6 +91,36 @@ export declare function countWriteScopeResidualRisks(taskDir: string): number;
  * Reuses the single dispatch-alarm channel and its unchanged row shape; returns
  * the number of residual-risk rows found (0 ⇒ nothing written). */
 export declare function recordWriteScopeResidualRisks(agenticdocRoot: string, taskKey: string, taskDir: string): number;
+/** Exit-Reason prefix every model-exhausted worker writes (design §4; the
+ * worker-side T-01 half of this key). */
+export declare const MODEL_UNAVAILABLE_PREFIX = "model unavailable:";
+/** Consecutive model-error terminals before the PM records one `model-error`
+ * alarm (AC-006; K=2 per design §3.4/D7). */
+export declare const MODEL_ERROR_STREAK_K = 2;
+/** `run.json.model_exhausted === true` (design §4: the worker sets it on the
+ * model-exhausted terminal, exit 3). Read raw rather than through the shared
+ * `RunState` type because that field is added by the worker protocol (T-01) and
+ * `shared/run-store.ts` is not this file's write face; a missing, unreadable or
+ * malformed record is simply `false` (never throws — the poll loop calls this
+ * on every terminal row). */
+export declare function runModelExhausted(taskDir: string): boolean;
+/** Does this terminal run carry model-unavailable evidence (AC-006/design
+ * §3.4)? Two independent sources, OR'd: the worker's own
+ * `run.json.model_exhausted` flag and the `## Exit Reason` body starting with
+ * `model unavailable:`. Reading failures degrade to `false`, never throw. */
+export declare function isModelErrorTerminal(taskDir: string): boolean;
+/** Bump (model-error) or clear (every other terminal) one key's consecutive
+ * model-error streak. The pure half of AC-006, exported so tests can drive the
+ * sequence without standing up the poll loop. */
+export declare function bumpModelErrorStreak(streaks: Map<string, number>, key: string, modelError: boolean): number;
+/** PM-side model-error perception for one terminal worker row (AC-006, design
+ * §3.4/D7). Called once per terminal transition on the poll loop's ownership
+ * branch: bumps the owning key's streak, clears it on any non-model-error
+ * terminal, and records ONE `model-error` alarm row through the single
+ * dispatch-alarm channel once the streak reaches {@link MODEL_ERROR_STREAK_K}.
+ * `detail` is the task key of the terminal that triggered the alarm. PERCEPTION
+ * ONLY: the return value is never used to block or alter a re-dispatch. */
+export declare function recordModelErrorTerminal(agenticdocRoot: string, streakKey: string, taskKey: string, taskDir: string, streaks: Map<string, number>): number;
 /** The one-line ledger detail for a PM-side write-face refusal (AC-003/D-008).
  * `DispatchRefusal.reason` is byte-identical to the conductor's
  * `DispatchResult.reason`, so it already carries the stable refusal `code`, the

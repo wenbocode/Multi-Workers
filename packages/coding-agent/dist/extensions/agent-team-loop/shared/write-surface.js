@@ -56,7 +56,11 @@ export const WORKER_FILE_NAME_RE = new RegExp(`^(?:${WORKER_FILE_BASENAME_ALT})$
  * {@link judgeWriteTarget}; this regex only keeps obviously-invalid values out
  * of the TypeBox layer.
  */
-const WORKER_FILE_EVIDENCE_SEG = "(?!\\.{1,2}(?:/|$))[A-Za-z0-9._-]+";
+// Segment: alphabet including dots, but at least one non-dot char — rejects
+// "."/".." segments WITHOUT lookaround (Azure strict JSON-schema validation of
+// tool `pattern` fields rejects ECMA lookaround; broke review-role workers on
+// gpt-6.1-sol). Equivalent to the old (?!.{1,2}(?:/|$)) guard.
+const WORKER_FILE_EVIDENCE_SEG = "[A-Za-z0-9._-]*[A-Za-z0-9_-][A-Za-z0-9._-]*";
 export const WORKER_FILE_EVIDENCE_ALT = `(?:\\.agenticdoc/[A-Za-z0-9._-]+/)?evidence/${WORKER_FILE_EVIDENCE_SEG}(?:/${WORKER_FILE_EVIDENCE_SEG})*`;
 /** Schema-layer pattern: a worker_file basename OR an evidence path. */
 export const WORKER_FILE_PATH_RE = new RegExp(`^(?:${WORKER_FILE_BASENAME_ALT}|${WORKER_FILE_EVIDENCE_ALT})$`);
