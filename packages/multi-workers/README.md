@@ -81,7 +81,7 @@ python mw.py <子命令>
 | `update-env [--apply] [--json] [--fetch]` | 增量自检（UPDATE.md 锚点：bundle/dist/serve/框架传播）；`--apply` 执行安全修复后复查 |
 | `target set/show/clear` | 双工作区配置（见下） |
 | `ue-toolchain run/targets/hash` | dual 模式 UE 工具链纪律（见下）：执行模板并留证（错误签名双判 + --watch 前后哈希）、发现 UE 构建目标名、EOL 归一化哈希 |
-| `model set/show/clear` | 派发模型默认值（见下） |
+| `model set/show/clear`、`model set-fallback/clear-fallback` | 派发模型默认值与备用模型链（见下） |
 | `run-detached [--cwd DIR] [--run-dir DIR] [--timeout-min N] [--heartbeat-s N] -- <cmd...>` | 后台命令唯一入口：隐藏控制台监督进程 + heartbeat/marker 证据（见下「Windows detached-run checklist」） |
 
 ## Windows detached-run checklist
@@ -140,6 +140,7 @@ task.md model:  >  dispatch.yml [role]  >  当前窗口模型  >  每路由硬�
 | `claude/` | pi + anthropic 直连 | 不走 mw 代理，ANTHROPIC_API_KEY 直连 |
 | `codex/` | pi + openai-codex | 用 codex 自身配置，无需代理凭证 |
 | `deepseek/` | pi + deepseek 直连 | 不走 mw 代理 |
+| `zai/` | pi + zai-coding-cn 直连 | 不走 mw 代理，ZAI_CODING_CN_API_KEY 直连 |
 | `codex_cli/` / `claude_cli/` | CLI 执行器 | 仅匹配对应 cli 的任务 |
 | 裸 id（无前缀） | 任务原路由 | 兼容现有行为 |
 
@@ -148,13 +149,32 @@ task.md model:  >  dispatch.yml [role]  >  当前窗口模型  >  每路由硬�
 ```bash
 python mw.py model set --project . coding timi/glm-5.3
 python mw.py model set --project . review timi/glm-5.3-air
-python mw.py model show --project .      # 配置 + 窗口模型 + 各角色实际生效值
+python mw.py model show --project .      # 配置 + 窗口模型 + 各角色实际生效值 + 备用链
 python mw.py model clear --project . review
+python mw.py model set-fallback --project . review timi/deepseek-v4.1-flash,zai/glm-5.3   # 备用链（按序尝试，1..4 个）
+python mw.py model clear-fallback --project . review
 ```
 
-PM 窗口里也可用 `/mw model`（转发到同一 CLI）：`/mw model show` · `/mw model set <role> <prefix/model>` · `/mw model clear <role|all>`。worker 角色下次 spawn 生效（无需重启 serve）；`main` 角色在窗口下次启动时套用。
+PM 窗口里也可用 `/mw model`（转发到同一 CLI）：`/mw model show` · `/mw model set <role> <prefix/model>` · `/mw model clear <role|all>` · `/mw model set-fallback <task-type> <m1,m2>` · `/mw model clear-fallback <task-type>`。worker 角色下次 spawn 生效（无需重启 serve）；`main` 角色在窗口下次启动时套用。
 
 `mw doctor` 的 `dispatch` 段展示配置状态；配置文件损坏仅降级为建议（不阻断派发，回退窗口模型/硬编码默认）。
+
+### 模型故障降级（fallback_models，mw-model-error-perception）
+
+worker 遇到模型层故障（HTTP 5xx / 拒绝连接 / 流中断）时按「同模型重试 → 备用模型链 → failed」有界收敛，不再伪成功，也不再无限重派。配置写在 `.mw/dispatch.yml` 顶层，用 `mw model set-fallback <task-type> <m1,m2,...>` / `clear-fallback` 写入（或手编 YAML；注意 CLI 写入是 YAML 重新序列化，手写注释不保留）：
+
+```yaml
+fallback_models:
+  coding: [claude/claude-sonnet-5, deepseek/deepseek-chat]
+  review: [timi/glm-5.3-air]
+  research: [timi/glm-5.3]
+```
+
+- 键是任务类型（`coding`/`phase-writer`/`repair`/`roadmap-writer`/`review`/`verifier`/`reviewer`/`research`/`rag-research`/`vision`；未命中精确键时回退其 role 桶），值是 1..4 个 `前缀/模型 id` 单行字符串（前缀见上表；`*_cli` transport 前缀不接受）。列表内**重复项被接受并去重**（保留首次出现，大小写归一，故 `A/x,a/X` 等价于 `a/x`）；真正的格式错误（未知键 / 超上限 / 非 `前缀/模型` / 空项 / 项内换行）由 `mw model set-fallback` 拒绝写入、由 `mw doctor` 报 issue，route 缺失或凭证不可用报 suggestion；读取失败软降级为「无备用链」，不阻断派发。`main` 角色无 worker fallback。
+- 触发：worker 首个「run 内 auto-retry 耗尽」的 error run 即 `exit 3` 并写 `run.json` `model_exhausted: true`（同时写 `[MODEL_ERR]` trace 行、`## Exit Reason` 以 `model unavailable:` 开头）。launcher 在状态映射前拦截：先对**同一模型**按 `PI_WORKER_MODEL_ERR_MAX`（默认 2；`0`=直接切备）重试进程，每次写 `[MODEL_RETRY] <iso> model=<m> attempt=<k>`；预算耗尽后按数组顺序用下一个备用模型重派同一任务（`--model`、`PI_WORKER_FALLBACK_INDEX`+1、`PI_WORKER_TRIED_MODELS` 追加），写 `[MODEL_FALLBACK] <iso> from=<m> to=<n> attempt=<k>`。候选 route/凭证预校验不过则写 `[MODEL_FALLBACK-SKIP]` 并续试下一个；链耗尽 → `failed`（Exit Reason 透传 `model unavailable:` 链）。
+- 无备用链的类别：同模型重试耗尽后直接 `failed`。
+- 计数以文件为事实源：同模型预算由 trace.log 的 `[MODEL_RETRY]` 推导、链进度由 `[MODEL_FALLBACK]` 推导，launcher/serve 重启后从证据续跑（不重置、不重复）。重派是进程级（task.md + 磁盘产物重播种），不调用 `setModel`、不写全局设置。
+- 挂起型模型故障：error 边界事件不喂活动钟，无在飞工具的 idle 击杀改判 `exit 3` 进降级链（`[IDLE_KILL] ... last_model_error=yes|no`）；有在飞工具的挂死仍 `exit 1`。
 
 ### 派工类型与模型覆盖门禁（mw-dispatch-role-escape）
 
@@ -358,6 +378,10 @@ python mw.py autopilot verify clear --project <dir>
 | `PI_WORKER_TASK` | Worker 的 task.md 路径；设置即进入 Worker 模式 |
 | `PI_WORKER_TIMEOUT_MS` | Worker 墙钟兜底（默认 60m；task.md `timeout:` 分钟头优先） |
 | `PI_WORKER_IDLE_MS` | 无活动判挂死阈值（默认 10 分钟） |
+| `PI_WORKER_MODEL_ERR_MAX` | 同模型进程重试预算（launcher 读自身 env，默认 2；`0`=直接切备用链） |
+| `PI_WORKER_FALLBACK_MODELS` | 备用模型链（csv `前缀/模型`，launcher 注入 worker） |
+| `PI_WORKER_FALLBACK_INDEX` | 已消费的备用模型数（launcher 注入 worker，0 起） |
+| `PI_WORKER_TRIED_MODELS` | 已耗尽模型链（csv，含主模型；launcher 注入 worker，worker 追加当前模型） |
 | `MW_TARGET_GAME` / `MW_TARGET_ENGINE` | 双工作区临时覆盖 |
 | `MW_PY` | 扩展找不到 `mw.py` 时手动指定路径 |
 | `MW_IMPL_GATE_ROOT` | 门禁项目根覆盖（测试钩子，默认 cwd） |

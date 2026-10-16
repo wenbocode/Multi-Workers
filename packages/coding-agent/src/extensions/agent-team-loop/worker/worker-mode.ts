@@ -25,8 +25,8 @@ import { findNonEmptyReport, hasDeliverableEvidence } from "../shared/deliverabl
 import { DISPATCH_TYPE_VOCABULARY } from "../shared/dispatch-card.ts";
 import { roleForTaskType } from "../shared/dispatch-models.ts";
 import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.ts";
-import { MW_RUN_DETACHED_TOOL, registerRunDetachedTool } from "../shared/run-detached.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
+import { MW_RUN_DETACHED_TOOL, registerRunDetachedTool } from "../shared/run-detached.ts";
 import {
 	collectArtifacts,
 	isTerminalRunStatus,
@@ -173,7 +173,6 @@ export function activeToolsForType(taskType: string): string[] {
 	// write-surface guard cannot be bypassed (design D-005). Never goes into
 	// TOOL_ALLOWLISTS (T-17 parity lock).
 	return tools.includes("bash") ? [...tools, MW_RUN_DETACHED_TOOL] : tools;
-	return base.includes("write") ? base : [...base, WORKER_FILE_TOOL];
 }
 
 /** Is this a role whose tool set carries `bash` (contract C3)? */
@@ -2431,6 +2430,10 @@ export interface IdleKillEvidence {
 	thresholdKind: "idle" | "tool_idle";
 	/** Last source that refreshed the activity clock. */
 	lastActivity: string;
+	/** True when the most recent assistant boundary was an error (design D4): a
+	 * silent worker whose last message failed is a model-availability suspect,
+	 * not a generic hang. */
+	lastModelError: boolean;
 }
 
 /** Append one machine `[IDLE_KILL]` line to trace.log. Returns false when the
@@ -2446,7 +2449,8 @@ export function appendIdleKillEvidence(taskKey: string, agenticdocRoot: string, 
 			`[IDLE_KILL] ${new Date().toISOString()} tool_in_flight=${evidence.toolInFlight} ` +
 			`tool_run_s=${num(evidence.toolRunS)} tool_idle_s=${num(evidence.toolIdleS)} ` +
 			`silence_s=${evidence.silenceS} threshold_s=${evidence.thresholdS} ` +
-			`threshold_kind=${evidence.thresholdKind} last_activity=${evidence.lastActivity}`;
+			`threshold_kind=${evidence.thresholdKind} last_activity=${evidence.lastActivity} ` +
+			`last_model_error=${evidence.lastModelError ? "yes" : "no"}`;
 		fs.appendFileSync(path.join(dir, "trace.log"), `${line}\n`, "utf8");
 		return true;
 	} catch {
@@ -2565,6 +2569,26 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	const startedAt = Date.now();
 	const phaseTotal = meta.phases?.length ?? 0;
 
+	// Model-error state machine (design §3.1 / D1/D3/D4/D6, process-level revision
+	// 2026-10-15): the process itself is the retry unit. One error agent run ends
+	// this process (exit 3); same-model retries and the fallback chain live in the
+	// launcher, so there is no per-process error-run counter here. agent_end only
+	// records `lastErrorInfo` (it fires once per internal auto-retry attempt, so
+	// acting there would miscount). `triedModels` is the launcher-seeded audit
+	// chain; the current model joins it at session start.
+	// `provider/id` label of the live model (raw id when the provider is absent):
+	// the identity every model-error protocol line reports (design §4).
+	let currentModelLabel = "";
+	let lastErrorInfo: AssistantBoundaryView | undefined;
+	// Design D4 patch (hang classification): a no-in-flight-tool hang is a
+	// model-availability suspect when this process already saw an error boundary,
+	// or when its agent loop started and never produced a successful assistant
+	// (a pure first-call hang). A worker that never entered its agent loop is a
+	// generic hang, not a model diagnosis.
+	let agentRunStarted = false;
+	let sawSuccessfulAssistant = false;
+	const triedModels: string[] = parseTriedModels(process.env.PI_WORKER_TRIED_MODELS);
+
 	// D-115: record this spawn before anything else — the process itself is
 	// the observation unit (spawn count + pid liveness), even when the task
 	// is refused right below.
@@ -2584,7 +2608,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	// fallback before the fail-closed gate so a refused spawn is audited too.
 	appendHeaderAudit(meta.taskKey, meta.agenticdocRoot, taskContent, meta.type);
 
-	const runState: RunState = {
+	const runState: WorkerRunState = {
 		schema: RUN_SCHEMA,
 		task_key: meta.taskKey,
 		run_id: newRunId(meta.taskKey),
@@ -2693,7 +2717,13 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	// line on a later session event is harmless: readers take the last one.
 	pi.on("session_start", (_event, ctx) => {
 		const modelId = ctx.model?.id;
-		if (modelId) appendModel(meta.taskKey, meta.agenticdocRoot, modelId);
+		if (modelId) {
+			appendModel(meta.taskKey, meta.agenticdocRoot, modelId);
+			// Model-error perception: remember which model this run is on and make
+			// sure it joins the launcher-seeded tried chain (D-116 `[MODEL]` source).
+			currentModelLabel = ctx.model?.provider ? `${ctx.model.provider}/${modelId}` : modelId;
+			if (!triedModels.includes(currentModelLabel)) triedModels.push(currentModelLabel);
+		}
 		// T-09/AC-011 (VC-011): runtime image-capability backstop. The dispatch
 		// declared `images: yes` but the resolved model cannot read images —
 		// refuse before the task body runs, through the same failure channel as
@@ -2785,6 +2815,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		});
 	} catch (err) {
 		writeWorkerLogLine(`[worker] rag disabled: ${err instanceof Error ? err.message : String(err)}`);
+	}
 	// run-detached surface (D-005): registered in BOTH activate paths (the
 	// registerRagTools precedent) so PM and worker windows can dispatch
 	// background commands. The allowlist gate above decides visibility.
@@ -2792,7 +2823,6 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		registerRunDetachedTool(pi, controlRoot);
 	} catch (err) {
 		writeWorkerLogLine(`[worker] run-detached disabled: ${err instanceof Error ? err.message : String(err)}`);
-	}
 	}
 	// Narrow write channel (D-101/D-104/D-106): roles whose allowlist has no
 	// write/edit tool get `worker_file` registered — a structural gate mirroring
@@ -3036,15 +3066,33 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		lastActivityAt = Date.now();
 		lastActivitySource = source;
 	};
+	/** Design D4 (option A): an error assistant boundary is NOT activity — a
+	 * failed/stalled model must not keep the idle clock fresh, so a silent hang
+	 * is reaped by the idle wall (~10m) instead of the ~40m N=2 chain. The fact
+	 * is still recorded (`lastErrorInfo`) so `[IDLE_KILL]` can name the model as
+	 * the suspect (AC-002). A non-assistant message leaves the previous
+	 * assistant fact alone and always feeds the clock. */
+	const noteBoundary = (source: string, view: AssistantBoundaryView | undefined): void => {
+		if (view !== undefined) {
+			lastErrorInfo = view.error ? { error: true, errorMessage: view.errorMessage } : undefined;
+			// Any successful assistant boundary disqualifies the D4-patch "first call
+			// never returned" reading (the model did answer at least once).
+			if (!view.error) sawSuccessfulAssistant = true;
+		}
+		if (view === undefined || !view.error) touch(source);
+	};
 	pi.on("message_update", () => {
 		touch("delta");
 		lastDeltaAt = Date.now();
 	});
 	pi.on("message_start", () => touch("message_start"));
-	pi.on("message_end", () => touch("message_end"));
+	pi.on("message_end", (event) => noteBoundary("message_end", assistantBoundaryInfo(event.message)));
 	pi.on("turn_start", () => touch("turn_start"));
-	pi.on("turn_end", () => touch("turn_end"));
-	pi.on("agent_start", () => touch("agent_start"));
+	pi.on("turn_end", (event) => noteBoundary("turn_end", assistantBoundaryInfo(event.message)));
+	pi.on("agent_start", () => {
+		agentRunStarted = true;
+		touch("agent_start");
+	});
 	pi.on("tool_execution_update", (event) => {
 		const tool = inFlightTools.get(event.toolCallId);
 		if (tool) tool.lastActivityAt = Date.now();
@@ -3135,10 +3183,14 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		appendToolError(meta.taskKey, meta.agenticdocRoot, event.toolName, toolErrorText(event.result));
 	});
 
-	// Capture last assistant text for output summary (AC-019)
+	// Capture last assistant text for output summary (AC-019). Model-error
+	// perception (design D1): the same scan records whether the run's final
+	// assistant message was an error. agent_end fires once per internal
+	// auto-retry attempt, so this is evidence only — counting/resend/exit live on
+	// agent_settled.
 	let lastAssistantText = "";
 	pi.on("agent_end", (event) => {
-		touch("agent_end");
+		let view: AssistantBoundaryView | undefined;
 		for (let i = event.messages.length - 1; i >= 0; i--) {
 			const msg = event.messages[i];
 			if (msg.role === "assistant") {
@@ -3147,14 +3199,16 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 					.map((c) => c.text)
 					.join("\n");
 				if (text) lastAssistantText = text;
+				view = assistantBoundaryInfo(msg);
 				break;
 			}
 		}
+		noteBoundary("agent_end", view);
 	});
 
 	// Shared terminal bookkeeping: trace [END] with exact runtime + a status
 	// line into worker.log (synchronous — survives an immediate process.exit).
-	function recordEnd(exitCode: 0 | 1 | 2): void {
+	function recordEnd(exitCode: 0 | 1 | 2 | 3): void {
 		// Single exit-code → status mapping (markOutcome), reused here so the trace
 		// line, the persisted record and the marker can never disagree (AC-006).
 		const status = markOutcome(exitCode);
@@ -3224,11 +3278,22 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		return best;
 	}
 
-	function timeoutExit(kind: "idle" | "wall", detail: string): void {
+	function timeoutExit(kind: "idle" | "wall", detail: string, modelExhausted = false): void {
 		taskDone = true;
 		clearWatchdogTimers();
 		clearInterval(heartbeat);
 		appendTimeout(meta.taskKey, meta.agenticdocRoot, kind, detail);
+		// Design D4 patch: an idle hang with no in-flight tool and either a prior
+		// error boundary or no successful assistant at all is a model-availability
+		// verdict, not a generic workflow hang. The existing [IDLE_KILL]/[TIMEOUT]
+		// evidence is already on disk; the terminal write reuses the model-exhausted
+		// path (exit 3 + run.json model_exhausted:true) so the launcher's same-model
+		// retry / fallback chain takes over. A real hung tool and a wall kill keep
+		// the exit-1 path below.
+		if (modelExhausted) {
+			modelExhaustedExit(lastErrorInfo?.errorMessage ?? "model produced no response before the idle timeout");
+			return;
+		}
 		const ckpt = lastCheckpoint
 			? ` (checkpoint: risk=${lastCheckpoint.risk} reads=${lastCheckpoint.reads} writes=${
 					lastCheckpoint.writes
@@ -3422,6 +3487,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 				thresholdS: Math.round(toolIdleMs / 1000),
 				thresholdKind: "tool_idle",
 				lastActivity: lastActivitySource,
+				lastModelError: lastErrorInfo !== undefined,
 			});
 			if (!written) return; // no evidence -> no kill
 			timeoutExit(
@@ -3449,13 +3515,21 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			thresholdS: Math.round(idleMs / 1000),
 			thresholdKind: "idle",
 			lastActivity: lastActivitySource,
+			lastModelError: lastErrorInfo !== undefined,
 		});
 		if (!written) return; // no evidence -> no kill
 		const d = lastDeltaAt === undefined ? "-" : `${Math.round((now - lastDeltaAt) / 1000)}`;
 		const t = lastToolAt === undefined ? "-" : `${Math.round((now - lastToolAt) / 1000)}`;
+		// Design D4 patch: with no in-flight tool the worker is stuck waiting on an
+		// LLM call. If this process already saw an error boundary, or its agent loop
+		// started and never produced a successful assistant, the hang is a
+		// model-availability verdict (exit 3 -> launcher retry/fallback) rather than
+		// a generic worker hang. A real hung tool keeps the exit-1 path above.
+		const modelExhausted = lastErrorInfo !== undefined || (!sawSuccessfulAssistant && agentRunStarted);
 		timeoutExit(
 			"idle",
 			`no activity for ${Math.round(idleForMs / 1000)}s (last delta ${d}s ago, last tool ${t}s ago)`,
+			modelExhausted,
 		);
 	}, 30_000);
 	idleTimer.unref();
@@ -3705,6 +3779,48 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		finishSuccess();
 	}
 
+	/** AC-004 chain: every model the launcher moved through plus the current one.
+	 * Each worker process contributes exactly one error run (the process is the
+	 * retry unit now), so `runs` is the literal 1; same-model retries and the
+	 * fallback chain are counted by the launcher from trace.log
+	 * (`[MODEL_RETRY]`/`[MODEL_FALLBACK]`). */
+	function modelErrChain(): ModelErrChainEntry[] {
+		const models = [...triedModels];
+		if (currentModelLabel !== "" && !models.includes(currentModelLabel)) models.push(currentModelLabel);
+		return models.map((model) => ({ model, runs: 1 }));
+	}
+
+	/** Bounded model-exhausted exit (design D1/D3 修订版 D6, mirrors `timeoutExit`):
+	 * all evidence is written synchronously, then the process exits 3 so the
+	 * launcher can run the same-model retry / next-fallback step. Reached from the
+	 * first error settle (process-level retry unit, revised 2026-10-15: no worker
+	 * budget, no in-process followUp resend — it never ran in print mode) and from
+	 * the D4-patch hang classification. Never reaches `finishSuccess` (AC-003). */
+	function modelExhaustedExit(lastError: string): void {
+		taskDone = true;
+		clearWatchdogTimers();
+		clearInterval(heartbeat);
+		// Protocol extension (plan §3 / design §4): the terminal run record carries
+		// the machine-readable flag the PM polls for (D7).
+		runState.model_exhausted = true;
+		const phasesLabel = phaseTotal > 0 ? `${completedPhaseIdx}/${phaseTotal}` : "-";
+		const summary = `${truncateModelErrText(
+			lastAssistantText || "Model exhausted before producing output.",
+		)} phases=${phasesLabel}`;
+		writeOutputGuarded({
+			taskKey: meta.taskKey,
+			agenticdocRoot: meta.agenticdocRoot,
+			exitCode: 3,
+			summary,
+			changedFiles: collectArtifacts(taskDir),
+			exitReason: formatModelUnavailableReason(modelErrChain(), lastError),
+		});
+		recordEnd(3);
+		outputWritten = true;
+		killTrackedDetachedChildren();
+		process.exit(3);
+	}
+
 	pi.on("agent_settled", () => {
 		try {
 			// AC-010②: this handler is the settle entry point; once finishSuccess has
@@ -3713,6 +3829,32 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			// taskDone === false until the final finishSuccess, so the phase machine
 			// below is unaffected.
 			if (taskDone) return;
+			// Model-error branch (design §3.1 / D1/D3/D4, revised 2026-10-15): an error
+			// settle must never advance the phase machine or reach the success path
+			// (AC-003), so it sits ahead of EVERY initialSettled / phase /
+			// settleOrSelfCheck branch. It records the [MODEL_ERR] evidence and exits 3
+			// immediately; the launcher owns same-model retries and the fallback chain.
+			if (lastErrorInfo !== undefined) {
+				// Capture the error text before the fact is consumed so exit 3 (AC-004)
+				// and the `[MODEL_ERR]` line report the SAME final errorMessage.
+				const lastErrorText = lastErrorInfo.errorMessage ?? "error";
+				// Task-mandated carrier: appendTrace (`[MODEL_ERR] <iso> model=<p/m>
+				// run=1 err=<≤200>`), one line per error agent run — never from
+				// agent_end, which fires once per internal auto-retry attempt. Every
+				// process is exactly one error run now, so `run` is the literal 1.
+				appendTrace(
+					meta.taskKey,
+					meta.agenticdocRoot,
+					`[MODEL_ERR] ${new Date().toISOString()} model=${
+						currentModelLabel === "" ? "unknown" : currentModelLabel
+					} run=1 err=${truncateModelErrText(lastErrorText)}`,
+				);
+				// Consume the fact (the next agent_end refreshes it) so one error
+				// boundary can never be counted twice.
+				lastErrorInfo = undefined;
+				modelExhaustedExit(lastErrorText);
+				return;
+			}
 			if (!initialSettled) {
 				initialSettled = true;
 				// Initial task prompt (from pi -p) has settled
@@ -3875,4 +4017,77 @@ function dropHeredocBodies(tokens: ShellToken[]): ShellToken[] {
 		if (!dropped.has(line)) kept.push(...lines[line]);
 	}
 	return kept;
+}
+
+// ── Model-error perception pure helpers (mw-model-error-perception, D1/D3/D4/D6)
+// Placed at the END of the module on purpose: the T-17/B-1 anchor gate pins the
+// absolute lines of the shell-lexer helpers above (AC-011), so module-level code
+// added later must never be inserted before them.
+
+/** `RunState` plus the model-exhausted protocol extension (plan §3 / design §4):
+ * `model_exhausted: true` marks an exit-3 terminal record. run-store.ts stays
+ * untouched (outside this task's write face); the extra key rides on this local
+ * alias and is serialized as a plain JSON property by `writeRunState`. */
+type WorkerRunState = RunState & { model_exhausted?: boolean };
+
+/** `PI_WORKER_TRIED_MODELS` csv -> ordered, deduped model labels
+ * (`provider/model`). The launcher seeds it with the main model and every
+ * fallback it moved through, so the list is the audit chain the Exit Reason
+ * reports. */
+export function parseTriedModels(env: string | undefined): string[] {
+	const out: string[] = [];
+	const seen = new Set<string>();
+	for (const part of (env ?? "").split(",")) {
+		const model = part.trim();
+		if (model === "" || seen.has(model)) continue;
+		seen.add(model);
+		out.push(model);
+	}
+	return out;
+}
+
+/** Model-error text budget (design §4): every error string on trace.log and in
+ * `## Exit Reason` is collapsed to one line and capped at 200 chars, so a
+ * multi-line provider dump can never break the line-parsable trace or the PM
+ * readback. */
+export const MODEL_ERR_TEXT_MAX = 200;
+
+/** Collapse whitespace to one line and cap at {@link MODEL_ERR_TEXT_MAX}
+ * (ellipsis included in the cap). */
+export function truncateModelErrText(text: string): string {
+	const oneLine = text.replace(/\s+/g, " ").trim();
+	return oneLine.length <= MODEL_ERR_TEXT_MAX ? oneLine : `${oneLine.slice(0, MODEL_ERR_TEXT_MAX - 1)}…`;
+}
+
+/** Model-error view of one boundary event's message (design D4). `undefined`
+ * when the message is not an assistant message: the activity clock must still
+ * be fed, and the most recent assistant fact is left unchanged. For an
+ * assistant message, `error` says whether that boundary was an error — which
+ * suppresses `touch` and arms the model-error state machine. */
+export interface AssistantBoundaryView {
+	error: boolean;
+	errorMessage?: string;
+}
+
+export function assistantBoundaryInfo(message: unknown): AssistantBoundaryView | undefined {
+	if (typeof message !== "object" || message === null) return undefined;
+	const record = message as { role?: unknown; stopReason?: unknown; errorMessage?: unknown };
+	if (record.role !== "assistant") return undefined;
+	return {
+		error: record.stopReason === "error",
+		errorMessage: typeof record.errorMessage === "string" ? record.errorMessage : undefined,
+	};
+}
+
+/** One entry of the tried-model audit chain (AC-004). */
+export interface ModelErrChainEntry {
+	model: string;
+	runs: number;
+}
+
+/** AC-004 exit reason: `model unavailable: tried=<m>(<n>),... last=<err>`. The
+ * PM reads the tried chain and the final error text with zero text parsing. */
+export function formatModelUnavailableReason(entries: readonly ModelErrChainEntry[], lastError: string): string {
+	const tried = entries.length > 0 ? entries.map((entry) => `${entry.model}(${entry.runs})`).join(",") : "-";
+	return `model unavailable: tried=${tried} last=${truncateModelErrText(lastError)}`;
 }

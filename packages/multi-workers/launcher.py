@@ -17,6 +17,21 @@ mw-widget-terminal-lifecycle (T-08, AC-012/AC-013):
   bundle) applies unconditionally; evidence-less rows fail as presumed dead
   after the silence window, yielding to another live launcher's fresh beat
   (design D-006~D-008).
+
+mw-model-error-perception (T-03, AC-008/AC-009/D2/D5/D6):
+- A worker that exits 3 (its per-model error-run budget is exhausted, and its
+  run.json double-confirms `model_exhausted: true`) is re-dispatched on the
+  next configured `fallback_models` entry instead of reaping as failed. The
+  configured chain length is the hard re-dispatch bound and the chain state is
+  carried in the task's trace.log, so a launcher restart resumes it.
+
+mw-model-error-perception (T-03b, AC-001/008/009, D3 revised 2026-10-15):
+- The `N=2` attempts-per-model budget moved from the worker to the launcher.
+  Before the chain advances, exit 3 re-dispatches the SAME model until the
+  `[MODEL_RETRY]` lines recorded for it reach `PI_WORKER_MODEL_ERR_MAX`
+  (default 2; 0 = straight to the chain); only then does the `[MODEL_FALLBACK]`
+  advance apply. Both budgets are derived from trace.log, so either resumes
+  after a launcher restart.
 """
 
 from __future__ import annotations
@@ -406,6 +421,170 @@ def inject_rag_env(
             env[token_env.strip()] = value
 
 
+# ── Model fallback chain (mw-model-error-perception, design §3.2/D2/D5/D6) ─────
+#
+# The launcher owns the process-level half of the fallback mechanism: when a
+# worker exits 3 (its N=2 error-run budget is exhausted, design D6) the
+# launcher re-spawns the SAME task on the next configured fallback model. The
+# worker never calls `pi.setModel` (D2: its success path writes the user-global
+# ~/.pi/agent/settings.json). Total attempts are bounded by the configured chain
+# length; there is no extra re-dispatch quota and no interaction with the
+# resume-credit / stalled-gate semantics.
+#
+# Config source: dispatch.yml top-level `fallback_models: {<type>: [values]}`,
+# owned by the T-02 config layer: `mw_common.load_fallback_models` reads and
+# validates it, and `mw_common.fallback_models_for_task_type` applies the exact
+# task-type-then-role bucketing. A broken/absent block yields no chain, which
+# keeps the pre-fallback behavior (spawn on the main model; exit 3 still reaps
+# as failed) and never blocks a spawn.
+#
+# Chain state is file-driven, not launcher memory: every re-dispatch appends one
+# `[MODEL_FALLBACK] ... to=<value> attempt=<k>` line to the task's trace.log,
+# where `k` is the number of fallback models consumed so far. A launcher restart
+# (or another launcher) resumes the chain from that evidence.
+
+_FALLBACK_MODELS_ENV = "PI_WORKER_FALLBACK_MODELS"
+_FALLBACK_INDEX_ENV = "PI_WORKER_FALLBACK_INDEX"
+_FALLBACK_TRIED_ENV = "PI_WORKER_TRIED_MODELS"
+
+# Every spawn clears these internal markers first: a leaked value from the serve
+# environment must never hand a worker a stale chain (same isolation direction as
+# `_stripped_env`'s credential strip set).
+_FALLBACK_ENV_NAMES: tuple[str, ...] = (
+    _FALLBACK_MODELS_ENV,
+    _FALLBACK_INDEX_ENV,
+    _FALLBACK_TRIED_ENV,
+)
+
+# One `[MODEL_FALLBACK] <iso> from=<m> to=<n> attempt=<k>` re-dispatch line
+# (design §4). `to=` is the model actually spawned, `attempt=` is the 1-based
+# count of consumed fallback models and drives both the next selection and the
+# chain-exhaustion bound. A skip line carries a distinct marker so it can never
+# be mistaken for a consumed attempt.
+_MODEL_FALLBACK_RE = re.compile(
+    r"^\[MODEL_FALLBACK\][ \t]+.*\bto=(\S+)\b.*\battempt=(\d+)\b", re.MULTILINE
+)
+_MODEL_FALLBACK_SKIP = "[MODEL_FALLBACK-SKIP]"
+
+# Same-model process-retry budget (D3 revised 2026-10-15, T-03b). The worker now
+# exits 3 on its first exhausted model run, so the `N=2` attempts-per-model
+# budget lives here: before the chain advances, the launcher re-spawns the SAME
+# model until its recorded `[MODEL_RETRY]` count reaches
+# `PI_WORKER_MODEL_ERR_MAX` (default 2; 0 = skip straight to the chain). The
+# budget is read from the launcher's own process environment and, like the
+# fallback chain, derived from trace.log so a restart resumes it.
+_MODEL_ERR_MAX_ENV = "PI_WORKER_MODEL_ERR_MAX"
+_MODEL_ERR_MAX_DEFAULT = 2
+# One `[MODEL_RETRY] <iso> model=<m> attempt=<k>` same-model re-dispatch line.
+# A distinct marker from `[MODEL_FALLBACK]` so the two budgets (same-model
+# attempts vs. model switches) can never be read into each other.
+_MODEL_RETRY_RE = re.compile(
+    r"^\[MODEL_RETRY\][ \t]+.*\bmodel=(\S+)\b.*\battempt=(\d+)\b", re.MULTILINE
+)
+_MODEL_ERR_MAX_WARNED = False
+
+
+def _fallback_models_config(project_dir: pathlib.Path) -> dict:
+    """`fallback_models` (task type -> [values]) from the T-02 config layer.
+
+    `load_fallback_models` is the T-02 single reader: it validates the block
+    (format / 1..4 entries / known task types / no CLI-transport prefixes) and
+    fails soft, so an invalid block returns {} here and simply means "no
+    fallback" — doctor is where the config error is surfaced.
+    """
+    fallbacks, _error = mw_common.load_fallback_models(project_dir)
+    return fallbacks if isinstance(fallbacks, dict) else {}
+
+
+def _model_value_identity(value: str) -> tuple[str, str] | None:
+    """(pi provider, model id) for a `prefix/model` dispatch value, else None."""
+    prefix, model_id = mw_common.parse_model_value(value)
+    provider = mw_common.MODEL_PREFIX_TO_PI_PROVIDER.get(prefix, "")
+    if not provider or not model_id:
+        return None
+    return (provider, model_id)
+
+
+def _fallback_values(project_dir: pathlib.Path, task_type: str) -> list[str]:
+    """Validated fallback chain for one task type (config order preserved).
+
+    Delegates the exact-type-then-role bucketing to the T-02 single source
+    (`mw_common.fallback_models_for_task_type`), so a bucket keyed `coding`
+    also covers `phase-writer`/`repair` exactly like the main model resolution.
+    """
+    fallbacks = _fallback_models_config(project_dir)
+    values = mw_common.fallback_models_for_task_type(fallbacks, task_type)
+    return [value.strip() for value in values if isinstance(value, str) and value.strip()]
+
+
+def _fallback_chain(
+    entry: dict[str, str], project_dir: pathlib.Path, main_value: str
+) -> list[str]:
+    """Configured chain for this task minus the main model (the spares).
+
+    The main model is never a fallback target: re-dispatching the model that
+    just exhausted its budget is not a downgrade. Dedup is by provider+id so a
+    same-id value under a different prefix spelling cannot re-enter the chain.
+    """
+    if entry.get("cli", "").lower() != "pi":
+        return []
+    task_type, _task_model = _read_task_md_fields(entry["task_path"])
+    chain = _fallback_values(project_dir, task_type)
+    main_identity = _model_value_identity(main_value)
+    if main_identity is None:
+        return chain
+    return [value for value in chain if _model_value_identity(value) != main_identity]
+
+
+def _main_model_value(entry: dict[str, str], model_value: str) -> str:
+    """The main model in the dispatch namespace, for the tried chain.
+
+    A resolved prefixed value is returned verbatim; a bare value is rebuilt
+    from the entry's route (`provider` -> prefix) when possible, and an empty
+    value stays empty (the per-cli default is not detectable here).
+    """
+    value = (model_value or "").strip()
+    if "/" in value:
+        return value
+    prefix = mw_common.PROVIDER_ID_TO_PREFIX.get(entry.get("provider", "").strip(), "")
+    model_id = entry.get("model", "").strip()
+    if prefix and model_id:
+        return f"{prefix}/{model_id}"
+    return value
+
+
+def inject_fallback_env(
+    env: dict[str, str],
+    entry: dict[str, str],
+    project_dir: pathlib.Path,
+    *,
+    main_value: str = "",
+    index: int = 0,
+    tried: list[str] | None = None,
+) -> None:
+    """Post-step after ``_build_env``: inject the model fallback chain env.
+
+    ``PI_WORKER_FALLBACK_MODELS`` is the configured spare chain (csv, config
+    order), ``PI_WORKER_FALLBACK_INDEX`` counts the fallback models already
+    consumed (0 on the first spawn), and ``PI_WORKER_TRIED_MODELS`` is the chain
+    of models already exhausted *before* this run — the worker appends its own
+    current model (T-01), so the main model first appears after the first
+    re-dispatch and the value is empty on the initial spawn.
+
+    A task type with no configured chain injects nothing (the three markers are
+    still cleared first), keeping a fallback-less worker byte-identical to the
+    pre-fallback launcher.
+    """
+    for name in _FALLBACK_ENV_NAMES:
+        env.pop(name, None)
+    chain = _fallback_chain(entry, project_dir, main_value)
+    if not chain:
+        return
+    env[_FALLBACK_MODELS_ENV] = ",".join(chain)
+    env[_FALLBACK_INDEX_ENV] = str(max(index, 0))
+    env[_FALLBACK_TRIED_ENV] = ",".join(value for value in (tried or []) if value)
+
+
 def _exit_to_status(exit_code: int) -> str:
     """Map worker exit code to _workers.parallel status (AC-006)."""
     if exit_code == 0:
@@ -453,21 +632,248 @@ def _reap_status(
     return run_status
 
 
-def _reap_task_dirs(project_dir: pathlib.Path) -> dict[str, pathlib.Path]:
-    """``task_key -> task dir`` from the live queue rows (reap reads run.json).
+def _reap_entries(project_dir: pathlib.Path) -> dict[str, dict[str, str]]:
+    """``task_key -> live queue row`` for the reaped workers.
 
-    Best-effort like every other ledger read: an unreadable/absent queue file
-    yields no map, and each reaped row then falls back to its exit code
-    exactly as before. The first row wins (``task_key`` is unique in
-    practice).
+    The reap path needs the whole row (task.md path, cli, route) to decide the
+    model-fallback re-dispatch, not just the task dir. Best-effort like every
+    other ledger read: an unreadable/absent queue file yields no map, and each
+    reaped row then falls back to its exit code exactly as before. The first
+    row wins (``task_key`` is unique in practice).
     """
-    dirs: dict[str, pathlib.Path] = {}
+    rows: dict[str, dict[str, str]] = {}
     for entry in _parse_workers_file(_workers_path(project_dir)):
         key = entry.get("task_key")
-        task_path = entry.get("task_path")
-        if key and task_path and key not in dirs:
-            dirs[key] = pathlib.Path(task_path).parent
-    return dirs
+        if key and key not in rows:
+            rows[key] = entry
+    return rows
+
+
+def _run_model_exhausted(task_dir: pathlib.Path | None) -> bool:
+    """True only when the worker-written run.json confirms exit 3 (design D6).
+
+    The exit code alone is the machine signal; the product field guards against
+    an unrelated process that happens to return 3. Missing/broken run.json is
+    no confirmation, so the row keeps the existing failed terminal path.
+    """
+    if task_dir is None:
+        return False
+    try:
+        data = json.loads((task_dir / "run.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and data.get("model_exhausted") is True
+
+
+def _model_fallback_history(entry: dict[str, str]) -> list[tuple[int, str]]:
+    """(attempt, to-model) for every `[MODEL_FALLBACK]` line, attempt-ordered.
+
+    trace.log is the chain's persistent state (a launcher restart resumes
+    exactly where the last re-dispatch stopped). Malformed lines are ignored.
+    """
+    trace = pathlib.Path(entry["task_path"]).parent / "trace.log"
+    try:
+        text = trace.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return sorted(
+        (int(match.group(2)), match.group(1))
+        for match in _MODEL_FALLBACK_RE.finditer(text)
+    )
+
+
+def _model_err_max() -> int:
+    """Same-model process-retry budget from the launcher's own environment.
+
+    `PI_WORKER_MODEL_ERR_MAX` (int, default 2, 0 = no same-model retry: the
+    exhausted model goes straight to the fallback chain). The launcher owns the
+    budget now that the worker exits 3 on its first exhausted run. A value that
+    is not a non-negative integer falls back to the default with at most ONE
+    warning per launcher process -- the setting only ever moves a bounded
+    process attempt, so it must never refuse a spawn or spam the log.
+    """
+    global _MODEL_ERR_MAX_WARNED
+    raw = os.environ.get(_MODEL_ERR_MAX_ENV)
+    if raw is None or raw.strip() == "":
+        return _MODEL_ERR_MAX_DEFAULT
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        value = -1
+    if value < 0:
+        if not _MODEL_ERR_MAX_WARNED:
+            _MODEL_ERR_MAX_WARNED = True
+            print(
+                f"[launcher] invalid {_MODEL_ERR_MAX_ENV}={raw!r} "
+                f"(want an integer >= 0); using default {_MODEL_ERR_MAX_DEFAULT}",
+                file=sys.stderr,
+                flush=True,
+            )
+        return _MODEL_ERR_MAX_DEFAULT
+    return value
+
+
+def _model_retry_history(entry: dict[str, str]) -> list[tuple[int, str]]:
+    """(attempt, model) for every `[MODEL_RETRY]` line, attempt-ordered.
+
+    Same restart-safety contract as `_model_fallback_history`: trace.log is the
+    only budget state, so a launcher restart (or another launcher) continues the
+    in-progress same-model budget instead of restarting it. Malformed lines are
+    ignored.
+    """
+    trace = pathlib.Path(entry["task_path"]).parent / "trace.log"
+    try:
+        text = trace.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return sorted(
+        (int(match.group(2)), match.group(1))
+        for match in _MODEL_RETRY_RE.finditer(text)
+    )
+
+
+def _model_retry_count(entry: dict[str, str], model: str) -> int:
+    """Same-model retries already spent on `model` (0 when it is not in trace).
+
+    Keyed by the model VALUE the launcher wrote (`main` for the initial model,
+    the fallback value after a switch), so each model in the chain carries its
+    own budget. The highest recorded attempt wins: re-dispatch writes
+    `attempt=k+1`, so a duplicated/foreign line can never grant extra attempts.
+    """
+    return max(
+        (attempt for attempt, value in _model_retry_history(entry) if value == model),
+        default=0,
+    )
+
+
+def _fallback_candidate_available(candidate: str, config: dict) -> tuple[bool, str]:
+    """(usable, reason) spawn-time precheck for one fallback value.
+
+    Reuses the mw-dispatch-reliability validator (`mw_common.route_precheck`,
+    the route/credential snapshot `mw doctor` reads) for the proxy-shaped
+    routes. No network probe is made. A missing route or credential is a skip,
+    not a failure (design §3.2/§6): a cross-provider spare the machine cannot
+    reach must not block the rest of the chain.
+    """
+    prefix, model_id = mw_common.parse_model_value(candidate)
+    route_name = mw_common.FALLBACK_PREFIX_TO_ROUTE.get(prefix)
+    if not route_name or not model_id:
+        return False, f"{candidate!r} is not a valid `prefix/model` value"
+    if route_name == "codex-native":
+        # Native provider: auth lives in codex/pi config, not a mw credential.
+        return True, ""
+    routes = {
+        route["route"]: route
+        for route in mw_common.route_precheck(config, os.environ).get("routes", [])
+    }
+    status = routes.get(route_name)
+    if status is None:
+        return False, f"no route declared for fallback prefix {prefix!r} (route {route_name!r})"
+    if not status.get("available"):
+        return False, f"route {route_name!r} credential unavailable ({status.get('missing')})"
+    return True, ""
+
+
+def _try_model_redispatch(
+    entry: dict[str, str],
+    project_dir: pathlib.Path,
+    config: dict,
+    running_procs: dict[str, subprocess.Popen[bytes]],
+    log_handles: dict[str, object] | None,
+) -> bool:
+    """Re-spawn one model-exhausted task within its per-model budget.
+
+    Returns True only when the task is running again (a new worker process was
+    started and is tracked). Two stages, in this order (D3 revised):
+
+    1. Same-model retry while the CURRENT model's recorded `[MODEL_RETRY]`
+       count is below `PI_WORKER_MODEL_ERR_MAX` (default 2; 0 skips this
+       stage): the task is re-spawned with the same `--model` and the same
+       INDEX/TRIED values the model was first spawned with, and one
+       `[MODEL_RETRY] model=<m> attempt=<k>` line records the budget step.
+    2. The fallback chain, consumed strictly in config order after the models
+       already recorded in trace.log; a candidate whose route/credential
+       precheck fails is skipped with a `[MODEL_FALLBACK-SKIP]` trace fact and
+       the next one is tried.
+
+    Only when both are exhausted (nothing configured or the whole chain tried)
+    does the function return False and let the caller apply the existing
+    `failed` terminal path -- the worker's own `model unavailable:` Exit Reason
+    stays the reason of record.
+    """
+    key = entry["task_key"]
+    if entry.get("cli", "").lower() != "pi":
+        return False
+    if not _run_model_exhausted(pathlib.Path(entry["task_path"]).parent):
+        return False
+    model_value, _source = _resolve_entry_model(entry, project_dir)
+    try:
+        main = _main_model_value(_effective_entry(entry, model_value), model_value)
+    except RuntimeError:
+        main = _main_model_value(entry, model_value)
+    history = _model_fallback_history(entry)
+    consumed = history[-1][0] if history else 0
+    dispatched = [model for _attempt, model in history]
+    current = dispatched[-1] if dispatched else (main or "(main)")
+    # D3 revised (T-03b): the same model gets its own process-attempt budget
+    # before the chain advances. `current` is the value `_spawn` received as
+    # `model_override` (or `main` for the initial dispatch), so every model in
+    # the chain carries an independent count and a launcher restart continues
+    # the budget in progress. INDEX/TRIED keep the values the current model was
+    # FIRST spawned with, so the retry is a faithful process restart of the same
+    # dispatch (`--model` unchanged); the new run_id comes from the worker's own
+    # run store. The retry re-uses the concurrency slot the reap just freed and
+    # never touches the pending queue.
+    retries = _model_retry_count(entry, current)
+    if retries < _model_err_max():
+        _record_trace_line(
+            entry,
+            f"[MODEL_RETRY] {mw_common.iso_now()} model={current} attempt={retries + 1}",
+        )
+        _spawn(
+            entry,
+            project_dir,
+            config,
+            running_procs,
+            log_handles,
+            model_override=dispatched[-1] if dispatched else None,
+            fallback_index=consumed,
+            tried_models=(([main] if main else []) + dispatched[:-1]) if dispatched else [],
+            main_model=main,
+        )
+        return key in running_procs
+    chain = _fallback_chain(entry, project_dir, main)
+    if not chain:
+        return False
+    tried = ([main] if main else []) + dispatched
+    for index in range(consumed, len(chain)):
+        candidate = chain[index]
+        usable, reason = _fallback_candidate_available(candidate, config)
+        if not usable:
+            _record_trace_line(
+                entry,
+                f"{_MODEL_FALLBACK_SKIP} {mw_common.iso_now()} {key} "
+                f"candidate={candidate} attempt={index + 1} reason={reason}",
+            )
+            continue
+        _record_trace_line(
+            entry,
+            f"[MODEL_FALLBACK] {mw_common.iso_now()} from={current} "
+            f"to={candidate} attempt={index + 1}",
+        )
+        _spawn(
+            entry,
+            project_dir,
+            config,
+            running_procs,
+            log_handles,
+            model_override=candidate,
+            fallback_index=index + 1,
+            tried_models=tried,
+            main_model=main,
+        )
+        return key in running_procs
+    return False
 
 
 def _require_task_file(task_path: str) -> pathlib.Path:
@@ -1750,19 +2156,34 @@ def _poll_once(
     # Reap finished processes
     finished = [k for k, p in running_procs.items() if p.poll() is not None]
     # AC-006/DD-06: reap reads the product (run.json) before the exit code.
-    reap_dirs = _reap_task_dirs(project_dir) if finished else {}
+    reap_entries = _reap_entries(project_dir) if finished else {}
     for key in finished:
         proc = running_procs.pop(key)
         code = proc.returncode if proc.returncode is not None else 1
-        status = _reap_status(reap_dirs.get(key), code, key)
-        _update_status(project_dir, key, status)
-        # Close the per-task worker.log handle now the process has exited.
+        # Close the per-task worker.log handle now the process has exited (and
+        # before a possible re-dispatch reopens it for the new process).
         lh = log_handles.pop(key, None)
         if lh is not None:
             try:
                 lh.close()  # type: ignore[attr-defined]
             except Exception:  # noqa: BLE001 — best-effort cleanup
                 pass
+        entry = reap_entries.get(key)
+        # T-03 exit-3 interception (design D6): a model-exhausted exit does not
+        # reap as a terminal failure while the fallback chain has an unused
+        # model; the same task is re-dispatched on it instead. The row is left
+        # `running` by _spawn, so the pending drain must not add a second worker
+        # on a slot the re-dispatch just re-occupied.
+        redispatched = (
+            entry is not None
+            and code == 3
+            and _try_model_redispatch(entry, project_dir, config, running_procs, log_handles)
+        )
+        if redispatched:
+            continue
+        task_dir = pathlib.Path(entry["task_path"]).parent if entry is not None else None
+        status = _reap_status(task_dir, code, key)
+        _update_status(project_dir, key, status)
         # Drain queue now a slot is free
         if pending_queue:
             next_entry = pending_queue.pop(0)
@@ -1955,11 +2376,21 @@ def _spawn(
     config: dict,
     running_procs: dict[str, subprocess.Popen[bytes]],
     log_handles: dict[str, object] | None = None,
+    *,
+    model_override: str | None = None,
+    fallback_index: int = 0,
+    tried_models: list[str] | None = None,
+    main_model: str = "",
 ) -> None:
     """Spawn one worker. Any per-task failure marks it failed and continues.
 
     Design D-001: a missing credential (or any other per-task error) is
     isolated to the task — it can never take down the launcher or mw serve.
+
+    ``model_override`` is the model-fallback re-dispatch path (T-03): the same
+    task is spawned again on the next configured spare, bypassing the
+    task.md/config resolution chain while keeping every other spawn property
+    (credential isolation, worktree cwd, watchdog env) unchanged.
     """
     try:
         # Spawn gate (mw-target-partition D-007): the target config decides
@@ -1969,7 +2400,10 @@ def _spawn(
         target_config = _worker_target_config(project_dir)
         _check_config_tear(entry, target_config)
         check_rag_tear(entry, project_dir)
-        model_value, model_source = _resolve_entry_model(entry, project_dir)
+        if model_override is not None:
+            model_value, model_source = model_override, "fallback"
+        else:
+            model_value, model_source = _resolve_entry_model(entry, project_dir)
         effective = _effective_entry(entry, model_value)
         # RAG static-config strip set (T-07/D-010): declared token env NAMES
         # are removed by _build_env; the enabled subset is re-added by the
@@ -1977,6 +2411,14 @@ def _spawn(
         rag_config, _rag_error = mw_common.load_rag_config(project_dir)
         env = _build_env(effective, config, rag_config)
         inject_rag_env(env, effective, project_dir)
+        inject_fallback_env(
+            env,
+            effective,
+            project_dir,
+            main_value=main_model or _main_model_value(effective, model_value),
+            index=fallback_index,
+            tried=tried_models,
+        )
         cmd = _build_command(effective)
         print(
             f"[launcher] {entry['task_key']}: model={model_value or '(route default)'} source={model_source}",
@@ -2041,6 +2483,10 @@ def _dry_run(project_dir: pathlib.Path, config: dict) -> None:
             rag_config, _rag_error = mw_common.load_rag_config(project_dir)
             env = _build_env(entry, config, rag_config)
             inject_rag_env(env, entry, project_dir)
+            inject_fallback_env(
+                env, entry, project_dir,
+                main_value=_main_model_value(entry, entry.get("model", "")),
+            )
         except Exception as exc:  # noqa: BLE001 — report, do not crash
             print(f"[DRY-RUN] {entry['task_key']}: cannot build ({exc})")
             continue

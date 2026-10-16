@@ -14,6 +14,7 @@ import pathlib
 import sys
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
@@ -472,6 +473,246 @@ class TestModelCli:
         assert "review: timi/glm-5.3-air" in out
         assert "window model: claude/claude-sonnet-5" in out
         assert "coding: (unset)" in out and "[window]" in out
+
+
+def _write_dispatch_bytes(project: pathlib.Path, text: str) -> pathlib.Path:
+    """Seed .mw/dispatch.yml as raw bytes so a refusal can be proven byte-identical."""
+    path = mw_common.dispatch_config_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(text.encode("utf-8"))
+    return path
+
+
+# A valid config plus a foreign comment/key/chain: a refusal must leave all of it alone.
+_CONFIG_WITH_FOREIGN_KEYS = (
+    "# keep this comment\n"
+    "note: hand written\n"
+    "models:\n  review: timi/gpt-6.1-sol\n"
+    "fallback_models:\n  coding:\n    - timi/glm-5.3-flashx\n"
+)
+
+
+class TestModelFallbackCli:
+    """mw-model-fallback-cli: `mw model set-fallback` / `clear-fallback` write the
+    top-level `fallback_models` block through the same validator the launcher and
+    doctor read (order preserved, 1..4 entries, no CLI transport prefixes)."""
+
+    def test_set_fallback_roundtrip_preserves_models_key(self, tmp_path: pathlib.Path) -> None:
+        assert mw.cmd_model(_model_args(tmp_path, "set", "review", "timi/gpt-6.1-sol")) == 0
+        assert (
+            mw.cmd_model(
+                _model_args(tmp_path, "set-fallback", "review", "timi/deepseek-v4.1-flash,zai/glm-5.3")
+            )
+            == 0
+        )
+        config, err = mw_common.load_dispatch_config(tmp_path)
+        assert err is None
+        assert config["models"] == {"review": "timi/gpt-6.1-sol"}
+        fallbacks, fb_err = mw_common.load_fallback_models(tmp_path)
+        assert fb_err is None
+        # Order is the retry order: first entry is tried first.
+        assert fallbacks == {"review": ["timi/deepseek-v4.1-flash", "zai/glm-5.3"]}
+
+    def test_set_fallback_normalizes_case_and_drops_duplicates(self, tmp_path: pathlib.Path) -> None:
+        assert (
+            mw.cmd_model(
+                _model_args(
+                    tmp_path, "set-fallback", "review", " Timi/DeepSeek-V4.1-Flash , timi/deepseek-v4.1-flash "
+                )
+            )
+            == 0
+        )
+        fallbacks, fb_err = mw_common.load_fallback_models(tmp_path)
+        assert fb_err is None
+        assert fallbacks == {"review": ["timi/deepseek-v4.1-flash"]}
+
+    def test_set_fallback_rejects_more_than_four_entries(self, tmp_path: pathlib.Path) -> None:
+        path = mw_common.dispatch_config_path(tmp_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"models:\n  review: timi/gpt-6.1-sol\n")
+        before = path.read_bytes()
+        assert (
+            mw.cmd_model(
+                _model_args(tmp_path, "set-fallback", "review", "timi/a,timi/b,timi/c,timi/d,timi/e")
+            )
+            == 1
+        )
+        # A refused write leaves the file byte-identical (D2 byte oracle).
+        assert path.read_bytes() == before
+
+    def test_set_fallback_accepts_exactly_four_entries(self, tmp_path: pathlib.Path) -> None:
+        assert (
+            mw.cmd_model(
+                _model_args(tmp_path, "set-fallback", "review", "timi/a,timi/b,timi/c,timi/d")
+            )
+            == 0
+        )
+        fallbacks, fb_err = mw_common.load_fallback_models(tmp_path)
+        assert fb_err is None
+        assert fallbacks == {"review": ["timi/a", "timi/b", "timi/c", "timi/d"]}
+
+    def test_set_fallback_rejects_cli_transport_prefix(self, tmp_path: pathlib.Path) -> None:
+        # Byte oracle (R-01 D2): a refused value must not touch the file.
+        path = _write_dispatch_bytes(tmp_path, _CONFIG_WITH_FOREIGN_KEYS)
+        before = path.read_bytes()
+        assert mw.cmd_model(_model_args(tmp_path, "set-fallback", "review", "codex_cli/gpt-5.6-sol")) == 1
+        assert path.read_bytes() == before
+        assert mw.cmd_model(_model_args(tmp_path, "set-fallback", "review", "bogus/x")) == 1
+        assert path.read_bytes() == before
+
+    def test_set_fallback_rejects_unknown_task_type_and_empty_value(self, tmp_path: pathlib.Path) -> None:
+        path = _write_dispatch_bytes(tmp_path, _CONFIG_WITH_FOREIGN_KEYS)
+        before = path.read_bytes()
+        assert mw.cmd_model(_model_args(tmp_path, "set-fallback", "main", "timi/glm-5.3")) == 1
+        assert path.read_bytes() == before
+        assert mw.cmd_model(_model_args(tmp_path, "set-fallback", "review", " , ")) == 1
+        assert path.read_bytes() == before
+
+    def test_set_fallback_refuses_unusable_existing_block(self, tmp_path: pathlib.Path) -> None:
+        path = mw_common.dispatch_config_path(tmp_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "models:\n  review: timi/gpt-6.1-sol\nfallback_models:\n  review: not-a-list\n",
+            encoding="utf-8",
+        )
+        before = path.read_bytes()
+        assert mw.cmd_model(_model_args(tmp_path, "set-fallback", "review", "timi/deepseek-v4.1-flash")) == 1
+        assert path.read_bytes() == before
+
+    def test_clear_fallback_drops_role_and_then_the_block(self, tmp_path: pathlib.Path) -> None:
+        assert (
+            mw.cmd_model(
+                _model_args(tmp_path, "set-fallback", "review", "timi/deepseek-v4.1-flash,zai/glm-5.3")
+            )
+            == 0
+        )
+        assert mw.cmd_model(_model_args(tmp_path, "set-fallback", "coding", "timi/glm-5.3-flashx")) == 0
+        assert mw.cmd_model(_model_args(tmp_path, "clear-fallback", "review")) == 0
+        fallbacks, fb_err = mw_common.load_fallback_models(tmp_path)
+        assert fb_err is None
+        assert fallbacks == {"coding": ["timi/glm-5.3-flashx"]}
+        # Last chain removed -> the top-level key goes away entirely.
+        assert mw.cmd_model(_model_args(tmp_path, "clear-fallback", "coding")) == 0
+        text = mw_common.dispatch_config_path(tmp_path).read_text(encoding="utf-8")
+        assert "fallback_models" not in text
+
+    def test_clear_fallback_not_configured_is_a_noop(self, tmp_path: pathlib.Path) -> None:
+        assert mw.cmd_model(_model_args(tmp_path, "clear-fallback", "review")) == 0
+
+    def test_show_prints_fallback_chains(
+        self, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert (
+            mw.cmd_model(
+                _model_args(tmp_path, "set-fallback", "review", "timi/deepseek-v4.1-flash,zai/glm-5.3")
+            )
+            == 0
+        )
+        assert mw.cmd_model(_model_args(tmp_path, "show")) == 0
+        out = capsys.readouterr().out
+        assert "fallback review: timi/deepseek-v4.1-flash, zai/glm-5.3" in out
+
+    def test_show_reports_absent_fallback_as_none(
+        self, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert mw.cmd_model(_model_args(tmp_path, "show")) == 0
+        assert "fallback: (none configured)" in capsys.readouterr().out
+
+
+class TestModelFallbackCliRefusals:
+    """R-01 follow-up: the CSV argument reaches the single validator unfiltered (F1),
+    every refusal is a byte-identical no-op (D1/D2), and a successful write preserves
+    the whole config graph (D3)."""
+
+    _BODY = _CONFIG_WITH_FOREIGN_KEYS
+
+    def _fixture(self, tmp_path: pathlib.Path, text: str) -> pathlib.Path:
+        return _write_dispatch_bytes(tmp_path, text)
+
+    def test_set_fallback_rejects_a_mixed_empty_csv_entry(self, tmp_path: pathlib.Path) -> None:
+        # F1: `a,,b` must reach the validator, which rejects the empty entry.
+        path = self._fixture(tmp_path, self._BODY)
+        before = path.read_bytes()
+        assert mw.cmd_model(_model_args(tmp_path, "set-fallback", "review", "timi/a,,zai/b")) == 1
+        assert path.read_bytes() == before
+
+    def test_set_fallback_rejects_an_embedded_newline_in_an_entry(self, tmp_path: pathlib.Path) -> None:
+        path = self._fixture(tmp_path, self._BODY)
+        before = path.read_bytes()
+        assert mw.cmd_model(_model_args(tmp_path, "set-fallback", "review", "timi/a\n,zai/b")) == 1
+        assert path.read_bytes() == before
+
+    def test_set_fallback_still_tolerates_surrounding_whitespace(self, tmp_path: pathlib.Path) -> None:
+        # The F1 fix must not break the friendly case: parse_model_value strips items.
+        assert mw.cmd_model(_model_args(tmp_path, "set-fallback", "review", " timi/a , zai/b ")) == 0
+        fallbacks, fb_err = mw_common.load_fallback_models(tmp_path)
+        assert fb_err is None
+        assert fallbacks == {"review": ["timi/a", "zai/b"]}
+
+    @pytest.mark.parametrize(
+        ("body", "action", "value"),
+        [
+            ("models: [unclosed\n", "set-fallback", "timi/a"),
+            ("models:\n  bogus: timi/x\n", "set-fallback", "timi/a"),
+            ("fallback_models: [1, 2]\n", "set-fallback", "timi/a"),
+            ("fallback_models:\n  review:\n    - 5\n", "set-fallback", "timi/a"),
+            ("models: [unclosed\n", "clear-fallback", ""),
+            ("models:\n  bogus: timi/x\n", "clear-fallback", ""),
+            ("fallback_models: [1, 2]\n", "clear-fallback", ""),
+            ("fallback_models:\n  review: not-a-list\n", "clear-fallback", ""),
+        ],
+    )
+    def test_refusals_are_byte_identical_noops(
+        self, tmp_path: pathlib.Path, body: str, action: str, value: str
+    ) -> None:
+        path = self._fixture(tmp_path, body)
+        before = path.read_bytes()
+        assert mw.cmd_model(_model_args(tmp_path, action, "review", value)) == 1
+        assert path.read_bytes() == before
+
+    def test_clear_fallback_rejects_an_unknown_task_type(self, tmp_path: pathlib.Path) -> None:
+        # D1: `main` is a role, never a fallback task type, and clearing it must refuse.
+        path = self._fixture(tmp_path, self._BODY)
+        before = path.read_bytes()
+        assert mw.cmd_model(_model_args(tmp_path, "clear-fallback", "main")) == 1
+        assert path.read_bytes() == before
+
+    def test_clear_fallback_without_a_file_creates_nothing(self, tmp_path: pathlib.Path) -> None:
+        assert mw.cmd_model(_model_args(tmp_path, "clear-fallback", "review")) == 0
+        assert not mw_common.dispatch_config_path(tmp_path).exists()
+        # D3: the noop must not even create the .mw directory.
+        assert not (tmp_path / ".mw").exists()
+
+    def test_set_fallback_replaces_only_the_target_chain(self, tmp_path: pathlib.Path) -> None:
+        path = self._fixture(
+            tmp_path,
+            "# keep this comment\n"
+            "note: hand written\n"
+            "future_block:\n  a: 1\n"
+            "models:\n  review: timi/gpt-6.1-sol\n  coding: timi/glm-5.3-flashx\n"
+            "fallback_models:\n  review:\n    - timi/old\n  coding:\n    - timi/glm-5.3-flashx\n",
+        )
+        assert mw.cmd_model(_model_args(tmp_path, "set-fallback", "review", "timi/new,zai/other")) == 0
+        # Whole-graph comparison: models, the other chain and foreign keys survive.
+        assert yaml.safe_load(path.read_text(encoding="utf-8")) == {
+            "note": "hand written",
+            "future_block": {"a": 1},
+            "models": {"review": "timi/gpt-6.1-sol", "coding": "timi/glm-5.3-flashx"},
+            "fallback_models": {"review": ["timi/new", "zai/other"], "coding": ["timi/glm-5.3-flashx"]},
+        }
+        assert mw.cmd_model(_model_args(tmp_path, "clear-fallback", "review")) == 0
+        graph = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert graph["models"] == {"review": "timi/gpt-6.1-sol", "coding": "timi/glm-5.3-flashx"}
+        assert graph["fallback_models"] == {"coding": ["timi/glm-5.3-flashx"]}
+        assert graph["note"] == "hand written"
+        assert graph["future_block"] == {"a": 1}
+
+    def test_show_fails_loudly_on_a_broken_fallback_block(
+        self, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._fixture(tmp_path, "models:\n  review: timi/gpt-6.1-sol\nfallback_models: [1, 2]\n")
+        assert mw.cmd_model(_model_args(tmp_path, "show")) == 1
+        assert "fallback: Error" in capsys.readouterr().out
 
 
 class TestModelSetVisionCapability:

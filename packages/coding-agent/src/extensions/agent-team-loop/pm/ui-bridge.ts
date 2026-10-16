@@ -3303,7 +3303,10 @@ export async function runMwPartitionCommand(
  * `mw.py model` (single source of parsing/validation/rendering); the runner is
  * injectable for tests. set/clear remind when the change takes effect:
  * worker roles on the next spawn (launcher resolves per spawn, no serve
- * restart), `main` at the next window start (session_start application). */
+ * restart), `main` at the next window start (session_start application).
+ * `set-fallback`/`clear-fallback` edit the ordered per-task-type fallback
+ * chain (mw-model-fallback-cli); the window face takes effect on the next
+ * worker spawn too, since the launcher reads the chain per spawn. */
 export async function runMwModelCommand(
 	ctx: ExtensionCommandContext,
 	projectDir: string,
@@ -3361,7 +3364,32 @@ export async function runMwModelCommand(
 		);
 		return;
 	}
-	ctx.ui.notify("Usage: /mw model show | set <role> <prefix/model> | clear <role|all>", "warning");
+	if (action === "set-fallback" || action === "clear-fallback") {
+		const taskType = parts[1];
+		const expectsChain = action === "set-fallback";
+		const chain = parts[2];
+		if (!taskType || (expectsChain && (!chain || parts.length > 3)) || (!expectsChain && parts.length > 2)) {
+			ctx.ui.notify(
+				expectsChain
+					? "Usage: /mw model set-fallback <task-type> <prefix/model[,prefix/model...]> - 1..4 models, tried in order (e.g. /mw model set-fallback review timi/deepseek-v4.1-flash,zai/glm-5.3)"
+					: "Usage: /mw model clear-fallback <task-type>",
+				"warning",
+			);
+			return;
+		}
+		// Thin wrapper: Python owns role/schema validation (same as set/clear).
+		const args = expectsChain ? [action, taskType, chain] : [action, taskType];
+		const r = runner(projectDir, args);
+		ctx.ui.notify(
+			r.ok ? r.output || `mw model ${action}: ok` : `mw model ${action} failed: ${r.error}`,
+			r.ok ? "info" : "error",
+		);
+		return;
+	}
+	ctx.ui.notify(
+		"Usage: /mw model show | set <role> <prefix/model> | clear <role|all> | set-fallback <task-type> <chain> | clear-fallback <task-type>",
+		"warning",
+	);
 }
 
 /** /mw command description (exported so the registration test can assert the
@@ -3663,8 +3691,9 @@ export function registerMwCommands(
 			}
 
 			if (sub === "model") {
-				// Dispatch model defaults (mw.py model show/set/clear) — thin wrapper,
-				// Python stays the single source of parsing and validation.
+				// Dispatch model defaults + fallback chains (mw.py model show/set/clear/
+				// set-fallback/clear-fallback) — thin wrapper, Python stays the single
+				// source of parsing and validation.
 				await runMwModelCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
 				return;
 			}
@@ -3712,7 +3741,7 @@ export function registerMwCommands(
 			}
 
 			ctx.ui.notify(
-				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear | rag <sub> | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
+				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | rag <sub> | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
 				"warning",
 			);
 		},

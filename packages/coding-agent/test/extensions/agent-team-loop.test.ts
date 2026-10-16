@@ -5181,10 +5181,112 @@ describe("/mw model (dispatch model defaults)", () => {
 		expect(calls).toEqual([["/proj", ["clear", "all"]]]);
 	});
 
+	it("set-fallback forwards the task type and the comma-separated chain verbatim", async () => {
+		const calls: Array<[string, string[]]> = [];
+		const ctx = fakeCmdCtx();
+		await runMwModelCommand(
+			ctx.ctx,
+			"/proj",
+			"set-fallback review timi/deepseek-v4.1-flash,zai/glm-5.3",
+			(projectDir, args) => {
+				calls.push([projectDir, args]);
+				return {
+					ok: true,
+					output: "[mw model set-fallback] review = timi/deepseek-v4.1-flash, zai/glm-5.3",
+				};
+			},
+		);
+		expect(calls).toEqual([["/proj", ["set-fallback", "review", "timi/deepseek-v4.1-flash,zai/glm-5.3"]]]);
+		expect(ctx.notifications.some((n) => n.includes("set-fallback") && n.includes("deepseek-v4.1-flash"))).toBe(true);
+	});
+
+	it("set-fallback with a missing chain or extra args shows usage and runs nothing", async () => {
+		let ran = false;
+		const ctx = fakeCmdCtx();
+		await runMwModelCommand(ctx.ctx, "/proj", "set-fallback review", () => {
+			ran = true;
+			return { ok: true, output: "" };
+		});
+		await runMwModelCommand(ctx.ctx, "/proj", "set-fallback review timi/x extra", () => {
+			ran = true;
+			return { ok: true, output: "" };
+		});
+		expect(ran).toBe(false);
+		expect(ctx.notifications.filter((n) => n.startsWith("Usage: /mw model set-fallback")).length).toBe(2);
+	});
+
+	it("clear-fallback forwards the task type and requires one", async () => {
+		const calls: Array<[string, string[]]> = [];
+		const ctx = fakeCmdCtx();
+		await runMwModelCommand(ctx.ctx, "/proj", "clear-fallback review", (projectDir, args) => {
+			calls.push([projectDir, args]);
+			return { ok: true, output: "[mw model clear-fallback] removed review" };
+		});
+		expect(calls).toEqual([["/proj", ["clear-fallback", "review"]]]);
+
+		let ran = false;
+		await runMwModelCommand(ctx.ctx, "/proj", "clear-fallback", () => {
+			ran = true;
+			return { ok: true, output: "" };
+		});
+		expect(ran).toBe(false);
+		expect(ctx.notifications.some((n) => n.startsWith("Usage: /mw model clear-fallback"))).toBe(true);
+	});
+
+	it("fallback guards reject malformed shapes and pass fuzzy chains through verbatim", async () => {
+		const guardCases = [
+			"set-fallback",
+			"set-fallback review",
+			'set-fallback "" timi/a',
+			"clear-fallback",
+			"clear-fallback review extra",
+		];
+		for (const line of guardCases) {
+			const ctx = fakeCmdCtx();
+			let ran = false;
+			await runMwModelCommand(ctx.ctx, "/proj", line, () => {
+				ran = true;
+				return { ok: true, output: "" };
+			});
+			expect(ran, line).toBe(false);
+			expect(
+				ctx.notifications.some(
+					(n) => n.startsWith("Usage: /mw model set-fallback") || n.startsWith("Usage: /mw model clear-fallback"),
+				),
+				line,
+			).toBe(true);
+		}
+
+		// A double-quoted chain with surrounding whitespace is one argv element, forwarded as-is:
+		// Python decides validity (the validator strips each entry itself).
+		const calls: Array<[string, string[]]> = [];
+		const ctx = fakeCmdCtx();
+		await runMwModelCommand(ctx.ctx, "/proj", 'set-fallback review " timi/a , zai/b "', (projectDir, args) => {
+			calls.push([projectDir, args]);
+			return { ok: true, output: "[mw model set-fallback] review = timi/a, zai/b" };
+		});
+		expect(calls).toEqual([["/proj", ["set-fallback", "review", " timi/a , zai/b "]]]);
+	});
+
+	it("a failing fallback runner notifies the error", async () => {
+		const ctx = fakeCmdCtx();
+		await runMwModelCommand(ctx.ctx, "/proj", "set-fallback review timi/a,,zai/b", () => ({
+			ok: false,
+			error: "[mw model set-fallback] Error: invalid-config: dispatch.yml fallback_models.review[1] must be a non-empty 'prefix/model' string",
+		}));
+		expect(
+			ctx.notifications.some(
+				(n) => n.includes("mw model set-fallback failed") && n.includes("non-empty 'prefix/model'"),
+			),
+		).toBe(true);
+	});
+
 	it("unknown action shows the general usage", async () => {
 		const ctx = fakeCmdCtx();
 		await runMwModelCommand(ctx.ctx, "/proj", "frobnicate", () => ({ ok: true, output: "" }));
 		expect(ctx.notifications.some((n) => n.startsWith("Usage: /mw model show"))).toBe(true);
+		// The general usage line names the fallback subcommands too (R-01 Q6).
+		expect(ctx.notifications.some((n) => n.includes("set-fallback") && n.includes("clear-fallback"))).toBe(true);
 	});
 
 	it("runner failure notifies an error", async () => {

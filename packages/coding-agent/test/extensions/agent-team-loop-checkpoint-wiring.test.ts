@@ -31,6 +31,7 @@ import * as path from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import { MW_RUN_DETACHED_TOOL } from "../../src/extensions/agent-team-loop/shared/run-detached.ts";
 import { appendProgressLine } from "../../src/extensions/agent-team-loop/worker/output-writer.ts";
 import { WORKER_FILE_TOOL } from "../../src/extensions/agent-team-loop/worker/worker-file-tool.ts";
 import {
@@ -308,16 +309,25 @@ describe("checkpoint steer role split (VC-004)", () => {
 
 // ── VC-007: active set computation ──────────────────────────────────────────
 
+/** Active-set derivation mirroring `activeToolsForType`: worker_file is
+ * appended to writeless roles, and mw_run_detached is appended to roles whose
+ * base carries `bash` (spawn surface; deliberately outside the frozen
+ * TOOL_ALLOWLISTS table — see worker-mode.ts and commit 4980da301). */
+function expectedActiveTools(base: string[]): string[] {
+	let tools = base.includes("write") ? base : [...base, WORKER_FILE_TOOL];
+	if (base.includes("bash")) tools = [...tools, MW_RUN_DETACHED_TOOL];
+	return tools;
+}
+
 describe("activeToolsForType (VC-007)", () => {
 	it("VC-007: table matches the frozen 10-key snapshot; worker_file is appended to writeless roles only", () => {
 		for (const [taskType, expected] of Object.entries(ALLOWLIST_SNAPSHOT)) {
 			expect(toolsForType(taskType), taskType).toEqual(expected);
-			const writeless = !expected.includes("write");
-			expect(activeToolsForType(taskType), taskType).toEqual(writeless ? [...expected, WORKER_FILE_TOOL] : expected);
+			expect(activeToolsForType(taskType), taskType).toEqual(expectedActiveTools(expected));
 		}
 		// Unknown types resolve through the fallback bucket (which has write).
 		expect(toolsForType("mystery-type")).toEqual(ALLOWLIST_SNAPSHOT.fallback);
-		expect(activeToolsForType("mystery-type")).toEqual(ALLOWLIST_SNAPSHOT.fallback);
+		expect(activeToolsForType("mystery-type")).toEqual(expectedActiveTools(ALLOWLIST_SNAPSHOT.fallback));
 		verify(
 			`[VERIFY] VC-007: table_unchanged=true extra_only_writeless=true types=${Object.keys(ALLOWLIST_SNAPSHOT).length}`,
 		);
@@ -329,10 +339,7 @@ describe("activeToolsForType (VC-007)", () => {
 		try {
 			const cases: Array<{ type: string; expected: string[] }> = Object.entries(ALLOWLIST_SNAPSHOT)
 				.filter(([taskType]) => taskType !== "fallback")
-				.map(([taskType, base]) => ({
-					type: taskType,
-					expected: base.includes("write") ? base : [...base, WORKER_FILE_TOOL],
-				}));
+				.map(([taskType, base]) => ({ type: taskType, expected: expectedActiveTools(base) }));
 			for (const c of cases) {
 				const taskKey = `t-${c.type}`;
 				const { worker } = await startWorker(root, taskKey, `type: ${c.type}\n\nwork\n`);

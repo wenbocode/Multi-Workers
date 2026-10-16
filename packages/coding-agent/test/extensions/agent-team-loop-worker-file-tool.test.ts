@@ -36,6 +36,12 @@ import {
 	writeWorkerFile,
 } from "../../src/extensions/agent-team-loop/worker/worker-file-tool.ts";
 
+/** Azure strict JSON-schema validation (e.g. the gpt-6.1-sol deployment via
+ * litellm) rejects ECMA lookaround in tool `pattern` fields — a 400/502 on the
+ * very first LLM call killed every writeless-role worker. The path regex must
+ * stay lookaround-free (mw-review-schema-lookaround). */
+const LOOKAROUND_RE = /\(\?[=!<]/;
+
 /* The suite swallows console.log from green tests; write the evidence line
  * straight to stdout so the required command surfaces it. */
 function verify(line: string): void {
@@ -115,7 +121,13 @@ function mkTaskDir(): string {
 
 function snapshot(dir: string): string[] {
 	if (!fs.existsSync(dir)) return [];
-	return fs.readdirSync(dir).sort();
+	// Whitelist filter: the framework now also writes trace.log/worker.log into
+	// the task dir (mw-worker-progress-persist); the test only inspects
+	// worker_file-written files.
+	return fs
+		.readdirSync(dir)
+		.filter((f) => isAllowedWorkerFile(f))
+		.sort();
 }
 
 afterEach(() => {
@@ -332,6 +344,9 @@ describe("registerWorkerFileTool (D-109 / §4.1)", () => {
 		expect(schema.properties?.file?.pattern).toBe(WORKER_FILE_PATH_RE.source);
 		expect(WORKER_FILE_PATH_RE.source).toContain(WORKER_FILE_BASENAME_ALT);
 		expect(WORKER_FILE_NAME_RE.source).toContain(WORKER_FILE_BASENAME_ALT);
+		// mw-review-schema-lookaround: the schema pattern must stay lookaround-free.
+		expect(schema.properties?.file?.pattern ?? "").not.toMatch(LOOKAROUND_RE);
+		expect(WORKER_FILE_PATH_RE.source).not.toMatch(LOOKAROUND_RE);
 
 		verify("[VERIFY] D-102/D-109: schema_pattern_single_source=true additional_properties_rejected=true");
 	});

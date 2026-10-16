@@ -30,6 +30,7 @@ import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { dispatchNewTasks } from "../../src/extensions/agent-team-loop/pm/pm-orchestrator.ts";
+import { MW_RUN_DETACHED_TOOL } from "../../src/extensions/agent-team-loop/shared/run-detached.ts";
 import { WorkerStore } from "../../src/extensions/agent-team-loop/shared/worker-store.ts";
 import { goalMtime } from "../../src/extensions/agent-team-loop/worker/phase-runner.ts";
 import { WORKER_FILE_TOOL } from "../../src/extensions/agent-team-loop/worker/worker-file-tool.ts";
@@ -72,6 +73,15 @@ const START_PID_RE = /^\[START\] pid=(\d+)$/;
 // included). VC-023 locks the TS TOOL_ALLOWLISTS equal to this table; the
 // T-17 L0 parity test locks the Python side against the same table.
 const PY_CODING_TOOLS = ["read", "write", "edit", "bash", "find", "grep", "ls"];
+
+/** Active-set derivation mirroring `activeToolsForType` (worker-mode.ts):
+ * worker_file for writeless roles + mw_run_detached for bash-carrying roles
+ * (commit 4980da301; deliberately outside TOOL_ALLOWLISTS / PY_REGISTRY). */
+function active(base: string[]): string[] {
+	let tools = base.includes("write") ? base : [...base, WORKER_FILE_TOOL];
+	if (base.includes("bash")) tools = [...tools, MW_RUN_DETACHED_TOOL];
+	return tools;
+}
 const PY_REVIEW_TOOLS = ["read", "find", "grep", "ls"];
 const PY_REGISTRY: Record<string, string[]> = {
 	"roadmap-writer": ["read", "write", "edit", "find", "grep", "ls"],
@@ -239,7 +249,7 @@ describe("typed tool allowlists (D-107 / VC-023)", () => {
 		const root = mkdtemp();
 		const cases: Array<{ type: string; expected: string[]; extra?: string[] }> = [
 			{ type: "roadmap-writer", expected: PY_REGISTRY["roadmap-writer"] },
-			{ type: "phase-writer", expected: PY_REGISTRY["phase-writer"] },
+			{ type: "phase-writer", expected: active(PY_REGISTRY["phase-writer"]) },
 			// Read-only types additionally carry the narrow write channel
 			// (D-101/D-104/D-106): the Python REGISTRY tuples stay unchanged, so
 			// the parity assertion is the Python set plus the TS-only worker_file.
@@ -249,7 +259,7 @@ describe("typed tool allowlists (D-107 / VC-023)", () => {
 				extra: ["read_scope:", "  - .agenticdoc/goal.md"],
 			},
 			{ type: "reviewer", expected: [...PY_REGISTRY.reviewer, WORKER_FILE_TOOL] },
-			{ type: "repair", expected: PY_REGISTRY.repair },
+			{ type: "repair", expected: active(PY_REGISTRY.repair) },
 		];
 		try {
 			for (const c of cases) {
@@ -343,15 +353,15 @@ describe("typed tool allowlists (D-107 / VC-023)", () => {
 		const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
 		try {
 			const cases: Array<{ taskKey: string; md: string; expected: string[] }> = [
-				{ taskKey: "m-coding", md: "type: coding\n\nwork\n", expected: PY_CODING_TOOLS },
+				{ taskKey: "m-coding", md: "type: coding\n\nwork\n", expected: active(PY_CODING_TOOLS) },
 				{ taskKey: "m-review", md: "type: review\n\nwork\n", expected: [...PY_REVIEW_TOOLS, WORKER_FILE_TOOL] },
 				{
 					taskKey: "m-research",
 					md: "type: research\n\nwork\n",
-					expected: ["read", "find", "grep", "ls", "bash", WORKER_FILE_TOOL],
+					expected: active(["read", "find", "grep", "ls", "bash"]),
 				},
 				// GC-8 verbatim: the manual fallback path stays for unknown types.
-				{ taskKey: "m-unknown", md: "type: mystery-type\n\nwork\n", expected: PY_CODING_TOOLS },
+				{ taskKey: "m-unknown", md: "type: mystery-type\n\nwork\n", expected: active(PY_CODING_TOOLS) },
 			];
 			for (const c of cases) {
 				const { worker } = await activateWorker(root, "goal-ap", c.taskKey, c.md);

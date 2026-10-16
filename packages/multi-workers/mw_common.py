@@ -1,4 +1,4 @@
-﻿"""
+"""
 mw_common.py 鈥?shared Multi-Workers core.
 
 Single source for provider/credential config, route precheck, stale-entry
@@ -229,6 +229,10 @@ def load_dispatch_config(project_root: pathlib.Path) -> tuple[dict, str | None]:
     model defaults are a convenience and must never block dispatching — the
     launcher falls through to the window model / per-cli defaults and doctor
     surfaces the error.
+
+    The top-level `fallback_models` block is deliberately NOT part of this
+    return value (its shape and fail-soft contract differ, and this mapping is
+    a frozen consumers' contract). Read it with :func:`load_fallback_models`.
     """
     path = dispatch_config_path(project_root)
     if not path.exists():
@@ -319,6 +323,157 @@ def resolve_dispatch_model(
     if window_model.strip() and model_value_compatible(cli, window_model):
         return window_model.strip(), "window"
     return "", "default"
+
+
+# ── Fallback model config (.mw/dispatch.yml top-level fallback_models) ────
+#
+# mw-model-error-perception D5/§3.3: per-task-type backup models the launcher
+# injects into a worker (PI_WORKER_FALLBACK_MODELS) once its primary model is
+# exhausted. The value lives in a TOP-LEVEL key rather than under `models:`
+# because both readers (this module and TS shared/dispatch-models.ts)
+# hard-validate `models.<role>` as a single-line string. Keys are the known
+# worker task types (the `type:` values TASK_TYPE_TO_ROLE buckets); `main` is
+# the PM window and has no worker fallback. Every list holds 1..4 `prefix/model`
+# values (the same namespace as `models.<role>` and the `[MODEL_FALLBACK]`
+# trace line), normalized to lowercase and de-duplicated. A missing key means
+# "no fallback" — the worker behaves exactly as before.
+FALLBACK_MAX_MODELS = 4
+FALLBACK_TASK_TYPES = tuple(TASK_TYPE_TO_ROLE)
+
+# Fallback prefix -> mw route name, for the doctor credential precheck. The pi
+# provider ids (MODEL_PREFIX_TO_PI_PROVIDER: claude -> anthropic, ...) are NOT
+# route_precheck keys; these are the providers.json / codex-native names the
+# existing checker reports.
+FALLBACK_PREFIX_TO_ROUTE: dict[str, str] = {
+    "timi": "timi",
+    "claude": "claude",
+    "deepseek": "deepseek",
+    "zai": "zai-coding-cn",
+    "codex": "codex-native",
+}
+
+# Machine-readable error kind (style of _TARGET_KINDS): every
+# validate_fallback_models / load_fallback_models error starts with this token
+# so the launcher and doctor can branch on the kind instead of parsing prose.
+FALLBACK_ERROR_KIND = "invalid-config"
+
+
+def _fallback_error(message: str) -> tuple[dict[str, list[str]], str]:
+    return {}, f"{FALLBACK_ERROR_KIND}: {message}"
+
+
+def validate_fallback_models(raw: object) -> tuple[dict[str, list[str]], str | None]:
+    """Pure validator for the top-level `fallback_models` value.
+
+    Returns ``({task_type: [model, ...]}, None)`` or ``({}, message)`` where
+    ``message`` starts with ``"invalid-config: "`` (machine-readable). A
+    ``None`` value is not an error: absent/null means no fallback configured.
+    """
+    if raw is None:
+        return {}, None
+    if not isinstance(raw, dict):
+        return _fallback_error(
+            "dispatch.yml fallback_models must be a mapping of task type to model list"
+        )
+    cleaned: dict[str, list[str]] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            return _fallback_error(
+                f"dispatch.yml fallback_models has a non-string task type {key!r}"
+            )
+        task_type = key.strip().lower()
+        if task_type not in FALLBACK_TASK_TYPES:
+            return _fallback_error(
+                f"dispatch.yml fallback_models has unknown task type {key!r} "
+                f"(valid: {', '.join(sorted(FALLBACK_TASK_TYPES))})"
+            )
+        if task_type in cleaned:
+            return _fallback_error(
+                f"dispatch.yml fallback_models has duplicate task type {key!r}"
+            )
+        if not isinstance(value, list):
+            return _fallback_error(
+                f"dispatch.yml fallback_models.{task_type} must be a list of "
+                f"1..{FALLBACK_MAX_MODELS} 'prefix/model' strings"
+            )
+        if not 1 <= len(value) <= FALLBACK_MAX_MODELS:
+            return _fallback_error(
+                f"dispatch.yml fallback_models.{task_type} has {len(value)} entries "
+                f"(must be 1..{FALLBACK_MAX_MODELS})"
+            )
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for index, item in enumerate(value):
+            where = f"dispatch.yml fallback_models.{task_type}[{index}]"
+            if not isinstance(item, str) or not item.strip():
+                return _fallback_error(f"{where} must be a non-empty 'prefix/model' string")
+            if "\n" in item or "\r" in item:
+                return _fallback_error(f"{where} must be a single line")
+            prefix, model_id = parse_model_value(item)
+            if not prefix or not model_id or "/" in model_id:
+                return _fallback_error(
+                    f"{where} must be 'prefix/model' (e.g. timi/glm-5.3), "
+                    f"got {item.strip()!r}"
+                )
+            prefix = prefix.lower()
+            if prefix in CLI_PREFIX_TO_CLI:
+                return _fallback_error(
+                    f"{where} uses the CLI transport prefix {prefix!r}; fallback "
+                    "models must stay on the pi transport"
+                )
+            if prefix not in KNOWN_MODEL_PREFIXES:
+                return _fallback_error(
+                    f"{where} has unknown prefix {prefix!r} "
+                    f"(valid: {', '.join(sorted(KNOWN_MODEL_PREFIXES))})"
+                )
+            # Case normalization + de-duplication (first occurrence wins).
+            entry = f"{prefix}/{model_id.lower()}"
+            if entry in seen:
+                continue
+            seen.add(entry)
+            normalized.append(entry)
+        if normalized:
+            cleaned[task_type] = normalized
+    return cleaned, None
+
+
+def load_fallback_models(
+    project_root: pathlib.Path,
+) -> tuple[dict[str, list[str]], str | None]:
+    """Read + validate the top-level `fallback_models` block of dispatch.yml.
+
+    Same fail-soft contract as :func:`load_dispatch_config`: a missing file or
+    absent key is ``({}, None)`` (no fallback), and any parse/validation
+    problem is ``({}, "invalid-config: ...")`` that never blocks dispatching —
+    doctor surfaces the error. The two keys are intentionally independent: a
+    broken `models` block does not hide a usable `fallback_models` block (and
+    vice versa).
+    """
+    path = dispatch_config_path(project_root)
+    if not path.exists():
+        return {}, None
+    import yaml  # PyYAML: implicit dep for target.yml (mw-dual-workspace D-010)
+
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        return {}, f"{FALLBACK_ERROR_KIND}: dispatch.yml unreadable: {exc}"
+    if data is None:
+        return {}, None
+    if not isinstance(data, dict):
+        return {}, f"{FALLBACK_ERROR_KIND}: dispatch.yml must be a mapping at top level"
+    return validate_fallback_models(data.get("fallback_models"))
+
+
+def fallback_models_for_task_type(fallbacks: dict, task_type: str) -> list[str]:
+    """Backup models for one task: the exact `type:` key wins, else its role
+    bucket (mirror of resolve_dispatch_model's TASK_TYPE_TO_ROLE bucketing).
+    Unset -> [] (no fallback; behaviour is unchanged)."""
+    task_type = (task_type or "").strip().lower()
+    if task_type in fallbacks:
+        return list(fallbacks[task_type])
+    role = TASK_TYPE_TO_ROLE.get(task_type, "coding")
+    return list(fallbacks.get(role, []))
 
 
 # ── task.md header parsing (AC-005 single source) ──────────────────────────
@@ -1424,6 +1579,16 @@ def _doctor_dispatch(project_dir: pathlib.Path) -> dict:
     if err:
         section["error"] = err
         return section
+    # fallback_models (mw-model-error-perception D5) is read only once the file
+    # parses: an unreadable/broken file is already reported through `error` and
+    # must not also become a fallback ISSUE (a broken dispatch.yml stays
+    # fail-soft). Only present keys are emitted, so an unconfigured project
+    # keeps the historical section shape (JSON consumers stay unaffected).
+    fallbacks, fallback_err = load_fallback_models(project_dir)
+    if fallback_err:
+        section["fallback_error"] = fallback_err
+    elif fallbacks:
+        section["fallback_models"] = fallbacks
     if section["models"]:
         section["images"] = {
             role: model_images(value) for role, value in sorted(section["models"].items())
@@ -3873,6 +4038,36 @@ def _doctor_issues(report: dict) -> tuple[list[str], list[str]]:
             f"(images=no) - run 'mw model set vision <vision-model>' and re-dispatch "
             f"with that role, or give '{role_name}' an image-capable model"
         )
+    # fallback_models (mw-model-error-perception D5): a malformed block is an
+    # ISSUE (unlike the fail-soft `models` default) — a bad fallback silently
+    # degrades model-failure recovery, so doctor must surface it. A missing
+    # route/credential is only a suggestion: the launcher's dispatch-time
+    # precheck skips an unusable fallback, so it never blocks a worker.
+    if dispatch.get("fallback_error"):
+        issues.append(
+            f"dispatch.yml fallback_models unusable ({dispatch['fallback_error']}) - "
+            "fallback models will be ignored; fix or remove the block in .mw/dispatch.yml"
+        )
+    fallback_routes = {
+        r["route"]: r for r in (report.get("credentials") or {}).get("routes", [])
+    }
+    for task_type, values in sorted((dispatch.get("fallback_models") or {}).items()):
+        for value in values:
+            prefix, _model = parse_model_value(value)
+            route_name = FALLBACK_PREFIX_TO_ROUTE.get(prefix)
+            route = fallback_routes.get(route_name) if route_name else None
+            if route is None:
+                suggestions.append(
+                    f"dispatch fallback_models.{task_type} uses {value}, whose route "
+                    f"({route_name or prefix}) is not configured - add it to providers.json "
+                    "or remove the fallback"
+                )
+            elif not route.get("available"):
+                suggestions.append(
+                    f"dispatch fallback_models.{task_type} uses {value}, whose credential "
+                    f"is missing ({route.get('missing')}) - the launcher skips it at dispatch "
+                    "time; provide the credential or remove the fallback"
+                )
     if report["orphan_proxy"]["detected"]:
         ports = ", ".join(str(p["port"]) for p in report["orphan_proxy"]["ports"])
         suggestions.append(
@@ -4288,6 +4483,17 @@ def format_doctor_text(report: dict) -> str:
             ) or "no roles set"
             window = dispatch.get("window_model") or "(none recorded)"
             lines.append(f"dispatch: {roles}; window model {window}")
+        # fallback row: emitted only when a fallback block exists, so an
+        # unconfigured project keeps the historical text byte-identical.
+        fallbacks = dispatch.get("fallback_models") or {}
+        if dispatch.get("fallback_error"):
+            lines.append(f"dispatch_fallback: ERROR — {dispatch['fallback_error']}")
+        elif fallbacks:
+            rendered = "; ".join(
+                f"{task_type}={','.join(values)}"
+                for task_type, values in sorted(fallbacks.items())
+            )
+            lines.append(f"dispatch_fallback: {rendered}")
     for r in report["credentials"]["routes"]:
         state = "available (" + _source_desc(r["source"]) + ")" if r["available"] else "missing (" + str(r["missing"]) + ")"
         lines.append(f"credentials: {r['route']} {state}")

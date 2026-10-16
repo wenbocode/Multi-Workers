@@ -12,8 +12,8 @@ Subcommands:
   setup  — one-time machine bootstrap: clone framework + install extension globally
   bootstrap — fresh-machine one-shot: prereqs → npm ci → build → link pi → setup → init → start → doctor
   update-env — incremental self-check over the update anchors (UPDATE.md); --apply runs the safe fixes
-  run-detached — detached background command runner: hidden-console supervisor + heartbeat/marker evidence
   ue-toolchain — dual-mode UE toolchain discipline (UE game dev: game repo + engine source repo, MSVC/UBT): run a configured command with evidence, discover UE targets, EOL-normalized hashing
+  run-detached — detached background command runner: hidden-console supervisor + heartbeat/marker evidence
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ import time
 import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-import console_run
 
+import console_run
 import mw_common
 import rag_templates
 import worktree_cmd
@@ -3438,13 +3438,54 @@ def cmd_partition(args: argparse.Namespace) -> int:
 
 # ── Subcommand: model (dispatch model defaults) ──────────────────────────────
 
-def _model_write(project_dir: pathlib.Path, models: dict[str, str]) -> None:
-    """Write .mw/dispatch.yml from a complete role→value mapping."""
+def _dispatch_extra_keys(path: pathlib.Path) -> dict:
+    """Top-level dispatch.yml keys other than ``models`` (fallback_models, ...).
+
+    ``_model_write`` rewrites the whole file from a role->value mapping. Before
+    that rewrite we lift every other top-level key off the existing file so the
+    write cannot silently drop configuration it does not own (mw-model-error-
+    perception D5: the launcher reads the top-level `fallback_models` key). A
+    missing/unreadable/unparsable/non-mapping file contributes nothing — the
+    caller has already refused a write on an unusable file.
+    """
+    import yaml
+
+    if not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {key: value for key, value in data.items() if key != "models"}
+
+
+def _model_write(
+    project_dir: pathlib.Path,
+    models: dict[str, str],
+    fallback_models: dict[str, list[str]] | None = None,
+) -> None:
+    """Write .mw/dispatch.yml from a complete role→value mapping.
+
+    Read-modify-write: untouched top-level keys (notably `fallback_models`) are
+    preserved verbatim, never replaced by a models-only dict."""
+
+# mw-model-fallback-cli: `fallback_models` is a task-type -> ordered-chain mapping.
+# None keeps the file's existing block verbatim; a mapping replaces it, and an
+# empty mapping drops the top-level key entirely (no leftovers after the last clear).
     import yaml
 
     path = mw_common.dispatch_config_path(project_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = {"models": models} if models else {}
+    data = _dispatch_extra_keys(path)
+    if models:
+        data["models"] = models
+    if fallback_models is not None:
+        if fallback_models:
+            data["fallback_models"] = fallback_models
+        else:
+            data.pop("fallback_models", None)
     path.write_text(
         yaml.safe_dump(data, allow_unicode=True, default_flow_style=False, sort_keys=True),
         encoding="utf-8",
@@ -3558,6 +3599,88 @@ def cmd_model(args: argparse.Namespace) -> int:
         print(f"[mw model clear] removed {role} → {mw_common.dispatch_config_path(project_dir)}")
         return 0
 
+    if action == "set-fallback":
+        # mw-model-fallback-cli: an ordered per-task-type fallback chain. The
+        # comma-separated value goes through the same validator the launcher
+        # and doctor read with, so CLI writes and file reads cannot diverge.
+        task_type = args.role
+        if task_type not in mw_common.FALLBACK_TASK_TYPES:
+            print(
+                f"[mw model set-fallback] Error: unknown task type {task_type!r} "
+                f"(valid: {', '.join(sorted(mw_common.FALLBACK_TASK_TYPES))})",
+                file=sys.stderr,
+            )
+            return 1
+        # R-01 F1: the validator input is the raw CSV split - no pre-stripping and
+        # no empty-item filtering, so `mw_common.validate_fallback_models` stays the
+        # single authority for the empty-entry and single-line rules (filtering here
+        # let `a,,b` and embedded CR/LF through). Whitespace around entries is still
+        # tolerated: `parse_model_value` strips each item itself.
+        if not args.value.strip():
+            print(
+                "[mw model set-fallback] Error: value must be a comma-separated list of "
+                f"1..{mw_common.FALLBACK_MAX_MODELS} 'prefix/model' entries "
+                "(e.g. timi/deepseek-v4.1-flash,zai/glm-5.3)",
+                file=sys.stderr,
+            )
+            return 1
+        cleaned, err = mw_common.validate_fallback_models({task_type: args.value.split(",")})
+        if err:
+            print(f"[mw model set-fallback] Error: {err}", file=sys.stderr)
+            return 1
+        existing, err = mw_common.load_dispatch_config(project_dir)
+        if err:
+            print(
+                f"[mw model set-fallback] Error: existing dispatch.yml is unusable ({err}) "
+                "— fix or remove it before writing",
+                file=sys.stderr,
+            )
+            return 1
+        fallbacks, fb_err = mw_common.load_fallback_models(project_dir)
+        if fb_err:
+            print(
+                "[mw model set-fallback] Error: existing fallback_models is unusable "
+                f"({fb_err}) — fix or remove it before writing",
+                file=sys.stderr,
+            )
+            return 1
+        chain = cleaned[task_type]
+        fallbacks[task_type] = chain
+        _model_write(project_dir, dict(existing.get("models", {})), fallback_models=fallbacks)
+        print(
+            f"[mw model set-fallback] {task_type} = {', '.join(chain)} "
+            f"({len(chain)} in order) → {mw_common.dispatch_config_path(project_dir)}"
+        )
+        return 0
+
+    if action == "clear-fallback":
+        task_type = args.role
+        if task_type not in mw_common.FALLBACK_TASK_TYPES:
+            print(
+                f"[mw model clear-fallback] Error: unknown task type {task_type!r} "
+                f"(valid: {', '.join(sorted(mw_common.FALLBACK_TASK_TYPES))})",
+                file=sys.stderr,
+            )
+            return 1
+        existing, err = mw_common.load_dispatch_config(project_dir)
+        if err:
+            print(f"[mw model clear-fallback] Error: {err}", file=sys.stderr)
+            return 1
+        fallbacks, fb_err = mw_common.load_fallback_models(project_dir)
+        if fb_err:
+            print(f"[mw model clear-fallback] Error: {fb_err}", file=sys.stderr)
+            return 1
+        if task_type not in fallbacks:
+            print(f"[mw model clear-fallback] {task_type} is not configured")
+            return 0
+        del fallbacks[task_type]
+        _model_write(project_dir, dict(existing.get("models", {})), fallback_models=fallbacks)
+        print(
+            f"[mw model clear-fallback] removed {task_type} → "
+            f"{mw_common.dispatch_config_path(project_dir)}"
+        )
+        return 0
+
     # show
     existing, err = mw_common.load_dispatch_config(project_dir)
     path = mw_common.dispatch_config_path(project_dir)
@@ -3587,6 +3710,17 @@ def cmd_model(args: argparse.Namespace) -> int:
         # "unknown" without probing an empty string.
         capability = mw_common.model_images(value) if value else "unknown"
         print(f"{role}: (unset) → {effective} [{source}] images={capability}")
+    fallbacks, fb_err = mw_common.load_fallback_models(project_dir)
+    if fb_err:
+        # Same contract as a broken `models` block above: a config the reader
+        # rejects is a nonzero exit, never a silent success (R-01 可观测性).
+        print(f"fallback: Error: {fb_err}")
+        return 1
+    if fallbacks:
+        for task_type in sorted(fallbacks):
+            print(f"fallback {task_type}: {', '.join(fallbacks[task_type])}")
+    else:
+        print("fallback: (none configured)")
     return 0
 
 
@@ -6609,6 +6743,33 @@ def _parse_args() -> argparse.Namespace:
                                help=f"One of: {', '.join(mw_common.DISPATCH_ROLES)} — or 'all'")
     model_show_p = model_sub.add_parser("show", help="Print the configured roles and the effective resolution")
     model_show_p.add_argument("--project", required=True, help="Project directory")
+    model_setfb_p = model_sub.add_parser(
+        "set-fallback",
+        help="Set a task type's ordered fallback chain (1..4 models, tried in order once the primary exhausts)",
+    )
+    model_setfb_p.add_argument("--project", required=True, help="Project directory")
+    model_setfb_p.add_argument(
+        "role",
+        choices=sorted(mw_common.FALLBACK_TASK_TYPES),
+        metavar="TASK_TYPE",
+        help=f"Task type (not a role): {', '.join(sorted(mw_common.FALLBACK_TASK_TYPES))}",
+    )
+    model_setfb_p.add_argument(
+        "value",
+        metavar="PREFIX/MODEL[,PREFIX/MODEL...]",
+        help="Comma-separated fallback chain, tried in order (e.g. timi/deepseek-v4.1-flash,zai/glm-5.3)",
+    )
+    model_clearfb_p = model_sub.add_parser(
+        "clear-fallback",
+        help="Remove a task type's fallback chain (drops the top-level block when it was the last one)",
+    )
+    model_clearfb_p.add_argument("--project", required=True, help="Project directory")
+    model_clearfb_p.add_argument(
+        "role",
+        choices=sorted(mw_common.FALLBACK_TASK_TYPES),
+        metavar="TASK_TYPE",
+        help=f"Task type: {', '.join(sorted(mw_common.FALLBACK_TASK_TYPES))}",
+    )
 
     autopilot_p = sub.add_parser(
         "autopilot",
@@ -6916,6 +7077,7 @@ def _parse_args() -> argparse.Namespace:
                              help="Emit the machine-readable audit report")
     rag_audit_p.add_argument("--out", default=None, metavar="FILE",
                              help="Write the JSON report to FILE (default: no file is written)")
+
     run_detached_p = sub.add_parser(
         "run-detached",
         help="Detached background command runner: spawn CMD in a hidden console "
@@ -6935,16 +7097,15 @@ def _parse_args() -> argparse.Namespace:
     run_detached_p.add_argument("argv", nargs=argparse.REMAINDER, metavar="CMD",
                                 help="Command argv after '--' (stored verbatim, no shell)")
 
-
     return parser.parse_args()
 
 
+if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "_run_supervisor":
         # Internal detached-runner supervisor. Never registered as an argparse
         # subcommand (stays out of --help); console_run's CLI spawns it as
         # `python mw.py _run_supervisor --run-dir D ... -- <cmd...>`.
         sys.exit(console_run.run_supervisor_entry(sys.argv[2:]))
-if __name__ == "__main__":
     args = _parse_args()
     dispatch = {
         "serve": cmd_serve,
@@ -6965,7 +7126,7 @@ if __name__ == "__main__":
         "update-env": cmd_update_env,
         "ue-toolchain": cmd_toolchain,
         "worktree": cmd_worktree,
-        "run-detached": console_run.cmd_run_detached,
         "rag": cmd_rag,
+        "run-detached": console_run.cmd_run_detached,
     }
     sys.exit(dispatch[args.subcommand](args))
