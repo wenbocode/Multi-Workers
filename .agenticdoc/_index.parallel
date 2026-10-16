@@ -17,7 +17,7 @@
 | mw-activation-rearm | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-14T09:25:30.889Z |
 | mw-evidence-nudge-notify | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-14T09:58:19.011Z |
 | mw-pm-save-snapshot | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-15T04:10:55.224Z |
-| mw-timi-models-add | idle | SPEC | WENBOZHOU-PC4:48996 |  |  | 2026-09-15 21:52 |
+| mw-timi-models-add | idle | SPEC | WENBOZHOU-PC4:1876 |  |  | 2026-10-15T06:40:40.879Z |
 | mw-protected-config-guard | idle | — | — | — | Cross-window config hard guard: agent tool layer blocks write/edit/bash modification of ~/.pi/agent auth.json/models.json/settings.json/oauth.json while sessions run (2026-09-15 all-windows credential-loss incident); Python-side same-rule helpers | 2026-09-16 15:06 |
 | mw-bootstrap-fresh-install-tolerance | idle | — | — | — | Bootstrap fresh-install tolerance: missing credentials no longer abort (warn + skip service start + --fast re-run hint); package README rewritten clean (mojibake + behavior fix); changelog synced; 20/20 + 430 package tests | 2026-09-16 15:06 |
 | mw-rg-download-403-fallback | idle | — | — | — | Fix fresh-install rg/fd download failure on 403-rate-limited GitHub API networks: pinned-version fallback via direct release URLs + optional GITHUB_TOKEN; sandbox e2e verified rg 14.1.0 and fd 10.2.0 | 2026-09-16 16:00 |
@@ -58,5 +58,10 @@
 | mw-dispatch-card-gate | idle | DONE | WENBOZHOU-PC4:117296 |  |  | 2026-10-13T03:37:18.182Z |
 | mw-autopilot-gate-alarm-liveness | idle | DONE | WENBOZHOU-PC4:117296 |  |  | 2026-10-13T15:17:36.217Z |
 | mw-write-face-guard | idle | DONE | WENBOZHOU-PC4:8740 |  | Machine-readable write-face declarations + dispatch-layer overlap refusal (prerequisite for dynamic concurrency) | 2026-10-14T08:24:37.000Z |
-| mw-dynamic-concurrency | active | DONE | WENBOZHOU-PC4:8740 | mw-write-face-guard | Dependency-driven dynamic concurrency: key-layer frontier + per-key task DAG, config becomes an upper bound | 2026-10-14 18:24 |
-| mw-worker-output-contract | idle | PLAN | WENBOZHOU-PC4:162452 |  |  | 2026-10-14 12:08 |
+| mw-dynamic-concurrency | idle | DONE | WENBOZHOU-PC4:8740 | mw-write-face-guard | Dependency-driven dynamic concurrency: key-layer frontier + per-key task DAG, config becomes an upper bound | 2026-10-14T13:43:30.058Z |
+| mw-worker-output-contract | idle | DONE | WENBOZHOU-PC4:49268 |  |  | 2026-10-15 15:10 |
+| mw-console-storm-hardening | idle | DONE | WENBOZHOU-PC4:53592 |  |  | 2026-10-15 23:15 |
+| mw-model-error-perception | idle | DONE | WENBOZHOU-PC4:47596 | — | — | 2026-10-15T15:38:12.702Z |
+| mw-model-fallback-cli | idle | SPEC | WENBOZHOU-PC4:47596 |  |  | 2026-10-16 15:47 |
+| mw-jev-provider-integration | idle | SPEC | WENBOZHOU-PC4:53592 | — | JEV model integration: make jev models usable end-to-end (catalog/API wiring per typesafe.ai docs) and decision-surface friendly (dispatch/fallback role mapping + effective error feedback) | 2026-10-16 17:09 |
+| mw-goal-gate-write-intent | active | — | WENBOZHOU-PC4:43712 | agent-team-loop | goal.md 门禁改按写意图判定（读放行）+ 门禁模板进仓库 + 安装钩子 + 回归向量测试 | 2026-10-16 16:49 |

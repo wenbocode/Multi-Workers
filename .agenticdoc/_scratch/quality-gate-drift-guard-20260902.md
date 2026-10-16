@@ -48,4 +48,11 @@
 - W1 已修：agent-team-loop pm-state Phase 行恢复 `- Phase: EXECUTE`（注解信息已在""下一步行动""行，无丢失；真态 EXECUTE 待用户确认后 advance）
 - W2 已修：timi-gpt-pi-routing 经 `update_index.py set-phase` 正规通道对齐索引至 DONE（真态判定依据：pm-state DONE + 7 任务全完 + ready for merge；索引 EXECUTE 为滞后）
 - W3 已修（commit 6b22bd3）：_update_pm_state_claim 补 subn 守卫（Claim-Id 更新/Key 后插入双路径响亮失败）；cmd_claim 改 pm-state 先写（漂移时索引零触碰）；顺带修复两个预存 bug——CRLF 读写不对称（双 \r 腐败）与 `.*` 吞行尾 \r。新增 test_update_index.py VC-024~029 ×3 副本，全套 10 个测试文件回归全过
+
+## 处置记录（2026-10-16，mw-goal-gate-write-intent）
+
+- **Q-GOAL-1 关闭**：goal.ts 门禁模板已入库 —— `packages/multi-workers/goal.ts`（紧邻 mw.py，与 agentictask-update.ts 同机制），`mw.py::_goal_gate_install()` 在 `mw setup` / `mw build --install` 安装（字节精确、幂等、漂移覆盖）。
+- **永久回归网**：`packages/multi-workers/test_goal_gate.py` 从模板哨兵 `GOAL-GATE-CLASSIFIER-BEGIN/END` 之间原样抽取判定块，node（`--experimental-strip-types`）执行 31 条只读 + 30 条写入向量，另加安装三态（缺失/幂等/漂移覆盖）；AC-004 以字节比较保证本机安装副本 == 仓库模板。
+- **触发事件**：2026-10-16 用户报告「读 goal.md 也被拦」——旧 bash 启发式（`(python|node|perl|ruby|awk|pwsh|powershell) ... goal.md` 与 `(mv|move|rm|del|cp|copy|...) ... goal.md`）把只读命令判成写：worker trace 共 8 处 `[TOOL_ERR] ... 只读的项目目标锚点`（mw-worker-output-contract / mw-autopilot-slot-capacity / mw-done-closure-repair / mw-autopilot-gate-alarm-liveness），交互窗口弹 yes/no。新口径按引号感知分段 + 写意图判定，只读形态全放行；write/edit 工具门禁语义不变。
+- 残留（未做）：门禁逻辑未并入 agent-team-loop 扩展（该扩展 worker 写面守卫 `bashWriteDenyReason` 已覆盖 worker 写 goal.md）；本次只解决「读被拦 + 仓库外无测试」。
 - 勘误：W3 原文函数名应为 _update_pm_state_claim（非 _sync_claim_to_pm_state）

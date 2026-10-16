@@ -4958,10 +4958,35 @@ def _agentictask_update_install() -> tuple[bool, str]:
     return True, f"agentictask-update extension installed: {dst}"
 
 
+def _goal_gate_install() -> tuple[bool, str]:
+    """Install the goal.md loader + write gate into pi's global extensions dir.
+
+    Machine-independent template (goal.ts ships next to mw.py). The gate is
+    repo-owned so it is traceable and carries permanent regression tests
+    (mw-goal-gate-write-intent): it used to live only as a hand-installed file
+    in ~/.pi/agent/extensions with no tests, and its bash heuristic gated
+    read-only commands (every mention of goal.md) instead of writes.
+    Idempotent: skips when the installed copy is identical, overwrites a
+    drifted one. Byte-exact (read/write bytes) so the installed copy hashes
+    equal to the template on every platform. Returns (ok, msg)."""
+    src = pathlib.Path(__file__).parent / "goal.ts"
+    if not src.is_file():
+        return False, f"goal.ts template missing: {src}"
+    ext_dir = _global_ext_dir()
+    ext_dir.mkdir(parents=True, exist_ok=True)
+    dst = ext_dir / "goal.ts"
+    content = src.read_bytes()
+    if dst.is_file() and dst.read_bytes() == content:
+        return True, f"goal.md write gate up-to-date: {dst}"
+    dst.write_bytes(content)
+    return True, f"goal.md write gate installed: {dst}"
+
+
 def _deploy_bundle(no_dist: bool) -> int:
     """Install the freshly built bundle globally: bundle copy + .mw-py-path
-    sidecar + /update-agentictask command + pi dist rebuild. Shared by
-    `mw build --install` and `mw update-env --apply`. Returns exit code.
+    sidecar + /update-agentictask command + goal.md write gate + pi dist
+    rebuild. Shared by `mw build --install` and `mw update-env --apply`.
+    Returns exit code.
 
     The dist rebuild runs BEFORE the global copy: if it fails the old global
     bundle is left untouched (fail-closed) instead of pairing a fresh global
@@ -4980,6 +5005,9 @@ def _deploy_bundle(no_dist: bool) -> int:
     ok_u, msg_u = _agentictask_update_install()
     print(f"[mw build] {msg_u}" if ok_u else f"[mw build] Warning: {msg_u}",
           file=None if ok_u else sys.stderr)
+    ok_g, msg_g = _goal_gate_install()
+    print(f"[mw build] {msg_g}" if ok_g else f"[mw build] Warning: {msg_g}",
+          file=None if ok_g else sys.stderr)
     print(f"[mw build] installed globally: {ext_dst}")
     # The npm global `pi` links to packages/coding-agent, so the runtime
     # executes the repo's dist — the rebuild above made it match the source.
@@ -5237,6 +5265,12 @@ def cmd_setup(args: argparse.Namespace) -> int:
     ok_u, msg_u = _agentictask_update_install()
     print(f"[mw setup] {msg_u}" if ok_u else f"[mw setup] Warning: {msg_u}",
           file=None if ok_u else sys.stderr)
+
+    # (2c) goal.md loader + write gate (the repo template is the source of
+    # truth; failure is a warning — the core loop works without it).
+    ok_g, msg_g = _goal_gate_install()
+    print(f"[mw setup] {msg_g}" if ok_g else f"[mw setup] Warning: {msg_g}",
+          file=None if ok_g else sys.stderr)
 
     # (3) pin pi's shellPath when missing (fresh-machine shell bootstrap):
     # additive merge into ~/.pi/agent/settings.json — PowerShell detected via
