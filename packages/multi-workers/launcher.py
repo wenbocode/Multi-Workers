@@ -32,6 +32,13 @@ mw-model-error-perception (T-03b, AC-001/008/009, D3 revised 2026-10-15):
   (default 2; 0 = straight to the chain); only then does the `[MODEL_FALLBACK]`
   advance apply. Both budgets are derived from trace.log, so either resumes
   after a launcher restart.
+
+mw-usage-monitor (T-02):
+- Every worker run is mirrored into the machine-level usage ledger owned by
+  `usage.py`: `start` at Popen success (carrying the launcher-assigned
+  `--session-id` for pi/claude), `end` at reap (including the exit-3
+  re-dispatch attempt) and at orphan reconcile, `spawn_failed` when the CLI
+  never ran. Fail-soft: the ledger never changes a spawn/reap decision.
 """
 
 from __future__ import annotations
@@ -46,11 +53,13 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import mw_common
 import tree_watch
+import usage
 from autopilot import config as autopilot_config
 from mw_common import (
     acquire_lock as _acquire_lock,
@@ -71,12 +80,16 @@ def _worker_log_path(entry: dict[str, str]) -> pathlib.Path:
     return pathlib.Path(entry["task_path"]).parent / "worker.log"
 
 
-def _record_spawn_failure(entry: dict[str, str], msg: str) -> None:
+def _record_spawn_failure(
+    entry: dict[str, str], msg: str, project_dir: pathlib.Path | None = None
+) -> None:
     """Persist the spawn failure reason into the task's worker.log.
 
     The CLI never ran, so without this the failed status would be unexplained
-    (AC-001: the reason must name the missing credential source).
+    (AC-001: the reason must name the missing credential source). Also closes
+    the run in the usage ledger as `spawn_failed` (mw-usage-monitor T-02).
     """
+    _usage_spawn_failed(entry, msg, project_dir)
     try:
         log_path = _worker_log_path(entry)
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,6 +147,381 @@ def _record_reconcile(entry: dict[str, str], reason: str) -> None:
             fh.write(f"[launcher] reconcile ({mw_common.iso_now()}): {reason}\n")
     except OSError:
         pass  # best-effort; the queue row still carries the terminal status
+
+
+# ── Usage ledger hooks (mw-usage-monitor T-02) ────────────────────────────────
+#
+# The machine-level ledger (`~/.mw/usage/runs.jsonl`, storage owned by usage.py)
+# gets one `start` event per successful Popen, one `end` event per reap / orphan
+# reconcile, and one `spawn_failed` event when the CLI never ran. The ledger is
+# metadata only: tokens are joined from the CLI session logs at query time
+# (spec §2), which is why the launcher assigns the session id it passes to the
+# CLI here.
+#
+# Fail-soft by contract (spec §7): a broken ledger warns on stderr and never
+# changes a spawn/reap decision. `usage.append_event` is already fail-soft; the
+# wrappers below additionally guard record construction, so no new exception
+# path can reach the poll loop.
+
+#: task_key -> {"run_id": str, "started": epoch} for runs still live in THIS
+#: launcher process. A module dict is the launcher's instance state (the
+#: launcher is a single process built from module functions, not a class).
+_USAGE_RUNS: dict[str, dict[str, object]] = {}
+
+#: Monotonic per-process counter behind run ids and pi session ids. Never
+#: reused: reusing a session id would resume the old session file (RQ1 §3).
+_USAGE_SEQ = 0
+
+_USAGE_EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+
+
+def _usage_next_seq() -> int:
+    global _USAGE_SEQ
+    _USAGE_SEQ += 1
+    return _USAGE_SEQ
+
+
+def _usage_writes_enabled() -> bool:
+    """False when the launcher runs *inside* an un-redirected pytest process.
+
+    The ledger is machine level (one file for every project on this host), so an
+    in-process test run that spawns fake workers would append synthetic runs to
+    the user's real `~/.mw/usage/runs.jsonl` and permanently skew `mw stats`.
+    Tests that assert ledger behaviour point `MW_USAGE_DIR` at a tmp dir —
+    usage.py's documented test knob — and stay fully enabled; a launcher started
+    as a real subprocess from a test does not import pytest and is unaffected.
+    """
+    if os.environ.get(usage.USAGE_ENV_DIR):
+        return True
+    return "pytest" not in sys.modules
+
+
+def _usage_warn(action: str, exc: object) -> None:
+    print(f"[launcher] usage ledger warning ({action}): {exc}", file=sys.stderr, flush=True)
+
+
+def _usage_new_run_id(seq: int) -> str:
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{stamp}-{os.getpid()}-{seq}"
+
+
+def _usage_attribution(cli: str) -> str:
+    """`exact` only where the CLI log carries the session id we handed it.
+
+    pi and claude sessions are addressed by id, so the query side can join the
+    tokens exactly; codex has no such flag, so its runs stay `unknown_cli`
+    (RQ3 §3, AC-007).
+    """
+    return "exact" if cli in ("pi", "claude") else "unknown_cli"
+
+
+def _usage_session_id(entry: dict[str, str]) -> str | None:
+    """Allocate this spawn's CLI session id (`None` for codex).
+
+    pi: ``mw-<owner-key>-<pid>-<seq>`` — the `mw-` prefix is what makes the
+    query side read the session as a worker run (`usage._key_from_session_id`),
+    and pid+seq keep ids unique across launcher restarts. claude: a uuid4 that
+    names its ``projects/<cwd-slug>/<uuid>.jsonl``. codex: the CLI has no
+    ``--session-id`` flag, so it gets nothing.
+    """
+    cli = entry.get("cli", "").lower()
+    if cli == "claude":
+        return str(uuid.uuid4())
+    if cli != "pi":
+        return None
+    seq = _usage_next_seq()
+    pid = os.getpid()
+    for candidate in (mw_common.worker_owner_key(entry), entry.get("task_key", ""), "run"):
+        try:
+            return usage.new_session_id(candidate, pid, seq)
+        except ValueError:
+            continue  # un-slugabble key: try the next candidate, never refuse
+    return None
+
+
+def _usage_project_from_path(task_path: str) -> str:
+    """Control root guessed from ``<root>/.agenticdoc/<key>/workers/<tk>/task.md``.
+
+    Only the spawn-failure path needs it without a project_dir argument; both
+    production call sites pass the real root, so this is a safety net that
+    returns "" (rendered `unknown`) rather than raising.
+    """
+    try:
+        for parent in pathlib.Path(task_path).parents:
+            if (parent / ".agenticdoc").is_dir():
+                return str(parent)
+    except (OSError, ValueError):
+        return ""
+    return ""
+
+
+def _usage_common_fields(
+    entry: dict[str, str], project_dir: pathlib.Path | None
+) -> dict[str, str]:
+    """(key, task_key, task_type, role, project) for one queue row.
+
+    `key` is the owner project key the row's task_path is filed under (not the
+    task_key); `type` comes from the AC-005 single source `read_task_type` and
+    `role` from its dispatch mapping, matching the `config:<role>` model source.
+    """
+    task_key = entry.get("task_key", "")
+    task_type, _task_model = _read_task_md_fields(entry.get("task_path", ""))
+    return {
+        "key": mw_common.worker_owner_key(entry) or task_key,
+        "task_key": task_key,
+        "task_type": task_type,
+        "role": mw_common.TASK_TYPE_TO_ROLE.get(task_type, "coding"),
+        "project": (
+            str(project_dir)
+            if project_dir is not None
+            else _usage_project_from_path(entry.get("task_path", ""))
+        ),
+    }
+
+
+def _usage_start_record(
+    *,
+    run_id: str,
+    ts: str,
+    key: str,
+    task_key: str,
+    task_type: str,
+    role: str,
+    cli: str,
+    session_id: str | None,
+    model: str,
+    model_source: str,
+    pid: int | None,
+    cwd: str,
+    project: str,
+    source: str = "worker",
+) -> dict[str, object]:
+    """Pure `start` event (design §2 field list; `pid` is `None` for fakes)."""
+    return {
+        "event": "start",
+        "run_id": run_id,
+        "ts": ts,
+        "source": source,
+        "project": project,
+        "key": key,
+        "task_key": task_key,
+        "type": task_type,
+        "role": role,
+        "cli": cli,
+        "attribution": _usage_attribution(cli),
+        "session_id": session_id,
+        "model": model,
+        "model_source": model_source,
+        "pid": pid,
+        "cwd": cwd,
+    }
+
+
+def _usage_end_record(
+    *,
+    run_id: str,
+    ts: str,
+    exit_code: int | None,
+    wall_s: float | None,
+    status: str,
+    reconciled: bool = False,
+) -> dict[str, object]:
+    """Pure `end` event; `wall_s`/`exit` stay `None` when unknown (never 0)."""
+    return {
+        "event": "end",
+        "run_id": run_id,
+        "ts": ts,
+        "exit": exit_code,
+        "wall_s": wall_s,
+        "status": status,
+        "reconciled": reconciled,
+    }
+
+
+def _usage_spawn_failed_record(
+    *,
+    run_id: str,
+    ts: str,
+    key: str,
+    task_key: str,
+    task_type: str,
+    role: str,
+    cli: str,
+    model: str,
+    model_source: str,
+    project: str,
+    reason: str,
+    source: str = "worker",
+) -> dict[str, object]:
+    """Pure `spawn_failed` event: no pid and no wall (the CLI never ran)."""
+    return {
+        "event": "spawn_failed",
+        "run_id": run_id,
+        "ts": ts,
+        "source": source,
+        "project": project,
+        "key": key,
+        "task_key": task_key,
+        "type": task_type,
+        "role": role,
+        "cli": cli,
+        "attribution": _usage_attribution(cli),
+        "session_id": None,
+        "model": model,
+        "model_source": model_source,
+        "reason": reason,
+    }
+
+
+def _usage_append(record: dict[str, object]) -> bool:
+    """Append one event; a broken ledger only warns (spec §7 fail-soft)."""
+    if not _usage_writes_enabled():
+        return False
+    try:
+        return usage.append_event(record)
+    except Exception as exc:  # noqa: BLE001 — the ledger must never break a spawn
+        _usage_warn("append", exc)
+        return False
+
+
+def _usage_start(
+    entry: dict[str, str],
+    *,
+    model: str,
+    model_source: str,
+    session_id: str | None,
+    pid: int | None,
+    cwd: str,
+    project_dir: pathlib.Path | None,
+) -> None:
+    """Ledger `start` for one successful Popen + remember the run for its `end`."""
+    try:
+        task_key = entry.get("task_key", "")
+        run_id = _usage_new_run_id(_usage_next_seq())
+        _USAGE_RUNS[task_key] = {"run_id": run_id, "started": time.time()}
+        _usage_append(
+            _usage_start_record(
+                run_id=run_id,
+                ts=mw_common.iso_now(),
+                cli=entry.get("cli", "").lower(),
+                session_id=session_id,
+                model=model,
+                model_source=model_source,
+                pid=pid,
+                cwd=cwd,
+                **_usage_common_fields(entry, project_dir),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — ledger only, never a control flow
+        _usage_warn("start", exc)
+
+
+def _usage_end(task_key: str, exit_code: int, status: str) -> None:
+    """Ledger `end` for the run `_usage_start` opened for this task.
+
+    Must run the moment the exit code is known — BEFORE the exit-3 re-dispatch
+    starts the next run of the same task, otherwise this `end` would pair with
+    the new run's `start` and report a negative/zero wall clock.
+    """
+    try:
+        state = _USAGE_RUNS.pop(task_key, None)
+        if not state:
+            return
+        run_id = str(state.get("run_id") or "")
+        if not run_id:
+            return
+        started = state.get("started")
+        wall_s = (
+            round(max(0.0, time.time() - float(started)), 3)
+            if isinstance(started, (int, float))
+            else None
+        )
+        _usage_append(
+            _usage_end_record(
+                run_id=run_id,
+                ts=mw_common.iso_now(),
+                exit_code=exit_code,
+                wall_s=wall_s,
+                status=status,
+                reconciled=False,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — ledger only, never a control flow
+        _usage_warn("end", exc)
+
+
+def _usage_open_run_id(task_key: str) -> str | None:
+    """`run_id` of an unclosed ledger run of this task, if any.
+
+    A launcher restart loses `_USAGE_RUNS`, so the orphan reconcile path has to
+    recover the pair from the ledger itself; without it the original run would
+    stay `open_run` forever and the reconciled `end` would dangle on its own id.
+    Best-effort: any read failure means "no known run" and the caller mints a
+    fresh id.
+    """
+    if not task_key or not _usage_writes_enabled():
+        return None
+    try:
+        runs, _meta = usage.load_runs(_USAGE_EPOCH, {})
+    except Exception as exc:  # noqa: BLE001 — ledger read is advisory only
+        _usage_warn("open run lookup", exc)
+        return None
+    for run in reversed(runs):
+        if run.get("open_run") and run.get("task_key") == task_key:
+            return str(run.get("run_id") or "") or None
+    return None
+
+
+def _usage_reconcile_end(entry: dict[str, str], *, exit_code: int | None, status: str) -> None:
+    """Ledger `end` for an orphaned row converged by `_reconcile_orphans`.
+
+    `reconciled=true` marks that the launcher, not the worker process, decided
+    the end. `exit` is the trace.log `[END] exit=` value when one exists and
+    stays `null` otherwise (AC-004/AC-013: unverified is never 0).
+    """
+    try:
+        run_id = _usage_open_run_id(entry.get("task_key", "")) or _usage_new_run_id(
+            _usage_next_seq()
+        )
+        _usage_append(
+            _usage_end_record(
+                run_id=run_id,
+                ts=mw_common.iso_now(),
+                exit_code=exit_code,
+                wall_s=None,
+                status=status,
+                reconciled=True,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — ledger only, never a control flow
+        _usage_warn("reconcile end", exc)
+
+
+def _usage_spawn_failed(
+    entry: dict[str, str], reason: str, project_dir: pathlib.Path | None = None
+) -> None:
+    """Ledger `spawn_failed` for a spawn that never produced a process."""
+    try:
+        task_key = entry.get("task_key", "")
+        if task_key in _USAGE_RUNS:
+            # The Popen did succeed (the exception came from post-spawn
+            # bookkeeping), so a process exists and its `start` row is already
+            # written: the reap path owns that run's `end`. Recording a second
+            # event here would leave the real run open forever.
+            return
+        _usage_append(
+            _usage_spawn_failed_record(
+                run_id=_usage_new_run_id(_usage_next_seq()),
+                ts=mw_common.iso_now(),
+                cli=entry.get("cli", "").lower(),
+                model=entry.get("model", ""),
+                model_source="",
+                reason=reason,
+                **_usage_common_fields(entry, project_dir),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — ledger only, never a control flow
+        _usage_warn("spawn_failed", exc)
 
 
 # ── Provider / env helpers ────────────────────────────────────────────────────
@@ -1761,7 +2149,29 @@ def _resolve_cli(name: str) -> str:
     return resolved
 
 
-def _build_command(entry: dict[str, str]) -> list[str]:
+def _argv_with_session_id(cmd: list[str], session_id: str | None) -> list[str]:
+    """Insert ``["--session-id", sid]`` right before the trailing ``-p <starter>``.
+
+    Argument order semantics are preserved (mw-usage-monitor T-02 requirement 1):
+    ``--model`` keeps its position and ``-p`` stays the last flag pair, so the
+    id lands between them. A command without a ``-p`` tail appends instead.
+    """
+    if not session_id:
+        return cmd
+    try:
+        index = len(cmd) - 1 - cmd[::-1].index("-p")
+    except ValueError:
+        return [*cmd, "--session-id", session_id]
+    return [*cmd[:index], "--session-id", session_id, *cmd[index:]]
+
+
+def _build_command(entry: dict[str, str], session_id: str | None = None) -> list[str]:
+    """Build one CLI argv.
+
+    ``session_id`` is the launcher-assigned CLI session id (T-02): pi and claude
+    accept ``--session-id`` and that is how the query side joins the run's
+    session log; codex has no such flag (RQ3 §3) and silently ignores it.
+    """
     cli = entry["cli"].lower()
     provider = entry.get("provider", "").strip()
     # Model semantics: entry["model"] may carry a resolved prefix from
@@ -1775,7 +2185,10 @@ def _build_command(entry: dict[str, str]) -> list[str]:
     starter = _starter_prompt(task_path)
     if cli == "pi":
         if provider == "timi":
-            return ["pi", "--provider", "timi", "--model", model or "glm-5.3", "-p", starter]
+            return _argv_with_session_id(
+                ["pi", "--provider", "timi", "--model", model or "glm-5.3", "-p", starter],
+                session_id,
+            )
         # Direct non-timi providers (anthropic / openai-codex / deepseek /
         # zai-coding-cn, set via model prefixes): explicit --provider so the
         # flag can never ride on pi's default-provider resolution.
@@ -1785,26 +2198,30 @@ def _build_command(entry: dict[str, str]) -> list[str]:
                     f"pi provider {provider!r} requires an explicit model "
                     "(no per-route default is hardcoded for direct providers)"
                 )
-            return ["pi", "--provider", provider, "--model", model, "-p", starter]
+            return _argv_with_session_id(
+                ["pi", "--provider", provider, "--model", model, "-p", starter],
+                session_id,
+            )
         # Extension reads task.md via PI_WORKER_TASK; -p passes a short starter
         # pointing at the task file (never the body — see _starter_prompt).
         cmd = ["pi"]
         if model:
             cmd += ["--model", model]
         cmd += ["-p", starter]
-        return cmd
+        return _argv_with_session_id(cmd, session_id)
     elif cli == "codex":
         if provider not in ("", "codex"):
             raise RuntimeError(
                 f"Codex workers support only an empty provider or 'codex', got {provider!r}"
             )
+        # No --session-id: the codex CLI has no such flag (T-02 requirement 1).
         return ["codex", "exec", "-m", model or "gpt-5.6-sol", starter]
     elif cli == "claude":
         cmd = ["claude"]
         if model:
             cmd += ["--model", model]
         cmd += ["-p", starter]
-        return cmd
+        return _argv_with_session_id(cmd, session_id)
     else:
         return [cli, starter]
 
@@ -1934,6 +2351,7 @@ def _reconcile_orphans(
                 continue
             status = "failed"
             reason = f"reconcile: presumed dead (no activity for {int(age_min)}m)"
+        _usage_reconcile_end(entry, exit_code=end_exit, status=status)
         _record_reconcile(entry, reason)
         try:
             _update_status(project_dir, key, status)
@@ -2160,6 +2578,12 @@ def _poll_once(
     for key in finished:
         proc = running_procs.pop(key)
         code = proc.returncode if proc.returncode is not None else 1
+        # mw-usage-monitor T-02: close this run's ledger row the moment the exit
+        # code is known. It must happen BEFORE the exit-3 re-dispatch below can
+        # start the next run of the same task, otherwise this `end` would carry
+        # the new run's id and the pair would cross. The ledger status is the
+        # process-exit status; the queue row keeps its product-first status.
+        _usage_end(key, code, _exit_to_status(code))
         # Close the per-task worker.log handle now the process has exited (and
         # before a possible re-dispatch reopens it for the new process).
         lh = log_handles.pop(key, None)
@@ -2237,7 +2661,7 @@ def _poll_once(
         try:
             _validate_task_path(project_dir, entry["task_path"])
         except RuntimeError as exc:
-            _record_spawn_failure(entry, str(exc))
+            _record_spawn_failure(entry, str(exc), project_dir)
             try:
                 _update_status(project_dir, key, "failed")
             except Exception:  # noqa: BLE001 — never mask the poll loop
@@ -2419,7 +2843,8 @@ def _spawn(
             index=fallback_index,
             tried=tried_models,
         )
-        cmd = _build_command(effective)
+        session_id = _usage_session_id(effective)
+        cmd = _build_command(effective, session_id=session_id)
         print(
             f"[launcher] {entry['task_key']}: model={model_value or '(route default)'} source={model_source}",
             flush=True,
@@ -2448,6 +2873,18 @@ def _spawn(
         if sys.platform == "win32":
             spawn_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
         proc = subprocess.Popen(cmd, **spawn_kwargs)  # noqa: S603
+        # mw-usage-monitor T-02: the ledger `start` row is written the moment the
+        # process exists (its pid is what the session log is joined against).
+        # Fail-soft: the hook never raises, so it cannot fail the spawn.
+        _usage_start(
+            entry,
+            model=model_value,
+            model_source=model_source,
+            session_id=session_id,
+            pid=getattr(proc, "pid", None),
+            cwd=str(spawn_kwargs["cwd"]),
+            project_dir=project_dir,
+        )
         running_procs[entry["task_key"]] = proc
         if log_file is not None:
             # Keep the handle open until the process is reaped (run() closes it).
@@ -2460,7 +2897,7 @@ def _spawn(
     except Exception as exc:  # noqa: BLE001 — per-task isolation (design D-001)
         msg = str(exc)
         print(f"[launcher] spawn failed for {entry['task_key']!r}: {msg}", file=sys.stderr, flush=True)
-        _record_spawn_failure(entry, msg)
+        _record_spawn_failure(entry, msg, project_dir)
         try:
             _update_status(project_dir, entry["task_key"], "failed")
         except Exception as exc2:  # noqa: BLE001 — never mask the loop

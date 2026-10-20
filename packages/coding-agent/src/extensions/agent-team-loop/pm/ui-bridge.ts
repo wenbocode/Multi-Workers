@@ -51,6 +51,7 @@ import {
 	restartMw,
 	serveStaleness,
 	startMw,
+	statsMw,
 	stopMw,
 	targetMw,
 	updateEnvMw,
@@ -3395,7 +3396,7 @@ export async function runMwModelCommand(
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
 export const MW_COMMAND_DESCRIPTION =
-	"Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / run-detached / ack";
+	"Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / stats / run-detached / ack";
 
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
@@ -3556,6 +3557,34 @@ export async function runMwRunDetachedCommand(
 	ctx.ui.notify(`dispatched pid=${pid} marker=${marker} heartbeat=${heartbeat} log=${log}`, "info");
 }
 
+/** /mw stats — thin wrapper over `mw.py stats` (mw-usage-monitor T-04/AC-006).
+ * The window owns no aggregation: the raw argument tail passes through
+ * untouched (`--since / --key / --type / --model / --source / --json` are
+ * parsed by Python), the report is rendered by Python, and the runner is
+ * injectable for tests (the rag precedent). A failure notifies at `error` with
+ * the Python text verbatim — runMwCliRaw merges stderr into it, so the reason
+ * (`invalid --since`, bad `--source`) is never swallowed. A thrown runner
+ * (spawn-level bug) is reported the same way instead of escaping the command. */
+export async function runMwStatsCommand(
+	ctx: ExtensionCommandContext,
+	projectDir: string,
+	raw: string,
+	runner: (projectDir: string, args: string[]) => MwCliResult = statsMw,
+): Promise<void> {
+	const args = splitCommandLine(raw);
+	let result: MwCliResult;
+	try {
+		result = runner(projectDir, args);
+	} catch (err) {
+		ctx.ui.notify(`mw stats failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+		return;
+	}
+	ctx.ui.notify(
+		result.ok ? result.output || "mw stats: ok" : `mw stats failed: ${result.error}`,
+		result.ok ? "info" : "error",
+	);
+}
+
 export function registerMwCommands(
 	pi: ExtensionAPI,
 	projectDir: string,
@@ -3706,6 +3735,14 @@ export function registerMwCommands(
 				return;
 			}
 
+			if (sub === "stats") {
+				// Usage monitor (mw-usage-monitor AC-006): token + wall-clock
+				// attribution over a time window — thin wrapper, Python owns the
+				// ledger scan, the filters and the text report.
+				await runMwStatsCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
+				return;
+			}
+
 			if (sub === "run-detached") {
 				// Background command dispatch (D-005/AC-008) — thin wrapper over
 				// shared/run-detached.ts; parsing stays here (usage-first), the
@@ -3741,7 +3778,7 @@ export function registerMwCommands(
 			}
 
 			ctx.ui.notify(
-				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | rag <sub> | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
+				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
 				"warning",
 			);
 		},

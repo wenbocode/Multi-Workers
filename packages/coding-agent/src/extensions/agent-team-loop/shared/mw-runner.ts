@@ -550,6 +550,16 @@ export function modelMw(projectDir: string, args: string[]): MwCliResult {
 	return runMwCli("model", projectDir, args);
 }
 
+/** `mw.py stats [args...]` — token + wall-clock attribution over a time window
+ * (mw-usage-monitor T-04/AC-006). Thin wrapper: Python owns the ledger scan,
+ * the window/filter semantics and the rendering; the TS side only forwards the
+ * argv tail and displays the text (`--project` is appended by runMwCliRaw, so
+ * a bare `/mw stats` still scopes the report to this control root). The timeout
+ * is minutes, not seconds: the report scans session logs across the window. */
+export function statsMw(projectDir: string, extraArgs: string[]): MwCliResult {
+	return runMwCli("stats", projectDir, extraArgs, 180_000);
+}
+
 /** `mw.py rag` subcommands — must mirror mw.py `_RAG_ACTIONS`. Python stays the
  * single source of argument parsing/validation; this list only decides whether
  * a call is worth making and renders the usage line. */

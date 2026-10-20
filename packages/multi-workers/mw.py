@@ -36,6 +36,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import console_run
 import mw_common
 import rag_templates
+import usage
 import worktree_cmd
 from mw_common import (
     check_pid as _check_pid,
@@ -6679,7 +6680,47 @@ def _add_serve_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--providers", default=None)
 
 
-def _parse_args() -> argparse.Namespace:
+# -- Subcommand: stats (mw-usage-monitor T-03, design 3.3 / 5 / 7) ----------
+
+#: Formats accepted by ``--since``; echoed on a bad value (design 7: rc=2).
+_STATS_SINCE_HINT = "7d / 24h / 30m / YYYY-MM-DD"
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    """`mw stats`: token + wall-clock attribution over a time window.
+
+    The report is built by ``usage.build_report`` (design 5 contract). A
+    missing ledger is not an error: session logs are still scanned and the
+    text path renders ``no ledger yet`` / ``no usage in window`` (design 7).
+    """
+    since_text = str(args.since or "7d").strip()
+    try:
+        since = usage.parse_since(since_text)
+    except ValueError:
+        print(
+            f"[mw stats] invalid --since {since_text!r}; use {_STATS_SINCE_HINT}",
+            file=sys.stderr,
+        )
+        return 2
+    report = usage.build_report(
+        since=since,
+        filters={
+            "window": since_text,
+            "key": args.key,
+            "type": args.type,
+            "model": args.model,
+            "project": args.project,
+            "source": args.source,
+        },
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        print(usage.format_report_text(report))
+    return 0
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Multi-Workers service manager")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
@@ -6689,6 +6730,27 @@ def _parse_args() -> argparse.Namespace:
     for name in ("stop", "status"):
         p = sub.add_parser(name)
         p.add_argument("--project", required=True)
+
+    # `--project` stays optional: the TS runner appends `--project=<dir>` to
+    # every argv, while a bare `mw stats` means the whole machine (RQ4 2).
+    stats_p = sub.add_parser(
+        "stats",
+        help="Token and wall-clock usage over a time window (worker runs + PM sessions)",
+    )
+    stats_p.add_argument("--since", default="7d", metavar="WINDOW",
+                         help=f"Window to report: {_STATS_SINCE_HINT} (default: %(default)s)")
+    stats_p.add_argument("--key", default=None, metavar="KEY",
+                         help="Only runs owned by this key directory")
+    stats_p.add_argument("--type", default=None, metavar="TYPE",
+                         help="Only runs of this task type (coding / review / research / ...)")
+    stats_p.add_argument("--model", default=None, metavar="MODEL",
+                         help="Only usage whose provider/model contains this substring")
+    stats_p.add_argument("--project", default=None, metavar="DIR",
+                         help="Only this project (path or basename); omit for the whole machine")
+    stats_p.add_argument("--source", default=None, choices=("worker", "pm"),
+                         help="Only worker runs, or only PM window sessions")
+    stats_p.add_argument("--json", action="store_true",
+                         help="Emit the fixed JSON contract instead of the text brief")
 
     doctor_p = sub.add_parser(
         "doctor",
@@ -7131,7 +7193,7 @@ def _parse_args() -> argparse.Namespace:
     run_detached_p.add_argument("argv", nargs=argparse.REMAINDER, metavar="CMD",
                                 help="Command argv after '--' (stored verbatim, no shell)")
 
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
@@ -7146,6 +7208,7 @@ if __name__ == "__main__":
         "start": cmd_start,
         "stop": cmd_stop,
         "status": cmd_status,
+        "stats": cmd_stats,
         "doctor": cmd_doctor,
         "target": cmd_target,
         "partition": cmd_partition,
