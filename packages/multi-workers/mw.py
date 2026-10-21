@@ -6685,6 +6685,9 @@ def _add_serve_args(parser: argparse.ArgumentParser) -> None:
 #: Formats accepted by ``--since``; echoed on a bad value (design 7: rc=2).
 _STATS_SINCE_HINT = "7d / 24h / 30m / YYYY-MM-DD"
 
+#: ``--until`` adds one form on top of ``--since`` (local wall-clock minute).
+_STATS_UNTIL_HINT = _STATS_SINCE_HINT + " / YYYY-MM-DDTHH:MM"
+
 
 def cmd_stats(args: argparse.Namespace) -> int:
     """`mw stats`: token + wall-clock attribution over a time window.
@@ -6702,8 +6705,31 @@ def cmd_stats(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    until_text = str(args.until or "").strip()
+    until = None
+    if until_text:
+        try:
+            until = usage.parse_until(until_text)
+        except ValueError:
+            # Same rc=2 path / message shape as ``--since`` (no second dialect).
+            print(
+                f"[mw stats] invalid --until {until_text!r}; use {_STATS_UNTIL_HINT}",
+                file=sys.stderr,
+            )
+            return 2
+        if until <= since:
+            # The read-only kernel yields an empty window; rejecting the bound
+            # is the CLI's job (spec §11.2 R7).
+            print("mw stats: --until must be after --since", file=sys.stderr)
+            return 2
+    if args.limit is not None and args.limit < 0:
+        print("mw stats: --limit must be >= 0", file=sys.stderr)
+        return 2
     report = usage.build_report(
         since=since,
+        until=until,
+        limit=args.limit,
+        detail=args.detail,
         filters={
             "window": since_text,
             "key": args.key,
@@ -6714,9 +6740,11 @@ def cmd_stats(args: argparse.Namespace) -> int:
         },
     )
     if args.json:
+        # `runs[]` / `runs_total` are part of the report itself (R8): the JSON
+        # contract never depends on `--detail`, so nothing is trimmed here.
         print(json.dumps(report, indent=2, ensure_ascii=False))
     else:
-        print(usage.format_report_text(report))
+        print(usage.format_report_text(report, detail=args.detail))
     return 0
 
 
@@ -6751,6 +6779,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                          help="Only worker runs, or only PM window sessions")
     stats_p.add_argument("--json", action="store_true",
                          help="Emit the fixed JSON contract instead of the text brief")
+    stats_p.add_argument("--until", default=None, metavar="WINDOW",
+                         help="window upper bound (exclusive): 7d / 24h / 30m / "
+                              "YYYY-MM-DD / YYYY-MM-DDTHH:MM (default: now)")
+    stats_p.add_argument("--detail", action="store_true",
+                         help="append the per-run table (key / task / type / model / tokens / wall)")
+    stats_p.add_argument("--limit", type=int, default=20, metavar="N",
+                         help="max runs in the detail table and JSON runs[] (0 = all, default 20)")
 
     doctor_p = sub.add_parser(
         "doctor",

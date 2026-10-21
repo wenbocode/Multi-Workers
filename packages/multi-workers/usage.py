@@ -92,6 +92,26 @@ _GROUP_TITLES = (
 SESSION_WALL_MARK = "*"
 SESSION_WALL_FOOTNOTE = "* = PM 会话跨度（header→末条），非 worker 墙钟"
 
+#: Run-level detail fields, verbatim (spec §11.2 R9). Missing values stay
+#: ``None`` and are rendered ``-`` in text.
+DETAIL_FIELDS = (
+    "run_id",
+    "started_at",
+    "ended_at",
+    "key",
+    "task_key",
+    "type",
+    "model",
+    "calls",
+    "tokens",
+    "wall_s",
+    "wall_kind",
+    "status",
+    "attribution",
+    "session_id",
+    "open_run",
+)
+
 
 # ── paths / env resolution ───────────────────────────────────────────────────
 
@@ -306,7 +326,36 @@ def _session_id_from_path(path: pathlib.Path) -> str:
     return stem
 
 
-# ── --since parsing ──────────────────────────────────────────────────────────
+# ── --since / --until parsing ────────────────────────────────────────────────
+
+
+def _parse_bound(text: str, now: datetime | None, flag: str, *, allow_time: bool) -> datetime:
+    """Parse one window bound; ``--since`` and ``--until`` share this parser.
+
+    Relative forms (``7d`` / ``24h`` / ``30m``) are always an offset back from
+    ``now``. Dates (plus ``YYYY-MM-DDTHH:MM`` for ``--until`` only) mean local
+    wall-clock time. Invalid input raises ``ValueError`` (the CLI turns that
+    into rc=2).
+    """
+    now_utc = _as_utc(now) if now is not None else datetime.now(timezone.utc)
+    raw = "" if text is None else str(text).strip()
+    if not raw:
+        raise ValueError(f"empty {flag} value")
+    relative = _RELATIVE_SINCE_RE.match(raw.lower())
+    if relative:
+        count = int(relative.group(1))
+        return now_utc - _RELATIVE_UNITS[relative.group(2)] * count
+    patterns = ("%Y-%m-%d", "%Y-%m-%dT%H:%M") if allow_time else ("%Y-%m-%d",)
+    for pattern in patterns:
+        try:
+            parsed = datetime.strptime(raw, pattern)
+        except ValueError:
+            continue
+        return parsed.replace(tzinfo=_local_tz()).astimezone(timezone.utc)
+    expected = "7d / 24h / 30m / YYYY-MM-DD"
+    if allow_time:
+        expected += " / YYYY-MM-DDTHH:MM"
+    raise ValueError(f"invalid {flag} value {text!r} (expected {expected})")
 
 
 def parse_since(text: str, now: datetime | None = None) -> datetime:
@@ -315,21 +364,17 @@ def parse_since(text: str, now: datetime | None = None) -> datetime:
     Invalid input raises ``ValueError`` (the CLI turns that into rc=2).
     A calendar date means local midnight of that day.
     """
-    now_utc = _as_utc(now) if now is not None else datetime.now(timezone.utc)
-    raw = "" if text is None else str(text).strip()
-    if not raw:
-        raise ValueError("empty --since value")
-    relative = _RELATIVE_SINCE_RE.match(raw.lower())
-    if relative:
-        count = int(relative.group(1))
-        return now_utc - _RELATIVE_UNITS[relative.group(2)] * count
-    try:
-        day = datetime.strptime(raw, "%Y-%m-%d")
-    except ValueError:
-        raise ValueError(
-            f"invalid --since value {text!r} (expected 7d / 24h / 30m / YYYY-MM-DD)"
-        ) from None
-    return day.replace(tzinfo=_local_tz()).astimezone(timezone.utc)
+    return _parse_bound(text, now, "--since", allow_time=False)
+
+
+def parse_until(text: str, now: datetime | None = None) -> datetime:
+    """``--until`` upper bound: same forms as ``parse_since`` + ``YYYY-MM-DDTHH:MM``.
+
+    The extra form is local wall-clock time of that minute ("yesterday 14:00"),
+    so a review window can start and end inside one day. Relative forms keep
+    ``parse_since`` semantics: ``24h`` means ``now - 24h``.
+    """
+    return _parse_bound(text, now, "--until", allow_time=True)
 
 
 def _window_label(since: datetime, now: datetime) -> str:
@@ -715,7 +760,10 @@ def _run_matches(run: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
 
 
 def load_runs(
-    since: datetime, filters: Mapping[str, Any] | None = None
+    since: datetime,
+    filters: Mapping[str, Any] | None = None,
+    *,
+    until: datetime | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Read the ledger and pair ``start``/``end`` events by ``run_id``.
 
@@ -723,6 +771,11 @@ def load_runs(
     ``None`` (never 0, AC-004/AC-013). Bad lines are skipped and counted.
     ``spawn_failed`` events are kept as ``spawned=False`` entries so failed
     spawns stay visible in ``ledger.events`` without being counted as runs.
+
+    The window is half-open ``[since, until)``: a run is kept when any of its
+    event stamps is ``>= since`` and any is ``< until`` (an unstamped event
+    counts as placeable). A run whose events all fall at/after ``until`` is
+    gone from every downstream view, not only from the detail table.
     """
     filters = filters or {}
     path = ledger_path()
@@ -733,6 +786,7 @@ def load_runs(
         "path": str(path),
     }
     since_utc = _as_utc(since)
+    until_utc = _as_utc(until) if until is not None else None
     if not path.exists():
         return [], meta
 
@@ -788,6 +842,8 @@ def load_runs(
         stamps = [stamp for stamp in (start_ts, end_ts, failed_ts) if stamp is not None]
         if stamps and max(stamps) < since_utc:
             continue
+        if until_utc is not None and stamps and min(stamps) >= until_utc:
+            continue
 
         wall = end.get("wall_s")
         if isinstance(wall, bool) or not isinstance(wall, (int, float)):
@@ -842,16 +898,17 @@ def load_runs(
 def _window_events(
     events: Iterable[tuple[str | None, str, dict[str, int | None]]],
     since: datetime,
-    now: datetime,
+    until: datetime,
     model_filter: str,
 ) -> list[tuple[str | None, str, dict[str, int | None]]]:
+    """Keep events in the half-open window ``[since, until)`` (R7)."""
     wanted = model_filter.lower()
     kept: list[tuple[str | None, str, dict[str, int | None]]] = []
     for stamp, model_key, tokens in events:
         moment = _parse_iso(stamp) if stamp else None
         # Message timestamps decide the bucket, not the file (RQ1 §6). A row
         # without a timestamp cannot be placed and is kept rather than dropped.
-        if moment is not None and (moment < since or moment > now):
+        if moment is not None and (moment < since or moment >= until):
             continue
         if wanted and wanted not in (model_key or "").lower():
             continue
@@ -978,6 +1035,140 @@ def _coverage_rows(
     ]
 
 
+def _detail_tokens(unit: Mapping[str, Any] | None) -> tuple[int | None, dict[str, int | None]]:
+    """``(calls, tokens)`` of one unit's in-window events; ``None`` when unknown.
+
+    ``None`` (not 0) means "cannot attribute": 0 would claim that the run
+    really made no request.
+    """
+    if unit is None:
+        return None, _new_token_map()
+    tokens = _new_token_map()
+    calls = 0
+    for _stamp, _model_key, event_tokens in unit.get("events") or []:
+        calls += 1
+        _add_tokens(tokens, event_tokens)
+    return calls, tokens
+
+
+def _unit_model(unit: Mapping[str, Any] | None) -> str | None:
+    """Session model only when it is unambiguous (otherwise no guessing)."""
+    models = (unit or {}).get("models") or {}
+    if len(models) == 1:
+        return next(iter(models))
+    return None
+
+
+def _run_attribution(run: Mapping[str, Any], claude_exact: set[str]) -> str:
+    """Same attribution rule as ``coverage`` (codex / missing claude log: unknown)."""
+    cli = _norm(run.get("cli")) or UNKNOWN_LABEL
+    if cli == "codex":
+        return "unknown_cli"
+    if cli == "claude":
+        return "exact" if run.get("run_id") in claude_exact else "unknown_cli"
+    return _norm(run.get("attribution")) or "exact"
+
+
+def _detail_sort_key(row: Mapping[str, Any]) -> tuple[bool, str]:
+    """ISO-Z stamps sort chronologically as strings; undated rows sink last."""
+    started = row.get("started_at")
+    return (bool(started), str(started or ""))
+
+
+def _run_detail_row(
+    run: Mapping[str, Any],
+    unit: Mapping[str, Any] | None,
+    claude_exact: set[str],
+) -> dict[str, Any]:
+    """One ledger run as a detail row (R9).
+
+    An open run keeps ``wall_s=None`` / ``wall_kind="none"``: the ledger has
+    no reap yet and the session span must never be used to fill it in
+    (T-06 / AC-016).
+    """
+    calls, tokens = _detail_tokens(unit)
+    open_run = bool(run.get("open_run"))
+    wall_s = None if open_run else run.get("wall_s")
+    return {
+        "run_id": run.get("run_id"),
+        "started_at": run.get("start_ts"),
+        "ended_at": run.get("end_ts"),
+        "key": run.get("key"),
+        "task_key": run.get("task_key"),
+        "type": run.get("type"),
+        "model": run.get("model") or _unit_model(unit),
+        "calls": calls,
+        "tokens": tokens,
+        "wall_s": wall_s,
+        "wall_kind": "run" if wall_s is not None else "none",
+        "status": run.get("status"),
+        "attribution": _run_attribution(run, claude_exact),
+        "session_id": run.get("session_id"),
+        "open_run": open_run,
+    }
+
+
+def _pm_detail_row(unit: Mapping[str, Any]) -> dict[str, Any]:
+    """A PM window session without a ledger row.
+
+    ``totals.runs`` counts it, so the detail table must carry it too, otherwise
+    ``sum(runs.tokens) == totals.tokens`` would break (AC-015). Its span is a
+    *session* wall (``*`` marker), never a run sample.
+    """
+    calls, tokens = _detail_tokens(unit)
+    span = _wall_from_session(
+        {"started_at": unit.get("started_at"), "ended_at": unit.get("ended_at")}
+    )
+    return {
+        "run_id": None,
+        "started_at": unit.get("started_at"),
+        "ended_at": unit.get("ended_at"),
+        "key": unit.get("key"),
+        "task_key": None,
+        "type": unit.get("type"),
+        "model": _unit_model(unit),
+        "calls": calls,
+        "tokens": tokens,
+        "wall_s": span,
+        "wall_kind": "session" if span is not None else "none",
+        "status": None,
+        "attribution": "exact",
+        "session_id": unit.get("session_id"),
+        "open_run": False,
+    }
+
+
+def _detail_rows(
+    spawned_runs: list[dict[str, Any]],
+    units: list[dict[str, Any]],
+    by_session: Mapping[str, dict[str, Any]],
+    claude_exact: set[str],
+) -> list[dict[str, Any]]:
+    """Run-level detail rows, newest first (R8-R10, AC-015/AC-016).
+
+    Coverage: every spawned ledger run gets a row (a missing session log keeps
+    ``calls``/``tokens`` at ``None``), plus every PM window session that has no
+    ledger row. That makes ``runs_total == totals.runs`` and lets the token
+    columns sum to ``totals.tokens`` before ``limit`` truncation.
+    """
+    by_unit_session: dict[str, dict[str, Any]] = {
+        str(unit["session_id"]): unit for unit in units if unit.get("session_id")
+    }
+    rows: list[dict[str, Any]] = []
+    for run in spawned_runs:
+        session_id = run.get("session_id")
+        unit = by_unit_session.get(str(session_id)) if session_id else None
+        rows.append(_run_detail_row(run, unit, claude_exact))
+    for unit in units:
+        if unit.get("source") != "pm":
+            continue
+        if str(unit.get("session_id") or "") in by_session:
+            continue  # already covered by its ledger run row
+        rows.append(_pm_detail_row(unit))
+    rows.sort(key=_detail_sort_key, reverse=True)
+    return rows
+
+
 def build_report(
     now: datetime | None = None,
     since: datetime | None = None,
@@ -985,6 +1176,9 @@ def build_report(
     *,
     pi_root: pathlib.Path | str | None = None,
     claude_roots: Iterable[pathlib.Path | str] | None = None,
+    until: datetime | None = None,
+    limit: int | None = 20,
+    detail: bool = False,
 ) -> dict[str, Any]:
     """Join ledger + session logs into the ``mw stats --json`` contract (design §5).
 
@@ -997,6 +1191,16 @@ def build_report(
     PM window can span days while a run lasts seconds (T-06).
     ``unknown_cli`` runs (codex, missing claude log) appear in ``coverage``
     only, never in a token group.
+
+    Window is half-open ``[since, until)`` with ``until`` defaulting to ``now``
+    (R7). ``runs``/``runs_total`` are the run-level detail (R8-R10): the list is
+    always in the JSON (``detail`` only drives text rendering in
+    :func:`format_report_text`), newest first, cut to ``limit`` rows (``None``
+    or ``0`` = no cut) while ``runs_total`` keeps the uncut count. ``tokens``
+    and ``calls`` are the same joined events the groups use, so with no cut
+    ``sum(runs.tokens) == totals.tokens`` (AC-015). An ``until`` earlier than
+    ``since`` yields an empty window; rejecting it with rc=2 belongs to the
+    CLI (R7), not to this read-only kernel.
     """
     now_utc = _as_utc(now) if now is not None else datetime.now(timezone.utc)
     filters = dict(filters or {})
@@ -1004,9 +1208,10 @@ def build_report(
         since_utc = parse_since(_norm(filters.get("window")) or "7d", now_utc)
     else:
         since_utc = _as_utc(since)
-    window = _norm(filters.get("window")) or _window_label(since_utc, now_utc)
+    until_utc = _as_utc(until) if until is not None else now_utc
+    window = _norm(filters.get("window")) or _window_label(since_utc, until_utc)
 
-    runs, ledger_meta = load_runs(since_utc, filters)
+    runs, ledger_meta = load_runs(since_utc, filters, until=until_utc)
     by_session = {
         run["session_id"]: run
         for run in runs
@@ -1059,7 +1264,10 @@ def build_report(
         # A run that exists but has no end event keeps wall_s = None (AC-004:
         # an orphan is never reported as 0, and never guessed from the log).
         unit["project"] = _project_name(unit["project"])
-        unit["events"] = _window_events(session["events"], since_utc, now_utc, model_filter)
+        unit["started_at"] = session.get("started_at")
+        unit["ended_at"] = session.get("ended_at")
+        unit["models"] = session.get("models") or {}
+        unit["events"] = _window_events(session["events"], since_utc, until_utc, model_filter)
         if not unit["events"] or not _unit_matches(unit, filters):
             continue
         units.append(unit)
@@ -1081,7 +1289,7 @@ def build_report(
         if session is None:
             continue
         claude_exact.add(run["run_id"])
-        events = _window_events(session["events"], since_utc, now_utc, model_filter)
+        events = _window_events(session["events"], since_utc, until_utc, model_filter)
         if not events:
             continue
         unit = {
@@ -1091,6 +1299,9 @@ def build_report(
             "type": _norm(run.get("type")) or UNKNOWN_LABEL,
             "project": _project_name(run.get("project") or session.get("cwd")),
             "session_id": session_id,
+            "started_at": session.get("started_at"),
+            "ended_at": session.get("ended_at"),
+            "models": session.get("models") or {},
             "wall_s": run.get("wall_s"),
             "wall_kind": "run" if run.get("wall_s") is not None else "none",
             "events": events,
@@ -1143,9 +1354,21 @@ def build_report(
     worker_runs = len(spawned_runs) - ledger_pm
     sources = {"worker": worker_runs, "pm": pm_units + ledger_pm}
 
+    # -- run-level detail (R8-R10) ----------------------------------------
+    detail_rows = _detail_rows(spawned_runs, units, by_session, claude_exact)
+    runs_total = len(detail_rows)
+    if limit is None:
+        shown_runs = detail_rows
+    else:
+        limit_count = int(limit)
+        if limit_count < 0:
+            raise ValueError(f"limit must be >= 0 (0 = no limit), got {limit!r}")
+        shown_runs = detail_rows if limit_count == 0 else detail_rows[:limit_count]
+
     return {
         "generated_at": _iso(now_utc),
         "since": _iso(since_utc),
+        "until": _iso(until_utc),
         "window": window,
         "ledger": {
             "path": ledger_meta["path"],
@@ -1161,6 +1384,8 @@ def build_report(
         "groups": {dim: _finalize_group(buckets[dim]) for dim in buckets},
         "coverage": _coverage_rows(spawned_runs, claude_exact, pm_units),
         "sources": sources,
+        "runs_total": runs_total,
+        "runs": shown_runs,
     }
 
 
@@ -1169,6 +1394,13 @@ def build_report(
 _ROW_TEMPLATE = (
     "  {name:<24} calls {calls:<5} in {tok_in:<6} out {tok_out:<6}"
     " cacheR {tok_r:<7} cacheW {tok_w:<6} wall p50 {p50:<6} p90 {p90:<6} n {n}"
+)
+
+#: Run-detail row: same compact style as ``_ROW_TEMPLATE`` (no new dependency).
+_DETAIL_TEMPLATE = (
+    "  {started:<16}  {key:<24}  {task:<28}  {type:<9}  {model:<26}"
+    "  calls {calls:<5}  in {tok_in:<6}  out {tok_out:<6}"
+    "  cacheR {tok_r:<7}  cacheW {tok_w:<6}  wall {wall:<6}  {status}"
 )
 
 
@@ -1212,6 +1444,36 @@ def _format_wall(value: Any) -> str:
     return f"{seconds}s"
 
 
+def _format_local_stamp(value: Any) -> str:
+    """ISO-Z -> local ``YYYY-MM-DDTHH:MM`` (JSON keeps UTC, text reads local)."""
+    moment = _parse_iso(value)
+    if moment is None:
+        return "-"
+    return moment.astimezone(_local_tz()).strftime("%Y-%m-%dT%H:%M")
+
+
+def _format_detail_row(row: Mapping[str, Any]) -> str:
+    tokens = row.get("tokens") or {}
+    wall = _format_wall(row.get("wall_s"))
+    if row.get("wall_kind") == "session":
+        wall += SESSION_WALL_MARK
+    calls = row.get("calls")
+    return _DETAIL_TEMPLATE.format(
+        started=_format_local_stamp(row.get("started_at")),
+        key=_norm(row.get("key")) or UNKNOWN_LABEL,
+        task=_norm(row.get("task_key")) or "-",
+        type=_norm(row.get("type")) or UNKNOWN_LABEL,
+        model=_norm(row.get("model")) or "-",
+        calls="-" if calls is None else calls,
+        tok_in=_format_tokens(tokens.get("input")),
+        tok_out=_format_tokens(tokens.get("output")),
+        tok_r=_format_tokens(tokens.get("cache_read")),
+        tok_w=_format_tokens(tokens.get("cache_write")),
+        wall=wall,
+        status=_norm(row.get("status")) or "-",
+    )
+
+
 def _format_row(row: Mapping[str, Any]) -> str:
     tokens = row.get("tokens") or {}
     p90 = _format_wall(row.get("wall_p90"))
@@ -1245,20 +1507,34 @@ def _format_coverage(coverage: Iterable[Mapping[str, Any]]) -> str:
     return "coverage: " + " · ".join(parts)
 
 
-def format_report_text(report: Mapping[str, Any]) -> str:
-    """Human-readable report (design §6); ``None`` renders ``-``, never ``0``."""
+def format_report_text(report: Mapping[str, Any], detail: bool = False) -> str:
+    """Human-readable report (design §6); ``None`` renders ``-``, never ``0``.
+
+    ``detail=True`` appends the per-run table before ``coverage`` (R8: the JSON
+    always carries ``runs[]``; this flag only decides whether the text renders
+    it). A ``limit`` cut is stated in the table head, and a ``session`` wall
+    cell carries the same ``*`` marker / footnote as the group rows.
+    """
     ledger = report.get("ledger") or {}
     totals = report.get("totals") or {}
     sources = report.get("sources") or {}
     groups = report.get("groups") or {}
     since = _norm(report.get("since"))
+    until = _norm(report.get("until"))
     since_date = since[:10] if len(since) >= 10 else since
-    lines = [
-        f"usage since {since_date} ({_norm(report.get('window')) or '-'}) · "
-        f"ledger {ledger.get('events', 0)} events · "
+    window = _norm(report.get("window")) or "-"
+    head_tail = (
+        f" · ledger {ledger.get('events', 0)} events · "
         f"runs {totals.get('runs', 0)} "
         f"(worker {sources.get('worker', 0)} / pm {sources.get('pm', 0)})"
-    ]
+    )
+    if until:
+        # Half-open window: show both bounds (R7).
+        first = f"usage {_format_local_stamp(since)} → {_format_local_stamp(until)} ({window})"
+    else:
+        # Backward compatible wording for a report built without ``until``.
+        first = f"usage since {since_date} ({window})"
+    lines = [first + head_tail]
     path = _norm(ledger.get("path"))
     if path and not pathlib.Path(path).exists():
         lines.append("no ledger yet")
@@ -1279,7 +1555,21 @@ def format_report_text(report: Mapping[str, Any]) -> str:
                     marked = True
                 lines.append(_format_row(row))
 
-    if marked:
+    detail_marked = False
+    if detail:
+        rows = list(report.get("runs") or [])
+        total = report.get("runs_total")
+        lines.append("")
+        lines.append("runs (newest first)")
+        if isinstance(total, int) and total > len(rows):
+            # Never let a cut table pass for the whole window (R10).
+            lines.append(f"showing {len(rows)} of {total} runs (--limit 0 for all)")
+        for row in rows:
+            if row.get("wall_kind") == "session":
+                detail_marked = True
+            lines.append(_format_detail_row(row))
+
+    if marked or detail_marked:
         lines.append("")
         lines.append(SESSION_WALL_FOOTNOTE)
     lines.append("")

@@ -173,3 +173,48 @@ Worker Agent 并行开发同一个项目」；交付面含「mw 后台服务（P
 | 长命 PM 会话一个文件活数周（max 25.2 天） | 按文件归属切桶 → 跨天统计错 | 按消息 `timestamp` 切桶 | RQ1 §6 |
 | timi 路由直连不经代理 | 代理侧看不到主力流量 | 只从会话 JSONL 取 token | RQ4 §5 |
 | 旧 `serve` 进程仍跑旧 launcher | 台账为空，误判“没数据” | 落地后 `/mw restart`；无台账时显式提示 | RQ2 §5 |
+
+## 11. v0.3 增补（2026-10-21，用户反馈：窗口只能看用量，看不到调用方）
+
+### 11.1 问题
+
+v1 的输出只有 4 个维度的聚合行（`by model` / `by type` / `by key` / `by project`），
+聚合行回答了“花了多少”，没有回答“这 30986 input tokens 是哪一次运行、哪个 task、哪个会话烧的”。
+同时时间维度只有下界 `--since`（默认 7d），没有上界：想复盘“昨天 14:00 到现在”只能看整段。
+窗口面 `/mw stats` 参数是透传的（`ui-bridge.ts` `runMwStatsCommand` → `splitCommandLine` → `statsMw`），
+所以只要 CLI 有这两个能力，窗口自动具备，不需要改 TS。
+
+### 11.2 新需求
+
+- **R7 时间上界**：`--until <7d|24h|30m|YYYY-MM-DD|YYYY-MM-DDTHH:MM>`，窗口为 `[since, until)`；
+  缺省 = now。`--until` 早于 `--since` ⇒ rc=2。相对形式（`24h`）以 now 为基准，与 `--since` 一致。
+- **R8 运行级明细**：`--detail` 在文本尾部追加 `runs` 明细表，一行一次运行；
+  `--json` 固定新增 `runs[]`（**不受 `--detail` 影响**，`--detail` 只控制文本是否渲染它，
+  避免“要 JSON 明细必须加 flag”的二段契约）。
+- **R9 明细字段**：`run_id, started_at, ended_at, key, task_key, type, model, calls,
+  tokens{input,output,cache_read,cache_write}, wall_s, wall_kind, status, attribution, session_id, open_run`。
+  `open_run=true`（有 `start` 无 `end`）⇒ `wall_s=null`、`wall_kind="none"`，绝不回填会话跨度（沿用 T-06 规则）。
+- **R10 明细截断**：`--limit N`（默认 20，`0` 表示不限），按 `started_at` 倒序取前 N 条；
+  被截断时文本必须写出 `showing N of M runs (--limit)` 且 JSON 给 `runs_total`，否则用户会把截断当成全量。
+
+### 11.3 验收补充
+
+- **AC-014**：`--until` 生效且为半开区间；窗口外的 run 同时从 `totals`/`groups`/`runs` 消失；
+  `--until < --since` 与非法取值均 rc=2 且 stderr 说明期望格式。
+- **AC-015**：`--detail` 文本每行含 key、task_key、type、model、calls、四个 token 分量、wall、status；
+  `runs` 与 `totals.runs` 在同一过滤条件下自洽（N 条明细的 tokens 之和 = totals，除非被 `--limit` 截断）。
+- **AC-016**：`runs[]` 字段名与 §11.2 逐字一致；`open_run=true` 的行 `wall_s` 是 JSON `null`（不是 0）。
+- **AC-017**：窗口 `/mw stats --detail --since 24h` 可直接用（零 TS 改动）；`--help` 文本更新。
+
+### 11.4 非目标（v0.3 明确不做）
+
+- 不做按 task_key 分组的第 5 个维度（`--detail` 已能看，聚合能加就成噪音）。
+- 不做分页/游标（`--limit` 足够，7d 窗口最多千级 run）。
+- 不改 `runs.jsonl` 台账 schema（明细全部来自查询期 join，D-7 不变）。
+
+### 11.5 复用到的既有资产
+
+- `usage.parse_since`（`usage.py:312`）的 相对/日期 解析与 `_local_tz` 语义直接复用给 `--until`。
+- `usage.load_runs`（`usage.py:717`）已产出 `open_run/wall_s` 语义，明细行只是不再被折叠进聚合。
+- `usage._format_row`（`usage.py:1215`）的 `-` 表示 `None` 的渲染约定。
+- `usage.SESSION_WALL_FOOTNOTE`（`usage.py` 的 `*` 脚注）在明细表里同样适用。

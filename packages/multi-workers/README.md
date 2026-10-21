@@ -82,7 +82,7 @@ python mw.py <子命令>
 | `target set/show/clear` | 双工作区配置（见下） |
 | `ue-toolchain run/targets/hash` | dual 模式 UE 工具链纪律（见下）：执行模板并留证（错误签名双判 + --watch 前后哈希）、发现 UE 构建目标名、EOL 归一化哈希 |
 | `model set/show/clear`、`model set-fallback/clear-fallback` | 派发模型默认值与备用模型链（见下） |
-| `stats [--since W] [--key K] [--type T] [--model M] [--project P] [--source worker\|pm] [--json]` | 机器级 token/墙钟台账查询（见下「用量统计（mw stats）」）：model/type/key/project 四组分布 + 覆盖率声明 |
+| `stats [--since W] [--key K] [--type T] [--model M] [--project P] [--source worker\|pm] [--until W] [--detail] [--limit N] [--json]` | 机器级 token/墙钟台账查询（见下「用量统计（mw stats）」）：model/type/key/project 四组分布 + 覆盖率声明 |
 | `run-detached [--cwd DIR] [--run-dir DIR] [--timeout-min N] [--heartbeat-s N] -- <cmd...>` | 后台命令唯一入口：隐藏控制台监督进程 + heartbeat/marker 证据（见下「Windows detached-run checklist」） |
 
 ## 用量统计（mw stats）
@@ -93,7 +93,7 @@ worker 跑了多久」。只统计 token，不读正文。
 ### 命令
 
 ```bash
-python mw.py stats [--since 7d] [--key K] [--type T] [--model M] [--project P] [--source worker|pm] [--json]
+python mw.py stats [--since 7d] [--until 24h] [--key K] [--type T] [--model M] [--project P] [--source worker|pm] [--detail] [--limit 20] [--json]
 ```
 
 pi 窗口内是同一张报表：`/mw stats [<同样的参数>]`。窗口侧是薄包装——扫描、过滤与渲染全部在 Python；
@@ -102,12 +102,15 @@ runner 恒追加 `--project`，故窗口内默认只看当前 control root。
 | 参数 | 默认 | 说明 |
 |------|------|------|
 | `--since` | `7d` | 窗口：`7d` / `24h` / `30m` / `YYYY-MM-DD`（日期 = 本地零点）。非法值 rc=2 并打印可用格式 |
+| `--until` | now | 窗口上界，窗口为半开区间 `[since, until)`：`7d` / `24h` / `30m` / `YYYY-MM-DD` / `YYYY-MM-DDTHH:MM`（日期/时刻 = 本地墙钟，相对形式以 now 为基准）。早于 `--since` 或非法值 rc=2 |
 | `--key` | 全部 | 只统计该 owner key |
 | `--type` | 全部 | 只统计该任务类型（coding / review / research / ...） |
 | `--model` | 全部 | `provider/model` 子串匹配（如 `--model glm-5.3`） |
 | `--project` | 全机 | 路径或 basename；省略 = 本机所有项目。`/mw stats` 由 runner 追加当前 control root |
 | `--source` | 全部 | `worker` = 只 worker 运行；`pm` = 只 PM 窗口会话 |
-| `--json` | 文本 | 输出固定 JSON 契约（`groups` / `totals` / `coverage` / `sources`，未知值一律 `null`） |
+| `--detail` | 关 | 文本尾部追加 `runs (newest first)` 明细表：一行一次运行（key / task_key / type / model / calls / 四个 token 分量 / wall / status）。只影响文本，JSON 恒有 `runs[]` |
+| `--limit` | `20` | 明细表与 JSON `runs[]` 的最大行数（`0` = 不限），`started_at` 倒序截断；被截断时文本写 `showing N of M runs`、JSON 给 `runs_total` |
+| `--json` | 文本 | 输出固定 JSON 契约（`groups` / `totals` / `coverage` / `sources` / `runs[]` / `runs_total`，未知值一律 `null`） |
 
 ### 台账位置
 
@@ -126,7 +129,7 @@ runner 恒追加 `--project`，故窗口内默认只看当前 control root。
 ### 输出样例
 
 ```text
-usage since 2026-10-12 (7d) · ledger 42 events · runs 12 (worker 9 / pm 3)
+usage 2026-10-12T00:00 → 2026-10-19T00:00 (7d) · ledger 42 events · runs 12 (worker 9 / pm 3)
 
 by model
   timi/glm-5.3             calls 84    in 1.24M  out 310k   cacheR 11.4M   cacheW 42k    wall p50 4m12s  p90 5m30s  n 6
@@ -150,6 +153,30 @@ coverage: pi 8 runs (exact) · claude 1 (exact) · codex 1 (未统计)
   只要输出里出现 `*`，就在 `coverage:` 之前插入那行脚注。
 - `coverage:` 区分「没有运行」与「有运行但未统计」：pi worker / PM 窗口 / claude 精确统计；codex v1 显式
   未统计（无 session id，`token_count` 成对重复），其运行只出现在 coverage，`-` 不计入任何分组。
+
+### 明细样例（`--detail`）
+
+真实渲染（`--source worker --detail --limit 3`，本机台账 2026-10-21 15:00 快照；`by model/type/key/project`
+四组在此略去）：
+
+```text
+usage 2026-10-20T16:20 → 2026-10-21T15:00 (24h) · ledger 353 events · runs 116 (worker 116 / pm 0)
+
+runs (newest first)
+showing 3 of 116 runs (--limit 0 for all)
+  2026-10-21T14:55  feature-ui-dep-graph      ap-feature-ui-dep-graph-009-depgraph-pure-functions  phase-writer  timi/deepseek-v4.1-flash    calls 39     in 92.9k   out 39k     cacheR 2.56M    cacheW 0       wall 11m00s  done
+  2026-10-21T14:55  graph-edge-integrity      gei-bc-handoff-note-retry     coding     timi/deepseek-v4.1-flash    calls 8      in 12.3k   out 5.83k   cacheR 134k     cacheW 0       wall 45s     done
+  2026-10-21T14:43  feature-w1-preliminary-names  ap-feature-w1-preliminary-names-l3-a7  reviewer   timi/glm-5.3                calls 24     in 177k    out 30.5k   cacheR 1.17M    cacheW 0       wall 26m12s  done
+
+coverage: pi 116 runs (exact)
+```
+
+- 一行一次运行，回答「这个 token 是哪次运行 / 哪个 task / 哪个会话烧的」：`calls` 是该运行在窗口内的 provider
+  响应数，四个 token 分量同聚合行的口径（未知仍显 `-` 而非 `0`）。
+- 倒序（最新在上）；`--limit` 截断时一定有 `showing N of M runs (--limit 0 for all)`，JSON 侧对应 `runs_total`。
+- `open_run=true`（有 `start` 无 `end`）的行 `wall` 显 `-`（JSON `wall_s: null` / `wall_kind: "none"`）：台账还没有
+  reap，绝不拿会话跨度回填。没有台账行的 PM 会话也占一行，其 `wall` 带 `*`（会话跨度），保证明细 token 之和
+  与 `totals` 自洽。
 
 ### 隐私边界
 

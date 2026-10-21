@@ -82,3 +82,91 @@ coverage: pi 92 runs (exact)
 - **端到端 exact 归因（AC-002 的 worker 侧）**：需要 `/mw restart` 让 serve 用新 `launcher.py`，然后派一张
   最小任务，确认该 run 的 `session_id` 能在 `~/.pi/agent/sessions` 找到对应文件且 `mw stats` 的 token 与手工
   扫该文件一致。当前 27 条 worker 台账全部来自测试桩（1 秒 run，无会话文件），`wall_kind` 全为 `session`。
+
+## V-5 端到端复核（2026-10-21，build + serve restart 之后）
+
+前提：`mw build` 14:25 完成，全局扩展与 `packages/multi-workers/dist/extensions/agent-team-loop.js` sha256 一致
+（`a2c4454cc95bfd1b`，1328455B，含 `/ stats /` 与 `statsMw`）；serve 于 15:59:14 重启（PID 4416，
+`mw status` 报 `fresh`，`expected commit = actual commit = 744e95b97`）。
+
+用一次真实派发做样本（card `.agenticdoc/mw-usage-monitor/tasks/T-07-e2e-ledger-smoke.md`，
+task `um-t07-e2e-ledger-smoke`，type=research，worker 自述 30 次工具调用后 settled）：
+
+1. **start 行**（`python mw.py stats --since 2h --json` 的台账源 `C:\Users\wenbozhou\.mw\usage\runs.jsonl`）：
+   `{"event":"start","run_id":"20261021T080045Z-17812-2","source":"worker","project":"H:\\git\\Multi-Workers",
+   "key":"mw-usage-monitor","task_key":"um-t07-e2e-ledger-smoke","type":"research","role":"research","cli":"pi",
+   "attribution":"exact","session_id":"mw-mw-usage-monitor-17812-1",
+   "model":"timi/deepseek-v4.1-flash","model_source":"config:research",...}`
+2. **end 行**（同一 `run_id`，reap 时写入）：
+   `{"event":"end","run_id":"20261021T080045Z-17812-2","ts":"2026-10-21T08:02:36+00:00","exit":0,
+   "wall_s":110.751,"status":"done","reconciled":false}`
+3. **exact 归因成立**：会话文件真实存在
+   `~/.pi/agent/sessions/--H--git-Multi-Workers--/2026-10-21T08-00-49-345Z_mw-mw-usage-monitor-17812-1.jsonl`
+   （106839B），文件名里的 id 与台账 `session_id` 逐字相同 ⇒ 台账行 → 会话文件是一对一，不需要正文匹配。
+4. **token 归因 Δ=0**（手扫该文件 vs `mw stats`）：
+
+   | 项 | `usage.scan_pi_session` 手扫 | `mw stats --since 2h --key mw-usage-monitor` |
+   | --- | --- | --- |
+   | requests | 20 | calls 20 |
+   | input | 30986 | 30986 |
+   | output | 13992 | 13992 |
+   | cache_read | 503040 | 503040 |
+   | cache_write | 0 | 0 |
+
+   该 key 组 `runs=1, n=1, wall_p50=null, wall_kind="none"`：单样本不报墙钟、也不拿 PM 跨度回填（T-06 规则生效）。
+5. **墙钟来自真实 reap**：同窗口其它组 `wall_kind="run"`（例 `timi/deepseek-v4.1-flash` n=27，
+   p50 439.063s / p90 1017.769s），不再是 PM 会话跨度；`coverage` = `[{cli: pi, runs: 48, attribution: "exact"}]`。
+6. **台账体检**：341 events、`bad_lines=0`、`open_runs=9`（含正在跑的 worker），无写坏行。
+
+### 仍未验证（1 项，需用户操作）
+
+- **AC-006（`/mw stats` 在窗口可见）**：全局扩展已更新，但本窗口进程启动于 2026-10-16 11:51（PID 43712），
+  早于 bundle 的 2026-10-21 14:25，需用户在窗口执行 `/reload` 才会加载带 `stats` 分支的扩展。
+  窗口内可见性无法由工具侧触发，故保持未验证直至 `/reload` 后人工确认。
+
+### 已知偏差（不影响 AC）
+
+- 台账 `pid` 是 serve 侧记账 pid（`Popen` 的 `cmd.exe` 包裹层，本次 17236），真实 pi 进程是另一 pid
+  （worker 自测 `node.exe 30696`）；`session_id` 里的 `17812` 是 python 进程 pid。三者语义不同但台账只用
+  `session_id` 做归因，`pid` 仅作排障线索。
+- T-07 卡片锚点 `mw.py:7016` 已陈旧（`cmd_stats` 现位于 `mw.py:9623`，`--since` 默认值在 `mw.py:9674`），
+  是并发的 decide 代码插入导致的行号漂移，卡片文字未同步。
+
+## V-6 v0.3 复核（2026-10-21，`--until` / `--detail` / `--limit`）
+
+用户反馈「窗口只能看用量，看不到具体调用方」，PM 在 spec §11 增补 R7–R10 / AC-014–AC-017，两轮 worker 交付：
+
+- T-08（`um-t08-usage-detail-until-r2`）：`usage.py` +344/−35、`test_usage.py` +378/−1。
+  `_parse_bound` 统一 `--since`/`--until` 解析（同一份正则），`parse_until` 多接 `YYYY-MM-DDTHH:MM`；
+  `load_runs(until=...)` 半开窗口；`build_report(until=, limit=20, detail=False)` 产出 `until`/`runs`/`runs_total`；
+  文本首行 `usage <since> → <until> (<window>)`。
+- T-09（`um-t09-stats-cli-detail`）：`mw.py` +35/−1（纯锚点插入）、`test_stats_cli.py` 修 3 红 + 7 类新用例、
+  README 用量统计节、CHANGELOG 一条 bullet。零 TS 改动（窗口靠参数透传）。
+
+PM 独立复核（非照抄 worker 报告）：
+
+```
+$ python -m pytest test_stats_cli.py test_usage.py -q   → 57 passed
+$ python -m pytest test_launcher_run_ledger.py -q       → 17 passed
+$ python mw.py stats --since 3h --detail --limit 4
+  runs (newest first)
+  showing 4 of 56 runs (--limit 0 for all)
+    2026-10-21T16:18  parser-callee-qn          pcqn-design-rereview          review     timi/gpt-6.1-sol          calls 9   in 27     out 4.81k  cacheR 411k   cacheW 137k  wall -      running
+    2026-10-21T16:17  mw-usage-monitor          um-t09-stats-cli-detail       coding     timi/deepseek-v4.1-flash  calls 57  in 68.4k  out 31.8k  cacheR 3.92M  cacheW 0     wall 5m27s  done
+    2026-10-21T16:17  feature-ui-name-surfaces  ap-...-plan-writer-a1         phase-writer timi/deepseek-v4.1-flash calls 69  in 111k   out 29.6k  cacheR 7.18M  cacheW 0     wall -      running
+    2026-10-21T16:13  feature-domain-assign-33  ap-...-plan-writer-a1         phase-writer timi/deepseek-v4.1-flash calls 45  in 104k   out 23.8k  cacheR 3.76M  cacheW 0     wall -      running
+$ python mw.py stats --since 1d --json --limit 2   → runs 2, runs_total 229, "until" in report = True
+$ python mw.py stats --since 7d --until 2020-01-01 → stderr "mw stats: --until must be after --since", rc=2
+$ python mw.py stats --since 7d --until nope       → stderr "[mw stats] invalid --until 'nope'; use 7d / 24h / 30m / YYYY-MM-DD / YYYY-MM-DDTHH:MM", rc=2
+```
+
+结论：AC-014（上界半开窗口 + rc=2 语义）、AC-015（明细行含 key/task/type/model/四 token 分量/wall/status）、
+AC-016（`open_run=true` ⇒ `wall_s=None` + `wall_kind="none"`，上面第 1/3/4 行的 `wall -`+`running` 即此语义）、
+AC-017（零 TS 改动，窗口参数透传）均达成。仍未在 TUI 里手动敲一次 `/mw stats --detail`（窗口本窗口进程早于
+bundle，需 `/reload`），属可见性验证而非功能缺口。
+
+### 过程记录
+
+- T-08 首卡因段落顺序（`## 改动历史` 在 `## 上下文` 之前）被派发器打乱，envelope 校验 1s 失败，未产生任何文件改动；
+  按 T-03 的段落顺序重写后重派（r2）即成功。T-09 卡片同样先做了顺序修正。
+- T-09 第一次运行 55s 后异常退出且无 `output.md`，serve 自动重派后成功；最终产物以复核结果为准。

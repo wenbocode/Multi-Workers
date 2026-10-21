@@ -33,8 +33,20 @@ WORKER_SESSION_ID = "mw-mw-usage-monitor-4242-1"
 PM_SESSION_ID = "pm-session-1"
 PROJECT = "H:/git/ProjA"
 
-#: design 5: the fixed `--json` contract, exact key sets (extras are failures).
-TOP_KEYS = {"generated_at", "since", "window", "ledger", "totals", "groups", "coverage", "sources"}
+#: design 5 + spec §11.2: the fixed `--json` contract, exact key sets (extras are failures).
+TOP_KEYS = {
+    "generated_at",
+    "since",
+    "until",
+    "window",
+    "ledger",
+    "totals",
+    "groups",
+    "coverage",
+    "sources",
+    "runs_total",
+    "runs",
+}
 LEDGER_KEYS = {"path", "events", "bad_lines", "open_runs"}
 TOTALS_KEYS = {"calls", "tokens", "runs"}
 GROUP_ROW_KEYS = {"name", "calls", "tokens", "runs", "wall_p50", "wall_p90", "n", "wall_kind"}
@@ -84,19 +96,42 @@ def _pi_session(
     filename: str | None = None,
     model: str = "glm-5.3-flashx",
     provider: str = "timi",
+    at_minutes: float | None = None,
 ) -> pathlib.Path:
+    # `at_minutes` shifts the whole session (header + 2 entries) so a test can
+    # place it inside a `[since, until)` window; the default reproduces the
+    # original -180/-170/-150 min layout byte for byte.
+    head = 180 if at_minutes is None else at_minutes
     rows = [
-        {"type": "session", "version": 3, "id": session_id, "timestamp": _at(180), "cwd": PROJECT},
-        {"type": "message", "id": "msg-1", "parentId": None, "timestamp": _at(170),
+        {"type": "session", "version": 3, "id": session_id, "timestamp": _at(head), "cwd": PROJECT},
+        {"type": "message", "id": "msg-1", "parentId": None, "timestamp": _at(head - 10),
          "message": {"role": "assistant", "content": [{"type": "text", "text": "x"}],
                      "api": "openai-responses", "provider": provider, "model": model,
                      "usage": _usage(1200, 340, 5600, 120), "stopReason": "stop",
                      "timestamp": 0}},
-        {"type": "message", "id": "msg-2", "parentId": None, "timestamp": _at(150),
+        {"type": "message", "id": "msg-2", "parentId": None, "timestamp": _at(head - 30),
          "message": {"role": "user", "content": "not read", "timestamp": 0}},
     ]
     name = filename or f"2026-10-19T10-00-00-000Z_{session_id}.jsonl"
     return _write_jsonl(pathlib.Path(root) / "H--git-ProjA" / name, rows)
+
+
+def _run_at(
+    run_id: str,
+    start_min: float,
+    end_min: float,
+    session_id: str,
+    key: str = WORKER_KEY,
+) -> list[dict]:
+    """One ledger run+reap pair at arbitrary offsets (window-boundary tests)."""
+    start = {"event": "start", "run_id": run_id, "ts": _at(start_min), "source": "worker",
+             "project": PROJECT, "key": key, "task_key": key,
+             "type": "coding", "role": "coding", "cli": "pi", "attribution": "exact",
+             "session_id": session_id, "model": "timi/glm-5.3-flashx"}
+    end = {"event": "end", "run_id": run_id, "ts": _at(end_min),
+           "wall_s": (start_min - end_min) * 60,
+           "exit": 0, "status": "done", "reconciled": False}
+    return [start, end]
 
 
 @pytest.fixture()
@@ -133,6 +168,10 @@ def test_parse_args_stats_defaults() -> None:
     assert args.project is None  # None = whole machine, not an error
     assert args.source is None
     assert args.json is False
+    # spec §11.2 R7-R10: window upper bound / run detail / row cut.
+    assert args.until is None  # None = now
+    assert args.detail is False
+    assert args.limit == 20
 
 
 def test_parse_args_stats_accepts_runner_appended_project() -> None:
@@ -179,7 +218,9 @@ def test_cmd_stats_text_matches_format_report(env_dirs, monkeypatch) -> None:
     # The text path is exactly the shared renderer, not a re-implementation.
     assert out == usage.format_report_text(report) + "\n"
 
-    assert out.startswith("usage since ")
+    assert out.startswith("usage ")
+    # spec §11.2 R7: both window bounds are printed, half-open `[since, until)`.
+    assert " → " in out
     assert "(7d)" in out
     assert "ledger 2 events" in out
     assert "runs 1 (worker 1 / pm 0)" in out
@@ -358,6 +399,133 @@ def test_cmd_stats_empty_window_rc0(env_dirs) -> None:
     assert code == 0, err
     assert "no usage in window" in out
     assert "runs 0 (worker 0 / pm 0)" in out
+
+
+# -- 4b. --until / --detail / --limit (spec §11 v0.3, AC-014..AC-017) ------
+
+
+def test_cmd_stats_until_drops_runs_outside_window(env_dirs) -> None:
+    """AC-014: a run after `until` leaves totals/groups/runs, not just the table."""
+    usage_dir, pi_root, _claude = env_dirs
+    _write_ledger(
+        usage_dir,
+        [
+            # Inside the last 7d but newer than `--until 6h`.
+            _run_at("run-recent", 180, 120, "mw-mw-usage-monitor-4242-1"),
+            # 10h ago: before `--until 6h`.
+            _run_at("run-earlier", 600, 540, "mw-mw-usage-monitor-4242-2"),
+        ],
+    )
+    _pi_session(pi_root, "mw-mw-usage-monitor-4242-1", at_minutes=180)
+    _pi_session(pi_root, "mw-mw-usage-monitor-4242-2", at_minutes=600)
+
+    code, out, err = _run_stats(["--since", "7d", "--until", "6h", "--json"])
+    assert code == 0, err
+    report = json.loads(out)
+    assert report["totals"]["runs"] == 1
+    assert report["sources"] == {"worker": 1, "pm": 0}
+    assert [row["run_id"] for row in report["runs"]] == ["run-earlier"]
+    assert report["runs_total"] == 1
+    # The recent run's events are outside the window, so its tokens are gone too.
+    assert report["totals"]["calls"] == 1
+    assert report["totals"]["tokens"] == {
+        "input": 1200, "output": 340, "cache_read": 5600, "cache_write": 120,
+    }
+    assert [row["runs"] for rows in report["groups"].values() for row in rows] == [1, 1, 1, 1]
+
+    code, out, err = _run_stats(["--since", "7d", "--until", "6h"])
+    assert code == 0, err
+    assert "runs 1 (worker 1 / pm 0)" in out
+    assert "usage " in out and " → " in out
+
+
+def test_cmd_stats_until_before_since_rc2(env_dirs) -> None:
+    """R7: an inverted window is a CLI error; the kernel only yields an empty one."""
+    code, out, err = _run_stats(["--since", "7d", "--until", "2020-01-01"])
+    assert code == 2
+    assert out == ""
+    assert "--until must be after --since" in err
+
+
+def test_cmd_stats_invalid_until_rc2(env_dirs) -> None:
+    code, out, err = _run_stats(["--until", "yesterday"])
+    assert code == 2
+    assert out == ""
+    assert "invalid --until" in err
+    assert "YYYY-MM-DDTHH:MM" in err
+
+
+def test_cmd_stats_detail_text_appends_run_table(env_dirs) -> None:
+    """R8/AC-015: `--detail` is text-only, one row per run, all R9 fields."""
+    usage_dir, pi_root, _claude = env_dirs
+    _write_ledger(usage_dir, [_worker_run()])
+    _pi_session(pi_root, WORKER_SESSION_ID)
+
+    code, out, err = _run_stats([])
+    assert code == 0, err
+    assert "runs (newest first)" not in out
+
+    code, out, err = _run_stats(["--detail"])
+    assert code == 0, err
+    assert "runs (newest first)" in out
+    table = out.split("runs (newest first)", 1)[1]
+    assert WORKER_KEY in table and "coding" in table
+    assert "timi/glm-5.3-flashx" in table
+    assert "calls 1" in table
+    assert "in 1.2k" in table and "out 340" in table  # four token components
+    assert "wall 50m00s" in table and "done" in table
+
+
+def test_cmd_stats_limit_cuts_detail_and_json(env_dirs) -> None:
+    """R10: the cut is stated in text and `runs_total` keeps the real count."""
+    usage_dir, pi_root, _claude = env_dirs
+    runs = []
+    for index in range(3):
+        session_id = f"mw-mw-usage-monitor-4242-{index}"
+        start_min = 600 - index * 60
+        runs.append(_run_at(f"run-{index}", start_min, start_min - 60, session_id))
+        _pi_session(pi_root, session_id, at_minutes=start_min)
+    _write_ledger(usage_dir, runs)
+
+    code, out, err = _run_stats(["--detail", "--limit", "1"])
+    assert code == 0, err
+    assert "runs (newest first)" in out
+    assert "showing 1 of 3 runs" in out
+
+    code, out, err = _run_stats(["--json", "--limit", "1"])
+    assert code == 0, err
+    report = json.loads(out)
+    assert len(report["runs"]) == 1
+    assert report["runs_total"] == 3 > 1
+    # newest first (run-2 started last), and `--limit` never touches the totals.
+    assert report["runs"][0]["run_id"] == "run-2"
+    assert report["totals"]["runs"] == 3
+
+
+def test_cmd_stats_negative_limit_rc2(env_dirs) -> None:
+    code, out, err = _run_stats(["--limit", "-1"])
+    assert code == 2
+    assert out == ""
+    assert "--limit must be >= 0" in err
+
+
+def test_cmd_stats_json_carries_runs_without_detail(env_dirs) -> None:
+    """R8/AC-016: `runs[]` is part of the JSON contract, not a `--detail` effect."""
+    usage_dir, pi_root, _claude = env_dirs
+    _write_ledger(usage_dir, [_worker_run()])
+    _pi_session(pi_root, WORKER_SESSION_ID)
+
+    code, out, err = _run_stats(["--json"])
+    assert code == 0, err
+    report = json.loads(out)
+    assert set(report) == TOP_KEYS
+    assert isinstance(report["runs"], list) and len(report["runs"]) == 1
+    assert report["runs_total"] == 1
+    row = report["runs"][0]
+    assert set(row) == set(usage.DETAIL_FIELDS)  # R9, verbatim
+    assert row["run_id"] == "run-1" and row["key"] == WORKER_KEY
+    assert row["calls"] == 1 and row["open_run"] is False
+    assert row["wall_kind"] == "run" and row["wall_s"] == 3000.0
 
 
 # -- 5. dispatch + machine-level CLI smoke ---------------------------------

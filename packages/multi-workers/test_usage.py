@@ -928,11 +928,9 @@ def test_format_report_text_matches_fixture(tmp_path, monkeypatch) -> None:
     report = usage.build_report(fixed_now, fixed_since, {"window": "7d"})
     text = usage.format_report_text(report)
 
-    expected = "\n".join(
-        [
-            "usage since 2026-10-12 (7d) · ledger 4 events · runs 2 (worker 2 / pm 0)",
-            "",
-            "by model",
+    expected_lines = [
+        "",
+        "by model",
             "  timi/glm-5.3-flashx      calls 2     in 1.2M   out 310k   cacheR 11.4M"
             "   cacheW 42k    wall p50 -      p90 -      n 1",
             "",
@@ -949,9 +947,13 @@ def test_format_report_text_matches_fixture(tmp_path, monkeypatch) -> None:
             "   cacheW 42k    wall p50 -      p90 -      n 1",
             "",
             "coverage: pi 1 runs (exact) · codex 1 (未统计)",
-        ]
-    )
-    assert text == expected
+    ]
+    # First line now states the half-open window (R7); timestamps render in
+    # local time, so the exact digits are environment dependent by design.
+    text_lines = text.splitlines()
+    assert text_lines[0].startswith(f"usage {usage._format_local_stamp(report['since'])} → ")
+    assert text_lines[0].endswith("(7d) · ledger 4 events · runs 2 (worker 2 / pm 0)")
+    assert text_lines[1:] == expected_lines
 
 
 def test_format_report_text_marks_missing_ledger(tmp_path, monkeypatch) -> None:
@@ -1188,3 +1190,363 @@ def test_build_report_source_pm_keeps_session_wall(tmp_path, monkeypatch) -> Non
     assert rows[0]["n"] == 5
     assert rows[0]["wall_p50"] == pytest.approx(1800.0)
     assert rows[0]["wall_p90"] == pytest.approx(1800.0)
+
+
+# ── 13. --until (R7) and run-level detail (R8-R10) ──────────────────────────
+
+
+def _iso_at(moment: datetime) -> str:
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_parse_until_accepts_since_forms_plus_minute() -> None:
+    base = datetime(2026, 10, 19, 12, 0, 0, tzinfo=timezone.utc)
+    assert usage.parse_until("7d", base) == base - timedelta(days=7)
+    assert usage.parse_until("24h", base) == base - timedelta(hours=24)
+    assert usage.parse_until("30m", base) == base - timedelta(minutes=30)
+    # Relative forms keep parse_since semantics: an offset back from now.
+    assert usage.parse_until("24h", base) == usage.parse_since("24h", base)
+
+    day = usage.parse_until("2026-10-12", base)
+    assert day.tzinfo is not None
+    assert day.astimezone().strftime("%Y-%m-%d") == "2026-10-12"
+    assert day.astimezone().strftime("%H:%M") == "00:00"
+
+    # The form only --until accepts: local wall clock of that minute.
+    minute = usage.parse_until("2026-10-19T14:00", base)
+    assert minute.tzinfo is not None
+    assert minute.astimezone().strftime("%Y-%m-%d %H:%M") == "2026-10-19 14:00"
+
+
+def test_parse_until_rejects_garbage() -> None:
+    for bad in (
+        "",
+        "7",
+        "abc",
+        "7x",
+        "2026-13-01",
+        "2026/10/12",
+        "-3d",
+        "2026-10-19T25:00",
+        "2026-10-19 14:00",
+    ):
+        with pytest.raises(ValueError):
+            usage.parse_until(bad)
+    # --since keeps its narrower syntax: no time-of-day form.
+    with pytest.raises(ValueError):
+        usage.parse_since("2026-10-19T14:00")
+
+
+def test_build_report_until_window_is_half_open(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "usage"
+    pi_root = tmp_path / "pi"
+    monkeypatch.setenv("MW_USAGE_DIR", str(target))
+    monkeypatch.setenv("MW_PI_SESSIONS_DIR", str(pi_root))
+
+    base = datetime(2026, 10, 19, 12, 0, 0, tzinfo=timezone.utc)
+    since = base - timedelta(hours=2)
+    until = base
+    inside_start = base - timedelta(minutes=30)
+
+    _write_ledger(
+        target / "runs.jsonl",
+        [
+            # Starts exactly at the lower bound: included (half-open lower edge).
+            _start("r-since", key="k", type="coding", session_id="mw-k-1-1",
+                   ts=_iso_at(since)),
+            _end("r-since", wall_s=60.0, ts=_iso_at(since + timedelta(seconds=60))),
+            _start("r-inside", key="k", type="coding", session_id="mw-k-1-2",
+                   ts=_iso_at(inside_start)),
+            _end("r-inside", wall_s=60.0, ts=_iso_at(inside_start + timedelta(seconds=60))),
+            # Starts exactly at the upper bound: excluded (half-open upper edge).
+            _start("r-until", key="k", type="coding", session_id="mw-k-1-3",
+                   ts=_iso_at(until)),
+            _end("r-until", wall_s=60.0, ts=_iso_at(until + timedelta(seconds=60))),
+        ],
+    )
+    _write_pi_session(
+        pi_root,
+        "2026-10-19T10-00-00-000Z_mw-k-1-1.jsonl",
+        [
+            _pi_header("mw-k-1-1", _iso_at(since)),
+            _pi_assistant(_iso_at(since + timedelta(seconds=30)), raw_usage=_usage(10, 1, 0, 0)),
+        ],
+    )
+    _write_pi_session(
+        pi_root,
+        "2026-10-19T10-01-00-000Z_mw-k-1-2.jsonl",
+        [
+            _pi_header("mw-k-1-2", _iso_at(inside_start)),
+            _pi_assistant(
+                _iso_at(inside_start + timedelta(seconds=30)), raw_usage=_usage(20, 2, 0, 0)
+            ),
+            # Exactly at `until`: outside the half-open window.
+            _pi_assistant(_iso_at(until), raw_usage=_usage(999, 99, 0, 0)),
+        ],
+    )
+    _write_pi_session(
+        pi_root,
+        "2026-10-19T10-02-00-000Z_mw-k-1-3.jsonl",
+        [
+            _pi_header("mw-k-1-3", _iso_at(until)),
+            _pi_assistant(_iso_at(until + timedelta(seconds=30)), raw_usage=_usage(50, 5, 0, 0)),
+        ],
+    )
+
+    report = usage.build_report(base, since, {}, until=until)
+
+    assert report["since"] == _iso_at(since)
+    assert report["until"] == _iso_at(until)
+    assert report["window"] == "2h"
+    # Window-out runs vanish from every view, not only from the detail table.
+    assert [run["run_id"] for run in report["runs"]] == ["r-inside", "r-since"]
+    assert report["runs_total"] == 2
+    assert report["totals"]["runs"] == 2
+    listed = [run["run_id"] for run in usage.load_runs(since, {}, until=until)[0]]
+    assert listed == ["r-since", "r-inside"]
+
+    # The message exactly at `until` never becomes a call.
+    assert report["totals"]["calls"] == 2
+    assert report["totals"]["tokens"]["input"] == 30
+    by_id = {run["run_id"]: run for run in report["runs"]}
+    assert by_id["r-since"]["calls"] == 1
+    assert by_id["r-inside"]["calls"] == 1
+    assert by_id["r-inside"]["tokens"]["input"] == 20
+
+    # Lowering the upper bound removes the newer run from groups too.
+    narrow = usage.build_report(base, since, {}, until=inside_start)
+    assert narrow["runs_total"] == 1
+    assert narrow["totals"]["tokens"]["input"] == 10
+
+
+def test_build_report_runs_detail_fields_order_and_limit(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "usage"
+    pi_root = tmp_path / "pi"
+    monkeypatch.setenv("MW_USAGE_DIR", str(target))
+    monkeypatch.setenv("MW_PI_SESSIONS_DIR", str(pi_root))
+
+    ledger = []
+    for index in range(1, 26):
+        session_id = f"mw-k-1-{index}"
+        started = NOW - timedelta(minutes=2 * index)
+        ledger.append(
+            _start(f"r{index}", key="k", type="coding", session_id=session_id,
+                   model="timi/glm-5.3-flashx", ts=_iso_at(started))
+        )
+        ledger.append(_end(f"r{index}", wall_s=10.0, ts=_iso_at(started + timedelta(minutes=1))))
+        _write_pi_session(
+            pi_root,
+            f"2026-10-19T10-{index:02d}-00-000Z_{session_id}.jsonl",
+            [
+                _pi_header(session_id, _iso_at(started)),
+                _pi_assistant(
+                    _iso_at(started + timedelta(seconds=10)),
+                    raw_usage=_usage(100, 10, 1000, 5),
+                ),
+            ],
+        )
+    _write_ledger(target / "runs.jsonl", ledger)
+
+    report = usage.build_report(NOW, SINCE, {})
+
+    # Default limit is 20, while runs_total keeps the uncut count.
+    assert report["runs_total"] == 25
+    assert len(report["runs"]) == 20
+    assert [run["run_id"] for run in report["runs"]] == [f"r{i}" for i in range(1, 21)]
+
+    row = report["runs"][0]
+    assert set(row) == set(usage.DETAIL_FIELDS)  # R9 field names, verbatim
+    assert set(row["tokens"]) == set(usage.TOKEN_FIELDS)
+    assert row["run_id"] == "r1"
+    assert row["started_at"] == _iso_at(NOW - timedelta(minutes=2))
+    assert row["ended_at"] == _iso_at(NOW - timedelta(minutes=1))
+    assert row["key"] == "k"
+    assert row["type"] == "coding"
+    assert row["model"] == "timi/glm-5.3-flashx"
+    assert row["calls"] == 1
+    assert row["tokens"] == {"input": 100, "output": 10, "cache_read": 1000, "cache_write": 5}
+    assert row["wall_s"] == pytest.approx(10.0)
+    assert row["wall_kind"] == "run"
+    assert row["status"] == "done"
+    assert row["attribution"] == "exact"
+    assert row["session_id"] == "mw-k-1-1"
+    assert row["open_run"] is False
+
+    unlimited = usage.build_report(NOW, SINCE, {}, limit=0)
+    assert len(unlimited["runs"]) == 25
+    assert unlimited["runs_total"] == 25
+    assert len(usage.build_report(NOW, SINCE, {}, limit=None)["runs"]) == 25
+    assert len(usage.build_report(NOW, SINCE, {}, limit=3)["runs"]) == 3
+
+    with pytest.raises(ValueError):
+        usage.build_report(NOW, SINCE, {}, limit=-1)
+
+
+def test_build_report_runs_open_run_never_backfills_wall(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "usage"
+    pi_root = tmp_path / "pi"
+    monkeypatch.setenv("MW_USAGE_DIR", str(target))
+    monkeypatch.setenv("MW_PI_SESSIONS_DIR", str(pi_root))
+    # start, no end: an orphan run. Its session spans 600 s, which must never
+    # become the run wall (T-06 / AC-016).
+    _write_ledger(
+        target / "runs.jsonl",
+        [_start("r-open", key="k", type="coding", session_id="mw-open-1-1", ts=_at(30))],
+    )
+    _write_pi_session(
+        pi_root,
+        "2026-10-19T10-00-00-000Z_mw-open-1-1.jsonl",
+        [
+            _pi_header("mw-open-1-1", _at(20)),
+            _pi_assistant(_at(10), raw_usage=_usage(7, 3, 0, 0)),
+        ],
+    )
+
+    report = usage.build_report(NOW, SINCE, {})
+    row = report["runs"][0]
+    assert row["open_run"] is True
+    assert row["wall_s"] is None  # null, not 0 and not the session span
+    assert row["wall_kind"] == "none"
+    assert row["status"] == "running"
+    assert row["ended_at"] is None
+    assert row["calls"] == 1  # tokens are still attributable
+    assert row["tokens"]["input"] == 7
+
+    text = usage.format_report_text(report, detail=True)
+    assert "wall -" in text
+
+
+def test_build_report_runs_missing_session_keeps_tokens_unknown(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "usage"
+    pi_root = tmp_path / "pi"
+    monkeypatch.setenv("MW_USAGE_DIR", str(target))
+    monkeypatch.setenv("MW_PI_SESSIONS_DIR", str(pi_root))
+    _write_ledger(
+        target / "runs.jsonl",
+        [
+            _start("r-ghost", key="k", type="coding", session_id="mw-ghost-1-1", ts=_at(30)),
+            _end("r-ghost", wall_s=5.0, ts=_at(29)),
+        ],
+    )
+
+    report = usage.build_report(NOW, SINCE, {})
+    row = report["runs"][0]
+
+    assert row["run_id"] == "r-ghost"
+    assert row["calls"] is None  # not 0: 0 would claim "no request happened"
+    assert row["tokens"] == {
+        "input": None,
+        "output": None,
+        "cache_read": None,
+        "cache_write": None,
+    }
+    assert row["wall_s"] == pytest.approx(5.0)
+    assert row["wall_kind"] == "run"
+    assert row["session_id"] == "mw-ghost-1-1"
+    # Nothing was attributable, so the totals stay unknown too.
+    assert report["totals"]["tokens"]["input"] is None
+
+    text = usage.format_report_text(report, detail=True)
+    assert "calls -" in text
+    assert "in -       out -       cacheR -" in text
+
+
+def test_build_report_runs_tokens_sum_to_totals(tmp_path, monkeypatch) -> None:
+    _rich_fixture(tmp_path, monkeypatch)
+
+    report = usage.build_report(NOW, SINCE, {}, limit=0)
+
+    assert report["runs_total"] == report["totals"]["runs"] == 6
+    sums = dict.fromkeys(usage.TOKEN_FIELDS, 0)
+    for row in report["runs"]:
+        for field in usage.TOKEN_FIELDS:
+            value = row["tokens"][field]
+            if value is not None:
+                sums[field] += value
+    assert sums == report["totals"]["tokens"]  # AC-015, untruncated
+
+    # Truncating must not corrupt runs_total or the totals.
+    cut = usage.build_report(NOW, SINCE, {}, limit=2)
+    assert len(cut["runs"]) == 2
+    assert cut["runs_total"] == 6
+    assert cut["totals"] == report["totals"]
+
+    # A PM window session without a ledger row is a row of its own, so the
+    # token sum stays self-consistent; its wall is a session span ('*').
+    pm_rows = [row for row in report["runs"] if row["run_id"] is None]
+    assert len(pm_rows) == 1
+    assert pm_rows[0]["key"] == "pm"
+    assert pm_rows[0]["type"] == "pm"
+    assert pm_rows[0]["wall_kind"] == "session"
+    assert pm_rows[0]["open_run"] is False
+
+
+def test_format_report_text_detail_section_and_truncation(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "usage"
+    pi_root = tmp_path / "pi"
+    monkeypatch.setenv("MW_USAGE_DIR", str(target))
+    monkeypatch.setenv("MW_PI_SESSIONS_DIR", str(pi_root))
+    fixed_now = datetime(2026, 10, 19, 12, 0, 0, tzinfo=timezone.utc)
+    fixed_since = fixed_now - timedelta(days=7)
+
+    ledger = []
+    for index in range(1, 4):
+        session_id = f"mw-k-1-{index}"
+        started = fixed_now - timedelta(minutes=30 * index)
+        ledger.append(
+            _start(f"r{index}", key="mw-usage-monitor", task_key=f"um-t0{index}",
+                   type="research", session_id=session_id,
+                   model="timi/deepseek-v4.1-flash", ts=_iso_at(started))
+        )
+        ledger.append(
+            _end(f"r{index}", wall_s=111.0, status="done",
+                 ts=_iso_at(started + timedelta(seconds=111)))
+        )
+        _write_pi_session(
+            pi_root,
+            f"2026-10-19T10-0{index}-00-000Z_{session_id}.jsonl",
+            [
+                _pi_header(session_id, _iso_at(started)),
+                _pi_assistant(
+                    _iso_at(started + timedelta(seconds=5)),
+                    model="deepseek-v4.1-flash",
+                    raw_usage=_usage(31_000, 14_000, 503_000, 0),
+                ),
+            ],
+        )
+    _write_ledger(target / "runs.jsonl", ledger)
+
+    report = usage.build_report(fixed_now, fixed_since, {}, limit=2)
+    plain = usage.format_report_text(report)
+    assert "runs (newest first)" not in plain
+    assert "showing" not in plain
+
+    text = usage.format_report_text(report, detail=True)
+    lines = text.splitlines()
+    assert lines[0].startswith("usage ")
+    assert " → " in lines[0]
+    assert lines[0].endswith("(7d) · ledger 6 events · runs 3 (worker 3 / pm 0)")
+
+    head = lines.index("runs (newest first)")
+    assert lines[head + 1] == "showing 2 of 3 runs (--limit 0 for all)"
+    coverage_index = next(index for index, line in enumerate(lines) if line.startswith("coverage:"))
+    assert head < coverage_index
+
+    # AC-015 row content: key, task_key, type, model, calls, 4 token parts,
+    # wall, status. Newest first => r1.
+    row = lines[head + 2]
+    assert "mw-usage-monitor" in row
+    assert "um-t01" in row
+    assert "research" in row
+    assert "timi/deepseek-v4.1-flash" in row
+    assert "calls 1" in row
+    assert "in 31k" in row and "out 14k" in row
+    assert "cacheR 503k" in row and "cacheW 0" in row
+    assert "wall 1m51s" in row and "done" in row
+
+    full = usage.format_report_text(
+        usage.build_report(fixed_now, fixed_since, {}, limit=0), detail=True
+    )
+    assert "runs (newest first)" in full
+    assert "showing" not in full
+    assert len([line for line in full.splitlines() if "1m51s" in line]) == 3
