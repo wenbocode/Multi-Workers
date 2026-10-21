@@ -1550,3 +1550,506 @@ def test_format_report_text_detail_section_and_truncation(tmp_path, monkeypatch)
     assert "runs (newest first)" in full
     assert "showing" not in full
     assert len([line for line in full.splitlines() if "1m51s" in line]) == 3
+
+
+# ── HTML rendering (spec §12 R11-R14, AC-018..AC-021) ────────────────────────
+
+
+def _html_report() -> dict:
+    """Minimal report: one model group, one XSS key, one open run, one session."""
+    unknown = dict.fromkeys(usage.TOKEN_FIELDS)
+    return {
+        "generated_at": "2026-10-19T10:20:30Z",
+        "since": "2026-10-12T10:20:30Z",
+        "until": "2026-10-19T10:20:30Z",
+        "window": "7d",
+        "ledger": {
+            "path": "C:/mw/usage/runs.jsonl",
+            "events": 12,
+            "bad_lines": 1,
+            "open_runs": 1,
+        },
+        "totals": {
+            "calls": 3,
+            "tokens": {
+                "input": 1_202_000,
+                "output": None,
+                "cache_read": 6_100,
+                "cache_write": 0,
+            },
+            "runs": 2,
+        },
+        "groups": {
+            "model": [
+                {
+                    "name": "timi/glm-5.3-flashx",
+                    "calls": 3,
+                    "tokens": {
+                        "input": 1_202_000,
+                        "output": None,
+                        "cache_read": 6_100,
+                        "cache_write": 0,
+                    },
+                    "runs": 2,
+                    "wall_p50": None,
+                    "wall_p90": 125.0,
+                    "n": 1,
+                    "wall_kind": "session",
+                }
+            ],
+            "type": [],
+            "key": [],
+            "project": [],
+        },
+        "coverage": [{"cli": "pi", "runs": 2, "attribution": "exact"}],
+        "sources": {"worker": 1, "pm": 1},
+        "runs_total": 2,
+        "runs": [
+            {
+                "run_id": "r1",
+                "started_at": "2026-10-19T10:10:00Z",
+                "ended_at": None,
+                "key": "<img src=x onerror=alert(1)>",
+                "task_key": "um-t10",
+                "type": "coding",
+                "model": "timi/glm-5.3-flashx",
+                "calls": None,
+                "tokens": dict(unknown),
+                "wall_s": 125.0,
+                "wall_kind": "session",
+                "status": None,
+                "attribution": "exact",
+                "session_id": "01JPMWINDOW0001",
+                "open_run": False,
+            },
+            {
+                "run_id": "r2",
+                "started_at": "2026-10-19T10:00:00Z",
+                "ended_at": None,
+                "key": "alpha",
+                "task_key": None,
+                "type": "coding",
+                "model": "timi/glm-5.3-flashx",
+                "calls": 2,
+                "tokens": {
+                    "input": 1_000,
+                    "output": 200,
+                    "cache_read": None,
+                    "cache_write": 0,
+                },
+                "wall_s": None,
+                "wall_kind": "none",
+                "status": None,
+                "attribution": "exact",
+                "session_id": None,
+                "open_run": True,
+            },
+        ],
+    }
+
+
+def test_render_html_document_skeleton_is_self_contained() -> None:
+    html = usage.render_html(_html_report())
+
+    assert html.startswith("<!doctype html>")
+    assert html.endswith("</html>")
+    assert '<html lang="zh">' in html
+    assert '<meta charset="utf-8">' in html
+    assert 'name="viewport"' in html
+    assert "<style>" in html and "</style>" in html
+    assert "@import" not in html
+    assert "<script" not in html.lower()
+    assert 'src="' not in html
+    assert "http://" not in html and "https://" not in html
+    assert "xmlns" not in html
+    # layout must be readable: sticky head, zebra rows, tabular numbers, centered
+    assert "border-collapse: collapse" in html
+    assert "position: sticky" in html
+    assert "nth-child(even)" in html
+    assert "tabular-nums" in html
+    assert "max-width: 1400px" in html
+    assert "Microsoft YaHei" in html
+    assert "word-break: break-all" in html
+    # header block: generated time, window, ledger status, coverage
+    assert "生成时间" in html and "窗口" in html
+    assert "events 12" in html and "bad_lines 1" in html and "open_runs 1" in html
+    assert "coverage: pi 2 runs (exact)" in html
+    # default title carries the window
+    assert "<title>mw usage — " in html
+
+
+def test_render_html_custom_title_is_escaped() -> None:
+    html = usage.render_html(_html_report(), title='<b title="x">t</b>')
+
+    assert "<title>&lt;b title=&quot;x&quot;&gt;t&lt;/b&gt;</title>" in html
+
+
+def test_render_html_escapes_untrusted_ledger_strings() -> None:
+    html = usage.render_html(_html_report())
+
+    assert "<img" not in html
+    assert "onerror=alert(1)>" not in html
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+
+
+def test_render_html_none_renders_dash_never_zero() -> None:
+    html = usage.render_html(_html_report())
+
+    # summary card and group row: unknown output stays "-"
+    assert '<div class="label">output</div><div class="value">-</div>' in html
+    assert '<td class="num">1.2M</td><td class="num">-</td>' in html
+    # a detail row with calls/tokens unknown renders dashes, not zeros
+    assert '<td class="num">-</td><td class="num">-</td>' in html
+    assert usage._format_tokens(None) == "-"
+
+
+def test_render_html_group_tables_only_for_non_empty_groups() -> None:
+    html = usage.render_html(_html_report())
+
+    assert "<h2>by model</h2>" in html
+    for absent in ("by type", "by key", "by project"):
+        assert f"<h2>{absent}</h2>" not in html
+    assert html.count("<table>") == 2  # one group table + the runs table
+
+
+def test_render_html_runs_table_open_run_session_marker_and_footnotes() -> None:
+    html = usage.render_html(_html_report())
+
+    assert "<td>running</td>" in html
+    assert '<td class="num">2m05s*</td>' in html
+    assert usage.SESSION_WALL_FOOTNOTE in html
+    assert "`-` = 无数据/不适用" in html
+    assert "<h2>runs (newest first)</h2>" in html
+
+
+def test_render_html_empty_window_renders_message() -> None:
+    report = _html_report()
+    report["groups"] = {"model": [], "type": [], "key": [], "project": []}
+    report["runs"] = []
+    report["runs_total"] = 0
+    report["totals"] = {
+        "calls": 0,
+        "tokens": dict.fromkeys(usage.TOKEN_FIELDS),
+        "runs": 0,
+    }
+
+    html = usage.render_html(report)
+
+    assert "窗口内没有运行" in html
+    assert "no usage in window" in html
+    assert "<h2>by model</h2>" not in html
+    assert html.count("<table>") == 1  # only the runs table, with its headers
+    assert "<th>started_at</th>" in html
+
+
+def test_render_html_matches_text_semantics_on_rich_fixture(tmp_path, monkeypatch) -> None:
+    _rich_fixture(tmp_path, monkeypatch)
+
+    report = usage.build_report(NOW, SINCE, {}, limit=0)
+    html = usage.render_html(report)
+    text = usage.format_report_text(report, detail=True)
+
+    # every non-empty group table is present
+    for title in ("by model", "by type", "by key", "by project"):
+        assert f"<h2>{title}</h2>" in html
+    for row in report["groups"]["model"]:
+        assert row["name"] in html
+    assert report["groups"]["project"][0]["name"] in html
+
+    # AC-020: same helpers, same numbers; both renderers read one report dict
+    first = report["groups"]["model"][0]
+    for field in usage.TOKEN_FIELDS:
+        rendered = usage._format_tokens(first["tokens"][field])
+        assert f'<td class="num">{rendered}</td>' in html
+    assert "coverage: pi 4 runs (exact)" in html
+    assert "coverage: pi 4 runs (exact)" in text
+
+    # open run (r5) has no status yet -> "running", never a raw None
+    assert any(run["open_run"] for run in report["runs"])
+    assert "<td>running</td>" in html
+    assert "None" not in html
+
+    # PM window session keeps the shared marker + footnote, as in text
+    assert any(run["wall_kind"] == "session" for run in report["runs"])
+    assert usage.SESSION_WALL_MARK in html
+    assert usage.SESSION_WALL_FOOTNOTE in html
+    assert usage.SESSION_WALL_FOOTNOTE in text
+
+    # truncated detail table discloses the cut (same wording as text)
+    truncated = usage.build_report(NOW, SINCE, {}, limit=2)
+    tail = usage.render_html(truncated)
+    assert "showing 2 of " in tail and "(--limit 0 for all)" in tail
+
+
+# ── HTML full-run table (spec §13 R15-R17, AC-022..AC-024) ───────────────────
+
+
+def _runs_tbody(html: str) -> str:
+    """Body of the runs table only: group tables are rendered before it."""
+    tail = html.split("<h2>runs (newest first)", 1)[1]
+    return tail.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+
+
+def _runs_table_row_count(html: str) -> int:
+    return _runs_tbody(html).count("<tr>")
+
+
+def test_build_report_include_all_runs_adds_uncut_list(tmp_path, monkeypatch) -> None:
+    _rich_fixture(tmp_path, monkeypatch)
+
+    default = usage.build_report(NOW, SINCE, {}, limit=3)
+    full = usage.build_report(NOW, SINCE, {}, limit=3, include_all_runs=True)
+
+    # AC-023: the default call keeps the exact pre-v0.5 key set (no JSON bloat).
+    assert "runs_all" not in default
+    assert "runs_all" in full
+
+    assert full["runs_total"] > 3
+    assert len(full["runs_all"]) == full["runs_total"]
+    # R16: `--limit` still owns the JSON/text view.
+    assert len(full["runs"]) == 3
+    assert full["runs_total"] == default["runs_total"]
+    assert full["runs"] == default["runs"]
+
+
+def test_build_report_runs_all_prefix_matches_limited_runs(tmp_path, monkeypatch) -> None:
+    _rich_fixture(tmp_path, monkeypatch)
+
+    full = usage.build_report(NOW, SINCE, {}, limit=3, include_all_runs=True)
+    limited = usage.build_report(NOW, SINCE, {}, limit=3)
+    uncut = usage.build_report(NOW, SINCE, {}, limit=0, include_all_runs=True)
+
+    # AC-024: same rows, same order, same fields -- just not cut.
+    assert full["runs_all"][:3] == limited["runs"]
+    assert full["runs_all"] == uncut["runs"]
+    # R17: one list, referenced twice, so a second scan cannot drift the order.
+    assert uncut["runs_all"] is uncut["runs"]
+
+
+def test_render_html_runs_all_renders_every_row_with_total_heading(tmp_path, monkeypatch) -> None:
+    _rich_fixture(tmp_path, monkeypatch)
+    report = usage.build_report(NOW, SINCE, {}, limit=2, include_all_runs=True)
+    assert len(report["runs"]) == 2 < report["runs_total"]
+
+    html = usage.render_html(report)
+
+    # AC-022: the HTML table is the window, not the `--limit` slice.
+    assert _runs_table_row_count(html) == report["runs_total"]
+    assert "showing" not in html
+    assert f"<h2>runs (newest first) · {report['runs_total']}</h2>" in html
+    # no re-sort: the first rendered row carries the newest started_at
+    first = usage._format_local_stamp(report["runs_all"][0]["started_at"])
+    second = usage._format_local_stamp(report["runs_all"][1]["started_at"])
+    body = _runs_tbody(html)
+    assert body.index(first) < body.index(second)
+
+
+def test_render_html_falls_back_to_runs_without_runs_all() -> None:
+    report = _html_report()
+    assert "runs_all" not in report
+
+    html = usage.render_html(report)
+
+    assert _runs_table_row_count(html) == len(report["runs"]) == 2
+    # legacy heading: this table *is* the cut slice, and the cut is disclosed
+    assert "<h2>runs (newest first)</h2>" in html
+
+    # a non-list `runs_all` is not trusted either (no crash, no guessing)
+    report["runs_all"] = "not-a-list"
+    assert _runs_table_row_count(usage.render_html(report)) == 2
+
+
+def test_render_html_search_hint_only_above_row_threshold(monkeypatch) -> None:
+    report = _html_report()
+    rows = report["runs"]
+    report["runs_all"] = [rows[0], rows[1], rows[0]]
+    report["runs_total"] = len(report["runs_all"])
+
+    # 3 rows stay quiet under the real threshold
+    assert usage.HTML_SEARCH_HINT_ROWS == 2000
+    assert "Ctrl+F" not in usage.render_html(report)
+
+    monkeypatch.setattr(usage, "HTML_SEARCH_HINT_ROWS", 2)
+    html = usage.render_html(report)
+
+    assert "共 3 行，可用浏览器 Ctrl+F 搜索 key / task_key" in html
+    assert _runs_table_row_count(html) == 3
+    assert "showing" not in html
+
+
+def test_render_html_renders_every_row_past_threshold() -> None:
+    report = _html_report()
+    base = report["runs"][1]
+    report["runs_all"] = [base] * (usage.HTML_SEARCH_HINT_ROWS + 1)
+    report["runs_total"] = len(report["runs_all"])
+
+    html = usage.render_html(report)
+
+    assert _runs_table_row_count(html) == usage.HTML_SEARCH_HINT_ROWS + 1
+    assert f"共 {usage.HTML_SEARCH_HINT_ROWS + 1} 行，可用浏览器 Ctrl+F" in html
+    assert f"<h2>runs (newest first) · {usage.HTML_SEARCH_HINT_ROWS + 1}</h2>" in html
+
+
+# ── Run detail project field (spec §14 R18-R20, AC-025..AC-027) ─────────────
+
+
+def _project_fixture(tmp_path, monkeypatch):
+    """One worker run with a ledger project, one without, and one PM window."""
+    target = tmp_path / "usage"
+    pi_root = tmp_path / "pi"
+    monkeypatch.setenv("MW_USAGE_DIR", str(target))
+    monkeypatch.setenv("MW_PI_SESSIONS_DIR", str(pi_root))
+
+    _write_ledger(
+        target / "runs.jsonl",
+        [
+            _start("r-proj", key="alpha", project="H:/git/ProjA",
+                   session_id="mw-alpha-1-1", ts=_at(60)),
+            _end("r-proj", wall_s=30.0, ts=_at(59)),
+            # No ledger project and no session log: nothing to fall back on.
+            _start("r-none", key="gamma", project=None,
+                   session_id="mw-gamma-1-1", ts=_at(30)),
+            _end("r-none", wall_s=10.0, ts=_at(29)),
+        ],
+    )
+    _write_pi_session(
+        pi_root,
+        "2026-10-19T10-00-00-000Z_mw-alpha-1-1.jsonl",
+        [
+            _pi_header("mw-alpha-1-1", _at(58), cwd="H:/git/ProjA"),
+            _pi_assistant(_at(57), raw_usage=_usage(100, 10, 0, 0)),
+        ],
+    )
+    # PM window session: no mw- prefix, no ledger row, project == header cwd.
+    _write_pi_session(
+        pi_root,
+        "2026-10-19T09-00-00-000Z_01JPMWINDOWPROJ.jsonl",
+        [
+            _pi_header("01JPMWINDOWPROJ", _at(40), cwd="H:/git/ProjC"),
+            _pi_assistant(_at(39), raw_usage=_usage(5, 1, 0, 0)),
+        ],
+    )
+    return target, pi_root
+
+
+def test_build_report_runs_project_from_ledger_and_pm_cwd(tmp_path, monkeypatch) -> None:
+    _project_fixture(tmp_path, monkeypatch)
+
+    report = usage.build_report(NOW, SINCE, {}, limit=0)
+    rows = {row["run_id"]: row for row in report["runs"]}
+
+    # AC-025: a worker row carries its ledger `start.project`, verbatim.
+    assert rows["r-proj"]["project"] == "H:/git/ProjA"
+    # ... and a row with neither ledger project nor session header is null.
+    assert rows["r-none"]["project"] is None
+    # AC-025: a PM session row carries its header `cwd`.
+    pm_rows = [row for row in report["runs"] if row["run_id"] is None]
+    assert len(pm_rows) == 1
+    assert pm_rows[0]["project"] == "H:/git/ProjC"
+
+    # R20: null is JSON null, never an empty string.
+    dumped = json.dumps(report["runs"])
+    assert '"project": null' in dumped
+    assert '"project": ""' not in dumped
+
+    # R19/AC-027: the group joins the same raw value and displays the basename.
+    assert {row["name"] for row in report["groups"]["project"]} == {"ProjA", "ProjC"}
+    assert {
+        usage._project_name(row["project"]) for row in report["runs"] if row["project"]
+    } <= {row["name"] for row in report["groups"]["project"]}
+
+
+def test_build_report_runs_project_falls_back_to_session_cwd(
+    tmp_path, monkeypatch
+) -> None:
+    target = tmp_path / "usage"
+    pi_root = tmp_path / "pi"
+    monkeypatch.setenv("MW_USAGE_DIR", str(target))
+    monkeypatch.setenv("MW_PI_SESSIONS_DIR", str(pi_root))
+    # An old ledger row written before `project` existed: no key at all, and
+    # the row constructor must not raise (R20).
+    old = _start("r-old", key="delta", session_id="mw-delta-1-1", ts=_at(60))
+    old.pop("project")
+    _write_ledger(target / "runs.jsonl", [old, _end("r-old", wall_s=5.0, ts=_at(59))])
+    _write_pi_session(
+        pi_root,
+        "2026-10-19T10-00-00-000Z_mw-delta-1-1.jsonl",
+        [
+            _pi_header("mw-delta-1-1", _at(58), cwd="H:/git/ProjD"),
+            _pi_assistant(_at(57), raw_usage=_usage(10, 1, 0, 0)),
+        ],
+    )
+
+    report = usage.build_report(NOW, SINCE, {}, limit=0)
+
+    assert report["runs"][0]["project"] == "H:/git/ProjD"  # session header cwd
+
+
+def test_format_report_text_detail_renders_project_basename_and_dash(
+    tmp_path, monkeypatch
+) -> None:
+    _project_fixture(tmp_path, monkeypatch)
+
+    report = usage.build_report(NOW, SINCE, {}, limit=0)
+    text = usage.format_report_text(report, detail=True)
+    detail = text.split("runs (newest first)", 1)[1]
+
+    # AC-026: the column sits right after started_at and renders the path tail.
+    proj_line = next(line for line in detail.splitlines() if "alpha" in line)
+    assert proj_line.split()[1] == "ProjA"
+    pm_line = next(line for line in detail.splitlines() if "ProjC" in line)
+    assert pm_line.split()[1] == "ProjC"
+    # R20: null renders `-`, and the full path never lands in the table.
+    none_line = next(line for line in detail.splitlines() if "gamma" in line)
+    assert none_line.split()[1] == "-"
+    assert "H:/git/ProjA" not in text
+
+
+def test_render_html_runs_project_cell_basename_with_title(
+    tmp_path, monkeypatch
+) -> None:
+    _project_fixture(tmp_path, monkeypatch)
+
+    report = usage.build_report(NOW, SINCE, {}, limit=0, include_all_runs=True)
+    html = usage.render_html(report)
+    tbody = _runs_tbody(html)
+
+    # AC-026: basename as cell text, full path in the (escaped) title.
+    assert "<th>project</th>" in html
+    assert '<td title="H:/git/ProjA">ProjA</td>' in tbody
+    assert '<td title="H:/git/ProjC">ProjC</td>' in tbody
+    # R20: a null project is a plain `-` cell with no title at all.
+    none_row = next(row for row in tbody.split("<tr>") if "gamma" in row)
+    assert "title=" not in none_row
+    assert "<td>-</td>" in none_row
+
+
+def test_render_html_project_title_is_escaped() -> None:
+    report = _html_report()
+    report["runs"][1]["project"] = 'H:/git/<b>"x"</b>'
+
+    html = usage.render_html(report)
+
+    # R14/AC-021: the full path is untrusted text inside an attribute.
+    assert 'title="H:/git/&lt;b&gt;&quot;x&quot;&lt;/b&gt;"' in html
+    assert 'title="H:/git/<b>' not in html
+
+
+def test_build_report_project_filter_covers_worker_and_pm_rows(
+    tmp_path, monkeypatch
+) -> None:
+    _rich_fixture(tmp_path, monkeypatch)
+
+    # AC-027: the PM session's cwd participates in the filter and every
+    # remaining row (worker or PM) matches it.
+    pm_only = usage.build_report(NOW, SINCE, {"project": "ProjC"}, limit=0)
+    assert pm_only["runs_total"] == pm_only["totals"]["runs"] == 1
+    assert [row["run_id"] for row in pm_only["runs"]] == [None]
+    assert all(usage._project_matches(row["project"], "ProjC") for row in pm_only["runs"])
+
+    # Same on the worker side, including a full-path filter (CLI appends a path).
+    workers = usage.build_report(NOW, SINCE, {"project": "H:/git/ProjA"}, limit=0)
+    assert {row["run_id"] for row in workers["runs"]} == {"r1", "r2"}
+    assert workers["runs_total"] == workers["totals"]["runs"] == 2
+    assert all(usage._project_matches(row["project"], "ProjA") for row in workers["runs"])
+    assert {row["name"] for row in workers["groups"]["project"]} == {"ProjA"}

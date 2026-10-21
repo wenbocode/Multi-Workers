@@ -16,6 +16,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -172,6 +173,17 @@ def test_parse_args_stats_defaults() -> None:
     assert args.until is None  # None = now
     assert args.detail is False
     assert args.limit == 20
+    # spec §12: HTML sidecar + browser toggle (default off/off).
+    assert args.html is None
+    assert args.no_open is False
+
+
+def test_parse_args_stats_html_flag_forms() -> None:
+    """spec §12 R11: `--html` alone means the default path, `--html P` that path."""
+    assert mw._parse_args(["stats", "--html"]).html == ""
+    assert mw._parse_args(["stats", "--html", "out/r.html"]).html == "out/r.html"
+    both = mw._parse_args(["stats", "--html", "--no-open"])
+    assert (both.html, both.no_open) == ("", True)
 
 
 def test_parse_args_stats_accepts_runner_appended_project() -> None:
@@ -465,7 +477,7 @@ def test_cmd_stats_detail_text_appends_run_table(env_dirs) -> None:
     assert code == 0, err
     assert "runs (newest first)" not in out
 
-    code, out, err = _run_stats(["--detail"])
+    code, out, err = _run_stats(["--detail", "--no-open"])
     assert code == 0, err
     assert "runs (newest first)" in out
     table = out.split("runs (newest first)", 1)[1]
@@ -487,7 +499,7 @@ def test_cmd_stats_limit_cuts_detail_and_json(env_dirs) -> None:
         _pi_session(pi_root, session_id, at_minutes=start_min)
     _write_ledger(usage_dir, runs)
 
-    code, out, err = _run_stats(["--detail", "--limit", "1"])
+    code, out, err = _run_stats(["--detail", "--no-open", "--limit", "1"])
     assert code == 0, err
     assert "runs (newest first)" in out
     assert "showing 1 of 3 runs" in out
@@ -526,6 +538,267 @@ def test_cmd_stats_json_carries_runs_without_detail(env_dirs) -> None:
     assert row["run_id"] == "run-1" and row["key"] == WORKER_KEY
     assert row["calls"] == 1 and row["open_run"] is False
     assert row["wall_kind"] == "run" and row["wall_s"] == 3000.0
+
+
+# -- 4c. static HTML sidecar + browser (spec §12, AC-018/AC-019) ----------
+
+
+def _html_report_text(usage_dir: pathlib.Path, pi_root: pathlib.Path, monkeypatch) -> None:
+    """One worker run + its session, so all four group tables are populated."""
+    _write_ledger(usage_dir, [_worker_run()])
+    _pi_session(pi_root, WORKER_SESSION_ID)
+    monkeypatch.delenv("MW_STATS_NO_OPEN", raising=False)
+
+
+def test_cmd_stats_html_writes_self_contained_report(env_dirs, tmp_path, monkeypatch) -> None:
+    """AC-018: `--html <path>` writes the file; `--no-open` never opens it."""
+    usage_dir, pi_root, _claude = env_dirs
+    _html_report_text(usage_dir, pi_root, monkeypatch)
+
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("webbrowser.open must not run under --no-open")
+
+    monkeypatch.setattr(mw.webbrowser, "open", _explode)
+
+    # No --html and no --detail: no sidecar at all (the text path is unchanged).
+    code, out, _err = _run_stats([])
+    assert code == 0
+    assert "html:" not in out
+    assert not (usage_dir / "reports").exists()
+
+    target = tmp_path / "nested" / "dir" / "r.html"  # parents are created
+    code, out, err = _run_stats(["--html", str(target), "--no-open"])
+    assert code == 0, err
+    assert target.exists()
+    html = target.read_text(encoding="utf-8")
+    # Four group tables + the run table are the anchors, not the text brief.
+    for heading in ("by model", "by type", "by key", "by project"):
+        assert f"<h2>{heading}</h2>" in html
+    # spec §13.2 R15: once the table *is* the whole window the heading states
+    # its size (`runs (newest first) · N`) instead of the legacy `showing` note.
+    assert '<h2>runs (newest first) \u00b7 1</h2>' in html
+    assert "showing" not in html
+    for header in ("started_at", "task_key", "cacheR", "session_id"):
+        assert f"<th>{header}</th>" in html or f'<th class="num">{header}</th>' in html
+    assert html.startswith("<!doctype html>")
+    assert 'http://' not in html and 'https://' not in html
+    # Text mode: the report prefix is untouched, the path is the last line.
+    assert out.rstrip("\n").splitlines()[-1] == f"html: {target}"
+    assert "by model" in out and "no ledger yet" not in out
+
+
+def test_cmd_stats_detail_writes_default_path(env_dirs, monkeypatch) -> None:
+    """R12: `--detail` keeps the text bytes and adds the default HTML sidecar."""
+    usage_dir, pi_root, _claude = env_dirs
+    _html_report_text(usage_dir, pi_root, monkeypatch)
+    monkeypatch.setattr(mw.webbrowser, "open", lambda _uri: False)
+
+    code, plain, _err = _run_stats(["--no-open"])
+    assert code == 0
+    assert "html:" not in plain  # no --html and no --detail ⇒ no sidecar
+
+    code, out, err = _run_stats(["--detail", "--no-open"])
+    assert code == 0, err
+    # AC-019: suppressing the browser changes neither text nor rc.
+    code, out_open, _err_open = _run_stats(["--detail"])
+    stamp = re.compile(r"usage-\d{8}-\d{6}\.html")
+    assert code == 0
+    assert stamp.sub("STAMP", out_open) == stamp.sub("STAMP", out)
+    path = pathlib.Path(out.rstrip("\n").splitlines()[-1].split("html: ", 1)[1])
+    assert path.parent == usage_dir / "reports"
+    assert re.fullmatch(r"usage-\d{8}-\d{6}\.html", path.name)
+    assert path.exists() and path.read_text(encoding="utf-8").startswith("<!doctype html>")
+
+    # A second refresh is a second file: history is never overwritten.
+    time.sleep(1.1)  # the default name has one-second resolution
+    code, out2, err2 = _run_stats(["--detail", "--no-open"])
+    assert code == 0, err2
+    path2 = pathlib.Path(out2.rstrip("\n").splitlines()[-1].split("html: ", 1)[1])
+    assert path2 != path and path2.exists()
+
+
+def test_cmd_stats_detail_opens_browser(env_dirs, monkeypatch) -> None:
+    """AC-019: `--detail` opens the file:// URI exactly once by default."""
+    usage_dir, pi_root, _claude = env_dirs
+    _html_report_text(usage_dir, pi_root, monkeypatch)
+    calls: list[str] = []
+    monkeypatch.setattr(mw.webbrowser, "open", lambda uri: calls.append(uri) or True)
+
+    code, out, err = _run_stats(["--detail"])
+    assert code == 0, err
+    assert len(calls) == 1
+    assert calls[0].startswith("file:///")
+    assert calls[0].endswith(".html")
+    assert "warning" not in err
+    assert "runs (newest first)" in out
+
+
+def test_cmd_stats_no_open_env_suppresses_browser(env_dirs, monkeypatch) -> None:
+    """AC-019: `MW_STATS_NO_OPEN=1` is the automation switch (`0` = open)."""
+    usage_dir, pi_root, _claude = env_dirs
+    _html_report_text(usage_dir, pi_root, monkeypatch)
+
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("MW_STATS_NO_OPEN must suppress webbrowser.open")
+
+    monkeypatch.setattr(mw.webbrowser, "open", _explode)
+    monkeypatch.setenv("MW_STATS_NO_OPEN", "1")
+    code, out, err = _run_stats(["--detail"])
+    assert code == 0, err
+    assert "html:" in out
+
+    # `0` is not "set": it restores the default open behaviour.
+    opened: list[str] = []
+    monkeypatch.setattr(mw.webbrowser, "open", lambda uri: opened.append(uri) or True)
+    monkeypatch.setenv("MW_STATS_NO_OPEN", "0")
+    code, _out, err = _run_stats(["--detail"])
+    assert code == 0, err
+    assert len(opened) == 1
+
+
+def test_cmd_stats_json_detail_keeps_stdout_pure(env_dirs, monkeypatch) -> None:
+    """`--json` never lets the HTML path leak into the JSON document."""
+    usage_dir, pi_root, _claude = env_dirs
+    _html_report_text(usage_dir, pi_root, monkeypatch)
+    monkeypatch.setattr(mw.webbrowser, "open", lambda _uri: True)
+
+    code, out, err = _run_stats(["--json", "--detail", "--no-open"])
+    assert code == 0, err
+    report = json.loads(out)  # the whole stdout is one JSON document
+    assert set(report) == TOP_KEYS
+    assert "html" not in out
+    assert "[mw stats] html: " in err
+    assert err.strip().splitlines()[-1].endswith(".html")
+
+
+def test_cmd_stats_open_failure_warns_rc0(env_dirs, monkeypatch) -> None:
+    """AC-019: no default browser is a warning; rc stays 0 and text is intact."""
+    usage_dir, pi_root, _claude = env_dirs
+    _html_report_text(usage_dir, pi_root, monkeypatch)
+
+    def _boom(_uri):
+        raise RuntimeError("no browser")
+
+    monkeypatch.setattr(mw.webbrowser, "open", _boom)
+    code, out, err = _run_stats(["--detail"])
+    assert code == 0
+    assert "runs (newest first)" in out
+    assert "[mw stats] warning: cannot open" in err
+    path = pathlib.Path(out.rstrip("\n").splitlines()[-1].split("html: ", 1)[1])
+    assert path.exists()
+
+
+def test_cmd_stats_html_empty_window_renders_placeholder(
+    env_dirs, tmp_path, monkeypatch
+) -> None:
+    """A report with no runs still renders the table (no exception, explicit gap)."""
+    usage_dir, pi_root, _claude = env_dirs
+    pi_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.delenv("MW_STATS_NO_OPEN", raising=False)
+    monkeypatch.setattr(mw.webbrowser, "open", lambda _uri: True)
+
+    target = tmp_path / "empty.html"
+    code, _out, err = _run_stats(["--html", str(target), "--no-open"])
+    assert code == 0, err
+    assert "窗口内没有运行" in target.read_text(encoding="utf-8")
+
+
+# -- 4d. HTML = whole window, `--json` never pops a browser (spec §13) -----
+
+
+def _six_runs(usage_dir: pathlib.Path, pi_root: pathlib.Path) -> None:
+    """Six joined runs inside the default 7d window, so `--limit 3` really cuts."""
+    runs = []
+    for index in range(6):
+        session_id = f"mw-mw-usage-monitor-4242-{index}"
+        start_min = 600 - index * 60
+        runs.append(_run_at(f"run-{index}", start_min, start_min - 60, session_id))
+        _pi_session(pi_root, session_id, at_minutes=start_min)
+    _write_ledger(usage_dir, runs)
+
+
+def _runs_tbody_rows(html: str) -> int:
+    """Data rows of the runs table (group tables precede it, header sits in thead)."""
+    tail = html.split("<h2>runs (newest first)", 1)[1]
+    tbody = tail.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    return tbody.count("<tr>")
+
+
+def test_cmd_stats_html_detail_is_whole_window(env_dirs, tmp_path, monkeypatch) -> None:
+    """AC-022: `--limit` cuts the text/JSON table only; the HTML page is every run."""
+    usage_dir, pi_root, _claude = env_dirs
+    _six_runs(usage_dir, pi_root)
+    monkeypatch.delenv("MW_STATS_NO_OPEN", raising=False)
+
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("webbrowser.open must not run under --no-open")
+
+    monkeypatch.setattr(mw.webbrowser, "open", _explode)
+
+    target = tmp_path / "all.html"
+    code, out, err = _run_stats(
+        ["--since", "7d", "--detail", "--no-open", "--limit", "3",
+         "--html", str(target)]
+    )
+    assert code == 0, err
+    # R16: the text table keeps the cut and says so; runs_total stays the truth.
+    assert "showing 3 of 6 runs" in out
+    assert "runs 6 (worker 6 / pm 0)" in out
+    html = target.read_text(encoding="utf-8")
+    assert _runs_tbody_rows(html) == 6  # == runs_total, not the --limit slice
+    assert "showing" not in html
+    assert '<h2>runs (newest first) \u00b7 6</h2>' in html
+
+
+def test_cmd_stats_json_detail_never_builds_runs_all(env_dirs, monkeypatch) -> None:
+    """AC-023: `runs_all` is an HTML-only channel; the JSON key set does not widen."""
+    usage_dir, pi_root, _claude = env_dirs
+    _html_report_text(usage_dir, pi_root, monkeypatch)
+
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("webbrowser.open must not run under --json")
+
+    monkeypatch.setattr(mw.webbrowser, "open", _explode)
+
+    code, out, err = _run_stats(["--json", "--detail", "--no-open"])
+    assert code == 0, err
+    report = json.loads(out)  # the whole stdout is still one JSON document
+    assert "runs_all" not in report
+    assert set(report) == TOP_KEYS
+
+
+def test_cmd_stats_json_does_not_open_browser(env_dirs, monkeypatch) -> None:
+    """`--json` implies `--no-open`: an automation run never pops a window."""
+    usage_dir, pi_root, _claude = env_dirs
+    _html_report_text(usage_dir, pi_root, monkeypatch)
+    opened: list[str] = []
+    monkeypatch.setattr(mw.webbrowser, "open", lambda uri: opened.append(uri) or True)
+
+    code, out, err = _run_stats(["--json", "--detail"])
+    assert code == 0, err
+    assert opened == []
+    json.loads(out)
+    # The file is still written and its path is diagnostics on stderr, and the
+    # suppressed full table is disclosed exactly once (no silent downgrade).
+    assert "[mw stats] html: " in err
+    path = pathlib.Path(err.strip().splitlines()[-1].split("html: ", 1)[1])
+    assert path.exists() and path.name.endswith(".html")
+    assert err.count("[mw stats] note: --json suppresses the full run table") == 1
+
+
+def test_cmd_stats_json_explicit_html_still_opens(env_dirs, tmp_path, monkeypatch) -> None:
+    """An explicit `--json --html PATH` is a file request: write it and open it."""
+    usage_dir, pi_root, _claude = env_dirs
+    _html_report_text(usage_dir, pi_root, monkeypatch)
+    opened: list[str] = []
+    monkeypatch.setattr(mw.webbrowser, "open", lambda uri: opened.append(uri) or True)
+
+    target = tmp_path / "r.html"
+    code, out, err = _run_stats(["--json", "--detail", "--html", str(target)])
+    assert code == 0, err
+    json.loads(out)
+    assert target.exists()
+    assert opened == [target.as_uri()]
 
 
 # -- 5. dispatch + machine-level CLI smoke ---------------------------------

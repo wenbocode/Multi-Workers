@@ -218,3 +218,115 @@ v1 的输出只有 4 个维度的聚合行（`by model` / `by type` / `by key` /
 - `usage.load_runs`（`usage.py:717`）已产出 `open_run/wall_s` 语义，明细行只是不再被折叠进聚合。
 - `usage._format_row`（`usage.py:1215`）的 `-` 表示 `None` 的渲染约定。
 - `usage.SESSION_WALL_FOOTNOTE`（`usage.py` 的 `*` 脚注）在明细表里同样适用。
+
+## 12. v0.4 增补（2026-10-21，用户反馈：窗口可读性有限，要静态 HTML + `--detail` 自动打开）
+
+### 12.1 数据新鲜度（先回答问题）
+
+`mw stats` **每次调用都重新取数**，没有任何 rollup/缓存（D-6）：
+台账 `~/.mw/usage/runs.jsonl` 全量重读（341 事件级，毫秒）；token 侧按窗口扫描
+`~/.pi/agent/sessions/**/*.jsonl`（实测 7d ≈ 3–5s，含 2.6GB 语料）。
+正在跑的 worker 的会话文件会随 pi 落盘增长，所以 token 反映的是**最近一次落盘**，
+`end` 行要等 reap 才出现（此前是 `open_run`/`running`，`wall_s=null`）。
+因此「刷新」= 再调一次 `mw stats`，不需要额外机制。
+
+### 12.2 新需求
+
+- **R11 静态 HTML 报告**：`usage.render_html(report)` 产出**单文件、自包含**（内联 CSS，无外链、无网络、
+  无脚本依赖）的 HTML；`mw stats --html [PATH]` 落盘并打印路径。
+  默认路径 `<usage_dir>/reports/usage-<YYYYMMDD-HHMMSS>.html`（`MW_USAGE_DIR` 同源），每次调用新文件，不覆盖历史。
+- **R12 `--detail` 自动打开**：窗口面 `/mw stats --detail` 在落盘 HTML 后**自动用默认浏览器打开**，
+  文本仍照旧打印（终端里保留可复制的最小摘要）。自动化场景用 `--no-open`（或 `MW_STATS_NO_OPEN=1`）关闭；
+  两者都不得影响 rc 与文本内容。
+- **R13 HTML 内容**：①头部：生成时间（本地）、窗口 `since → until`、生效的过滤条件、
+  ledger 路径/事件数/bad_lines；②汇总卡：runs（worker/pm 拆分）、calls、四个 token 分量；
+  ③四张分组表（model / type / key / project，列为 calls、四分量、runs、wall p50/p90、n、wall_kind）；
+  ④runs 明细表（started_at、wall、status、key、task_key、type、model、calls、四分量、session_id）；
+  ⑤coverage 行与 `*`/`-` 脚注。**语义必须与文本输出一致**：`None` 渲染 `-`（不是 0），
+  `wall_kind=session` 的墙钟加 `*` 并带同一条脚注，`open_run` 行明确标 `running`。
+- **R14 HTML 转义**：所有来自台账/会话的字符串（key、task_key、model、project、路径）必须 HTML 转义，
+  防止 `<`/`&` 破坏结构（台账里的用户输入不可信）。
+
+### 12.3 验收补充
+
+- **AC-018**：`mw stats --html <tmp>` 生成的文件存在、单文件（无 `http://`/`https://`/`src=`/`<script src` 外链）、
+  `<html lang="zh">` + `<meta charset="utf-8">`，且包含窗口、汇总、四张分组表、明细表的锚点文本。
+- **AC-019**：`--detail` 默认尝试打开浏览器；`--no-open` 与 `MW_STATS_NO_OPEN=1` 都不打开，
+  且文本/JSON/rc 与不打开时完全一致。打开失败（无默认浏览器）只 warn，rc 仍为 0。
+- **AC-020**：HTML 渲染的数值与同一 report 的文本渲染一致（同一 `report` dict 的两个渲染器，不各自取数）；
+  `None` ⇒ `-`；`wall_kind=session` ⇒ `*` + 脚注；`open_run` ⇒ `running`。
+- **AC-021**：HTML 里出现 `<script`/`<style` 由我们生成，但台账字段里的 `<`/`&` 必须转义（用一个含
+  `<img src=x onerror=...>` 的 key 做单测，断言输出里没有可执行的原始标签）。
+
+### 12.4 非目标
+
+- 不做交互式仪表盘/自动刷新（用户要的是「刷新一次 → 静态文件」）。
+- 不引 JS 框架、不引第三方 CDN、不写文件到仓库（默认写 `~/.mw/usage/reports/`）。
+- 不改文本输出契约（`--detail` 文本仍照旧；HTML 是并列产物）。
+
+## 13. v0.5 增补（2026-10-21，用户反馈：「都 html 了就把 run 都展示吧」）
+
+### 13.1 问题
+
+`--limit`（默认 20）是为**终端**存在的：文本表滚屏、`argv` 输出有长度上限，截断必须说清。
+HTML 没有这个约束——一页 200 行明细完全可读（粘顶表头 + 斑马纹），
+把 HTML 也截断成 20 行等于让用户「为了看全量再去改参数」，与「静态报告」的目的相反。
+
+### 13.2 新需求
+
+- **R15 HTML 全量 run**：HTML 明细表展示**窗口内全部** run，行数 = `runs_total`；**不受 `--limit` 影响**。
+  标题写明总数（如 `runs (newest first) · 184`），不出现 `showing N of M` 这类截断提示。
+- **R16 契约不变**：`--limit` 仍然只作用于**文本**与 **JSON `runs[]`**（R10 不变）。
+  为不撑大 JSON，全量 run 只在「需要 HTML」时构建：`build_report(..., include_all_runs=False)`；
+  为真时额外返回 `runs_all`（list，与 `runs` 同 schema），默认不出现该键。
+- **R17 一致性**：`runs_all` 与 `runs` 的前 N 行逐字相同（同一批对象、同一排序），
+  `len(runs_all) == runs_total`；`render_html` 优先用 `runs_all`，缺失时回退 `runs`（旧调用路径不炸）。
+
+### 13.3 验收补充
+
+- **AC-022**：`mw stats --since 24h --detail --limit 3 --no-open` 生成的 HTML 里
+  `<tbody>` 的 run 行数 == `runs_total`（远大于 3），且不含 `showing 3 of`。
+- **AC-023**：`build_report(include_all_runs=True)` ⇒ `len(runs_all) == runs_total`；
+  默认调用返回的 dict **没有** `runs_all` 键（JSON 体积不回归）。
+- **AC-024**：`runs_all[:k]` 与 `build_report(limit=k)["runs"]` 逐字段深比较相等（排序与内容一致）。
+
+### 13.4 非目标
+
+- 不给 HTML 加排序/筛选 JS（静态报告，粘顶表头 + 浏览器内 `Ctrl+F` 足够）。
+- 不把全量 run 写进 JSON（`runs_all` 只是内部投递通道，CLI 的 `--json` 输出不裁剪也不扩：仍只输出 report 里实际存在的键，
+  但 CLI **不带** `--json` 时才请求 `include_all_runs`，避免 JSON 模式顺带带上全量）。
+
+## 14. v0.6 增补（2026-10-21，用户要求：`runs` 里加 `project` 字段）
+
+### 14.1 问题
+
+台账 `start` 行本来就带 `project`（launcher 写入 spawn 时的项目根），`by project` 分组也在用它；
+但 run 级明细行丢了这个字段，导致同一次查询里「分组能看到 project、逐条看不到 project」。
+跨项目并行（本机同时有 Multi-Workers / OverCode 等）时，明细无法区分来源。
+
+### 14.2 新需求
+
+- **R18 `runs[].project`**：明细行新增 `project`（字符串或 `null`）。
+  取值顺序：台账 `project`（worker run）→ 会话 header 的 `cwd`（PM 会话，或台账缺字段的老行）→ `null`。
+  不得为了这个字段额外扫描或读消息正文（`cwd` 来自已经解析过的 header）。
+- **R19 展示**：
+  - 文本 `--detail` 表在 `started_at` 之后插入 `project` 列，渲染为**路径末段**（basename，如 `Multi-Workers`），
+    `null` ⇒ `-`；列宽沿用现有紧凑风格。
+  - HTML 明细表同样插入 `project` 列，单元格文本是 basename，并带 `title="<完整路径>"`（悬停可看全路径）。
+  - `by project` 分组、`--project` 过滤语义**不变**；明细行与分组必须用同一个 project 值（同一次 join），
+    否则「按 project 过滤后明细里出现别的 project」会自相矛盾。
+- **R20 兼容**：`project` 为 `null` 时 JSON 输出 `null`（不是空串），文本/HTML 渲染 `-`；
+  旧 fixture（没有 project 的台账行）不得让行构造抛异常。
+
+### 14.3 验收补充
+
+- **AC-025**：worker run 行 `project` 等于该 run 台账 `start.project`；PM 会话行 `project` 等于会话 header `cwd`；
+  两者都缺失时是 JSON `null`。
+- **AC-026**：文本明细行含 basename 列；HTML 明细表同时含 basename 文本与 `title="<完整路径>"`。
+- **AC-027**：`--project X` 过滤后，`runs[]` 里每一行（worker 与 PM）的 project 都匹配 X，
+  且 `runs_total` 与分组 totals 的 runs 一致（不出现「明细多出/少掉」）。
+
+### 14.4 非目标
+
+- 不新增 `by project` 之外的分组维度。
+- 不把 project 规范化成 slug（保留原始路径，展示层才取 basename）。

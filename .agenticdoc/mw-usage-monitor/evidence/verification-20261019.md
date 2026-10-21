@@ -170,3 +170,38 @@ bundle，需 `/reload`），属可见性验证而非功能缺口。
 - T-08 首卡因段落顺序（`## 改动历史` 在 `## 上下文` 之前）被派发器打乱，envelope 校验 1s 失败，未产生任何文件改动；
   按 T-03 的段落顺序重写后重派（r2）即成功。T-09 卡片同样先做了顺序修正。
 - T-09 第一次运行 55s 后异常退出且无 `output.md`，serve 自动重派后成功；最终产物以复核结果为准。
+
+## V-7 v0.4/v0.5 复核（2026-10-21，静态 HTML + 全量 run）
+
+用户两轮追加：①「窗口可读性有限，做一次刷新后用静态 HTML 展示，`--detail` 后自动打开」；
+②「都 html 了就把 run 都展示吧」。PM 写入 spec §12（v0.4 R11–R14 / AC-018–021）与 §13（v0.5 R15–R17 / AC-022–024），
+三轮 worker 交付：T-10 渲染器、T-11 CLI（`--html` / `--no-open` / 自动打开）、T-12 全量 run 内核、
+T-13 CLI 接线（`include_all_runs` + `--json` 不自动弹窗）。
+
+PM 独立复核（真实命令，非照抄报告）：
+
+```
+$ python -m pytest test_stats_cli.py test_usage.py -q          → 83 passed
+$ python mw.py stats --since 24h --detail --no-open
+  → 文本末尾 `html: C:\Users\wenbozhou\.mw\usage\reports\usage-20261021-171913.html`
+  → 该文件 76352B，标题 `<h2>runs (newest first) · 189</h2>`，明细 189 行 = runs_total 189，
+     全篇无 `showing`、无 `http`、无 `<script`
+$ python mw.py stats --since 2h --json --detail          （stderr 分离）
+  → stdout 纯 JSON：11 键，无 `runs_all`，runs 20 / runs_total 72
+  → stderr：`[mw stats] note: --json suppresses the full run table`（未弹浏览器）
+```
+
+语义分工（AC-022/AC-023/AC-024）：`--limit` 只截**文本**与 **JSON `runs[]`**；HTML 恒为窗口内全量，
+数据来自同一批 run（`runs_all` 与 `runs` 同源同序），超过 2000 行时加 Ctrl+F 提示。
+`render_html` 单文件自包含（内联 CSS、无外链/CDN/远程脚本），台账字段全部 HTML 转义。
+
+### 强制偏差（PM 接受）
+
+T-13 把 `test_stats_cli.py` 里 `test_cmd_stats_html_writes_self_contained_report` 的旧断言
+`<h2>runs (newest first)</h2>` 收紧为 `<h2>runs (newest first) · 1</h2>` + 「无 `showing`」：
+旧断言与 spec §13.2 R15 直接冲突（标题必须带总数），收紧后与 `test_usage.py` 的锁定一致，未削弱覆盖面。
+
+### 数据新鲜度（回答用户第 1 问）
+
+两次调用相隔 26 秒：`calls 4950 → 4953`、`output 3901549 → 3924382`（Δ +3 / +22833），`generated_at` 每次变化。
+无 rollup/缓存：台账全量重读 + 按窗口重扫会话文件，运行中的 worker 反映最近一次落盘，`end` 行等 reap。

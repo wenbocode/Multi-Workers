@@ -30,6 +30,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import webbrowser
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
@@ -6725,11 +6726,22 @@ def cmd_stats(args: argparse.Namespace) -> int:
     if args.limit is not None and args.limit < 0:
         print("mw stats: --limit must be >= 0", file=sys.stderr)
         return 2
+    # R15-R17: the HTML page is the readable view of the WHOLE window, while
+    # the text table and the JSON ``runs[]`` keep the ``--limit`` cut (R10).
+    # ``--json`` wins on purity: its document stays byte-identical (AC-023), so
+    # the uncut ``runs_all`` row list is never built for it.
+    needs_html = args.html is not None or args.detail
+    if needs_html and args.json:
+        print(
+            "[mw stats] note: --json suppresses the full run table",
+            file=sys.stderr,
+        )
     report = usage.build_report(
         since=since,
         until=until,
         limit=args.limit,
         detail=args.detail,
+        include_all_runs=needs_html and not args.json,
         filters={
             "window": since_text,
             "key": args.key,
@@ -6745,7 +6757,67 @@ def cmd_stats(args: argparse.Namespace) -> int:
         print(json.dumps(report, indent=2, ensure_ascii=False))
     else:
         print(usage.format_report_text(report, detail=args.detail))
+    # R11/R12: a static HTML sibling of the same report. `--detail` implies it
+    # (the terminal table is a summary, the browser is the readable view).
+    if needs_html:
+        # AC-019 + script safety: an unnamed `--json` run never pops a window
+        # (same effect as `--no-open`); an explicit `--html PATH` still does.
+        explicit_path = bool(str(args.html or "").strip())
+        _publish_stats_html(
+            report,
+            args.html or "",
+            no_open=args.no_open or (args.json and not explicit_path),
+            as_json=args.json,
+        )
     return 0
+
+
+#: Env switch that suppresses opening the report (AC-019); `0` = open again.
+_STATS_NO_OPEN_ENV = "MW_STATS_NO_OPEN"
+
+
+def _publish_stats_html(
+    report: Mapping[str, object],
+    spec: str,
+    *,
+    no_open: bool,
+    as_json: bool,
+) -> pathlib.Path | None:
+    """Write the static HTML report, then open it in the browser (R11/R12).
+
+    ``spec`` is the raw ``--html`` value: an explicit PATH, or empty for the
+    default ``<usage_dir>/reports/usage-<YYYYMMDD-HHMMSS>.html`` (one fresh
+    file per call, history is never overwritten). Failures here never change
+    the exit code: the text/JSON report was already printed (AC-019).
+    """
+    explicit = spec.strip()
+    if explicit:
+        target = pathlib.Path(explicit).expanduser()
+    else:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        target = usage.usage_dir() / "reports" / f"usage-{stamp}.html"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(usage.render_html(report))
+    except OSError as exc:
+        print(f"[mw stats] warning: cannot write {target}: {exc}", file=sys.stderr)
+        return None
+    # `--json` keeps stdout a pure JSON document; the path is diagnostics.
+    if as_json:
+        print(f"[mw stats] html: {target}", file=sys.stderr)
+    else:
+        print(f"html: {target}")
+    suppress = str(os.environ.get(_STATS_NO_OPEN_ENV) or "").strip()
+    if no_open or (suppress and suppress != "0"):
+        return target
+    try:
+        opened = webbrowser.open(target.as_uri())
+    except Exception:  # noqa: BLE001 - no default browser is a warning, not an error
+        opened = False
+    if not opened:
+        print(f"[mw stats] warning: cannot open {target}", file=sys.stderr)
+    return target
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -6786,6 +6858,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                          help="append the per-run table (key / task / type / model / tokens / wall)")
     stats_p.add_argument("--limit", type=int, default=20, metavar="N",
                          help="max runs in the detail table and JSON runs[] (0 = all, default 20)")
+    stats_p.add_argument("--html", nargs="?", const="", default=None, metavar="PATH",
+                         help="write a static HTML report (default: "
+                              "<usage_dir>/reports/usage-YYYYMMDD-HHMMSS.html)")
+    stats_p.add_argument("--no-open", action="store_true",
+                         help="do not open the HTML report in the browser")
 
     doctor_p = sub.add_parser(
         "doctor",

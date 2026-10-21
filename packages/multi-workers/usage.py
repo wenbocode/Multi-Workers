@@ -92,11 +92,32 @@ _GROUP_TITLES = (
 SESSION_WALL_MARK = "*"
 SESSION_WALL_FOOTNOTE = "* = PM 会话跨度（header→末条），非 worker 墙钟"
 
+#: ``[CLAIMS]`` trace line (claim-driven-review T-05 / design D-004). It is a
+#: line of its own and never folded into ``[END]``: both sides of ``[END]``
+#: are anchored regexes (``heartbeat.ts:93``, ``mw_common.py:2768``). The five
+#: fields keep a fixed order; trailing fields are ignored, a missing field
+#: makes the line unparseable (no guessing).
+_CLAIMS_LINE_RE = re.compile(
+    r"^\s*\[CLAIMS\]\s+(?:\S+\s+)?"
+    r"claims=(\d+)\s+"
+    r"closed=(\d+)\s+"
+    r"partial=(\d+)\s+"
+    r"unverified=(\d+)\s+"
+    r"fetches=(\d+)(?=\s|$)"
+)
+
+#: Claim counters of one run (``[CLAIMS]`` line / ``run.json#claims`` subobject).
+CLAIMS_FIELDS = ("claims", "closed", "partial", "unverified", "fetches")
+
+#: Rendered for "not computable": never ``0`` and never an approximation.
+CLAIMS_NA = "n/a"
+
 #: Run-level detail fields, verbatim (spec §11.2 R9). Missing values stay
 #: ``None`` and are rendered ``-`` in text.
 DETAIL_FIELDS = (
     "run_id",
     "started_at",
+    "project",
     "ended_at",
     "key",
     "task_key",
@@ -884,12 +905,136 @@ def load_runs(
             "open_run": spawned and not end,
             "spawned": spawned,
         }
+        # Optional claim metadata (claim-driven-review T-05): a ledger event may
+        # carry the run's claim counters (a ``claims`` subobject as in run.json,
+        # or its ``[CLAIMS]`` line). Absent on both events -> the key is not
+        # added and the run dict is exactly what it was before T-05.
+        for claim_key in ("claims", "claims_line"):
+            value = end.get(claim_key) if end.get(claim_key) is not None else base.get(claim_key)
+            if value is not None:
+                run[claim_key] = value
         if not _run_matches(run, filters):
             continue
         runs.append(run)
 
     meta["open_runs"] = sum(1 for run in runs if run["open_run"])
     return runs, meta
+
+
+# ── claim coverage metrics (claim-driven-review T-05, design §3.4) ──────────
+
+
+def parse_claims_line(line: str) -> dict[str, int] | None:
+    """Parse one ``[CLAIMS]`` trace line into its five counters, or ``None``.
+
+    Shape (T-04, design D-004): ``[CLAIMS] <ts> claims=<n> closed=<n>
+    partial=<n> unverified=<n> fetches=<n>``. The field order is fixed, so a
+    reordered line is not parsed; extra trailing fields are ignored. A line
+    without all five counters returns ``None`` (an old bundle has no
+    ``[CLAIMS]`` line at all, and a half line is not a measurement).
+    """
+    if not isinstance(line, str):
+        return None
+    match = _CLAIMS_LINE_RE.match(line)
+    if match is None:
+        return None
+    return {field: int(value) for field, value in zip(CLAIMS_FIELDS, match.groups())}
+
+
+def parse_claims_lines(lines: Iterable[str]) -> dict[str, int] | None:
+    """Counters of the last parseable ``[CLAIMS]`` line in ``lines``.
+
+    A trace can hold more than one line (a retried run); the last one is the
+    settled measurement, so later lines win. ``None`` when no line parses.
+    """
+    found: dict[str, int] | None = None
+    for line in lines:
+        parsed = parse_claims_line(line)
+        if parsed is not None:
+            found = parsed
+    return found
+
+
+def _run_claims_counts(run: Mapping[str, Any] | None) -> dict[str, int] | None:
+    """Claim counters carried by one run mapping, or ``None``.
+
+    A pre-parsed ``claims`` subobject (``run.json`` / a ledger event) wins;
+    otherwise the run's ``[CLAIMS]`` line is parsed from ``claims_line`` or
+    from the multiline ``trace`` text. Nothing to read means no measurement —
+    the caller must not infer one.
+    """
+    if not isinstance(run, Mapping):
+        return None
+    payload = run.get("claims")
+    if isinstance(payload, Mapping):
+        counts: dict[str, int] = {}
+        for field in CLAIMS_FIELDS:
+            # run.json names the total `total` (design §3.4); a trace-shaped
+            # dict may spell it `claims`. Both are the same counter.
+            value = _as_int(payload.get(field))
+            if value is None and field == "claims":
+                value = _as_int(payload.get("total"))
+            if value is None:
+                return None
+            counts[field] = value
+        return counts
+    for key in ("claims_line", "trace"):
+        text = run.get(key)
+        if isinstance(text, str) and text.strip():
+            return parse_claims_lines(text.splitlines())
+    return None
+
+
+def _claims_tokens(session: Mapping[str, Any] | None) -> int | None:
+    """Tokens of one joined session, or ``None`` when it cannot be attributed.
+
+    The join is the existing one (``runs.jsonl`` ``start.session_id`` -> pi
+    session header ``id``); a run without a session log, or a log whose rows
+    carry no usage, stays unattributable rather than becoming ``0``.
+    """
+    if not isinstance(session, Mapping):
+        return None
+    events = session.get("events") or []
+    if not events:
+        return None
+    tokens = _new_token_map()
+    for _stamp, _model_key, event_tokens in events:
+        _add_tokens(tokens, event_tokens)
+    if all(value is None for value in tokens.values()):
+        return None
+    return _token_total(tokens)
+
+
+def claims_metrics(
+    run: Mapping[str, Any] | None,
+    session: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Claim-coverage metrics of one run (design §3.4), or ``None``.
+
+    ``run`` supplies the claim counters (``claims`` subobject or ``[CLAIMS]``
+    line), ``session`` is the joined session scan that supplies ``tokens``.
+    ``tokens_per_closed_claim = Σtokens / Σclosed``; it is ``"n/a"`` (never
+    ``0``) when the session cannot be attributed (then ``tokens=None`` and
+    ``attributable=False``) or when ``closed == 0``. A run with no
+    ``[CLAIMS]`` line yields ``None`` as a whole: no inference, no defaults.
+    """
+    counts = _run_claims_counts(run)
+    if counts is None:
+        return None
+    tokens = _claims_tokens(session)
+    closed = counts["closed"]
+    return {
+        "claims": counts["claims"],
+        "closed": closed,
+        "partial": counts["partial"],
+        "unverified": counts["unverified"],
+        "fetches": counts["fetches"],
+        "tokens": tokens,
+        "tokens_per_closed_claim": (
+            CLAIMS_NA if tokens is None or closed == 0 else tokens / closed
+        ),
+        "attributable": tokens is not None,
+    }
 
 
 # ── report aggregation ───────────────────────────────────────────────────────
@@ -1084,14 +1229,25 @@ def _run_detail_row(
 
     An open run keeps ``wall_s=None`` / ``wall_kind="none"``: the ledger has
     no reap yet and the session span must never be used to fill it in
-    (T-06 / AC-016).
+    (T-06 / AC-016). A run whose claims were measured (``[CLAIMS]`` line /
+    ``claims`` subobject) grows an extra ``claims`` key; a run without one
+    keeps the R9 key set byte-for-byte, so old reports are unchanged.
+
+    ``project`` (R18) is the same raw value the ``by project`` grouping joins
+    (``build_report`` line that builds a unit): ledger ``start.project`` first,
+    then the session header ``cwd``, else ``None`` -- never an empty string, so
+    an old ledger row renders ``-`` instead of a fake project.
     """
     calls, tokens = _detail_tokens(unit)
     open_run = bool(run.get("open_run"))
     wall_s = None if open_run else run.get("wall_s")
-    return {
+    row = {
         "run_id": run.get("run_id"),
         "started_at": run.get("start_ts"),
+        "project": run.get("project")
+        or (unit or {}).get("project")
+        or (unit or {}).get("cwd")
+        or None,
         "ended_at": run.get("end_ts"),
         "key": run.get("key"),
         "task_key": run.get("task_key"),
@@ -1106,6 +1262,12 @@ def _run_detail_row(
         "session_id": run.get("session_id"),
         "open_run": open_run,
     }
+    claims = claims_metrics(run, unit)
+    if claims is not None:
+        # Only measured runs carry the key (no ``claims: null`` padding): the
+        # JSON/text of a project without ``[CLAIMS]`` lines stays unchanged.
+        row["claims"] = claims
+    return row
 
 
 def _pm_detail_row(unit: Mapping[str, Any]) -> dict[str, Any]:
@@ -1122,6 +1284,8 @@ def _pm_detail_row(unit: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "run_id": None,
         "started_at": unit.get("started_at"),
+        # R18/AC-025: a PM session's project *is* its header cwd (no ledger row).
+        "project": unit.get("project") or unit.get("cwd") or None,
         "ended_at": unit.get("ended_at"),
         "key": unit.get("key"),
         "task_key": None,
@@ -1179,6 +1343,7 @@ def build_report(
     until: datetime | None = None,
     limit: int | None = 20,
     detail: bool = False,
+    include_all_runs: bool = False,
 ) -> dict[str, Any]:
     """Join ledger + session logs into the ``mw stats --json`` contract (design §5).
 
@@ -1201,6 +1366,15 @@ def build_report(
     ``sum(runs.tokens) == totals.tokens`` (AC-015). An ``until`` earlier than
     ``since`` yields an empty window; rejecting it with rc=2 belongs to the
     CLI (R7), not to this read-only kernel.
+
+    ``include_all_runs`` is the delivery channel for the HTML report (R15/R16):
+    the uncut row list is already built here, so asking for it costs nothing
+    extra and the same objects (same order) back both keys. With ``True`` the
+    report additionally carries ``runs_all`` (``len(runs_all) == runs_total``,
+    ``runs_all[:k] == build_report(limit=k)["runs"]``, AC-023/AC-024) while
+    ``runs`` stays cut, so the JSON/text contract does not widen. ``False``
+    (default) leaves the returned key set exactly as before: no ``runs_all``,
+    no JSON bloat.
     """
     now_utc = _as_utc(now) if now is not None else datetime.now(timezone.utc)
     filters = dict(filters or {})
@@ -1263,7 +1437,6 @@ def build_report(
             unit["wall_kind"] = "session" if span is not None else "none"
         # A run that exists but has no end event keeps wall_s = None (AC-004:
         # an orphan is never reported as 0, and never guessed from the log).
-        unit["project"] = _project_name(unit["project"])
         unit["started_at"] = session.get("started_at")
         unit["ended_at"] = session.get("ended_at")
         unit["models"] = session.get("models") or {}
@@ -1297,7 +1470,7 @@ def build_report(
             "cli": "claude",
             "key": _norm(run.get("key")) or UNKNOWN_LABEL,
             "type": _norm(run.get("type")) or UNKNOWN_LABEL,
-            "project": _project_name(run.get("project") or session.get("cwd")),
+            "project": run.get("project") or session.get("cwd") or None,
             "session_id": session_id,
             "started_at": session.get("started_at"),
             "ended_at": session.get("ended_at"),
@@ -1328,7 +1501,9 @@ def build_report(
                 "model": model_key or UNKNOWN_LABEL,
                 "type": unit["type"] or UNKNOWN_LABEL,
                 "key": unit["key"] or UNKNOWN_LABEL,
-                "project": unit["project"] or UNKNOWN_LABEL,
+                # Display name only: the raw path stays on the unit so the run
+                # detail row and this group join the exact same value (R19).
+                "project": _project_name(unit["project"]),
             }
             for dim, name in names.items():
                 entry = buckets[dim].get(name)
@@ -1365,7 +1540,7 @@ def build_report(
             raise ValueError(f"limit must be >= 0 (0 = no limit), got {limit!r}")
         shown_runs = detail_rows if limit_count == 0 else detail_rows[:limit_count]
 
-    return {
+    report: dict[str, Any] = {
         "generated_at": _iso(now_utc),
         "since": _iso(since_utc),
         "until": _iso(until_utc),
@@ -1387,6 +1562,11 @@ def build_report(
         "runs_total": runs_total,
         "runs": shown_runs,
     }
+    if include_all_runs:
+        # Same list object the cut above sliced, so `runs_all[:k]` and
+        # `build_report(limit=k)["runs"]` are field-for-field equal (AC-024).
+        report["runs_all"] = detail_rows
+    return report
 
 
 # ── text rendering ───────────────────────────────────────────────────────────
@@ -1398,7 +1578,7 @@ _ROW_TEMPLATE = (
 
 #: Run-detail row: same compact style as ``_ROW_TEMPLATE`` (no new dependency).
 _DETAIL_TEMPLATE = (
-    "  {started:<16}  {key:<24}  {task:<28}  {type:<9}  {model:<26}"
+    "  {started:<16}  {project:<16}  {key:<24}  {task:<28}  {type:<9}  {model:<26}"
     "  calls {calls:<5}  in {tok_in:<6}  out {tok_out:<6}"
     "  cacheR {tok_r:<7}  cacheW {tok_w:<6}  wall {wall:<6}  {status}"
 )
@@ -1452,6 +1632,12 @@ def _format_local_stamp(value: Any) -> str:
     return moment.astimezone(_local_tz()).strftime("%Y-%m-%dT%H:%M")
 
 
+def _project_tail(value: Any) -> str:
+    """Path tail of a run's project (``None`` renders ``-``, R19/AC-026)."""
+    path = _norm(value)
+    return _basename(path) if path else "-"
+
+
 def _format_detail_row(row: Mapping[str, Any]) -> str:
     tokens = row.get("tokens") or {}
     wall = _format_wall(row.get("wall_s"))
@@ -1460,6 +1646,7 @@ def _format_detail_row(row: Mapping[str, Any]) -> str:
     calls = row.get("calls")
     return _DETAIL_TEMPLATE.format(
         started=_format_local_stamp(row.get("started_at")),
+        project=_project_tail(row.get("project")),
         key=_norm(row.get("key")) or UNKNOWN_LABEL,
         task=_norm(row.get("task_key")) or "-",
         type=_norm(row.get("type")) or UNKNOWN_LABEL,
@@ -1574,4 +1761,426 @@ def format_report_text(report: Mapping[str, Any], detail: bool = False) -> str:
         lines.append(SESSION_WALL_FOOTNOTE)
     lines.append("")
     lines.append(_format_coverage(report.get("coverage") or []))
+    return "\n".join(lines)
+
+
+# ── HTML rendering (spec §12 R11-R14) ───────────────────────────────────────
+
+#: Inline stylesheet: single file, no external font / CDN / @import.
+_HTML_STYLE = """
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 24px 16px 48px;
+  background: #fafafa;
+  color: #1b1b1f;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+main { max-width: 1400px; margin: 0 auto; }
+h1 { margin: 0 0 12px; font-size: 20px; }
+h2 { margin: 28px 0 8px; font-size: 16px; }
+h3 { margin: 0 0 6px; font-size: 13px; color: #5b5b66; font-weight: 600; }
+.meta {
+  margin: 0 0 8px;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid #e2e2e8;
+  border-radius: 6px;
+}
+.meta dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 16px;
+  margin: 0;
+}
+.meta dt { color: #5b5b66; }
+.meta dd { margin: 0; }
+.path { word-break: break-all; font-family: ui-monospace, Consolas, monospace; }
+.coverage { margin: 10px 0 0; color: #3a3a44; }
+.cards { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0 0; padding: 0; list-style: none; }
+.card {
+  flex: 1 1 150px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid #e2e2e8;
+  border-radius: 6px;
+}
+.card .label { color: #5b5b66; font-size: 12px; }
+.card .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.card .sub { color: #5b5b66; font-size: 12px; font-variant-numeric: tabular-nums; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #e2e2e8;
+}
+th, td { padding: 6px 10px; border-bottom: 1px solid #ececf1; text-align: left; vertical-align: top; }
+thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f2f2f6;
+  font-weight: 600;
+  white-space: nowrap;
+}
+tbody tr:nth-child(even) { background: #fbfbfd; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.mono { font-family: ui-monospace, Consolas, monospace; }
+td.empty { padding: 16px; text-align: center; color: #5b5b66; }
+.note, .footnote, .no-group { color: #5b5b66; font-size: 12px; }
+.note { margin: 8px 0 0; }
+.footnote { margin: 10px 0 0; }
+.no-group { margin: 12px 0 0; }
+"""
+
+_HTML_GROUP_HEADERS = (
+    ("name", ""),
+    ("calls", "num"),
+    ("in", "num"),
+    ("out", "num"),
+    ("cacheR", "num"),
+    ("cacheW", "num"),
+    ("runs", "num"),
+    ("wall p50", "num"),
+    ("wall p90", "num"),
+    ("n", "num"),
+    ("wall_kind", ""),
+)
+
+#: Row count above which the HTML runs table adds a browser ``Ctrl+F`` hint
+#: (R15: still renders every row, the hint only points at in-page search).
+HTML_SEARCH_HINT_ROWS = 2000
+
+_HTML_RUN_HEADERS = (
+    ("started_at", ""),
+    ("project", ""),
+    ("wall", "num"),
+    ("status", ""),
+    ("key", ""),
+    ("task_key", ""),
+    ("type", ""),
+    ("model", ""),
+    ("calls", "num"),
+    ("in", "num"),
+    ("out", "num"),
+    ("cacheR", "num"),
+    ("cacheW", "num"),
+    ("session_id", ""),
+)
+
+#: Filters shown in the header block, in CLI order (``window`` is in the head).
+_HTML_FILTER_ORDER = ("key", "type", "model", "project", "source")
+
+
+def _html_escape(value: Any) -> str:
+    """Escape one interpolated value (ledger/session text is untrusted, R14)."""
+    text = "" if value is None else str(value)
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )
+
+
+def _html_int(value: Any) -> str:
+    """A count cell; unknown stays ``-`` (never a fabricated ``0``)."""
+    if value is None:
+        return "-"
+    return _html_escape(value)
+
+
+def _html_local_datetime(value: Any) -> str:
+    """ISO-Z -> local ``YYYY-MM-DD HH:MM:SS`` (header: generated time)."""
+    moment = _parse_iso(value)
+    if moment is None:
+        return "-"
+    return moment.astimezone(_local_tz()).strftime("%Y-%m-%d %H:%M:%S")
+
+
+class _HtmlCell:
+    """A table cell that renders its own ``<td>`` (needs a per-cell attribute).
+
+    ``_html_table`` wraps plain strings in ``<td>``; a cell carrying e.g.
+    ``title`` supplies the finished tag instead. Its HTML is already escaped
+    by the caller (`_html_project_cell`), same contract as a string cell.
+    """
+
+    __slots__ = ("html",)
+
+    def __init__(self, html: str) -> None:
+        self.html = html
+
+
+def _html_table(
+    headers: tuple[tuple[str, str], ...],
+    rows: Iterable[Iterable[str | _HtmlCell]],
+    empty_message: str | None = None,
+) -> str:
+    """One table; every cell value is already escaped by the caller."""
+    head = "".join(
+        f'<th class="{css}">{_html_escape(label)}</th>' if css else f"<th>{_html_escape(label)}</th>"
+        for label, css in headers
+    )
+    body: list[str] = []
+    for row in rows:
+        cells: list[str] = []
+        for (_label, css), value in zip(headers, row):
+            if isinstance(value, _HtmlCell):
+                cells.append(value.html)
+            elif css:
+                cells.append(f'<td class="{css}">{value}</td>')
+            else:
+                cells.append(f"<td>{value}</td>")
+        body.append("<tr>" + "".join(cells) + "</tr>")
+    if not body and empty_message is not None:
+        body.append(
+            f'<tr><td class="empty" colspan="{len(headers)}">'
+            f"{_html_escape(empty_message)}</td></tr>"
+        )
+    return (
+        "<table>\n<thead><tr>"
+        + head
+        + "</tr></thead>\n<tbody>\n"
+        + "\n".join(body)
+        + "\n</tbody>\n</table>"
+    )
+
+
+def _html_filter_text(report: Mapping[str, Any]) -> str:
+    """Effective filters from ``report["filters"]``; empty when absent.
+
+    ``build_report`` does not echo its filters, so the HTML header only shows
+    this line when the report actually carries them (no guessing, no second
+    data read).
+    """
+    filters = report.get("filters")
+    if not isinstance(filters, Mapping):
+        return ""
+    keys = [name for name in _HTML_FILTER_ORDER if name in filters]
+    keys.extend(str(name) for name in filters if name not in _HTML_FILTER_ORDER)
+    parts: list[str] = []
+    for name in keys:
+        if name == "window":
+            continue  # already rendered as part of the window line
+        value = _norm(filters.get(name))
+        if value:
+            parts.append(f"{name}={value}")
+    return " · ".join(parts)
+
+
+def _html_group_row(row: Mapping[str, Any]) -> list[str]:
+    tokens = row.get("tokens") or {}
+    p90 = _format_wall(row.get("wall_p90"))
+    if row.get("wall_kind") == "session":
+        # Same marker as the text renderer (see SESSION_WALL_FOOTNOTE).
+        p90 += SESSION_WALL_MARK
+    return [
+        _html_escape(str(row.get("name") or UNKNOWN_LABEL)),
+        _html_int(row.get("calls")),
+        _html_escape(_format_tokens(tokens.get("input"))),
+        _html_escape(_format_tokens(tokens.get("output"))),
+        _html_escape(_format_tokens(tokens.get("cache_read"))),
+        _html_escape(_format_tokens(tokens.get("cache_write"))),
+        _html_int(row.get("runs")),
+        _html_escape(_format_wall(row.get("wall_p50"))),
+        _html_escape(p90),
+        _html_int(row.get("n")),
+        _html_escape(_norm(row.get("wall_kind")) or "-"),
+    ]
+
+
+def _html_project_cell(value: Any) -> str | _HtmlCell:
+    """basename text plus ``title="<full path>"`` (R19); ``None`` is plain ``-``."""
+    path = _norm(value)
+    if not path:
+        return "-"
+    return _HtmlCell(
+        f'<td title="{_html_escape(path)}">{_html_escape(_basename(path))}</td>'
+    )
+
+
+def _html_run_row(row: Mapping[str, Any]) -> list[str | _HtmlCell]:
+    tokens = row.get("tokens") or {}
+    wall = _format_wall(row.get("wall_s"))
+    if row.get("wall_kind") == "session":
+        wall += SESSION_WALL_MARK
+    if row.get("open_run"):
+        status = "running"  # never render the raw None of an open run
+    else:
+        status = _norm(row.get("status")) or "-"
+    return [
+        _html_escape(_format_local_stamp(row.get("started_at"))),
+        _html_project_cell(row.get("project")),
+        _html_escape(wall),
+        _html_escape(status),
+        _html_escape(_norm(row.get("key")) or UNKNOWN_LABEL),
+        _html_escape(_norm(row.get("task_key")) or "-"),
+        _html_escape(_norm(row.get("type")) or UNKNOWN_LABEL),
+        _html_escape(_norm(row.get("model")) or "-"),
+        _html_int(row.get("calls")),
+        _html_escape(_format_tokens(tokens.get("input"))),
+        _html_escape(_format_tokens(tokens.get("output"))),
+        _html_escape(_format_tokens(tokens.get("cache_read"))),
+        _html_escape(_format_tokens(tokens.get("cache_write"))),
+        _html_escape(_norm(row.get("session_id")) or "-"),
+    ]
+
+
+def render_html(report: Mapping[str, Any], *, title: str | None = None) -> str:
+    """Render the report as one self-contained HTML document (R11-R14).
+
+    Pure string rendering of an existing report dict: no I/O and no second
+    data read (AC-020). Semantics mirror :func:`format_report_text` — the same
+    ``_format_tokens`` / ``_format_wall`` helpers, ``None`` renders ``-``
+    (never ``0``), a ``session`` wall carries ``*`` plus
+    ``SESSION_WALL_FOOTNOTE``, an open run reads ``running``. Every
+    interpolated ledger/session string goes through :func:`_html_escape`
+    (R14/AC-021).
+
+    The run table reads ``report["runs_all"]`` first (the uncut list of R15,
+    so the row count is ``runs_total`` and the heading carries that total); a
+    report without it falls back to ``report["runs"]``, which is what every
+    caller built before v0.5. Above :data:`HTML_SEARCH_HINT_ROWS` rows the
+    table still renders in full and only gains a ``Ctrl+F`` line.
+    """
+    ledger = report.get("ledger") or {}
+    totals = report.get("totals") or {}
+    sources = report.get("sources") or {}
+    groups = report.get("groups") or {}
+    total_tokens = totals.get("tokens") or {}
+    since = _format_local_stamp(report.get("since"))
+    until = _format_local_stamp(report.get("until"))
+    window = _norm(report.get("window")) or "-"
+    doc_title = title if title is not None else f"mw usage — {since} → {until}"
+
+    meta_cells = [
+        ("生成时间", _html_escape(_html_local_datetime(report.get("generated_at")))),
+        ("窗口", _html_escape(f"{since} → {until} ({window})")),
+        (
+            "ledger",
+            f'<span class="path">{_html_escape(_norm(ledger.get("path")) or "-")}</span>'
+            f" · events {_html_int(ledger.get('events'))}"
+            f" · bad_lines {_html_int(ledger.get('bad_lines'))}"
+            f" · open_runs {_html_int(ledger.get('open_runs'))}",
+        ),
+    ]
+    filter_text = _html_filter_text(report)
+    if filter_text:
+        meta_cells.append(("过滤", _html_escape(filter_text)))
+
+    cards = (
+        (
+            "runs",
+            _html_int(totals.get("runs")),
+            f"worker {_html_int(sources.get('worker'))} / pm {_html_int(sources.get('pm'))}",
+        ),
+        ("calls", _html_int(totals.get("calls")), ""),
+        ("input", _html_escape(_format_tokens(total_tokens.get("input"))), ""),
+        ("output", _html_escape(_format_tokens(total_tokens.get("output"))), ""),
+        ("cacheR", _html_escape(_format_tokens(total_tokens.get("cache_read"))), ""),
+        ("cacheW", _html_escape(_format_tokens(total_tokens.get("cache_write"))), ""),
+    )
+
+    group_sections: list[str] = []
+    for dim, label in _GROUP_TITLES:
+        rows = groups.get(dim) or []
+        if not rows:
+            continue  # empty groups are not rendered at all
+        group_sections.append(
+            f"<section>\n<h2>{_html_escape(label)}</h2>\n"
+            f"{_html_table(_HTML_GROUP_HEADERS, (_html_group_row(row) for row in rows))}\n"
+            "</section>"
+        )
+
+    # R15/R17: the detail table is the whole window, never the `--limit` slice.
+    # ``runs_all`` is the uncut list ``build_report(include_all_runs=True)``
+    # hands over; a report built without it (older call path) still renders its
+    # ``runs`` slice instead of exploding. No re-sort, no second token pass:
+    # rows are already newest first and pre-computed.
+    runs_all = report.get("runs_all")
+    has_all_runs = isinstance(runs_all, list)
+    run_rows = list(runs_all if has_all_runs else (report.get("runs") or []))
+    runs_table = _html_table(
+        _HTML_RUN_HEADERS,
+        (_html_run_row(row) for row in run_rows),
+        empty_message="窗口内没有运行",
+    )
+
+    lines = [
+        "<!doctype html>",
+        '<html lang="zh">',
+        "<head>",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        f"<title>{_html_escape(doc_title)}</title>",
+        f"<style>{_HTML_STYLE}</style>",
+        "</head>",
+        "<body>",
+        "<main>",
+        "<h1>mw usage</h1>",
+        '<div class="meta">',
+        "<dl>",
+    ]
+    for name, value in meta_cells:
+        lines.append(f"<dt>{_html_escape(name)}</dt><dd>{value}</dd>")
+    lines.extend(
+        [
+            "</dl>",
+            f'<p class="coverage">{_html_escape(_format_coverage(report.get("coverage") or []))}</p>',
+            "</div>",
+            "<h2>summary</h2>",
+            '<ul class="cards">',
+        ]
+    )
+    for label, value, sub in cards:
+        sub_html = f'<div class="sub">{sub}</div>' if sub else ""
+        lines.append(
+            f'<li class="card"><div class="label">{_html_escape(label)}</div>'
+            f'<div class="value">{value}</div>{sub_html}</li>'
+        )
+    lines.append("</ul>")
+    if group_sections:
+        lines.extend(group_sections)
+    else:
+        lines.append('<p class="no-group">no usage in window</p>')
+    total_runs = report.get("runs_total")
+    # A full-run table states its own size (R15). The fallback path keeps the
+    # legacy heading because its `runs` list may still be cut.
+    heading = "runs (newest first)"
+    if has_all_runs:
+        heading = f"runs (newest first) · {len(run_rows)}"
+    lines.extend(
+        [
+            "<section>",
+            f"<h2>{_html_escape(heading)}</h2>",
+        ]
+    )
+    if len(run_rows) > HTML_SEARCH_HINT_ROWS:
+        # No second cut: the page is long, the browser is the pager (R15).
+        lines.append(
+            f'<p class="note">共 {len(run_rows)} 行，可用浏览器 Ctrl+F'
+            " 搜索 key / task_key</p>"
+        )
+    if not has_all_runs and isinstance(total_runs, int) and total_runs > len(run_rows):
+        # Legacy slice only: kept for a report that never asked for `runs_all`,
+        # so an old caller is still told its table is not the whole window.
+        lines.append(
+            f'<p class="note">showing {len(run_rows)} of {total_runs} runs'
+            " (--limit 0 for all)</p>"
+        )
+    lines.extend(
+        [
+            runs_table,
+            '<p class="footnote">`-` = 无数据/不适用</p>',
+            f'<p class="footnote">{_html_escape(SESSION_WALL_FOOTNOTE)}</p>',
+            "</section>",
+            "</main>",
+            "</body>",
+            "</html>",
+        ]
+    )
     return "\n".join(lines)

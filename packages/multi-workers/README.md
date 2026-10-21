@@ -82,7 +82,7 @@ python mw.py <子命令>
 | `target set/show/clear` | 双工作区配置（见下） |
 | `ue-toolchain run/targets/hash` | dual 模式 UE 工具链纪律（见下）：执行模板并留证（错误签名双判 + --watch 前后哈希）、发现 UE 构建目标名、EOL 归一化哈希 |
 | `model set/show/clear`、`model set-fallback/clear-fallback` | 派发模型默认值与备用模型链（见下） |
-| `stats [--since W] [--key K] [--type T] [--model M] [--project P] [--source worker\|pm] [--until W] [--detail] [--limit N] [--json]` | 机器级 token/墙钟台账查询（见下「用量统计（mw stats）」）：model/type/key/project 四组分布 + 覆盖率声明 |
+| `stats [--since W] [--key K] [--type T] [--model M] [--project P] [--source worker\|pm] [--until W] [--detail] [--limit N] [--json] [--html [PATH]] [--no-open]` | 机器级 token/墙钟台账查询（见下「用量统计（mw stats）」）：model/type/key/project 四组分布 + 覆盖率声明 |
 | `run-detached [--cwd DIR] [--run-dir DIR] [--timeout-min N] [--heartbeat-s N] -- <cmd...>` | 后台命令唯一入口：隐藏控制台监督进程 + heartbeat/marker 证据（见下「Windows detached-run checklist」） |
 
 ## 用量统计（mw stats）
@@ -93,7 +93,7 @@ worker 跑了多久」。只统计 token，不读正文。
 ### 命令
 
 ```bash
-python mw.py stats [--since 7d] [--until 24h] [--key K] [--type T] [--model M] [--project P] [--source worker|pm] [--detail] [--limit 20] [--json]
+python mw.py stats [--since 7d] [--until 24h] [--key K] [--type T] [--model M] [--project P] [--source worker|pm] [--detail] [--limit 20] [--json] [--html [PATH]] [--no-open]
 ```
 
 pi 窗口内是同一张报表：`/mw stats [<同样的参数>]`。窗口侧是薄包装——扫描、过滤与渲染全部在 Python；
@@ -108,21 +108,25 @@ runner 恒追加 `--project`，故窗口内默认只看当前 control root。
 | `--model` | 全部 | `provider/model` 子串匹配（如 `--model glm-5.3`） |
 | `--project` | 全机 | 路径或 basename；省略 = 本机所有项目。`/mw stats` 由 runner 追加当前 control root |
 | `--source` | 全部 | `worker` = 只 worker 运行；`pm` = 只 PM 窗口会话 |
-| `--detail` | 关 | 文本尾部追加 `runs (newest first)` 明细表：一行一次运行（key / task_key / type / model / calls / 四个 token 分量 / wall / status）。只影响文本，JSON 恒有 `runs[]` |
-| `--limit` | `20` | 明细表与 JSON `runs[]` 的最大行数（`0` = 不限），`started_at` 倒序截断；被截断时文本写 `showing N of M runs`、JSON 给 `runs_total` |
+| `--detail` | 关 | 文本尾部追加 `runs (newest first)` 明细表：一行一次运行（project / key / task_key / type / model / calls / 四个 token 分量 / wall / status）。文本之外还驱动 HTML 报告（见 `--html` / `--no-open`）；JSON 恒有 `runs[]`，不需要 `--detail` |
+| `--limit` | `20` | **文本**明细表与 JSON `runs[]` 的最大行数（`0` = 不限），`started_at` 倒序截断；被截断时文本写 `showing N of M runs`、JSON 给 `runs_total`。HTML 明细不受它影响，恒为窗口内全部 run |
 | `--json` | 文本 | 输出固定 JSON 契约（`groups` / `totals` / `coverage` / `sources` / `runs[]` / `runs_total`，未知值一律 `null`） |
+| `--html [PATH]` | 不生成 | 额外写一份**单文件自包含**静态 HTML（内联 CSS，无外链/无脚本/CDN）：`--html PATH` 写到该路径（父目录自动创建），只写 `--html` 不写值则用默认路径 `<usage_dir>/reports/usage-<YYYYMMDD-HHMMSS>.html`（每次调用一个新文件，不覆盖历史，`MW_USAGE_DIR` 同源）。`--json` 时路径只写 stderr，stdout 仍是纯 JSON；文本模式在末尾追加 `html: <path>`。HTML 明细表包含窗口内**全部** run（标题 `runs (newest first) · N`，不写 `showing N of M`） |
+| `--no-open` | 关（打开） | 不调用浏览器。`--html`/`--detail` 默认用 `webbrowser.open(file:///…)` 打开报告；自动化场景用 `--no-open` 或环境变量 `MW_STATS_NO_OPEN=1`（`0` = 恢复打开）抑制。打开/写盘失败只 warn，rc 仍为 0。`--json` 且未显式给 `--html PATH` 时等价 `--no-open`（不弹窗，文件照写；`--json --html PATH` 仍打开） |
 
-### 台账位置
+### 数据落在哪
 
 | 项 | 路径 | 覆盖 |
 |----|------|------|
 | 台账 | `~/.mw/usage/runs.jsonl`（append-only，事件 `start` / `end` / `spawn_failed`） | `MW_USAGE_DIR`（整目录） |
 | 锁 | `~/.mw/usage/runs.jsonl.lock` | 同上 |
-| pi 会话（token 真相） | `~/.pi/agent/sessions/` | `MW_PI_SESSIONS_DIR` / `PI_CODING_AGENT_SESSION_DIR` / `PI_CODING_AGENT_DIR` |
-| claude 会话 | `~/.claude/projects/` | `MW_CLAUDE_PROJECTS_DIR` / `CLAUDE_CONFIG_DIR` |
+| HTML 报告 | `~/.mw/usage/reports/usage-<YYYYMMDD-HHMMSS>.html`（每次调用一个新文件，不覆盖历史） | `MW_USAGE_DIR`（整目录）；`--html PATH` 只换单次路径 |
+| pi 会话（token 真相） | `~/.pi/agent/sessions/**/*.jsonl` | `MW_PI_SESSIONS_DIR` / `PI_CODING_AGENT_SESSION_DIR` / `PI_CODING_AGENT_DIR` |
+| claude 会话 | `~/.claude/projects/**/*.jsonl` | `MW_CLAUDE_PROJECTS_DIR` / `CLAUDE_CONFIG_DIR` |
 
-台账只存运行元数据（谁 / 何时 / 哪个模型 / 多久 / 怎么结束），token 在查询时从会话日志 join 得出；
-目录由 launcher 首次写台账时创建（`USERPROFILE`/`HOME` → `~/.mw/usage`，不用裸 `expanduser`）。
+台账只存运行元数据（谁 / 何时 / 哪个模型 / 多久 / 怎么结束），**不存 token**：token 是查询时从会话日志
+**只读** join 出来的（现算、不复制、不落第二份）。目录由 launcher 首次写台账时创建
+（`USERPROFILE`/`HOME` → `~/.mw/usage`，不用裸 `expanduser`）。
 旧 `serve` 进程里的 launcher 不会写台账：升级后需 `/mw restart`。无台账时首屏显式打印 `no ledger yet`
 （仍会扫描会话，PM 数据可用）。
 
@@ -156,27 +160,37 @@ coverage: pi 8 runs (exact) · claude 1 (exact) · codex 1 (未统计)
 
 ### 明细样例（`--detail`）
 
-真实渲染（`--source worker --detail --limit 3`，本机台账 2026-10-21 15:00 快照；`by model/type/key/project`
+真实渲染（`python mw.py stats --since 24h --detail --limit 3 --no-open`，本机台账 2026-10-21 17:31 快照；
+最新 3 行快照时仍在跑，所以 `wall` 是 `-`，`calls`/token 已随会话落盘更新；`by model/type/key/project`
 四组在此略去）：
 
 ```text
-usage 2026-10-20T16:20 → 2026-10-21T15:00 (24h) · ledger 353 events · runs 116 (worker 116 / pm 0)
+usage 2026-10-20T17:31 → 2026-10-21T17:31 (24h) · ledger 442 events · runs 200 (worker 176 / pm 24)
 
 runs (newest first)
-showing 3 of 116 runs (--limit 0 for all)
-  2026-10-21T14:55  feature-ui-dep-graph      ap-feature-ui-dep-graph-009-depgraph-pure-functions  phase-writer  timi/deepseek-v4.1-flash    calls 39     in 92.9k   out 39k     cacheR 2.56M    cacheW 0       wall 11m00s  done
-  2026-10-21T14:55  graph-edge-integrity      gei-bc-handoff-note-retry     coding     timi/deepseek-v4.1-flash    calls 8      in 12.3k   out 5.83k   cacheR 134k     cacheW 0       wall 45s     done
-  2026-10-21T14:43  feature-w1-preliminary-names  ap-feature-w1-preliminary-names-l3-a7  reviewer   timi/glm-5.3                calls 24     in 177k    out 30.5k   cacheR 1.17M    cacheW 0       wall 26m12s  done
+showing 3 of 200 runs (--limit 0 for all)
+  2026-10-21T17:31  FeatureMigrator   gui-config-simplify       gcs-059-config-game-path-editable  coding     timi/deepseek-v4.1-flash    calls 3      in 10.2k   out 285     cacheR 12.7k    cacheW 0       wall -       running
+  2026-10-21T17:31  FeatureMigrator   gui-config-simplify       gcs-058-project-new-prefill   coding     timi/deepseek-v4.1-flash    calls 6      in 12.5k   out 891     cacheR 52.1k    cacheW 0       wall -       running
+  2026-10-21T17:29  E2Feature         feature-llm-semantic-naming  ap-feature-llm-semantic-naming-002-readonly-guard-and-before  phase-writer  timi/deepseek-v4.1-flash    calls 24     in 61.4k   out 10.5k   cacheR 1.12M    cacheW 0       wall -       running
 
-coverage: pi 116 runs (exact)
+coverage: pi 200 runs (exact)
 ```
 
 - 一行一次运行，回答「这个 token 是哪次运行 / 哪个 task / 哪个会话烧的」：`calls` 是该运行在窗口内的 provider
   响应数，四个 token 分量同聚合行的口径（未知仍显 `-` 而非 `0`）。
+- `started_at` 之后紧跟 `project` 列（路径末段，如 `Multi-Workers`；取不到显 `-`）：文本与 HTML 明细同一列、
+  同一取值，HTML 单元格悬停 `title` 给完整路径。JSON `runs[]` 每项含 `project`（台账 `start.project` →
+  会话 header `cwd` → `null`），与 `by project` 分组同源。
+- JSON `runs[]` 每项：`run_id` / `started_at` / `project` / `ended_at` / `key` / `task_key` / `type` / `model` /
+  `calls` / `tokens`（`input` / `output` / `cache_read` / `cache_write`）/ `wall_s` / `wall_kind` / `status` /
+  `attribution` / `session_id` / `open_run`；`claims` 只在可测量时出现。
 - 倒序（最新在上）；`--limit` 截断时一定有 `showing N of M runs (--limit 0 for all)`，JSON 侧对应 `runs_total`。
 - `open_run=true`（有 `start` 无 `end`）的行 `wall` 显 `-`（JSON `wall_s: null` / `wall_kind: "none"`）：台账还没有
   reap，绝不拿会话跨度回填。没有台账行的 PM 会话也占一行，其 `wall` 带 `*`（会话跨度），保证明细 token 之和
   与 `totals` 自洽。
+
+`--detail` 会自动把同一份数据渲染成 `~/.mw/usage/reports/*.html` 并用默认浏览器打开（文本照旧打印，`--no-open`
+或 `MW_STATS_NO_OPEN=1` 关闭；`--html <path>` 换路径）。
 
 ### 隐私边界
 
