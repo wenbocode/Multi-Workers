@@ -205,3 +205,28 @@ T-13 把 `test_stats_cli.py` 里 `test_cmd_stats_html_writes_self_contained_repo
 
 两次调用相隔 26 秒：`calls 4950 → 4953`、`output 3901549 → 3924382`（Δ +3 / +22833），`generated_at` 每次变化。
 无 rollup/缓存：台账全量重读 + 按窗口重扫会话文件，运行中的 worker 反映最近一次落盘，`end` 行等 reap。
+
+## V-8 v0.6 / v0.7 复核（2026-10-21）
+
+### v0.6 `runs[].project`（T-14，提交 e6523ed14）
+
+- `pytest test_usage.py test_stats_cli.py` → 89 passed（含 T-15 文档用例后 110 passed）。
+- 真实台账：6h 窗口 HTML `107` 行、`project=null` 行 `0`；表头顺序 `<th>started_at</th><th>project</th>`，
+  单元格 `<td title="H:\git\E2Feature">E2Feature</td>`（basename 文本 + 转义 title 全路径）。
+- JSON 保留原始路径；与 `by project` 分组同源。
+- 6h 窗口 project 分布：`E2Feature 63 / Multi-Workers 61 / FeatureMigrator 20 / OverCode 17 / UEMigrator 3 / tmp 若干`。
+
+### v0.7 窗口面机器级（T-16，提交 9bef2152b）
+
+复核动机：用户反馈「project 只剩一个 Multi-Workers 了」。定位：`mw-runner.ts:508 runMwCliRaw`
+对所有子命令无条件追加 `--project=<control root>`；证据 `~/.mw/usage/reports/usage-20261021-174136.html`
+196 行全部 `H:\git\Multi-Workers`，而同窗口 CLI 生成的 `usage-20261021-174311.html` 210 行含 6 个项目。
+
+- `pytest test_stats_cli.py test_usage.py -q` → `91 passed`（提交树 temp worktree 复跑同样 91 passed）。
+- `mw stats --since 24h --json` 与 `--all-projects` → `runs_total` 均 `209`（两次运行间隔 208→209，等值关系成立）。
+- `mw stats --all-projects --project H:/git/Multi-Workers` → stderr `mw stats: --all-projects conflicts with --project`，rc=2。
+- `vitest --run test/suite/mw-stats-surface.test.ts` → `8 passed`（bare spawn = `["stats"]`，`project_appends=0`）。
+- 入库快照泄漏检查：`mw.py` 无 `cmd_decide/decide_p/decide_archive/dispatch_module`；README 无 `决策服务（mw decide）/claims 派发契约`；
+  CHANGELOG 无 `decision substitution/claims block`；`mw-runner.ts` 无 `decideMw/DECIDE_CONCLUSIONS`。
+- 未验证：窗口 bundle 未重建（`mw build --install` 因其它会话 WIP 反向 dirty 而拒绝；加 `--allow-dirty` 会把未提交的
+  decide/triage 代码打进 bundle，留给用户决定），故 `/mw stats` 新语义需下次 build + `/reload` 才生效。
