@@ -230,3 +230,15 @@ T-13 把 `test_stats_cli.py` 里 `test_cmd_stats_html_writes_self_contained_repo
   CHANGELOG 无 `decision substitution/claims block`；`mw-runner.ts` 无 `decideMw/DECIDE_CONCLUSIONS`。
 - 未验证：窗口 bundle 未重建（`mw build --install` 因其它会话 WIP 反向 dirty 而拒绝；加 `--allow-dirty` 会把未提交的
   decide/triage 代码打进 bundle，留给用户决定），故 `/mw stats` 新语义需下次 build + `/reload` 才生效。
+
+### V-8b bundle 安装（2026-10-21 17:59）
+
+- 现象复现：窗口生成的 `~/.mw/usage/reports/usage-20261021-175801.html`（195 行）仍全部 `H:\git\Multi-Workers`
+  ——窗口进程 PID 43712 于 2026-10-16 启动，加载的是旧全局扩展 bundle（1328455B / 14:25），代码修好但 bundle 未换。
+- 干净构建：临时 worktree 检出 HEAD（`e193e1eba`）+ `node_modules` junction，直接 esbuild 打包
+  （`mw build --install` 因其它会话 WIP 反向 dirty 而拒绝，`--allow-dirty` 会把未提交的 decide/triage 打进 bundle，故不用）。
+  产物 1231463B，自检 `activate` 通过，`scopeProject=True`、`decideMw=False`，
+  `statsMw` 已为 `runMwCli("stats", projectDir, extraArgs, 18e4, false)`。
+- 安装：`mw._global_ext_dir()` → 全局扩展 `agent-team-loop.js`（17:59:19），旧 bundle 备份为 `agent-team-loop.js.bak-20261021`。
+- 待用户动作：窗口 `/reload`（或重启）后 `/mw stats --detail` 才走新语义。注意：HEAD 构建不含其它会话未提交的
+  `/mw decide` 代码，reload 后 decide 命令会消失，直到对方 WIP 提交并重新 build。
