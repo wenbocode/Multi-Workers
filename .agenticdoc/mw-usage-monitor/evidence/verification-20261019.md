@@ -242,3 +242,17 @@ T-13 把 `test_stats_cli.py` 里 `test_cmd_stats_html_writes_self_contained_repo
 - 安装：`mw._global_ext_dir()` → 全局扩展 `agent-team-loop.js`（17:59:19），旧 bundle 备份为 `agent-team-loop.js.bak-20261021`。
 - 待用户动作：窗口 `/reload`（或重启）后 `/mw stats --detail` 才走新语义。注意：HEAD 构建不含其它会话未提交的
   `/mw decide` 代码，reload 后 decide 命令会消失，直到对方 WIP 提交并重新 build。
+
+## V-9 v0.8 夹具折叠（2026-10-21，提交 7bb436ea9）
+
+- 需求由用户当场确认：方案 A（临时目录归并）+ 额外把 `pi-runtime-**` 一并折叠。
+- `pytest test_usage.py test_stats_cli.py -q` → `95 passed`（提交树 temp worktree 复跑同样 95 passed）。
+- 真实 7 天数据（985 runs）：分组从 38 个降到 11 个——`E2Feature 351 / Multi-Workers 195 / FeatureMigrator 115 /
+  OverCode 84 / ToolKits 56 / MLSCN 26 / EngineRAG 12 / UEMigrator 10 / mw-dsh 8 / (test fixtures) 38 / fix 1`；
+  `(test fixtures)` 合计 calls 49、tokens 45.2k / 219 / 4.84k / 48.2k，不再有 `pi-runtime-*` / `pytest-of-*` 独立分组。
+- 事实层未变：`--project "(test fixtures)"` 的明细行仍是各自原始路径；`--project E2Feature` → runs_total 351、
+  project 集合只有 `H:\\git\\E2Feature`，夹具泄漏 0。
+- `_is_fixture_project` 边界实测：`H:/git/Multi-Workers` False；`/tmp/x`、`C:\\Users\\U\\AppData\\Local\\Temp\\pi-runtime-cwd-a-1`、
+  `C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\pytest-of-x\\pytest-1\\a`、`C:\\Windows\\Temp\\foo`、`pi-runtime-abc` 全 True；`fix` False。
+- HTML 复核（`usage-20261021-182701.html`，381724B）：`by project` 出现 `(test fixtures) 49 45.2k ... 38 14s`，
+  其它真实项目行数值与文本一致。
