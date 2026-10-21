@@ -363,3 +363,32 @@ HTML 没有这个约束——一页 200 行明细完全可读（粘顶表头 + �
 
 - 不改 CLI 默认语义（本来就不过滤）。
 - 不把 project 过滤下推到台账解析层（仍是查询时过滤）。
+
+## 16. v0.8：临时目录/测试夹具在分组里折叠成 `(test fixtures)`
+
+### 16.1 背景
+
+`by project` 按会话 header 的 `cwd` 认项目，于是 pi 自身测试套件用 `mkdtemp` 起的一次性目录
+（`%TEMP%\pi-runtime-suite-<ms>-<rand>`、`pi-2860-…`、`pi-runtime-cwd-a/b-…`、`pi-runtime-events-…`、
+`pytest-of-<user>\pytest-<n>\…`）每个都成了一个「项目」。2026-10-21 的 7 天窗口里这类分组 27 个、
+37 runs、48 calls（占 76065 calls 的 0.06%），把真实项目（E2Feature / Multi-Workers / OverCode …）挤出视野。
+
+### 16.2 需求
+
+- **R24**：分组表里，cwd 落在系统临时根目录（`tempfile.gettempdir()`、`/tmp`、`/var/folders`、`C:\Windows\Temp`）
+  之下的会话，以及 basename 以 `pi-runtime-` 开头的会话，统一归到一个分组，名字固定为 `(test fixtures)`。
+- **R25**：合并不影响事实层——`runs[]` 明细行、文本/HTML 明细表的 `project` 仍是原始路径（basename 展示），
+  JSON `runs[].project` 仍是全路径；只有 `groups.project` 与文本 `by project` 表被折叠。
+- **R26**：`--project "(test fixtures)"` 只选夹具会话；`--project <真实项目>` 不会带出夹具行。
+
+### 16.3 验收补充
+
+- **AC-031**：含 2 个不同夹具 cwd（一个 `pi-runtime-*`、一个 `pytest-of-*`）的合成台账/会话，`groups.project`
+  里只有一个 `(test fixtures)` 条目，其 `calls`/`runs` 等于两者之和，其它真实项目分组不变。
+- **AC-032**：同一份数据下 `runs[]` 的 `project` 仍是两个不同的原始路径（未被改名）。
+- **AC-033**：`--project "(test fixtures)"` 的 `runs_total` 等于夹具 runs 数；`--project E2Feature` 的结果里不含夹具行。
+
+### 16.4 非目标
+
+- 不自动清理/删除临时目录或会话文件（只影响展示分组）。
+- 不改 `by key` / `by type` / `by model` 分组。

@@ -42,6 +42,7 @@ import os
 import pathlib
 import re
 import sys
+import tempfile
 from collections.abc import Iterable, Iterator, Mapping
 from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any
@@ -75,6 +76,17 @@ _RELATIVE_UNITS = {"d": timedelta(days=1), "h": timedelta(hours=1), "m": timedel
 #: Value used for the type/key group of a PM window session (not a worker run).
 PM_LABEL = "pm"
 UNKNOWN_LABEL = "unknown"
+
+#: Group name that folds every test-fixture cwd into one ``by project`` row
+#: (T-17/R25). The fold is display-only: ``runs[].project`` and the detail
+#: table keep the raw path.
+FIXTURE_LABEL = "(test fixtures)"
+
+#: Temp roots whose cwds are throwaway test directories (T-17).
+#: ``tempfile.gettempdir()`` is appended at call time: on Windows it may hand
+#: out the 8.3 short name (``C:\Users\WENBOZ~1\AppData\Local\Temp``) while
+#: a session header carries the long one, and both spellings must fold.
+_FIXTURE_TEMP_ROOTS = ("/tmp", "/var/folders", "c:/windows/temp")
 
 _LEDGER_EVENTS = ("start", "end", "spawn_failed")
 _CLI_ORDER = ("pi", "claude", "codex")
@@ -740,14 +752,63 @@ def _basename(value: str) -> str:
     return value.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
 
 
+def _fixture_temp_roots() -> tuple[str, ...]:
+    """Normalized temp roots a fixture cwd may sit under (T-17)."""
+    roots = list(_FIXTURE_TEMP_ROOTS)
+    try:
+        roots.append(tempfile.gettempdir())
+    except (OSError, RuntimeError):  # pragma: no cover - no usable temp dir
+        pass
+    normalized = (root.replace("\\", "/").rstrip("/").casefold() for root in roots)
+    return tuple(root for root in normalized if len(root) > 1)
+
+
+def _is_fixture_project(value: Any) -> bool:
+    """Is ``value`` a throwaway test cwd rather than a project (T-17)?
+
+    pi's test suite (``pi-runtime-*``) and pytest spawn sessions in one-off
+    directories, so every run would otherwise own a ``by project`` row and
+    push the real projects out of view. The verdict is taken on the raw path;
+    only the group table folds (R25: facts stay raw).
+    """
+    raw = _norm(value)
+    if not raw:
+        return False
+    if _basename(raw).casefold().startswith("pi-runtime-"):
+        return True
+    path = raw.replace("\\", "/").rstrip("/").casefold()
+    if not path:
+        return False
+    # Substring, not root prefix: the short (8.3) and long Temp spellings
+    # differ, and a session cwd can carry either one.
+    for marker in ("/appdata/local/temp", "/windows/temp"):
+        if path.endswith(marker) or f"{marker}/" in path:
+            return True
+    for root in _fixture_temp_roots():
+        if path == root or path.startswith(root + "/"):
+            return True
+    return False
+
+
 def _project_matches(value: Any, wanted: str) -> bool:
-    """Accept a full path or its basename on either side (TS appends ``--project=<dir>``)."""
+    """Accept a full path or its basename on either side (TS appends ``--project=<dir>``).
+
+    ``--project "(test fixtures)"`` selects exactly the folded fixture group
+    and nothing else (R26). A fixture row otherwise matches its own raw path
+    only: a real project's basename must never pull a fixture row into the
+    detail table, so the fixture verdict wins over basename matching.
+    """
     if not value:
         return False
     have = _norm(value).replace("\\", "/").rstrip("/").lower()
     want = _norm(wanted).replace("\\", "/").rstrip("/").lower()
     if not want:
         return True
+    fixture = _is_fixture_project(value)
+    if want == FIXTURE_LABEL.casefold():
+        return fixture
+    if fixture:
+        return have == want
     return (
         have == want
         or _basename(have) == want
@@ -757,6 +818,8 @@ def _project_matches(value: Any, wanted: str) -> bool:
 
 
 def _project_name(value: Any) -> str:
+    if _is_fixture_project(value):
+        return FIXTURE_LABEL
     name = _basename(_norm(value))
     return name or UNKNOWN_LABEL
 

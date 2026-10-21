@@ -150,7 +150,9 @@ by key
 coverage: pi 8 runs (exact) · claude 1 (exact) · codex 1 (未统计)
 ```
 
-（节选：`by type` / `by project` 与上面同形，四组都输出。）
+（节选：`by type` / `by project` 与上面同形，四组都输出。`by project` 把临时目录（`%TEMP%` / `/tmp` /
+`/var/folders` / `C:\Windows\Temp`）与 `pi-runtime-*` 目录折叠成一行 `(test fixtures)`（`--project "(test fixtures)"`
+只选这些行）；折叠只发生在分组表，`--detail` 与 `runs[].project` 仍显示原始路径。）
 
 - 四个 token 分量分列（`in` / `out` / `cacheR` / `cacheW`），`total` 由分项求和；`n<5` 时分位数显 `-`
   （样本不足就不猜，未知 token 也是 `-` 而非 `0`）。

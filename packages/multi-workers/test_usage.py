@@ -12,6 +12,7 @@ import os
 import pathlib
 import re
 import sys
+import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -2053,3 +2054,162 @@ def test_build_report_project_filter_covers_worker_and_pm_rows(
     assert workers["runs_total"] == workers["totals"]["runs"] == 2
     assert all(usage._project_matches(row["project"], "ProjA") for row in workers["runs"])
     assert {row["name"] for row in workers["groups"]["project"]} == {"ProjA"}
+
+
+# ── 10. fixture cwd folding (T-17) ──────────────────────────────────────────
+
+
+def _fixture_cwds() -> tuple[str, str]:
+    """Two throwaway test cwds under the machine temp root.
+
+    The second one deliberately ends in ``ProjA``: under the old basename
+    matching it would have been pulled in by ``--project ProjA`` (R26).
+    """
+    temp_root = pathlib.Path(tempfile.gettempdir())
+    return (
+        str(temp_root / "pi-runtime-suite-8f2c"),
+        str(temp_root / "pytest-of-u" / "pytest-1" / "ProjA"),
+    )
+
+
+def _fixture_fold_fixture(tmp_path, monkeypatch) -> tuple[str, str]:
+    """Three worker runs: pi-runtime suite, pytest temp dir, real project."""
+    suite_cwd, pytest_cwd = _fixture_cwds()
+    target = tmp_path / "usage"
+    pi_root = tmp_path / "pi"
+    monkeypatch.setenv("MW_USAGE_DIR", str(target))
+    monkeypatch.setenv("MW_PI_SESSIONS_DIR", str(pi_root))
+    _write_ledger(
+        target / "runs.jsonl",
+        [
+            _start("r-suite", key="alpha", project=suite_cwd,
+                   session_id="mw-alpha-1-1", ts=_at(90)),
+            _end("r-suite", wall_s=10.0, ts=_at(89)),
+            _start("r-pytest", key="alpha", project=pytest_cwd,
+                   session_id="mw-alpha-1-2", ts=_at(80)),
+            _end("r-pytest", wall_s=20.0, ts=_at(79)),
+            _start("r-real", key="alpha", project="H:/git/ProjA",
+                   session_id="mw-alpha-1-3", ts=_at(70)),
+            _end("r-real", wall_s=30.0, ts=_at(69)),
+        ],
+    )
+    _write_pi_session(
+        pi_root,
+        "2026-10-19T10-01-00-000Z_mw-alpha-1-1.jsonl",
+        [
+            _pi_header("mw-alpha-1-1", _at(88), cwd=suite_cwd),
+            _pi_assistant(_at(87), raw_usage=_usage(10, 1, 0, 0)),
+        ],
+    )
+    _write_pi_session(
+        pi_root,
+        "2026-10-19T10-02-00-000Z_mw-alpha-1-2.jsonl",
+        [
+            _pi_header("mw-alpha-1-2", _at(78), cwd=pytest_cwd),
+            _pi_assistant(_at(77), raw_usage=_usage(20, 2, 0, 0)),
+            _pi_assistant(_at(76), raw_usage=_usage(30, 3, 0, 0)),
+        ],
+    )
+    _write_pi_session(
+        pi_root,
+        "2026-10-19T10-03-00-000Z_mw-alpha-1-3.jsonl",
+        [
+            _pi_header("mw-alpha-1-3", _at(68), cwd="H:/git/ProjA"),
+            _pi_assistant(_at(67), raw_usage=_usage(1, 1, 1, 1)),
+            _pi_assistant(_at(66), raw_usage=_usage(1, 1, 1, 1)),
+            _pi_assistant(_at(65), raw_usage=_usage(1, 1, 1, 1)),
+        ],
+    )
+    return suite_cwd, pytest_cwd
+
+
+def test_build_report_folds_fixture_cwds_into_one_group(tmp_path, monkeypatch) -> None:
+    _fixture_fold_fixture(tmp_path, monkeypatch)
+
+    report = usage.build_report(NOW, SINCE, {}, limit=0)
+    rows = {row["name"]: row for row in report["groups"]["project"]}
+
+    # AC-031: both throwaway cwds land in the single fixture row, summing up.
+    assert set(rows) == {usage.FIXTURE_LABEL, "ProjA"}
+    fixtures = rows[usage.FIXTURE_LABEL]
+    assert fixtures["calls"] == 1 + 2
+    assert fixtures["runs"] == 2
+    assert fixtures["tokens"]["input"] == 10 + 20 + 30
+    assert fixtures["tokens"]["output"] == 1 + 2 + 3
+    # The real project is untouched by the fold.
+    assert rows["ProjA"]["calls"] == 3
+    assert rows["ProjA"]["runs"] == 1
+    assert rows["ProjA"]["tokens"]["input"] == 3
+
+
+def test_fixture_fold_keeps_raw_paths_in_runs(tmp_path, monkeypatch) -> None:
+    suite_cwd, pytest_cwd = _fixture_fold_fixture(tmp_path, monkeypatch)
+
+    report = usage.build_report(NOW, SINCE, {}, limit=0)
+    projects = {row["run_id"]: row["project"] for row in report["runs"]}
+
+    # AC-032: the fact layer keeps each original path, not the fold label.
+    assert projects["r-suite"] == suite_cwd
+    assert projects["r-pytest"] == pytest_cwd
+    assert projects["r-real"] == "H:/git/ProjA"
+    assert usage.FIXTURE_LABEL not in projects.values()
+
+    # The text detail table still shows the raw basenames.
+    text = usage.format_report_text(report, detail=True)
+    assert pytest_cwd not in text  # full path never printed
+    assert "pi-runtime-suite-8f2c" in text
+
+
+def test_build_report_fixture_project_filter(tmp_path, monkeypatch) -> None:
+    suite_cwd, pytest_cwd = _fixture_fold_fixture(tmp_path, monkeypatch)
+
+    # AC-033: the label selects exactly the fixture rows (case/space folded).
+    fixtures_only = usage.build_report(
+        NOW, SINCE, {"project": "  (Test Fixtures) "}, limit=0
+    )
+    assert fixtures_only["runs_total"] == fixtures_only["totals"]["runs"] == 2
+    assert {row["run_id"] for row in fixtures_only["runs"]} == {"r-suite", "r-pytest"}
+    assert {row["name"] for row in fixtures_only["groups"]["project"]} == {
+        usage.FIXTURE_LABEL
+    }
+
+    # AC-033: a real basename never pulls the fixture row in (same basename!),
+    # and nothing but the real row survives.
+    real_only = usage.build_report(NOW, SINCE, {"project": "ProjA"}, limit=0)
+    assert real_only["runs_total"] == real_only["totals"]["runs"] == 1
+    assert {row["project"] for row in real_only["runs"]} == {"H:/git/ProjA"}
+    assert {row["name"] for row in real_only["groups"]["project"]} == {"ProjA"}
+
+    # A fixture's own raw path is still filterable exactly.
+    by_suite_path = usage.build_report(NOW, SINCE, {"project": suite_cwd}, limit=0)
+    assert [row["run_id"] for row in by_suite_path["runs"]] == ["r-suite"]
+    by_pytest_path = usage.build_report(NOW, SINCE, {"project": pytest_cwd}, limit=0)
+    # The fixture is reachable by its raw path; the pre-existing both-sides
+    # basename match also lets the same-basename real row through (unchanged
+    # semantics, out of T-17 scope).
+    assert "r-pytest" in {row["run_id"] for row in by_pytest_path["runs"]}
+
+
+def test_is_fixture_project_boundaries() -> None:
+    assert usage._is_fixture_project("H:\\git\\Multi-Workers") is False
+    assert usage._is_fixture_project("/tmp/x") is True
+    assert usage._is_fixture_project(r"C:\Users\U\AppData\Local\Temp\pi-runtime-cwd-a-1") is True
+    assert usage._is_fixture_project(r"D:\builds\pi-runtime-foo") is True  # basename rule, any dir
+    assert usage._is_fixture_project("/var/folders/ab/T/pytest-1/test_x0") is True
+    assert usage._is_fixture_project(r"C:\Windows\Temp\pytest-of-x") is True
+    assert usage._is_fixture_project("") is False
+    assert usage._is_fixture_project(None) is False
+
+    # Display name vs. fact: only the group table folds.
+    assert usage._project_name("/tmp/x") == usage.FIXTURE_LABEL
+    assert usage._project_name("H:/git/Multi-Workers") == "Multi-Workers"
+    assert usage._project_name(None) == usage.UNKNOWN_LABEL
+
+    # R26: the label matches fixtures only; lower-priority matching never
+    # reaches a fixture row through a basename.
+    assert usage._project_matches("/tmp/x", usage.FIXTURE_LABEL) is True
+    assert usage._project_matches("H:/git/ProjA", usage.FIXTURE_LABEL) is False
+    assert usage._project_matches("H:/git/ProjA", "proja") is True
+    assert usage._project_matches("H:/git/ProjA", "ProjA") is True
+    assert usage._project_matches("/tmp/x", "x") is False
+    assert usage._project_matches("/tmp/x", "/tmp/x") is True
