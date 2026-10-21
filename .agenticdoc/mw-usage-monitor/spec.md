@@ -330,3 +330,36 @@ HTML 没有这个约束——一页 200 行明细完全可读（粘顶表头 + �
 
 - 不新增 `by project` 之外的分组维度。
 - 不把 project 规范化成 slug（保留原始路径，展示层才取 basename）。
+
+## 15. v0.7：窗口面默认机器级（`--all-projects`）
+
+### 15.1 背景
+
+台账是机器级的（`~/.mw/usage/runs.jsonl` 收全部项目），CLI 的 `mw stats` 默认也不过滤 project。
+但窗口面 `statsMw` 走 `runMwCliRaw`，后者对所有子命令无条件追加 `--project=<control root>`，
+于是 `/mw stats` 永远只有当前项目一个 project——与「机器级监控」的产品意图相反，也让人以为
+`project` 列坏了（2026-10-21 用户反馈：「project 只剩一个 Multi-Workers 了」）。
+顺带一个真实 bug：用户在窗口里显式写 `--project H:\git\E2Feature` 时，被追加在后面的
+`--project=<control root>` 覆盖（argparse 后者胜），显式过滤静默失效。
+
+### 15.2 需求
+
+- **R21**：窗口面 `/mw stats` 默认不过滤 project（与 CLI 一致，机器级）；只有用户显式写
+  `--project <dir>` 时才收窄。
+- **R22**：`runMwCliRaw` 的 `--project` 追加必须可关闭（只对 stats 关闭）：stats 的 argv 尾部
+  由调用方完全决定，Python 侧仍是唯一解析方。
+- **R23**：`mw stats` 接受 `--all-projects` 显式表达「不过滤」；`--all-projects` 与 `--project`
+  同时出现时 rc=2 并打印 `mw stats: --all-projects conflicts with --project`（不允许 argv 顺序决定语义）。
+
+### 15.3 验收补充
+
+- **AC-028**：`statsMw(root, [])` 派发的 argv 里**没有** `--project`；`statsMw(root, ["--project", "X"])`
+  只带那一个 `--project X`（不再追加 control root）。
+- **AC-029**：`mw stats --all-projects` 与裸 `mw stats` 的 `runs_total` 相同；`--all-projects --project X`
+  rc=2 且 stderr 含冲突提示。
+- **AC-030**：文本/HTML/JSON 三种输出的 project 分布一致（同一窗口内 ≥2 个真实项目时都能看到多个）。
+
+### 15.4 非目标
+
+- 不改 CLI 默认语义（本来就不过滤）。
+- 不把 project 过滤下推到台账解析层（仍是查询时过滤）。

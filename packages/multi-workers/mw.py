@@ -6726,6 +6726,12 @@ def cmd_stats(args: argparse.Namespace) -> int:
     if args.limit is not None and args.limit < 0:
         print("mw stats: --limit must be >= 0", file=sys.stderr)
         return 2
+    # `--all-projects` is only the explicit spelling of the bare default, so
+    # combining it with a `--project` filter is a contradiction, not a no-op.
+    if args.all_projects and args.project:
+        print("mw stats: --all-projects conflicts with --project", file=sys.stderr)
+        return 2
+    project_filter = None if args.all_projects else args.project
     # R15-R17: the HTML page is the readable view of the WHOLE window, while
     # the text table and the JSON ``runs[]`` keep the ``--limit`` cut (R10).
     # ``--json`` wins on purity: its document stays byte-identical (AC-023), so
@@ -6747,7 +6753,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
             "key": args.key,
             "type": args.type,
             "model": args.model,
-            "project": args.project,
+            "project": project_filter,
             "source": args.source,
         },
     )
@@ -6831,8 +6837,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         p = sub.add_parser(name)
         p.add_argument("--project", required=True)
 
-    # `--project` stays optional: the TS runner appends `--project=<dir>` to
-    # every argv, while a bare `mw stats` means the whole machine (RQ4 2).
+    # `--project` stays optional: a bare `mw stats` means the whole machine
+    # (RQ4 2). The window runner no longer appends a control root, so
+    # `/mw stats` is machine-level too; `--all-projects` states that explicitly.
     stats_p = sub.add_parser(
         "stats",
         help="Token and wall-clock usage over a time window (worker runs + PM sessions)",
@@ -6847,6 +6854,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                          help="Only usage whose provider/model contains this substring")
     stats_p.add_argument("--project", default=None, metavar="DIR",
                          help="Only this project (path or basename); omit for the whole machine")
+    stats_p.add_argument("--all-projects", action="store_true",
+                         help="Explicitly report every project on this machine (the default; "
+                              "refused together with --project)")
     stats_p.add_argument("--source", default=None, choices=("worker", "pm"),
                          help="Only worker runs, or only PM window sessions")
     stats_p.add_argument("--json", action="store_true",

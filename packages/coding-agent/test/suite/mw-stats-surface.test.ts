@@ -3,7 +3,10 @@
  * (mw-usage-monitor T-04, covers AC-006).
  *
  * The window owns no aggregation: `statsMw` forwards `stats <argv...>` to
- * mw.py and `runMwCliRaw` appends `--project=<controlRoot>` exactly once,
+ * mw.py verbatim. The ledger is machine-level, so the runner does NOT append
+ * `--project=<controlRoot>` for `stats` (AC-028): a bare `/mw stats` is the
+ * same machine-wide report as the bare CLI, and an explicit `--project` in the
+ * argv survives instead of being overridden by a trailing append.
  * `runMwStatsCommand` splits the command tail verbatim (no flag parsing, no
  * rewriting) and maps ok -> info / failure -> error while keeping Python's
  * stderr in the notify text. The spawn tests reuse the rag precedent: a stub
@@ -122,32 +125,42 @@ function projectArgs(argv: string[]): string[] {
 	return argv.filter((arg) => arg.startsWith("--project"));
 }
 
-describe("/mw stats spawn contract (AC-006)", () => {
-	it.skipIf(!pythonAvailable)("forwards `stats` plus argv and appends --project exactly once", () => {
+describe("/mw stats spawn contract (AC-006/AC-028)", () => {
+	it.skipIf(!pythonAvailable)("forwards `stats` plus argv and never appends --project", () => {
 		const root = mkdtemp("mw-stats-spawn-");
 		process.env.MW_PY = stubMw(root, "ok");
 
 		const bare = statsMw(root, []);
 		if (!bare.ok) throw new Error(`statsMw failed: ${bare.error}`);
 		const bareArgv = JSON.parse(bare.output) as string[];
-		expect(bareArgv).toEqual(["stats", `--project=${root}`]);
-		expect(projectArgs(bareArgv)).toEqual([`--project=${root}`]);
+		expect(bareArgv).toEqual(["stats"]);
+		expect(projectArgs(bareArgv)).toEqual([]);
 
 		const filtered = statsMw(root, ["--since", "24h", "--source", "pm"]);
 		if (!filtered.ok) throw new Error(`statsMw failed: ${filtered.error}`);
 		const filteredArgv = JSON.parse(filtered.output) as string[];
-		expect(filteredArgv).toEqual(["stats", "--since", "24h", "--source", "pm", `--project=${root}`]);
-		expect(projectArgs(filteredArgv)).toHaveLength(1);
+		expect(filteredArgv).toEqual(["stats", "--since", "24h", "--source", "pm"]);
+		expect(projectArgs(filteredArgv)).toEqual([]);
+
+		// An explicit scope is the caller's, not the runner's: exactly one
+		// `--project`, and it is the one that was asked for.
+		const scoped = statsMw(root, ["--project", "H:/x"]);
+		if (!scoped.ok) throw new Error(`statsMw failed: ${scoped.error}`);
+		const scopedArgv = JSON.parse(scoped.output) as string[];
+		expect(scopedArgv).toEqual(["stats", "--project", "H:/x"]);
+		expect(projectArgs(scopedArgv)).toEqual(["--project"]); // exactly one, no control root
 
 		verify(
-			`[VERIFY] AC-006: bare=${JSON.stringify(bareArgv)} filtered=${JSON.stringify(
+			`[VERIFY] AC-028: bare=${JSON.stringify(bareArgv)} filtered=${JSON.stringify(
 				filteredArgv,
-			)} project_appends=${projectArgs(filteredArgv).length}`,
+			)} scoped=${JSON.stringify(scopedArgv)} project_appends=${
+				projectArgs(bareArgv).length + projectArgs(filteredArgv).length
+			}`,
 		);
 	});
 });
 
-describe("/mw stats dispatch wiring (AC-006)", () => {
+describe("/mw stats dispatch wiring (AC-006/AC-028)", () => {
 	it.skipIf(!pythonAvailable)("the registered /mw command routes `stats` instead of the usage line", async () => {
 		const root = mkdtemp("mw-stats-dispatch-");
 		process.env.MW_PY = stubMw(root, "ok");
@@ -157,14 +170,15 @@ describe("/mw stats dispatch wiring (AC-006)", () => {
 		await handler("stats", ctx);
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0]?.type).toBe("info");
-		expect(JSON.parse(notifications[0]?.message ?? "")).toEqual(["stats", `--project=${root}`]);
+		expect(JSON.parse(notifications[0]?.message ?? "")).toEqual(["stats"]);
 
 		await handler("stats --since 24h --source pm", ctx);
 		const argv = JSON.parse(notifications[1]?.message ?? "") as string[];
-		expect(argv).toEqual(["stats", "--since", "24h", "--source", "pm", `--project=${root}`]);
+		expect(argv).toEqual(["stats", "--since", "24h", "--source", "pm"]);
+		expect(projectArgs(argv)).toEqual([]);
 		expect(notifications.some((n) => n.message.startsWith("Usage: /mw build"))).toBe(false);
 
-		verify(`[VERIFY] AC-006: dispatch_notifies=${notifications.length} argv=${JSON.stringify(argv)}`);
+		verify(`[VERIFY] AC-028: dispatch_notifies=${notifications.length} argv=${JSON.stringify(argv)}`);
 	});
 
 	it("the usage尾行 documents stats", async () => {

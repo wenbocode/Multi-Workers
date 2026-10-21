@@ -167,6 +167,7 @@ def test_parse_args_stats_defaults() -> None:
     assert args.type is None
     assert args.model is None
     assert args.project is None  # None = whole machine, not an error
+    assert args.all_projects is False  # explicit spelling of the bare default
     assert args.source is None
     assert args.json is False
     # spec §11.2 R7-R10: window upper bound / run detail / row cut.
@@ -799,6 +800,46 @@ def test_cmd_stats_json_explicit_html_still_opens(env_dirs, tmp_path, monkeypatc
     json.loads(out)
     assert target.exists()
     assert opened == [target.as_uri()]
+
+
+# -- 4e. --all-projects (machine-level default, AC-029) -------------------
+
+
+def test_cmd_stats_all_projects_equals_bare_run(env_dirs) -> None:
+    """AC-029: `--all-projects` is the explicit spelling of the bare default."""
+    usage_dir, pi_root, _claude = env_dirs
+    first = _run_at("run-a", 180, 120, "mw-mw-usage-monitor-4242-1")
+    second = _run_at("run-b", 300, 240, "mw-mw-usage-monitor-4242-2")
+    second[0]["project"] = "H:/git/ProjB"  # a second project on the same machine
+    _write_ledger(usage_dir, [first, second])
+    _pi_session(pi_root, "mw-mw-usage-monitor-4242-1", at_minutes=180)
+    _pi_session(pi_root, "mw-mw-usage-monitor-4242-2", at_minutes=300)
+
+    code, bare_out, err = _run_stats(["--json"])
+    assert code == 0, err
+    code, all_out, err = _run_stats(["--json", "--all-projects"])
+    assert code == 0, err
+    bare = json.loads(bare_out)
+    everything = json.loads(all_out)
+    assert bare["runs_total"] == 2  # the machine-level default: no implicit filter
+    assert everything["runs_total"] == bare["runs_total"]
+    # Both projects survive, in both spellings (the flag only states the default).
+    assert sorted(row["name"] for row in bare["groups"]["project"]) == ["ProjA", "ProjB"]
+    assert bare["groups"]["project"] == everything["groups"]["project"]
+    assert bare["totals"] == everything["totals"]
+
+
+def test_cmd_stats_all_projects_conflicts_with_project(env_dirs) -> None:
+    """AC-029: the two flags contradict each other -> rc=2, no report printed."""
+    code, out, err = _run_stats(["--all-projects", "--project", "ProjA"])
+    assert code == 2
+    assert out == ""
+    assert "conflicts with --project" in err
+    # The equal form of the same filter is refused identically.
+    code, out, err = _run_stats(["--all-projects", "--project=H:/git/ProjA", "--json"])
+    assert code == 2
+    assert out == ""
+    assert "--all-projects conflicts with --project" in err
 
 
 # -- 5. dispatch + machine-level CLI smoke ---------------------------------

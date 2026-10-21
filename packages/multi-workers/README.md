@@ -82,7 +82,7 @@ python mw.py <子命令>
 | `target set/show/clear` | 双工作区配置（见下） |
 | `ue-toolchain run/targets/hash` | dual 模式 UE 工具链纪律（见下）：执行模板并留证（错误签名双判 + --watch 前后哈希）、发现 UE 构建目标名、EOL 归一化哈希 |
 | `model set/show/clear`、`model set-fallback/clear-fallback` | 派发模型默认值与备用模型链（见下） |
-| `stats [--since W] [--key K] [--type T] [--model M] [--project P] [--source worker\|pm] [--until W] [--detail] [--limit N] [--json] [--html [PATH]] [--no-open]` | 机器级 token/墙钟台账查询（见下「用量统计（mw stats）」）：model/type/key/project 四组分布 + 覆盖率声明 |
+| `stats [--since W] [--key K] [--type T] [--model M] [--project P] [--all-projects] [--source worker\|pm] [--until W] [--detail] [--limit N] [--json] [--html [PATH]] [--no-open]` | 机器级 token/墙钟台账查询（见下「用量统计（mw stats）」）：model/type/key/project 四组分布 + 覆盖率声明 |
 | `run-detached [--cwd DIR] [--run-dir DIR] [--timeout-min N] [--heartbeat-s N] -- <cmd...>` | 后台命令唯一入口：隐藏控制台监督进程 + heartbeat/marker 证据（见下「Windows detached-run checklist」） |
 
 ## 用量统计（mw stats）
@@ -93,11 +93,12 @@ worker 跑了多久」。只统计 token，不读正文。
 ### 命令
 
 ```bash
-python mw.py stats [--since 7d] [--until 24h] [--key K] [--type T] [--model M] [--project P] [--source worker|pm] [--detail] [--limit 20] [--json] [--html [PATH]] [--no-open]
+python mw.py stats [--since 7d] [--until 24h] [--key K] [--type T] [--model M] [--project P] [--all-projects] [--source worker|pm] [--detail] [--limit 20] [--json] [--html [PATH]] [--no-open]
 ```
 
 pi 窗口内是同一张报表：`/mw stats [<同样的参数>]`。窗口侧是薄包装——扫描、过滤与渲染全部在 Python；
-runner 恒追加 `--project`，故窗口内默认只看当前 control root。
+台账是机器级的，窗口面与 CLI 一致，也不追加 `--project`：要收窄就显式传 `--project <dir>`
+（`--all-projects` 只是显式声明“不过滤”，与裸跑等价）。
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
@@ -106,7 +107,8 @@ runner 恒追加 `--project`，故窗口内默认只看当前 control root。
 | `--key` | 全部 | 只统计该 owner key |
 | `--type` | 全部 | 只统计该任务类型（coding / review / research / ...） |
 | `--model` | 全部 | `provider/model` 子串匹配（如 `--model glm-5.3`） |
-| `--project` | 全机 | 路径或 basename；省略 = 本机所有项目。`/mw stats` 由 runner 追加当前 control root |
+| `--project` | 全机 | 路径或 basename；省略 = 本机所有项目（`/mw stats` 默认也不追加，与本行一致） |
+| `--all-projects` | 关 | 显式声明统计全机所有项目（与裸跑等价）；与 `--project` 同时出现 = rc=2 冲突错误 |
 | `--source` | 全部 | `worker` = 只 worker 运行；`pm` = 只 PM 窗口会话 |
 | `--detail` | 关 | 文本尾部追加 `runs (newest first)` 明细表：一行一次运行（project / key / task_key / type / model / calls / 四个 token 分量 / wall / status）。文本之外还驱动 HTML 报告（见 `--html` / `--no-open`）；JSON 恒有 `runs[]`，不需要 `--detail` |
 | `--limit` | `20` | **文本**明细表与 JSON `runs[]` 的最大行数（`0` = 不限），`started_at` 倒序截断；被截断时文本写 `showing N of M runs`、JSON 给 `runs_total`。HTML 明细不受它影响，恒为窗口内全部 run |

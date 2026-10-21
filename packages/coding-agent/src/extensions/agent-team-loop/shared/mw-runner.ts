@@ -504,11 +504,23 @@ interface MwCliRawResult {
  * with the merged stdout+stderr text. The ok/error wrapper below collapses
  * every nonzero code into an error, which is wrong for `mw.py rag` (exit 1 is
  * "findings" — an expected warning, exit 2 is a usage/config error).
+ *
+ * `scopeProject = false` drops the trailing `--project=<dir>` for subcommands
+ * whose ledger is machine-level (`stats`): appending it there would hide every
+ * other project AND silently override an explicit `--project` the caller
+ * passed (argparse keeps the last value).
  */
-function runMwCliRaw(sub: string, projectDir: string, args: string[], timeoutMs = 30_000): MwCliRawResult {
+function runMwCliRaw(
+	sub: string,
+	projectDir: string,
+	args: string[],
+	timeoutMs = 30_000,
+	scopeProject = true,
+): MwCliRawResult {
 	const mwPy = findMwPy();
 	if (!mwPy) return { code: -1, output: "", spawnError: "Could not find mw.py — set MW_PY env var." };
-	const result = spawnSync(PYTHON_EXE, [mwPy, sub, ...args, `--project=${projectDir}`], {
+	const argv = scopeProject ? [mwPy, sub, ...args, `--project=${projectDir}`] : [mwPy, sub, ...args];
+	const result = spawnSync(PYTHON_EXE, argv, {
 		encoding: "utf8",
 		timeout: timeoutMs,
 	});
@@ -525,10 +537,17 @@ function runMwCliRaw(sub: string, projectDir: string, args: string[], timeoutMs 
  * Run `mw.py <sub> <args...> --project=<dir>` for the config subcommands
  * (target / model). The Python side stays the single source of parsing,
  * validation, and rendering — the TS side only forwards and displays.
- * `--project` is appended here so callers never forget the control root.
+ * `--project` is appended here so callers never forget the control root,
+ * unless the subcommand opts out (`scopeProject = false`, see `statsMw`).
  */
-function runMwCli(sub: string, projectDir: string, args: string[], timeoutMs = 30_000): MwCliResult {
-	const raw = runMwCliRaw(sub, projectDir, args, timeoutMs);
+function runMwCli(
+	sub: string,
+	projectDir: string,
+	args: string[],
+	timeoutMs = 30_000,
+	scopeProject = true,
+): MwCliResult {
+	const raw = runMwCliRaw(sub, projectDir, args, timeoutMs, scopeProject);
 	if (raw.spawnError !== undefined) return { ok: false, error: raw.spawnError };
 	if (raw.code !== 0) return { ok: false, error: raw.output || `mw ${sub} exited with code ${raw.code}` };
 	return { ok: true, output: raw.output };
@@ -553,11 +572,15 @@ export function modelMw(projectDir: string, args: string[]): MwCliResult {
 /** `mw.py stats [args...]` — token + wall-clock attribution over a time window
  * (mw-usage-monitor T-04/AC-006). Thin wrapper: Python owns the ledger scan,
  * the window/filter semantics and the rendering; the TS side only forwards the
- * argv tail and displays the text (`--project` is appended by runMwCliRaw, so
- * a bare `/mw stats` still scopes the report to this control root). The timeout
- * is minutes, not seconds: the report scans session logs across the window. */
+ * argv tail and displays the text. The ledger is machine-level (`~/.mw/usage/
+ * runs.jsonl` holds every project), so the window face does NOT append the
+ * control root (`scopeProject = false`) — a bare `/mw stats` reports the whole
+ * machine exactly like the bare CLI, and narrowing is an explicit
+ * `--project <dir>` that now survives (before, the appended tail overrode it).
+ * The timeout is minutes, not seconds: the report scans session logs across
+ * the window. */
 export function statsMw(projectDir: string, extraArgs: string[]): MwCliResult {
-	return runMwCli("stats", projectDir, extraArgs, 180_000);
+	return runMwCli("stats", projectDir, extraArgs, 180_000, false);
 }
 
 /** `mw.py rag` subcommands — must mirror mw.py `_RAG_ACTIONS`. Python stays the
