@@ -63,5 +63,9 @@
 | mw-console-storm-hardening | idle | DONE | WENBOZHOU-PC4:53592 |  |  | 2026-10-15 23:15 |
 | mw-model-error-perception | idle | DONE | WENBOZHOU-PC4:47596 | — | — | 2026-10-15T15:38:12.702Z |
 | mw-model-fallback-cli | idle | SPEC | WENBOZHOU-PC4:47596 |  |  | 2026-10-16 15:47 |
-| mw-jev-provider-integration | idle | SPEC | WENBOZHOU-PC4:53592 | — | JEV model integration: make jev models usable end-to-end (catalog/API wiring per typesafe.ai docs) and decision-surface friendly (dispatch/fallback role mapping + effective error feedback) | 2026-10-16 17:09 |
-| mw-goal-gate-write-intent | active | — | WENBOZHOU-PC4:43712 | agent-team-loop | goal.md 门禁改按写意图判定（读放行）+ 门禁模板进仓库 + 安装钩子 + 回归向量测试 | 2026-10-16 16:49 |
+| mw-jev-provider-integration | idle | DONE | WENBOZHOU-PC4:53592 | — | JEV model integration: make jev models usable end-to-end (catalog/API wiring per typesafe.ai docs) and decision-surface friendly (dispatch/fallback role mapping + effective error feedback) | 2026-10-16 19:52 |
+| mw-goal-gate-write-intent | idle | — | WENBOZHOU-PC4:43712 | agent-team-loop | goal.md 门禁改按写意图判定（读放行）+ 门禁模板进仓库 + 安装钩子 + 回归向量测试 | 2026-10-19 17:38 |
+| mw-decision-substitution | idle | DONE | WENBOZHOU-PC4:53592 | — | — | 2026-10-21 23:41 |
+| mw-usage-monitor | idle | DONE | WENBOZHOU-PC4:43712 | agent-team-loop | 本机级 usage 监控：mw 派发 worker 与 PM 窗口的 token 分布（模型/任务类型/key/项目）+ 墙钟，mw stats CLI 与 /mw stats 窗口简报 | 2026-10-22 00:22 |
+| claim-driven-review | idle | EXECUTE | WENBOZHOU-PC4:69520 |  |  | 2026-10-21T09:44:20.260Z |
+| mw-signoff-per-key | active | SPEC | WENBOZHOU-PC4:53592 |  |  | 2026-10-21T16:21:29.043Z |
