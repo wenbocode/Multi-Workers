@@ -7,14 +7,22 @@ Hermetic pytest suite (key mw-decision-substitution) for the sign-off face the
   ``write_signoff`` - and the ``mw decide sign`` CLI: a summary first, then the
   machine lines (``counted_rows`` / ``rows_sha256``) written into
   ``<key>/evidence/review/sign-final.md`` with one ``authority-change`` row.
-* (b) the ``advance_phase.py`` ``decision_signoff`` check: only keys carrying
-  ``decision-scope.md`` are checked, and the check recomputes the archive facts
-  so a signed file stops matching the moment the archive changes. ``continue``
-  needs N>=1 and *every* row on the real jev triple
-  (``timi-decisions`` / ``jev-latest`` / ``api``); ``narrow``/``revoke`` take
-  authority away and only need an intact hash chain.
+* (b) the ``advance_phase.py`` ``decision_signoff`` check: the rule runs for
+  every key (``decision-scope.md`` is inert, AC-002b) but only *requires* a
+  signed file when the key's archive carries >=1 ``kind=decide`` row (AC-001 /
+  AC-002). It recomputes the archive facts, so a signed file stops matching the
+  moment the archive changes. ``continue`` needs N>=1 and *every* row on the
+  real jev triple (``timi-decisions`` / ``jev-latest`` / ``api``);
+  ``narrow``/``revoke`` take authority away and only need an intact hash chain.
 
-Everything runs under ``tmp_path``; no backend, no network, no credential.
+The 2026-10-22 decide-only ruling removed every human face: ``mw decide sign``
+has no ``--conclusion`` / ``--human-confirmed``, ``signed_via`` is
+``auto-decide`` only, and ``write_signoff`` no longer refuses inside an agent
+session. Tests that asserted the removed faces are rewritten (or dropped), not
+kept as compatibility.
+
+Everything runs under ``tmp_path``; the only backend is
+``decision.FakeBackend``, so no network and no credential.
 """
 
 from __future__ import annotations
@@ -22,7 +30,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import os
 import pathlib
 import re
 import sys
@@ -33,6 +40,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))  # noqa: E402
 
 import decide_archive  # noqa: E402
 import decide_signoff  # noqa: E402
+import decision  # noqa: E402
 import decision_points as dpts  # noqa: E402
 import mw  # noqa: E402
 
@@ -69,6 +77,47 @@ def _project(tmp_path: pathlib.Path, *, key: str = KEY) -> pathlib.Path:
 
 def _archive(project: pathlib.Path) -> pathlib.Path:
     return decide_signoff.archive_path(project)
+
+
+def _write_config(project: pathlib.Path, **fields) -> pathlib.Path:
+    """`.mw/decide.json` with ``enabled: true`` (the jev path needs it)."""
+    path = project / ".mw" / "decide.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"enabled": True, **fields}, ensure_ascii=False),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return path
+
+
+def _backend(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    conclusion: str = "continue",
+    confidence: float = 0.9,
+    available: bool = True,
+) -> decision.FakeBackend:
+    """A FakeBackend answering ``q-conclusion`` (no network)."""
+    backend = decision.FakeBackend(
+        results=None,
+        name="timi-decisions",
+        model="jev-latest",
+        confidence_source=decision.CONFIDENCE_SOURCE_API,
+        default=decision.BackendOutcome(
+            available=available,
+            reason=None if available else decision.REASON_UPSTREAM_ERROR,
+            retryable=False,
+            answers=(
+                {"q-conclusion": {"value": conclusion, "confidence": confidence}}
+                if available
+                else None
+            ),
+            latency_ms=3,
+        ),
+    )
+    monkeypatch.setattr(decision, "DEFAULT_BACKEND_FACTORY", lambda cfg: backend)
+    return backend
 
 
 def _append(
@@ -119,17 +168,18 @@ def _append(
 
 
 def _sign_args(project: pathlib.Path, **kw) -> argparse.Namespace:
+    """The one argv shape `mw decide sign` still has (no conclusion face)."""
     base = {
         "subcommand": "decide",
         "decide_action": "sign",
         "project": str(project),
         "key": None,
-        "conclusion": None,
         "reason": None,
         "allow_empty": False,
         "dry_run": False,
         "json": False,
-        "human_confirmed": False,
+        "auto": False,
+        "disable": False,
     }
     base.update(kw)
     return argparse.Namespace(**base)
@@ -148,6 +198,21 @@ def _load_advance_phase():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _write_sign(
+    project: pathlib.Path,
+    conclusion: str,
+    *,
+    allow_empty: bool = False,
+    key: str = KEY,
+) -> pathlib.Path:
+    """Write a real sign-off file from the archive's current facts."""
+    facts = decide_signoff.collect(project, key)
+    text = decide_signoff.render(
+        facts, conclusion, None, key, "-", allow_empty=allow_empty, ts="T"
+    )
+    return decide_signoff.write_signoff(project, key, text)
 
 
 # ---------------------------------------------------------------------------
@@ -385,28 +450,6 @@ def test_render_decide_fallback_is_one_parseable_line(tmp_path: pathlib.Path) ->
     assert "conclusion: continue" not in forged.splitlines()
 
 
-def test_write_signoff_auto_face_needs_the_flag(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """AC-026: `allow_agent_session` AND an ``auto`` face, never one alone."""
-    project = _project(tmp_path)
-    monkeypatch.setenv("PI_WORKER_TASK", "task.md")
-    with pytest.raises(decide_signoff.SignoffError):
-        decide_signoff.write_signoff(project, KEY, "conclusion: narrow\n")
-    with pytest.raises(decide_signoff.SignoffError):
-        decide_signoff.write_signoff(
-            project, KEY, "conclusion: narrow\n", signed_via="auto-decide"
-        )
-    path = decide_signoff.write_signoff(
-        project,
-        KEY,
-        "conclusion: narrow\n",
-        allow_agent_session=True,
-        signed_via="auto-decide",
-    )
-    assert path.is_file()
-
-
 # ---------------------------------------------------------------------------
 # sha determinism
 # ---------------------------------------------------------------------------
@@ -429,15 +472,24 @@ def test_rows_sha256_is_deterministic_and_changes_with_a_new_row(
 # ---------------------------------------------------------------------------
 
 
-def test_write_signoff_refuses_inside_an_agent_session(
+def test_write_signoff_works_inside_an_agent_session(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """AC-008: the writer has no agent-session gate; humans and agents walk one path."""
     project = _project(tmp_path)
-    monkeypatch.setenv("PI_CODING_AGENT", "1")
-    with pytest.raises(decide_signoff.SignoffError) as excinfo:
-        decide_signoff.write_signoff(project, KEY, "conclusion: continue\n")
-    assert "agent session" in str(excinfo.value)
-    assert not _sign_file(project).exists()
+    for name in decide_signoff.AGENT_SESSION_ENV_VARS:
+        monkeypatch.setenv(name, "1")
+    assert decide_signoff.agent_session_vars() == list(decide_signoff.AGENT_SESSION_ENV_VARS)
+
+    path = decide_signoff.write_signoff(project, KEY, "conclusion: narrow\n")
+    assert path.is_file()
+    assert path.read_text(encoding="utf-8") == "conclusion: narrow\n"
+    # AGENT_SESSION_ENV_VARS stays exported for `mw decide dp apply`, not for this write.
+    assert decide_signoff.AGENT_SESSION_ENV_VARS == (
+        "PI_CODING_AGENT",
+        "AI_AGENT",
+        "PI_WORKER_TASK",
+    )
 
 
 def test_write_signoff_creates_parent_dirs(tmp_path: pathlib.Path) -> None:
@@ -454,55 +506,69 @@ def test_write_signoff_creates_parent_dirs(tmp_path: pathlib.Path) -> None:
 
 
 def test_cli_preview_writes_nothing(tmp_path: pathlib.Path, capsys) -> None:
+    """jev unavailable: exit 0, one line, zero writes (spec AC-005)."""
     project = _project(tmp_path)
     assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
     out = capsys.readouterr().out
-    assert "counted_rows=0" in out
-    assert "rows_sha256=" in out
-    assert "conclusion: <continue|narrow|revoke>" in out
+    assert "decision model unavailable" in out
+    assert "sign-off not required" in out
     assert not _sign_file(project).exists()
+    assert not _archive(project).exists()
 
 
 def test_cli_continue_n_zero_exits_2_and_writes_nothing(
-    tmp_path: pathlib.Path, capsys
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     project = _project(tmp_path)
-    assert mw.cmd_decide(_sign_args(project, key=KEY, conclusion="continue")) == 2
+    _write_config(project)
+    _backend(monkeypatch, conclusion="continue")
+    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 2
     err = capsys.readouterr().err
     assert "N=0" in err
     assert "narrow/revoke" in err
     assert "nothing was written" in err
     assert not _sign_file(project).exists()
-    assert not _archive(project).exists()
+    # dp25 archived its own advice row, but no sign-off ever happened.
+    rows = [row for _lineno, row in decide_archive.iter_rows(_archive(project))]
+    assert not any(row.get("kind") == "authority-change" for row in rows)
 
 
-def test_cli_allow_empty_records_the_flag(tmp_path: pathlib.Path) -> None:
+def test_cli_allow_empty_records_the_flag(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project = _project(tmp_path)
-    code = mw.cmd_decide(
-        _sign_args(project, key=KEY, conclusion="continue", allow_empty=True)
-    )
-    assert code == 0
+    _write_config(project)
+    _backend(monkeypatch, conclusion="continue")
+    assert mw.cmd_decide(_sign_args(project, key=KEY, allow_empty=True)) == 0
     text = _sign_file(project).read_text(encoding="utf-8")
     assert "allow_empty: true" in text.splitlines()
     assert "counted_rows: 0" in text.splitlines()
 
 
-def test_cli_narrow_with_n_zero_passes(tmp_path: pathlib.Path) -> None:
+def test_cli_narrow_with_n_zero_passes(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project = _project(tmp_path)
-    assert mw.cmd_decide(_sign_args(project, key=KEY, conclusion="narrow")) == 0
-    assert _sign_file(project).is_file()
+    _write_config(project)
+    _backend(monkeypatch, conclusion="narrow")
+    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
+    text = _sign_file(project).read_text(encoding="utf-8")
+    assert "conclusion: narrow" in text.splitlines()
+    assert "signed_via: auto-decide" in text.splitlines()
 
 
-def test_cli_continue_writes_sign_file_and_authority_row(tmp_path: pathlib.Path) -> None:
+def test_cli_continue_writes_sign_file_and_authority_row(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project = _project(tmp_path)
+    _write_config(project)
     _append(project, trigger="t1")
-    code = mw.cmd_decide(
-        _sign_args(project, key=KEY, conclusion="continue", reason="dp3 held up")
-    )
-    assert code == 0
+    _backend(monkeypatch, conclusion="continue")
+    assert mw.cmd_decide(_sign_args(project, key=KEY, reason="dp3 held up")) == 0
     text = _sign_file(project).read_text(encoding="utf-8")
     assert "conclusion: continue" in text.splitlines()
     assert "counted_rows: 1" in text.splitlines()
+    assert "reason: dp3 held up" in text.splitlines()
     rows = [row for _lineno, row in decide_archive.iter_rows(_archive(project))]
     audit = rows[-1]
     assert audit["kind"] == "authority-change"
@@ -511,29 +577,46 @@ def test_cli_continue_writes_sign_file_and_authority_row(tmp_path: pathlib.Path)
     assert audit["conclusion"] == "continue"
     assert audit["key"] == KEY
     assert audit["dp"] == "dp3-worker-clarify"
+    assert audit["note"] == "signed_via=auto-decide"
     assert audit["prev_sha"] == decide_archive._row_sha(rows[-2])
 
 
-def test_cli_mixed_engine_continue_exits_2(tmp_path: pathlib.Path, capsys) -> None:
+def test_cli_mixed_engine_continue_exits_2(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
     project = _project(tmp_path)
+    _write_config(project)
     _append(project, trigger="t1")
     _append(project, trigger="t2", transport="llm-transitional")
-    assert mw.cmd_decide(_sign_args(project, key=KEY, conclusion="continue")) == 2
+    _backend(monkeypatch, conclusion="continue")
+    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 2
     err = capsys.readouterr().err
     assert "engine mismatch" in err
     assert "seq 2" in err
     assert not _sign_file(project).exists()
 
 
-def test_cli_json_key_set(tmp_path: pathlib.Path, capsys) -> None:
+def test_cli_json_key_set(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
     project = _project(tmp_path)
+    _write_config(project)
     _append(project, trigger="t1")
-    code = mw.cmd_decide(_sign_args(project, key=KEY, conclusion="continue", json=True))
-    assert code == 0
+    _backend(monkeypatch, conclusion="continue")
+    assert mw.cmd_decide(_sign_args(project, key=KEY, json=True)) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert set(payload) == {"conclusion", "ok", "problems", "facts", "path"}
+    assert set(payload) == {
+        "conclusion",
+        "signed_via",
+        "ok",
+        "problems",
+        "facts",
+        "path",
+        "verdicts",
+    }
     assert payload["ok"] is True
     assert payload["conclusion"] == "continue"
+    assert payload["signed_via"] == "auto-decide"
     assert pathlib.Path(payload["path"]) == _sign_file(project)
     assert set(payload["facts"]) >= {
         "counted_rows",
@@ -547,37 +630,46 @@ def test_cli_json_key_set(tmp_path: pathlib.Path, capsys) -> None:
     }
 
 
-def test_cli_json_on_failure_keeps_the_key_set(tmp_path: pathlib.Path, capsys) -> None:
+def test_cli_json_on_failure_keeps_the_key_set(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
     project = _project(tmp_path)
-    code = mw.cmd_decide(_sign_args(project, key=KEY, conclusion="continue", json=True))
-    assert code == 2
+    _write_config(project)
+    _backend(monkeypatch, conclusion="continue")
+    assert mw.cmd_decide(_sign_args(project, key=KEY, json=True)) == 2
     payload = json.loads(capsys.readouterr().out)
-    assert set(payload) == {"conclusion", "ok", "problems", "facts", "path"}
+    assert set(payload) == {"conclusion", "ok", "problems", "facts", "path", "verdicts"}
     assert payload["ok"] is False
     assert payload["path"] is None
     assert payload["problems"]
+    assert "signed_via" not in payload
 
 
 def test_cli_dry_run_writes_nothing(tmp_path: pathlib.Path, capsys) -> None:
     project = _project(tmp_path)
     _append(project, trigger="t1")
-    code = mw.cmd_decide(_sign_args(project, key=KEY, conclusion="continue", dry_run=True))
+    code = mw.cmd_decide(_sign_args(project, key=KEY, dry_run=True))
     assert code == 0
     out = capsys.readouterr().out
     assert "dry-run" in out
-    assert "conclusion: continue" in out
+    assert "nothing is written" in out
+    assert "counted_rows=1" in out
     assert not _sign_file(project).exists()
-    assert all(
-        row.get("kind") == "decide"
-        for _lineno, row in decide_archive.iter_rows(_archive(project))
-    )
+    rows = [row for _lineno, row in decide_archive.iter_rows(_archive(project))]
+    assert len(rows) == 1
+    assert all(row.get("kind") == "decide" for row in rows)
 
 
-def test_cli_infers_the_key_from_a_key_dir_project(tmp_path: pathlib.Path) -> None:
+def test_cli_infers_the_key_from_a_key_dir_project(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project = _project(tmp_path)
+    _write_config(project)
+    _backend(monkeypatch, conclusion="revoke")
     key_dir = project / ".agenticdoc" / KEY
-    assert mw.cmd_decide(_sign_args(key_dir, conclusion="revoke")) == 0
+    assert mw.cmd_decide(_sign_args(key_dir)) == 0
     assert _sign_file(project).is_file()
+    assert "conclusion: revoke" in _sign_file(project).read_text(encoding="utf-8").splitlines()
 
 
 def test_cli_refuses_to_guess_the_key(tmp_path: pathlib.Path, capsys) -> None:
@@ -586,25 +678,19 @@ def test_cli_refuses_to_guess_the_key(tmp_path: pathlib.Path, capsys) -> None:
     assert "cannot infer the key" in capsys.readouterr().err
 
 
-def test_cli_refuses_inside_an_agent_session(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
-) -> None:
-    project = _project(tmp_path)
-    monkeypatch.setenv("PI_WORKER_TASK", "task.md")
-    assert mw.cmd_decide(_sign_args(project, key=KEY, conclusion="narrow")) == 2
-    assert "agent session" in capsys.readouterr().err
-    assert not _sign_file(project).exists()
-
-
 # ---------------------------------------------------------------------------
 # (b) the done gate
 # ---------------------------------------------------------------------------
 
 
-def test_gate_ignores_keys_without_decision_scope_marker(tmp_path: pathlib.Path) -> None:
+def test_gate_passes_a_key_without_any_decide_row(tmp_path: pathlib.Path) -> None:
+    """AC-002b: `decision-scope.md` is inert; no decide row means no sign-off."""
     advance = _load_advance_phase()
     project = _project(tmp_path)
     key_dir = project / ".agenticdoc" / KEY
+    (key_dir / "decision-scope.md").write_text("scope\n", encoding="utf-8")
+    assert advance._key_has_decide_rows(key_dir) is False
+    assert advance._decision_signoff_problems(key_dir) == []
     passed, failures = advance.check_gate(key_dir, "done")
     assert not any("SIGNOFF" in failure for failure in failures), failures
     assert passed is False  # the pre-existing done rules still fail; no sign-off check ran
@@ -615,8 +701,12 @@ def test_gate_blocks_continue_with_n_zero(tmp_path: pathlib.Path) -> None:
     project = _project(tmp_path)
     key_dir = project / ".agenticdoc" / KEY
     (key_dir / "decision-scope.md").write_text("scope\n", encoding="utf-8")
-    assert mw.cmd_decide(_sign_args(key_dir, conclusion="continue", allow_empty=True)) == 0
+    # The gate only looks when a real decide row exists; this one escalated, so
+    # counted_rows=1 while N (available rows) stays 0.
+    _append(project, trigger="t1", available=False, escalated_reason="low-confidence")
+    _write_sign(project, "continue", allow_empty=True)
     _passed, failures = advance.check_gate(key_dir, "done")
+    assert advance._key_has_decide_rows(key_dir) is True
     assert any("N=0" in failure for failure in failures), failures
 
 
@@ -624,8 +714,11 @@ def test_gate_passes_narrow_with_n_zero(tmp_path: pathlib.Path) -> None:
     advance = _load_advance_phase()
     project = _project(tmp_path)
     key_dir = project / ".agenticdoc" / KEY
-    (key_dir / "decision-scope.md").write_text("scope\n", encoding="utf-8")
-    assert mw.cmd_decide(_sign_args(key_dir, conclusion="narrow")) == 0
+    _append(project, trigger="t1", available=False, escalated_reason="low-confidence")
+    _write_sign(project, "narrow")
+    # Not a vacuous pass: the key has a decide row, so the full check really ran.
+    assert advance._key_has_decide_rows(key_dir) is True
+    assert advance._decision_signoff_problems(key_dir) == []
     _passed, failures = advance.check_gate(key_dir, "done")
     assert not any("SIGNOFF" in failure for failure in failures), failures
 
@@ -635,9 +728,8 @@ def test_gate_blocks_after_the_archive_is_appended(tmp_path: pathlib.Path) -> No
     advance = _load_advance_phase()
     project = _project(tmp_path)
     key_dir = project / ".agenticdoc" / KEY
-    (key_dir / "decision-scope.md").write_text("scope\n", encoding="utf-8")
     _append(project, trigger="t1")
-    assert mw.cmd_decide(_sign_args(key_dir, conclusion="continue")) == 0
+    _write_sign(project, "continue")
     _passed, failures = advance.check_gate(key_dir, "done")
     assert not any("SIGNOFF" in failure for failure in failures), failures
 
@@ -650,7 +742,7 @@ def test_gate_blocks_a_missing_machine_line(tmp_path: pathlib.Path) -> None:
     advance = _load_advance_phase()
     project = _project(tmp_path)
     key_dir = project / ".agenticdoc" / KEY
-    (key_dir / "decision-scope.md").write_text("scope\n", encoding="utf-8")
+    _append(project, trigger="t1")
     sign = _sign_file(project)
     sign.parent.mkdir(parents=True, exist_ok=True)
     sign.write_text("conclusion: narrow\n", encoding="utf-8", newline="\n")
@@ -659,123 +751,100 @@ def test_gate_blocks_a_missing_machine_line(tmp_path: pathlib.Path) -> None:
     assert any("rows_sha256" in failure for failure in failures), failures
 
 
+def test_gate_fails_a_key_with_decide_rows_and_no_file(
+    tmp_path: pathlib.Path,
+) -> None:
+    """AC-002: the model took part, so the missing file is a locatable blocker."""
+    advance = _load_advance_phase()
+    project = _project(tmp_path)
+    key_dir = project / ".agenticdoc" / KEY
+    _append(project, trigger="t1")
+    _passed, failures = advance.check_gate(key_dir, "done")
+    assert any(
+        "MISSING" in failure and "sign-final.md" in failure for failure in failures
+    ), failures
+
+
+def test_gate_ignores_rows_for_other_keys(tmp_path: pathlib.Path) -> None:
+    advance = _load_advance_phase()
+    project = _project(tmp_path)
+    key_dir = project / ".agenticdoc" / KEY
+    _append(project, trigger="other-1", key="other-key")
+    assert advance._key_has_decide_rows(key_dir) is False
+    _passed, failures = advance.check_gate(key_dir, "done")
+    assert not any(
+        "SIGNOFF" in failure or "sign-final.md" in failure for failure in failures
+    ), failures
+
+
+def test_gate_treats_an_unreadable_archive_as_having_rows(
+    tmp_path: pathlib.Path,
+) -> None:
+    """UnicodeDecodeError is fail-loud: "cannot read" must not read as "no rows"."""
+    advance = _load_advance_phase()
+    project = _project(tmp_path)
+    key_dir = project / ".agenticdoc" / KEY
+    archive = _archive(project)
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_bytes(b"\xff\xfe not utf-8\n")
+    assert advance._key_has_decide_rows(key_dir) is True
+    _passed, failures = advance.check_gate(key_dir, "done")
+    assert any(
+        "MISSING" in failure and "sign-final.md" in failure for failure in failures
+    ), failures
+
+
 # ---------------------------------------------------------------------------
-# FIX-Q: `--human-confirmed` (the /mw decide sign TUI exemption) + signed_via
+# The machine-line vocabulary the readers share
 # ---------------------------------------------------------------------------
+
+
+def test_signed_via_vocabulary_is_auto_decide_only() -> None:
+    """AC-006: the decision model is the only authority, so one value is writable."""
+    assert decide_signoff.SIGNED_VIA_VALUES == ("auto-decide",)
 
 
 def test_signed_via_line_leaves_the_gate_and_dp_apply_parse_untouched(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The new line is evidence and a machine line: every reader still agrees.
-
-    W9 added ``signed_via`` to the column-0 vocabulary so :func:`parse_signoff`
-    reads it back; the done gate and ``mw decide dp apply`` are unaffected
-    because neither matches an unknown name.
-    """
+    """The line is evidence and a machine line: every reader still agrees."""
     advance = _load_advance_phase()
     project = _project(tmp_path)
     key_dir = project / ".agenticdoc" / KEY
-    (key_dir / "decision-scope.md").write_text("scope\n", encoding="utf-8")
+    _append(project, trigger="t1")
     facts = decide_signoff.collect(project, KEY)
-    text = mw._decide_sign_signed_via(
-        decide_signoff.render(facts, "narrow", None, KEY, "-", ts="T"), "tui"
+    text = decide_signoff.render(
+        facts, "narrow", None, KEY, "-", ts="T", signed_via="auto-decide"
     )
-    assert "signed_via: tui" in text.splitlines()
+    assert "signed_via: auto-decide" in text.splitlines()
     assert re.search(GATE_RE, text)
     payload, errors = mw._dp_apply_parse(text)
     assert errors == []
     assert payload["conclusion"] == "narrow"
-    # W9: `signed_via` is part of the machine-line vocabulary now (render() emits
+    # `signed_via` is part of the machine-line vocabulary now (render() emits
     # it), so parse_signoff reads it; `dp apply` ignores the unknown name.
-    assert decide_signoff.parse_signoff(text)["signed_via"] == "tui"
-    sign = _sign_file(project)
-    sign.parent.mkdir(parents=True, exist_ok=True)
-    sign.write_text(text, encoding="utf-8", newline="\n")
+    assert decide_signoff.parse_signoff(text)["signed_via"] == "auto-decide"
+    decide_signoff.write_signoff(project, KEY, text)
+    # The check really ran (the key has a decide row) and the extra line is inert.
+    assert advance._key_has_decide_rows(key_dir) is True
     _passed, failures = advance.check_gate(key_dir, "done")
     assert not any("SIGNOFF" in failure for failure in failures), failures
 
 
-def test_cli_records_signed_via_cli_by_default(tmp_path: pathlib.Path) -> None:
-    project = _project(tmp_path)
-    _append(project, trigger="t1")
-    assert mw.cmd_decide(_sign_args(project, key=KEY, conclusion="continue")) == 0
-    text = _sign_file(project).read_text(encoding="utf-8")
-    assert "signed_via: cli" in text.splitlines()
-    assert "signed_via: tui" not in text.splitlines()
-
-
-def test_cli_human_confirmed_signs_inside_an_agent_session_and_records_tui(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = _project(tmp_path)
-    _append(project, trigger="t1")
-    monkeypatch.setenv("PI_WORKER_TASK", "task.md")
-    monkeypatch.setenv("PI_CODING_AGENT", "1")
-    code = mw.cmd_decide(
-        _sign_args(project, key=KEY, conclusion="continue", human_confirmed=True)
-    )
-    assert code == 0
-    text = _sign_file(project).read_text(encoding="utf-8")
-    assert "conclusion: continue" in text.splitlines()
-    assert "signed_via: tui" in text.splitlines()
-    # The archive `by` vocabulary is unchanged (still `signoff:<conclusion>`).
-    rows = [row for _lineno, row in decide_archive.iter_rows(_archive(project))]
-    assert rows[-1]["kind"] == "authority-change"
-    assert rows[-1]["by"] == "signoff:continue"
-    # The exemption is scoped to the write: the probe env survives it.
-    assert os.environ.get("PI_WORKER_TASK") == "task.md"
-
-
-def test_cli_human_confirmed_narrow_with_n_zero_inside_an_agent_session(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = _project(tmp_path)
-    monkeypatch.setenv("AI_AGENT", "1")
-    assert (
-        mw.cmd_decide(
-            _sign_args(project, key=KEY, conclusion="narrow", human_confirmed=True)
-        )
-        == 0
-    )
-    assert "signed_via: tui" in _sign_file(project).read_text(encoding="utf-8")
-
-
-def test_cli_without_human_confirmed_still_refuses_and_writes_nothing(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
-) -> None:
-    project = _project(tmp_path)
-    _append(project, trigger="t1")  # the verdict passes; only the session gate refuses
-    monkeypatch.setenv("PI_WORKER_TASK", "task.md")
-    assert mw.cmd_decide(_sign_args(project, key=KEY, conclusion="continue")) == 2
-    err = capsys.readouterr().err
-    assert "refusing inside an agent session" in err
-    assert not _sign_file(project).exists()
-    # Zero authority-change rows: the sign-off never happened.
-    rows = [row for _lineno, row in decide_archive.iter_rows(_archive(project))]
-    assert [row["kind"] for row in rows] == ["decide"]
-
-
-def test_write_signoff_human_confirmed_is_the_only_exemption(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = _project(tmp_path)
-    monkeypatch.setenv("PI_CODING_AGENT", "1")
-    path = mw._decide_sign_write(
-        project / ".agenticdoc" / KEY, KEY, "conclusion: narrow\n", human_confirmed=True
-    )
-    assert path.read_text(encoding="utf-8") == "conclusion: narrow\n"
-    with pytest.raises(decide_signoff.SignoffError):
-        mw._decide_sign_write(
-            project / ".agenticdoc" / KEY, KEY, "conclusion: revoke\n", human_confirmed=False
-        )
+# ---------------------------------------------------------------------------
+# `--dry-run --json`: the zero-write pre-judge (AC-003)
+# ---------------------------------------------------------------------------
 
 
 def test_cli_preview_json_carries_every_conclusion_verdict(
-    tmp_path: pathlib.Path, capsys
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     project = _project(tmp_path)
-    assert mw.cmd_decide(_sign_args(project, key=KEY, json=True)) == 0
+    archive = _archive(project)
+    before = [row for _lineno, row in decide_archive.iter_rows(archive)]
+
+    # No backend registered at all: the pre-judge still answers with verdicts.
+    assert mw.cmd_decide(_sign_args(project, key=KEY, dry_run=True, json=True)) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["path"] is None
     assert set(payload["verdicts"]) == set(decide_signoff.CONCLUSIONS)
@@ -783,12 +852,29 @@ def test_cli_preview_json_carries_every_conclusion_verdict(
     assert any("N=0" in problem for problem in payload["verdicts"]["continue"]["problems"])
     assert payload["verdicts"]["narrow"] == {"ok": True, "problems": []}
     assert payload["verdicts"]["revoke"] == {"ok": True, "problems": []}
+    after = [row for _lineno, row in decide_archive.iter_rows(archive)]
+    assert len(after) == len(before) == 0
+
+    # Even with a backend registered the pre-judge never calls it (zero model
+    # calls) and never appends an archive row.
+    backend = _backend(monkeypatch, conclusion="continue")
+    assert mw.cmd_decide(_sign_args(project, key=KEY, dry_run=True, json=True)) == 0
+    capsys.readouterr()
+    assert backend.calls == []
+    assert len([row for _lineno, row in decide_archive.iter_rows(archive)]) == 0
+    assert not _sign_file(project).exists()
 
 
 def test_cli_preview_json_honours_allow_empty_for_continue(
     tmp_path: pathlib.Path, capsys
 ) -> None:
     project = _project(tmp_path)
-    assert mw.cmd_decide(_sign_args(project, key=KEY, json=True, allow_empty=True)) == 0
+    assert (
+        mw.cmd_decide(
+            _sign_args(project, key=KEY, dry_run=True, json=True, allow_empty=True)
+        )
+        == 0
+    )
     payload = json.loads(capsys.readouterr().out)
     assert payload["verdicts"]["continue"] == {"ok": True, "problems": []}
+    assert not _sign_file(project).exists()

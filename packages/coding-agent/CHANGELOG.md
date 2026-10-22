@@ -94,6 +94,8 @@
 
 ### Changed
 
+- Changed the window's sign-off face to a trigger only (mw-signoff-decide-only): `/mw decide sign` no longer takes a conclusion or forwards `--conclusion`/`--human-confirmed`, no longer refuses when `ctx.hasUI !== true` (headless / `-p` / rpc run the same path), and no longer shows a confirmation dialog - the write is the single `mw decide sign --key <k> --json` argv, and the echo parses the real `signed_via:`/`conclusion:` instead of assuming one. The read-only preview uses `mw decide sign --key <k> --dry-run --json` (strictly zero-write: no `dp25` call, no archive row) and always carries `verdicts` (`continue|narrow|revoke` -> `{ok, problems}`). Nothing on the sign path needs a human, so `/mw decide show` and `/mw decide sign` work in the same window shape and the project's `signoff: disable` still applies.
+
 - Changed autopilot concurrency from a static key cap to a dependency frontier (mw-dynamic-concurrency): the conductor starts `min(max_parallel_keys, |key frontier|)` keys and `min(max_workers_per_key, |task frontier|)` workers per key, both derived from the roadmap `depends_on` column and the task cards' `deps:` header. Missing or unparseable dependency data falls that layer back to serial with an audit line, and roadmap dependency validation now runs inside the tick as observation only (it neither suppresses nor authorises a dispatch).
 
 - Changed the min/max parallel-key range from a frozen value to an upper bound (mw-dynamic-concurrency): setting the bound to `1` returns both layers to serial without restarting `serve`, since the effective concurrency is recomputed from the frontier on every tick.

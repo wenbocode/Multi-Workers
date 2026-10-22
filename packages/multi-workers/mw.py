@@ -3607,13 +3607,10 @@ def _decide_sign_summary(
             + ", ".join(f"{name}={count}" for name, count in sorted(escalated.items()))
         )
     lines.append(f"  p0-open: {', '.join(facts.p0_open) or '-'} ({facts.p0_source})")
-    for name in decide_signoff.CONCLUSIONS:
-        ok, problems = decide_signoff.verdict(
-            facts, name, allow_empty=allow_empty and name == "continue"
-        )
-        detail = "ok" if ok else f"REFUSED ({len(problems)} problem(s))"
+    for name, found in _decide_sign_verdicts(facts, allow_empty).items():
+        detail = "ok" if found["ok"] else f"REFUSED ({len(found['problems'])} problem(s))"
         lines.append(f"  verdict {name}: {detail}")
-        for problem in problems:
+        for problem in found["problems"]:
             lines.append(f"    - {problem}")
     lines.append("  machine lines (draft):")
     lines.append(f"    conclusion: {conclusion or '<continue|narrow|revoke>'}")
@@ -3621,63 +3618,6 @@ def _decide_sign_summary(
     lines.append(f"    rows_sha256: {facts.sha256}")
     lines.append(f"    engine: {'/'.join(decide_signoff.TRUE_ENGINE)}")
     return lines
-
-
-def _decide_sign_signed_via(text: str, signed_via: str) -> str:
-    """Insert the ``signed_via:`` machine line into a rendered sign-off (FIX-Q).
-
-    ``signed_via`` records which face produced the file (``cli`` = a person in
-    a terminal, ``tui`` = the ``/mw decide sign`` confirmation dialog). It rides
-    on the anchored ``promote: -`` line that :func:`decide_signoff.render`
-    always emits after the scalar machine lines, so the ``conclusion:`` /
-    ``counted_rows:`` / ``rows_sha256:`` lines the done gate and ``dp apply``
-    parse stay byte-identical and ``signed_via`` is never mistaken for part of
-    that vocabulary.
-    """
-    anchor = re.search(r"(?m)^promote: -$", text)
-    if anchor is None:  # render() always emits it; refuse instead of guessing
-        raise ValueError("rendered sign-off has no 'promote: -' anchor for signed_via")
-    return f"{text[: anchor.start()]}signed_via: {signed_via}\n{text[anchor.start() :]}"
-
-
-def _decide_sign_write(
-    key_dir_path: pathlib.Path,
-    key: str,
-    text: str,
-    *,
-    human_confirmed: bool,
-    signed_via: str = "cli",
-) -> pathlib.Path:
-    """Write the sign-off, honouring the two documented exemptions.
-
-    :func:`decide_signoff.write_signoff` refuses inside an agent session. Two
-    exemptions exist, and both are recorded in the file itself:
-
-    * ``signed_via`` in ``auto-decide|auto-llm`` (spec §15 AC-026 / D-070): the
-      authority is the decision model (or the caller's inference), so the write
-      is legal in an agent session; the flag alone opens nothing.
-    * ``--human-confirmed`` (the ``/mw decide sign`` dialog): the one legal
-      human escape hatch, scoped to this call — the probe variables are hidden
-      for the duration of the write and restored immediately, and the file
-      records ``signed_via: tui``. That is tamper-evidence, not tamper-proof:
-      forging the flag is deliberate and still leaves the line (plus the
-      ``authority-change`` archive row) behind.
-    """
-    if signed_via in decide_signoff.AUTO_SIGNED_VIA:
-        return decide_signoff.write_signoff(
-            key_dir_path, key, text, allow_agent_session=True, signed_via=signed_via
-        )
-    if not human_confirmed:
-        return decide_signoff.write_signoff(key_dir_path, key, text, signed_via=signed_via)
-    hidden = {
-        name: os.environ.pop(name)
-        for name in decide_signoff.AGENT_SESSION_ENV_VARS
-        if name in os.environ
-    }
-    try:
-        return decide_signoff.write_signoff(key_dir_path, key, text, signed_via=signed_via)
-    finally:
-        os.environ.update(hidden)
 
 
 def _decide_sign_mode(args: argparse.Namespace) -> tuple[str | None, str | None]:
@@ -3741,6 +3681,23 @@ def _decide_sign_persist_mode(
     return 0
 
 
+def _decide_sign_verdicts(
+    facts: decide_signoff.SignoffFacts, allow_empty: bool
+) -> dict[str, dict]:
+    """Every conclusion's ``{ok, problems}`` (shared by preview and ``--dry-run``).
+
+    ``--allow-empty`` only widens ``continue`` (``narrow`` / ``revoke`` only need
+    the hash chain), so the pre-judge a caller makes here is exactly the gate's.
+    """
+    verdicts: dict[str, dict] = {}
+    for name in decide_signoff.CONCLUSIONS:
+        ok, problems = decide_signoff.verdict(
+            facts, name, allow_empty=allow_empty and name == "continue"
+        )
+        verdicts[name] = {"ok": ok, "problems": list(problems)}
+    return verdicts
+
+
 def _decide_sign_preview(
     facts: decide_signoff.SignoffFacts,
     key: str,
@@ -3751,14 +3708,8 @@ def _decide_sign_preview(
 ) -> int:
     """The read-only preview (summary + machine-line draft, exit 0, no write)."""
     if as_json:
-        # Previews carry every conclusion's verdict so the `/mw decide sign`
-        # window can show them and refuse before the confirm dialog (FIX-Q).
-        verdicts: dict[str, dict] = {}
-        for name in decide_signoff.CONCLUSIONS:
-            ok, problems = decide_signoff.verdict(
-                facts, name, allow_empty=allow_empty and name == "continue"
-            )
-            verdicts[name] = {"ok": ok, "problems": list(problems)}
+        # Previews carry every conclusion's verdict so a window can refuse
+        # before spending a decision-model call.
         print(
             json.dumps(
                 {
@@ -3767,7 +3718,7 @@ def _decide_sign_preview(
                     "problems": [],
                     "facts": facts.as_dict(),
                     "path": None,
-                    "verdicts": verdicts,
+                    "verdicts": _decide_sign_verdicts(facts, allow_empty),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -3782,29 +3733,25 @@ def _decide_sign_preview(
 
 
 def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
-    """`mw decide sign`: the automatic sign-off, or the legacy human sign.
+    """`mw decide sign`: the decision model signs, or nothing is required.
 
-    Mode order (spec §15 AC-024 / design D-066, fixed):
+    One path only (spec §2 / design §3.1-3.2):
 
     1. ``--auto`` / ``--disable`` persist ``signoff`` in ``.mw/decide.json`` and
-       exit 0 (``--dry-run`` prints only). With ``--conclusion`` as well the flow
-       continues into the sign step with that mode in effect, which is how the
-       ``auto-llm`` face is reached.
+       exit 0 (``--dry-run`` prints only). They never sign: there is no
+       conclusion parameter to carry into the sign step any more.
     2. ``signoff=disable`` -> nothing is written, exit 0 (the ``done`` gate also
        stops requiring the file, D-071).
-    3. automatic flow (no ``--conclusion``, or an explicit mode flag): jev via
-       ``dp25-signoff-conclusion`` when decide is configured **and** that point
-       is enabled -> ``signed_via: auto-decide``; otherwise the passed
-       ``--conclusion`` is the caller's own inference -> ``signed_via: auto-llm``
-       with one ``decide_fallback: <reason>`` line; with neither, a read-only
-       preview plus guidance (exit 0, nothing written).
-    4. an explicit ``--conclusion`` **without** a mode flag keeps the old human
-       semantics (``signed_via: cli``, ``tui`` with ``--human-confirmed``) and an
-       agent session is still refused.
+    3. ``--dry-run`` is the read-only pre-judge: facts plus every conclusion's
+       ``{ok, problems}`` verdict, zero writes (no decision-model call, no
+       archive row, no sign-off file).
+    4. otherwise ``dp25-signoff-conclusion`` (jev) supplies
+       ``continue|narrow|revoke`` and the file records ``signed_via: auto-decide``.
+    5. jev unavailable -> exit 0, no file, one line
+       ``decision model unavailable (<reason>); sign-off not required``.
 
-    The verdict runs first in every writing path: any problem prints on stderr,
-    exits 2 and writes nothing (``continue`` with N=0 additionally needs
-    ``--allow-empty``).
+    The verdict runs before the write: any problem prints on stderr, exits 2 and
+    writes nothing (``continue`` with N=0 additionally needs ``--allow-empty``).
     """
     key_dir_path, key, err = _decide_sign_key(args, project_dir)
     if err:
@@ -3813,23 +3760,19 @@ def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
     # `.mw/decide.json` and `.mw/decide-points.json` live at the control root,
     # i.e. two levels above the key dir — `--project` may be either one.
     control_dir = key_dir_path.parent.parent
-    conclusion = getattr(args, "conclusion", None)
     reason = getattr(args, "reason", None)
     allow_empty = bool(getattr(args, "allow_empty", False))
     dry_run = bool(getattr(args, "dry_run", False))
     as_json = bool(getattr(args, "json", False))
-    human_confirmed = bool(getattr(args, "human_confirmed", False))
 
     mode_flag, mode_err = _decide_sign_mode(args)
     if mode_err:
         print(f"[mw decide sign] {mode_err}", file=sys.stderr)
         return 2
     if mode_flag is not None:
-        code = _decide_sign_persist_mode(
+        return _decide_sign_persist_mode(
             control_dir, mode_flag, dry_run=dry_run, as_json=as_json
         )
-        if code != 0 or conclusion is None:
-            return code
 
     cfg, _cfg_err = decision.DecisionConfig.from_project(control_dir)
     if cfg.signoff_error:
@@ -3838,53 +3781,62 @@ def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         print(f"[mw decide sign] .mw/decide.json: {cfg.signoff_error}", file=sys.stderr)
         print("[mw decide sign] nothing was written", file=sys.stderr)
         return 2
-    signoff = mode_flag if mode_flag is not None else cfg.signoff
-    auto_flow = conclusion is None or mode_flag is not None
-    signed_via = "tui" if human_confirmed else "cli"
-    decide_fallback: str | None = None
-    decide_detail: str | None = None
 
     facts = decide_signoff.collect(key_dir_path, key)
     sign_path = decide_signoff.signoff_path(key_dir_path, key)
 
-    if auto_flow and signoff == decision.SIGNOFF_DISABLE:
+    if cfg.signoff == decision.SIGNOFF_DISABLE:
         print(
             "signoff disabled (.mw/decide.json signoff=disable); nothing to sign, "
             f"{sign_path} is not required"
         )
         return _decide_sign_preview(facts, key, allow_empty, as_json)
 
-    if auto_flow:
-        auto_conclusion, auto_detail = decide_signoff.auto_conclusion(
-            control_dir, key, facts=facts
+    if dry_run:
+        # AC-003: the pre-judge is read-only in the strict sense — no
+        # `dp25` call (it would append its own archive row), no sign-off file.
+        return _decide_sign_preview(
+            facts,
+            key,
+            allow_empty,
+            as_json,
+            note=(
+                "dry-run: facts and every conclusion's verdict only; "
+                "nothing is written"
+            ),
         )
-        if auto_conclusion is not None:
-            conclusion = auto_conclusion
-            signed_via = "auto-decide"
-            decide_detail = auto_detail
-        elif conclusion is not None:
-            # jev could not answer: the caller's conclusion is the LLM face and
-            # the file records why the model was not used (D-069).
-            signed_via = "auto-llm"
-            decide_fallback = auto_detail
-        else:
-            return _decide_sign_preview(
-                facts,
-                key,
-                allow_empty,
-                as_json,
-                note=(
-                    f"signoff=auto but no conclusion available ({auto_detail}); "
-                    "pass --conclusion (or --auto --conclusion) to sign, or "
-                    "--disable to stop requiring the file"
-                ),
-            )
-        # The dp25 call appended its own decide row: re-read so the chain view
-        # the signature describes is the post-decision one (its rows are counted
-        # nowhere, see decide_signoff.collect).
-        facts = decide_signoff.collect(key_dir_path, key)
 
-    assert conclusion is not None  # every branch above either set it or returned
+    conclusion, decide_detail = decide_signoff.auto_conclusion(
+        control_dir, key, facts=facts
+    )
+    if conclusion is None:
+        unavailable = (
+            f"decision model unavailable ({decide_detail}); sign-off not required"
+        )
+        if as_json:
+            print(
+                json.dumps(
+                    {
+                        "conclusion": None,
+                        "ok": None,
+                        "problems": [],
+                        "note": unavailable,
+                        "facts": facts.as_dict(),
+                        "path": None,
+                        "verdicts": _decide_sign_verdicts(facts, allow_empty),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            print(unavailable)
+        return 0
+
+    # The dp25 call appended its own decide row: re-read so the chain view the
+    # signature describes is the post-decision one (its rows are counted
+    # nowhere, see decide_signoff.collect).
+    facts = decide_signoff.collect(key_dir_path, key)
     ok, problems = decide_signoff.verdict(
         facts, conclusion, allow_empty=allow_empty and conclusion == "continue"
     )
@@ -3901,6 +3853,7 @@ def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
                         "problems": problems,
                         "facts": facts.as_dict(),
                         "path": None,
+                        "verdicts": _decide_sign_verdicts(facts, allow_empty),
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -3916,44 +3869,11 @@ def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         key,
         claim,
         allow_empty=allow_empty and conclusion == "continue",
-        signed_via=signed_via,
-        decide_fallback=decide_fallback,
+        signed_via="auto-decide",
     )
-    if dry_run:
-        if as_json:
-            print(
-                json.dumps(
-                    {
-                        "conclusion": conclusion,
-                        "ok": True,
-                        "problems": [],
-                        "facts": facts.as_dict(),
-                        "path": None,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
-            return 0
-        for line in _decide_sign_summary(facts, key, conclusion, allow_empty):
-            print(line)
-        if decide_detail:
-            print(f"  decide: {decide_detail}")
-        if decide_fallback:
-            print(f"  decide_fallback: {decide_fallback}")
-        print("  --- rendered (dry-run, nothing written) ---")
-        for line in text.splitlines():
-            print(f"  | {line}")
-        return 0
 
     try:
-        written = _decide_sign_write(
-            key_dir_path,
-            key,
-            text,
-            human_confirmed=human_confirmed,
-            signed_via=signed_via,
-        )
+        written = decide_signoff.write_signoff(key_dir_path, key, text)
     except (decide_signoff.SignoffError, OSError) as exc:
         print(f"[mw decide sign] cannot write {sign_path}: {exc}", file=sys.stderr)
         return 2
@@ -3977,8 +3897,7 @@ def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
             trigger_id=f"signoff@{key}@{ts}",
             conclusion=conclusion,
             config_sha_after=config_sha[:16] if config_sha else None,
-            note=f"signed_via={signed_via}"
-            + (f"; decide_fallback={decide_fallback}" if decide_fallback else ""),
+            note="signed_via=auto-decide",
         )
     except (decide_archive.DecisionArchiveError, OSError) as exc:
         print(
@@ -3993,10 +3912,12 @@ def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
             json.dumps(
                 {
                     "conclusion": conclusion,
+                    "signed_via": "auto-decide",
                     "ok": True,
                     "problems": [],
                     "facts": facts.as_dict(),
                     "path": str(written),
+                    "verdicts": _decide_sign_verdicts(facts, allow_empty),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -4007,9 +3928,7 @@ def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
         print(line)
     if decide_detail:
         print(f"  decide: {decide_detail}")
-    if decide_fallback:
-        print(f"  decide_fallback: {decide_fallback}")
-    print(f"signed_via: {signed_via}")
+    print("signed_via: auto-decide")
     print(f"wrote {written}")
     print(f"authority-change: dp={anchor_dp} by=signoff:{conclusion} -> {archive}")
     return 0
@@ -10866,49 +10785,41 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Sign off this key: print the decision summary, then write evidence/review/sign-final.md",
         description=(
             "Summarise the key's decision-archive rows (engine triple, per-dp counts, "
-            "escalated reasons, rows_sha256) and, in the automatic flow, ask "
-            "dp25-signoff-conclusion for continue|narrow|revoke and write "
-            "<key>/evidence/review/sign-final.md plus one authority-change row. "
-            "signoff=auto (default) tries jev first (signed_via: auto-decide) and "
-            "falls back to --conclusion (signed_via: auto-llm, decide_fallback: <reason>); "
-            "signoff=disable never signs and the done gate stops requiring the file. "
-            "An explicit --conclusion WITHOUT --auto/--disable keeps the human semantics "
-            "(signed_via: cli / tui) and is refused inside an agent session."
+            "escalated reasons, rows_sha256), ask dp25-signoff-conclusion for "
+            "continue|narrow|revoke and write <key>/evidence/review/sign-final.md "
+            "(signed_via: auto-decide) plus one authority-change row. The decision "
+            "model is the only authority: no caller-supplied conclusion exists, and "
+            "when it is unavailable nothing is written and no sign-off is required "
+            "(exit 0). signoff=disable never signs and the done gate stops requiring "
+            "the file; --auto / --disable only persist that mode. --dry-run is a "
+            "zero-write pre-judge: facts plus every conclusion's {ok, problems}."
         ),
         epilog=(
             "examples:\n"
-            "  mw decide sign --project .agenticdoc/<key>            # auto: jev decides\n"
+            "  mw decide sign --project .agenticdoc/<key>            # the decision model decides\n"
+            "  mw decide sign --project .agenticdoc/<key> --dry-run --json  # verdicts only, no write\n"
             "  mw decide sign --project . --disable                  # opt out of signing\n"
-            "  mw decide sign --project .agenticdoc/<key> --auto --conclusion narrow\n"
-            "  mw decide sign --project .agenticdoc/<key> --conclusion continue --reason 'human'\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     decide_sign_p.add_argument("--project", default=".", help="Project directory (default: %(default)s)")
     decide_sign_p.add_argument("--key", default=None,
                                help="AgenticTask key (default: the project dir name when it sits under .agenticdoc)")
-    decide_sign_p.add_argument("--conclusion", default=None,
-                               choices=list(decide_signoff.CONCLUSIONS),
-                               help="continue|narrow|revoke; omitted = the automatic sign-off flow "
-                                    "(jev via dp25, else preview only)")
     decide_sign_p.add_argument("--auto", action="store_true",
-                               help="Set signoff=auto in .mw/decide.json (default). With "
-                                    "--conclusion it also signs through the auto-llm face")
+                               help="Set signoff=auto in .mw/decide.json (default) and exit; "
+                                    "it persists the mode only, never signs")
     decide_sign_p.add_argument("--disable", action="store_true",
                                help="Set signoff=disable in .mw/decide.json: never sign, and the "
                                     "done gate stops requiring sign-final.md")
     decide_sign_p.add_argument("--reason", default=None, metavar="TEXT",
-                               help="One-line human reason recorded in the sign-off file")
+                               help="One-line reason recorded in the sign-off file")
     decide_sign_p.add_argument("--allow-empty", action="store_true", dest="allow_empty",
                                help="Allow conclusion=continue with N=0 (recorded as allow_empty: true)")
-    decide_sign_p.add_argument("--human-confirmed", action="store_true", dest="human_confirmed",
-                               help="Exemption set ONLY by the /mw decide sign confirmation dialog: "
-                                    "allow the write inside an agent session and record signed_via: tui. "
-                                    "Tamper-evidence, not tamper-proof")
     decide_sign_p.add_argument("--dry-run", action="store_true", dest="dry_run",
-                               help="Validate and render, write nothing (no archive row either)")
+                               help="Zero-write pre-judge: facts + verdicts (every conclusion's "
+                                    "{ok, problems}), no decision-model call and no sign-off file")
     decide_sign_p.add_argument("--json", action="store_true",
-                               help="Emit {conclusion, ok, problems, facts, path}")
+                               help="Emit {conclusion, ok, problems, verdicts, facts, path}")
 
     decide_dp_p = decide_sub.add_parser(
         "dp",

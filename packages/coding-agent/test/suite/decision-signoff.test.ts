@@ -2,10 +2,12 @@
  * Decision sign-off write-guard coverage (mw-decision-substitution T-09,
  * design D-015, AC-009/AC-010).
  *
- * The sign-off file `evidence/review/sign-final.md` is the human answer channel
- * and `.mw/decide-points.json` is the only authorization source, so an agent
- * must not write either through its tool channel (self-signed authority). The
- * guard mirrors `shared/xkey-gate-guard.ts`: write/edit paths are
+ * The sign-off file `evidence/review/sign-final.md` records the decision model's
+ * conclusion (mw-signoff-decide-only) and `.mw/decide-points.json` is the only
+ * authorization source, so an agent must not write either through its tool
+ * channel: a hand-written file would forge the model's conclusion and bypass the
+ * verdict / `rows_sha256` / authority-change lines. The guard mirrors
+ * `shared/xkey-gate-guard.ts`: write/edit paths are
  * fragment-matched, bash commands are scanned text-level, fail-closed, and
  * every refusal leaves a `[DECISION_SIGNOFF]` trace line.
  *
@@ -232,6 +234,11 @@ describe("decision sign-off guard path matcher (T-09)", () => {
 			"mw decide dp show dp4-failure-handling",
 			"mw decide dp check --json",
 			"mw decide report --key k-signoff --phase verify",
+			// The decision model is the signed writer (mw-signoff-decide-only): the
+			// window forwards these two argv shapes, so `decide sign` stays a
+			// sanctioned writer (deliberately absent from TABLE_WRITE_CLI_RE).
+			"mw decide sign --key k-signoff --dry-run --json",
+			"mw decide sign --key k-signoff --json",
 			// registry -> table one-way merge (append-only, cannot widen authority):
 			// this is how dp25-signoff-conclusion becomes a visible table row.
 			"mw decide dp refresh --project .",
@@ -352,7 +359,7 @@ describe("decision sign-off guard real tool_call dispatch (T-09)", () => {
 			expect(result.isError).toBe(true);
 			expect(toolResultText(result)).toContain("decision-signoff-guard: blocked worker_file");
 		}
-		// No file landed and the human's file is byte-identical.
+		// No file landed and the recorded sign-off is byte-identical.
 		expect(fs.readFileSync(fixture.signoff, "utf8")).toBe(signoffBefore);
 		expect(fs.existsSync(straySignoff)).toBe(false);
 		const lines = traceLines(fixture.readTrace());

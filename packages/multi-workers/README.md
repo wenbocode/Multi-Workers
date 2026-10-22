@@ -849,7 +849,7 @@ triage: ERROR — <配置错误串>
 | 指令 | `mw decide dp list/show/on/off/set/refresh/check/apply/export/verify`（`export [--json|--write]` 把注册表导出成 `decide_registry.json`，每个 point 自带 `wired`/`trigger`/`adopted_at`/`wiring_note` 且 `required_state_fields` 带 `{name,type,description}`，重生成保留手写 wiring；`verify [--json|--live|--dp ID]` 离线把每个 dp 的最小合法 state 跑过 `decide` + 线上 body 形状检查，`--live` 打真 jev-latest，任一 dp 不可用 exit 1）（`on <P0>` 必须带 `--i-understand-p0`，否则 exit 2 且不写文件） |
 | 档案 | `.agenticdoc/_autopilot/decisions.jsonl`：`decide`/`override`/`settle`/`authority-change` 四类行 + `prev_sha` 哈希链，单写者 append-only，`decision_id` 幂等 |
 | 报告 | `mw decide report --key <key> --write`：phase 末由 `advance_phase` 自动生成 `evidence/review/decision-review-<phase>-*.md`；`N<5` 强制「数据不足，不结论」，机器只给 `suggest:` 不给动作 |
-| 收尾签收 | `mw decide sign --project .agenticdoc/<key> [--conclusion continue\|narrow\|revoke]` 生成 `<key>/evidence/review/sign-final.md`（机器行 `counted_rows`/`rows_sha256` 由命令算，人只回结论）+ 一条 `authority-change` 档案行；再由人在 agent 会话外跑 `mw decide dp apply`。done 门禁强制；key 目录有 `decision-scope.md` 时还校验签收内容（见下） |
+| 收尾签收 | `mw decide sign --project .agenticdoc/<key>` 触发签收：结论由决策模型（`dp25-signoff-conclusion`）给出，命令生成 `<key>/evidence/review/sign-final.md`（机器行 `counted_rows`/`rows_sha256` 由命令算）+ 一条 `authority-change` 档案行。done 门禁无条件校验签收内容；`.mw/decide.json` 的 `signoff: disable` 或该 key 档案无 `kind=decide` 行 → 无需签收（见下） |
 
 #### per-dp 策略旋钮（`min_confidence` / `max_questions` / `timeout_s`）
 
@@ -875,60 +875,63 @@ triage: ERROR — <配置错误串>
 - 这三键目前是**只读表内容**：`mw decide dp set` 仍只接受 `tier/enabled/mode/note`（未知键照旧 exit 2），
   需要时直接编辑 `.mw/decide-points.json`（下一次决策即生效）。
 
-#### `mw decide sign`（签收 = 决策摘要 + 机器行，人只回结论）
+#### `mw decide sign`（签收 = 决策摘要 + 机器行，结论由决策模型给）
 
-人不再手写签收文件的机器行：命令先算出本 key 的决策事实，人只给结论。
+签收不再由人给结论：命令先算出本 key 的决策事实，再由 `dp25-signoff-conclusion` 决定
+`continue|narrow|revoke`。命令没有结论参数。
 
 ```bash
-python mw.py decide sign --project .agenticdoc/<key>                        # 只打印摘要 + 机器行草稿，不写文件
-python mw.py decide sign --project .agenticdoc/<key> --conclusion continue --reason 'dp3 站住了'
-python mw.py decide sign --project . --key <key> --conclusion narrow --dry-run
-python mw.py decide sign --project .agenticdoc/<key> --conclusion continue --json
+python mw.py decide sign --project .agenticdoc/<key>                        # 决策模型签收（或无需签收）
+python mw.py decide sign --project .agenticdoc/<key> --dry-run --json       # 只读预判：三个 verdict，零写入
+python mw.py decide sign --project .agenticdoc/<key> --reason 'closing EXECUTE'
+python mw.py decide sign --project .agenticdoc/<key> --disable            # 显式关掉签收（写 .mw/decide.json）
 ```
 
 - 摘要含：`counted_rows`（本 key 的 `kind=decide` 行数）、`n_available` / `n_acted` / `n_escalated`、
   `engines`（`transport/model/confidence_source` 三元组计数）、按 dp 的计数、`escalated_reason` 分布、
-  已开 P0、`rows_sha256`（被计数行的规范 JSON 哈希，档案一改就变）。
-- `conclusion=continue` 要求 `N>=1`、档案哈希链完整、且**每一行**都是真 jev
-  （`timi-decisions` / `jev-latest` / `api`）；`narrow` / `revoke` 是减权，只要求链完整（`N=0` 也允许）。
+  已开 P0、`rows_sha256`（被计数行的规范 JSON 哈希，档案一改就变），以及三个结论各自的 `{ok, problems}`。
+- 结论只来自 `dp25-signoff-conclusion`（jev）：`continue` 要求 `N>=1`、档案哈希链完整、且**每一行**都是
+  真 jev（`timi-decisions` / `jev-latest` / `api`）；`narrow` / `revoke` 是减权，只要求链完整（`N=0` 也允许）。
   `N=0` 还要 `continue` 时必须显式 `--allow-empty`，文件里落 `allow_empty: true` 与 `counted_rows: 0`。
+- **决策模型不可用就不写文件**（传输关 / dp 关 / 低置信 / 超时 / 不可达）：exit 0，打印
+  `decision model unavailable (<reason>); sign-off not required`。done 门禁此后仍报 MISSING（签收文件不存在），
+  重跑一次即可，不需要人。
 - 校验不过 → stderr 逐条原因、exit 2、**不写文件**。写入成功后追加一条 `kind=authority-change`
-  档案行（`by=signoff:<conclusion>`、`change=signoff`、`conclusion=<x>`；`by` 沿用档案层冻结词表）。
+  档案行（`by=signoff:<conclusion>`、`change=signoff`、`conclusion=<x>`；`by` 沿用档案层冻结词表），
+  文件落 `signed_via: auto-decide`（写面词表只有这一个值）。
 - 固定落 `<key>/evidence/review/sign-final.md`（父目录自动创建，`conclusion:` 列 0 单行），并写出
   `promote:` / `demote:` / `p0-open:` 三行，所以同一份文件仍可直接给 `mw decide dp apply` 消费。
-- **agent 会话内拒绝**：`PI_CODING_AGENT` / `AI_AGENT` / `PI_WORKER_TASK` 任一存在即 exit 2，与
-  `dp apply` 同一判据（常量单一来源 `decide_signoff.AGENT_SESSION_ENV_VARS`）。唯一例外是 `--human-confirmed`：
-  它只由 `/mw decide sign` 的确认对话框设置（见下），带该 flag 时允许写入，并在文件里落一行
-  `signed_via: tui`（命令行正常签收落 `signed_via: cli`）。该 flag 的定位是 **tamper-evidence 不是
-  tamper-proof**：agent 仍可蓄意伪造它，但文件与 `authority-change` 档案行都会留下来源痕迹。
-- `--json` 输出 `{conclusion, ok, problems, facts, path}`（失败时 `path=null`；preview 时
-  `conclusion`/`ok`/`path` 皆 `null`），另外 preview 会多带 `verdicts`：三个结论各自的 `{ok, problems}`，
-  供 `/mw decide show|sign` 在弹框前判断。
+- **零 `kind=decide` 行 → 无需签收**：done 门禁跳过（不要求 `sign-final.md`）。此情形下 `continue` 被
+  `N=0` 拒（必须显式 `--allow-empty`），只有 `narrow` / `revoke` 能过（减权只需链完整）；
+  `--dry-run --json` 可直接看到 `counted_rows: 0` 与三个 verdict。
+- `--dry-run --json` 永不写入、也不调决策模型，输出
+  `{"conclusion": null, "ok": null, "problems": [], "facts": {...}, "path": null, "verdicts": {"continue": {"ok": true, "problems": []}, "narrow": {...}, "revoke": {...}}}`；
+  窗口与脚本用 `verdicts` 预判。其它 `--json` 输出 `{conclusion, ok, problems, facts, path, verdicts}`
+  （失败时 `path=null`）。
+- `mw decide sign` 不再按 agent 会话拒绝：结论由决策模型给，任何调用方都给不出（`mw decide dp apply`
+  的会话守卫照旧，它是独立的授权变更动作）。
 
-**pi 窗口入口（FIX-Q）**：`/mw decide show` 与
-`/mw decide sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <k>]`。
+**pi 窗口入口：窗口只触发签收，不产生结论。** `/mw decide show` 与
+`/mw decide sign [--allow-empty] [--key <k>]`。
 
 ```text
-/mw decide show                                  # 只跑 preview（等价 mw decide sign --json），不写任何文件
-/mw decide sign continue --reason "dp3 站住了"    # 先 preview → 判据不过直接报错 → 通过才弹确认框
-/mw decide sign narrow --key my-key --allow-empty
+/mw decide show                                  # 只跑 preview（mw decide sign --dry-run --json），不写任何文件
+/mw decide sign --key my-key                     # 写面：mw decide sign --key <k> --json
 ```
 
 - `show` 渲染 `counted_rows/available/acted/escalated`、`engines:` 直方图、三个 verdict、
-  `rows_sha256` 前 12 位与 `p0-open`；它是只读预览（`--json` preview），**不写文件**。
-- `sign` 先跑同一条 preview；若该 conclusion 的机器判据不通过（preview 的 `verdicts[<c>].problems` 非空），
-  直接把 problems 报成 error、**不弹确认框、零写入**。通过才 `ctx.ui.confirm`，取消则
-  `cancelled, nothing written`；确认后转发 `mw decide sign ... --conclusion <c> --human-confirmed`
-  （带 `--reason` / `--allow-empty` 时原样追加），Python 侧仍会重跑判据（exit 2 且零写入），成功才提示
-  `advance_phase.py` 可推进。
-- key 取 `--key` > 当前窗口 watch 的 key > usage 报错（不猜）。`ctx.hasUI` 为假（headless / `-p` / rpc）
-  一律拒：没有确认框就没有人工点击可收集。
+  `rows_sha256` 前 12 位与 `p0-open`；`--dry-run` preview 零写入、零决策模型调用。
+- `sign` 只有一个写面：`mw decide sign --key <k> --json`。没有结论参数（调用方没有结论可给）、不弹确认框、
+  不要求 `ctx.hasUI`（headless / `-p` / rpc 走同一条路径）；回显解析真实 `signed_via: auto-decide` 与
+  `conclusion:`，不猜结论。`--reason` 是 CLI 面，窗口不转发；项目 `signoff: disable` 仍生效（只打印预览）。
+- key 取 `--key` > 当前窗口 watch 的 key > usage 报错（不猜）。
 
-**done 门禁新增 `decision_signoff` 检查（条件生效）**：只有 key 目录存在 `decision-scope.md` 标记文件的
-key 才校验签收内容——①`sign-final.md` 存在 ②`conclusion:` 可解析 ③`counted_rows:` / `rows_sha256:` 存在
+**done 门禁的 `decision_signoff` 检查（无条件执行）**：适用性由检查函数判断——`.mw/decide.json` 的
+`signoff: disable` 或该 key 档案没有一条 `kind=decide` 行 → 跳过（无需签收；档案读不出则 fail-loud）。
+否则校验 ①`sign-final.md` 存在 ②`conclusion:` 可解析 ③`counted_rows:` / `rows_sha256:` 存在
 ④用 `decide_signoff.collect` 重算并比对 sha（签名后档案被追加/篡改即失败）⑤`continue` 再跑
-`verdict()`（N>=1 + 全部真 jev + 链完整）。**其它 key 零影响**，既有两条签收检查（文件存在 + `conclusion:`
-机器行）也不变。`decision-scope.md` 由 PM 在需要内容校验的 key 上建立（内容自由，只作标记）。
+`verdict()`（N>=1 + 全部真 jev + 链完整）。「文件存在 + `conclusion:` 行」已并入这一条规则：原先
+`decision-scope.md` 开关与另外两条无条件签收规则已删除，`decision-scope.md` 不再被读取。
 
 当前只有 **dp1（派发前分诊，`mode=auto` 时写 `decision:` 头行）/ dp2（checkpoint 只允许收窄）/ dp3
 （worker 澄清自答）** 有真实调用点，其余 21 项仅注册（开启不改变任何行为）。完整说明（24 项一览与

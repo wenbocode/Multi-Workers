@@ -1,19 +1,21 @@
-"""test_decide_sign_auto.py - W9: the sign-off belongs to the decision model.
+"""test_decide_sign_auto.py - the sign-off belongs to the decision model only.
 
-Spec §15 (AC-023..AC-027) / design D-064..D-071 replaced "a human signs outside
-the agent session" with:
+The 2026-10-22 decide-only ruling (spec §2 / design §3) left exactly one path:
 
 * ``.mw/decide.json`` ``signoff`` = ``auto`` (default) | ``disable``, written by
-  ``mw decide sign --auto|--disable`` (fail-soft read, D-065);
-* ``auto`` asks ``dp25-signoff-conclusion`` first (state assembled from
+  ``mw decide sign --auto|--disable`` (fail-soft read, D-065). The flags only
+  persist the mode; the sign step itself has no caller-supplied conclusion.
+* ``auto`` asks ``dp25-signoff-conclusion`` (state assembled from
   ``decide_signoff.collect()`` facts only) and records ``signed_via:
-  auto-decide``; when jev cannot answer, the caller's ``--conclusion`` is the
-  LLM face (``signed_via: auto-llm`` + ``decide_fallback: <reason>``); with
-  neither it is a read-only preview (exit 0);
+  auto-decide``;
+* when jev cannot answer (no config / transport down / dp25 unregistered or
+  disabled) nothing is written and the command exits 0 with
+  ``decision model unavailable (<reason>); sign-off not required`` - there is
+  no ``auto-llm`` fallback and no human face;
 * ``disable`` writes nothing and the ``done`` gate stops requiring
   ``sign-final.md``;
-* an explicit ``--conclusion`` without a mode flag keeps the human semantics
-  (``cli`` / ``tui``) and an agent session is still refused.
+* ``write_signoff`` has no agent-session gate: humans and agents walk the same
+  path (AC-008).
 
 Hermetic: a ``decision.FakeBackend`` through ``decision.DEFAULT_BACKEND_FACTORY``,
 ``tmp_path`` projects, no network, no credential.
@@ -156,17 +158,16 @@ def _backend(
 
 
 def _sign_args(project: pathlib.Path, **kw) -> argparse.Namespace:
+    """The one argv shape `mw decide sign` still has (no conclusion face)."""
     base = {
         "subcommand": "decide",
         "decide_action": "sign",
         "project": str(project),
         "key": None,
-        "conclusion": None,
         "reason": None,
         "allow_empty": False,
         "dry_run": False,
         "json": False,
-        "human_confirmed": False,
         "auto": False,
         "disable": False,
     }
@@ -243,16 +244,26 @@ def test_sign_refuses_on_signoff_error_and_writes_nothing(tmp_path: pathlib.Path
 # ---------------------------------------------------------------------------
 
 
-def test_sign_auto_persists_the_mode_and_exits_zero(tmp_path: pathlib.Path, capsys) -> None:
+def test_sign_auto_persists_the_mode_and_exits_zero(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
     project = _project(tmp_path)
     _write_config(project, signoff="disable")
+    _append_true_engine_row(project)
+    _backend(monkeypatch, conclusion="continue")
     assert mw.cmd_decide(_sign_args(project, key=KEY, auto=True)) == 0
     out = capsys.readouterr().out
     assert "signoff: auto" in out
     stored = json.loads((project / ".mw" / "decide.json").read_text(encoding="utf-8"))
     assert stored["signoff"] == "auto"
     assert stored["enabled"] is True, "persisting signoff must keep every other key"
+    # `--auto` is the mode-persist face only; the sign step runs on the next
+    # plain invocation, which now signs without any caller-supplied conclusion.
     assert not _sign_file(project).exists()
+    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
+    machines = _parse_machines(project)
+    assert machines["signed_via"] == "auto-decide"
+    assert machines["conclusion"] == "continue"
 
 
 def test_sign_disable_persists_the_mode_and_dry_run_writes_nothing(
@@ -340,41 +351,27 @@ def test_auto_decide_narrow_with_no_rows_is_written(
     assert machines["counted_rows"] == "0"
 
 
-def test_low_confidence_falls_back_to_llm_and_records_decide_fallback(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+def test_unavailable_transport_writes_nothing_and_names_the_reason(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
+    """AC-005: no `auto-llm` fallback; exit 0, no file, one explanatory line."""
     project = _project(tmp_path)
     _write_config(project)
     _enable_dp25(project)
-    _append_true_engine_row(project)
-    _backend(monkeypatch, conclusion="continue", confidence=0.2)
+    backend = _backend(monkeypatch, available=False)
 
-    assert mw.cmd_decide(_sign_args(project, key=KEY, auto=True, conclusion="narrow")) == 0
-    machines = _parse_machines(project)
-    assert machines["conclusion"] == "narrow"
-    assert machines["signed_via"] == "auto-llm"
-    assert machines["decide_fallback"].startswith("low-confidence")
+    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
+    out = capsys.readouterr().out
+    assert "decision model unavailable" in out
+    assert "sign-off not required" in out
+    assert not _sign_file(project).exists()
+    assert backend.calls, "the unavailable transport was actually attempted"
     rows = [row for _lineno, row in decide_archive.iter_rows(_archive(project))]
-    assert rows[-1]["note"].startswith("signed_via=auto-llm; decide_fallback=low-confidence")
+    assert not any(row.get("kind") == "authority-change" for row in rows)
 
 
-def test_unavailable_transport_falls_back_to_llm(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = _project(tmp_path)
-    _write_config(project)
-    _enable_dp25(project)
-    _backend(monkeypatch, available=False)
-
-    assert mw.cmd_decide(_sign_args(project, key=KEY, auto=True, conclusion="revoke")) == 0
-    machines = _parse_machines(project)
-    assert machines["signed_via"] == "auto-llm"
-    assert machines["conclusion"] == "revoke"
-    assert machines["decide_fallback"].startswith("unavailable")
-
-
-def test_dp25_disabled_falls_back_and_names_the_reason(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+def test_dp25_disabled_says_not_required_and_writes_nothing(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     project = _project(tmp_path)
     _write_config(project)
@@ -382,15 +379,16 @@ def test_dp25_disabled_falls_back_and_names_the_reason(
     _write_points_table(project, {decide_signoff.SIGNOFF_DP_ID: {"enabled": False}})
     backend = _backend(monkeypatch, conclusion="continue")
 
-    assert mw.cmd_decide(_sign_args(project, key=KEY, auto=True, conclusion="revoke")) == 0
-    machines = _parse_machines(project)
-    assert machines["signed_via"] == "auto-llm"
-    assert "disabled" in machines["decide_fallback"]
+    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
+    out = capsys.readouterr().out
+    assert "sign-off not required" in out
+    assert "disabled" in out
+    assert not _sign_file(project).exists()
     assert backend.calls == [], "a disabled point must not reach the transport"
 
 
-def test_dp25_not_registered_falls_back_to_llm(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+def test_dp25_not_registered_says_not_required_and_writes_nothing(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     project = _project(tmp_path)
     _write_config(project)
@@ -403,23 +401,25 @@ def test_dp25_not_registered_falls_back_to_llm(
         lambda dp_id: (_ for _ in ()).throw(decision.DecisionInputError("unknown dp")),
     )
 
-    assert mw.cmd_decide(_sign_args(project, key=KEY, auto=True, conclusion="narrow")) == 0
-    machines = _parse_machines(project)
-    assert machines["signed_via"] == "auto-llm"
-    assert "not registered" in machines["decide_fallback"]
+    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
+    out = capsys.readouterr().out
+    assert "sign-off not required" in out
+    assert "not registered" in out
+    assert not _sign_file(project).exists()
     assert backend.calls == []
 
 
-def test_auto_without_jev_and_without_conclusion_is_a_preview(
+def test_sign_without_jev_says_not_required_and_writes_nothing(
     tmp_path: pathlib.Path, capsys
 ) -> None:
+    """No `.mw/decide.json`, no `--conclusion`: one line, zero writes."""
     project = _project(tmp_path)
     assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
     out = capsys.readouterr().out
-    assert "signoff=auto but no conclusion available" in out
-    assert "--disable" in out
-    assert "counted_rows=0" in out
+    assert "decision model unavailable" in out
+    assert "sign-off not required" in out
     assert not _sign_file(project).exists()
+    assert not _archive(project).exists()
 
 
 def test_auto_decide_continue_still_runs_the_verdict(
@@ -495,8 +495,9 @@ def test_disable_lets_the_done_gate_pass(tmp_path: pathlib.Path) -> None:
     advance = _load_advance_phase()
     project = _project(tmp_path)
     key_dir = _key_dir(project)
-    (key_dir / "decision-scope.md").write_text("scope\n", encoding="utf-8")
     _write_config(project, signoff="disable")
+    # A real jev row would normally require the file (AC-002); disable waives it.
+    _append_true_engine_row(project)
     _passed, failures = advance.check_gate(key_dir, "done")
     assert not any("SIGNOFF" in failure or "sign-final" in failure for failure in failures), failures
 
@@ -527,63 +528,37 @@ def test_auto_keeps_the_gate_closed_without_the_file(tmp_path: pathlib.Path) -> 
     advance = _load_advance_phase()
     project = _project(tmp_path)
     key_dir = _key_dir(project)
-    (key_dir / "decision-scope.md").write_text("scope\n", encoding="utf-8")
     _write_config(project, signoff="auto")
+    # AC-002: the model took part (one real jev row), so the missing file blocks.
+    _append_true_engine_row(project)
     _passed, failures = advance.check_gate(key_dir, "done")
     assert any("sign-final.md" in failure for failure in failures), failures
 
 
 # ---------------------------------------------------------------------------
-# 5. The human face is unchanged (AC-026)
+# 5. The writer has no session gate (AC-008)
 # ---------------------------------------------------------------------------
 
 
-def test_explicit_conclusion_without_a_mode_flag_keeps_cli_semantics(
-    tmp_path: pathlib.Path,
-) -> None:
-    project = _project(tmp_path)
-    _write_config(project)
-    _enable_dp25(project)
-    _append_true_engine_row(project)
-
-    assert mw.cmd_decide(_sign_args(project, key=KEY, conclusion="continue")) == 0
-    machines = _parse_machines(project)
-    assert machines["signed_via"] == "cli"
-    assert "decide_fallback" not in machines
-
-
-def test_explicit_conclusion_without_a_mode_flag_is_refused_in_an_agent_session(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
-) -> None:
-    project = _project(tmp_path)
-    _write_config(project)
-    _enable_dp25(project)
-    _append_true_engine_row(project)
-    monkeypatch.setenv("PI_WORKER_TASK", "task.md")
-
-    assert mw.cmd_decide(_sign_args(project, key=KEY, conclusion="continue")) == 2
-    assert "agent session" in capsys.readouterr().err
-    assert not _sign_file(project).exists()
-
-
-def test_write_signoff_only_opens_for_the_auto_values(
+def test_write_signoff_has_no_session_gate(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Every face is gone: the writer accepts any caller, agent session or not."""
     project = _project(tmp_path)
     monkeypatch.setenv("PI_CODING_AGENT", "1")
+    monkeypatch.setenv("PI_WORKER_TASK", "task.md")
     key_dir = _key_dir(project)
-    with pytest.raises(decide_signoff.SignoffError):
-        decide_signoff.write_signoff(
-            key_dir, KEY, "conclusion: narrow\n", allow_agent_session=True, signed_via="cli"
-        )
-    path = decide_signoff.write_signoff(
-        key_dir,
-        KEY,
-        "conclusion: narrow\n",
-        allow_agent_session=True,
-        signed_via="auto-llm",
-    )
+    assert decide_signoff.agent_session_vars() == ["PI_CODING_AGENT", "PI_WORKER_TASK"]
+    path = decide_signoff.write_signoff(key_dir, KEY, "conclusion: narrow\n")
     assert path.is_file()
+    assert path.read_text(encoding="utf-8") == "conclusion: narrow\n"
+    # Overwrite works too: no `allow_agent_session` / `signed_via` parameter exists.
+    path = decide_signoff.write_signoff(key_dir, KEY, "conclusion: revoke\n")
+    assert path.read_text(encoding="utf-8") == "conclusion: revoke\n"
+    with pytest.raises(TypeError):
+        decide_signoff.write_signoff(
+            key_dir, KEY, "conclusion: narrow\n", signed_via="auto-decide"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -771,8 +746,3 @@ def test_signoff_state_is_assembled_from_the_facts_only(tmp_path: pathlib.Path) 
         "escalated_reasons",
         "engine_violations",
     }
-
-
-def test_signed_via_vocabulary_is_the_four_documented_faces() -> None:
-    assert decide_signoff.AUTO_SIGNED_VIA == ("auto-decide", "auto-llm")
-    assert decide_signoff.SIGNED_VIA_VALUES == ("auto-decide", "auto-llm", "cli", "tui")

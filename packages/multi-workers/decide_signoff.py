@@ -2,15 +2,15 @@
 
 FIX-P implements the two halves the 2026-10-21 decision settled on:
 
-* **(a) the command** - ``mw decide sign`` prints the key's decision summary and,
-  with ``--conclusion``, writes ``<key>/evidence/review/sign-final.md`` plus one
-  ``kind=authority-change`` archive row. A human only answers
-  ``continue|narrow|revoke``; the machine lines (``counted_rows`` /
-  ``rows_sha256``) are computed here, never typed.
-* **(b) the gate** - ``advance_phase.py``'s ``decision_signoff`` check (only for
-  keys carrying ``decision-scope.md``) recomputes :func:`collect` and compares
-  ``rows_sha256``, so a signed file stops matching the moment the archive is
-  appended to or rewritten.
+* **(a) the command** - ``mw decide sign`` prints the key's decision summary and
+  writes ``<key>/evidence/review/sign-final.md`` plus one
+  ``kind=authority-change`` archive row. The conclusion comes from the decision
+  model only; the machine lines (``counted_rows`` / ``rows_sha256``) are
+  computed here, never typed.
+* **(b) the gate** - ``advance_phase.py``'s ``decision_signoff`` check runs
+  unconditionally and skips keys with no raw ``kind=decide`` row; when it does
+  run it recomputes :func:`collect` and compares ``rows_sha256``, so a signed
+  file stops matching the moment the archive is appended to or rewritten.
 
 Everything here is a pure function over the authoritative archive
 (``.agenticdoc/_autopilot/decisions.jsonl``, :mod:`decide_archive`) and the
@@ -18,18 +18,18 @@ authorization table (``.mw/decide-points.json``, :mod:`decision_points`); the
 only writer is :func:`write_signoff`.
 
 The 2026-10-21 ruling (spec §15 / design D-064..D-071) moved the authority for
-the conclusion from a human to the decision model, so this module now carries
-three faces:
+the conclusion from a human to the decision model, and the 2026-10-22 ruling
+(spec §2 / design §3) removed every other face: there is exactly one path.
 
 * **auto-decide** - :func:`auto_conclusion` folds the *same* :func:`collect`
 facts into the ``dp25-signoff-conclusion`` state and asks jev for
 ``continue|narrow|revoke`` (``intent="answer"``, nothing is executed).
-* **auto-llm** - when jev is unavailable / the point is disabled / the answer is
-low-confidence, the caller's own conclusion is used and the file records
-``decide_fallback: <reason>``.
-* **human** - an explicit ``--conclusion`` outside the auto flow keeps the old
-semantics (``signed_via: cli`` / ``tui``) and :func:`write_signoff` still
-refuses inside an agent session for those values.
+* no conclusion from the caller, no LLM fallback, no human path: when jev is
+unavailable nothing is written and no sign-off is required.
+
+The write-side ``signed_via`` vocabulary is therefore just ``auto-decide``.
+The read side (:mod:`decision_history`) still accepts the historical values
+``auto-llm`` / ``cli`` / ``tui`` so archived sign-offs are not re-classified.
 
 The evidence file ``.agenticdoc/_autopilot/triage-decisions.jsonl`` is
 deliberately *not* read: it carries no ``key`` column, so it cannot be grouped
@@ -54,7 +54,6 @@ import decision_points
 
 __all__ = [
     "AGENT_SESSION_ENV_VARS",
-    "AUTO_SIGNED_VIA",
     "CONCLUSIONS",
     "SIGNOFF_DP_ID",
     "SIGNOFF_RELATIVE_PATH",
@@ -96,11 +95,11 @@ AGENT_SESSION_ENV_VARS = ("PI_CODING_AGENT", "AI_AGENT", "PI_WORKER_TASK")
 #: ``signoff:<conclusion>`` and writes nothing): the *write* stays here, the
 #: point only answers.
 SIGNOFF_DP_ID = "dp25-signoff-conclusion"
-#: ``signed_via`` values that may be written from an agent session (D-070).
-AUTO_SIGNED_VIA = ("auto-decide", "auto-llm")
-#: The full ``signed_via`` vocabulary this module renders: two machine paths
-#: (``auto-*``) and two human paths (``cli`` / ``tui``).
-SIGNED_VIA_VALUES = ("auto-decide", "auto-llm", "cli", "tui")
+#: The ``signed_via`` vocabulary this module may write: the decision model is
+#: the only authority, so there is exactly one face. Historical ``auto-llm`` /
+#: ``cli`` / ``tui`` files stay readable (``decision_history.py`` keeps its own
+#: four-value vocabulary) but are never produced again.
+SIGNED_VIA_VALUES = ("auto-decide",)
 
 #: Per-row snapshot the sign-off counts and hashes. Deliberately narrow: adding
 #: an unrelated archive column must not invalidate an already-signed file.
@@ -127,7 +126,7 @@ _MACHINE_LINE_RE = re.compile(
 
 
 class SignoffError(ValueError):
-    """Sign-off refused (agent session, unwritable path); the CLI maps this to 2."""
+    """Sign-off refused (unwritable path); the CLI maps this to 2."""
 
 
 # ---------------------------------------------------------------------------
@@ -520,7 +519,7 @@ def render(
     *,
     allow_empty: bool = False,
     ts: str | None = None,
-    signed_via: str | None = None,
+    signed_via: str | None = "auto-decide",
     decide_fallback: str | None = None,
 ) -> str:
     """Markdown sign-off file: column-0 machine lines + the human tables.
@@ -532,10 +531,10 @@ def render(
     both lists stay ``-``; ``p0-open`` echoes the currently enabled P0 set, as
     ``apply`` requires an exact match).
 
-    ``signed_via`` (``auto-decide`` / ``auto-llm`` / ``cli`` / ``tui``) and
-    ``decide_fallback`` (why jev could not answer, D-069) are machine lines too
-    (column 0, ``name: value``) so :func:`parse_signoff` reads them back without
-    a second parser; ``mw decide dp apply`` ignores unknown names.
+    ``signed_via`` (always ``auto-decide`` now) and the legacy
+    ``decide_fallback`` column are machine lines too (column 0, ``name: value``)
+    so :func:`parse_signoff` reads them back without a second parser and old
+    files keep parsing; ``mw decide dp apply`` ignores unknown names.
     """
     p0_machine = ", ".join(facts.p0_open) if facts.p0_open else "-"
     if facts.p0_source == "missing":
@@ -549,8 +548,8 @@ def render(
         f"# 决策签收 / Decision sign-off: {key or '-'}",
         "",
         "> 由 `mw decide sign` 生成的人类签收记录；`conclusion:` 等机器行为列 0 单行。",
-        "> done 门禁（`advance_phase.py` 的 `decision_signoff` 检查）只在 key 目录存在",
-        "> `decision-scope.md` 时生效，并按 `rows_sha256` 重算比对档案。",
+        "> done 门禁（`advance_phase.py` 的 `decision_signoff` 检查）对该 key 无条件执行",
+        "> （无 `kind=decide` 行时跳过），并按 `rows_sha256` 重算比对档案。",
         "",
         f"conclusion: {conclusion}",
         f"counted_rows: {len(facts.rows)}",
@@ -666,30 +665,15 @@ def write_signoff(
     project_dir: pathlib.Path | str,
     key: str,
     text: str,
-    *,
-    allow_agent_session: bool = False,
-    signed_via: str | None = None,
 ) -> pathlib.Path:
     """Write ``<key>/evidence/review/sign-final.md`` (parents created, atomic).
 
-    Refused inside an agent session for the human paths (``cli`` / ``tui`` or no
-    ``signed_via`` at all): a PM/worker signing its own release is the exact
-    failure mode the human sign-off exists to prevent. The *automatic* paths are
-    the opposite case (spec §15 AC-026 / design D-070): with
-    ``allow_agent_session=True`` **and** ``signed_via`` in :data:`AUTO_SIGNED_VIA`
-    the write is legal inside an agent session, because the authority there is
-    the decision model (or the caller's LLM inference), not a human. The two
-    conditions are deliberately conjunctive: the flag alone opens nothing.
+    No agent-session gate any more (spec §2 / design §3.3): the sign-off is
+    written whenever :func:`auto_conclusion` produced a conclusion, and the
+    authority is the decision model rather than the process running the
+    command. :data:`AGENT_SESSION_ENV_VARS` stays exported because ``mw.py``
+    still uses it for the ``dp apply`` guard, not for this write.
     """
-    hits = agent_session_vars()
-    auto = allow_agent_session and signed_via in AUTO_SIGNED_VIA
-    if hits and not auto:
-        raise SignoffError(
-            "refusing inside an agent session "
-            f"({', '.join(hits)} set); only the automatic sign-off paths "
-            f"({'|'.join(AUTO_SIGNED_VIA)}) may write here, a human must run "
-            "a cli/tui sign-off"
-        )
     path = signoff_path(project_dir, key)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")

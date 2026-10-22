@@ -1,19 +1,30 @@
 /**
- * decide-command.test.ts — `/mw decide show|sign` (FIX-Q, user ruling 2026-10-21).
+ * decide-command.test.ts — `/mw decide show|sign` (mw-signoff-decide-only).
  *
- * The user ruled that the sign-off entry point moves into the pi window as
- * option (B): `/mw decide sign` shows the preview, `ctx.ui.confirm` collects one
- * human click, and only then does the window forward the write with the Python
- * side's explicit `--human-confirmed` exemption. The guard-rail semantics drop
- * from "an agent cannot sign at all" to "signing on purpose means forging a
- * flag, and the file records `signed_via: tui`" — tamper-evidence, not
- * tamper-proof.
+ * The decision model signs; nothing else does. The window face is two argv
+ * shapes plus one output split:
+ *   - preview: `sign --key <k> --dry-run --json` (strictly zero-write: no
+ *     decision-model call, no archive row, no sign-off file),
+ *   - write:   `sign --key <k> --json` — Python asks the decision model and
+ *     writes only when it answers. No caller-supplied conclusion, no
+ *     `--human-confirmed` exemption, no `--auto` (it would persist
+ *     `signoff: auto` over a project's `signoff: disable`), no `--project`
+ *     (`decideMw` appends the control root),
+ *   - `exit 0` is NOT "signed": the write counts as signed only when stdout
+ *     carries a `signed_via:` line or the JSON payload a non-null `path`.
+ *     Otherwise the run is reported as unsigned with Python's own reason
+ *     (decision model unavailable / `signoff: disable` / not required).
+ *
+ * Headless (`-p` / worker) is supported on purpose: the runner still runs and
+ * the result text comes back as the return value, because `ctx.ui.notify` is a
+ * no-op there — the `/mw` handler puts that text into the transcript instead
+ * (AC-007, no silent loss).
  *
  * Everything here is hermetic: the runner is a counting stub (no spawn, no
- * network) and the ctx is a fake with a recording `notify` / `confirm`. The
- * preview payload mirrors `mw decide sign --json` (facts + the three
- * per-conclusion verdicts), and Python stays authoritative for the real verdict
- * and the machine lines.
+ * network) and the ctx is a fake with a recording `notify`. The preview payload
+ * mirrors `mw decide sign --dry-run --json` (facts + the three per-conclusion
+ * verdicts), and Python stays authoritative for the real verdict and the
+ * machine lines.
  */
 
 import * as fs from "node:fs";
@@ -39,46 +50,40 @@ function verify(line: string): void {
 }
 
 const SHA = "0123456789abcdef0123456789abcdef";
-const WRITE_OUTPUT = "wrote /proj/.agenticdoc/k/evidence/review/sign-final.md";
+const SIGNED_PATH = "/proj/.agenticdoc/k/evidence/review/sign-final.md";
+const PREVIEW_ARGV = ["sign", "--key", "k", "--dry-run", "--json"];
+const WRITE_ARGV = ["sign", "--key", "k", "--json"];
 
 interface Notify {
 	message: string;
 	type: string;
 }
 
-interface ConfirmCall {
-	title: string;
-	message: string;
-}
-
 interface FakeDecideCtx {
 	ctx: ExtensionCommandContext;
 	notifications: Notify[];
-	confirms: ConfirmCall[];
 }
 
-/** Fake command ctx: `notify` records, `confirm` records and answers with
- * `confirmResult` — no real dialog exists in a test. */
-function fakeDecideCtx(opts: { hasUI?: boolean; confirmResult?: boolean } = {}): FakeDecideCtx {
+/** Fake command ctx: `notify` records; `hasUI` decides whether it is called at
+ * all (the production `reportDecide` records nothing when there is no UI).
+ * There is no dialog any more — `confirm` exists only to prove nobody asks. */
+function fakeDecideCtx(opts: { hasUI?: boolean } = {}): FakeDecideCtx {
 	const notifications: Notify[] = [];
-	const confirms: ConfirmCall[] = [];
-	const confirmResult = opts.confirmResult ?? true;
 	const ctx = {
 		hasUI: opts.hasUI ?? true,
 		ui: {
 			notify: (message: string, type?: string) => {
 				notifications.push({ message, type: type ?? "" });
 			},
-			confirm: async (title: string, message: string) => {
-				confirms.push({ title, message });
-				return confirmResult;
+			confirm: async () => {
+				throw new Error("no confirmation dialog exists on the sign-off face");
 			},
 		},
 	} as unknown as ExtensionCommandContext;
-	return { ctx, notifications, confirms };
+	return { ctx, notifications };
 }
 
-/** One `mw decide sign --key <k> --json` preview payload (facts + verdicts). */
+/** One `mw decide sign --dry-run --json` payload (facts + verdicts). */
 function previewPayload(overrides: Record<string, unknown> = {}): string {
 	return JSON.stringify({
 		conclusion: null,
@@ -107,20 +112,37 @@ function previewPayload(overrides: Record<string, unknown> = {}): string {
 	});
 }
 
-/** Counting stub runner: preview argv gets the preview payload, the write argv
- * (only it carries `--human-confirmed`) gets the `wrote <path>` line. */
-function stubRunner(opts: { preview?: string; write?: MwCliResult } = {}): {
+/** A signed `--json` write payload: Python reports the written `path` and the
+ * conclusion the decision model produced (no `signed_via` field in JSON). */
+function signedWritePayload(): string {
+	return previewPayload({
+		conclusion: "continue",
+		ok: true,
+		path: SIGNED_PATH,
+	});
+}
+
+/** Counting stub runner: `--dry-run` gets the preview payload, the bare write
+ * argv gets a signed write. Every call is recorded verbatim, so the argv
+ * contract (no `--auto` / `--project` / `--human-confirmed` / `--conclusion`)
+ * is provable without a spawn. */
+function stubRunner(opts: { preview?: MwCliResult; write?: MwCliResult } = {}): {
 	calls: string[][];
 	runner: (projectDir: string, args: string[]) => MwCliResult;
 } {
 	const calls: string[][] = [];
-	const preview = opts.preview ?? previewPayload();
+	const preview = opts.preview ?? { ok: true, output: previewPayload() };
+	const write = opts.write ?? { ok: true, output: signedWritePayload() };
 	const runner = (_projectDir: string, args: string[]): MwCliResult => {
 		calls.push(args);
-		if (args.includes("--human-confirmed")) return opts.write ?? { ok: true, output: WRITE_OUTPUT };
-		return { ok: true, output: preview };
+		return args.includes("--dry-run") ? preview : write;
 	};
 	return { calls, runner };
+}
+
+/** The write-side argv only (the calls without `--dry-run`). */
+function writeCalls(calls: string[][]): string[][] {
+	return calls.filter((args) => !args.includes("--dry-run"));
 }
 
 const tmpDirs: string[] = [];
@@ -135,69 +157,101 @@ afterEach(() => {
 	for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-describe("/mw decide argument parsing (FIX-Q)", () => {
-	it("accepts the six documented shapes and rejects the four malformed ones", () => {
+describe("/mw decide argument parsing (mw-signoff-decide-only)", () => {
+	it("accepts the documented shapes and rejects the malformed ones", () => {
 		const empty = parseDecideArgs("");
 		const show = parseDecideArgs("show");
-		const full = parseDecideArgs('sign continue --reason "dp3 held up" --allow-empty --key k');
-		const missing = parseDecideArgs("sign");
-		const invalid = parseDecideArgs("sign approve");
+		const bare = parseDecideArgs("sign");
+		const keyed = parseDecideArgs("sign --key k");
+		const allowEmpty = parseDecideArgs("sign --allow-empty --key k");
+		// A conclusion is no longer a window input: the decision model produces it
+		// during the write, so any positional (including a valid conclusion name)
+		// is a usage error.
+		const conclusion = parseDecideArgs("sign continue");
+		const reason = parseDecideArgs('sign --reason "dp3 held up"');
+		const stray = parseDecideArgs("sign extra");
+		const noValue = parseDecideArgs("sign --key");
+		const showArg = parseDecideArgs("show --key k");
 		const unknown = parseDecideArgs("bogus");
 
 		expect(empty).toEqual({ action: "show" });
 		expect(show).toEqual({ action: "show" });
-		expect(full).toEqual({
-			action: "sign",
-			conclusion: "continue",
-			reason: "dp3 held up",
-			allowEmpty: true,
-			key: "k",
-		});
-		for (const parsed of [missing, invalid, unknown]) expect(parsed.action).toBe("usage");
-		expect(missing.action === "usage" && missing.error).toContain("needs a conclusion");
-		expect(invalid.action === "usage" && invalid.error).toContain("invalid conclusion 'approve'");
+		expect(bare).toEqual({ action: "sign", allowEmpty: false, key: undefined });
+		expect(keyed).toEqual({ action: "sign", allowEmpty: false, key: "k" });
+		expect(allowEmpty).toEqual({ action: "sign", allowEmpty: true, key: "k" });
+		for (const parsed of [conclusion, reason, stray, noValue, showArg, unknown]) {
+			expect(parsed.action).toBe("usage");
+		}
+		expect(conclusion.action === "usage" && conclusion.error).toContain("unexpected argument 'continue'");
+		expect(noValue.action === "usage" && noValue.error).toContain("--key needs a value");
 		expect(unknown.action === "usage" && unknown.error).toContain("unknown sub 'bogus'");
-		// A flag without a value and a stray positional are usage errors too.
-		const noValue = parseDecideArgs("sign narrow --reason");
-		const stray = parseDecideArgs("sign narrow extra");
-		const showArg = parseDecideArgs("show --key k");
-		for (const parsed of [noValue, stray, showArg]) expect(parsed.action).toBe("usage");
-
 		verify(
-			`FIX-Q parse: empty=${JSON.stringify(empty)} show=${JSON.stringify(show)} full=${JSON.stringify(
-				full,
-			)} usage_missing=${missing.action} usage_invalid=${invalid.action} usage_unknown=${unknown.action} conclusions=${DECIDE_CONCLUSIONS.join("|")}`,
+			`parse: empty=${JSON.stringify(empty)} keyed=${JSON.stringify(keyed)} allow_empty=${JSON.stringify(
+				allowEmpty,
+			)} usage_conclusion=${conclusion.action} usage_flag=${noValue.action} usage_unknown=${unknown.action} verdict_keys=${DECIDE_CONCLUSIONS.join("|")}`,
 		);
 	});
 });
 
-describe("/mw decide refuses without an interactive TUI (FIX-Q)", () => {
-	it("hasUI=false notifies a warning and never calls the runner", async () => {
+describe("/mw decide sign is headless-capable (AC-007)", () => {
+	it("headless sign runs and reports through the return value", async () => {
 		const { calls, runner } = stubRunner();
 		const { ctx, notifications } = fakeDecideCtx({ hasUI: false });
 
-		await runMwDecideCommand(ctx, "/proj", "sign continue --key k", {
-			runner,
-			watchKey: () => "k",
-		});
+		const text = await runMwDecideCommand(ctx, "/proj", "sign --key k", { runner, watchKey: () => "k" });
 
-		expect(calls).toEqual([]);
-		expect(notifications).toHaveLength(1);
-		expect(notifications[0]?.type).toBe("warning");
-		expect(notifications[0]?.message).toContain("需要交互 TUI");
-		verify(`FIX-Q hasUI: runner_calls=${calls.length} level=${notifications[0]?.type}`);
+		// The runner runs in full (preview + write): no `hasUI` gate exists.
+		expect(calls).toEqual([PREVIEW_ARGV, WRITE_ARGV]);
+		// No UI → notify is never called, but nothing is lost: the same text is
+		// the return value the `/mw` handler puts into the transcript.
+		expect(notifications).toEqual([]);
+		expect(text).toContain("已签收 k");
+		expect(text).toContain("signed_via: auto-decide");
+		expect(text).toContain(SIGNED_PATH);
+		verify(
+			`headless-sign: calls=${calls.length} preview=${JSON.stringify(calls[0])} write=${JSON.stringify(
+				calls[1],
+			)} notifies=0 signed_via_echoed=${text.includes("signed_via:")}`,
+		);
+	});
+
+	it("exit 0 without a signed_via line is reported as not signed", async () => {
+		// AC-005: `exit 0` also covers "the decision model was unavailable" and
+		// "`signoff: disable`", both of which write no file.
+		const unsigned =
+			"signoff=auto but no conclusion available (decision model unavailable (no credentials)); sign-off not required";
+		const { calls, runner } = stubRunner({ write: { ok: true, output: unsigned } });
+		const { ctx, notifications } = fakeDecideCtx({ hasUI: false });
+
+		const text = await runMwDecideCommand(ctx, "/proj", "sign --key k", { runner, watchKey: () => "k" });
+
+		expect(calls).toEqual([PREVIEW_ARGV, WRITE_ARGV]);
+		expect(notifications).toEqual([]);
+		expect(text).toContain("未签收 k");
+		expect(text).toContain("decision model unavailable");
+		// Never displays as a signature: no success arrow, no signed_via line,
+		// and the sign-off path appears only inside the explicit "not written" clause.
+		expect(text).not.toContain("已签收");
+		expect(text).not.toContain("→");
+		expect(text).not.toContain("signed_via:");
+		expect(text).toContain("未写 k/evidence/review/sign-final.md");
+		verify(
+			`unsigned-exit0: calls=${calls.length} claimed_signed=${text.includes("已签收")} wrote_claim=${
+				text.includes("→") ? 1 : 0
+			} reason_passthrough=${text.includes("decision model unavailable")}`,
+		);
 	});
 });
 
-describe("/mw decide show is a read-only preview (FIX-Q)", () => {
-	it("forwards `sign --key <k> --json` and renders the facts without writing", async () => {
+describe("/mw decide show is a read-only preview (mw-signoff-decide-only)", () => {
+	it("forwards `sign --key <k> --dry-run --json` and renders the facts without writing", async () => {
 		const { calls, runner } = stubRunner();
-		const { ctx, notifications, confirms } = fakeDecideCtx();
+		const { ctx, notifications } = fakeDecideCtx();
 
-		await runMwDecideCommand(ctx, "/proj", "show", { runner, watchKey: () => "k" });
+		const text = await runMwDecideCommand(ctx, "/proj", "show", { runner, watchKey: () => "k" });
 
-		expect(calls).toEqual([["sign", "--key", "k", "--json"]]);
-		expect(confirms).toEqual([]);
+		expect(calls).toEqual([PREVIEW_ARGV]);
+		expect(writeCalls(calls)).toEqual([]);
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0]?.type).toBe("info");
 		const message = notifications[0]?.message ?? "";
@@ -210,155 +264,132 @@ describe("/mw decide show is a read-only preview (FIX-Q)", () => {
 		expect(message).toContain(SHA.slice(0, 12));
 		expect(message).toContain("p0-open: -");
 		expect(message).toContain("preview only");
+		expect(text).toBe(message);
 		verify(
-			`FIX-Q show: argv=${JSON.stringify(calls[0])} sha12=${SHA.slice(0, 12)} writes=${
-				calls.filter((args) => args.includes("--human-confirmed")).length
+			`show: argv=${JSON.stringify(calls[0])} sha12=${SHA.slice(0, 12)} write_calls=${
+				writeCalls(calls).length
 			} verdict_lines=3`,
 		);
 	});
-});
 
-describe("/mw decide sign refuses before the dialog (FIX-Q)", () => {
-	it("a failing preview verdict notifies the problems, no confirm, no write argv", async () => {
-		const refused = previewPayload({
-			verdicts: {
-				continue: {
-					ok: false,
-					problems: ["N=0: no decide row for this key in the archive", "engine mismatch at seq 2"],
-				},
-				narrow: { ok: true, problems: [] },
-				revoke: { ok: true, problems: [] },
-			},
-		});
-		const { calls, runner } = stubRunner({ preview: refused });
-		const { ctx, notifications, confirms } = fakeDecideCtx();
+	it("preview never touches the write path", async () => {
+		const { calls, runner } = stubRunner();
+		const { ctx } = fakeDecideCtx({ hasUI: false });
 
-		await runMwDecideCommand(ctx, "/proj", "sign continue --key k", { runner });
+		await runMwDecideCommand(ctx, "/proj", "show", { runner, watchKey: () => "k" });
 
-		expect(confirms).toEqual([]);
-		expect(calls).toEqual([["sign", "--key", "k", "--json"]]);
-		expect(notifications[0]?.type).toBe("error");
-		const message = notifications[0]?.message ?? "";
-		expect(message).toContain("N=0: no decide row for this key in the archive");
-		expect(message).toContain("engine mismatch at seq 2");
-		expect(message).toContain("零写入");
-		verify(
-			`FIX-Q sign-refused: confirms=${confirms.length} write_calls=${
-				calls.filter((args) => args.includes("--human-confirmed")).length
-			} level=${notifications[0]?.type}`,
-		);
-	});
-
-	it("a top-level problems list is honoured the same way (older preview shape)", async () => {
-		const { calls, runner } = stubRunner({
-			preview: previewPayload({ verdicts: undefined, problems: ["archive hash chain is broken"] }),
-		});
-		const { ctx, notifications, confirms } = fakeDecideCtx();
-
-		await runMwDecideCommand(ctx, "/proj", "sign narrow --key k", { runner });
-
-		expect(confirms).toEqual([]);
 		expect(calls).toHaveLength(1);
-		expect(notifications[0]?.message).toContain("archive hash chain is broken");
-	});
-});
-
-describe("/mw decide sign confirm dialog (FIX-Q)", () => {
-	it("cancelling writes nothing and notifies `cancelled, nothing written`", async () => {
-		const { calls, runner } = stubRunner();
-		const { ctx, notifications, confirms } = fakeDecideCtx({ confirmResult: false });
-
-		await runMwDecideCommand(ctx, "/proj", "sign narrow --key k", { runner });
-
-		expect(confirms).toHaveLength(1);
-		expect(confirms[0]?.title).toContain("确认签收 k");
-		expect(confirms[0]?.message).toContain(`rows_sha256=${SHA.slice(0, 12)}`);
-		expect(confirms[0]?.message).toContain("conclusion=narrow");
-		expect(calls).toEqual([["sign", "--key", "k", "--json"]]);
-		const last = notifications.at(-1);
-		expect(last?.message).toBe("cancelled, nothing written");
-		expect(last?.type).toBe("info");
-		verify(`FIX-Q cancel: confirms=${confirms.length} write_calls=${calls.length - 1} last=${last?.message}`);
+		expect(calls[0]).toContain("--dry-run");
+		// The write face is exactly "the calls that are not the dry run".
+		expect(writeCalls(calls)).toEqual([]);
+		expect(calls.every((args) => args.includes("--dry-run"))).toBe(true);
+		verify(`preview-zero-write: calls=${calls.length} dry_run_only=true write_calls=0`);
 	});
 
-	it("confirming forwards the exact write argv with --human-confirmed", async () => {
+	it("`--allow-empty` rides on the preview only, never on the write argv", async () => {
 		const { calls, runner } = stubRunner();
-		const { ctx, notifications, confirms } = fakeDecideCtx({ confirmResult: true });
+		const { ctx } = fakeDecideCtx({ hasUI: false });
 
-		await runMwDecideCommand(ctx, "/proj", "sign continue --key k", { runner });
-
-		expect(confirms).toHaveLength(1);
-		expect(calls).toHaveLength(2);
-		expect(calls[1]).toEqual(["sign", "--key", "k", "--conclusion", "continue", "--human-confirmed"]);
-		const last = notifications.at(-1);
-		expect(last?.type).toBe("info");
-		expect(last?.message).toContain("已签收 k");
-		expect(last?.message).toContain("/proj/.agenticdoc/k/evidence/review/sign-final.md");
-		expect(last?.message).toContain("advance_phase.py");
-		verify(
-			`FIX-Q write: argv=${JSON.stringify(calls[1])} level=${last?.type} path_echoed=${
-				last?.message.includes("sign-final.md") ?? false
-			}`,
-		);
-	});
-
-	it("the reason/allowEmpty variant keeps the flag order and previews with --allow-empty", async () => {
-		const { calls, runner } = stubRunner();
-		const { ctx } = fakeDecideCtx({ confirmResult: true });
-
-		await runMwDecideCommand(ctx, "/proj", 'sign continue --reason "dp3 held up" --allow-empty', {
+		await runMwDecideCommand(ctx, "/proj", "sign --allow-empty", {
 			runner,
 			watchKey: () => "k",
 		});
 
-		expect(calls[0]).toEqual(["sign", "--key", "k", "--json", "--allow-empty"]);
-		expect(calls[1]).toEqual([
-			"sign",
-			"--key",
-			"k",
-			"--conclusion",
-			"continue",
-			"--human-confirmed",
-			"--reason",
-			"dp3 held up",
-			"--allow-empty",
-		]);
-		verify(`FIX-Q write-variant: argv=${JSON.stringify(calls[1])}`);
+		expect(calls[0]).toEqual([...PREVIEW_ARGV, "--allow-empty"]);
+		expect(calls[1]).toEqual(WRITE_ARGV);
+		expect(calls[1]).not.toContain("--allow-empty");
+		verify(`allow-empty: preview=${JSON.stringify(calls[0])} write=${JSON.stringify(calls[1])}`);
 	});
 
-	it("a write failure notifies Python's text at error level and never throws", async () => {
+	it("a failing preview notifies Python's reason and never reaches the write", async () => {
 		const { calls, runner } = stubRunner({
-			write: { ok: false, error: "[mw decide sign] cannot write ...: refusing inside an agent session" },
+			preview: { ok: false, error: "[mw decide sign] exit 2: archive table is unreadable" },
 		});
-		const { ctx, notifications } = fakeDecideCtx({ confirmResult: true });
+		const { ctx, notifications } = fakeDecideCtx();
 
-		await runMwDecideCommand(ctx, "/proj", "sign continue --key k", { runner });
+		const text = await runMwDecideCommand(ctx, "/proj", "sign --key k", { runner });
 
-		expect(calls).toHaveLength(2);
-		const last = notifications.at(-1);
-		expect(last?.type).toBe("error");
-		expect(last?.message).toContain("refusing inside an agent session");
+		expect(calls).toEqual([PREVIEW_ARGV]);
+		expect(writeCalls(calls)).toEqual([]);
+		expect(notifications).toHaveLength(1);
+		expect(notifications[0]?.type).toBe("error");
+		expect(notifications[0]?.message).toContain("archive table is unreadable");
+		expect(text).toContain("预览失败");
+		verify(`preview-failure: calls=${calls.length} write_calls=0 level=${notifications[0]?.type}`);
 	});
 
 	it("a preview that is not JSON notifies the raw tail instead of guessing", async () => {
-		const { calls, runner } = stubRunner({ preview: "Traceback (most recent call last):\nValueError: boom" });
-		const { ctx, notifications, confirms } = fakeDecideCtx();
+		const { calls, runner } = stubRunner({
+			preview: { ok: true, output: "Traceback (most recent call last):\nValueError: boom" },
+		});
+		const { ctx, notifications } = fakeDecideCtx();
 
-		await runMwDecideCommand(ctx, "/proj", "sign narrow --key k", { runner });
+		await runMwDecideCommand(ctx, "/proj", "sign --key k", { runner });
 
-		expect(confirms).toEqual([]);
 		expect(calls).toHaveLength(1);
+		expect(writeCalls(calls)).toEqual([]);
 		expect(notifications[0]?.type).toBe("error");
 		expect(notifications[0]?.message).toContain("ValueError: boom");
 	});
 });
 
-describe("/mw decide key resolution (FIX-Q)", () => {
+describe("/mw decide sign forwards exactly one write argv (mw-signoff-decide-only)", () => {
+	it("forwards `sign --key <k> --json` once and reports the signature", async () => {
+		const { calls, runner } = stubRunner();
+		const { ctx, notifications } = fakeDecideCtx();
+
+		const text = await runMwDecideCommand(ctx, "/proj", "sign --key k", { runner });
+
+		expect(calls).toHaveLength(2);
+		expect(calls[0]).toEqual(PREVIEW_ARGV);
+		expect(calls[1]).toEqual(WRITE_ARGV);
+		// The window supplies no conclusion, no exemption flag and no project root.
+		for (const flag of ["--auto", "--project", "--human-confirmed", "--conclusion"]) {
+			expect(calls[1]).not.toContain(flag);
+		}
+		expect(notifications).toHaveLength(1);
+		expect(notifications[0]?.type).toBe("info");
+		const message = notifications[0]?.message ?? "";
+		expect(message).toContain("已签收 k");
+		expect(message).toContain(SIGNED_PATH);
+		expect(message).toContain("signed_via: auto-decide");
+		expect(message).toContain("conclusion: continue");
+		expect(message).not.toContain("decision-scope.md");
+		expect(text).toBe(message);
+		verify(
+			`write: argv=${JSON.stringify(calls[1])} level=${notifications[0]?.type} path_echoed=${message.includes(
+				"sign-final.md",
+			)} signed_via_echoed=${message.includes("signed_via:")}`,
+		);
+	});
+
+	it("a write failure notifies Python's text at error level and never throws", async () => {
+		const { calls, runner } = stubRunner({
+			write: {
+				ok: false,
+				error: "[mw decide sign] refusing: machine-line verdict failed (N=0: no decide row) — zero writes",
+			},
+		});
+		const { ctx, notifications } = fakeDecideCtx();
+
+		const text = await runMwDecideCommand(ctx, "/proj", "sign --key k", { runner });
+
+		expect(calls).toHaveLength(2);
+		const last = notifications.at(-1);
+		expect(last?.type).toBe("error");
+		expect(last?.message).toContain("machine-line verdict failed");
+		expect(text).toContain("machine-line verdict failed");
+		expect(text).not.toContain("已签收");
+		verify(`write-failure: calls=${calls.length} level=${last?.type} threw=false signed_claim=false`);
+	});
+});
+
+describe("/mw decide key resolution (mw-signoff-decide-only)", () => {
 	it("without --key and without a watched key it is a usage error and spawns nothing", async () => {
 		const { calls, runner } = stubRunner();
 		const { ctx, notifications } = fakeDecideCtx();
 
-		await runMwDecideCommand(ctx, "/proj", "sign continue", {
+		const text = await runMwDecideCommand(ctx, "/proj", "sign", {
 			runner,
 			watchKey: () => undefined,
 		});
@@ -367,14 +398,16 @@ describe("/mw decide key resolution (FIX-Q)", () => {
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0]?.type).toBe("warning");
 		expect(notifications[0]?.message).toContain("无法确定 key，请给 --key");
-		verify(`FIX-Q no-key: runner_calls=${calls.length} level=${notifications[0]?.type}`);
+		expect(text).toContain("无法确定 key");
+		verify(`no-key: runner_calls=${calls.length} level=${notifications[0]?.type}`);
 	});
 });
 
-describe("/mw decide dispatcher wiring (FIX-Q)", () => {
+describe("/mw decide dispatcher wiring (mw-signoff-decide-only)", () => {
 	it("the registered /mw command routes `decide` and the usage line documents it", async () => {
 		const root = mkdtemp("mw-decide-dispatch-");
 		const commands = new Map<string, (args: string, ctx: ExtensionCommandContext) => Promise<void>>();
+		const summaries: string[] = [];
 		const pi = {
 			registerCommand: (
 				name: string,
@@ -382,25 +415,32 @@ describe("/mw decide dispatcher wiring (FIX-Q)", () => {
 			) => {
 				commands.set(name, def.handler);
 			},
+			sendMessage: (message: { content: string }) => {
+				summaries.push(message.content);
+			},
 		} as unknown as ExtensionAPI;
 		registerMwCommands(pi, root, new WorkerStore(root), {} as AckStore, { key: undefined }, root);
 		const handler = commands.get("mw");
 		if (!handler) throw new Error("/mw command not registered");
 
-		// hasUI=false makes the decide branch refuse before any spawn, so the
-		// routing is provable without python (the rag/stats precedent).
+		// Headless routing: a usage-level decide tail proves the `decide` branch is
+		// reached without spawning python, and the result lands in the transcript
+		// through displaySummary instead of the no-op notify (AC-007).
 		const headless = fakeDecideCtx({ hasUI: false });
-		await handler("decide sign continue", headless.ctx);
-		expect(headless.notifications).toHaveLength(1);
-		expect(headless.notifications[0]?.message).toContain("需要交互 TUI");
+		await handler("decide bogus", headless.ctx);
+		expect(headless.notifications).toEqual([]);
+		expect(summaries).toHaveLength(1);
+		expect(summaries[0]).toContain("unknown sub 'bogus'");
+		expect(summaries[0]).toContain(DECIDE_USAGE);
 
 		const usage = fakeDecideCtx({ hasUI: true });
 		await handler("bogus", usage.ctx);
-		const usageLine = usage.notifications[0]?.message ?? "";
-		expect(usageLine).toContain("| decide show|sign <continue|narrow|revoke>");
-		expect(usageLine).toContain("[--allow-empty] [--key <k>]");
+		const usageLine = usage.notifications.at(-1)?.message ?? "";
+		expect(usageLine).toContain("| decide show|sign [--allow-empty] [--key <k>]");
+		expect(usageLine).not.toContain("<continue|narrow|revoke>");
+		expect(DECIDE_USAGE.startsWith("Usage: /mw decide show | sign")).toBe(true);
 		verify(
-			`FIX-Q dispatch: routed=${headless.notifications.length === 1} usage_has_decide=${usageLine.includes(
+			`dispatch: routed=${summaries.length === 1} headless_summary=true usage_has_decide=${usageLine.includes(
 				"| decide show|sign",
 			)} usage_export=${DECIDE_USAGE.startsWith("Usage: /mw decide show | sign")}`,
 		);

@@ -912,13 +912,27 @@ def test_parse_ask_book_flag_and_book_check_json(tmp_path: pathlib.Path) -> None
 def test_parse_sign_auto_and_disable_flags(tmp_path: pathlib.Path) -> None:
     plain = mw._parse_args(["decide", "sign", "--project", str(tmp_path)])
     assert plain.auto is False and plain.disable is False
-    assert plain.conclusion is None
+    # AC-006: the caller-supplied conclusion and the human-confirmation flag are
+    # gone from argv reachable surface, not merely ignored.
+    assert not hasattr(plain, "conclusion")
+    assert not hasattr(plain, "human_confirmed")
     auto = mw._parse_args(["decide", "sign", "--project", str(tmp_path), "--auto"])
     assert auto.auto is True and auto.disable is False
     disable = mw._parse_args(
         ["decide", "sign", "--project", str(tmp_path), "--disable"]
     )
     assert disable.disable is True and disable.auto is False
+
+
+def test_sign_rejects_the_removed_conclusion_and_human_confirmed_flags(
+    tmp_path: pathlib.Path,
+) -> None:
+    for flag in ("--conclusion", "--human-confirmed"):
+        with pytest.raises(SystemExit) as excinfo:
+            mw._parse_args(
+                ["decide", "sign", "--project", str(tmp_path), flag, "continue"]
+            )
+        assert excinfo.value.code == 2, flag
 
 
 def test_cli_sign_auto_persists_the_mode(tmp_path: pathlib.Path) -> None:
@@ -967,9 +981,5 @@ def test_cli_sign_dry_run_does_not_persist_the_mode(tmp_path: pathlib.Path) -> N
 
 
 def test_cli_signed_via_coverage() -> None:
-    assert decide_signoff.SIGNED_VIA_VALUES == (
-        "auto-decide",
-        "auto-llm",
-        "cli",
-        "tui",
-    )
+    """AC-006: the decision model is the only authority, so the write face is one value."""
+    assert decide_signoff.SIGNED_VIA_VALUES == ("auto-decide",)
