@@ -569,6 +569,14 @@ export function modelMw(projectDir: string, args: string[]): MwCliResult {
 	return runMwCli("model", projectDir, args);
 }
 
+/** `mw.py decide <args...>` — decision archive / dp authority / sign-off. The
+ * window face only forwards (`/mw decide sign` adds the `--human-confirmed`
+ * exemption after its own confirm dialog); Python stays the single source of
+ * parsing, validation, verdicts and rendering. */
+export function decideMw(projectDir: string, args: string[]): MwCliResult {
+	return runMwCli("decide", projectDir, args);
+}
+
 /** `mw.py stats [args...]` — token + wall-clock attribution over a time window
  * (mw-usage-monitor T-04/AC-006). Thin wrapper: Python owns the ledger scan,
  * the window/filter semantics and the rendering; the TS side only forwards the

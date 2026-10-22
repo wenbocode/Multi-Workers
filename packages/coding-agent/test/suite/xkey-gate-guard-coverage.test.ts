@@ -42,11 +42,17 @@ import { createReadTool } from "../../src/core/tools/read.ts";
 import { createWriteTool } from "../../src/core/tools/write.ts";
 import {
 	checkXkeyGateBashCommand,
+	DECISION_SIGNOFF_TRACE_MARKER,
 	isXkeyGatePath,
+	registerDecisionSignoffGuard,
 	registerXkeyGateGuard,
 	xkeyGuardedDir,
 	xkeySubtreeDir,
 } from "../../src/extensions/agent-team-loop/shared/xkey-gate-guard.ts";
+import {
+	registerWorkerFileTool,
+	WORKER_FILE_TOOL,
+} from "../../src/extensions/agent-team-loop/worker/worker-file-tool.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const ENV_GATE_ROOT = "MW_XKEY_GATE_ROOT";
@@ -112,6 +118,8 @@ function createFixture(): GuardFixture {
 
 const harnesses: Harness[] = [];
 const fixtures: GuardFixture[] = [];
+/** Temp roots owned by the deep-evidence fixture below (no GuardFixture shape). */
+const extraRoots: string[] = [];
 let savedGateRoot: string | undefined;
 let savedWorkerTask: string | undefined;
 
@@ -247,6 +255,10 @@ describe("xkey guard real tool_call dispatch (T-10, VC-025/VC-026)", () => {
 			const fixture = fixtures.pop();
 			if (fixture) fs.rmSync(fixture.root, { recursive: true, force: true });
 		}
+		while (extraRoots.length > 0) {
+			const root = extraRoots.pop();
+			if (root) fs.rmSync(root, { recursive: true, force: true });
+		}
 		if (savedGateRoot === undefined) {
 			delete process.env[ENV_GATE_ROOT];
 		} else {
@@ -344,6 +356,152 @@ describe("xkey guard real tool_call dispatch (T-10, VC-025/VC-026)", () => {
 		expect(results[0]?.isError).toBe(false);
 		expect(fs.readFileSync(proposal, "utf8")).toBe("proposal r2\n");
 		expect(xkeyGateTraceLines(fixture.readTrace())).toHaveLength(0);
+	});
+
+	it("lets a deep evidence product named sign-final.md through worker_file (QG MAJOR-4 residual)", async () => {
+		// `evidence/research/evidence/sign-final.md` is a normal research product:
+		// only the first `evidence` segment is the landing face, so the guard must
+		// not read the trailing `evidence` as a second sign-off location.
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "mw-signoff-deep-"));
+		extraRoots.push(root);
+		const keyDir = path.join(root, ".agenticdoc", "k-deep");
+		const taskDir = path.join(keyDir, "workers", "w1");
+		fs.mkdirSync(taskDir, { recursive: true });
+		const taskPath = path.join(taskDir, "task.md");
+		fs.writeFileSync(taskPath, "type: research\n\nfixture worker task for a deep evidence product\n", "utf8");
+		process.env[ENV_GATE_ROOT] = root;
+		process.env[ENV_WORKER_TASK] = taskPath;
+		const harness = await createHarness({
+			tools: [createWriteTool(root), createEditTool(root), createReadTool(root)],
+			extensionFactories: [
+				(pi) => {
+					registerXkeyGateGuard(pi);
+					// The two guards the sign-off covers, plus the writeless-role channel.
+					registerDecisionSignoffGuard(pi);
+					registerWorkerFileTool(pi, taskDir);
+				},
+			],
+		});
+		harnesses.push(harness);
+		const content = "conclusion: the deep product is ordinary evidence\n";
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall(WORKER_FILE_TOOL, {
+						file: "evidence/research/evidence/sign-final.md",
+						content,
+						mode: "write",
+					}),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("written"),
+		]);
+
+		await harness.session.prompt("write the deep research product");
+
+		const results = toolResults(harness, WORKER_FILE_TOOL);
+		expect(results).toHaveLength(1);
+		expect(results[0]?.isError).toBe(false);
+		const landed = path.join(keyDir, "evidence", "research", "evidence", "sign-final.md");
+		expect(fs.readFileSync(landed, "utf8")).toBe(content);
+		expect(fs.readFileSync(path.join(taskDir, "trace.log"), "utf8")).not.toContain(DECISION_SIGNOFF_TRACE_MARKER);
+	});
+
+	it("judges both sign-off landing spots the same way on write/edit/bash and worker_file (channel parity)", async () => {
+		// FIX-F: `isDecisionSignoffPath` used to match only
+		// `evidence/review/sign-final.md`, so the evidence-root landing spot was
+		// refused for `worker_file` and allowed for write/edit/bash. Both spots
+		// now share one landing rule; the deep product stays writable (FIX-E).
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "mw-signoff-parity-"));
+		extraRoots.push(root);
+		const keyDir = path.join(root, ".agenticdoc", "k-parity");
+		const taskDir = path.join(keyDir, "workers", "w1");
+		const signoff = path.join(keyDir, "evidence", "sign-final.md");
+		fs.mkdirSync(path.dirname(signoff), { recursive: true });
+		fs.mkdirSync(path.join(keyDir, "evidence", "research", "evidence"), { recursive: true });
+		fs.mkdirSync(taskDir, { recursive: true });
+		fs.writeFileSync(signoff, "conclusion: keep\n", "utf8");
+		const taskPath = path.join(taskDir, "task.md");
+		fs.writeFileSync(taskPath, "type: coding\n\nfixture worker task for sign-off channel parity\n", "utf8");
+		process.env[ENV_GATE_ROOT] = root;
+		process.env[ENV_WORKER_TASK] = taskPath;
+		const executedBashCommands: string[] = [];
+		const bashOperations: BashOperations = {
+			exec: async (command, _cwd, options) => {
+				executedBashCommands.push(command);
+				options.onData(Buffer.from(`ran: ${command}`));
+				return { exitCode: 0 };
+			},
+		};
+		const harness = await createHarness({
+			tools: [createWriteTool(root), createEditTool(root), createBashTool(root, { operations: bashOperations })],
+			extensionFactories: [
+				(pi) => {
+					registerDecisionSignoffGuard(pi);
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const rootLanding = ".agenticdoc/k-parity/evidence/sign-final.md";
+		const deepLanding = ".agenticdoc/k-parity/evidence/research/evidence/sign-final.md";
+		const researchLanding = ".agenticdoc/k-parity/evidence/research/sign-final.md";
+		const blockedRedirect = `echo 'conclusion: continue' > ${rootLanding}`;
+		const deepRedirect = `echo deep > ${deepLanding}`;
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall("write", { path: rootLanding, content: "conclusion: continue\n" }),
+					fauxToolCall("edit", { path: rootLanding, edits: [{ oldText: "keep", newText: "continue" }] }),
+					fauxToolCall("bash", { command: blockedRedirect }),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage(
+				[
+					fauxToolCall("write", { path: deepLanding, content: "deep product\n" }),
+					fauxToolCall("write", { path: researchLanding, content: "research product\n" }),
+					fauxToolCall("bash", { command: deepRedirect }),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done"),
+		]);
+
+		await harness.session.prompt("write the sign-off landing spots");
+
+		// Both landing spots are refused on all three write channels.
+		for (const toolName of ["write", "edit", "bash"]) {
+			const first = toolResults(harness, toolName)[0];
+			expect(first, toolName).toBeDefined();
+			if (first === undefined) continue;
+			expect(first.isError, toolName).toBe(true);
+			expect(toolResultText(first), toolName).toContain("decision-signoff-guard: blocked");
+		}
+		expect(fs.readFileSync(signoff, "utf8")).toBe("conclusion: keep\n");
+		expect(executedBashCommands).toEqual([deepRedirect]);
+
+		// The deep product (`evidence/research/evidence/…`) stays writable — the
+		// FIX-E regression must not come back through a suffix rule.
+		const writes = toolResults(harness, "write");
+		expect(writes).toHaveLength(3);
+		expect(writes[1]?.isError).toBe(false);
+		expect(writes[2]?.isError).toBe(false);
+		expect(fs.readFileSync(path.join(keyDir, "evidence", "research", "evidence", "sign-final.md"), "utf8")).toBe(
+			"deep product\n",
+		);
+		expect(fs.readFileSync(path.join(keyDir, "evidence", "research", "sign-final.md"), "utf8")).toBe(
+			"research product\n",
+		);
+
+		// Every refusal is observable in the worker trace (one line per channel).
+		const trace = fs.readFileSync(path.join(taskDir, "trace.log"), "utf8");
+		const refusedLines = trace.split(/\r?\n/).filter((line) => line.includes(DECISION_SIGNOFF_TRACE_MARKER));
+		expect(refusedLines).toHaveLength(3);
+		expect(trace).toContain("blocked tool=write target=.agenticdoc/k-parity/evidence/sign-final.md");
+		expect(trace).toContain("blocked tool=edit target=.agenticdoc/k-parity/evidence/sign-final.md");
+		expect(trace).toContain("blocked tool=bash target=echo 'conclusion: continue'");
 	});
 
 	it("read paths still pass: read/find/grep on _autopilot are never intercepted", async () => {

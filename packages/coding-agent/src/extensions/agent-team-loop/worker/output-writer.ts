@@ -1,9 +1,16 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { collectMalformedCandidates, diffLedger } from "../shared/change-ledger.ts";
+import type { Claim } from "../shared/dispatch-card.ts";
 import { readRunState } from "../shared/run-store.ts";
 import { readTaskType } from "../shared/task-frontmatter.ts";
-import { checkRecovery, isMechanicalSection, recoverySectionsFor } from "./output-sections.ts";
+import {
+	checkRecovery,
+	claimCoverage,
+	isMechanicalSection,
+	parseVerdictTable,
+	recoverySectionsFor,
+} from "./output-sections.ts";
 
 export interface WriteOutputOpts {
 	taskKey: string;
@@ -76,6 +83,13 @@ export interface TerminalGaps {
 	 * gap. The classification reads the filesystem (existence), never the
 	 * token's shape. */
 	unresolvableFiles: string[];
+	/** T-04a: the AC-002 claim-coverage verdict (`worker/output-sections.ts::
+	 * claimCoverage`) — the `## 断言裁决` table judged against the card's claims.
+	 * OPTIONAL and absent (not `[]`) when the run has no claim contract, so a
+	 * claim-free caller's object stays field-identical to the pre-T-04a verdict
+	 * and every hand-built `TerminalGaps` keeps compiling. Part of `ok` when
+	 * present. */
+	claimGaps?: string[];
 	/** True iff every gap list is empty. */
 	ok: boolean;
 }
@@ -370,6 +384,13 @@ export function readTerminalGaps(opts: {
 	 * role with no report product keeps the AC-006/C5 exemption (its deliverable
 	 * is the repository). The change ledger (AC-004) is always judged. */
 	judgeRecovery?: boolean;
+	/** T-04a AC-002: the card's parsed claims. Omitted/`undefined` means the run
+	 * carries no claim contract — the claims are then not judged AT ALL, so the
+	 * returned `TerminalGaps` is field-identical to the pre-T-04a verdict. The
+	 * judgement reads the agent product's `## 断言裁决` table (parsed here, this
+	 * is the single settle decision point) and gates on `judgeRecovery`: a role
+	 * whose report is not a deliverable has no product table to judge. */
+	claims?: Claim[];
 }): TerminalGaps {
 	const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
 	const type = opts.type ?? typeFromTaskMd(dir);
@@ -386,6 +407,13 @@ export function readTerminalGaps(opts: {
 		};
 	const productText = agentProductText(dir, opts.summary);
 	const missingSections = opts.judgeRecovery === false ? [] : checkRecovery(productText, type).missing;
+	// T-04a: the claim-coverage judgement rides the same product text and the
+	// same single decision point as the recovery contract (design §2.2: inside
+	// `readTerminalGaps`, folded into `ok` before the caller's terminal flip).
+	const claimGaps =
+		opts.claims === undefined || opts.judgeRecovery === false
+			? undefined
+			: claimCoverage(opts.claims, parseVerdictTable(productText), { projectDir: opts.projectRoot });
 	const traceText = readFileSafe(path.join(dir, "trace.log"));
 	// T-17: pass the role + the key's evidence tree + the run clock, so a
 	// writeless role's outside-taskDir deliverable is reconciled from disk
@@ -408,7 +436,7 @@ export function readTerminalGaps(opts: {
 	// C-36c: warn-only path hygiene — the malformed sample is visible but it
 	// never enters a gap list and never flips `ok`.
 	const malformedFiles = collectMalformedCandidates(productText);
-	return {
+	const gaps: TerminalGaps = {
 		judged: true,
 		missingSections,
 		unrecordedFiles: ledger.extra,
@@ -420,8 +448,38 @@ export function readTerminalGaps(opts: {
 		// T-17c: declared paths not on disk are named for visibility but never
 		// judged (a nonexistent file cannot be a write).
 		unresolvableFiles: ledger.unresolvable,
-		ok: missingSections.length === 0 && ledger.extra.length === 0 && unjudgeableFiles.length === 0,
+		ok:
+			missingSections.length === 0 &&
+			ledger.extra.length === 0 &&
+			unjudgeableFiles.length === 0 &&
+			(claimGaps?.length ?? 0) === 0,
 	};
+	// Only present when the run actually has a claim contract: an absent field
+	// keeps the pre-claim verdict object byte-identical for legacy callers.
+	if (claimGaps !== undefined) gaps.claimGaps = claimGaps;
+	return gaps;
+}
+
+/**
+ * T-04a: the `## Questions` first-line note naming the un-settled claims. The
+ * first line of `## Questions` is the PM's readback point
+ * (`pm/ui-bridge.ts::readTerminalDetail`), so the ids have to ride that line
+ * rather than a later paragraph. At most three ids, with an ellipsis only when
+ * more are hidden; `""` when the run has no claim gaps, so a claim-free product
+ * keeps its byte-identical readback line. A gap without a claim id
+ * (`claims:missing-table`) is named by its own token.
+ */
+function claimGapNote(claimGaps: string[] | undefined): string {
+	if (claimGaps === undefined || claimGaps.length === 0) return "";
+	const ids: string[] = [];
+	for (const gap of claimGaps) {
+		const match = /^claim:(C-\d{2,3}(?:\.\d+)?):/.exec(gap);
+		if (match === null) continue;
+		const id = match[1] ?? "";
+		if (!ids.includes(id)) ids.push(id);
+	}
+	const items = ids.length > 0 ? ids : Array.from(new Set(claimGaps));
+	return `未裁决断言：${items.slice(0, 3).join("、")}${items.length > 3 ? "…" : ""}`;
 }
 
 export function writeOutput(opts: WriteOutputOpts): void {
@@ -497,7 +555,9 @@ export function writeOutput(opts: WriteOutputOpts): void {
 			`ledger-unresolvable count=${gaps.unresolvableFiles.length} samples=${gaps.unresolvableFiles.join(",")}`,
 		);
 	}
-	const terminalNote = [gapNote, ledgerNote, unjudgeableNote].filter((note) => note !== "").join("；");
+	const terminalNote = [gapNote, ledgerNote, unjudgeableNote, claimGapNote(gaps.claimGaps)]
+		.filter((note) => note !== "")
+		.join("；");
 
 	const sections: string[] = [];
 	// TL;DR first section (D-005): single-line conclusion on every exit path,

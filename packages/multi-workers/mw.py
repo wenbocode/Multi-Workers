@@ -19,6 +19,8 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import copy
+from collections.abc import Mapping
 import hashlib
 import json
 import os
@@ -35,6 +37,12 @@ import webbrowser
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import console_run
+import decide_archive
+import decide_signoff
+import decision_book
+import decision
+import decision_backends
+import decision_points
 import mw_common
 import rag_templates
 import usage
@@ -43,6 +51,7 @@ from mw_common import (
     check_pid as _check_pid,
     port_is_bound as _port_is_bound,
 )
+from autopilot import dispatch as dispatch_module
 from autopilot import config as _ap_config
 from autopilot import conductor as _ap_conductor
 from autopilot import contract_guard
@@ -662,6 +671,3429 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(_format_write_face_doctor_line(report["write_face"]))
         print(f"serve code: {serve_code['detail']}")
     return 0 if report["summary"]["healthy"] else 1
+
+
+# ── Subcommand: decide (mw-jev-provider-integration T-02, design D-001/D-003/D-007)
+
+#: `mw decide set` key -> value type. Covers the design D-007 fields plus the
+#: W1 transport knobs that ride through ``DecisionConfig.extras``. Anything
+#: else is an argument error (exit 2) and is never written to disk.
+_DECIDE_SET_KEYS: dict[str, str] = {
+    "enabled": "bool",
+    "transport": "str",
+    "model": "str",
+    "timeout_s": "number",
+    "max_retries": "int",
+    "max_questions": "int",
+    "max_state_bytes": "int",
+    "max_total_tokens": "int",
+    "max_state_plus_question_tokens": "int",
+    "max_tokens": "int",
+    "backoff_base_s": "number",
+    "evidence_path": "str",
+    "triage_notify_on_unavailable": "bool",
+    "base_url": "str",
+    "api_key": "str",
+    "entry_probe": "bool",
+    "systemone_url": "str",
+    "jev_model": "str",
+}
+_DECIDE_POINT_KEYS: dict[str, str] = {"enabled": "bool", "alert_on_disagreement": "bool"}
+
+
+def _decide_read_request(args: argparse.Namespace) -> tuple[dict | None, str | None]:
+    """Read the `run` request JSON from --request-file or stdin.
+
+    ``state`` is deliberately never accepted on the command line (design D-003):
+    it is large, free-form and belongs on a pipe/file.
+    """
+    source = getattr(args, "request_file", None)
+    if source:
+        path = pathlib.Path(source)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return None, f"cannot read request file {path}: {exc}"
+    else:
+        try:
+            text = sys.stdin.read()
+        except Exception as exc:  # noqa: BLE001 - CLI boundary, never traceback
+            return None, f"cannot read request from stdin: {exc}"
+    try:
+        payload = json.loads(text)
+    except ValueError as exc:
+        return None, f"request is not valid JSON: {exc}"
+    if not isinstance(payload, dict):
+        return None, "request must be a JSON object with 'state' and optional 'questions'"
+    # `questions` is optional here: a structured request lets the registry be the
+    # single question authority and names the point with --dp (design D-027).
+    # Resolution and the ambiguity checks live in `_decide_resolve_dp_questions`.
+    missing = [key for key in ("state",) if key not in payload]
+    if missing:
+        return None, f"request is missing {', '.join(missing)}"
+    return payload, None
+
+
+def _decide_coerce(key: str, value: str, kind: str) -> tuple[object, str | None]:
+    """Coerce one textual KEY=VALUE into the declared JSON type (exit-2 errors)."""
+    if kind == "bool":
+        low = value.strip().lower()
+        if low in ("true", "1", "yes", "on"):
+            return True, None
+        if low in ("false", "0", "no", "off"):
+            return False, None
+        return None, f"{key} must be true/false"
+    if kind == "int":
+        try:
+            return int(value.strip()), None
+        except ValueError:
+            return None, f"{key} must be an integer"
+    if kind == "number":
+        try:
+            return float(value.strip()), None
+        except ValueError:
+            return None, f"{key} must be a number"
+    return value, None
+
+
+def _decide_pairs_to_updates(pairs: list[str]) -> tuple[dict | None, str | None]:
+    """Parse `key=value` pairs; unknown keys are refused (None, message)."""
+    updates: dict = {}
+    for raw in pairs:
+        if "=" not in raw:
+            return None, f"expected KEY=VALUE, got {raw!r}"
+        key, _, value = raw.partition("=")
+        key = key.strip()
+        if key.startswith("points."):
+            point, _, leaf = key[len("points."):].rpartition(".")
+            if not point or leaf not in _DECIDE_POINT_KEYS:
+                return None, f"unknown config key {key!r}"
+            typed, err = _decide_coerce(key, value, _DECIDE_POINT_KEYS[leaf])
+            if err:
+                return None, err
+            points = updates.setdefault("points", {})
+            points.setdefault(point, {})[leaf] = typed
+            continue
+        if key not in _DECIDE_SET_KEYS:
+            return None, f"unknown config key {key!r}"
+        typed, err = _decide_coerce(key, value, _DECIDE_SET_KEYS[key])
+        if err:
+            return None, err
+        updates[key] = typed
+    return updates, None
+
+
+def _decide_write_config(path: pathlib.Path, data: dict, *, lock: bool = True) -> None:
+    """P-003 atomic write: temp file + os.replace, utf-8, '\\n' newlines.
+
+    A read-modify-write of a shared file, so the O_CREAT|O_EXCL lock protocol
+    (mw_common.acquire_lock) guards the whole replace; the temp file never
+    survives a successful call. ``lock=False`` is for a caller that already
+    holds ``<path>.lock`` and must keep ONE critical section around the table
+    write plus its `authority-change` append (`dp apply`, T-09/design Q4).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not lock:
+        _decide_replace_file(path, data)
+        return
+    lock_path = path.with_name(path.name + ".lock")
+    mw_common.acquire_lock(lock_path)
+    try:
+        _decide_replace_file(path, data)
+    finally:
+        mw_common.release_lock(lock_path)
+
+
+def _decide_replace_file(path: pathlib.Path, data: dict) -> None:
+    """The lock-free half of the P-003 protocol (caller owns the lock)."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    os.replace(tmp, path)
+
+
+def _decide_resolve_dp_questions(
+    args: argparse.Namespace, payload: dict
+) -> tuple[dict | None, str | None, str | None]:
+    """Resolve ``(questions, dp)`` for `decide run` (design D-027).
+
+    Legacy requests carry their own ``questions`` object: that path is kept
+    byte-identical (the ``--dp`` label still defaults to ``dp1``). Structured
+    requests omit ``questions`` because ``decision_points.DP_REGISTRY`` is the
+    single authority (spec DS-10); they name the point with ``--dp`` and get the
+    registered question set. Anything ambiguous is refused (exit 2) instead of
+    guessing: no questions and no dp, an unknown dp id, or a ``--dp`` that
+    disagrees with ``state.decision_point``.
+    """
+    questions = payload.get("questions")
+    dp = getattr(args, "dp", None)
+    if questions:
+        return questions, dp or "dp1", None
+    if not dp:
+        return (
+            None,
+            None,
+            "request is missing questions and no --dp was given "
+            "(pass --dp <dp-id>, or a legacy request carrying 'questions')",
+        )
+    try:
+        point = decision_points.get_decision_point(dp)
+    except decision.DecisionInputError as exc:
+        return None, None, str(exc)
+    state = payload.get("state")
+    state_dp = state.get("decision_point") if isinstance(state, dict) else None
+    if isinstance(state_dp, str) and state_dp and state_dp != dp:
+        return None, None, f"--dp {dp!r} disagrees with state.decision_point {state_dp!r}; refusing the ambiguity"
+    return decision_points.questions_map(point), dp, None
+
+
+#: `decide_for` escalated_reason -> the legacy `mw decide run` reason vocabulary
+#: (`decision.REASON_CODES`). The CLI JSON is parsed by `triage-client.ts`, which
+#: dispatches on `available` and prints `reason`; an escalated decision therefore
+#: always maps back into the frozen transport set instead of leaking a decision
+#: vocabulary the TS side does not know.
+_DECIDE_RUN_REASON_MAP: dict[str, str] = {
+    "disabled": decision.REASON_DISABLED,
+    # A P0 point is human-only by construction: for the answer face that is the
+    # same "no automatic authority" signal as a disabled point.
+    "p0": decision.REASON_DISABLED,
+    "input-incomplete": decision.REASON_BAD_RESPONSE,
+    "input-oversize": decision.REASON_BUDGET_EXHAUSTED,
+    "low-confidence": decision.REASON_BAD_RESPONSE,
+    "over-authority": decision.REASON_BAD_RESPONSE,
+}
+
+
+def _decide_run_reason(outcome: decision_points.DecisionOutcome) -> str:
+    """Legacy `reason` for one escalated outcome (always a `REASON_CODES` value)."""
+    if outcome.escalated_reason == "unavailable":
+        reason = outcome.transport_reason
+        return reason if reason in decision.REASON_CODES else decision.REASON_UPSTREAM_ERROR
+    return _DECIDE_RUN_REASON_MAP.get(
+        outcome.escalated_reason or "", decision.REASON_UPSTREAM_ERROR
+    )
+
+
+def _decide_run_payload(outcome: decision_points.DecisionOutcome) -> dict:
+    """`mw decide run` JSON = the pre-T-02b key set + the authority keys.
+
+    The legacy keys (`available`/`answers`/`reason`/`confidence_source`/
+    `latency_ms`/`transport`/`model`/`attempts`) are what `triage-client.ts`
+    parses. The additive keys (`decision_id`/`mode`/`acted`/`escalated_reason`/
+    `state_digest`) carry the authorization verdict so the TS side never mirrors
+    `.mw/decide-points.json` again (design D-036).
+    """
+    response = dict(outcome.response or {})
+    available = outcome.status in ("acted", "suggested")
+    return {
+        # -- legacy keys (unchanged contract) --
+        "available": available,
+        "transport": response.get("transport") or "none",
+        "model": response.get("model"),
+        "confidence_source": outcome.confidence_source
+        or decision.CONFIDENCE_SOURCE_UNKNOWN,
+        "attempts": int(response.get("attempts") or 0),
+        "latency_ms": int(outcome.latency_ms or 0),
+        "answers": dict(outcome.answer) if available and outcome.answer else None,
+        "reason": None if available else _decide_run_reason(outcome),
+        # -- additive authority keys (T-02b) --
+        "decision_id": outcome.decision_id,
+        "mode": outcome.mode,
+        "acted": outcome.status == "acted",
+        "escalated_reason": outcome.escalated_reason,
+        "state_digest": outcome.state_digest,
+    }
+
+
+def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw decide run`: one decision through the single authority.
+
+    A structured request (no `questions`, `--dp <registry id>`) goes through
+    :func:`decision_points.decide_for` with ``intent="answer"``: authorization,
+    the state input gate, the transport call, the answer check and the archive
+    row all happen in one place (design D-035/D-036). `enabled=false` therefore
+    returns before any encode/spawn/archive on the CLI path too (AC-001).
+
+    A legacy request carrying its own `questions` keeps the byte-identical
+    pre-T-02b path (design D-027): it names no registry dp (the default label is
+    `dp1`, which is not a registered id), so there is no authorization decision
+    to make and the registry stays the single id authority.
+    """
+    payload: dict | None = None
+    err: str | None = None
+    book_source = getattr(args, "book", None)
+    book_meta = None
+    book_state_obj: dict | None = None
+    if book_source:
+        if getattr(args, "request_file", None):
+            print(
+                "[mw decide run] --book is mutually exclusive with --request-file",
+                file=sys.stderr,
+            )
+            return 2
+        book_state_obj, book_meta, err = _book_gate(
+            book_source, project_dir, flag="mw decide run"
+        )
+        if err:
+            return 2
+        book_dp = str(book_meta.get("decision_point") or "")
+        labelled = getattr(args, "dp", None)
+        if labelled and labelled != book_dp:
+            print(
+                f"[mw decide run] --dp {labelled!r} disagrees with the book "
+                f"decision_point {book_dp!r}; refusing the ambiguity",
+                file=sys.stderr,
+            )
+            return 2
+        args = argparse.Namespace(**{**vars(args), "dp": book_dp})
+        payload = {"state": book_state_obj}
+    else:
+        payload, err = _decide_read_request(args)
+        if err:
+            print(f"[mw decide run] {err}", file=sys.stderr)
+            return 2
+    assert payload is not None  # both branches either set it or returned 2
+    questions, dp, err = _decide_resolve_dp_questions(args, payload)
+    if err:
+        print(f"[mw decide run] {err}", file=sys.stderr)
+        return 2
+    cfg, _cfg_err = decision.DecisionConfig.from_project(project_dir)
+    client = decision.DecisionClient(cfg, project_root=project_dir)
+    if payload.get("questions"):
+        # Legacy path (frozen bytes): payload state + caller questions, no
+        # registry dp, no authorization row.
+        try:
+            response = client.decide(payload["state"], questions, dp=dp)
+        except decision.DecisionInputError as exc:
+            print(f"[mw decide run] {exc}", file=sys.stderr)
+            return 2
+        if getattr(args, "json", False):
+            print(json.dumps(response, ensure_ascii=False))
+        else:
+            print(json.dumps(response, ensure_ascii=False, indent=2))
+        return 0
+    # Structured path: the registry dp is the authority; the trigger is the
+    # request's state object (L0/L1 only, `key` becomes the decision id suffix).
+    state = payload.get("state")
+    trigger = decision_points.Trigger.from_mapping(state if isinstance(state, dict) else {})
+    try:
+        outcome = decision_points.decide_for(
+            dp, trigger, project_dir, client=client, intent="answer"
+        )
+    except decision.DecisionInputError as exc:
+        print(f"[mw decide run] {exc}", file=sys.stderr)
+        return 2
+    result = _decide_run_payload(outcome)
+    if book_meta:
+        response = outcome.response or {}
+        available = bool(response.get("available"))
+        result["book"] = {
+            "path": book_meta.get("path"),
+            "file_sha256": book_meta.get("file_sha256"),
+            "evidence": dict(book_meta.get("evidence") or {}),
+        }
+        _book_receipt(
+            project_dir,
+            book_meta,
+            book_state_obj,
+            available=available,
+            reason=None if available else (outcome.transport_reason or outcome.escalated_reason),
+            decision_id=outcome.decision_id,
+            transport=response.get("transport"),
+        )
+    if getattr(args, "json", False):
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _decide_probe(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    cfg, cfg_err = decision.DecisionConfig.from_project(project_dir)
+    rows = decision_backends.probe_matrix(cfg)
+    if getattr(args, "json", False):
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+    if cfg_err:
+        print(f"probe: WARN — {cfg_err} (using defaults)")
+    print(f"probe: {len(rows)} target(s)")
+    for row in rows:
+        status = row.get("status")
+        print(
+            f"  {row.get('method')} {row.get('path')} {row.get('target')} -> "
+            f"{status if status is not None else 'n/a'} {row.get('verdict')}"
+        )
+    return 0
+
+
+def _decide_redact_secrets(raw: dict) -> dict:
+    """Copy of a config dict with credential values masked (design D-008).
+
+    `set --json` echoes what it wrote; without this a plaintext `api_key` would
+    land in terminal scrollback even though `show` masks it.
+    """
+    out = dict(raw)
+    if out.get("api_key"):
+        out["api_key"] = "<redacted>"
+    return out
+
+
+def _decide_show_payload(
+    project_dir: pathlib.Path,
+    cfg: object,
+    cfg_err: str | None,
+    last: tuple[int, dict] | None,
+) -> dict:
+    """Machine view for `mw decide show`; api_key is redacted (design D-008)."""
+    config_path = decision.decide_config_path(project_dir)
+    extras = {
+        key: ("<redacted>" if key == "api_key" and value else value)
+        for key, value in (getattr(cfg, "extras", None) or {}).items()
+    }
+    return {
+        "config_path": str(config_path),
+        "exists": config_path.exists(),
+        "error": cfg_err,
+        "enabled": bool(getattr(cfg, "enabled", False)),
+        "transport": getattr(cfg, "transport", None),
+        "model": getattr(cfg, "model", None),
+        "timeout_s": getattr(cfg, "timeout_s", None),
+        "max_retries": getattr(cfg, "max_retries", None),
+        "max_questions": getattr(cfg, "max_questions", None),
+        "max_state_bytes": getattr(cfg, "max_state_bytes", None),
+        "max_total_tokens": getattr(cfg, "max_total_tokens", None),
+        "max_state_plus_question_tokens": getattr(cfg, "max_state_plus_question_tokens", None),
+        "max_tokens": getattr(cfg, "max_tokens", None),
+        "points": getattr(cfg, "points", None) or {},
+        # AC-016: the effective per-dp policy next to the raw config, so
+        # `decide show --json` can answer "which value did the decision use?".
+        "policy": _dp_policy_view(project_dir, decision_points.load_points_config(project_dir)),
+        "triage_notify_on_unavailable": bool(
+            getattr(cfg, "triage_notify_on_unavailable", False)
+        ),
+        # Spec §15 AC-023: the sign-off mode rides the config view so a reader
+        # can see who signs this project (`signoff_error` explains a typo).
+        "signoff": getattr(cfg, "signoff", decision.SIGNOFF_AUTO),
+        "signoff_error": getattr(cfg, "signoff_error", None),
+        "extras": extras,
+        "evidence_path": str(mw_common.decide_evidence_path(project_dir, cfg)),
+        "last_seq": last[0] if last else None,
+        "last": last[1] if last else None,
+    }
+
+
+def _decide_show(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    cfg, cfg_err = decision.DecisionConfig.from_project(project_dir)
+    config_path = decision.decide_config_path(project_dir)
+    last = mw_common.decide_last_evidence(mw_common.decide_evidence_path(project_dir, cfg))
+    if getattr(args, "json", False):
+        print(json.dumps(_decide_show_payload(project_dir, cfg, cfg_err, last), ensure_ascii=False, indent=2))
+        return 0
+    if cfg_err:
+        print(f"decide: ERROR — {cfg_err}")
+    elif not config_path.exists():
+        print("decide: disabled (.mw/decide.json not present)")
+    else:
+        print(f"decide: {'enabled' if cfg.enabled else 'disabled'}")
+    print(f"config: {config_path}")
+    print(f"transport: {cfg.transport}")
+    print(f"model: {cfg.model}")
+    print(
+        f"timeout_s: {cfg.timeout_s:g} max_retries: {cfg.max_retries} "
+        f"max_questions: {cfg.max_questions} max_state_bytes: {cfg.max_state_bytes} "
+        f"max_tokens: {cfg.max_tokens}"
+    )
+    print(
+        f"max_total_tokens: {cfg.max_total_tokens} "
+        f"max_state_plus_question_tokens: {cfg.max_state_plus_question_tokens}"
+    )
+    print(f"triage_notify_on_unavailable: {cfg.triage_notify_on_unavailable}")
+    print(f"signoff: {cfg.signoff}" + (f" (invalid: {cfg.signoff_error})" if cfg.signoff_error else ""))
+    point_pairs: list[str] = []
+    for point, fields in sorted((cfg.points or {}).items()):
+        if isinstance(fields, dict):
+            point_pairs.extend(f"{point}.{name}={fields[name]}" for name in sorted(fields))
+    print("points: " + ("; ".join(point_pairs) if point_pairs else "none"))
+    if last is None:
+        print("last: none")
+    else:
+        print(f"last: seq={last[0]} {json.dumps(last[1], ensure_ascii=False)}")
+    return 0
+
+
+def _decide_set(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    pairs = list(getattr(args, "pairs", None) or [])
+    if not pairs:
+        print("[mw decide set] no KEY=VALUE pairs given", file=sys.stderr)
+        return 2
+    updates, err = _decide_pairs_to_updates(pairs)
+    if err:
+        print(f"[mw decide set] {err}", file=sys.stderr)
+        return 2
+    config_path = decision.decide_config_path(project_dir)
+    raw: dict = {}
+    if config_path.exists():
+        try:
+            loaded = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"[mw decide set] existing {config_path} is not usable: {exc}", file=sys.stderr)
+            return 2
+        if not isinstance(loaded, dict):
+            print(f"[mw decide set] existing {config_path} is not a JSON object", file=sys.stderr)
+            return 2
+        raw = loaded
+    for key, value in updates.items():
+        if key != "points":
+            raw[key] = value
+            continue
+        existing_points = raw.get("points") if isinstance(raw.get("points"), dict) else {}
+        merged = {point: dict(fields) if isinstance(fields, dict) else fields
+                  for point, fields in existing_points.items()}
+        for point, fields in value.items():
+            base = merged.get(point) if isinstance(merged.get(point), dict) else {}
+            base.update(fields)
+            merged[point] = base
+        raw["points"] = merged
+    # Validate through the same parser the client uses: a bad value must be
+    # refused *before* the file is touched (fail-soft reads, strict writes).
+    _cfg, validation_error = decision.DecisionConfig.from_dict(raw, project_root=project_dir)
+    if validation_error:
+        print(f"[mw decide set] {validation_error}", file=sys.stderr)
+        return 2
+    try:
+        _decide_write_config(config_path, raw)
+    except (OSError, RuntimeError) as exc:
+        print(f"[mw decide set] cannot write {config_path}: {exc}", file=sys.stderr)
+        return 2
+    if getattr(args, "json", False):
+        print(json.dumps(
+            {"path": str(config_path), "config": _decide_redact_secrets(raw)},
+            ensure_ascii=False,
+            indent=2,
+        ))
+    else:
+        print(f"wrote {config_path}")
+    return 0
+
+
+# ── Subcommand: decide ask (FIX-M: the human face of timi/jev-latest)
+#
+# `decide ask` is the opposite of `decide run`: a human types the state and the
+# questions on the command line, so there is no dp id, no registry lookup and no
+# authorization verdict -- the human *is* the authority. That is why it goes
+# through `DecisionClient.decide(state, questions)` (the legacy, ungated path)
+# and only formats the answer; transport, retries, reason normalisation and the
+# evidence row stay the client's job (the dp label is `dp-human-ask`).
+
+_ASK_QID_RE = re.compile(r"[A-Za-z0-9_.-]+")
+_ASK_CHOICE_KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
+_ASK_SCORE_MIN_LEVELS = 2
+_ASK_SCORE_MAX_LEVELS = 10
+_ASK_DP = "dp-human-ask"
+#: Column widths of the human table: `[choice]` is the widest type tag.
+_ASK_TYPE_WIDTH = 9
+_ASK_VALUE_WIDTH = 13
+_ASK_USAGE = (
+    "usage: mw decide ask (--state <text|@path> | --state-file <path>) "
+    "[--noul QID=TEXT ...] [--choice QID=KEY[:TEXT][,KEY[:TEXT]...] ...] "
+    "[--score QID=LOW,MID,HIGH ...] [--noul-criteria QID=true:TEXT;false:TEXT ...] "
+    "[--model MODEL] [--json] [--project DIR]\n"
+    "at least one --noul/--choice/--score is required"
+)
+
+
+def _ask_split(raw: str, flag: str) -> tuple[str | None, str | None, str | None]:
+    """Split one ``QID=REST`` argv value (exit-2 message instead of guessing)."""
+    qid, sep, rest = raw.partition("=")
+    qid = qid.strip()
+    if not sep or not _ASK_QID_RE.fullmatch(qid):
+        return None, None, (
+            f"{flag} expects QID=... with QID matching [A-Za-z0-9_.-]+, got {raw!r}"
+        )
+    return qid, rest, None
+
+
+def _ask_noul_question(rest: str) -> tuple[dict | None, str | None]:
+    instructions = rest.strip()
+    if not instructions:
+        return None, "--noul requires question text (QID=TEXT)"
+    # `criteria` stays absent unless --noul-criteria supplies it: the documented
+    # optional field must not be sent empty (jev接入.md: noul criteria is optional).
+    return {"type": "noul", "instructions": instructions}, None
+
+
+def _ask_choice_question(rest: str) -> tuple[dict | None, str | None]:
+    criteria: dict[str, str | None] = {}
+    for token in rest.split(","):
+        token = token.strip()
+        if not token:
+            return None, "--choice has an empty entry (QID=KEY[:TEXT][,KEY[:TEXT]...])"
+        key, sep, label = token.partition(":")
+        key = key.strip()
+        if not _ASK_CHOICE_KEY_RE.fullmatch(key):
+            return None, f"--choice key {key!r} must match [A-Za-z0-9_-]+ and precede ':'"
+        if key in criteria:
+            return None, f"--choice has duplicate key {key!r}"
+        criteria[key] = (label.strip() or None) if sep else None
+    # `criteria` is the documented wire field; `choices`/`labels` are how the
+    # client declares the same vocabulary (it validates `choices`, the backend
+    # renders `criteria` from them).
+    return {
+        "type": "choice",
+        "criteria": criteria,
+        "choices": list(criteria),
+        "labels": dict(criteria),
+    }, None
+
+
+def _ask_score_question(rest: str) -> tuple[dict | None, str | None]:
+    levels = [level.strip() for level in rest.split(",")]
+    if any(not level for level in levels):
+        return None, "--score levels must be non-empty (QID=LOW,MID,HIGH)"
+    if not _ASK_SCORE_MIN_LEVELS <= len(levels) <= _ASK_SCORE_MAX_LEVELS:
+        return None, (
+            f"--score needs {_ASK_SCORE_MIN_LEVELS}..{_ASK_SCORE_MAX_LEVELS} levels "
+            f"(low -> high), got {len(levels)}"
+        )
+    return {"type": "score", "criteria": levels, "min": 0, "max": len(levels) - 1}, None
+
+
+def _ask_noul_criteria(rest: str) -> tuple[dict | None, str | None]:
+    criteria: dict[str, str] = {}
+    for token in rest.split(";"):
+        token = token.strip()
+        if not token:
+            continue
+        key, sep, text = token.partition(":")
+        key = key.strip()
+        text = text.strip()
+        if not sep or key not in ("true", "false") or not text:
+            return None, "--noul-criteria expects true:TEXT;false:TEXT"
+        if key in criteria:
+            return None, f"--noul-criteria has duplicate key {key!r}"
+        criteria[key] = text
+    if not criteria:
+        return None, "--noul-criteria expects true:TEXT;false:TEXT"
+    return criteria, None
+
+
+def _ask_questions(args: argparse.Namespace) -> tuple[dict | None, str | None]:
+    """Assemble ``{qid: {type, instructions, criteria?}}`` from the argv flags."""
+    questions: dict[str, dict] = {}
+    criteria_by_qid: dict[str, dict] = {}
+    for raw in getattr(args, "noul_criteria", None) or []:
+        qid, rest, err = _ask_split(raw, "--noul-criteria")
+        if err:
+            return None, err
+        criteria, err = _ask_noul_criteria(rest)
+        if err:
+            return None, err
+        if qid in criteria_by_qid:
+            return None, f"--noul-criteria repeats question {qid!r}"
+        criteria_by_qid[qid] = criteria
+    for attr, flag, builder in (
+        ("noul", "--noul", _ask_noul_question),
+        ("choice", "--choice", _ask_choice_question),
+        ("score", "--score", _ask_score_question),
+    ):
+        for raw in getattr(args, attr, None) or []:
+            qid, rest, err = _ask_split(raw, flag)
+            if err:
+                return None, err
+            if qid in questions:
+                return None, f"question {qid!r} is declared more than once"
+            question, err = builder(rest)
+            if err:
+                return None, err
+            questions[qid] = question
+    for qid, criteria in criteria_by_qid.items():
+        question = questions.get(qid)
+        if question is None or question.get("type") != "noul":
+            return None, f"--noul-criteria {qid!r} needs a matching --noul {qid}=TEXT"
+        question["criteria"] = criteria
+    if not questions:
+        return None, _ASK_USAGE
+    return questions, None
+
+
+def _ask_state(args: argparse.Namespace) -> tuple[str | None, str | None]:
+    """Resolve ``--state <text|@path>`` / ``--state-file <path>`` (UTF-8)."""
+    state_arg = getattr(args, "state", None)
+    state_file = getattr(args, "state_file", None)
+    if state_arg is not None and state_file is not None:
+        return None, "--state and --state-file are mutually exclusive"
+    if state_file is not None:
+        source = pathlib.Path(state_file)
+    elif state_arg is not None:
+        if not state_arg.startswith("@"):
+            if not state_arg.strip():
+                return None, "--state must not be empty"
+            return state_arg, None
+        source = pathlib.Path(state_arg[1:])
+    else:
+        return None, "one of --state or --state-file is required"
+    try:
+        text = source.read_text(encoding="utf-8")
+    except OSError as exc:
+        return None, f"cannot read state file {source}: {exc}"
+    if not text.strip():
+        return None, f"state file {source} is empty"
+    return text, None
+
+
+class _AskDecisionClient(decision.DecisionClient):
+    """Human face of the client: wider answers plus the failure detail.
+
+    The machine face narrows every answer to ``{value, confidence}`` and drops
+    the backend's ``detail`` on an ``available=false`` response. A human reading
+    `mw decide ask` needs both: `probabilities`/`legend` to read a choice/score
+    answer, and the reason text to act on a failure. Only those two accessors
+    are widened -- validation, retries, reason normalisation and the evidence
+    row stay exactly the client's.
+    """
+
+    ask_detail: str = ""
+
+    def _normalize_answers(self, answers: object, questions: Mapping) -> dict | None:
+        normalized = super()._normalize_answers(answers, questions)
+        if not isinstance(normalized, dict) or not isinstance(answers, Mapping):
+            return normalized
+        for qid, answer in normalized.items():
+            raw = answers.get(qid)
+            if not isinstance(raw, Mapping):
+                continue
+            for key in ("probabilities", "legend"):
+                extra = raw.get(key)
+                if isinstance(extra, Mapping):
+                    answer[key] = dict(extra)
+        return normalized
+
+    def _emit(
+        self,
+        dp: str,
+        start: float,
+        available: bool,
+        reason: str | None,
+        attempts: int,
+        answers: dict | None,
+        detail: object,
+        transport: str,
+        confidence_source: str,
+        backend: decision.DecisionBackend | None = None,
+    ) -> dict:
+        self.ask_detail = "" if available else str(detail or "")
+        return super()._emit(
+            dp, start, available, reason, attempts, answers, detail, transport, confidence_source, backend
+        )
+
+
+def _ask_number(value: object) -> str:
+    """Two decimals for the numbers the endpoint documents as floats."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "n/a" if value is None else str(value)
+    return f"{float(value):.2f}"
+
+
+def _ask_index(raw: object) -> int:
+    try:
+        return int(str(raw))
+    except ValueError:
+        return 0
+
+
+def _ask_legend(answer: Mapping, spec: Mapping | None) -> str:
+    """``0=平静, 1=不满`` -- the server legend, else the requested levels."""
+    legend = answer.get("legend")
+    if isinstance(legend, Mapping) and legend:
+        items = sorted(legend.items(), key=lambda item: _ask_index(item[0]))
+        return ", ".join(f"{level}={label}" for level, label in items)
+    criteria = (spec or {}).get("criteria")
+    if isinstance(criteria, list) and criteria:
+        return ", ".join(f"{index}={label}" for index, label in enumerate(criteria))
+    return "n/a"
+
+
+def _ask_probabilities(probabilities: object) -> str:
+    if not isinstance(probabilities, Mapping) or not probabilities:
+        return "n/a"
+
+    def _weight(item: tuple[object, object]) -> tuple[float, str]:
+        value = item[1]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return (0.0, str(item[0]))
+        return (-float(value), str(item[0]))
+
+    items = sorted(probabilities.items(), key=_weight)
+    return ", ".join(f"{key} {_ask_number(value)}" for key, value in items)
+
+
+def _ask_rows(answers: Mapping, questions: Mapping) -> list[str]:
+    """Human table: key column, fixed-width type column, value, details."""
+    key_width = max((len(str(qid)) for qid in answers), default=0)
+    rows: list[str] = []
+    for qid, answer in answers.items():
+        spec = questions.get(qid) if isinstance(questions.get(qid), Mapping) else {}
+        qtype = str(spec.get("type") or "")
+        answer = answer if isinstance(answer, Mapping) else {}
+        if qtype == "choice":
+            value = str(answer.get("value"))
+            details = [
+                f"confidence {_ask_number(answer.get('confidence'))}",
+                f"probs: {_ask_probabilities(answer.get('probabilities'))}",
+            ]
+        elif qtype == "noul":
+            value = _ask_number(answer.get("value"))
+            details = ['(probability of "yes")']
+        else:  # score
+            value = _ask_number(answer.get("value"))
+            details = [
+                f"confidence {_ask_number(answer.get('confidence'))}",
+                f"legend: {_ask_legend(answer, spec)}",
+            ]
+        head = (
+            f"{str(qid).ljust(key_width)} "
+            f"{('[' + qtype + ']').ljust(_ASK_TYPE_WIDTH)} "
+            f"{value.ljust(_ASK_VALUE_WIDTH)}"
+        )
+        rows.append(f"{head} {'   '.join(details)}")
+    return rows
+
+
+def _ask_header(payload: Mapping) -> str:
+    answers = payload.get("answers")
+    count = len(answers) if isinstance(answers, Mapping) else 0
+    questions = "question" if count == 1 else "questions"
+    model = payload.get("model") or "unknown-model"
+    # The client's frozen response carries no token usage (it is dropped with
+    # the backend's raw body), so the header never invents token counts.
+    return f"{model} · {count} {questions} · {int(payload.get('latency_ms') or 0)} ms"
+
+
+def _ask_print(text: str) -> None:
+    """Human output that survives a legacy code page (criteria can be Chinese)."""
+    _rag_safe_print(text)
+
+
+def _book_eprint(text: str) -> None:
+    """stderr 输出，legacy code page 下不炸（与 `_rag_safe_print` 同理）。"""
+    encoding = getattr(sys.stderr, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        text = text.encode(encoding, "replace").decode(encoding, "replace")
+    print(text, file=sys.stderr)
+
+
+def _book_print_issues(issues, *, flag: str, source: object) -> None:
+    """失败表：一行总述 + 每条 issue 一行（`book check` 用同一个 `format()`）。"""
+    _book_eprint(
+        f"[{flag}] book {source} rejected: {len(issues)} issue(s); nothing was sent (zero HTTP)"
+    )
+    for issue in issues:
+        _book_eprint(f"  FAIL {issue.format()}")
+
+
+def _book_gate(
+    source: str, project_dir: pathlib.Path, *, flag: str, dp: str | None = None
+) -> tuple[dict | None, dict | None, str | None]:
+    """先验后发：装载 + `check_book` + 组发送用的 state。
+
+    返回 ``(state, meta, error)``；``error`` 非空时 ``state`` 为 ``None``，调用方
+    必须立即 exit 2 —— 检查失败绝不落到 `DecisionClient`（零 HTTP/零 spawn）。
+    """
+    try:
+        book = decision_book.load_book(source)
+    except decision_book.BookError as exc:
+        _book_print_issues([exc.issue], flag=flag, source=source)
+        return None, None, exc.issue.format()
+    issues = decision_book.check_book(book, project_dir=project_dir)
+    if dp is not None and book.get("decision_point") != dp:
+        issues.insert(
+            0,
+            decision_book.Issue(
+                "book-schema",
+                "decision_point",
+                f"book is for {book.get('decision_point')!r}, not {dp!r}",
+            ),
+        )
+    if issues:
+        _book_print_issues(issues, flag=flag, source=source)
+        return None, None, f"book {source} rejected ({len(issues)} issue(s))"
+    meta = decision_book.book_meta(
+        book, source, root=decision_book.resolve_repo_root(project_dir)
+    )
+    return decision_book.book_state(book), meta, None
+
+
+def _book_receipt(
+    project_dir: pathlib.Path,
+    meta: Mapping | None,
+    state: object,
+    *,
+    available: bool,
+    reason: str | None = None,
+    decision_id: str | None = None,
+    transport: str | None = None,
+) -> None:
+    """落一条 book 回执（`book_path` + `file_sha256` + `notes.evidence`）。
+
+    回执是 best-effort：写失败只提示，不改决策结果（与证据行同一语义）。
+    """
+    if not meta:
+        return
+    try:
+        decision_book.append_book_receipt(
+            project_dir,
+            meta=meta,
+            state=state,
+            available=available,
+            reason=reason,
+            decision_id=decision_id,
+            transport=transport,
+        )
+    except OSError as exc:
+        _book_eprint(f"[mw decide] cannot write the book receipt: {exc}")
+
+
+def _decide_book_new(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw decide book new <dp-id> [--out FILE] [--json]`：只读注册表生成骨架。"""
+    dp_id = str(getattr(args, "dp", "") or "").strip()
+    try:
+        book = decision_book.scaffold_book(dp_id)
+    except decision_book.BookError as exc:
+        _book_eprint(f"[mw decide book new] {exc}")
+        return 2
+    text = json.dumps(book, ensure_ascii=False, indent=2) + "\n"
+    out = getattr(args, "out", None)
+    if not out:
+        if getattr(args, "json", False):
+            print(json.dumps(book, ensure_ascii=False))
+        else:
+            print(text, end="")
+        return 0
+    path = pathlib.Path(out)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="\n")
+    except OSError as exc:
+        _book_eprint(f"[mw decide book new] cannot write {path}: {exc}")
+        return 2
+    sha = decision_book.book_sha256(path)
+    size = len(text.encode("utf-8"))
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "dp": book["decision_point"],
+                    "out": str(path),
+                    "file_sha256": sha,
+                    "bytes": size,
+                },
+                ensure_ascii=False,
+            )
+        )
+    else:
+        _rag_safe_print(f"wrote {path} ({size} bytes, sha256 {str(sha)[:12]})")
+    return 0
+
+
+def _decide_book_check(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw decide book check <file> [--json]`：只报告不修，失败 exit 2。"""
+    source = getattr(args, "file", None)
+    report = decision_book.check_book_file(source, project_dir=project_dir)
+    if getattr(args, "json", False):
+        print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
+    else:
+        for issue in report.issues:
+            _rag_safe_print(f"FAIL {issue.format()}")
+        sha = str(report.sha256 or "unreadable")[:12]
+        if report.ok:
+            _rag_safe_print(f"PASS {report.path} ({len(report.books)} book(s), sha256 {sha})")
+        else:
+            _rag_safe_print(f"FAIL {report.path}: {len(report.issues)} issue(s), sha256 {sha}")
+    return 0 if report.ok else 2
+
+
+def _decide_book(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw decide book <new|check>`：决策本的生成面与验收面。"""
+    action = getattr(args, "book_action", None)
+    if action == "new":
+        return _decide_book_new(args, project_dir)
+    if action == "check":
+        return _decide_book_check(args, project_dir)
+    _book_eprint(f"[mw decide book] unknown action {action!r}")
+    return 2
+
+
+def _decide_ask(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw decide ask`: one human-authored request to timi/jev-latest.
+
+    Failure is exit 2 with `[mw decide ask] <reason>: <detail>` on stderr and no
+    answer on stdout: the human face never prints a made-up answer and never
+    retries another model (FIX-M).
+    """
+    questions, err = _ask_questions(args)
+    if err:
+        print(f"[mw decide ask] {err}", file=sys.stderr)
+        return 2
+    book_source = getattr(args, "book", None)
+    book_meta = None
+    if book_source:
+        if getattr(args, "state", None) is not None or getattr(args, "state_file", None) is not None:
+            print(
+                "[mw decide ask] --book is mutually exclusive with --state/--state-file",
+                file=sys.stderr,
+            )
+            return 2
+        state, book_meta, err = _book_gate(book_source, project_dir, flag="mw decide ask")
+        if err:
+            return 2
+    else:
+        state, err = _ask_state(args)
+        if err:
+            print(f"[mw decide ask] {err}", file=sys.stderr)
+            return 2
+    cfg, _cfg_err = decision.DecisionConfig.from_project(project_dir)
+    if cfg.unconfigured:
+        # Typing the command is the human's opt-in; `.mw/decide.json` with
+        # enabled=false (or a broken file) is the operator's written decision
+        # and still wins.
+        cfg.enabled = True
+    model = str(getattr(args, "model", None) or "").strip()
+    if model:
+        cfg.model = model
+    client = _AskDecisionClient(cfg, project_root=project_dir)
+    try:
+        response = client.decide(state, questions, dp=_ASK_DP)
+    except decision.DecisionInputError as exc:
+        print(f"[mw decide ask] {exc}", file=sys.stderr)
+        return 2
+    answers = response.get("answers")
+    if not response.get("available") or not isinstance(answers, dict):
+        reason = response.get("reason") or decision.REASON_UPSTREAM_ERROR
+        detail = client.ask_detail or "no detail reported"
+        print(f"[mw decide ask] {reason}: {detail}", file=sys.stderr)
+        _book_receipt(
+            project_dir,
+            book_meta,
+            state,
+            available=False,
+            reason=reason,
+            transport=response.get("transport"),
+        )
+        return 2
+    _book_receipt(
+        project_dir,
+        book_meta,
+        state,
+        available=True,
+        transport=response.get("transport"),
+    )
+    payload = {
+        "model": response.get("model"),
+        "usage": None,
+        "latency_ms": int(response.get("latency_ms") or 0),
+        "answers": answers,
+    }
+    if getattr(args, "json", False):
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+    _ask_print(_ask_header(payload))
+    for row in _ask_rows(answers, questions):
+        _ask_print(row)
+    return 0
+
+
+# ── Subcommand: decide dp (mw-decision-substitution T-02, design §2.5)
+#
+# `.mw/decide-points.json` is the only authority source (design D-001) and the
+# registry in `decision_points.DP_REGISTRY` is the only registration authority
+# (design D-002). This family is the *human* write face (AC-010: machines never
+# write the table): `list`/`show` read, `on`/`off`/`set` are explicit human
+# edits, `refresh` only adds missing rows (never touches `enabled`/`mode`),
+# `check` is the doctor face, and `apply` validates + writes a human sign-off in
+# one critical section (T-09).
+
+#: `dp set` whitelist (design §2.5): key -> value kind.
+_DP_SET_SPEC: dict[str, str] = {
+    "tier": "tier",
+    "enabled": "bool",
+    "mode": "mode",
+    "note": "text",
+}
+#: Column order of a table row (design §2.2 sample).
+_DP_ROW_KEYS = ("tier", "enabled", "mode", "note")
+
+#: `dp check` severity per degradation layer (design §2.2 L0..L7). A row that
+#: cannot be parsed silently disables its dp, so L1/L2/L3/L5 are errors; L4/L6/L7
+#: are advisory because the registry tier already wins over the table column.
+_DP_CHECK_LEVELS: dict[str, str] = {
+    "L1": "error",
+    "L2": "error",
+    "L3": "error",
+    "L4": "warning",
+    "L5": "error",
+    "L6": "warning",
+    "L7": "warning",
+}
+
+#: `dp apply` header keys (research D5-Q4) + the conclusion vocabulary (§7.2).
+_DP_SIGN_LIST_KEYS = ("promote", "demote")
+_DP_SIGN_CONCLUSIONS = ("continue", "narrow", "revoke")
+#: Any of these means an agent session (design D-016): `dp apply`/`sign` refuse.
+#: Single source: `decide_signoff.AGENT_SESSION_ENV_VARS`.
+_DP_AGENT_ENV_VARS = decide_signoff.AGENT_SESSION_ENV_VARS
+
+
+def _dp_now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _dp_table_path(project_dir: pathlib.Path) -> pathlib.Path:
+    return decision_points.decide_points_config_path(project_dir)
+
+
+def _dp_table_sha(path: pathlib.Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _dp_new_table() -> dict:
+    return {"version": 1, "updated_at": _dp_now(), "updated_by": "human", "points": {}}
+
+
+def _dp_row_for(point: decision_points.DecisionPoint) -> dict:
+    """Default row for a registry point (registry defaults, design §2.1)."""
+    return {
+        "tier": point.tier,
+        "enabled": point.default_enabled,
+        "mode": point.default_mode,
+        "note": "",
+    }
+
+
+def _dp_registry_point(
+    dp_id: str,
+) -> tuple[decision_points.DecisionPoint | None, str | None]:
+    try:
+        return decision_points.get_decision_point(dp_id), None
+    except decision.DecisionInputError as exc:
+        return None, str(exc)
+
+
+def _dp_load_raw(path: pathlib.Path) -> tuple[dict | None, str | None]:
+    """Load the table for a *write* (strict: an unusable file is refused).
+
+    The read side is fail-soft (design §2.2), but a write that cannot see the
+    existing rows would silently drop them, so every write command refuses to
+    touch an unparsable table and points at `dp check` instead.
+    """
+    if not path.exists():
+        return _dp_new_table(), None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return None, f"existing {path} is not usable ({exc}); run `mw decide dp check`"
+    if not isinstance(raw, dict):
+        return None, f"existing {path} is not a JSON object; run `mw decide dp check`"
+    points = raw.get("points")
+    if points is None:
+        raw["points"] = {}
+    elif not isinstance(points, dict):
+        return None, f"existing {path} 'points' is not a JSON object; run `mw decide dp check`"
+    return raw, None
+
+
+def _dp_write_raw(path: pathlib.Path, raw: dict, *, lock: bool = True) -> None:
+    """Atomic write through the shared `_decide_write_config` protocol.
+
+    ``(st_mtime_ns, st_size)`` is the read-side cache signature, so a same-size
+    rewrite inside one timestamp tick must bump the mtime explicitly
+    (design D-022); otherwise the next `decide_for` keeps the stale view.
+    ``lock=False`` means the caller already holds ``<path>.lock`` (`dp apply`).
+    """
+    raw.setdefault("version", 1)
+    raw.setdefault("updated_by", "human")
+    try:
+        before: tuple[int, int] | None = (
+            int(path.stat().st_mtime_ns),
+            int(path.stat().st_size),
+        )
+    except OSError:
+        before = None
+    _decide_write_config(path, raw, lock=lock)
+    after = (int(path.stat().st_mtime_ns), int(path.stat().st_size))
+    if before == after:
+        os.utime(path, ns=(after[0] + 1, after[0] + 1))
+    decision_points.clear_points_config_cache()
+
+
+def _dp_append_authority_change(
+    project_dir: pathlib.Path,
+    dp_id: str,
+    *,
+    by: str,
+    change: str,
+    config_sha: str | None,
+    key: str = "",
+    conclusion: str | None = None,
+    trigger_id: str | None = None,
+    strict: bool = False,
+) -> bool:
+    """Append the `authority-change` audit row for one table edit (§2.4).
+
+    The table write is the primary effect and already durable here, so an
+    archive failure is reported without rolling it back; the archive layer
+    itself stays fail-loud for its own callers. ``strict=True`` (`dp apply`)
+    re-raises instead, because there the audit row is written BEFORE the table
+    and a missing row must abort the whole apply.
+    """
+    archive = pathlib.Path(project_dir) / decision_points.DECISIONS_RELATIVE_PATH
+    try:
+        decide_archive.append_authority_change(
+            archive,
+            dp=dp_id,
+            key=key,
+            by=by,
+            change=change,
+            conclusion=conclusion,
+            trigger_id=trigger_id,
+            config_sha_after=config_sha[:16] if config_sha else None,
+        )
+    except (decide_archive.DecisionArchiveError, OSError) as exc:
+        if strict:
+            raise
+        print(
+            f"[mw decide dp] warning: authority-change row not written to {archive}: {exc}",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def _dp_list_entries(config: decision_points.PointsConfig) -> list[dict]:
+    """Registry order first (effective rows), then orphaned table rows."""
+    entries: list[dict] = []
+    for point in decision_points.DP_REGISTRY:
+        row = config.effective(point)
+        entries.append(
+            {
+                "id": point.id,
+                "tier": point.tier,
+                "enabled": bool(row.enabled),
+                "mode": row.mode,
+                "note": row.note,
+                "source": row.source,
+                "orphaned": False,
+                "p0_on": point.tier == "P0" and bool(row.enabled),
+                "issues": list(row.issues),
+            }
+        )
+    for dp_id in config.orphaned_ids():
+        row = config.points[dp_id]
+        entries.append(
+            {
+                "id": dp_id,
+                "tier": row.tier,
+                "enabled": bool(row.enabled),
+                "mode": row.mode,
+                "note": row.note,
+                "source": "config",
+                "orphaned": True,
+                "p0_on": False,
+                "issues": list(row.issues),
+            }
+        )
+    return entries
+
+
+def _dp_list(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    config = decision_points.load_points_config(project_dir)
+    entries = _dp_list_entries(config)
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "path": str(config.path) if config.path else None,
+                    "exists": config.exists,
+                    "layer": config.layer,
+                    "warnings": list(config.warnings),
+                    "points": entries,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    for entry in entries:
+        flags = " P0-ON" if entry["p0_on"] else ""
+        if entry["orphaned"]:
+            flags += " ORPHANED"
+        print(
+            f"{entry['id']:<24} {entry['tier']:<3} "
+            f"enabled={str(entry['enabled']).lower():<5} "
+            f"mode={entry['mode']:<7} source={entry['source']:<7}{flags}"
+        )
+    for warning in config.warnings:
+        print(f"warning: {warning}")
+    enabled = sum(1 for entry in entries if entry["enabled"] and not entry["orphaned"])
+    orphaned = sum(1 for entry in entries if entry["orphaned"])
+    print(
+        f"{len(entries)} decision point(s), enabled={enabled}, "
+        f"orphaned={orphaned}, layer={config.layer}"
+    )
+    return 0
+
+
+def _dp_archive_tail(
+    project_dir: pathlib.Path, dp_id: str, limit: int
+) -> tuple[pathlib.Path, list[dict], str | None]:
+    """Last ``limit`` archive rows for one dp (read-only, never fatal)."""
+    path = pathlib.Path(project_dir) / decision_points.DECISIONS_RELATIVE_PATH
+    if limit <= 0:
+        return path, [], None
+    rows: list[dict] = []
+    try:
+        for _lineno, row in decide_archive.iter_rows(path):
+            if row.get("dp") == dp_id:
+                rows.append(row)
+    except decide_archive.DecisionArchiveError as exc:
+        return path, [], str(exc)
+    return path, rows[-limit:], None
+
+
+def _dp_show(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    dp_id = args.dp
+    point, err = _dp_registry_point(dp_id)
+    if err:
+        print(f"[mw decide dp show] {err}", file=sys.stderr)
+        return 2
+    config = decision_points.load_points_config(project_dir)
+    row = config.effective(point)
+    table_row = config.row(dp_id)
+    policy_entry = _dp_policy_view(project_dir, config)[dp_id]
+    limit = getattr(args, "rows", 5)
+    archive_path, rows, archive_err = _dp_archive_tail(project_dir, dp_id, limit)
+    payload = {
+        "id": point.id,
+        "tier": point.tier,
+        "description": point.description,
+        "enabled": bool(row.enabled),
+        "mode": row.mode,
+        "note": row.note,
+        "source": row.source,
+        "orphaned": bool(table_row.orphaned) if table_row is not None else False,
+        "p0_on": point.tier == "P0" and bool(row.enabled),
+        "p0_consequences": point.p0_consequences,
+        "executor": "present" if point.executor is not None else "none",
+        "questions_version": point.questions_version,
+        "questions": [str(question["id"]) for question in point.questions],
+        "issues": list(row.issues) + list(config.warnings if table_row is None else ()),
+        "policy": policy_entry,
+        "config_path": str(config.path) if config.path else None,
+        "config_layer": config.layer,
+        "archive_path": str(archive_path),
+        "archive_error": archive_err,
+        "archive_rows": rows,
+    }
+    if getattr(args, "json", False):
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    print(f"{payload['id']} ({payload['tier']})")
+    print(f"  description: {payload['description']}")
+    print(
+        f"  enabled={str(payload['enabled']).lower()} mode={payload['mode']} "
+        f"source={payload['source']} orphaned={str(payload['orphaned']).lower()}"
+    )
+    if payload["p0_on"]:
+        print("  P0-ON")
+    if payload["note"]:
+        print(f"  note: {payload['note']}")
+    if payload["p0_consequences"]:
+        print(f"  p0_consequences: {payload['p0_consequences']}")
+    print(f"  executor: {payload['executor']}")
+    print(f"  questions: {payload['questions_version']} ({', '.join(payload['questions'])})")
+    # AC-016: the effective policy, not the raw row value; `origin` says which
+    # layer decided it (a dropped illegal value therefore reads differently).
+    policy_payload = payload["policy"]
+    policy_origins = policy_payload["origin"]
+    print(
+        f"  policy: min_confidence={policy_payload['min_confidence']:g}"
+        f"({policy_origins['min_confidence']}) "
+        f"max_questions={policy_payload['max_questions']}({policy_origins['max_questions']}) "
+        f"timeout_s={policy_payload['timeout_s']}({policy_origins['timeout_s']})"
+    )
+    for issue in payload["issues"]:
+        print(f"  issue: {issue}")
+    print(f"  config: {payload['config_path']} (layer={payload['config_layer']})")
+    if archive_err:
+        print(f"  archive: unreadable ({archive_err})")
+    elif not rows:
+        print(f"  archive: no rows for {dp_id} in {archive_path}")
+    else:
+        print(f"  archive: last {len(rows)} row(s) of {archive_path}")
+        for archive_row in rows:
+            print(
+                f"    #{archive_row.get('seq')} {archive_row.get('kind')} "
+                f"{archive_row.get('decision_id')} outcome={archive_row.get('outcome')}"
+            )
+    return 0
+
+
+def _dp_ensure_row(
+    raw: dict, point: decision_points.DecisionPoint
+) -> tuple[dict | None, str | None]:
+    """Return the mutable row for ``point``, creating it when absent."""
+    points = raw["points"]
+    existing = points.get(point.id)
+    if existing is None:
+        row = _dp_row_for(point)
+        points[point.id] = row
+        return row, None
+    if not isinstance(existing, dict):
+        return None, f"row {point.id!r} is not a JSON object; run `mw decide dp check`"
+    return existing, None
+
+
+def _dp_require_p0_confirmation(
+    args: argparse.Namespace, point: decision_points.DecisionPoint
+) -> bool:
+    """P0 opens need the explicit ``--i-understand-p0`` gate (AC-002 / DS-12)."""
+    if point.tier != "P0" or getattr(args, "i_understand_p0", False):
+        return True
+    print(
+        f"[mw decide dp] {point.id} is {point.tier} and cannot be switched on without "
+        f"--i-understand-p0",
+        file=sys.stderr,
+    )
+    if point.p0_consequences:
+        print(f"[mw decide dp] consequence: {point.p0_consequences}", file=sys.stderr)
+    print("[mw decide dp] nothing was written", file=sys.stderr)
+    return False
+
+
+def _dp_set_enabled(args: argparse.Namespace, project_dir: pathlib.Path, *, enabled: bool) -> int:
+    point, err = _dp_registry_point(args.dp)
+    if err:
+        print(f"[mw decide dp] {err}", file=sys.stderr)
+        return 2
+    if enabled and not _dp_require_p0_confirmation(args, point):
+        return 2
+    path = _dp_table_path(project_dir)
+    raw, err = _dp_load_raw(path)
+    if err:
+        print(f"[mw decide dp] {err}", file=sys.stderr)
+        return 2
+    row, err = _dp_ensure_row(raw, point)
+    if err:
+        print(f"[mw decide dp] {err}", file=sys.stderr)
+        return 2
+    if row.get("enabled") is enabled:
+        print(f"no change: {point.id} already enabled={str(enabled).lower()}")
+        return 0
+    row["enabled"] = enabled
+    by = "human:p0-confirm" if (enabled and point.tier == "P0") else "human"
+    raw["updated_by"] = by
+    try:
+        _dp_write_raw(path, raw)
+    except (OSError, RuntimeError) as exc:
+        print(f"[mw decide dp] cannot write {path}: {exc}", file=sys.stderr)
+        return 2
+    _dp_append_authority_change(
+        project_dir,
+        point.id,
+        by=by,
+        change=f"{'enable' if enabled else 'disable'} {point.id}",
+        config_sha=_dp_table_sha(path),
+    )
+    print(f"wrote {path}: {point.id} enabled={str(enabled).lower()}")
+    return 0
+
+
+def _dp_on(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    return _dp_set_enabled(args, project_dir, enabled=True)
+
+
+def _dp_off(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    return _dp_set_enabled(args, project_dir, enabled=False)
+
+
+def _dp_coerce_set(key: str, value: str) -> tuple[object, str | None]:
+    """Coerce one `dp set` value; anything off-spec is an exit-2 argument error."""
+    kind = _DP_SET_SPEC[key]
+    if kind == "tier":
+        if value not in decision_points.TIERS:
+            return None, f"{key} must be one of {'|'.join(decision_points.TIERS)}, got {value!r}"
+        return value, None
+    if kind == "mode":
+        if value not in decision_points.MODES:
+            return None, f"{key} must be one of {'|'.join(decision_points.MODES)}, got {value!r}"
+        return value, None
+    if kind == "bool":
+        low = value.strip().lower()
+        if low in ("true", "1", "yes", "on"):
+            return True, None
+        if low in ("false", "0", "no", "off"):
+            return False, None
+        return None, f"{key} must be true/false, got {value!r}"
+    if "\n" in value or "\r" in value:
+        return None, f"{key} must be a single line"
+    return value, None
+
+
+def _dp_set(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    pairs = list(getattr(args, "pairs", None) or [])
+    if not pairs:
+        print("[mw decide dp set] no KEY=VALUE pairs given", file=sys.stderr)
+        return 2
+    point, err = _dp_registry_point(args.dp)
+    if err:
+        print(f"[mw decide dp set] {err}", file=sys.stderr)
+        return 2
+    updates: dict[str, object] = {}
+    for raw_pair in pairs:
+        if "=" not in raw_pair:
+            print(f"[mw decide dp set] expected KEY=VALUE, got {raw_pair!r}", file=sys.stderr)
+            return 2
+        key, _, value = raw_pair.partition("=")
+        key = key.strip()
+        if key not in _DP_SET_SPEC:
+            print(
+                f"[mw decide dp set] unknown key {key!r} "
+                f"(allowed: {'|'.join(_DP_ROW_KEYS)})",
+                file=sys.stderr,
+            )
+            return 2
+        typed, err = _dp_coerce_set(key, value)
+        if err:
+            print(f"[mw decide dp set] {err}", file=sys.stderr)
+            return 2
+        updates[key] = typed
+    if updates.get("enabled") is True and not _dp_require_p0_confirmation(args, point):
+        return 2
+    path = _dp_table_path(project_dir)
+    raw, err = _dp_load_raw(path)
+    if err:
+        print(f"[mw decide dp set] {err}", file=sys.stderr)
+        return 2
+    row, err = _dp_ensure_row(raw, point)
+    if err:
+        print(f"[mw decide dp set] {err}", file=sys.stderr)
+        return 2
+    changed = {key: value for key, value in updates.items() if row.get(key) != value}
+    if not changed:
+        print(f"no change: {point.id} already has the requested value(s)")
+        return 0
+    row.update(changed)
+    by = (
+        "human:p0-confirm"
+        if changed.get("enabled") is True and point.tier == "P0"
+        else "human"
+    )
+    raw["updated_by"] = by
+    raw["updated_at"] = _dp_now()
+    try:
+        _dp_write_raw(path, raw)
+    except (OSError, RuntimeError) as exc:
+        print(f"[mw decide dp set] cannot write {path}: {exc}", file=sys.stderr)
+        return 2
+    _dp_append_authority_change(
+        project_dir,
+        point.id,
+        by=by,
+        change="set " + ", ".join(f"{key}={changed[key]!r}" for key in sorted(changed)),
+        config_sha=_dp_table_sha(path),
+    )
+    print(f"wrote {path}: {point.id} " + " ".join(f"{key}={changed[key]!r}" for key in sorted(changed)))
+    return 0
+
+
+def _dp_refresh(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    path = _dp_table_path(project_dir)
+    raw, err = _dp_load_raw(path)
+    if err:
+        print(f"[mw decide dp refresh] {err}", file=sys.stderr)
+        return 2
+    points = raw["points"]
+    registered = {point.id for point in decision_points.DP_REGISTRY}
+    added: list[str] = []
+    kept = 0
+    for point in decision_points.DP_REGISTRY:
+        if point.id in points:
+            kept += 1
+        else:
+            points[point.id] = _dp_row_for(point)
+            added.append(point.id)
+    orphaned = [dp_id for dp_id in points if dp_id not in registered]
+    if added:
+        raw["updated_by"] = "refresh"
+        # `updated_at` is the table's "last write" stamp: refresh/set keep it
+        # truthful instead of leaving the first-created time (QG MINOR-3).
+        raw["updated_at"] = _dp_now()
+        try:
+            _dp_write_raw(path, raw)
+        except (OSError, RuntimeError) as exc:
+            print(f"[mw decide dp refresh] cannot write {path}: {exc}", file=sys.stderr)
+            return 2
+        config_sha = _dp_table_sha(path)
+        for dp_id in added:
+            _dp_append_authority_change(
+                project_dir,
+                dp_id,
+                by="refresh",
+                change=f"add missing row {dp_id}",
+                config_sha=config_sha,
+            )
+    summary = {
+        "path": str(path),
+        "added": added,
+        "kept": kept,
+        "orphaned": orphaned,
+        "written": bool(added),
+    }
+    if getattr(args, "json", False):
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+    else:
+        print(
+            f"refresh: added={len(added)} kept={kept} orphaned={len(orphaned)} "
+            f"{'wrote ' + str(path) if added else 'no changes (file untouched)'}"
+        )
+        for dp_id in orphaned:
+            print(f"  orphaned: {dp_id} (row kept, not deleted)")
+    return 0
+
+
+def _dp_policy_view(
+    project_dir: pathlib.Path, config: decision_points.PointsConfig
+) -> dict[str, dict]:
+    """Effective AC-016 policy for every registered dp (row > decide.json > builtin).
+
+    This is the read-only "did my knob actually apply?" face: each entry carries
+    the three effective values plus the layer that decided each one, so an
+    illegal row value is visible as `builtin`/`decide.json` rather than as the
+    number the human wrote (AC-016).
+    """
+    cfg, _cfg_err = decision.DecisionConfig.from_project(project_dir)
+    view: dict[str, dict] = {}
+    for point in sorted(decision_points.DP_REGISTRY, key=lambda entry: entry.id):
+        dp_id = point.id
+        row = config.effective(point)
+        values = decision_points.resolve_policy(dp_id, row, cfg)
+        view[dp_id] = {
+            "min_confidence": values["min_confidence"],
+            "max_questions": values["max_questions"],
+            "timeout_s": values["timeout_s"],
+            "origin": decision_points.resolve_policy_origins(dp_id, row, cfg),
+        }
+    return view
+
+
+def _dp_check_issues(config: decision_points.PointsConfig) -> list[dict]:
+    """One issue per degradation (design §2.2), with an exit-code severity."""
+    issues: list[dict] = []
+    if config.layer == "L1":
+        for warning in config.warnings:
+            code, _, message = warning.partition(":")
+            issues.append(
+                {
+                    "level": "error",
+                    "code": code.strip() or "L1",
+                    "dp": None,
+                    "message": message.strip() or warning,
+                }
+            )
+        return issues
+    for row in config.points.values():
+        for issue in row.issues:
+            code, _, message = issue.partition(":")
+            code = code.strip()
+            issues.append(
+                {
+                    "level": _DP_CHECK_LEVELS.get(code, "warning"),
+                    "code": code,
+                    "dp": row.id,
+                    "message": message.strip() or issue,
+                }
+            )
+    if config.exists and config.version is None:
+        issues.append(
+            {
+                "level": "warning",
+                "code": "version",
+                "dp": None,
+                "message": "version is missing or not an integer (advisory only)",
+            }
+        )
+    return issues
+
+
+def _dp_check(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    config = decision_points.load_points_config(project_dir)
+    issues = _dp_check_issues(config)
+    policy_view = _dp_policy_view(project_dir, config)
+    errors = [issue for issue in issues if issue["level"] == "error"]
+    warnings = [issue for issue in issues if issue["level"] == "warning"]
+    code = 2 if errors else 1 if warnings else 0
+    payload = {
+        "path": str(config.path) if config.path else None,
+        "exists": config.exists,
+        "layer": config.layer,
+        "status": "error" if errors else "warning" if warnings else "ok",
+        "exit": code,
+        "counts": {"error": len(errors), "warning": len(warnings)},
+        "orphaned": list(config.orphaned_ids()),
+        "issues": issues,
+        "policy": policy_view,
+    }
+    if getattr(args, "json", False):
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return code
+    print(f"check: {payload['path']} (exists={str(config.exists).lower()} layer={config.layer})")
+    if not config.exists:
+        print("  info: table absent; the registry defaults apply (P2 on, P1/P0 off)")
+    for issue in issues:
+        label = "ERROR" if issue["level"] == "error" else "WARN "
+        where = f" {issue['dp']}" if issue["dp"] else ""
+        print(f"  {label} {issue['code']}{where}: {issue['message']}")
+    # AC-016: the EFFECTIVE value per row, with the deciding layer in parens. An
+    # illegal row value shows up here as its fallback origin, not as the raw one.
+    for dp_id, entry in policy_view.items():
+        origins = entry["origin"]
+        print(
+            f"  policy {dp_id}: "
+            f"min_confidence={entry['min_confidence']:g}({origins['min_confidence']}) "
+            f"max_questions={entry['max_questions']}({origins['max_questions']}) "
+            f"timeout_s={entry['timeout_s']}({origins['timeout_s']})"
+        )
+    print(f"check: {len(errors)} error(s), {len(warnings)} warning(s) -> exit {code}")
+    return code
+
+
+#: Generated registry export (card D-CFG). Sits next to `mw.py`, so the path
+#: follows the package and never the `--project` directory.
+_DP_EXPORT_NAME = "decide_registry.json"
+
+
+def _dp_export_path() -> pathlib.Path:
+    return pathlib.Path(__file__).resolve().parent / _DP_EXPORT_NAME
+
+
+def _dp_export_wiring_entry(entry: object) -> dict | None:
+    """One wiring entry normalized to the four frozen keys, or ``None``.
+
+    Accepts both shapes this file has had: the per-point v2 shape
+    (``wiring_note``) and the legacy top-level ``wiring`` section (``note``), so
+    an old file migrates once and every later read sees one shape only. An entry
+    that claims ``wired=true`` without a ``<path>:<line>`` location is refused
+    (``None``) instead of half-migrated: the drift test would fail it anyway.
+    """
+    if not isinstance(entry, dict):
+        return None
+    wired = entry.get("wired")
+    if not isinstance(wired, bool):
+        return None
+    note = entry.get("wiring_note", entry.get("note"))
+    if not isinstance(note, str) or not note.strip():
+        return None
+    trigger = entry.get("trigger")
+    adopted_at = entry.get("adopted_at")
+    if wired:
+        if not isinstance(trigger, str) or not isinstance(adopted_at, str):
+            return None
+    else:
+        trigger = None
+        adopted_at = None
+    return {
+        "wired": wired,
+        "trigger": trigger,
+        "adopted_at": adopted_at,
+        "wiring_note": note,
+    }
+
+
+def _dp_export_wiring(path: pathlib.Path) -> tuple[dict[str, dict], list[str], str | None]:
+    """The hand-maintained wiring entries, read back so `--write` keeps them.
+
+    Wiring names TS call sites (``path:line``) that the Python registry cannot
+    know, so it is human-maintained and must survive regeneration. The current
+    shape carries the four fields on each point; a legacy file keeps them in the
+    top-level ``wiring`` section, which is migrated here (and never written
+    again). A dp without an entry would otherwise be silently dropped: emit a
+    ``wired=false`` placeholder and report the id so the gap is visible. An
+    unparsable file is reported instead (``--write`` refuses it): rewriting on
+    top of a typo would throw the hand-written section away.
+    """
+    try:
+        raw: object = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raw = None
+    except (OSError, ValueError) as exc:
+        return {}, [], f"{path.name} is not readable ({exc})"
+    if raw is not None and not isinstance(raw, dict):
+        return {}, [], f"{path.name} is not a JSON object"
+    points = raw.get("points") if isinstance(raw, dict) else None
+    by_point = (
+        {point["id"]: point for point in points if isinstance(point, dict) and "id" in point}
+        if isinstance(points, list)
+        else {}
+    )
+    legacy = raw.get("wiring") if isinstance(raw, dict) else None
+    wiring: dict[str, dict] = {}
+    missing: list[str] = []
+    for point in decision_points.DP_REGISTRY:
+        entry = _dp_export_wiring_entry(by_point.get(point.id))
+        if entry is None and isinstance(legacy, dict):
+            entry = _dp_export_wiring_entry(legacy.get(point.id))
+        if entry is None:
+            wiring[point.id] = dict(decision_points.UNWIRED_SNAPSHOT_WIRING)
+            missing.append(point.id)
+        else:
+            wiring[point.id] = entry
+    return wiring, missing, None
+
+
+def _dp_export_doc() -> tuple[dict, list[str], str | None]:
+    """Generated snapshot with the hand-written wiring merged into each point."""
+    doc = decision_points.registry_snapshot()
+    wiring, missing, error = _dp_export_wiring(_dp_export_path())
+    for point in doc["points"]:
+        # An unreadable file yields no wiring at all (``--write`` refuses it);
+        # the read paths then render the unwired defaults instead of crashing.
+        point.update(wiring.get(point["id"], decision_points.UNWIRED_SNAPSHOT_WIRING))
+    return doc, missing, error
+
+
+def _dp_export(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw decide dp export [--json|--write]` (card D-CFG).
+
+    Read-only by default. ``--write`` regenerates ``decide_registry.json`` from
+    the registry while keeping the hand-maintained ``wiring`` section. The
+    authorization table ``.mw/decide-points.json`` is never read or written
+    here (design D-001: it is the human authority source, not a registry
+    snapshot), which is why ``--project`` is accepted but unused.
+    """
+    del project_dir  # the export is package-relative, not project-relative
+    doc, missing, error = _dp_export_doc()
+    points = doc["points"]
+    wired = sum(1 for point in points if point.get("wired") is True)
+    if error is not None:
+        print(f"[mw decide dp export] {error}", file=sys.stderr)
+        if getattr(args, "write", False):
+            print("[mw decide dp export] nothing was written", file=sys.stderr)
+            return 2
+    if getattr(args, "write", False):
+        path = _dp_export_path()
+        path.write_text(
+            decision_points.registry_snapshot_text(doc), encoding="utf-8", newline="\n"
+        )
+        for dp_id in missing:
+            print(
+                f"[mw decide dp export] {dp_id}: no wiring entry in {path.name}; "
+                "wrote wired=false",
+                file=sys.stderr,
+            )
+        print(f"wrote {path} ({len(points)} points, {wired} wired)")
+        return 0
+    if getattr(args, "json", False):
+        print(decision_points.registry_snapshot_text(doc), end="")
+        return 0
+    for point in points:
+        print(
+            f"{point['id']:<24} {point['tier']:<3} "
+            f"enabled={str(point['default_enabled']).lower():<5} "
+            f"mode={point['default_mode']:<7} "
+            f"executor={point['executor']:<7} "
+            f"wired={'yes' if point.get('wired') else 'no':<3} "
+            f"{point['questions_version']}"
+        )
+    kinds = {
+        kind: sum(1 for point in points if point["executor"] == kind)
+        for kind in ("wired", "unwired", "none")
+    }
+    print(
+        f"{len(points)} decision point(s), wired={wired}, "
+        f"executor wired={kinds['wired']} unwired={kinds['unwired']} none={kinds['none']}"
+    )
+    return 0
+
+
+#: Minimal legal value of each required state path (``mw decide dp verify``).
+#: The contract probe fills ONLY the paths a dp lists in
+#: ``required_state_fields`` (no invented extras); the per-dp values
+#: (``decision_point``, ``authority_tier``, ``task_summary``,
+#: ``questions_version``, ``ambiguity.question``) are derived from the entry. A
+#: required path missing here is a config gap and fails the probe loudly.
+_DP_VERIFY_STATE_VALUES: dict[str, object] = {
+    "schema_version": 2,
+    "key": "mw-decision-substitution",
+    "phase": "EXECUTE",
+    "task_type": "coding",
+    "requested_type": "coding",
+    "risk": "low",
+    "risk_source": "machine",
+    "scope.write_scope": ["packages/"],
+    "scope.file_extensions": [".py"],
+    "progress.elapsed_minutes": 1,
+    "progress.budget_minutes": 30,
+    "progress.phases_done": 1,
+    "progress.phases_total": 3,
+    "progress.artifact_present": True,
+    "ambiguity.kind": "scope",
+    "local_candidates": [{"id": "c1", "label": "candidate one"}],
+    # dp25-signoff-conclusion: the sign-off facts, not a real decision.
+    "rows_total": 1,
+    "rows_available": 1,
+    "chain_ok": True,
+    "p0_open": [],
+}
+
+
+def _dp_verify_set_path(state: dict, dotted: str, value: object) -> None:
+    """Set one dotted path, creating intermediate objects (dotted key -> object)."""
+    parts = dotted.split(".")
+    node = state
+    for part in parts[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            node[part] = child
+        node = child
+    node[parts[-1]] = value
+
+
+def _dp_verify_state(point: Mapping) -> dict:
+    """Minimal legal state for one dp: its required paths only, nothing extra.
+
+    The values come from :data:`_DP_VERIFY_STATE_VALUES` (a per-dp override for
+    the four identity paths), so the probe exercises exactly the fields the
+    registry declares and cannot pass by padding the state.
+    """
+    dp_id = str(point["id"])
+    derived = {
+        "decision_point": dp_id,
+        "authority_tier": str(point["tier"]),
+        "task_summary": f"{dp_id} contract probe",
+        "questions_version": str(point["questions_version"]),
+        "ambiguity.question": f"{dp_id} probe",
+    }
+    state: dict = {}
+    for field in point.get("required_state_fields") or []:
+        path = str(field["name"])
+        if path in derived:
+            value = derived[path]
+        elif path in _DP_VERIFY_STATE_VALUES:
+            value = copy.deepcopy(_DP_VERIFY_STATE_VALUES[path])
+        else:
+            raise ValueError(f"{dp_id}: no probe value for required state path {path!r}")
+        _dp_verify_set_path(state, path, value)
+    return state
+
+
+def _dp_verify_answers(questions: Mapping) -> dict:
+    """Legal placeholder answer per question (the shape the client normalizes)."""
+    answers: dict[str, dict] = {}
+    for qid, spec in questions.items():
+        qtype = spec.get("type") if isinstance(spec, Mapping) else None
+        if qtype == decision.QUESTION_NOUL:
+            answers[str(qid)] = {"value": 0.9}
+        elif qtype == decision.QUESTION_SCORE:
+            answers[str(qid)] = {"value": int(spec.get("min", 0)), "confidence": 0.9}
+        else:
+            choices = spec.get("choices") if isinstance(spec, Mapping) else None
+            value = choices[0] if isinstance(choices, list) and choices else "c1"
+            answers[str(qid)] = {"value": value, "confidence": 0.9}
+    return answers
+
+
+def _dp_verify_payload(
+    dp_id: str, state: Mapping, questions: Mapping, cfg: decision.DecisionConfig
+) -> list[str]:
+    """Wire-shape checks on :meth:`TimiDecisionsBackend.build_payload`.
+
+    Asserts the documented body is exactly ``{model, state, questions}``, every
+    registry question survives, and each one carries the field its type needs
+    (``instructions`` always; ``criteria`` on choice/score, and on ``noul``
+    when the registry declares them).
+    """
+    del dp_id  # failures are already namespaced by the caller's dp row
+    failures: list[str] = []
+    backend = decision_backends.TimiDecisionsBackend()
+    dynamic = decision_points.resolve_dynamic_choices(questions, state)
+    if dynamic is None:
+        failures.append("dynamic_choices cannot render from the probe state")
+    body = backend.build_payload(state, questions, cfg, dynamic or {})
+    if set(body) != {"model", "state", "questions"}:
+        failures.append(f"payload body keys drifted: {sorted(body)}")
+        return failures
+    built = body["questions"]
+    expected = {str(qid) for qid in questions}
+    if set(built) != expected:
+        failures.append(
+            f"payload questions {sorted(built)} != registry questions {sorted(expected)}"
+        )
+    for qid, spec in questions.items():
+        question = built.get(str(qid))
+        if not isinstance(question, dict):
+            continue
+        qtype = spec.get("type") if isinstance(spec, Mapping) else None
+        if not isinstance(question.get("type"), str) or not question["type"]:
+            failures.append(f"{qid}: payload question has no type")
+        instructions = question.get("instructions")
+        if isinstance(instructions, str) and not instructions.strip():
+            failures.append(f"{qid}: payload question has empty instructions")
+        elif not instructions:
+            failures.append(f"{qid}: payload question has no instructions")
+        if qtype == decision.QUESTION_CHOICE:
+            criteria = question.get("criteria")
+            if not isinstance(criteria, dict) or not criteria:
+                failures.append(f"{qid}: choice criteria missing or empty")
+        elif qtype == decision.QUESTION_SCORE:
+            criteria = question.get("criteria")
+            if not isinstance(criteria, list) or not criteria:
+                failures.append(f"{qid}: score criteria missing or not a non-empty list")
+        elif qtype == decision.QUESTION_NOUL and "criteria" in spec:
+            criteria = question.get("criteria")
+            if not isinstance(criteria, dict) or set(criteria) != {"true", "false"}:
+                failures.append(f"{qid}: noul criteria must be exactly {{true, false}}")
+    return failures
+
+
+def _dp_verify_row(point: Mapping) -> dict:
+    """Per-dp verdict skeleton shared by the offline and live probes."""
+    return {
+        "id": str(point["id"]),
+        "ok": False,
+        "available": False,
+        "questions": len(point.get("questions") or []),
+        "wired": point.get("wired") is True,
+        "model": None,
+        "latency_ms": 0,
+        "reason": None,
+        "answer_ids": [],
+        "failures": [],
+    }
+
+
+def _dp_verify_point(point: Mapping) -> dict:
+    """Offline contract probe for one dp: no network, no writes.
+
+    The configured question set must reach ``decide`` (no ``DecisionInputError``),
+    come back ``available=true`` with an answer for every question, and render
+    the documented wire body. ``ok`` is the conjunction of those checks.
+    """
+    dp_id = str(point["id"])
+    row = _dp_verify_row(point)
+    failures: list[str] = row["failures"]
+    try:
+        dp_point = decision_points.get_decision_point(dp_id)
+        state = _dp_verify_state(point)
+        questions = decision_points.questions_map(dp_point)
+    except (KeyError, ValueError) as exc:
+        failures.append(f"unusable config: {exc}")
+        return row
+    row["questions"] = len(questions)
+    if point.get("questions_version") != dp_point.questions_version:
+        failures.append(
+            f"questions_version {point.get('questions_version')!r} != registry "
+            f"{dp_point.questions_version!r}"
+        )
+    cfg = decision.DecisionConfig(enabled=True)
+    backend = decision.FakeBackend(
+        [
+            decision.BackendOutcome(
+                available=True,
+                reason=None,
+                retryable=False,
+                answers=_dp_verify_answers(questions),
+                latency_ms=0,
+                detail="contract probe",
+            )
+        ],
+        name="contract-probe",
+        model=cfg.model,
+    )
+    try:
+        response = decision.DecisionClient(cfg, backend=backend).decide(
+            state, questions, dp=dp_id
+        )
+    except decision.DecisionInputError as exc:
+        failures.append(f"DecisionInputError: {exc}")
+        return row
+    row["available"] = bool(response["available"])
+    row["model"] = response["model"]
+    row["latency_ms"] = int(response["latency_ms"])
+    row["reason"] = response["reason"]
+    row["answer_ids"] = sorted((response["answers"] or {}).keys())
+    if not response["available"]:
+        failures.append(f"available=false (reason={response['reason']})")
+    elif set(row["answer_ids"]) != {str(qid) for qid in questions}:
+        failures.append(
+            f"normalized answers {row['answer_ids']} != question ids "
+            f"{sorted(str(qid) for qid in questions)}"
+        )
+    failures.extend(_dp_verify_payload(dp_id, state, questions, cfg))
+    row["ok"] = not failures
+    return row
+
+
+def _dp_verify_live_point(point: Mapping, cfg: decision.DecisionConfig) -> dict:
+    """Live probe for one dp: the same minimal state over the real backend."""
+    dp_id = str(point["id"])
+    row = _dp_verify_row(point)
+    failures: list[str] = row["failures"]
+    try:
+        dp_point = decision_points.get_decision_point(dp_id)
+        state = _dp_verify_state(point)
+        questions = decision_points.questions_map(dp_point)
+    except (KeyError, ValueError) as exc:
+        failures.append(f"unusable config: {exc}")
+        return row
+    row["questions"] = len(questions)
+    try:
+        response = decision.DecisionClient(cfg).decide(state, questions, dp=dp_id)
+    except decision.DecisionInputError as exc:
+        failures.append(f"DecisionInputError: {exc}")
+        return row
+    row["available"] = bool(response["available"])
+    row["model"] = response["model"]
+    row["latency_ms"] = int(response["latency_ms"])
+    row["reason"] = response["reason"]
+    row["answer_ids"] = sorted((response["answers"] or {}).keys())
+    if not response["available"]:
+        failures.append(f"available=false (reason={response['reason']})")
+    elif set(row["answer_ids"]) != {str(qid) for qid in questions}:
+        failures.append(
+            f"answers {row['answer_ids']} != question ids "
+            f"{sorted(str(qid) for qid in questions)}"
+        )
+    row["ok"] = not failures
+    return row
+
+
+def _dp_verify(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw decide dp verify [--json|--live|--dp ID]` (offline by default).
+
+    Offline: every exported point is fed a minimal legal state through the real
+    ``DecisionClient`` + a fake backend, so a config that cannot be parsed or
+    rendered fails here instead of at a live call site. ``--live`` repeats the
+    state over the real ``jev-latest`` endpoint one dp at a time (PM-run; any
+    ``available=false`` exits 1). A dp that fails exits 1 in both modes; an
+    unreadable ``decide_registry.json`` or an unknown ``--dp`` exits 2.
+    """
+    doc, _missing, error = _dp_export_doc()
+    if error is not None:
+        print(f"[mw decide dp verify] {error}", file=sys.stderr)
+        return 2
+    points = doc["points"]
+    wanted = list(getattr(args, "dp_filter", None) or [])
+    known = {point["id"] for point in points}
+    unknown = [dp_id for dp_id in wanted if dp_id not in known]
+    if unknown:
+        print(
+            f"[mw decide dp verify] unknown decision point id: {', '.join(unknown)}",
+            file=sys.stderr,
+        )
+        return 2
+    selected = [point for point in points if not wanted or point["id"] in wanted]
+    live = bool(getattr(args, "live", False))
+    if live:
+        cfg, cfg_err = decision.DecisionConfig.from_project(project_dir)
+        if cfg_err is not None:
+            print(f"[mw decide dp verify] WARN — {cfg_err} (using defaults)", file=sys.stderr)
+        rows = [_dp_verify_live_point(point, cfg) for point in selected]
+    else:
+        rows = [_dp_verify_point(point) for point in selected]
+    ok = sum(1 for row in rows if row["ok"])
+    failed = len(rows) - ok
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "mode": "live" if live else "offline",
+                    "ok": ok,
+                    "fail": failed,
+                    "points": rows,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0 if failed == 0 else 1
+    if live:
+        for row in rows:
+            answers = ",".join(row["answer_ids"]) or "-"
+            print(
+                f"{row['id']} | {str(row['available']).lower()} | {row['model'] or '-'} | "
+                f"{row['latency_ms']} | {row['reason'] or '-'} | {answers}"
+            )
+            for failure in row["failures"]:
+                print(f"  - {failure}")
+    else:
+        for row in rows:
+            print(
+                f"{row['id']}  {'ok' if row['ok'] else 'fail'}  "
+                f"questions={row['questions']}  "
+                f"wired={'yes' if row['wired'] else 'no'}"
+            )
+            for failure in row["failures"]:
+                print(f"  - {failure}")
+    print(f"{ok} ok / {failed} fail")
+    return 0 if failed == 0 else 1
+
+
+def _dp_apply_parse(text: str) -> tuple[dict, list[str]]:
+    """Parse the sign-off header (research D5-Q4; gate regex in spec §7.2).
+
+    Only whole-line `key: value` lines are accepted: the done gate matches the
+    conclusion line with an anchored single-line regex (spec §7.2), so an
+    inline comment would pass `apply` but fail the gate — rejected here instead.
+    """
+    errors: list[str] = []
+    raw: dict[str, str] = {}
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        stripped = line.rstrip()
+        if not stripped:
+            continue
+        match = re.match(r"^(conclusion|promote|demote|p0-open)(\s*):\s*(.*)$", stripped)
+        if match is None:
+            continue
+        key = match.group(1)
+        if match.group(2):
+            # The done gate regex is anchored on `key:`, so `key : value` would
+            # pass here and fail the gate: refuse it instead.
+            errors.append(f"line {lineno}: '{key}:' must not have whitespace before the colon")
+            continue
+        value = match.group(3).strip()
+        if key in raw:
+            errors.append(f"line {lineno}: duplicate '{key}:' line")
+            continue
+        raw[key] = value
+    conclusion = raw.get("conclusion")
+    if conclusion is None:
+        errors.append("missing 'conclusion:' (continue|narrow|revoke)")
+    elif conclusion not in _DP_SIGN_CONCLUSIONS:
+        errors.append(f"invalid conclusion {conclusion!r} (continue|narrow|revoke)")
+    lists: dict[str, list[str]] = {}
+    for key in _DP_SIGN_LIST_KEYS + ("p0-open",):
+        value = raw.get(key, "-")
+        if value in ("", "-"):
+            lists[key] = []
+            continue
+        ids = [item.strip() for item in value.split(",")]
+        if any(not item for item in ids):
+            errors.append(f"'{key}:' has an empty dp id (use '-' for none)")
+        ids = [item for item in ids if item]
+        if len(set(ids)) != len(ids):
+            errors.append(f"'{key}:' lists a dp id twice")
+        for dp_id in ids:
+            point, err = _dp_registry_point(dp_id)
+            if err:
+                errors.append(f"'{key}:' {err}")
+                continue
+            if key == "p0-open" and point.tier != "P0":
+                errors.append(f"'p0-open:' {dp_id} is {point.tier}, not P0")
+        lists[key] = ids
+    for dp_id in sorted(set(lists.get("promote", [])) & set(lists.get("demote", []))):
+        errors.append(f"{dp_id} cannot be both promoted and demoted")
+    return {"conclusion": conclusion, **lists}, errors
+
+
+def _dp_sign_key(path: pathlib.Path) -> str:
+    """Best-effort key from `<key>/evidence/review/sign-final.md` (else "")."""
+    parts = path.resolve().parts
+    if len(parts) >= 4 and parts[-3:-1] == ("evidence", "review"):
+        return parts[-4]
+    return ""
+
+
+def _dp_p0_open_ids(config: decision_points.PointsConfig) -> list[str]:
+    """The P0 points that are enabled right now (spec §7.2 / AC-009)."""
+    return sorted(
+        point.id
+        for point in decision_points.DP_REGISTRY
+        if point.tier == "P0" and config.effective(point).enabled
+    )
+
+
+def _dp_apply_check_p0_open(
+    payload: dict, config: decision_points.PointsConfig
+) -> list[str]:
+    """`p0-open:` must equal the currently open P0 set exactly (AC-009)."""
+    current = _dp_p0_open_ids(config)
+    signed = sorted(set(payload["p0-open"]))
+    errors: list[str] = []
+    missing = [dp_id for dp_id in current if dp_id not in signed]
+    extra = [dp_id for dp_id in signed if dp_id not in current]
+    if missing:
+        errors.append(
+            "'p0-open:' is missing open P0 dp(s): "
+            f"{', '.join(missing)} (list every open P0, or close it first)"
+        )
+    if extra:
+        errors.append(
+            "'p0-open:' lists dp(s) that are not open P0: "
+            f"{', '.join(extra)} (current open P0: {', '.join(current) or '-'})"
+        )
+    return errors
+
+
+def _dp_apply_plan(
+    payload: dict, config: decision_points.PointsConfig
+) -> tuple[dict[str, bool], list[str]]:
+    """Resolve the signed verdict into `dp id -> target enabled` (pure).
+
+    `continue` applies the signed promote/demote delta; `narrow` only narrows
+    (a promote there is a contradiction and is refused, never silently
+    dropped); `revoke` disables every currently enabled dp. A P0 dp is never
+    opened here — that is the `--i-understand-p0` human confirmation (AC-002).
+    """
+    conclusion = payload["conclusion"]
+    errors: list[str] = []
+    if conclusion in ("narrow", "revoke") and payload["promote"]:
+        errors.append(
+            f"conclusion '{conclusion}' must not promote (widening); "
+            "use a 'continue' sign-off for added authority"
+        )
+    targets: dict[str, bool] = {}
+    for dp_id in payload["promote"]:
+        point = decision_points.get_decision_point(dp_id)
+        if point.tier == "P0":
+            errors.append(
+                f"sign-off cannot open P0 {dp_id}; run "
+                f"`mw decide dp on {dp_id} --i-understand-p0` by hand"
+            )
+            continue
+        targets[dp_id] = True
+    for dp_id in payload["demote"]:
+        targets[dp_id] = False
+    if conclusion == "revoke":
+        for point in decision_points.DP_REGISTRY:
+            if config.effective(point).enabled:
+                targets.setdefault(point.id, False)
+    return targets, errors
+
+
+def _dp_apply_rows(
+    payload: dict, config: decision_points.PointsConfig, targets: dict[str, bool]
+) -> list[tuple[str, str]]:
+    """One `(dp, change)` audit row per affected dp (D-006: expanded per dp).
+
+    A verdict that changes nothing still has to be auditable (AC-009: all three
+    conclusions produce `authority-change` rows), so it records the authorities
+    it keeps; only an all-off table falls back to the first registered dp.
+    """
+    rows = [
+        (dp_id, f"{'enable' if enabled else 'disable'} {dp_id}")
+        for dp_id, enabled in sorted(targets.items())
+    ]
+    if rows:
+        return rows
+    for point in decision_points.DP_REGISTRY:
+        if config.effective(point).enabled:
+            rows.append((point.id, f"keep {point.id} enabled"))
+    if not rows:
+        anchor = decision_points.DP_REGISTRY[0].id
+        rows.append((anchor, f"signoff {payload['conclusion']}: no decision point is enabled"))
+    return rows
+
+
+def _dp_apply(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """Validated sign-off → ONE critical section → atomic table write (Q4).
+
+    Order inside the lock: re-read the table (TOCTOU), re-check the P0 set,
+    append the `authority-change` rows, then replace the table through the
+    shared P-003 protocol. Nothing is written until every check passed.
+    """
+    env_hits = [name for name in _DP_AGENT_ENV_VARS if os.environ.get(name)]
+    if env_hits:
+        print(
+            "[mw decide dp apply] refusing inside an agent session "
+            f"({', '.join(env_hits)} set); a human must run the sign-off",
+            file=sys.stderr,
+        )
+        return 2
+    path = pathlib.Path(args.sign_file)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"[mw decide dp apply] cannot read {path}: {exc}", file=sys.stderr)
+        return 2
+    payload, errors = _dp_apply_parse(text)
+    if errors:
+        for error in errors:
+            print(f"[mw decide dp apply] {error}", file=sys.stderr)
+        print("[mw decide dp apply] nothing was written", file=sys.stderr)
+        return 2
+
+    key = _dp_sign_key(path)
+    table = _dp_table_path(project_dir)
+    by = f"signoff:{payload['conclusion']}"
+    decision_points.clear_points_config_cache()
+    errors = _dp_apply_check_p0_open(payload, decision_points.load_points_config(project_dir))
+    if errors:
+        for error in errors:
+            print(f"[mw decide dp apply] {error}", file=sys.stderr)
+        print("[mw decide dp apply] nothing was written", file=sys.stderr)
+        return 2
+
+    table.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = table.with_name(table.name + ".lock")
+    try:
+        mw_common.acquire_lock(lock_path)
+    except RuntimeError as exc:
+        print(f"[mw decide dp apply] cannot lock {lock_path}: {exc}", file=sys.stderr)
+        print("[mw decide dp apply] nothing was written", file=sys.stderr)
+        return 2
+    try:
+        raw, err = _dp_load_raw(table)
+        if err:
+            print(f"[mw decide dp apply] {err}", file=sys.stderr)
+            print("[mw decide dp apply] nothing was written", file=sys.stderr)
+            return 2
+        # (a) TOCTOU: the pre-check above ran outside the lock — re-read and
+        # re-validate the open-P0 set against the state we are about to write.
+        decision_points.clear_points_config_cache()
+        config = decision_points.load_points_config(project_dir)
+        errors = _dp_apply_check_p0_open(payload, config)
+        if errors:
+            for error in errors:
+                print(f"[mw decide dp apply] {error}", file=sys.stderr)
+            print("[mw decide dp apply] nothing was written", file=sys.stderr)
+            return 2
+        targets, errors = _dp_apply_plan(payload, config)
+        if errors:
+            for error in errors:
+                print(f"[mw decide dp apply] {error}", file=sys.stderr)
+            print("[mw decide dp apply] nothing was written", file=sys.stderr)
+            return 2
+        changed: list[str] = []
+        for dp_id in sorted(targets):
+            point, err = _dp_registry_point(dp_id)
+            if point is None:
+                print(f"[mw decide dp apply] {err}", file=sys.stderr)
+                print("[mw decide dp apply] nothing was written", file=sys.stderr)
+                return 2
+            row, err = _dp_ensure_row(raw, point)
+            if row is None:
+                print(f"[mw decide dp apply] {err}", file=sys.stderr)
+                print("[mw decide dp apply] nothing was written", file=sys.stderr)
+                return 2
+            if row.get("enabled") is not targets[dp_id]:
+                row["enabled"] = targets[dp_id]
+                changed.append(dp_id)
+        by = f"signoff:{payload['conclusion']}"
+        raw["updated_by"] = by
+        raw["updated_at"] = _dp_now()
+        config_sha = hashlib.sha256(
+            (json.dumps(raw, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        ).hexdigest()
+        ts = _dp_now()
+        audit_rows = _dp_apply_rows(payload, config, targets)
+        # (b) audit rows first (design Q4 step 2b), then (c) the table write.
+        try:
+            for dp_id, change in audit_rows:
+                _dp_append_authority_change(
+                    project_dir,
+                    dp_id,
+                    by=by,
+                    change=change,
+                    config_sha=config_sha,
+                    key=key,
+                    conclusion=payload["conclusion"],
+                    trigger_id=f"signoff@{key}@{ts}",
+                    strict=True,
+                )
+        except (decide_archive.DecisionArchiveError, OSError) as exc:
+            print(
+                f"[mw decide dp apply] authority-change append failed ({exc}); "
+                "nothing was written",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            _dp_write_raw(table, raw, lock=False)
+        except (OSError, RuntimeError) as exc:
+            print(
+                f"[mw decide dp apply] the authority-change rows are written but the "
+                f"table write failed: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+    finally:
+        mw_common.release_lock(lock_path)
+
+    print(f"apply: {path}")
+    print(f"  conclusion: {payload['conclusion']} (by={by}, key={key or '-'})")
+    print(f"  p0-open: {', '.join(payload['p0-open']) or '-'}")
+    print(f"wrote {table}: {len(changed)} row(s) changed (sha256={config_sha[:16]})")
+    for dp_id, change in audit_rows:
+        print(f"  {change}")
+    print(
+        f"authority-change: {len(audit_rows)} row(s) -> "
+        f"{pathlib.Path(project_dir) / decision_points.DECISIONS_RELATIVE_PATH}"
+    )
+    return 0
+
+
+# ── Subcommand: decide report (mw-decision-substitution T-09, D-020/AC-008) ──
+#
+# The phase review is a pure read of `decisions.jsonl`: fold by decision_id, count
+# the outcomes, and render a human table. It is NOT a gate (spec §7.1 `判据表` is
+# 参考 only); the done gate only checks that the sign-off file exists.
+
+_REPORT_MIN_N = 5
+_REPORT_OVERRIDE_RATE = 0.15
+#: Sliding window for the override-rate trigger (spec §7.3).
+_REPORT_WINDOW = 30
+_REPORT_Z = 1.96
+#: Fold notes that are the explicit "cannot correlate" registrations (spec §6.2).
+_REPORT_UNLINKED_NOTES = frozenset({"composite", "lost", "deferred-to-human"})
+_REPORT_SETTLED = ("ok", "rework", "rollback")
+_REPORT_OUTCOMES = ("ok", "rework", "rollback", "inconclusive", "pending")
+
+
+def _wilson_lower_bound(hits: int, n: int, z: float = _REPORT_Z) -> float | None:
+    """Wilson 95% lower bound of a proportion (RQ-5); None for an empty sample.
+
+    `agreement` is a small sample, so the plain ratio overstates confidence;
+    the bound is what the report shows next to the raw rate.
+    """
+    if n <= 0:
+        return None
+    hits = max(0, min(hits, n))
+    phat = hits / n
+    denom = 1.0 + (z * z) / n
+    centre = phat + (z * z) / (2.0 * n)
+    margin = z * ((phat * (1.0 - phat) / n + (z * z) / (4.0 * n * n)) ** 0.5)
+    return max(0.0, (centre - margin) / denom)
+
+
+def _decide_report_groups(
+    project_dir: pathlib.Path, key: str | None
+) -> tuple[pathlib.Path, decide_archive.FoldResult, list[decide_archive.FoldedDecision]]:
+    """Read + fold the archive; optionally keep one key's rows (plus project rows)."""
+    path = pathlib.Path(project_dir) / decision_points.DECISIONS_RELATIVE_PATH
+    rows = [row for _lineno, row in decide_archive.iter_rows(path)]
+    folded = decide_archive.fold(rows)
+    groups = list(folded.groups.values())
+    if key:
+        groups = [group for group in groups if group.key in (key, "", None)]
+    groups.sort(key=lambda group: group.decision_id)
+    return path, folded, groups
+
+
+def _decide_report_metrics(
+    groups: list[decide_archive.FoldedDecision], stats: decide_archive.FoldStats
+) -> dict:
+    """Aggregate the fold into the report numbers (pure over the folded view)."""
+    outcomes: dict[str, int] = {name: 0 for name in _REPORT_OUTCOMES}
+    decided = acted = escalated = overrides = 0
+    nc_raw = nc_human = 0
+    per_dp: dict[str, dict] = {}
+    unlinked: list[str] = []
+    for group in groups:
+        outcome = group.outcome if group.outcome in outcomes else "pending"
+        outcomes[outcome] += 1
+        dp_id = str(group.dp)
+        bucket = per_dp.setdefault(
+            dp_id,
+            {"decisions": 0, "settled": 0, "override": 0, "window": []},
+        )
+        bucket["decisions"] += 1
+        if outcome in _REPORT_SETTLED:
+            bucket["settled"] += 1
+        if group.human_override:
+            bucket["override"] += 1
+            overrides += 1
+        base = group.base
+        seq = base.get("seq") if base is not None else None
+        bucket["window"].append((seq if isinstance(seq, int) else 0, group.human_override))
+        if base is not None:
+            decided += 1
+            if base.get("acted") is True:
+                acted += 1
+            escalated_here = base.get("authority") == "human" or bool(base.get("escalated_reason"))
+            if escalated_here:
+                escalated += 1
+            if dp_id == "dp3-worker-clarify":
+                nc_raw += 1
+                if escalated_here:
+                    nc_human += 1
+        if base is not None and group.task_key is None and dp_id == "dp1-dispatch-type":
+            unlinked.append(f"{group.decision_id}: PM-local decision (task_key=null)")
+        if group.note in _REPORT_UNLINKED_NOTES:
+            unlinked.append(f"{group.decision_id}: note={group.note}")
+    n = sum(outcomes[name] for name in _REPORT_SETTLED)
+    agree = n - sum(
+        1 for group in groups if group.outcome in _REPORT_SETTLED and group.human_override
+    )
+    windows: dict[str, dict[str, int]] = {}
+    for dp_id, bucket in per_dp.items():
+        recent = sorted(bucket.pop("window"))[-_REPORT_WINDOW:]
+        windows[dp_id] = {
+            "n": len(recent),
+            "override": sum(1 for _seq, flipped in recent if flipped),
+        }
+        bucket["window_n"] = windows[dp_id]["n"]
+        bucket["window_override"] = windows[dp_id]["override"]
+    return {
+        "groups": len(groups),
+        "rows": stats.parsed,
+        "decided": decided,
+        "acted": acted,
+        "escalated": escalated,
+        "outcomes": outcomes,
+        "n": n,
+        "override": overrides,
+        "override_rate": (overrides / decided) if decided else None,
+        "agree_wilson_lb": _wilson_lower_bound(agree, n),
+        "nc_raw": nc_raw,
+        "nc_human": nc_human,
+        "per_dp": per_dp,
+        "windows": windows,
+        "unlinked": unlinked,
+        "chain_breaks": stats.chain_breaks + stats.seq_breaks,
+        "skipped_rows": stats.skipped_unparsable + stats.skipped_non_dict,
+    }
+
+
+def _decide_report_suggest(metrics: dict) -> list[str]:
+    """The machine-readable `suggest:` line(s), spec §7.3 / design Q3 format.
+
+    One direction per line: `suggest: disable <dp>[, <dp>]*, N=<n> override=<n>`.
+    The rate is computed over the dp's last `_REPORT_WINDOW` decisions (spec
+    §7.3 sliding window) and below the minimum sample the report refuses to
+    conclude (§7.1)."""
+    if metrics["n"] < _REPORT_MIN_N:
+        return [
+            f"suggest: none (N={metrics['n']} < {_REPORT_MIN_N}, 数据不足，不结论)"
+        ]
+    hits = [
+        (dp_id, window["n"], window["override"])
+        for dp_id, window in sorted(metrics["windows"].items())
+        if window["n"] >= _REPORT_MIN_N
+        and window["override"] / window["n"] > _REPORT_OVERRIDE_RATE
+    ]
+    if not hits:
+        return [f"suggest: none (N={metrics['n']}, no threshold hit)"]
+    dp_ids = ", ".join(dp_id for dp_id, _n, _override in hits)
+    n = sum(n for _dp_id, n, _override in hits)
+    override = sum(override for _dp_id, _n, override in hits)
+    return [f"suggest: disable {dp_ids}, N={n} override={override}"]
+
+
+def _decide_report_markdown(
+    *,
+    key: str,
+    phase: str,
+    archive: pathlib.Path,
+    metrics: dict,
+    suggestions: list[str],
+    groups: list[decide_archive.FoldedDecision],
+    generated_at: str,
+) -> str:
+    """Render the review markdown (概览/判据表/逐决策/分歧样例/suggest/无法关联)."""
+    insufficient = metrics["n"] < _REPORT_MIN_N
+    rate = metrics["override_rate"]
+    lb = metrics["agree_wilson_lb"]
+    lines = [
+        f"# Decision Review — {key or 'project'} {phase}",
+        "",
+        f"> 机器生成（`mw decide report`），数据源 `{archive}`，只读 fold，**不作门控**。",
+        f"> generated_at: {generated_at}",
+        "",
+        "## 概览",
+        "",
+        "| 指标 | 值 |",
+        "| --- | --- |",
+        f"| N（有效 settle，剔 inconclusive/pending） | {metrics['n']} |",
+        f"| decision groups / 档案行 | {metrics['groups']} / {metrics['rows']} |",
+        f"| 已决策 / 自动生效(acted) / 上抛人 | {metrics['decided']} / {metrics['acted']} / {metrics['escalated']} |",
+        f"| override | {metrics['override']}（rate={_pct(rate)}） |",
+        f"| 一致率 Wilson 95% 下界 | {_pct(lb)} |",
+        f"| nc_raw / nc_human（dp3） | {metrics['nc_raw']} / {metrics['nc_human']} |",
+        f"| 链断裂 / 跳过行 | {metrics['chain_breaks']} / {metrics['skipped_rows']} |",
+        "",
+        "outcomes: "
+        + ", ".join(f"{name}={count}" for name, count in metrics["outcomes"].items()),
+        "",
+    ]
+    if insufficient:
+        lines += [
+            f"**数据不足，不结论**（N={metrics['n']} < {_REPORT_MIN_N}）：以下内容仅供观察，不构成调整依据。",
+            "",
+        ]
+    lines += [
+        "## 判据表",
+        "",
+        "| decision_id | dp | answer | confidence | mode | acted | outcome | override |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for group in groups:
+        base = group.base
+        if base is None:
+            lines.append(
+                f"| {group.decision_id} | {group.dp} | (无 decide 行) | - | - | - | "
+                f"{group.outcome} | {'yes' if group.human_override else 'no'} |"
+            )
+            continue
+        answer = "-"
+        if isinstance(base.get("answer"), dict) and base.get("answer"):
+            answer = "; ".join(
+                f"{qid}={entry.get('value') if isinstance(entry, dict) else entry}"
+                for qid, entry in base["answer"].items()
+            )
+        elif not base.get("available", True):
+            answer = f"escalated:{base.get('reason') or base.get('escalated_reason') or '-'}"
+        confidence = base.get("confidence")
+        lines.append(
+            f"| {group.decision_id} | {group.dp} | {_cell(answer)} | "
+            f"{_cell(confidence if confidence is not None else '-')} | "
+            f"{base.get('mode') or '-'} | {'yes' if base.get('acted') else 'no'} | "
+            f"{group.outcome} | {'yes' if group.human_override else 'no'} |"
+        )
+    lines += ["", "## 逐决策", ""]
+    for group in groups:
+        lines.append(f"### {group.decision_id}")
+        base = group.base
+        if base is None:
+            lines.append("- decide: （缺失，孤立的 override/settle 行）")
+        else:
+            lines.append(
+                f"- decide: ts={base.get('ts')} available={base.get('available')} "
+                f"authority={base.get('authority')} acted={base.get('acted')} "
+                f"mode={base.get('mode') or '-'}"
+            )
+            if base.get("escalated_reason"):
+                lines.append(f"- escalated_reason: {base.get('escalated_reason')}")
+            if base.get("actual_action"):
+                lines.append(f"- actual_action: {base.get('actual_action')}")
+        lines.append(
+            f"- outcome: {group.outcome} (settled_by={group.settled_by or '-'})"
+        )
+        if group.note:
+            lines.append(f"- note: {group.note}")
+        if group.human_override:
+            lines.append(
+                f"- override: by={group.override_by or '-'} reason={group.override_reason or '-'}"
+            )
+        lines.append("")
+    lines += ["## 分歧样例", ""]
+    disagreements = [
+        group
+        for group in groups
+        if group.human_override
+        or group.outcome == "rollback"
+        or (group.authority_last is not None and str(group.authority_last.get("by", "")).startswith("human"))
+    ]
+    if not disagreements:
+        lines += ["- （无 override / rollback / 人工授权变更）", ""]
+    for group in disagreements:
+        base = group.base
+        jev = "-"
+        if base is not None and isinstance(base.get("answer"), dict):
+            jev = "; ".join(
+                f"{qid}={entry.get('value') if isinstance(entry, dict) else entry}"
+                for qid, entry in base["answer"].items()
+            )
+        human = group.override_reason or (
+            group.authority_last.get("change") if group.authority_last is not None else None
+        )
+        if group.human_override:
+            human_action = f"override（{group.override_by or 'human'}）"
+        elif group.outcome != "pending":
+            human_action = group.outcome
+        else:
+            human_action = human or "-"
+        lines += [
+            f"- {group.decision_id}: jev 答 {_cell(jev)}；人做 {_cell(human_action)}；"
+            f"理由 {_cell(group.override_reason or human or '-')}",
+            "",
+        ]
+    lines += ["## 候选调整", ""]
+    lines += suggestions
+    lines += ["", "## 无法关联项", ""]
+    if metrics["unlinked"]:
+        lines += [f"- {item}" for item in metrics["unlinked"]]
+    else:
+        lines.append("- （无显式登记的无法关联项）")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _pct(value: float | None) -> str:
+    return "-" if value is None else f"{value * 100:.1f}%"
+
+
+def _cell(value: object) -> str:
+    text = "-" if value is None else str(value)
+    return text.replace("|", "\\|").replace("\n", " ")
+
+
+def _decide_report(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw decide report [--key K] [--phase P] [--write] [--json]` (AC-008).
+
+    Exit 0 even for an empty archive (`N<5` → "数据不足，不结论"); only an
+    unreadable archive or a `--write` without `--key` is exit 2.
+    """
+    key = getattr(args, "key", None) or ""
+    phase = str(getattr(args, "phase", None) or "final").strip() or "final"
+    try:
+        archive, folded, groups = _decide_report_groups(project_dir, key or None)
+    except decide_archive.DecisionArchiveError as exc:
+        print(f"[mw decide report] {exc}", file=sys.stderr)
+        return 2
+    metrics = _decide_report_metrics(groups, folded.stats)
+    suggestions = _decide_report_suggest(metrics)
+    generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    markdown = _decide_report_markdown(
+        key=key,
+        phase=phase,
+        archive=archive,
+        metrics=metrics,
+        suggestions=suggestions,
+        groups=groups,
+        generated_at=generated_at,
+    )
+    report_path: pathlib.Path | None = None
+    if getattr(args, "write", False):
+        if not key:
+            print("[mw decide report] --write needs --key <key>", file=sys.stderr)
+            return 2
+        report_dir = (
+            pathlib.Path(project_dir) / ".agenticdoc" / key / "evidence" / "review"
+        )
+        report_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M")
+        report_path = report_dir / f"decision-review-{phase}-{stamp}.md"
+        report_path.write_text(markdown, encoding="utf-8", newline="\n")
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "archive": str(archive),
+                    "key": key or None,
+                    "phase": phase,
+                    "generated_at": generated_at,
+                    "insufficient_data": metrics["n"] < _REPORT_MIN_N,
+                    "metrics": metrics,
+                    "suggestions": suggestions,
+                    "report_path": str(report_path) if report_path else None,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    rate = metrics["override_rate"]
+    print(f"report: {archive} (key={key or '-'} phase={phase})")
+    print(
+        f"  groups={metrics['groups']} rows={metrics['rows']} N={metrics['n']} "
+        + " ".join(f"{name}={count}" for name, count in metrics["outcomes"].items())
+    )
+    print(
+        f"  acted={metrics['acted']}/{metrics['decided']} "
+        f"escalated={metrics['escalated']}/{metrics['decided']} "
+        f"override={metrics['override']} (rate={_pct(rate)}) "
+        f"agree_lb95={_pct(metrics['agree_wilson_lb'])} "
+        f"nc_raw={metrics['nc_raw']} nc_human={metrics['nc_human']}"
+    )
+    for dp_id, bucket in sorted(metrics["per_dp"].items()):
+        print(
+            f"  {dp_id:<26} decisions={bucket['decisions']:<3} "
+            f"settled={bucket['settled']:<3} override={bucket['override']}"
+        )
+    if metrics["n"] < _REPORT_MIN_N:
+        print(f"  数据不足，不结论 (N={metrics['n']} < {_REPORT_MIN_N})")
+    for line in suggestions:
+        print(f"  {line}")
+    if report_path is not None:
+        print(f"wrote {report_path}")
+    return 0
+
+
+def _decide_sign_key(
+    args: argparse.Namespace, project_dir: pathlib.Path
+) -> tuple[pathlib.Path, str, str | None]:
+    """Resolve ``(key_dir, key, error)`` for `mw decide sign` (FIX-P a).
+
+    ``--key`` wins; otherwise the key is the directory itself when it sits
+    directly under ``.agenticdoc`` (so `--project .agenticdoc/<key>` needs no
+    extra flag). Anything else refuses instead of guessing a key.
+    """
+    key = getattr(args, "key", None)
+    if key:
+        return decide_signoff.key_dir(project_dir, key), key, None
+    if project_dir.parent.name == ".agenticdoc":
+        return project_dir, project_dir.name, None
+    return (
+        project_dir,
+        "",
+        "cannot infer the key: pass --key <key> or --project .agenticdoc/<key>",
+    )
+
+
+def _decide_sign_claim(key_dir_path: pathlib.Path) -> str:
+    """The key's claim id (``pm-state.md`` ``- Claim-Id:``), else ``-``."""
+    pm_state = key_dir_path / "pm-state.md"
+    if not pm_state.is_file():
+        return "-"
+    try:
+        text = pm_state.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "-"
+    match = re.search(r"^- Claim-Id:\s*(.+?)\s*$", text, flags=re.MULTILINE)
+    return match.group(1) if match else "-"
+
+
+def _decide_sign_anchor_dp(
+    project_dir: pathlib.Path, facts: decide_signoff.SignoffFacts
+) -> str:
+    """The dp an authority-change row is filed under (no dp changes here).
+
+    Same fallback ladder as `dp apply`: a dp that actually decided, else the
+    first enabled dp, else the first registered one — never an invented id.
+    """
+    for row in facts.rows:
+        dp_id = row.get("dp")
+        if isinstance(dp_id, str) and dp_id:
+            return dp_id
+    config = decision_points.load_points_config(project_dir)
+    for point in decision_points.DP_REGISTRY:
+        if config.effective(point).enabled:
+            return point.id
+    return decision_points.DP_REGISTRY[0].id
+
+
+def _decide_sign_summary(
+    facts: decide_signoff.SignoffFacts,
+    key: str,
+    conclusion: str | None,
+    allow_empty: bool,
+) -> list[str]:
+    """Human summary + the machine-line draft (nothing is written)."""
+    lines = [
+        f"sign: key={key or '-'} archive={facts.archive}",
+        f"  counted_rows={len(facts.rows)} available={facts.n_available} "
+        f"acted={facts.n_acted} escalated={facts.n_escalated} "
+        f"chain_ok={str(facts.chain_ok).lower()}",
+        f"  rows_sha256={facts.sha256}",
+    ]
+    engines = ", ".join(f"{name}={count}" for name, count in facts.engines.items())
+    lines.append(f"  engines: {engines or '-'}")
+    by_dp: dict[str, list[dict]] = {}
+    for row in facts.rows:
+        by_dp.setdefault(str(row.get("dp") or "-"), []).append(row)
+    for dp_id, group in sorted(by_dp.items()):
+        lines.append(
+            f"  dp {dp_id}: rows={len(group)} "
+            f"available={sum(1 for r in group if r.get('available') is True)} "
+            f"acted={sum(1 for r in group if r.get('acted') is True)} "
+            f"escalated={sum(1 for r in group if r.get('escalated_reason') is not None)}"
+        )
+    escalated: dict[str, int] = {}
+    for row in facts.rows:
+        reason = row.get("escalated_reason")
+        if isinstance(reason, str) and reason:
+            escalated[reason] = escalated.get(reason, 0) + 1
+    if escalated:
+        lines.append(
+            "  escalated_reason: "
+            + ", ".join(f"{name}={count}" for name, count in sorted(escalated.items()))
+        )
+    lines.append(f"  p0-open: {', '.join(facts.p0_open) or '-'} ({facts.p0_source})")
+    for name in decide_signoff.CONCLUSIONS:
+        ok, problems = decide_signoff.verdict(
+            facts, name, allow_empty=allow_empty and name == "continue"
+        )
+        detail = "ok" if ok else f"REFUSED ({len(problems)} problem(s))"
+        lines.append(f"  verdict {name}: {detail}")
+        for problem in problems:
+            lines.append(f"    - {problem}")
+    lines.append("  machine lines (draft):")
+    lines.append(f"    conclusion: {conclusion or '<continue|narrow|revoke>'}")
+    lines.append(f"    counted_rows: {len(facts.rows)}")
+    lines.append(f"    rows_sha256: {facts.sha256}")
+    lines.append(f"    engine: {'/'.join(decide_signoff.TRUE_ENGINE)}")
+    return lines
+
+
+def _decide_sign_signed_via(text: str, signed_via: str) -> str:
+    """Insert the ``signed_via:`` machine line into a rendered sign-off (FIX-Q).
+
+    ``signed_via`` records which face produced the file (``cli`` = a person in
+    a terminal, ``tui`` = the ``/mw decide sign`` confirmation dialog). It rides
+    on the anchored ``promote: -`` line that :func:`decide_signoff.render`
+    always emits after the scalar machine lines, so the ``conclusion:`` /
+    ``counted_rows:`` / ``rows_sha256:`` lines the done gate and ``dp apply``
+    parse stay byte-identical and ``signed_via`` is never mistaken for part of
+    that vocabulary.
+    """
+    anchor = re.search(r"(?m)^promote: -$", text)
+    if anchor is None:  # render() always emits it; refuse instead of guessing
+        raise ValueError("rendered sign-off has no 'promote: -' anchor for signed_via")
+    return f"{text[: anchor.start()]}signed_via: {signed_via}\n{text[anchor.start() :]}"
+
+
+def _decide_sign_write(
+    key_dir_path: pathlib.Path,
+    key: str,
+    text: str,
+    *,
+    human_confirmed: bool,
+    signed_via: str = "cli",
+) -> pathlib.Path:
+    """Write the sign-off, honouring the two documented exemptions.
+
+    :func:`decide_signoff.write_signoff` refuses inside an agent session. Two
+    exemptions exist, and both are recorded in the file itself:
+
+    * ``signed_via`` in ``auto-decide|auto-llm`` (spec §15 AC-026 / D-070): the
+      authority is the decision model (or the caller's inference), so the write
+      is legal in an agent session; the flag alone opens nothing.
+    * ``--human-confirmed`` (the ``/mw decide sign`` dialog): the one legal
+      human escape hatch, scoped to this call — the probe variables are hidden
+      for the duration of the write and restored immediately, and the file
+      records ``signed_via: tui``. That is tamper-evidence, not tamper-proof:
+      forging the flag is deliberate and still leaves the line (plus the
+      ``authority-change`` archive row) behind.
+    """
+    if signed_via in decide_signoff.AUTO_SIGNED_VIA:
+        return decide_signoff.write_signoff(
+            key_dir_path, key, text, allow_agent_session=True, signed_via=signed_via
+        )
+    if not human_confirmed:
+        return decide_signoff.write_signoff(key_dir_path, key, text, signed_via=signed_via)
+    hidden = {
+        name: os.environ.pop(name)
+        for name in decide_signoff.AGENT_SESSION_ENV_VARS
+        if name in os.environ
+    }
+    try:
+        return decide_signoff.write_signoff(key_dir_path, key, text, signed_via=signed_via)
+    finally:
+        os.environ.update(hidden)
+
+
+def _decide_sign_mode(args: argparse.Namespace) -> tuple[str | None, str | None]:
+    """``(signoff mode flag, error)`` for `mw decide sign --auto/--disable`."""
+    auto = bool(getattr(args, "auto", False))
+    disable = bool(getattr(args, "disable", False))
+    if auto and disable:
+        return None, "--auto and --disable are mutually exclusive"
+    if auto:
+        return decision.SIGNOFF_AUTO, None
+    if disable:
+        return decision.SIGNOFF_DISABLE, None
+    return None, None
+
+
+def _decide_sign_persist_mode(
+    control_dir: pathlib.Path, mode: str, *, dry_run: bool, as_json: bool
+) -> int:
+    """Persist ``signoff`` into ``.mw/decide.json`` (spec §15 AC-023).
+
+    Same read-modify-write shape as `mw decide set`: the merged document is
+    validated through the client's own parser before anything is written, the
+    replace goes through the P-003 helper (temp + ``os.replace`` under the lock),
+    and ``--dry-run`` only prints.
+    """
+    path = decision.decide_config_path(control_dir)
+    raw: dict = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"[mw decide sign] existing {path} is not usable: {exc}", file=sys.stderr)
+            return 2
+        if not isinstance(loaded, dict):
+            print(f"[mw decide sign] existing {path} is not a JSON object", file=sys.stderr)
+            return 2
+        raw = loaded
+    raw["signoff"] = mode
+    _cfg, validation_error = decision.DecisionConfig.from_dict(
+        raw, project_root=control_dir
+    )
+    if validation_error:
+        print(f"[mw decide sign] {validation_error}", file=sys.stderr)
+        return 2
+    if not dry_run:
+        try:
+            _decide_write_config(path, raw)
+        except (OSError, RuntimeError) as exc:
+            print(f"[mw decide sign] cannot write {path}: {exc}", file=sys.stderr)
+            return 2
+    if as_json:
+        print(
+            json.dumps(
+                {"path": str(path), "signoff": mode, "written": not dry_run},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    print(f"signoff: {mode} ({'would write' if dry_run else 'wrote'} {path})")
+    return 0
+
+
+def _decide_sign_preview(
+    facts: decide_signoff.SignoffFacts,
+    key: str,
+    allow_empty: bool,
+    as_json: bool,
+    *,
+    note: str | None = None,
+) -> int:
+    """The read-only preview (summary + machine-line draft, exit 0, no write)."""
+    if as_json:
+        # Previews carry every conclusion's verdict so the `/mw decide sign`
+        # window can show them and refuse before the confirm dialog (FIX-Q).
+        verdicts: dict[str, dict] = {}
+        for name in decide_signoff.CONCLUSIONS:
+            ok, problems = decide_signoff.verdict(
+                facts, name, allow_empty=allow_empty and name == "continue"
+            )
+            verdicts[name] = {"ok": ok, "problems": list(problems)}
+        print(
+            json.dumps(
+                {
+                    "conclusion": None,
+                    "ok": None,
+                    "problems": [],
+                    "facts": facts.as_dict(),
+                    "path": None,
+                    "verdicts": verdicts,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    if note:
+        print(f"  {note}")
+    for line in _decide_sign_summary(facts, key, None, allow_empty):
+        print(line)
+    return 0
+
+
+def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """`mw decide sign`: the automatic sign-off, or the legacy human sign.
+
+    Mode order (spec §15 AC-024 / design D-066, fixed):
+
+    1. ``--auto`` / ``--disable`` persist ``signoff`` in ``.mw/decide.json`` and
+       exit 0 (``--dry-run`` prints only). With ``--conclusion`` as well the flow
+       continues into the sign step with that mode in effect, which is how the
+       ``auto-llm`` face is reached.
+    2. ``signoff=disable`` -> nothing is written, exit 0 (the ``done`` gate also
+       stops requiring the file, D-071).
+    3. automatic flow (no ``--conclusion``, or an explicit mode flag): jev via
+       ``dp25-signoff-conclusion`` when decide is configured **and** that point
+       is enabled -> ``signed_via: auto-decide``; otherwise the passed
+       ``--conclusion`` is the caller's own inference -> ``signed_via: auto-llm``
+       with one ``decide_fallback: <reason>`` line; with neither, a read-only
+       preview plus guidance (exit 0, nothing written).
+    4. an explicit ``--conclusion`` **without** a mode flag keeps the old human
+       semantics (``signed_via: cli``, ``tui`` with ``--human-confirmed``) and an
+       agent session is still refused.
+
+    The verdict runs first in every writing path: any problem prints on stderr,
+    exits 2 and writes nothing (``continue`` with N=0 additionally needs
+    ``--allow-empty``).
+    """
+    key_dir_path, key, err = _decide_sign_key(args, project_dir)
+    if err:
+        print(f"[mw decide sign] {err}", file=sys.stderr)
+        return 2
+    # `.mw/decide.json` and `.mw/decide-points.json` live at the control root,
+    # i.e. two levels above the key dir — `--project` may be either one.
+    control_dir = key_dir_path.parent.parent
+    conclusion = getattr(args, "conclusion", None)
+    reason = getattr(args, "reason", None)
+    allow_empty = bool(getattr(args, "allow_empty", False))
+    dry_run = bool(getattr(args, "dry_run", False))
+    as_json = bool(getattr(args, "json", False))
+    human_confirmed = bool(getattr(args, "human_confirmed", False))
+
+    mode_flag, mode_err = _decide_sign_mode(args)
+    if mode_err:
+        print(f"[mw decide sign] {mode_err}", file=sys.stderr)
+        return 2
+    if mode_flag is not None:
+        code = _decide_sign_persist_mode(
+            control_dir, mode_flag, dry_run=dry_run, as_json=as_json
+        )
+        if code != 0 or conclusion is None:
+            return code
+
+    cfg, _cfg_err = decision.DecisionConfig.from_project(control_dir)
+    if cfg.signoff_error:
+        # Design D-065 / AC-023: a typo does not disable the dps, but the sign
+        # command refuses instead of silently picking a mode.
+        print(f"[mw decide sign] .mw/decide.json: {cfg.signoff_error}", file=sys.stderr)
+        print("[mw decide sign] nothing was written", file=sys.stderr)
+        return 2
+    signoff = mode_flag if mode_flag is not None else cfg.signoff
+    auto_flow = conclusion is None or mode_flag is not None
+    signed_via = "tui" if human_confirmed else "cli"
+    decide_fallback: str | None = None
+    decide_detail: str | None = None
+
+    facts = decide_signoff.collect(key_dir_path, key)
+    sign_path = decide_signoff.signoff_path(key_dir_path, key)
+
+    if auto_flow and signoff == decision.SIGNOFF_DISABLE:
+        print(
+            "signoff disabled (.mw/decide.json signoff=disable); nothing to sign, "
+            f"{sign_path} is not required"
+        )
+        return _decide_sign_preview(facts, key, allow_empty, as_json)
+
+    if auto_flow:
+        auto_conclusion, auto_detail = decide_signoff.auto_conclusion(
+            control_dir, key, facts=facts
+        )
+        if auto_conclusion is not None:
+            conclusion = auto_conclusion
+            signed_via = "auto-decide"
+            decide_detail = auto_detail
+        elif conclusion is not None:
+            # jev could not answer: the caller's conclusion is the LLM face and
+            # the file records why the model was not used (D-069).
+            signed_via = "auto-llm"
+            decide_fallback = auto_detail
+        else:
+            return _decide_sign_preview(
+                facts,
+                key,
+                allow_empty,
+                as_json,
+                note=(
+                    f"signoff=auto but no conclusion available ({auto_detail}); "
+                    "pass --conclusion (or --auto --conclusion) to sign, or "
+                    "--disable to stop requiring the file"
+                ),
+            )
+        # The dp25 call appended its own decide row: re-read so the chain view
+        # the signature describes is the post-decision one (its rows are counted
+        # nowhere, see decide_signoff.collect).
+        facts = decide_signoff.collect(key_dir_path, key)
+
+    assert conclusion is not None  # every branch above either set it or returned
+    ok, problems = decide_signoff.verdict(
+        facts, conclusion, allow_empty=allow_empty and conclusion == "continue"
+    )
+    if not ok:
+        for problem in problems:
+            print(f"[mw decide sign] {problem}", file=sys.stderr)
+        print("[mw decide sign] nothing was written", file=sys.stderr)
+        if as_json:
+            print(
+                json.dumps(
+                    {
+                        "conclusion": conclusion,
+                        "ok": False,
+                        "problems": problems,
+                        "facts": facts.as_dict(),
+                        "path": None,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        return 2
+
+    claim = _decide_sign_claim(key_dir_path)
+    text = decide_signoff.render(
+        facts,
+        conclusion,
+        reason,
+        key,
+        claim,
+        allow_empty=allow_empty and conclusion == "continue",
+        signed_via=signed_via,
+        decide_fallback=decide_fallback,
+    )
+    if dry_run:
+        if as_json:
+            print(
+                json.dumps(
+                    {
+                        "conclusion": conclusion,
+                        "ok": True,
+                        "problems": [],
+                        "facts": facts.as_dict(),
+                        "path": None,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
+        for line in _decide_sign_summary(facts, key, conclusion, allow_empty):
+            print(line)
+        if decide_detail:
+            print(f"  decide: {decide_detail}")
+        if decide_fallback:
+            print(f"  decide_fallback: {decide_fallback}")
+        print("  --- rendered (dry-run, nothing written) ---")
+        for line in text.splitlines():
+            print(f"  | {line}")
+        return 0
+
+    try:
+        written = _decide_sign_write(
+            key_dir_path,
+            key,
+            text,
+            human_confirmed=human_confirmed,
+            signed_via=signed_via,
+        )
+    except (decide_signoff.SignoffError, OSError) as exc:
+        print(f"[mw decide sign] cannot write {sign_path}: {exc}", file=sys.stderr)
+        return 2
+
+    archive = decide_signoff.archive_path(key_dir_path)
+    anchor_dp = _decide_sign_anchor_dp(control_dir, facts)
+    ts = _dp_now()
+    # `decide_archive._CHANGE_BY` is a frozen vocabulary (human / signoff:<conclusion>
+    # / refresh), so the automatic face rides the `note` column instead of
+    # inventing `signoff:auto-*`; `config_sha_after` is 16 hex by contract (the
+    # pre-existing call passed the full digest, which fails whenever the table
+    # exists — exactly the case the automatic path runs in).
+    config_sha = _dp_table_sha(_dp_table_path(control_dir))
+    try:
+        decide_archive.append_authority_change(
+            archive,
+            dp=anchor_dp,
+            key=key,
+            by=f"signoff:{conclusion}",
+            change="signoff",
+            trigger_id=f"signoff@{key}@{ts}",
+            conclusion=conclusion,
+            config_sha_after=config_sha[:16] if config_sha else None,
+            note=f"signed_via={signed_via}"
+            + (f"; decide_fallback={decide_fallback}" if decide_fallback else ""),
+        )
+    except (decide_archive.DecisionArchiveError, OSError) as exc:
+        print(
+            f"[mw decide sign] sign file written ({written}) but the "
+            f"authority-change row failed: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "conclusion": conclusion,
+                    "ok": True,
+                    "problems": [],
+                    "facts": facts.as_dict(),
+                    "path": str(written),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    for line in _decide_sign_summary(facts, key, conclusion, allow_empty):
+        print(line)
+    if decide_detail:
+        print(f"  decide: {decide_detail}")
+    if decide_fallback:
+        print(f"  decide_fallback: {decide_fallback}")
+    print(f"signed_via: {signed_via}")
+    print(f"wrote {written}")
+    print(f"authority-change: dp={anchor_dp} by=signoff:{conclusion} -> {archive}")
+    return 0
+
+
+def _decide_dp(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+    """Dispatch `mw decide dp <action>` (design §2.5)."""
+    action = getattr(args, "dp_action", None)
+    handlers = {
+        "list": _dp_list,
+        "show": _dp_show,
+        "on": _dp_on,
+        "off": _dp_off,
+        "set": _dp_set,
+        "refresh": _dp_refresh,
+        "check": _dp_check,
+        "export": _dp_export,
+        "verify": _dp_verify,
+        "apply": _dp_apply,
+    }
+    handler = handlers.get(action)
+    if handler is None:
+        print(f"[mw decide dp] unknown action {action!r}", file=sys.stderr)
+        return 2
+    return handler(args, project_dir)
+
+
+def cmd_dispatch(args: argparse.Namespace) -> int:
+    """Conductor dispatch helpers (`mw dispatch check ...`).
+
+    W8 of mw-decision-substitution: the decision-worker card judge lives in
+    ``autopilot/dispatch.py`` (same criteria ``dispatch()`` refuses on), so a
+    worker or PM can see the refusal before spending a spawn. Exit codes mirror
+    ``mw decide book check``: 0 clean, 2 refused, 1 usage/IO.
+    """
+    action = getattr(args, "dispatch_action", None)
+    if action == "check":
+        argv: list[str] = []
+        if getattr(args, "card", None):
+            argv += ["--card", args.card]
+        if getattr(args, "dp", None):
+            argv += ["--dp", args.dp]
+        if getattr(args, "book", None):
+            argv += ["--book", args.book]
+        if getattr(args, "json", False):
+            argv.append("--json")
+        return dispatch_module.check_command(argv)
+    print("dispatch: a subcommand is required (known: check)", file=sys.stderr)
+    return 1
+
+
+def cmd_decide(args: argparse.Namespace) -> int:
+    """Decision-service CLI (design D-001/D-003/D-007).
+
+    ``mw decide <run|ask|probe|show|set|report|dp> --project DIR``. Exit codes
+    follow D-003: a completed decision — including ``available=false`` — is 0
+    (the service is bypassable by design), only invalid arguments/config writes
+    are 2. ``ask`` is the human face (FIX-M) and deliberately exits 2 on an
+    unavailable answer: a human asked, so there is nothing to bypass. Nothing in
+    this command raises: the client normalises runtime failures and the config
+    read is fail-soft.
+    """
+    project_dir = pathlib.Path(args.project).resolve()
+    action = getattr(args, "decide_action", None)
+    if action == "run":
+        return _decide_run(args, project_dir)
+    if action == "probe":
+        return _decide_probe(args, project_dir)
+    if action == "show":
+        return _decide_show(args, project_dir)
+    if action == "set":
+        return _decide_set(args, project_dir)
+    if action == "ask":
+        return _decide_ask(args, project_dir)
+    if action == "book":
+        return _decide_book(args, project_dir)
+    if action == "report":
+        return _decide_report(args, project_dir)
+    if action == "sign":
+        return _decide_sign(args, project_dir)
+    if action == "dp":
+        return _decide_dp(args, project_dir)
+    print(f"[mw decide] unknown action {action!r}", file=sys.stderr)
+    return 2
 
 
 # ── Subcommand: target (dual-workspace config, mw-dual-workspace D-011) ──────
@@ -7296,6 +10728,281 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     rag_audit_p.add_argument("--out", default=None, metavar="FILE",
                              help="Write the JSON report to FILE (default: no file is written)")
 
+    decide_p = sub.add_parser(
+        "decide",
+        help="Decision service: run a decision point, probe transports, show config, write config",
+    )
+    decide_sub = decide_p.add_subparsers(dest="decide_action", required=True)
+    decide_run_p = decide_sub.add_parser(
+        "run", help="Ask one decision point (JSON request on stdin or --request-file; state is never argv)"
+    )
+    decide_run_p.add_argument("--project", required=True, help="Project directory")
+    decide_run_p.add_argument("--request-file", default=None, metavar="FILE",
+                              help="JSON request file with 'state' and 'questions' (default: stdin)")
+    decide_run_p.add_argument("--dp", default=None, metavar="NAME",
+                              help="Registered decision point id; required when the request omits "
+                                   "'questions' (a legacy request carrying 'questions' defaults to dp1)")
+    decide_run_p.add_argument("--book", default=None, metavar="FILE",
+                              help="Read state + decision_point from a decision book; the book is "
+                                   "checked first and any failure refuses to send (zero HTTP)")
+    decide_run_p.add_argument("--json", action="store_true", help="Emit compact machine-readable JSON")
+    decide_probe_p = decide_sub.add_parser(
+        "probe", help="Probe candidate transports/endpoint shapes (diagnostic, never fails)"
+    )
+    decide_probe_p.add_argument("--project", required=True, help="Project directory")
+    decide_probe_p.add_argument("--json", action="store_true", help="Emit the machine-readable probe matrix")
+    decide_show_p = decide_sub.add_parser(
+        "show", help="Print the effective config and the most recent evidence line"
+    )
+    decide_show_p.add_argument("--project", required=True, help="Project directory")
+    decide_show_p.add_argument("--json", action="store_true", help="Emit the machine-readable config view")
+    decide_set_p = decide_sub.add_parser(
+        "set", help="Write .mw/decide.json atomically (pairs are KEY=VALUE; unknown keys are refused)"
+    )
+    decide_set_p.add_argument("--project", required=True, help="Project directory")
+    decide_set_p.add_argument("pairs", nargs="*", metavar="KEY=VALUE",
+                              help="Config updates, e.g. enabled=true points.dp1.enabled=true")
+    decide_set_p.add_argument("--json", action="store_true", help="Emit the written config as JSON")
+
+    decide_ask_p = decide_sub.add_parser(
+        "ask",
+        help="Ask timi/jev-latest directly (human face: --state + --noul/--choice/--score)",
+        description=(
+            "Ask the decisions endpoint (timi/jev-latest) one human-authored request. "
+            "state is either inline text, @<file> or --state-file; the questions are "
+            "built from --noul/--choice/--score. Exit 2 on bad arguments or an "
+            "unavailable service (reason + detail on stderr, never a made-up answer)."
+        ),
+        epilog=(
+            "examples:\n"
+            "  mw decide ask --state '提现失败3天' --noul urgent=是否紧急 \\\n"
+            "      --choice dept=billing:支付,technical:技术 --score effort=小,中,大\n"
+            "  mw decide ask --state-file ticket.txt --choice dept=billing,technical --json\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    decide_ask_p.add_argument("--project", default=".", help="Project directory (default: %(default)s)")
+    decide_ask_p.add_argument("--state", default=None, metavar="TEXT|@FILE",
+                              help="State to evaluate; '@<path>' reads that UTF-8 file "
+                                   "(mutually exclusive with --state-file)")
+    decide_ask_p.add_argument("--state-file", default=None, dest="state_file", metavar="FILE",
+                              help="Read the state from FILE (UTF-8)")
+    decide_ask_p.add_argument("--book", default=None, metavar="FILE",
+                              help="Read the state (and context) from a decision book; the book is "
+                                   "checked first and any failure refuses to send (zero HTTP)")
+    decide_ask_p.add_argument("--noul", action="append", default=[], metavar="QID=TEXT",
+                              help="Binary question: QID=TEXT (repeatable)")
+    decide_ask_p.add_argument("--noul-criteria", action="append", default=[], dest="noul_criteria",
+                              metavar="QID=true:TEXT;false:TEXT",
+                              help="Optional noul criteria for a --noul question (repeatable)")
+    decide_ask_p.add_argument("--choice", action="append", default=[],
+                              metavar="QID=KEY[:TEXT][,KEY[:TEXT]...]",
+                              help="Choice question: options in low->high order, TEXT optional "
+                                   "(repeatable)")
+    decide_ask_p.add_argument("--score", action="append", default=[],
+                              metavar="QID=LOW,MID,HIGH",
+                              help="Score question: 2..10 ordered levels (repeatable)")
+    decide_ask_p.add_argument("--model", default=None, metavar="MODEL",
+                              help="Decisions-class model (default: jev-latest / .mw/decide.json; "
+                                   "an unknown value is sent as-is and reported by the server)")
+    decide_ask_p.add_argument("--json", action="store_true",
+                              help="Emit {model, usage, latency_ms, answers} as one JSON object")
+
+    decide_book_p = decide_sub.add_parser(
+        "book",
+        help="Decision books: generate a skeleton from the registry / check one before sending",
+        description=(
+            "A decision book is the input file of the decide interface: "
+            "{schema_version, decision_point, state, context?, notes}. `book new` generates "
+            "the skeleton from decide_registry.json (key set and order come from the config), "
+            "`book check` validates the closed key set, placeholders, context slots, evidence "
+            "refs, the token/byte budget and credential-looking text. The checker only reports; "
+            "it never fills a field in (exit 0 = all pass, 2 = any failure)."
+        ),
+        epilog=(
+            "examples:\n"
+            "  mw decide book new dp3-worker-clarify --out .agenticdoc/<key>/evidence/books/dp3.json\n"
+            "  mw decide book check .agenticdoc/<key>/evidence/books/dp3.json --json\n"
+            "  mw decide run --project . --book .agenticdoc/<key>/evidence/books/dp3.json\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    decide_book_sub = decide_book_p.add_subparsers(dest="book_action", required=True)
+    decide_book_new_p = decide_book_sub.add_parser(
+        "new", help="Print (or write with --out) the skeleton for one dp; no network, no repo scan"
+    )
+    decide_book_new_p.add_argument("dp", metavar="DP-ID", help="Registered decision point id")
+    decide_book_new_p.add_argument("--out", default=None, metavar="FILE",
+                                   help="Write the skeleton to FILE (default: print to stdout only)")
+    decide_book_new_p.add_argument("--json", action="store_true",
+                                   help="Emit one line of JSON (the book, or {dp,out,file_sha256,bytes} with --out)")
+    decide_book_new_p.add_argument("--project", default=".", help="Project directory (default: %(default)s)")
+    decide_book_check_p = decide_book_sub.add_parser(
+        "check", help="Validate a decision book (report only; exit 2 on any failure)"
+    )
+    decide_book_check_p.add_argument("file", metavar="FILE",
+                                     help="Book file (a {'books': {...}} bundle is checked book by book)")
+    decide_book_check_p.add_argument("--json", action="store_true",
+                                     help="Emit {path, sha256, ok, books[], issues[]}")
+    decide_book_check_p.add_argument("--project", default=".",
+                                     help="Project directory: budget gates + evidence path anchor (default: %(default)s)")
+
+    decide_report_p = decide_sub.add_parser(
+        "report",
+        help="Fold decisions.jsonl into a phase review (human table / --json; never gates)",
+    )
+    decide_report_p.add_argument("--project", default=".", help="Project directory (default: %(default)s)")
+    decide_report_p.add_argument("--key", default=None,
+                                help="Only rows of this key (required with --write)")
+    decide_report_p.add_argument("--phase", default="final", metavar="PHASE",
+                                help="Phase named in decision-review-<phase>-<ts>.md (default: %(default)s)")
+    decide_report_p.add_argument("--write", action="store_true",
+                                help="Write .agenticdoc/<key>/evidence/review/decision-review-<phase>-<yyyymmdd-hhmm>.md")
+    decide_report_p.add_argument("--json", action="store_true",
+                                help="Emit the machine-readable metrics (fold counts, ratios, Wilson lower bound)")
+
+    decide_sign_p = decide_sub.add_parser(
+        "sign",
+        help="Sign off this key: print the decision summary, then write evidence/review/sign-final.md",
+        description=(
+            "Summarise the key's decision-archive rows (engine triple, per-dp counts, "
+            "escalated reasons, rows_sha256) and, in the automatic flow, ask "
+            "dp25-signoff-conclusion for continue|narrow|revoke and write "
+            "<key>/evidence/review/sign-final.md plus one authority-change row. "
+            "signoff=auto (default) tries jev first (signed_via: auto-decide) and "
+            "falls back to --conclusion (signed_via: auto-llm, decide_fallback: <reason>); "
+            "signoff=disable never signs and the done gate stops requiring the file. "
+            "An explicit --conclusion WITHOUT --auto/--disable keeps the human semantics "
+            "(signed_via: cli / tui) and is refused inside an agent session."
+        ),
+        epilog=(
+            "examples:\n"
+            "  mw decide sign --project .agenticdoc/<key>            # auto: jev decides\n"
+            "  mw decide sign --project . --disable                  # opt out of signing\n"
+            "  mw decide sign --project .agenticdoc/<key> --auto --conclusion narrow\n"
+            "  mw decide sign --project .agenticdoc/<key> --conclusion continue --reason 'human'\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    decide_sign_p.add_argument("--project", default=".", help="Project directory (default: %(default)s)")
+    decide_sign_p.add_argument("--key", default=None,
+                               help="AgenticTask key (default: the project dir name when it sits under .agenticdoc)")
+    decide_sign_p.add_argument("--conclusion", default=None,
+                               choices=list(decide_signoff.CONCLUSIONS),
+                               help="continue|narrow|revoke; omitted = the automatic sign-off flow "
+                                    "(jev via dp25, else preview only)")
+    decide_sign_p.add_argument("--auto", action="store_true",
+                               help="Set signoff=auto in .mw/decide.json (default). With "
+                                    "--conclusion it also signs through the auto-llm face")
+    decide_sign_p.add_argument("--disable", action="store_true",
+                               help="Set signoff=disable in .mw/decide.json: never sign, and the "
+                                    "done gate stops requiring sign-final.md")
+    decide_sign_p.add_argument("--reason", default=None, metavar="TEXT",
+                               help="One-line human reason recorded in the sign-off file")
+    decide_sign_p.add_argument("--allow-empty", action="store_true", dest="allow_empty",
+                               help="Allow conclusion=continue with N=0 (recorded as allow_empty: true)")
+    decide_sign_p.add_argument("--human-confirmed", action="store_true", dest="human_confirmed",
+                               help="Exemption set ONLY by the /mw decide sign confirmation dialog: "
+                                    "allow the write inside an agent session and record signed_via: tui. "
+                                    "Tamper-evidence, not tamper-proof")
+    decide_sign_p.add_argument("--dry-run", action="store_true", dest="dry_run",
+                               help="Validate and render, write nothing (no archive row either)")
+    decide_sign_p.add_argument("--json", action="store_true",
+                               help="Emit {conclusion, ok, problems, facts, path}")
+
+    decide_dp_p = decide_sub.add_parser(
+        "dp",
+        help="Decision-point table: list/show/on/off/set/refresh/check/apply/export (human write face)",
+    )
+    dp_sub = decide_dp_p.add_subparsers(dest="dp_action", required=True)
+
+    def _dp_project(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--project", default=".", help="Project directory (default: %(default)s)")
+
+    dp_list_p = dp_sub.add_parser(
+        "list", help="List all dps: id/tier/enabled/mode/source/orphaned/P0-ON"
+    )
+    _dp_project(dp_list_p)
+    dp_list_p.add_argument("--json", action="store_true", help="Emit the machine-readable table view")
+    dp_show_p = dp_sub.add_parser("show", help="One dp: effective config + the last N archive rows")
+    _dp_project(dp_show_p)
+    dp_show_p.add_argument("dp", help="Decision point id")
+    dp_show_p.add_argument("--rows", type=int, default=5, metavar="N",
+                           help="How many archive rows to show (default: %(default)s)")
+    dp_show_p.add_argument("--json", action="store_true", help="Emit the machine-readable detail")
+    dp_on_p = dp_sub.add_parser("on", help="Enable one dp (P0 needs --i-understand-p0)")
+    _dp_project(dp_on_p)
+    dp_on_p.add_argument("dp", help="Decision point id")
+    dp_on_p.add_argument("--i-understand-p0", action="store_true", dest="i_understand_p0",
+                         help="Required to enable a P0 dp; without it nothing is written (exit 2)")
+    dp_off_p = dp_sub.add_parser("off", help="Disable one dp")
+    _dp_project(dp_off_p)
+    dp_off_p.add_argument("dp", help="Decision point id")
+    dp_set_p = dp_sub.add_parser("set", help="Update one dp row (tier|enabled|mode|note)")
+    _dp_project(dp_set_p)
+    dp_set_p.add_argument("dp", help="Decision point id")
+    dp_set_p.add_argument("pairs", nargs="*", metavar="KEY=VALUE",
+                          help="Row updates, e.g. mode=suggest note='trial phase'")
+    dp_set_p.add_argument("--i-understand-p0", action="store_true", dest="i_understand_p0",
+                         help="Required to set enabled=true on a P0 dp")
+    dp_refresh_p = dp_sub.add_parser(
+        "refresh", help="One-way merge registry -> table: add missing rows only (no-op when unchanged)"
+    )
+    _dp_project(dp_refresh_p)
+    dp_refresh_p.add_argument("--json", action="store_true", help="Emit the added/kept/orphaned summary")
+    dp_check_p = dp_sub.add_parser(
+        "check", help="Table health: bad rows/orphans/tier conflicts (exit 0 clean / 1 warning / 2 error)"
+    )
+    _dp_project(dp_check_p)
+    dp_check_p.add_argument("--json", action="store_true", help="Emit the machine-readable issue list")
+    dp_export_p = dp_sub.add_parser(
+        "export",
+        help="Export the registry as decide_registry.json (generated points + hand-maintained wiring)",
+    )
+    _dp_project(dp_export_p)
+    dp_export_p.add_argument("--json", action="store_true",
+                             help="Print the whole snapshot (points + wiring)")
+    dp_export_p.add_argument("--write", action="store_true",
+                             help=f"Rewrite the packaged {_DP_EXPORT_NAME}; the wiring section is kept")
+    dp_verify_p = dp_sub.add_parser(
+        "verify",
+        help="Contract probe: every dp's config reaches decide + the wire body (offline; "
+             "--live hits jev-latest)",
+    )
+    _dp_project(dp_verify_p)
+    dp_verify_p.add_argument("--json", action="store_true",
+                             help="Emit the machine-readable per-dp verdicts")
+    dp_verify_p.add_argument("--live", action="store_true",
+                             help="Send the same minimal state to the real jev-latest endpoint "
+                                  "one dp at a time (exit 1 when any dp is unavailable)")
+    dp_verify_p.add_argument("--dp", action="append", dest="dp_filter", metavar="ID",
+                             help="Only verify ID (repeatable)")
+    dp_apply_p = dp_sub.add_parser(
+        "apply",
+        help="Apply an evidence/review/sign-final.md sign-off (validated, atomic; refused in agent sessions)",
+    )
+    _dp_project(dp_apply_p)
+    dp_apply_p.add_argument("sign_file", metavar="SIGN-FILE", help="Sign-off markdown file")
+
+    dispatch_p = sub.add_parser(
+        "dispatch",
+        help="Conductor dispatch helpers: `check` validates a decision-worker card offline "
+             "(required items, dp required_state_fields, allow-send authority)",
+    )
+    dispatch_sub = dispatch_p.add_subparsers(dest="dispatch_action")
+    dispatch_check_p = dispatch_sub.add_parser(
+        "check",
+        help="Validate a decision card / dp / book send authority (exit 0 clean / 2 refused)",
+    )
+    dispatch_check_p.add_argument("--card", metavar="FILE",
+                                  help="Card markdown (e.g. tasks/W9-decision.md)")
+    dispatch_check_p.add_argument("--dp", metavar="ID",
+                                  help="Override/replace the card's dp (registry-only probe)")
+    dispatch_check_p.add_argument("--book", metavar="FILE",
+                                  help="Decision book the caller intends to SEND (refused when allow-send is no)")
+    dispatch_check_p.add_argument("--json", action="store_true",
+                                  help="Emit the machine-readable issue list")
+
     run_detached_p = sub.add_parser(
         "run-detached",
         help="Detached background command runner: spawn CMD in a hidden console "
@@ -7332,6 +11039,8 @@ if __name__ == "__main__":
         "status": cmd_status,
         "stats": cmd_stats,
         "doctor": cmd_doctor,
+        "decide": cmd_decide,
+        "dispatch": cmd_dispatch,
         "target": cmd_target,
         "partition": cmd_partition,
         "model": cmd_model,

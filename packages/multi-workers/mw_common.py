@@ -140,7 +140,7 @@ KNOWN_MODEL_PREFIXES = frozenset(MODEL_PREFIX_TO_PI_PROVIDER) | frozenset(CLI_PR
 
 # Configurable roles (mw model set <role>): main = the PM window itself;
 # the rest map dispatch task types onto semantic buckets.
-DISPATCH_ROLES = ("main", "coding", "review", "research", "vision")
+DISPATCH_ROLES = ("main", "coding", "review", "research", "vision", "decide_prepare")
 TASK_TYPE_TO_ROLE: dict[str, str] = {
     "coding": "coding",
     "phase-writer": "coding",
@@ -155,6 +155,13 @@ TASK_TYPE_TO_ROLE: dict[str, str] = {
     "rag-research": "research",
     # mw-vision-role T-01: vision bucket (screenshot/diagram/visual analysis).
     "vision": "vision",
+    # mw-decision-substitution W8 / W10: the decision-book writer role. It has
+    # its own role bucket so `.mw/dispatch.yml` `models.decide_prepare` can pin
+    # a model; unset falls back to the `coding` role (resolve_dispatch_model)
+    # because writing a book is read-and-fill work of the same weight as a
+    # coding task. W10 renamed the type `decision` -> `decide_prepare` (no
+    # alias: the old value is no longer a recognized type or role).
+    "decide_prepare": "decide_prepare",
 }
 
 STALE_FILE_NAME = "_workers.stale.parallel"
@@ -318,6 +325,14 @@ def resolve_dispatch_model(
         return entry_model.strip(), "task"
     role = TASK_TYPE_TO_ROLE.get(task_type, "coding")
     candidate = config_models.get(role, "").strip()
+    # mw-decision-substitution W8/W10: a `decide_prepare` worker is read-and-fill
+    # work of coding weight, so an unset `models.decide_prepare` means "use the
+    # coding role" (the type default in the card). An explicit
+    # `models.decide_prepare` still wins, which is what the README section tells
+    # the operator how to change.
+    if not candidate and role == "decide_prepare":
+        role = "coding"
+        candidate = config_models.get(role, "").strip()
     if candidate and model_value_compatible(cli, candidate):
         return candidate, f"config:{role}"
     if window_model.strip() and model_value_compatible(cli, window_model):
@@ -473,6 +488,10 @@ def fallback_models_for_task_type(fallbacks: dict, task_type: str) -> list[str]:
     if task_type in fallbacks:
         return list(fallbacks[task_type])
     role = TASK_TYPE_TO_ROLE.get(task_type, "coding")
+    # W8/W10: same default as resolve_dispatch_model — an unset
+    # `decide_prepare` bucket borrows the `coding` fallback list.
+    if role == "decide_prepare" and "decide_prepare" not in fallbacks:
+        role = "coding"
     return list(fallbacks.get(role, []))
 
 
@@ -1593,6 +1612,96 @@ def _doctor_dispatch(project_dir: pathlib.Path) -> dict:
         section["images"] = {
             role: model_images(value) for role, value in sorted(section["models"].items())
         }
+    return section
+
+
+# ── Decision service (mw-jev-provider-integration T-02, design D-005/D-007) ──
+
+def decide_evidence_path(project_dir: pathlib.Path, cfg: object | None = None) -> pathlib.Path:
+    """Resolved evidence JSONL path for the decision service (design D-005).
+
+    Mirrors ``decision.DecisionClient._evidence_file``: a configured
+    ``evidence_path`` (absolute or project-relative) wins, otherwise the frozen
+    ``.agenticdoc/_autopilot/triage-decisions.jsonl`` under the project. The
+    import is function-local so importing mw_common never depends on the
+    decision module being present on the path.
+    """
+    import decision
+
+    root = pathlib.Path(project_dir)
+    override = getattr(cfg, "evidence_path", None) if cfg is not None else None
+    if override:
+        path = pathlib.Path(override)
+        return path if path.is_absolute() else root / path
+    return root / decision.EVIDENCE_RELATIVE_PATH
+
+
+def decide_last_evidence(path: pathlib.Path) -> tuple[int, dict] | None:
+    """``(1-based line number, record)`` of the last non-empty JSONL line.
+
+    Best-effort read (design D-005: the evidence file is an append-only audit
+    record, never a correctness dependency): a missing/unreadable file or a
+    corrupt last line yields ``None`` instead of raising.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    lines = text.splitlines()
+    for index in range(len(lines) - 1, -1, -1):
+        if not lines[index].strip():
+            continue
+        try:
+            record = json.loads(lines[index])
+        except ValueError:
+            return None
+        if not isinstance(record, dict):
+            return None
+        return index + 1, record
+    return None
+
+
+def _doctor_decide(project_dir: pathlib.Path) -> dict:
+    """Decision service section (mw-jev-provider-integration T-02).
+
+    A missing ``.mw/decide.json`` means the feature is off, so the section is
+    exactly ``{"exists": False}`` and ``format_doctor_text`` emits no
+    ``triage:`` line: an unconfigured project keeps the historical doctor text
+    byte-identical (zero-perturbation rule, design D-005).
+
+    A broken file is a fail-soft *error* string for display (D-007) and stays
+    informational: this section is never consulted by ``_doctor_issues``, so a
+    broken/unavailable decision service can never flip the healthy verdict.
+    ``last_suggestion``/``last_unavailable`` describe the single most recent
+    evidence line: ``last_suggestion`` is its 1-based JSONL line number when it
+    carried answers, ``last_unavailable`` its reason otherwise.
+    """
+    import decision
+
+    root = pathlib.Path(project_dir)
+    config_path = decision.decide_config_path(root)
+    section: dict = {"exists": config_path.exists()}
+    if not config_path.exists():
+        return section
+    cfg, err = decision.DecisionConfig.from_project(root)
+    if err:
+        section["error"] = err
+        return section
+    section["enabled"] = bool(cfg.enabled)
+    section["transport"] = cfg.transport
+    section["model"] = cfg.model
+    section["points"] = cfg.points
+    section["triage_notify_on_unavailable"] = bool(cfg.triage_notify_on_unavailable)
+    last = decide_last_evidence(decide_evidence_path(root, cfg))
+    section["last_seq"] = last[0] if last else None
+    section["last_suggestion"] = None
+    section["last_unavailable"] = None
+    if last is not None:
+        _seq, record = last
+        if record.get("available"):
+            section["last_suggestion"] = last[0]
+        else:
+            section["last_unavailable"] = str(record.get("reason") or "unknown")
     return section
 
 
@@ -4263,6 +4372,7 @@ def doctor_report(
     report["autopilot"] = _doctor_autopilot(project_dir)
     report["gates"] = _doctor_gates(project_dir)
     report["dispatch"] = _doctor_dispatch(project_dir)
+    report["decide"] = _doctor_decide(project_dir)
     report["pi_shell"] = ensure_pi_shell_path(env=os.environ, fix=fix)
     if fix and report["pi_shell"].get("status") in ("filled", "replaced"):
         report["fix"]["applied"].append(
@@ -4494,6 +4604,22 @@ def format_doctor_text(report: dict) -> str:
                 for task_type, values in sorted(fallbacks.items())
             )
             lines.append(f"dispatch_fallback: {rendered}")
+    # decision service row (T-02/D-005): silent unless .mw/decide.json exists,
+    # so an unconfigured project keeps the historical text byte-identical.
+    decide_section = report.get("decide")
+    if decide_section is not None and decide_section.get("exists"):
+        if decide_section.get("error"):
+            lines.append(f"triage: ERROR — {decide_section['error']}")
+        elif not decide_section.get("enabled"):
+            lines.append("triage: disabled")
+        else:
+            suggestion = decide_section.get("last_suggestion")
+            unavailable = decide_section.get("last_unavailable")
+            lines.append(
+                f"triage: enabled {decide_section.get('transport')} "
+                f"last_suggestion={suggestion if suggestion is not None else 'none'} "
+                f"last_unavailable={unavailable or 'none'}"
+            )
     for r in report["credentials"]["routes"]:
         state = "available (" + _source_desc(r["source"]) + ")" if r["available"] else "missing (" + str(r["missing"]) + ")"
         lines.append(f"credentials: {r['route']} {state}")

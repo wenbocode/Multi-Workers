@@ -42,7 +42,16 @@
  * Migration: this module only answers a question; the caller decides when to
  * ask it (`worker/output-writer.ts`, `worker/worker-mode.ts`). Historical task
  * books without a header `type:` are never re-judged (P-07/P-09).
+ *
+ * The T-04a verdict-table half at the bottom is the same shape of contract for
+ * the L3 layer: `parseVerdictTable` reads the agent-authored `## 断言裁决`
+ * table and `claimCoverage` judges it against the card's claim set. Both are
+ * pure (plus `statSync`/line counts for evidence refs) and never throw.
  */
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { CLAIM_BUDGET, type Claim, claimsGaps, UNVERIFIED_REASONS } from "../shared/dispatch-card.ts";
 
 /** Sections every role's product must carry (design §3.2). */
 export const RECOVERY_SECTIONS = ["结论", "证据", "残留与未验证", "上下文来源"] as const;
@@ -215,4 +224,453 @@ export function checkRecovery(text: string, type: string | undefined): RecoveryV
 		return !headings.some((heading) => headingHitsAlias(heading, aliases));
 	});
 	return { ok: missing.length === 0, missing, required };
+}
+
+// ── T-04a: the `## 断言裁决` verdict table (design §2.2/§3.3, RQ-3 §5) ────────
+//
+// The L3 settle layer judges what the worker CLAIMS to have settled. The
+// table is agent-authored (`## 断言裁决`), seven columns, free column order,
+// extra columns ignored, fenced code blocks excluded, full-width forms folded
+// (RQ-3 §5.6, the P-048 tolerance lesson). Every gap string below is frozen:
+// `claim:<id>:<element>` / `claims:<rule>:<detail>` — the same shape T-01's
+// `claimsGaps` already froze, so the refusal text and the settle readback can
+// concatenate either list without a second vocabulary.
+
+/** H2 aliases of the verdict table. `## 断言裁决（claims）` still hits because
+ * the match is `includes`, exactly like `RECOVERY_SECTION_ALIASES`. */
+const VERDICT_TABLE_ALIASES: readonly string[] = ["断言裁决", "claim verdict", "claims verdict", "verdict table"];
+
+/** The seven judged columns (RQ-3 §5.1). */
+type VerdictField = "id" | "type" | "verdict" | "finding" | "evidence" | "fetches" | "reason";
+
+/** Header aliases per column, both scripts (RQ-3 §5.6). */
+const VERDICT_COLUMN_ALIASES: ReadonlyArray<readonly [VerdictField, readonly string[]]> = [
+	["id", ["claim", "断言", "claim id"]],
+	["type", ["类型", "type", "类别"]],
+	["verdict", ["裁决", "verdict"]],
+	["finding", ["判定", "finding", "判断"]],
+	["evidence", ["证据", "evidence"]],
+	["fetches", ["取数", "fetches", "reads"]],
+	["reason", ["原因", "reason"]],
+];
+
+/** One parsed `## 断言裁决` row, all cells trimmed (never normalized away: the
+ * raw cell text is what the diagnostics quote). */
+export interface VerdictRow {
+	/** `C-01` / `C-01.3` id, upper-cased. */
+	id: string;
+	/** `类型` cell, lower-cased, `""` when the column is absent. */
+	type: string;
+	verdict: string;
+	finding: string;
+	evidence: string;
+	fetches: string;
+	reason: string;
+	/** 1-based line of the row in the parsed text (diagnostics only). */
+	row: number;
+}
+
+/** Result of {@link parseVerdictTable}. Never throws (P-048). */
+export interface VerdictTable {
+	/** The `## 断言裁决` H2 was seen outside a fence. */
+	present: boolean;
+	rows: VerdictRow[];
+	/** `claim:<row>:unparsable` findings, row = 1-based source line. */
+	errors: string[];
+}
+
+/** `C-01` / `C-01.3` (the same id shape `parseClaimsBlock` accepts). */
+const VERDICT_ID_RE = /^C-(\d{2,3})(?:\.(\d+))?$/i;
+
+/** Header index per judged column, filled in header order. */
+type VerdictColumns = Partial<Record<VerdictField, number>>;
+
+/** Fold the full-width forms the card corpus mixes in (RQ-3 §5.6): `：` -> `:`,
+ * `｜` -> `|`, full-width digits -> ASCII digits, ideographic space -> space.
+ * Mirror of the private helper in `shared/dispatch-card.ts` (the claims block
+ * parser); the exported constants are imported, never copied. */
+function normalizeVerdictText(text: string): string {
+	return text
+		.replace(/[\uFF10-\uFF19]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0))
+		.replace(/\uFF1A/g, ":")
+		.replace(/\uFF5C/g, "|")
+		.replace(/\u3000/g, " ")
+		.trim();
+}
+
+/** Cells never carry markdown code fences: strip the backticks a writer adds. */
+function stripVerdictTicks(text: string): string {
+	return text.replace(/`/g, "").trim();
+}
+
+/** Split a `| a | b |` row into trimmed cells (leading/trailing pipes dropped). */
+function splitVerdictRow(line: string): string[] {
+	const cells = normalizeVerdictText(line).split("|");
+	if (cells.length > 0 && (cells[0] ?? "").trim() === "") cells.shift();
+	if (cells.length > 0 && (cells[cells.length - 1] ?? "").trim() === "") cells.pop();
+	return cells.map((cell) => cell.trim());
+}
+
+/** Header of a verdict table, `undefined` when the row is not a header. */
+function matchVerdictHeader(cells: string[]): VerdictColumns | undefined {
+	const columns: VerdictColumns = {};
+	let hasClaimColumn = false;
+	for (let i = 0; i < cells.length; i++) {
+		const name = stripVerdictTicks(normalizeVerdictText(cells[i] ?? ""))
+			.toLowerCase()
+			.replace(/\s+/g, " ")
+			.replace(/:$/, "");
+		for (const [field, aliases] of VERDICT_COLUMN_ALIASES) {
+			if (!aliases.includes(name)) continue;
+			if (columns[field] === undefined) columns[field] = i;
+			if (field === "id") hasClaimColumn = true;
+			break;
+		}
+	}
+	return hasClaimColumn ? columns : undefined;
+}
+
+/** `| --- | --- |` separator row (any dash count, optional alignment colons). */
+function isVerdictSeparatorRow(cells: string[]): boolean {
+	if (cells.length === 0) return false;
+	return cells.every((cell) => cell === "" || /^:?-{1,}:?$/.test(cell));
+}
+
+/** Cell of `field` in `cells`, `""` when the column is absent (tolerance). */
+function verdictCell(cells: string[], columns: VerdictColumns, field: VerdictField): string {
+	const index = columns[field];
+	if (index === undefined) return "";
+	return (cells[index] ?? "").trim();
+}
+
+/** One table row -> {@link VerdictRow}, `undefined` when the id is unparsable. */
+function verdictRowFrom(cells: string[], columns: VerdictColumns, row: number): VerdictRow | undefined {
+	const idMatch = VERDICT_ID_RE.exec(stripVerdictTicks(verdictCell(cells, columns, "id")));
+	if (idMatch === null) return undefined;
+	const number = idMatch[1] ?? "";
+	const child = idMatch[2];
+	return {
+		id: `C-${number}${child === undefined ? "" : `.${child}`}`,
+		type: stripVerdictTicks(verdictCell(cells, columns, "type")).toLowerCase(),
+		verdict: verdictCell(cells, columns, "verdict"),
+		finding: verdictCell(cells, columns, "finding"),
+		evidence: verdictCell(cells, columns, "evidence"),
+		fetches: verdictCell(cells, columns, "fetches"),
+		reason: verdictCell(cells, columns, "reason"),
+		row,
+	};
+}
+
+/**
+ * Parse the agent-authored `## 断言裁决` table (RQ-3 §5.1/§5.6).
+ *
+ * Tolerance is the contract (P-048): the heading may carry a suffix, column
+ * order is free, extra columns are ignored, header words take both scripts,
+ * full-width `：｜`/digits fold to ASCII, and fenced code blocks contribute
+ * nothing (the same fence state machine `h2Headings` uses). A row whose
+ * `claim` cell is not a claim id is reported as `claim:<row>:unparsable` and
+ * skipped; this function never throws.
+ */
+export function parseVerdictTable(text: string): VerdictTable {
+	const table: VerdictTable = { present: false, rows: [], errors: [] };
+	let fence: { char: string; len: number } | undefined;
+	let inSection = false;
+	let columns: VerdictColumns | undefined;
+	const lines = text.split(/\r?\n/);
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i] ?? "";
+		fence = advanceFence(line, fence);
+		if (fence !== undefined) continue;
+		const heading = H2_RE.exec(line);
+		if (heading !== null) {
+			const normalized = normalizeHeading(heading[1] ?? "");
+			if (inSection) {
+				inSection = false;
+				columns = undefined;
+				continue;
+			}
+			if (!table.present && VERDICT_TABLE_ALIASES.some((alias) => normalized.includes(alias))) {
+				// RQ-3 §5.6: `## 断言裁决（claims）` hits, the body starts below it.
+				table.present = true;
+				inSection = true;
+				columns = undefined;
+			}
+			continue;
+		}
+		if (!inSection) continue;
+		if (BLOCKQUOTE_RE.test(line)) continue;
+		if (!normalizeVerdictText(line).startsWith("|")) {
+			columns = undefined;
+			continue;
+		}
+		const cells = splitVerdictRow(line);
+		if (columns === undefined) {
+			columns = matchVerdictHeader(cells);
+			continue;
+		}
+		if (isVerdictSeparatorRow(cells)) continue;
+		const row = verdictRowFrom(cells, columns, i + 1);
+		if (row === undefined) {
+			table.errors.push(`claim:${i + 1}:unparsable`);
+			continue;
+		}
+		table.rows.push(row);
+	}
+	return table;
+}
+
+/** `裁决` closed set (RQ-3 §5.2; no `done`/`PASS`/`ok`/`verified`/`N/A`). */
+const VERDICT_TOKENS: readonly string[] = ["closed", "partial", "unverified"];
+
+/** `判定` closed set (RQ-3 §5.1) plus the `partial` render token `部分成立` —
+ * §5.1's own mapping (`partial` -> 部分成立) has no other representable form,
+ * so excluding it here would make `partial` unusable. */
+const FINDING_TOKENS: readonly string[] = ["成立", "不成立", "无法判定", "部分成立"];
+
+/** Allowed `判定` per `裁决` (RQ-3 §5.1: `closed` settles either way). */
+const VERDICT_FINDINGS: Readonly<Record<string, readonly string[]>> = {
+	closed: ["成立", "不成立"],
+	partial: ["部分成立"],
+	unverified: ["无法判定"],
+};
+
+/** Fold a closed-set cell to its token form (ticks, whitespace, ASCII case). */
+function verdictToken(cell: string): string {
+	return stripVerdictTicks(cell).replace(/\s+/g, "").toLowerCase();
+}
+
+/** Evidence ref separators (`;`, RQ-3 §5.1) and the `-` empty marker. */
+function splitEvidenceRefs(cell: string): string[] {
+	return stripVerdictTicks(cell)
+		.split(";")
+		.map((ref) => ref.trim())
+		.filter((ref) => ref !== "" && ref !== "-");
+}
+
+/** `cmdref` verbs (RQ-3 §5.3 verb whitelist). */
+const CMD_REF_VERBS: readonly string[] = [
+	"node",
+	"npm",
+	"npx",
+	"python",
+	"python3",
+	"pytest",
+	"vitest",
+	"git",
+	"mw",
+	"rg",
+	"grep",
+	"bash",
+];
+
+/** `cmdref` result half: `rc=<digits>` plus optional `key=value` pairs. */
+const CMD_RESULT_RE = /^rc=-?\d+(?:\s+[\w.-]+=\S+)*$/;
+
+/** One parsed evidence ref: a path with a line/line range, or a command. */
+interface EvidenceRef {
+	kind: "path" | "cmd";
+	/** Repo-relative path (`""` for a command ref). */
+	path: string;
+	first: number;
+	last: number;
+}
+
+/** A path ref is repo-relative: no absolute path, no `./` prefix, no `..`. */
+function isRepoRelativePath(text: string): boolean {
+	if (text === "" || text.startsWith("/") || /^[A-Za-z]:[\\/]/.test(text) || text.startsWith("./")) return false;
+	return !text.split(/[\\/]/).includes("..");
+}
+
+/**
+ * Parse one evidence ref (RQ-3 §5.3): `path:line`, `path:a-b`, optionally with
+ * a `「excerpt」` suffix, or `verb rest => rc=N [k=v]`. `undefined` means the
+ * ref does not match the frozen grammar (a `claim:<id>:evidence` gap).
+ */
+function parseEvidenceRef(raw: string): EvidenceRef | undefined {
+	const ref = stripVerdictTicks(raw);
+	if (ref === "" || ref === "-") return undefined;
+	const halves = ref.split("=>");
+	if (halves.length > 2) return undefined;
+	if (halves.length === 2) {
+		const left = (halves[0] ?? "").trim();
+		const right = (halves[1] ?? "").trim();
+		// RQ-3 §5.3: no `&&` / `;` (split above) / `>` / backticks inside a cmdref.
+		if (left === "" || left.includes("&&") || left.includes(">") || left.includes("<") || left.includes("`")) {
+			return undefined;
+		}
+		const verb = /^([A-Za-z0-9]+)\s+/.exec(left)?.[1]?.toLowerCase() ?? "";
+		if (!CMD_REF_VERBS.includes(verb) || !CMD_RESULT_RE.test(right)) return undefined;
+		return { kind: "cmd", path: "", first: 0, last: 0 };
+	}
+	const withoutExcerpt = ref.replace(/「[^」]*」\s*$/, "").trim();
+	const match = /^(.+?):(\d+)(?:-(\d+))?$/.exec(withoutExcerpt);
+	if (match === null) return undefined;
+	const pathText = (match[1] ?? "").trim();
+	if (!isRepoRelativePath(pathText)) return undefined;
+	const first = Number(match[2] ?? "");
+	const last = match[3] === undefined ? first : Number(match[3]);
+	if (!Number.isInteger(first) || !Number.isInteger(last) || first < 1 || last < first) return undefined;
+	return { kind: "path", path: pathText, first, last };
+}
+
+/** Line count of a text file, trailing newline not counted as a line. */
+function lineCount(text: string): number {
+	const lines = text.split(/\r?\n/);
+	return text.endsWith("\n") ? lines.length - 1 : lines.length;
+}
+
+/** True when a parsed path ref is not a usable citation: outside the project
+ * root, not a file, a line past EOF, or a range wider than 200 lines. */
+function evidenceRefInvalid(ref: EvidenceRef, projectDir: string): boolean {
+	if (ref.kind === "cmd") return false;
+	const absolute = path.resolve(projectDir, ref.path);
+	const relative = path.relative(projectDir, absolute);
+	if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+		return true;
+	}
+	let text: string;
+	try {
+		if (!fs.statSync(absolute).isFile()) return true;
+		text = fs.readFileSync(absolute, "utf8");
+	} catch {
+		return true;
+	}
+	if (ref.last > lineCount(text)) return true;
+	return ref.last - ref.first > 200;
+}
+
+/** Self-witness set of RQ-3 §4 (B-1/B-4): a claim citing only these files has
+ * cited the report that contains it, not evidence. `progress.md` is allowed as
+ * SECONDARY evidence (one real ref alongside it is enough), never as the only
+ * one — which is exactly what "every ref is self-witness" means here. */
+const SELF_EVIDENCE_BASENAMES: readonly RegExp[] = [
+	/^report.*\.md$/i,
+	/^output\.md$/i,
+	/^progress\.md$/i,
+	/^task\.md$/i,
+];
+
+/** True when a path ref points into the self-witness set (any depth). */
+function isSelfEvidenceRef(ref: EvidenceRef): boolean {
+	if (ref.kind !== "path") return false;
+	const basename = ref.path.split(/[\\/]/).pop() ?? "";
+	return SELF_EVIDENCE_BASENAMES.some((pattern) => pattern.test(basename));
+}
+
+/** `Σ预算` of the card's claims; a card that declares no `预算` at all falls
+ * back to the calibrated call cap so a missing field cannot make every fetch a
+ * gap (T-01's `claim:<id>:budget` already refuses that card at G1). */
+function declaredBudget(claims: Claim[]): number {
+	let sum = 0;
+	let declared = 0;
+	for (const claim of claims) {
+		if (!Number.isFinite(claim.budget) || claim.budget < 0) continue;
+		sum += claim.budget;
+		declared += 1;
+	}
+	return declared === 0 ? CLAIM_BUDGET.callCap : sum;
+}
+
+/** `取数` cell as a non-negative integer, `undefined` when it is not one. */
+function fetchCount(cell: string): number | undefined {
+	const text = stripVerdictTicks(cell);
+	return /^\d+$/.test(text) ? Number(text) : undefined;
+}
+
+/** Ids T-01's own tautology judge (RQ-3 B-5) flags for this claim set. Reuses
+ * `claimsGaps` so the `陈述`/`反证条件` similarity + new-artifact rule has ONE
+ * implementation (the card forbids rewriting it and `shared/**` is out of the
+ * write face, so the exported validator is the only legal handle). */
+function tautologyIds(claims: Claim[], projectDir: string): Set<string> {
+	const ids = new Set<string>();
+	if (claims.length === 0) return ids;
+	const gaps = claimsGaps({ present: true, claims, errors: [] }, { projectDir, enforce: true });
+	for (const gap of gaps) {
+		const match = /^claim:(C-\d{2,3}(?:\.\d+)?):tautology$/.exec(gap);
+		if (match !== null && match[1] !== undefined) ids.add(match[1]);
+	}
+	return ids;
+}
+
+/** Options of {@link claimCoverage}. `projectDir` is the root the evidence path
+ * refs resolve against (the launcher's cwd in production, a fixture in tests). */
+export interface ClaimCoverageOptions {
+	projectDir?: string;
+}
+
+/**
+ * Judge the `## 断言裁决` table against the card's claim set (RQ-3 §5, B-1/B-4/
+ * B-10). Every returned string is one frozen criterion; the string IS the
+ * diagnostic, so no second vocabulary is introduced.
+ *
+ * Criteria (in emission order):
+ *   `claims:missing-table`            no `## 断言裁决` H2 at all
+ *   `claim:<id>:missing-row`          a card claim the table never adjudicates
+ *   `claims:extra-row:<id>`           a table row the card never declared
+ *   `claim:<id>:verdict`              `裁决` outside closed|partial|unverified
+ *   `claim:<id>:finding`              `判定` outside 成立|不成立|无法判定
+ *   `claim:<id>:verdict-finding`      the two columns disagree (§5.1 mapping)
+ *   `claim:<id>:evidence`             no evidence for closed/partial, or a ref
+ *                                     that is unparsable / missing on disk /
+ *                                     past EOF / wider than 200 lines
+ *   `claim:<id>:reason`               `unverified` without a 7-word reason
+ *   `claim:<id>:self-evidence`        every ref is `report*`/output/progress/task
+ *   `claim:<id>:struct-held`          a `struct` row counted as `closed` (B-10)
+ *   `claim:<id>:budget`               `取数` not a count, or > min(Σ预算, 30)
+ *   `claim:<id>:tautology`            T-01's B-5 tautology judge fired
+ *
+ * Never throws. A claim-free card returns `[]` (nothing to adjudicate), and a
+ * table-only run without claims is likewise not judged.
+ */
+export function claimCoverage(claims: Claim[], table: VerdictTable, opts: ClaimCoverageOptions = {}): string[] {
+	const gaps: string[] = [];
+	if (claims.length === 0) return gaps;
+	if (!table.present) return ["claims:missing-table"];
+	const projectDir = opts.projectDir ?? process.cwd();
+	const rows = new Map<string, VerdictRow>();
+	for (const row of table.rows) if (!rows.has(row.id)) rows.set(row.id, row);
+	const budgetCap = Math.min(declaredBudget(claims), CLAIM_BUDGET.callCap);
+	const tautological = tautologyIds(claims, projectDir);
+	for (const claim of claims) {
+		const row = rows.get(claim.id);
+		if (row === undefined) {
+			gaps.push(`claim:${claim.id}:missing-row`);
+			continue;
+		}
+		const verdict = verdictToken(row.verdict);
+		const finding = verdictToken(row.finding);
+		if (!VERDICT_TOKENS.includes(verdict)) gaps.push(`claim:${claim.id}:verdict`);
+		if (!FINDING_TOKENS.includes(finding)) gaps.push(`claim:${claim.id}:finding`);
+		if (
+			VERDICT_FINDINGS[verdict] !== undefined &&
+			FINDING_TOKENS.includes(finding) &&
+			!(VERDICT_FINDINGS[verdict] ?? []).includes(finding)
+		) {
+			gaps.push(`claim:${claim.id}:verdict-finding`);
+		}
+		const refs = splitEvidenceRefs(row.evidence);
+		const parsed: Array<EvidenceRef | undefined> = refs.map((ref) => parseEvidenceRef(ref));
+		const needsEvidence = verdict === "closed" || verdict === "partial";
+		if (needsEvidence && refs.length === 0) gaps.push(`claim:${claim.id}:evidence`);
+		else if (parsed.some((ref) => ref === undefined || evidenceRefInvalid(ref, projectDir))) {
+			gaps.push(`claim:${claim.id}:evidence`);
+		}
+		if (verdict === "unverified" && !(UNVERIFIED_REASONS as readonly string[]).includes(verdictToken(row.reason))) {
+			gaps.push(`claim:${claim.id}:reason`);
+		}
+		const parsedAll: EvidenceRef[] = parsed.filter((ref): ref is EvidenceRef => ref !== undefined);
+		if (parsedAll.length > 0 && parsedAll.length === refs.length && parsedAll.every(isSelfEvidenceRef)) {
+			gaps.push(`claim:${claim.id}:self-evidence`);
+		}
+		const declaredType = row.type === "" ? claim.type.toLowerCase() : row.type;
+		if (declaredType === "struct" && verdict === "closed") gaps.push(`claim:${claim.id}:struct-held`);
+		const fetches = fetchCount(row.fetches);
+		if (fetches === undefined || fetches > budgetCap) gaps.push(`claim:${claim.id}:budget`);
+		if (tautological.has(claim.id)) gaps.push(`claim:${claim.id}:tautology`);
+	}
+	const declaredIds = new Set(claims.map((claim) => claim.id));
+	for (const row of table.rows) {
+		if (!declaredIds.has(row.id)) gaps.push(`claims:extra-row:${row.id}`);
+	}
+	return gaps;
 }

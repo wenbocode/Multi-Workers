@@ -31,7 +31,7 @@ def true_str(b: bool) -> str:
 def test_registry_types_and_tools() -> None:
     assert set(dispatch.REGISTRY) == {
         "roadmap-writer", "phase-writer", "verifier", "reviewer", "repair",
-        "rag-research", "vision",
+        "rag-research", "vision", "decide_prepare",
     }
     assert dispatch.tool_set("roadmap-writer") == (
         "read", "write", "edit", "find", "grep", "ls",
@@ -49,6 +49,9 @@ def test_registry_types_and_tools() -> None:
     assert dispatch.tool_set("vision") == (
         "read", "write", "edit", "bash", "find", "grep", "ls",
     )
+    # mw-decision-substitution W8, renamed W10: read-only tools + bash
+    # (narrowed, book check only).
+    assert dispatch.tool_set("decide_prepare") == ("read", "find", "grep", "ls", "bash")
     for entry in dispatch.REGISTRY.values():
         assert entry.cli == "pi"
         assert entry.provider == "timi"

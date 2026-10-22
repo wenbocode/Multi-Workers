@@ -1,0 +1,35 @@
+{
+  "model": "jev-latest",
+  "state": {
+    "message": "求助！我的提现已经失败3天了。",
+    "context": "用户从帮助中心提交工单，未提供订单号。"
+  },
+  "questions": {
+    "urgent": {
+      "type": "noul",
+      "instructions": "这段话是否传达了紧急性？",
+      "criteria": {
+        "true": "用户明确表示业务受阻或要求立即处理",
+        "false": "只是普通咨询或抱怨"
+      }
+    },
+    "dept": {
+      "type": "choice",
+      "instructions": "这条工单应该由哪个团队接手？",
+      "criteria": {
+        "billing": "支付、开票、退款相关",
+        "technical": "缺陷、故障、集成相关",
+        "sales": "定价、升级、新账号相关"
+      }
+    },
+    "frustration": {
+      "type": "score",
+      "instructions": "用户此刻的情绪强度是第几档？",
+      "criteria": [
+        "平静",
+        "不满",
+        "非常愤怒"
+      ]
+    }
+  }
+}

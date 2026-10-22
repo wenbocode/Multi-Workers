@@ -150,6 +150,15 @@ export function readTaskProgress(taskDir: string): TaskProgress | undefined {
 		const start = START_LINE_RE.exec(line);
 		if (start) {
 			startTs = start[1] ?? "";
+			// Re-dispatches (model retry / fallback) append to the SAME trace.log, so a
+			// new [START] can follow the previous attempt's [END]. That [END] belongs to
+			// the attempt that already finished: keeping it pairs the new start with an
+			// older end (elapsed clamps to 0, "up 0s" forever) and leaves a stale
+			// exitCode that reads a running task as terminal. A [START] therefore
+			// resets the terminal fields.
+			endTs = undefined;
+			exitCode = undefined;
+			endPhases = undefined;
 			continue;
 		}
 		const mdl = MODEL_LINE_RE.exec(line);

@@ -27,7 +27,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { VERSION } from "../../src/config.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../src/core/extensions/types.ts";
 import {
@@ -480,6 +480,103 @@ describe("dispatch card gate (G-1)", () => {
 		expect(notifications.join("\n")).toContain("missing=[card_path]");
 		expect(fs.existsSync(path.join(root, "_scratch", "workers"))).toBe(false);
 		expect(store.readAll()).toHaveLength(0);
+	});
+});
+
+// ── 2b. negative: claims gate, fail-closed with zero side effects (T-02) ────
+
+/** A compliant coding card plus a claims table (T-02/design §2.1): the block
+ * rides after the last §1.2 extra, so the envelope judge still passes and only
+ * the claims judge can refuse. */
+function claimsCard(rows: string[]): string {
+	return [
+		COMPLIANT_CARD.replace(/\n$/, ""),
+		"",
+		"<!-- mw-claims: v1 -->",
+		"| claim | 类型 | 陈述 | 反证条件 | 定位 | 判据 | 预算 |",
+		"| --- | --- | --- | --- | --- | --- | --- |",
+		...rows,
+		"<!-- /mw-claims -->",
+		"",
+	].join("\n");
+}
+
+/** One claims table row; an empty string cell is a genuinely absent element. */
+function claimRow(
+	cells: Partial<Record<"id" | "type" | "statement" | "falsifier" | "locator" | "judgement" | "budget", string>>,
+): string {
+	const row = {
+		id: "C-01",
+		type: "grep",
+		statement: "派发层不再吞掉 claims 块",
+		falsifier: "出现 claims 块但 claims=[]",
+		locator: "-",
+		judgement: "grep: count=0",
+		budget: "1",
+		...cells,
+	};
+	return `| ${row.id} | ${row.type} | ${row.statement} | ${row.falsifier} | ${row.locator} | ${row.judgement} | ${row.budget} |`;
+}
+
+describe("claims gate (G-1, T-02)", () => {
+	// `enforce` (D-006) makes every finding a refusal; the structural seven are
+	// refused in advisory mode as well (a row missing a required cell is not a
+	// claim), the `claims:*` aggregates only here.
+	beforeEach(() => {
+		process.env.MW_CLAIM_GATE = "enforce";
+	});
+
+	afterEach(() => {
+		delete process.env.MW_CLAIM_GATE;
+	});
+
+	/** Dispatch a claims card, then assert the refusal named every claim item AND
+	 * wrote nothing (no task dir, no queue row). */
+	async function expectClaimsRefusal(cardBytes: string, taskKey: string, item: string): Promise<void> {
+		const fx = setupDispatch();
+		const before = fx.store.readAll().length;
+		const cardAbs = writeCard(fx.root, "_scratch", `T-02-${taskKey}.md`, cardBytes);
+		const message = await dispatch(fx, { task_key: taskKey, card_path: cardAbs, description: "work" });
+		expect(message).toContain("[dispatch-claims]");
+		expect(message).toContain(item);
+		expect(message).toContain("nothing was written.");
+		expect(fs.existsSync(taskDirOf(fx.root, taskKey))).toBe(false);
+		expect(fx.store.readAll()).toHaveLength(before);
+	}
+
+	it("refuses a claim with no 类型 (claim:C-01:type)", async () => {
+		await expectClaimsRefusal(claimsCard([claimRow({ type: "" })]), "t-claim-type", "claim:C-01:type");
+	});
+
+	it("refuses a claim with no 陈述 (claim:C-01:statement)", async () => {
+		await expectClaimsRefusal(claimsCard([claimRow({ statement: "" })]), "t-claim-statement", "claim:C-01:statement");
+	});
+
+	it("refuses a claim with no 反证条件 (claim:C-01:falsifier)", async () => {
+		await expectClaimsRefusal(claimsCard([claimRow({ falsifier: "" })]), "t-claim-falsifier", "claim:C-01:falsifier");
+	});
+
+	it("refuses a claim with no 定位 (claim:C-01:locator)", async () => {
+		await expectClaimsRefusal(claimsCard([claimRow({ locator: "" })]), "t-claim-locator", "claim:C-01:locator");
+	});
+
+	it("refuses a claim with no 判据 (claim:C-01:judgement)", async () => {
+		await expectClaimsRefusal(claimsCard([claimRow({ judgement: "" })]), "t-claim-judgement", "claim:C-01:judgement");
+	});
+
+	it("refuses a claim with no 预算 (claim:C-01:budget)", async () => {
+		await expectClaimsRefusal(claimsCard([claimRow({ budget: "" })]), "t-claim-budget", "claim:C-01:budget");
+	});
+
+	it("refuses a claims block whose Σ预算 exceeds 40 (claims:budget-sum:41>40)", async () => {
+		const rows = Array.from({ length: 41 }, (_, index) =>
+			claimRow({
+				id: `C-${String(index + 1).padStart(2, "0")}`,
+				statement: `第 ${index} 条断言成立`,
+				falsifier: `出现第 ${index} 条反例`,
+			}),
+		);
+		await expectClaimsRefusal(claimsCard(rows), "t-claim-sum", "claims:budget-sum:41>40");
 	});
 });
 

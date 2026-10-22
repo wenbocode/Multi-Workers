@@ -82,6 +82,7 @@ python mw.py <子命令>
 | `target set/show/clear` | 双工作区配置（见下） |
 | `ue-toolchain run/targets/hash` | dual 模式 UE 工具链纪律（见下）：执行模板并留证（错误签名双判 + --watch 前后哈希）、发现 UE 构建目标名、EOL 归一化哈希 |
 | `model set/show/clear`、`model set-fallback/clear-fallback` | 派发模型默认值与备用模型链（见下） |
+| `decide run/ask/probe/show/set/report/dp` | 决策服务 + 决策替换（见下「决策服务（mw decide）」与 [docs/decision-substitution.md](../../docs/decision-substitution.md)）：DP-1 派发前分诊的旁路调用、人直接问 timi/jev-latest、传输诊断、配置读写、phase 末决策报告、24 个 dp 的授权表指令 |
 | `stats [--since W] [--key K] [--type T] [--model M] [--project P] [--all-projects] [--source worker\|pm] [--until W] [--detail] [--limit N] [--json] [--html [PATH]] [--no-open]` | 机器级 token/墙钟台账查询（见下「用量统计（mw stats）」）：model/type/key/project 四组分布 + 覆盖率声明 |
 | `run-detached [--cwd DIR] [--run-dir DIR] [--timeout-min N] [--heartbeat-s N] -- <cmd...>` | 后台命令唯一入口：隐藏控制台监督进程 + heartbeat/marker 证据（见下「Windows detached-run checklist」） |
 
@@ -288,7 +289,7 @@ fallback_models:
   research: [timi/glm-5.3]
 ```
 
-- 键是任务类型（`coding`/`phase-writer`/`repair`/`roadmap-writer`/`review`/`verifier`/`reviewer`/`research`/`rag-research`/`vision`；未命中精确键时回退其 role 桶），值是 1..4 个 `前缀/模型 id` 单行字符串（前缀见上表；`*_cli` transport 前缀不接受）。列表内**重复项被接受并去重**（保留首次出现，大小写归一，故 `A/x,a/X` 等价于 `a/x`）；真正的格式错误（未知键 / 超上限 / 非 `前缀/模型` / 空项 / 项内换行）由 `mw model set-fallback` 拒绝写入、由 `mw doctor` 报 issue，route 缺失或凭证不可用报 suggestion；读取失败软降级为「无备用链」，不阻断派发。`main` 角色无 worker fallback。
+- 键是任务类型（`coding`/`phase-writer`/`repair`/`roadmap-writer`/`review`/`verifier`/`reviewer`/`research`/`rag-research`/`vision`/`decide_prepare`；未命中精确键时回退其 role 桶），值是 1..4 个 `前缀/模型 id` 单行字符串（前缀见上表；`*_cli` transport 前缀不接受）。列表内**重复项被接受并去重**（保留首次出现，大小写归一，故 `A/x,a/X` 等价于 `a/x`）；真正的格式错误（未知键 / 超上限 / 非 `前缀/模型` / 空项 / 项内换行）由 `mw model set-fallback` 拒绝写入、由 `mw doctor` 报 issue，route 缺失或凭证不可用报 suggestion；读取失败软降级为「无备用链」，不阻断派发。`main` 角色无 worker fallback。
 - 触发：worker 首个「run 内 auto-retry 耗尽」的 error run 即 `exit 3` 并写 `run.json` `model_exhausted: true`（同时写 `[MODEL_ERR]` trace 行、`## Exit Reason` 以 `model unavailable:` 开头）。launcher 在状态映射前拦截：先对**同一模型**按 `PI_WORKER_MODEL_ERR_MAX`（默认 2；`0`=直接切备）重试进程，每次写 `[MODEL_RETRY] <iso> model=<m> attempt=<k>`；预算耗尽后按数组顺序用下一个备用模型重派同一任务（`--model`、`PI_WORKER_FALLBACK_INDEX`+1、`PI_WORKER_TRIED_MODELS` 追加），写 `[MODEL_FALLBACK] <iso> from=<m> to=<n> attempt=<k>`。候选 route/凭证预校验不过则写 `[MODEL_FALLBACK-SKIP]` 并续试下一个；链耗尽 → `failed`（Exit Reason 透传 `model unavailable:` 链）。
 - 无备用链的类别：同模型重试耗尽后直接 `failed`。
 - 计数以文件为事实源：同模型预算由 trace.log 的 `[MODEL_RETRY]` 推导、链进度由 `[MODEL_FALLBACK]` 推导，launcher/serve 重启后从证据续跑（不重置、不重复）。重派是进程级（task.md + 磁盘产物重播种），不调用 `setModel`、不写全局设置。
@@ -489,6 +490,32 @@ python mw.py autopilot verify clear --project <dir>
 
 **两侧同版本上线**：先 `mw build --install`，再重启各 pi 窗口的 `serve`——旧 bundle 的 `validateConfigData` 读含新键（`xkey_verify_cwd`）的文件会 fail-closed，两侧必须同版本。
 
+## claims 派发契约（conductor 侧预算）
+
+派发卡可以用 `<!-- mw-claims: v1 -->` 块声明本次要证伪的断言，七列：
+`claim | 类型 | 陈述 | 反证条件 | 定位 | 判据 | 预算`。conductor 只做两件事：解析这张卡，
+把**这张卡自己的** claims 折算成 worker 的读取预算。改动前 caps 在读卡之前就算，所以只能拿到上一张卡的预算。
+
+- 解析（`autopilot/dispatch.py::parse_claims_block`）与 TS `shared/dispatch-card.ts::parseClaimsBlock` 同语法：
+  结束标记缺失时容错到下一个 H2 或文件尾，fence 内的示例表不参与解析，表头别名与列序任意、
+  全角 `：｜` 与全角数字归一，`C-01.3` 子行只能挂在 `struct` 父行下；不可解析的行进 `errors`，永不抛异常。
+- caps 推导（`claim_budget_caps`，两字段各自独立）：
+  - `l2_read_file_cap = min(30, Σ(类型 == manual ? 2 : 1))` —— manual 记双倍，它买的是 PM 注意力而不是 worker 取数；
+  - `l2_read_byte_cap = min(393216, 65536 × n)`，`n` = claims 条数；
+  - 预算两常数只在 `CLAIM_BUDGET` 里定义一次（与 TS 同名同值）；`CLAIM_TYPES` / `UNVERIFIED_REASONS` /
+    `CLAIM_GATE_DEFAULT` / `CLAIM_BUDGET`（五键）全部由 `test_claim_parity.py` 逐字逐序锁住。
+- 优先级：项目层 `.agenticdoc/_autopilot/config.json` **显式写的** `l2_read_file_cap` / `l2_read_byte_cap`
+  逐字段胜出，只有缺的字段才用卡推导值。
+- 无 claims 的卡、以及 conductor 合成卡（没有卡文件）的路径：不写 `read_scope`、不写 cap 行，
+  字节与改动前一致；claims 块随卡注入 task.md 由 TS 派发层负责（D-002），conductor 侧只解析与预算。
+- 生效条件：`/mw restart`（conductor 是 serve 子进程，模块只在启动时 import）。
+
+**门禁灰度**：`advisory` 是默认，卡里有问题只告警、派发照走（回执一行 `[claims] ...`）；
+`enforce` 必须显式开启（`MW_CLAIM_GATE=enforce`），才会把 claims 问题变成拒绝（零副作用）。
+非法/空值回落 `advisory` 并往 stderr 打一行 `[CLAIMS] claim_gate=<值> fallback=advisory`——
+门禁是 opt-in，拼错既不能静默升级成强制、也不能把回路卡死。两侧同名同义：
+TS `pm/ui-bridge.ts::claimGateMode` 与 Python `autopilot/dispatch.py::claim_gate`。
+
 ## 关键环境变量
 
 | 变量 | 说明 |
@@ -500,6 +527,7 @@ python mw.py autopilot verify clear --project <dir>
 | `PI_WORKER_FALLBACK_MODELS` | 备用模型链（csv `前缀/模型`，launcher 注入 worker） |
 | `PI_WORKER_FALLBACK_INDEX` | 已消费的备用模型数（launcher 注入 worker，0 起） |
 | `PI_WORKER_TRIED_MODELS` | 已耗尽模型链（csv，含主模型；launcher 注入 worker，worker 追加当前模型） |
+| `MW_CLAIM_GATE` | claims 门禁灰度：默认 `advisory`（只告警），`enforce` = 显式开启拒绝，非法值回落默认 |
 | `MW_TARGET_GAME` / `MW_TARGET_ENGINE` | 双工作区临时覆盖 |
 | `MW_PY` | 扩展找不到 `mw.py` 时手动指定路径 |
 | `MW_IMPL_GATE_ROOT` | 门禁项目根覆盖（测试钩子，默认 cwd） |
@@ -599,6 +627,346 @@ python mw.py rag sync  --project <dir>                                      # �
 熔断（连续 3 次连接/超时/协议错误，能力错误不计）；必需但服务不可用 = 告警；必需但没用 = 告警。
 worker trace 里会出现 `rag_call`（含 `mcp_tool` 真实线上名）、`rag_fallback`、`rag-required-missing`、
 `rag-rewrite-degraded` 等行；`mw rag audit` 只读地对这些行做独立判定。
+
+## 决策服务（mw decide）
+
+决策服务是**可选**的旁路能力（goal.md 第 2 条「框架需要决策的时候能正确调用并有效反馈」）：在框架需要
+判断的时刻（首个决策点 **DP-1 派发前分诊**）调用一次结构化决策（`state` + 类型化 `questions` → 类型化
+`answers` + 置信度），产出**建议**，不改写派发的类型/角色/模型，也不改 watchdog/checkpoint 策略。
+未配置 `.mw/decide.json` 的项目零影响：不发网络调用、不产生新进程、doctor 不出现 `triage:` 行。
+
+### 配置（默认关闭）
+
+项目级配置 `<control>/.mw/decide.json`。文件缺失 = 决策整体 disabled；文件损坏 = disabled + 错误串给
+doctor 展示（fail-soft，不影响任何既有流程）。
+
+```json
+{
+  "enabled": true,
+  "transport": "timi-decisions",
+  "model": "jev-latest",
+  "timeout_s": 20
+}
+```
+
+| 键 | 默认 | 说明 |
+|----|------|------|
+| `enabled` | `false` | 总开关；未写该键或文件不存在 = 关闭（`mw decide ask` 例外，见下） |
+| `transport` | `timi-decisions` | **唯一传输**：`POST {base_url}/v1/decisions`。旧的 `llm-transitional` / `llmproxy-anthropic` / `direct-systemone` 已删除，显式写旧名会得到 `reason=entry-unavailable`（没有备选通道、没有回退） |
+| `model` | `jev-latest` | Decisions 类模型（平台模型库为准）；非 decisions 类模型由服务端报错并原样回显，客户端不改写、不换模型 |
+| `timeout_s` / `max_retries` / `max_questions` / `max_state_bytes` / `max_tokens` / `backoff_base_s` | `20` / `2` / `8` / `16384` / `1024` / `2.0` | 预算与退避，全部可配；超预算立即 fail-soft 返回 |
+| `points.dp1.enabled` | 未写 = 跟随总开关 | 单个决策点开关 |
+| `points.dp1.alert_on_disagreement` | `true` | 建议类型与派发类型不一致时是否唤醒 PM 一次（争议升级） |
+| `triage_notify_on_unavailable` | `false` | 决策不可用时是否投一条 notice（默认静默，结构上不可能被误读为「已生效」） |
+
+传输旋钮经配置透传：`base_url`（默认 `http://api.timiai.woa.com/ai_api_manage/llmproxy`）、`api_key`
+（**通常不写**：解析顺序 = 本文件 `api_key` → 环境变量 `TIMI_API_KEY` → **pi 自己的 `~/.pi/agent/auth.json`
+的 `timi.key`**，即 pi 登录过就直接复用，无需另配；`mw decide show --json` 回显为 `<redacted>`，
+任何日志/证据都不落明文 key）。
+
+### 命令
+
+`--project <dir>` 是 `run`/`probe`/`show`/`set` 的共同必填参数（`ask`/`report`/`dp` 默认 `.`）；配置写入走
+P-003 原子写（temp + `os.replace`，`O_CREAT|O_EXCL` 锁）。`decide run` 的 `state` 只走 stdin /
+`--request-file`，不接受命令行参数；人要现场提问用 `decide ask`。
+
+```bash
+python mw.py decide ask   (--state <text|@path> | --state-file <path>) [--noul QID=TEXT ...] [--choice QID=K[:说明][,K2[:说明2]] ...] [--score QID=档1,档2 ...] [--model MODEL] [--json] [--project DIR]
+python mw.py decide book  new <dp-id> [--out FILE] [--json]                           # 按注册表生成决策本骨架（只读配置，不联网）
+python mw.py decide book  check <file> [--json] [--project DIR]                        # 七类失败码验收（只报告不修，失败 exit 2）
+python mw.py decide ask   --book <file> [...]                                          # 先验后发：check 不过就零 HTTP
+python mw.py decide run   --project <dir> --book <file> [--json]                     # 同上；dp 由 book.decision_point 指定
+python mw.py decide run   --project <dir> --dp dp1 [--request-file FILE] [--json]  # 请求 JSON（state + questions）走 stdin 或文件
+python mw.py decide probe --project <dir> [--json]                                 # 传输诊断（FIX-L 后只剩单行 /v1/decisions）
+python mw.py decide show  --project <dir> [--json]                                 # 生效配置 + 最近一条证据行
+python mw.py decide set   --project <dir> [--json] KEY=VALUE ...                   # 原子写配置（未知键/非法值拒绝，exit 2）
+```
+
+#### `mw decide ask`（人直接问 timi/jev-latest）
+
+`--state` 是待评估内容（文本，或以 `@` 开头表示从该 UTF-8 文件读）；`--noul` / `--choice` / `--score`
+可重复，至少给一个，否则 exit 2 并打印用法摘要。`--choice` 的说明可省略（`billing` →
+`criteria == {"billing": null}`），键为 `[A-Za-z0-9_-]+`，重复键 → exit 2；`--score` 按低→高档位写
+2..10 个，越界 → exit 2。`--noul` 可用 `--noul-criteria 'QID=true:说明;false:说明'` 补判据（可选，缺省不发
+`criteria` 键）。模型默认 `jev-latest`，`--model` 只覆盖模型名，未知值不拦截（交给服务端报错并原样回显）。
+
+```bash
+python mw.py decide ask --project . \
+  --state '求助！我的提现已经失败3天了。' \
+  --noul urgent=这段话是否传达了紧急性？ \
+  --noul-criteria 'urgent=true:明确有时效性;false:未表达紧急性' \
+  --choice dept=billing:支付/退款相关,technical:缺陷/故障相关 \
+  --score effort=平静,不满,非常愤怒
+```
+
+```text
+jev-latest · 3 questions · 1186 ms
+dept      [choice] billing      confidence 0.98   probs: billing 0.99, technical 0.01
+urgent    [noul]   0.87         (probability of "yes")
+effort    [score]  1.05         confidence 0.92   legend: 0=平静, 1=不满, 2=非常愤怒
+```
+
+- `--json`：一条机器可读对象 `{model, usage, latency_ms, answers}`，不夹杂人类文案。`answers` 是客户端
+  契约形态（`choice`/`score` 额外带 `probabilities`，`score` 带 `legend`）；`usage` 目前恒为 `null`，
+  因为冻结的客户端响应不携带 token 用量。
+- **失败原样上抛**：`available=false`（未配置 / 无凭据 / 超时 / 429 / 5xx / 响应不可解析 / 超预算）时
+  stderr 打 `[mw decide ask] <reason>: <detail>`、exit 2，stdout 不输出任何答案；**不编造答案、不重试其它
+  模型**。成功时照常落证据行，`dp=dp-human-ask`。
+- 项目没有 `.mw/decide.json` 时，`ask` 视为开启（人主动敲命令就是 opt-in）；显式 `enabled=false` 或配置
+  文件损坏仍然关闭。其余路径（`run`/`dp`）依旧由配置表授权，不受此例外影响。
+
+请求形状（`type` 覆盖 `choice` / `score` / `noul` / `box`；`choice` 必须声明 `choices` 或
+`dynamic_choices`，`score` 必须给整数 `min`/`max`，`noul` 无必需字段；`box` 在发请求前按已知类型被拒
+（`box-requires-image`））：
+
+```json
+{"state": "<一句派发场景描述>",
+ "questions": {"triage_type": {"type": "choice", "choices": ["coding", "research", "review"]},
+               "triage_risk": {"type": "choice", "choices": ["low", "mid", "high"]}}}
+```
+
+`answers` 每项含 `value` + `confidence`；响应另附 `available/transport/model/confidence_source/attempts/latency_ms/reason`。
+
+#### `mw decide book`（写决策本 + 先验后发）
+
+`ask_decision` 判 `input-incomplete`、该 dp 尚未接线，或 PM 需要一次可复核的离线决策时，写一份**决策本**
+而不是在对话里描述。决策本是 `decide` 接口的**输入文件**：`{schema_version: 2, decision_point, state,
+context?, notes}`；键集合与顺序**由配置决定**（`decide_registry.json` 的 `required_state_fields` + 该 dp 的
+`contextSlots`），不是由人猜。位置：`.agenticdoc/<key>/evidence/books/<dp-id>-<slug>.json`
+（PM 用 `.agenticdoc/_autopilot/books/`）。
+
+```bash
+python mw.py decide book new dp3-worker-clarify --out .agenticdoc/<key>/evidence/books/dp3.json
+python mw.py decide book check .agenticdoc/<key>/evidence/books/dp3.json --json
+python mw.py decide run --project . --book .agenticdoc/<key>/evidence/books/dp3.json
+python mw.py decide ask --book .agenticdoc/<key>/evidence/books/dp3.json --noul urgent=是否紧急
+```
+
+四步：
+
+1. `book new <dp-id>` 生成骨架（默认**只打印**，加 `--out FILE` 才写文件）：`state` 的键与顺序 ==
+   `required_state_fields`，值一律是类型占位符（`"<string: …>"` / `-1` / `-1.0` / `false` / `[]` / `{}`）；
+   `schema_version` / `decision_point` / `questions_version` 预填注册表真值；`notes.evidence` 为每个必填
+   字段生成同名待填项；`context` 只留该 dp 允许的槽位。
+2. 按每个字段的 `description` 填值（`book new` 已把描述写进占位符）。数值/枚举必须来自真实证据。
+3. `notes.evidence` 每条给 `path:line`（文件必须在仓库内、行号 ≤ 行数）或命令原文
+   （`cmd: rg -n …`、裸 `rg …`、`git …`）。三个身份字段的证据可以写 `cmd: mw decide book new <dp-id>`。
+   `context` 的槽位值就是内容（文本槽位是字符串，数组槽位是数组，形状同 `decision_context`），
+   已用槽位的来源写成 `notes.evidence["context.<slot>"] = "path:line"`。
+4. `book check <file>` 通过后再用 `--book` 发送；`ask/run --book` 会先跑同一套检查，**任一失败即拒绝
+   发送（零 HTTP）**，失败表打 stderr、exit 2。
+
+**封闭键集合**（缺与多都失败）：`state` 里除该 dp 的 `required_state_fields` 与三个通用身份字段
+（`schema_version` / `decision_point` / `questions_version`）外不得有其它键。七个失败码：
+
+| 失败码 | 判据 |
+| --- | --- |
+| `book-schema` | JSON 不可解析、顶层键越界（只允许 `schema_version`/`decision_point`/`state`/`context`/`notes`）、`schema_version != 2`、dp 不在注册表 |
+| `book-state` | 缺必填、类型不符（`string|integer|number|boolean|array|object`）、**多出注册表没有的键**、`questions_version` 与注册表漂移 |
+| `book-placeholder` | 占位符未替换、空串、负数、空数组/对象、`TBD`/`TODO`/`xxx` |
+| `book-context` | 未知槽位（不属于该 dp）、已用槽位缺 `source`（`notes.evidence["context.<slot>"]`）、单槽超长、`context` 总字节 > 4000 |
+| `book-evidence` | 必填字段缺证据、`path:line` 文件不存在/行号越界/路径在仓库外 |
+| `book-budget` | `state + 最长题面` > 32k tokens 或整请求 > 64k（复用 `_estimate_tokens` 与 `.mw/decide.json` 的闸） |
+| `book-secret` | 命中 `decision._redact` 的凭据检测面 |
+
+`book check` 只报告不修（退出码 0 = 全过 / 2 = 有失败），`--json` 输出
+`{path, sha256, ok, books[], issues[]}`（一个文件可装多本示例：`{"books": {dp-id: book}}`）。
+决策本**只写输入、不写预期答案**：没有 `answers`/`expected_*` 这类键的位置，`questions` 也不允许覆盖（题面归注册表）。
+
+`--book` 成功发送后，档案侧落两处：决策行照旧进 `.agenticdoc/_autopilot/decisions.jsonl`（字段矩阵封闭），
+book 的输入元数据（`book_path` + `file_sha256` + `notes.evidence` + `state_digest`）落
+`.agenticdoc/_autopilot/book-receipts.jsonl`，`decide run --json` 的回执顶层多一个 `book` 对象。
+
+### fail-soft 与退出码
+
+决策服务**不可用绝不阻断**派发、执行、收尾：
+
+- 成功与 `available=false`（未配置 / 入口未暴露 / 超时 / 429 / 5xx / 连接不可达 / 响应不可解析 / 超预算）
+  **都 exit 0**，失败以机器可读 `reason` 表达（`disabled` / `entry-unavailable` / `timeout` / `rate-limited` /
+  `upstream-error` / `bad-response` / `budget-exhausted` / `unsupported-question-type`）。
+- 只有**参数非法**（缺字段、未知问题类型、超上限）exit 2；配置写入失败也是 2。
+- 客户端不向编排抛异常；每次调用向 `<project>/.agenticdoc/_autopilot/triage-decisions.jsonl` best-effort
+  追加一行 JSON 证据（write 失败不破坏调用方主流程）。
+
+### 置信度硬规则
+
+`confidence_source` 区分来源：`api`（上游直出；`timi-decisions` 恒为它）与 `model-self-report`（旧过渡路线
+由模型自报，**未经校准**）。**`confidence_source != "api"` 时 `confidence` 不得用于任何门控/阈值自动决策**，只能作为
+弱排序信号；呈现文案必须带来源标识（实测过渡后端对平凡事实自报 1.0，典型过自信）。
+
+### 覆盖面与数据流
+
+- **覆盖面（本波 2/15）**：DP-1 当前只挂在 **PM 发起派发** 的路径上（`planDispatchFrontmatter`，`dispatch_worker` 与
+  `/worker` 两个入口共用）；conductor 的 **13 个自动派发点尚未接入**，那些路径的行为与未启用决策服务完全一致
+  （后续波次再挂 Python 侧 `dispatch()`）。
+- **数据流**：开启后，每次派发会把派发场景描述（`state`，派发描述全文加类型/阶段等上下文，上游已按
+  `max_state_bytes` 截断）经内网 decisions 接口（`POST {base_url}/v1/decisions`）发往配置的 `jev-latest`；
+  与既有 pi worker 自身的模型流量走同一通道。`mw decide ask` 使用的是同一条通道（人自己写 `state`）。
+  **不要在派发描述里放凭据或敏感原文**；敏感场景请保持 `enabled=false`。
+- 结构化证据行落在 `<project>/.agenticdoc/_autopilot/triage-decisions.jsonl`（唯一写者是 Python 决策客户端，
+  TS 侧只读）。
+
+### 建议被谁消费（执行 → 结果）
+
+建议产出后**只作旁路提示**，四条消费路径：
+
+| 路径 | 何时 | 形态 |
+| --- | --- | --- |
+| 派发回执 | `available=true` | 回执末尾追加一行 `[triage] 旁路建议，未据此更改派发：triage_type=…（conf=…）, triage_risk=…`（零额外 turn） |
+| ledger 行 | 任意结果 | `kind=triage-suggestion`（可用）/ `triage-unavailable`（不可用且 `triage_notify_on_unavailable=true`） |
+| PM 唤醒 | 仅「建议类型 ≠ 派发类型」且 `alert_on_disagreement != false` | 一条告警消息，文案明写 `the dispatch type/role/model were NOT changed` |
+| 证据文件 | 每次调用 | `.agenticdoc/_autopilot/triage-decisions.jsonl` 一行 11 字段 JSON |
+
+四个象限的最终状态：一致 → 静默记录；**争议 → 回执 + 一条 PM 告警，派发不变（是否改判由 PM/人决定）**；
+不可用 → 默认全静默（可配 ledger 行）；未启用 → 零输出（回执逐字节不变，TS 侧有真断言）。
+
+完整链路（输入→输出→执行→结果、四象限、测试矩阵、凭据链）：
+`.agenticdoc/mw-jev-provider-integration/docs/jev-integration-flow-and-usage.md`。
+
+### doctor 行
+
+`mw doctor` 增加决策服务行（**信息行**，不进 `_doctor_issues`、不翻转 healthy；未配置项目输出逐字不变）：
+
+```text
+triage: enabled timi-decisions last_suggestion=<seq|none> last_unavailable=<reason|none>
+triage: disabled
+triage: ERROR — <配置错误串>
+```
+
+`mw doctor --json` 同步给出 `decide` section（`exists/enabled/transport/model/last_seq/last_suggestion/last_unavailable`）。
+
+### 决策替换（dp 配置表）
+
+决策服务之上是**决策替换**：框架里 24 个「会等人」的决策点（dp）各在注册表登记一次，由一个项目级
+授权表 `.mw/decide-points.json` 决定哪些点由决策服务直接给答案/执行、哪些照旧上抛人。**配置表是唯一
+授权权威**（P2 默认开、P1/P0 默认关），人用指令或直接改文件开/关单个 dp，**下一次决策即生效**——
+无需重启；关掉即回原路径（零 spawn、关闭态字节同构）。失效安全：未开启 / 不可用 / 低置信 / 输入缺失
+一律上抛人，**没有默认动作**。
+
+| 面 | 形态 |
+| --- | --- |
+| 配置表 | `.mw/decide-points.json`（只管授权；与管传输的 `.mw/decide.json` 分工，互不写入；文件缺失 = 注册表默认） |
+| 指令 | `mw decide dp list/show/on/off/set/refresh/check/apply/export/verify`（`export [--json|--write]` 把注册表导出成 `decide_registry.json`，每个 point 自带 `wired`/`trigger`/`adopted_at`/`wiring_note` 且 `required_state_fields` 带 `{name,type,description}`，重生成保留手写 wiring；`verify [--json|--live|--dp ID]` 离线把每个 dp 的最小合法 state 跑过 `decide` + 线上 body 形状检查，`--live` 打真 jev-latest，任一 dp 不可用 exit 1）（`on <P0>` 必须带 `--i-understand-p0`，否则 exit 2 且不写文件） |
+| 档案 | `.agenticdoc/_autopilot/decisions.jsonl`：`decide`/`override`/`settle`/`authority-change` 四类行 + `prev_sha` 哈希链，单写者 append-only，`decision_id` 幂等 |
+| 报告 | `mw decide report --key <key> --write`：phase 末由 `advance_phase` 自动生成 `evidence/review/decision-review-<phase>-*.md`；`N<5` 强制「数据不足，不结论」，机器只给 `suggest:` 不给动作 |
+| 收尾签收 | `mw decide sign --project .agenticdoc/<key> [--conclusion continue\|narrow\|revoke]` 生成 `<key>/evidence/review/sign-final.md`（机器行 `counted_rows`/`rows_sha256` 由命令算，人只回结论）+ 一条 `authority-change` 档案行；再由人在 agent 会话外跑 `mw decide dp apply`。done 门禁强制；key 目录有 `decision-scope.md` 时还校验签收内容（见下） |
+
+#### per-dp 策略旋钮（`min_confidence` / `max_questions` / `timeout_s`）
+
+`.mw/decide-points.json` 的每行除 `tier/enabled/mode/note` 外，还可覆盖三个策略项（spec §14 AC-016）：
+
+| 键 | 类型 | 合法域 | 缺省（内置常量即当前值） |
+| --- | --- | --- | --- |
+| `min_confidence` | number | `0 <= x <= 1` | dp1/dp2/dp3 = 0.7 |
+| `max_questions` | integer | `1 <= n <= 8` | `.mw/decide.json` 的 `max_questions`（8） |
+| `timeout_s` | integer | `1 <= n <= 300` | `.mw/decide.json` 的 `timeout_s`（20） |
+
+- **生效值** = per-dp 行 > `.mw/decide.json` 的同名键 > 内置常量。行里只写一个键时，另外两个各自落到下一层。
+- **非法值 fail-soft**：该值被丢弃（不 disable、不抛异常），回落到下一层，并在 `dp check` 记一条 `L8` warning。
+- **看生效值**：`mw decide dp show <dp>` / `mw decide dp check` 打印每行的**生效值**与决定它的层
+  （`row` / `decide.json` / `builtin`），原始值非法时同屏有 `L8` 回落原因；`dp show --json`、
+  `dp check --json`、`mw decide show --json` 的 `policy` 字段带同一份数据（`mw decide dp check` 的
+  非 `--json` 输出每个注册 dp 一行 `policy <dp>: min_confidence=0.7(builtin) ...`）。
+- **档案回显**：`kind=decide` 档案行新增 `policy` 字段（三个生效值），事后可复原「为什么它被 escalate」。
+- **TS 侧**：`agent-team-loop/shared/decide-policy.ts::resolveDecidePolicy(dpId, projectDir)`，与
+  `decision_points.resolve_policy` 同一解析顺序（同一份配置 → 同一生效值，由 parity 测试锁死）。
+  dp3 的三个阈值随 `min_confidence` 平移（`min_match=+0.05`、`answerable=-0.2`，缺省仍是 0.75/0.7/0.5）；
+  dp2 用 `min_confidence` 做 `acted` 置信门、`timeout_s` 做子进程预算。
+- 这三键目前是**只读表内容**：`mw decide dp set` 仍只接受 `tier/enabled/mode/note`（未知键照旧 exit 2），
+  需要时直接编辑 `.mw/decide-points.json`（下一次决策即生效）。
+
+#### `mw decide sign`（签收 = 决策摘要 + 机器行，人只回结论）
+
+人不再手写签收文件的机器行：命令先算出本 key 的决策事实，人只给结论。
+
+```bash
+python mw.py decide sign --project .agenticdoc/<key>                        # 只打印摘要 + 机器行草稿，不写文件
+python mw.py decide sign --project .agenticdoc/<key> --conclusion continue --reason 'dp3 站住了'
+python mw.py decide sign --project . --key <key> --conclusion narrow --dry-run
+python mw.py decide sign --project .agenticdoc/<key> --conclusion continue --json
+```
+
+- 摘要含：`counted_rows`（本 key 的 `kind=decide` 行数）、`n_available` / `n_acted` / `n_escalated`、
+  `engines`（`transport/model/confidence_source` 三元组计数）、按 dp 的计数、`escalated_reason` 分布、
+  已开 P0、`rows_sha256`（被计数行的规范 JSON 哈希，档案一改就变）。
+- `conclusion=continue` 要求 `N>=1`、档案哈希链完整、且**每一行**都是真 jev
+  （`timi-decisions` / `jev-latest` / `api`）；`narrow` / `revoke` 是减权，只要求链完整（`N=0` 也允许）。
+  `N=0` 还要 `continue` 时必须显式 `--allow-empty`，文件里落 `allow_empty: true` 与 `counted_rows: 0`。
+- 校验不过 → stderr 逐条原因、exit 2、**不写文件**。写入成功后追加一条 `kind=authority-change`
+  档案行（`by=signoff:<conclusion>`、`change=signoff`、`conclusion=<x>`；`by` 沿用档案层冻结词表）。
+- 固定落 `<key>/evidence/review/sign-final.md`（父目录自动创建，`conclusion:` 列 0 单行），并写出
+  `promote:` / `demote:` / `p0-open:` 三行，所以同一份文件仍可直接给 `mw decide dp apply` 消费。
+- **agent 会话内拒绝**：`PI_CODING_AGENT` / `AI_AGENT` / `PI_WORKER_TASK` 任一存在即 exit 2，与
+  `dp apply` 同一判据（常量单一来源 `decide_signoff.AGENT_SESSION_ENV_VARS`）。唯一例外是 `--human-confirmed`：
+  它只由 `/mw decide sign` 的确认对话框设置（见下），带该 flag 时允许写入，并在文件里落一行
+  `signed_via: tui`（命令行正常签收落 `signed_via: cli`）。该 flag 的定位是 **tamper-evidence 不是
+  tamper-proof**：agent 仍可蓄意伪造它，但文件与 `authority-change` 档案行都会留下来源痕迹。
+- `--json` 输出 `{conclusion, ok, problems, facts, path}`（失败时 `path=null`；preview 时
+  `conclusion`/`ok`/`path` 皆 `null`），另外 preview 会多带 `verdicts`：三个结论各自的 `{ok, problems}`，
+  供 `/mw decide show|sign` 在弹框前判断。
+
+**pi 窗口入口（FIX-Q）**：`/mw decide show` 与
+`/mw decide sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <k>]`。
+
+```text
+/mw decide show                                  # 只跑 preview（等价 mw decide sign --json），不写任何文件
+/mw decide sign continue --reason "dp3 站住了"    # 先 preview → 判据不过直接报错 → 通过才弹确认框
+/mw decide sign narrow --key my-key --allow-empty
+```
+
+- `show` 渲染 `counted_rows/available/acted/escalated`、`engines:` 直方图、三个 verdict、
+  `rows_sha256` 前 12 位与 `p0-open`；它是只读预览（`--json` preview），**不写文件**。
+- `sign` 先跑同一条 preview；若该 conclusion 的机器判据不通过（preview 的 `verdicts[<c>].problems` 非空），
+  直接把 problems 报成 error、**不弹确认框、零写入**。通过才 `ctx.ui.confirm`，取消则
+  `cancelled, nothing written`；确认后转发 `mw decide sign ... --conclusion <c> --human-confirmed`
+  （带 `--reason` / `--allow-empty` 时原样追加），Python 侧仍会重跑判据（exit 2 且零写入），成功才提示
+  `advance_phase.py` 可推进。
+- key 取 `--key` > 当前窗口 watch 的 key > usage 报错（不猜）。`ctx.hasUI` 为假（headless / `-p` / rpc）
+  一律拒：没有确认框就没有人工点击可收集。
+
+**done 门禁新增 `decision_signoff` 检查（条件生效）**：只有 key 目录存在 `decision-scope.md` 标记文件的
+key 才校验签收内容——①`sign-final.md` 存在 ②`conclusion:` 可解析 ③`counted_rows:` / `rows_sha256:` 存在
+④用 `decide_signoff.collect` 重算并比对 sha（签名后档案被追加/篡改即失败）⑤`continue` 再跑
+`verdict()`（N>=1 + 全部真 jev + 链完整）。**其它 key 零影响**，既有两条签收检查（文件存在 + `conclusion:`
+机器行）也不变。`decision-scope.md` 由 PM 在需要内容校验的 key 上建立（内容自由，只作标记）。
+
+当前只有 **dp1（派发前分诊，`mode=auto` 时写 `decision:` 头行）/ dp2（checkpoint 只允许收窄）/ dp3
+（worker 澄清自答）** 有真实调用点，其余 21 项仅注册（开启不改变任何行为）。完整说明（24 项一览与
+档位、配置表 8 层降级与热生效、`mode` 语义、档案字段与读法、报告与签收流程、失败与回退阶梯）：
+[`docs/decision-substitution.md`](../../docs/decision-substitution.md)。
+
+### 派 decide_prepare worker 写决策本（`type: decide_prepare`）
+
+**何时派**：某个 dp 的决策刚好能由「读配置 + 收证据 + 按注册表填本」得出时（今天 dp1/dp2/dp3 定义了
+`required_state_fields`），把这件事整体交给一个 `decide_prepare` worker，PM 不自己推理字段内容。
+（W10 起类型值叫 `decide_prepare`；旧的 `decision` 不再被识别，不留别名。）
+
+**卡片怎么写**：`<key>/tasks/<stem>.md` 的派发段必须四条齐全（缺任一条派发即拒，零副作用）：
+
+```markdown
+## 派发参数
+
+- dp: dp3-worker-clarify
+- 证据来源: .mw/decide.json:3 + `mw decide book new dp3-worker-clarify`
+- 分支后果: 误判会把需要澄清的任务直接执行
+- allow-send: no
+```
+
+- `dp` 必须是定义了 `required_state_fields` 的 dp（否则拒绝并提示「先给该 dp 定义必填字段」）。
+- `allow-send: no`（缺省即 no）：worker 只能跑 `mw decide book check`；`decide run|ask --book` 由 PM 发送。
+- 想给这个角色单独指定模型：`.mw/dispatch.yml` 的 `models.decide_prepare`（或 `mw model set decide_prepare
+  <prefix/model>`）；**不配则沿用 `models.coding`**（同一角色配置，`fallback_models` 也一样）。`dispatch_worker`
+  的 `model` 覆盖仍优先（记 `model-reason`）。本仓库当前配的是 `decide_prepare: timi/gpt-6.1-sol`（只读、要准确）。
+- 写入面：卡片不写 `## 写入允许面` 时，类型默认收窄为 `<key>/workers/<task_key>/evidence/books/**`；
+  卡片自己声明更宽的面时**以卡片为准**，并在 task.md 记一行 `narrowed_by:` 说明（不静默放宽）。
+
+**验收看什么**：
+
+1. `python -m autopilot.dispatch check --card <card>` → exit 0（同一套标准；exit 2 会逐条列出
+   `missing-item:*` / `dp-required-state-fields-missing:*` / `book-send-refused`）。
+2. worker 的 `evidence/books/<dp>-<slug>.json` 过 `mw decide book check`（exit 0）。
+3. task.md 的「决策本参数」段已把 dp / 证据来源 / 分支后果 / allow-send / book 路径 / `narrowed_by` 写全。
+4. `allow-send: no` 的 run：trace.log 不应出现 `decide run/ask`；只有 `book check`。
 
 ## 待实现（Backlog）
 

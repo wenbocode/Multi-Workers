@@ -2,8 +2,20 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
 import { killTrackedDetachedChildren } from "../../../utils/shell.ts";
-import { recordDispatchAlarm } from "../pm/pm-orchestrator.ts";
-import { WRITE_SURFACE_MARKER, WRITE_SURFACE_MARKER_END } from "../pm/ui-bridge.ts";
+import {
+	DP2_NARROW_MARKER,
+	DP2_STEER_FILE,
+	DP2_STEER_REQUEST_HEADER,
+	recordDispatchAlarm,
+} from "../pm/pm-orchestrator.ts";
+import {
+	canonicalStateBytes,
+	type DecideRunner,
+	type RawDecideRun,
+	readDecidePolicy,
+	runDecideMw,
+} from "../pm/triage-client.ts";
+import { assertStateMatchesRegistry, WRITE_SURFACE_MARKER, WRITE_SURFACE_MARKER_END } from "../pm/ui-bridge.ts";
 import { Breaker, Budget } from "../rag/budget.ts";
 import { requiredFor } from "../rag/config.ts";
 import { appendEvidence } from "../rag/evidence.ts";
@@ -21,8 +33,10 @@ import {
 	parseWriteFileEvents,
 	repoRelativePath,
 } from "../shared/change-ledger.ts";
+import { resolveDecidePolicy } from "../shared/decide-policy.ts";
+import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.ts";
 import { findNonEmptyReport, hasDeliverableEvidence } from "../shared/deliverable-evidence.ts";
-import { DISPATCH_TYPE_VOCABULARY } from "../shared/dispatch-card.ts";
+import { type Claim, claimBudgetCaps, DISPATCH_TYPE_VOCABULARY, parseClaimsBlock } from "../shared/dispatch-card.ts";
 import { roleForTaskType } from "../shared/dispatch-models.ts";
 import { formatHeartbeatAge, HEARTBEAT_INTERVAL_MS } from "../shared/heartbeat.ts";
 import { controlRootFromTaskPath } from "../shared/paths.ts";
@@ -53,8 +67,9 @@ import {
 	resolveOwnWriteTarget,
 	resolveWriteSurfacePaths,
 } from "../shared/write-surface.ts";
-import { isMechanicalSection } from "./output-sections.ts";
+import { claimCoverage, isMechanicalSection, parseVerdictTable, type VerdictTable } from "./output-sections.ts";
 import {
+	agentProductText,
 	appendCheckpoint,
 	appendEnd,
 	appendError,
@@ -126,6 +141,11 @@ const TOOL_ALLOWLISTS: Record<string, string[]> = {
 	// Vision bucket (mw-vision-role D-001): full coding set, same order as the
 	// Python-side REGISTRY entry in autopilot/dispatch.py.
 	vision: ["read", "write", "edit", "bash", "find", "grep", "ls"],
+	// Decision-book writer (mw-decision-substitution W8, renamed W10): read-only
+	// tools plus a narrowed `bash` (see `decisionBashBlockReason` below). Same
+	// order as the Python-side REGISTRY entry in autopilot/dispatch.py. W10:
+	// the type value is `decide_prepare` (was `decision`; no alias kept).
+	decide_prepare: ["read", "find", "grep", "ls", "bash"],
 	fallback: ["read", "write", "edit", "bash", "find", "grep", "ls"],
 };
 
@@ -194,6 +214,147 @@ export function isWritelessRole(taskType: string): boolean {
 export function hasWriteTools(taskType: string): boolean {
 	const tools = activeToolsForType(taskType);
 	return tools.includes("write") || tools.includes("edit");
+}
+
+// ── decision worker type (mw-decision-substitution W8, renamed W10) ──────────
+//
+// W10: the dispatch type value is `decide_prepare` (was `decision`); no alias
+// is kept, so `type: decision` is now an unknown type.
+//
+// A `decide_prepare` worker writes ONE decision book: scaffold it, fill every field
+// from real evidence, pass `mw decide book check`, and hand the book back. It
+// never edits code and never sends the book: the send (`decide run|ask --book`)
+// is the PM's call unless the card explicitly says `allow-send: yes`.
+//
+// Three runtime pieces live here:
+//   1. the fixed prompt (`DECISION_TYPE_PROMPT`) — injected into the system
+//      prompt of every turn of a decision worker, so the contract cannot be
+//      lost by compaction or by a terse card;
+//   2. a read-only bash policy (`decisionBashBlockReason`) that blocks every
+//      command except `mw decide book check`, `git diff|status|log`, `rg`,
+//      `cat`, `ls`, `head`, `tail`, `wc` — and blocks `decide run|ask` unless
+//      the card authorized the send;
+//   3. a `worker_file` target policy (`decisionWorkerFilePathAllowed`) that
+//      keeps the only write channel inside `<key>/evidence/books/**`.
+
+export const DECIDE_PREPARE_TYPE = "decide_prepare";
+/** Card item carrying the send authority (`yes` = the worker may send). */
+export const DECISION_ALLOW_SEND_ITEM = "allow-send";
+/** The one directory a decision book may be written to. */
+export const DECISION_BOOK_SUBDIR = "evidence/books";
+
+/** The fixed decision-worker prompt (card requirement 2). */
+export const DECISION_TYPE_PROMPT = [
+	"[mw decide_prepare worker] 你写决策本，不改代码。",
+	"1. 先跑 `mw decide book new <dp> --out <key>/evidence/books/<dp>-<slug>.json`；<dp> 与 book 路径见 task.md 的「决策本参数」段。",
+	"2. 按每个字段的 description 从证据里填值；`notes.evidence` 每条给 `path:line` 或命令原文。",
+	"3. 最后跑 `mw decide book check <book>`；失败就继续填，直到通过。",
+	"不要改阈值、不要填预期答案、不要改任何代码（packages/ 只读）。",
+	"bash 只允许 `mw decide book check`、`git diff --stat`、`rg`、`cat` 这类只读命令。",
+	"`allow-send: no` 时不要调用 `decide run` / `decide ask`（含 `--book`）；发送由 PM 做。",
+].join("\n");
+
+/** Does the task authorize the worker itself to send the book?
+ *
+ * Only an explicit `allow-send: yes` line does (`- allow-send: yes` or
+ * `allow-send: yes`); every other shape — absent, `no`, garbage — is the
+ * closed state (W8 requirement 4: the default is `no`). */
+export function decisionAllowsSend(taskContent: string): boolean {
+	for (const raw of taskContent.split(/\r?\n/)) {
+		const m = /^\s*(?:[-*+]\s*)?(?:\*\*)?allow-send(?:\*\*)?\s*[:：]\s*(\S+)/i.exec(raw);
+		if (m) return m[1].trim().toLowerCase() === "yes";
+	}
+	return false;
+}
+
+/** Commands a decision worker may run (read-only subset, card requirement 2).
+ * Order matters only for the audit message. */
+const DECISION_ALLOWED_COMMANDS: ReadonlyArray<readonly [RegExp, string]> = [
+	[/^mw\s+decide\s+book\s+check\b/, "mw decide book check"],
+	[/^python\S*\s+.*\bmw\.py\s+decide\s+book\s+check\b/, "mw decide book check"],
+	[/^git\s+diff\b/, "git diff"],
+	[/^git\s+status\b/, "git status"],
+	[/^git\s+log\b/, "git log"],
+	[/^rg\b/, "rg"],
+	[/^cat\b/, "cat"],
+	[/^ls\b/, "ls"],
+	[/^head\b/, "head"],
+	[/^tail\b/, "tail"],
+	[/^wc\b/, "wc"],
+];
+
+/** Shell metacharacters a read-only decision command may never carry. */
+const DECISION_BASH_REDIRECT_RE =
+	/[<>]|\btee\b|\brm\b|\bmv\b|\bcp\b|\bsed\s+-i\b|\bgit\s+(?:add|commit|checkout|reset)\b|\bpython\S*\s+-c\b/;
+
+/** The `decide run|ask` invocations (with or without `--book`). */
+const DECISION_SEND_RE = /\bdecide\s+(?:run|ask)\b/;
+
+/** The scaffold call (`book new`), which may WRITE exactly one file: its
+ * `--out` target (W8: the prompt's first step, still bounded to the books dir).
+ * Without `--out` it only prints to stdout — that shape writes nothing. */
+const DECISION_BOOK_NEW_RE = /^(?:mw\s+decide\s+book\s+new|python\S*\s+.*\bmw\.py\s+decide\s+book\s+new)\b/;
+
+/** Block reason for one decision-worker bash command, or `null` when allowed.
+ *
+ * Splits on the shell control operators (`&&`, `||`, `;`, `|`, newline) so a
+ * chained write (`rg x && rm -rf y`) cannot hide behind an allowed prefix, and
+ * refuses redirections/known mutators outright (P1: for this role a false
+ * block costs one retry, a miss writes outside the books dir).
+ *
+ * `mw decide book new` is allowed on top of the card's read-only list because
+ * the prompt's FIRST step is that scaffold; its `--out` must stay inside
+ * `evidence/books/**` and the no-`--out` shape only prints to stdout. */
+export function decisionBashBlockReason(command: string, allowSend: boolean): string | null {
+	const send = DECISION_SEND_RE.exec(command);
+	if (send && !allowSend) {
+		return (
+			`decision: \`decide ${send[0].split(/\s+/)[1]}\` is the PM's call — this card says ` +
+			`\`allow-send: no\` (or nothing), so only \`mw decide book check\` is allowed`
+		);
+	}
+	const allowed = DECISION_ALLOWED_COMMANDS.map(([, label]) => label).join(", ");
+	for (const raw of command.split(/&&|\|\||[;|\n]/)) {
+		const segment = raw.trim();
+		if (segment === "") continue;
+		if (DECISION_BASH_REDIRECT_RE.test(segment)) {
+			return `decision: bash is read-only for this role (no redirect/mutation); allowed: ${allowed}`;
+		}
+		if (DECISION_BOOK_NEW_RE.test(segment)) {
+			const out = /--out(?:=|\s+)(\S+)/.exec(segment);
+			const target = out?.[1]?.replace(/^["']|["']$/g, "") ?? "";
+			if (target !== "" && !decisionWorkerFilePathAllowed(target)) {
+				return (
+					`decision: \`book new --out\` must target ${DECISION_BOOK_SUBDIR}/** ` +
+					`(got ${JSON.stringify(target)})`
+				);
+			}
+			continue;
+		}
+		if (send && segment.includes(send[0]) && allowSend) continue;
+		if (!DECISION_ALLOWED_COMMANDS.some(([pattern]) => pattern.test(segment))) {
+			return (
+				`decision: bash is read-only for this role; \`${segment.split(/\s+/)[0]}\` is not allowed ` +
+				`(allowed: ${allowed})`
+			);
+		}
+	}
+	return null;
+}
+
+/** Is this `worker_file` target inside the decision book directory?
+ *
+ * Accepts both spellings the tool documents: `evidence/books/<f>` (taskDir
+ * relative) and `.agenticdoc/<key>/evidence/books/<f>`. Everything else — the
+ * broader `<key>/evidence/**` face, `progress.md`, a source file — is refused
+ * (W8 requirement 3: the write face narrows to the books dir). */
+export function decisionWorkerFilePathAllowed(file: string): boolean {
+	const normalized = file.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+	if (normalized === "" || normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized)) {
+		return false;
+	}
+	if (normalized.split("/").includes("..")) return false;
+	return normalized.includes(`${DECISION_BOOK_SUBDIR}/`);
 }
 
 /** Checkpoint self-assessment steer text, split by role (D-104/VC-004).
@@ -531,6 +692,14 @@ interface TaskMeta {
 	/** AC-010/T-12: structure of the C2 contract markers read back from this
 	 * task book (see {@link writeSurfaceMarkerState}). */
 	writeSurfaceMarker: WriteSurfaceMarkerState;
+	/** T-04b/D-002: the `<!-- mw-claims: v1 -->` block T-02 injects into task.md
+	 * (the settle-time claim contract; the mutable card file is never re-read).
+	 * `undefined` when the block is absent — the zero-branch legacy path (AC-007:
+	 * a claims-free book keeps `finishSuccess` byte-identical). Present-but-empty
+	 * stays `[]` on purpose: the block exists, so the run DOES carry a claim
+	 * contract whose claims all failed to parse (the count is then 0, never a
+	 * silent "no claims"). */
+	claims?: Claim[];
 }
 
 /** Structure of the C2 write-surface contract markers in a task book
@@ -688,6 +857,12 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 		base: path.dirname(trueAgenticdocRoot),
 		caseInsensitive: process.platform === "win32",
 	});
+	// T-04b: the claims block is an HTML comment, so the card seed's heading
+	// slices never carried it — T-02 injects the block verbatim into task.md
+	// (`pm/ui-bridge.ts::extractClaimsBlockText`). Parsing it here keeps the one
+	// settle-time source of truth in the task book (D-002) and reuses the L1
+	// parser (no second grammar).
+	const claimsBlock = parseClaimsBlock(content);
 
 	return {
 		type: taskType,
@@ -710,7 +885,220 @@ export function parseTaskMd(taskPath: string): TaskMeta {
 		ragTimeBudgetS,
 		allowForeignWrite,
 		writeSurfaceMarker: writeSurfaceMarkerState(content),
+		claims: claimsBlock.present ? claimsBlock.claims : undefined,
 	};
+}
+
+// ── claims settlement (T-04b / design §3.3, AC-008) ───────────────────────
+
+/** Share of `unverified` rows above which the run did not settle its claim
+ * contract (AC-008 ②). `>` — the boundary itself passes. */
+export const CLAIM_UNVERIFIED_MAX_DEFAULT = 0.4;
+
+/** ... except for the review role, which legitimately hits the no-bash wall
+ * (RQ-3 §4 B-2: all 46 corpus review units only carry read/find/grep/ls). */
+export const CLAIM_UNVERIFIED_MAX_REVIEW = 0.6;
+
+/** The `carried-from: <path:line>` audit marker of a re-used verdict (RQ-3 §4
+ * B-7: "code really did not change" is legal, but only when written down). */
+const CARRIED_FROM_RE = /carried-from\s*:\s*\S+/i;
+
+/** One `run.json` `claims` subobject (design §3.4). `total` is the card's claim
+ * count; the three verdict counters are the rows that settled against it; and
+ * `tokens: null` is the contract's "not attributable" value (AC-005b: the
+ * worker process cannot split LLM usage per claim — the Python side joins the
+ * session ledger, and a made-up number would corrupt `tokens_per_closed_claim`).
+ * T-05's `readRunClaims` reads exactly these six keys (absent key = no claims). */
+export interface ClaimCounts {
+	total: number;
+	closed: number;
+	partial: number;
+	unverified: number;
+	/** `[FLOW] tool_call` read-class count (D-008: only allowed calls). */
+	fetches: number;
+	tokens: number | null;
+}
+
+/** `裁决` cell folded to its token form (ticks/whitespace/case), mirroring the
+ * L3 parser's own comparison so the counters cannot disagree with the verdict. */
+function claimVerdictToken(cell: string): string {
+	return cell.replace(/`/g, "").replace(/\s+/g, "").toLowerCase();
+}
+
+/** Per-run claim counters: the card's claim set against the product's `## 断言裁决`
+ * table (first row per id wins, same as `claimCoverage`). A claims-free run has
+ * no counters to write at all — the caller guards on `meta.claims === undefined`
+ * rather than fabricating zeroes (T-05: an absent key means "not measured"). */
+export function claimCounts(claims: Claim[], table: VerdictTable, fetches: number): ClaimCounts {
+	const counts: ClaimCounts = {
+		total: claims.length,
+		closed: 0,
+		partial: 0,
+		unverified: 0,
+		fetches,
+		tokens: null,
+	};
+	const declared = new Set(claims.map((claim) => claim.id));
+	const seen = new Set<string>();
+	for (const row of table.rows) {
+		if (!declared.has(row.id) || seen.has(row.id)) continue;
+		seen.add(row.id);
+		const verdict = claimVerdictToken(row.verdict);
+		if (verdict === "closed") counts.closed += 1;
+		else if (verdict === "partial") counts.partial += 1;
+		else if (verdict === "unverified") counts.unverified += 1;
+	}
+	return counts;
+}
+
+/** The `[CLAIMS]` trace row (design D-004): a line of its own, NEVER folded into
+ * `[END]` — both sides of `[END]` are anchored regexes (`shared/heartbeat.ts`,
+ * `packages/multi-workers/mw_common.py`). Field order is frozen here and by
+ * `usage.py::_CLAIMS_LINE_RE` (T-05). */
+export function formatClaimsTraceLine(counts: ClaimCounts, now: Date = new Date()): string {
+	return (
+		`[CLAIMS] ${now.toISOString()} claims=${counts.total} closed=${counts.closed} ` +
+		`partial=${counts.partial} unverified=${counts.unverified} fetches=${counts.fetches}`
+	);
+}
+
+/** Append the `[CLAIMS]` row once, lifecycle style (no `[FLOW]` prefix — the line
+ * starts with its own anchor). Best-effort like every other trace anchor: a
+ * diagnostic append must never change the terminal verdict. */
+export function appendClaimsTraceLine(taskKey: string, agenticdocRoot: string, counts: ClaimCounts): void {
+	try {
+		const dir = path.resolve(agenticdocRoot, taskKey);
+		fs.mkdirSync(dir, { recursive: true });
+		fs.appendFileSync(path.join(dir, "trace.log"), `${formatClaimsTraceLine(counts)}\n`, "utf8");
+	} catch {
+		// Diagnostic append — trace.log and run.json carry the rest
+	}
+}
+
+/** The claim ids named by a gap list (`claim:<id>:<criterion>`), de-duplicated in
+ * emission order. Tokens without an id (`claims:missing-table`,
+ * `claims:unverified-ratio:…`) are skipped: their own name is the diagnostic. */
+export function claimGapIds(gaps: string[]): string[] {
+	const ids: string[] = [];
+	for (const gap of gaps) {
+		const match = /^claim:(C-\d{2,3}(?:\.\d+)?):/.exec(gap);
+		const id = match?.[1];
+		if (id !== undefined && !ids.includes(id)) ids.push(id);
+	}
+	return ids;
+}
+
+/** Repo-relative `path:line` evidence refs of one verdict row's `证据` cell. This
+ * is a deliberately narrow reader (the full grammar lives in `output-sections.ts`,
+ * which is frozen for T-04b): only the `path[:line[-line]]` half is needed to ask
+ * "was this citation produced by an EARLIER round?" — command refs and
+ * unparsable refs are ignored, they are owned by the `:evidence` criterion. */
+function claimEvidencePaths(cell: string): string[] {
+	const paths: string[] = [];
+	for (const raw of cell.replace(/`/g, "").split(";")) {
+		const ref = raw
+			.trim()
+			.replace(/「[^」]*」\s*$/, "")
+			.trim();
+		if (ref === "" || ref === "-" || ref.includes("=>")) continue;
+		const match = /^(.+?):(\d+)(?:-(\d+))?$/.exec(ref);
+		if (match === null) continue;
+		const file = (match[1] ?? "").trim();
+		if (file === "" || file.startsWith("/") || /^[A-Za-z]:[\\/]/.test(file) || file.startsWith("./")) continue;
+		if (file.split(/[\\/]/).includes("..")) continue;
+		paths.push(file);
+	}
+	return paths;
+}
+
+/**
+ * The three AC-008 settlement criteria that need inputs only the worker layer
+ * holds (the role, the run clock, the trace read count) — `claimCoverage`'s
+ * per-claim criteria stay in `worker/output-sections.ts` (frozen, T-04a):
+ *
+ *   ② `claims:unverified-ratio:<u>/<n>><limit>%`  too many un-settled claims
+ *      (40%, or 60% for the review role) ⇒ the run must not read as PASS.
+ *   ③ `claims:fetches:<sum>><cap>`               Σ取数 above `min(Σ预算, 30)`.
+ *      `claims:fetches:<sum>>trace:<n>`           Σ取数 above the trace's own
+ *                                                read-class `tool_call` count
+ *                                                (B-6: an upper bound — you
+ *                                                cannot honestly report more
+ *                                                fetches than you performed).
+ *   ⑥ `claim:<id>:carried-from`                 a closed/partial row whose every
+ *      cited file predates this run's task.md and carries no `carried-from:`:
+ *      the previous round's verdict was copied without saying so.
+ *
+ * Never throws. `claims.length === 0` (no contract) returns `[]`, and an unknown
+ * `taskMtimeMs` skips ⑥ rather than guessing a clock.
+ */
+export function claimSettlementGaps(opts: {
+	claims: Claim[];
+	table: VerdictTable;
+	/** Task type whose role sets the ② threshold (`roleForTaskType`). */
+	role: string;
+	/** `[FLOW] tool_call` read-class count of this run (D-008). */
+	traceReads: number;
+	/** mtime of this run's task.md — the clock a "fresh" citation must beat. */
+	taskMtimeMs?: number;
+	/** Root the evidence paths resolve against (launcher cwd in production). */
+	projectDir?: string;
+}): string[] {
+	const gaps: string[] = [];
+	if (opts.claims.length === 0) return gaps;
+	const declared = new Set(opts.claims.map((claim) => claim.id));
+	const rows: VerdictTable["rows"] = [];
+	const seen = new Set<string>();
+	for (const row of opts.table.rows) {
+		if (!declared.has(row.id) || seen.has(row.id)) continue;
+		seen.add(row.id);
+		rows.push(row);
+	}
+
+	// ② unverified share (integer permille so the boundary is exact: `>` not `>=`).
+	const limitPermille = Math.round(
+		opts.role === "review" ? CLAIM_UNVERIFIED_MAX_REVIEW * 1000 : CLAIM_UNVERIFIED_MAX_DEFAULT * 1000,
+	);
+	const unverified = rows.filter((row) => claimVerdictToken(row.verdict) === "unverified").length;
+	if (opts.claims.length > 0 && unverified * 1000 > opts.claims.length * limitPermille) {
+		gaps.push(`claims:unverified-ratio:${unverified}/${opts.claims.length}>${limitPermille / 10}%`);
+	}
+
+	// ③ Σ取数 against the derived cap and the trace's own read count.
+	let fetchSum = 0;
+	for (const row of rows) {
+		const fetches = Number(row.fetches.replace(/`/g, "").trim());
+		if (Number.isInteger(fetches) && fetches >= 0) fetchSum += fetches;
+	}
+	const { fileCap } = claimBudgetCaps(opts.claims);
+	if (fetchSum > fileCap) gaps.push(`claims:fetches:${fetchSum}>${fileCap}`);
+	if (fetchSum > opts.traceReads) gaps.push(`claims:fetches:${fetchSum}>trace:${opts.traceReads}`);
+
+	// ⑥ carried-from: a re-used previous-round verdict must say so.
+	const projectDir = opts.projectDir ?? process.cwd();
+	if (opts.taskMtimeMs !== undefined) {
+		for (const row of rows) {
+			const verdict = claimVerdictToken(row.verdict);
+			if (verdict !== "closed" && verdict !== "partial") continue;
+			if (CARRIED_FROM_RE.test(`${row.evidence} ${row.reason}`)) continue;
+			const files = claimEvidencePaths(row.evidence).map((file) => path.resolve(projectDir, file));
+			if (files.length === 0) continue;
+			let staleOnly = true;
+			for (const file of files) {
+				try {
+					if (!(fs.statSync(file).mtimeMs < opts.taskMtimeMs)) {
+						staleOnly = false;
+						break;
+					}
+				} catch {
+					// Missing file: the `:evidence` criterion owns it, not this one.
+					staleOnly = false;
+					break;
+				}
+			}
+			if (staleOnly) gaps.push(`claim:${row.id}:carried-from`);
+		}
+	}
+	return gaps;
 }
 
 // ── Trace helpers ────────────────────────────────────────────────────────────
@@ -2553,7 +2941,13 @@ export function emitRagRequiredMissing(check: RagRequiredCheck): string | null {
 
 // ── Main entry ───────────────────────────────────────────────────────────────
 
-export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
+export interface WorkerModeOptions {
+	/** Test seam for the dp3 decision service (production uses the triage
+	 * client's `runDecideMw`, which reuses `findMwPy()` + `PYTHON_EXE`). */
+	dp3Runner?: DecideRunner;
+}
+
+export async function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeOptions): Promise<void> {
 	const taskPathEnv = process.env.PI_WORKER_TASK;
 	if (!taskPathEnv) {
 		return;
@@ -2851,9 +3245,103 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	// handler stays idempotent across phase/follow-up turns (D-002); a null
 	// runtime reproduces the pre-RAG `setActiveTools(toolsForType(type))` byte
 	// for byte.
+	// dp2 narrow steer (T-07b): this is the primary consumption point of
+	// `steer-dp2.md` — the file the PM writes INSTEAD of waking itself. Same
+	// handler because both are per-run, idempotent and must run before the turn.
+	let dp2SteerInjected = false;
+	/** Consume `<taskDir>/steer-dp2.md` once. Returns true when a steer was
+	 * injected in THIS call (the settle path then keeps the run open so the
+	 * queued follow-up turn actually executes). Never throws: a broken steer must
+	 * not change the terminal verdict — it is reported on trace.log instead. */
+	function consumeDp2NarrowSteer(via: "before_agent_start" | "settle"): boolean {
+		const steerPath = path.join(taskDir, DP2_STEER_FILE);
+		let content: string;
+		try {
+			content = fs.readFileSync(steerPath, "utf8");
+		} catch (err) {
+			// Absent file is the normal state (no dp2 narrow request): zero trace.
+			if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+				appendTrace(meta.taskKey, meta.agenticdocRoot, "[DECISION] dp2 consume-failed reason=read");
+			}
+			return false;
+		}
+		if (dp2SteerInjected || hasDp2ConsumedMarker(content)) return false;
+		const text = formatDp2NarrowSteer(content);
+		if (text === undefined) {
+			// Header-only / empty request: nothing to inject, and no marker either
+			// (marking it consumed would assert a steer that never existed).
+			appendTrace(meta.taskKey, meta.agenticdocRoot, "[DECISION] dp2 consume-failed reason=empty");
+			return false;
+		}
+		try {
+			pi.sendUserMessage(text, { deliverAs: "followUp" });
+		} catch {
+			appendTrace(meta.taskKey, meta.agenticdocRoot, "[DECISION] dp2 consume-failed reason=inject");
+			return false;
+		}
+		dp2SteerInjected = true;
+		// Marker AFTER a delivered injection: a crash in between replays the steer
+		// (at-least-once) instead of silently swallowing it (fail-open).
+		let marked = false;
+		try {
+			marked = appendDp2ConsumedMarker(steerPath, content, runState.run_id);
+		} catch {
+			marked = false;
+		}
+		if (!marked) {
+			appendTrace(meta.taskKey, meta.agenticdocRoot, "[DECISION] dp2 consume-failed reason=mark");
+		}
+		const decisionId = /decision_id=(\S+)/.exec(content)?.[1] ?? "-";
+		appendTrace(
+			meta.taskKey,
+			meta.agenticdocRoot,
+			`[DECISION] dp2 consumed=1 decision_id=${decisionId} via=${via} marker=${marked ? "ok" : "failed"}`,
+		);
+		return true;
+	}
 	pi.on("before_agent_start", () => {
 		applyRagTools(pi, ragRuntime, meta.type);
+		consumeDp2NarrowSteer("before_agent_start");
 	});
+
+	// W8: the decision role's fixed contract + its two runtime guards. The prompt
+	// is appended to the system prompt of EVERY turn (not a one-shot message), so
+	// a compacted context cannot lose "do not send, do not edit code"; the guards
+	// enforce the two shapes the prompt alone cannot prevent (a mutating bash
+	// command, a write outside the books dir). Inert for every other type.
+	if (meta.type === DECIDE_PREPARE_TYPE) {
+		const allowSend = decisionAllowsSend(taskContent);
+		pi.on("before_agent_start", (event) => {
+			if (event.systemPrompt.includes(DECISION_TYPE_PROMPT)) return undefined;
+			return { systemPrompt: `${event.systemPrompt}\n\n${DECISION_TYPE_PROMPT}` };
+		});
+		pi.on("tool_call", (event) => {
+			if (event.toolName === "bash") {
+				const command = (event.input as { command?: unknown } | undefined)?.command;
+				if (typeof command !== "string" || command.trim() === "") return undefined;
+				const reason = decisionBashBlockReason(command, allowSend);
+				if (reason === null) return undefined;
+				appendTrace(
+					meta.taskKey,
+					meta.agenticdocRoot,
+					`[DECISION] bash blocked allow_send=${allowSend ? "yes" : "no"}`,
+				);
+				return { block: true, reason };
+			}
+			if (event.toolName === WORKER_FILE_TOOL) {
+				const file = (event.input as { path?: unknown } | undefined)?.path;
+				if (typeof file !== "string" || decisionWorkerFilePathAllowed(file)) return undefined;
+				appendTrace(meta.taskKey, meta.agenticdocRoot, "[DECISION] worker_file blocked outside evidence/books");
+				return {
+					block: true,
+					reason:
+						`decision: this role writes only ${DECISION_BOOK_SUBDIR}/** ` +
+						`(got ${JSON.stringify(file)}); the book is the whole product.`,
+				};
+			}
+			return undefined;
+		});
+	}
 
 	// Read-scope interceptor (D-106): read/ls/find/grep share one containment
 	// gate. ls/find/grep default to the cwd (= project root) when their path
@@ -3545,9 +4033,14 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	// - initialSettled: true once the first agent_settled fires (after pi -p <task_content>)
 	// - nextPhaseIdx: index of the next phase prompt to send (or phases.length when all sent)
 	// - completedPhaseIdx: index of the phase whose output should be written on current settle
+	// - phaseMachineComplete: the last phase's output/goal-check was already written.
+	//   `taskDone` alone cannot carry this any more: a dp3 auto-answer keeps the
+	//   process alive past the final settle, so a later settle must NOT re-emit
+	//   `[GOAL_CHECK]`/`[PHASE] done` for a phase that already landed (invariant 5).
 	let initialSettled = false;
 	let nextPhaseIdx = 0;
 	let completedPhaseIdx = 0;
+	let phaseMachineComplete = false;
 	const phases = meta.phases;
 
 	// Heartbeat: a [HEARTBEAT] line every HEARTBEAT_INTERVAL_MS, written by pure
@@ -3573,6 +4066,39 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		const tools =
 			toolsUsed.size > 0 ? ` Tools used: ${[...toolsUsed].sort().join(", ")} (${toolCallCount} calls).` : "";
 		return `${base}${tools}`;
+	}
+
+	/** T-04b: mtime of this run's task.md — the clock the AC-008 ⑥
+	 * `carried-from` check compares evidence citations against ("written before
+	 * this task book existed" = a previous round's artifact). `undefined` when
+	 * the file is unreadable: the check then skips rather than inventing a clock. */
+	function taskMtimeMs(): number | undefined {
+		try {
+			return fs.statSync(taskPath).mtimeMs;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** T-04b: the claim gaps this settle would report. Same criteria list
+	 * `readTerminalGaps` folds (`claimCoverage`) PLUS the three AC-008 checks that
+	 * need worker-only inputs; used by the pre-settle self-check, which must name
+	 * the un-settled claims BEFORE the terminal write exists. `[]` for a
+	 * claims-free book (zero branches). */
+	function claimGapsHere(summary: string): string[] {
+		if (meta.claims === undefined) return [];
+		const table = parseVerdictTable(agentProductText(taskDir, summary));
+		return [
+			...claimCoverage(meta.claims, table, { projectDir: process.cwd() }),
+			...claimSettlementGaps({
+				claims: meta.claims,
+				table,
+				role: roleForTaskType(meta.type),
+				traceReads: readCount,
+				taskMtimeMs: taskMtimeMs(),
+				projectDir: process.cwd(),
+			}),
+		];
 	}
 
 	/** AC-007/DD-09: the effort half of `## Exit Reason` — which product file this
@@ -3602,6 +4128,130 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		return judgedType !== undefined && (isWritelessRole(meta.type) || hasReportProduct(taskDir));
 	}
 
+	// dp3 state: the process-level budget (`Dp3Attempted`) bounds the auto-answer
+	// to ONE follow-up round per run, so a second NC can never loop (design Q4.3);
+	// the two counters are the `nc_raw` / `nc_human` metric pair (Q3.3).
+	let dp3RawClarifications = 0;
+	let dp3HumanClarifications = 0;
+	let dp3AutoAnswered = false;
+
+	/** Insert-point hook for dp3 (`finishSuccess`, after `exitCode`, before
+	 * `writeOutputGuarded`). Returns true when an auto-answer was injected — the
+	 * caller then returns WITHOUT writing any terminal product. Every other path
+	 * (3b, suggest, all four degradations, budget spent) returns false and the
+	 * original human path proceeds byte-identically. Never throws. */
+	function attemptDp3Clarification(harnessDetail: string): boolean {
+		try {
+			const projectDir = process.cwd();
+			const policy = readDp3Policy(projectDir);
+			// D-007 complete bypass: a disabled dp3 performs ZERO spawn and ZERO write
+			// (not even a trace row), which is what keeps the closed state identical.
+			if (!policy.enabled) return false;
+			dp3RawClarifications += 1;
+			const triggerId = `${meta.taskKey}#nc${dp3RawClarifications}`;
+			const decisionId = `${DP3_ID}:${triggerId}`;
+			if (dp3AutoAnswered) {
+				// Budget spent: never ask the service twice — the human path resumes.
+				dp3HumanClarifications += 1;
+				appendTrace(
+					meta.taskKey,
+					meta.agenticdocRoot,
+					formatDp3TraceLine({
+						triggerId,
+						acted: false,
+						mode: policy.mode,
+						escalatedReason: "-",
+						decisionId,
+						ncRaw: dp3RawClarifications,
+						ncHuman: dp3HumanClarifications,
+					}),
+				);
+				return false;
+			}
+			const risk = lastCheckpoint?.risk ?? "mid";
+			const decision = decideDp3WorkerClarify({
+				projectDir,
+				taskKey: meta.taskKey,
+				ncIndex: dp3RawClarifications,
+				key: path.basename(path.dirname(meta.agenticdocRoot)),
+				phase: meta.phase ?? "EXECUTE",
+				taskType: dp3TaskType(meta.type),
+				risk,
+				riskSource: lastCheckpoint === undefined ? "pm-label" : "machine",
+				question: lastAssistantText,
+				harnessDetail,
+				taskDir,
+				taskPath,
+				taskContent,
+				trueRoot: meta.trueAgenticdocRoot,
+				keyDir: path.dirname(meta.agenticdocRoot),
+				policy,
+				runner: options?.dp3Runner,
+			});
+			if (decision.kind === "answer" && decision.detail !== undefined) {
+				// FIX-J §5: which local candidate was consumed and from where. The frozen
+				// `[DECIDE]` row keeps its key order, so the detail rides its own line.
+				appendTrace(meta.taskKey, meta.agenticdocRoot, `[DECISION] dp3 detail=${decision.detail}`);
+			}
+			if (decision.kind === "answer" && decision.mode === "auto") {
+				// D-041: adoption happens HERE, at the point that injects the steer.
+				// The child's own `acted` only says Python did not execute the action
+				// itself; the auto-answered clarification IS the consumed decision.
+				// `decision.mode` is Python's verdict on the spawned path (D-036).
+				const actedDecision = { ...decision, acted: true };
+				dp3AutoAnswered = true;
+				appendTrace(
+					meta.taskKey,
+					meta.agenticdocRoot,
+					formatDp3TraceLine({
+						triggerId,
+						sub: actedDecision.sub,
+						acted: actedDecision.acted === true,
+						mode: actedDecision.mode,
+						escalatedReason: "-",
+						decisionId: actedDecision.decisionId,
+						ncRaw: dp3RawClarifications,
+						ncHuman: dp3HumanClarifications,
+					}),
+				);
+				// Association marker (same shape dp2 uses): the one line a settle/
+				// report can correlate without parsing the frozen `[DECIDE]` row.
+				appendTrace(
+					meta.taskKey,
+					meta.agenticdocRoot,
+					`[DECISION] dp3 acted=1 decision_id=${actedDecision.decisionId}`,
+				);
+				// The steer carrier (design Q3): a settle-time follow-up turn, the same
+				// mechanism the recovery self-check uses. The original question is never
+				// rewritten and `## Questions` is not written at all yet.
+				pi.sendUserMessage(formatDp3AnswerSteer(actedDecision, lastAssistantText), { deliverAs: "followUp" });
+				return true;
+			}
+			// Every other outcome is the human path: 3b by default, `suggest` mode,
+			// low confidence, unavailable service, incomplete input, budget spent.
+			dp3HumanClarifications += 1;
+			appendTrace(
+				meta.taskKey,
+				meta.agenticdocRoot,
+				formatDp3TraceLine({
+					triggerId,
+					sub: decision.sub,
+					acted: false,
+					mode: decision.kind === "answer" ? decision.mode : policy.mode,
+					escalatedReason: decision.kind === "escalate" ? decision.reason : "-",
+					decisionId,
+					ncRaw: dp3RawClarifications,
+					ncHuman: dp3HumanClarifications,
+				}),
+			);
+			return false;
+		} catch {
+			// Structural fail-soft: a bug in the dp3 hook must never change the
+			// terminal verdict. The caller falls through to the original NC path.
+			return false;
+		}
+	}
+
 	/** Success path. Does NOT process.exit: this handler runs inside pi's
 	 * agent_settled emit — returning lets pi's print mode resolve, print the
 	 * final assistant message to stdout (captured as worker.log), flush, and
@@ -3611,10 +4261,15 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 		// AC-010②: a second settle in the same process is a no-op — without this the
 		// append-only writer (output-writer.ts D-117) adds a second harness block,
 		// a second `[END]` and (for an NC run) a second no-product alarm.
+		// The terminal lock itself is taken LOWER DOWN, after the dp3 clarification
+		// hook: an auto-answered NC must return with the run still open (T-06).
 		if (taskDone) return;
-		taskDone = true;
-		clearWatchdogTimers();
-		clearInterval(heartbeat);
+		// dp2 narrow steer (T-07b): a request that arrived while this turn was
+		// running is consumed HERE, before the terminal write-out. It is injected as
+		// a followUp and the run stays OPEN (no terminal product, timers armed), so
+		// the queued turn actually executes — the same carrier dp3 uses. The
+		// consumed marker bounds this to one extra turn per request.
+		if (consumeDp2NarrowSteer("settle")) return;
 		// AC-006 (contract C5): a writeless role that settles without a product is
 		// needs-clarification, not done. Judged here — before the single write-out —
 		// so the output.md marker, `## Questions`, run.json.status and `[END] exit=`
@@ -3660,7 +4315,35 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			agenticdocRoot: meta.agenticdocRoot,
 			summary: buildSummary(),
 			judgeRecovery,
+			// T-04b/D-003: the card's claim set (from task.md) rides the SAME single
+			// decision point as the recovery contract and the change ledger. Absent
+			// (`undefined`) ⇒ `readTerminalGaps` returns a field-identical verdict to
+			// the pre-claim one, so a claims-free book keeps this path byte-identical.
+			claims: meta.claims,
 		});
+		// ── AC-008 settlement criteria (T-04b) ─────────────────────────────────
+		// ② unverified share, ③ Σ取数 upper bounds and ⑥ carried-from need inputs
+		// only this layer holds (role, run clock, trace read count), so they are
+		// computed here and folded into the SAME `gaps` object. No second decision
+		// point and no reordering: the ONE terminal fold below (`delivered &&
+		// gaps.ok`) stays the only place an exit code is decided, and
+		// `worker/output-*.ts` stay frozen (T-04a owns the per-claim criteria).
+		const claimsTable =
+			meta.claims === undefined ? undefined : parseVerdictTable(agentProductText(taskDir, buildSummary()));
+		if (meta.claims !== undefined && claimsTable !== undefined && judgeRecovery) {
+			const settlementGaps = claimSettlementGaps({
+				claims: meta.claims,
+				table: claimsTable,
+				role: roleForTaskType(meta.type),
+				traceReads: readCount,
+				taskMtimeMs: taskMtimeMs(),
+				projectDir: process.cwd(),
+			});
+			if (settlementGaps.length > 0) {
+				gaps.claimGaps = [...(gaps.claimGaps ?? []), ...settlementGaps];
+				gaps.ok = false;
+			}
+		}
 		const exitCode: 0 | 2 = evidence.delivered && gaps.ok ? 0 : 2;
 		// AC-007/DD-09: carry the settle-time artifacts into the product so a
 		// `## Deliverables` section can list them (the writer drops output.md and
@@ -3675,7 +4358,43 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			gaps.unjudgeableFiles.length > 0
 				? `unjudgeable write(s) (trace has no [WRITE_FILE] event): ${gaps.unjudgeableFiles.join(", ")}`
 				: "";
-		const gapsReason = [gapReason, ledgerReason, unjudgeableReason].filter((part) => part !== "").join("; ");
+		// T-04b: the claim half of the settle reason. `claimGaps` exists only when
+		// the run carries a claim contract, so a claims-free book keeps this list —
+		// and therefore `## Questions` / `## Exit Reason` — byte-identical.
+		const claimIds = claimGapIds(gaps.claimGaps ?? []);
+		const claimReason =
+			claimIds.length > 0
+				? `unsettled claim(s): ${claimIds.join(", ")}`
+				: (gaps.claimGaps?.length ?? 0) > 0
+					? `unsettled claims: ${(gaps.claimGaps ?? []).join(", ")}`
+					: "";
+		const gapsReason = [gapReason, ledgerReason, unjudgeableReason, claimReason]
+			.filter((part) => part !== "")
+			.join("; ");
+		// The exact `## Questions` body this run would land. It is computed ONCE so
+		// the dp3 hook and the original human path read the same string: every
+		// degradation falls through with this value byte-identical (design Q4.1).
+		const questionsText = evidence.delivered
+			? gaps.ok
+				? undefined
+				: `recovery-incomplete: ${gapsReason}`
+			: `no-product: ${evidence.detail}`;
+		// ── dp3 clarification substitution (mw-decision-substitution T-06) ──────
+		// The ONLY insertion point (design Q1.2): every dp3 input is in scope here
+		// (`evidence`, `gaps`, `lastAssistantText`), the NC product is NOT written
+		// yet, the terminal run record is not committed, and this process can still
+		// continue the same run. An auto-answer returns WITHOUT closing the run:
+		// `taskDone` stays false and the watchdog/heartbeat timers stay armed, so the
+		// next settle re-judges the same predicates and only the human path (or a
+		// delivered product) commits a terminal state.
+		if (exitCode === 2 && attemptDp3Clarification([evidence.detail, gapsReason].filter((p) => p !== "").join("; "))) {
+			return;
+		}
+		// Terminal from here on: take the lock, stop the liveness timers and land
+		// the single write-out exactly as before (byte-identical when dp3 is off).
+		taskDone = true;
+		clearWatchdogTimers();
+		clearInterval(heartbeat);
 		writeOutputGuarded({
 			taskKey: meta.taskKey,
 			agenticdocRoot: meta.agenticdocRoot,
@@ -3688,11 +4407,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 					? `Agent settled after ${toolCallCount} tool call(s). ${effort}`
 					: `Agent settled after ${toolCallCount} tool call(s) without a recoverable product (${gapsReason}). ${effort}`
 				: `Agent settled after ${toolCallCount} tool call(s) without a deliverable: ${evidence.detail} ${effort}`,
-			questions: evidence.delivered
-				? gaps.ok
-					? undefined
-					: `recovery-incomplete: ${gapsReason}`
-				: `no-product: ${evidence.detail}`,
+			questions: questionsText,
 			terminalGaps: gaps,
 		});
 		if (!evidence.delivered) {
@@ -3717,6 +4432,18 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 				taskDir: path.dirname(taskPath),
 			});
 		}
+		// T-04b/AC-008: the independent `[CLAIMS]` evidence row (design D-004 — a
+		// line of its own, never folded into `[END]`) and the `run.json` `claims`
+		// subobject T-05 reads back. Written ONCE per run, immediately before the
+		// terminal bookkeeping (`recordEnd` -> `[END]` + `finishRun`), so the trace
+		// line and the persisted record carry the same counters. A claims-free book
+		// writes NEITHER (no line, no key: T-05 treats an absent key as "not
+		// measured" and renders n/a instead of a fabricated zero).
+		if (meta.claims !== undefined && claimsTable !== undefined) {
+			const counts = claimCounts(meta.claims, claimsTable, readCount);
+			runState.claims = counts;
+			appendClaimsTraceLine(meta.taskKey, meta.agenticdocRoot, counts);
+		}
 		recordEnd(exitCode);
 		outputWritten = true;
 	}
@@ -3733,20 +4460,29 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 	 * the immediate no-product verdict (AC-006/C5 alarm is never delayed). */
 	function settleOrSelfCheck(): void {
 		if (judgedType !== undefined && (isWritelessRole(meta.type) || hasReportProduct(taskDir))) {
+			const summary = buildSummary();
 			const missing = currentRecoveryMissing({
 				taskKey: meta.taskKey,
 				agenticdocRoot: meta.agenticdocRoot,
-				summary: buildSummary(),
+				summary,
 				type: judgedType,
 			});
+			// T-04b: claim gaps are a SEPARATE list with a separate render, but they
+			// share this trigger and the one-shot `selfCheckSent` state (design §3.3:
+			// no second boolean — the I1 invariant is "one self-check turn per
+			// process", not "one per criterion family").
+			const claimGaps = claimGapsHere(summary);
+			const claimIds = claimGapIds(claimGaps);
 			// Parseable machine record of the gap the worker is about to receive
 			// (AC-004): `[FLOW] <ts> recovery-gap missing=<a|b> selfcheck=<...>`.
+			// The claim half is appended only when the run has an unsettled claim, so
+			// a claims-free book keeps the line byte-identical.
 			appendTrace(
 				meta.taskKey,
 				meta.agenticdocRoot,
 				`recovery-gap missing=${missing.length > 0 ? missing.join("|") : "-"} selfcheck=${
 					selfCheckSent ? "sent" : "pending"
-				}`,
+				}${claimGaps.length > 0 ? ` claims=${claimIds.length > 0 ? claimIds.join("|") : "-"}` : ""}`,
 			);
 			const substantive = missing.filter((name) => !isMechanicalSection(name));
 			// T-13/D-015 (option C): the follow-up turn exists so the agent can fix
@@ -3763,16 +4499,31 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 			const isDelivered = isWritelessRole(meta.type)
 				? hasDeliverableEvidence(taskDir, lastAssistantText).delivered
 				: true;
-			if (!selfCheckSent && substantive.length > 0 && isDelivered) {
+			if (!selfCheckSent && (substantive.length > 0 || claimGaps.length > 0) && isDelivered) {
 				selfCheckSent = true;
+				const recoveryText =
+					substantive.length > 0
+						? `你的产物缺少恢复契约段：${substantive.join(
+								"、",
+							)}。请在 report.md / output.md 中用 \`## <段名>\` 标题补上这些段落`
+						: "";
+				// AC-008 ②/⑥ and the per-claim criteria: name the FIRST un-settled claim
+				// id so the agent has one concrete row to fix first, then the machine
+				// tokens behind it.
+				const claimText =
+					claimGaps.length > 0
+						? `产物中的 \`## 断言裁决\` 未结算 ${
+								claimIds.length > 0 ? claimIds.join("、") : "-"
+							}（首个缺失 claim id：${claimIds[0] ?? "-"}），缺项：${claimGaps.join("; ")}`
+						: "";
 				// Reuse the checkpoint steer carrier (followUp): the agent is settled,
 				// so this queues one more turn instead of resuming mid-generation.
-				pi.sendUserMessage(
-					`[mw recovery self-check] 你的产物缺少恢复契约段：${substantive.join(
-						"、",
-					)}。请在 report.md / output.md 中用 \`## <段名>\` 标题补上这些段落，然后重新收尾；本进程只自检一次，之后按实际产物判定。`,
-					{ deliverAs: "followUp" },
-				);
+				// A claims-free run keeps the pre-T-04b sentence byte for byte.
+				const steerText =
+					claimText === ""
+						? `${recoveryText}，然后重新收尾；本进程只自检一次，之后按实际产物判定。`
+						: `${[recoveryText, claimText].filter((part) => part !== "").join("；另：")}。然后重新收尾；本进程只自检一次，之后按实际产物判定。`;
+				pi.sendUserMessage(`[mw recovery self-check] ${steerText}`, { deliverAs: "followUp" });
 				return;
 			}
 		}
@@ -3870,8 +4621,9 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 				return;
 			}
 
-			// A phase just completed: write its output file and goal-check trace
-			if (phases) {
+			// A phase just completed: write its output file and goal-check trace. The
+			// guard keeps a post-dp3-answer settle from re-processing a finished phase.
+			if (phases && !phaseMachineComplete) {
 				const phaseIndex = completedPhaseIdx;
 				writePhaseFile(
 					meta.taskKey,
@@ -3894,6 +4646,7 @@ export async function workerModeActivate(pi: ExtensionAPI): Promise<void> {
 					nextPhaseIdx++;
 					return;
 				}
+				phaseMachineComplete = true;
 			}
 
 			// All phases done (or no phases after initial settle)
@@ -4027,8 +4780,14 @@ function dropHeredocBodies(tokens: ShellToken[]): ShellToken[] {
 /** `RunState` plus the model-exhausted protocol extension (plan §3 / design §4):
  * `model_exhausted: true` marks an exit-3 terminal record. run-store.ts stays
  * untouched (outside this task's write face); the extra key rides on this local
- * alias and is serialized as a plain JSON property by `writeRunState`. */
-type WorkerRunState = RunState & { model_exhausted?: boolean };
+ * alias and is serialized as a plain JSON property by `writeRunState`.
+ *
+ * T-04b adds the optional `claims` subobject (design §3.4): the worker is the
+ * only writer of `run.json`, so the settle layer persists its own claim
+ * counters here — `shared/run-store.ts` stays untouched for the same reason.
+ * The key is ABSENT (not zeroed) on a claims-free run, which is exactly what
+ * T-05's `readRunClaims` treats as "not measured". */
+type WorkerRunState = RunState & { model_exhausted?: boolean; claims?: ClaimCounts };
 
 /** `PI_WORKER_TRIED_MODELS` csv -> ordered, deduped model labels
  * (`provider/model`). The launcher seeds it with the main model and every
@@ -4090,4 +4849,1017 @@ export interface ModelErrChainEntry {
 export function formatModelUnavailableReason(entries: readonly ModelErrChainEntry[], lastError: string): string {
 	const tried = entries.length > 0 ? entries.map((entry) => `${entry.model}(${entry.runs})`).join(",") : "-";
 	return `model unavailable: tried=${tried} last=${truncateModelErrText(lastError)}`;
+}
+
+// ── dp2 narrow steer consumption (mw-decision-substitution T-07b) ───────────
+//
+// `pm/pm-orchestrator.ts` replaces the divergence wake with a
+// `<taskDir>/steer-dp2.md` request when dp2 answers `narrow`. This module is the
+// ONLY reader of that file: an unconsumed request is the fail-open DS-4 forbids
+// — the decision suppressed the PM wake (a displaySummary, no triggerTurn) and
+// nothing reached the worker, so the task stalls and no human ever learns.
+//
+// Contract:
+// - two consumption points: `before_agent_start` (the normal case) and the
+//   settle path inside `finishSuccess` (a request that arrived mid-turn);
+// - idempotency lives in the file itself: the injected steer is followed by a
+//   `[dp2-consumed <runId> <ISO ts>]` line, so a restart re-reads the same file
+//   and never replays it (the process-local flag only covers a failed mark);
+// - injection is `pi.sendUserMessage(text, { deliverAs: "followUp" })` behind
+//   the fixed `[mw dp2-narrow]` prefix (DS-7: machine-attributable);
+// - every failure is a trace row (`[DECISION] dp2 consume-failed reason=…`),
+//   never a throw — a broken steer must not change the terminal verdict.
+
+/** Marker line written into `steer-dp2.md` after a delivered injection. */
+export const DP2_CONSUMED_MARKER = "[dp2-consumed";
+
+/** True when the request file already carries a consumption marker (any run). */
+export function hasDp2ConsumedMarker(content: string): boolean {
+	return content.split(/\r?\n/).some((line) => line.trim().startsWith(DP2_CONSUMED_MARKER));
+}
+
+/** The injected text of one steer request: the machine request header is a
+ * transport artifact, not a directive, so it is dropped; the directive keeps the
+ * `[mw dp2-narrow]` attribution prefix (added only when it is not there yet).
+ * `undefined` when nothing is left to inject (empty / header-only file) — an
+ * empty steer is not a steer. */
+export function formatDp2NarrowSteer(content: string): string | undefined {
+	const body = content
+		.split(/\r?\n/)
+		.filter(
+			(line) =>
+				line.trim() !== "" &&
+				!line.trim().startsWith(DP2_CONSUMED_MARKER) &&
+				!line.startsWith(DP2_STEER_REQUEST_HEADER),
+		)
+		.join("\n")
+		.trim();
+	if (body === "") return undefined;
+	return body.startsWith(DP2_NARROW_MARKER) ? body : `${DP2_NARROW_MARKER} ${body}`;
+}
+
+/** Atomically append the consumption marker to the request file. The file stays
+ * the single source of truth for "this steer was already injected", so the
+ * append is a tmp+rename replacement, never a partial write. */
+export function appendDp2ConsumedMarker(steerPath: string, content: string, runId: string): boolean {
+	const marker = `${DP2_CONSUMED_MARKER} ${runId} ${new Date().toISOString()}]`;
+	const separator = content === "" || content.endsWith("\n") ? "" : "\n";
+	const tmp = `${steerPath}.consumed.tmp`;
+	try {
+		fs.writeFileSync(tmp, `${content}${separator}${marker}\n`, "utf8");
+		fs.renameSync(tmp, steerPath);
+		return true;
+	} catch {
+		try {
+			fs.rmSync(tmp, { force: true });
+		} catch {
+			// Best-effort cleanup only — the false return already traces the failure.
+		}
+		return false;
+	}
+}
+
+// ── dp3 clarification substitution (mw-decision-substitution T-06) ───────────
+//
+// Insertion point: `finishSuccess()` — after `exitCode` is computed and before
+// `writeOutputGuarded`. Everything below is module-level and deliberately sits
+// AFTER the anchor-pinned shell-lexer helpers (T-17/B-1 pins their absolute
+// lines; new module code must never be inserted above them).
+//
+// Contract (design Q2/Q3/Q4):
+// - triage: 3c local reuse (score >= 0.75 AND a shared exact referent) answers
+//   from the quoted line with zero spawn; 3a fact lookup (no intent word + a
+//   resolvable referent + locator shape) asks the decision service once, and
+//   the answer must carry a `path:line` citation; everything else is 3b (the
+//   default) and goes straight back to the human;
+// - FIX-J: the 3a question set is Jev-native (choice + noul + a dynamic choice),
+//   so the model neither writes prose nor a citation: `buildDp3Candidates`
+//   derives the candidates locally (deterministic, no network), the model picks
+//   one and reports `answerable`, and the injected answer is the local line plus
+//   its local `<path>:<line>`;
+// - fail-soft: every failure normalises to `unavailable` / `low-confidence` /
+//   `input-incomplete` (plus the `input-oversize` refusal, D-028) with ZERO spawn
+//   beyond the one attempt, and the caller falls through to the byte-identical NC
+//   path;
+// - disabled (`readDp3Policy().enabled === false`) is a complete bypass: zero
+//   spawn AND zero write (D-007), so the closed state stays byte-identical;
+// - injection: `pi.sendUserMessage(text, { deliverAs: "followUp" })` behind the
+//   fixed `[mw dp3-answer]` prefix + decision_id (machine-attributable);
+// - metrics: one {@link formatDp3TraceLine} row per clarification event, with
+//   `nc_raw` (clarifications seen) and `nc_human` (those that reached a human).
+//   Every row satisfies `nc_raw = nc_human + acted`.
+
+/** Registry id of the worker-clarification decision point (`decision_points.py`
+ * `DP_REGISTRY`; AC-011: the TS side only holds ids, never a second registry). */
+export const DP3_ID = "dp3-worker-clarify";
+
+/** `questions_version` of `DP3_ID` (`decision_points._questions_version`). */
+export const DP3_QUESTIONS_VERSION = "q-fcbd3847";
+
+/** Fixed attribution prefix of an injected dp3 answer (DS-7 guardrail). */
+export const DP3_ANSWER_PREFIX = "[mw dp3-answer]";
+
+/** Deterministic-reuse threshold of the local matcher (design Q2.2). Built-in
+ * baseline only: the effective value is derived from the resolved
+ * `min_confidence` by {@link dp3Thresholds} (0.75 = 0.7 + 0.05). */
+export const DP3_MIN_MATCH_SCORE = 0.75;
+
+/** Below this score a local match is not even a reuse candidate. */
+export const DP3_BORDERLINE_MATCH_SCORE = 0.6;
+
+/** Built-in baseline of the confidence gate (AC-016 layer 3). The effective
+ * value is `resolveDecidePolicy(DP3_ID, projectDir).minConfidence`. */
+export const DP3_MIN_CONFIDENCE = 0.7;
+
+/** `answerable` (an `noul` probability) below this is a refusal, not an answer:
+ * the model reports it cannot settle the question from the sent candidates.
+ * Built-in baseline only; derived by {@link dp3Thresholds} (0.7 - 0.2 = 0.5). */
+export const DP3_ANSWERABLE_MIN = 0.5;
+
+/** The three dp3 thresholds as a function of the effective `min_confidence`.
+ *
+ * D-050: the decision STRUCTURE does not change — only the numbers are read
+ * from policy instead of the hard-coded constants. The two satellite gates keep
+ * their historic margin to the confidence gate, so the built-in layer (0.7)
+ * reproduces the pre-AC-016 values exactly: 0.75 / 0.7 / 0.5. */
+export function dp3Thresholds(minConfidence: number): {
+	minMatchScore: number;
+	minConfidence: number;
+	answerableMin: number;
+} {
+	const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
+	// Round to 4 decimals: the margin arithmetic above is exact in decimal but
+	// not in IEEE-754 (0.9 + 0.05 = 0.9500000000000001), and the value ends up in
+	// a trace line that must stay readable.
+	const round4 = (value: number): number => Math.round(clamp01(value) * 1e4) / 1e4;
+	return {
+		minMatchScore: round4(minConfidence + (DP3_MIN_MATCH_SCORE - DP3_MIN_CONFIDENCE)),
+		minConfidence,
+		answerableMin: round4(minConfidence - (DP3_MIN_CONFIDENCE - DP3_ANSWERABLE_MIN)),
+	};
+}
+
+/** Hard cap on the local candidate list (`local_candidates`, 1..5). */
+export const DP3_CANDIDATE_LIMIT = 5;
+
+/** Client-side canonical state budget (spec §5.4). */
+export const DP3_MAX_STATE_BYTES = 2_000;
+
+/** Question excerpt carried in the injected steer (L2 stays local). */
+export const DP3_STEER_QUESTION_MAX = 300;
+
+/** Three-way split (spec §4.1): 3a fact, 3b intent, 3c already-answered. */
+export type Dp3Sub = "3a" | "3b" | "3c";
+
+/** Failure vocabulary (AC-005, the four-value set from design Q4) plus
+ * `input-oversize` (D-028: a REFUSAL, not a degradation — the canonical state is
+ * complete, it just cannot be sent, so it must not read as `input-incomplete`).
+ *
+ * This is a worker-local SUBSET of the single shared `escalated_reason`
+ * vocabulary (design D-030 / `decision_points.ESCALATED_REASONS`), which already
+ * contains `input-oversize`. Nothing else in TS shares this union
+ * (`triage-client.ts` and `decision-tool.ts` type the field as `string`), so the
+ * member narrows nothing and widens no outward contract: the legacy
+ * `mw decide run` `reason` field keeps its frozen 8-value transport set, where
+ * `mw.py` maps `input-oversize` onto `budget-exhausted`. */
+export type Dp3EscalatedReason = "disabled" | "unavailable" | "low-confidence" | "input-incomplete" | "input-oversize";
+
+/** Effective dp3 authorization (`decide-points.json`) + transport gate
+ * (`.mw/decide.json`). A missing authorization file/row is the registry default
+ * (P2 → enabled, auto); a missing/invalid transport file is a complete bypass. */
+export interface Dp3Policy {
+	enabled: boolean;
+	/** Advisory mode for the ZERO-SPAWN paths (3b/3c never reach Python) and for
+	 * the metric row. A dp3a answer carries Python's own `mode` in the payload and
+	 * the settle hook prefers THAT (D-036). */
+	mode: "auto" | "suggest";
+	/** Effective `min_confidence` (AC-016): per-dp row > decide.json > 0.7. */
+	minConfidence: number;
+	/** Effective `max_questions` (AC-016). The dp3 question set comes from the
+	 * registry, so this is carried for audit/parity, not for shaping a prompt. */
+	maxQuestions: number;
+	/** Effective `timeout_s` (AC-016): default child budget when the caller has
+	 * no explicit `timeoutMs` override. */
+	timeoutS: number;
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> | undefined {
+	return value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+}
+
+function readJsonRecord(file: string): Record<string, unknown> | undefined {
+	try {
+		return asPlainRecord(JSON.parse(fs.readFileSync(file, "utf8")));
+	} catch {
+		return undefined;
+	}
+}
+
+/** Mirror of the `force_off` half of `decision_points.py::_parse_row`
+ * (decision_points.py:884-968): a non-object row (L2, handled by the caller) or
+ * a row whose `mode`/`note`/`tier` is not a string of the accepted shape, or
+ * whose `enabled` is not a boolean (L3/L5), is `enabled=false` for that dp only.
+ * L4/L7 (tier VALUE outside P0|P1|P2, tier ≠ registry) are advisory and never
+ * disable. Divergence is fixed HERE, in favour of Python `decide_for`. */
+function dp3RowForceOff(row: Record<string, unknown>): boolean {
+	if ("mode" in row && row.mode !== "auto" && row.mode !== "suggest") return true;
+	if ("note" in row && typeof row.note !== "string") return true;
+	if ("tier" in row && typeof row.tier !== "string") return true;
+	return "enabled" in row && typeof row.enabled !== "boolean";
+}
+
+/** Read the dp3 policy fail-soft (AC-001). The transport gate is authoritative:
+ * without `.mw/decide.json` (`enabled === true`) dp3 does nothing at all, which
+ * is what keeps the closed state byte-identical to the pre-dp3 worker.
+ *
+ * NON-AUTHORITATIVE (D-036): `enabled`/`note` pre-read from
+ * `.mw/decide-points.json` exists ONLY to avoid paying for a `mw decide run`
+ * child that Python would reject. The authorization verdict belongs to
+ * `decision_points.decide_for`; if this mirror disagrees, PYTHON WINS. */
+export function readDp3Policy(projectDir: string): Dp3Policy {
+	const transportEnabled = readDecidePolicy(projectDir).enabled;
+	let enabled = true; // registry default for a P2 point
+	let mode: "auto" | "suggest" = "auto";
+	const points = asPlainRecord(readJsonRecord(path.join(projectDir, ".mw", "decide-points.json"))?.points);
+	// A present-but-non-object row (L2) is `enabled=false`; only a MISSING row
+	// falls back to the registry default.
+	const rawRow = points !== undefined && Object.hasOwn(points, DP3_ID) ? points[DP3_ID] : undefined;
+	const row = asPlainRecord(rawRow);
+	if (rawRow !== undefined && row === undefined) enabled = false;
+	if (row !== undefined) {
+		// AC-001: a bad row is `enabled=false` (never a crash, never a guess).
+		if (row.enabled === false || dp3RowForceOff(row)) enabled = false;
+		if (row.mode === "suggest") mode = "suggest";
+	}
+	// AC-016: the three thresholds/limits come from one resolver, so the worker
+	// mirror and Python agree on every layer (parity fixture in the tests).
+	const resolved = resolveDecidePolicy(DP3_ID, projectDir);
+	return {
+		enabled: transportEnabled && enabled,
+		mode,
+		minConfidence: resolved.minConfidence,
+		maxQuestions: resolved.maxQuestions,
+		timeoutS: resolved.timeoutS,
+	};
+}
+
+/** One candidate source of an already-stated answer, already bounded. */
+export interface Dp3ReuseSource {
+	label: string;
+	text: string;
+}
+
+/** Byte-safe truncation (never splits a surrogate pair). */
+function dp3TruncateUtf8(text: string, maxBytes: number): string {
+	if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+	let out = "";
+	let used = 0;
+	for (const char of text) {
+		const size = Buffer.byteLength(char, "utf8");
+		if (used + size > maxBytes) break;
+		out += char;
+		used += size;
+	}
+	return out;
+}
+
+function dp3RelPath(projectDir: string, target: string): string {
+	const rel = path.relative(projectDir, target);
+	return rel !== "" && !rel.startsWith("..") ? rel.replace(/\\/g, "/") : target.replace(/\\/g, "/");
+}
+
+function dp3ReadBounded(file: string, maxBytes: number): string | undefined {
+	try {
+		const text = fs.readFileSync(file, "utf8");
+		return dp3TruncateUtf8(text, maxBytes);
+	} catch {
+		return undefined;
+	}
+}
+
+/** `## [N.] Decisions` section of pm-state.md (the key's settled rulings). */
+function dp3DecisionsSection(text: string): string | undefined {
+	const lines = text.split(/\r?\n/);
+	let start = -1;
+	for (let i = 0; i < lines.length; i++) {
+		if (/^##\s+(?:\d+\.\s*)?Decisions\b/.test(lines[i])) {
+			start = i;
+			break;
+		}
+	}
+	if (start < 0) return undefined;
+	let end = lines.length;
+	for (let i = start + 1; i < lines.length; i++) {
+		if (/^##\s+/.test(lines[i])) {
+			end = i;
+			break;
+		}
+	}
+	return lines.slice(start, end).join("\n");
+}
+
+/** Bounded local reuse corpus, in priority order (design Q2.2): own dispatch
+ * card → sibling cards → goal.md → pm-state `## Decisions`. The session-history
+ * level is deliberately absent (L2: user quotes never leave the machine, and
+ * this card has no session reader). */
+export function readDp3ReuseSources(input: {
+	projectDir: string;
+	taskDir: string;
+	taskPath: string;
+	taskContent: string;
+	trueRoot: string;
+	keyDir: string;
+	siblingLimit?: number;
+	maxBytes?: number;
+}): Dp3ReuseSource[] {
+	const maxBytes = input.maxBytes ?? 8_192;
+	const sources: Dp3ReuseSource[] = [
+		{ label: dp3RelPath(input.projectDir, input.taskPath), text: dp3TruncateUtf8(input.taskContent, maxBytes) },
+	];
+	const workersDir = path.dirname(input.taskDir);
+	const ownName = path.basename(input.taskDir);
+	const limit = input.siblingLimit ?? 5;
+	try {
+		const siblings = fs
+			.readdirSync(workersDir, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory() && entry.name !== ownName)
+			.map((entry) => entry.name)
+			.sort()
+			.slice(0, limit);
+		for (const name of siblings) {
+			const file = path.join(workersDir, name, "task.md");
+			const text = dp3ReadBounded(file, maxBytes);
+			if (text !== undefined) sources.push({ label: dp3RelPath(input.projectDir, file), text });
+		}
+	} catch {
+		// A missing/unreadable workers dir simply yields no sibling source.
+	}
+	const goal = dp3ReadBounded(path.join(input.trueRoot, "goal.md"), maxBytes);
+	if (goal !== undefined)
+		sources.push({ label: dp3RelPath(input.projectDir, path.join(input.trueRoot, "goal.md")), text: goal });
+	const pmStateFile = path.join(input.keyDir, "pm-state.md");
+	const pmState = dp3ReadBounded(pmStateFile, maxBytes);
+	if (pmState !== undefined) {
+		const decisions = dp3DecisionsSection(pmState);
+		if (decisions !== undefined) {
+			sources.push({ label: `${dp3RelPath(input.projectDir, pmStateFile)}:decisions`, text: decisions });
+		}
+	}
+	return sources;
+}
+
+/** Content tokens for the Jaccard score: latin words verbatim + CJK bigrams
+ * (a whitespace split cannot tokenise Chinese prose). */
+export function dp3ContentTokens(text: string): Set<string> {
+	const tokens = new Set<string>();
+	for (const word of text.toLowerCase().match(/[a-z0-9_][a-z0-9_.\-/]*/g) ?? []) tokens.add(word);
+	for (const run of text.match(/[\u4e00-\u9fff]+/g) ?? []) {
+		for (let i = 0; i + 1 < run.length; i++) tokens.add(run.slice(i, i + 2));
+	}
+	return tokens;
+}
+
+/** Exact referents (paths / identifiers / commands / quoted errors) from a
+ * question — the second 3c condition besides the Jaccard score. */
+export function dp3QuestionReferents(text: string): string[] {
+	const out = new Set<string>();
+	for (const match of text.matchAll(/`([^`\n]{2,80})`/g)) {
+		const value = match[1].trim();
+		if (value !== "") out.add(value);
+	}
+	for (const match of text.matchAll(/(?:^|[\s("'`])((?:[\w.@-]+[\\/]){1,}[\w.@-]+)/g)) out.add(match[1]);
+	for (const match of text.matchAll(/"([^"\n]{3,60})"|\u201c([^\n\u201d]{3,60})\u201d/g)) {
+		const value = (match[1] ?? match[2] ?? "").trim();
+		if (value !== "") out.add(value);
+	}
+	for (const match of text.matchAll(/\b(?:npm|npx|node|python3?|pytest|vitest|git|make)\s+[\w:./-]+/g))
+		out.add(match[0]);
+	return [...out].slice(0, 8);
+}
+
+function dp3Jaccard(a: Set<string>, b: Set<string>): number {
+	if (a.size === 0 || b.size === 0) return 0;
+	let shared = 0;
+	for (const token of a) if (b.has(token)) shared += 1;
+	return shared / (a.size + b.size - shared);
+}
+
+/** One local reuse hit. `source` is `<path>:<line>`; `quote` is the raw line. */
+export interface Dp3ReuseMatch {
+	source: string;
+	quote: string;
+	score: number;
+}
+
+/** Deterministic 3c matcher: the best line of each source in priority order,
+ * requiring a shared exact referent AND a content-word Jaccard >= 0.6. The
+ * first source that clears the effective match threshold (default
+ * {@link DP3_MIN_MATCH_SCORE}, derived from `min_confidence` by
+ * {@link dp3Thresholds}) wins (priority order); otherwise the best borderline
+ * hit is returned for the caller to escalate. */
+export function matchDp3Reuse(
+	question: string,
+	sources: readonly Dp3ReuseSource[],
+	minMatchScore: number = DP3_MIN_MATCH_SCORE,
+): Dp3ReuseMatch | undefined {
+	const referents = dp3QuestionReferents(question);
+	if (referents.length === 0) return undefined;
+	const qTokens = dp3ContentTokens(dp3TruncateUtf8(question, 2_000));
+	let best: Dp3ReuseMatch | undefined;
+	for (const source of sources) {
+		const lines = source.text.split(/\r?\n/);
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i].trim();
+			if (line.length < 4) continue;
+			const sharedReferent = referents.find((ref) => line.includes(ref));
+			if (sharedReferent === undefined) continue;
+			const score = dp3Jaccard(qTokens, dp3ContentTokens(dp3TruncateUtf8(line, 2_000)));
+			if (score < DP3_BORDERLINE_MATCH_SCORE) continue;
+			if (best === undefined || score > best.score) {
+				best = { source: `${source.label}:${i + 1}`, quote: dp3TruncateUtf8(line, 300), score };
+			}
+			if (score >= minMatchScore) return best;
+		}
+	}
+	return best;
+}
+
+/** Intent / preference / approval wording — the hard 3b signal (design Q2.1). */
+const DP3_INTENT_RE =
+	/应该|建议|更好|倾向于|偏好|优先|取舍|是否可以|要不要|请确认|需要你|由你|你决定|approve|prefer|should\b|trade-?off/i;
+
+/** Locator / definition / error-shape questions that a fact answer can settle. */
+const DP3_LOCATOR_RE =
+	/在哪|哪里|哪个文件|什么文件|什么命令|怎么(?:运行|跑|执行|用|做)|如何(?:运行|跑|执行)|字段名|签名|定义|位置|报错|为什么|为何|where\b|which file|what file|how (?:do|to|can) i (?:run|use)|field name|signature|defined/i;
+
+/** A fact answer must cite `path:line` (design Q2.2 3a). */
+export const DP3_CITATION_RE = /[\w./-]+\.(?:ts|tsx|js|mjs|cjs|py|json|md|yml|yaml|toml|sh)\s*:\d+/i;
+
+export interface Dp3DecisionInput {
+	projectDir: string;
+	taskKey: string;
+	/** `nc<N>` index of this clarification event inside the run (1-based). */
+	ncIndex: number;
+	key: string;
+	phase: string;
+	taskType: "coding" | "research" | "review";
+	risk: "low" | "mid" | "high";
+	riskSource: "machine" | "pm-label";
+	question: string;
+	harnessDetail: string;
+	taskDir: string;
+	taskPath: string;
+	taskContent: string;
+	trueRoot: string;
+	keyDir: string;
+	policy: Dp3Policy;
+	/** Test seam; production uses the triage client's `runDecideMw`. */
+	runner?: DecideRunner;
+	timeoutMs?: number;
+}
+
+/** Classification + (for 3a) one decision-service call. Never throws. */
+export type Dp3Decision =
+	| {
+			kind: "answer";
+			sub: "3a" | "3c";
+			answer: string;
+			source?: string;
+			decisionId: string;
+			confidence: number | null;
+			confidenceSource: string;
+			/** Effective mode for THIS answer: the child's `payload.mode` when Python
+			 * answered (D-036: mode is an authorization OUTPUT), otherwise the local
+			 * `policy.mode` — the 3c path never spawns, so the mirror is all there is. */
+			mode: "auto" | "suggest";
+			/** D-041: set by the CONSUMING side only — the settle hook that actually
+			 * injected the `[mw dp3-answer]` steer. The classifier never fills it: an
+			 * `answer` from the child is a proposal, not an executed action. */
+			acted?: boolean;
+			/** FIX-J: which local candidate was consumed and from where. The frozen
+			 * `[DECIDE]` row keeps its shape; this rides its own trace line. */
+			detail?: string;
+	  }
+	| {
+			kind: "escalate";
+			sub?: Dp3Sub;
+			reason: Dp3EscalatedReason | "intent";
+			detail: string;
+			decisionId: string;
+	  };
+
+function normalizeDp3Question(text: string): string {
+	return text.replace(/\s+/g, " ").trim();
+}
+
+/** Map an arbitrary worker role onto the dp3 `task_type` enum. A role outside
+ * the enum keeps its nature (write tools → coding, else research) instead of
+ * refusing the decision outright. */
+export function dp3TaskType(type: string): "coding" | "research" | "review" {
+	if (type === "coding" || type === "research" || type === "review") return type;
+	return hasWriteTools(type) ? "coding" : "research";
+}
+
+/** Stopwords of the candidate tokenizer (frozen by FIX-J §2). */
+const DP3_CANDIDATE_STOPWORDS = new Set([
+	"the",
+	"and",
+	"for",
+	"which",
+	"where",
+	"should",
+	"what",
+	"how",
+	"this",
+	"that",
+	"file",
+	"write",
+	"please",
+]);
+
+/** Repo-relative roots searched for candidate files (FIX-J §2). */
+const DP3_CANDIDATE_ROOTS = ["evidence", "docs", "tasks"] as const;
+
+/** Per-root walk budget: at most this many files are listed (names only). */
+const DP3_CANDIDATE_FILES_PER_ROOT = 300;
+
+/** Per-root walk budget: at most this directory depth is descended into. */
+const DP3_CANDIDATE_MAX_DEPTH = 3;
+
+/** `label` budget of a single candidate (FIX-J §2). */
+const DP3_CANDIDATE_LABEL_MAX = 80;
+
+/** One locally generated dp3 candidate. `label` is the bounded repo-relative
+ * path that rides `local_candidates`; `path` is the absolute file the answer is
+ * quoted from (the child never supplies either). */
+export interface Dp3Candidate {
+	id: string;
+	label: string;
+	path: string;
+}
+
+/** Question tokens of the candidate matcher (FIX-J §2): ASCII words of >= 3
+ * chars and CJK runs of >= 2 chars, lowercased, stopwords dropped, first-seen
+ * order (so the line scan below is deterministic). */
+export function dp3CandidateTokens(question: string): string[] {
+	const tokens: string[] = [];
+	const seen = new Set<string>();
+	const push = (raw: string): void => {
+		const token = raw.toLowerCase();
+		if (token === "" || DP3_CANDIDATE_STOPWORDS.has(token) || seen.has(token)) return;
+		seen.add(token);
+		tokens.push(token);
+	};
+	for (const word of question.match(/[A-Za-z0-9]{3,}/g) ?? []) push(word);
+	for (const run of question.match(/[\u4e00-\u9fff]{2,}/g) ?? []) push(run);
+	return tokens;
+}
+
+/** Middle truncation so a label never exceeds {@link DP3_CANDIDATE_LABEL_MAX}. */
+function dp3CandidateLabel(rel: string): string {
+	if (rel.length <= DP3_CANDIDATE_LABEL_MAX) return rel;
+	const keep = DP3_CANDIDATE_LABEL_MAX - 3;
+	const head = Math.ceil(keep / 2);
+	return `${rel.slice(0, head)}...${rel.slice(rel.length - (keep - head))}`;
+}
+
+/** `YYYYMMDD` of the LOCAL day (the convention candidate's stamp). */
+function dp3LocalDateStamp(now: Date = new Date()): string {
+	const month = String(now.getMonth() + 1).padStart(2, "0");
+	const day = String(now.getDate()).padStart(2, "0");
+	return `${now.getFullYear()}${month}${day}`;
+}
+
+/** Bounded, name-only walk: depth <= 3, <= 300 files per root, deterministic
+ * (sorted) order. The candidate search never reads file CONTENT. */
+function dp3CollectCandidateFiles(projectDir: string, rootRel: string, out: string[]): void {
+	const walk = (dirRel: string, depth: number): void => {
+		if (out.length >= DP3_CANDIDATE_FILES_PER_ROOT) return;
+		let entries: fs.Dirent[];
+		try {
+			entries = fs.readdirSync(path.join(projectDir, dirRel), { withFileTypes: true });
+		} catch {
+			return; // a missing/unreadable root contributes nothing (fail-soft)
+		}
+		entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+		for (const entry of entries) {
+			if (out.length >= DP3_CANDIDATE_FILES_PER_ROOT) return;
+			const rel = `${dirRel}/${entry.name}`;
+			if (entry.isDirectory()) {
+				if (depth < DP3_CANDIDATE_MAX_DEPTH) walk(rel, depth + 1);
+			} else if (entry.isFile()) {
+				out.push(rel);
+			}
+		}
+	};
+	walk(rootRel, 1);
+}
+
+/** Deterministic local candidate list for one dp3 question (FIX-J §2): `c1` is
+ * always the convention evidence file of the task type, `c2..c5` are the best
+ * name matches under the four roots, ordered by (hit count desc, path asc). */
+export function buildDp3Candidates(input: Dp3DecisionInput, question: string): Dp3Candidate[] {
+	const folder = input.taskType === "research" ? "evidence/research" : "evidence/runs";
+	const fixedRel = `${folder}/${input.taskKey}-${dp3LocalDateStamp()}.md`;
+	const candidates: Dp3Candidate[] = [
+		{ id: "c1", label: dp3CandidateLabel(fixedRel), path: path.join(input.projectDir, fixedRel) },
+	];
+	const tokens = dp3CandidateTokens(question);
+	if (tokens.length === 0) return candidates;
+	const seen = new Set([fixedRel.toLowerCase()]);
+	const files: string[] = [];
+	for (const root of [...DP3_CANDIDATE_ROOTS, `.agenticdoc/${input.key}`]) {
+		const rootFiles: string[] = [];
+		dp3CollectCandidateFiles(input.projectDir, root, rootFiles);
+		files.push(...rootFiles);
+	}
+	const scored = files
+		.filter((rel) => !seen.has(rel.toLowerCase()))
+		.map((rel) => {
+			const lower = rel.toLowerCase();
+			let hits = 0;
+			for (const token of tokens) if (lower.includes(token)) hits += 1;
+			return { rel, hits };
+		})
+		.filter((entry) => entry.hits > 0)
+		.sort((a, b) => b.hits - a.hits || (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+	for (const entry of scored) {
+		if (candidates.length >= DP3_CANDIDATE_LIMIT) break;
+		if (seen.has(entry.rel.toLowerCase())) continue;
+		seen.add(entry.rel.toLowerCase());
+		candidates.push({
+			id: `c${candidates.length + 1}`,
+			label: dp3CandidateLabel(entry.rel),
+			path: path.join(input.projectDir, entry.rel),
+		});
+	}
+	return candidates;
+}
+
+/** The locally quoted line of a chosen candidate (FIX-J §4): the first line
+ * that hits any question token (case-insensitive), else the first non-empty
+ * line. `undefined` when the file is unreadable or carries no non-empty line. */
+function dp3CandidateLine(file: string, tokens: readonly string[]): { text: string; line: number } | undefined {
+	let content: string;
+	try {
+		content = fs.readFileSync(file, "utf8");
+	} catch {
+		return undefined;
+	}
+	const lines = content.split(/\r?\n/);
+	let first: { text: string; line: number } | undefined;
+	for (let i = 0; i < lines.length; i++) {
+		const text = lines[i].trim();
+		if (text === "") continue;
+		if (first === undefined) first = { text, line: i + 1 };
+		const lower = text.toLowerCase();
+		if (tokens.some((token) => lower.includes(token))) return { text, line: i + 1 };
+	}
+	return first;
+}
+
+/** Resolve the model's `candidate` choice into a LOCALLY quoted answer (FIX-J
+ * §4). Nothing the child wrote in free text reaches `answer`: the text is the
+ * local line, the citation is the local `<path>:<line>`. */
+function resolveDp3CandidateAnswer(
+	input: Dp3DecisionInput,
+	question: string,
+	candidates: readonly Dp3Candidate[],
+	rawCandidate: unknown,
+): { ok: true; answer: string; source?: string; detail: string } | { ok: false; detail: string } {
+	const chosenId = parseAnswerEntry(rawCandidate)?.value;
+	const chosen = chosenId === undefined ? undefined : candidates.find((entry) => entry.id === chosenId);
+	if (chosen === undefined) return { ok: false, detail: `unknown candidate id ${chosenId ?? "-"}` };
+	const rel = dp3RelPath(input.projectDir, chosen.path);
+	const hit = dp3CandidateLine(chosen.path, dp3CandidateTokens(question));
+	if (hit === undefined) return { ok: false, detail: `candidate file unreadable ${rel}` };
+	const answer = `${hit.text.slice(0, 200)} (${rel}:${hit.line})`;
+	return {
+		ok: true,
+		answer,
+		source: DP3_CITATION_RE.exec(answer)?.[0],
+		detail: `candidate=${chosen.id} path=${rel} line=${hit.line} sent=${candidates.map((entry) => entry.id).join(",")}`,
+	};
+}
+
+/** `answerable` is an `noul` probability (0..1) carried as a NUMBER in
+ * `value`, unlike the string-valued entries {@link parseAnswerEntry} handles. */
+function parseDp3Probability(value: unknown): number | undefined {
+	const entry = asPlainRecord(value);
+	if (!entry) return undefined;
+	const raw = entry.value;
+	const numeric = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
+	return Number.isFinite(numeric) ? Math.min(1, Math.max(0, numeric)) : undefined;
+}
+
+function buildDp3State(
+	input: Dp3DecisionInput,
+	question: string,
+	candidates: readonly Dp3Candidate[] = buildDp3Candidates(input, question),
+): Record<string, unknown> {
+	const excerpt = dp3TruncateUtf8(question, 600);
+	// FIX-J: the candidate list IS input data, not part of the question set —
+	// `questions_version` deliberately does not track it (FIX-I frozen contract).
+	const state: Record<string, unknown> = {
+		schema_version: 2,
+		decision_point: DP3_ID,
+		key: input.key,
+		phase: input.phase,
+		task_type: input.taskType,
+		risk: input.risk,
+		risk_source: input.riskSource,
+		authority_tier: "P2",
+		questions_version: DECIDE_REGISTRY[DP3_ID]?.questionsVersion ?? DP3_QUESTIONS_VERSION,
+		task_summary: excerpt,
+		// The ambiguity.kind enum is scope|missing-dep|rule-conflict (the contract
+		// has no `fact` member, so dp3a rides `scope`; the registry question
+		// `answer_kind` carries the real three-way verdict).
+		ambiguity: { kind: "scope", question: dp3TruncateUtf8(question, 300) },
+		local_candidates: candidates.map(({ id, label }) => ({ id, label })),
+	};
+	// W6 (D-052..D-054): the engineered context the model needs to answer without
+	// guessing — a one-line change summary plus the verbatim hit line of every
+	// candidate (first 200 chars + `<path>:<line>`, so a citation is checkable).
+	const contextSlots = DECIDE_REGISTRY[DP3_ID]?.contextSlots ?? [];
+	const context: Record<string, unknown> = {};
+	if (contextSlots.includes("change_summary")) {
+		context.change_summary = dp3TruncateUtf8(`clarification (scope): ${question}`, 600);
+	}
+	if (contextSlots.includes("candidate_snippets")) {
+		const tokens = dp3CandidateTokens(question);
+		const snippets: Array<{ text: string; source: string }> = [];
+		for (const candidate of candidates) {
+			const hit = dp3CandidateLine(candidate.path, tokens);
+			if (hit === undefined) continue;
+			const rel = dp3RelPath(input.projectDir, candidate.path);
+			snippets.push({ text: Array.from(hit.text).slice(0, 200).join(""), source: `${rel}:${hit.line}` });
+		}
+		if (snippets.length > 0) context.candidate_snippets = snippets;
+	}
+	if (Object.keys(context).length > 0) state.context = context;
+	// W6: the registry, not this builder, owns the field list; drift fails loud.
+	assertStateMatchesRegistry(DP3_ID, state);
+	return state;
+}
+
+function parseDecideStdout(stdout: string): Record<string, unknown> | undefined {
+	const trimmed = stdout.trim();
+	if (trimmed === "") return undefined;
+	const candidates = [trimmed, trimmed.split("\n").at(-1) ?? ""];
+	for (const candidate of candidates) {
+		if (candidate === "") continue;
+		try {
+			const parsed = asPlainRecord(JSON.parse(candidate));
+			if (parsed) return parsed;
+		} catch {
+			// try the next candidate
+		}
+	}
+	return undefined;
+}
+
+function parseAnswerEntry(value: unknown): { value?: string; confidence: number | null } | undefined {
+	const entry = asPlainRecord(value);
+	if (!entry) return undefined;
+	const rawValue = entry.value;
+	const text = typeof rawValue === "string" && rawValue.trim() !== "" ? rawValue.trim() : undefined;
+	const rawConfidence = entry.confidence;
+	const confidence =
+		typeof rawConfidence === "number" && Number.isFinite(rawConfidence)
+			? Math.min(1, Math.max(0, rawConfidence))
+			: null;
+	if (text === undefined && confidence === null) return undefined;
+	return { value: text, confidence };
+}
+
+/** Decide one clarification (never throws; the caller owns the trace + steer). */
+export function decideDp3WorkerClarify(input: Dp3DecisionInput): Dp3Decision {
+	const localDecisionId = `${DP3_ID}:${input.taskKey}#nc${input.ncIndex}`;
+	// The id every escalation reports: the locally derived one until the child
+	// answers, then the child's own `decision_id` (D-041: verbatim passthrough).
+	let decisionId = localDecisionId;
+	const escalate = (reason: Dp3EscalatedReason | "intent", sub: Dp3Sub | undefined, detail: string): Dp3Decision => ({
+		kind: "escalate",
+		sub,
+		reason,
+		detail,
+		decisionId,
+	});
+	try {
+		const question = normalizeDp3Question(dp3TruncateUtf8(input.question, 2_000));
+		if (question === "") return escalate("input-incomplete", undefined, "lastAssistantText is empty");
+		if (input.taskKey === "" || input.key === "" || input.phase === "") {
+			return escalate("input-incomplete", undefined, "task context unavailable");
+		}
+		const sources = readDp3ReuseSources({
+			projectDir: input.projectDir,
+			taskDir: input.taskDir,
+			taskPath: input.taskPath,
+			taskContent: input.taskContent,
+			trueRoot: input.trueRoot,
+			keyDir: input.keyDir,
+		});
+		// 3c first: the cheapest, most deterministic path (zero spawn).
+		// AC-016: the three dp3 thresholds follow the effective `min_confidence`
+		// (built-in 0.7 reproduces 0.75 / 0.7 / 0.5 exactly).
+		const thresholds = dp3Thresholds(input.policy.minConfidence);
+		const match = matchDp3Reuse(question, sources, thresholds.minMatchScore);
+		if (match !== undefined) {
+			if (match.score < thresholds.minMatchScore) {
+				return escalate(
+					"low-confidence",
+					"3c",
+					`reuse score ${match.score.toFixed(2)} < ${thresholds.minMatchScore}`,
+				);
+			}
+			return {
+				kind: "answer",
+				sub: "3c",
+				answer: match.quote,
+				source: match.source,
+				decisionId,
+				confidence: match.score,
+				confidenceSource: "local-match",
+				mode: input.policy.mode,
+			};
+		}
+		// 3a gate: no intent wording, a resolvable in-repo referent and a locator
+		// question. Anything else is 3b (the default) and goes back to the human.
+		const intent = DP3_INTENT_RE.test(question);
+		const referents = dp3QuestionReferents(question);
+		const corpus = sources.map((source) => source.text).join("\n");
+		const resolvable = referents.filter((ref) => {
+			if (ref.includes("/") || ref.includes("\\")) {
+				return (
+					fs.existsSync(path.join(input.projectDir, ref)) || fs.existsSync(path.resolve(input.projectDir, ref))
+				);
+			}
+			return corpus.includes(ref);
+		});
+		if (intent || resolvable.length === 0 || !DP3_LOCATOR_RE.test(question)) {
+			const why = intent
+				? "intent wording"
+				: resolvable.length === 0
+					? "no resolvable referent"
+					: "not a locator question";
+			return escalate("intent", "3b", why);
+		}
+		// One decision-service call (stdin JSON only; <=2000B canonical state).
+		// The candidate list is built ONCE: the ids sent in `local_candidates` are
+		// exactly the ids the answer is validated against below.
+		const candidates = buildDp3Candidates(input, question);
+		const state = buildDp3State(input, question, candidates);
+		if (canonicalStateBytes(state) > DP3_MAX_STATE_BYTES) {
+			// D-028: an over-budget state is refused, never sent; the reason is the
+			// distinct `input-oversize` so it cannot be mistaken for a missing field.
+			return escalate("input-oversize", "3a", `canonical state > ${DP3_MAX_STATE_BYTES}B`);
+		}
+		let raw: RawDecideRun;
+		try {
+			raw = (input.runner ?? runDecideMw)({
+				projectDir: input.projectDir,
+				dp: DP3_ID,
+				timeoutMs: input.timeoutMs ?? Math.round(input.policy.timeoutS * 1000),
+				input: JSON.stringify({ state }),
+			});
+		} catch {
+			return escalate("unavailable", "3a", "decision runner threw");
+		}
+		if (raw.timedOut) return escalate("unavailable", "3a", "decision call timed out");
+		if (raw.error !== undefined) return escalate("unavailable", "3a", raw.error);
+		if (raw.status !== 0) return escalate("unavailable", "3a", `decision exit ${raw.status ?? "null"}`);
+		const payload = parseDecideStdout(raw.stdout);
+		if (payload === undefined) return escalate("unavailable", "3a", "non-JSON decision stdout");
+		if (payload.available !== true) {
+			const reason = typeof payload.reason === "string" && payload.reason !== "" ? payload.reason : "upstream-error";
+			return escalate("unavailable", "3a", reason);
+		}
+		// The child is the authority for the id (D-036/D-041): adopt its
+		// `decision_id` when it reported one, else keep the locally derived id.
+		const carriedDecisionId = payload.decision_id;
+		if (typeof carriedDecisionId === "string" && carriedDecisionId.trim() !== "") {
+			decisionId = carriedDecisionId.trim();
+		}
+		const answers = asPlainRecord(payload.answers);
+		const kind = parseAnswerEntry(answers?.answer_kind);
+		// FIX-I removed `clarifying_answer` from the dp3 question set (the model may
+		// not write prose). It is only honoured on the legacy 3c `reuse` path, where
+		// the old behaviour is kept byte-identical for an old-shaped payload.
+		const legacyAnswer = parseAnswerEntry(answers?.clarifying_answer);
+		if (kind?.value === undefined) {
+			return escalate("unavailable", "3a", "decision answer shape is unusable");
+		}
+		const confidenceSource =
+			typeof payload.confidence_source === "string" && payload.confidence_source !== ""
+				? payload.confidence_source
+				: "unknown";
+		// FIX-J: `answerable` carries the noul probability; its `confidence` is the
+		// second choice of the confidence chain (the kind verdict is the first).
+		const answerableEntry = parseAnswerEntry(answers?.answerable);
+		const confidence = kind.confidence ?? answerableEntry?.confidence ?? null;
+		// D-036/D-041: on the spawned path the child's own `mode` is the ONLY
+		// authority on whether the service considers the decision settled. A child
+		// that reports none (or an unknown value) has not said it answered, so the
+		// consumer must not invent `auto` from the local mirror and inject a steer;
+		// it escalates instead. The zero-spawn 3c path above is the only place the
+		// local `policy.mode` is authoritative (there is no child to ask).
+		const childMode = payload.mode;
+		if (childMode !== "auto" && childMode !== "suggest") {
+			return escalate("unavailable", "3a", "decision mode missing");
+		}
+		// Spec §7.2: confidence only gates when the source is `api`.
+		if (confidenceSource === "api" && confidence !== null && confidence < input.policy.minConfidence) {
+			return escalate("low-confidence", "3a", `confidence ${confidence.toFixed(2)} < ${input.policy.minConfidence}`);
+		}
+		if (kind.value === "intent") return escalate("intent", "3b", "model classified the question as intent");
+		if (kind.value === "reuse" && legacyAnswer?.value !== undefined) {
+			// Legacy 3c payloads keep the old behaviour verbatim: the quoted text is
+			// whatever the answer carried, the citation is its `path:line`.
+			return {
+				kind: "answer",
+				sub: "3c",
+				answer: legacyAnswer.value,
+				source: DP3_CITATION_RE.exec(legacyAnswer.value)?.[0],
+				decisionId,
+				confidence,
+				confidenceSource,
+				mode: childMode,
+			};
+		}
+		if (kind.value !== "fact" && kind.value !== "reuse") {
+			return escalate("unavailable", "3a", `unknown answer_kind ${kind.value}`);
+		}
+		// FIX-J: the model neither writes the answer nor its citation. It reports
+		// how answerable the question is and picks one of the candidates it was
+		// sent; the text and the `path:line` come from that LOCAL file.
+		const answerable = parseDp3Probability(answers?.answerable);
+		if (answerable === undefined) {
+			return escalate("unavailable", "3a", "decision answer shape is unusable");
+		}
+		if (answerable < thresholds.answerableMin) {
+			return escalate("unavailable", "3a", `model reports unanswerable (${answerable})`);
+		}
+		const picked = resolveDp3CandidateAnswer(input, question, candidates, answers?.candidate);
+		if (!picked.ok) {
+			// `reuse` still classifies as 3c; everything else is the 3a refusal.
+			return escalate("unavailable", kind.value === "reuse" ? "3c" : "3a", picked.detail);
+		}
+		return {
+			kind: "answer",
+			sub: kind.value === "reuse" ? "3c" : "3a",
+			answer: picked.answer,
+			source: picked.source,
+			decisionId,
+			confidence,
+			confidenceSource,
+			mode: childMode,
+			detail: picked.detail,
+		};
+	} catch {
+		// Structural fail-soft: a bug here must never break a terminal verdict.
+		return { kind: "escalate", reason: "unavailable", detail: "dp3 internal error", decisionId };
+	}
+}
+
+/** The injected steer (DS-7: machine-attributable, never impersonates a human).
+ * The original question is quoted, never rewritten. */
+export function formatDp3AnswerSteer(
+	decision: { sub: "3a" | "3c"; answer: string; source?: string; decisionId: string },
+	question: string,
+): string {
+	const excerpt = dp3TruncateUtf8(normalizeDp3Question(question), DP3_STEER_QUESTION_MAX);
+	const kind = decision.sub === "3a" ? "3a 事实检索" : "3c 已表态引用";
+	const source = decision.source === undefined || decision.source === "" ? "-" : decision.source;
+	return [
+		`${DP3_ANSWER_PREFIX} 你的澄清问题已由自动决策解答（decision_id=${decision.decisionId}，${kind}，非人工输入）。`,
+		`问题：${excerpt}`,
+		`答案：${decision.answer}`,
+		`出处：${source}`,
+		"请基于该答案继续完成任务并正常收尾；若与该出处冲突，以出处内容为准。",
+	].join("\n");
+}
+
+/** One unified dp3 metric row. Key order is FROZEN — the offline statistics
+ * parse `sub`/`acted`/`escalated_reason` and reconcile `nc_raw` against
+ * `nc_human + acted` (Q3.3). `sub=-` means no classifier ran (budget spent). */
+export function formatDp3TraceLine(input: {
+	triggerId: string;
+	sub?: Dp3Sub;
+	acted: boolean;
+	mode: "auto" | "suggest";
+	escalatedReason: Dp3EscalatedReason | "intent" | "-";
+	decisionId: string;
+	ncRaw: number;
+	ncHuman: number;
+	now?: Date;
+}): string {
+	const iso = (input.now ?? new Date()).toISOString();
+	const reason = input.escalatedReason === "intent" ? "-" : input.escalatedReason;
+	return (
+		`[DECIDE] ${iso} dp=${DP3_ID} trigger=${input.triggerId} sub=${input.sub ?? "-"} acted=${input.acted}` +
+		` mode=${input.mode} escalated_reason=${reason} decision_id=${input.decisionId}` +
+		` nc_raw=${input.ncRaw} nc_human=${input.ncHuman}`
+	);
 }

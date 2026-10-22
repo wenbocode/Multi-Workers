@@ -41,6 +41,7 @@ for ``verifier`` (D-106 containment) and omitted otherwise.
 
 from __future__ import annotations
 
+import argparse
 import dataclasses
 import json
 import os
@@ -65,6 +66,9 @@ from autopilot import write_face as write_face_mod  # noqa: E402
 
 _CODING_TOOLS = ("read", "write", "edit", "bash", "find", "grep", "ls")
 _REVIEW_TOOLS = ("read", "find", "grep", "ls")
+#: mw-decision-substitution W8/W10: read-only tools + `bash` (the runtime
+#: narrows the shell to `mw decide book check` / `git diff --stat` / `rg` / `cat`).
+DECIDE_PREPARE_TOOLS = ("read", "find", "grep", "ls", "bash")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -124,6 +128,15 @@ REGISTRY: dict[str, DispatchType] = {
     "vision": DispatchType(
         "vision", _CODING_TOOLS, "pi", "timi", False,
     ),
+    # Decision-book writer (mw-decision-substitution W8, renamed W10):
+    # read-only tools plus a read-only shell subset (the runtime narrows `bash`
+    # further — see worker-mode.ts `decisionBashBlockReason`). It never writes
+    # code: its whole product is one book under `<key>/evidence/books/**`.
+    # Tool order is locked per-item against the TS TOOL_ALLOWLISTS entry.
+    # W10: the type value is `decide_prepare` (was `decision`; no alias kept).
+    "decide_prepare": DispatchType(
+        "decide_prepare", DECIDE_PREPARE_TOOLS, "pi", "timi", False,
+    ),
 }
 
 SCRATCH_OWNER = "_scratch"
@@ -166,6 +179,229 @@ def tool_set(task_type: str) -> tuple[str, ...]:
 def registry_snapshot() -> dict[str, tuple[str, ...]]:
     """type -> tools snapshot for the L0 parity test (T-17)."""
     return {name: entry.tools for name, entry in REGISTRY.items()}
+
+
+# ── decision worker type (mw-decision-substitution W8/W10) ───────────────────
+#
+# A `decide_prepare` worker writes ONE decision book: read the config, collect
+# evidence, fill the skeleton, pass `mw decide book check`, hand the book back.
+# (W10 renamed the type `decision` -> `decide_prepare`; the old value is no
+# longer a registered type or role — no alias.)
+# This block owns the three dispatch-time criteria that make that role safe:
+#
+#   1. the card must declare `- dp:`, `- 证据来源:`, `- 分支后果:` and
+#      `- allow-send:` (missing any one of them is a refusal — the worker
+#      cannot invent its own decision point or send authority);
+#   2. the dp must declare `required_state_fields` in the registry
+#      (`decide_registry.json`): without a field list there is no book to fill
+#      and the book-check gate would be vacuous (dp1/dp2/dp3 today);
+#   3. `allow-send: no` (the default) means the worker may run `book check`
+#      only — the send (`decide run|ask --book`) stays with the PM.
+#
+# The write face is narrowed to `<key>/evidence/books/**`, the one directory a
+# book may live in. A card that declares a wider face still wins (the author's
+# declaration is authoritative, D-113); the task.md then records the
+# `narrowed_by` line so the widening stays visible instead of silent.
+
+DECIDE_PREPARE_TYPE = "decide_prepare"
+DECISION_WRITE_FACE_SUBDIR = "evidence/books"
+
+#: Card bullet labels every decision card must declare (lowercase keys).
+DECISION_CARD_ITEMS = ("dp", "证据来源", "分支后果", "allow-send")
+DECISION_SEND_ITEM = "allow-send"
+DECISION_SEND_YES = "yes"
+DECISION_SEND_NO = "no"
+
+#: Heading of the synthesized task.md section carrying the normalized items.
+DECISION_PARAMS_HEADING = "决策本参数"
+
+#: `- dp: dp3-worker-clarify` / `* 证据来源：x` → ("dp", "dp3-worker-clarify").
+_DECISION_ITEM_RE = re.compile(r"^\s*[-*+]\s*(?:\*\*)?([^:：]{1,32}?)(?:\*\*)?\s*[:：]\s*(.*)$")
+
+
+@dataclasses.dataclass(frozen=True)
+class DecisionIssue:
+    """One refused decision-card criterion (stable code + locator + prose)."""
+
+    code: str
+    path: str
+    detail: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {"code": self.code, "path": self.path, "detail": self.detail}
+
+    def format(self) -> str:
+        return f"{self.code} {self.path}: {self.detail}"
+
+
+def decision_card_fields(text: str) -> dict[str, str]:
+    """Bullet-label map of a decision card: `{label: value}` (first hit wins).
+
+    Wide on purpose (P-03 in the card-judge family): any bullet carrying the
+    label counts, indentation and bold markers included. Labels are folded to
+    lowercase so `Allow-Send:` and `allow-send:` are the same item.
+    """
+    fields: dict[str, str] = {}
+    for raw in str(text or "").splitlines():
+        match = _DECISION_ITEM_RE.match(raw)
+        if match is None:
+            continue
+        label = match.group(1).strip().lower()
+        value = match.group(2).strip().strip("`").strip()
+        if label and label not in fields:
+            fields[label] = value
+    return fields
+
+
+def decision_allows_send(fields: dict[str, str]) -> bool:
+    """Only an explicit `allow-send: yes` authorizes the worker to send.
+
+    Absent/`no`/anything else is the closed state: the worker runs
+    `book check` and stops, the PM sends (card requirement 4)."""
+    return str(fields.get(DECISION_SEND_ITEM, "")).strip().lower() == DECISION_SEND_YES
+
+
+def _decision_registry_points() -> dict[str, dict]:
+    """Read-only registry view (`decide_registry.json`). Import is local so a
+    dispatch path that never sees a `decide_prepare` task pays nothing for the
+    registry build."""
+    import decision_book  # local: read-only view, W8 calls it and never patches it
+
+    return decision_book.registry_points()
+
+
+def decision_card_issues(
+    card_text: str,
+    *,
+    card_path: str = "card",
+    dp: str = "",
+    book: str = "",
+    require_items: bool = True,
+) -> list[DecisionIssue]:
+    """Every refusal of one decision card (empty list = dispatchable).
+
+    ``dp`` / ``book`` are CLI-only overrides: ``dp`` lets the checker validate
+    the registry criterion without a card, ``book`` turns on the send check
+    (`--book` under `allow-send: no`). The four card items are always required
+    on a real dispatch (requirement 4: missing any one is a refusal, not a
+    warning); ``require_items=False`` is the registry-only probe shape.
+    """
+    fields = decision_card_fields(card_text)
+    issues: list[DecisionIssue] = []
+    for item in (DECISION_CARD_ITEMS if require_items else ()):
+        if not fields.get(item, "").strip():
+            issues.append(DecisionIssue(
+                f"missing-item:{item}", card_path,
+                f"decision 卡片缺少 `- {item}:` 条目（缺任一项不得派发）",
+            ))
+    if (send := fields.get(DECISION_SEND_ITEM, "").strip().lower()) and send not in (
+        DECISION_SEND_YES, DECISION_SEND_NO,
+    ):
+        issues.append(DecisionIssue(
+            f"invalid-item:{DECISION_SEND_ITEM}", card_path,
+            f"allow-send 只能是 yes|no（读到 {send!r}；缺省按 no 处理）",
+        ))
+    target_dp = (dp or fields.get("dp", "")).strip()
+    if target_dp:
+        points = _decision_registry_points()
+        point = points.get(target_dp)
+        if point is None:
+            issues.append(DecisionIssue(
+                f"dp-unknown:{target_dp}", card_path,
+                f"dp {target_dp!r} 不在 decide_registry.json（先定义该 dp）",
+            ))
+        elif not (point.get("required_state_fields") or ()):
+            issues.append(DecisionIssue(
+                f"dp-required-state-fields-missing:{target_dp}", card_path,
+                f"dp {target_dp!r} 没有 required_state_fields：先给该 dp 定义必填字段，"
+                "否则没有决策本可填",
+            ))
+    if book and not decision_allows_send(fields):
+        issues.append(DecisionIssue(
+            "book-send-refused", card_path,
+            "allow-send: no（或缺失）时 worker 只能跑 `mw decide book check`；"
+            "`decide run|ask --book` 由 PM 发送",
+        ))
+    return issues
+
+
+def decision_write_face(
+    owner: str, task_key: str, card_entries: Sequence[str] | None
+) -> tuple[list[str], str, str]:
+    """(write_face entries, carrier, `narrowed_by` note) for one decision task.
+
+    ``card_entries is None`` / empty = the card declares no face (or none at
+    all): the type default `<key>/evidence/books/**` is used — that is the
+    narrowing requirement 3 asks for, since the generic writeless face
+    (`<key>/evidence/**`) would let a book land anywhere in the evidence tree.
+    A declared card face always wins (D-113); the third element records whether
+    it was wider than the type default, so the widening lands in task.md as a
+    `narrowed_by` line instead of staying invisible.
+    """
+    default_entry = f".agenticdoc/{owner}/workers/{task_key}/{DECISION_WRITE_FACE_SUBDIR}/**"
+    entries = [str(entry).strip() for entry in (card_entries or ()) if str(entry).strip()]
+    if not entries:
+        return (
+            [default_entry],
+            "type-default",
+            f"type-default:{DECISION_WRITE_FACE_SUBDIR}/** (decide_prepare 类型默认收窄，卡片未声明写入面)",
+        )
+    books_prefix = f".agenticdoc/{owner}/workers/{task_key}/{DECISION_WRITE_FACE_SUBDIR}/"
+    inside = all(entry.replace("\\", "/").startswith(books_prefix) for entry in entries)
+    if inside:
+        return entries, "card", f"card:{DECISION_WRITE_FACE_SUBDIR}/** (卡片面在类型默认面内，无放宽)"
+    return (
+        entries,
+        "card-wider",
+        f"card-wider: 卡片声明面比类型默认面 {books_prefix}** 更宽，以卡片为准",
+    )
+
+
+def decision_params_body(
+    fields: dict[str, str], *, book_path: str, carrier: str, narrowed_by: str
+) -> str:
+    """Body of the synthesized task.md section the worker (and the PM) reads.
+
+    Normalized, ordered, machine-grepable: the four card items first, then the
+    resolved send authority, the book target and the write-face provenance.
+    """
+    send = DECISION_SEND_YES if decision_allows_send(fields) else DECISION_SEND_NO
+    return "\n".join([
+        f"- dp: {fields.get('dp', '').strip()}",
+        f"- 证据来源: {fields.get('证据来源', '').strip()}",
+        f"- 分支后果: {fields.get('分支后果', '').strip()}",
+        f"- allow-send: {send}",
+        f"- book: {book_path}",
+        f"- write_face_carrier: {carrier}",
+        f"- narrowed_by: {narrowed_by}",
+    ])
+
+
+def _read_card_text(project_root: pathlib.Path, owner: str, stem: str) -> str:
+    """Raw text of the dispatch's card file, or "" when there is none."""
+    card_file = pathlib.Path(project_root) / ".agenticdoc" / owner / "tasks" / f"{stem}.md"
+    try:
+        return card_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def decision_dispatch_issues(
+    project_root: pathlib.Path, owner: str, stem: str
+) -> list[DecisionIssue]:
+    """Dispatch-time gate for `type: decide_prepare` (zero side effects on refusal).
+
+    A card-less dispatch is refused: every criterion lives on the card, so
+    there is nothing to fall back to (unlike the internal roles, whose extras
+    are synthesized from metadata).
+    """
+    card_text = _read_card_text(project_root, owner, stem)
+    if not card_text.strip():
+        return [DecisionIssue(
+            "card-missing", f"tasks/{stem}.md",
+            "decide_prepare 派发必须带卡片（dp/证据来源/分支后果/allow-send 都在卡片上）",
+        )]
+    return decision_card_issues(card_text, card_path=f"tasks/{stem}.md")
 
 
 # ── task.md rendering ─────────────────────────────────────────────────────────
@@ -221,7 +457,303 @@ def _inject_rag_block(
     return _strip_rag_block(content).rstrip() + "\n\n" + block + "\n"
 
 
-def _read_scope_caps(project_root: pathlib.Path) -> tuple[int | None, int | None]:
+# ── claims block contract (claim-driven-review T-03, design §2/§3.2) ──────────
+#
+# A card may declare its falsifiable claims in a ``<!-- mw-claims: v1 -->``
+# block: a seven-column table (``claim | 类型 | 陈述 | 反证条件 | 定位 | 判据 |
+# 预算``). The conductor needs exactly two things from it — the parsed claims
+# (so the settle side can compare them against the worker's ``## 断言裁决``
+# table) and the derived read budget (so the worker's cap matches the card it
+# was actually given instead of a fixed 8 files / 65536 B). The gate itself
+# (which gaps refuse a dispatch, which only warn) stays in the TS layer
+# (``shared/dispatch-card.ts``); this module is the parser + budget mirror, so
+# a card without claims keeps the pre-claims renderer byte for byte.
+#
+# The four constants below are the Python half of the single-source contract in
+# design §2.3: ``test_claim_parity.py`` (T-06) compares each of them verbatim
+# against the TS module, the same lock the decision registry uses for
+# ``decision_points.ESCALATED_REASONS`` — that vocabulary drifted once because
+# two modules each kept a copy.
+CLAIM_TYPES: list[str] = ["cmd", "grep", "struct", "manual"]
+UNVERIFIED_REASONS: list[str] = [
+    "budget",
+    "no-access",
+    "not-found",
+    "ambiguous",
+    "environment",
+    "out-of-scope",
+    "awaiting-input",
+]
+CLAIM_GATE_DEFAULT = "advisory"
+CLAIM_BUDGET: dict[str, int] = {
+    "perClaim": 6,
+    "callCap": 30,
+    "hardCap": 35,
+    "claimByteCap": 65536,
+    "byteCapMax": 393216,
+}
+#: Legal gate modes (D-006: advisory by default, enforce is opt-in).
+_CLAIM_GATE_MODES = ("advisory", "enforce")
+
+_CLAIM_BLOCK_START_RE = re.compile(
+    r"^<!--\s*mw-claims\s*:\s*v1\s*-->$", re.IGNORECASE
+)
+_CLAIM_BLOCK_END_RE = re.compile(r"^<!--\s*/\s*mw-claims\s*-->$", re.IGNORECASE)
+#: H2 only (``## x``, not ``###``): the tolerance end of an unterminated block.
+_CLAIM_HEADING_RE = re.compile(r"^##(?!#)\s+")
+#: Fence opener, split into marker + rest so the closer can be recognised.
+_CLAIM_FENCE_RE = re.compile(r"^(`{3,}|~{3,})(.*)$")
+#: ``C-01`` / ``C-01.3`` — the TS parser upper-cases the id it rebuilds.
+_CLAIM_ID_RE = re.compile(r"^C-(\d{2,3})(?:\.(\d+))?$", re.IGNORECASE)
+_CLAIM_SEPARATOR_RE = re.compile(r"^:?-{1,}:?$")
+
+#: Field -> header aliases (P-048 / RQ-3 §5.6): column order is free, extra
+#: columns are ignored, and either script of a header word is accepted. This is
+#: the verbatim mirror of the TS ``CLAIM_COLUMN_ALIASES`` table; full-width
+#: variants are folded before the lookup.
+_CLAIM_COLUMN_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("id", ("claim", "claim id", "claim id /", "断言", "断言 id")),
+    ("type", ("类型", "type", "类别")),
+    ("statement", ("陈述", "statement", "主张", "断言内容")),
+    ("falsifier", ("反证条件", "反证", "falsifier", "refutation")),
+    ("locator", ("定位", "locator", "anchor", "锚点")),
+    ("judgement", ("判据", "judgement", "judgment", "criterion")),
+    ("budget", ("预算", "budget")),
+)
+
+#: Full-width -> half-width folding for the table header/cell scan (the TS
+#: ``normalizeClaimText``): ``：｜``, ideographic space and full-width digits.
+_CLAIM_FULLWIDTH = str.maketrans(
+    {
+        "：": ":", "｜": "|", "　": " ",
+        "０": "0", "１": "1", "２": "2", "３": "3", "４": "4",
+        "５": "5", "６": "6", "７": "7", "８": "8", "９": "9",
+    }
+)
+
+
+def _claim_normalize(text: str) -> str:
+    """Full-width folding + trim (mirror of the TS ``normalizeClaimText``)."""
+    return str(text).translate(_CLAIM_FULLWIDTH).strip()
+
+
+def _claim_strip_ticks(text: str) -> str:
+    """Drop the backticks a card writer wraps a cell value in."""
+    return str(text).replace("`", "").strip()
+
+
+def _advance_claim_fence(line: str, open_marker: str | None) -> str | None:
+    """Fence state after ``line``: the opener marker, or ``None`` outside.
+
+    Same semantics as the TS ``advanceClaimFence``: the closer only closes a
+    fence of the same character with at least its length and nothing after it
+    (a nested ```` ```ts ```` line does not close a ```` ``` ```` fence).
+    """
+    match = _CLAIM_FENCE_RE.match(line)
+    if match is None:
+        return open_marker
+    marker = match.group(1)
+    rest = match.group(2)
+    if open_marker is None:
+        return marker
+    if (
+        marker[0] == open_marker[0]
+        and len(marker) >= len(open_marker)
+        and rest.strip() == ""
+    ):
+        return None
+    return open_marker
+
+
+def _claim_cells(line: str) -> list[str]:
+    """Table cells of one row (mirror of the TS ``splitClaimRow``).
+
+    Full-width ``：``/``｜``/digits are folded first, then the leading/trailing
+    pipes are dropped so both ``| a | b |`` and ``a | b`` shapes work.
+    """
+    parts = _claim_normalize(line).split("|")
+    if parts and parts[0].strip() == "":
+        parts = parts[1:]
+    if parts and parts[-1].strip() == "":
+        parts = parts[:-1]
+    return [part.strip() for part in parts]
+
+
+def _claim_header_columns(cells: Sequence[str]) -> dict[str, int] | None:
+    """Field -> column index of a claims table header, or ``None``.
+
+    Column order is free and an extra column keeps no slot (it is ignored).
+    The table only counts as a claims header when it names the id column
+    (``claim`` / ``断言`` families) — same rule as the TS ``matchClaimHeader``.
+    """
+    columns: dict[str, int] = {}
+    for index, cell in enumerate(cells):
+        name = _claim_strip_ticks(_claim_normalize(cell)).lower()
+        name = re.sub(r"\s+", " ", name)
+        if name.endswith(":"):
+            name = name[:-1]
+        for field, aliases in _CLAIM_COLUMN_ALIASES:
+            if name not in aliases:
+                continue
+            if field not in columns:
+                columns[field] = index
+            break
+    return columns if "id" in columns else None
+
+
+def _claim_cell(cells: Sequence[str], columns: dict[str, int], field: str) -> str:
+    """Cell of ``field`` (``""`` when the column or the cell is absent)."""
+    index = columns.get(field)
+    if index is None or index >= len(cells):
+        return ""
+    return str(cells[index]).strip()
+
+
+def _claim_from_row(
+    cells: Sequence[str],
+    columns: dict[str, int],
+    row: int,
+    by_id: dict[str, dict],
+) -> dict | None:
+    """One table row -> claim dict, or ``None`` when the row cannot be read.
+
+    Mirrors the TS ``claimFromRow``: the id is normalised to ``C-<nnn>``, a
+    ``C-01.3`` child is only legal under an already-seen ``struct`` parent
+    (RQ-3 §5.1/B-10) and inherits ``struct`` when its own 类型 cell is empty,
+    and a non-numeric 预算 is "absent" (``None`` — the Python form of the TS
+    ``NaN``; both mean "no budget declared", never 0).
+    """
+    id_match = _CLAIM_ID_RE.match(
+        _claim_strip_ticks(_claim_cell(cells, columns, "id"))
+    )
+    if id_match is None:
+        return None
+    number = id_match.group(1)
+    child = id_match.group(2)
+    parent = "" if child is None else f"C-{number}"
+    claim_id = f"C-{number}" if child is None else f"C-{number}.{child}"
+    if parent:
+        parent_claim = by_id.get(parent)
+        if parent_claim is None or parent_claim.get("type") != "struct":
+            return None
+    declared = _claim_strip_ticks(_claim_cell(cells, columns, "type")).lower()
+    budget_text = _claim_strip_ticks(_claim_cell(cells, columns, "budget"))
+    return {
+        "id": claim_id,
+        "type": "struct" if declared == "" and parent else declared,
+        "parent": parent,
+        "statement": _claim_cell(cells, columns, "statement"),
+        "falsifier": _claim_cell(cells, columns, "falsifier"),
+        "locator": _claim_cell(cells, columns, "locator"),
+        "judgement": _claim_cell(cells, columns, "judgement"),
+        "budget": int(budget_text) if re.fullmatch(r"\d+", budget_text) else None,
+        "row": row,
+    }
+
+
+def parse_claims_block(text: str) -> dict:
+    """Parse a card's ``mw-claims: v1`` block: ``{present, claims, errors}``.
+
+    Mirrors the TS ``parseClaimsBlock`` grammar (design §2.1/§3.1) so both sides
+    read one shape:
+
+    * the block runs from ``<!-- mw-claims: v1 -->`` to ``<!-- /mw-claims -->``;
+      a missing end marker tolerates up to the next H2 or EOF;
+    * markers and tables inside fenced code blocks contribute nothing (a card
+      often shows the format in an example fence);
+    * the header row names the columns (any order, extra columns ignored, alias
+      table ``_CLAIM_COLUMN_ALIASES``, full-width ``：｜``/digits folded); a
+      non-table line resets the header state, so a second table needs its own;
+    * an unreadable row lands in ``errors`` as ``claim:<line>:unparsable`` —
+      this function never raises (P-048).
+    """
+    lines = str(text or "").splitlines()
+    claims: list[dict] = []
+    errors: list[str] = []
+    by_id: dict[str, dict] = {}
+    present = False
+    in_block = False
+    columns: dict[str, int] | None = None
+    fence: str | None = None
+    for index, line in enumerate(lines):
+        fence = _advance_claim_fence(line, fence)
+        if fence is not None:
+            continue
+        if not in_block:
+            if _CLAIM_BLOCK_START_RE.match(line):
+                in_block = True
+                present = True
+            continue
+        if _CLAIM_BLOCK_END_RE.match(line) or _CLAIM_HEADING_RE.match(line):
+            in_block = False
+            columns = None
+            continue
+        if not _claim_normalize(line).startswith("|"):
+            columns = None
+            continue
+        cells = _claim_cells(line)
+        if columns is None:
+            columns = _claim_header_columns(cells)
+            continue
+        if cells and all(
+            cell == "" or _CLAIM_SEPARATOR_RE.match(cell) for cell in cells
+        ):
+            continue
+        claim = _claim_from_row(cells, columns, index + 1, by_id)
+        if claim is None:
+            errors.append(f"claim:{index + 1}:unparsable")
+            continue
+        claims.append(claim)
+        by_id[str(claim["id"])] = claim
+    return {"present": present, "claims": claims, "errors": errors}
+
+
+def claim_budget_caps(claims: Sequence[dict] | None) -> tuple[int, int]:
+    """``(file_cap, byte_cap)`` derived from a card's claims (design §4).
+
+    ``file_cap = min(30, Σ(manual ? 2 : 1))`` — a manual claim is weighted
+    double because it buys PM attention instead of worker fetches; ``byte_cap =
+    min(393216, 65536 × n)``. Both bounds come from :data:`CLAIM_BUDGET`, the
+    calibrated values (RQ-1 §5, D-007), never from a local literal. No claims
+    returns ``(0, 0)``, which :func:`_read_scope_caps` reads as "keep the
+    historical behaviour" — the byte-identity guarantee for pre-claims cards.
+    """
+    rows = list(claims or ())
+    if not rows:
+        return 0, 0
+    budget_sum = sum(
+        2 if str(row.get("type") or "").strip().lower() == "manual" else 1
+        for row in rows
+    )
+    file_cap = min(CLAIM_BUDGET["callCap"], budget_sum)
+    byte_cap = min(
+        CLAIM_BUDGET["byteCapMax"], CLAIM_BUDGET["claimByteCap"] * len(rows)
+    )
+    return file_cap, byte_cap
+
+
+def claim_gate() -> str:
+    """Claim gate mode: ``advisory`` (default) or ``enforce`` (D-006).
+
+    Unknown/blank values fall back to :data:`CLAIM_GATE_DEFAULT` with one
+    diagnostic on stderr and never block a dispatch: the gate is opt-in, so a
+    typo may not silently turn enforcement on *or* stall the loop (fail-open).
+    """
+    raw = os.environ.get("MW_CLAIM_GATE", CLAIM_GATE_DEFAULT)
+    value = str(raw).strip().lower()
+    if value in _CLAIM_GATE_MODES:
+        return value
+    print(
+        f"[CLAIMS] claim_gate={raw} fallback={CLAIM_GATE_DEFAULT}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return CLAIM_GATE_DEFAULT
+
+
+def _project_scope_caps(
+    project_root: pathlib.Path,
+) -> tuple[int | None, int | None]:
     """``l2_read_file_cap`` / ``l2_read_byte_cap`` for the rendered task.md.
 
     Until 2026-09-23 these two fields were dead config: config.py parsed and
@@ -268,6 +800,35 @@ def _read_scope_caps(project_root: pathlib.Path) -> tuple[int | None, int | None
             else None
         )
     return caps[0], caps[1]
+
+
+def _read_scope_caps(
+    project_root: pathlib.Path, claims: Sequence[dict] | None = None
+) -> tuple[int | None, int | None]:
+    """Read-scope caps for the rendered task.md: project config first, then the
+    card's claims.
+
+    Two sources, in that order:
+
+    1. the project layer (``_autopilot/config.json``) — an explicitly
+       configured key always wins, unchanged from before
+       (:func:`_project_scope_caps`);
+    2. the card being dispatched (:func:`claim_budget_caps`), used only for the
+       field the project layer left unset.
+
+    Before T-03 the conductor computed the caps *before* reading the card, so a
+    claims card inherited the previous dispatch's budget (or none); the caller
+    now passes this card's own claims. ``claims=None``/empty keeps the
+    historical behaviour bit for bit: no config → ``(None, None)`` → no cap
+    lines → a pre-claims card renders the same bytes it did before (AC-007).
+    """
+    file_cap, byte_cap = _project_scope_caps(project_root)
+    derived_file, derived_byte = claim_budget_caps(claims)
+    if file_cap is None and derived_file:
+        file_cap = derived_file
+    if byte_cap is None and derived_byte:
+        byte_cap = derived_byte
+    return file_cap, byte_cap
 
 
 # ── producer identity (mw-dispatch-card-gate T-13) ───────────────────────────
@@ -579,6 +1140,14 @@ def dispatch_card(project_root: pathlib.Path, owner: str, stem: str) -> dict | N
     ``worker_dir`` the round's artifact directory, so the renderer can both
     inject the card's own declarations and fill any still-missing §1.2 item
     from real metadata (never an empty skeleton).
+
+    ``claims`` (T-03) is the card's parsed ``mw-claims: v1`` block and
+    ``claim_errors`` its row-level parse errors. The card text read here is the
+    only text source in the module, so the claims are parsed from it exactly
+    once (no second read) and the derived read budget follows THIS card —
+    ``dispatch()`` reads the claims from this dict instead of pricing the caps
+    before the card exists. A card without a claims block returns ``[]`` (the
+    pre-claims behaviour).
     """
     card_path = f"tasks/{stem}.md"
     card_file = pathlib.Path(project_root) / ".agenticdoc" / owner / card_path
@@ -587,6 +1156,7 @@ def dispatch_card(project_root: pathlib.Path, owner: str, stem: str) -> dict | N
     try:
         text = card_file.read_text(encoding="utf-8", errors="replace")
         sections, extras = _extract_card_parts(text)
+        claims_block = parse_claims_block(text)
         digest = card_digest(card_file)
     except OSError:
         return None
@@ -595,6 +1165,10 @@ def dispatch_card(project_root: pathlib.Path, owner: str, stem: str) -> dict | N
         "sha256": digest,
         "worker_dir": f".agenticdoc/{owner}/workers/{task_key_for(owner, stem)}",
         "extras": extras,
+        # T-03: claims parsed from the text above (single read, single grammar)
+        # + their row-level errors. A malformed row is reported, never raised.
+        "claims": claims_block["claims"],
+        "claim_errors": claims_block["errors"],
         **sections,
     }
 
@@ -1440,6 +2014,17 @@ def dispatch(
             "verifier-read-scope-required",
             "verifier dispatches require a non-empty read_scope (D-106)",
         )
+    # W8: the decision role's whole contract lives on the card (dp / evidence
+    # sources / branch consequence / send authority). Judged here, before the
+    # target config and before any task-dir side effect, so a refused card
+    # leaves the project exactly as it was.
+    if task_type == DECIDE_PREPARE_TYPE:
+        decision_issues = decision_dispatch_issues(project_root, owner, stem)
+        if decision_issues:
+            return reject(
+                f"decision-card-invalid: {decision_issues[0].code}",
+                "; ".join(issue.format() for issue in decision_issues),
+            )
 
     # Workspace-profile injection (mw-dual-workspace D-005/D-007): the
     # resolved config drives scope expansion + deny_globs defaults. The
@@ -1485,7 +2070,6 @@ def dispatch(
                 mw_common.describe_target_error(exc, project_root),
                 ev="target-config-rejected",
             )
-    read_file_cap, read_byte_cap = _read_scope_caps(project_root)
     timeout_min = _worker_timeout_min(project_root)
     # T-10: every dispatch carries the T-02 envelope signal. A card-backed
     # execute dispatch reads the card (`card_path`/`card_sha256` + its section
@@ -1494,10 +2078,55 @@ def dispatch(
     # service-layer judge too — the T-09 card-only injection left those rows
     # refused after the `ENVELOPE_ENFORCE_SINCE` cutover.
     card_backed = dispatch_card(project_root, owner, stem)
+    # T-03 order fix: the caps must follow THIS card. Computing them above (the
+    # pre-T-03 order) priced the previous dispatch's budget, because the card
+    # was only read further down. `claims` empty / card-less (synthesized) →
+    # `_read_scope_caps` degenerates to the config-only behaviour, so those
+    # renders stay byte-identical. The gate read never blocks the dispatch
+    # (advisory is the default); it only surfaces an invalid value on stderr.
+    card_claims = card_backed.get("claims") if card_backed is not None else None
+    if card_claims:
+        claim_gate()
+    read_file_cap, read_byte_cap = _read_scope_caps(project_root, card_claims)
     envelope_card = (
         card_backed if card_backed is not None
         else synthesized_card(owner, stem, task_type, prompt, loop, attempt)
     )
+    narrowed_by_note = ""
+    if task_type == DECIDE_PREPARE_TYPE:
+        # W8 requirement 3: the write face of a decision worker is
+        # `<key>/evidence/books/**` unless the card declares its own face (in
+        # which case the card wins and the task.md records why). The computed
+        # face is injected into the envelope as a `## 写入允许面` extra, which is
+        # the SAME carrier `render_task_md` reads into the `write_face:` head —
+        # a card that already declares one keeps it verbatim (never widened).
+        face_entries, face_carrier, narrowed_by_note = decision_write_face(
+            owner, task_key, _card_write_face_entries(card_backed)
+        )
+        decision_fields = decision_card_fields(
+            _read_card_text(project_root, owner, stem)
+        )
+        extras = [dict(extra) for extra in (envelope_card.get("extras") or ())
+                  if isinstance(extra, dict)]
+        extras.append({
+            "title": DECISION_PARAMS_HEADING,
+            "body": decision_params_body(
+                decision_fields,
+                book_path=(
+                    f"{envelope_card.get('worker_dir', '')}/"
+                    f"{DECISION_WRITE_FACE_SUBDIR}/"
+                    f"{decision_fields.get('dp', '').strip() or 'dp'}-book.json"
+                ),
+                carrier=face_carrier,
+                narrowed_by=narrowed_by_note,
+            ),
+        })
+        if face_carrier == "type-default":
+            extras.append({
+                "title": WRITE_FACE_CARD_SECTION,
+                "body": "\n".join(f"- {entry}" for entry in face_entries),
+            })
+        envelope_card = {**envelope_card, "extras": extras}
     content = render_task_md(
         task_type, prompt, loop=loop, attempt=attempt, read_scope=scope,
         deny_globs=globs, model=model, phase=_owner_phase(project_root, owner),
@@ -1657,3 +2286,90 @@ def dispatch(
     return DispatchResult(
         ok=True, reason="", task_key=task_key, task_md=task_md, row_verified=row_verified
     )
+
+
+# ── decision-card checker CLI (`python -m autopilot.dispatch check`) ────────
+#
+# Offline, side-effect free: judges one decision card (and optionally a book)
+# with the SAME criteria `dispatch()` refuses on, so a worker/PM can see the
+# refusal before spending a spawn. Exit codes mirror `mw dp check`/
+# `mw decide book check`: 0 clean, 2 refused, 1 usage/IO problem.
+def _check_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="dispatch check",
+        description=(
+            "Validate a decision-card offline (type: decide_prepare): the four required items "
+            "(dp / 证据来源 / 分支后果 / allow-send), the dp's required_state_fields, "
+            "and the allow-send authority for `decide run|ask --book`."
+        ),
+    )
+    parser.add_argument("--card", metavar="FILE",
+                        help="Card markdown (e.g. tasks/W9-decision.md); omit with --dp for a registry-only probe")
+    parser.add_argument("--dp", metavar="ID",
+                        help="Override/replace the card's dp (registry probe: must define required_state_fields)")
+    parser.add_argument("--book", metavar="FILE",
+                        help="Decision book the caller intends to SEND: refused when allow-send is no (the default)")
+    parser.add_argument("--json", action="store_true",
+                        help="Emit the machine-readable issue list")
+    return parser.parse_args(argv)
+
+
+def check_command(argv: Sequence[str]) -> int:
+    """`check` subcommand → exit code (0 clean / 2 refused / 1 IO)."""
+    args = _check_args(argv)
+    if not args.card and not args.dp:
+        print("dispatch check: --card or --dp is required", file=sys.stderr)
+        return 1
+    text = ""
+    card_path = args.card or "-"
+    if args.card:
+        try:
+            text = pathlib.Path(args.card).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            print(f"dispatch check: cannot read {args.card}: {exc}", file=sys.stderr)
+            return 1
+    issues = decision_card_issues(
+        text, card_path=card_path, dp=args.dp or "", book=args.book or "",
+        require_items=bool(args.card),
+    )
+    if args.json:
+        print(json.dumps({
+            "ok": not issues,
+            "card": card_path,
+            "dp": args.dp or decision_card_fields(text).get("dp", ""),
+            "allow_send": decision_allows_send(decision_card_fields(text)),
+            "issues": [issue.as_dict() for issue in issues],
+        }, ensure_ascii=False, indent=2))
+    elif issues:
+        for issue in issues:
+            print(issue.format(), file=sys.stderr)
+    else:
+        target = card_path if args.card else (args.dp or decision_card_fields(text).get("dp", ""))
+        print(f"ok {target}".rstrip())
+    return 0 if not issues else 2
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Module CLI: `python -m autopilot.dispatch check [--card FILE] ...`."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args or args[0] in ("-h", "--help"):
+        parser = argparse.ArgumentParser(
+            prog="dispatch",
+            description=(
+                "Conductor dispatch helpers. `check` validates a decide_prepare worker's "
+                "card offline with the same criteria dispatch() refuses on "
+                "(exit 0 clean / 2 refused / 1 usage)."
+            ),
+        )
+        parser.add_argument("subcommand", nargs="?", choices=["check"],
+                            help="check: validate a decision card / dp / book send authority")
+        parser.parse_args(args)
+        return 0
+    if args[0] == "check":
+        return check_command(args[1:])
+    print(f"dispatch: unknown subcommand {args[0]!r} (known: check)", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

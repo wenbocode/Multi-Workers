@@ -153,6 +153,9 @@ class TestParseAndCompat:
         # mw-vision-role T-01: parity sync with mw_common.TASK_TYPE_TO_ROLE
         # and dispatch-models.ts DISPATCH_ROLE_BY_TYPE.
         "vision": "vision",
+        # mw-decision-substitution W8, renamed W10: decision-book writer role
+        # (type value `decide_prepare`, old `decision` removed without alias).
+        "decide_prepare": "decide_prepare",
     }
 
     def test_role_map_matches_ts_mirror(self) -> None:
@@ -811,7 +814,10 @@ class TestModelSetVisionCapability:
     def test_verify_vc002(self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
                           capsys: pytest.CaptureFixture[str]) -> None:
         roles = len(mw_common.DISPATCH_ROLES)
-        assert roles == 5 and "vision" in mw_common.DISPATCH_ROLES
+        assert roles == 6 and "vision" in mw_common.DISPATCH_ROLES
+        # W10: the book-writer role is `decide_prepare` (renamed from `decision`).
+        assert "decide_prepare" in mw_common.DISPATCH_ROLES
+        assert "decision" not in mw_common.DISPATCH_ROLES
         monkeypatch.setattr(sys, "argv", [
             "mw", "model", "set", "--project", str(tmp_path), "villain", "timi/x",
         ])

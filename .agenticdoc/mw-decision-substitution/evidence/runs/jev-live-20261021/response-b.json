@@ -1,0 +1,40 @@
+{
+  "status": 200,
+  "latency_ms": 1184,
+  "body": {
+    "model": "jev-latest",
+    "answers": {
+      "answer_kind": {
+        "type": "choice",
+        "choice": "fact",
+        "confidence": 0.55,
+        "probabilities": {
+          "fact": 0.7,
+          "intent": 0.29,
+          "reuse": 0.01
+        }
+      },
+      "answerable": {
+        "type": "noul",
+        "noul": 0.29
+      },
+      "candidate": {
+        "type": "choice",
+        "choice": "c2",
+        "confidence": 0.98,
+        "probabilities": {
+          "c1": 0.0,
+          "c2": 0.99,
+          "c3": 0.01
+        }
+      }
+    },
+    "usage": {
+      "input_tokens": 913,
+      "output_tokens": 96,
+      "cached_tokens": 0,
+      "cache_write_tokens": 0
+    },
+    "id": "gen-dec-1792553273-75IHdrYvYLHfnBuFhqBz"
+  }
+}

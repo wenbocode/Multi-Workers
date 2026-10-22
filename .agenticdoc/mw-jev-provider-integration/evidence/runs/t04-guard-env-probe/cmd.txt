@@ -1,0 +1,5 @@
+python
+-m
+pytest
+-q
+test_mw_console_guard.py::test_isolation_parent_process_subprocess_unpatched

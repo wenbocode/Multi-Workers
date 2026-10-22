@@ -1,9 +1,10 @@
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
+import { registerAskDecisionTool } from "./pm/decision-tool.ts";
 import { pmActivate } from "./pm/pm-orchestrator.ts";
 import { registerImplementationGate } from "./shared/implementation-gate.ts";
 import { registerProtectedConfigGuard } from "./shared/protected-config.ts";
 import { registerWorktreeJunctionGuard } from "./shared/worktree-junction-guard.ts";
-import { registerXkeyGateGuard } from "./shared/xkey-gate-guard.ts";
+import { registerDecisionSignoffGuard, registerXkeyGateGuard } from "./shared/xkey-gate-guard.ts";
 import { workerModeActivate } from "./worker/worker-mode.ts";
 
 // Defense against a double-load: if the same bundle is loaded twice in one host
@@ -49,6 +50,15 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 	// position as the protected-config guard so a worker window is covered.
 	registerXkeyGateGuard(pi);
 
+	// Decision sign-off guard (mw-decision-substitution D-015, AC-009/AC-010):
+	// `evidence/review/sign-final.md` is the human answer channel and
+	// `.mw/decide-points.json` is the only authority source (machines never
+	// write it), so the agent tool layer is refused there (write/edit/bash,
+	// fail-closed) while reads and `decision-review-*.md` stay open. Same
+	// mechanism as the xkey guard above, registered right after it in EVERY
+	// mode so a worker window is covered too.
+	registerDecisionSignoffGuard(pi);
+
 	// Implementation entry gate (mw-implementation-gate): write/edit/bash
 	// calls targeting code paths under packages/ pass only with an active
 	// AgenticTask key claim for this window, a dispatched worker env
@@ -71,6 +81,13 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 
 	if (process.env.PI_WORKER_TASK) {
 		await workerModeActivate(pi);
+		// `ask_decision` (mw-decision-substitution T-05, design D-017/Q1 §1.3):
+		// registered ONLY in the worker branch — PM decision points live at the
+		// dispatch/checkpoint call sites, not behind an LLM tool. Registered
+		// AFTER workerModeActivate so this module's `before_agent_start` handler
+		// runs after the role's active-set recomputation and can append the tool
+		// for every role without editing TOOL_ALLOWLISTS (T-17 parity lock).
+		registerAskDecisionTool(pi);
 	} else {
 		pmActivate(pi);
 	}

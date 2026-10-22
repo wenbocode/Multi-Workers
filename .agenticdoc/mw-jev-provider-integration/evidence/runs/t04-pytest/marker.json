@@ -1,0 +1,15 @@
+{
+  "schema": "mw-run/1",
+  "rc": 1,
+  "timed_out": false,
+  "started_at_ms": 1792145415099,
+  "ended_at_ms": 1792145910265,
+  "wall_sec": 495.166,
+  "pid": 53156,
+  "argv": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ]
+}

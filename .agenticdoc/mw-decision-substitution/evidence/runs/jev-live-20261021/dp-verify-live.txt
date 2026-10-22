@@ -1,0 +1,29 @@
+# mw decide dp verify --live  2026-10-21
+
+dp1-dispatch-type | true | jev-latest | 1079 | - | triage_risk,triage_type
+dp2-checkpoint-split | true | jev-latest | 993 | - | checkpoint_action
+dp3-worker-clarify | true | jev-latest | 1104 | - | answer_kind,answerable,candidate
+dp4-failure-handling | true | jev-latest | 961 | - | failure_action
+dp5-test-triage | true | jev-latest | 1072 | - | test_category
+dp6-qg-verdict | true | jev-latest | 990 | - | qg_verdict
+dp7-gate-failure | true | jev-latest | 1107 | - | gate_cause
+dp8-scope-change | true | jev-latest | 897 | - | scope_decision,scope_reason
+dp9-model-select | true | jev-latest | 926 | - | model_class
+dp10-dependency | true | jev-latest | 963 | - | dependency_decision
+dp11-credential | true | jev-latest | 933 | - | credential_action
+dp12-destructive | true | jev-latest | 939 | - | destructive_action
+dp13-commit-release | true | jev-latest | 872 | - | release_action
+dp14-rule-conflict | true | jev-latest | 1014 | - | conflict_resolution
+dp15-autopilot-gate | true | jev-latest | 1021 | - | gate_decision
+dp16-goal | true | jev-latest | 1058 | - | goal_decision
+dp17-spec-lock | true | jev-latest | 839 | - | spec_lock
+dp18-claim | true | jev-latest | 834 | - | claim_conflict
+dp19-foreign-write | true | jev-latest | 844 | - | write_decision
+dp20-stage-close | true | jev-latest | 907 | - | stage_action
+dp21-refine | true | jev-latest | 1111 | - | refine_decision
+dp22-debug-plan | true | jev-latest | 1004 | - | debug_plan
+dp23-snapshot | true | jev-latest | 932 | - | snapshot_decision
+dp24-pi-trust | true | jev-latest | 918 | - | trust_decision
+24 ok / 0 fail
+
+# rc=0

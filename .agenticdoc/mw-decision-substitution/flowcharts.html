@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>流程图 — mw-decision-substitution</title>
+<style>
+:root{
+  --bg:#f6f7fb; --card:#ffffff; --ink:#111827; --muted:#5b6478; --line:#e3e7ef;
+  --accent:#4338ca; --accent-soft:#eef2ff; --warn:#b45309; --warn-soft:#fffbeb;
+  --ok:#15803d; --ok-soft:#f0fdf4; --radius:14px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font:15px/1.75 ui-sans-serif,-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.layout{display:grid; grid-template-columns:270px minmax(0,1fr); gap:34px; max-width:1500px; margin:0 auto; padding:28px 26px 80px}
+nav.toc{
+  position:sticky; top:24px; align-self:start; max-height:calc(100vh - 48px); overflow:auto;
+  background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:16px 14px;
+  box-shadow:0 1px 2px rgba(16,24,40,.04);
+}
+nav.toc .brand{font-weight:700; font-size:14px; letter-spacing:.02em; color:var(--accent); margin:0 8px 10px}
+nav.toc a{
+  display:block; padding:5px 9px; border-radius:8px; text-decoration:none; color:var(--muted);
+  font-size:13.5px; line-height:1.5; border-left:2px solid transparent;
+}
+nav.toc a:hover{background:var(--accent-soft); color:var(--accent)}
+nav.toc a.active{background:var(--accent-soft); color:var(--accent); border-left-color:var(--accent); font-weight:600}
+nav.toc a.lvl3{padding-left:20px; font-size:13px}
+nav.toc .brand.gap{margin-top:14px; padding-top:12px; border-top:1px solid var(--line); color:#6b7280}
+nav.toc a.diag{color:#0f766e}
+nav.toc a.diag:hover{background:#f0fdfa; color:#0f766e}
+main{min-width:0}
+header.page{
+  background:linear-gradient(135deg,#4338ca 0%,#6d28d9 55%,#0f766e 100%);
+  color:#fff; border-radius:18px; padding:26px 28px; margin-bottom:26px;
+  box-shadow:0 10px 26px rgba(67,56,202,.22);
+}
+header.page h1{margin:0 0 6px; font-size:26px; letter-spacing:.01em}
+header.page .sub{opacity:.9; font-size:13.5px}
+.badges{display:flex; flex-wrap:wrap; gap:8px; margin-top:14px}
+.badge{background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.32); padding:3px 10px; border-radius:999px; font-size:12.5px}
+.badge.warn{background:rgba(255,255,255,.92); color:#9a3412; border-color:transparent; font-weight:600}
+main > h2{
+  font-size:19px; margin:38px 0 12px; padding:12px 16px; background:var(--card);
+  border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:10px;
+}
+main > h3{font-size:16px; margin:26px 0 10px; color:#1f2937}
+h3 code{background:#f3f4f6}
+p{margin:10px 0}
+ul{margin:10px 0; padding-left:22px}
+li{margin:6px 0}
+hr{border:0; border-top:1px dashed var(--line); margin:30px 0}
+code{font-family:ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace; font-size:.88em; background:#f3f4f6; padding:1.5px 5px; border-radius:5px; border:1px solid #eceef4}
+p.meta{color:var(--muted); font-size:13.5px; background:var(--card); border:1px dashed var(--line); border-radius:10px; padding:10px 14px}
+.table-wrap{overflow-x:auto; border:1px solid var(--line); border-radius:12px; background:var(--card); margin:14px 0}
+table{border-collapse:collapse; width:100%; font-size:13.8px}
+th,td{padding:10px 13px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line)}
+th{background:#f8fafc; font-weight:600; white-space:nowrap; color:#374151}
+tbody tr:nth-child(even){background:#fcfdff}
+tbody tr:last-child td{border-bottom:0}
+td code{white-space:nowrap}
+pre{border:1px solid var(--line); border-radius:12px; background:#0f172a; color:#e5e7eb; padding:16px 18px; overflow:auto; font-size:13px; line-height:1.6}
+pre code{background:none; border:0; color:inherit; padding:0; font-size:1em}
+figure.diagram{
+  margin:16px 0 22px; background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+  padding:18px 16px 10px; overflow:auto; box-shadow:0 1px 2px rgba(16,24,40,.04);
+}
+figure.diagram .mermaid{display:flex; justify-content:center; min-height:60px}
+figure.diagram figcaption{color:var(--muted); font-size:12.5px; text-align:center; margin-top:10px}
+figure.diagram details{margin-top:10px; border-top:1px dashed var(--line); padding-top:8px}
+figure.diagram summary{cursor:pointer; color:var(--muted); font-size:12.5px}
+figure.diagram pre.src{margin:10px 0 0; max-height:420px}
+.banner{border-radius:12px; padding:14px 16px; margin:16px 0; font-size:13.8px; border:1px solid}
+.banner.warn{background:var(--warn-soft); border-color:#fde68a; color:#7c2d12}
+.banner.info{background:var(--accent-soft); border-color:#c7d2fe; color:#312e81}
+.banner b{font-weight:700}
+#offline{display:none}
+body.no-mermaid #offline{display:block}
+body.no-mermaid figure.diagram .mermaid{display:none}
+footer{color:var(--muted); font-size:12.5px; margin-top:46px; border-top:1px solid var(--line); padding-top:14px}
+@media (max-width:1080px){
+  .layout{grid-template-columns:1fr; padding:18px}
+  nav.toc{position:static; max-height:none; order:-1}
+  nav.toc a{display:inline-block; margin:2px}
+}
+@media print{
+  body{background:#fff}
+  nav.toc,#offline{display:none}
+  .layout{display:block; padding:0}
+  header.page{box-shadow:none}
+  figure.diagram,.table-wrap{break-inside:avoid}
+  figure.diagram details{display:none}
+}
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="toc">
+    <p class="brand">mw-decision-substitution</p>
+    <a class="lvl2" href="#1-目标">1. 目标</a>
+<a class="lvl2" href="#2-实现流程-代码运行逻辑">2. 实现流程（代码运行逻辑）</a>
+<a class="lvl3" href="#2-1-一次决策调用的端到端链路-流程图形式-兼容性优先">2.1 一次决策调用的端到端链路（流程图形式，兼容性优先）</a>
+<a class="lvl3" href="#2-2-decide_for-的判定树-11-步-含短路点">2.2 decide_for 的判定树（11 步，含短路点）</a>
+<a class="lvl3" href="#2-3-客户端三层容量闸与传输-decision-py-797">2.3 客户端三层容量闸与传输（decision.py:797）</a>
+<a class="lvl3" href="#2-4-state-由谁生产-确定性代码-不经过-llm">2.4 state 由谁生产（确定性代码，不经过 LLM）</a>
+<a class="lvl3" href="#2-5-两条入口分叉-直接-run-与决策本-run">2.5 两条入口分叉：直接 run 与决策本 run</a>
+<a class="lvl3" href="#2-6-decision-worker-类型的门禁-运行时">2.6 decision worker 类型的门禁（运行时）</a>
+<a class="lvl3" href="#2-7-签收链路-mw-decide-sign-key-任意-key-w9-w11">2.7 签收链路（mw decide sign --key &lt;任意 key&gt;，W9/W11）</a>
+<a class="lvl2" href="#3-验证流程">3. 验证流程</a>
+<a class="lvl2" href="#4-落地流程">4. 落地流程</a>
+<a class="lvl2" href="#5-当前状态">5. 当前状态</a>
+<a class="lvl2" href="#6-附录-构建过程-pm-视角的波次编排-非运行期代码逻辑">6. 附录：构建过程（PM 视角的波次编排，非运行期代码逻辑）</a><p class="brand gap">图表索引</p><a class="lvl3 diag" href="#d1">图 1 · 目标</a>
+<a class="lvl3 diag" href="#d2">图 2 · 一次决策调用的端到端链路</a>
+<a class="lvl3 diag" href="#d3">图 3 · decide_for 的判定树</a>
+<a class="lvl3 diag" href="#d4">图 4 · 客户端三层容量闸与传输</a>
+<a class="lvl3 diag" href="#d5">图 5 · 两条入口分叉：直接 run 与决策…</a>
+<a class="lvl3 diag" href="#d6">图 6 · decision worker 类…</a>
+<a class="lvl3 diag" href="#d7">图 7 · 签收链路</a>
+<a class="lvl3 diag" href="#d8">图 8 · 验证流程</a>
+<a class="lvl3 diag" href="#d9">图 9 · 落地流程</a>
+<a class="lvl3 diag" href="#d10">图 10 · 附录：构建过程</a>
+  </nav>
+  <main>
+    <header class="page">
+      <h1>流程图 — mw-decision-substitution</h1>
+      <div class="sub">jev 作为决策模型替换中低风险人工决策 · 目标 / 代码实现逻辑 / 验证 / 落地</div>
+      <div class="badges">
+        <span class="badge">相位 EXECUTE</span>
+        <span class="badge">图 9 张</span>
+        <span class="badge">AC-001..022 · D-001..063</span>
+        <span class="badge warn">done 门禁：待人工签收</span>
+      </div>
+    </header>
+
+    <div id="offline" class="banner warn">
+      <b>Mermaid 脚本未能从 CDN 加载</b>（当前环境离线或被拦截）。下方每张图的源码已自动展开，
+      可直接阅读或复制到支持 Mermaid 的编辑器；联网后刷新即可看到渲染结果。
+    </div>
+
+    <div class="banner info">
+      阅读约定：<b>菱形</b>为判定点，<b>圆角框</b>为代码动作，<b>escalate / refused 节点</b>是零副作用出口
+      （不 spawn、不发网络请求、不写归档）。每个节点标注对应 <code>file:line</code> 锚点。
+    </div>
+
+<p class="meta">Key: <code>mw-decision-substitution</code> · 更新 2026-10-21 · 相位 EXECUTE（实现/验证完成，差人签收） HTML 版（目录 + 可渲染图 + 折叠源码）：同目录 <code>flowcharts.html</code>，浏览器直接打开。</p>
+<p>四张图：目标、<strong>代码实现逻辑</strong>、验证流程、落地流程。 第 6 节保留"构建过程"（PM 视角的波次编排），与第 2 节的运行期代码逻辑区分开。</p>
+<hr/>
+<h2 id="1-目标">1. 目标</h2>
+<figure class="diagram" id="d1"><div class="mermaid">flowchart TB
+    subgraph GOAL["目标（key: mw-decision-substitution）"]
+        G["把 &lt;b&gt;中低风险人工决策&lt;/b&gt; 从人手里移到 jev&lt;br/&gt;高风险/P0 仍归人"]
+    end
+
+    G --&gt; A["决策点可枚举&lt;br/&gt;24 dp 进注册表&lt;br/&gt;tier / mode / risk_source"]
+    G --&gt; B["输入可结构化&lt;br/&gt;state 由确定性代码组装&lt;br/&gt;不是 LLM 编"]
+    G --&gt; C["答案可验收&lt;br/&gt;封闭键集合 + 七类失败码"]
+    G --&gt; D["决策可追溯&lt;br/&gt;jsonl 哈希链 + 签收门禁"]
+    G --&gt; E["人能介入&lt;br/&gt;per-dp 开关 / 置信阈值 / 签收"]
+
+    A --&gt; A1["mw decide dp list/show/check/verify"]
+    B --&gt; B1["state.context 五槽位&lt;br/&gt;注册表生成 TS 字段清单"]
+    C --&gt; C1["mw decide book new/check&lt;br/&gt;先验后发，失败零 HTTP"]
+    D --&gt; D1["decide_archive 4 类行&lt;br/&gt;advance_phase decision_signoff"]
+    E --&gt; E1["per-dp min_confidence / max_questions / timeout_s"]
+
+    A1 --&gt; OUT["产出：&lt;br/&gt;唯一传输 timi-decisions / jev-latest&lt;br/&gt;24/24 dp live 可用&lt;br/&gt;3 dp 真实接线（dp1/dp2/dp3）"]
+    B1 --&gt; OUT
+    C1 --&gt; OUT
+    D1 --&gt; OUT
+    E1 --&gt; OUT
+
+    OUT --&gt; NS["不做（已裁定）&lt;br/&gt;per-dp model / transport&lt;br/&gt;P0 全自动&lt;br/&gt;向后兼容旧 state"]</div><figcaption>图 1 · 1. 目标</figcaption><details><summary>查看 Mermaid 源码</summary><pre class="src">flowchart TB
+    subgraph GOAL["目标（key: mw-decision-substitution）"]
+        G["把 &lt;b&gt;中低风险人工决策&lt;/b&gt; 从人手里移到 jev&lt;br/&gt;高风险/P0 仍归人"]
+    end
+
+    G --&gt; A["决策点可枚举&lt;br/&gt;24 dp 进注册表&lt;br/&gt;tier / mode / risk_source"]
+    G --&gt; B["输入可结构化&lt;br/&gt;state 由确定性代码组装&lt;br/&gt;不是 LLM 编"]
+    G --&gt; C["答案可验收&lt;br/&gt;封闭键集合 + 七类失败码"]
+    G --&gt; D["决策可追溯&lt;br/&gt;jsonl 哈希链 + 签收门禁"]
+    G --&gt; E["人能介入&lt;br/&gt;per-dp 开关 / 置信阈值 / 签收"]
+
+    A --&gt; A1["mw decide dp list/show/check/verify"]
+    B --&gt; B1["state.context 五槽位&lt;br/&gt;注册表生成 TS 字段清单"]
+    C --&gt; C1["mw decide book new/check&lt;br/&gt;先验后发，失败零 HTTP"]
+    D --&gt; D1["decide_archive 4 类行&lt;br/&gt;advance_phase decision_signoff"]
+    E --&gt; E1["per-dp min_confidence / max_questions / timeout_s"]
+
+    A1 --&gt; OUT["产出：&lt;br/&gt;唯一传输 timi-decisions / jev-latest&lt;br/&gt;24/24 dp live 可用&lt;br/&gt;3 dp 真实接线（dp1/dp2/dp3）"]
+    B1 --&gt; OUT
+    C1 --&gt; OUT
+    D1 --&gt; OUT
+    E1 --&gt; OUT
+
+    OUT --&gt; NS["不做（已裁定）&lt;br/&gt;per-dp model / transport&lt;br/&gt;P0 全自动&lt;br/&gt;向后兼容旧 state"]</pre></details></figure>
+<p>要点：</p>
+<ul><li><strong>四个 dp 有真实调用方</strong>：dp1 triage（<code>ui-bridge.ts:1730</code>）、dp2 checkpoint（<code>pm-orchestrator.ts:2602</code>）、 dp3 worker 澄清（<code>worker-mode.ts:3903</code>）、dp25 签收结论（<code>mw decide sign</code>，W9/W11）。其余 21 个 "已注册、可验证、未接线"——<code>wired</code> 与 <code>executor</code> 是两个维度（Python executor 只回显，真实动作在 TS/CLI 侧）。</li><li><strong>签收不再是人的阻塞点</strong>：<code>.mw/decide.json</code> 的 <code>signoff</code> 缺省 <code>auto</code> → 由 jev 出 <code>continue|narrow|revoke</code>； 不可用或低置信才回落到 agent LLM 推断；<code>disable</code> 表示永不签收、<code>done</code> 门禁不阻塞。</li><li><strong>state 不由 LLM 组装</strong>：TS 生产者 + Python <code>_state_builder</code>，jev 只回答题面。</li><li><strong>不做向后兼容</strong>：state 字段改名后旧 state 直接 <code>input-incomplete</code>。</li></ul>
+<hr/>
+<h2 id="2-实现流程-代码运行逻辑">2. 实现流程（代码运行逻辑）</h2>
+<h3 id="2-1-一次决策调用的端到端链路-流程图形式-兼容性优先">2.1 一次决策调用的端到端链路（流程图形式，兼容性优先）</h3>
+<figure class="diagram" id="d2"><div class="mermaid">flowchart TB
+    subgraph P1["① TS 生产者"]
+        A1["dp1 ui-bridge.ts:1730&lt;br/&gt;dp2 pm-orchestrator.ts:2602&lt;br/&gt;dp3 worker-mode.ts:3903"]
+    end
+    subgraph P2["② triage-client.ts"]
+        B1["buildTriageState&lt;br/&gt;组装现场字段"]
+        B2["validateStructuredState&lt;br/&gt;对照注册表生成物"]
+        B3["canonicalize + 2000B 绑定&lt;br/&gt;超限先砍可选 / 劈半"]
+        B4["refused 零 spawn"]
+    end
+    subgraph P3["③ mw.py + decision_points.py"]
+        C1["cmd_decide / _decide_run&lt;br/&gt;state 走 stdin"]
+        C2["decide_for 步骤 1-3&lt;br/&gt;unknown id / enabled / mode"]
+        C3["步骤 4-4b&lt;br/&gt;transport 配置 + resolve_policy"]
+        C4["步骤 5-6&lt;br/&gt;build_state + required + _fit_state"]
+        C5["escalate&lt;br/&gt;disabled / unavailable / input-incomplete / input-oversize"]
+    end
+    subgraph P4["④ decision.py + backend"]
+        E1["DecisionClient.decide&lt;br/&gt;三闸：字节 / 32k / 64k"]
+        E2["TimiDecisionsBackend&lt;br/&gt;POST /v1/decisions"]
+        E3["jev-latest&lt;br/&gt;model + state + questions 三键"]
+        E4["available=false&lt;br/&gt;budget-exhausted 等"]
+    end
+    subgraph P5["⑤ 判定与归档"]
+        F1["步骤 7-8&lt;br/&gt;unavailable / low-confidence"]
+        F2["步骤 9&lt;br/&gt;suggest 或 intent=answer"]
+        F3["步骤 10-11&lt;br/&gt;executor 成功 / over-authority"]
+        F4["decide_archive.append_decide&lt;br/&gt;jsonl 哈希链 + policy 回显"]
+    end
+    subgraph P6["⑥ 回传与消费"]
+        G1["JSON 出参 stdout&lt;br/&gt;parse + applyAuthorityKeys"]
+        G2["TriageResult"]
+        G3["dp1 处置&lt;br/&gt;dp2 仅收窄&lt;br/&gt;dp3 sendUserMessage 前缀 steer"]
+    end
+
+    A1 --&gt; B1 --&gt; B2
+    B2 --&gt;|"缺/多字段"| B4
+    B2 --&gt;|"通过"| B3 --&gt; C1
+    C1 --&gt; C2
+    C2 --&gt;|"unknown id"| C5
+    C2 --&gt;|"disabled"| C5
+    C2 --&gt;|"通过"| C3
+    C3 --&gt;|"未配置"| C5
+    C3 --&gt;|"已配置"| C4
+    C4 --&gt;|"字段缺失 / 超 2000B"| C5
+    C4 --&gt;|"通过"| E1
+    E1 --&gt;|"闸门拦下"| E4
+    E1 --&gt;|"通过"| E2 --&gt; E3
+    E3 --&gt;|"200 + answers"| F1
+    E4 --&gt; F1
+    C5 --&gt; F4
+    F1 --&gt;|"不可用 / 低置信"| F4
+    F1 --&gt;|"可用"| F2
+    F2 --&gt;|"suggest / answer"| F4
+    F2 --&gt;|"auto + act"| F3
+    F3 --&gt; F4
+    F4 --&gt; G1 --&gt; G2 --&gt; G3</div><figcaption>图 2 · 2.1 一次决策调用的端到端链路（流程图形式，兼容性优先）</figcaption><details><summary>查看 Mermaid 源码</summary><pre class="src">flowchart TB
+    subgraph P1["① TS 生产者"]
+        A1["dp1 ui-bridge.ts:1730&lt;br/&gt;dp2 pm-orchestrator.ts:2602&lt;br/&gt;dp3 worker-mode.ts:3903"]
+    end
+    subgraph P2["② triage-client.ts"]
+        B1["buildTriageState&lt;br/&gt;组装现场字段"]
+        B2["validateStructuredState&lt;br/&gt;对照注册表生成物"]
+        B3["canonicalize + 2000B 绑定&lt;br/&gt;超限先砍可选 / 劈半"]
+        B4["refused 零 spawn"]
+    end
+    subgraph P3["③ mw.py + decision_points.py"]
+        C1["cmd_decide / _decide_run&lt;br/&gt;state 走 stdin"]
+        C2["decide_for 步骤 1-3&lt;br/&gt;unknown id / enabled / mode"]
+        C3["步骤 4-4b&lt;br/&gt;transport 配置 + resolve_policy"]
+        C4["步骤 5-6&lt;br/&gt;build_state + required + _fit_state"]
+        C5["escalate&lt;br/&gt;disabled / unavailable / input-incomplete / input-oversize"]
+    end
+    subgraph P4["④ decision.py + backend"]
+        E1["DecisionClient.decide&lt;br/&gt;三闸：字节 / 32k / 64k"]
+        E2["TimiDecisionsBackend&lt;br/&gt;POST /v1/decisions"]
+        E3["jev-latest&lt;br/&gt;model + state + questions 三键"]
+        E4["available=false&lt;br/&gt;budget-exhausted 等"]
+    end
+    subgraph P5["⑤ 判定与归档"]
+        F1["步骤 7-8&lt;br/&gt;unavailable / low-confidence"]
+        F2["步骤 9&lt;br/&gt;suggest 或 intent=answer"]
+        F3["步骤 10-11&lt;br/&gt;executor 成功 / over-authority"]
+        F4["decide_archive.append_decide&lt;br/&gt;jsonl 哈希链 + policy 回显"]
+    end
+    subgraph P6["⑥ 回传与消费"]
+        G1["JSON 出参 stdout&lt;br/&gt;parse + applyAuthorityKeys"]
+        G2["TriageResult"]
+        G3["dp1 处置&lt;br/&gt;dp2 仅收窄&lt;br/&gt;dp3 sendUserMessage 前缀 steer"]
+    end
+
+    A1 --&gt; B1 --&gt; B2
+    B2 --&gt;|"缺/多字段"| B4
+    B2 --&gt;|"通过"| B3 --&gt; C1
+    C1 --&gt; C2
+    C2 --&gt;|"unknown id"| C5
+    C2 --&gt;|"disabled"| C5
+    C2 --&gt;|"通过"| C3
+    C3 --&gt;|"未配置"| C5
+    C3 --&gt;|"已配置"| C4
+    C4 --&gt;|"字段缺失 / 超 2000B"| C5
+    C4 --&gt;|"通过"| E1
+    E1 --&gt;|"闸门拦下"| E4
+    E1 --&gt;|"通过"| E2 --&gt; E3
+    E3 --&gt;|"200 + answers"| F1
+    E4 --&gt; F1
+    C5 --&gt; F4
+    F1 --&gt;|"不可用 / 低置信"| F4
+    F1 --&gt;|"可用"| F2
+    F2 --&gt;|"suggest / answer"| F4
+    F2 --&gt;|"auto + act"| F3
+    F3 --&gt; F4
+    F4 --&gt; G1 --&gt; G2 --&gt; G3</pre></details></figure>
+<h3 id="2-2-decide_for-的判定树-11-步-含短路点">2.2 <code>decide_for</code> 的判定树（11 步，含短路点）</h3>
+<figure class="diagram" id="d3"><div class="mermaid">flowchart TB
+    S["decide_for dp_id&lt;br/&gt;decision_points.py:2191"] --&gt; S1{"dp_id 在注册表?"}
+    S1 --&gt;|"否"| E2["DecisionInputError&lt;br/&gt;CLI exit 2"]
+    S1 --&gt;|"是"| S2{"enabled?"}
+    S2 --&gt;|"false"| R1["escalate disabled&lt;br/&gt;在 build_state / 网络之前返回"]
+    S2 --&gt;|"true"| S3["mode 校验&lt;br/&gt;config 优先，注册表兜底"]
+    S3 --&gt; S4{"transport 已配置?"}
+    S4 --&gt;|"否"| R2["escalate unavailable"]
+    S4 --&gt;|"是"| S4B["resolve_policy + _apply_per_dp_budget&lt;br/&gt;row &gt; .mw/decide.json &gt; builtin"]
+    S4B --&gt; S5["build_state trigger&lt;br/&gt;_state_builder 加 schema_version / decision_point"]
+    S5 --&gt; S5A{"required_state_fields 齐?"}
+    S5A --&gt;|"缺"| R3["escalate input-incomplete&lt;br/&gt;只报字段名，不报值"]
+    S5A --&gt;|"齐"| S6["_fit_state&lt;br/&gt;先 fit_context 再丢可选字段"]
+    S6 --&gt; S6A{"仍超 2000B?"}
+    S6A --&gt;|"是"| R4["escalate input-oversize"]
+    S6A --&gt;|"否"| S7["DecisionClient.decide"]
+    S7 --&gt; S7A{"available?"}
+    S7A --&gt;|"false"| R5["escalate unavailable&lt;br/&gt;reason: disabled/timeout/rate-limited/..."]
+    S7A --&gt;|"true"| S8{"答案可用且置信达标?"}
+    S8 --&gt;|"空 / 缺 qid / 非法值 / 低于 floor"| R6["escalate low-confidence"]
+    S8 --&gt;|"可用"| S9{"mode=suggest 或 intent=answer?"}
+    S9 --&gt;|"是"| A1["acted=false&lt;br/&gt;归档建议，不执行"]
+    S9 --&gt;|"否"| A2{"executor 存在且成功?"}
+    A2 --&gt;|"否"| R7["escalate over-authority"]
+    A2 --&gt;|"是"| A3["acted=true + actual_action"]
+    R1 --&gt; ARC["归档：decide 行 + 哈希链 + policy 回显"]
+    R2 --&gt; ARC
+    R3 --&gt; ARC
+    R4 --&gt; ARC
+    R5 --&gt; ARC
+    R6 --&gt; ARC
+    R7 --&gt; ARC
+    A1 --&gt; ARC
+    A3 --&gt; ARC
+    ARC --&gt; OUT["DecisionOutcome&lt;br/&gt;status / answered_by / confidence / detail"]</div><figcaption>图 3 · 2.2 <code>decide_for</code> 的判定树（11 步，含短路点）</figcaption><details><summary>查看 Mermaid 源码</summary><pre class="src">flowchart TB
+    S["decide_for dp_id&lt;br/&gt;decision_points.py:2191"] --&gt; S1{"dp_id 在注册表?"}
+    S1 --&gt;|"否"| E2["DecisionInputError&lt;br/&gt;CLI exit 2"]
+    S1 --&gt;|"是"| S2{"enabled?"}
+    S2 --&gt;|"false"| R1["escalate disabled&lt;br/&gt;在 build_state / 网络之前返回"]
+    S2 --&gt;|"true"| S3["mode 校验&lt;br/&gt;config 优先，注册表兜底"]
+    S3 --&gt; S4{"transport 已配置?"}
+    S4 --&gt;|"否"| R2["escalate unavailable"]
+    S4 --&gt;|"是"| S4B["resolve_policy + _apply_per_dp_budget&lt;br/&gt;row &gt; .mw/decide.json &gt; builtin"]
+    S4B --&gt; S5["build_state trigger&lt;br/&gt;_state_builder 加 schema_version / decision_point"]
+    S5 --&gt; S5A{"required_state_fields 齐?"}
+    S5A --&gt;|"缺"| R3["escalate input-incomplete&lt;br/&gt;只报字段名，不报值"]
+    S5A --&gt;|"齐"| S6["_fit_state&lt;br/&gt;先 fit_context 再丢可选字段"]
+    S6 --&gt; S6A{"仍超 2000B?"}
+    S6A --&gt;|"是"| R4["escalate input-oversize"]
+    S6A --&gt;|"否"| S7["DecisionClient.decide"]
+    S7 --&gt; S7A{"available?"}
+    S7A --&gt;|"false"| R5["escalate unavailable&lt;br/&gt;reason: disabled/timeout/rate-limited/..."]
+    S7A --&gt;|"true"| S8{"答案可用且置信达标?"}
+    S8 --&gt;|"空 / 缺 qid / 非法值 / 低于 floor"| R6["escalate low-confidence"]
+    S8 --&gt;|"可用"| S9{"mode=suggest 或 intent=answer?"}
+    S9 --&gt;|"是"| A1["acted=false&lt;br/&gt;归档建议，不执行"]
+    S9 --&gt;|"否"| A2{"executor 存在且成功?"}
+    A2 --&gt;|"否"| R7["escalate over-authority"]
+    A2 --&gt;|"是"| A3["acted=true + actual_action"]
+    R1 --&gt; ARC["归档：decide 行 + 哈希链 + policy 回显"]
+    R2 --&gt; ARC
+    R3 --&gt; ARC
+    R4 --&gt; ARC
+    R5 --&gt; ARC
+    R6 --&gt; ARC
+    R7 --&gt; ARC
+    A1 --&gt; ARC
+    A3 --&gt; ARC
+    ARC --&gt; OUT["DecisionOutcome&lt;br/&gt;status / answered_by / confidence / detail"]</pre></details></figure>
+<h3 id="2-3-客户端三层容量闸与传输-decision-py-797">2.3 客户端三层容量闸与传输（<code>decision.py:797</code>）</h3>
+<figure class="diagram" id="d4"><div class="mermaid">flowchart TB
+    C0["DecisionClient.decide"] --&gt; C1["_validate_input&lt;br/&gt;state 三形态 + questions 类型"]
+    C1 --&gt; C2{".mw/decide.json 已配置?"}
+    C2 --&gt;|"否"| CE["available=false&lt;br/&gt;reason=disabled"]
+    C2 --&gt;|"是"| C3{"max_state_bytes &gt; 0 且超限?"}
+    C3 --&gt;|"是"| CB["budget-exhausted&lt;br/&gt;带实际字节数"]
+    C3 --&gt;|"否"| C4{"state + 最长单题 &gt; 32768 tokens?"}
+    C4 --&gt;|"是"| CB
+    C4 --&gt;|"否"| C5{"整份请求 &gt; 65536 tokens?"}
+    C5 --&gt;|"是"| CB
+    C5 --&gt;|"否"| C6["_resolve_backend&lt;br/&gt;transport=timi-decisions"]
+    C6 --&gt; C7{"有 backend?"}
+    C7 --&gt;|"否"| CE2["available=false&lt;br/&gt;reason=entry-unavailable"]
+    C7 --&gt;|"是"| C8["循环直到 timeout_s 截止&lt;br/&gt;不做模型回退、不换传输"]
+    C8 --&gt; C9{"HTTP 2xx?"}
+    C9 --&gt;|"否"| C10["reason=rate-limited / upstream-error"]
+    C9 --&gt;|"是"| C11{"响应体带 error?"}
+    C11 --&gt;|"是"| C10
+    C11 --&gt;|"否"| C12["回填 model / confidence_source&lt;br/&gt;answers + latency_ms"]
+    C10 --&gt; C13["available=false + attempts"]
+    C12 --&gt; CO["response dict"]
+    C13 --&gt; CO</div><figcaption>图 4 · 2.3 客户端三层容量闸与传输（<code>decision.py:797</code>）</figcaption><details><summary>查看 Mermaid 源码</summary><pre class="src">flowchart TB
+    C0["DecisionClient.decide"] --&gt; C1["_validate_input&lt;br/&gt;state 三形态 + questions 类型"]
+    C1 --&gt; C2{".mw/decide.json 已配置?"}
+    C2 --&gt;|"否"| CE["available=false&lt;br/&gt;reason=disabled"]
+    C2 --&gt;|"是"| C3{"max_state_bytes &gt; 0 且超限?"}
+    C3 --&gt;|"是"| CB["budget-exhausted&lt;br/&gt;带实际字节数"]
+    C3 --&gt;|"否"| C4{"state + 最长单题 &gt; 32768 tokens?"}
+    C4 --&gt;|"是"| CB
+    C4 --&gt;|"否"| C5{"整份请求 &gt; 65536 tokens?"}
+    C5 --&gt;|"是"| CB
+    C5 --&gt;|"否"| C6["_resolve_backend&lt;br/&gt;transport=timi-decisions"]
+    C6 --&gt; C7{"有 backend?"}
+    C7 --&gt;|"否"| CE2["available=false&lt;br/&gt;reason=entry-unavailable"]
+    C7 --&gt;|"是"| C8["循环直到 timeout_s 截止&lt;br/&gt;不做模型回退、不换传输"]
+    C8 --&gt; C9{"HTTP 2xx?"}
+    C9 --&gt;|"否"| C10["reason=rate-limited / upstream-error"]
+    C9 --&gt;|"是"| C11{"响应体带 error?"}
+    C11 --&gt;|"是"| C10
+    C11 --&gt;|"否"| C12["回填 model / confidence_source&lt;br/&gt;answers + latency_ms"]
+    C10 --&gt; C13["available=false + attempts"]
+    C12 --&gt; CO["response dict"]
+    C13 --&gt; CO</pre></details></figure>
+<p><code>_estimate_tokens</code> 是保守估计：非 ASCII 1 token/字符，ASCII 4 字符/token。</p>
+<h3 id="2-4-state-由谁生产-确定性代码-不经过-llm">2.4 state 由谁生产（确定性代码，不经过 LLM）</h3>
+<div class="table-wrap"><table><thead><tr><th>dp</th><th>生产者锚点</th><th>触发器</th><th>state 关键字段</th></tr></thead><tbody><tr><td>dp1 triage</td><td><code>pm/ui-bridge.ts:446</code> / <code>:503 dispatchTaskExcerpt</code> / <code>:564</code></td><td>派发前风险分类</td><td><code>scope.file_extensions</code>、<code>progress.elapsed_minutes</code>、<code>risk_source</code>、<code>context.task_excerpt</code></td></tr><tr><td>dp2 checkpoint</td><td><code>pm/pm-orchestrator.ts:2161/2201/2209</code></td><td>CHECKPOINT mid/high risk</td><td><code>change_summary</code>、<code>context.artifact_status</code>、阈值来自生效 policy</td></tr><tr><td>dp3 worker 澄清</td><td><code>worker/worker-mode.ts:5057/5075 buildDp3State</code></td><td>worker 提出澄清问题</td><td><code>ambiguity.question</code>、<code>local_candidates</code>、<code>context.change_summary</code> + <code>context.candidate_snippets</code></td></tr><tr><td>任意 dp</td><td><code>decision_points.py:402 _state_builder</code></td><td><code>decide run</code></td><td><code>{schema_version: 2, decision_point}</code> + <code>trigger.data</code> setdefault + <code>key/task_key/questions_version</code></td></tr><tr><td>任意 dp</td><td><code>decision_context.py:197 fit_context</code></td><td>发送前</td><td><code>state.context</code> 五槽，单源槽位表与截断规则</td></tr></tbody></table></div>
+<p>TS 侧还有一道开发期护栏：<code>ui-bridge.ts:461 assertStateMatchesRegistry</code> 对照 <code>shared/decide-registry.generated.ts</code>（由 <code>scripts/gen_decide_registry_ts.py</code> 从 <code>decide_registry.json</code> 生成，<code>--check</code> 零漂移）。缺字段或多字段都 throw——防止 "配置要求 A、代码发 B"。</p>
+<h3 id="2-5-两条入口分叉-直接-run-与决策本-run">2.5 两条入口分叉：直接 run 与决策本 run</h3>
+<figure class="diagram" id="d5"><div class="mermaid">flowchart TB
+    I{"入口"} --&gt;|"mw decide run --dp X --json&lt;br/&gt;state 来自 stdin"| P1["decide_for&lt;br/&gt;同 2.2"]
+    I --&gt;|"mw decide run --book B"| B1["load_book + check_book&lt;br/&gt;七类失败码 + 封闭键集合"]
+    B1 --&gt;|"任一不符"| B2["exit 2&lt;br/&gt;零 HTTP、零归档"]
+    B1 --&gt;|"通过"| B3["从 book 提取 state&lt;br/&gt;校验 questions_version"]
+    B3 --&gt; P1
+    P1 --&gt; AR["归档行&lt;br/&gt;带 book_path + file_sha256"]</div><figcaption>图 5 · 2.5 两条入口分叉：直接 run 与决策本 run</figcaption><details><summary>查看 Mermaid 源码</summary><pre class="src">flowchart TB
+    I{"入口"} --&gt;|"mw decide run --dp X --json&lt;br/&gt;state 来自 stdin"| P1["decide_for&lt;br/&gt;同 2.2"]
+    I --&gt;|"mw decide run --book B"| B1["load_book + check_book&lt;br/&gt;七类失败码 + 封闭键集合"]
+    B1 --&gt;|"任一不符"| B2["exit 2&lt;br/&gt;零 HTTP、零归档"]
+    B1 --&gt;|"通过"| B3["从 book 提取 state&lt;br/&gt;校验 questions_version"]
+    B3 --&gt; P1
+    P1 --&gt; AR["归档行&lt;br/&gt;带 book_path + file_sha256"]</pre></details></figure>
+<p>决策本骨架由配置生成，不由人/LLM 猜：</p>
+<pre class="code"><code>decide_registry.json  ──▶  mw decide book new &lt;dp&gt;  ──▶  骨架（键与顺序 == required_state_fields）
+                                                          │
+                                        人或 decision worker 填值（只写输入，不写预期答案）
+                                                          ▼
+                                             mw decide book check --book B</code></pre>
+<p>七类失败码：<code>book-schema</code> / <code>book-state</code> / <code>book-placeholder</code> / <code>book-context</code> / <code>book-evidence</code> / <code>book-budget</code> / <code>book-secret</code>。</p>
+<h3 id="2-6-decision-worker-类型的门禁-运行时">2.6 <code>decision</code> worker 类型的门禁（运行时）</h3>
+<figure class="diagram" id="d6"><div class="mermaid">flowchart TB
+    D0["dispatch_worker type=decision&lt;br/&gt;autopilot/dispatch.py REGISTRY"] --&gt; D1{"卡片四项齐?&lt;br/&gt;dp / 证据来源 / 分支后果 / allow-send"}
+    D1 --&gt;|"缺"| D2["missing-item:NAME&lt;br/&gt;拒绝派发，零 spawn"]
+    D1 --&gt;|"齐"| D3{"dp 定义了 required_state_fields?"}
+    D3 --&gt;|"否"| D4["dp-required-state-fields-missing"]
+    D3 --&gt;|"是"| D5["写面收窄到 key/evidence/books/**&lt;br/&gt;卡片更宽则记 narrowed_by"]
+    D5 --&gt; D6["worker 启动：只读工具 + 窄 bash&lt;br/&gt;book new -&gt; 填值 -&gt; book check"]
+    D6 --&gt; D7{"allow-send?"}
+    D7 --&gt;|"no（缺省）"| D8["禁 --book&lt;br/&gt;book-send-refused，发送权归 PM"]
+    D7 --&gt;|"yes"| D9["worker 可 --book 发送"]
+    D8 --&gt; D10["PM 复核 book check 后自行发送"]</div><figcaption>图 6 · 2.6 <code>decision</code> worker 类型的门禁（运行时）</figcaption><details><summary>查看 Mermaid 源码</summary><pre class="src">flowchart TB
+    D0["dispatch_worker type=decision&lt;br/&gt;autopilot/dispatch.py REGISTRY"] --&gt; D1{"卡片四项齐?&lt;br/&gt;dp / 证据来源 / 分支后果 / allow-send"}
+    D1 --&gt;|"缺"| D2["missing-item:NAME&lt;br/&gt;拒绝派发，零 spawn"]
+    D1 --&gt;|"齐"| D3{"dp 定义了 required_state_fields?"}
+    D3 --&gt;|"否"| D4["dp-required-state-fields-missing"]
+    D3 --&gt;|"是"| D5["写面收窄到 key/evidence/books/**&lt;br/&gt;卡片更宽则记 narrowed_by"]
+    D5 --&gt; D6["worker 启动：只读工具 + 窄 bash&lt;br/&gt;book new -&gt; 填值 -&gt; book check"]
+    D6 --&gt; D7{"allow-send?"}
+    D7 --&gt;|"no（缺省）"| D8["禁 --book&lt;br/&gt;book-send-refused，发送权归 PM"]
+    D7 --&gt;|"yes"| D9["worker 可 --book 发送"]
+    D8 --&gt; D10["PM 复核 book check 后自行发送"]</pre></details></figure>
+<p>离线预判：<code>mw dispatch check --card FILE [--dp ID] [--book FILE] [--json]</code> （exit 0 干净 / 2 拒绝 / 1 用法错误），判据与 <code>dispatch()</code> 拒绝时完全相同。</p>
+<hr/>
+<h3 id="2-7-签收链路-mw-decide-sign-key-任意-key-w9-w11">2.7 签收链路（<code>mw decide sign --key &lt;任意 key&gt;</code>，W9/W11）</h3>
+<figure class="diagram" id="d7"><div class="mermaid">flowchart TB
+    S0["mw decide sign&lt;br/&gt;无 --conclusion 即自动"] --&gt; S1{".mw/decide.json 的 signoff"}
+    S1 --&gt;|"disable"| S2["不写文件&lt;br/&gt;done 门禁签收规则豁免"]
+    S1 --&gt;|"auto（缺省）"| S3{"decide 已配置&lt;br/&gt;且 dp25 生效 enabled?"}
+    S3 --&gt;|"是"| S4["decide_for dp25-signoff-conclusion&lt;br/&gt;intent=answer&lt;br/&gt;state = collect 事实"]
+    S4 --&gt; S5{"available 且&lt;br/&gt;置信 &gt;= 生效 min_confidence?"}
+    S5 --&gt;|"是"| S6["结论 = jev 答案&lt;br/&gt;signed_via: auto-decide"]
+    S5 --&gt;|"否"| S7["回落 LLM 推断&lt;br/&gt;--auto --conclusion X&lt;br/&gt;signed_via: auto-llm&lt;br/&gt;decide_fallback: reason"]
+    S3 --&gt;|"否"| S7
+    S6 --&gt; S8["render + write_signoff&lt;br/&gt;auto-* 允许 agent 会话"]
+    S7 --&gt; S8
+    S8 --&gt; S9["append authority-change 行&lt;br/&gt;by=signoff:conclusion，note 记 signed_via"]
+    S9 --&gt; S10["advance_phase done 门禁&lt;br/&gt;counted_rows / rows_sha256 / verdict"]
+    S2 --&gt; S11["done 门禁通过&lt;br/&gt;输出 signoff=disable note"]</div><figcaption>图 7 · 2.7 签收链路（<code>mw decide sign --key &lt;任意 key&gt;</code>，W9/W11）</figcaption><details><summary>查看 Mermaid 源码</summary><pre class="src">flowchart TB
+    S0["mw decide sign&lt;br/&gt;无 --conclusion 即自动"] --&gt; S1{".mw/decide.json 的 signoff"}
+    S1 --&gt;|"disable"| S2["不写文件&lt;br/&gt;done 门禁签收规则豁免"]
+    S1 --&gt;|"auto（缺省）"| S3{"decide 已配置&lt;br/&gt;且 dp25 生效 enabled?"}
+    S3 --&gt;|"是"| S4["decide_for dp25-signoff-conclusion&lt;br/&gt;intent=answer&lt;br/&gt;state = collect 事实"]
+    S4 --&gt; S5{"available 且&lt;br/&gt;置信 &gt;= 生效 min_confidence?"}
+    S5 --&gt;|"是"| S6["结论 = jev 答案&lt;br/&gt;signed_via: auto-decide"]
+    S5 --&gt;|"否"| S7["回落 LLM 推断&lt;br/&gt;--auto --conclusion X&lt;br/&gt;signed_via: auto-llm&lt;br/&gt;decide_fallback: reason"]
+    S3 --&gt;|"否"| S7
+    S6 --&gt; S8["render + write_signoff&lt;br/&gt;auto-* 允许 agent 会话"]
+    S7 --&gt; S8
+    S8 --&gt; S9["append authority-change 行&lt;br/&gt;by=signoff:conclusion，note 记 signed_via"]
+    S9 --&gt; S10["advance_phase done 门禁&lt;br/&gt;counted_rows / rows_sha256 / verdict"]
+    S2 --&gt; S11["done 门禁通过&lt;br/&gt;输出 signoff=disable note"]</pre></details></figure>
+<p>判据（写进 <code>dp25</code> 的 <code>instructions</code>）：</p>
+<ul><li><code>continue</code>：N≥1 可用行 + 链闭合 + 每行 <code>timi-decisions/jev-latest/api</code></li><li><code>narrow</code>：能力降级但仍要保留部分授权</li><li><code>revoke</code>：链断、engine 不符、或没有任何可用行</li></ul>
+<p>防自我背书：dp25 自己的档案行不计入签收事实；<code>signed_via</code> 只写 <code>auto-decide|auto-llm|cli|tui</code>。</p>
+<hr/>
+<h2 id="3-验证流程">3. 验证流程</h2>
+<figure class="diagram" id="d8"><div class="mermaid">flowchart TB
+    L1["L1 单元&lt;br/&gt;pytest: decision 相关 226 passed&lt;br/&gt;vitest: 6 suite 152 passed / 早前 163"]
+    L1 --&gt; L2["L2 镜像锁&lt;br/&gt;frozen allowlist 快照 / 角色映射双向&lt;br/&gt;gen_decide_registry_ts --check 零漂移&lt;br/&gt;triage-client STATE_TOP_LEVEL_KEYS"]
+    L2 --&gt; L3["L3 配置契约&lt;br/&gt;dp check 24/24 干净&lt;br/&gt;dp verify 24 ok / 0 fail&lt;br/&gt;book check 封闭键集合"]
+    L3 --&gt; L4["L4 真机&lt;br/&gt;dp verify --live 24/24 available&lt;br/&gt;jev-latest 766-1361ms&lt;br/&gt;三案例：noul 0.31 / choice 0.30 / score 0.55"]
+    L4 --&gt; L5["L5 质量门 QG&lt;br/&gt;4 份报告 → 三轮全 PASS"]
+
+    L5 --&gt; G1{"advance_phase check_gate"}
+    G1 --&gt;|"spec/design/plan/tasks/execute/verify"| OK1["PASS"]
+    G1 --&gt;|"done"| G2["decision_signoff 检查&lt;br/&gt;evidence/review/sign-final.md"]
+    G2 --&gt;|"缺文件"| BLOCK["BLOCKED&lt;br/&gt;需人在 agent 会话外签收"]
+    G2 --&gt;|"有 conclusion: continue"| DONE["可推 DONE"]
+
+    NOTE["本机环境边界（非本 key 引入）&lt;br/&gt;tsgo 全局不可用：worker/output-sections.ts 被另一 live 窗口改到半途&lt;br/&gt;pytest 3180 passed / 9 failed：GBK 子进程解码 3 + 历史卡片被清理 2 + 其他会话在飞 4"]</div><figcaption>图 8 · 3. 验证流程</figcaption><details><summary>查看 Mermaid 源码</summary><pre class="src">flowchart TB
+    L1["L1 单元&lt;br/&gt;pytest: decision 相关 226 passed&lt;br/&gt;vitest: 6 suite 152 passed / 早前 163"]
+    L1 --&gt; L2["L2 镜像锁&lt;br/&gt;frozen allowlist 快照 / 角色映射双向&lt;br/&gt;gen_decide_registry_ts --check 零漂移&lt;br/&gt;triage-client STATE_TOP_LEVEL_KEYS"]
+    L2 --&gt; L3["L3 配置契约&lt;br/&gt;dp check 24/24 干净&lt;br/&gt;dp verify 24 ok / 0 fail&lt;br/&gt;book check 封闭键集合"]
+    L3 --&gt; L4["L4 真机&lt;br/&gt;dp verify --live 24/24 available&lt;br/&gt;jev-latest 766-1361ms&lt;br/&gt;三案例：noul 0.31 / choice 0.30 / score 0.55"]
+    L4 --&gt; L5["L5 质量门 QG&lt;br/&gt;4 份报告 → 三轮全 PASS"]
+
+    L5 --&gt; G1{"advance_phase check_gate"}
+    G1 --&gt;|"spec/design/plan/tasks/execute/verify"| OK1["PASS"]
+    G1 --&gt;|"done"| G2["decision_signoff 检查&lt;br/&gt;evidence/review/sign-final.md"]
+    G2 --&gt;|"缺文件"| BLOCK["BLOCKED&lt;br/&gt;需人在 agent 会话外签收"]
+    G2 --&gt;|"有 conclusion: continue"| DONE["可推 DONE"]
+
+    NOTE["本机环境边界（非本 key 引入）&lt;br/&gt;tsgo 全局不可用：worker/output-sections.ts 被另一 live 窗口改到半途&lt;br/&gt;pytest 3180 passed / 9 failed：GBK 子进程解码 3 + 历史卡片被清理 2 + 其他会话在飞 4"]</pre></details></figure>
+<div class="table-wrap"><table><thead><tr><th>层</th><th>命令</th><th>通过标准</th></tr></thead><tbody><tr><td>L1</td><td><code>python -m pytest -q</code>（packages/multi-workers）/ <code>npx vitest --run test/suite/...</code></td><td>新增全绿，无新增失败</td></tr><tr><td>L2</td><td><code>python scripts/gen_decide_registry_ts.py --check</code>；parity / frozen 快照测试</td><td>rc=0，零漂移</td></tr><tr><td>L3</td><td><code>mw decide dp check</code> / <code>mw decide dp verify</code> / <code>mw decide book check</code></td><td>0 error / 0 warning</td></tr><tr><td>L4</td><td><code>mw decide dp verify --live</code>、真实 worker 派发</td><td>24/24 <code>available=true</code>，model=jev-latest</td></tr><tr><td>L5</td><td>QG review（4 份证据报告）</td><td>三轮 PASS</td></tr><tr><td>门禁</td><td><code>advance_phase check_gate(key, "done")</code></td><td>仅差 <code>sign-final.md</code></td></tr></tbody></table></div>
+<hr/>
+<h2 id="4-落地流程">4. 落地流程</h2>
+<figure class="diagram" id="d9"><div class="mermaid">flowchart TB
+    B0["代码就绪&lt;br/&gt;packages/multi-workers + coding-agent"] --&gt; B1["构建&lt;br/&gt;mw build --allow-dirty --install&lt;br/&gt;bundle → ~/.pi/agent/extensions/agent-team-loop.js"]
+    B1 --&gt; B2["重启服务&lt;br/&gt;/mw restart&lt;br/&gt;（当前 serve 跑 stale code）"]
+    B2 --&gt; B3["重载扩展&lt;br/&gt;/reload&lt;br/&gt;（当前进程仍是旧 bundle）"]
+    B3 --&gt; USE
+
+    subgraph USE["使用面（配置驱动三件套）"]
+        U0["① 选 dp&lt;br/&gt;mw decide dp list / show dp3"]
+        U1["② 生成决策本骨架&lt;br/&gt;mw decide book new dp3-worker-clarify"]
+        U2["③ 填值（人 / decision worker）&lt;br/&gt;键 == required_state_fields&lt;br/&gt;只写输入，不写预期答案"]
+        U3["④ 验收&lt;br/&gt;mw decide book check --book B"]
+        U4["⑤ 发送&lt;br/&gt;mw decide run --book B 或 --book + decision worker 派发"]
+        U0 --&gt; U1 --&gt; U2 --&gt; U3 --&gt; U4
+        U3 --&gt;|"任一失败码"| U2
+    end
+
+    USE --&gt; S1["签收（唯一 done 阻塞）&lt;br/&gt;mw decide sign --conclusion continue&lt;br/&gt;写 evidence/review/sign-final.md + authority-change 行"]
+    S1 --&gt; S2["推 DONE&lt;br/&gt;advance_phase → done&lt;br/&gt;_project_log 摘要行"]
+    S2 --&gt; S3{"用户放话"}
+    S3 --&gt;|"提交"| S4["feat(multi-workers) / feat(coding-agent) / feat(ai) + docs&lt;br/&gt;mw-heartbeat-attempt-reset 随同"]
+    S3 --&gt;|"重建 dist"| S5["dist/** 重建（当前 bundle 早于 W5b-W8）"]
+
+    S1 -.-&gt;|"不签 / narrow / revoke"| S6["回到 dp 配置或设计&lt;br/&gt;降级、收窄或撤销该 dp"]</div><figcaption>图 9 · 4. 落地流程</figcaption><details><summary>查看 Mermaid 源码</summary><pre class="src">flowchart TB
+    B0["代码就绪&lt;br/&gt;packages/multi-workers + coding-agent"] --&gt; B1["构建&lt;br/&gt;mw build --allow-dirty --install&lt;br/&gt;bundle → ~/.pi/agent/extensions/agent-team-loop.js"]
+    B1 --&gt; B2["重启服务&lt;br/&gt;/mw restart&lt;br/&gt;（当前 serve 跑 stale code）"]
+    B2 --&gt; B3["重载扩展&lt;br/&gt;/reload&lt;br/&gt;（当前进程仍是旧 bundle）"]
+    B3 --&gt; USE
+
+    subgraph USE["使用面（配置驱动三件套）"]
+        U0["① 选 dp&lt;br/&gt;mw decide dp list / show dp3"]
+        U1["② 生成决策本骨架&lt;br/&gt;mw decide book new dp3-worker-clarify"]
+        U2["③ 填值（人 / decision worker）&lt;br/&gt;键 == required_state_fields&lt;br/&gt;只写输入，不写预期答案"]
+        U3["④ 验收&lt;br/&gt;mw decide book check --book B"]
+        U4["⑤ 发送&lt;br/&gt;mw decide run --book B 或 --book + decision worker 派发"]
+        U0 --&gt; U1 --&gt; U2 --&gt; U3 --&gt; U4
+        U3 --&gt;|"任一失败码"| U2
+    end
+
+    USE --&gt; S1["签收（唯一 done 阻塞）&lt;br/&gt;mw decide sign --conclusion continue&lt;br/&gt;写 evidence/review/sign-final.md + authority-change 行"]
+    S1 --&gt; S2["推 DONE&lt;br/&gt;advance_phase → done&lt;br/&gt;_project_log 摘要行"]
+    S2 --&gt; S3{"用户放话"}
+    S3 --&gt;|"提交"| S4["feat(multi-workers) / feat(coding-agent) / feat(ai) + docs&lt;br/&gt;mw-heartbeat-attempt-reset 随同"]
+    S3 --&gt;|"重建 dist"| S5["dist/** 重建（当前 bundle 早于 W5b-W8）"]
+
+    S1 -.-&gt;|"不签 / narrow / revoke"| S6["回到 dp 配置或设计&lt;br/&gt;降级、收窄或撤销该 dp"]</pre></details></figure>
+<p>签收命令（必须人在 agent 会话外执行）：</p>
+<pre class="code"><code>python packages/multi-workers/mw.py decide sign \
+  --project .agenticdoc/mw-decision-substitution \
+  --conclusion continue \
+  --reason "&lt;理由&gt;"</code></pre>
+<hr/>
+<h2 id="5-当前状态">5. 当前状态</h2>
+<div class="table-wrap"><table><thead><tr><th>环节</th><th>状态</th></tr></thead><tbody><tr><td>实现（T-01..T-12 / FIX-A..R / W1..W8）</td><td>完成</td></tr><tr><td>验证 L1-L5</td><td>完成</td></tr><tr><td>门禁 spec/design/plan/tasks/execute/verify</td><td>PASS</td></tr><tr><td>门禁 done（<code>decision_signoff</code>）</td><td><strong>PASS</strong>：<code>mw decide sign</code> → dp25 → jev 答 <code>narrow</code>（confidence=0.7 api），<code>signed_via: auto-decide</code>，无 <code>decide_fallback</code></td></tr><tr><td>构建 + 重启 + 重载</td><td>待用户（bundle 早于 W5b-W8）</td></tr><tr><td>提交</td><td>待用户放话</td></tr></tbody></table></div>
+<hr/>
+<h2 id="6-附录-构建过程-pm-视角的波次编排-非运行期代码逻辑">6. 附录：构建过程（PM 视角的波次编排，非运行期代码逻辑）</h2>
+<figure class="diagram" id="d10"><div class="mermaid">flowchart TB
+    SPEC["SPEC&lt;br/&gt;5 束 research 并行&lt;br/&gt;spec rev3 AC-001..022"] --&gt; DES["DESIGN&lt;br/&gt;6 束 research 并行&lt;br/&gt;D-001..063"]
+    DES --&gt; PLAN["PLAN&lt;br/&gt;W1..W8 波次表&lt;br/&gt;每波自带测试"]
+
+    PLAN --&gt; R1{"第一轮：底座"}
+    R1 --&gt; T1["T-01..T-12&lt;br/&gt;注册表 / 档案链 / dp1·dp2·dp3 / 签收命令"]
+    T1 --&gt; FIX["FIX-A..R&lt;br/&gt;类型 / 传输收敛 / 签收门 / 冻结镜像"]
+
+    FIX --&gt; R2{"第二轮：配置驱动"}
+    R2 --&gt; W1W2["W1 ∥ W2&lt;br/&gt;state 三形态 + token 双闸 ∥ Python 字段改名"]
+    R2 --&gt; W3["W3&lt;br/&gt;TS 字段改名 + 校验镜像"]
+    W1W2 --&gt; W4W5["W4 ∥ W5b&lt;br/&gt;配置自描述 + dp verify ∥ per-dp 三旋钮"]
+    W3 --&gt; W4W5
+    W4W5 --&gt; W6W7["W6 ∥ W7&lt;br/&gt;context 槽位 + 生成 TS 清单 ∥ 决策本 new/check"]
+    W6W7 --&gt; W8["W8&lt;br/&gt;decision worker 类型&lt;br/&gt;卡片四项判据 + allow-send 门 + 写面收窄"]
+
+    W8 --&gt; PM["PM 收口（串行）&lt;br/&gt;镜像锁 5 处 / 槽位口径统一 / mw dispatch check 注册 / CHANGELOG / pm-state"]
+
+    PM --&gt; RULE1["规矩 1：关闭态先同构&lt;br/&gt;dp 全关 → run.json / output.md / trace.log 逐字节等于基线"]
+    PM --&gt; RULE2["规矩 2：契约先行&lt;br/&gt;改契约必须回 design 改 D-xxx"]
+    PM --&gt; RULE3["规矩 3：写面互斥&lt;br/&gt;同波同文件只一个 worker"]</div><figcaption>图 10 · 6. 附录：构建过程（PM 视角的波次编排，非运行期代码逻辑）</figcaption><details><summary>查看 Mermaid 源码</summary><pre class="src">flowchart TB
+    SPEC["SPEC&lt;br/&gt;5 束 research 并行&lt;br/&gt;spec rev3 AC-001..022"] --&gt; DES["DESIGN&lt;br/&gt;6 束 research 并行&lt;br/&gt;D-001..063"]
+    DES --&gt; PLAN["PLAN&lt;br/&gt;W1..W8 波次表&lt;br/&gt;每波自带测试"]
+
+    PLAN --&gt; R1{"第一轮：底座"}
+    R1 --&gt; T1["T-01..T-12&lt;br/&gt;注册表 / 档案链 / dp1·dp2·dp3 / 签收命令"]
+    T1 --&gt; FIX["FIX-A..R&lt;br/&gt;类型 / 传输收敛 / 签收门 / 冻结镜像"]
+
+    FIX --&gt; R2{"第二轮：配置驱动"}
+    R2 --&gt; W1W2["W1 ∥ W2&lt;br/&gt;state 三形态 + token 双闸 ∥ Python 字段改名"]
+    R2 --&gt; W3["W3&lt;br/&gt;TS 字段改名 + 校验镜像"]
+    W1W2 --&gt; W4W5["W4 ∥ W5b&lt;br/&gt;配置自描述 + dp verify ∥ per-dp 三旋钮"]
+    W3 --&gt; W4W5
+    W4W5 --&gt; W6W7["W6 ∥ W7&lt;br/&gt;context 槽位 + 生成 TS 清单 ∥ 决策本 new/check"]
+    W6W7 --&gt; W8["W8&lt;br/&gt;decision worker 类型&lt;br/&gt;卡片四项判据 + allow-send 门 + 写面收窄"]
+
+    W8 --&gt; PM["PM 收口（串行）&lt;br/&gt;镜像锁 5 处 / 槽位口径统一 / mw dispatch check 注册 / CHANGELOG / pm-state"]
+
+    PM --&gt; RULE1["规矩 1：关闭态先同构&lt;br/&gt;dp 全关 → run.json / output.md / trace.log 逐字节等于基线"]
+    PM --&gt; RULE2["规矩 2：契约先行&lt;br/&gt;改契约必须回 design 改 D-xxx"]
+    PM --&gt; RULE3["规矩 3：写面互斥&lt;br/&gt;同波同文件只一个 worker"]</pre></details></figure>
+<p>关键坑（已入 <code>.agenticdoc/_pitfalls.md</code>）：</p>
+<ul><li>卡片 <code>write_face:</code> 必须<strong>一行一个路径</strong>（顿号并列只解析第一条）。</li><li>worker 整文件读 <code>mw.py</code>（1 万行）/ <code>worker-mode.ts</code>（5 千行）会 4 GB 堆 OOM。</li><li>派发卡片必须带 ≥1 个 <code>path:line</code> 种子锚点，否则 envelope 拒绝。</li><li>卡片 <code>###</code> 子标题会被提升成 <code>##</code>，吞掉后续标题。</li></ul>
+
+    <footer>
+      源文件 <code>.agenticdoc/mw-decision-substitution/flowcharts.md</code> · 生成于 2026-10-21 ·
+      图表渲染依赖 Mermaid 11（CDN），离线时可展开图源码阅读。
+    </footer>
+  </main>
+</div>
+<script type="module">
+const CFG = {
+  startOnLoad: false,
+  securityLevel: 'loose',
+  theme: 'base',
+  flowchart: { htmlLabels: true, curve: 'linear', nodeSpacing: 38, rankSpacing: 58, useMaxWidth: true },
+  themeVariables: {
+    fontFamily: 'ui-sans-serif, "Segoe UI", "Microsoft YaHei", sans-serif',
+    fontSize: '14px',
+    primaryColor: '#eef2ff',
+    primaryBorderColor: '#4f46e5',
+    primaryTextColor: '#111827',
+    secondaryColor: '#f0fdf4',
+    tertiaryColor: '#fffbeb',
+    lineColor: '#64748b',
+    clusterBkg: '#f8fafc',
+    clusterBorder: '#cbd5e1',
+    edgeLabelBackground: '#ffffff'
+  }
+};
+const CDN = [
+  'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs',
+  'https://unpkg.com/mermaid@11/dist/mermaid.esm.min.mjs'
+];
+(async () => {
+  for (const url of CDN) {
+    try {
+      const mod = await import(url);
+      const mermaid = mod.default ?? mod;
+      mermaid.initialize(CFG);
+      await mermaid.run({ querySelector: '.mermaid' });
+      document.body.classList.add('mermaid-ok');
+      return;
+    } catch (err) {
+      console.warn('[mermaid] failed via', url, err);
+    }
+  }
+  document.body.classList.add('no-mermaid');
+  document.querySelectorAll('figure.diagram details').forEach((d) => { d.open = true; });
+})();
+
+const links = [...document.querySelectorAll('nav.toc a')];
+const byId = new Map(links.map((a) => [a.getAttribute('href').slice(1), a]));
+const obs = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    links.forEach((a) => a.classList.remove('active'));
+    const a = byId.get(e.target.id);
+    if (a) a.classList.add('active');
+  }
+}, { rootMargin: '-10% 0px -75% 0px', threshold: 0 });
+document.querySelectorAll('main h2[id], main h3[id]').forEach((h) => obs.observe(h));
+</script>
+</body>
+</html>

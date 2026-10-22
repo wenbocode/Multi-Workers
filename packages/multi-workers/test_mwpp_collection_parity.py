@@ -59,6 +59,10 @@ _EXPECTED_ALLOWLISTS: dict[str, list[str]] = {
         "rag_chat",
     ],
     "vision": ["read", "write", "edit", "bash", "find", "grep", "ls"],
+    # mw-decision-substitution W8, renamed W10: read-only set + bash for
+    # `book check`, same entry order as the Python REGISTRY. The type value is
+    # `decide_prepare` (was `decision`).
+    "decide_prepare": ["read", "find", "grep", "ls", "bash"],
     "fallback": ["read", "write", "edit", "bash", "find", "grep", "ls"],
 }
 

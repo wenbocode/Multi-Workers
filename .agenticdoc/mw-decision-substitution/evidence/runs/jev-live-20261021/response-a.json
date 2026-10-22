@@ -1,0 +1,45 @@
+{
+  "status": 200,
+  "latency_ms": 1010,
+  "body": {
+    "model": "jev-latest",
+    "answers": {
+      "dept": {
+        "type": "choice",
+        "choice": "billing",
+        "confidence": 0.98,
+        "probabilities": {
+          "billing": 0.99,
+          "sales": 0.0,
+          "technical": 0.01
+        }
+      },
+      "frustration": {
+        "type": "score",
+        "score": 0.99,
+        "confidence": 0.97,
+        "legend": {
+          "0": "平静",
+          "1": "不满",
+          "2": "非常愤怒"
+        },
+        "probabilities": {
+          "0": 0.01,
+          "1": 0.98,
+          "2": 0.01
+        }
+      },
+      "urgent": {
+        "type": "noul",
+        "noul": 0.79
+      }
+    },
+    "usage": {
+      "input_tokens": 513,
+      "output_tokens": 70,
+      "cached_tokens": 0,
+      "cache_write_tokens": 0
+    },
+    "id": "gen-dec-1792553272-7XlykMXE041LF9GzLdiA"
+  }
+}

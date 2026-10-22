@@ -1,0 +1,61 @@
+{
+  "model": "jev-latest",
+  "state": {
+    "v": 1,
+    "dp": "dp3-worker-clarify",
+    "key": "jev-live-case",
+    "phase": "EXECUTE",
+    "task_type": "research",
+    "risk": "low",
+    "risk_source": "machine",
+    "authority_tier": "P2",
+    "task_summary": "jev 决策入口的契约调研证据应该写到哪个文件？",
+    "questions_version": "q-fcbd3847",
+    "ambiguity": {
+      "kind": "scope",
+      "question": "jev 决策入口 /v1/decisions 的传输契约调研证据应该写到 evidence/research/ 下的哪个文件？"
+    },
+    "local_candidates": [
+      {
+        "id": "c1",
+        "label": "evidence/research/spec-worker-heartbeat-20261021.md"
+      },
+      {
+        "id": "c2",
+        "label": "evidence/research/spec-timi-decisions-api-20261021.md"
+      },
+      {
+        "id": "c3",
+        "label": "evidence/research/spec-budget-guard-20261021.md"
+      }
+    ]
+  },
+  "questions": {
+    "answer_kind": {
+      "type": "choice",
+      "instructions": "这条澄清属于哪一类：能凭已给材料查到答案、需要人的意图判断、还是已有表态可复用？",
+      "criteria": {
+        "fact": "答案存在于给出的状态或候选条目里",
+        "intent": "取决于人想要什么（材料里没有）",
+        "reuse": "之前的表态或产物已经回答了它"
+      }
+    },
+    "answerable": {
+      "type": "noul",
+      "instructions": "仅凭 state 里给出的内容与候选条目，能否确定地回答上面这条澄清？",
+      "criteria": {
+        "true": "材料里直接有答案",
+        "false": "材料不足或需要人表态"
+      }
+    },
+    "candidate": {
+      "type": "choice",
+      "instructions": "state.local_candidates 里哪一条最可能承载答案？",
+      "criteria": {
+        "c1": "evidence/research/spec-worker-heartbeat-20261021.md",
+        "c2": "evidence/research/spec-timi-decisions-api-20261021.md",
+        "c3": "evidence/research/spec-budget-guard-20261021.md"
+      }
+    }
+  }
+}

@@ -1,0 +1,1 @@
+{"model": "jev-latest", "usage": null, "latency_ms": 1024, "answers": {"gate_next": {"value": "allow_empty", "confidence": 0.3, "probabilities": {"allow_empty": 0.53, "narrow_scope": 0.17, "sign_now": 0.3}}}}

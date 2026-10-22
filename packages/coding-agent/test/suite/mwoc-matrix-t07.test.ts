@@ -32,6 +32,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import { diffLedger, parseWriteFileEvents } from "../../src/extensions/agent-team-loop/shared/change-ledger.ts";
 import { readTaskType } from "../../src/extensions/agent-team-loop/shared/task-frontmatter.ts";
 import {
 	checkRecovery,
@@ -47,18 +48,14 @@ import {
 	MECHANICAL_CONTEXT_MARKER,
 	readTerminalGaps,
 } from "../../src/extensions/agent-team-loop/worker/output-writer.ts";
-import { workerModeActivate } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
 import {
+	type BashWriteScopeConfig,
+	checkBashWriteScopeTarget,
 	classifyLedgerTargets,
 	extractBashWriteCandidates,
 	stripDataRegions,
-	type BashWriteScopeConfig,
-	checkBashWriteScopeTarget,
+	workerModeActivate,
 } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
-import {
-	diffLedger,
-	parseWriteFileEvents,
-} from "../../src/extensions/agent-team-loop/shared/change-ledger.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 
@@ -326,7 +323,9 @@ describe("AC-015 candidate-set x judgement combinations", () => {
 		const verdict = gaps(fx, "reply", "research");
 		expect(verdict.missingSections).toEqual([]);
 		expect(verdict.ok).toBe(true);
-		console.log(`[VERIFY] AC-015 report+slug judged=${path.basename(judgedProductFile(fx.taskDir) ?? "")} missing=${JSON.stringify(verdict.missingSections)}`);
+		console.log(
+			`[VERIFY] AC-015 report+slug judged=${path.basename(judgedProductFile(fx.taskDir) ?? "")} missing=${JSON.stringify(verdict.missingSections)}`,
+		);
 	});
 
 	it("only output.md: output.md is judged and the verdict comes from it", () => {
@@ -336,7 +335,9 @@ describe("AC-015 candidate-set x judgement combinations", () => {
 		const verdict = gaps(fx, "reply", "research");
 		expect(verdict.judged).toBe(true);
 		expect(verdict.missingSections).toEqual([...BASE]);
-		console.log(`[VERIFY] AC-015 output-only judged=${path.basename(judgedProductFile(fx.taskDir) ?? "")} missing=${JSON.stringify(verdict.missingSections)}`);
+		console.log(
+			`[VERIFY] AC-015 output-only judged=${path.basename(judgedProductFile(fx.taskDir) ?? "")} missing=${JSON.stringify(verdict.missingSections)}`,
+		);
 	});
 
 	it("the settle exit agrees with the candidate-set verdict on all three forms", async () => {
@@ -430,9 +431,7 @@ describe("AC-005 historical mechanical-only replay (3 cases, exit=2 -> exit=0)",
 	it.each(REPLAY)("%s: missing only 上下文来源, then exit=2 -> exit=0", async (rel) => {
 		const fx = makeReplayFixture(rel);
 		const pre = checkRecovery(fx.preText, fx.type);
-		console.log(
-			`[VERIFY] AC-005 replay pre task=${rel} type=${fx.type} missing=${JSON.stringify(pre.missing)}`,
-		);
+		console.log(`[VERIFY] AC-005 replay pre task=${rel} type=${fx.type} missing=${JSON.stringify(pre.missing)}`);
 		expect(pre.missing).toEqual(["上下文来源"]);
 		// The disposition class is backfill-rescued: the only gap is mechanical.
 		expect(recoverySectionsFor(fx.type)).toContain("上下文来源");
@@ -520,18 +519,14 @@ describe("AC-017(b) .NET file APIs extract exactly one event each", () => {
 		expect(classification.recorded).toEqual(["evidence/x.md"]);
 		const eventLines = classification.recorded.map((target) => `[WRITE_FILE] path=${target}\n`).join("");
 		expect(parseWriteFileEvents(eventLines)).toEqual(["evidence/x.md"]);
-		console.log(`[VERIFY] AC-017(b) recorded=${JSON.stringify(classification.recorded)} events=${JSON.stringify(parseWriteFileEvents(eventLines))}`);
+		console.log(
+			`[VERIFY] AC-017(b) recorded=${JSON.stringify(classification.recorded)} events=${JSON.stringify(parseWriteFileEvents(eventLines))}`,
+		);
 	});
 });
 
 describe("AC-017(c) the --glob here-string no longer denies real writes", () => {
-	const CACHED_CORPUS = path.join(
-		REPO_ROOT,
-		".agenticdoc",
-		"mw-worker-output-contract",
-		"workers",
-		"woc-rq3-ledger",
-	);
+	const CACHED_CORPUS = path.join(REPO_ROOT, ".agenticdoc", "mw-worker-output-contract", "workers", "woc-rq3-ledger");
 
 	const RQ1_WRITE_SCOPE = [
 		".agenticdoc/mw-write-face-guard/workers/wfg-rq1-write-face-sources",
@@ -540,13 +535,7 @@ describe("AC-017(c) the --glob here-string no longer denies real writes", () => 
 
 	const RQ1_CONFIG: BashWriteScopeConfig = {
 		projectRoot: REPO_ROOT,
-		taskDir: path.join(
-			REPO_ROOT,
-			".agenticdoc",
-			"mw-write-face-guard",
-			"workers",
-			"wfg-rq1-write-face-sources",
-		),
+		taskDir: path.join(REPO_ROOT, ".agenticdoc", "mw-write-face-guard", "workers", "wfg-rq1-write-face-sources"),
 		keyDir: path.join(REPO_ROOT, ".agenticdoc", "mw-write-face-guard"),
 		trueRoot: path.join(REPO_ROOT, ".agenticdoc"),
 		writeScope: RQ1_WRITE_SCOPE,
@@ -678,9 +667,7 @@ describe("AC-017(d) unjudgeable derives from USABLE events", () => {
 	it("a zero-event trace with a declaration stays unjudgeable; without one it is green", () => {
 		expect(diffLedger(report([DECLARED]), "", { projectRoot: REPO_ROOT }).unjudgeable).toBe(true);
 		expect(diffLedger(report([]), "", { projectRoot: REPO_ROOT }).unjudgeable).toBe(false);
-		console.log(
-			`[VERIFY] AC-017(d) zero_events declared_unjudgeable=true undeclared_unjudgeable=false`,
-		);
+		console.log(`[VERIFY] AC-017(d) zero_events declared_unjudgeable=true undeclared_unjudgeable=false`);
 	});
 
 	it("a usable [WRITE_FILE] for the declared file is green", () => {

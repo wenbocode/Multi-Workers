@@ -1544,11 +1544,30 @@ export interface KeyRounds {
 	retry: RoundBudget;
 }
 
+/** Per-key claim coverage (claim-driven-review T-05, design §3.4). Summed over
+ * the key's worker `run.json` files that carry a `claims` subobject; the
+ * subobject itself is written by the launcher (out of scope for T-05), so a
+ * run without one contributes nothing and a key without any measured run has
+ * no `claims` view at all. */
+export interface ClaimMetricsView {
+	total: number;
+	closed: number;
+	partial: number;
+	unverified: number;
+	fetches: number;
+	/** `Σtokens / Σclosed`; `"n/a"` when a contributing run has no attributable
+	 * tokens or when `closed === 0` — never a fabricated `0`. */
+	tokensPerClosedClaim: number | "n/a";
+}
+
 export interface StageKeyView {
 	key: string;
 	phase: string;
 	state: string;
 	rounds: KeyRounds;
+	/** Optional so every pre-T-05 model shape (and every exact `toEqual` on it)
+	 * stays valid; set only when a run.json actually carries claims. */
+	claims?: ClaimMetricsView;
 }
 
 export interface StageView {
@@ -1676,6 +1695,92 @@ function keyRounds(perLoop: Map<string, number>, key: string, budget: number): K
 	};
 }
 
+/** One `run.json` `claims` subobject (design §3.4: `{total, closed, partial,
+ * unverified, fetches, tokens}`, `tokens: null` = not attributable). */
+interface RunClaims {
+	total: number;
+	closed: number;
+	partial: number;
+	unverified: number;
+	fetches: number;
+	tokens: number | null;
+}
+
+/** A non-negative integer counter, or `null` when the field is not one. */
+function claimCounter(value: unknown): number | null {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+	return Math.trunc(value);
+}
+
+/** Read one `run.json` claim payload. Anything unreadable/partial is `null`:
+ * a half-written subobject is not a measurement, so nothing is inferred. */
+function readRunClaims(file: string): RunClaims | null {
+	let raw: string;
+	try {
+		raw = fs.readFileSync(file, "utf8");
+	} catch {
+		return null;
+	}
+	let data: unknown;
+	try {
+		data = JSON.parse(raw);
+	} catch {
+		return null;
+	}
+	if (typeof data !== "object" || data === null) return null;
+	const claims = (data as Record<string, unknown>).claims;
+	if (typeof claims !== "object" || claims === null) return null;
+	const fields = claims as Record<string, unknown>;
+	const total = claimCounter(fields.total);
+	const closed = claimCounter(fields.closed);
+	const partial = claimCounter(fields.partial);
+	const unverified = claimCounter(fields.unverified);
+	const fetches = claimCounter(fields.fetches);
+	if (total === null || closed === null || partial === null || unverified === null || fetches === null) {
+		return null;
+	}
+	// A missing `tokens` key means unattributable (same as an explicit null).
+	const tokens = claimCounter(fields.tokens);
+	return { total, closed, partial, unverified, fetches, tokens };
+}
+
+/** Aggregate one key's worker runs into a `claims` view (design §3.4:
+ * `Σtokens / Σclosed`). Unknown for any single run makes the ratio `n/a` — a
+ * partial sum would understate the cost per closed claim. */
+function keyClaims(workersDir: string): ClaimMetricsView | undefined {
+	let entries: fs.Dirent[];
+	try {
+		entries = fs.readdirSync(workersDir, { withFileTypes: true });
+	} catch {
+		return undefined; // no workers/ dir: nothing was measured for this key
+	}
+	const names = entries
+		.filter((e) => e.isDirectory())
+		.map((e) => e.name)
+		.sort();
+	const totals = { total: 0, closed: 0, partial: 0, unverified: 0, fetches: 0 };
+	let tokens = 0;
+	let tokensKnown = true;
+	let seen = false;
+	for (const name of names) {
+		const payload = readRunClaims(path.join(workersDir, name, "run.json"));
+		if (payload === null) continue;
+		seen = true;
+		totals.total += payload.total;
+		totals.closed += payload.closed;
+		totals.partial += payload.partial;
+		totals.unverified += payload.unverified;
+		totals.fetches += payload.fetches;
+		if (payload.tokens === null) tokensKnown = false;
+		else tokens += payload.tokens;
+	}
+	if (!seen) return undefined;
+	return {
+		...totals,
+		tokensPerClosedClaim: !tokensKnown || totals.closed === 0 ? "n/a" : tokens / totals.closed,
+	};
+}
+
 /** Derive the full status view from files alone (AC-015: a reopened console
  * rebuilds this in <10s with zero process state). The only hard failure is
  * an invalid config.json (D-110 fail-closed); a missing/parse-failed
@@ -1701,15 +1806,21 @@ export function deriveStatusModel(projectDir: string, nowMs: number = Date.now()
 	const keys: StageKeyView[] = [];
 	if (stage !== undefined) {
 		for (const row of stage.keys) {
-			const perLoop = usedRounds([path.join(agenticdoc, row.key, "workers")]);
-			keys.push({
+			const workersDir = path.join(agenticdoc, row.key, "workers");
+			const perLoop = usedRounds([workersDir]);
+			const claims = keyClaims(workersDir);
+			const view: StageKeyView = {
 				key: row.key,
 				phase: phaseByKey.get(row.key) ?? "—",
 				// key-status line absent (fresh proposal) → the only non-terminal
 				// enum value, "running" (D-105 KEY_STATUSES has no "pending").
 				state: stage.keyStatus[row.key] ?? "running",
 				rounds: keyRounds(perLoop, row.key, config.round_budget),
-			});
+			};
+			// D-109 N8 shape lock: the key exists only when a run.json measured
+			// claims, so a project without claims serializes exactly as before.
+			if (claims !== undefined) view.claims = claims;
+			keys.push(view);
 		}
 	}
 
@@ -1780,9 +1891,18 @@ export function renderStatusText(model: StatusModel): string {
 	if (status.stage.current > 0) {
 		lines.push(`stage ${status.stage.current} (${status.stage.status})`);
 		for (const k of status.stage.keys) {
+			// T-05: appended at the END of the line, never inserted before the
+			// L2/L3/retry columns. A downstream 110-column cut (monitor.ts) then
+			// trims the claims tail first, so the existing fields keep their
+			// columns. Absent claims add nothing at all.
+			const claims =
+				k.claims === undefined
+					? ""
+					: ` | claims ${k.claims.total}/${k.claims.closed}c ${k.claims.partial}p ${k.claims.unverified}u`;
 			lines.push(
 				`  ${k.key} | phase=${k.phase} | state=${k.state} | L2 ${k.rounds.l2.used}/${k.rounds.l2.max}` +
-					` | L3 ${k.rounds.l3.used}/${k.rounds.l3.max} | retry ${k.rounds.retry.used}/${k.rounds.retry.max}`,
+					` | L3 ${k.rounds.l3.used}/${k.rounds.l3.max} | retry ${k.rounds.retry.used}/${k.rounds.retry.max}` +
+					claims,
 			);
 		}
 		if (status.stage.keys.length === 0) lines.push("  (no keys)");

@@ -1,0 +1,65 @@
+{
+ "state": "key=mw-decision-substitution（决策模型替换 jev）。阶段 EXECUTE，主体 T-01..T-10 全 done，FIX-A..Q 全落地；decide 相关九套件 397 passed；packages/ai 6 passed；tsgo rc=0。本仓决策配置：transport=timi-decisions、model=jev-latest、dp1/dp2/dp3 enabled=true mode=auto。权威档案 .agenticdoc/_autopilot/decisions.jsonl 共 25 行：seq1-24 是 refresh 授权行，seq25 是唯一一条真 jev 决策行（decision_id=dp3-worker-clarify:mw-decision-substitution、available=true、acted=false、escalated_reason=low-confidence、transport=timi-decisions、model=jev-latest、confidence_source=api、latency_ms=1055）。签收门禁（decide_signoff）要求：N>=1、hash 链闭合、每行 engine=timi-decisions/jev-latest/api。done 门禁当前 3 条 FAIL 全部指向缺失的 evidence/review/sign-final.md。构建：mw build --install --allow-dirty 已成功（version=0.83.0，bundle 14:25），但工作树仍有 9 个未提交的 tracked 改动（packages/coding-agent/src 下）。已知残留：worker 把 FIX-Q 的 signed_via 逻辑放在 mw.py 的两个 helper（原计划改 decide_signoff.py，被 write_face 头挡）；score 型问题在 24 个注册 dp 里没有任何一个使用；per-dp 配置只有 tier/enabled/mode/note。",
+ "results": {
+  "A-noul": {
+   "rc": 0,
+   "payload": {
+    "model": "jev-latest",
+    "usage": null,
+    "latency_ms": 1017,
+    "answers": {
+     "signoff_ready": {
+      "value": 0.31,
+      "confidence": null
+     }
+    }
+   },
+   "stderr": ""
+  },
+  "B-choice": {
+   "rc": 0,
+   "payload": {
+    "model": "jev-latest",
+    "usage": null,
+    "latency_ms": 1024,
+    "answers": {
+     "gate_next": {
+      "value": "allow_empty",
+      "confidence": 0.3,
+      "probabilities": {
+       "allow_empty": 0.53,
+       "narrow_scope": 0.17,
+       "sign_now": 0.3
+      }
+     }
+    }
+   },
+   "stderr": ""
+  },
+  "C-score": {
+   "rc": 0,
+   "payload": {
+    "model": "jev-latest",
+    "usage": null,
+    "latency_ms": 1275,
+    "answers": {
+     "remaining_work": {
+      "value": 1.7,
+      "confidence": 0.55,
+      "probabilities": {
+       "0": 0.01,
+       "1": 0.28,
+       "2": 0.71
+      },
+      "legend": {
+       "0": "�ѿ���β��ֻ��ǩ����",
+       "1": "ֻ��֤�ݻ��ĵ�����",
+       "2": "����ʵ�ֻ����"
+      }
+     }
+    }
+   },
+   "stderr": ""
+  }
+ }
+}

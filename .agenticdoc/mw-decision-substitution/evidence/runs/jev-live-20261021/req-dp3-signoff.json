@@ -1,0 +1,32 @@
+{
+  "state": {
+    "v": 1,
+    "dp": "dp3-worker-clarify",
+    "key": "mw-decision-substitution",
+    "phase": "EXECUTE",
+    "task_type": "research",
+    "risk": "low",
+    "risk_source": "machine",
+    "authority_tier": "P2",
+    "task_summary": "jev 决策传输契约的证据应该写进哪个文件？",
+    "questions_version": "q-fcbd3847",
+    "ambiguity": {
+      "kind": "scope",
+      "question": "jev /v1/decisions 的传输契约与真调用证据，应该落在哪个文件里？"
+    },
+    "local_candidates": [
+      {
+        "id": "c1",
+        "label": "evidence/runs/jev-live-20261021/transcript.md"
+      },
+      {
+        "id": "c2",
+        "label": "evidence/quality-gate-report-20261020d.md"
+      },
+      {
+        "id": "c3",
+        "label": "evidence/research/spec-authority-audit-model-20261016.md"
+      }
+    ]
+  }
+}

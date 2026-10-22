@@ -1,0 +1,41 @@
+{
+  "status": "escalated",
+  "escalated_reason": "low-confidence",
+  "answer": {
+    "answer_kind": {
+      "value": "fact",
+      "confidence": 0.61
+    },
+    "answerable": {
+      "value": 0.28,
+      "confidence": null
+    },
+    "candidate": {
+      "value": "c2",
+      "confidence": 0.98
+    }
+  },
+  "response": {
+    "available": true,
+    "transport": "timi-decisions",
+    "model": "jev-latest",
+    "confidence_source": "api",
+    "attempts": 1,
+    "latency_ms": 990,
+    "answers": {
+      "answer_kind": {
+        "value": "fact",
+        "confidence": 0.61
+      },
+      "answerable": {
+        "value": 0.28,
+        "confidence": null
+      },
+      "candidate": {
+        "value": "c2",
+        "confidence": 0.98
+      }
+    },
+    "reason": null
+  }
+}

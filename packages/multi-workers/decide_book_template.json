@@ -1,0 +1,61 @@
+{
+  "books": {
+    "dp3-worker-clarify": {
+      "schema_version": 2,
+      "decision_point": "dp3-worker-clarify",
+      "state": {
+        "schema_version": 2,
+        "decision_point": "dp3-worker-clarify",
+        "key": "<string: AgenticTask key, e.g. mw-decision-substitution.>",
+        "phase": "<string: Current AgenticTask phase, e.g. EXECUTE.>",
+        "task_type": "<string: Task type of the work being decided: coding|review|research|rag-research|vision|verifier|reviewer|repair|phase-writer|roadmap-writer.>",
+        "risk": "<string: Risk tier of the task: low|mid|high.>",
+        "risk_source": "<string: Who assigned the risk: machine (auto-derived) | pm-label (labelled by the PM).>",
+        "authority_tier": "<string: Decision authority tier: P0|P1|P2.>",
+        "task_summary": "<string: One-line summary of the task being decided.>",
+        "questions_version": "q-fcbd3847",
+        "ambiguity": {
+          "kind": "<string: Kind of the ambiguity: scope|fact|intent.>",
+          "question": "<string: The clarifying question the worker could not answer.>"
+        },
+        "local_candidates": []
+      },
+      "context": {
+        "change_summary": "",
+        "candidate_snippets": []
+      },
+      "notes": {
+        "evidence": {
+          "schema_version": "<待填: path:line 或命令原文>",
+          "decision_point": "<待填: path:line 或命令原文>",
+          "key": "<待填: path:line 或命令原文>",
+          "phase": "<待填: path:line 或命令原文>",
+          "task_type": "<待填: path:line 或命令原文>",
+          "risk": "<待填: path:line 或命令原文>",
+          "risk_source": "<待填: path:line 或命令原文>",
+          "authority_tier": "<待填: path:line 或命令原文>",
+          "task_summary": "<待填: path:line 或命令原文>",
+          "questions_version": "<待填: path:line 或命令原文>",
+          "ambiguity.kind": "<待填: path:line 或命令原文>",
+          "ambiguity.question": "<待填: path:line 或命令原文>",
+          "local_candidates": "<待填: path:line 或命令原文>"
+        }
+      }
+    },
+    "dp6-qg-verdict": {
+      "schema_version": 2,
+      "decision_point": "dp6-qg-verdict",
+      "state": {
+        "schema_version": 2,
+        "decision_point": "dp6-qg-verdict",
+        "questions_version": "q-16b4bb5c"
+      },
+      "context": {
+        "error_excerpt": ""
+      },
+      "notes": {
+        "evidence": {}
+      }
+    }
+  }
+}

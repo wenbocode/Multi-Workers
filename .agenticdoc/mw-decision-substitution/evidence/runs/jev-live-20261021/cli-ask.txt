@@ -1,0 +1,4 @@
+jev-latest · 3 questions · 1067 ms
+urgent      [noul]    0.87          (probability of "yes")
+dept        [choice]  billing       confidence 0.95   probs: billing 0.97, technical 0.03, sales 0.00
+frustration [score]   1.02          confidence 0.95   legend: 0=平静, 1=不满, 2=非常愤怒

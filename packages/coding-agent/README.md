@@ -54,6 +54,7 @@ I regularly publish my own `pi-mono` work sessions here:
   - [Extensions](#extensions)
   - [Themes](#themes)
   - [Pi Packages](#pi-packages)
+- [Multi-Worker Dispatch Cards](#multi-worker-dispatch-cards)
 - [Programmatic Usage](#programmatic-usage)
 - [Philosophy](#philosophy)
 - [CLI Reference](#cli-reference)
@@ -452,6 +453,69 @@ Create a package by adding a `pi` key to `package.json`:
 Without a `pi` manifest, pi auto-discovers from conventional directories (`extensions/`, `skills/`, `prompts/`, `themes/`).
 
 See [docs/packages.md](docs/packages.md).
+
+---
+
+## Multi-Worker Dispatch Cards
+
+The bundled `agent-team-loop` extension turns a Markdown dispatch card into a worker task. A card may declare the claims it wants refuted in a `<!-- mw-claims: v1 -->` block; the extension then judges that block, prices the worker's read budget from it, and (when the gate is enforced) refuses a card whose claims cannot be adjudicated.
+
+### Claims block
+
+```markdown
+<!-- mw-claims: v1 -->
+| claim | 类型 | 陈述 | 反证条件 | 定位 | 判据 | 预算 |
+| --- | --- | --- | --- | --- | --- | --- |
+| C-01 | grep | `decision-tool.ts` no longer reads the routing file | any `readFileSync` hit on that path | `pm/decision-tool.ts` | grep: readFileSync => count=0 | 2 |
+| C-02 | cmd | the targeted suite is still green | a non-zero exit code | `evidence/claims/qg-20261021.md#C-02` | cmd: node --run test/x => rc=0 | 1 |
+<!-- /mw-claims -->
+```
+
+Seven columns: `claim | 类型 | 陈述 | 反证条件 | 定位 | 判据 | 预算`. On read the column order is free, extra columns are ignored, and either script of a header word is accepted.
+
+| 类型 | 判据 prefix | 定位 |
+| --- | --- | --- |
+| `cmd` | `cmd:` | `evidence/claims/<file>#<claim-id>` |
+| `grep` | `grep:` | `path[:a-b]` |
+| `struct` | `shape:` | `path[:a-b]` |
+| `manual` | `manual:` | `path:line`, or `-` |
+
+- `类型` is self-reported, never inferred, and must agree with the `判据` prefix.
+- `cmd` claims are pre-executed by the PM, not by the worker: the PM runs the command **before** dispatching and writes `verb ... => rc=<n>` (plus any measured `key=value` pairs) to `evidence/claims/<file>`; the reviewer only reads that file and cites the `evidence/claims/<file>#<claim-id>` anchor. The review roles have no shell, so an unrecorded command stays `unverified` with reason `no-access`.
+- `预算` is the planning weight: `manual` counts 2, every other type 1. `Σ预算 ≤ 40` and `manual` rows ≤ `min(4, ceil(n/3))`.
+- A claim missing `类型` / `陈述` / `反证条件` / `定位` / `判据` / `预算` is unusable and refuses the dispatch in both gate modes. Soft findings — `判据` prefix mismatch, a `cmd` locator outside `evidence/claims/`, an unresolvable or oversized locator, a tautological `反证条件` (same text as `陈述` once negation words are dropped and naming no new artifact), `Σ预算 > 40`, manual overflow — warn only (see gate modes below).
+
+### Read budget
+
+With `n` claims the dispatch renders a read scope and two cap scalars into `task.md`:
+
+```text
+read_scope:
+  - .agenticdoc/<key>
+  - .agenticdoc/goal.md
+l2_read_file_cap: min(30, Σ预算)
+l2_read_byte_cap: min(393216, 65536 × n)
+```
+
+A card without a claims block renders neither `read_scope` nor the caps, so it keeps its pre-claims bytes and the harness default cap (8 files / 65,536 B).
+
+### Gate modes
+
+`advisory` is the default: the dispatch receipt carries one `[claims] ... warnings=[...]` line and the dispatch proceeds. `MW_CLAIM_GATE=enforce` is the explicit opt-in that turns every finding into a refusal (code `dispatch-claims`, zero side effects). An unknown or blank value falls back to `advisory` with one diagnostic, so a typo can neither enforce silently nor stall the loop.
+
+### Verdict table
+
+A claims-backed worker answers every card claim in `output.md` under a `## 断言裁决` heading, with these seven columns:
+
+| claim | 类型 | 裁决 | 判定 | 证据 | 取数 | 原因 |
+| --- | --- | --- | --- | --- | --- | --- |
+
+- `裁决` ∈ `closed | partial | unverified`; `判定` ∈ `成立 | 不成立 | 无法判定` (plus `部分成立` for `partial`). The two columns must agree: `closed` takes 成立/不成立, `partial` only 部分成立, `unverified` only 无法判定.
+- `证据`: 1–3 refs separated by `;`, each either `path:line[-line][「excerpt」]` (repo-relative, inside the project, within the file, at most 200 lines wide) or `verb ... => rc=<n> [key=value]` for a pre-recorded command. Every ref pointing at `report*.md` / `output.md` / `progress.md` / `task.md` is self-witness, not evidence.
+- `原因` for `unverified` is one of the closed seven words: `budget`, `no-access`, `not-found`, `ambiguous`, `environment`, `out-of-scope`, `awaiting-input`.
+- `取数` is the number of read calls spent on the claim, at most `min(Σ预算, 30)`.
+- A `struct` row cannot be counted as `closed` (a shape check that held is `partial`), and a row for a claim the card never declared is a gap.
+- Missing table, missing row, disagreeing verdict/finding, unusable evidence or reason, or self-witness evidence is a terminal gap: one self-check steer, then the non-zero `exit 2` terminal — never a silent `done`.
 
 ---
 

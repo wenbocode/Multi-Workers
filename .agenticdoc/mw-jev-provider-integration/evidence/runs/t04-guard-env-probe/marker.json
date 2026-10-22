@@ -1,0 +1,16 @@
+{
+  "schema": "mw-run/1",
+  "rc": 1,
+  "timed_out": false,
+  "started_at_ms": 1792146511639,
+  "ended_at_ms": 1792146516646,
+  "wall_sec": 5.007,
+  "pid": 71148,
+  "argv": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "test_mw_console_guard.py::test_isolation_parent_process_subprocess_unpatched"
+  ]
+}
