@@ -273,6 +273,22 @@ export declare function partitionMw(projectDir: string, args: string[]): MwCliRe
 /** `mw.py model <args...>` — dispatch model defaults (show / set / clear) and the
  * ordered fallback chains (set-fallback / clear-fallback). */
 export declare function modelMw(projectDir: string, args: string[]): MwCliResult;
+/** `mw.py decide <args...>` — decision archive / dp authority / sign-off. The
+ * window face only forwards (`/mw decide sign` adds the `--human-confirmed`
+ * exemption after its own confirm dialog); Python stays the single source of
+ * parsing, validation, verdicts and rendering. */
+export declare function decideMw(projectDir: string, args: string[]): MwCliResult;
+/** `mw.py stats [args...]` — token + wall-clock attribution over a time window
+ * (mw-usage-monitor T-04/AC-006). Thin wrapper: Python owns the ledger scan,
+ * the window/filter semantics and the rendering; the TS side only forwards the
+ * argv tail and displays the text. The ledger is machine-level (`~/.mw/usage/
+ * runs.jsonl` holds every project), so the window face does NOT append the
+ * control root (`scopeProject = false`) — a bare `/mw stats` reports the whole
+ * machine exactly like the bare CLI, and narrowing is an explicit
+ * `--project <dir>` that now survives (before, the appended tail overrode it).
+ * The timeout is minutes, not seconds: the report scans session logs across
+ * the window. */
+export declare function statsMw(projectDir: string, extraArgs: string[]): MwCliResult;
 /** `mw.py rag` subcommands — must mirror mw.py `_RAG_ACTIONS`. Python stays the
  * single source of argument parsing/validation; this list only decides whether
  * a call is worth making and renders the usage line. */

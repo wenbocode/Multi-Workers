@@ -1,3 +1,4 @@
+import type { Claim } from "../shared/dispatch-card.ts";
 export interface WriteOutputOpts {
     taskKey: string;
     agenticdocRoot: string;
@@ -68,6 +69,13 @@ export interface TerminalGaps {
      * gap. The classification reads the filesystem (existence), never the
      * token's shape. */
     unresolvableFiles: string[];
+    /** T-04a: the AC-002 claim-coverage verdict (`worker/output-sections.ts::
+     * claimCoverage`) — the `## 断言裁决` table judged against the card's claims.
+     * OPTIONAL and absent (not `[]`) when the run has no claim contract, so a
+     * claim-free caller's object stays field-identical to the pre-T-04a verdict
+     * and every hand-built `TerminalGaps` keeps compiling. Part of `ok` when
+     * present. */
+    claimGaps?: string[];
     /** True iff every gap list is empty. */
     ok: boolean;
 }
@@ -168,6 +176,13 @@ export declare function readTerminalGaps(opts: {
      * role with no report product keeps the AC-006/C5 exemption (its deliverable
      * is the repository). The change ledger (AC-004) is always judged. */
     judgeRecovery?: boolean;
+    /** T-04a AC-002: the card's parsed claims. Omitted/`undefined` means the run
+     * carries no claim contract — the claims are then not judged AT ALL, so the
+     * returned `TerminalGaps` is field-identical to the pre-T-04a verdict. The
+     * judgement reads the agent product's `## 断言裁决` table (parsed here, this
+     * is the single settle decision point) and gates on `judgeRecovery`: a role
+     * whose report is not a deliverable has no product table to judge. */
+    claims?: Claim[];
 }): TerminalGaps;
 export declare function writeOutput(opts: WriteOutputOpts): void;
 export declare function appendTrace(taskKey: string, agenticdocRoot: string, line: string): void;

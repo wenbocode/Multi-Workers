@@ -31,9 +31,12 @@
  * Leaf layer: intentionally depends only on `node:fs` (plus the `node:path` /
  * `./paths.ts` allowance of the card). It must not import `pm/**` or
  * `worker/**`, and callers pass a resolved `cardPath` so the module never
- * guesses a project root.
+ * guesses a project root. The claims section below re-implements the fence
+ * state machine of `worker/output-sections.ts` for the same reason instead of
+ * importing it (claims design §3.1).
  */
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { readTaskType } from "./task-frontmatter.js";
 /** The three envelope sections every dispatchable card must carry (§1.1). */
 export const ENVELOPE_SECTIONS = ["context", "requirements", "deliverables"];
@@ -188,6 +191,10 @@ export const DISPATCH_TYPE_VOCABULARY = [
     "research",
     "rag-research",
     "vision",
+    // Decision-book writer (mw-decision-substitution W8, renamed W10): a role
+    // that only fills a decision book from evidence, never edits code. The type
+    // value is `decide_prepare` (was `decision`; no alias kept).
+    "decide_prepare",
     "verifier",
     "reviewer",
     "repair",
@@ -215,6 +222,12 @@ const TYPE_EXTRA_PATTERNS = {
         ["改动历史", /改动历史|改动清单|变更历史|写入事件|trace\.log|write[-_ ]?history|change[-_ ]?log/i],
     ],
     research: [["唯一证据文件", /唯一证据文件|唯一证据|唯一产物|仅此一写|sole[-_ ]?evidence/i]],
+    decide_prepare: [
+        ["dp", /^\s*(?:[-*+]\s*)?(?:\*\*)?dp(?:\*\*)?\s*[:：]/im],
+        ["证据来源", /证据来源|证据清单|证据出处|evidence[-_ ]?sources?/i],
+        ["分支后果", /分支后果|各分支|后果说明|branch[-_ ]?(consequences?|outcomes?)/i],
+        ["allow-send", /allow[-_ ]?send/i],
+    ],
     review: [
         ["审计目标", /审计目标|审计问题|审计对象|审计范围|审计维度|问题域|要回答|audit[-_ ]?(target|scope|question)/i],
         [
@@ -465,5 +478,460 @@ export function seedItemsMissing(text) {
     if (!PATH_LINE_RE.test(text))
         missing.push(SEED_PATH_ITEM);
     return missing;
+}
+// ── claims: constants (design §2.1/§2.3, parity-locked by T-06) ─────────────
+/**
+ * Self-reported judgement kind of one claim. The classifier never infers the
+ * kind (agreement with the corpus is only 63.5%, RQ-3 §2.4); the card declares
+ * it and {@link claimsGaps} only checks that the `判据` prefix agrees.
+ */
+export const CLAIM_TYPES = ["cmd", "grep", "struct", "manual"];
+/**
+ * `unverified` reason vocabulary (design §2.3). Single source: the Python
+ * mirror (`autopilot/dispatch.py`) and the T-06 parity lock read this tuple
+ * verbatim. Never write a second copy — the `ESCALATED_REASONS` precedent
+ * (`packages/multi-workers/decision_points.py:111-120`) records exactly that
+ * drift lesson.
+ */
+export const UNVERIFIED_REASONS = [
+    "budget",
+    "no-access",
+    "not-found",
+    "ambiguous",
+    "environment",
+    "out-of-scope",
+    "awaiting-input",
+];
+/**
+ * Default gate mode (D-006): `advisory` warns only, `enforce` refuses with zero
+ * side effects. `MW_CLAIM_GATE=enforce` overrides it at runtime; both sides of
+ * the TS/Python pair use the same constant and the same env name.
+ */
+export const CLAIM_GATE_DEFAULT = "advisory";
+/**
+ * Calibrated read budget of one dispatch unit (RQ-1 §5, D-007): 30 calls,
+ * 393,216 B cumulative, from the p90 single-fetch cost (4,854 tokens) and the
+ * <400k chars safe band. `perClaim` is the planning weight, `hardCap` the
+ * floor(177856/4977) ceiling and `claimByteCap` the per-claim byte allowance.
+ */
+export const CLAIM_BUDGET = {
+    perClaim: 6,
+    callCap: 30,
+    hardCap: 35,
+    claimByteCap: 65536,
+    byteCapMax: 393216,
+};
+// ── claims: 解析 / parsing (design §2.1, P-048 tolerance) ────────────────────
+/** Opening marker of the card's claims block. */
+const CLAIMS_OPEN_RE = /^<!--\s*mw-claims\s*:\s*v1\s*-->$/i;
+/** Closing marker; when absent the block tolerates up to the next H2. */
+const CLAIMS_CLOSE_RE = /^<!--\s*\/\s*mw-claims\s*-->$/i;
+/** H2 on an already-trimmed line: the tolerance end of an unterminated block. */
+const CLAIMS_STOP_H2_RE = /^##(?!#)\s+/;
+/** Fence opener/closer; same semantics as `worker/output-sections.ts`. */
+const CLAIMS_FENCE_RE = /^(`{3,}|~{3,})(.*)$/;
+/** `C-01` / `C-01.3` (the `C` is case-insensitive, digits are 2-3 wide). */
+const CLAIM_ID_RE = /^C-(\d{2,3})(?:\.(\d+))?$/i;
+/**
+ * Header aliases per field (P-048, RQ-3 §5.6): column order is free, extra
+ * columns are ignored, and either script of the header word is accepted.
+ */
+const CLAIM_COLUMN_ALIASES = [
+    ["id", ["claim", "claim id", "claim id /", "断言", "断言 id"]],
+    ["type", ["类型", "type", "类别"]],
+    ["statement", ["陈述", "statement", "主张", "断言内容"]],
+    ["falsifier", ["反证条件", "反证", "falsifier", "refutation"]],
+    ["locator", ["定位", "locator", "anchor", "锚点"]],
+    ["judgement", ["判据", "judgement", "judgment", "criterion"]],
+    ["budget", ["预算", "budget"]],
+];
+/** Tracks fenced-code-block state across lines (mirror of the worker copy). */
+function advanceClaimFence(line, open) {
+    const match = CLAIMS_FENCE_RE.exec(line);
+    if (match === null)
+        return open;
+    const marker = match[1] ?? "";
+    const rest = match[2] ?? "";
+    const char = marker[0] ?? "";
+    if (open === undefined)
+        return { char, len: marker.length };
+    if (char === open.char && marker.length >= open.len && rest.trim() === "")
+        return undefined;
+    return open;
+}
+/**
+ * Fold the full-width forms the card corpus mixes in (P-048): `：` -> `:`,
+ * `｜` -> `|`, full-width digits -> ASCII digits, ideographic space -> space.
+ */
+function normalizeClaimText(text) {
+    return text
+        .replace(/[\uFF10-\uFF19]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0))
+        .replace(/\uFF1A/g, ":")
+        .replace(/\uFF5C/g, "|")
+        .replace(/\u3000/g, " ")
+        .trim();
+}
+/** Cells never carry markdown code fences: strip the backticks a writer adds. */
+function stripClaimTicks(text) {
+    return text.replace(/`/g, "").trim();
+}
+/** Split a `| a | b |` row into trimmed cells (leading/trailing pipes dropped). */
+function splitClaimRow(line) {
+    const cells = normalizeClaimText(line).split("|");
+    if (cells.length > 0 && (cells[0] ?? "").trim() === "")
+        cells.shift();
+    if (cells.length > 0 && (cells[cells.length - 1] ?? "").trim() === "")
+        cells.pop();
+    return cells.map((cell) => cell.trim());
+}
+/** Header of a claims table, `undefined` when the row is not a claims header. */
+function matchClaimHeader(cells) {
+    const columns = {};
+    let hasClaimColumn = false;
+    for (let i = 0; i < cells.length; i++) {
+        const name = stripClaimTicks(normalizeClaimText(cells[i] ?? ""))
+            .toLowerCase()
+            .replace(/\s+/g, " ")
+            .replace(/:$/, "");
+        for (const [field, aliases] of CLAIM_COLUMN_ALIASES) {
+            if (!aliases.includes(name))
+                continue;
+            if (columns[field] === undefined)
+                columns[field] = i;
+            if (field === "id")
+                hasClaimColumn = true;
+            break;
+        }
+    }
+    return hasClaimColumn ? columns : undefined;
+}
+/** `| --- | --- |` separator row (any dash count, optional alignment colons). */
+function isClaimSeparatorRow(cells) {
+    if (cells.length === 0)
+        return false;
+    return cells.every((cell) => cell === "" || /^:?-{1,}:?$/.test(cell));
+}
+/** Cell of `field` in `cells`, `""` when the column is absent (P-048). */
+function claimCell(cells, columns, field) {
+    const index = columns[field];
+    if (index === undefined)
+        return "";
+    return (cells[index] ?? "").trim();
+}
+/**
+ * Parse the card's `<!-- mw-claims: v1 -->` block (design §2.1).
+ *
+ * Tolerance is the contract, not a nicety (P-048: an over-strict schema caused
+ * 30 minutes of consecutive false refusals): the block end falls back to the
+ * next H2 or EOF, column order is free, extra columns are ignored, header
+ * words take aliases, full-width `：｜`/digits fold to ASCII, and fenced code
+ * blocks contribute nothing. An unparsable row is reported as
+ * `claim:<row>:unparsable` and skipped — this function never throws.
+ */
+export function parseClaimsBlock(text) {
+    const block = { present: false, claims: [], errors: [] };
+    const byId = new Map();
+    let fence;
+    let inBlock = false;
+    let columns;
+    const lines = splitLines(text);
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i] ?? "";
+        fence = advanceClaimFence(line, fence);
+        if (fence !== undefined)
+            continue;
+        if (!inBlock) {
+            if (CLAIMS_OPEN_RE.test(line)) {
+                inBlock = true;
+                block.present = true;
+            }
+            continue;
+        }
+        if (CLAIMS_CLOSE_RE.test(line) || CLAIMS_STOP_H2_RE.test(line)) {
+            inBlock = false;
+            columns = undefined;
+            continue;
+        }
+        if (!normalizeClaimText(line).startsWith("|")) {
+            columns = undefined;
+            continue;
+        }
+        const cells = splitClaimRow(line);
+        if (columns === undefined) {
+            columns = matchClaimHeader(cells);
+            continue;
+        }
+        if (isClaimSeparatorRow(cells))
+            continue;
+        const claim = claimFromRow(cells, columns, i + 1, byId);
+        if (claim === undefined) {
+            block.errors.push(`claim:${i + 1}:unparsable`);
+            continue;
+        }
+        block.claims.push(claim);
+        byId.set(claim.id, claim);
+    }
+    return block;
+}
+/** One table row -> {@link Claim}, `undefined` when the row cannot be parsed. */
+function claimFromRow(cells, columns, row, byId) {
+    const idMatch = CLAIM_ID_RE.exec(stripClaimTicks(claimCell(cells, columns, "id")));
+    if (idMatch === null)
+        return undefined;
+    const number = idMatch[1] ?? "";
+    const child = idMatch[2];
+    const parent = child === undefined ? "" : `C-${number}`;
+    const id = `C-${number}${child === undefined ? "" : `.${child}`}`;
+    if (parent !== "") {
+        // RQ-3 §5.1 / B-10: a `父.序号` child row is only legal under a `struct`
+        // parent (a struct enumerates the sub-items of one shape).
+        const parentClaim = byId.get(parent);
+        if (parentClaim === undefined || parentClaim.type !== "struct")
+            return undefined;
+    }
+    const declaredType = stripClaimTicks(claimCell(cells, columns, "type")).toLowerCase();
+    const budgetText = stripClaimTicks(claimCell(cells, columns, "budget"));
+    return {
+        id,
+        // A struct child restates part of the parent shape, so an empty `类型`
+        // cell inherits `struct` instead of manufacturing a second gap.
+        type: declaredType === "" && parent !== "" ? "struct" : declaredType,
+        parent,
+        statement: claimCell(cells, columns, "statement"),
+        falsifier: claimCell(cells, columns, "falsifier"),
+        locator: claimCell(cells, columns, "locator"),
+        judgement: claimCell(cells, columns, "judgement"),
+        budget: /^\d+$/.test(budgetText) ? Number(budgetText) : Number.NaN,
+        row,
+    };
+}
+// ── claims: 校验 / validation (design §2.1, AC-001) ──────────────────────────
+/** `判据` prefix each self-reported type must carry (design §2.1). */
+const CLAIM_TYPE_PREFIX = {
+    cmd: "cmd:",
+    grep: "grep:",
+    struct: "shape:",
+    manual: "manual:",
+};
+/** `Σ预算` cap, manual rows counted twice (AC-001 ⑤). */
+const CLAIM_BUDGET_SUM_MAX = 40;
+/** `manual` cap numerator of `min(4, ceil(n/3))` (AC-001 ⑤, RQ-3 §6.1). */
+const CLAIM_MANUAL_CAP = 4;
+/** Normalized-similarity threshold of the tautology judge (RQ-3 B-5). */
+const CLAIM_TAUTOLOGY_SIMILARITY = 0.9;
+/** Above this size a `定位` must name a line range (AC-001 ④). */
+const CLAIM_LOCATOR_RANGE_BYTES = 32768;
+/** D-005: a `cmd` locator is the PM's pre-executed evidence file row. */
+const CLAIM_CMD_LOCATOR_RE = /^evidence\/claims\/[^#\s]+#(C-\d{2,3}(?:\.\d+)?)$/i;
+/** A locator names a file when it has a separator or a file extension. */
+function looksLikeClaimPath(text) {
+    if (text.includes("/"))
+        return true;
+    return /\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(text);
+}
+/**
+ * Resolve a `定位` cell against `projectDir` without reading content: only
+ * `statSync` runs (design §3.1). A bare symbol, a missing file, a non-file and
+ * a path outside `projectDir` are all `unresolved` (never a throw).
+ */
+function resolveClaimLocator(locator, projectDir) {
+    const raw = stripClaimTicks(locator);
+    if (raw === "" || raw === "-")
+        return { kind: "skipped", size: 0, ranged: false };
+    const withoutFragment = raw.replace(/#.*$/, "");
+    const range = /^(.*?):(\d+)(?:-(\d+))?$/.exec(withoutFragment);
+    const pathText = (range === null ? withoutFragment : (range[1] ?? "")).trim();
+    const ranged = range !== null && range[3] !== undefined;
+    if (pathText === "" || !looksLikeClaimPath(pathText))
+        return { kind: "unresolved", size: 0, ranged };
+    const absolute = path.resolve(projectDir, pathText);
+    const relative = path.relative(projectDir, absolute);
+    if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        return { kind: "unresolved", size: 0, ranged };
+    }
+    try {
+        const stat = fs.statSync(absolute);
+        if (!stat.isFile())
+            return { kind: "unresolved", size: 0, ranged };
+        return { kind: "resolved", size: stat.size, ranged };
+    }
+    catch {
+        return { kind: "unresolved", size: 0, ranged };
+    }
+}
+/**
+ * Negation / absence words plus aspect fillers stripped before the tautology
+ * similarity test, so that "X 已修复" vs "X 未修复" compares the same
+ * remainder (RQ-3 B-5: the whole point is that a minimal rewrite only differs
+ * by these words). Longest-first so `不再` wins over `不` and `已经` over `已`.
+ */
+const CLAIM_NEGATION_TOKENS = [
+    "已经",
+    "不再",
+    "不会",
+    "不能",
+    "不得",
+    "没有",
+    "无法",
+    "禁止",
+    "absent",
+    "cannot",
+    "didn't",
+    "doesn't",
+    "failed",
+    "fails",
+    "isn't",
+    "aren't",
+    "missing",
+    "never",
+    "without",
+    "can't",
+    "fail",
+    "not",
+    "已",
+    "不",
+    "未",
+    "无",
+    "非",
+    "否",
+    "缺",
+].sort((a, b) => b.length - a.length);
+/** Drop negation words (ASCII ones with word boundaries), then all separators. */
+function normalizeClaimSimilarityText(text) {
+    let out = text.toLowerCase().replace(/`/g, " ");
+    for (const token of CLAIM_NEGATION_TOKENS) {
+        out = /^[a-z']+$/.test(token) ? out.replace(new RegExp(`\\b${token}\\b`, "gi"), " ") : out.split(token).join(" ");
+    }
+    return out.replace(/[^\p{L}\p{N}]+/gu, "");
+}
+/** Levenshtein distance over code points (both inputs are short in practice). */
+function claimEditDistance(a, b) {
+    const left = Array.from(a);
+    const right = Array.from(b);
+    let previous = right.map((_, index) => index);
+    previous = [0, ...previous];
+    for (let i = 1; i <= left.length; i++) {
+        const current = [i];
+        for (let j = 1; j <= right.length; j++) {
+            const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+            current[j] = Math.min((previous[j] ?? Number.POSITIVE_INFINITY) + 1, (current[j - 1] ?? Number.POSITIVE_INFINITY) + 1, (previous[j - 1] ?? Number.POSITIVE_INFINITY) + cost);
+        }
+        previous = current;
+    }
+    return previous[right.length] ?? 0;
+}
+/** Artifact tokens (paths, symbols, commands) that a `判据` can point at. */
+const CLAIM_ARTIFACT_TOKEN_RE = /[A-Za-z0-9_][A-Za-z0-9_./-]*/g;
+/** Artifact tokens of a `判据`, with the leading type prefix removed. */
+function claimJudgementArtifacts(judgement) {
+    const body = judgement.replace(/^\s*(?:cmd|grep|shape|manual)\s*:\s*/i, "");
+    const tokens = body.match(CLAIM_ARTIFACT_TOKEN_RE) ?? [];
+    return tokens.filter((token) => token.length >= 3);
+}
+/**
+ * Tautology judge (RQ-3 B-5): `陈述` and `反证条件` become the same text once
+ * negation words are dropped (similarity >= 0.90) AND the `判据` names no
+ * artifact that `陈述` does not already name. Any new artifact (path, symbol,
+ * command) means the claim is still falsifiable, so it is not tautological.
+ */
+function isTautologicalClaim(claim) {
+    if (claim.statement === "" || claim.falsifier === "" || claim.judgement === "")
+        return false;
+    const statement = normalizeClaimSimilarityText(claim.statement);
+    const falsifier = normalizeClaimSimilarityText(claim.falsifier);
+    if (statement === "" || falsifier === "")
+        return false;
+    const distance = claimEditDistance(statement, falsifier);
+    const similarity = 1 - distance / Math.max(statement.length, falsifier.length);
+    if (similarity < CLAIM_TAUTOLOGY_SIMILARITY)
+        return false;
+    const haystack = claim.statement.toLowerCase();
+    return !claimJudgementArtifacts(claim.judgement).some((token) => !haystack.includes(token.toLowerCase()));
+}
+/**
+ * Judge a parsed claims block (design §2.1/§3.1, AC-001). Never throws.
+ *
+ * Structural gaps (`type` / `statement` / `falsifier` / `locator` /
+ * `judgement` / `budget`) are gaps in both modes: a claim missing a required
+ * cell is not a claim. The soft findings — `type-prefix`, `cmd-locator`,
+ * `locator-unresolved`, `locator-range`, `tautology` and the two `claims:*`
+ * aggregates — are returned only when `opts.enforce` is true; an advisory
+ * caller gets `[]` for them here and can re-query with `enforce: true` to
+ * render the same string list as warnings (D-006: advisory warns, never
+ * refuses).
+ *
+ * Item shapes are frozen because T-02 concatenates them into the refusal text:
+ * `claim:<id>:<element>` and `claims:<rule>:<detail>`.
+ */
+export function claimsGaps(block, opts) {
+    const structural = [];
+    const advisory = [];
+    let budgetSum = 0;
+    let manualCount = 0;
+    for (const claim of block.claims) {
+        const type = claim.type.toLowerCase();
+        const known = CLAIM_TYPES.includes(type);
+        budgetSum += type === "manual" ? 2 : 1;
+        if (type === "manual")
+            manualCount += 1;
+        if (!known)
+            structural.push(`claim:${claim.id}:type`);
+        if (claim.statement === "")
+            structural.push(`claim:${claim.id}:statement`);
+        if (claim.falsifier === "")
+            structural.push(`claim:${claim.id}:falsifier`);
+        if (claim.locator === "")
+            structural.push(`claim:${claim.id}:locator`);
+        if (claim.judgement === "")
+            structural.push(`claim:${claim.id}:judgement`);
+        if (!Number.isInteger(claim.budget) || claim.budget < 0)
+            structural.push(`claim:${claim.id}:budget`);
+        if (!known)
+            continue;
+        if (claim.judgement !== "") {
+            const prefix = CLAIM_TYPE_PREFIX[type];
+            if (!claim.judgement.trim().toLowerCase().startsWith(prefix))
+                advisory.push(`claim:${claim.id}:type-prefix`);
+        }
+        if (type === "cmd" && claim.locator !== "") {
+            const cmdLocator = CLAIM_CMD_LOCATOR_RE.exec(stripClaimTicks(claim.locator));
+            if (cmdLocator === null || (cmdLocator[1] ?? "").toUpperCase() !== claim.id.toUpperCase()) {
+                advisory.push(`claim:${claim.id}:cmd-locator`);
+            }
+        }
+        const target = resolveClaimLocator(claim.locator, opts.projectDir);
+        if (target.kind === "unresolved")
+            advisory.push(`claim:${claim.id}:locator-unresolved`);
+        if (target.kind === "resolved" && target.size > CLAIM_LOCATOR_RANGE_BYTES && !target.ranged) {
+            advisory.push(`claim:${claim.id}:locator-range`);
+        }
+        if (isTautologicalClaim(claim))
+            advisory.push(`claim:${claim.id}:tautology`);
+    }
+    const total = block.claims.length;
+    if (budgetSum > CLAIM_BUDGET_SUM_MAX)
+        advisory.push(`claims:budget-sum:${budgetSum}>${CLAIM_BUDGET_SUM_MAX}`);
+    const manualCap = Math.min(CLAIM_MANUAL_CAP, Math.ceil(total / 3));
+    if (manualCount > manualCap)
+        advisory.push(`claims:manual-overflow:${manualCount}/${total}`);
+    return opts.enforce ? [...structural, ...advisory] : structural;
+}
+// ── claims: 预算 / budget (design §4, AC-003) ────────────────────────────────
+/**
+ * Read-scope caps derived from the claims block (design §4):
+ * `fileCap = min(30, Σ(manual ? 2 : 1))`, `byteCap = min(393,216, 65,536 × n)`.
+ * No claims means no derived cap — `{ fileCap: 0, byteCap: 0 }` lets the caller
+ * keep the project-level default instead of zeroing a read budget.
+ */
+export function claimBudgetCaps(claims) {
+    if (claims.length === 0)
+        return { fileCap: 0, byteCap: 0 };
+    let weightSum = 0;
+    for (const claim of claims)
+        weightSum += claim.type.toLowerCase() === "manual" ? 2 : 1;
+    return {
+        fileCap: Math.min(CLAIM_BUDGET.callCap, weightSum),
+        byteCap: Math.min(CLAIM_BUDGET.byteCapMax, CLAIM_BUDGET.claimByteCap * claims.length),
+    };
 }
 //# sourceMappingURL=dispatch-card.js.map

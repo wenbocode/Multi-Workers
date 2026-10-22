@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
 import type { ModelRegistry } from "../../../core/model-registry.ts";
 import type { AckStore } from "../shared/ack-store.ts";
+import { CLAIM_GATE_DEFAULT, type Claim } from "../shared/dispatch-card.ts";
 import { type IndexStore } from "../shared/index-store.ts";
 import type { DoctorJson, MwCliResult } from "../shared/mw-runner.ts";
 import { type PmStateClaimSyncResult } from "../shared/pm-state-claim.ts";
@@ -8,6 +9,7 @@ import { type RunDetachedOptions, type RunDetachedResult } from "../shared/run-d
 import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 import { type WriteTargetShape } from "../shared/write-surface.ts";
 export { classifyWriteTargetShape, type WriteTargetShape } from "../shared/write-surface.ts";
+import { type DecideRunner, type TriageResult, type TriageState } from "./triage-client.ts";
 /** Owner key for a worker task — this window's own claim first, the shared
  * active pointer second. Explicit key wins (deliberate choice — no warning).
  * Otherwise, when this window watches a key whose _index.parallel row it
@@ -34,6 +36,131 @@ export declare function deliverPmAlert(pi: ExtensionAPI, text: string): void;
 /** Deliver a terminal worker result (the "finish call" of dispatch →
  * monitor → finish call → pm run). See deliverPmAlert for the channel. */
 export declare function deliverWorkerResult(pi: ExtensionAPI, summary: string): void;
+/** DP-1 advice attached to one dispatch plan (design D-005/D-006). `null`
+ * means the decision feature is fully off — the dispatch must then stay
+ * byte-identical to the pre-T-03 behaviour. */
+export interface DispatchTriage {
+    result: TriageResult;
+    alertOnDisagreement: boolean;
+    notifyOnUnavailable: boolean;
+    /** The type actually dispatched — never rewritten by the advice. */
+    dispatchedType: string;
+    disagreement: boolean;
+    /** One-line receipt echo; "" when there is nothing to show. */
+    receipt: string;
+    /** T-04c (D-041): the decision this dispatch CONSUMES, i.e. the one whose
+     * `decision:` head line `writeDispatchTaskMd` may write. Only an authorized
+     * (`mode=auto`) usable answer whose `triage_type` MATCHES the dispatched type
+     * and that carries a `decision_id` produces it; `suggest` / a disagreement /
+     * unavailable / an anonymous answer leave it undefined, which keeps the
+     * pre-T-08 task.md bytes. */
+    decision?: DispatchDecision;
+    /** T-04d: which `state` shape actually went on the wire. `structured` is the
+     * normal path; `legacy` means the dp1 required-field set could not be built
+     * from the dispatch plan (or the structured state stayed over budget after
+     * the two-stage truncation) and the frozen pre-T-04 string state was used
+     * instead. */
+    statePath: "structured" | "legacy";
+    /** T-04d: the one audit line the dispatch writes into the task's `trace.log`
+     * (`[DECISION] dp1 state=structured bytes=<N>` / `state=legacy
+     * reason=<missing|oversize>`). Never silent — the path decision is recorded. */
+    stateTrace: string;
+}
+/** Dispatch-plan facts the dp1 structured state is built from (T-04d).
+ *
+ * The state is derived from the dispatch itself — no extra call, no config read
+ * and no `.mw/decide-points.json` mirror (D-036). `writeFace` is the card's
+ * `## 写入允许面` entry list (`cardWriteFaceEntries`), i.e. the PM's own
+ * declaration of what this task may write; `taskType`/`phase`/`description`
+ * are the plan inputs `planDispatchFrontmatter` already holds. */
+export interface Dp1DispatchPlan {
+    /** AgenticTask key the task lands under (the decision id's trigger id). */
+    key?: string;
+    /** Owner key's current phase (`dispatchPhase`); "" for `_scratch`. */
+    phase?: string;
+    /** The dispatched `type:` (never rewritten by the advice). */
+    taskType?: string;
+    /** The PM's requested type. Today the dispatch never rewrites the type, so
+     * this equals `taskType`; both fields exist because the registry asks for
+     * both (`REQUIRED_STATE_FIELDS["dp1-dispatch-type"]`). */
+    requestedType?: string;
+    /** Task body — only its first line becomes the L1 `task_summary`. */
+    description?: string;
+    /** Card write-face entries, `null`/absent when the card declares none. */
+    writeFace?: string[] | null;
+    /** The PM explicitly accepted a write outside the key. */
+    allowForeignWrite?: boolean;
+}
+/** Call-site facts only the dispatch entry knows; the rest of the dp1 state is
+ * derived inside {@link planDispatchFrontmatter}. */
+export type Dp1DispatchFacts = Pick<Dp1DispatchPlan, "key" | "writeFace" | "allowForeignWrite">;
+/** Build result for one dp1 structured state (T-04d). `reason` maps the client
+ * refusal onto the two trace values the card fixes: `missing` (any
+ * `input-incomplete` — a required field absent, blank, out of enum or over its
+ * cap) and `oversize` (still over 2000B after the two-stage truncation). */
+export type Dp1StateBuild = {
+    ok: true;
+    state: TriageState;
+    bytes: number;
+    dropped: string[];
+} | {
+    ok: false;
+    reason: "missing" | "oversize";
+};
+/** Assert one built state matches its registry row (W6: the registry is the
+ * field-list authority, so a producer may never send a second hand-written
+ * list). Missing required paths AND uncontrolled keys throw; `context` is the
+ * only extra top-level key and its slots must be in the dp's `contextSlots`.
+ *
+ * The extras check is deliberately top-level: the registry lists required paths
+ * only, while a dp may also carry OPTIONAL L1 children (dp2's
+ * `progress.writes`/`trend`), which must not read as drift. */
+export declare function assertStateMatchesRegistry(dpId: string, state: Record<string, unknown>): void;
+/** Build the dp1 structured state from the dispatch plan (T-04d).
+ *
+ * Field set = `decision_points.REQUIRED_STATE_FIELDS["dp1-dispatch-type"]`
+ * (universal 9 + `requested_type`/`task_summary`/`scope.write_scope`/
+ * `scope.file_extensions`), plus `task_key`-free `key` and the registry
+ * `questions_version`. Everything is validated + bounded by
+ * {@link prepareStructuredState} (≤2000B, two-stage truncation); a refusal is
+ * reported, never patched over — the caller then falls back to the legacy
+ * string state. */
+export declare function buildDp1DispatchState(plan: Dp1DispatchPlan): Dp1StateBuild;
+/** Compute the bypass advice for one dispatch. Reads `.mw/decide.json`
+ * (read-only) and asks the triage client for a suggestion; returns `null` on
+ * the default-off path so nothing downstream changes. Never throws.
+ *
+ * T-04d: when `dp1` is supplied and the plan yields the complete registry
+ * required set, the request carries a STRUCTURED state — the only shape the
+ * CLI routes through `decision_points.decide_for`, which is what makes
+ * `decision_id` / `mode` / `acted` reachable in production. An incomplete or
+ * oversized set falls back to the frozen pre-T-04 legacy string state and the
+ * fallback is recorded in {@link DispatchTriage.stateTrace} (never silent). */
+export declare function computeDispatchTriage(input: {
+    projectDir: string;
+    state: string;
+    dispatchedType: string;
+    run?: DecideRunner;
+    /** T-04d dispatch-plan facts; omitted (direct API callers) = legacy state. */
+    dp1?: Dp1DispatchPlan;
+}): DispatchTriage | null;
+/** Durable + wake channel for one triage outcome (design D-005 item 3).
+ * Best-effort: the ledger writer never throws; `deliverPmAlert` (one PM turn)
+ * fires ONLY on a disagreement the config did not mute. Unavailable advice is
+ * completely silent unless `triage_notify_on_unavailable=true`. */
+export declare function emitDispatchTriage(pi: ExtensionAPI, agenticdocRoot: string, triage: DispatchTriage | null): void;
+/** Append the triage receipt line to a dispatch receipt. Byte-identical when
+ * there is no advice to show (default-off equivalence, T-03 requirement 5). */
+export declare function appendTriageReceipt(text: string, triage: DispatchTriage | null): string;
+/** The acted decision a triage result carries, or undefined.
+ *
+ * Design D-036 makes the child (`mw decide run --dp <id> --json`) the single
+ * authority for `decision_id` / `mode` / `acted`; the triage result type only
+ * declares the legacy fields today, so this reads the additive keys
+ * structurally and stays undefined until the client forwards them. It never
+ * infers `acted` from the mode or from `.mw/decide-points.json` (that mirror is
+ * exactly what D-036 forbids), and a non-`acted` answer is dropped here. */
+export declare function actedDecisionOf(triage: DispatchTriage | null): DispatchDecision | undefined;
 export interface PmWatchState {
     /** AgenticTask key this window explicitly executes; undefined = not watching. */
     key: string | undefined;
@@ -288,10 +415,18 @@ export declare function planDispatchFrontmatter(input: {
     model: string;
     modelReason: string;
     registry: ModelRegistry | undefined;
+    /** Test seam for the DP-1 child (T-03): production callers omit it and the
+     * triage client spawns the real `mw decide run`. */
+    triageRun?: DecideRunner;
+    /** T-04d dispatch facts for the dp1 STRUCTURED state (owning key + the
+     * card's write face). Omitted / incomplete falls back to the legacy string
+     * state, and the fallback is traced (`[DECISION] dp1 state=legacy ...`). */
+    dp1?: Dp1DispatchFacts;
 }): {
     ok: true;
     frontmatter: string;
     echo: string;
+    triage: DispatchTriage | null;
 } | {
     ok: false;
     message: string;
@@ -403,8 +538,69 @@ export declare function renderWriteSurfaceContract(type: string, writeScope: str
  * the leading frontmatter block. Applying it twice is a byte-level fixed point
  * and leaves exactly one marker pair. */
 export declare function applyWriteSurfaceContract(taskMdText: string, type: string, writeScope: string | undefined): string;
+/** The decision that authorized this dispatch, carried into task.md as the
+ * `decision:` head line. `decision_id` is `"<dp>:<trigger_id>"` (spec §6.1);
+ * the PM settle path reverse-looks it up from the task file, so the line is the
+ * ONLY link between a run and the decision it executes. */
+export interface DispatchDecision {
+    decisionId: string;
+    /** Only an acted decision authorizes the dispatch (AC-015): a `suggest`
+     * answer is archived with `acted=false` and must never be settled against
+     * this task, so it never gets a head line. */
+    acted: boolean;
+}
+/** Merge the `decision:` correlation line into the frontmatter at the END of
+ * the merge chain (last head line before the body). `acted`-gated by contract:
+ * `suggest` advice, a missing decision and a malformed `decision_id` all leave
+ * the frontmatter bytes untouched (a broken correlation key is never written;
+ * settle then treats the task as un-associated instead of guessing). */
+export declare function mergeDecisionHeader(frontmatter: string, decision: DispatchDecision | undefined): string;
 /** Machine-readable refusal code for a missing/incomplete dispatch card. */
 export declare const DISPATCH_CARD_CODE = "dispatch-card";
+/** Machine-readable refusal code for a card whose claims block cannot be used
+ * (T-02, design §3.2). Deliberately NOT `dispatch-card`: `card_audit` and the
+ * PM read the code to tell an incomplete envelope apart from a declared-but-
+ * unusable claims table. */
+export declare const DISPATCH_CLAIMS_CODE = "dispatch-claims";
+/** One of the two refusal codes {@link dispatchCardRefusal} renders. */
+export type DispatchCardRefusalCode = typeof DISPATCH_CARD_CODE | typeof DISPATCH_CLAIMS_CODE;
+/** Claims-gate mode (D-006 grey release): the calibrated default from
+ * `shared/dispatch-card.ts`, upgraded to `enforce` by `MW_CLAIM_GATE`. */
+export type ClaimGateMode = typeof CLAIM_GATE_DEFAULT | "enforce";
+/**
+ * Runtime claims-gate mode (T-02 requirement 4, D-006): `MW_CLAIM_GATE`
+ * overrides {@link CLAIM_GATE_DEFAULT}. The name and the two values are the
+ * same on both sides of the TS/Python pair (`dispatch.py::claim_gate`), so a
+ * grey release flips one env var. An unknown/blank value falls back to the
+ * default instead of blocking a dispatch: the gate is opt-in, and a typo must
+ * neither silently enforce nor stall the loop (same fail-open rule as the
+ * Python side).
+ */
+export declare function claimGateMode(): ClaimGateMode;
+/** The `read_scope:` entries of one claims-backed dispatch (T-02, design §4):
+ * the owner key's own tree, the project goal anchor (the pair the key's
+ * conductor dispatches already carry), and — the part a claim-driven review
+ * cannot do without — the files the claims point at. A locator names the file
+ * the claim is about (optionally with a `:line` / `:a-b` span suffix), so the
+ * scope is exactly "the claims plus their anchors": the worker reads what it
+ * must falsify and nothing else, which is the whole point of pricing a review
+ * by claims instead of by repo size. Absolute paths and `..` escapes are
+ * dropped, so a card cannot widen its own scope out of the project root.
+ * Rendered only when the card declares claims, because `read_scope:` switches
+ * the worker's read interceptor on. */
+export declare function claimReadScope(ownerKey: string, claims: Claim[]): string[];
+/**
+ * Verbatim text of the card's `<!-- mw-claims: v1 -->` block (T-02 requirement
+ * 2), `""` when the card has none.
+ *
+ * The card seed only injects heading slices, so an HTML comment block would
+ * never reach `task.md` reliably (RQ-2 §2.3) — and the settle layer must read
+ * the claims from `task.md`, never from the (mutable) card file (D-002). The
+ * slice is taken between the markers with the same fence/H2 semantics as the
+ * shared parser; an unterminated block gets the close marker appended, so the
+ * injected copy cannot swallow the seed disclaimer or the task body after it.
+ */
+export declare function extractClaimsBlockText(text: string): string;
 /** Paired markers around the card-derived body section (idempotent injection,
  * same "strip old region → reinsert" mechanism as the write-surface contract). */
 export declare const CARD_SEED_MARKER = "<!-- mw-dispatch-card: v1 -->";
@@ -428,6 +624,11 @@ export interface CardSections {
     deliverables: string;
     /** Card sections outside the three envelope families, in document order. */
     extras: CardExtraSection[];
+    /** T-02/design §4: the card's claims block, verbatim, injected inside the
+     * seed marker region so the settle layer reads it from `task.md` (D-002).
+     * Absent for a card without a claims block — every pre-claims byte shape
+     * (and the read-interception behaviour) stays unchanged (AC-007). */
+    claims?: string;
     /** T-05/AC-003: the card's declared `type:`, set only by {@link readDispatchCard}
      * (a directly constructed `CardSections` carries no type, so callers keep the
      * pre-T-05 bytes). It drives the `## 交付段契约（本角色）` checklist in
@@ -521,9 +722,15 @@ export declare function normalizeCardPathForHeader(cardPathInput: string, ownerK
 /** Resolved dispatch-card gate result (T-02, contract C3). */
 export interface DispatchCardGate {
     ok: boolean;
+    /** Which refusal code this verdict carries (T-02/design §3.2): the envelope /
+     * extras / seed judge (`dispatch-card`) or the claims judge
+     * (`dispatch-claims`). */
+    code: DispatchCardRefusalCode;
     /** Absolute path the reference resolved to (named in every refusal). */
     resolvedPath: string;
-    /** Missing envelope items, `readEnvelope` keys and/or §1.2 extra names. */
+    /** Missing envelope items, `readEnvelope` keys and/or §1.2 extra names; for a
+     * `dispatch-claims` verdict the claim gap items (`claim:<id>:<element>`,
+     * `claims:<rule>:<detail>`). */
     missing: string[];
     /** Normalized `tasks/<name>.md` header value (empty when ok=false). */
     headerPath: string;
@@ -531,6 +738,19 @@ export interface DispatchCardGate {
     sha256: string;
     /** Extracted seed bodies (empty strings when ok=false). */
     sections: CardSections;
+    /** Parsed claims of the card, `[]` when it declares no claims block. */
+    claims: Claim[];
+    /** Read-budget caps derived from the claims (design §4), `null` when the card
+     * declares no claims (the dispatch then keeps the historical cap behaviour
+     * and writes no `read_scope:`/cap lines). */
+    caps: {
+        fileCap: number;
+        byteCap: number;
+    } | null;
+    /** Advisory findings (D-006): the dispatch proceeds, but these items would be
+     * gaps under `MW_CLAIM_GATE=enforce`. Empty in enforce mode (they are refused
+     * instead) and for a card without a claims block. */
+    warnings: string[];
 }
 /**
  * G-1 tool-layer gate (design §4): resolve the card path, judge the envelope
@@ -539,6 +759,23 @@ export interface DispatchCardGate {
  * T-12/F-02) and the seed minimum (`seedItemsMissing`, T-12/F-05), and only
  * then digest + extract the seed. Never judges content quality; a refusal is a
  * plain report the caller turns into text (zero side effects).
+ *
+ * The claims judge (T-02, design §5 G1) runs LAST, on the same card text, so a
+ * card that already fails the envelope keeps its historical refusal byte for
+ * byte and its `dispatch-card` code:
+ *
+ *  - `MW_CLAIM_GATE=enforce` (D-006) merges EVERY finding — the unusable rows
+ *    that `claimsGaps` always reports plus the soft ones it only reports under
+ *    enforce — into `missing`, and the verdict carries `dispatch-claims`;
+ *  - `advisory` (the calibrated default) refuses NOTHING: every finding,
+ *    structural or soft, rides along as a `warnings` entry on the receipt and
+ *    the dispatch proceeds. A gray-release gate that could still reject a card
+ *    would be a new way to lose a dispatch on a table typo, which is the exact
+ *    failure mode P-048 measured (an over-strict schema produced consecutive
+ *    false refusals); `enforce` is the only mode that judges.
+ *
+ * A card without a claims block yields `claims=[]`, `caps=null`, `warnings=[]`
+ * and not a single changed byte downstream (AC-007).
  */
 export declare function readDispatchCard(input: {
     cardPath: string;
@@ -547,8 +784,14 @@ export declare function readDispatchCard(input: {
     projectDir: string;
 }): DispatchCardGate;
 /** Refusal text for an incomplete card (AC-007 fail-closed): names the code,
- * the missing items and the exact card path; says nothing was written. */
+ * the missing items and the exact card path; says nothing was written. A
+ * claims verdict (T-02/design §3.2) keeps the same structure under its own
+ * code, `missing=[claim:C2:locator, claims:budget-sum:48>40]` as parsed. */
 export declare function dispatchCardRefusal(gate: DispatchCardGate): string;
+/** The advisory claims receipt line (design §5 G1): appended ONLY when the card
+ * declares claims, so a pre-claims card's receipt stays byte-identical
+ * (`triage-dispatch.test.ts` pins the full string). */
+export declare function claimsReceiptLine(gate: DispatchCardGate): string;
 /** Single write point for one dispatch's task.md (contract C4). Both dispatch
  * entries — the `dispatch_worker` tool and the `/worker` command — go through
  * here so the pipeline (frontmatter merge, contract-section injection, mkdir,
@@ -584,6 +827,24 @@ export declare function writeDispatchTaskMd(deps: {
         sha256: string;
         sections: CardSections;
     };
+    /** T-08 (spec §6.1, design D-012): the decision that authorized this
+     * dispatch. Injected as the `decision:` head line ONLY when `acted=true`;
+     * omitted keeps the pre-T-08 byte shape. */
+    decision?: DispatchDecision;
+    /** T-04d: the one `[DECISION] dp1 state=…` audit line this dispatch writes
+     * into the task's `trace.log` (structured path vs legacy fallback). Omitted
+     * (direct callers / triage off) writes nothing. */
+    decisionTrace?: string;
+    /** T-02 (design §4): the claims-derived read scope. Rendered as a
+     * `read_scope:` block list (plus the two cap scalars); omitted/empty keeps
+     * the pre-T-02 bytes AND the worker's read interceptor off (AC-007). */
+    readScope?: string[];
+    /** `l2_read_file_cap` value from `claimBudgetCaps`; renders only when
+     * `readScope` is non-empty and the value is a positive number. */
+    readFileCap?: number;
+    /** `l2_read_byte_cap` value from `claimBudgetCaps`, same rule as
+     * {@link readFileCap}. */
+    readByteCap?: number;
 }): {
     ok: true;
     path: string;
@@ -593,7 +854,9 @@ export declare function writeDispatchTaskMd(deps: {
  * Register agent-callable tools for worker dispatch and task listing.
  * These complement the slash commands in registerWorkerCommands.
  */
-export declare function registerWorkerTools(pi: ExtensionAPI, workerStore: WorkerStore, ackStore: AckStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, projectDir?: string): void;
+export declare function registerWorkerTools(pi: ExtensionAPI, workerStore: WorkerStore, ackStore: AckStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, projectDir?: string, 
+/** T-03 test seam for the DP-1 child; production omits it. */
+triageRun?: DecideRunner): void;
 /** Register the agent-callable switch_key tool: same takeover as
  * /pm-key switch, callable mid-conversation. Tool description + prompt
  * guidelines teach the agent when to call it (explicit user request, or
@@ -613,7 +876,9 @@ export declare function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: s
  * Spawn a worker directly from the pi window.
  * Usage: /worker <claude|codex|pi> [--type <t>] [--model <id>] [--reason <text>] [--key <name>] <desc>
  */
-export declare function registerWorkerCommands(pi: ExtensionAPI, workerStore: WorkerStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, projectDir?: string): void;
+export declare function registerWorkerCommands(pi: ExtensionAPI, workerStore: WorkerStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, projectDir?: string, 
+/** T-03 test seam for the DP-1 child; production omits it. */
+triageRun?: DecideRunner): void;
 /**
  * Render the RAG row exactly like `mw.py:_format_rag_doctor_line` (D-308): an
  * `error` wins, an empty `enabled` list yields the not-enabled form, otherwise
@@ -681,7 +946,7 @@ export declare function runMwPartitionCommand(ctx: ExtensionCommandContext, proj
 export declare function runMwModelCommand(ctx: ExtensionCommandContext, projectDir: string, argsText: string, runner?: (projectDir: string, args: string[]) => MwCliResult): Promise<void>;
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
-export declare const MW_COMMAND_DESCRIPTION = "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / run-detached / ack";
+export declare const MW_COMMAND_DESCRIPTION = "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / decide / rag / stats / run-detached / ack";
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
 export declare const RAG_OUTPUT_MAX_LINES = 30;
@@ -750,5 +1015,96 @@ export declare function parseRunDetachedArgs(raw: string): {
  * precedent). The 4-field handoff summary matches the mw_run_detached tool
  * 文案 byte for byte; failures notify a structured error and never throw. */
 export declare function runMwRunDetachedCommand(ctx: ExtensionCommandContext, projectDir: string, raw: string, runner?: (opts: RunDetachedOptions) => RunDetachedResult): Promise<void>;
+/** /mw stats — thin wrapper over `mw.py stats` (mw-usage-monitor T-04/AC-006).
+ * The window owns no aggregation: the raw argument tail passes through
+ * untouched (`--since / --key / --type / --model / --source / --json` are
+ * parsed by Python), the report is rendered by Python, and the runner is
+ * injectable for tests (the rag precedent). A failure notifies at `error` with
+ * the Python text verbatim — runMwCliRaw merges stderr into it, so the reason
+ * (`invalid --since`, bad `--source`) is never swallowed. A thrown runner
+ * (spawn-level bug) is reported the same way instead of escaping the command. */
+export declare function runMwStatsCommand(ctx: ExtensionCommandContext, projectDir: string, raw: string, runner?: (projectDir: string, args: string[]) => MwCliResult): Promise<void>;
+/** Conclusions `mw decide sign` accepts (mirror of the Python
+ * `decide_signoff.CONCLUSIONS`; only used to reject a typo before any spawn). */
+export declare const DECIDE_CONCLUSIONS: readonly ["continue", "narrow", "revoke"];
+/** Usage line of the window face (the `--key` flag only exists on `sign`). */
+export declare const DECIDE_USAGE = "Usage: /mw decide show | sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <key>]";
+/** Parsed `/mw decide` arguments. Pure and spawn-free (the rag precedent). */
+export type ParsedDecideArgs = {
+    action: "show";
+} | {
+    action: "sign";
+    conclusion: string;
+    reason?: string;
+    allowEmpty: boolean;
+    key?: string;
+} | {
+    action: "usage";
+    error: string;
+};
+/**
+ * Parse `/mw decide [show | sign <conclusion> [flags]]`.
+ *
+ * `""` / `show` is the read-only preview; `sign <continue|narrow|revoke>`
+ * accepts `--reason <text>`, `--allow-empty` and `--key <key>`. Everything else
+ * (unknown sub, missing/invalid conclusion, a flag without a value, a stray
+ * positional) returns a usage error so the caller rejects without a spawn —
+ * Python stays the single source of the verdict and of the machine lines.
+ */
+export declare function parseDecideArgs(argsText: string): ParsedDecideArgs;
+/** `facts` block of the `mw decide sign --json` preview (only what the window
+ * renders; Python owns every other field). */
+export interface DecidePreviewFacts {
+    counted_rows?: number;
+    n_available?: number;
+    n_acted?: number;
+    n_escalated?: number;
+    engines?: Record<string, number>;
+    sha256?: string;
+    chain_ok?: boolean;
+    p0_open?: string[];
+    p0_source?: string;
+}
+/** `mw decide sign --json` payload (preview: `conclusion`/`ok`/`path` null,
+ * `verdicts` carries the three per-conclusion machine verdicts). */
+export interface DecidePreview {
+    ok?: boolean | null;
+    problems?: string[];
+    facts?: DecidePreviewFacts;
+    verdicts?: Record<string, {
+        ok?: boolean;
+        problems?: string[];
+    }>;
+}
+/** Lines of raw preview output shown when the JSON cannot be parsed. */
+export declare const DECIDE_ERROR_TAIL_LINES = 6;
+/** Render the preview facts the way `/mw decide show` prints them: the four
+ * counts, the engine histogram, one verdict line per conclusion, the first 12
+ * characters of `rows_sha256` and the open-P0 list. */
+export declare function formatDecidePreview(payload: DecidePreview): string;
+/** Injectable collaborators of `runMwDecideCommand` (tests use a stub runner
+ * and a fixed watch key; production passes `decideMw` and `watch.key`). */
+export interface DecideCommandDeps {
+    runner?: (projectDir: string, args: string[]) => MwCliResult;
+    watchKey?: () => string | undefined;
+}
+/**
+ * `/mw decide show|sign` — the TUI face of the human sign-off (FIX-Q, user
+ * ruling: option B).
+ *
+ * `show` runs the Python preview (`mw decide sign --key <k> --json`, which
+ * writes nothing) and prints the facts. `sign` runs the same preview first,
+ * refuses before any dialog when that conclusion's machine verdict does not
+ * pass, and then asks `ctx.ui.confirm`; only a human confirmation forwards the
+ * write with `--human-confirmed` (Python then records `signed_via: tui`). Guard
+ * rails, in order:
+ *   1. `ctx.hasUI !== true` refuses outright — headless / `-p` / rpc have no
+ *      dialog, so there is no human click to collect and nothing to bypass;
+ *   2. the key is `--key` > the watched key > a usage error (never guessed);
+ *   3. Python stays authoritative: its verdict (exit 2, zero writes) still
+ *      runs on the write call, so a preview/flag mismatch cannot fake success.
+ * The runner is injectable so every branch is provable without a spawn.
+ */
+export declare function runMwDecideCommand(ctx: ExtensionCommandContext, projectDir: string, argsText: string, deps?: DecideCommandDeps): Promise<void>;
 export declare function registerMwCommands(pi: ExtensionAPI, projectDir: string, workerStore: WorkerStore, ackStore: AckStore, watch: PmWatchState, agenticdocRoot: string): void;
 //# sourceMappingURL=ui-bridge.d.ts.map

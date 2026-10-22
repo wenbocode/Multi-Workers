@@ -2,6 +2,18 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 /**
+ * Agent tool-layer write guards for the authority-channel files (autopilot
+ * state, the decision sign-off, the dp authorization table). Two
+ * guards live here because they are one mechanism (mw-decision-substitution
+ * D-015: same shape, same visible refusal):
+ *
+ *   1. `registerXkeyGateGuard` — autopilot state, `.agenticdoc/_autopilot/**`
+ *      (xkey-repair-mechanism D-008 "observable refusal", AC-004).
+ *   2. `registerDecisionSignoffGuard` — the decision sign-off file
+ *      `evidence/review/sign-final.md` and the authorization table
+ *      `.mw/decide-points.json` (mw-decision-substitution D-015, AC-009 /
+ *      AC-010). See the section comment above `DECISION_SIGNOFF_FRAGMENT`.
+ *
  * XKEY gate-dir write guard (xkey-repair-mechanism D-008 "observable
  * refusal", AC-004).
  *
@@ -243,6 +255,274 @@ export function registerXkeyGateGuard(pi) {
                     recordXkeyGateBlockTrace(event.toolName, command);
                     return { block: true, reason: verdict.reason };
                 }
+            }
+            return undefined;
+        }
+        return undefined;
+    });
+}
+// ---------------------------------------------------------------------------
+// Decision sign-off write guard (mw-decision-substitution D-015, AC-009 /
+// AC-010) — same mechanism as the xkey guard above, different target.
+//
+// Why: the sign-off file `evidence/review/sign-final.md` is the authority
+// channel of the decision-substitution feature (spec §7.2 / §15) and
+// `.mw/decide-points.json` is the only authority source (DS-9, "唯配置论").
+// Since the 2026-10-21 ruling (spec §15 AC-026) the sign-off is *written by the
+// tool*, not by a person in a terminal: `mw decide sign` asks
+// `dp25-signoff-conclusion` (signed_via: auto-decide) or the caller's LLM
+// inference (auto-llm) and writes the file, `--auto|--disable` persist the
+// `signoff` mode. What this guard still stops is FORGING that record: a raw
+// write/edit/redirect/`Set-Content` of the file, or a direct table write,
+// bypasses the verdict, the sha and the authority-change row.
+//
+// `pm/pm-orchestrator.ts` only COUNTS `[WRITE_SCOPE]` trace residuals; it does
+// not intercept any write, so without this guard an agent could forge its own
+// sign-off (skipping the verdict, the sha and the archive row). The guard
+// therefore reuses the mechanism above: paths are fragment-matched (relative,
+// absolute, and backslash spellings) and bash commands are scanned text-level,
+// fail-closed. `mw decide sign` itself is NOT blocked — it is the sanctioned
+// writer (the `decide dp <write verb>` regex below deliberately omits it).
+//
+// Deliberately NOT blocked: `evidence/review/decision-review-*.md` (the
+// machine-generated advice channel — it never grants authority) and every read
+// (`read`/`find`/`grep`/read-only bash), so a worker can still inspect a
+// sign-off or the table.
+//
+// `worker_file` (QG MAJOR-4): a writeless role (research / review) has no
+// `write`/`edit`, so `worker_file` is its only write channel, and that channel's
+// evidence face accepts any basename under `<key>/evidence/**`
+// (shared/write-surface.ts). Without the `worker_file` branch below a dispatched
+// worker could write the sign-off itself, bypassing the verdict/sha the same way
+// a raw write does (advance_phase.py) — the same self-signed authority the
+// write/edit branch exists to prevent. The branch shares the fixed-name predicate
+// `isDecisionSignoffEvidenceTarget` and leaves every other evidence product
+// (`evidence/review/<other>.md`, `evidence/research/**`) writable.
+//
+// Residual risk (same threat model as the xkey guard): this is an
+// application-layer guard, not a sandbox. A same-uid out-of-process writer can
+// still touch the files; what the guard guarantees is that an agent cannot do
+// it through its only tool channel without a recorded refusal.
+/** The fixed sign-off file name (D-014: `content_match` cannot take a glob). */
+export const DECISION_SIGNOFF_BASENAME = "sign-final.md";
+/** The fixed sign-off fragment the done gate checks (project/key relative).
+ *
+ * The done gate only reads this `review/` landing spot, but the guard covers
+ * BOTH landing spots (`<key>/evidence/sign-final.md` and
+ * `<key>/evidence/review/sign-final.md`). write/edit/bash judge paths through
+ * `isDecisionSignoffPath`, `worker_file` through
+ * `isDecisionSignoffEvidenceTarget`, and both delegate to the SAME landing rule
+ * (first `evidence` segment + tail `[]` or `["review"]`), so the four channels
+ * refuse the same path and stay consistent. Keep them on that shared rule: a
+ * `evidence/sign-final.md` suffix patch would re-refuse the legal
+ * `evidence/research/evidence/sign-final.md` product (QG MAJOR-4 residual). */
+export const DECISION_SIGNOFF_FRAGMENT = `evidence/review/${DECISION_SIGNOFF_BASENAME}`;
+/** The authorization table (project-relative). */
+export const DECISION_POINTS_FRAGMENT = ".mw/decide-points.json";
+/** Trace marker written into a worker's trace.log (mirrors `[XKEY_GATE]`). */
+export const DECISION_SIGNOFF_TRACE_MARKER = "[DECISION_SIGNOFF]";
+const DECISION_GUARD_EXPLANATION = "The decision sign-off is the authority channel: evidence/review/sign-final.md is written by `mw decide sign` " +
+    "(the auto-* faces from an agent session, the cli/tui faces from a human) and .mw/decide-points.json is the " +
+    "only authorization source: `mw decide dp on|off|set|apply` writes its rows, and `mw decide dp refresh` may only " +
+    "append missing registry rows with their registry defaults. Directly writing the file - Set-Content, a " +
+    "redirect, an editor - forges that record without the verdict, so an agent tool call must not do it; call " +
+    "`mw decide sign` instead (it computes counted_rows/rows_sha256 from the archive and appends the " +
+    "authority-change row). Reads stay allowed.";
+/** The table-writing CLI verbs (AC-010: `list/show/check/report` stay reads).
+ *
+ * `decide sign` is deliberately ABSENT (spec §15 AC-026): it is the sanctioned
+ * writer of the sign-off file (and, with `--auto|--disable`, of the `signoff`
+ * key in `.mw/decide.json`), so a bare invocation names no guarded file and is
+ * never refused. A redirect into the file, a `Set-Content` or a `dp apply`
+ * beside it is still caught by the refs/constructs rules below.
+ *
+ * `refresh` is ABSENT on purpose too (mw-signoff-per-key): it is the one-way
+ * registry -> table merge, it only APPENDS the rows a registry point is missing
+ * (`mw._dp_refresh` never rewrites an existing row's `enabled`/`mode`, and a
+ * P0/P1 row is added disabled), so it cannot widen authority — it is how a new
+ * registry point such as `dp25-signoff-conclusion` becomes a visible row in the
+ * table instead of living on its registry default alone. `on|off|set|apply`
+ * stay refused: those flip authority and need a human. */
+const TABLE_WRITE_CLI_RE = /\bmw(?:\.py)?\b[^\n;&|]*\bdecide\s+dp\s+(?:on|off|set|apply)\b/i;
+/** Does a write/edit tool path target the sign-off file or the table?
+ * Pure: fragment match after normalizing backslashes (and case on win32), so
+ * relative, `./`-prefixed and absolute spellings are all covered.
+ *
+ * Channel parity (see `DECISION_SIGNOFF_FRAGMENT`): the table and the `review/`
+ * landing spot keep their fragment match, and every remaining `sign-final.md`
+ * basename is delegated to the SAME landing rule `worker_file` uses — so
+ * `<key>/evidence/sign-final.md` is refused here as well, while the deep
+ * product `evidence/research/evidence/sign-final.md` still passes. */
+export function isDecisionSignoffPath(rawPath) {
+    if (typeof rawPath !== "string" || rawPath === "")
+        return false;
+    const scan = toForwardSlashes(fold(rawPath)).replace(/\/+$/, "");
+    for (const fragment of [DECISION_SIGNOFF_FRAGMENT, DECISION_POINTS_FRAGMENT]) {
+        if (scan === fragment || scan.endsWith(`/${fragment}`))
+            return true;
+    }
+    return isDecisionSignoffEvidenceTarget(scan);
+}
+/** Does a `worker_file` target name the decision sign-off file (the file
+ * `mw decide sign` writes)?
+ *
+ * `worker_file` is the only write channel of a writeless role and its paths are
+ * key-dir relative (`evidence/…`) or project-root relative
+ * (`.agenticdoc/<key>/evidence/…`), with no basename restriction inside the
+ * evidence face — so the fixed D-014 name has to be judged on the path, not on
+ * the tool. Covers both landing spots the sign-off can be written to
+ * (`<key>/evidence/sign-final.md` and `<key>/evidence/review/sign-final.md`)
+ * and nothing else under `evidence/**`, so normal research/review products stay
+ * writable. Case folding above (win32) also catches `SIGN-FINAL.MD`, which a
+ * Win32 filesystem would land on the same file. */
+export function isDecisionSignoffEvidenceTarget(rawPath) {
+    if (typeof rawPath !== "string" || rawPath === "")
+        return false;
+    const segments = toForwardSlashes(fold(rawPath))
+        .replace(/\/+$/, "")
+        .split("/")
+        .filter((segment) => segment !== "" && segment !== ".");
+    const name = segments[segments.length - 1];
+    if (name === undefined || name !== DECISION_SIGNOFF_BASENAME)
+        return false;
+    const dir = segments.slice(0, -1);
+    // The FIRST `evidence` segment is the landing position: a key-dir relative
+    // path has exactly one evidence face, so any deeper `evidence` is part of a
+    // product name (`evidence/research/evidence/…`), not a second face.
+    const evidenceIdx = dir.indexOf("evidence");
+    if (evidenceIdx < 0)
+        return false;
+    const tail = dir.slice(evidenceIdx + 1);
+    return tail.length === 0 || (tail.length === 1 && tail[0] === "review");
+}
+/** Command tokens that can spell a path (quotes, `>`/`|`/`;` and parens
+ * split them), used to apply the shared landing rule text-level. */
+const COMMAND_TOKEN_RE = /[^\s"'`|&;<>()]+/g;
+/** Does the command name the fixed sign-off name at a landing spot that the
+ * fragment above misses (the `evidence/` root landing spot)?
+ *
+ * Deliberately segment-based via `isDecisionSignoffPath`, never an
+ * `evidence/sign-final.md` suffix test: the latter would re-refuse the legal
+ * `evidence/research/evidence/sign-final.md` product. */
+function signoffLandingRefPresent(scan) {
+    if (!scan.includes(DECISION_SIGNOFF_BASENAME))
+        return false;
+    for (const match of scan.matchAll(COMMAND_TOKEN_RE)) {
+        if (isDecisionSignoffPath(match[0] ?? ""))
+            return true;
+    }
+    return false;
+}
+/** Decision for one bash tool command (fail-closed, text-level heuristic).
+ *
+ * Two independent triggers: (a) a reference to a guarded path plus any write
+ * construct / redirect into it, and (b) the table-writing CLI itself
+ * (`mw decide dp on|off|set|apply`) even without a literal path.
+ * Read-only references (`cat sign-final.md`, `mw decide dp list|show|check`), the
+ * sanctioned writer (`mw decide sign`, which names no guarded file and is absent
+ * from the write-verb regex) and the registry->table one-way merge
+ * (`mw decide dp refresh`, append-only) pass. */
+export function checkDecisionSignoffBashCommand(command) {
+    if (typeof command !== "string" || command === "")
+        return { prohibited: false };
+    const scan = toForwardSlashes(fold(command));
+    const refs = [];
+    if (scan.includes(DECISION_SIGNOFF_FRAGMENT))
+        refs.push(DECISION_SIGNOFF_FRAGMENT);
+    if (scan.includes(DECISION_POINTS_FRAGMENT))
+        refs.push(DECISION_POINTS_FRAGMENT);
+    // The root landing spot carries no single fragment; judge it with the same
+    // landing rule the write/edit and worker_file channels use.
+    if (refs.length === 0 && signoffLandingRefPresent(scan))
+        refs.push(DECISION_SIGNOFF_BASENAME);
+    const cliWrite = TABLE_WRITE_CLI_RE.test(scan);
+    if (refs.length === 0 && !cliWrite)
+        return { prohibited: false };
+    const constructs = [];
+    if (cliWrite)
+        constructs.push("mw decide dp write command");
+    if (refs.length > 0) {
+        if (WRITE_VERB_RE.test(scan))
+            constructs.push("write verb");
+        if (POWERSHELL_WRITE_RE.test(scan))
+            constructs.push("powershell write cmdlet");
+        if (SED_IN_PLACE_RE.test(scan))
+            constructs.push("sed -i");
+        if (FIND_WRITE_RE.test(scan))
+            constructs.push("find -delete/-exec");
+        if (INLINE_CODE_RE.test(scan) && INLINE_WRITE_MARKER_RE.test(scan))
+            constructs.push("inline code write");
+        for (const m of scan.matchAll(REDIRECT_RE)) {
+            const target = (m[1] ?? "").replace(/^["']|["']$/g, "");
+            if (target !== "" && isDecisionSignoffPath(target))
+                constructs.push("redirect target");
+        }
+    }
+    if (constructs.length === 0)
+        return { prohibited: false };
+    const where = refs.length > 0 ? ` (${refs.join(", ")})` : "";
+    return {
+        prohibited: true,
+        reason: `decision-signoff-guard: blocked a bash command targeting the decision sign-off channel${where} ` +
+            `with a write construct (${constructs.join(", ")}). ${DECISION_GUARD_EXPLANATION}`,
+    };
+}
+/** Worker-mode visibility: append one `[DECISION_SIGNOFF]` line to the task's
+ * trace.log (dirname of PI_WORKER_TASK — the file the PM watch reads live), so
+ * a refused worker shows up immediately. Best-effort: a failure here must never
+ * break the block itself; the env is injectable for tests. */
+export function recordDecisionSignoffBlockTrace(toolName, detail, taskPathEnv = process.env.PI_WORKER_TASK) {
+    if (!taskPathEnv)
+        return;
+    try {
+        const dir = path.dirname(path.resolve(taskPathEnv));
+        fs.mkdirSync(dir, { recursive: true });
+        const first = detail.split("\n")[0] ?? "";
+        fs.appendFileSync(path.join(dir, "trace.log"), `${DECISION_SIGNOFF_TRACE_MARKER} ${new Date().toISOString()} blocked tool=${toolName} target=${first}\n`, "utf8");
+    }
+    catch {
+        // best-effort diagnostic — the block itself already happened
+    }
+}
+/** Register the tool_call sign-off block: write/edit paths and bash commands
+ * aiming at `evidence/review/sign-final.md` or `.mw/decide-points.json` are
+ * refused, as is a `worker_file` call whose target is the fixed sign-off name
+ * under the key's evidence tree (writeless-role channel); every other call
+ * (including reads, `decision-review-*.md` and the rest of `evidence/**`) passes
+ * through untouched. Runs in every mode (PM, worker, interactive); registered
+ * in `index.ts` right after `registerXkeyGateGuard`. */
+export function registerDecisionSignoffGuard(pi) {
+    pi.on("tool_call", (event) => {
+        if (event.toolName === "write" || event.toolName === "edit") {
+            const rawPath = event.input.path;
+            if (typeof rawPath === "string" && isDecisionSignoffPath(rawPath)) {
+                recordDecisionSignoffBlockTrace(event.toolName, rawPath);
+                return {
+                    block: true,
+                    reason: `decision-signoff-guard: blocked ${event.toolName} of ${rawPath}. ${DECISION_GUARD_EXPLANATION}`,
+                };
+            }
+            return undefined;
+        }
+        if (event.toolName === "bash") {
+            const command = event.input.command;
+            if (typeof command === "string") {
+                const verdict = checkDecisionSignoffBashCommand(command);
+                if (verdict.prohibited) {
+                    recordDecisionSignoffBlockTrace(event.toolName, command);
+                    return { block: true, reason: verdict.reason };
+                }
+            }
+            return undefined;
+        }
+        if (event.toolName === "worker_file") {
+            const rawFile = event.input.file;
+            if (typeof rawFile === "string" && isDecisionSignoffEvidenceTarget(rawFile)) {
+                recordDecisionSignoffBlockTrace(event.toolName, rawFile);
+                return {
+                    block: true,
+                    reason: `decision-signoff-guard: blocked ${event.toolName} of ${rawFile}. ${DECISION_GUARD_EXPLANATION}`,
+                };
             }
             return undefined;
         }

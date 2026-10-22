@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { collectMalformedCandidates, diffLedger } from "../shared/change-ledger.js";
 import { readRunState } from "../shared/run-store.js";
 import { readTaskType } from "../shared/task-frontmatter.js";
-import { checkRecovery, isMechanicalSection, recoverySectionsFor } from "./output-sections.js";
+import { checkRecovery, claimCoverage, isMechanicalSection, parseVerdictTable, recoverySectionsFor, } from "./output-sections.js";
 /** Never-throwing read (the product files may not exist yet). */
 function readFileSafe(filePath) {
     try {
@@ -271,6 +271,12 @@ export function readTerminalGaps(opts) {
         };
     const productText = agentProductText(dir, opts.summary);
     const missingSections = opts.judgeRecovery === false ? [] : checkRecovery(productText, type).missing;
+    // T-04a: the claim-coverage judgement rides the same product text and the
+    // same single decision point as the recovery contract (design §2.2: inside
+    // `readTerminalGaps`, folded into `ok` before the caller's terminal flip).
+    const claimGaps = opts.claims === undefined || opts.judgeRecovery === false
+        ? undefined
+        : claimCoverage(opts.claims, parseVerdictTable(productText), { projectDir: opts.projectRoot });
     const traceText = readFileSafe(path.join(dir, "trace.log"));
     // T-17: pass the role + the key's evidence tree + the run clock, so a
     // writeless role's outside-taskDir deliverable is reconciled from disk
@@ -293,7 +299,7 @@ export function readTerminalGaps(opts) {
     // C-36c: warn-only path hygiene — the malformed sample is visible but it
     // never enters a gap list and never flips `ok`.
     const malformedFiles = collectMalformedCandidates(productText);
-    return {
+    const gaps = {
         judged: true,
         missingSections,
         unrecordedFiles: ledger.extra,
@@ -305,8 +311,40 @@ export function readTerminalGaps(opts) {
         // T-17c: declared paths not on disk are named for visibility but never
         // judged (a nonexistent file cannot be a write).
         unresolvableFiles: ledger.unresolvable,
-        ok: missingSections.length === 0 && ledger.extra.length === 0 && unjudgeableFiles.length === 0,
+        ok: missingSections.length === 0 &&
+            ledger.extra.length === 0 &&
+            unjudgeableFiles.length === 0 &&
+            (claimGaps?.length ?? 0) === 0,
     };
+    // Only present when the run actually has a claim contract: an absent field
+    // keeps the pre-claim verdict object byte-identical for legacy callers.
+    if (claimGaps !== undefined)
+        gaps.claimGaps = claimGaps;
+    return gaps;
+}
+/**
+ * T-04a: the `## Questions` first-line note naming the un-settled claims. The
+ * first line of `## Questions` is the PM's readback point
+ * (`pm/ui-bridge.ts::readTerminalDetail`), so the ids have to ride that line
+ * rather than a later paragraph. At most three ids, with an ellipsis only when
+ * more are hidden; `""` when the run has no claim gaps, so a claim-free product
+ * keeps its byte-identical readback line. A gap without a claim id
+ * (`claims:missing-table`) is named by its own token.
+ */
+function claimGapNote(claimGaps) {
+    if (claimGaps === undefined || claimGaps.length === 0)
+        return "";
+    const ids = [];
+    for (const gap of claimGaps) {
+        const match = /^claim:(C-\d{2,3}(?:\.\d+)?):/.exec(gap);
+        if (match === null)
+            continue;
+        const id = match[1] ?? "";
+        if (!ids.includes(id))
+            ids.push(id);
+    }
+    const items = ids.length > 0 ? ids : Array.from(new Set(claimGaps));
+    return `未裁决断言：${items.slice(0, 3).join("、")}${items.length > 3 ? "…" : ""}`;
 }
 export function writeOutput(opts) {
     const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
@@ -362,7 +400,9 @@ export function writeOutput(opts) {
     if (unresolvableNote !== "") {
         appendTrace(opts.taskKey, opts.agenticdocRoot, `ledger-unresolvable count=${gaps.unresolvableFiles.length} samples=${gaps.unresolvableFiles.join(",")}`);
     }
-    const terminalNote = [gapNote, ledgerNote, unjudgeableNote].filter((note) => note !== "").join("；");
+    const terminalNote = [gapNote, ledgerNote, unjudgeableNote, claimGapNote(gaps.claimGaps)]
+        .filter((note) => note !== "")
+        .join("；");
     const sections = [];
     // TL;DR first section (D-005): single-line conclusion on every exit path,
     // ahead of the verbatim ## Summary (readOutputSummary regex compatibility).

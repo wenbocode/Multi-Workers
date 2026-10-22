@@ -31,7 +31,9 @@
  * Leaf layer: intentionally depends only on `node:fs` (plus the `node:path` /
  * `./paths.ts` allowance of the card). It must not import `pm/**` or
  * `worker/**`, and callers pass a resolved `cardPath` so the module never
- * guesses a project root.
+ * guesses a project root. The claims section below re-implements the fence
+ * state machine of `worker/output-sections.ts` for the same reason instead of
+ * importing it (claims design §3.1).
  */
 /** The three envelope sections every dispatchable card must carry (§1.1). */
 export declare const ENVELOPE_SECTIONS: readonly ["context", "requirements", "deliverables"];
@@ -98,7 +100,7 @@ export declare const TYPE_EXTRA_SECTIONS: Readonly<Record<string, readonly strin
  * `test/suite/dispatch-recovery-terminal.test.ts`. Adding a role means changing
  * this tuple once.
  */
-export declare const DISPATCH_TYPE_VOCABULARY: readonly ["coding", "review", "research", "rag-research", "vision", "verifier", "reviewer", "repair", "phase-writer", "roadmap-writer", "codex"];
+export declare const DISPATCH_TYPE_VOCABULARY: readonly ["coding", "review", "research", "rag-research", "vision", "decide_prepare", "verifier", "reviewer", "repair", "phase-writer", "roadmap-writer", "codex"];
 /** Is `type` part of the single-source dispatch vocabulary? */
 export declare function isKnownDispatchType(type: string): boolean;
 /**
@@ -152,4 +154,110 @@ export declare const SEED_GOAL_ITEM = "seed:goal.md";
 export declare const SEED_PATH_ITEM = "seed:path:line";
 /** Seed items the card does not declare, `[]` when it declares both. */
 export declare function seedItemsMissing(text: string): string[];
+/**
+ * Self-reported judgement kind of one claim. The classifier never infers the
+ * kind (agreement with the corpus is only 63.5%, RQ-3 §2.4); the card declares
+ * it and {@link claimsGaps} only checks that the `判据` prefix agrees.
+ */
+export declare const CLAIM_TYPES: readonly ["cmd", "grep", "struct", "manual"];
+/** One member of {@link CLAIM_TYPES}. */
+export type ClaimType = (typeof CLAIM_TYPES)[number];
+/**
+ * `unverified` reason vocabulary (design §2.3). Single source: the Python
+ * mirror (`autopilot/dispatch.py`) and the T-06 parity lock read this tuple
+ * verbatim. Never write a second copy — the `ESCALATED_REASONS` precedent
+ * (`packages/multi-workers/decision_points.py:111-120`) records exactly that
+ * drift lesson.
+ */
+export declare const UNVERIFIED_REASONS: readonly ["budget", "no-access", "not-found", "ambiguous", "environment", "out-of-scope", "awaiting-input"];
+/** One member of {@link UNVERIFIED_REASONS}. */
+export type UnverifiedReason = (typeof UNVERIFIED_REASONS)[number];
+/**
+ * Default gate mode (D-006): `advisory` warns only, `enforce` refuses with zero
+ * side effects. `MW_CLAIM_GATE=enforce` overrides it at runtime; both sides of
+ * the TS/Python pair use the same constant and the same env name.
+ */
+export declare const CLAIM_GATE_DEFAULT: "advisory";
+/**
+ * Calibrated read budget of one dispatch unit (RQ-1 §5, D-007): 30 calls,
+ * 393,216 B cumulative, from the p90 single-fetch cost (4,854 tokens) and the
+ * <400k chars safe band. `perClaim` is the planning weight, `hardCap` the
+ * floor(177856/4977) ceiling and `claimByteCap` the per-claim byte allowance.
+ */
+export declare const CLAIM_BUDGET: {
+    readonly perClaim: 6;
+    readonly callCap: 30;
+    readonly hardCap: 35;
+    readonly claimByteCap: 65536;
+    readonly byteCapMax: 393216;
+};
+/** One parsed claim row of the card's `<!-- mw-claims: v1 -->` block. */
+export interface Claim {
+    /** Normalized `C-01` / `C-01.3` id. */
+    id: string;
+    /** Lower-cased self-reported 类型, `""` when the cell or column is absent. */
+    type: string;
+    /** Parent id of a `C-01.3` child row, `""` for a top-level claim. */
+    parent: string;
+    statement: string;
+    falsifier: string;
+    locator: string;
+    judgement: string;
+    /** Parsed 预算; `Number.NaN` when missing or not a non-negative integer. */
+    budget: number;
+    /** 1-based line of the row in the parsed text (diagnostics only). */
+    row: number;
+}
+/** Result of {@link parseClaimsBlock}. Never throws (P-048). */
+export interface ClaimBlock {
+    /** A `<!-- mw-claims: v1 -->` marker was seen outside a fence. */
+    present: boolean;
+    claims: Claim[];
+    /** `claim:<row>:unparsable` findings, row = 1-based source line. */
+    errors: string[];
+}
+/**
+ * Parse the card's `<!-- mw-claims: v1 -->` block (design §2.1).
+ *
+ * Tolerance is the contract, not a nicety (P-048: an over-strict schema caused
+ * 30 minutes of consecutive false refusals): the block end falls back to the
+ * next H2 or EOF, column order is free, extra columns are ignored, header
+ * words take aliases, full-width `：｜`/digits fold to ASCII, and fenced code
+ * blocks contribute nothing. An unparsable row is reported as
+ * `claim:<row>:unparsable` and skipped — this function never throws.
+ */
+export declare function parseClaimsBlock(text: string): ClaimBlock;
+/** Options of {@link claimsGaps}. */
+export interface ClaimsGapOptions {
+    /** Absolute project root the `定位` paths resolve against. */
+    projectDir: string;
+    /** `true` upgrades the advisory findings to gaps (D-006 grey release). */
+    enforce: boolean;
+}
+/**
+ * Judge a parsed claims block (design §2.1/§3.1, AC-001). Never throws.
+ *
+ * Structural gaps (`type` / `statement` / `falsifier` / `locator` /
+ * `judgement` / `budget`) are gaps in both modes: a claim missing a required
+ * cell is not a claim. The soft findings — `type-prefix`, `cmd-locator`,
+ * `locator-unresolved`, `locator-range`, `tautology` and the two `claims:*`
+ * aggregates — are returned only when `opts.enforce` is true; an advisory
+ * caller gets `[]` for them here and can re-query with `enforce: true` to
+ * render the same string list as warnings (D-006: advisory warns, never
+ * refuses).
+ *
+ * Item shapes are frozen because T-02 concatenates them into the refusal text:
+ * `claim:<id>:<element>` and `claims:<rule>:<detail>`.
+ */
+export declare function claimsGaps(block: ClaimBlock, opts: ClaimsGapOptions): string[];
+/**
+ * Read-scope caps derived from the claims block (design §4):
+ * `fileCap = min(30, Σ(manual ? 2 : 1))`, `byteCap = min(393,216, 65,536 × n)`.
+ * No claims means no derived cap — `{ fileCap: 0, byteCap: 0 }` lets the caller
+ * keep the project-level default instead of zeroing a read budget.
+ */
+export declare function claimBudgetCaps(claims: Claim[]): {
+    fileCap: number;
+    byteCap: number;
+};
 //# sourceMappingURL=dispatch-card.d.ts.map

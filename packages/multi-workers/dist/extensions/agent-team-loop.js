@@ -43,8 +43,8 @@ var require_windows = __commonJS({
   "node_modules/isexe/windows.js"(exports, module) {
     module.exports = isexe;
     isexe.sync = sync;
-    var fs42 = __require("fs");
-    function checkPathExt(path43, options) {
+    var fs46 = __require("fs");
+    function checkPathExt(path48, options) {
       var pathext = options.pathExt !== void 0 ? options.pathExt : process.env.PATHEXT;
       if (!pathext) {
         return true;
@@ -55,25 +55,25 @@ var require_windows = __commonJS({
       }
       for (var i = 0; i < pathext.length; i++) {
         var p = pathext[i].toLowerCase();
-        if (p && path43.substr(-p.length).toLowerCase() === p) {
+        if (p && path48.substr(-p.length).toLowerCase() === p) {
           return true;
         }
       }
       return false;
     }
-    function checkStat(stat, path43, options) {
+    function checkStat(stat, path48, options) {
       if (!stat.isSymbolicLink() && !stat.isFile()) {
         return false;
       }
-      return checkPathExt(path43, options);
+      return checkPathExt(path48, options);
     }
-    function isexe(path43, options, cb) {
-      fs42.stat(path43, function(er, stat) {
-        cb(er, er ? false : checkStat(stat, path43, options));
+    function isexe(path48, options, cb) {
+      fs46.stat(path48, function(er, stat) {
+        cb(er, er ? false : checkStat(stat, path48, options));
       });
     }
-    function sync(path43, options) {
-      return checkStat(fs42.statSync(path43), path43, options);
+    function sync(path48, options) {
+      return checkStat(fs46.statSync(path48), path48, options);
     }
   }
 });
@@ -83,14 +83,14 @@ var require_mode = __commonJS({
   "node_modules/isexe/mode.js"(exports, module) {
     module.exports = isexe;
     isexe.sync = sync;
-    var fs42 = __require("fs");
-    function isexe(path43, options, cb) {
-      fs42.stat(path43, function(er, stat) {
+    var fs46 = __require("fs");
+    function isexe(path48, options, cb) {
+      fs46.stat(path48, function(er, stat) {
         cb(er, er ? false : checkStat(stat, options));
       });
     }
-    function sync(path43, options) {
-      return checkStat(fs42.statSync(path43), options);
+    function sync(path48, options) {
+      return checkStat(fs46.statSync(path48), options);
     }
     function checkStat(stat, options) {
       return stat.isFile() && checkMode(stat, options);
@@ -114,7 +114,7 @@ var require_mode = __commonJS({
 // node_modules/isexe/index.js
 var require_isexe = __commonJS({
   "node_modules/isexe/index.js"(exports, module) {
-    var fs42 = __require("fs");
+    var fs46 = __require("fs");
     var core;
     if (process.platform === "win32" || global.TESTING_WINDOWS) {
       core = require_windows();
@@ -123,7 +123,7 @@ var require_isexe = __commonJS({
     }
     module.exports = isexe;
     isexe.sync = sync;
-    function isexe(path43, options, cb) {
+    function isexe(path48, options, cb) {
       if (typeof options === "function") {
         cb = options;
         options = {};
@@ -132,17 +132,17 @@ var require_isexe = __commonJS({
         if (typeof Promise !== "function") {
           throw new TypeError("callback not provided");
         }
-        return new Promise(function(resolve21, reject) {
-          isexe(path43, options || {}, function(er, is) {
+        return new Promise(function(resolve24, reject) {
+          isexe(path48, options || {}, function(er, is) {
             if (er) {
               reject(er);
             } else {
-              resolve21(is);
+              resolve24(is);
             }
           });
         });
       }
-      core(path43, options || {}, function(er, is) {
+      core(path48, options || {}, function(er, is) {
         if (er) {
           if (er.code === "EACCES" || options && options.ignoreErrors) {
             er = null;
@@ -152,9 +152,9 @@ var require_isexe = __commonJS({
         cb(er, is);
       });
     }
-    function sync(path43, options) {
+    function sync(path48, options) {
       try {
-        return core.sync(path43, options || {});
+        return core.sync(path48, options || {});
       } catch (er) {
         if (options && options.ignoreErrors || er.code === "EACCES") {
           return false;
@@ -170,7 +170,7 @@ var require_isexe = __commonJS({
 var require_which = __commonJS({
   "node_modules/which/which.js"(exports, module) {
     var isWindows = process.platform === "win32" || process.env.OSTYPE === "cygwin" || process.env.OSTYPE === "msys";
-    var path43 = __require("path");
+    var path48 = __require("path");
     var COLON = isWindows ? ";" : ":";
     var isexe = require_isexe();
     var getNotFoundError = (cmd) => Object.assign(new Error(`not found: ${cmd}`), { code: "ENOENT" });
@@ -203,27 +203,27 @@ var require_which = __commonJS({
         opt = {};
       const { pathEnv, pathExt, pathExtExe } = getPathInfo(cmd, opt);
       const found = [];
-      const step = (i) => new Promise((resolve21, reject) => {
+      const step = (i) => new Promise((resolve24, reject) => {
         if (i === pathEnv.length)
-          return opt.all && found.length ? resolve21(found) : reject(getNotFoundError(cmd));
+          return opt.all && found.length ? resolve24(found) : reject(getNotFoundError(cmd));
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-        const pCmd = path43.join(pathPart, cmd);
+        const pCmd = path48.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
-        resolve21(subStep(p, i, 0));
+        resolve24(subStep(p, i, 0));
       });
-      const subStep = (p, i, ii) => new Promise((resolve21, reject) => {
+      const subStep = (p, i, ii) => new Promise((resolve24, reject) => {
         if (ii === pathExt.length)
-          return resolve21(step(i + 1));
+          return resolve24(step(i + 1));
         const ext2 = pathExt[ii];
         isexe(p + ext2, { pathExt: pathExtExe }, (er, is) => {
           if (!er && is) {
             if (opt.all)
               found.push(p + ext2);
             else
-              return resolve21(p + ext2);
+              return resolve24(p + ext2);
           }
-          return resolve21(subStep(p, i, ii + 1));
+          return resolve24(subStep(p, i, ii + 1));
         });
       });
       return cb ? step(0).then((res) => cb(null, res), cb) : step(0);
@@ -235,7 +235,7 @@ var require_which = __commonJS({
       for (let i = 0; i < pathEnv.length; i++) {
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-        const pCmd = path43.join(pathPart, cmd);
+        const pCmd = path48.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
         for (let j = 0; j < pathExt.length; j++) {
           const cur = p + pathExt[j];
@@ -283,7 +283,7 @@ var require_path_key = __commonJS({
 var require_resolveCommand = __commonJS({
   "node_modules/cross-spawn/lib/util/resolveCommand.js"(exports, module) {
     "use strict";
-    var path43 = __require("path");
+    var path48 = __require("path");
     var which = require_which();
     var getPathKey = require_path_key();
     function resolveCommandAttempt(parsed, withoutPathExt) {
@@ -301,7 +301,7 @@ var require_resolveCommand = __commonJS({
       try {
         resolved = which.sync(parsed.command, {
           path: env[getPathKey({ env })],
-          pathExt: withoutPathExt ? path43.delimiter : void 0
+          pathExt: withoutPathExt ? path48.delimiter : void 0
         });
       } catch (e) {
       } finally {
@@ -310,7 +310,7 @@ var require_resolveCommand = __commonJS({
         }
       }
       if (resolved) {
-        resolved = path43.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
+        resolved = path48.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
       }
       return resolved;
     }
@@ -364,8 +364,8 @@ var require_shebang_command = __commonJS({
       if (!match2) {
         return null;
       }
-      const [path43, argument] = match2[0].replace(/#! ?/, "").split(" ");
-      const binary = path43.split("/").pop();
+      const [path48, argument] = match2[0].replace(/#! ?/, "").split(" ");
+      const binary = path48.split("/").pop();
       if (binary === "env") {
         return argument;
       }
@@ -378,16 +378,16 @@ var require_shebang_command = __commonJS({
 var require_readShebang = __commonJS({
   "node_modules/cross-spawn/lib/util/readShebang.js"(exports, module) {
     "use strict";
-    var fs42 = __require("fs");
+    var fs46 = __require("fs");
     var shebangCommand = require_shebang_command();
     function readShebang(command) {
       const size = 150;
       const buffer = Buffer.alloc(size);
       let fd;
       try {
-        fd = fs42.openSync(command, "r");
-        fs42.readSync(fd, buffer, 0, size, 0);
-        fs42.closeSync(fd);
+        fd = fs46.openSync(command, "r");
+        fs46.readSync(fd, buffer, 0, size, 0);
+        fs46.closeSync(fd);
       } catch (e) {
       }
       return shebangCommand(buffer.toString());
@@ -400,7 +400,7 @@ var require_readShebang = __commonJS({
 var require_parse = __commonJS({
   "node_modules/cross-spawn/lib/parse.js"(exports, module) {
     "use strict";
-    var path43 = __require("path");
+    var path48 = __require("path");
     var resolveCommand = require_resolveCommand();
     var escape2 = require_escape();
     var readShebang = require_readShebang();
@@ -425,7 +425,7 @@ var require_parse = __commonJS({
       const needsShell = !isExecutableRegExp.test(commandFile);
       if (parsed.options.forceShell || needsShell) {
         const needsDoubleEscapeMetaChars = isCmdShimRegExp.test(commandFile);
-        parsed.command = path43.normalize(parsed.command);
+        parsed.command = path48.normalize(parsed.command);
         parsed.command = escape2.command(parsed.command);
         parsed.args = parsed.args.map((arg) => escape2.argument(arg, needsDoubleEscapeMetaChars));
         const shellCommand = [parsed.command].concat(parsed.args).join(" ");
@@ -515,21 +515,21 @@ var require_cross_spawn = __commonJS({
     var cp = __require("child_process");
     var parse3 = require_parse();
     var enoent = require_enoent();
-    function spawn4(command, args, options) {
+    function spawn5(command, args, options) {
       const parsed = parse3(command, args, options);
       const spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
       enoent.hookChildProcess(spawned, parsed);
       return spawned;
     }
-    function spawnSync6(command, args, options) {
+    function spawnSync8(command, args, options) {
       const parsed = parse3(command, args, options);
       const result = cp.spawnSync(parsed.command, parsed.args, parsed.options);
       result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
       return result;
     }
-    module.exports = spawn4;
-    module.exports.spawn = spawn4;
-    module.exports.sync = spawnSync6;
+    module.exports = spawn5;
+    module.exports.spawn = spawn5;
+    module.exports.sync = spawnSync8;
     module.exports._parse = parse3;
     module.exports._enoent = enoent;
   }
@@ -612,17 +612,17 @@ var require_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    function visit_(key, node, visitor, path43) {
-      const ctrl = callVisitor(key, node, visitor, path43);
+    function visit_(key, node, visitor, path48) {
+      const ctrl = callVisitor(key, node, visitor, path48);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path43, ctrl);
-        return visit_(key, ctrl, visitor, path43);
+        replaceNode(key, path48, ctrl);
+        return visit_(key, ctrl, visitor, path48);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path43 = Object.freeze(path43.concat(node));
+          path48 = Object.freeze(path48.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = visit_(i, node.items[i], visitor, path43);
+            const ci = visit_(i, node.items[i], visitor, path48);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -633,13 +633,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path43 = Object.freeze(path43.concat(node));
-          const ck = visit_("key", node.key, visitor, path43);
+          path48 = Object.freeze(path48.concat(node));
+          const ck = visit_("key", node.key, visitor, path48);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = visit_("value", node.value, visitor, path43);
+          const cv = visit_("value", node.value, visitor, path48);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -660,17 +660,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node, visitor, path43) {
-      const ctrl = await callVisitor(key, node, visitor, path43);
+    async function visitAsync_(key, node, visitor, path48) {
+      const ctrl = await callVisitor(key, node, visitor, path48);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path43, ctrl);
-        return visitAsync_(key, ctrl, visitor, path43);
+        replaceNode(key, path48, ctrl);
+        return visitAsync_(key, ctrl, visitor, path48);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path43 = Object.freeze(path43.concat(node));
+          path48 = Object.freeze(path48.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = await visitAsync_(i, node.items[i], visitor, path43);
+            const ci = await visitAsync_(i, node.items[i], visitor, path48);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -681,13 +681,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path43 = Object.freeze(path43.concat(node));
-          const ck = await visitAsync_("key", node.key, visitor, path43);
+          path48 = Object.freeze(path48.concat(node));
+          const ck = await visitAsync_("key", node.key, visitor, path48);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = await visitAsync_("value", node.value, visitor, path43);
+          const cv = await visitAsync_("value", node.value, visitor, path48);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -714,23 +714,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node, visitor, path43) {
+    function callVisitor(key, node, visitor, path48) {
       if (typeof visitor === "function")
-        return visitor(key, node, path43);
+        return visitor(key, node, path48);
       if (identity.isMap(node))
-        return visitor.Map?.(key, node, path43);
+        return visitor.Map?.(key, node, path48);
       if (identity.isSeq(node))
-        return visitor.Seq?.(key, node, path43);
+        return visitor.Seq?.(key, node, path48);
       if (identity.isPair(node))
-        return visitor.Pair?.(key, node, path43);
+        return visitor.Pair?.(key, node, path48);
       if (identity.isScalar(node))
-        return visitor.Scalar?.(key, node, path43);
+        return visitor.Scalar?.(key, node, path48);
       if (identity.isAlias(node))
-        return visitor.Alias?.(key, node, path43);
+        return visitor.Alias?.(key, node, path48);
       return void 0;
     }
-    function replaceNode(key, path43, node) {
-      const parent = path43[path43.length - 1];
+    function replaceNode(key, path48, node) {
+      const parent = path48[path48.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node;
       } else if (identity.isPair(parent)) {
@@ -1340,10 +1340,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path43, value) {
+    function collectionFromPath(schema, path48, value) {
       let v = value;
-      for (let i = path43.length - 1; i >= 0; --i) {
-        const k = path43[i];
+      for (let i = path48.length - 1; i >= 0; --i) {
+        const k = path48[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -1362,7 +1362,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path43) => path43 == null || typeof path43 === "object" && !!path43[Symbol.iterator]().next().done;
+    var isEmptyPath = (path48) => path48 == null || typeof path48 === "object" && !!path48[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -1392,11 +1392,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path43, value) {
-        if (isEmptyPath(path43))
+      addIn(path48, value) {
+        if (isEmptyPath(path48))
           this.add(value);
         else {
-          const [key, ...rest] = path43;
+          const [key, ...rest] = path48;
           const node = this.get(key, true);
           if (identity.isCollection(node))
             node.addIn(rest, value);
@@ -1410,8 +1410,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path43) {
-        const [key, ...rest] = path43;
+      deleteIn(path48) {
+        const [key, ...rest] = path48;
         if (rest.length === 0)
           return this.delete(key);
         const node = this.get(key, true);
@@ -1425,8 +1425,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path43, keepScalar) {
-        const [key, ...rest] = path43;
+      getIn(path48, keepScalar) {
+        const [key, ...rest] = path48;
         const node = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node) ? node.value : node;
@@ -1444,8 +1444,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path43) {
-        const [key, ...rest] = path43;
+      hasIn(path48) {
+        const [key, ...rest] = path48;
         if (rest.length === 0)
           return this.has(key);
         const node = this.get(key, true);
@@ -1455,8 +1455,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path43, value) {
-        const [key, ...rest] = path43;
+      setIn(path48, value) {
+        const [key, ...rest] = path48;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -3971,9 +3971,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path43, value) {
+      addIn(path48, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path43, value);
+          this.contents.addIn(path48, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -4048,14 +4048,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path43) {
-        if (Collection.isEmptyPath(path43)) {
+      deleteIn(path48) {
+        if (Collection.isEmptyPath(path48)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path43) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path48) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -4070,10 +4070,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path43, keepScalar) {
-        if (Collection.isEmptyPath(path43))
+      getIn(path48, keepScalar) {
+        if (Collection.isEmptyPath(path48))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path43, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path48, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -4084,10 +4084,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path43) {
-        if (Collection.isEmptyPath(path43))
+      hasIn(path48) {
+        if (Collection.isEmptyPath(path48))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path43) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path48) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -4104,13 +4104,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path43, value) {
-        if (Collection.isEmptyPath(path43)) {
+      setIn(path48, value) {
+        if (Collection.isEmptyPath(path48)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path43), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path48), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path43, value);
+          this.contents.setIn(path48, value);
         }
       }
       /**
@@ -4496,10 +4496,10 @@ var require_resolve_block_map = __commonJS({
       let offset = bm.offset;
       let commentEnd = null;
       for (const collItem of bm.items) {
-        const { start, key, sep: sep11, value } = collItem;
+        const { start, key, sep: sep13, value } = collItem;
         const keyProps = resolveProps.resolveProps(start, {
           indicator: "explicit-key-ind",
-          next: key ?? sep11?.[0],
+          next: key ?? sep13?.[0],
           offset,
           onError,
           parentIndent: bm.indent,
@@ -4513,7 +4513,7 @@ var require_resolve_block_map = __commonJS({
             else if ("indent" in key && key.indent !== bm.indent)
               onError(offset, "BAD_INDENT", startColMsg);
           }
-          if (!keyProps.anchor && !keyProps.tag && !sep11) {
+          if (!keyProps.anchor && !keyProps.tag && !sep13) {
             commentEnd = keyProps.end;
             if (keyProps.comment) {
               if (map.comment)
@@ -4537,7 +4537,7 @@ var require_resolve_block_map = __commonJS({
         ctx.atKey = false;
         if (utilMapIncludes.mapIncludes(ctx, map.items, keyNode))
           onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-        const valueProps = resolveProps.resolveProps(sep11 ?? [], {
+        const valueProps = resolveProps.resolveProps(sep13 ?? [], {
           indicator: "map-value-ind",
           next: value,
           offset: keyNode.range[2],
@@ -4553,7 +4553,7 @@ var require_resolve_block_map = __commonJS({
             if (ctx.options.strict && keyProps.start < valueProps.found.offset - 1024)
               onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key");
           }
-          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : composeEmptyNode(ctx, offset, sep11, null, valueProps, onError);
+          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : composeEmptyNode(ctx, offset, sep13, null, valueProps, onError);
           if (ctx.schema.compat)
             utilFlowIndentCheck.flowIndentCheck(bm.indent, value, onError);
           offset = valueNode.range[2];
@@ -4644,7 +4644,7 @@ var require_resolve_end = __commonJS({
       let comment = "";
       if (end) {
         let hasSpace = false;
-        let sep11 = "";
+        let sep13 = "";
         for (const token of end) {
           const { source, type } = token;
           switch (type) {
@@ -4658,13 +4658,13 @@ var require_resolve_end = __commonJS({
               if (!comment)
                 comment = cb;
               else
-                comment += sep11 + cb;
-              sep11 = "";
+                comment += sep13 + cb;
+              sep13 = "";
               break;
             }
             case "newline":
               if (comment)
-                sep11 += source;
+                sep13 += source;
               hasSpace = true;
               break;
             default:
@@ -4707,18 +4707,18 @@ var require_resolve_flow_collection = __commonJS({
       let offset = fc.offset + fc.start.source.length;
       for (let i = 0; i < fc.items.length; ++i) {
         const collItem = fc.items[i];
-        const { start, key, sep: sep11, value } = collItem;
+        const { start, key, sep: sep13, value } = collItem;
         const props = resolveProps.resolveProps(start, {
           flow: fcName,
           indicator: "explicit-key-ind",
-          next: key ?? sep11?.[0],
+          next: key ?? sep13?.[0],
           offset,
           onError,
           parentIndent: fc.indent,
           startOnNewline: false
         });
         if (!props.found) {
-          if (!props.anchor && !props.tag && !sep11 && !value) {
+          if (!props.anchor && !props.tag && !sep13 && !value) {
             if (i === 0 && props.comma)
               onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
             else if (i < fc.items.length - 1)
@@ -4772,8 +4772,8 @@ var require_resolve_flow_collection = __commonJS({
             }
           }
         }
-        if (!isMap2 && !sep11 && !props.found) {
-          const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep11, null, props, onError);
+        if (!isMap2 && !sep13 && !props.found) {
+          const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep13, null, props, onError);
           coll.items.push(valueNode);
           offset = valueNode.range[2];
           if (isBlock(value))
@@ -4785,7 +4785,7 @@ var require_resolve_flow_collection = __commonJS({
           if (isBlock(key))
             onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg);
           ctx.atKey = false;
-          const valueProps = resolveProps.resolveProps(sep11 ?? [], {
+          const valueProps = resolveProps.resolveProps(sep13 ?? [], {
             flow: fcName,
             indicator: "map-value-ind",
             next: value,
@@ -4796,8 +4796,8 @@ var require_resolve_flow_collection = __commonJS({
           });
           if (valueProps.found) {
             if (!isMap2 && !props.found && ctx.options.strict) {
-              if (sep11)
-                for (const st of sep11) {
+              if (sep13)
+                for (const st of sep13) {
                   if (st === valueProps.found)
                     break;
                   if (st.type === "newline") {
@@ -4814,7 +4814,7 @@ var require_resolve_flow_collection = __commonJS({
             else
               onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`);
           }
-          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode(ctx, valueProps.end, sep11, null, valueProps, onError) : null;
+          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode(ctx, valueProps.end, sep13, null, valueProps, onError) : null;
           if (valueNode) {
             if (isBlock(value))
               onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
@@ -4994,7 +4994,7 @@ var require_resolve_block_scalar = __commonJS({
           chompStart = i + 1;
       }
       let value = "";
-      let sep11 = "";
+      let sep13 = "";
       let prevMoreIndented = false;
       for (let i = 0; i < contentStart; ++i)
         value += lines[i][0].slice(trimIndent) + "\n";
@@ -5011,24 +5011,24 @@ var require_resolve_block_scalar = __commonJS({
           indent = "";
         }
         if (type === Scalar.Scalar.BLOCK_LITERAL) {
-          value += sep11 + indent.slice(trimIndent) + content;
-          sep11 = "\n";
+          value += sep13 + indent.slice(trimIndent) + content;
+          sep13 = "\n";
         } else if (indent.length > trimIndent || content[0] === "	") {
-          if (sep11 === " ")
-            sep11 = "\n";
-          else if (!prevMoreIndented && sep11 === "\n")
-            sep11 = "\n\n";
-          value += sep11 + indent.slice(trimIndent) + content;
-          sep11 = "\n";
+          if (sep13 === " ")
+            sep13 = "\n";
+          else if (!prevMoreIndented && sep13 === "\n")
+            sep13 = "\n\n";
+          value += sep13 + indent.slice(trimIndent) + content;
+          sep13 = "\n";
           prevMoreIndented = true;
         } else if (content === "") {
-          if (sep11 === "\n")
+          if (sep13 === "\n")
             value += "\n";
           else
-            sep11 = "\n";
+            sep13 = "\n";
         } else {
-          value += sep11 + content;
-          sep11 = " ";
+          value += sep13 + content;
+          sep13 = " ";
           prevMoreIndented = false;
         }
       }
@@ -5210,25 +5210,25 @@ var require_resolve_flow_scalar = __commonJS({
       if (!match2)
         return source;
       let res = match2[1];
-      let sep11 = " ";
+      let sep13 = " ";
       let pos = first.lastIndex;
       line.lastIndex = pos;
       while (match2 = line.exec(source)) {
         if (match2[1] === "") {
-          if (sep11 === "\n")
-            res += sep11;
+          if (sep13 === "\n")
+            res += sep13;
           else
-            sep11 = "\n";
+            sep13 = "\n";
         } else {
-          res += sep11 + match2[1];
-          sep11 = " ";
+          res += sep13 + match2[1];
+          sep13 = " ";
         }
         pos = line.lastIndex;
       }
       const last = /[ \t]*(.*)/sy;
       last.lastIndex = pos;
       match2 = last.exec(source);
-      return res + sep11 + (match2?.[1] ?? "");
+      return res + sep13 + (match2?.[1] ?? "");
     }
     function doubleQuotedValue(source, onError) {
       let res = "";
@@ -6038,14 +6038,14 @@ var require_cst_stringify = __commonJS({
         }
       }
     }
-    function stringifyItem({ start, key, sep: sep11, value }) {
+    function stringifyItem({ start, key, sep: sep13, value }) {
       let res = "";
       for (const st of start)
         res += st.source;
       if (key)
         res += stringifyToken(key);
-      if (sep11)
-        for (const st of sep11)
+      if (sep13)
+        for (const st of sep13)
           res += st.source;
       if (value)
         res += stringifyToken(value);
@@ -6070,9 +6070,9 @@ var require_cst_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    visit.itemAtPath = (cst, path43) => {
+    visit.itemAtPath = (cst, path48) => {
       let item = cst;
-      for (const [field, index] of path43) {
+      for (const [field, index] of path48) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -6081,23 +6081,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit.parentCollection = (cst, path43) => {
-      const parent = visit.itemAtPath(cst, path43.slice(0, -1));
-      const field = path43[path43.length - 1][0];
+    visit.parentCollection = (cst, path48) => {
+      const parent = visit.itemAtPath(cst, path48.slice(0, -1));
+      const field = path48[path48.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path43, item, visitor) {
-      let ctrl = visitor(item, path43);
+    function _visit(path48, item, visitor) {
+      let ctrl = visitor(item, path48);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path43.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path48.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -6108,10 +6108,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path43);
+            ctrl = ctrl(item, path48);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path43) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path48) : ctrl;
     }
     exports.visit = visit;
   }
@@ -7212,18 +7212,18 @@ var require_parser = __commonJS({
         if (this.type === "map-value-ind") {
           const prev = getPrevProps(this.peek(2));
           const start = getFirstKeyStartProps(prev);
-          let sep11;
+          let sep13;
           if (scalar.end) {
-            sep11 = scalar.end;
-            sep11.push(this.sourceToken);
+            sep13 = scalar.end;
+            sep13.push(this.sourceToken);
             delete scalar.end;
           } else
-            sep11 = [this.sourceToken];
+            sep13 = [this.sourceToken];
           const map = {
             type: "block-map",
             offset: scalar.offset,
             indent: scalar.indent,
-            items: [{ start, key: scalar, sep: sep11 }]
+            items: [{ start, key: scalar, sep: sep13 }]
           };
           this.onKeyLine = true;
           this.stack[this.stack.length - 1] = map;
@@ -7376,15 +7376,15 @@ var require_parser = __commonJS({
                 } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
                   const start2 = getFirstKeyStartProps(it.start);
                   const key = it.key;
-                  const sep11 = it.sep;
-                  sep11.push(this.sourceToken);
+                  const sep13 = it.sep;
+                  sep13.push(this.sourceToken);
                   delete it.key;
                   delete it.sep;
                   this.stack.push({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start: start2, key, sep: sep11 }]
+                    items: [{ start: start2, key, sep: sep13 }]
                   });
                 } else if (start.length > 0) {
                   it.sep = it.sep.concat(start, this.sourceToken);
@@ -7413,14 +7413,14 @@ var require_parser = __commonJS({
             case "scalar":
             case "single-quoted-scalar":
             case "double-quoted-scalar": {
-              const fs42 = this.flowScalar(this.type);
+              const fs46 = this.flowScalar(this.type);
               if (atNextItem || it.value) {
-                map.items.push({ start, key: fs42, sep: [] });
+                map.items.push({ start, key: fs46, sep: [] });
                 this.onKeyLine = true;
               } else if (it.sep) {
-                this.stack.push(fs42);
+                this.stack.push(fs46);
               } else {
-                Object.assign(it, { key: fs42, sep: [] });
+                Object.assign(it, { key: fs46, sep: [] });
                 this.onKeyLine = true;
               }
               return;
@@ -7548,13 +7548,13 @@ var require_parser = __commonJS({
             case "scalar":
             case "single-quoted-scalar":
             case "double-quoted-scalar": {
-              const fs42 = this.flowScalar(this.type);
+              const fs46 = this.flowScalar(this.type);
               if (!it || it.value)
-                fc.items.push({ start: [], key: fs42, sep: [] });
+                fc.items.push({ start: [], key: fs46, sep: [] });
               else if (it.sep)
-                this.stack.push(fs42);
+                this.stack.push(fs46);
               else
-                Object.assign(it, { key: fs42, sep: [] });
+                Object.assign(it, { key: fs46, sep: [] });
               return;
             }
             case "flow-map-end":
@@ -7578,13 +7578,13 @@ var require_parser = __commonJS({
             const prev = getPrevProps(parent);
             const start = getFirstKeyStartProps(prev);
             fixFlowSeqItems(fc);
-            const sep11 = fc.end.splice(1, fc.end.length);
-            sep11.push(this.sourceToken);
+            const sep13 = fc.end.splice(1, fc.end.length);
+            sep13.push(this.sourceToken);
             const map = {
               type: "block-map",
               offset: fc.offset,
               indent: fc.indent,
-              items: [{ start, key: fc, sep: sep11 }]
+              items: [{ start, key: fc, sep: sep13 }]
             };
             this.onKeyLine = true;
             this.stack[this.stack.length - 1] = map;
@@ -7862,18 +7862,11 @@ var require_dist = __commonJS({
   }
 });
 
-// packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts
-import * as fs37 from "node:fs";
-import * as path38 from "node:path";
-
-// packages/coding-agent/src/extensions/agent-team-loop/autopilot/console.ts
-import * as fs35 from "node:fs";
-import * as path36 from "node:path";
-
-// packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
-import * as fs32 from "node:fs";
-import * as os4 from "node:os";
-import * as path34 from "node:path";
+// packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts
+import { spawn as spawn2 } from "node:child_process";
+import * as fs3 from "node:fs";
+import * as os2 from "node:os";
+import * as path4 from "node:path";
 
 // node_modules/typebox/build/system/memory/memory.mjs
 var memory_exports = {};
@@ -12248,10 +12241,1391 @@ __export(typebox_exports, {
   With: () => With2
 });
 
+// packages/coding-agent/src/extensions/agent-team-loop/shared/mw-runner.ts
+import { spawn, spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+var PYTHON_EXE = process.platform === "win32" ? "python" : "python3";
+function globalExtDir() {
+  const envDir = process.env.PI_CODING_AGENT_DIR;
+  const base = envDir ? envDir : path.join(os.homedir(), ".pi", "agent");
+  return path.join(base, "extensions");
+}
+function findMwPy() {
+  const envPath = process.env.MW_PY;
+  if (envPath && fs.existsSync(envPath)) return envPath;
+  try {
+    const rec = path.join(globalExtDir(), ".mw-py-path");
+    if (fs.existsSync(rec)) {
+      const recorded = fs.readFileSync(rec, "utf8").trim();
+      if (recorded && fs.existsSync(recorded)) return recorded;
+    }
+  } catch {
+  }
+  try {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const candidate = path.resolve(here, "../../../../../multi-workers/mw.py");
+    if (fs.existsSync(candidate)) return candidate;
+  } catch {
+  }
+  return null;
+}
+function buildMw() {
+  const mwPy = findMwPy();
+  if (!mwPy) return { ok: false, error: "Could not find mw.py \u2014 set MW_PY env var." };
+  const result = spawnSync(PYTHON_EXE, [mwPy, "build", "--install"], {
+    encoding: "utf8",
+    timeout: 12e4
+  });
+  if (result.error) {
+    return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
+  }
+  if (result.status !== 0) {
+    const stderr = result.stderr?.trim();
+    return { ok: false, error: stderr || `mw build exited with code ${result.status}` };
+  }
+  return { ok: true, output: (result.stdout || "").trim() };
+}
+function pidFilePath(projectDir) {
+  return path.join(projectDir, ".mw", "mw.pid");
+}
+function getMwStatus(projectDir) {
+  const pidPath = pidFilePath(projectDir);
+  if (!fs.existsSync(pidPath)) return { running: false, pid: null };
+  const raw = fs.readFileSync(pidPath, "utf8").trim();
+  const pid = Number.parseInt(raw, 10);
+  if (Number.isNaN(pid)) return { running: false, pid: null };
+  try {
+    process.kill(pid, 0);
+    return { running: true, pid };
+  } catch {
+    return { running: false, pid: null };
+  }
+}
+function initMw(projectDir) {
+  const mwPy = findMwPy();
+  if (!mwPy) return { ok: false, error: "Could not find mw.py \u2014 set MW_PY env var." };
+  const result = spawnSync(PYTHON_EXE, [mwPy, "init", `--project=${projectDir}`], {
+    encoding: "utf8",
+    timeout: 3e4
+  });
+  if (result.error) {
+    return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
+  }
+  if (result.status !== 0) {
+    const stderr = result.stderr?.trim();
+    return { ok: false, error: stderr || `mw init exited with code ${result.status}` };
+  }
+  return { ok: true };
+}
+function startMw(projectDir) {
+  const mwPy = findMwPy();
+  if (!mwPy) return false;
+  const child = spawn(PYTHON_EXE, [mwPy, "start", `--project=${projectDir}`], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true
+  });
+  child.unref();
+  return true;
+}
+async function waitForMwStart(projectDir, timeoutMs = 8e3, stableMs = 3e3) {
+  return waitForStart(() => getMwStatus(projectDir), timeoutMs, stableMs);
+}
+async function waitForStart(statusFn, timeoutMs, stableMs, pollMs = 250) {
+  const deadline = Date.now() + timeoutMs;
+  let stableSince = null;
+  while (Date.now() < deadline) {
+    if (statusFn().running) {
+      if (stableSince === null) stableSince = Date.now();
+      if (Date.now() - stableSince >= stableMs) return true;
+    } else {
+      stableSince = null;
+    }
+    await new Promise((resolve24) => setTimeout(resolve24, pollMs));
+  }
+  return statusFn().running;
+}
+function stopMw(projectDir) {
+  const mwPy = findMwPy();
+  if (!mwPy) return false;
+  const result = spawn(PYTHON_EXE, [mwPy, "stop", `--project=${projectDir}`], {
+    stdio: "inherit"
+  });
+  result.unref();
+  return true;
+}
+function serveMetaPath(projectDir) {
+  return path.join(projectDir, ".mw", "serve.meta");
+}
+function readServeMeta(projectDir) {
+  try {
+    const raw = fs.readFileSync(serveMetaPath(projectDir), "utf8");
+    const m = JSON.parse(raw);
+    if (typeof m.pid !== "number" || typeof m.started_at_ms !== "number") return null;
+    const meta = { pid: m.pid, startedAtMs: m.started_at_ms };
+    if (typeof m.code_dir === "string" && m.code_dir) meta.codeDir = m.code_dir;
+    if (typeof m.commit === "string" && m.commit) meta.commit = m.commit;
+    if (typeof m.dirty_tracked === "number") meta.dirtyTracked = m.dirty_tracked;
+    if (typeof m.dirty_untracked === "number") meta.dirtyUntracked = m.dirty_untracked;
+    if (typeof m.code_mtime_ms === "number") meta.codeMtimeMs = m.code_mtime_ms;
+    if (typeof m.code_digest === "string" && m.code_digest) meta.codeDigest = m.code_digest;
+    if (typeof m.schema === "number") meta.schema = m.schema;
+    return meta;
+  } catch {
+    return null;
+  }
+}
+function mwCodeNewestMtimeMs(mwPyOverride) {
+  const mwPy = mwPyOverride ?? findMwPy();
+  if (!mwPy) return null;
+  let newest = 0;
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.isDirectory()) {
+        if (e.name === "__pycache__" || e.name === "dist" || e.name === ".tmp" || e.name === "test") continue;
+        walk(path.join(dir, e.name));
+        continue;
+      }
+      if (!e.isFile()) continue;
+      if (!/\.(py|json)$/.test(e.name)) continue;
+      if (e.name.startsWith("test_") || e.name.startsWith("_")) continue;
+      try {
+        const m = fs.statSync(path.join(dir, e.name)).mtimeMs;
+        if (m > newest) newest = m;
+      } catch {
+      }
+    }
+  };
+  walk(path.dirname(mwPy));
+  return newest > 0 ? newest : null;
+}
+function serveStaleness(projectDir, codeMtimeMs) {
+  const meta = readServeMeta(projectDir);
+  let codeMs = codeMtimeMs ?? null;
+  if (codeMs === null) {
+    if (meta?.codeDir) codeMs = mwCodeNewestMtimeMs(path.join(meta.codeDir, "mw.py"));
+    if (codeMs === null) codeMs = mwCodeNewestMtimeMs();
+  }
+  if (codeMs === null) return void 0;
+  let startedAtMs = meta?.startedAtMs ?? null;
+  if (startedAtMs === null) {
+    try {
+      startedAtMs = fs.statSync(pidFilePath(projectDir)).mtimeMs;
+    } catch {
+      return void 0;
+    }
+  }
+  const stale = codeMs > startedAtMs + 2e3;
+  return {
+    stale,
+    detail: `serve started ${new Date(startedAtMs).toISOString()}, mw code changed ${new Date(codeMs).toISOString()}`
+  };
+}
+async function restartSequence(isRunning, requestStop, start, waitUp, timeoutMs, pollMs = 250) {
+  if (isRunning()) {
+    requestStop();
+    const deadline = Date.now() + timeoutMs;
+    while (isRunning() && Date.now() < deadline) {
+      await new Promise((resolve24) => setTimeout(resolve24, pollMs));
+    }
+    if (isRunning()) return "stop-failed";
+  }
+  if (!start()) return "start-failed";
+  return await waitUp() ? "restarted" : "start-failed";
+}
+async function restartMw(projectDir, timeoutMs = 3e4) {
+  return restartSequence(
+    () => getMwStatus(projectDir).running,
+    () => {
+      const stopReq = path.join(projectDir, ".mw", "mw.stop");
+      fs.mkdirSync(path.dirname(stopReq), { recursive: true });
+      fs.writeFileSync(stopReq, "stop", "utf8");
+    },
+    () => startMw(projectDir),
+    () => waitForMwStart(projectDir),
+    timeoutMs
+  );
+}
+function doctorMw(projectDir, fix = false) {
+  const mwPy = findMwPy();
+  if (!mwPy) return { ok: false, error: "Could not find mw.py \u2014 set MW_PY env var." };
+  const args = [mwPy, "doctor", `--project=${projectDir}`, "--json"];
+  if (fix) args.push("--fix");
+  const result = spawnSync(PYTHON_EXE, args, { encoding: "utf8", timeout: 15e3 });
+  if (result.error) {
+    return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
+  }
+  if (!result.stdout || !result.stdout.trim()) {
+    const stderr = result.stderr?.trim() ?? "";
+    return { ok: false, error: stderr || `mw doctor exited with code ${result.status}` };
+  }
+  try {
+    return { ok: true, report: JSON.parse(result.stdout) };
+  } catch (err) {
+    return { ok: false, error: `mw doctor returned non-JSON output: ${String(err)}` };
+  }
+}
+function runMwCliRaw(sub, projectDir, args, timeoutMs = 3e4, scopeProject = true) {
+  const mwPy = findMwPy();
+  if (!mwPy) return { code: -1, output: "", spawnError: "Could not find mw.py \u2014 set MW_PY env var." };
+  const argv = scopeProject ? [mwPy, sub, ...args, `--project=${projectDir}`] : [mwPy, sub, ...args];
+  const result = spawnSync(PYTHON_EXE, argv, {
+    encoding: "utf8",
+    timeout: timeoutMs
+  });
+  if (result.error) {
+    return { code: -1, output: "", spawnError: `Failed to spawn mw.py: ${result.error.message}` };
+  }
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+  return { code: result.status ?? -1, output };
+}
+function runMwCli(sub, projectDir, args, timeoutMs = 3e4, scopeProject = true) {
+  const raw = runMwCliRaw(sub, projectDir, args, timeoutMs, scopeProject);
+  if (raw.spawnError !== void 0) return { ok: false, error: raw.spawnError };
+  if (raw.code !== 0) return { ok: false, error: raw.output || `mw ${sub} exited with code ${raw.code}` };
+  return { ok: true, output: raw.output };
+}
+function targetMw(projectDir, args) {
+  return runMwCli("target", projectDir, args);
+}
+function partitionMw(projectDir, args) {
+  return runMwCli("partition", projectDir, args);
+}
+function modelMw(projectDir, args) {
+  return runMwCli("model", projectDir, args);
+}
+function decideMw(projectDir, args) {
+  return runMwCli("decide", projectDir, args);
+}
+function statsMw(projectDir, extraArgs) {
+  return runMwCli("stats", projectDir, extraArgs, 18e4, false);
+}
+var RAG_SUBCOMMANDS = ["list", "probe", "audit", "sync", "init"];
+function ragMw(projectDir, args) {
+  const raw = runMwCliRaw("rag", projectDir, args);
+  if (raw.spawnError !== void 0) return { ok: false, code: raw.code, output: raw.spawnError };
+  return { ok: raw.code === 0, code: raw.code, output: raw.output };
+}
+function updateEnvMw(projectDir, apply) {
+  const mwPy = findMwPy();
+  if (!mwPy) return { ok: false, error: "Could not find mw.py \u2014 set MW_PY env var." };
+  const args = [mwPy, "update-env", `--project=${projectDir}`];
+  if (apply) args.push("--apply");
+  const result = spawnSync(PYTHON_EXE, args, { encoding: "utf8", timeout: 6e5 });
+  if (result.error) {
+    return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
+  }
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+  if (!output) {
+    return { ok: false, error: `mw update-env exited with code ${result.status}` };
+  }
+  return { ok: true, output };
+}
+
+// packages/coding-agent/src/extensions/agent-team-loop/shared/paths.ts
+import * as path2 from "node:path";
+var AGENTICDOC_DIR = ".agenticdoc";
+var GOAL_FILE = "goal.md";
+var SCRATCH_WORKERS_KEY = "_scratch";
+var WORKERS_DIR = "workers";
+function agenticdocRoot(projectDir) {
+  return path2.join(projectDir, AGENTICDOC_DIR);
+}
+function goalPath(agenticdocRoot2) {
+  return path2.join(agenticdocRoot2, GOAL_FILE);
+}
+function workersDirFor(agenticdocRoot2, ownerKey) {
+  return path2.join(agenticdocRoot2, ownerKey, WORKERS_DIR);
+}
+function workerTaskDir(agenticdocRoot2, ownerKey, taskKey) {
+  return path2.join(workersDirFor(agenticdocRoot2, ownerKey), taskKey);
+}
+function controlRootFromTaskPath(taskPath) {
+  const workersDir = path2.dirname(path2.dirname(taskPath));
+  const agenticdocRoot2 = path2.dirname(path2.dirname(workersDir));
+  return path2.dirname(agenticdocRoot2);
+}
+
+// packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
+import { createHash } from "node:crypto";
+import * as fs2 from "node:fs";
+import * as path3 from "node:path";
+var DEFAULT_TRIAGE_TIMEOUT_MS = 2e4;
+var MAX_STRUCTURED_STATE_BYTES = 2e3;
+var MAX_TRIAGE_STATE_BYTES = 16e3;
+var DP1_ID = "dp1-dispatch-type";
+var TRIAGE_REASON_INPUT_INCOMPLETE = "input-incomplete";
+var TRIAGE_REASON_INPUT_OVERSIZE = "input-oversize";
+var CONFIDENCE_SOURCE_API = "api";
+var CONFIDENCE_SOURCE_MODEL_SELF_REPORT = "model-self-report";
+var DP1_QUESTIONS = {
+  triage_type: { type: "choice", choices: ["coding", "research", "review"] },
+  triage_risk: { type: "choice", choices: ["low", "mid", "high"] }
+};
+var DP1_QUESTIONS_VERSION = `q-${createHash("sha256").update(
+  JSON.stringify(
+    Object.entries(DP1_QUESTIONS).map(([id, spec]) => ({ choices: spec.choices, id, type: spec.type }))
+  ),
+  "utf8"
+).digest("hex").slice(0, 8)}`;
+var DISABLED_POLICY = {
+  enabled: false,
+  dp1Enabled: true,
+  alertOnDisagreement: true,
+  notifyOnUnavailable: false,
+  timeoutMs: DEFAULT_TRIAGE_TIMEOUT_MS
+};
+function readDecidePolicy(projectDir) {
+  let raw;
+  try {
+    raw = JSON.parse(fs2.readFileSync(path3.join(projectDir, ".mw", "decide.json"), "utf8"));
+  } catch {
+    return { ...DISABLED_POLICY };
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ...DISABLED_POLICY };
+  const obj = raw;
+  if (obj.enabled !== true) return { ...DISABLED_POLICY };
+  const points = asRecord(obj.points);
+  const dp1 = asRecord(points?.dp1);
+  const timeoutS = typeof obj.timeout_s === "number" && Number.isFinite(obj.timeout_s) && obj.timeout_s > 0 ? obj.timeout_s : void 0;
+  return {
+    enabled: true,
+    dp1Enabled: dp1?.enabled !== false,
+    alertOnDisagreement: dp1?.alert_on_disagreement !== false,
+    notifyOnUnavailable: obj.triage_notify_on_unavailable === true,
+    timeoutMs: timeoutS === void 0 ? DEFAULT_TRIAGE_TIMEOUT_MS : Math.round(timeoutS * 1e3)
+  };
+}
+function asRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+var runDecideMw = (request) => {
+  const mwPy = findMwPy();
+  if (!mwPy) return { status: null, stdout: "", stderr: "", error: "mw.py not found", timedOut: false };
+  const args = ["-X", "utf8", mwPy, "decide", "run", `--project=${request.projectDir}`, "--dp", request.dp, "--json"];
+  try {
+    const result = spawnSync2(PYTHON_EXE, args, {
+      input: request.input,
+      encoding: "utf8",
+      timeout: request.timeoutMs,
+      windowsHide: true
+    });
+    const code = result.error?.code;
+    return {
+      status: result.status,
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+      error: result.error ? result.error.message : void 0,
+      timedOut: code === "ETIMEDOUT"
+    };
+  } catch (err) {
+    return {
+      status: null,
+      stdout: "",
+      stderr: "",
+      error: err instanceof Error ? err.message : String(err),
+      timedOut: false
+    };
+  }
+};
+function unavailable(reason, latencyMs = 0, digest) {
+  const result = {
+    available: false,
+    reason,
+    confidences: {},
+    confidence_source: "unknown",
+    latency_ms: latencyMs
+  };
+  if (digest !== void 0) result.state_digest = digest;
+  return result;
+}
+function refused(reason, missing, dropped) {
+  const result = {
+    available: false,
+    reason,
+    confidences: {},
+    confidence_source: "unknown",
+    latency_ms: 0,
+    escalate_to_human: true
+  };
+  if (missing.length > 0) result.missing_fields = missing;
+  if (dropped.length > 0) result.dropped_fields = dropped;
+  return result;
+}
+var STATE_TOP_LEVEL_KEYS = /* @__PURE__ */ new Set([
+  "schema_version",
+  "decision_point",
+  "key",
+  "task_key",
+  "phase",
+  "task_type",
+  "requested_type",
+  "risk",
+  "risk_source",
+  "authority_tier",
+  "questions_version",
+  "task_summary",
+  "scope",
+  "progress",
+  "failure",
+  "ambiguity",
+  // `local_candidates` feeds a dynamic-choice question's enum (dp3): it is
+  // input data, not part of the question set, so it is a legal top-level key.
+  "local_candidates",
+  // `context` is the optional AC-017 block (task excerpt / change summary /
+  // candidate snippets / artifact status / error excerpt). It carries the
+  // engineering-context slots the decide model needs, so it is a legal
+  // top-level key even though it is never required.
+  "context",
+  "closure",
+  "history"
+]);
+var UNIVERSAL_REQUIRED_FIELDS = [
+  "schema_version",
+  "decision_point",
+  "key",
+  "phase",
+  "task_type",
+  "risk",
+  "risk_source",
+  "authority_tier",
+  "questions_version"
+];
+var REQUIRED_FIELDS_BY_DP = {
+  [DP1_ID]: ["requested_type", "task_summary", "scope.write_scope", "scope.file_extensions"],
+  "dp2-checkpoint-split": [
+    "progress.elapsed_minutes",
+    "progress.budget_minutes",
+    "progress.phases_done",
+    "progress.phases_total",
+    "progress.artifact_present"
+  ],
+  "dp3-worker-clarify": ["task_summary", "ambiguity.kind", "ambiguity.question", "local_candidates"],
+  "dp4-failure-handling": ["failure.kind"],
+  "dp5-test-triage": ["failure.kind", "failure.test_name", "failure.baseline_known"],
+  "dp6-qg-verdict": ["closure"],
+  "dp13-commit-release": ["closure"]
+};
+var TASK_TYPE_CHOICES = ["coding", "research", "review"];
+var RISK_CHOICES = ["low", "mid", "high"];
+var RISK_SOURCE_CHOICES = ["machine", "pm-label"];
+var AUTHORITY_TIER_CHOICES = ["P0", "P1", "P2"];
+var FAILURE_KIND_CHOICES = ["model-error", "wall-timeout", "exit-nonzero", "needs-clarification", "lost"];
+var AMBIGUITY_KIND_CHOICES = ["scope", "missing-dep", "rule-conflict"];
+function utf8Bytes(text) {
+  return Buffer.byteLength(text, "utf8");
+}
+function stringField(maxBytes) {
+  return (value) => {
+    if (typeof value !== "string" || value.trim() === "") return "must be a non-empty string";
+    if (maxBytes > 0 && utf8Bytes(value) > maxBytes) return `must be <= ${maxBytes} UTF-8 bytes`;
+    return void 0;
+  };
+}
+function enumField(choices) {
+  return (value) => typeof value === "string" && choices.includes(value) ? void 0 : `must be one of ${choices.join("|")}`;
+}
+function intField(value) {
+  return typeof value === "number" && Number.isInteger(value) ? void 0 : "must be an integer";
+}
+function intOrNullField(value) {
+  return value === null ? void 0 : intField(value);
+}
+function boolField(value) {
+  return typeof value === "boolean" ? void 0 : "must be a boolean";
+}
+function objectField(value) {
+  return asRecord(value) === void 0 ? "must be an object" : void 0;
+}
+function stringListField(maxItems, maxItemBytes, maxTotalBytes) {
+  return (value) => {
+    if (!Array.isArray(value) || value.length === 0) return "must be a non-empty string array";
+    if (value.length > maxItems) return `must have <= ${maxItems} items`;
+    let total = 0;
+    for (const item of value) {
+      if (typeof item !== "string" || item.trim() === "") return "items must be non-empty strings";
+      const size = utf8Bytes(item);
+      if (size > maxItemBytes) return `items must be <= ${maxItemBytes} UTF-8 bytes`;
+      total += size;
+    }
+    if (total > maxTotalBytes) return `items must total <= ${maxTotalBytes} UTF-8 bytes`;
+    return void 0;
+  };
+}
+var TEST_NAME_PATTERN = /^[A-Za-z_$][\w$]*$/;
+var LOCAL_CANDIDATE_ID_PATTERN = /^c[1-9]$/;
+var LOCAL_CANDIDATES_MAX = 5;
+var LOCAL_CANDIDATE_LABEL_MAX = 80;
+function localCandidatesField(value) {
+  if (!Array.isArray(value) || value.length === 0) return "must be a non-empty array";
+  if (value.length > LOCAL_CANDIDATES_MAX) return `must have <= ${LOCAL_CANDIDATES_MAX} items`;
+  for (let index = 0; index < value.length; index += 1) {
+    const candidate = asRecord(value[index]);
+    if (!candidate) return `items[${index}] must be an object`;
+    const id = candidate.id;
+    if (typeof id !== "string" || !LOCAL_CANDIDATE_ID_PATTERN.test(id)) {
+      return `items[${index}].id must be cN (c1..c9)`;
+    }
+    if (id !== `c${index + 1}`) return `items[${index}].id must be contiguous from c1`;
+    const label = candidate.label;
+    if (typeof label !== "string" || label.trim() === "") {
+      return `items[${index}].label must be a non-empty string`;
+    }
+    if (label.includes("\n") || label.includes("\r")) {
+      return `items[${index}].label must not contain a newline`;
+    }
+    if (label.length > LOCAL_CANDIDATE_LABEL_MAX) {
+      return `items[${index}].label must be <= ${LOCAL_CANDIDATE_LABEL_MAX} chars`;
+    }
+  }
+  return void 0;
+}
+var FIELD_VALIDATORS = {
+  // Schema version 2 == the registry builder's
+  // `{"schema_version": 2, "decision_point": <id>}` shape
+  // (`decision_points._state_builder`). Bumping one side alone is a refusal.
+  schema_version: (value) => value === 2 ? void 0 : "must be the integer 2",
+  // The dp id set is authoritative in the Python registry: only shape and the
+  // envelope equality are checked here, never a duplicated id enum. The 20B cap
+  // is the longest registry id (`dp2-checkpoint-split` / `dp4-failure-handling`)
+  // — a longer id must surface as a refusal, not as a silently unmatched row.
+  decision_point: stringField(20),
+  key: stringField(48),
+  task_key: stringField(48),
+  phase: stringField(16),
+  task_type: enumField(TASK_TYPE_CHOICES),
+  requested_type: enumField(TASK_TYPE_CHOICES),
+  risk: enumField(RISK_CHOICES),
+  risk_source: enumField(RISK_SOURCE_CHOICES),
+  authority_tier: enumField(AUTHORITY_TIER_CHOICES),
+  questions_version: stringField(24),
+  task_summary: stringField(600),
+  scope: objectField,
+  "scope.write_scope": stringListField(12, 32, 384),
+  "scope.file_extensions": stringListField(6, 8, 36),
+  "scope.images_required": boolField,
+  progress: objectField,
+  "progress.elapsed_minutes": intField,
+  "progress.budget_minutes": intField,
+  "progress.phases_done": intField,
+  "progress.phases_total": intField,
+  "progress.artifact_present": boolField,
+  "progress.writes": intOrNullField,
+  "progress.uniq_targets": intOrNullField,
+  "progress.repeat_top": intOrNullField,
+  "progress.last_land_age_min": intOrNullField,
+  failure: objectField,
+  "failure.kind": enumField(FAILURE_KIND_CHOICES),
+  "failure.exit": intField,
+  "failure.attempts": intField,
+  "failure.summary": stringField(300),
+  "failure.test_name": (value) => typeof value === "string" && TEST_NAME_PATTERN.test(value) && utf8Bytes(value) <= 64 ? void 0 : "must be an identifier (<= 64 bytes)",
+  "failure.baseline_known": boolField,
+  ambiguity: objectField,
+  "ambiguity.kind": enumField(AMBIGUITY_KIND_CHOICES),
+  "ambiguity.question": stringField(300),
+  local_candidates: localCandidatesField,
+  closure: objectField,
+  "closure.blockers_count": intField,
+  "closure.evidence_present": boolField,
+  "closure.blockers": stringListField(3, 200, 600),
+  "closure.blockers_kind": stringListField(3, 40, 120),
+  history: objectField,
+  "history.recent_done": intField,
+  "history.recent_failed": intField,
+  "history.recent_lost": intField,
+  "history.recent_needs_clarification": intField,
+  "history.recent_superseded": intField
+};
+function readPath(state, dotted) {
+  let current = state;
+  for (const part of dotted.split(".")) {
+    const record = asRecord(current);
+    if (!record) return void 0;
+    current = record[part];
+  }
+  return current;
+}
+function crossFieldProblems(state) {
+  const problems = [];
+  if (state.authority_tier === "P0") problems.push("authority_tier:P0");
+  const failure = asRecord(state.failure);
+  if (failure) {
+    const hasExit = failure.exit !== void 0;
+    if (failure.kind === "exit-nonzero" && !hasExit) problems.push("failure.exit");
+    if (failure.kind !== "exit-nonzero" && hasExit) problems.push("failure.exit");
+  }
+  const progress = asRecord(state.progress);
+  if (progress && typeof progress.elapsed_minutes === "number" && typeof progress.budget_minutes === "number") {
+    if (progress.elapsed_minutes > progress.budget_minutes && state.risk === "low") problems.push("risk");
+  }
+  return problems;
+}
+function validateStructuredState(dpId, state) {
+  if (state === null || typeof state !== "object" || Array.isArray(state)) return ["state"];
+  const problems = [];
+  for (const key of Object.keys(state)) {
+    if (!STATE_TOP_LEVEL_KEYS.has(key)) problems.push(`unknown:${key}`);
+  }
+  if (typeof state.decision_point === "string" && state.decision_point !== dpId) {
+    problems.push("decision_point");
+  }
+  const required = [...UNIVERSAL_REQUIRED_FIELDS, ...REQUIRED_FIELDS_BY_DP[dpId] ?? []];
+  for (const field of required) {
+    const value = readPath(state, field);
+    if (value === void 0) {
+      problems.push(field);
+      continue;
+    }
+    if (FIELD_VALIDATORS[field]?.(value) !== void 0) problems.push(field);
+  }
+  for (const [field, validate] of Object.entries(FIELD_VALIDATORS)) {
+    if (required.includes(field)) continue;
+    const value = readPath(state, field);
+    if (value === void 0) continue;
+    if (validate(value) !== void 0) problems.push(field);
+  }
+  problems.push(...crossFieldProblems(state));
+  return [...new Set(problems)];
+}
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  const record = asRecord(value);
+  if (!record) return value;
+  const out = {};
+  for (const key of Object.keys(record).sort()) out[key] = canonicalize(record[key]);
+  return out;
+}
+function canonicalStateJson(state) {
+  return JSON.stringify(canonicalize(state));
+}
+function canonicalStateBytes(state) {
+  return Buffer.byteLength(canonicalStateJson(state), "utf8");
+}
+function truncateUtf8(text, maxBytes) {
+  if (utf8Bytes(text) <= maxBytes) return text;
+  let out = "";
+  let used = 0;
+  for (const char of text) {
+    const size = utf8Bytes(char);
+    if (used + size > maxBytes) break;
+    out += char;
+    used += size;
+  }
+  return out;
+}
+function shrinkList(state, parent, key, limit) {
+  const container = asRecord(state[parent]);
+  if (!container) return false;
+  const list = container[key];
+  if (!Array.isArray(list) || list.length <= limit) return false;
+  container[key] = list.slice(0, limit);
+  return true;
+}
+function removeOptionalProgressKeys(state) {
+  const progress = asRecord(state.progress);
+  if (!progress) return false;
+  let changed = false;
+  for (const key of ["writes", "uniq_targets", "repeat_top", "last_land_age_min"]) {
+    if (key in progress) {
+      delete progress[key];
+      changed = true;
+    }
+  }
+  return changed;
+}
+function removeField(state, parent, key) {
+  const container = parent === void 0 ? state : asRecord(state[parent]);
+  if (!container || !(key in container)) return false;
+  delete container[key];
+  return true;
+}
+function truncateField(state, parent, key, maxBytes) {
+  const container = parent === void 0 ? state : asRecord(state[parent]);
+  if (!container) return false;
+  const value = container[key];
+  if (typeof value !== "string") return false;
+  const next = truncateUtf8(value, maxBytes);
+  if (next === value) return false;
+  container[key] = next;
+  return true;
+}
+function truncateStructuredState(state, maxBytes = MAX_STRUCTURED_STATE_BYTES) {
+  const work = JSON.parse(JSON.stringify(state));
+  const dropped = [];
+  let size = canonicalStateBytes(work);
+  const steps = [
+    // Stage 1 — optional L1, lowest decision value first.
+    { label: "history", apply: () => removeField(work, void 0, "history") },
+    { label: "closure.blockers", apply: () => shrinkList(work, "closure", "blockers", 2) },
+    { label: "closure.blockers_kind", apply: () => shrinkList(work, "closure", "blockers_kind", 2) },
+    { label: "closure.blockers", apply: () => shrinkList(work, "closure", "blockers", 1) },
+    { label: "closure.blockers_kind", apply: () => shrinkList(work, "closure", "blockers_kind", 1) },
+    { label: "closure.blockers", apply: () => removeField(work, "closure", "blockers") },
+    { label: "scope.write_scope", apply: () => shrinkList(work, "scope", "write_scope", 6) },
+    { label: "scope.write_scope", apply: () => shrinkList(work, "scope", "write_scope", 3) },
+    {
+      label: "progress.writes/uniq_targets/repeat_top/last_land_age_min",
+      apply: () => removeOptionalProgressKeys(work)
+    },
+    { label: "failure.summary", apply: () => removeField(work, "failure", "summary") },
+    // Stage 2 — required L1: shrink to half of the D6 cap, never drop.
+    { label: "task_summary", apply: () => truncateField(work, void 0, "task_summary", 300) },
+    { label: "ambiguity.question", apply: () => truncateField(work, "ambiguity", "question", 150) }
+  ];
+  for (const step of steps) {
+    if (size <= maxBytes) break;
+    if (!step.apply()) continue;
+    dropped.push(step.label);
+    size = canonicalStateBytes(work);
+  }
+  return { state: work, dropped, bytes: size, oversize: size > maxBytes };
+}
+function prepareStructuredState(dpId, state, maxBytes = MAX_STRUCTURED_STATE_BYTES) {
+  const missing = validateStructuredState(dpId, state);
+  if (missing.length > 0) {
+    return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing, dropped: [] };
+  }
+  let truncation;
+  try {
+    truncation = truncateStructuredState(state, maxBytes);
+  } catch {
+    return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: ["state:serializable"], dropped: [] };
+  }
+  if (truncation.oversize) {
+    return { ok: false, reason: TRIAGE_REASON_INPUT_OVERSIZE, missing: [], dropped: truncation.dropped };
+  }
+  return {
+    ok: true,
+    state: canonicalize(truncation.state),
+    bytes: truncation.bytes,
+    dropped: truncation.dropped
+  };
+}
+function buildTriageState(input) {
+  const lines = [`requested_type: ${input.taskType}`, `cli: ${input.cli}`];
+  if (input.phase) lines.push(`owner_phase: ${input.phase}`);
+  lines.push("", "task:", input.description);
+  return lines.join("\n");
+}
+function boundTriageState(state, maxBytes = MAX_TRIAGE_STATE_BYTES) {
+  if (Buffer.byteLength(state, "utf8") <= maxBytes) return state;
+  let text = state;
+  while (Buffer.byteLength(text, "utf8") > maxBytes - 16 && text.length > 0) {
+    text = text.slice(0, Math.floor(text.length * 0.9));
+  }
+  return `${text}
+[state truncated]`;
+}
+function parseJsonPayload(stdout) {
+  const trimmed = stdout.trim();
+  const attempts = [trimmed];
+  const lastLine = trimmed.split("\n").at(-1);
+  if (lastLine !== void 0 && lastLine !== trimmed) attempts.push(lastLine.trim());
+  for (const text of attempts) {
+    if (!text) continue;
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+    }
+  }
+  return void 0;
+}
+function answerOf(answers, id) {
+  const entry = asRecord(answers?.[id]);
+  if (!entry) return void 0;
+  const rawValue = entry.value;
+  const value = typeof rawValue === "string" && rawValue.trim() !== "" ? rawValue.trim() : void 0;
+  const rawConfidence = entry.confidence;
+  const confidence = typeof rawConfidence === "number" && Number.isFinite(rawConfidence) ? Math.min(1, Math.max(0, rawConfidence)) : null;
+  if (value === void 0 && confidence === null) return void 0;
+  return { value, confidence };
+}
+function digestOf(payload) {
+  const raw = payload.state_digest;
+  return typeof raw === "string" && raw.trim() !== "" ? raw.trim() : void 0;
+}
+function applyAuthorityKeys(target, payload) {
+  const decisionId = payload.decision_id;
+  if (typeof decisionId === "string") target.decision_id = decisionId;
+  const mode = payload.mode;
+  if (mode === "auto" || mode === "suggest") target.mode = mode;
+  const acted = payload.acted;
+  if (typeof acted === "boolean") target.acted = acted;
+  const escalatedReason = payload.escalated_reason;
+  if (typeof escalatedReason === "string") target.escalated_reason = escalatedReason;
+}
+function triageDispatch(input) {
+  const started = Date.now();
+  try {
+    const policy = input.policy ?? readDecidePolicy(input.projectDir);
+    if (!policy.enabled || !policy.dp1Enabled) return unavailable("disabled");
+    const dpId = input.dpId ?? input.dp ?? DP1_ID;
+    let envelope;
+    let droppedFields = [];
+    if (typeof input.state === "string") {
+      envelope = { state: boundTriageState(input.state), questions: DP1_QUESTIONS };
+    } else {
+      const prepared = prepareStructuredState(dpId, input.state);
+      if (!prepared.ok) return refused(prepared.reason, prepared.missing, prepared.dropped);
+      droppedFields = prepared.dropped;
+      envelope = { state: prepared.state };
+    }
+    const run = input.run ?? runDecideMw;
+    const request = {
+      projectDir: input.projectDir,
+      dp: dpId,
+      timeoutMs: input.timeoutMs ?? policy.timeoutMs,
+      // Single egress point: pure serialisation, no redaction, no hashing.
+      input: JSON.stringify(envelope)
+    };
+    let raw;
+    try {
+      raw = run(request);
+    } catch {
+      return unavailable("upstream-error", Date.now() - started);
+    }
+    if (raw.timedOut) return unavailable("timeout", Date.now() - started);
+    if (raw.error !== void 0) return unavailable("upstream-error", Date.now() - started);
+    if (raw.status !== 0) return unavailable("upstream-error", Date.now() - started);
+    const payload = parseJsonPayload(raw.stdout);
+    if (!payload) return unavailable("bad-response", Date.now() - started);
+    const latency = typeof payload.latency_ms === "number" ? payload.latency_ms : Date.now() - started;
+    const digest = digestOf(payload);
+    if (payload.available !== true) {
+      const reason = typeof payload.reason === "string" && payload.reason !== "" ? payload.reason : "upstream-error";
+      const result2 = unavailable(reason, latency, digest);
+      applyAuthorityKeys(result2, payload);
+      return result2;
+    }
+    const answers = asRecord(payload.answers);
+    const type = answerOf(answers, "triage_type");
+    const risk = answerOf(answers, "triage_risk");
+    if (!type?.value && !risk?.value) return unavailable("bad-response", latency, digest);
+    const result = {
+      available: true,
+      triage_type: type?.value,
+      triage_risk: risk?.value,
+      confidences: { triage_type: type?.confidence ?? null, triage_risk: risk?.confidence ?? null },
+      confidence_source: typeof payload.confidence_source === "string" && payload.confidence_source !== "" ? payload.confidence_source : "unknown",
+      latency_ms: latency
+    };
+    if (digest !== void 0) result.state_digest = digest;
+    if (droppedFields.length > 0) result.dropped_fields = droppedFields;
+    applyAuthorityKeys(result, payload);
+    return result;
+  } catch {
+    return unavailable("upstream-error", Date.now() - started);
+  }
+}
+function formatConfidence(value) {
+  return typeof value === "number" ? value.toFixed(2) : "n/a";
+}
+function confidenceSourceLabel(confidenceSource) {
+  if (confidenceSource === CONFIDENCE_SOURCE_MODEL_SELF_REPORT) return "\u6A21\u578B\u81EA\u62A5\u7F6E\u4FE1\u5EA6\uFF08\u4E0D\u7528\u4E8E\u95E8\u63A7\uFF09";
+  if (confidenceSource === CONFIDENCE_SOURCE_API) return "\u7F6E\u4FE1\u5EA6\u6765\u6E90=api\uFF08\u53EF\u4F5C\u4E3A\u5224\u636E\uFF09";
+  return `\u7F6E\u4FE1\u5EA6\u6765\u6E90=${confidenceSource}\uFF08\u672A\u6807\u6CE8\uFF0C\u4E0D\u4F5C\u4E3A\u5224\u636E\uFF09`;
+}
+function formatTriageReceipt(result) {
+  if (!result.available) return "";
+  const source = result.confidence_source;
+  return `[triage] \u65C1\u8DEF\u5EFA\u8BAE\uFF0C\u672A\u636E\u6B64\u6539\u6D3E\u53D1\uFF1Atriage_type=${result.triage_type ?? "?"}\uFF08conf=${formatConfidence(result.confidences.triage_type)}\uFF09, triage_risk=${result.triage_risk ?? "?"}\uFF08conf=${formatConfidence(result.confidences.triage_risk)}\uFF09\uFF1B${confidenceSourceLabel(source)}\uFF0Cconfidence_source=${source}`;
+}
+function formatTriageLedgerDetail(result, dispatchedType, dpId = DP1_ID) {
+  const disagreement = result.triage_type !== void 0 && result.triage_type !== dispatchedType;
+  return [
+    `dp=${dpId}`,
+    `triage_type=${result.triage_type ?? "?"}`,
+    `triage_risk=${result.triage_risk ?? "?"}`,
+    `dispatched_type=${dispatchedType}`,
+    `disagreement=${disagreement ? "yes" : "no"}`,
+    `confidence_source=${result.confidence_source}`
+  ].join(" ");
+}
+
+// packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts
+var ASK_DECISION_TOOL = "ask_decision";
+var ASK_DECISION_TIMEOUT_MS = 2e4;
+var ASK_DECISION_MAX_BLOCKED_PER_TURN = 2;
+var ASK_DECISION_BLOCKED_ACTION = "blocked-ask-human";
+var ASK_DECISION_MAX_STATE_BYTES = MAX_STRUCTURED_STATE_BYTES;
+var NOTE_MAX_BYTES = 600;
+var TASK_KEY_MAX_BYTES = 48;
+var ASK_DECISION_DP_IDS = [
+  "dp1-dispatch-type",
+  "dp2-checkpoint-split",
+  "dp3-worker-clarify",
+  "dp4-failure-handling",
+  "dp5-test-triage",
+  "dp6-qg-verdict",
+  "dp7-gate-failure",
+  "dp8-scope-change",
+  "dp9-model-select",
+  "dp10-dependency",
+  "dp11-credential",
+  "dp12-destructive",
+  "dp13-commit-release",
+  "dp14-rule-conflict",
+  "dp15-autopilot-gate",
+  "dp16-goal",
+  "dp17-spec-lock",
+  "dp18-claim",
+  "dp19-foreign-write",
+  "dp20-stage-close",
+  "dp21-refine",
+  "dp22-debug-plan",
+  "dp23-snapshot",
+  "dp24-pi-trust",
+  "dp25-signoff-conclusion"
+];
+var ASK_DECISION_ENFORCED_STATE_DP_IDS = [
+  "dp1-dispatch-type",
+  "dp2-checkpoint-split",
+  "dp3-worker-clarify",
+  // mw-decision-substitution W9: the sign-off conclusion dp (spec §15 AC-027).
+  "dp25-signoff-conclusion"
+];
+var ASK_DECISION_PYTHON_REASONS = /* @__PURE__ */ new Set([
+  "disabled",
+  "entry-unavailable",
+  "timeout",
+  "rate-limited",
+  "upstream-error",
+  "bad-response",
+  "unsupported-question-type",
+  "budget-exhausted"
+]);
+var ASK_DECISION_REASON_INPUT_INCOMPLETE = "input-incomplete";
+var ASK_DECISION_REASON_INPUT_OVERSIZE = "input-oversize";
+var ASK_DECISION_GUESS_DIRECTIVE = "\u4E0D\u8981\u81EA\u884C\u731C\u6D4B";
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function isRegisteredDp(dp) {
+  return ASK_DECISION_DP_IDS.includes(dp);
+}
+function truncateUtf82(text, maxBytes) {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  let out = "";
+  let used = 0;
+  for (const char of text) {
+    const size = Buffer.byteLength(char, "utf8");
+    if (used + size > maxBytes) break;
+    out += char;
+    used += size;
+  }
+  return out;
+}
+function buildDecisionState(input) {
+  const state = { schema_version: 2, decision_point: input.dp };
+  if (input.taskKey !== void 0 && input.taskKey !== "") {
+    const key = truncateUtf82(input.taskKey, TASK_KEY_MAX_BYTES);
+    state.key = key;
+    state.task_key = key;
+  }
+  if (input.note !== void 0 && input.note.trim() !== "") {
+    state.task_summary = truncateUtf82(input.note.trim(), NOTE_MAX_BYTES);
+  }
+  return state;
+}
+var PYTHON_AUTO_FILLED_FIELDS = /* @__PURE__ */ new Set(["questions_version"]);
+function missingDecisionStateFields(dp, state) {
+  if (!ASK_DECISION_ENFORCED_STATE_DP_IDS.includes(dp)) return [];
+  return validateStructuredState(dp, state).filter((field) => !PYTHON_AUTO_FILLED_FIELDS.has(field));
+}
+function buildDecisionRequestJson(state) {
+  return JSON.stringify({ state });
+}
+var MAX_CHILD_OUTPUT_BYTES = 1048576;
+function spawnWithTimeout(argv, options = {}) {
+  const timeoutMs = options.timeoutMs ?? ASK_DECISION_TIMEOUT_MS;
+  return new Promise((resolve24) => {
+    let settled = false;
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let spawnError;
+    let wallTimer;
+    let graceTimer;
+    const finish = (status) => {
+      if (settled) return;
+      settled = true;
+      if (wallTimer !== void 0) clearTimeout(wallTimer);
+      if (graceTimer !== void 0) clearTimeout(graceTimer);
+      options.signal?.removeEventListener("abort", onAbort);
+      const result = { status, stdout, stderr, timedOut };
+      if (spawnError !== void 0) result.error = spawnError;
+      resolve24(result);
+    };
+    const append = (current, chunk) => {
+      if (Buffer.byteLength(current, "utf8") >= MAX_CHILD_OUTPUT_BYTES) return current;
+      return current + chunk;
+    };
+    const child = spawn2(argv[0], argv.slice(1), {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const kill = () => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+      }
+      graceTimer = setTimeout(() => finish(child.exitCode), 2e3);
+    };
+    const onAbort = () => {
+      if (settled) return;
+      spawnError = "aborted";
+      kill();
+    };
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => {
+      stdout = append(stdout, chunk);
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr = append(stderr, chunk);
+    });
+    child.on("error", (err) => {
+      spawnError = err.message;
+      finish(null);
+    });
+    child.on("close", (code) => finish(code));
+    if (options.signal !== void 0) {
+      if (options.signal.aborted) onAbort();
+      else options.signal.addEventListener("abort", onAbort, { once: true });
+    }
+    wallTimer = setTimeout(() => {
+      if (settled) return;
+      timedOut = true;
+      kill();
+    }, timeoutMs);
+  });
+}
+function buildDecideArgv(mwPy, request, requestFile) {
+  return [
+    "-X",
+    "utf8",
+    mwPy,
+    "decide",
+    "run",
+    `--project=${request.projectDir}`,
+    "--dp",
+    request.dp,
+    "--request-file",
+    requestFile,
+    "--json"
+  ];
+}
+function writeRequestFile(input) {
+  const dir = fs3.mkdtempSync(path4.join(os2.tmpdir(), "mw-decide-"));
+  const file = path4.join(dir, "request.json");
+  fs3.writeFileSync(file, input, { encoding: "utf8", mode: 384 });
+  return { dir, file };
+}
+var runDecideMw2 = async (request, signal) => {
+  const mwPy = findMwPy();
+  if (!mwPy) return { status: null, stdout: "", stderr: "", error: "mw.py not found", timedOut: false };
+  let files;
+  try {
+    files = writeRequestFile(request.input);
+  } catch (err) {
+    return {
+      status: null,
+      stdout: "",
+      stderr: "",
+      error: err instanceof Error ? err.message : String(err),
+      timedOut: false
+    };
+  }
+  try {
+    return await spawnWithTimeout([PYTHON_EXE, ...buildDecideArgv(mwPy, request, files.file)], {
+      timeoutMs: request.timeoutMs,
+      signal
+    });
+  } finally {
+    try {
+      fs3.rmSync(files.dir, { recursive: true, force: true });
+    } catch {
+    }
+  }
+};
+function asAnswers(value) {
+  if (!isRecord(value)) return void 0;
+  const answers = {};
+  for (const [qid, raw] of Object.entries(value)) {
+    if (!isRecord(raw) || !("value" in raw)) continue;
+    const entry = { value: raw.value };
+    if (typeof raw.confidence === "number" && Number.isFinite(raw.confidence)) entry.confidence = raw.confidence;
+    answers[qid] = entry;
+  }
+  return Object.keys(answers).length > 0 ? answers : void 0;
+}
+function parseDecisionJson(stdout) {
+  const candidates = [stdout.trim()];
+  const lastLine = stdout.trim().split("\n").at(-1)?.trim();
+  if (lastLine !== void 0 && lastLine !== candidates[0]) candidates.push(lastLine);
+  for (const text of candidates) {
+    if (!text) continue;
+    try {
+      const parsed = JSON.parse(text);
+      if (isRecord(parsed)) return parsed;
+    } catch {
+    }
+  }
+  return void 0;
+}
+function unavailableDirective(reason, dp) {
+  const base = `UNAVAILABLE(${reason}) \u2014 ${ASK_DECISION_GUESS_DIRECTIVE}\uFF0C\u4E0D\u8981\u6267\u884C\u88AB\u95E8\u63A7\u7684\u52A8\u4F5C\uFF0C\u4E0D\u8981\u7528\u522B\u7684\u5DE5\u5177\u7ED5\u8FC7\uFF0C\u4E5F\u4E0D\u8981\u91CD\u590D\u95EE\u540C\u4E00\u4E2A\u95EE\u9898\u3002\u4E0A\u62A5 "blocked on decision ${dp}" \u5E76\u7B49\u5F85\u4EBA\u5DE5\u88C1\u51B3\u3002`;
+  if (reason === "disabled") {
+    return `${base} disabled \u2260 approval\uFF1A\u51B3\u7B56\u70B9\u672A\u5F00\u542F\u4E0D\u7B49\u4E8E\u653E\u884C\uFF0C\u88AB\u95E8\u63A7\u7684\u52A8\u4F5C\u4ECD\u53D7\u5176\u5E38\u89C4\u5DE5\u5177\u6743\u9650\u7EA6\u675F\u3002`;
+  }
+  return base;
+}
+function terminalDirective(dp, blocks) {
+  return `TERMINAL: "${dp}" has been blocked ${blocks} time(s) in this turn. ${ASK_DECISION_GUESS_DIRECTIVE}\u3002\u505C\u6B62\u91CD\u8BD5\uFF0C\u4E0A\u62A5 "blocked on decision ${dp}" \u5E76\u7ED3\u675F\u672C\u8F6E\uFF08\u4E0D\u8981\u518D\u6B21\u8C03\u7528 ask_decision\uFF09\u3002`;
+}
+function jsonText(payload) {
+  return JSON.stringify(payload);
+}
+function unavailable2(reason, dp, spawned, extra = {}) {
+  const payload = {
+    available: false,
+    unavailable: reason,
+    action: ASK_DECISION_BLOCKED_ACTION
+  };
+  if (extra.escalated_reason !== void 0) payload.escalated_reason = extra.escalated_reason;
+  if (extra.missing_fields !== void 0 && extra.missing_fields.length > 0) {
+    payload.missing_fields = extra.missing_fields;
+  }
+  return { payload, text: `${jsonText(payload)}
+${unavailableDirective(reason, dp)}`, spawned };
+}
+async function runAskDecision(input) {
+  const started = Date.now();
+  const dp = input.dp;
+  if (!isRegisteredDp(dp)) return unavailable2("disabled", dp, false);
+  const state = buildDecisionState({ dp, note: input.note, taskKey: input.taskKey });
+  const missing = missingDecisionStateFields(dp, state);
+  if (missing.length > 0) {
+    return unavailable2(ASK_DECISION_REASON_INPUT_INCOMPLETE, dp, false, { missing_fields: missing });
+  }
+  if (canonicalStateBytes(state) > ASK_DECISION_MAX_STATE_BYTES) {
+    return unavailable2(ASK_DECISION_REASON_INPUT_OVERSIZE, dp, false);
+  }
+  const requestJson = buildDecisionRequestJson(state);
+  const runner = input.runner ?? runDecideMw2;
+  const request = {
+    projectDir: input.projectDir,
+    dp,
+    input: requestJson,
+    timeoutMs: input.timeoutMs ?? ASK_DECISION_TIMEOUT_MS
+  };
+  let raw;
+  try {
+    raw = await runner(request, input.signal);
+  } catch {
+    return unavailable2("upstream-error", dp, true);
+  }
+  if (raw.timedOut) return unavailable2("timeout", dp, true);
+  if (raw.error !== void 0) return unavailable2("upstream-error", dp, true);
+  if (raw.status !== 0) return unavailable2("upstream-error", dp, true);
+  const response = parseDecisionJson(raw.stdout);
+  if (response === void 0) return unavailable2("bad-response", dp, true);
+  const latency = typeof response.latency_ms === "number" ? response.latency_ms : Date.now() - started;
+  if (response.available !== true) {
+    const rawReason = typeof response.reason === "string" ? response.reason : "";
+    const reason = ASK_DECISION_PYTHON_REASONS.has(rawReason) ? rawReason : "upstream-error";
+    const escalated = typeof response.escalated_reason === "string" && response.escalated_reason !== "" ? response.escalated_reason : void 0;
+    return unavailable2(reason, dp, true, { escalated_reason: escalated });
+  }
+  let answers = asAnswers(response.answers);
+  if (answers === void 0) return unavailable2("bad-response", dp, true);
+  if (input.question !== void 0) {
+    const picked = answers[input.question];
+    if (picked === void 0) return unavailable2(ASK_DECISION_REASON_INPUT_INCOMPLETE, dp, true);
+    answers = { [input.question]: picked };
+  }
+  const decisionId = typeof response.decision_id === "string" ? response.decision_id : "";
+  const mode = response.mode;
+  const acted = response.acted;
+  if (decisionId === "" || mode !== "auto" && mode !== "suggest" || typeof acted !== "boolean") {
+    return unavailable2("bad-response", dp, true);
+  }
+  const payload = {
+    available: true,
+    decision_id: decisionId,
+    mode,
+    acted,
+    answers,
+    confidence_source: typeof response.confidence_source === "string" && response.confidence_source !== "" ? response.confidence_source : "unknown",
+    latency_ms: latency
+  };
+  return { payload, text: jsonText(payload), spawned: true };
+}
+function createDecisionBlockCounter() {
+  const counts = /* @__PURE__ */ new Map();
+  return {
+    reset: () => counts.clear(),
+    recordBlock: (dp) => {
+      const next = (counts.get(dp) ?? 0) + 1;
+      counts.set(dp, next);
+      return next;
+    },
+    clear: (dp) => {
+      counts.delete(dp);
+    },
+    countFor: (dp) => counts.get(dp) ?? 0
+  };
+}
+function ownerKeyFromTaskPath(taskPath) {
+  const key = path4.basename(path4.dirname(path4.dirname(path4.dirname(taskPath))));
+  return key === "" || key === "." ? void 0 : key;
+}
+function appendDecisionTrace(tracePath, line) {
+  if (tracePath === void 0) return;
+  try {
+    fs3.mkdirSync(path4.dirname(tracePath), { recursive: true });
+    fs3.appendFileSync(tracePath, `${line}
+`, "utf8");
+  } catch {
+  }
+}
+var DP_ENUM_SCHEMA = typebox_exports.Union(
+  ASK_DECISION_DP_IDS.map((id) => typebox_exports.Literal(id)),
+  { description: "Registered decision point id (unknown ids are rejected)" }
+);
+var ASK_DECISION_PARAMETERS = typebox_exports.Object(
+  {
+    dp: DP_ENUM_SCHEMA,
+    trigger: typebox_exports.String({
+      minLength: 1,
+      maxLength: 256,
+      pattern: "^[^\\s:]+$",
+      description: "Audit trigger label, e.g. <task_key> or <task_key>#ckpt3 (no ':' per D-023); the decision id itself is resolved by the service"
+    }),
+    question: typebox_exports.Optional(
+      typebox_exports.String({
+        minLength: 1,
+        maxLength: 64,
+        description: "Single registry question id; omit for the full question set"
+      })
+    ),
+    note: typebox_exports.Optional(
+      typebox_exports.String({
+        maxLength: 800,
+        description: "Short L0/L1 context summary (no secrets/absolute paths/code)"
+      })
+    )
+  },
+  { additionalProperties: false }
+);
+function registerAskDecisionTool(pi, options = {}) {
+  const taskPath = options.taskPath ?? process.env.PI_WORKER_TASK;
+  const resolvedTaskPath = taskPath !== void 0 && taskPath !== "" ? path4.resolve(taskPath) : void 0;
+  const projectDir = options.projectDir ?? (resolvedTaskPath !== void 0 ? controlRootFromTaskPath(resolvedTaskPath) : process.cwd());
+  const tracePath = options.tracePath ?? (resolvedTaskPath !== void 0 ? path4.join(path4.dirname(resolvedTaskPath), "trace.log") : void 0);
+  const taskKey = resolvedTaskPath !== void 0 ? ownerKeyFromTaskPath(resolvedTaskPath) : void 0;
+  const counter = createDecisionBlockCounter();
+  pi.on("turn_start", () => counter.reset());
+  pi.registerTool({
+    name: ASK_DECISION_TOOL,
+    label: ASK_DECISION_TOOL,
+    description: 'Ask the external decision service for a human-style ruling on a gated decision point. Returns ONE line of JSON: {available, decision_id, mode, acted, answers, confidence_source, latency_ms}. available=false means UNAVAILABLE: the gated action stays blocked \u2014 do NOT guess, do NOT work around it, report "blocked on decision <dp>" and stop. The failure line also carries escalated_reason and, for input-incomplete, missing_fields.',
+    promptSnippet: "ask_decision(dp, trigger, question?, note?) \u2014 ask the decision service before a gated action; available=false means blocked, never guess.",
+    promptGuidelines: [
+      "Call ask_decision ONLY with a dp id from the enum and the trigger_id from your task context (<task_key> or <task_key>#ckpt<N>); never invent a dp id, trigger or question id.",
+      'available=false is a terminal answer for this attempt: report "blocked on decision <dp>" and wait for a human. Repeating the same call in one turn is cut off by the retry breaker.',
+      "unavailable=input-incomplete lists missing_fields: the registry needs them and this tool cannot produce them, so do not retry \u2014 report the block.",
+      "note is an L0/L1 summary (<=600 bytes): no credentials, no user quotes, no absolute paths, no code.",
+      "mode=suggest only archives an advisory row; acted is the service's verdict and never your own inference from the mode."
+    ],
+    parameters: ASK_DECISION_PARAMETERS,
+    // Sequential: an ask changes gate state, so it must not race the tools
+    // it authorizes (design Q1 §1.1).
+    executionMode: "sequential",
+    execute: async (_toolCallId, params, signal) => {
+      const outcome = await runAskDecision({
+        projectDir,
+        dp: params.dp,
+        trigger: params.trigger,
+        question: params.question,
+        note: params.note,
+        taskKey,
+        runner: options.runner,
+        timeoutMs: options.timeoutMs,
+        signal
+      });
+      const iso = (/* @__PURE__ */ new Date()).toISOString();
+      if (outcome.payload.available) {
+        counter.clear(params.dp);
+        appendDecisionTrace(
+          tracePath,
+          `[DECISION] ${iso} dp=${params.dp} trigger=${params.trigger} decision_id=${outcome.payload.decision_id} mode=${outcome.payload.mode} acted=${String(outcome.payload.acted)} source=${outcome.payload.confidence_source} latency_ms=${outcome.payload.latency_ms}`
+        );
+        return { content: [{ type: "text", text: outcome.text }], details: outcome.payload };
+      }
+      const reason = outcome.payload.unavailable;
+      const escalated = outcome.payload.escalated_reason !== void 0 ? ` escalated_reason=${outcome.payload.escalated_reason}` : "";
+      const blocks = counter.recordBlock(params.dp);
+      appendDecisionTrace(
+        tracePath,
+        `[DECISION_UNAVAILABLE] ${iso} dp=${params.dp} trigger=${params.trigger} reason=${reason}${escalated} count=${blocks} max=${ASK_DECISION_MAX_BLOCKED_PER_TURN}`
+      );
+      if (blocks < ASK_DECISION_MAX_BLOCKED_PER_TURN) {
+        return { content: [{ type: "text", text: outcome.text }], details: outcome.payload };
+      }
+      appendDecisionTrace(
+        tracePath,
+        `[DECISION_RETRY_STOP] ${iso} dp=${params.dp} trigger=${params.trigger} reason=${reason} count=${blocks} max=${ASK_DECISION_MAX_BLOCKED_PER_TURN}`
+      );
+      return {
+        content: [{ type: "text", text: `${outcome.text}
+${terminalDirective(params.dp, blocks)}` }],
+        details: outcome.payload,
+        terminate: true
+      };
+    }
+  });
+  pi.on("before_agent_start", () => {
+    const active = pi.getActiveTools();
+    if (active.includes(ASK_DECISION_TOOL)) return;
+    pi.setActiveTools([...active, ASK_DECISION_TOOL]);
+  });
+  return { projectDir, tracePath, counter };
+}
+
+// packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts
+import { spawnSync as spawnSync6 } from "node:child_process";
+import { createHash as createHash4 } from "node:crypto";
+import * as fs41 from "node:fs";
+import * as path43 from "node:path";
+
+// packages/coding-agent/src/extensions/agent-team-loop/autopilot/console.ts
+import * as fs39 from "node:fs";
+import * as path41 from "node:path";
+
+// packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
+import * as fs36 from "node:fs";
+import * as os5 from "node:os";
+import * as path39 from "node:path";
+
 // packages/coding-agent/src/config.ts
-import { accessSync, constants, existsSync, readFileSync, realpathSync as realpathSync2 } from "fs";
-import { basename, dirname, join as join2, resolve, sep as sep2, win32 } from "path";
-import { fileURLToPath as fileURLToPath2 } from "url";
+import { accessSync, constants, existsSync as existsSync2, readFileSync as readFileSync3, realpathSync as realpathSync2 } from "fs";
+import { basename as basename2, dirname as dirname4, join as join6, resolve as resolve3, sep as sep2, win32 } from "path";
+import { fileURLToPath as fileURLToPath3 } from "url";
 
 // packages/coding-agent/src/utils/child-process.ts
 var import_cross_spawn = __toESM(require_cross_spawn(), 1);
@@ -12261,10 +13635,10 @@ import {
 } from "node:child_process";
 
 // packages/coding-agent/src/utils/paths.ts
-import { realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join, resolve as nodeResolvePath, relative, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { realpathSync, statSync as statSync2 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { isAbsolute, join as join5, resolve as nodeResolvePath, relative, sep } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 var UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 function normalizePath(input, options = {}) {
   let normalized = options.trim ? input.trim() : input;
@@ -12275,21 +13649,21 @@ function normalizePath(input, options = {}) {
     normalized = normalized.slice(1);
   }
   if (options.expandTilde ?? true) {
-    const home = options.homeDir ?? homedir();
+    const home = options.homeDir ?? homedir2();
     if (normalized === "~") return home;
     if (normalized.startsWith("~/") || process.platform === "win32" && normalized.startsWith("~\\")) {
-      return join(home, normalized.slice(2));
+      return join5(home, normalized.slice(2));
     }
   }
   if (/^file:\/\//.test(normalized)) {
-    return fileURLToPath(normalized);
+    return fileURLToPath2(normalized);
   }
   return normalized;
 }
 
 // packages/coding-agent/src/config.ts
-var __filename = fileURLToPath2(import.meta.url);
-var __dirname = dirname(__filename);
+var __filename = fileURLToPath3(import.meta.url);
+var __dirname = dirname4(__filename);
 var isBunBinary = import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN") || import.meta.url.includes("%7EBUN");
 var isBunRuntime = !!process.versions.bun;
 function getPackageDir() {
@@ -12298,23 +13672,23 @@ function getPackageDir() {
     return normalizePath(envDir);
   }
   if (isBunBinary) {
-    return dirname(process.execPath);
+    return dirname4(process.execPath);
   }
   let dir = __dirname;
-  while (dir !== dirname(dir)) {
-    if (existsSync(join2(dir, "package.json"))) {
+  while (dir !== dirname4(dir)) {
+    if (existsSync2(join6(dir, "package.json"))) {
       return dir;
     }
-    dir = dirname(dir);
+    dir = dirname4(dir);
   }
   return __dirname;
 }
 function getPackageJsonPath() {
-  return join2(getPackageDir(), "package.json");
+  return join6(getPackageDir(), "package.json");
 }
 var pkg = {};
 try {
-  pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8"));
+  pkg = JSON.parse(readFileSync3(getPackageJsonPath(), "utf-8"));
 } catch (e) {
   const err = e;
   if (err.code !== "ENOENT") throw e;
@@ -12329,17 +13703,17 @@ var ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 var ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
 
 // packages/coding-agent/src/extensions/agent-team-loop/rag/tools.ts
-import * as path22 from "node:path";
+import * as path27 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts
-import * as fs18 from "node:fs";
-import * as path21 from "node:path";
+import * as fs22 from "node:fs";
+import * as path26 from "node:path";
 
 // packages/coding-agent/src/utils/shell.ts
-import { existsSync as existsSync2 } from "node:fs";
-import * as path from "node:path";
+import { existsSync as existsSync3 } from "node:fs";
+import * as path5 from "node:path";
 import { delimiter } from "node:path";
-import { spawn, spawnSync } from "child_process";
+import { spawn as spawn3, spawnSync as spawnSync3 } from "child_process";
 var trackedDetachedChildPids = /* @__PURE__ */ new Set();
 function killTrackedDetachedChildren() {
   for (const pid of trackedDetachedChildPids) {
@@ -12350,7 +13724,7 @@ function killTrackedDetachedChildren() {
 function killProcessTree(pid) {
   if (process.platform === "win32") {
     try {
-      spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
+      spawn3("taskkill", ["/F", "/T", "/PID", String(pid)], {
         stdio: "ignore",
         detached: true,
         windowsHide: true
@@ -12370,8 +13744,8 @@ function killProcessTree(pid) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/rag/budget.ts
-import * as fs from "node:fs";
-import * as path2 from "node:path";
+import * as fs4 from "node:fs";
+import * as path6 from "node:path";
 var WALL_GUARD_RATIO = 0.7;
 var RAG_BUDGET_FILENAME = "rag-budget.json";
 var RAG_HEARTBEAT_INTERVAL_MS = 3e4;
@@ -12383,7 +13757,7 @@ function toNonNegativeInt(value) {
 function readBudgetState(file) {
   let text;
   try {
-    text = fs.readFileSync(file, "utf8");
+    text = fs4.readFileSync(file, "utf8");
   } catch {
     return null;
   }
@@ -12520,12 +13894,12 @@ var Budget = class {
       timeUsedMs: this.timeUsedMs,
       timeBudgetMs: this.timeBudgetMs
     };
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(this.filePath(), `${JSON.stringify(merged, null, 2)}
+    fs4.mkdirSync(dir, { recursive: true });
+    fs4.writeFileSync(this.filePath(), `${JSON.stringify(merged, null, 2)}
 `, "utf8");
   }
   filePath() {
-    return path2.join(this.workerTaskDir ?? "", RAG_BUDGET_FILENAME);
+    return path6.join(this.workerTaskDir ?? "", RAG_BUDGET_FILENAME);
   }
   readExisting() {
     if (this.workerTaskDir === null) return null;
@@ -12563,14 +13937,14 @@ function withHeartbeat(intervalMs, onUpdate, fn) {
 
 // packages/coding-agent/src/extensions/agent-team-loop/rag/config.ts
 var import_yaml2 = __toESM(require_dist(), 1);
-import { createHash } from "node:crypto";
-import * as fs3 from "node:fs";
-import * as path4 from "node:path";
+import { createHash as createHash2 } from "node:crypto";
+import * as fs6 from "node:fs";
+import * as path8 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/target-config.ts
 var import_yaml = __toESM(require_dist(), 1);
-import * as fs2 from "node:fs";
-import * as path3 from "node:path";
+import * as fs5 from "node:fs";
+import * as path7 from "node:path";
 var ENV_TARGET_GAME = "MW_TARGET_GAME";
 var ENV_TARGET_ENGINE = "MW_TARGET_ENGINE";
 var ENV_PARTITION_PARENT = "MW_PARTITION_PARENT";
@@ -12603,27 +13977,27 @@ function stringArray(value, field) {
   return value;
 }
 function normalizeRoot(raw, controlRoot) {
-  const resolved = path3.resolve(controlRoot, raw);
+  const resolved = path7.resolve(controlRoot, raw);
   try {
-    return fs2.realpathSync.native(resolved);
+    return fs5.realpathSync.native(resolved);
   } catch {
     let dir = resolved;
     const tail = [];
     for (; ; ) {
-      const parent = path3.dirname(dir);
+      const parent = path7.dirname(dir);
       if (parent === dir) return resolved;
       try {
-        const real = fs2.realpathSync.native(dir);
-        return tail.length === 0 ? real : path3.join(real, ...tail);
+        const real = fs5.realpathSync.native(dir);
+        return tail.length === 0 ? real : path7.join(real, ...tail);
       } catch {
-        tail.unshift(path3.basename(dir));
+        tail.unshift(path7.basename(dir));
         dir = parent;
       }
     }
   }
 }
 function targetYmlPath(controlRoot) {
-  return path3.join(controlRoot, ".agenticdoc", TARGET_YML);
+  return path7.join(controlRoot, ".agenticdoc", TARGET_YML);
 }
 function parseToolchain(value) {
   if (value === void 0 || value === null) return {};
@@ -12666,7 +14040,7 @@ function rawTargetYml(controlRoot) {
   const file = targetYmlPath(controlRoot);
   let text;
   try {
-    text = fs2.readFileSync(file, "utf-8");
+    text = fs5.readFileSync(file, "utf-8");
   } catch {
     return {};
   }
@@ -12804,7 +14178,7 @@ function readRootsAst(controlRoot) {
   const file = targetYmlPath(controlRoot);
   let text;
   try {
-    text = fs2.readFileSync(file, "utf-8");
+    text = fs5.readFileSync(file, "utf-8");
   } catch {
     return null;
   }
@@ -12833,13 +14207,13 @@ function parseRoots(value, controlRoot, rootsAst) {
   return out;
 }
 function relationNorm(p) {
-  const normalized = path3.normalize(p);
+  const normalized = path7.normalize(p);
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 function checkRootRelation(parentRoot, partitionRoot) {
   const a = relationNorm(parentRoot);
   const b = relationNorm(partitionRoot);
-  if (a === b || a.startsWith(b + path3.sep) || b.startsWith(a + path3.sep)) {
+  if (a === b || a.startsWith(b + path7.sep) || b.startsWith(a + path7.sep)) {
     fail(
       "invalid-config",
       `target.yml: partition root relation is invalid \u2014 parent (${parentRoot}) and partition (${partitionRoot}) must not be equal or nested`
@@ -12927,7 +14301,7 @@ function resolveLegacyConfig(controlRoot, raw, envGame, envEngine) {
   };
 }
 function resolveWorkspaceConfig(controlRoot) {
-  const fileExists = fs2.existsSync(targetYmlPath(controlRoot));
+  const fileExists = fs5.existsSync(targetYmlPath(controlRoot));
   const raw = rawTargetYml(controlRoot);
   const envGame = process.env[ENV_TARGET_GAME]?.trim() || null;
   const envEngine = process.env[ENV_TARGET_ENGINE]?.trim() || null;
@@ -13000,15 +14374,15 @@ function resolveWorkspaceConfig(controlRoot) {
 }
 function discoverUproject(gameRoot, explicit) {
   if (explicit !== null && explicit !== void 0) {
-    const p = path3.resolve(gameRoot, explicit);
-    if (!fs2.existsSync(p)) {
+    const p = path7.resolve(gameRoot, explicit);
+    if (!fs5.existsSync(p)) {
       fail("uproject-not-found", `explicit uproject '${explicit}' not found under game root ${gameRoot}`);
     }
     return p;
   }
   let entries;
   try {
-    entries = fs2.readdirSync(gameRoot);
+    entries = fs5.readdirSync(gameRoot);
   } catch (err) {
     fail(
       "invalid-config",
@@ -13022,7 +14396,7 @@ function discoverUproject(gameRoot, explicit) {
       `expected exactly one *.uproject under game root ${gameRoot}, found ${matches.length}` + (matches.length > 1 ? ` (${matches.join(", ")})` : "")
     );
   }
-  return path3.join(gameRoot, matches[0]);
+  return path7.join(gameRoot, matches[0]);
 }
 function renderToolchainCommand(command, config) {
   if (config.mode === "partition") {
@@ -13145,7 +14519,7 @@ function machineRagServersPath(env = process.env) {
   if (explicitFile !== void 0 && explicitFile !== "") return explicitFile;
   const home = env[ENV_RAG_SERVERS_HOME]?.trim() || env.HOME?.trim() || env.USERPROFILE?.trim();
   if (home === void 0 || home === "") return "";
-  return path4.join(home, ".agents", RAG_SERVERS_BASENAME);
+  return path8.join(home, ".agents", RAG_SERVERS_BASENAME);
 }
 var RAG_SERVERS_TOP_KEYS = /* @__PURE__ */ new Set(["servers"]);
 var RAG_SECTION_KEYS = /* @__PURE__ */ new Set(["enabled", "default_server", "roles", "phases", "budgets"]);
@@ -13289,7 +14663,7 @@ function mergeServerEntry(machine, project, name) {
 function readYamlMapping(file, label) {
   let text;
   try {
-    text = fs3.readFileSync(file, "utf-8");
+    text = fs6.readFileSync(file, "utf-8");
   } catch {
     return {};
   }
@@ -13405,7 +14779,7 @@ function unknownServer(name, visible) {
 }
 function loadRagConfig(controlRoot) {
   const machineTable = readServersTable(machineRagServersPath(), "machine rag-servers.yml");
-  const projectFile = path4.join(controlRoot, ".mw", RAG_SERVERS_BASENAME);
+  const projectFile = path8.join(controlRoot, ".mw", RAG_SERVERS_BASENAME);
   const projectTable = readServersTable(projectFile, "project rag-servers.yml");
   const rag = readRagSection(controlRoot);
   const names = [.../* @__PURE__ */ new Set([...Object.keys(machineTable), ...Object.keys(projectTable)])].sort();
@@ -13454,23 +14828,23 @@ function resolveDefaults(config, role, phase) {
 function requiredFor(config, role, phase) {
   return config.roles[role]?.require === true || config.phases[phase]?.require === true;
 }
-function canonicalize(value) {
-  if (Array.isArray(value)) return value.map(canonicalize);
+function canonicalize2(value) {
+  if (Array.isArray(value)) return value.map(canonicalize2);
   if (isObject(value)) {
     const out = {};
-    for (const key of Object.keys(value).sort()) out[key] = canonicalize(value[key]);
+    for (const key of Object.keys(value).sort()) out[key] = canonicalize2(value[key]);
     return out;
   }
   return value;
 }
 function canonicalJson(value) {
-  return JSON.stringify(canonicalize(value));
+  return JSON.stringify(canonicalize2(value));
 }
 function pathRootsDigest(controlRoot, file) {
   if (file === null) return null;
-  const target = path4.isAbsolute(file) ? file : path4.join(controlRoot, file);
+  const target = path8.isAbsolute(file) ? file : path8.join(controlRoot, file);
   try {
-    return createHash("sha256").update(fs3.readFileSync(target)).digest("hex");
+    return createHash2("sha256").update(fs6.readFileSync(target)).digest("hex");
   } catch {
     return null;
   }
@@ -13522,27 +14896,27 @@ function ragFingerprint(config, enabledOnly) {
     phases,
     budgets: { chat_budget: config.budgets.chat, time_budget_s: config.budgets.timeS }
   };
-  return createHash("sha256").update(canonicalJson(payload)).digest("hex");
+  return createHash2("sha256").update(canonicalJson(payload)).digest("hex");
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/rag/evidence.ts
-import * as path8 from "node:path";
+import * as path14 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/output-writer.ts
-import * as fs6 from "node:fs";
-import * as path7 from "node:path";
+import * as fs11 from "node:fs";
+import * as path13 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/change-ledger.ts
-import * as fs4 from "node:fs";
-import * as path5 from "node:path";
+import * as fs7 from "node:fs";
+import * as path9 from "node:path";
 var WRITE_FILE_EVENT = "[WRITE_FILE]";
 function formatWriteFileEvent(filePath) {
   return `${WRITE_FILE_EVENT} path=${filePath}`;
 }
 function appendWriteFileEvent(tracePath, filePath) {
   try {
-    fs4.mkdirSync(path5.dirname(tracePath), { recursive: true });
-    fs4.appendFileSync(tracePath, `${formatWriteFileEvent(filePath)}
+    fs7.mkdirSync(path9.dirname(tracePath), { recursive: true });
+    fs7.appendFileSync(tracePath, `${formatWriteFileEvent(filePath)}
 `, "utf8");
   } catch {
   }
@@ -13557,8 +14931,8 @@ function formatUnresolvedWriteEvent(pattern, target) {
 }
 function appendUnresolvedWriteEvent(tracePath, pattern, target) {
   try {
-    fs4.mkdirSync(path5.dirname(tracePath), { recursive: true });
-    fs4.appendFileSync(tracePath, `${formatUnresolvedWriteEvent(pattern, target)}
+    fs7.mkdirSync(path9.dirname(tracePath), { recursive: true });
+    fs7.appendFileSync(tracePath, `${formatUnresolvedWriteEvent(pattern, target)}
 `, "utf8");
   } catch {
   }
@@ -13569,8 +14943,8 @@ function isRecordedEventUsable(filePath, projectRoot) {
   return isExistingDotlessCandidate(filePath, projectRoot);
 }
 function repoRelativePath(target, base = process.cwd()) {
-  const rel = path5.relative(base, target);
-  if (rel === "" || rel.startsWith("..") || path5.isAbsolute(rel)) return normalizePath2(target);
+  const rel = path9.relative(base, target);
+  if (rel === "" || rel.startsWith("..") || path9.isAbsolute(rel)) return normalizePath2(target);
   return normalizePath2(rel);
 }
 function parseWriteFileEvents(traceText) {
@@ -13708,7 +15082,7 @@ function isSeparatorBearing(token) {
   return token.includes("/") || token.includes("\\");
 }
 function isUnder(base, target) {
-  const clean = (p) => path5.resolve(p).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const clean = (p) => path9.resolve(p).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
   const b = clean(base);
   const t = clean(target);
   return t === b || t.startsWith(`${b}/`);
@@ -13717,13 +15091,13 @@ function resolveDeliverablePath(token, projectRoot, deliverableDir2) {
   if (hasUnexpandedVariable(token)) return void 0;
   const stripped = token.replace(/[（(][^（）()]*[）)]$/, "");
   const forms = stripped === token || stripped === "" ? [token] : [stripped, token];
-  const keyDir = path5.dirname(deliverableDir2);
+  const keyDir = path9.dirname(deliverableDir2);
   for (const form of forms) {
-    const candidates = path5.isAbsolute(form) ? [form] : [path5.resolve(projectRoot, form), path5.resolve(keyDir, form)];
+    const candidates = path9.isAbsolute(form) ? [form] : [path9.resolve(projectRoot, form), path9.resolve(keyDir, form)];
     for (const candidate of candidates) {
       if (!isUnder(deliverableDir2, candidate)) continue;
       try {
-        if (fs4.statSync(candidate).isFile()) return candidate;
+        if (fs7.statSync(candidate).isFile()) return candidate;
       } catch {
       }
     }
@@ -13733,7 +15107,7 @@ function resolveDeliverablePath(token, projectRoot, deliverableDir2) {
 function isFreshDeliverable(abs, runStartedAtMs2) {
   if (runStartedAtMs2 === void 0 || !Number.isFinite(runStartedAtMs2)) return true;
   try {
-    return fs4.statSync(abs).mtimeMs >= runStartedAtMs2;
+    return fs7.statSync(abs).mtimeMs >= runStartedAtMs2;
   } catch {
     return false;
   }
@@ -13747,7 +15121,7 @@ function collectWritelessDeclarations(reportText, options) {
   const delivered = [];
   const projectRoot = options.projectRoot ?? process.cwd();
   if (options.deliverableDir !== void 0) {
-    const deliverableDir2 = path5.resolve(options.deliverableDir);
+    const deliverableDir2 = path9.resolve(options.deliverableDir);
     for (const line of reportText.split(/\r?\n/)) {
       for (const token of lineTokens(line)) {
         const abs = resolveDeliverablePath(token, projectRoot, deliverableDir2);
@@ -13766,7 +15140,7 @@ function collectWritelessDeclarations(reportText, options) {
 }
 function existsOnDisk(token, projectRoot) {
   try {
-    return fs4.existsSync(path5.resolve(projectRoot ?? process.cwd(), token));
+    return fs7.existsSync(path9.resolve(projectRoot ?? process.cwd(), token));
   } catch {
     return false;
   }
@@ -13994,18 +15368,18 @@ function dedupe(values) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/run-store.ts
-import * as fs5 from "node:fs";
-import * as path6 from "node:path";
+import * as fs8 from "node:fs";
+import * as path10 from "node:path";
 var RUN_FILE_NAME = "run.json";
 var RUN_SCHEMA = 1;
 var RUN_TERMINAL_STATUSES = /* @__PURE__ */ new Set(["done", "failed", "needs-clarification", "lost"]);
 function runPath(taskDir) {
-  return path6.join(taskDir, RUN_FILE_NAME);
+  return path10.join(taskDir, RUN_FILE_NAME);
 }
 function readRunState(taskDir) {
   let raw;
   try {
-    raw = fs5.readFileSync(runPath(taskDir), "utf8");
+    raw = fs8.readFileSync(runPath(taskDir), "utf8");
   } catch {
     return void 0;
   }
@@ -14041,12 +15415,12 @@ function collectArtifacts(taskDir) {
   const names = [];
   for (const fixed of ["output.md", "report.md", "progress.md"]) {
     try {
-      if (fs5.statSync(path6.join(taskDir, fixed)).isFile()) names.push(fixed);
+      if (fs8.statSync(path10.join(taskDir, fixed)).isFile()) names.push(fixed);
     } catch {
     }
   }
   try {
-    for (const entry of fs5.readdirSync(taskDir, { withFileTypes: true })) {
+    for (const entry of fs8.readdirSync(taskDir, { withFileTypes: true })) {
       if (!entry.isFile()) continue;
       if (/^phase-.*\.md$/.test(entry.name) || /^stage-\d+.*\.md$/.test(entry.name)) names.push(entry.name);
     }
@@ -14056,19 +15430,19 @@ function collectArtifacts(taskDir) {
 }
 function appendRunNote(taskDir, message) {
   try {
-    fs5.appendFileSync(path6.join(taskDir, "trace.log"), `[FLOW] ${(/* @__PURE__ */ new Date()).toISOString()} ${message}
+    fs8.appendFileSync(path10.join(taskDir, "trace.log"), `[FLOW] ${(/* @__PURE__ */ new Date()).toISOString()} ${message}
 `, "utf8");
   } catch {
   }
 }
 function writeRunState(taskDir, state) {
   try {
-    fs5.mkdirSync(taskDir, { recursive: true });
+    fs8.mkdirSync(taskDir, { recursive: true });
     const target = runPath(taskDir);
     const tmp = `${target}.tmp`;
-    fs5.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}
+    fs8.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}
 `, "utf8");
-    fs5.renameSync(tmp, target);
+    fs8.renameSync(tmp, target);
     return { ok: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -14186,6 +15560,612 @@ function findTypeEscalation(bodyLines, headerType, toolsFor) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/output-sections.ts
+import * as fs10 from "node:fs";
+import * as path12 from "node:path";
+
+// packages/coding-agent/src/extensions/agent-team-loop/shared/dispatch-card.ts
+import * as fs9 from "node:fs";
+import * as path11 from "node:path";
+var ENVELOPE_SECTIONS = ["context", "requirements", "deliverables"];
+var ENVELOPE_SECTION_LABELS = {
+  context: "\u4E0A\u4E0B\u6587",
+  requirements: "\u8981\u6C42",
+  deliverables: "\u4EA4\u4ED8\u683C\u5F0F"
+};
+var ENVELOPE_HEADING_FAMILIES = [
+  [
+    "deliverables",
+    [
+      "\u4EA4\u4ED8\u7269",
+      "\u4EA4\u4ED8",
+      "\u9884\u671F\u4EA7\u51FA",
+      "\u9884\u671F\u4EA7\u7269",
+      "\u4EA7\u7269",
+      "\u8F93\u51FA",
+      "\u8BC1\u636E\u683C\u5F0F",
+      "\u8BC1\u636E",
+      "\u62A5\u544A\u8981\u6C42",
+      "\u56DE\u6267",
+      "Deliverable",
+      "Expected Output",
+      "Artifact"
+    ]
+  ],
+  [
+    "context",
+    [
+      "\u80CC\u666F",
+      "\u4E0A\u4E0B\u6587",
+      "\u95EE\u9898",
+      "\u73B0\u72B6",
+      "\u52A8\u673A",
+      "\u6839\u56E0",
+      "\u7F3A\u9677",
+      "\u504F\u5DEE",
+      "\u76EE\u6807",
+      "\u63CF\u8FF0",
+      "\u8F93\u5165",
+      "\u524D\u7F6E",
+      "\u8303\u56F4",
+      "Context",
+      "Motivation",
+      "Rationale",
+      "Why",
+      "Goal",
+      "Objective",
+      "Description",
+      "Input",
+      "Scope"
+    ]
+  ],
+  [
+    "requirements",
+    [
+      "\u8981\u6C42",
+      "\u4EFB\u52A1",
+      "\u5951\u7EA6",
+      "\u9A8C\u6536",
+      "\u9A8C\u8BC1",
+      "\u5B8C\u6210\u5224\u5B9A",
+      "\u5B8C\u6210\u5224\u636E",
+      "\u5224\u636E",
+      "\u884C\u4E3A",
+      "\u6D4B\u8BD5",
+      "\u63A5\u53E3",
+      "\u7528\u4F8B",
+      "\u534F\u8BAE",
+      "\u5185\u5BB9",
+      "\u6807\u51C6",
+      "\u505A\u6CD5",
+      "\u7B56\u7565",
+      "\u65AD\u8A00",
+      "\u89C4\u8303",
+      "\u7F16\u7801",
+      "\u5BF9\u7167",
+      "\u53CD\u4F8B",
+      "\u53CD\u5411",
+      "\u5FC5\u987B",
+      "\u5B9E\u73B0",
+      "\u6B65\u9AA4",
+      "\u6539\u52A8",
+      "\u53D8\u66F4",
+      "Acceptance Criteria",
+      "Requirement",
+      "Expected Behavior",
+      "[VERIFY]",
+      "AC ",
+      "VC ",
+      "TDD"
+    ]
+  ]
+];
+var ENVELOPE_BODY_HINTS = {
+  context: /背景|动机|原因|由于|因为|现状|痛点|为什么|为何|根因/,
+  requirements: /AC-\d+|VC-\d+/i,
+  deliverables: /report\.md|progress\.md|output\.md|evidence\/|回执/
+};
+var ENVELOPE_BULLET_KEYS = {
+  context: /^(背景|动机|问题|现状|范围|规格|目的|前提)$/,
+  requirements: /要求|规格|验收|必须|步骤|实现|改动|协议|契约|条件/,
+  deliverables: /产物|交付|佐证|证据|输出|结果|报告/
+};
+var DISPATCH_TYPE_VOCABULARY = [
+  "coding",
+  "review",
+  "research",
+  "rag-research",
+  "vision",
+  // Decision-book writer (mw-decision-substitution W8, renamed W10): a role
+  // that only fills a decision book from evidence, never edits code. The type
+  // value is `decide_prepare` (was `decision`; no alias kept).
+  "decide_prepare",
+  "verifier",
+  "reviewer",
+  "repair",
+  "phase-writer",
+  "roadmap-writer",
+  "codex"
+];
+function isKnownDispatchType(type) {
+  return DISPATCH_TYPE_VOCABULARY.includes(type);
+}
+var TYPE_EXTRA_PATTERNS = {
+  coding: [
+    ["\u5199\u5165\u5141\u8BB8\u9762", /写入允许面|允许写入|允许写|写入范围|写面|write_scope|allow[-_ ]?write/i],
+    ["\u5199\u5165\u7981\u6B62\u9762", /写入禁止面|禁止写入|禁止写|不得写|写入禁区|禁止范围|deny[-_ ]?write|forbid/i],
+    ["\u9A8C\u6536\u547D\u4EE4", /验收命令|验证命令|验收标准|验收判据|验收方式|验收|完成判据|acceptance/i],
+    ["\u6539\u52A8\u5386\u53F2", /改动历史|改动清单|变更历史|写入事件|trace\.log|write[-_ ]?history|change[-_ ]?log/i]
+  ],
+  research: [["\u552F\u4E00\u8BC1\u636E\u6587\u4EF6", /唯一证据文件|唯一证据|唯一产物|仅此一写|sole[-_ ]?evidence/i]],
+  decide_prepare: [
+    ["dp", /^\s*(?:[-*+]\s*)?(?:\*\*)?dp(?:\*\*)?\s*[:：]/im],
+    ["\u8BC1\u636E\u6765\u6E90", /证据来源|证据清单|证据出处|evidence[-_ ]?sources?/i],
+    ["\u5206\u652F\u540E\u679C", /分支后果|各分支|后果说明|branch[-_ ]?(consequences?|outcomes?)/i],
+    ["allow-send", /allow[-_ ]?send/i]
+  ],
+  review: [
+    ["\u5BA1\u8BA1\u76EE\u6807", /审计目标|审计问题|审计对象|审计范围|审计维度|问题域|要回答|audit[-_ ]?(target|scope|question)/i],
+    [
+      "\u672A\u8986\u76D6\u9762\u58F0\u660E",
+      /未覆盖面|未覆盖声明|未覆盖范围|未及范围|未查看|未探索|未涉及|not[-_ ]?covered|out[-_ ]?of[-_ ]?scope/i
+    ]
+  ]
+};
+var HEADING_RE2 = /^(#{2,6})\s+(.*)$/;
+var BULLET_LABEL_RE = /^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*)?([^:：]{1,48}?)(?:\*\*)?\s*[:：]/;
+var FIELD_LABEL_RE = /^\s*(?:\*\*)?([A-Za-z_][A-Za-z0-9_.-]{0,40})(?:\*\*)?\s*:/;
+var CARD_TYPE_RE = /(?:^|[\s|｜>*+-])type:\s*([^\s|｜]+)/;
+function splitLines(text) {
+  const lines = (text.startsWith("\uFEFF") ? text.slice(1) : text).replace(/\r\n?|[\u2028\u2029]/g, "\n").split("\n");
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  for (let i = 0; i < lines.length; i++) lines[i] = lines[i].replace(/\r$/, "").trim();
+  return lines;
+}
+function readCardType(lines) {
+  const shared = readTaskType(lines.join("\n")).type;
+  if (shared !== void 0 && shared !== "") return shared.trim();
+  const firstHeading = lines.findIndex((line) => HEADING_RE2.test(line));
+  const end = firstHeading === -1 ? lines.length : firstHeading;
+  for (let i = 0; i < end; i++) {
+    const match2 = CARD_TYPE_RE.exec(lines[i]);
+    if (match2) return match2[1].trim();
+  }
+  return "";
+}
+function stripNumbering(text) {
+  let out = text.trim();
+  out = out.replace(/^[（(]\s*[0-9A-Za-z一二三四五六七八九十]+\s*[)）]\s*/, "");
+  out = out.replace(/^[0-9]+(?:\.[0-9]+)*\s*[.、)）]\s*/, "");
+  out = out.replace(/^[A-Za-z]\s*[.、)）]\s*/, "");
+  out = out.replace(/^[一二三四五六七八九十]+\s*[、.)）]\s*/, "");
+  return out.trim();
+}
+function classifyHeading(heading) {
+  const lower = heading.toLowerCase();
+  for (const [section, tokens] of ENVELOPE_HEADING_FAMILIES) {
+    for (const token of tokens) {
+      if (lower.startsWith(token.toLowerCase())) return section;
+    }
+  }
+  return void 0;
+}
+function labelOf(line) {
+  const bullet = BULLET_LABEL_RE.exec(line);
+  if (bullet) return bullet[1].trim();
+  const field = FIELD_LABEL_RE.exec(line);
+  if (field) return field[1].trim();
+  return void 0;
+}
+function anyLabelMatches(lines, keyRe) {
+  for (const line of lines) {
+    const label = labelOf(line);
+    if (label !== void 0 && keyRe.test(label)) return true;
+  }
+  return false;
+}
+function collectHeadings(lines) {
+  const headings = [];
+  for (let i = 0; i < lines.length; i++) {
+    const match2 = HEADING_RE2.exec(lines[i]);
+    if (match2) headings.push({ level: match2[1].length, text: stripNumbering(match2[2]), line: i });
+  }
+  return headings;
+}
+function bodySemanticHit(section, lines) {
+  if (lines.some((line) => ENVELOPE_BODY_HINTS[section].test(line))) return true;
+  return anyLabelMatches(lines, ENVELOPE_BULLET_KEYS[section]);
+}
+function detectSections(lines) {
+  const detected = { context: "", requirements: "", deliverables: "" };
+  const headings = collectHeadings(lines);
+  for (let i = 0; i < headings.length; i++) {
+    const heading = headings[i];
+    const section = classifyHeading(heading.text);
+    if (section === void 0 || detected[section] !== "") continue;
+    let end = lines.length;
+    for (let j = i + 1; j < headings.length; j++) {
+      if (headings[j].level <= heading.level) {
+        end = headings[j].line;
+        break;
+      }
+    }
+    let hasBody = false;
+    for (let k = heading.line + 1; k < end; k++) {
+      if (lines[k] !== "") {
+        hasBody = true;
+        break;
+      }
+    }
+    if (hasBody) detected[section] = `heading:${heading.text}`;
+  }
+  for (const section of ENVELOPE_SECTIONS) {
+    if (detected[section] === "" && bodySemanticHit(section, lines)) detected[section] = "semantics";
+  }
+  return detected;
+}
+function emptyDetected() {
+  return { context: "", requirements: "", deliverables: "" };
+}
+function inspectEnvelope(text) {
+  const lines = splitLines(text);
+  const type = readCardType(lines);
+  const detected = detectSections(lines);
+  const missing = [];
+  if (type === "") missing.push("type");
+  for (const section of ENVELOPE_SECTIONS) {
+    if (detected[section] === "") missing.push(section);
+  }
+  return { ok: missing.length === 0, missing, type, detected };
+}
+function readEnvelope(cardPath) {
+  let text;
+  try {
+    text = fs9.readFileSync(cardPath, "utf8");
+  } catch {
+    return { ok: false, missing: ["file"], type: "", detected: emptyDetected() };
+  }
+  return inspectEnvelope(text);
+}
+function typeExtrasMissing(type, text) {
+  const patterns = TYPE_EXTRA_PATTERNS[type];
+  if (patterns === void 0) {
+    return isKnownDispatchType(type) ? [] : [`unknown-type:${type}`];
+  }
+  const lines = splitLines(text);
+  const missing = [];
+  for (const [item, pattern] of patterns) {
+    if (text.includes(item)) continue;
+    if (anyLabelMatches(lines, pattern)) continue;
+    let headingHit = false;
+    for (const line of lines) {
+      const heading = HEADING_RE2.exec(line);
+      if (heading && pattern.test(stripNumbering(heading[2]))) {
+        headingHit = true;
+        break;
+      }
+    }
+    if (!headingHit) missing.push(item);
+  }
+  return missing;
+}
+var GOAL_ANCHOR = "goal.md";
+var SEED_GOAL_ITEM = "seed:goal.md";
+var SEED_PATH_ITEM = "seed:path:line";
+var PATH_LINE_RE = /[A-Za-z0-9_][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,7}:\d+/;
+function seedItemsMissing(text) {
+  const missing = [];
+  if (!text.includes(GOAL_ANCHOR)) missing.push(SEED_GOAL_ITEM);
+  if (!PATH_LINE_RE.test(text)) missing.push(SEED_PATH_ITEM);
+  return missing;
+}
+var CLAIM_TYPES = ["cmd", "grep", "struct", "manual"];
+var UNVERIFIED_REASONS = [
+  "budget",
+  "no-access",
+  "not-found",
+  "ambiguous",
+  "environment",
+  "out-of-scope",
+  "awaiting-input"
+];
+var CLAIM_GATE_DEFAULT = "advisory";
+var CLAIM_BUDGET = {
+  perClaim: 6,
+  callCap: 30,
+  hardCap: 35,
+  claimByteCap: 65536,
+  byteCapMax: 393216
+};
+var CLAIMS_OPEN_RE = /^<!--\s*mw-claims\s*:\s*v1\s*-->$/i;
+var CLAIMS_CLOSE_RE = /^<!--\s*\/\s*mw-claims\s*-->$/i;
+var CLAIMS_STOP_H2_RE = /^##(?!#)\s+/;
+var CLAIMS_FENCE_RE = /^(`{3,}|~{3,})(.*)$/;
+var CLAIM_ID_RE = /^C-(\d{2,3})(?:\.(\d+))?$/i;
+var CLAIM_COLUMN_ALIASES = [
+  ["id", ["claim", "claim id", "claim id /", "\u65AD\u8A00", "\u65AD\u8A00 id"]],
+  ["type", ["\u7C7B\u578B", "type", "\u7C7B\u522B"]],
+  ["statement", ["\u9648\u8FF0", "statement", "\u4E3B\u5F20", "\u65AD\u8A00\u5185\u5BB9"]],
+  ["falsifier", ["\u53CD\u8BC1\u6761\u4EF6", "\u53CD\u8BC1", "falsifier", "refutation"]],
+  ["locator", ["\u5B9A\u4F4D", "locator", "anchor", "\u951A\u70B9"]],
+  ["judgement", ["\u5224\u636E", "judgement", "judgment", "criterion"]],
+  ["budget", ["\u9884\u7B97", "budget"]]
+];
+function advanceClaimFence(line, open) {
+  const match2 = CLAIMS_FENCE_RE.exec(line);
+  if (match2 === null) return open;
+  const marker = match2[1] ?? "";
+  const rest = match2[2] ?? "";
+  const char = marker[0] ?? "";
+  if (open === void 0) return { char, len: marker.length };
+  if (char === open.char && marker.length >= open.len && rest.trim() === "") return void 0;
+  return open;
+}
+function normalizeClaimText(text) {
+  return text.replace(/[\uFF10-\uFF19]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 65248)).replace(/\uFF1A/g, ":").replace(/\uFF5C/g, "|").replace(/\u3000/g, " ").trim();
+}
+function stripClaimTicks(text) {
+  return text.replace(/`/g, "").trim();
+}
+function splitClaimRow(line) {
+  const cells = normalizeClaimText(line).split("|");
+  if (cells.length > 0 && (cells[0] ?? "").trim() === "") cells.shift();
+  if (cells.length > 0 && (cells[cells.length - 1] ?? "").trim() === "") cells.pop();
+  return cells.map((cell) => cell.trim());
+}
+function matchClaimHeader(cells) {
+  const columns = {};
+  let hasClaimColumn = false;
+  for (let i = 0; i < cells.length; i++) {
+    const name = stripClaimTicks(normalizeClaimText(cells[i] ?? "")).toLowerCase().replace(/\s+/g, " ").replace(/:$/, "");
+    for (const [field, aliases] of CLAIM_COLUMN_ALIASES) {
+      if (!aliases.includes(name)) continue;
+      if (columns[field] === void 0) columns[field] = i;
+      if (field === "id") hasClaimColumn = true;
+      break;
+    }
+  }
+  return hasClaimColumn ? columns : void 0;
+}
+function isClaimSeparatorRow(cells) {
+  if (cells.length === 0) return false;
+  return cells.every((cell) => cell === "" || /^:?-{1,}:?$/.test(cell));
+}
+function claimCell(cells, columns, field) {
+  const index = columns[field];
+  if (index === void 0) return "";
+  return (cells[index] ?? "").trim();
+}
+function parseClaimsBlock(text) {
+  const block = { present: false, claims: [], errors: [] };
+  const byId = /* @__PURE__ */ new Map();
+  let fence;
+  let inBlock = false;
+  let columns;
+  const lines = splitLines(text);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    fence = advanceClaimFence(line, fence);
+    if (fence !== void 0) continue;
+    if (!inBlock) {
+      if (CLAIMS_OPEN_RE.test(line)) {
+        inBlock = true;
+        block.present = true;
+      }
+      continue;
+    }
+    if (CLAIMS_CLOSE_RE.test(line) || CLAIMS_STOP_H2_RE.test(line)) {
+      inBlock = false;
+      columns = void 0;
+      continue;
+    }
+    if (!normalizeClaimText(line).startsWith("|")) {
+      columns = void 0;
+      continue;
+    }
+    const cells = splitClaimRow(line);
+    if (columns === void 0) {
+      columns = matchClaimHeader(cells);
+      continue;
+    }
+    if (isClaimSeparatorRow(cells)) continue;
+    const claim = claimFromRow(cells, columns, i + 1, byId);
+    if (claim === void 0) {
+      block.errors.push(`claim:${i + 1}:unparsable`);
+      continue;
+    }
+    block.claims.push(claim);
+    byId.set(claim.id, claim);
+  }
+  return block;
+}
+function claimFromRow(cells, columns, row, byId) {
+  const idMatch = CLAIM_ID_RE.exec(stripClaimTicks(claimCell(cells, columns, "id")));
+  if (idMatch === null) return void 0;
+  const number = idMatch[1] ?? "";
+  const child = idMatch[2];
+  const parent = child === void 0 ? "" : `C-${number}`;
+  const id = `C-${number}${child === void 0 ? "" : `.${child}`}`;
+  if (parent !== "") {
+    const parentClaim = byId.get(parent);
+    if (parentClaim === void 0 || parentClaim.type !== "struct") return void 0;
+  }
+  const declaredType = stripClaimTicks(claimCell(cells, columns, "type")).toLowerCase();
+  const budgetText = stripClaimTicks(claimCell(cells, columns, "budget"));
+  return {
+    id,
+    // A struct child restates part of the parent shape, so an empty `类型`
+    // cell inherits `struct` instead of manufacturing a second gap.
+    type: declaredType === "" && parent !== "" ? "struct" : declaredType,
+    parent,
+    statement: claimCell(cells, columns, "statement"),
+    falsifier: claimCell(cells, columns, "falsifier"),
+    locator: claimCell(cells, columns, "locator"),
+    judgement: claimCell(cells, columns, "judgement"),
+    budget: /^\d+$/.test(budgetText) ? Number(budgetText) : Number.NaN,
+    row
+  };
+}
+var CLAIM_TYPE_PREFIX = {
+  cmd: "cmd:",
+  grep: "grep:",
+  struct: "shape:",
+  manual: "manual:"
+};
+var CLAIM_BUDGET_SUM_MAX = 40;
+var CLAIM_MANUAL_CAP = 4;
+var CLAIM_TAUTOLOGY_SIMILARITY = 0.9;
+var CLAIM_LOCATOR_RANGE_BYTES = 32768;
+var CLAIM_CMD_LOCATOR_RE = /^evidence\/claims\/[^#\s]+#(C-\d{2,3}(?:\.\d+)?)$/i;
+function looksLikeClaimPath(text) {
+  if (text.includes("/")) return true;
+  return /\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(text);
+}
+function resolveClaimLocator(locator, projectDir) {
+  const raw = stripClaimTicks(locator);
+  if (raw === "" || raw === "-") return { kind: "skipped", size: 0, ranged: false };
+  const withoutFragment = raw.replace(/#.*$/, "");
+  const range2 = /^(.*?):(\d+)(?:-(\d+))?$/.exec(withoutFragment);
+  const pathText = (range2 === null ? withoutFragment : range2[1] ?? "").trim();
+  const ranged = range2 !== null && range2[3] !== void 0;
+  if (pathText === "" || !looksLikeClaimPath(pathText)) return { kind: "unresolved", size: 0, ranged };
+  const absolute = path11.resolve(projectDir, pathText);
+  const relative13 = path11.relative(projectDir, absolute);
+  if (relative13 === "" || relative13 === ".." || relative13.startsWith(`..${path11.sep}`) || path11.isAbsolute(relative13)) {
+    return { kind: "unresolved", size: 0, ranged };
+  }
+  try {
+    const stat = fs9.statSync(absolute);
+    if (!stat.isFile()) return { kind: "unresolved", size: 0, ranged };
+    return { kind: "resolved", size: stat.size, ranged };
+  } catch {
+    return { kind: "unresolved", size: 0, ranged };
+  }
+}
+var CLAIM_NEGATION_TOKENS = [
+  "\u5DF2\u7ECF",
+  "\u4E0D\u518D",
+  "\u4E0D\u4F1A",
+  "\u4E0D\u80FD",
+  "\u4E0D\u5F97",
+  "\u6CA1\u6709",
+  "\u65E0\u6CD5",
+  "\u7981\u6B62",
+  "absent",
+  "cannot",
+  "didn't",
+  "doesn't",
+  "failed",
+  "fails",
+  "isn't",
+  "aren't",
+  "missing",
+  "never",
+  "without",
+  "can't",
+  "fail",
+  "not",
+  "\u5DF2",
+  "\u4E0D",
+  "\u672A",
+  "\u65E0",
+  "\u975E",
+  "\u5426",
+  "\u7F3A"
+].sort((a, b) => b.length - a.length);
+function normalizeClaimSimilarityText(text) {
+  let out = text.toLowerCase().replace(/`/g, " ");
+  for (const token of CLAIM_NEGATION_TOKENS) {
+    out = /^[a-z']+$/.test(token) ? out.replace(new RegExp(`\\b${token}\\b`, "gi"), " ") : out.split(token).join(" ");
+  }
+  return out.replace(/[^\p{L}\p{N}]+/gu, "");
+}
+function claimEditDistance(a, b) {
+  const left = Array.from(a);
+  const right = Array.from(b);
+  let previous = right.map((_, index) => index);
+  previous = [0, ...previous];
+  for (let i = 1; i <= left.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= right.length; j++) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        (previous[j] ?? Number.POSITIVE_INFINITY) + 1,
+        (current[j - 1] ?? Number.POSITIVE_INFINITY) + 1,
+        (previous[j - 1] ?? Number.POSITIVE_INFINITY) + cost
+      );
+    }
+    previous = current;
+  }
+  return previous[right.length] ?? 0;
+}
+var CLAIM_ARTIFACT_TOKEN_RE = /[A-Za-z0-9_][A-Za-z0-9_./-]*/g;
+function claimJudgementArtifacts(judgement) {
+  const body = judgement.replace(/^\s*(?:cmd|grep|shape|manual)\s*:\s*/i, "");
+  const tokens = body.match(CLAIM_ARTIFACT_TOKEN_RE) ?? [];
+  return tokens.filter((token) => token.length >= 3);
+}
+function isTautologicalClaim(claim) {
+  if (claim.statement === "" || claim.falsifier === "" || claim.judgement === "") return false;
+  const statement = normalizeClaimSimilarityText(claim.statement);
+  const falsifier = normalizeClaimSimilarityText(claim.falsifier);
+  if (statement === "" || falsifier === "") return false;
+  const distance = claimEditDistance(statement, falsifier);
+  const similarity = 1 - distance / Math.max(statement.length, falsifier.length);
+  if (similarity < CLAIM_TAUTOLOGY_SIMILARITY) return false;
+  const haystack = claim.statement.toLowerCase();
+  return !claimJudgementArtifacts(claim.judgement).some((token) => !haystack.includes(token.toLowerCase()));
+}
+function claimsGaps(block, opts) {
+  const structural = [];
+  const advisory = [];
+  let budgetSum = 0;
+  let manualCount = 0;
+  for (const claim of block.claims) {
+    const type = claim.type.toLowerCase();
+    const known = CLAIM_TYPES.includes(type);
+    budgetSum += type === "manual" ? 2 : 1;
+    if (type === "manual") manualCount += 1;
+    if (!known) structural.push(`claim:${claim.id}:type`);
+    if (claim.statement === "") structural.push(`claim:${claim.id}:statement`);
+    if (claim.falsifier === "") structural.push(`claim:${claim.id}:falsifier`);
+    if (claim.locator === "") structural.push(`claim:${claim.id}:locator`);
+    if (claim.judgement === "") structural.push(`claim:${claim.id}:judgement`);
+    if (!Number.isInteger(claim.budget) || claim.budget < 0) structural.push(`claim:${claim.id}:budget`);
+    if (!known) continue;
+    if (claim.judgement !== "") {
+      const prefix = CLAIM_TYPE_PREFIX[type];
+      if (!claim.judgement.trim().toLowerCase().startsWith(prefix)) advisory.push(`claim:${claim.id}:type-prefix`);
+    }
+    if (type === "cmd" && claim.locator !== "") {
+      const cmdLocator = CLAIM_CMD_LOCATOR_RE.exec(stripClaimTicks(claim.locator));
+      if (cmdLocator === null || (cmdLocator[1] ?? "").toUpperCase() !== claim.id.toUpperCase()) {
+        advisory.push(`claim:${claim.id}:cmd-locator`);
+      }
+    }
+    const target = resolveClaimLocator(claim.locator, opts.projectDir);
+    if (target.kind === "unresolved") advisory.push(`claim:${claim.id}:locator-unresolved`);
+    if (target.kind === "resolved" && target.size > CLAIM_LOCATOR_RANGE_BYTES && !target.ranged) {
+      advisory.push(`claim:${claim.id}:locator-range`);
+    }
+    if (isTautologicalClaim(claim)) advisory.push(`claim:${claim.id}:tautology`);
+  }
+  const total = block.claims.length;
+  if (budgetSum > CLAIM_BUDGET_SUM_MAX) advisory.push(`claims:budget-sum:${budgetSum}>${CLAIM_BUDGET_SUM_MAX}`);
+  const manualCap = Math.min(CLAIM_MANUAL_CAP, Math.ceil(total / 3));
+  if (manualCount > manualCap) advisory.push(`claims:manual-overflow:${manualCount}/${total}`);
+  return opts.enforce ? [...structural, ...advisory] : structural;
+}
+function claimBudgetCaps(claims) {
+  if (claims.length === 0) return { fileCap: 0, byteCap: 0 };
+  let weightSum = 0;
+  for (const claim of claims) weightSum += claim.type.toLowerCase() === "manual" ? 2 : 1;
+  return {
+    fileCap: Math.min(CLAIM_BUDGET.callCap, weightSum),
+    byteCap: Math.min(CLAIM_BUDGET.byteCapMax, CLAIM_BUDGET.claimByteCap * claims.length)
+  };
+}
+
+// packages/coding-agent/src/extensions/agent-team-loop/worker/output-sections.ts
 var RECOVERY_SECTIONS = ["\u7ED3\u8BBA", "\u8BC1\u636E", "\u6B8B\u7559\u4E0E\u672A\u9A8C\u8BC1", "\u4E0A\u4E0B\u6587\u6765\u6E90"];
 var RECOVERY_TYPE_SECTIONS = {
   coding: ["\u6539\u52A8\u6E05\u5355"],
@@ -14263,19 +16243,288 @@ function checkRecovery(text, type) {
   });
   return { ok: missing.length === 0, missing, required };
 }
+var VERDICT_TABLE_ALIASES = ["\u65AD\u8A00\u88C1\u51B3", "claim verdict", "claims verdict", "verdict table"];
+var VERDICT_COLUMN_ALIASES = [
+  ["id", ["claim", "\u65AD\u8A00", "claim id"]],
+  ["type", ["\u7C7B\u578B", "type", "\u7C7B\u522B"]],
+  ["verdict", ["\u88C1\u51B3", "verdict"]],
+  ["finding", ["\u5224\u5B9A", "finding", "\u5224\u65AD"]],
+  ["evidence", ["\u8BC1\u636E", "evidence"]],
+  ["fetches", ["\u53D6\u6570", "fetches", "reads"]],
+  ["reason", ["\u539F\u56E0", "reason"]]
+];
+var VERDICT_ID_RE = /^C-(\d{2,3})(?:\.(\d+))?$/i;
+function normalizeVerdictText(text) {
+  return text.replace(/[\uFF10-\uFF19]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 65248)).replace(/\uFF1A/g, ":").replace(/\uFF5C/g, "|").replace(/\u3000/g, " ").trim();
+}
+function stripVerdictTicks(text) {
+  return text.replace(/`/g, "").trim();
+}
+function splitVerdictRow(line) {
+  const cells = normalizeVerdictText(line).split("|");
+  if (cells.length > 0 && (cells[0] ?? "").trim() === "") cells.shift();
+  if (cells.length > 0 && (cells[cells.length - 1] ?? "").trim() === "") cells.pop();
+  return cells.map((cell) => cell.trim());
+}
+function matchVerdictHeader(cells) {
+  const columns = {};
+  let hasClaimColumn = false;
+  for (let i = 0; i < cells.length; i++) {
+    const name = stripVerdictTicks(normalizeVerdictText(cells[i] ?? "")).toLowerCase().replace(/\s+/g, " ").replace(/:$/, "");
+    for (const [field, aliases] of VERDICT_COLUMN_ALIASES) {
+      if (!aliases.includes(name)) continue;
+      if (columns[field] === void 0) columns[field] = i;
+      if (field === "id") hasClaimColumn = true;
+      break;
+    }
+  }
+  return hasClaimColumn ? columns : void 0;
+}
+function isVerdictSeparatorRow(cells) {
+  if (cells.length === 0) return false;
+  return cells.every((cell) => cell === "" || /^:?-{1,}:?$/.test(cell));
+}
+function verdictCell(cells, columns, field) {
+  const index = columns[field];
+  if (index === void 0) return "";
+  return (cells[index] ?? "").trim();
+}
+function verdictRowFrom(cells, columns, row) {
+  const idMatch = VERDICT_ID_RE.exec(stripVerdictTicks(verdictCell(cells, columns, "id")));
+  if (idMatch === null) return void 0;
+  const number = idMatch[1] ?? "";
+  const child = idMatch[2];
+  return {
+    id: `C-${number}${child === void 0 ? "" : `.${child}`}`,
+    type: stripVerdictTicks(verdictCell(cells, columns, "type")).toLowerCase(),
+    verdict: verdictCell(cells, columns, "verdict"),
+    finding: verdictCell(cells, columns, "finding"),
+    evidence: verdictCell(cells, columns, "evidence"),
+    fetches: verdictCell(cells, columns, "fetches"),
+    reason: verdictCell(cells, columns, "reason"),
+    row
+  };
+}
+function parseVerdictTable(text) {
+  const table = { present: false, rows: [], errors: [] };
+  let fence;
+  let inSection = false;
+  let columns;
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    fence = advanceFence(line, fence);
+    if (fence !== void 0) continue;
+    const heading = H2_RE.exec(line);
+    if (heading !== null) {
+      const normalized = normalizeHeading(heading[1] ?? "");
+      if (inSection) {
+        inSection = false;
+        columns = void 0;
+        continue;
+      }
+      if (!table.present && VERDICT_TABLE_ALIASES.some((alias) => normalized.includes(alias))) {
+        table.present = true;
+        inSection = true;
+        columns = void 0;
+      }
+      continue;
+    }
+    if (!inSection) continue;
+    if (BLOCKQUOTE_RE.test(line)) continue;
+    if (!normalizeVerdictText(line).startsWith("|")) {
+      columns = void 0;
+      continue;
+    }
+    const cells = splitVerdictRow(line);
+    if (columns === void 0) {
+      columns = matchVerdictHeader(cells);
+      continue;
+    }
+    if (isVerdictSeparatorRow(cells)) continue;
+    const row = verdictRowFrom(cells, columns, i + 1);
+    if (row === void 0) {
+      table.errors.push(`claim:${i + 1}:unparsable`);
+      continue;
+    }
+    table.rows.push(row);
+  }
+  return table;
+}
+var VERDICT_TOKENS = ["closed", "partial", "unverified"];
+var FINDING_TOKENS = ["\u6210\u7ACB", "\u4E0D\u6210\u7ACB", "\u65E0\u6CD5\u5224\u5B9A", "\u90E8\u5206\u6210\u7ACB"];
+var VERDICT_FINDINGS = {
+  closed: ["\u6210\u7ACB", "\u4E0D\u6210\u7ACB"],
+  partial: ["\u90E8\u5206\u6210\u7ACB"],
+  unverified: ["\u65E0\u6CD5\u5224\u5B9A"]
+};
+function verdictToken(cell) {
+  return stripVerdictTicks(cell).replace(/\s+/g, "").toLowerCase();
+}
+function splitEvidenceRefs(cell) {
+  return stripVerdictTicks(cell).split(";").map((ref) => ref.trim()).filter((ref) => ref !== "" && ref !== "-");
+}
+var CMD_REF_VERBS = [
+  "node",
+  "npm",
+  "npx",
+  "python",
+  "python3",
+  "pytest",
+  "vitest",
+  "git",
+  "mw",
+  "rg",
+  "grep",
+  "bash"
+];
+var CMD_RESULT_RE = /^rc=-?\d+(?:\s+[\w.-]+=\S+)*$/;
+function isRepoRelativePath(text) {
+  if (text === "" || text.startsWith("/") || /^[A-Za-z]:[\\/]/.test(text) || text.startsWith("./")) return false;
+  return !text.split(/[\\/]/).includes("..");
+}
+function parseEvidenceRef(raw) {
+  const ref = stripVerdictTicks(raw);
+  if (ref === "" || ref === "-") return void 0;
+  const halves = ref.split("=>");
+  if (halves.length > 2) return void 0;
+  if (halves.length === 2) {
+    const left = (halves[0] ?? "").trim();
+    const right = (halves[1] ?? "").trim();
+    if (left === "" || left.includes("&&") || left.includes(">") || left.includes("<") || left.includes("`")) {
+      return void 0;
+    }
+    const verb = /^([A-Za-z0-9]+)\s+/.exec(left)?.[1]?.toLowerCase() ?? "";
+    if (!CMD_REF_VERBS.includes(verb) || !CMD_RESULT_RE.test(right)) return void 0;
+    return { kind: "cmd", path: "", first: 0, last: 0 };
+  }
+  const withoutExcerpt = ref.replace(/「[^」]*」\s*$/, "").trim();
+  const match2 = /^(.+?):(\d+)(?:-(\d+))?$/.exec(withoutExcerpt);
+  if (match2 === null) return void 0;
+  const pathText = (match2[1] ?? "").trim();
+  if (!isRepoRelativePath(pathText)) return void 0;
+  const first = Number(match2[2] ?? "");
+  const last = match2[3] === void 0 ? first : Number(match2[3]);
+  if (!Number.isInteger(first) || !Number.isInteger(last) || first < 1 || last < first) return void 0;
+  return { kind: "path", path: pathText, first, last };
+}
+function lineCount(text) {
+  const lines = text.split(/\r?\n/);
+  return text.endsWith("\n") ? lines.length - 1 : lines.length;
+}
+function evidenceRefInvalid(ref, projectDir) {
+  if (ref.kind === "cmd") return false;
+  const absolute = path12.resolve(projectDir, ref.path);
+  const relative13 = path12.relative(projectDir, absolute);
+  if (relative13 === "" || relative13 === ".." || relative13.startsWith(`..${path12.sep}`) || path12.isAbsolute(relative13)) {
+    return true;
+  }
+  let text;
+  try {
+    if (!fs10.statSync(absolute).isFile()) return true;
+    text = fs10.readFileSync(absolute, "utf8");
+  } catch {
+    return true;
+  }
+  if (ref.last > lineCount(text)) return true;
+  return ref.last - ref.first > 200;
+}
+var SELF_EVIDENCE_BASENAMES = [
+  /^report.*\.md$/i,
+  /^output\.md$/i,
+  /^progress\.md$/i,
+  /^task\.md$/i
+];
+function isSelfEvidenceRef(ref) {
+  if (ref.kind !== "path") return false;
+  const basename15 = ref.path.split(/[\\/]/).pop() ?? "";
+  return SELF_EVIDENCE_BASENAMES.some((pattern) => pattern.test(basename15));
+}
+function declaredBudget(claims) {
+  let sum = 0;
+  let declared = 0;
+  for (const claim of claims) {
+    if (!Number.isFinite(claim.budget) || claim.budget < 0) continue;
+    sum += claim.budget;
+    declared += 1;
+  }
+  return declared === 0 ? CLAIM_BUDGET.callCap : sum;
+}
+function fetchCount(cell) {
+  const text = stripVerdictTicks(cell);
+  return /^\d+$/.test(text) ? Number(text) : void 0;
+}
+function tautologyIds(claims, projectDir) {
+  const ids = /* @__PURE__ */ new Set();
+  if (claims.length === 0) return ids;
+  const gaps = claimsGaps({ present: true, claims, errors: [] }, { projectDir, enforce: true });
+  for (const gap of gaps) {
+    const match2 = /^claim:(C-\d{2,3}(?:\.\d+)?):tautology$/.exec(gap);
+    if (match2 !== null && match2[1] !== void 0) ids.add(match2[1]);
+  }
+  return ids;
+}
+function claimCoverage(claims, table, opts = {}) {
+  const gaps = [];
+  if (claims.length === 0) return gaps;
+  if (!table.present) return ["claims:missing-table"];
+  const projectDir = opts.projectDir ?? process.cwd();
+  const rows = /* @__PURE__ */ new Map();
+  for (const row of table.rows) if (!rows.has(row.id)) rows.set(row.id, row);
+  const budgetCap = Math.min(declaredBudget(claims), CLAIM_BUDGET.callCap);
+  const tautological = tautologyIds(claims, projectDir);
+  for (const claim of claims) {
+    const row = rows.get(claim.id);
+    if (row === void 0) {
+      gaps.push(`claim:${claim.id}:missing-row`);
+      continue;
+    }
+    const verdict = verdictToken(row.verdict);
+    const finding = verdictToken(row.finding);
+    if (!VERDICT_TOKENS.includes(verdict)) gaps.push(`claim:${claim.id}:verdict`);
+    if (!FINDING_TOKENS.includes(finding)) gaps.push(`claim:${claim.id}:finding`);
+    if (VERDICT_FINDINGS[verdict] !== void 0 && FINDING_TOKENS.includes(finding) && !(VERDICT_FINDINGS[verdict] ?? []).includes(finding)) {
+      gaps.push(`claim:${claim.id}:verdict-finding`);
+    }
+    const refs = splitEvidenceRefs(row.evidence);
+    const parsed = refs.map((ref) => parseEvidenceRef(ref));
+    const needsEvidence = verdict === "closed" || verdict === "partial";
+    if (needsEvidence && refs.length === 0) gaps.push(`claim:${claim.id}:evidence`);
+    else if (parsed.some((ref) => ref === void 0 || evidenceRefInvalid(ref, projectDir))) {
+      gaps.push(`claim:${claim.id}:evidence`);
+    }
+    if (verdict === "unverified" && !UNVERIFIED_REASONS.includes(verdictToken(row.reason))) {
+      gaps.push(`claim:${claim.id}:reason`);
+    }
+    const parsedAll = parsed.filter((ref) => ref !== void 0);
+    if (parsedAll.length > 0 && parsedAll.length === refs.length && parsedAll.every(isSelfEvidenceRef)) {
+      gaps.push(`claim:${claim.id}:self-evidence`);
+    }
+    const declaredType = row.type === "" ? claim.type.toLowerCase() : row.type;
+    if (declaredType === "struct" && verdict === "closed") gaps.push(`claim:${claim.id}:struct-held`);
+    const fetches = fetchCount(row.fetches);
+    if (fetches === void 0 || fetches > budgetCap) gaps.push(`claim:${claim.id}:budget`);
+    if (tautological.has(claim.id)) gaps.push(`claim:${claim.id}:tautology`);
+  }
+  const declaredIds = new Set(claims.map((claim) => claim.id));
+  for (const row of table.rows) {
+    if (!declaredIds.has(row.id)) gaps.push(`claims:extra-row:${row.id}`);
+  }
+  return gaps;
+}
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/output-writer.ts
 function readFileSafe(filePath) {
   try {
-    return fs6.readFileSync(filePath, "utf8");
+    return fs11.readFileSync(filePath, "utf8");
   } catch {
     return "";
   }
 }
 function outputDir(taskKey, agenticdocRoot2) {
-  const resolved = path7.resolve(agenticdocRoot2, taskKey);
-  const root = path7.resolve(agenticdocRoot2);
-  if (!resolved.startsWith(`${root}${path7.sep}`) && resolved !== root) {
+  const resolved = path13.resolve(agenticdocRoot2, taskKey);
+  const root = path13.resolve(agenticdocRoot2);
+  if (!resolved.startsWith(`${root}${path13.sep}`) && resolved !== root) {
     throw new Error(`Invalid taskKey: path traversal detected in "${taskKey}"`);
   }
   return resolved;
@@ -14292,7 +16541,7 @@ function headline(summary) {
 }
 function typeFromTaskMd(dir) {
   try {
-    const reading = readTaskType(fs6.readFileSync(path7.join(dir, "task.md"), "utf8"));
+    const reading = readTaskType(fs11.readFileSync(path13.join(dir, "task.md"), "utf8"));
     return reading.source === "header" ? reading.type : void 0;
   } catch {
     return void 0;
@@ -14302,16 +16551,16 @@ var SLUG_REPORT_RE = /^report-.+\.md$/;
 function slugReportsByMtime(dir) {
   let names;
   try {
-    names = fs6.readdirSync(dir);
+    names = fs11.readdirSync(dir);
   } catch {
     return [];
   }
   const files = [];
   for (const name of names) {
     if (!SLUG_REPORT_RE.test(name)) continue;
-    const file = path7.join(dir, name);
+    const file = path13.join(dir, name);
     try {
-      const stat = fs6.statSync(file);
+      const stat = fs11.statSync(file);
       if (!stat.isFile() || stat.size === 0) continue;
       files.push({ file, mtimeMs: stat.mtimeMs });
     } catch {
@@ -14321,11 +16570,11 @@ function slugReportsByMtime(dir) {
   return files.map((entry) => entry.file);
 }
 function judgedProductFile(dir) {
-  const canonical = path7.join(dir, "report.md");
+  const canonical = path13.join(dir, "report.md");
   if (readFileSafe(canonical).trim() !== "") return canonical;
   const slug = slugReportsByMtime(dir)[0];
   if (slug !== void 0) return slug;
-  const output = path7.join(dir, "output.md");
+  const output = path13.join(dir, "output.md");
   if (readFileSafe(output).trim() !== "") return output;
   return void 0;
 }
@@ -14334,7 +16583,7 @@ function agentProductText(dir, summary) {
   return file === void 0 ? summary : readFileSafe(file);
 }
 function hasReportProduct(dir) {
-  if (readFileSafe(path7.join(dir, "report.md")).trim() !== "") return true;
+  if (readFileSafe(path13.join(dir, "report.md")).trim() !== "") return true;
   return slugReportsByMtime(dir).length > 0;
 }
 function currentRecoveryMissing(opts) {
@@ -14344,7 +16593,7 @@ function currentRecoveryMissing(opts) {
 }
 var MECHANICAL_CONTEXT_MARKER = "<!-- mw-mechanical-context-sources: v1 -->";
 function taskHeaderScalar(dir, key) {
-  const text = readFileSafe(path7.join(dir, "task.md"));
+  const text = readFileSafe(path13.join(dir, "task.md"));
   const match2 = new RegExp(`^[ \\t]*${key}[ \\t]*:[ \\t]*(\\S+)[ \\t]*$`, "m").exec(text);
   return match2?.[1] ?? "";
 }
@@ -14362,7 +16611,7 @@ function traceReadTargets(traceText) {
 function renderMechanicalSections(dir, target, names) {
   const cardPath = taskHeaderScalar(dir, "card_path");
   const cardSha = taskHeaderScalar(dir, "card_sha256");
-  const reads = traceReadTargets(readFileSafe(path7.join(dir, "trace.log")));
+  const reads = traceReadTargets(readFileSafe(path13.join(dir, "trace.log")));
   const card = cardPath === "" ? "`task.md`" : `\`${cardPath}\`${cardSha === "" ? "" : `\uFF08sha256 \`${cardSha}\`\uFF09`}`;
   const sources = reads.length > 0 ? reads : ["task.md"];
   return [
@@ -14374,7 +16623,7 @@ function renderMechanicalSections(dir, target, names) {
     "> \u672C\u8282\u7531\u6846\u67B6\u6309\u5DF2\u638C\u63E1\u4E8B\u5B9E\u673A\u68B0\u8865\u9F50\uFF08settle \u5224\u5B9A\u4E4B\u524D\uFF09\uFF1B\u4E0D\u542B\u5B9E\u8D28\u5224\u65AD\u3002",
     "",
     `- \u4EFB\u52A1\u5361\uFF1A${card}`,
-    `- \u4EA7\u7269\uFF1A\`${path7.basename(target)}\``,
+    `- \u4EA7\u7269\uFF1A\`${path13.basename(target)}\``,
     `- \u8BFB\u53D6\u6765\u6E90\uFF1A${sources.map((source) => `\`${source}\``).join("\u3001")}`,
     ""
   ].join("\n");
@@ -14400,7 +16649,7 @@ function appendMechanicalContextSources(opts) {
   }
   let appended = false;
   try {
-    fs6.appendFileSync(target, renderMechanicalSections(dir, target, toFill), "utf8");
+    fs11.appendFileSync(target, renderMechanicalSections(dir, target, toFill), "utf8");
     appended = true;
   } catch {
     return { ok: false, appended: false, missing: preMissing, target, reason: "not-writable" };
@@ -14418,7 +16667,7 @@ function runStartedAtMs(dir) {
   return Number.isFinite(ms) ? ms : void 0;
 }
 function deliverableDir(taskDir) {
-  return path7.join(path7.dirname(path7.dirname(taskDir)), "evidence");
+  return path13.join(path13.dirname(path13.dirname(taskDir)), "evidence");
 }
 function readTerminalGaps(opts) {
   const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
@@ -14436,7 +16685,8 @@ function readTerminalGaps(opts) {
     };
   const productText = agentProductText(dir, opts.summary);
   const missingSections = opts.judgeRecovery === false ? [] : checkRecovery(productText, type).missing;
-  const traceText = readFileSafe(path7.join(dir, "trace.log"));
+  const claimGaps = opts.claims === void 0 || opts.judgeRecovery === false ? void 0 : claimCoverage(opts.claims, parseVerdictTable(productText), { projectDir: opts.projectRoot });
+  const traceText = readFileSafe(path13.join(dir, "trace.log"));
   const ledger = diffLedger(productText, traceText, {
     role: type,
     deliverableDir: deliverableDir(dir),
@@ -14447,7 +16697,7 @@ function readTerminalGaps(opts) {
   const unresolvableSet = new Set(ledger.unresolvable);
   const unjudgeableFiles = ledger.unjudgeable ? ledger.declared.filter((file) => !infraSet.has(file) && !unresolvableSet.has(file)) : [];
   const malformedFiles = collectMalformedCandidates(productText);
-  return {
+  const gaps = {
     judged: true,
     missingSections,
     unrecordedFiles: ledger.extra,
@@ -14459,13 +16709,27 @@ function readTerminalGaps(opts) {
     // T-17c: declared paths not on disk are named for visibility but never
     // judged (a nonexistent file cannot be a write).
     unresolvableFiles: ledger.unresolvable,
-    ok: missingSections.length === 0 && ledger.extra.length === 0 && unjudgeableFiles.length === 0
+    ok: missingSections.length === 0 && ledger.extra.length === 0 && unjudgeableFiles.length === 0 && (claimGaps?.length ?? 0) === 0
   };
+  if (claimGaps !== void 0) gaps.claimGaps = claimGaps;
+  return gaps;
+}
+function claimGapNote(claimGaps) {
+  if (claimGaps === void 0 || claimGaps.length === 0) return "";
+  const ids = [];
+  for (const gap of claimGaps) {
+    const match2 = /^claim:(C-\d{2,3}(?:\.\d+)?):/.exec(gap);
+    if (match2 === null) continue;
+    const id = match2[1] ?? "";
+    if (!ids.includes(id)) ids.push(id);
+  }
+  const items = ids.length > 0 ? ids : Array.from(new Set(claimGaps));
+  return `\u672A\u88C1\u51B3\u65AD\u8A00\uFF1A${items.slice(0, 3).join("\u3001")}${items.length > 3 ? "\u2026" : ""}`;
 }
 function writeOutput(opts) {
   const dir = outputDir(opts.taskKey, opts.agenticdocRoot);
-  fs6.mkdirSync(dir, { recursive: true });
-  const outputPath = path7.join(dir, "output.md");
+  fs11.mkdirSync(dir, { recursive: true });
+  const outputPath = path13.join(dir, "output.md");
   const gaps = opts.terminalGaps ?? readTerminalGaps({ taskKey: opts.taskKey, agenticdocRoot: opts.agenticdocRoot, summary: opts.summary });
   const gapNote = gaps.missingSections.length > 0 ? `\u7F3A\u5931\u6BB5\uFF1A${gaps.missingSections.join("\u3001")}` : "";
   const ledgerNote = gaps.unrecordedFiles.length > 0 ? `\u672A\u8BB0\u5F55\u5199\u5165\uFF1A${gaps.unrecordedFiles.join("\u3001")}` : "";
@@ -14494,7 +16758,7 @@ function writeOutput(opts) {
       `ledger-unresolvable count=${gaps.unresolvableFiles.length} samples=${gaps.unresolvableFiles.join(",")}`
     );
   }
-  const terminalNote = [gapNote, ledgerNote, unjudgeableNote].filter((note) => note !== "").join("\uFF1B");
+  const terminalNote = [gapNote, ledgerNote, unjudgeableNote, claimGapNote(gaps.claimGaps)].filter((note) => note !== "").join("\uFF1B");
   const sections = [];
   sections.push(`## TL;DR
 
@@ -14565,7 +16829,7 @@ ${unresolvableNote}`);
 ` : ""}${sections.join("\n\n")}
 `;
   const existing = readFileSafe(outputPath);
-  fs6.writeFileSync(outputPath, existing.trim() === "" ? body : `${existing.trimEnd()}
+  fs11.writeFileSync(outputPath, existing.trim() === "" ? body : `${existing.trimEnd()}
 
 ---
 
@@ -14573,16 +16837,16 @@ ${body}`, "utf8");
 }
 function appendTrace(taskKey, agenticdocRoot2, line) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs6.mkdirSync(dir, { recursive: true });
-  const tracePath = path7.join(dir, "trace.log");
+  fs11.mkdirSync(dir, { recursive: true });
+  const tracePath = path13.join(dir, "trace.log");
   const ts = (/* @__PURE__ */ new Date()).toISOString();
-  fs6.appendFileSync(tracePath, `[FLOW] ${ts} ${line}
+  fs11.appendFileSync(tracePath, `[FLOW] ${ts} ${line}
 `, "utf8");
 }
 function appendLifecycleLine(taskKey, agenticdocRoot2, line) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs6.mkdirSync(dir, { recursive: true });
-  fs6.appendFileSync(path7.join(dir, "trace.log"), `${line}
+  fs11.mkdirSync(dir, { recursive: true });
+  fs11.appendFileSync(path13.join(dir, "trace.log"), `${line}
 `, "utf8");
 }
 function truncLine(s, max) {
@@ -14631,8 +16895,8 @@ function formatMachineCheckpoint(opts) {
 }
 function appendProgressLine(taskKey, agenticdocRoot2, line) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs6.mkdirSync(dir, { recursive: true });
-  fs6.appendFileSync(path7.join(dir, "progress.md"), `${line}
+  fs11.mkdirSync(dir, { recursive: true });
+  fs11.appendFileSync(path13.join(dir, "progress.md"), `${line}
 `, "utf8");
 }
 function appendError(taskKey, agenticdocRoot2, message) {
@@ -14654,17 +16918,17 @@ function appendEnd(taskKey, agenticdocRoot2, opts) {
 }
 function appendGoalCheck(taskKey, agenticdocRoot2, phaseNum, goalMtimeMs) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs6.mkdirSync(dir, { recursive: true });
-  const tracePath = path7.join(dir, "trace.log");
-  fs6.appendFileSync(tracePath, `[GOAL_CHECK] phase=${phaseNum} goal_mtime=${goalMtimeMs}
+  fs11.mkdirSync(dir, { recursive: true });
+  const tracePath = path13.join(dir, "trace.log");
+  fs11.appendFileSync(tracePath, `[GOAL_CHECK] phase=${phaseNum} goal_mtime=${goalMtimeMs}
 `, "utf8");
 }
 function appendHeartbeat(taskKey, agenticdocRoot2, phase) {
   const dir = outputDir(taskKey, agenticdocRoot2);
-  fs6.mkdirSync(dir, { recursive: true });
-  const tracePath = path7.join(dir, "trace.log");
+  fs11.mkdirSync(dir, { recursive: true });
+  const tracePath = path13.join(dir, "trace.log");
   const ts = (/* @__PURE__ */ new Date()).toISOString();
-  fs6.appendFileSync(tracePath, `[HEARTBEAT] ${ts} task=${taskKey} phase=${phase}
+  fs11.appendFileSync(tracePath, `[HEARTBEAT] ${ts} task=${taskKey} phase=${phase}
 `, "utf8");
 }
 
@@ -14699,8 +16963,8 @@ function ragRequiredMissingLine(e) {
   return `${RAG_REQUIRED_MISSING} role=${e.role} phase=${e.phase} server=${e.server}`;
 }
 function appendEvidence(taskDir, line) {
-  const resolved = path8.resolve(taskDir);
-  appendTrace(path8.basename(resolved), path8.dirname(resolved), line);
+  const resolved = path14.resolve(taskDir);
+  appendTrace(path14.basename(resolved), path14.dirname(resolved), line);
 }
 function redactSecrets(text, tokenEnvNames) {
   let redacted = text;
@@ -14714,12 +16978,12 @@ function redactSecrets(text, tokenEnvNames) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/rag/research-doc.ts
-import * as fs8 from "node:fs";
-import * as path10 from "node:path";
+import * as fs13 from "node:fs";
+import * as path16 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/rag/adapter.ts
-import * as fs7 from "node:fs";
-import * as path9 from "node:path";
+import * as fs12 from "node:fs";
+import * as path15 from "node:path";
 var DEFAULT_ROLE = "engine";
 var GRAPH_TOOLS = /* @__PURE__ */ new Set(["rag_graph", "rag_impact"]);
 var CHAT_TOOLS = /* @__PURE__ */ new Set(["rag_chat"]);
@@ -14785,7 +17049,7 @@ function loadPathRoots(pathRootsFile) {
   if (pathRootsFile === null || pathRootsFile.length === 0) return null;
   let text;
   try {
-    text = fs7.readFileSync(pathRootsFile, "utf8");
+    text = fs12.readFileSync(pathRootsFile, "utf8");
   } catch (error) {
     const code = error.code;
     if (code === "ENOENT" || code === "ENOTDIR") return null;
@@ -14816,11 +17080,11 @@ function resolveLocalPath(filePath, roots) {
     return { localPath: null, exists: false, lineHint: null, reason: "path_roots not configured" };
   }
   let role = DEFAULT_ROLE;
-  let relative11 = filePath;
+  let relative13 = filePath;
   const separator = filePath.indexOf("::");
   if (separator >= 0) {
     role = filePath.slice(0, separator).trim();
-    relative11 = filePath.slice(separator + 2);
+    relative13 = filePath.slice(separator + 2);
   }
   if (!Object.hasOwn(roots, role)) {
     const available = Object.keys(roots).sort().join(", ");
@@ -14831,9 +17095,9 @@ function resolveLocalPath(filePath, roots) {
       reason: `unknown role '${role}' (available roles: ${available})`
     };
   }
-  const normalizedRelative = relative11.trim().replace(/\\/g, "/").replace(/^\/+/, "");
-  const root = path9.resolve(roots[role]);
-  const resolved = path9.resolve(root, normalizedRelative);
+  const normalizedRelative = relative13.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  const root = path15.resolve(roots[role]);
+  const resolved = path15.resolve(root, normalizedRelative);
   if (!isInside(root, resolved)) {
     return {
       localPath: null,
@@ -14844,17 +17108,17 @@ function resolveLocalPath(filePath, roots) {
   }
   let exists = false;
   try {
-    exists = fs7.statSync(resolved).isFile();
+    exists = fs12.statSync(resolved).isFile();
   } catch {
     exists = false;
   }
   return { localPath: resolved, exists, lineHint: null, reason: exists ? null : "file missing" };
 }
 function isInside(root, candidate) {
-  const relative11 = path9.relative(root, candidate);
-  if (relative11 === "") return true;
-  if (path9.isAbsolute(relative11)) return false;
-  return relative11.split(/[\\/]/)[0] !== "..";
+  const relative13 = path15.relative(root, candidate);
+  if (relative13 === "") return true;
+  if (path15.isAbsolute(relative13)) return false;
+  return relative13.split(/[\\/]/)[0] !== "..";
 }
 var RAG_TOOL_MAP = {
   rag_search: { mcp: ["rag_search"], multi: "rag_search_multi_rounds" },
@@ -15026,16 +17290,16 @@ function buildItem(server, source, filePath, lineStart, symbolName, qualifiedNam
 var RESEARCH_DOC_SECTIONS = ["\u67E5\u8BE2", "\u7ED3\u8BBA", "\u5F15\u7528", "\u672A\u89E3\u51B3", "\u5FEB\u7167", "\u5F71\u54CD\u9762"];
 var RESEARCH_DOC_HEADINGS = RESEARCH_DOC_SECTIONS.map((section) => `## ${section}`);
 function researchDocDir(keyDir) {
-  return path10.join(keyDir, "rag");
+  return path16.join(keyDir, "rag");
 }
 function listResearchDocs(keyDir) {
   let names;
   try {
-    names = fs8.readdirSync(researchDocDir(keyDir));
+    names = fs13.readdirSync(researchDocDir(keyDir));
   } catch {
     return [];
   }
-  return names.filter((name) => name.endsWith(".md") && !name.startsWith(".")).map((name) => path10.join(researchDocDir(keyDir), name)).sort();
+  return names.filter((name) => name.endsWith(".md") && !name.startsWith(".")).map((name) => path16.join(researchDocDir(keyDir), name)).sort();
 }
 function splitResearchDocSections(text) {
   const sections = /* @__PURE__ */ new Map();
@@ -15100,7 +17364,7 @@ function collectCitations(lines) {
 function validateResearchDoc(keyDir) {
   const findings = [];
   const docs = listResearchDocs(keyDir);
-  const named = docs.filter((doc) => path10.basename(doc, ".md").includes("-"));
+  const named = docs.filter((doc) => path16.basename(doc, ".md").includes("-"));
   const docPath = named[0] ?? docs[0] ?? null;
   if (docPath === null) {
     findings.push("no research document at rag/<server>-<slug>.md");
@@ -15116,9 +17380,9 @@ function validateResearchDoc(keyDir) {
     };
   }
   if (!named.includes(docPath)) {
-    findings.push(`research doc '${path10.basename(docPath)}' does not match <server>-<slug>.md`);
+    findings.push(`research doc '${path16.basename(docPath)}' does not match <server>-<slug>.md`);
   }
-  const sections = splitResearchDocSections(fs8.readFileSync(docPath, "utf8"));
+  const sections = splitResearchDocSections(fs13.readFileSync(docPath, "utf8"));
   const headings = [];
   const missingSections = [];
   for (const section of RESEARCH_DOC_SECTIONS) {
@@ -15154,13 +17418,285 @@ function researchDocEvidence(report, role, phase, server) {
   return report.ok ? null : ragRequiredMissingLine({ role, phase, server });
 }
 
+// packages/coding-agent/src/extensions/agent-team-loop/shared/decide-policy.ts
+import * as fs14 from "node:fs";
+import * as path17 from "node:path";
+var DECIDE_POLICY_KEYS = ["min_confidence", "max_questions", "timeout_s"];
+var DECIDE_POLICY_BUILTIN = {
+  min_confidence: 0.7,
+  max_questions: 8,
+  timeout_s: 20
+};
+var DECIDE_POLICY_ROW_BOUNDS = {
+  min_confidence: [0, 1],
+  max_questions: [1, 8],
+  timeout_s: [1, 300]
+};
+function isRecord2(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function readJsonRecord(file) {
+  try {
+    const parsed = JSON.parse(fs14.readFileSync(file, "utf8"));
+    return isRecord2(parsed) ? parsed : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function policyNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : void 0;
+}
+function coerceDecidePolicyValue(key, value, perDp) {
+  const number = policyNumber(value);
+  if (number === void 0) return { problem: `must be a number, got ${JSON.stringify(value)}` };
+  if (key === "min_confidence") {
+    const [low, high] = perDp ? DECIDE_POLICY_ROW_BOUNDS.min_confidence : [0, 1];
+    if (!(low <= number && number <= high)) return { problem: `${number} is outside [${low}, ${high}]` };
+    return { value: number };
+  }
+  if (!Number.isInteger(number)) return { problem: `must be an integer, got ${JSON.stringify(value)}` };
+  if (perDp) {
+    const [low, high] = DECIDE_POLICY_ROW_BOUNDS[key];
+    if (!(low <= number && number <= high)) return { problem: `${number} is outside [${low}, ${high}]` };
+  } else if (number < 1) {
+    return { problem: `must be >= 1, got ${number}` };
+  }
+  return { value: number };
+}
+function layerValue(layer, key, perDp, problems, nullIsUndeclared) {
+  if (layer === void 0 || !Object.hasOwn(layer, key)) return void 0;
+  const raw = layer[key];
+  if (nullIsUndeclared && (raw === null || raw === void 0)) return void 0;
+  const parsed = coerceDecidePolicyValue(key, raw, perDp);
+  if (parsed.problem !== void 0) {
+    problems.push(`L8: ${key} ${parsed.problem}; effective value falls back to the next layer`);
+    return void 0;
+  }
+  return parsed.value;
+}
+function resolveDecidePolicy(dpId, projectDir) {
+  const pointsPath = path17.join(projectDir, ".mw", "decide-points.json");
+  const decidePath = path17.join(projectDir, ".mw", "decide.json");
+  const points = readJsonRecord(pointsPath);
+  const rawPoints = points?.points;
+  const rawRow = isRecord2(rawPoints) && Object.hasOwn(rawPoints, dpId) ? rawPoints[dpId] : void 0;
+  const row = isRecord2(rawRow) ? rawRow : void 0;
+  const globals = readJsonRecord(decidePath);
+  const problems = [];
+  const origins = {};
+  const effective = {};
+  for (const key of DECIDE_POLICY_KEYS) {
+    const rowValue = layerValue(row, key, true, problems, false);
+    if (rowValue !== void 0) {
+      effective[key] = rowValue;
+      origins[key] = "row";
+      continue;
+    }
+    const globalValue = layerValue(globals, key, false, problems, true);
+    if (globalValue !== void 0) {
+      effective[key] = globalValue;
+      origins[key] = "decide.json";
+      continue;
+    }
+    effective[key] = DECIDE_POLICY_BUILTIN[key];
+    origins[key] = "builtin";
+  }
+  return {
+    minConfidence: effective.min_confidence,
+    maxQuestions: effective.max_questions,
+    timeoutS: effective.timeout_s,
+    origins,
+    problems,
+    pointsPath,
+    decidePath
+  };
+}
+
+// packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts
+var DECIDE_REGISTRY = {
+  "dp1-dispatch-type": {
+    questionsVersion: "q-09d3aad3",
+    requiredStateFields: [
+      { name: "schema_version", type: "integer" },
+      { name: "decision_point", type: "string" },
+      { name: "key", type: "string" },
+      { name: "phase", type: "string" },
+      { name: "task_type", type: "string" },
+      { name: "requested_type", type: "string" },
+      { name: "risk", type: "string" },
+      { name: "risk_source", type: "string" },
+      { name: "authority_tier", type: "string" },
+      { name: "task_summary", type: "string" },
+      { name: "questions_version", type: "string" },
+      { name: "scope.write_scope", type: "array" },
+      { name: "scope.file_extensions", type: "array" }
+    ],
+    contextSlots: ["task_excerpt"]
+  },
+  "dp10-dependency": {
+    questionsVersion: "q-3bbd9e44",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp11-credential": {
+    questionsVersion: "q-080722b1",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp12-destructive": {
+    questionsVersion: "q-02f737ab",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp13-commit-release": {
+    questionsVersion: "q-6d26173d",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp14-rule-conflict": {
+    questionsVersion: "q-b667b8d3",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp15-autopilot-gate": {
+    questionsVersion: "q-09e25bec",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp16-goal": {
+    questionsVersion: "q-ba34304c",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp17-spec-lock": {
+    questionsVersion: "q-f81bd06d",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp18-claim": {
+    questionsVersion: "q-094db8cc",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp19-foreign-write": {
+    questionsVersion: "q-df9c727d",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp2-checkpoint-split": {
+    questionsVersion: "q-ba8e970f",
+    requiredStateFields: [
+      { name: "schema_version", type: "integer" },
+      { name: "decision_point", type: "string" },
+      { name: "key", type: "string" },
+      { name: "phase", type: "string" },
+      { name: "task_type", type: "string" },
+      { name: "risk", type: "string" },
+      { name: "risk_source", type: "string" },
+      { name: "authority_tier", type: "string" },
+      { name: "questions_version", type: "string" },
+      { name: "progress.elapsed_minutes", type: "integer" },
+      { name: "progress.budget_minutes", type: "integer" },
+      { name: "progress.phases_done", type: "integer" },
+      { name: "progress.phases_total", type: "integer" },
+      { name: "progress.artifact_present", type: "boolean" }
+    ],
+    contextSlots: ["change_summary", "artifact_status"]
+  },
+  "dp20-stage-close": {
+    questionsVersion: "q-30afd59f",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp21-refine": {
+    questionsVersion: "q-ddd23fe2",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp22-debug-plan": {
+    questionsVersion: "q-a1ed6dbc",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp23-snapshot": {
+    questionsVersion: "q-f5cecffb",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp24-pi-trust": {
+    questionsVersion: "q-20850ffa",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp25-signoff-conclusion": {
+    questionsVersion: "q-cad37e2a",
+    requiredStateFields: [
+      { name: "key", type: "string" },
+      { name: "rows_total", type: "integer" },
+      { name: "rows_available", type: "integer" },
+      { name: "chain_ok", type: "boolean" },
+      { name: "p0_open", type: "array" }
+    ],
+    contextSlots: []
+  },
+  "dp3-worker-clarify": {
+    questionsVersion: "q-fcbd3847",
+    requiredStateFields: [
+      { name: "schema_version", type: "integer" },
+      { name: "decision_point", type: "string" },
+      { name: "key", type: "string" },
+      { name: "phase", type: "string" },
+      { name: "task_type", type: "string" },
+      { name: "risk", type: "string" },
+      { name: "risk_source", type: "string" },
+      { name: "authority_tier", type: "string" },
+      { name: "task_summary", type: "string" },
+      { name: "questions_version", type: "string" },
+      { name: "ambiguity.kind", type: "string" },
+      { name: "ambiguity.question", type: "string" },
+      { name: "local_candidates", type: "array" }
+    ],
+    contextSlots: ["change_summary", "candidate_snippets"]
+  },
+  "dp4-failure-handling": {
+    questionsVersion: "q-b93176a8",
+    requiredStateFields: [],
+    contextSlots: ["error_excerpt"]
+  },
+  "dp5-test-triage": {
+    questionsVersion: "q-cc104f59",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp6-qg-verdict": {
+    questionsVersion: "q-16b4bb5c",
+    requiredStateFields: [],
+    contextSlots: ["error_excerpt"]
+  },
+  "dp7-gate-failure": {
+    questionsVersion: "q-c8e23cc7",
+    requiredStateFields: [],
+    contextSlots: ["error_excerpt"]
+  },
+  "dp8-scope-change": {
+    questionsVersion: "q-e5d928e8",
+    requiredStateFields: [],
+    contextSlots: []
+  },
+  "dp9-model-select": {
+    questionsVersion: "q-bc7918b9",
+    requiredStateFields: [],
+    contextSlots: []
+  }
+};
+
 // packages/coding-agent/src/extensions/agent-team-loop/shared/deliverable-evidence.ts
-import * as fs11 from "node:fs";
-import * as path15 from "node:path";
+import * as fs17 from "node:fs";
+import * as path21 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/write-surface.ts
-import * as fs10 from "node:fs";
-import * as path14 from "node:path";
+import * as fs16 from "node:fs";
+import * as path20 from "node:path";
 
 // node_modules/balanced-match/dist/esm/index.js
 var balanced = (a, b, str) => {
@@ -16267,12 +18803,12 @@ var qmarksTestNoExtDot = ([$0]) => {
   return (f) => f.length === len && f !== "." && f !== "..";
 };
 var defaultPlatform = typeof process === "object" && process ? typeof process.env === "object" && process.env && process.env.__MINIMATCH_TESTING_PLATFORM__ || process.platform : "posix";
-var path11 = {
+var path18 = {
   win32: { sep: "\\" },
   posix: { sep: "/" }
 };
-var sep5 = defaultPlatform === "win32" ? path11.win32.sep : path11.posix.sep;
-minimatch.sep = sep5;
+var sep7 = defaultPlatform === "win32" ? path18.win32.sep : path18.posix.sep;
+minimatch.sep = sep7;
 var GLOBSTAR = /* @__PURE__ */ Symbol("globstar **");
 minimatch.GLOBSTAR = GLOBSTAR;
 var qmark2 = "[^/]";
@@ -17018,27 +19554,27 @@ minimatch.escape = escape;
 minimatch.unescape = unescape;
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/read-scope.ts
-import * as fs9 from "node:fs";
-import * as path12 from "node:path";
+import * as fs15 from "node:fs";
+import * as path19 from "node:path";
 var DEFAULT_READ_FILE_CAP = 8;
 var DEFAULT_READ_BYTE_CAP = 65536;
 var IS_WIN32 = process.platform === "win32";
 function isSameOrUnder(prefix, candidate) {
   const a = IS_WIN32 ? prefix.toLowerCase() : prefix;
   const c = IS_WIN32 ? candidate.toLowerCase() : candidate;
-  return c === a || c.startsWith(`${a}${path12.sep}`);
+  return c === a || c.startsWith(`${a}${path19.sep}`);
 }
 function normalizeForCompare(projectRoot, p) {
-  const abs = path12.resolve(projectRoot, p);
+  const abs = path19.resolve(projectRoot, p);
   let cur = abs;
   const tail = [];
   for (; ; ) {
     try {
-      return path12.join(fs9.realpathSync(cur), ...tail);
+      return path19.join(fs15.realpathSync(cur), ...tail);
     } catch {
-      const parent = path12.dirname(cur);
+      const parent = path19.dirname(cur);
       if (parent === cur) return abs;
-      tail.unshift(path12.basename(cur));
+      tail.unshift(path19.basename(cur));
       cur = parent;
     }
   }
@@ -17049,7 +19585,7 @@ function isWithinScope(projectRoot, scopeEntries, requestPath) {
 }
 function defaultStatSize(absolutePath) {
   try {
-    return fs9.statSync(absolutePath).size;
+    return fs15.statSync(absolutePath).size;
   } catch {
     return 0;
   }
@@ -17057,7 +19593,7 @@ function defaultStatSize(absolutePath) {
 function matchedDenyGlob(projectRoot, denyGlobs, rawPath) {
   if (denyGlobs.length === 0) return null;
   const abs = normalizeForCompare(projectRoot, rawPath);
-  const rel = path12.relative(projectRoot, abs).replaceAll("\\", "/");
+  const rel = path19.relative(projectRoot, abs).replaceAll("\\", "/");
   for (const glob of denyGlobs) {
     if (minimatch(abs, glob) || minimatch(rel, glob)) return glob;
     if (glob.endsWith("/**")) {
@@ -17095,7 +19631,7 @@ function checkReadScopeCall(projectRoot, config, state, tool, rawPath, statSize 
   }
   let chargedBytes = 0;
   if (tool === "read") {
-    chargedBytes = statSize(path12.resolve(projectRoot, rawPath));
+    chargedBytes = statSize(path19.resolve(projectRoot, rawPath));
     if (state.bytesRead + chargedBytes > config.byteCap) {
       return {
         allowed: false,
@@ -17129,30 +19665,6 @@ function readScopeConfigFromMeta(meta) {
     fileCap: meta.readFileCap ?? DEFAULT_READ_FILE_CAP,
     byteCap: meta.readByteCap ?? DEFAULT_READ_BYTE_CAP
   };
-}
-
-// packages/coding-agent/src/extensions/agent-team-loop/shared/paths.ts
-import * as path13 from "node:path";
-var AGENTICDOC_DIR = ".agenticdoc";
-var GOAL_FILE = "goal.md";
-var SCRATCH_WORKERS_KEY = "_scratch";
-var WORKERS_DIR = "workers";
-function agenticdocRoot(projectDir) {
-  return path13.join(projectDir, AGENTICDOC_DIR);
-}
-function goalPath(agenticdocRoot2) {
-  return path13.join(agenticdocRoot2, GOAL_FILE);
-}
-function workersDirFor(agenticdocRoot2, ownerKey) {
-  return path13.join(agenticdocRoot2, ownerKey, WORKERS_DIR);
-}
-function workerTaskDir(agenticdocRoot2, ownerKey, taskKey) {
-  return path13.join(workersDirFor(agenticdocRoot2, ownerKey), taskKey);
-}
-function controlRootFromTaskPath(taskPath) {
-  const workersDir = path13.dirname(path13.dirname(taskPath));
-  const agenticdocRoot2 = path13.dirname(path13.dirname(workersDir));
-  return path13.dirname(agenticdocRoot2);
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/write-surface.ts
@@ -17200,26 +19712,26 @@ function classifyWriteTargetShape(pathToken, ctx) {
   if (t.includes(":")) return "colon";
   if (/\.[A-Za-z0-9]{1,8}$/.test(t)) return "ext";
   if (WRITE_INTENT_DENY_NAMES.has(t)) return "deny-name";
-  if (fs10.existsSync(path14.resolve(ctx.projectRoot, t))) return "exists";
+  if (fs16.existsSync(path20.resolve(ctx.projectRoot, t))) return "exists";
   return "bare";
 }
 function resolveWriteSurfacePaths(seed) {
-  const taskDir = path14.resolve(seed.taskDir);
-  const projectRoot = seed.projectRoot === void 0 ? process.cwd() : path14.resolve(seed.projectRoot);
+  const taskDir = path20.resolve(seed.taskDir);
+  const projectRoot = seed.projectRoot === void 0 ? process.cwd() : path20.resolve(seed.projectRoot);
   return {
     taskDir,
-    keyDir: seed.keyDir === void 0 ? void 0 : path14.resolve(seed.keyDir),
-    agenticdocRoot: seed.trueRoot === void 0 ? void 0 : path14.resolve(seed.trueRoot),
+    keyDir: seed.keyDir === void 0 ? void 0 : path20.resolve(seed.keyDir),
+    agenticdocRoot: seed.trueRoot === void 0 ? void 0 : path20.resolve(seed.trueRoot),
     projectRoot
   };
 }
 function deriveWriteSurfacePaths(taskDir) {
-  const abs = path14.resolve(taskDir);
-  const workersDir = path14.dirname(abs);
-  if (path14.basename(workersDir) !== WORKERS_DIR) return { taskDir: abs, projectRoot: process.cwd() };
-  const keyDir = path14.dirname(workersDir);
-  const trueRoot = path14.dirname(keyDir);
-  const projectRoot = path14.dirname(trueRoot);
+  const abs = path20.resolve(taskDir);
+  const workersDir = path20.dirname(abs);
+  if (path20.basename(workersDir) !== WORKERS_DIR) return { taskDir: abs, projectRoot: process.cwd() };
+  const keyDir = path20.dirname(workersDir);
+  const trueRoot = path20.dirname(keyDir);
+  const projectRoot = path20.dirname(trueRoot);
   return { taskDir: abs, projectRoot, keyDir, trueRoot };
 }
 function samePath2(a, b) {
@@ -17229,19 +19741,19 @@ function pmWriteDenyReason(ctx, target) {
   const keyDir = ctx.keyDir;
   const trueRoot = ctx.agenticdocRoot;
   if (keyDir !== void 0) {
-    if (samePath2(target, path14.join(keyDir, "pm-state.md"))) return "pm-state.md";
-    const workersDir = path14.join(keyDir, WORKERS_DIR);
+    if (samePath2(target, path20.join(keyDir, "pm-state.md"))) return "pm-state.md";
+    const workersDir = path20.join(keyDir, WORKERS_DIR);
     if (isSameOrUnder(workersDir, target)) {
-      const first = path14.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
+      const first = path20.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
       if (first.startsWith("_workers")) return "workers/_workers*";
     }
   }
-  if (trueRoot !== void 0 && samePath2(target, path14.join(trueRoot, "_index.parallel"))) return "_index.parallel";
+  if (trueRoot !== void 0 && samePath2(target, path20.join(trueRoot, "_index.parallel"))) return "_index.parallel";
   if (trueRoot !== void 0 && keyDir !== void 0 && isSameOrUnder(trueRoot, target) && !isSameOrUnder(keyDir, target)) {
     return "other key dir / .agenticdoc root";
   }
-  if (isSameOrUnder(path14.join(ctx.projectRoot, "packages"), target)) return "packages/**";
-  if (isSameOrUnder(path14.join(ctx.projectRoot, ".git"), target)) return ".git/**";
+  if (isSameOrUnder(path20.join(ctx.projectRoot, "packages"), target)) return "packages/**";
+  if (isSameOrUnder(path20.join(ctx.projectRoot, ".git"), target)) return ".git/**";
   return null;
 }
 var GLOB_MAGIC_RE = /[*?[\]{}]/;
@@ -17281,13 +19793,13 @@ function matchesWriteScopeEntry(projectRoot, entry, absoluteTarget) {
   const normalized = entry.trim();
   if (normalized === "") return false;
   if (GLOB_MAGIC_RE.test(normalized)) {
-    const relative11 = path14.relative(projectRoot, absoluteTarget).replaceAll("\\", "/");
+    const relative13 = path20.relative(projectRoot, absoluteTarget).replaceAll("\\", "/");
     const forward = absoluteTarget.replaceAll("\\", "/");
     const glob = normalized.replaceAll("\\", "/");
-    if (minimatch(relative11, glob) || minimatch(forward, glob)) return true;
+    if (minimatch(relative13, glob) || minimatch(forward, glob)) return true;
     if (glob.endsWith("/**")) {
       const stripped = glob.slice(0, -3);
-      if (stripped !== "" && (minimatch(relative11, stripped) || minimatch(forward, stripped))) return true;
+      if (stripped !== "" && (minimatch(relative13, stripped) || minimatch(forward, stripped))) return true;
     }
     return false;
   }
@@ -17334,7 +19846,7 @@ function resolveOwnWriteTarget(pathToken, paths, opts) {
   const evidenceTarget = matchEvidenceTarget(pathToken, paths, opts?.evidenceBasis ?? "dual");
   if (evidenceTarget !== null) return { domain: "evidence", target: evidenceTarget };
   if ((opts?.basenameChannel ?? true) && !/[\\/]/.test(pathToken) && WORKER_FILE_NAME_RE.test(pathToken)) {
-    return { domain: "task-dir", target: path14.join(paths.taskDir, pathToken) };
+    return { domain: "task-dir", target: path20.join(paths.taskDir, pathToken) };
   }
   return null;
 }
@@ -17376,7 +19888,7 @@ var MACHINE_SIGNAL_RE = /\[VERIFY\]|VERDICT=|TASKS=|\[CHECKPOINT\]/;
 var EVIDENCE_REF_RE = /evidence[\\/]([A-Za-z0-9._\-\\/]+?\.md)/g;
 function readTextFile(file) {
   try {
-    return fs11.readFileSync(file, "utf8");
+    return fs17.readFileSync(file, "utf8");
   } catch {
     return "";
   }
@@ -17384,13 +19896,13 @@ function readTextFile(file) {
 function findNonEmptyReport(taskDir) {
   let names;
   try {
-    names = fs11.readdirSync(taskDir);
+    names = fs17.readdirSync(taskDir);
   } catch {
     return void 0;
   }
   for (const name of names.sort()) {
     if (name === "progress.md" || !WORKER_FILE_NAME_RE.test(name)) continue;
-    if (readTextFile(path15.join(taskDir, name)).trim() === "") continue;
+    if (readTextFile(path21.join(taskDir, name)).trim() === "") continue;
     return name;
   }
   return void 0;
@@ -17421,16 +19933,16 @@ function hasNonPlaceholderProduct(text) {
   return candidates.some((body) => !isPlaceholderBody(body));
 }
 function findReferencedEvidence(taskDir, text) {
-  const keyDir = path15.dirname(path15.dirname(taskDir));
+  const keyDir = path21.dirname(path21.dirname(taskDir));
   const startedAt = readRunState(taskDir)?.started_at;
   const startedAtMs = typeof startedAt === "string" ? Date.parse(startedAt) : Number.NaN;
   for (const match2 of text.matchAll(EVIDENCE_REF_RE)) {
     const rel = match2[1].replace(/\\/g, "/");
     if (rel === "" || rel.includes("..")) continue;
-    const candidate = path15.join(keyDir, "evidence", rel);
+    const candidate = path21.join(keyDir, "evidence", rel);
     let stat;
     try {
-      stat = fs11.statSync(candidate);
+      stat = fs17.statSync(candidate);
     } catch {
       continue;
     }
@@ -17450,7 +19962,7 @@ function hasDeliverableEvidence(taskDir, outputText = "") {
   if (report !== void 0) {
     return { delivered: true, channel: "report", detail: report };
   }
-  const existing = readTextFile(path15.join(taskDir, "output.md"));
+  const existing = readTextFile(path21.join(taskDir, "output.md"));
   const productText = existing.trim() !== "" ? existing : outputText;
   if (productText.trim() === "") {
     return { delivered: false, channel: "none", detail: "no report file and no output text" };
@@ -17477,295 +19989,10 @@ function hasDeliverableEvidence(taskDir, outputText = "") {
   };
 }
 
-// packages/coding-agent/src/extensions/agent-team-loop/shared/dispatch-card.ts
-import * as fs12 from "node:fs";
-var ENVELOPE_SECTIONS = ["context", "requirements", "deliverables"];
-var ENVELOPE_SECTION_LABELS = {
-  context: "\u4E0A\u4E0B\u6587",
-  requirements: "\u8981\u6C42",
-  deliverables: "\u4EA4\u4ED8\u683C\u5F0F"
-};
-var ENVELOPE_HEADING_FAMILIES = [
-  [
-    "deliverables",
-    [
-      "\u4EA4\u4ED8\u7269",
-      "\u4EA4\u4ED8",
-      "\u9884\u671F\u4EA7\u51FA",
-      "\u9884\u671F\u4EA7\u7269",
-      "\u4EA7\u7269",
-      "\u8F93\u51FA",
-      "\u8BC1\u636E\u683C\u5F0F",
-      "\u8BC1\u636E",
-      "\u62A5\u544A\u8981\u6C42",
-      "\u56DE\u6267",
-      "Deliverable",
-      "Expected Output",
-      "Artifact"
-    ]
-  ],
-  [
-    "context",
-    [
-      "\u80CC\u666F",
-      "\u4E0A\u4E0B\u6587",
-      "\u95EE\u9898",
-      "\u73B0\u72B6",
-      "\u52A8\u673A",
-      "\u6839\u56E0",
-      "\u7F3A\u9677",
-      "\u504F\u5DEE",
-      "\u76EE\u6807",
-      "\u63CF\u8FF0",
-      "\u8F93\u5165",
-      "\u524D\u7F6E",
-      "\u8303\u56F4",
-      "Context",
-      "Motivation",
-      "Rationale",
-      "Why",
-      "Goal",
-      "Objective",
-      "Description",
-      "Input",
-      "Scope"
-    ]
-  ],
-  [
-    "requirements",
-    [
-      "\u8981\u6C42",
-      "\u4EFB\u52A1",
-      "\u5951\u7EA6",
-      "\u9A8C\u6536",
-      "\u9A8C\u8BC1",
-      "\u5B8C\u6210\u5224\u5B9A",
-      "\u5B8C\u6210\u5224\u636E",
-      "\u5224\u636E",
-      "\u884C\u4E3A",
-      "\u6D4B\u8BD5",
-      "\u63A5\u53E3",
-      "\u7528\u4F8B",
-      "\u534F\u8BAE",
-      "\u5185\u5BB9",
-      "\u6807\u51C6",
-      "\u505A\u6CD5",
-      "\u7B56\u7565",
-      "\u65AD\u8A00",
-      "\u89C4\u8303",
-      "\u7F16\u7801",
-      "\u5BF9\u7167",
-      "\u53CD\u4F8B",
-      "\u53CD\u5411",
-      "\u5FC5\u987B",
-      "\u5B9E\u73B0",
-      "\u6B65\u9AA4",
-      "\u6539\u52A8",
-      "\u53D8\u66F4",
-      "Acceptance Criteria",
-      "Requirement",
-      "Expected Behavior",
-      "[VERIFY]",
-      "AC ",
-      "VC ",
-      "TDD"
-    ]
-  ]
-];
-var ENVELOPE_BODY_HINTS = {
-  context: /背景|动机|原因|由于|因为|现状|痛点|为什么|为何|根因/,
-  requirements: /AC-\d+|VC-\d+/i,
-  deliverables: /report\.md|progress\.md|output\.md|evidence\/|回执/
-};
-var ENVELOPE_BULLET_KEYS = {
-  context: /^(背景|动机|问题|现状|范围|规格|目的|前提)$/,
-  requirements: /要求|规格|验收|必须|步骤|实现|改动|协议|契约|条件/,
-  deliverables: /产物|交付|佐证|证据|输出|结果|报告/
-};
-var DISPATCH_TYPE_VOCABULARY = [
-  "coding",
-  "review",
-  "research",
-  "rag-research",
-  "vision",
-  "verifier",
-  "reviewer",
-  "repair",
-  "phase-writer",
-  "roadmap-writer",
-  "codex"
-];
-function isKnownDispatchType(type) {
-  return DISPATCH_TYPE_VOCABULARY.includes(type);
-}
-var TYPE_EXTRA_PATTERNS = {
-  coding: [
-    ["\u5199\u5165\u5141\u8BB8\u9762", /写入允许面|允许写入|允许写|写入范围|写面|write_scope|allow[-_ ]?write/i],
-    ["\u5199\u5165\u7981\u6B62\u9762", /写入禁止面|禁止写入|禁止写|不得写|写入禁区|禁止范围|deny[-_ ]?write|forbid/i],
-    ["\u9A8C\u6536\u547D\u4EE4", /验收命令|验证命令|验收标准|验收判据|验收方式|验收|完成判据|acceptance/i],
-    ["\u6539\u52A8\u5386\u53F2", /改动历史|改动清单|变更历史|写入事件|trace\.log|write[-_ ]?history|change[-_ ]?log/i]
-  ],
-  research: [["\u552F\u4E00\u8BC1\u636E\u6587\u4EF6", /唯一证据文件|唯一证据|唯一产物|仅此一写|sole[-_ ]?evidence/i]],
-  review: [
-    ["\u5BA1\u8BA1\u76EE\u6807", /审计目标|审计问题|审计对象|审计范围|审计维度|问题域|要回答|audit[-_ ]?(target|scope|question)/i],
-    [
-      "\u672A\u8986\u76D6\u9762\u58F0\u660E",
-      /未覆盖面|未覆盖声明|未覆盖范围|未及范围|未查看|未探索|未涉及|not[-_ ]?covered|out[-_ ]?of[-_ ]?scope/i
-    ]
-  ]
-};
-var HEADING_RE2 = /^(#{2,6})\s+(.*)$/;
-var BULLET_LABEL_RE = /^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*)?([^:：]{1,48}?)(?:\*\*)?\s*[:：]/;
-var FIELD_LABEL_RE = /^\s*(?:\*\*)?([A-Za-z_][A-Za-z0-9_.-]{0,40})(?:\*\*)?\s*:/;
-var CARD_TYPE_RE = /(?:^|[\s|｜>*+-])type:\s*([^\s|｜]+)/;
-function splitLines(text) {
-  const lines = (text.startsWith("\uFEFF") ? text.slice(1) : text).replace(/\r\n?|[\u2028\u2029]/g, "\n").split("\n");
-  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
-  for (let i = 0; i < lines.length; i++) lines[i] = lines[i].replace(/\r$/, "").trim();
-  return lines;
-}
-function readCardType(lines) {
-  const shared = readTaskType(lines.join("\n")).type;
-  if (shared !== void 0 && shared !== "") return shared.trim();
-  const firstHeading = lines.findIndex((line) => HEADING_RE2.test(line));
-  const end = firstHeading === -1 ? lines.length : firstHeading;
-  for (let i = 0; i < end; i++) {
-    const match2 = CARD_TYPE_RE.exec(lines[i]);
-    if (match2) return match2[1].trim();
-  }
-  return "";
-}
-function stripNumbering(text) {
-  let out = text.trim();
-  out = out.replace(/^[（(]\s*[0-9A-Za-z一二三四五六七八九十]+\s*[)）]\s*/, "");
-  out = out.replace(/^[0-9]+(?:\.[0-9]+)*\s*[.、)）]\s*/, "");
-  out = out.replace(/^[A-Za-z]\s*[.、)）]\s*/, "");
-  out = out.replace(/^[一二三四五六七八九十]+\s*[、.)）]\s*/, "");
-  return out.trim();
-}
-function classifyHeading(heading) {
-  const lower = heading.toLowerCase();
-  for (const [section, tokens] of ENVELOPE_HEADING_FAMILIES) {
-    for (const token of tokens) {
-      if (lower.startsWith(token.toLowerCase())) return section;
-    }
-  }
-  return void 0;
-}
-function labelOf(line) {
-  const bullet = BULLET_LABEL_RE.exec(line);
-  if (bullet) return bullet[1].trim();
-  const field = FIELD_LABEL_RE.exec(line);
-  if (field) return field[1].trim();
-  return void 0;
-}
-function anyLabelMatches(lines, keyRe) {
-  for (const line of lines) {
-    const label = labelOf(line);
-    if (label !== void 0 && keyRe.test(label)) return true;
-  }
-  return false;
-}
-function collectHeadings(lines) {
-  const headings = [];
-  for (let i = 0; i < lines.length; i++) {
-    const match2 = HEADING_RE2.exec(lines[i]);
-    if (match2) headings.push({ level: match2[1].length, text: stripNumbering(match2[2]), line: i });
-  }
-  return headings;
-}
-function bodySemanticHit(section, lines) {
-  if (lines.some((line) => ENVELOPE_BODY_HINTS[section].test(line))) return true;
-  return anyLabelMatches(lines, ENVELOPE_BULLET_KEYS[section]);
-}
-function detectSections(lines) {
-  const detected = { context: "", requirements: "", deliverables: "" };
-  const headings = collectHeadings(lines);
-  for (let i = 0; i < headings.length; i++) {
-    const heading = headings[i];
-    const section = classifyHeading(heading.text);
-    if (section === void 0 || detected[section] !== "") continue;
-    let end = lines.length;
-    for (let j = i + 1; j < headings.length; j++) {
-      if (headings[j].level <= heading.level) {
-        end = headings[j].line;
-        break;
-      }
-    }
-    let hasBody = false;
-    for (let k = heading.line + 1; k < end; k++) {
-      if (lines[k] !== "") {
-        hasBody = true;
-        break;
-      }
-    }
-    if (hasBody) detected[section] = `heading:${heading.text}`;
-  }
-  for (const section of ENVELOPE_SECTIONS) {
-    if (detected[section] === "" && bodySemanticHit(section, lines)) detected[section] = "semantics";
-  }
-  return detected;
-}
-function emptyDetected() {
-  return { context: "", requirements: "", deliverables: "" };
-}
-function inspectEnvelope(text) {
-  const lines = splitLines(text);
-  const type = readCardType(lines);
-  const detected = detectSections(lines);
-  const missing = [];
-  if (type === "") missing.push("type");
-  for (const section of ENVELOPE_SECTIONS) {
-    if (detected[section] === "") missing.push(section);
-  }
-  return { ok: missing.length === 0, missing, type, detected };
-}
-function readEnvelope(cardPath) {
-  let text;
-  try {
-    text = fs12.readFileSync(cardPath, "utf8");
-  } catch {
-    return { ok: false, missing: ["file"], type: "", detected: emptyDetected() };
-  }
-  return inspectEnvelope(text);
-}
-function typeExtrasMissing(type, text) {
-  const patterns = TYPE_EXTRA_PATTERNS[type];
-  if (patterns === void 0) {
-    return isKnownDispatchType(type) ? [] : [`unknown-type:${type}`];
-  }
-  const lines = splitLines(text);
-  const missing = [];
-  for (const [item, pattern] of patterns) {
-    if (text.includes(item)) continue;
-    if (anyLabelMatches(lines, pattern)) continue;
-    let headingHit = false;
-    for (const line of lines) {
-      const heading = HEADING_RE2.exec(line);
-      if (heading && pattern.test(stripNumbering(heading[2]))) {
-        headingHit = true;
-        break;
-      }
-    }
-    if (!headingHit) missing.push(item);
-  }
-  return missing;
-}
-var GOAL_ANCHOR = "goal.md";
-var SEED_GOAL_ITEM = "seed:goal.md";
-var SEED_PATH_ITEM = "seed:path:line";
-var PATH_LINE_RE = /[A-Za-z0-9_][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,7}:\d+/;
-function seedItemsMissing(text) {
-  const missing = [];
-  if (!text.includes(GOAL_ANCHOR)) missing.push(SEED_GOAL_ITEM);
-  if (!PATH_LINE_RE.test(text)) missing.push(SEED_PATH_ITEM);
-  return missing;
-}
-
 // packages/coding-agent/src/extensions/agent-team-loop/shared/dispatch-models.ts
-import * as fs13 from "node:fs";
-import * as os from "node:os";
-import * as path16 from "node:path";
+import * as fs18 from "node:fs";
+import * as os3 from "node:os";
+import * as path22 from "node:path";
 var PROVIDER_ID_TO_PREFIX = {
   timi: "timi",
   anthropic: "claude",
@@ -17782,7 +20009,7 @@ function parseModelValue(value) {
   return { prefix: value.slice(0, idx).trim(), modelId: value.slice(idx + 1).trim() };
 }
 function windowModelPath(cwd) {
-  return path16.join(cwd, ".mw", "window-model");
+  return path22.join(cwd, ".mw", "window-model");
 }
 var DISPATCH_ROLE_BY_TYPE = {
   coding: "coding",
@@ -17794,26 +20021,29 @@ var DISPATCH_ROLE_BY_TYPE = {
   reviewer: "review",
   research: "research",
   "rag-research": "research",
-  vision: "vision"
+  vision: "vision",
+  // mw-decision-substitution W8, renamed W10: the type value is
+  // `decide_prepare` (was `decision`; no alias kept).
+  decide_prepare: "decide_prepare"
 };
-var DISPATCHABLE_TYPES = ["coding", "review", "research", "rag-research", "vision"];
+var DISPATCHABLE_TYPES = ["coding", "review", "research", "rag-research", "vision", "decide_prepare"];
 function roleForTaskType(taskType) {
   return DISPATCH_ROLE_BY_TYPE[taskType] ?? "coding";
 }
 var CLI_EXECUTOR_PREFIXES = ["codex_cli", "claude_cli"];
 function dispatchYmlPath(cwd) {
-  return path16.join(cwd, ".mw", "dispatch.yml");
+  return path22.join(cwd, ".mw", "dispatch.yml");
 }
 function isFrameworkProject(cwd) {
-  return fs13.existsSync(path16.join(cwd, ".agenticdoc"));
+  return fs18.existsSync(path22.join(cwd, ".agenticdoc"));
 }
 function recordWindowModel(cwd, model) {
   if (!model || !isFrameworkProject(cwd)) return;
   const prefix = PROVIDER_ID_TO_PREFIX[model.provider];
   if (!prefix) return;
   try {
-    fs13.mkdirSync(path16.join(cwd, ".mw"), { recursive: true });
-    fs13.writeFileSync(windowModelPath(cwd), `${prefix}/${model.id}
+    fs18.mkdirSync(path22.join(cwd, ".mw"), { recursive: true });
+    fs18.writeFileSync(windowModelPath(cwd), `${prefix}/${model.id}
 `, "utf8");
   } catch {
   }
@@ -17821,7 +20051,7 @@ function recordWindowModel(cwd, model) {
 function readRoleModel(cwd, role) {
   let text;
   try {
-    text = fs13.readFileSync(dispatchYmlPath(cwd), "utf8");
+    text = fs18.readFileSync(dispatchYmlPath(cwd), "utf8");
   } catch {
     return null;
   }
@@ -17893,16 +20123,16 @@ function detectImageNeed(cwd, description) {
     if (token.includes("://")) continue;
     if (/[*?[\]]/.test(token)) continue;
     try {
-      if (fs13.existsSync(path16.resolve(cwd, token))) return true;
+      if (fs18.existsSync(path22.resolve(cwd, token))) return true;
     } catch {
     }
   }
   return false;
 }
 function settingsDefaultModel() {
-  const base = process.env.PI_CODING_AGENT_DIR ?? path16.join(os.homedir(), ".pi", "agent");
+  const base = process.env.PI_CODING_AGENT_DIR ?? path22.join(os3.homedir(), ".pi", "agent");
   try {
-    const settings2 = JSON.parse(fs13.readFileSync(path16.join(base, "settings.json"), "utf8"));
+    const settings2 = JSON.parse(fs18.readFileSync(path22.join(base, "settings.json"), "utf8"));
     return typeof settings2.defaultModel === "string" && settings2.defaultModel ? settings2.defaultModel : null;
   } catch {
     return null;
@@ -17944,8 +20174,8 @@ function registerMainWindowModel(pi) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/heartbeat.ts
-import * as fs14 from "node:fs";
-import * as path17 from "node:path";
+import * as fs19 from "node:fs";
+import * as path23 from "node:path";
 var HEARTBEAT_INTERVAL_MS = 3e4;
 var HEARTBEAT_STALE_MS = 9e4;
 var HEARTBEAT_LINE_RE = /^\[HEARTBEAT\] (\S+) task=(\S+)(?: phase=(\S+))?$/;
@@ -17964,7 +20194,7 @@ function formatHeartbeatAge(ms) {
 function readTaskProgress(taskDir) {
   let content;
   try {
-    content = fs14.readFileSync(path17.join(taskDir, "trace.log"), "utf8");
+    content = fs19.readFileSync(path23.join(taskDir, "trace.log"), "utf8");
   } catch {
     return void 0;
   }
@@ -18000,6 +20230,9 @@ function readTaskProgress(taskDir) {
     const start = START_LINE_RE.exec(line);
     if (start) {
       startTs = start[1] ?? "";
+      endTs = void 0;
+      exitCode = void 0;
+      endPhases = void 0;
       continue;
     }
     const mdl = MODEL_LINE_RE.exec(line);
@@ -18062,292 +20295,7 @@ function readTaskProgress(taskDir) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/run-detached.ts
-import { spawnSync as spawnSync3 } from "node:child_process";
-
-// packages/coding-agent/src/extensions/agent-team-loop/shared/mw-runner.ts
-import { spawn as spawn2, spawnSync as spawnSync2 } from "node:child_process";
-import * as fs15 from "node:fs";
-import * as os2 from "node:os";
-import * as path18 from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
-var PYTHON_EXE = process.platform === "win32" ? "python" : "python3";
-function globalExtDir() {
-  const envDir = process.env.PI_CODING_AGENT_DIR;
-  const base = envDir ? envDir : path18.join(os2.homedir(), ".pi", "agent");
-  return path18.join(base, "extensions");
-}
-function findMwPy() {
-  const envPath = process.env.MW_PY;
-  if (envPath && fs15.existsSync(envPath)) return envPath;
-  try {
-    const rec = path18.join(globalExtDir(), ".mw-py-path");
-    if (fs15.existsSync(rec)) {
-      const recorded = fs15.readFileSync(rec, "utf8").trim();
-      if (recorded && fs15.existsSync(recorded)) return recorded;
-    }
-  } catch {
-  }
-  try {
-    const here = path18.dirname(fileURLToPath3(import.meta.url));
-    const candidate = path18.resolve(here, "../../../../../multi-workers/mw.py");
-    if (fs15.existsSync(candidate)) return candidate;
-  } catch {
-  }
-  return null;
-}
-function buildMw() {
-  const mwPy = findMwPy();
-  if (!mwPy) return { ok: false, error: "Could not find mw.py \u2014 set MW_PY env var." };
-  const result = spawnSync2(PYTHON_EXE, [mwPy, "build", "--install"], {
-    encoding: "utf8",
-    timeout: 12e4
-  });
-  if (result.error) {
-    return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
-  }
-  if (result.status !== 0) {
-    const stderr = result.stderr?.trim();
-    return { ok: false, error: stderr || `mw build exited with code ${result.status}` };
-  }
-  return { ok: true, output: (result.stdout || "").trim() };
-}
-function pidFilePath(projectDir) {
-  return path18.join(projectDir, ".mw", "mw.pid");
-}
-function getMwStatus(projectDir) {
-  const pidPath = pidFilePath(projectDir);
-  if (!fs15.existsSync(pidPath)) return { running: false, pid: null };
-  const raw = fs15.readFileSync(pidPath, "utf8").trim();
-  const pid = Number.parseInt(raw, 10);
-  if (Number.isNaN(pid)) return { running: false, pid: null };
-  try {
-    process.kill(pid, 0);
-    return { running: true, pid };
-  } catch {
-    return { running: false, pid: null };
-  }
-}
-function initMw(projectDir) {
-  const mwPy = findMwPy();
-  if (!mwPy) return { ok: false, error: "Could not find mw.py \u2014 set MW_PY env var." };
-  const result = spawnSync2(PYTHON_EXE, [mwPy, "init", `--project=${projectDir}`], {
-    encoding: "utf8",
-    timeout: 3e4
-  });
-  if (result.error) {
-    return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
-  }
-  if (result.status !== 0) {
-    const stderr = result.stderr?.trim();
-    return { ok: false, error: stderr || `mw init exited with code ${result.status}` };
-  }
-  return { ok: true };
-}
-function startMw(projectDir) {
-  const mwPy = findMwPy();
-  if (!mwPy) return false;
-  const child = spawn2(PYTHON_EXE, [mwPy, "start", `--project=${projectDir}`], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true
-  });
-  child.unref();
-  return true;
-}
-async function waitForMwStart(projectDir, timeoutMs = 8e3, stableMs = 3e3) {
-  return waitForStart(() => getMwStatus(projectDir), timeoutMs, stableMs);
-}
-async function waitForStart(statusFn, timeoutMs, stableMs, pollMs = 250) {
-  const deadline = Date.now() + timeoutMs;
-  let stableSince = null;
-  while (Date.now() < deadline) {
-    if (statusFn().running) {
-      if (stableSince === null) stableSince = Date.now();
-      if (Date.now() - stableSince >= stableMs) return true;
-    } else {
-      stableSince = null;
-    }
-    await new Promise((resolve21) => setTimeout(resolve21, pollMs));
-  }
-  return statusFn().running;
-}
-function stopMw(projectDir) {
-  const mwPy = findMwPy();
-  if (!mwPy) return false;
-  const result = spawn2(PYTHON_EXE, [mwPy, "stop", `--project=${projectDir}`], {
-    stdio: "inherit"
-  });
-  result.unref();
-  return true;
-}
-function serveMetaPath(projectDir) {
-  return path18.join(projectDir, ".mw", "serve.meta");
-}
-function readServeMeta(projectDir) {
-  try {
-    const raw = fs15.readFileSync(serveMetaPath(projectDir), "utf8");
-    const m = JSON.parse(raw);
-    if (typeof m.pid !== "number" || typeof m.started_at_ms !== "number") return null;
-    const meta = { pid: m.pid, startedAtMs: m.started_at_ms };
-    if (typeof m.code_dir === "string" && m.code_dir) meta.codeDir = m.code_dir;
-    if (typeof m.commit === "string" && m.commit) meta.commit = m.commit;
-    if (typeof m.dirty_tracked === "number") meta.dirtyTracked = m.dirty_tracked;
-    if (typeof m.dirty_untracked === "number") meta.dirtyUntracked = m.dirty_untracked;
-    if (typeof m.code_mtime_ms === "number") meta.codeMtimeMs = m.code_mtime_ms;
-    if (typeof m.code_digest === "string" && m.code_digest) meta.codeDigest = m.code_digest;
-    if (typeof m.schema === "number") meta.schema = m.schema;
-    return meta;
-  } catch {
-    return null;
-  }
-}
-function mwCodeNewestMtimeMs(mwPyOverride) {
-  const mwPy = mwPyOverride ?? findMwPy();
-  if (!mwPy) return null;
-  let newest = 0;
-  const walk = (dir) => {
-    let entries;
-    try {
-      entries = fs15.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      if (e.isDirectory()) {
-        if (e.name === "__pycache__" || e.name === "dist" || e.name === ".tmp" || e.name === "test") continue;
-        walk(path18.join(dir, e.name));
-        continue;
-      }
-      if (!e.isFile()) continue;
-      if (!/\.(py|json)$/.test(e.name)) continue;
-      if (e.name.startsWith("test_") || e.name.startsWith("_")) continue;
-      try {
-        const m = fs15.statSync(path18.join(dir, e.name)).mtimeMs;
-        if (m > newest) newest = m;
-      } catch {
-      }
-    }
-  };
-  walk(path18.dirname(mwPy));
-  return newest > 0 ? newest : null;
-}
-function serveStaleness(projectDir, codeMtimeMs) {
-  const meta = readServeMeta(projectDir);
-  let codeMs = codeMtimeMs ?? null;
-  if (codeMs === null) {
-    if (meta?.codeDir) codeMs = mwCodeNewestMtimeMs(path18.join(meta.codeDir, "mw.py"));
-    if (codeMs === null) codeMs = mwCodeNewestMtimeMs();
-  }
-  if (codeMs === null) return void 0;
-  let startedAtMs = meta?.startedAtMs ?? null;
-  if (startedAtMs === null) {
-    try {
-      startedAtMs = fs15.statSync(pidFilePath(projectDir)).mtimeMs;
-    } catch {
-      return void 0;
-    }
-  }
-  const stale = codeMs > startedAtMs + 2e3;
-  return {
-    stale,
-    detail: `serve started ${new Date(startedAtMs).toISOString()}, mw code changed ${new Date(codeMs).toISOString()}`
-  };
-}
-async function restartSequence(isRunning, requestStop, start, waitUp, timeoutMs, pollMs = 250) {
-  if (isRunning()) {
-    requestStop();
-    const deadline = Date.now() + timeoutMs;
-    while (isRunning() && Date.now() < deadline) {
-      await new Promise((resolve21) => setTimeout(resolve21, pollMs));
-    }
-    if (isRunning()) return "stop-failed";
-  }
-  if (!start()) return "start-failed";
-  return await waitUp() ? "restarted" : "start-failed";
-}
-async function restartMw(projectDir, timeoutMs = 3e4) {
-  return restartSequence(
-    () => getMwStatus(projectDir).running,
-    () => {
-      const stopReq = path18.join(projectDir, ".mw", "mw.stop");
-      fs15.mkdirSync(path18.dirname(stopReq), { recursive: true });
-      fs15.writeFileSync(stopReq, "stop", "utf8");
-    },
-    () => startMw(projectDir),
-    () => waitForMwStart(projectDir),
-    timeoutMs
-  );
-}
-function doctorMw(projectDir, fix = false) {
-  const mwPy = findMwPy();
-  if (!mwPy) return { ok: false, error: "Could not find mw.py \u2014 set MW_PY env var." };
-  const args = [mwPy, "doctor", `--project=${projectDir}`, "--json"];
-  if (fix) args.push("--fix");
-  const result = spawnSync2(PYTHON_EXE, args, { encoding: "utf8", timeout: 15e3 });
-  if (result.error) {
-    return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
-  }
-  if (!result.stdout || !result.stdout.trim()) {
-    const stderr = result.stderr?.trim() ?? "";
-    return { ok: false, error: stderr || `mw doctor exited with code ${result.status}` };
-  }
-  try {
-    return { ok: true, report: JSON.parse(result.stdout) };
-  } catch (err) {
-    return { ok: false, error: `mw doctor returned non-JSON output: ${String(err)}` };
-  }
-}
-function runMwCliRaw(sub, projectDir, args, timeoutMs = 3e4) {
-  const mwPy = findMwPy();
-  if (!mwPy) return { code: -1, output: "", spawnError: "Could not find mw.py \u2014 set MW_PY env var." };
-  const result = spawnSync2(PYTHON_EXE, [mwPy, sub, ...args, `--project=${projectDir}`], {
-    encoding: "utf8",
-    timeout: timeoutMs
-  });
-  if (result.error) {
-    return { code: -1, output: "", spawnError: `Failed to spawn mw.py: ${result.error.message}` };
-  }
-  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-  return { code: result.status ?? -1, output };
-}
-function runMwCli(sub, projectDir, args, timeoutMs = 3e4) {
-  const raw = runMwCliRaw(sub, projectDir, args, timeoutMs);
-  if (raw.spawnError !== void 0) return { ok: false, error: raw.spawnError };
-  if (raw.code !== 0) return { ok: false, error: raw.output || `mw ${sub} exited with code ${raw.code}` };
-  return { ok: true, output: raw.output };
-}
-function targetMw(projectDir, args) {
-  return runMwCli("target", projectDir, args);
-}
-function partitionMw(projectDir, args) {
-  return runMwCli("partition", projectDir, args);
-}
-function modelMw(projectDir, args) {
-  return runMwCli("model", projectDir, args);
-}
-var RAG_SUBCOMMANDS = ["list", "probe", "audit", "sync", "init"];
-function ragMw(projectDir, args) {
-  const raw = runMwCliRaw("rag", projectDir, args);
-  if (raw.spawnError !== void 0) return { ok: false, code: raw.code, output: raw.spawnError };
-  return { ok: raw.code === 0, code: raw.code, output: raw.output };
-}
-function updateEnvMw(projectDir, apply) {
-  const mwPy = findMwPy();
-  if (!mwPy) return { ok: false, error: "Could not find mw.py \u2014 set MW_PY env var." };
-  const args = [mwPy, "update-env", `--project=${projectDir}`];
-  if (apply) args.push("--apply");
-  const result = spawnSync2(PYTHON_EXE, args, { encoding: "utf8", timeout: 6e5 });
-  if (result.error) {
-    return { ok: false, error: `Failed to spawn mw.py: ${result.error.message}` };
-  }
-  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-  if (!output) {
-    return { ok: false, error: `mw update-env exited with code ${result.status}` };
-  }
-  return { ok: true, output };
-}
-
-// packages/coding-agent/src/extensions/agent-team-loop/shared/run-detached.ts
+import { spawnSync as spawnSync4 } from "node:child_process";
 var MW_RUN_DETACHED_TOOL = "mw_run_detached";
 var HANDOFF_PID_RE = /^\[mw run-detached\] pid=(\d+)$/;
 var HANDOFF_PATH_RE = /^(marker|heartbeat|log)=(.*)$/;
@@ -18399,7 +20347,7 @@ function runDetachedMw(opts) {
     return { ok: false, error: "Could not find mw.py \u2014 set MW_PY env var." };
   }
   const args = buildArgv(opts);
-  const result = spawnSync3(PYTHON_EXE, args, { encoding: "utf8", timeout: 3e4, windowsHide: true });
+  const result = spawnSync4(PYTHON_EXE, args, { encoding: "utf8", timeout: 3e4, windowsHide: true });
   if (result.error) {
     return { ok: false, error: `Failed to spawn mw run-detached: ${result.error.message}` };
   }
@@ -18593,7 +20541,7 @@ function matchClose(text, openIdx, opener, closer) {
   }
   return null;
 }
-function splitTopLevel(body, sep11) {
+function splitTopLevel(body, sep13) {
   const parts = [];
   let current = "";
   let braceDepth = 0;
@@ -18614,7 +20562,7 @@ function splitTopLevel(body, sep11) {
     else if (c === "}") braceDepth--;
     else if (c === "(") parenDepth++;
     else if (c === ")") parenDepth--;
-    if (c === sep11 && braceDepth === 0 && parenDepth === 0) {
+    if (c === sep13 && braceDepth === 0 && parenDepth === 0) {
       parts.push(current);
       current = "";
       continue;
@@ -18646,8 +20594,8 @@ function expandAlts(text) {
       continue;
     }
     const body = found.kind === "brace" ? cur.text.slice(found.start + 1, found.end) : cur.text.slice(found.start + 2, found.end);
-    const sep11 = found.kind === "brace" ? "," : "|";
-    const parts = splitTopLevel(body, sep11);
+    const sep13 = found.kind === "brace" ? "," : "|";
+    const parts = splitTopLevel(body, sep13);
     if (parts.length === 1) {
       ok = false;
       out.push(cur.text);
@@ -19036,36 +20984,36 @@ function writeFacesOverlap(a, b) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/phase-runner.ts
-import * as fs16 from "node:fs";
-import * as path19 from "node:path";
+import * as fs20 from "node:fs";
+import * as path24 from "node:path";
 function goalMtime(agenticdocRoot2) {
   const goalPathResolved = goalPath(agenticdocRoot2);
   try {
-    return fs16.statSync(goalPathResolved).mtimeMs;
+    return fs20.statSync(goalPathResolved).mtimeMs;
   } catch {
     return 0;
   }
 }
 function writePhaseFile(taskKey, agenticdocRoot2, phaseIndex, summary) {
-  const progressDir = path19.join(agenticdocRoot2, taskKey, "progress");
-  fs16.mkdirSync(progressDir, { recursive: true });
+  const progressDir = path24.join(agenticdocRoot2, taskKey, "progress");
+  fs20.mkdirSync(progressDir, { recursive: true });
   const content = `# Phase ${phaseIndex + 1}
 
 ${summary || "(phase complete)"}
 `;
-  fs16.writeFileSync(path19.join(progressDir, `phase-${phaseIndex + 1}.md`), content, "utf8");
+  fs20.writeFileSync(path24.join(progressDir, `phase-${phaseIndex + 1}.md`), content, "utf8");
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/worker/worker-file-tool.ts
-import * as fs17 from "node:fs";
-import * as path20 from "node:path";
+import * as fs21 from "node:fs";
+import * as path25 from "node:path";
 var WORKER_FILE_TOOL = "worker_file";
 var WORKER_FILE_MAX_BYTES = 64 * 1024;
 function resolveWorkerFileSurface(taskDir) {
   const derived = deriveWriteSurfacePaths(taskDir);
   let writeScope;
   try {
-    writeScope = parseWriteScopeHeader(fs17.readFileSync(path20.join(derived.taskDir, "task.md"), "utf8"));
+    writeScope = parseWriteScopeHeader(fs21.readFileSync(path25.join(derived.taskDir, "task.md"), "utf8"));
   } catch {
     writeScope = void 0;
   }
@@ -19090,13 +21038,13 @@ function writeWorkerFile(taskDir, file, content, mode, surface) {
     };
   }
   const target = verdict.target;
-  fs17.mkdirSync(path20.dirname(target), { recursive: true });
+  fs21.mkdirSync(path25.dirname(target), { recursive: true });
   if (mode === "append") {
-    fs17.appendFileSync(target, content, "utf8");
+    fs21.appendFileSync(target, content, "utf8");
   } else {
-    fs17.writeFileSync(target, content, "utf8");
+    fs21.writeFileSync(target, content, "utf8");
   }
-  appendWriteFileEvent(path20.join(taskDir, "trace.log"), repoRelativePath(target));
+  appendWriteFileEvent(path25.join(taskDir, "trace.log"), repoRelativePath(target));
   return { ok: true, path: target, bytes };
 }
 function registerWorkerFileTool(pi, taskDir) {
@@ -19169,6 +21117,11 @@ var TOOL_ALLOWLISTS = {
   // Vision bucket (mw-vision-role D-001): full coding set, same order as the
   // Python-side REGISTRY entry in autopilot/dispatch.py.
   vision: ["read", "write", "edit", "bash", "find", "grep", "ls"],
+  // Decision-book writer (mw-decision-substitution W8, renamed W10): read-only
+  // tools plus a narrowed `bash` (see `decisionBashBlockReason` below). Same
+  // order as the Python-side REGISTRY entry in autopilot/dispatch.py. W10:
+  // the type value is `decide_prepare` (was `decision`; no alias kept).
+  decide_prepare: ["read", "find", "grep", "ls", "bash"],
   fallback: ["read", "write", "edit", "bash", "find", "grep", "ls"]
 };
 function isRegisteredType(taskType) {
@@ -19195,6 +21148,75 @@ function isWritelessRole(taskType) {
 function hasWriteTools(taskType) {
   const tools = activeToolsForType(taskType);
   return tools.includes("write") || tools.includes("edit");
+}
+var DECIDE_PREPARE_TYPE = "decide_prepare";
+var DECISION_BOOK_SUBDIR = "evidence/books";
+var DECISION_TYPE_PROMPT = [
+  "[mw decide_prepare worker] \u4F60\u5199\u51B3\u7B56\u672C\uFF0C\u4E0D\u6539\u4EE3\u7801\u3002",
+  "1. \u5148\u8DD1 `mw decide book new <dp> --out <key>/evidence/books/<dp>-<slug>.json`\uFF1B<dp> \u4E0E book \u8DEF\u5F84\u89C1 task.md \u7684\u300C\u51B3\u7B56\u672C\u53C2\u6570\u300D\u6BB5\u3002",
+  "2. \u6309\u6BCF\u4E2A\u5B57\u6BB5\u7684 description \u4ECE\u8BC1\u636E\u91CC\u586B\u503C\uFF1B`notes.evidence` \u6BCF\u6761\u7ED9 `path:line` \u6216\u547D\u4EE4\u539F\u6587\u3002",
+  "3. \u6700\u540E\u8DD1 `mw decide book check <book>`\uFF1B\u5931\u8D25\u5C31\u7EE7\u7EED\u586B\uFF0C\u76F4\u5230\u901A\u8FC7\u3002",
+  "\u4E0D\u8981\u6539\u9608\u503C\u3001\u4E0D\u8981\u586B\u9884\u671F\u7B54\u6848\u3001\u4E0D\u8981\u6539\u4EFB\u4F55\u4EE3\u7801\uFF08packages/ \u53EA\u8BFB\uFF09\u3002",
+  "bash \u53EA\u5141\u8BB8 `mw decide book check`\u3001`git diff --stat`\u3001`rg`\u3001`cat` \u8FD9\u7C7B\u53EA\u8BFB\u547D\u4EE4\u3002",
+  "`allow-send: no` \u65F6\u4E0D\u8981\u8C03\u7528 `decide run` / `decide ask`\uFF08\u542B `--book`\uFF09\uFF1B\u53D1\u9001\u7531 PM \u505A\u3002"
+].join("\n");
+function decisionAllowsSend(taskContent) {
+  for (const raw of taskContent.split(/\r?\n/)) {
+    const m = /^\s*(?:[-*+]\s*)?(?:\*\*)?allow-send(?:\*\*)?\s*[:：]\s*(\S+)/i.exec(raw);
+    if (m) return m[1].trim().toLowerCase() === "yes";
+  }
+  return false;
+}
+var DECISION_ALLOWED_COMMANDS = [
+  [/^mw\s+decide\s+book\s+check\b/, "mw decide book check"],
+  [/^python\S*\s+.*\bmw\.py\s+decide\s+book\s+check\b/, "mw decide book check"],
+  [/^git\s+diff\b/, "git diff"],
+  [/^git\s+status\b/, "git status"],
+  [/^git\s+log\b/, "git log"],
+  [/^rg\b/, "rg"],
+  [/^cat\b/, "cat"],
+  [/^ls\b/, "ls"],
+  [/^head\b/, "head"],
+  [/^tail\b/, "tail"],
+  [/^wc\b/, "wc"]
+];
+var DECISION_BASH_REDIRECT_RE = /[<>]|\btee\b|\brm\b|\bmv\b|\bcp\b|\bsed\s+-i\b|\bgit\s+(?:add|commit|checkout|reset)\b|\bpython\S*\s+-c\b/;
+var DECISION_SEND_RE = /\bdecide\s+(?:run|ask)\b/;
+var DECISION_BOOK_NEW_RE = /^(?:mw\s+decide\s+book\s+new|python\S*\s+.*\bmw\.py\s+decide\s+book\s+new)\b/;
+function decisionBashBlockReason(command, allowSend) {
+  const send = DECISION_SEND_RE.exec(command);
+  if (send && !allowSend) {
+    return `decision: \`decide ${send[0].split(/\s+/)[1]}\` is the PM's call \u2014 this card says \`allow-send: no\` (or nothing), so only \`mw decide book check\` is allowed`;
+  }
+  const allowed = DECISION_ALLOWED_COMMANDS.map(([, label]) => label).join(", ");
+  for (const raw of command.split(/&&|\|\||[;|\n]/)) {
+    const segment = raw.trim();
+    if (segment === "") continue;
+    if (DECISION_BASH_REDIRECT_RE.test(segment)) {
+      return `decision: bash is read-only for this role (no redirect/mutation); allowed: ${allowed}`;
+    }
+    if (DECISION_BOOK_NEW_RE.test(segment)) {
+      const out = /--out(?:=|\s+)(\S+)/.exec(segment);
+      const target = out?.[1]?.replace(/^["']|["']$/g, "") ?? "";
+      if (target !== "" && !decisionWorkerFilePathAllowed(target)) {
+        return `decision: \`book new --out\` must target ${DECISION_BOOK_SUBDIR}/** (got ${JSON.stringify(target)})`;
+      }
+      continue;
+    }
+    if (send && segment.includes(send[0]) && allowSend) continue;
+    if (!DECISION_ALLOWED_COMMANDS.some(([pattern]) => pattern.test(segment))) {
+      return `decision: bash is read-only for this role; \`${segment.split(/\s+/)[0]}\` is not allowed (allowed: ${allowed})`;
+    }
+  }
+  return null;
+}
+function decisionWorkerFilePathAllowed(file) {
+  const normalized = file.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  if (normalized === "" || normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized)) {
+    return false;
+  }
+  if (normalized.split("/").includes("..")) return false;
+  return normalized.includes(`${DECISION_BOOK_SUBDIR}/`);
 }
 function checkpointSteerText(opts) {
   if (opts.hasWriteTools) {
@@ -19265,14 +21287,14 @@ function newestEvidenceMtimeMs(keyDir, startedAtMs, nowMs) {
     if (depth > maxDepth || visited >= maxEntries) return;
     let entries;
     try {
-      entries = fs18.readdirSync(dir, { withFileTypes: true });
+      entries = fs22.readdirSync(dir, { withFileTypes: true });
     } catch {
       return;
     }
     for (const entry of entries) {
       if (visited >= maxEntries) return;
       visited++;
-      const abs = path21.join(dir, entry.name);
+      const abs = path26.join(dir, entry.name);
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
         walk(abs, depth + 1);
@@ -19280,7 +21302,7 @@ function newestEvidenceMtimeMs(keyDir, startedAtMs, nowMs) {
       }
       if (!entry.isFile()) continue;
       try {
-        const stat = fs18.statSync(abs);
+        const stat = fs22.statSync(abs);
         if (stat.size === 0 || stat.mtimeMs < startedAtMs) continue;
         const mtimeMs = stat.mtimeMs > nowMs ? nowMs : stat.mtimeMs;
         if (newest === void 0 || mtimeMs > newest) newest = mtimeMs;
@@ -19288,7 +21310,7 @@ function newestEvidenceMtimeMs(keyDir, startedAtMs, nowMs) {
       }
     }
   };
-  walk(path21.join(keyDir, "evidence"), 0);
+  walk(path26.join(keyDir, "evidence"), 0);
   return newest;
 }
 function collectLandingSignals(opts) {
@@ -19299,16 +21321,16 @@ function collectLandingSignals(opts) {
   };
   let nonProgressLanded = false;
   for (const target of targets) {
-    const abs = path21.isAbsolute(target) ? target : path21.resolve(process.cwd(), target);
+    const abs = path26.isAbsolute(target) ? target : path26.resolve(process.cwd(), target);
     try {
-      const stat = fs18.statSync(abs);
+      const stat = fs22.statSync(abs);
       if (!stat.isFile() || stat.size === 0) continue;
       touch(stat.mtimeMs > opts.nowMs ? opts.nowMs : stat.mtimeMs);
-      if (path21.basename(abs) !== "progress.md") nonProgressLanded = true;
+      if (path26.basename(abs) !== "progress.md") nonProgressLanded = true;
     } catch {
     }
   }
-  const keyDir = path21.dirname(path21.dirname(opts.taskDir));
+  const keyDir = path26.dirname(path26.dirname(opts.taskDir));
   const evidenceMtimeMs = newestEvidenceMtimeMs(keyDir, opts.startedAtMs, opts.nowMs);
   if (evidenceMtimeMs !== void 0) touch(evidenceMtimeMs);
   return {
@@ -19327,7 +21349,7 @@ function writeSurfaceMarkerState(content) {
   return lines.indexOf(WRITE_SURFACE_MARKER) < lines.indexOf(WRITE_SURFACE_MARKER_END) ? "ok" : "malformed";
 }
 function parseTaskMd(taskPath) {
-  const content = fs18.readFileSync(taskPath, "utf8");
+  const content = fs22.readFileSync(taskPath, "utf8");
   const lines = content.split("\n");
   const taskType = readTaskType(content).type ?? "default";
   let phase;
@@ -19419,14 +21441,15 @@ function parseTaskMd(taskPath) {
       }
     }
   }
-  const agenticdocRoot2 = path21.dirname(path21.dirname(taskPath));
-  const taskKey = path21.basename(path21.dirname(taskPath));
-  const trueAgenticdocRoot = path21.dirname(path21.dirname(agenticdocRoot2));
+  const agenticdocRoot2 = path26.dirname(path26.dirname(taskPath));
+  const taskKey = path26.basename(path26.dirname(taskPath));
+  const trueAgenticdocRoot = path26.dirname(path26.dirname(agenticdocRoot2));
   const writeScope = parseWriteScopeHeader(content);
   const writeFaceParsed = parseWriteFace(content, {
-    base: path21.dirname(trueAgenticdocRoot),
+    base: path26.dirname(trueAgenticdocRoot),
     caseInsensitive: process.platform === "win32"
   });
+  const claimsBlock = parseClaimsBlock(content);
   return {
     type: taskType,
     phase,
@@ -19447,8 +21470,122 @@ function parseTaskMd(taskPath) {
     ragChatBudget,
     ragTimeBudgetS,
     allowForeignWrite,
-    writeSurfaceMarker: writeSurfaceMarkerState(content)
+    writeSurfaceMarker: writeSurfaceMarkerState(content),
+    claims: claimsBlock.present ? claimsBlock.claims : void 0
   };
+}
+var CLAIM_UNVERIFIED_MAX_DEFAULT = 0.4;
+var CLAIM_UNVERIFIED_MAX_REVIEW = 0.6;
+var CARRIED_FROM_RE = /carried-from\s*:\s*\S+/i;
+function claimVerdictToken(cell) {
+  return cell.replace(/`/g, "").replace(/\s+/g, "").toLowerCase();
+}
+function claimCounts(claims, table, fetches) {
+  const counts = {
+    total: claims.length,
+    closed: 0,
+    partial: 0,
+    unverified: 0,
+    fetches,
+    tokens: null
+  };
+  const declared = new Set(claims.map((claim) => claim.id));
+  const seen = /* @__PURE__ */ new Set();
+  for (const row of table.rows) {
+    if (!declared.has(row.id) || seen.has(row.id)) continue;
+    seen.add(row.id);
+    const verdict = claimVerdictToken(row.verdict);
+    if (verdict === "closed") counts.closed += 1;
+    else if (verdict === "partial") counts.partial += 1;
+    else if (verdict === "unverified") counts.unverified += 1;
+  }
+  return counts;
+}
+function formatClaimsTraceLine(counts, now = /* @__PURE__ */ new Date()) {
+  return `[CLAIMS] ${now.toISOString()} claims=${counts.total} closed=${counts.closed} partial=${counts.partial} unverified=${counts.unverified} fetches=${counts.fetches}`;
+}
+function appendClaimsTraceLine(taskKey, agenticdocRoot2, counts) {
+  try {
+    const dir = path26.resolve(agenticdocRoot2, taskKey);
+    fs22.mkdirSync(dir, { recursive: true });
+    fs22.appendFileSync(path26.join(dir, "trace.log"), `${formatClaimsTraceLine(counts)}
+`, "utf8");
+  } catch {
+  }
+}
+function claimGapIds(gaps) {
+  const ids = [];
+  for (const gap of gaps) {
+    const match2 = /^claim:(C-\d{2,3}(?:\.\d+)?):/.exec(gap);
+    const id = match2?.[1];
+    if (id !== void 0 && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+function claimEvidencePaths(cell) {
+  const paths = [];
+  for (const raw of cell.replace(/`/g, "").split(";")) {
+    const ref = raw.trim().replace(/「[^」]*」\s*$/, "").trim();
+    if (ref === "" || ref === "-" || ref.includes("=>")) continue;
+    const match2 = /^(.+?):(\d+)(?:-(\d+))?$/.exec(ref);
+    if (match2 === null) continue;
+    const file = (match2[1] ?? "").trim();
+    if (file === "" || file.startsWith("/") || /^[A-Za-z]:[\\/]/.test(file) || file.startsWith("./")) continue;
+    if (file.split(/[\\/]/).includes("..")) continue;
+    paths.push(file);
+  }
+  return paths;
+}
+function claimSettlementGaps(opts) {
+  const gaps = [];
+  if (opts.claims.length === 0) return gaps;
+  const declared = new Set(opts.claims.map((claim) => claim.id));
+  const rows = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const row of opts.table.rows) {
+    if (!declared.has(row.id) || seen.has(row.id)) continue;
+    seen.add(row.id);
+    rows.push(row);
+  }
+  const limitPermille = Math.round(
+    opts.role === "review" ? CLAIM_UNVERIFIED_MAX_REVIEW * 1e3 : CLAIM_UNVERIFIED_MAX_DEFAULT * 1e3
+  );
+  const unverified = rows.filter((row) => claimVerdictToken(row.verdict) === "unverified").length;
+  if (opts.claims.length > 0 && unverified * 1e3 > opts.claims.length * limitPermille) {
+    gaps.push(`claims:unverified-ratio:${unverified}/${opts.claims.length}>${limitPermille / 10}%`);
+  }
+  let fetchSum = 0;
+  for (const row of rows) {
+    const fetches = Number(row.fetches.replace(/`/g, "").trim());
+    if (Number.isInteger(fetches) && fetches >= 0) fetchSum += fetches;
+  }
+  const { fileCap } = claimBudgetCaps(opts.claims);
+  if (fetchSum > fileCap) gaps.push(`claims:fetches:${fetchSum}>${fileCap}`);
+  if (fetchSum > opts.traceReads) gaps.push(`claims:fetches:${fetchSum}>trace:${opts.traceReads}`);
+  const projectDir = opts.projectDir ?? process.cwd();
+  if (opts.taskMtimeMs !== void 0) {
+    for (const row of rows) {
+      const verdict = claimVerdictToken(row.verdict);
+      if (verdict !== "closed" && verdict !== "partial") continue;
+      if (CARRIED_FROM_RE.test(`${row.evidence} ${row.reason}`)) continue;
+      const files = claimEvidencePaths(row.evidence).map((file) => path26.resolve(projectDir, file));
+      if (files.length === 0) continue;
+      let staleOnly = true;
+      for (const file of files) {
+        try {
+          if (!(fs22.statSync(file).mtimeMs < opts.taskMtimeMs)) {
+            staleOnly = false;
+            break;
+          }
+        } catch {
+          staleOnly = false;
+          break;
+        }
+      }
+      if (staleOnly) gaps.push(`claim:${row.id}:carried-from`);
+    }
+  }
+  return gaps;
 }
 function toolTarget2(args) {
   const a = args;
@@ -19464,25 +21601,25 @@ function toolErrorText(result) {
 }
 function writeWorkerLogLine(line) {
   try {
-    fs18.writeSync(1, `${line}
+    fs22.writeSync(1, `${line}
 `);
   } catch {
   }
 }
 function appendStartPidLine(taskKey, agenticdocRoot2) {
   try {
-    const dir = path21.resolve(agenticdocRoot2, taskKey);
-    fs18.mkdirSync(dir, { recursive: true });
-    fs18.appendFileSync(path21.join(dir, "trace.log"), `[START] pid=${process.pid}
+    const dir = path26.resolve(agenticdocRoot2, taskKey);
+    fs22.mkdirSync(dir, { recursive: true });
+    fs22.appendFileSync(path26.join(dir, "trace.log"), `[START] pid=${process.pid}
 `, "utf8");
   } catch {
   }
 }
 function appendHeaderTraceLine(taskKey, agenticdocRoot2, line) {
   try {
-    const dir = path21.resolve(agenticdocRoot2, taskKey);
-    fs18.mkdirSync(dir, { recursive: true });
-    fs18.appendFileSync(path21.join(dir, "trace.log"), `${line}
+    const dir = path26.resolve(agenticdocRoot2, taskKey);
+    fs22.mkdirSync(dir, { recursive: true });
+    fs22.appendFileSync(path26.join(dir, "trace.log"), `${line}
 `, "utf8");
   } catch {
   }
@@ -19523,10 +21660,10 @@ function dispatchRefusal(meta) {
 }
 function appendReadScopeTraceLine(taskKey, agenticdocRoot2, r) {
   try {
-    const dir = path21.resolve(agenticdocRoot2, taskKey);
-    fs18.mkdirSync(dir, { recursive: true });
-    fs18.appendFileSync(
-      path21.join(dir, "trace.log"),
+    const dir = path26.resolve(agenticdocRoot2, taskKey);
+    fs22.mkdirSync(dir, { recursive: true });
+    fs22.appendFileSync(
+      path26.join(dir, "trace.log"),
       `[READ_SCOPE] ${r.ts} blocked path=${r.path} rule=${r.rule} tool=${r.tool}
 `,
       "utf8"
@@ -19537,13 +21674,13 @@ function appendReadScopeTraceLine(taskKey, agenticdocRoot2, r) {
 function appendReadScopeRejectionsSection(taskKey, agenticdocRoot2, rejections) {
   if (rejections.length === 0) return;
   try {
-    const dir = path21.resolve(agenticdocRoot2, taskKey);
-    fs18.mkdirSync(dir, { recursive: true });
+    const dir = path26.resolve(agenticdocRoot2, taskKey);
+    fs22.mkdirSync(dir, { recursive: true });
     const lines = ["## Read Scope Rejections", "", "| tool | rule | path | ts |", "| ---- | ---- | ---- | ---- |"];
     for (const r of rejections) {
       lines.push(`| ${r.tool} | ${r.rule} | ${r.path.replaceAll("|", "\\|")} | ${r.ts} |`);
     }
-    fs18.appendFileSync(path21.join(dir, "output.md"), `
+    fs22.appendFileSync(path26.join(dir, "output.md"), `
 ${lines.join("\n")}
 `, "utf8");
   } catch {
@@ -20454,20 +22591,20 @@ function samePath3(a, b) {
   return isSameOrUnder(a, b) && isSameOrUnder(b, a);
 }
 function bashWriteDenyReason(config, target) {
-  const workersDir = path21.join(config.keyDir, "workers");
-  if (samePath3(target, path21.join(config.keyDir, "pm-state.md"))) return "pm-state.md";
+  const workersDir = path26.join(config.keyDir, "workers");
+  if (samePath3(target, path26.join(config.keyDir, "pm-state.md"))) return "pm-state.md";
   if (isSameOrUnder(workersDir, target)) {
-    const firstSegment = path21.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
+    const firstSegment = path26.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
     if (firstSegment.startsWith("_workers")) return "workers/_workers*";
   }
-  if (samePath3(target, path21.join(config.trueRoot, "_index.parallel"))) return "_index.parallel";
+  if (samePath3(target, path26.join(config.trueRoot, "_index.parallel"))) return "_index.parallel";
   if (isSameOrUnder(config.trueRoot, target) && !isSameOrUnder(config.keyDir, target)) {
     return "other key dir / .agenticdoc root";
   }
-  if (config.roleClass !== "writable" && isSameOrUnder(path21.join(config.projectRoot, "packages"), target)) {
+  if (config.roleClass !== "writable" && isSameOrUnder(path26.join(config.projectRoot, "packages"), target)) {
     return "packages/**";
   }
-  if (isSameOrUnder(path21.join(config.projectRoot, ".git"), target)) return ".git/**";
+  if (isSameOrUnder(path26.join(config.projectRoot, ".git"), target)) return ".git/**";
   return null;
 }
 function matchesWriteFaceTarget(face, absoluteTarget) {
@@ -20492,14 +22629,14 @@ function carriersUnequal(writeFaceEntries, writeScopeEntries) {
 }
 function appendWriteFaceCarrierTraceLine(taskKey, agenticdocRoot2, info) {
   try {
-    const dir = path21.resolve(agenticdocRoot2, taskKey);
-    fs18.mkdirSync(dir, { recursive: true });
+    const dir = path26.resolve(agenticdocRoot2, taskKey);
+    fs22.mkdirSync(dir, { recursive: true });
     const rejected = info.rejected === void 0 ? "" : ` write_face_rejected=${info.rejected}`;
     const writeFace = JSON.stringify(info.writeFace);
     const writeScope = JSON.stringify(info.writeScope);
     const unequal = String(info.unequal);
-    fs18.appendFileSync(
-      path21.join(dir, "trace.log"),
+    fs22.appendFileSync(
+      path26.join(dir, "trace.log"),
       `[WRITE_FACE] ${(/* @__PURE__ */ new Date()).toISOString()} carrier=dual unequal=${unequal} write_face=${writeFace} write_scope=${writeScope}${rejected} detail=write_face and write_scope both present, unequal=${unequal}; write_face=${writeFace} write_scope=${writeScope}; declared face = intersection (legacy write_scope can only narrow)
 `,
       "utf8"
@@ -20509,8 +22646,8 @@ function appendWriteFaceCarrierTraceLine(taskKey, agenticdocRoot2, info) {
 }
 function checkBashWriteScopeTarget(config, rawTarget, verbatim, toolLabel = "bash") {
   if (!verbatim) {
-    const basename14 = rawTarget.split(/[\\/]/).pop() ?? "";
-    const risk = basename14 === "pm-state.md" || basename14.startsWith("_workers") ? "deny-basename" : void 0;
+    const basename15 = rawTarget.split(/[\\/]/).pop() ?? "";
+    const risk = basename15 === "pm-state.md" || basename15.startsWith("_workers") ? "deny-basename" : void 0;
     return {
       allowed: true,
       rule: "allow-unknown",
@@ -20581,12 +22718,12 @@ function checkBashWriteScopeTarget(config, rawTarget, verbatim, toolLabel = "bas
 }
 function appendBashWriteScopeTraceLine(taskKey, agenticdocRoot2, r) {
   try {
-    const dir = path21.resolve(agenticdocRoot2, taskKey);
-    fs18.mkdirSync(dir, { recursive: true });
+    const dir = path26.resolve(agenticdocRoot2, taskKey);
+    fs22.mkdirSync(dir, { recursive: true });
     const summary = r.command.replace(/\s+/g, " ").trim().slice(0, 200);
     const risk = r.risk === void 0 ? "" : `risk=${r.risk} `;
-    fs18.appendFileSync(
-      path21.join(dir, "trace.log"),
+    fs22.appendFileSync(
+      path26.join(dir, "trace.log"),
       `[WRITE_SCOPE] ${r.ts} write-scope blocked=${String(r.blocked)} ${risk}rule=${r.rule} detail=${r.detail} pattern=${r.pattern} target=${r.target} cmd=${summary}
 `,
       "utf8"
@@ -20596,10 +22733,10 @@ function appendBashWriteScopeTraceLine(taskKey, agenticdocRoot2, r) {
 }
 function appendWriteScopeSummary(taskKey, agenticdocRoot2, counts) {
   try {
-    const dir = path21.resolve(agenticdocRoot2, taskKey);
-    fs18.mkdirSync(dir, { recursive: true });
-    fs18.appendFileSync(
-      path21.join(dir, "trace.log"),
+    const dir = path26.resolve(agenticdocRoot2, taskKey);
+    fs22.mkdirSync(dir, { recursive: true });
+    fs22.appendFileSync(
+      path26.join(dir, "trace.log"),
       `[WRITE_SCOPE_SUMMARY] allow=${counts.allowDetermined} deny=${counts.deny} allow-unknown=${counts.allowUnknown}
 `,
       "utf8"
@@ -20609,10 +22746,10 @@ function appendWriteScopeSummary(taskKey, agenticdocRoot2, counts) {
 }
 function appendEscapeHatchTraceLine(taskKey, agenticdocRoot2, target) {
   try {
-    const dir = path21.resolve(agenticdocRoot2, taskKey);
-    fs18.mkdirSync(dir, { recursive: true });
-    fs18.appendFileSync(
-      path21.join(dir, "trace.log"),
+    const dir = path26.resolve(agenticdocRoot2, taskKey);
+    fs22.mkdirSync(dir, { recursive: true });
+    fs22.appendFileSync(
+      path26.join(dir, "trace.log"),
       `[ESCAPE_HATCH] allow_foreign_write=${taskKey} target=${target}
 `,
       "utf8"
@@ -20622,11 +22759,11 @@ function appendEscapeHatchTraceLine(taskKey, agenticdocRoot2, target) {
 }
 function appendIdleKillEvidence(taskKey, agenticdocRoot2, evidence) {
   try {
-    const dir = path21.resolve(agenticdocRoot2, taskKey);
-    fs18.mkdirSync(dir, { recursive: true });
+    const dir = path26.resolve(agenticdocRoot2, taskKey);
+    fs22.mkdirSync(dir, { recursive: true });
     const num = (value) => value === null ? "-" : String(value);
     const line = `[IDLE_KILL] ${(/* @__PURE__ */ new Date()).toISOString()} tool_in_flight=${evidence.toolInFlight} tool_run_s=${num(evidence.toolRunS)} tool_idle_s=${num(evidence.toolIdleS)} silence_s=${evidence.silenceS} threshold_s=${evidence.thresholdS} threshold_kind=${evidence.thresholdKind} last_activity=${evidence.lastActivity} last_model_error=${evidence.lastModelError ? "yes" : "no"}`;
-    fs18.appendFileSync(path21.join(dir, "trace.log"), `${line}
+    fs22.appendFileSync(path26.join(dir, "trace.log"), `${line}
 `, "utf8");
     return true;
   } catch {
@@ -20639,10 +22776,10 @@ function evidencePhase(phase) {
 var RAG_UNUSED_MARKER = "RAG \u672A\u751F\u6548\uFF1Arequired but unused";
 function appendEvidenceOnce(taskDir, line) {
   try {
-    const tracePath = path21.join(path21.resolve(taskDir), "trace.log");
+    const tracePath = path26.join(path26.resolve(taskDir), "trace.log");
     let existing = "";
     try {
-      existing = fs18.readFileSync(tracePath, "utf8");
+      existing = fs22.readFileSync(tracePath, "utf8");
     } catch {
     }
     if (existing.includes(line)) return;
@@ -20652,10 +22789,10 @@ function appendEvidenceOnce(taskDir, line) {
 }
 function markOutputRagUnused(taskDir) {
   try {
-    const outputPath = path21.join(path21.resolve(taskDir), "output.md");
-    if (!fs18.existsSync(outputPath)) return;
-    if (fs18.readFileSync(outputPath, "utf8").includes(RAG_UNUSED_MARKER)) return;
-    fs18.appendFileSync(outputPath, `
+    const outputPath = path26.join(path26.resolve(taskDir), "output.md");
+    if (!fs22.existsSync(outputPath)) return;
+    if (fs22.readFileSync(outputPath, "utf8").includes(RAG_UNUSED_MARKER)) return;
+    fs22.appendFileSync(outputPath, `
 ## RAG
 
 ${RAG_UNUSED_MARKER}
@@ -20682,13 +22819,13 @@ function emitRagRequiredMissing(check) {
   markOutputRagUnused(check.taskDir);
   return line;
 }
-async function workerModeActivate(pi) {
+async function workerModeActivate(pi, options) {
   const taskPathEnv = process.env.PI_WORKER_TASK;
   if (!taskPathEnv) {
     return;
   }
-  const taskPath = path21.resolve(taskPathEnv);
-  if (!fs18.existsSync(taskPath)) {
+  const taskPath = path26.resolve(taskPathEnv);
+  if (!fs22.existsSync(taskPath)) {
     killTrackedDetachedChildren();
     process.exit(1);
   }
@@ -20701,8 +22838,8 @@ async function workerModeActivate(pi) {
   let sawSuccessfulAssistant = false;
   const triedModels = parseTriedModels(process.env.PI_WORKER_TRIED_MODELS);
   appendStartPidLine(meta.taskKey, meta.agenticdocRoot);
-  const taskDir = path21.dirname(taskPath);
-  const taskContent = fs18.readFileSync(taskPath, "utf8");
+  const taskDir = path26.dirname(taskPath);
+  const taskContent = fs22.readFileSync(taskPath, "utf8");
   appendHeaderAudit(meta.taskKey, meta.agenticdocRoot, taskContent, meta.type);
   const runState = {
     schema: RUN_SCHEMA,
@@ -20710,7 +22847,7 @@ async function workerModeActivate(pi) {
     run_id: newRunId(meta.taskKey),
     // `.agenticdoc/<key>/workers/<task>` (or `_scratch`): the owner key is the
     // directory that owns this task, never inferred from the task-key prefix.
-    owner_key: path21.basename(path21.dirname(path21.dirname(taskDir))),
+    owner_key: path26.basename(path26.dirname(path26.dirname(taskDir))),
     kind: meta.type,
     status: "running",
     started_at: (/* @__PURE__ */ new Date()).toISOString(),
@@ -20825,7 +22962,7 @@ async function workerModeActivate(pi) {
   });
   let ragRuntime = null;
   const controlRoot = controlRootFromTaskPath(taskPath);
-  const workerTaskDir2 = path21.dirname(taskPath);
+  const workerTaskDir2 = path26.dirname(taskPath);
   try {
     ragRuntime = registerRagTools(pi, controlRoot, {
       breaker: new Breaker(),
@@ -20855,9 +22992,85 @@ async function workerModeActivate(pi) {
       { taskWallMs: resolveBudgetMs(meta.timeoutMin, process.env.PI_WORKER_TIMEOUT_MS) }
     );
   }
+  let dp2SteerInjected = false;
+  function consumeDp2NarrowSteer(via) {
+    const steerPath = path26.join(taskDir, DP2_STEER_FILE);
+    let content;
+    try {
+      content = fs22.readFileSync(steerPath, "utf8");
+    } catch (err) {
+      if (err.code !== "ENOENT") {
+        appendTrace(meta.taskKey, meta.agenticdocRoot, "[DECISION] dp2 consume-failed reason=read");
+      }
+      return false;
+    }
+    if (dp2SteerInjected || hasDp2ConsumedMarker(content)) return false;
+    const text = formatDp2NarrowSteer(content);
+    if (text === void 0) {
+      appendTrace(meta.taskKey, meta.agenticdocRoot, "[DECISION] dp2 consume-failed reason=empty");
+      return false;
+    }
+    try {
+      pi.sendUserMessage(text, { deliverAs: "followUp" });
+    } catch {
+      appendTrace(meta.taskKey, meta.agenticdocRoot, "[DECISION] dp2 consume-failed reason=inject");
+      return false;
+    }
+    dp2SteerInjected = true;
+    let marked = false;
+    try {
+      marked = appendDp2ConsumedMarker(steerPath, content, runState.run_id);
+    } catch {
+      marked = false;
+    }
+    if (!marked) {
+      appendTrace(meta.taskKey, meta.agenticdocRoot, "[DECISION] dp2 consume-failed reason=mark");
+    }
+    const decisionId = /decision_id=(\S+)/.exec(content)?.[1] ?? "-";
+    appendTrace(
+      meta.taskKey,
+      meta.agenticdocRoot,
+      `[DECISION] dp2 consumed=1 decision_id=${decisionId} via=${via} marker=${marked ? "ok" : "failed"}`
+    );
+    return true;
+  }
   pi.on("before_agent_start", () => {
     applyRagTools(pi, ragRuntime, meta.type);
+    consumeDp2NarrowSteer("before_agent_start");
   });
+  if (meta.type === DECIDE_PREPARE_TYPE) {
+    const allowSend = decisionAllowsSend(taskContent);
+    pi.on("before_agent_start", (event) => {
+      if (event.systemPrompt.includes(DECISION_TYPE_PROMPT)) return void 0;
+      return { systemPrompt: `${event.systemPrompt}
+
+${DECISION_TYPE_PROMPT}` };
+    });
+    pi.on("tool_call", (event) => {
+      if (event.toolName === "bash") {
+        const command = event.input?.command;
+        if (typeof command !== "string" || command.trim() === "") return void 0;
+        const reason = decisionBashBlockReason(command, allowSend);
+        if (reason === null) return void 0;
+        appendTrace(
+          meta.taskKey,
+          meta.agenticdocRoot,
+          `[DECISION] bash blocked allow_send=${allowSend ? "yes" : "no"}`
+        );
+        return { block: true, reason };
+      }
+      if (event.toolName === WORKER_FILE_TOOL) {
+        const file = event.input?.path;
+        if (typeof file !== "string" || decisionWorkerFilePathAllowed(file)) return void 0;
+        appendTrace(meta.taskKey, meta.agenticdocRoot, "[DECISION] worker_file blocked outside evidence/books");
+        return {
+          block: true,
+          reason: `decision: this role writes only ${DECISION_BOOK_SUBDIR}/** (got ${JSON.stringify(file)}); the book is the whole product.`
+        };
+      }
+      return void 0;
+    });
+  }
   if (readScopeConfig) {
     const projectRoot = process.cwd();
     pi.on("tool_call", (event) => {
@@ -20898,7 +23111,7 @@ async function workerModeActivate(pi) {
     projectRoot: process.cwd(),
     // launcher spawns workers with cwd = project root
     taskDir,
-    keyDir: path21.dirname(meta.agenticdocRoot),
+    keyDir: path26.dirname(meta.agenticdocRoot),
     trueRoot: meta.trueAgenticdocRoot,
     writeScope: meta.writeScope,
     roleClass,
@@ -21068,7 +23281,7 @@ async function workerModeActivate(pi) {
     const bashWrites = pendingBashWrites.get(event.toolCallId);
     pendingBashWrites.delete(event.toolCallId);
     if (!event.isError) {
-      const tracePath = path21.join(path21.resolve(meta.agenticdocRoot, meta.taskKey), "trace.log");
+      const tracePath = path26.join(path26.resolve(meta.agenticdocRoot, meta.taskKey), "trace.log");
       if (writeTarget !== void 0 && writeTarget !== "") {
         appendWriteFileEvent(tracePath, repoRelativePath(writeTarget));
       }
@@ -21164,7 +23377,7 @@ async function workerModeActivate(pi) {
   }
   function readTextBestEffort(file) {
     try {
-      return fs18.readFileSync(file, "utf8");
+      return fs22.readFileSync(file, "utf8");
     } catch {
       return "";
     }
@@ -21173,9 +23386,9 @@ async function workerModeActivate(pi) {
     const lastLand = opts.landing.lastLandingAgeMs === void 0 ? "-" : `${Math.round(opts.landing.lastLandingAgeMs / 1e3)}s`;
     const line = `[CHECKPOINT] ${(/* @__PURE__ */ new Date()).toISOString()} elapsed=${Math.round(opts.elapsedMs / 1e3)}s reads=${opts.reads} writes=${opts.writes} phases=${opts.phases} uniq_targets=${opts.uniqTargets} repeat_top=${opts.repeatTop} risk=${opts.risk} land=${opts.landing.landed} last_land=${lastLand} artifact=${opts.landing.artifactPresent ? "yes" : "no"} done=${opts.landing.progressDone ? "yes" : "no"}`;
     try {
-      const dir = path21.resolve(meta.agenticdocRoot, meta.taskKey);
-      fs18.mkdirSync(dir, { recursive: true });
-      fs18.appendFileSync(path21.join(dir, "trace.log"), `${line}
+      const dir = path26.resolve(meta.agenticdocRoot, meta.taskKey);
+      fs22.mkdirSync(dir, { recursive: true });
+      fs22.appendFileSync(path26.join(dir, "trace.log"), `${line}
 `, "utf8");
     } catch {
     }
@@ -21185,11 +23398,11 @@ async function workerModeActivate(pi) {
     let repeatTop = 0;
     for (const n of readCounts.values()) repeatTop = Math.max(repeatTop, n);
     const phasesStr = phaseTotal > 0 ? `${completedPhaseIdx}/${phaseTotal}` : "-";
-    const taskDir2 = path21.dirname(taskPath);
+    const taskDir2 = path26.dirname(taskPath);
     const landing = hasWriteTool ? void 0 : collectLandingSignals({
       taskDir: taskDir2,
-      traceText: readTextBestEffort(path21.join(taskDir2, "trace.log")),
-      progressText: readTextBestEffort(path21.join(taskDir2, "progress.md")),
+      traceText: readTextBestEffort(path26.join(taskDir2, "trace.log")),
+      progressText: readTextBestEffort(path26.join(taskDir2, "progress.md")),
       startedAtMs: startedAt,
       nowMs: startedAt + elapsedMs
     });
@@ -21243,7 +23456,7 @@ async function workerModeActivate(pi) {
       checkpointSteerText({
         elapsedMs,
         budgetMs,
-        progressPath: path21.join(taskDir2, "progress.md"),
+        progressPath: path26.join(taskDir2, "progress.md"),
         hasWriteTools: hasWriteTool,
         narrowTool: WORKER_FILE_TOOL
       }),
@@ -21330,6 +23543,7 @@ async function workerModeActivate(pi) {
   let initialSettled = false;
   let nextPhaseIdx = 0;
   let completedPhaseIdx = 0;
+  let phaseMachineComplete = false;
   const phases = meta.phases;
   const heartbeat = setInterval(() => {
     appendHeartbeat(
@@ -21346,8 +23560,30 @@ async function workerModeActivate(pi) {
     const tools = toolsUsed.size > 0 ? ` Tools used: ${[...toolsUsed].sort().join(", ")} (${toolCallCount} calls).` : "";
     return `${base}${tools}`;
   }
+  function taskMtimeMs() {
+    try {
+      return fs22.statSync(taskPath).mtimeMs;
+    } catch {
+      return void 0;
+    }
+  }
+  function claimGapsHere(summary) {
+    if (meta.claims === void 0) return [];
+    const table = parseVerdictTable(agentProductText(taskDir, summary));
+    return [
+      ...claimCoverage(meta.claims, table, { projectDir: process.cwd() }),
+      ...claimSettlementGaps({
+        claims: meta.claims,
+        table,
+        role: roleForTaskType(meta.type),
+        traceReads: readCount,
+        taskMtimeMs: taskMtimeMs(),
+        projectDir: process.cwd()
+      })
+    ];
+  }
   function writesLabel() {
-    const bases = new Set([...writeTargets].map((t) => path21.basename(t.replace(/[\\/]+$/, ""))));
+    const bases = new Set([...writeTargets].map((t) => path26.basename(t.replace(/[\\/]+$/, ""))));
     if ([...bases].some((b) => b === "report.md" || /^report-.+\.md$/.test(b))) return "report.md";
     if (bases.has("progress.md")) return "progress.md";
     return "none";
@@ -21357,11 +23593,105 @@ async function workerModeActivate(pi) {
   function judgeRecoveryHere() {
     return judgedType !== void 0 && (isWritelessRole(meta.type) || hasReportProduct(taskDir));
   }
+  let dp3RawClarifications = 0;
+  let dp3HumanClarifications = 0;
+  let dp3AutoAnswered = false;
+  function attemptDp3Clarification(harnessDetail) {
+    try {
+      const projectDir = process.cwd();
+      const policy = readDp3Policy(projectDir);
+      if (!policy.enabled) return false;
+      dp3RawClarifications += 1;
+      const triggerId = `${meta.taskKey}#nc${dp3RawClarifications}`;
+      const decisionId = `${DP3_ID}:${triggerId}`;
+      if (dp3AutoAnswered) {
+        dp3HumanClarifications += 1;
+        appendTrace(
+          meta.taskKey,
+          meta.agenticdocRoot,
+          formatDp3TraceLine({
+            triggerId,
+            acted: false,
+            mode: policy.mode,
+            escalatedReason: "-",
+            decisionId,
+            ncRaw: dp3RawClarifications,
+            ncHuman: dp3HumanClarifications
+          })
+        );
+        return false;
+      }
+      const risk = lastCheckpoint?.risk ?? "mid";
+      const decision = decideDp3WorkerClarify({
+        projectDir,
+        taskKey: meta.taskKey,
+        ncIndex: dp3RawClarifications,
+        key: path26.basename(path26.dirname(meta.agenticdocRoot)),
+        phase: meta.phase ?? "EXECUTE",
+        taskType: dp3TaskType(meta.type),
+        risk,
+        riskSource: lastCheckpoint === void 0 ? "pm-label" : "machine",
+        question: lastAssistantText,
+        harnessDetail,
+        taskDir,
+        taskPath,
+        taskContent,
+        trueRoot: meta.trueAgenticdocRoot,
+        keyDir: path26.dirname(meta.agenticdocRoot),
+        policy,
+        runner: options?.dp3Runner
+      });
+      if (decision.kind === "answer" && decision.detail !== void 0) {
+        appendTrace(meta.taskKey, meta.agenticdocRoot, `[DECISION] dp3 detail=${decision.detail}`);
+      }
+      if (decision.kind === "answer" && decision.mode === "auto") {
+        const actedDecision = { ...decision, acted: true };
+        dp3AutoAnswered = true;
+        appendTrace(
+          meta.taskKey,
+          meta.agenticdocRoot,
+          formatDp3TraceLine({
+            triggerId,
+            sub: actedDecision.sub,
+            acted: actedDecision.acted === true,
+            mode: actedDecision.mode,
+            escalatedReason: "-",
+            decisionId: actedDecision.decisionId,
+            ncRaw: dp3RawClarifications,
+            ncHuman: dp3HumanClarifications
+          })
+        );
+        appendTrace(
+          meta.taskKey,
+          meta.agenticdocRoot,
+          `[DECISION] dp3 acted=1 decision_id=${actedDecision.decisionId}`
+        );
+        pi.sendUserMessage(formatDp3AnswerSteer(actedDecision, lastAssistantText), { deliverAs: "followUp" });
+        return true;
+      }
+      dp3HumanClarifications += 1;
+      appendTrace(
+        meta.taskKey,
+        meta.agenticdocRoot,
+        formatDp3TraceLine({
+          triggerId,
+          sub: decision.sub,
+          acted: false,
+          mode: decision.kind === "answer" ? decision.mode : policy.mode,
+          escalatedReason: decision.kind === "escalate" ? decision.reason : "-",
+          decisionId,
+          ncRaw: dp3RawClarifications,
+          ncHuman: dp3HumanClarifications
+        })
+      );
+      return false;
+    } catch {
+      return false;
+    }
+  }
   function finishSuccess() {
     if (taskDone) return;
-    taskDone = true;
-    clearWatchdogTimers();
-    clearInterval(heartbeat);
+    if (consumeDp2NarrowSteer("settle")) return;
     const evidence = isWritelessRole(meta.type) ? hasDeliverableEvidence(taskDir, lastAssistantText) : { delivered: true, channel: "none", detail: "write role" };
     const judgeRecovery = judgeRecoveryHere();
     if (judgeRecovery) {
@@ -21375,7 +23705,7 @@ async function workerModeActivate(pi) {
         appendTrace(
           meta.taskKey,
           meta.agenticdocRoot,
-          `recovery-backfill section=\u4E0A\u4E0B\u6587\u6765\u6E90 target=${path21.basename(backfill.target ?? "")} ok=${backfill.ok}`
+          `recovery-backfill section=\u4E0A\u4E0B\u6587\u6765\u6E90 target=${path26.basename(backfill.target ?? "")} ok=${backfill.ok}`
         );
       }
     }
@@ -21383,14 +23713,43 @@ async function workerModeActivate(pi) {
       taskKey: meta.taskKey,
       agenticdocRoot: meta.agenticdocRoot,
       summary: buildSummary(),
-      judgeRecovery
+      judgeRecovery,
+      // T-04b/D-003: the card's claim set (from task.md) rides the SAME single
+      // decision point as the recovery contract and the change ledger. Absent
+      // (`undefined`) ⇒ `readTerminalGaps` returns a field-identical verdict to
+      // the pre-claim one, so a claims-free book keeps this path byte-identical.
+      claims: meta.claims
     });
+    const claimsTable = meta.claims === void 0 ? void 0 : parseVerdictTable(agentProductText(taskDir, buildSummary()));
+    if (meta.claims !== void 0 && claimsTable !== void 0 && judgeRecovery) {
+      const settlementGaps = claimSettlementGaps({
+        claims: meta.claims,
+        table: claimsTable,
+        role: roleForTaskType(meta.type),
+        traceReads: readCount,
+        taskMtimeMs: taskMtimeMs(),
+        projectDir: process.cwd()
+      });
+      if (settlementGaps.length > 0) {
+        gaps.claimGaps = [...gaps.claimGaps ?? [], ...settlementGaps];
+        gaps.ok = false;
+      }
+    }
     const exitCode = evidence.delivered && gaps.ok ? 0 : 2;
     const effort = `writes=${writesLabel()}`;
     const gapReason = gaps.missingSections.length > 0 ? `missing section(s): ${gaps.missingSections.join(", ")}` : "";
     const ledgerReason = gaps.unrecordedFiles.length > 0 ? `unrecorded write(s): ${gaps.unrecordedFiles.join(", ")}` : "";
     const unjudgeableReason = gaps.unjudgeableFiles.length > 0 ? `unjudgeable write(s) (trace has no [WRITE_FILE] event): ${gaps.unjudgeableFiles.join(", ")}` : "";
-    const gapsReason = [gapReason, ledgerReason, unjudgeableReason].filter((part) => part !== "").join("; ");
+    const claimIds = claimGapIds(gaps.claimGaps ?? []);
+    const claimReason = claimIds.length > 0 ? `unsettled claim(s): ${claimIds.join(", ")}` : (gaps.claimGaps?.length ?? 0) > 0 ? `unsettled claims: ${(gaps.claimGaps ?? []).join(", ")}` : "";
+    const gapsReason = [gapReason, ledgerReason, unjudgeableReason, claimReason].filter((part) => part !== "").join("; ");
+    const questionsText = evidence.delivered ? gaps.ok ? void 0 : `recovery-incomplete: ${gapsReason}` : `no-product: ${evidence.detail}`;
+    if (exitCode === 2 && attemptDp3Clarification([evidence.detail, gapsReason].filter((p) => p !== "").join("; "))) {
+      return;
+    }
+    taskDone = true;
+    clearWatchdogTimers();
+    clearInterval(heartbeat);
     writeOutputGuarded({
       taskKey: meta.taskKey,
       agenticdocRoot: meta.agenticdocRoot,
@@ -21399,7 +23758,7 @@ async function workerModeActivate(pi) {
       changedFiles: collectArtifacts(taskDir),
       verificationSteps: "See task output for details.",
       exitReason: evidence.delivered ? gaps.ok ? `Agent settled after ${toolCallCount} tool call(s). ${effort}` : `Agent settled after ${toolCallCount} tool call(s) without a recoverable product (${gapsReason}). ${effort}` : `Agent settled after ${toolCallCount} tool call(s) without a deliverable: ${evidence.detail} ${effort}`,
-      questions: evidence.delivered ? gaps.ok ? void 0 : `recovery-incomplete: ${gapsReason}` : `no-product: ${evidence.detail}`,
+      questions: questionsText,
       terminalGaps: gaps
     });
     if (!evidence.delivered) {
@@ -21415,36 +23774,44 @@ async function workerModeActivate(pi) {
         taskType: meta.type,
         phase: evidencePhase(meta.phase),
         outputText: lastAssistantText,
-        keyDir: path21.dirname(meta.agenticdocRoot),
-        taskDir: path21.dirname(taskPath)
+        keyDir: path26.dirname(meta.agenticdocRoot),
+        taskDir: path26.dirname(taskPath)
       });
+    }
+    if (meta.claims !== void 0 && claimsTable !== void 0) {
+      const counts = claimCounts(meta.claims, claimsTable, readCount);
+      runState.claims = counts;
+      appendClaimsTraceLine(meta.taskKey, meta.agenticdocRoot, counts);
     }
     recordEnd(exitCode);
     outputWritten = true;
   }
   function settleOrSelfCheck() {
     if (judgedType !== void 0 && (isWritelessRole(meta.type) || hasReportProduct(taskDir))) {
+      const summary = buildSummary();
       const missing = currentRecoveryMissing({
         taskKey: meta.taskKey,
         agenticdocRoot: meta.agenticdocRoot,
-        summary: buildSummary(),
+        summary,
         type: judgedType
       });
+      const claimGaps = claimGapsHere(summary);
+      const claimIds = claimGapIds(claimGaps);
       appendTrace(
         meta.taskKey,
         meta.agenticdocRoot,
-        `recovery-gap missing=${missing.length > 0 ? missing.join("|") : "-"} selfcheck=${selfCheckSent ? "sent" : "pending"}`
+        `recovery-gap missing=${missing.length > 0 ? missing.join("|") : "-"} selfcheck=${selfCheckSent ? "sent" : "pending"}${claimGaps.length > 0 ? ` claims=${claimIds.length > 0 ? claimIds.join("|") : "-"}` : ""}`
       );
       const substantive = missing.filter((name) => !isMechanicalSection(name));
       const isDelivered = isWritelessRole(meta.type) ? hasDeliverableEvidence(taskDir, lastAssistantText).delivered : true;
-      if (!selfCheckSent && substantive.length > 0 && isDelivered) {
+      if (!selfCheckSent && (substantive.length > 0 || claimGaps.length > 0) && isDelivered) {
         selfCheckSent = true;
-        pi.sendUserMessage(
-          `[mw recovery self-check] \u4F60\u7684\u4EA7\u7269\u7F3A\u5C11\u6062\u590D\u5951\u7EA6\u6BB5\uFF1A${substantive.join(
-            "\u3001"
-          )}\u3002\u8BF7\u5728 report.md / output.md \u4E2D\u7528 \`## <\u6BB5\u540D>\` \u6807\u9898\u8865\u4E0A\u8FD9\u4E9B\u6BB5\u843D\uFF0C\u7136\u540E\u91CD\u65B0\u6536\u5C3E\uFF1B\u672C\u8FDB\u7A0B\u53EA\u81EA\u68C0\u4E00\u6B21\uFF0C\u4E4B\u540E\u6309\u5B9E\u9645\u4EA7\u7269\u5224\u5B9A\u3002`,
-          { deliverAs: "followUp" }
-        );
+        const recoveryText = substantive.length > 0 ? `\u4F60\u7684\u4EA7\u7269\u7F3A\u5C11\u6062\u590D\u5951\u7EA6\u6BB5\uFF1A${substantive.join(
+          "\u3001"
+        )}\u3002\u8BF7\u5728 report.md / output.md \u4E2D\u7528 \`## <\u6BB5\u540D>\` \u6807\u9898\u8865\u4E0A\u8FD9\u4E9B\u6BB5\u843D` : "";
+        const claimText = claimGaps.length > 0 ? `\u4EA7\u7269\u4E2D\u7684 \`## \u65AD\u8A00\u88C1\u51B3\` \u672A\u7ED3\u7B97 ${claimIds.length > 0 ? claimIds.join("\u3001") : "-"}\uFF08\u9996\u4E2A\u7F3A\u5931 claim id\uFF1A${claimIds[0] ?? "-"}\uFF09\uFF0C\u7F3A\u9879\uFF1A${claimGaps.join("; ")}` : "";
+        const steerText = claimText === "" ? `${recoveryText}\uFF0C\u7136\u540E\u91CD\u65B0\u6536\u5C3E\uFF1B\u672C\u8FDB\u7A0B\u53EA\u81EA\u68C0\u4E00\u6B21\uFF0C\u4E4B\u540E\u6309\u5B9E\u9645\u4EA7\u7269\u5224\u5B9A\u3002` : `${[recoveryText, claimText].filter((part) => part !== "").join("\uFF1B\u53E6\uFF1A")}\u3002\u7136\u540E\u91CD\u65B0\u6536\u5C3E\uFF1B\u672C\u8FDB\u7A0B\u53EA\u81EA\u68C0\u4E00\u6B21\uFF0C\u4E4B\u540E\u6309\u5B9E\u9645\u4EA7\u7269\u5224\u5B9A\u3002`;
+        pi.sendUserMessage(`[mw recovery self-check] ${steerText}`, { deliverAs: "followUp" });
         return;
       }
     }
@@ -21502,7 +23869,7 @@ async function workerModeActivate(pi) {
         settleOrSelfCheck();
         return;
       }
-      if (phases) {
+      if (phases && !phaseMachineComplete) {
         const phaseIndex = completedPhaseIdx;
         writePhaseFile(
           meta.taskKey,
@@ -21520,6 +23887,7 @@ async function workerModeActivate(pi) {
           nextPhaseIdx++;
           return;
         }
+        phaseMachineComplete = true;
       }
       settleOrSelfCheck();
     } catch (err) {
@@ -21626,9 +23994,590 @@ function formatModelUnavailableReason(entries, lastError) {
   const tried = entries.length > 0 ? entries.map((entry) => `${entry.model}(${entry.runs})`).join(",") : "-";
   return `model unavailable: tried=${tried} last=${truncateModelErrText(lastError)}`;
 }
+var DP2_CONSUMED_MARKER = "[dp2-consumed";
+function hasDp2ConsumedMarker(content) {
+  return content.split(/\r?\n/).some((line) => line.trim().startsWith(DP2_CONSUMED_MARKER));
+}
+function formatDp2NarrowSteer(content) {
+  const body = content.split(/\r?\n/).filter(
+    (line) => line.trim() !== "" && !line.trim().startsWith(DP2_CONSUMED_MARKER) && !line.startsWith(DP2_STEER_REQUEST_HEADER)
+  ).join("\n").trim();
+  if (body === "") return void 0;
+  return body.startsWith(DP2_NARROW_MARKER) ? body : `${DP2_NARROW_MARKER} ${body}`;
+}
+function appendDp2ConsumedMarker(steerPath, content, runId) {
+  const marker = `${DP2_CONSUMED_MARKER} ${runId} ${(/* @__PURE__ */ new Date()).toISOString()}]`;
+  const separator = content === "" || content.endsWith("\n") ? "" : "\n";
+  const tmp = `${steerPath}.consumed.tmp`;
+  try {
+    fs22.writeFileSync(tmp, `${content}${separator}${marker}
+`, "utf8");
+    fs22.renameSync(tmp, steerPath);
+    return true;
+  } catch {
+    try {
+      fs22.rmSync(tmp, { force: true });
+    } catch {
+    }
+    return false;
+  }
+}
+var DP3_ID = "dp3-worker-clarify";
+var DP3_QUESTIONS_VERSION = "q-fcbd3847";
+var DP3_ANSWER_PREFIX = "[mw dp3-answer]";
+var DP3_MIN_MATCH_SCORE = 0.75;
+var DP3_BORDERLINE_MATCH_SCORE = 0.6;
+var DP3_MIN_CONFIDENCE = 0.7;
+var DP3_ANSWERABLE_MIN = 0.5;
+function dp3Thresholds(minConfidence) {
+  const clamp01 = (value) => Math.min(1, Math.max(0, value));
+  const round4 = (value) => Math.round(clamp01(value) * 1e4) / 1e4;
+  return {
+    minMatchScore: round4(minConfidence + (DP3_MIN_MATCH_SCORE - DP3_MIN_CONFIDENCE)),
+    minConfidence,
+    answerableMin: round4(minConfidence - (DP3_MIN_CONFIDENCE - DP3_ANSWERABLE_MIN))
+  };
+}
+var DP3_CANDIDATE_LIMIT = 5;
+var DP3_MAX_STATE_BYTES = 2e3;
+var DP3_STEER_QUESTION_MAX = 300;
+function asPlainRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function readJsonRecord2(file) {
+  try {
+    return asPlainRecord(JSON.parse(fs22.readFileSync(file, "utf8")));
+  } catch {
+    return void 0;
+  }
+}
+function dp3RowForceOff(row) {
+  if ("mode" in row && row.mode !== "auto" && row.mode !== "suggest") return true;
+  if ("note" in row && typeof row.note !== "string") return true;
+  if ("tier" in row && typeof row.tier !== "string") return true;
+  return "enabled" in row && typeof row.enabled !== "boolean";
+}
+function readDp3Policy(projectDir) {
+  const transportEnabled = readDecidePolicy(projectDir).enabled;
+  let enabled = true;
+  let mode = "auto";
+  const points = asPlainRecord(readJsonRecord2(path26.join(projectDir, ".mw", "decide-points.json"))?.points);
+  const rawRow = points !== void 0 && Object.hasOwn(points, DP3_ID) ? points[DP3_ID] : void 0;
+  const row = asPlainRecord(rawRow);
+  if (rawRow !== void 0 && row === void 0) enabled = false;
+  if (row !== void 0) {
+    if (row.enabled === false || dp3RowForceOff(row)) enabled = false;
+    if (row.mode === "suggest") mode = "suggest";
+  }
+  const resolved = resolveDecidePolicy(DP3_ID, projectDir);
+  return {
+    enabled: transportEnabled && enabled,
+    mode,
+    minConfidence: resolved.minConfidence,
+    maxQuestions: resolved.maxQuestions,
+    timeoutS: resolved.timeoutS
+  };
+}
+function dp3TruncateUtf8(text, maxBytes) {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  let out = "";
+  let used = 0;
+  for (const char of text) {
+    const size = Buffer.byteLength(char, "utf8");
+    if (used + size > maxBytes) break;
+    out += char;
+    used += size;
+  }
+  return out;
+}
+function dp3RelPath(projectDir, target) {
+  const rel = path26.relative(projectDir, target);
+  return rel !== "" && !rel.startsWith("..") ? rel.replace(/\\/g, "/") : target.replace(/\\/g, "/");
+}
+function dp3ReadBounded(file, maxBytes) {
+  try {
+    const text = fs22.readFileSync(file, "utf8");
+    return dp3TruncateUtf8(text, maxBytes);
+  } catch {
+    return void 0;
+  }
+}
+function dp3DecisionsSection(text) {
+  const lines = text.split(/\r?\n/);
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^##\s+(?:\d+\.\s*)?Decisions\b/.test(lines[i])) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return void 0;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join("\n");
+}
+function readDp3ReuseSources(input) {
+  const maxBytes = input.maxBytes ?? 8192;
+  const sources = [
+    { label: dp3RelPath(input.projectDir, input.taskPath), text: dp3TruncateUtf8(input.taskContent, maxBytes) }
+  ];
+  const workersDir = path26.dirname(input.taskDir);
+  const ownName = path26.basename(input.taskDir);
+  const limit = input.siblingLimit ?? 5;
+  try {
+    const siblings = fs22.readdirSync(workersDir, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name !== ownName).map((entry) => entry.name).sort().slice(0, limit);
+    for (const name of siblings) {
+      const file = path26.join(workersDir, name, "task.md");
+      const text = dp3ReadBounded(file, maxBytes);
+      if (text !== void 0) sources.push({ label: dp3RelPath(input.projectDir, file), text });
+    }
+  } catch {
+  }
+  const goal = dp3ReadBounded(path26.join(input.trueRoot, "goal.md"), maxBytes);
+  if (goal !== void 0)
+    sources.push({ label: dp3RelPath(input.projectDir, path26.join(input.trueRoot, "goal.md")), text: goal });
+  const pmStateFile = path26.join(input.keyDir, "pm-state.md");
+  const pmState = dp3ReadBounded(pmStateFile, maxBytes);
+  if (pmState !== void 0) {
+    const decisions = dp3DecisionsSection(pmState);
+    if (decisions !== void 0) {
+      sources.push({ label: `${dp3RelPath(input.projectDir, pmStateFile)}:decisions`, text: decisions });
+    }
+  }
+  return sources;
+}
+function dp3ContentTokens(text) {
+  const tokens = /* @__PURE__ */ new Set();
+  for (const word of text.toLowerCase().match(/[a-z0-9_][a-z0-9_.\-/]*/g) ?? []) tokens.add(word);
+  for (const run of text.match(/[\u4e00-\u9fff]+/g) ?? []) {
+    for (let i = 0; i + 1 < run.length; i++) tokens.add(run.slice(i, i + 2));
+  }
+  return tokens;
+}
+function dp3QuestionReferents(text) {
+  const out = /* @__PURE__ */ new Set();
+  for (const match2 of text.matchAll(/`([^`\n]{2,80})`/g)) {
+    const value = match2[1].trim();
+    if (value !== "") out.add(value);
+  }
+  for (const match2 of text.matchAll(/(?:^|[\s("'`])((?:[\w.@-]+[\\/]){1,}[\w.@-]+)/g)) out.add(match2[1]);
+  for (const match2 of text.matchAll(/"([^"\n]{3,60})"|\u201c([^\n\u201d]{3,60})\u201d/g)) {
+    const value = (match2[1] ?? match2[2] ?? "").trim();
+    if (value !== "") out.add(value);
+  }
+  for (const match2 of text.matchAll(/\b(?:npm|npx|node|python3?|pytest|vitest|git|make)\s+[\w:./-]+/g))
+    out.add(match2[0]);
+  return [...out].slice(0, 8);
+}
+function dp3Jaccard(a, b) {
+  if (a.size === 0 || b.size === 0) return 0;
+  let shared = 0;
+  for (const token of a) if (b.has(token)) shared += 1;
+  return shared / (a.size + b.size - shared);
+}
+function matchDp3Reuse(question, sources, minMatchScore = DP3_MIN_MATCH_SCORE) {
+  const referents = dp3QuestionReferents(question);
+  if (referents.length === 0) return void 0;
+  const qTokens = dp3ContentTokens(dp3TruncateUtf8(question, 2e3));
+  let best;
+  for (const source of sources) {
+    const lines = source.text.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.length < 4) continue;
+      const sharedReferent = referents.find((ref) => line.includes(ref));
+      if (sharedReferent === void 0) continue;
+      const score = dp3Jaccard(qTokens, dp3ContentTokens(dp3TruncateUtf8(line, 2e3)));
+      if (score < DP3_BORDERLINE_MATCH_SCORE) continue;
+      if (best === void 0 || score > best.score) {
+        best = { source: `${source.label}:${i + 1}`, quote: dp3TruncateUtf8(line, 300), score };
+      }
+      if (score >= minMatchScore) return best;
+    }
+  }
+  return best;
+}
+var DP3_INTENT_RE = /应该|建议|更好|倾向于|偏好|优先|取舍|是否可以|要不要|请确认|需要你|由你|你决定|approve|prefer|should\b|trade-?off/i;
+var DP3_LOCATOR_RE = /在哪|哪里|哪个文件|什么文件|什么命令|怎么(?:运行|跑|执行|用|做)|如何(?:运行|跑|执行)|字段名|签名|定义|位置|报错|为什么|为何|where\b|which file|what file|how (?:do|to|can) i (?:run|use)|field name|signature|defined/i;
+var DP3_CITATION_RE = /[\w./-]+\.(?:ts|tsx|js|mjs|cjs|py|json|md|yml|yaml|toml|sh)\s*:\d+/i;
+function normalizeDp3Question(text) {
+  return text.replace(/\s+/g, " ").trim();
+}
+function dp3TaskType(type) {
+  if (type === "coding" || type === "research" || type === "review") return type;
+  return hasWriteTools(type) ? "coding" : "research";
+}
+var DP3_CANDIDATE_STOPWORDS = /* @__PURE__ */ new Set([
+  "the",
+  "and",
+  "for",
+  "which",
+  "where",
+  "should",
+  "what",
+  "how",
+  "this",
+  "that",
+  "file",
+  "write",
+  "please"
+]);
+var DP3_CANDIDATE_ROOTS = ["evidence", "docs", "tasks"];
+var DP3_CANDIDATE_FILES_PER_ROOT = 300;
+var DP3_CANDIDATE_MAX_DEPTH = 3;
+var DP3_CANDIDATE_LABEL_MAX = 80;
+function dp3CandidateTokens(question) {
+  const tokens = [];
+  const seen = /* @__PURE__ */ new Set();
+  const push = (raw) => {
+    const token = raw.toLowerCase();
+    if (token === "" || DP3_CANDIDATE_STOPWORDS.has(token) || seen.has(token)) return;
+    seen.add(token);
+    tokens.push(token);
+  };
+  for (const word of question.match(/[A-Za-z0-9]{3,}/g) ?? []) push(word);
+  for (const run of question.match(/[\u4e00-\u9fff]{2,}/g) ?? []) push(run);
+  return tokens;
+}
+function dp3CandidateLabel(rel) {
+  if (rel.length <= DP3_CANDIDATE_LABEL_MAX) return rel;
+  const keep = DP3_CANDIDATE_LABEL_MAX - 3;
+  const head = Math.ceil(keep / 2);
+  return `${rel.slice(0, head)}...${rel.slice(rel.length - (keep - head))}`;
+}
+function dp3LocalDateStamp(now = /* @__PURE__ */ new Date()) {
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}${month}${day}`;
+}
+function dp3CollectCandidateFiles(projectDir, rootRel, out) {
+  const walk = (dirRel, depth) => {
+    if (out.length >= DP3_CANDIDATE_FILES_PER_ROOT) return;
+    let entries;
+    try {
+      entries = fs22.readdirSync(path26.join(projectDir, dirRel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    for (const entry of entries) {
+      if (out.length >= DP3_CANDIDATE_FILES_PER_ROOT) return;
+      const rel = `${dirRel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (depth < DP3_CANDIDATE_MAX_DEPTH) walk(rel, depth + 1);
+      } else if (entry.isFile()) {
+        out.push(rel);
+      }
+    }
+  };
+  walk(rootRel, 1);
+}
+function buildDp3Candidates(input, question) {
+  const folder = input.taskType === "research" ? "evidence/research" : "evidence/runs";
+  const fixedRel = `${folder}/${input.taskKey}-${dp3LocalDateStamp()}.md`;
+  const candidates = [
+    { id: "c1", label: dp3CandidateLabel(fixedRel), path: path26.join(input.projectDir, fixedRel) }
+  ];
+  const tokens = dp3CandidateTokens(question);
+  if (tokens.length === 0) return candidates;
+  const seen = /* @__PURE__ */ new Set([fixedRel.toLowerCase()]);
+  const files = [];
+  for (const root of [...DP3_CANDIDATE_ROOTS, `.agenticdoc/${input.key}`]) {
+    const rootFiles = [];
+    dp3CollectCandidateFiles(input.projectDir, root, rootFiles);
+    files.push(...rootFiles);
+  }
+  const scored = files.filter((rel) => !seen.has(rel.toLowerCase())).map((rel) => {
+    const lower = rel.toLowerCase();
+    let hits = 0;
+    for (const token of tokens) if (lower.includes(token)) hits += 1;
+    return { rel, hits };
+  }).filter((entry) => entry.hits > 0).sort((a, b) => b.hits - a.hits || (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+  for (const entry of scored) {
+    if (candidates.length >= DP3_CANDIDATE_LIMIT) break;
+    if (seen.has(entry.rel.toLowerCase())) continue;
+    seen.add(entry.rel.toLowerCase());
+    candidates.push({
+      id: `c${candidates.length + 1}`,
+      label: dp3CandidateLabel(entry.rel),
+      path: path26.join(input.projectDir, entry.rel)
+    });
+  }
+  return candidates;
+}
+function dp3CandidateLine(file, tokens) {
+  let content;
+  try {
+    content = fs22.readFileSync(file, "utf8");
+  } catch {
+    return void 0;
+  }
+  const lines = content.split(/\r?\n/);
+  let first;
+  for (let i = 0; i < lines.length; i++) {
+    const text = lines[i].trim();
+    if (text === "") continue;
+    if (first === void 0) first = { text, line: i + 1 };
+    const lower = text.toLowerCase();
+    if (tokens.some((token) => lower.includes(token))) return { text, line: i + 1 };
+  }
+  return first;
+}
+function resolveDp3CandidateAnswer(input, question, candidates, rawCandidate) {
+  const chosenId = parseAnswerEntry(rawCandidate)?.value;
+  const chosen = chosenId === void 0 ? void 0 : candidates.find((entry) => entry.id === chosenId);
+  if (chosen === void 0) return { ok: false, detail: `unknown candidate id ${chosenId ?? "-"}` };
+  const rel = dp3RelPath(input.projectDir, chosen.path);
+  const hit = dp3CandidateLine(chosen.path, dp3CandidateTokens(question));
+  if (hit === void 0) return { ok: false, detail: `candidate file unreadable ${rel}` };
+  const answer = `${hit.text.slice(0, 200)} (${rel}:${hit.line})`;
+  return {
+    ok: true,
+    answer,
+    source: DP3_CITATION_RE.exec(answer)?.[0],
+    detail: `candidate=${chosen.id} path=${rel} line=${hit.line} sent=${candidates.map((entry) => entry.id).join(",")}`
+  };
+}
+function parseDp3Probability(value) {
+  const entry = asPlainRecord(value);
+  if (!entry) return void 0;
+  const raw = entry.value;
+  const numeric2 = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
+  return Number.isFinite(numeric2) ? Math.min(1, Math.max(0, numeric2)) : void 0;
+}
+function buildDp3State(input, question, candidates = buildDp3Candidates(input, question)) {
+  const excerpt = dp3TruncateUtf8(question, 600);
+  const state = {
+    schema_version: 2,
+    decision_point: DP3_ID,
+    key: input.key,
+    phase: input.phase,
+    task_type: input.taskType,
+    risk: input.risk,
+    risk_source: input.riskSource,
+    authority_tier: "P2",
+    questions_version: DECIDE_REGISTRY[DP3_ID]?.questionsVersion ?? DP3_QUESTIONS_VERSION,
+    task_summary: excerpt,
+    // The ambiguity.kind enum is scope|missing-dep|rule-conflict (the contract
+    // has no `fact` member, so dp3a rides `scope`; the registry question
+    // `answer_kind` carries the real three-way verdict).
+    ambiguity: { kind: "scope", question: dp3TruncateUtf8(question, 300) },
+    local_candidates: candidates.map(({ id, label }) => ({ id, label }))
+  };
+  const contextSlots = DECIDE_REGISTRY[DP3_ID]?.contextSlots ?? [];
+  const context = {};
+  if (contextSlots.includes("change_summary")) {
+    context.change_summary = dp3TruncateUtf8(`clarification (scope): ${question}`, 600);
+  }
+  if (contextSlots.includes("candidate_snippets")) {
+    const tokens = dp3CandidateTokens(question);
+    const snippets = [];
+    for (const candidate of candidates) {
+      const hit = dp3CandidateLine(candidate.path, tokens);
+      if (hit === void 0) continue;
+      const rel = dp3RelPath(input.projectDir, candidate.path);
+      snippets.push({ text: Array.from(hit.text).slice(0, 200).join(""), source: `${rel}:${hit.line}` });
+    }
+    if (snippets.length > 0) context.candidate_snippets = snippets;
+  }
+  if (Object.keys(context).length > 0) state.context = context;
+  assertStateMatchesRegistry(DP3_ID, state);
+  return state;
+}
+function parseDecideStdout(stdout) {
+  const trimmed = stdout.trim();
+  if (trimmed === "") return void 0;
+  const candidates = [trimmed, trimmed.split("\n").at(-1) ?? ""];
+  for (const candidate of candidates) {
+    if (candidate === "") continue;
+    try {
+      const parsed = asPlainRecord(JSON.parse(candidate));
+      if (parsed) return parsed;
+    } catch {
+    }
+  }
+  return void 0;
+}
+function parseAnswerEntry(value) {
+  const entry = asPlainRecord(value);
+  if (!entry) return void 0;
+  const rawValue = entry.value;
+  const text = typeof rawValue === "string" && rawValue.trim() !== "" ? rawValue.trim() : void 0;
+  const rawConfidence = entry.confidence;
+  const confidence = typeof rawConfidence === "number" && Number.isFinite(rawConfidence) ? Math.min(1, Math.max(0, rawConfidence)) : null;
+  if (text === void 0 && confidence === null) return void 0;
+  return { value: text, confidence };
+}
+function decideDp3WorkerClarify(input) {
+  const localDecisionId = `${DP3_ID}:${input.taskKey}#nc${input.ncIndex}`;
+  let decisionId = localDecisionId;
+  const escalate = (reason, sub, detail) => ({
+    kind: "escalate",
+    sub,
+    reason,
+    detail,
+    decisionId
+  });
+  try {
+    const question = normalizeDp3Question(dp3TruncateUtf8(input.question, 2e3));
+    if (question === "") return escalate("input-incomplete", void 0, "lastAssistantText is empty");
+    if (input.taskKey === "" || input.key === "" || input.phase === "") {
+      return escalate("input-incomplete", void 0, "task context unavailable");
+    }
+    const sources = readDp3ReuseSources({
+      projectDir: input.projectDir,
+      taskDir: input.taskDir,
+      taskPath: input.taskPath,
+      taskContent: input.taskContent,
+      trueRoot: input.trueRoot,
+      keyDir: input.keyDir
+    });
+    const thresholds = dp3Thresholds(input.policy.minConfidence);
+    const match2 = matchDp3Reuse(question, sources, thresholds.minMatchScore);
+    if (match2 !== void 0) {
+      if (match2.score < thresholds.minMatchScore) {
+        return escalate(
+          "low-confidence",
+          "3c",
+          `reuse score ${match2.score.toFixed(2)} < ${thresholds.minMatchScore}`
+        );
+      }
+      return {
+        kind: "answer",
+        sub: "3c",
+        answer: match2.quote,
+        source: match2.source,
+        decisionId,
+        confidence: match2.score,
+        confidenceSource: "local-match",
+        mode: input.policy.mode
+      };
+    }
+    const intent = DP3_INTENT_RE.test(question);
+    const referents = dp3QuestionReferents(question);
+    const corpus = sources.map((source) => source.text).join("\n");
+    const resolvable = referents.filter((ref) => {
+      if (ref.includes("/") || ref.includes("\\")) {
+        return fs22.existsSync(path26.join(input.projectDir, ref)) || fs22.existsSync(path26.resolve(input.projectDir, ref));
+      }
+      return corpus.includes(ref);
+    });
+    if (intent || resolvable.length === 0 || !DP3_LOCATOR_RE.test(question)) {
+      const why = intent ? "intent wording" : resolvable.length === 0 ? "no resolvable referent" : "not a locator question";
+      return escalate("intent", "3b", why);
+    }
+    const candidates = buildDp3Candidates(input, question);
+    const state = buildDp3State(input, question, candidates);
+    if (canonicalStateBytes(state) > DP3_MAX_STATE_BYTES) {
+      return escalate("input-oversize", "3a", `canonical state > ${DP3_MAX_STATE_BYTES}B`);
+    }
+    let raw;
+    try {
+      raw = (input.runner ?? runDecideMw)({
+        projectDir: input.projectDir,
+        dp: DP3_ID,
+        timeoutMs: input.timeoutMs ?? Math.round(input.policy.timeoutS * 1e3),
+        input: JSON.stringify({ state })
+      });
+    } catch {
+      return escalate("unavailable", "3a", "decision runner threw");
+    }
+    if (raw.timedOut) return escalate("unavailable", "3a", "decision call timed out");
+    if (raw.error !== void 0) return escalate("unavailable", "3a", raw.error);
+    if (raw.status !== 0) return escalate("unavailable", "3a", `decision exit ${raw.status ?? "null"}`);
+    const payload = parseDecideStdout(raw.stdout);
+    if (payload === void 0) return escalate("unavailable", "3a", "non-JSON decision stdout");
+    if (payload.available !== true) {
+      const reason = typeof payload.reason === "string" && payload.reason !== "" ? payload.reason : "upstream-error";
+      return escalate("unavailable", "3a", reason);
+    }
+    const carriedDecisionId = payload.decision_id;
+    if (typeof carriedDecisionId === "string" && carriedDecisionId.trim() !== "") {
+      decisionId = carriedDecisionId.trim();
+    }
+    const answers = asPlainRecord(payload.answers);
+    const kind = parseAnswerEntry(answers?.answer_kind);
+    const legacyAnswer = parseAnswerEntry(answers?.clarifying_answer);
+    if (kind?.value === void 0) {
+      return escalate("unavailable", "3a", "decision answer shape is unusable");
+    }
+    const confidenceSource = typeof payload.confidence_source === "string" && payload.confidence_source !== "" ? payload.confidence_source : "unknown";
+    const answerableEntry = parseAnswerEntry(answers?.answerable);
+    const confidence = kind.confidence ?? answerableEntry?.confidence ?? null;
+    const childMode = payload.mode;
+    if (childMode !== "auto" && childMode !== "suggest") {
+      return escalate("unavailable", "3a", "decision mode missing");
+    }
+    if (confidenceSource === "api" && confidence !== null && confidence < input.policy.minConfidence) {
+      return escalate("low-confidence", "3a", `confidence ${confidence.toFixed(2)} < ${input.policy.minConfidence}`);
+    }
+    if (kind.value === "intent") return escalate("intent", "3b", "model classified the question as intent");
+    if (kind.value === "reuse" && legacyAnswer?.value !== void 0) {
+      return {
+        kind: "answer",
+        sub: "3c",
+        answer: legacyAnswer.value,
+        source: DP3_CITATION_RE.exec(legacyAnswer.value)?.[0],
+        decisionId,
+        confidence,
+        confidenceSource,
+        mode: childMode
+      };
+    }
+    if (kind.value !== "fact" && kind.value !== "reuse") {
+      return escalate("unavailable", "3a", `unknown answer_kind ${kind.value}`);
+    }
+    const answerable = parseDp3Probability(answers?.answerable);
+    if (answerable === void 0) {
+      return escalate("unavailable", "3a", "decision answer shape is unusable");
+    }
+    if (answerable < thresholds.answerableMin) {
+      return escalate("unavailable", "3a", `model reports unanswerable (${answerable})`);
+    }
+    const picked = resolveDp3CandidateAnswer(input, question, candidates, answers?.candidate);
+    if (!picked.ok) {
+      return escalate("unavailable", kind.value === "reuse" ? "3c" : "3a", picked.detail);
+    }
+    return {
+      kind: "answer",
+      sub: kind.value === "reuse" ? "3c" : "3a",
+      answer: picked.answer,
+      source: picked.source,
+      decisionId,
+      confidence,
+      confidenceSource,
+      mode: childMode,
+      detail: picked.detail
+    };
+  } catch {
+    return { kind: "escalate", reason: "unavailable", detail: "dp3 internal error", decisionId };
+  }
+}
+function formatDp3AnswerSteer(decision, question) {
+  const excerpt = dp3TruncateUtf8(normalizeDp3Question(question), DP3_STEER_QUESTION_MAX);
+  const kind = decision.sub === "3a" ? "3a \u4E8B\u5B9E\u68C0\u7D22" : "3c \u5DF2\u8868\u6001\u5F15\u7528";
+  const source = decision.source === void 0 || decision.source === "" ? "-" : decision.source;
+  return [
+    `${DP3_ANSWER_PREFIX} \u4F60\u7684\u6F84\u6E05\u95EE\u9898\u5DF2\u7531\u81EA\u52A8\u51B3\u7B56\u89E3\u7B54\uFF08decision_id=${decision.decisionId}\uFF0C${kind}\uFF0C\u975E\u4EBA\u5DE5\u8F93\u5165\uFF09\u3002`,
+    `\u95EE\u9898\uFF1A${excerpt}`,
+    `\u7B54\u6848\uFF1A${decision.answer}`,
+    `\u51FA\u5904\uFF1A${source}`,
+    "\u8BF7\u57FA\u4E8E\u8BE5\u7B54\u6848\u7EE7\u7EED\u5B8C\u6210\u4EFB\u52A1\u5E76\u6B63\u5E38\u6536\u5C3E\uFF1B\u82E5\u4E0E\u8BE5\u51FA\u5904\u51B2\u7A81\uFF0C\u4EE5\u51FA\u5904\u5185\u5BB9\u4E3A\u51C6\u3002"
+  ].join("\n");
+}
+function formatDp3TraceLine(input) {
+  const iso = (input.now ?? /* @__PURE__ */ new Date()).toISOString();
+  const reason = input.escalatedReason === "intent" ? "-" : input.escalatedReason;
+  return `[DECIDE] ${iso} dp=${DP3_ID} trigger=${input.triggerId} sub=${input.sub ?? "-"} acted=${input.acted} mode=${input.mode} escalated_reason=${reason} decision_id=${input.decisionId} nc_raw=${input.ncRaw} nc_human=${input.ncHuman}`;
+}
 
 // packages/coding-agent/src/extensions/agent-team-loop/rag/cli-bridge.ts
-import { spawn as spawn3 } from "node:child_process";
+import { spawn as spawn4 } from "node:child_process";
 
 // packages/coding-agent/src/extensions/agent-team-loop/rag/mcp-client.ts
 var MCP_PROTOCOL_VERSION = "2025-03-26";
@@ -21757,18 +24706,18 @@ var McpSession = class {
         body: this.redact(snippet(response.text))
       });
     }
-    if (!isRecord(parsed)) {
+    if (!isRecord3(parsed)) {
       throw this.buildError("protocol", tool, "JSON-RPC response is not an object", {
         body: this.redact(snippet(response.text))
       });
     }
     const error = parsed.error;
-    if (isRecord(error)) {
+    if (isRecord3(error)) {
       const detail = this.redactDetail(error);
       throw this.buildError(
         "tool",
         tool,
-        stringField(error, "message") ?? "server returned a JSON-RPC error",
+        stringField2(error, "message") ?? "server returned a JSON-RPC error",
         detail
       );
     }
@@ -21800,7 +24749,7 @@ var McpSession = class {
     }
   }
   unwrapToolResult(result, tool) {
-    if (!isRecord(result)) return result;
+    if (!isRecord3(result)) return result;
     if (result.isError === true) {
       throw this.buildError("tool", tool, contentText(result) ?? "tool returned isError=true", result);
     }
@@ -21826,7 +24775,7 @@ function contentText(result) {
   const content = result.content;
   if (!Array.isArray(content)) return null;
   for (const entry of content) {
-    if (isRecord(entry) && entry.type === "text" && typeof entry.text === "string") return entry.text;
+    if (isRecord3(entry) && entry.type === "text" && typeof entry.text === "string") return entry.text;
   }
   return null;
 }
@@ -21863,7 +24812,7 @@ function collectErrorMessages(error) {
 function visitErrors(value, visit) {
   const seen = /* @__PURE__ */ new Set();
   const walk = (current, depth) => {
-    if (depth > 5 || !isRecord(current) || seen.has(current)) return;
+    if (depth > 5 || !isRecord3(current) || seen.has(current)) return;
     seen.add(current);
     visit(current);
     if (Array.isArray(current.errors)) for (const entry of current.errors) walk(entry, depth + 1);
@@ -21871,14 +24820,14 @@ function visitErrors(value, visit) {
   };
   walk(value, 0);
 }
-function stringField(record, key) {
+function stringField2(record, key) {
   const value = record[key];
   return typeof value === "string" ? value : null;
 }
 function snippet(text) {
   return text.length > 300 ? text.slice(0, 300) : text;
 }
-function isRecord(value) {
+function isRecord3(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -21898,8 +24847,8 @@ async function callCli(cliEntry, name, args, opts) {
   const interpreter = resolveRagPython(opts.env);
   const server = cliEntry.cliEntry;
   if (opts.signal.aborted) throw cliError("timeout", server, name, "call cancelled before spawn");
-  return await new Promise((resolve21, reject) => {
-    const child = spawn3(interpreter, argv, {
+  return await new Promise((resolve24, reject) => {
+    const child = spawn4(interpreter, argv, {
       cwd: cliEntry.dir,
       env: opts.env,
       shell: false,
@@ -21956,7 +24905,7 @@ async function callCli(cliEntry, name, args, opts) {
           return;
         }
         try {
-          resolve21(JSON.parse(text));
+          resolve24(JSON.parse(text));
         } catch {
           reject(cliError("protocol", server, name, "cli stdout is not valid JSON", detail));
         }
@@ -22398,7 +25347,7 @@ function redactDetail(detail, tokenEnvNames) {
 }
 function resolvePathRootsFile(controlRoot, entry) {
   if (entry.pathRootsFile === null || entry.pathRootsFile.length === 0) return null;
-  return path22.resolve(controlRoot, entry.pathRootsFile);
+  return path27.resolve(controlRoot, entry.pathRootsFile);
 }
 async function transport(runtime, server, entry, logicalTool, mcpTool, args, signal, onUpdate) {
   const canMcp = (entry.transport === "mcp" || entry.transport === "both") && entry.mcp !== null;
@@ -22454,7 +25403,7 @@ async function mcpCall(runtime, server, entry, tool, args, signal, onUpdate, log
   });
 }
 function resolveCliDir(controlRoot, dir) {
-  return dir === null ? controlRoot : path22.resolve(controlRoot, dir);
+  return dir === null ? controlRoot : path27.resolve(controlRoot, dir);
 }
 async function cliCall(runtime, entry, tool, args, signal, onUpdate) {
   const skill = entry.skill;
@@ -22479,16 +25428,16 @@ function retag(error, server, tool) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/agentic-scripts.ts
-import { spawnSync as spawnSync4 } from "node:child_process";
-import * as fs19 from "node:fs";
-import * as path23 from "node:path";
+import { spawnSync as spawnSync5 } from "node:child_process";
+import * as fs23 from "node:fs";
+import * as path28 from "node:path";
 function agenticScriptsDir(projectDir) {
   const candidates = [
-    path23.join(projectDir, ".claude", "scripts"),
-    path23.join(projectDir, ".agents", "skills", "agentic-task", "claude", "scripts")
+    path28.join(projectDir, ".claude", "scripts"),
+    path28.join(projectDir, ".agents", "skills", "agentic-task", "claude", "scripts")
   ];
   for (const dir of candidates) {
-    if (fs19.existsSync(path23.join(dir, "advance_phase.py"))) return dir;
+    if (fs23.existsSync(path28.join(dir, "advance_phase.py"))) return dir;
   }
   return null;
 }
@@ -22500,11 +25449,11 @@ function runAgenticScript(projectDir, scriptName, args, timeoutMs = 3e4) {
       output: "AgenticTask framework scripts not found (looked for .claude/scripts/advance_phase.py and .agents/skills/agentic-task/claude/scripts/advance_phase.py under the project root). Run the framework installer (mw setup / install.py) first."
     };
   }
-  const script = path23.join(dir, scriptName);
-  if (!fs19.existsSync(script)) {
+  const script = path28.join(dir, scriptName);
+  if (!fs23.existsSync(script)) {
     return { ok: false, output: `Framework script not found: ${script}` };
   }
-  const result = spawnSync4(PYTHON_EXE, ["-X", "utf8", script, ...args], {
+  const result = spawnSync5(PYTHON_EXE, ["-X", "utf8", script, ...args], {
     cwd: projectDir,
     encoding: "utf8",
     timeout: timeoutMs,
@@ -22530,35 +25479,35 @@ function runAgenticScript(projectDir, scriptName, args, timeoutMs = 3e4) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/card-digest.ts
-import { createHash as createHash2 } from "node:crypto";
-import * as fs20 from "node:fs";
+import { createHash as createHash3 } from "node:crypto";
+import * as fs24 from "node:fs";
 function eolNormalizeBytes(data) {
   return Buffer.from(Buffer.from(data).toString("latin1").replace(/\r\n/g, "\n"), "latin1");
 }
 function sha256EolNormalizedBytes(data) {
-  return createHash2("sha256").update(eolNormalizeBytes(data)).digest("hex");
+  return createHash3("sha256").update(eolNormalizeBytes(data)).digest("hex");
 }
 function cardDigest(cardPath) {
-  return sha256EolNormalizedBytes(fs20.readFileSync(cardPath));
+  return sha256EolNormalizedBytes(fs24.readFileSync(cardPath));
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/file-lock.ts
-import * as fs21 from "node:fs";
-import * as path24 from "node:path";
+import * as fs25 from "node:fs";
+import * as path29 from "node:path";
 async function acquireLock(lockPath, opts = {}) {
   const retries = opts.retries ?? 10;
   const baseDelayMs = opts.baseDelayMs ?? 50;
-  const dir = path24.dirname(lockPath);
-  if (!fs21.existsSync(dir)) {
-    fs21.mkdirSync(dir, { recursive: true });
+  const dir = path29.dirname(lockPath);
+  if (!fs25.existsSync(dir)) {
+    fs25.mkdirSync(dir, { recursive: true });
   }
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const fd = fs21.openSync(lockPath, "wx");
-      fs21.closeSync(fd);
+      const fd = fs25.openSync(lockPath, "wx");
+      fs25.closeSync(fd);
       return () => {
         try {
-          fs21.unlinkSync(lockPath);
+          fs25.unlinkSync(lockPath);
         } catch {
         }
       };
@@ -22574,13 +25523,13 @@ async function acquireLock(lockPath, opts = {}) {
   throw new Error(`Could not acquire lock at ${lockPath}`);
 }
 function sleep(ms) {
-  return new Promise((resolve21) => setTimeout(resolve21, ms));
+  return new Promise((resolve24) => setTimeout(resolve24, ms));
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/index-store.ts
-import * as fs22 from "node:fs";
-import * as os3 from "node:os";
-import * as path25 from "node:path";
+import * as fs26 from "node:fs";
+import * as os4 from "node:os";
+import * as path30 from "node:path";
 var RESERVED_INDEX_NAMES = [
   "_scratch",
   ".mw",
@@ -22659,7 +25608,7 @@ function conductorPidAlive(pid) {
 }
 function syntheticClaimLive(claimId) {
   const synthetic = parseSyntheticClaim(claimId);
-  return synthetic !== void 0 && synthetic.host === os3.hostname() && conductorPidAlive(synthetic.pid);
+  return synthetic !== void 0 && synthetic.host === os4.hostname() && conductorPidAlive(synthetic.pid);
 }
 function conductorClaimState(claimId, selfId = "") {
   const trimmed = (claimId ?? "").trim();
@@ -22668,14 +25617,14 @@ function conductorClaimState(claimId, selfId = "") {
   if (!match2) return "stale";
   const pid = Number(match2[2]);
   if (!Number.isInteger(pid) || pid <= 0) return "stale";
-  if (match2[1] !== os3.hostname()) return "dead";
+  if (match2[1] !== os4.hostname()) return "dead";
   return conductorPidAlive(pid) ? "live" : "dead";
 }
 var OWNER_TRACE_MAX_DEPTH = 3;
 function hasWorkerTraceLog(workersDir, depth) {
   let entries;
   try {
-    entries = fs22.readdirSync(workersDir, { withFileTypes: true });
+    entries = fs26.readdirSync(workersDir, { withFileTypes: true });
   } catch {
     return false;
   }
@@ -22685,23 +25634,23 @@ function hasWorkerTraceLog(workersDir, depth) {
   if (depth >= OWNER_TRACE_MAX_DEPTH) return false;
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-    if (hasWorkerTraceLog(path25.join(workersDir, entry.name), depth + 1)) return true;
+    if (hasWorkerTraceLog(path30.join(workersDir, entry.name), depth + 1)) return true;
   }
   return false;
 }
 function keyHasOwnerTraces(agenticdocRoot2, key) {
-  const keyDir = path25.join(agenticdocRoot2, key);
+  const keyDir = path30.join(agenticdocRoot2, key);
   try {
-    const pmState = fs22.readFileSync(path25.join(keyDir, "pm-state.md"), "utf8");
+    const pmState = fs26.readFileSync(path30.join(keyDir, "pm-state.md"), "utf8");
     if (/^- (?:Claim-Id|Phase):/m.test(pmState)) return true;
   } catch {
   }
-  return hasWorkerTraceLog(path25.join(keyDir, "workers"), 0);
+  return hasWorkerTraceLog(path30.join(keyDir, "workers"), 0);
 }
 var OWNER_EVIDENCE_FRESH_MS = 14 * 24 * 60 * 60 * 1e3;
 function keyStateDocPaths(agenticdocRoot2, key) {
-  const keyDir = path25.join(agenticdocRoot2, key);
-  return [path25.join(keyDir, "pm-state.md"), path25.join(keyDir, "plan.md")];
+  const keyDir = path30.join(agenticdocRoot2, key);
+  return [path30.join(keyDir, "pm-state.md"), path30.join(keyDir, "plan.md")];
 }
 function ownerEvidenceCurrent(agenticdocRoot2, key, row, now = Date.now(), freshMs = OWNER_EVIDENCE_FRESH_MS) {
   if (row !== void 0 && syntheticClaimLive(row.claimId)) {
@@ -22711,7 +25660,7 @@ function ownerEvidenceCurrent(agenticdocRoot2, key, row, now = Date.now(), fresh
   for (const doc of keyStateDocPaths(agenticdocRoot2, key)) {
     let stat;
     try {
-      stat = fs22.statSync(doc);
+      stat = fs26.statSync(doc);
     } catch {
       continue;
     }
@@ -22759,12 +25708,12 @@ function serializeIndexLine(entry) {
 }
 var IndexStore = class {
   constructor(agenticdocRoot2) {
-    this.filePath = path25.join(agenticdocRoot2, "_index.parallel");
-    this.lockPath = path25.join(agenticdocRoot2, "..", ".mw", "index.lock");
+    this.filePath = path30.join(agenticdocRoot2, "_index.parallel");
+    this.lockPath = path30.join(agenticdocRoot2, "..", ".mw", "index.lock");
   }
   readAll() {
-    if (!fs22.existsSync(this.filePath)) return [];
-    const lines = fs22.readFileSync(this.filePath, "utf8").split("\n");
+    if (!fs26.existsSync(this.filePath)) return [];
+    const lines = fs26.readFileSync(this.filePath, "utf8").split("\n");
     return lines.map(parseIndexLine).filter((e) => e !== void 0);
   }
   async upsert(entry) {
@@ -22839,8 +25788,8 @@ var IndexStore = class {
    * lines. Callers must hold the index lock. */
   writeRows(rows) {
     let header = "";
-    if (fs22.existsSync(this.filePath)) {
-      const raw = fs22.readFileSync(this.filePath, "utf8");
+    if (fs26.existsSync(this.filePath)) {
+      const raw = fs26.readFileSync(this.filePath, "utf8");
       const headerLines = [];
       for (const l of raw.split("\n")) {
         const t = l.trim();
@@ -22858,8 +25807,8 @@ var IndexStore = class {
     const content = `${header}${rows.map(serializeIndexLine).join("\n")}
 `;
     const tmpPath = `${this.filePath}.tmp`;
-    fs22.writeFileSync(tmpPath, content, "utf8");
-    fs22.renameSync(tmpPath, this.filePath);
+    fs26.writeFileSync(tmpPath, content, "utf8");
+    fs26.renameSync(tmpPath, this.filePath);
   }
   findByKey(key) {
     return this.readAll().find((e) => normalizeKey(e.key) === normalizeKey(key));
@@ -22890,9 +25839,9 @@ var IndexStore = class {
   }
 };
 function readIndexMdActive(agenticdocRoot2) {
-  const mdPath = path25.join(agenticdocRoot2, "_index.md");
-  if (!fs22.existsSync(mdPath)) return void 0;
-  for (const line of fs22.readFileSync(mdPath, "utf8").split("\n")) {
+  const mdPath = path30.join(agenticdocRoot2, "_index.md");
+  if (!fs26.existsSync(mdPath)) return void 0;
+  for (const line of fs26.readFileSync(mdPath, "utf8").split("\n")) {
     const m = /^active:\s*(\S+)/u.exec(line.trim());
     if (m) return m[1];
   }
@@ -22900,8 +25849,8 @@ function readIndexMdActive(agenticdocRoot2) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/output-sections.ts
-import * as fs23 from "node:fs";
-import * as path26 from "node:path";
+import * as fs27 from "node:fs";
+import * as path31 from "node:path";
 var SECTION_SPLIT_RE = /##\s+(.+?)\s*\n+([\s\S]*?)(?=\n##\s|$)/g;
 var HORIZONTAL_RULE_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 function lineNumberAt(text, index) {
@@ -22940,7 +25889,7 @@ function readLastProductSection(text, titles) {
 function readLastProductSectionBody(taskDir, titles) {
   let text;
   try {
-    text = fs23.readFileSync(path26.join(taskDir, "output.md"), "utf8");
+    text = fs27.readFileSync(path31.join(taskDir, "output.md"), "utf8");
   } catch {
     return void 0;
   }
@@ -22948,11 +25897,11 @@ function readLastProductSectionBody(taskDir, titles) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/phase-docs.ts
-import * as fs25 from "node:fs";
-import * as path27 from "node:path";
+import * as fs29 from "node:fs";
+import * as path32 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/goal-reader.ts
-import * as fs24 from "node:fs";
+import * as fs28 from "node:fs";
 function parseStatus(content) {
   const m = content.match(/^\s*>?\s*status:\s*(\w+)/im);
   if (!m) return "unknown";
@@ -22977,9 +25926,9 @@ function parseGoalMd(content) {
 }
 function readGoal(agenticdocRoot2) {
   const resolved = goalPath(agenticdocRoot2);
-  if (!fs24.existsSync(resolved)) return null;
+  if (!fs28.existsSync(resolved)) return null;
   try {
-    return parseGoalMd(fs24.readFileSync(resolved, "utf8"));
+    return parseGoalMd(fs28.readFileSync(resolved, "utf8"));
   } catch {
     return null;
   }
@@ -22995,14 +25944,14 @@ function isGoalEstablished(goal) {
 var MIN_PHASE_DOC_BYTES = 500;
 function fileAtLeast(file, minBytes) {
   try {
-    return fs25.statSync(file).size >= minBytes;
+    return fs29.statSync(file).size >= minBytes;
   } catch {
     return false;
   }
 }
 function countNotes(dir, prefix) {
   try {
-    return fs25.readdirSync(dir).filter((n) => n.startsWith(prefix) && n.endsWith(".md")).length;
+    return fs29.readdirSync(dir).filter((n) => n.startsWith(prefix) && n.endsWith(".md")).length;
   } catch {
     return 0;
   }
@@ -23031,20 +25980,20 @@ function hasSectionWith(text, headingKws, mustContain) {
 }
 function readSpecContent(keyDir) {
   try {
-    return fs25.readFileSync(path27.join(keyDir, "spec.md"), "utf8");
+    return fs29.readFileSync(path32.join(keyDir, "spec.md"), "utf8");
   } catch {
     return void 0;
   }
 }
 function readPhaseDocs(agenticdocRoot2, key) {
-  const keyDir = path27.join(agenticdocRoot2, key);
+  const keyDir = path32.join(agenticdocRoot2, key);
   const specContent = readSpecContent(keyDir);
   const goalEstablished = isGoalEstablished(readGoal(agenticdocRoot2));
   return {
-    spec: fileAtLeast(path27.join(keyDir, "spec.md"), MIN_PHASE_DOC_BYTES),
-    design: fileAtLeast(path27.join(keyDir, "design.md"), MIN_PHASE_DOC_BYTES),
-    specEvidence: countNotes(path27.join(keyDir, "evidence", "research"), "spec-"),
-    designEvidence: countNotes(path27.join(keyDir, "evidence", "research"), "design-"),
+    spec: fileAtLeast(path32.join(keyDir, "spec.md"), MIN_PHASE_DOC_BYTES),
+    design: fileAtLeast(path32.join(keyDir, "design.md"), MIN_PHASE_DOC_BYTES),
+    specEvidence: countNotes(path32.join(keyDir, "evidence", "research"), "spec-"),
+    designEvidence: countNotes(path32.join(keyDir, "evidence", "research"), "design-"),
     specS0: !goalEstablished || hasSectionWith(specContent ?? "", ["\xA70", "Goal Alignment"], "\u9884\u671F\u6536\u76CA"),
     specAC: /AC-\d{3}/.test(specContent ?? "")
   };
@@ -23079,8 +26028,8 @@ function dispatchDocGaps(agenticdocRoot2, key, phase) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/pm-state-claim.ts
-import * as fs26 from "node:fs";
-import * as path28 from "node:path";
+import * as fs30 from "node:fs";
+import * as path33 from "node:path";
 var CLAIM_LINE_RE = /^- Claim-Id:[^\r\n]*/m;
 var KEY_LINE_RE = /^- Key:[^\r\n]*/m;
 function countSeq(haystack, needle) {
@@ -23093,12 +26042,12 @@ function countSeq(haystack, needle) {
   return count2;
 }
 function syncPmStateClaimId(agenticdocRoot2, key, claimId) {
-  const file = path28.join(agenticdocRoot2, key, "pm-state.md");
+  const file = path33.join(agenticdocRoot2, key, "pm-state.md");
   try {
-    if (!fs26.existsSync(file)) {
+    if (!fs30.existsSync(file)) {
       return { ok: false, reason: "pm-state.md missing" };
     }
-    const text = fs26.readFileSync(file).toString("latin1");
+    const text = fs30.readFileSync(file).toString("latin1");
     const nl = text.includes("\r\n") ? "\r\n" : "\n";
     let next;
     if (CLAIM_LINE_RE.test(text)) {
@@ -23124,8 +26073,8 @@ function syncPmStateClaimId(agenticdocRoot2, key, claimId) {
       }
     }
     const tmpPath = `${file}.tmp`;
-    fs26.writeFileSync(tmpPath, Buffer.from(next, "latin1"));
-    fs26.renameSync(tmpPath, file);
+    fs30.writeFileSync(tmpPath, Buffer.from(next, "latin1"));
+    fs30.renameSync(tmpPath, file);
     return { ok: true };
   } catch (err) {
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
@@ -23133,8 +26082,8 @@ function syncPmStateClaimId(agenticdocRoot2, key, claimId) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/pm-state-guard.ts
-import * as fs27 from "node:fs";
-import * as path29 from "node:path";
+import * as fs31 from "node:fs";
+import * as path34 from "node:path";
 var INTERFACE_LINE = /^- (Phase|Claim-Id):/m;
 var PHASE_LINE = /^- Phase:\s*(.+?)\s*$/m;
 var PHASE_ORDER = ["SPEC", "DESIGN", "PLAN", "TASKS", "EXECUTE", "VERIFY", "DONE"];
@@ -23146,13 +26095,13 @@ function pmStateTarget(toolName, args, projectDir, agenticdocRoot2) {
   if (toolName !== "write" && toolName !== "edit") return void 0;
   const filePath = args?.path;
   if (typeof filePath !== "string" || filePath === "") return void 0;
-  const rel = path29.relative(path29.resolve(agenticdocRoot2), path29.resolve(projectDir, filePath));
-  if (rel.startsWith("..") || path29.isAbsolute(rel)) return void 0;
-  const parts = rel.split(path29.sep);
+  const rel = path34.relative(path34.resolve(agenticdocRoot2), path34.resolve(projectDir, filePath));
+  if (rel.startsWith("..") || path34.isAbsolute(rel)) return void 0;
+  const parts = rel.split(path34.sep);
   if (parts.length !== 2 || parts[1] !== "pm-state.md") return void 0;
   const key = parts[0] ?? "";
   if (!key || key.startsWith("_") || key.startsWith(".")) return void 0;
-  return { key, absPath: path29.resolve(projectDir, filePath) };
+  return { key, absPath: path34.resolve(projectDir, filePath) };
 }
 function pmStateInterfaceViolation(toolName, args, projectDir, agenticdocRoot2, readFile = defaultReadFile) {
   const target = pmStateTarget(toolName, args, projectDir, agenticdocRoot2);
@@ -23179,7 +26128,7 @@ function pmStateInterfaceViolation(toolName, args, projectDir, agenticdocRoot2, 
 }
 function defaultReadFile(abs) {
   try {
-    return fs27.readFileSync(abs, "utf8");
+    return fs31.readFileSync(abs, "utf8");
   } catch {
     return void 0;
   }
@@ -23193,7 +26142,7 @@ function registerPmStateGuard(pi, projectDir, agenticdocRoot2) {
 }
 function readPmStatePhase(agenticdocRoot2, key) {
   try {
-    const content = fs27.readFileSync(path29.join(agenticdocRoot2, key, "pm-state.md"), "utf8");
+    const content = fs31.readFileSync(path34.join(agenticdocRoot2, key, "pm-state.md"), "utf8");
     const m = PHASE_LINE.exec(content);
     return m?.[1];
   } catch {
@@ -23238,7 +26187,7 @@ function phaseAuditWarnings(agenticdocRoot2, key, indexPhase) {
   }
   if (rank >= PHASE_ORDER.indexOf("EXECUTE")) {
     try {
-      const n = fs27.readdirSync(path29.join(agenticdocRoot2, key, "tasks")).filter((f) => f.endsWith(".md")).length;
+      const n = fs31.readdirSync(path34.join(agenticdocRoot2, key, "tasks")).filter((f) => f.endsWith(".md")).length;
       if (n < 1) warnings.push("[audit] execute gate: tasks/ has no .md files.");
     } catch {
       warnings.push(
@@ -23250,16 +26199,16 @@ function phaseAuditWarnings(agenticdocRoot2, key, indexPhase) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/state-manager.ts
-import * as fs28 from "node:fs";
-import * as path30 from "node:path";
+import * as fs32 from "node:fs";
+import * as path35 from "node:path";
 var VALID_PHASES = /* @__PURE__ */ new Set(["SPEC", "DESIGN", "PLAN", "TASKS", "EXECUTE", "DONE"]);
 var StateManager = class {
   constructor(agenticdocRoot2, taskKey) {
-    this.statePath = path30.join(agenticdocRoot2, taskKey, "pm-state.md");
+    this.statePath = path35.join(agenticdocRoot2, taskKey, "pm-state.md");
   }
   read() {
-    if (!fs28.existsSync(this.statePath)) return {};
-    const content = fs28.readFileSync(this.statePath, "utf8");
+    if (!fs32.existsSync(this.statePath)) return {};
+    const content = fs32.readFileSync(this.statePath, "utf8");
     const state = {};
     for (const line of content.split("\n")) {
       const m = line.match(/^- Phase:\s*(.+)$/);
@@ -23294,14 +26243,14 @@ var StateManager = class {
       "",
       merged.notes
     ].join("\n");
-    const dir = path30.dirname(this.statePath);
-    fs28.mkdirSync(dir, { recursive: true });
+    const dir = path35.dirname(this.statePath);
+    fs32.mkdirSync(dir, { recursive: true });
     const lockPath = `${this.statePath}.lock`;
     const release = await acquireLock(lockPath);
     try {
       const tmpPath = `${this.statePath}.tmp`;
-      fs28.writeFileSync(tmpPath, content, "utf8");
-      fs28.renameSync(tmpPath, this.statePath);
+      fs32.writeFileSync(tmpPath, content, "utf8");
+      fs32.renameSync(tmpPath, this.statePath);
     } finally {
       release();
     }
@@ -23309,32 +26258,32 @@ var StateManager = class {
 };
 
 // packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts
-import * as fs31 from "node:fs";
-import * as path33 from "node:path";
+import * as fs35 from "node:fs";
+import * as path38 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/autopilot/status-model.ts
-import * as fs29 from "node:fs";
-import * as path31 from "node:path";
+import * as fs33 from "node:fs";
+import * as path36 from "node:path";
 function autopilotDir(projectDir) {
-  return path31.join(projectDir, ".agenticdoc", "_autopilot");
+  return path36.join(projectDir, ".agenticdoc", "_autopilot");
 }
 function roadmapPath(projectDir) {
-  return path31.join(autopilotDir(projectDir), "_roadmap.md");
+  return path36.join(autopilotDir(projectDir), "_roadmap.md");
 }
 function gatesDir(projectDir) {
-  return path31.join(autopilotDir(projectDir), "gates");
+  return path36.join(autopilotDir(projectDir), "gates");
 }
 function timelinePath(projectDir) {
-  return path31.join(autopilotDir(projectDir), "timeline.jsonl");
+  return path36.join(autopilotDir(projectDir), "timeline.jsonl");
 }
 function configPath(projectDir) {
-  return path31.join(autopilotDir(projectDir), "config.json");
+  return path36.join(autopilotDir(projectDir), "config.json");
 }
 function gatesLockPath(projectDir) {
-  return path31.join(projectDir, ".mw", "gates.lock");
+  return path36.join(projectDir, ".mw", "gates.lock");
 }
 function configLockPath(projectDir) {
-  return path31.join(projectDir, ".mw", "autopilot-config.lock");
+  return path36.join(projectDir, ".mw", "autopilot-config.lock");
 }
 var DEFAULT_CONFIG = {
   enabled: false,
@@ -23451,7 +26400,7 @@ function readConfig(projectDir) {
   const file = configPath(projectDir);
   let raw;
   try {
-    raw = fs29.readFileSync(file, "utf8");
+    raw = fs33.readFileSync(file, "utf8");
   } catch (err) {
     if (err.code === "ENOENT") return { ok: true, config: freshDefaults() };
     return { ok: false, error: `cannot read ${file}: ${String(err)}` };
@@ -23523,11 +26472,11 @@ function saveConfig(projectDir, config) {
   };
   const file = configPath(projectDir);
   try {
-    fs29.mkdirSync(path31.dirname(file), { recursive: true });
+    fs33.mkdirSync(path36.dirname(file), { recursive: true });
     const tmp = `${file}.tmp`;
-    fs29.writeFileSync(tmp, `${JSON.stringify(ordered, null, 2)}
+    fs33.writeFileSync(tmp, `${JSON.stringify(ordered, null, 2)}
 `, "utf8");
-    fs29.renameSync(tmp, file);
+    fs33.renameSync(tmp, file);
   } catch (err) {
     return { ok: false, error: `cannot write ${file}: ${String(err)}` };
   }
@@ -23729,7 +26678,7 @@ function readRoadmap(projectDir) {
   const file = roadmapPath(projectDir);
   let text;
   try {
-    text = fs29.readFileSync(file, "utf8");
+    text = fs33.readFileSync(file, "utf8");
   } catch {
     return { ok: false, error: `roadmap file not found: ${file}` };
   }
@@ -23916,7 +26865,7 @@ function parseGateFile(text, file) {
     const value = fields.get(name) ?? null;
     return typeof value === "string" && value !== "" ? value : null;
   };
-  const intField = (name) => {
+  const intField2 = (name) => {
     const value = optional(name);
     if (value === null) return null;
     if (!/^-?\d+$/.test(value))
@@ -23995,10 +26944,10 @@ function parseGateFile(text, file) {
   const question = required("question");
   for (const name of GATE_JSON_LIST_FIELDS) jsonField(name, true);
   for (const name of GATE_JSON_OBJ_FIELDS) jsonField(name, false);
-  intField("evidence_anchor_mtime_ns");
-  intField("consumed_seq");
+  intField2("evidence_anchor_mtime_ns");
+  intField2("consumed_seq");
   isoField("consumed_at", optional("consumed_at"));
-  let gateSchema = intField("gate_schema");
+  let gateSchema = intField2("gate_schema");
   if (gateSchema === null) gateSchema = 1;
   if (gateSchema !== 1 && gateSchema !== 2) {
     throw new GateFormatError(`${file}: gate_schema must be one of 1, 2, got ${gateSchema}`);
@@ -24020,9 +26969,9 @@ function parseGateFile(text, file) {
     proposalSha256: optional("proposal_sha256"),
     goalSha256: optional("goal_sha256"),
     loop: optional("loop"),
-    usedRounds: intField("used_rounds"),
-    roundLimit: intField("round_limit"),
-    creditsUsed: intField("credits_used"),
+    usedRounds: intField2("used_rounds"),
+    roundLimit: intField2("round_limit"),
+    creditsUsed: intField2("credits_used"),
     verdictsFinal: jsonField("verdicts_final", true),
     openItems: jsonField("open_items", true),
     roadmapValidation: jsonField("roadmap_validation", true),
@@ -24045,7 +26994,7 @@ function listGates(projectDir) {
   const found = [];
   let entries;
   try {
-    entries = fs29.readdirSync(dir, { withFileTypes: true });
+    entries = fs33.readdirSync(dir, { withFileTypes: true });
   } catch (err) {
     if (err.code === "ENOENT") return { gates: [], errors: [] };
     return { gates: [], errors: [`${dir}: ${String(err)}`] };
@@ -24053,10 +27002,10 @@ function listGates(projectDir) {
   for (const entry of entries) {
     const m = GATE_FILE_RE.exec(entry.name);
     if (m === null || !entry.isFile()) continue;
-    const file = path31.join(dir, entry.name);
+    const file = path36.join(dir, entry.name);
     let text;
     try {
-      text = fs29.readFileSync(file, "utf8");
+      text = fs33.readFileSync(file, "utf8");
     } catch (err) {
       errors.push(`${file}: ${String(err)}`);
       continue;
@@ -24076,10 +27025,10 @@ function listGates(projectDir) {
   return { gates: found.map((f) => f.gate), errors };
 }
 function readGateReminders(agenticdocRoot2) {
-  const ledger = path31.join(agenticdocRoot2, "_autopilot", "auto-decisions.jsonl");
+  const ledger = path36.join(agenticdocRoot2, "_autopilot", "auto-decisions.jsonl");
   let raw;
   try {
-    raw = fs29.readFileSync(ledger, "utf8");
+    raw = fs33.readFileSync(ledger, "utf8");
   } catch {
     return [];
   }
@@ -24161,11 +27110,11 @@ function nonBeatFilter() {
   return filter2;
 }
 function rotationChain(timelinePath2) {
-  const dir = path31.dirname(timelinePath2);
-  const prefix = `${path31.basename(timelinePath2)}.`;
+  const dir = path36.dirname(timelinePath2);
+  const prefix = `${path36.basename(timelinePath2)}.`;
   let entries;
   try {
-    entries = fs29.readdirSync(dir, { withFileTypes: true });
+    entries = fs33.readdirSync(dir, { withFileTypes: true });
   } catch {
     return [];
   }
@@ -24174,7 +27123,7 @@ function rotationChain(timelinePath2) {
     if (!entry.name.startsWith(prefix)) continue;
     const suffix = entry.name.slice(prefix.length);
     if (/^\d+$/.test(suffix) && entry.isFile()) {
-      found.push({ gen: Number(suffix), file: path31.join(dir, entry.name) });
+      found.push({ gen: Number(suffix), file: path36.join(dir, entry.name) });
     }
   }
   found.sort((a, b) => b.gen - a.gen);
@@ -24183,7 +27132,7 @@ function rotationChain(timelinePath2) {
 function readTimelineEvents(file) {
   let data;
   try {
-    data = fs29.readFileSync(file);
+    data = fs33.readFileSync(file);
   } catch {
     return { events: [], skipped: 0 };
   }
@@ -24260,7 +27209,7 @@ var TASK_FM_LINE_RE = /^([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*?)[ \t]*$/;
 function parseTaskLabels(taskMdPath) {
   let text;
   try {
-    text = fs29.readFileSync(taskMdPath, "utf8");
+    text = fs33.readFileSync(taskMdPath, "utf8");
   } catch {
     return /* @__PURE__ */ new Map();
   }
@@ -24281,13 +27230,13 @@ function usedRounds(workersDirs) {
   for (const workersDir of workersDirs) {
     let entries;
     try {
-      entries = fs29.readdirSync(workersDir, { withFileTypes: true });
+      entries = fs33.readdirSync(workersDir, { withFileTypes: true });
     } catch {
       continue;
     }
     const names = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
     for (const name of names) {
-      const labels = parseTaskLabels(path31.join(workersDir, name, "task.md"));
+      const labels = parseTaskLabels(path36.join(workersDir, name, "task.md"));
       const loop = labels.get("loop");
       if (loop === void 0 || loop === "") continue;
       const attempt = (labels.get("attempt") ?? "").trim();
@@ -24338,6 +27287,68 @@ function keyRounds(perLoop, key, budget) {
     retry: { used: retry, max: budget }
   };
 }
+function claimCounter(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  return Math.trunc(value);
+}
+function readRunClaims(file) {
+  let raw;
+  try {
+    raw = fs33.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof data !== "object" || data === null) return null;
+  const claims = data.claims;
+  if (typeof claims !== "object" || claims === null) return null;
+  const fields = claims;
+  const total = claimCounter(fields.total);
+  const closed = claimCounter(fields.closed);
+  const partial = claimCounter(fields.partial);
+  const unverified = claimCounter(fields.unverified);
+  const fetches = claimCounter(fields.fetches);
+  if (total === null || closed === null || partial === null || unverified === null || fetches === null) {
+    return null;
+  }
+  const tokens = claimCounter(fields.tokens);
+  return { total, closed, partial, unverified, fetches, tokens };
+}
+function keyClaims(workersDir) {
+  let entries;
+  try {
+    entries = fs33.readdirSync(workersDir, { withFileTypes: true });
+  } catch {
+    return void 0;
+  }
+  const names = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  const totals = { total: 0, closed: 0, partial: 0, unverified: 0, fetches: 0 };
+  let tokens = 0;
+  let tokensKnown = true;
+  let seen = false;
+  for (const name of names) {
+    const payload = readRunClaims(path36.join(workersDir, name, "run.json"));
+    if (payload === null) continue;
+    seen = true;
+    totals.total += payload.total;
+    totals.closed += payload.closed;
+    totals.partial += payload.partial;
+    totals.unverified += payload.unverified;
+    totals.fetches += payload.fetches;
+    if (payload.tokens === null) tokensKnown = false;
+    else tokens += payload.tokens;
+  }
+  if (!seen) return void 0;
+  return {
+    ...totals,
+    tokensPerClosedClaim: !tokensKnown || totals.closed === 0 ? "n/a" : tokens / totals.closed
+  };
+}
 function deriveStatusModel(projectDir, nowMs = Date.now()) {
   const cfg = readConfig(projectDir);
   if (!cfg.ok) return cfg;
@@ -24350,20 +27361,24 @@ function deriveStatusModel(projectDir, nowMs = Date.now()) {
     warnings.push(roadmap.error);
   }
   const stage = currentStage(roadmap.ok ? roadmap.stages : []);
-  const agenticdoc = path31.join(projectDir, ".agenticdoc");
+  const agenticdoc = path36.join(projectDir, ".agenticdoc");
   const phaseByKey = new Map(new IndexStore(agenticdoc).readAll().map((e) => [e.key, e.phase]));
   const keys = [];
   if (stage !== void 0) {
     for (const row of stage.keys) {
-      const perLoop = usedRounds([path31.join(agenticdoc, row.key, "workers")]);
-      keys.push({
+      const workersDir = path36.join(agenticdoc, row.key, "workers");
+      const perLoop = usedRounds([workersDir]);
+      const claims = keyClaims(workersDir);
+      const view = {
         key: row.key,
         phase: phaseByKey.get(row.key) ?? "\u2014",
         // key-status line absent (fresh proposal) → the only non-terminal
         // enum value, "running" (D-105 KEY_STATUSES has no "pending").
         state: stage.keyStatus[row.key] ?? "running",
         rounds: keyRounds(perLoop, row.key, config.round_budget)
-      });
+      };
+      if (claims !== void 0) view.claims = claims;
+      keys.push(view);
     }
   }
   const gateScan = listGates(projectDir);
@@ -24419,8 +27434,9 @@ function renderStatusText(model) {
   if (status.stage.current > 0) {
     lines.push(`stage ${status.stage.current} (${status.stage.status})`);
     for (const k of status.stage.keys) {
+      const claims = k.claims === void 0 ? "" : ` | claims ${k.claims.total}/${k.claims.closed}c ${k.claims.partial}p ${k.claims.unverified}u`;
       lines.push(
-        `  ${k.key} | phase=${k.phase} | state=${k.state} | L2 ${k.rounds.l2.used}/${k.rounds.l2.max} | L3 ${k.rounds.l3.used}/${k.rounds.l3.max} | retry ${k.rounds.retry.used}/${k.rounds.retry.max}`
+        `  ${k.key} | phase=${k.phase} | state=${k.state} | L2 ${k.rounds.l2.used}/${k.rounds.l2.max} | L3 ${k.rounds.l3.used}/${k.rounds.l3.max} | retry ${k.rounds.retry.used}/${k.rounds.retry.max}` + claims
       );
     }
     if (status.stage.keys.length === 0) lines.push("  (no keys)");
@@ -24481,8 +27497,8 @@ function renderRagBlock(config, meta) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/worker-store.ts
-import * as fs30 from "node:fs";
-import * as path32 from "node:path";
+import * as fs34 from "node:fs";
+import * as path37 from "node:path";
 var WORKER_COLS_MIN = 7;
 var WORKER_COLS_MAX = 9;
 var WORKER_PATH_KEY_RE = /(?:^|[\\/])\.agenticdoc[\\/]([^\\/]+)[\\/]workers[\\/]/;
@@ -24541,8 +27557,8 @@ function serializeWorkerLine(entry) {
 }
 var WorkerStore = class {
   constructor(agenticdocRoot2) {
-    this.filePath = path32.join(agenticdocRoot2, "_workers.parallel");
-    this.lockPath = path32.join(agenticdocRoot2, "..", ".mw", "workers.lock");
+    this.filePath = path37.join(agenticdocRoot2, "_workers.parallel");
+    this.lockPath = path37.join(agenticdocRoot2, "..", ".mw", "workers.lock");
   }
   /** The queue file this store reads and writes. Exposed so a caller that must
    * stay inside the store's own critical section (the PM dispatcher derives the
@@ -24563,8 +27579,8 @@ var WorkerStore = class {
    * {@link upsertWithinLock} rewrite one row without touching any other byte
    * of the file (AC-023). */
   readRawLines() {
-    if (!fs30.existsSync(this.filePath)) return [];
-    const lines = fs30.readFileSync(this.filePath, "utf8").split("\n");
+    if (!fs34.existsSync(this.filePath)) return [];
+    const lines = fs34.readFileSync(this.filePath, "utf8").split("\n");
     if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
     return lines;
   }
@@ -24626,8 +27642,8 @@ var WorkerStore = class {
     const content = `${lines.join("\n")}
 `;
     const tmpPath = `${this.filePath}.tmp`;
-    fs30.writeFileSync(tmpPath, content, "utf8");
-    fs30.renameSync(tmpPath, this.filePath);
+    fs34.writeFileSync(tmpPath, content, "utf8");
+    fs34.renameSync(tmpPath, this.filePath);
   }
   findByKey(taskKey) {
     return this.readAll().find((e) => e.taskKey === taskKey);
@@ -24644,7 +27660,7 @@ function renderProfileBlock(config, ignoreEnforced) {
   const lines = [
     PROFILE_MARK,
     "[mw] Workspace profile (target.yml essentials, injected at dispatch;",
-    `full file: ${path33.join(config.controlRoot, ".agenticdoc", "target.yml")})`
+    `full file: ${path38.join(config.controlRoot, ".agenticdoc", "target.yml")})`
   ];
   if (config.mode === "dual") {
     lines.push(`Control workspace: ${config.controlRoot}`);
@@ -24674,7 +27690,7 @@ function renderProfileBlock(config, ignoreEnforced) {
     }
     if (contract.docs.length > 0) {
       lines.push("- docs (references, not inlined):");
-      for (const doc of contract.docs) lines.push(`  - ${path33.resolve(config.controlRoot, doc)}`);
+      for (const doc of contract.docs) lines.push(`  - ${path38.resolve(config.controlRoot, doc)}`);
     }
   }
   return lines.join("\n");
@@ -24722,7 +27738,7 @@ function renderPartitionProfileBlock(config, ignoreEnforced) {
     PROFILE_MARK_V2,
     `[mw] mode: ${config.mode}`,
     "[mw] Workspace profile (target.yml essentials, injected at dispatch;",
-    `full file: ${path33.join(config.controlRoot, ".agenticdoc", "target.yml")})`,
+    `full file: ${path38.join(config.controlRoot, ".agenticdoc", "target.yml")})`,
     `Control workspace: ${config.controlRoot}`,
     `Parent root (extended workspace, writable): ${config.parentRoot}`,
     `Partition root (worker cwd): ${config.partitionRoot}`
@@ -24755,7 +27771,7 @@ function renderPartitionProfileBlock(config, ignoreEnforced) {
     }
     if (contract.docs.length > 0) {
       lines.push("- docs (references, not inlined):");
-      for (const doc of contract.docs) lines.push(`  - ${path33.resolve(config.controlRoot, doc)}`);
+      for (const doc of contract.docs) lines.push(`  - ${path38.resolve(config.controlRoot, doc)}`);
     }
   }
   return lines.join("\n");
@@ -24778,7 +27794,7 @@ function injectWorkspaceProfile(taskPath) {
   const config = resolveWorkspaceConfig(controlRoot);
   let original;
   try {
-    original = fs31.readFileSync(taskPath, "utf8");
+    original = fs35.readFileSync(taskPath, "utf8");
   } catch (err) {
     console.error(
       `[mw] profile injection skipped for ${taskPath}: ${err instanceof Error ? err.message : String(err)}`
@@ -24810,7 +27826,7 @@ ${renderProfileBlock(config, !ownDenyGlobs)}
 
 ${ragBlock}
 `;
-  if (out !== original) fs31.writeFileSync(taskPath, out, "utf8");
+  if (out !== original) fs35.writeFileSync(taskPath, out, "utf8");
 }
 async function dispatchTask(entry, store) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -24819,13 +27835,13 @@ async function dispatchTask(entry, store) {
     dispatchedAt: now,
     updatedAt: now
   };
-  const base = writeFaceBase(path33.dirname(store.queuePath));
+  const base = writeFaceBase(path38.dirname(store.queuePath));
   const caseInsensitive = writeFaceCaseInsensitive();
   const release = await acquireLock(store.lockFilePath);
   try {
     let content = "";
     try {
-      content = fs31.readFileSync(entry.taskPath, "utf8");
+      content = fs35.readFileSync(entry.taskPath, "utf8");
     } catch {
     }
     const refusal = writeFaceVerdict({ entry, content, store, base, caseInsensitive });
@@ -24838,7 +27854,7 @@ async function dispatchTask(entry, store) {
   return { ok: true };
 }
 function writeFaceBase(agenticdocRoot2) {
-  return path33.resolve(agenticdocRoot2, "..");
+  return path38.resolve(agenticdocRoot2, "..");
 }
 function writeFaceCaseInsensitive() {
   return process.platform === "win32";
@@ -24847,7 +27863,7 @@ function parseInflightWriteFace(taskPath, base, caseInsensitive) {
   if (taskPath.trim() === "") return null;
   let text;
   try {
-    text = fs31.readFileSync(taskPath, "utf8");
+    text = fs35.readFileSync(taskPath, "utf8");
   } catch {
     return null;
   }
@@ -24982,9 +27998,239 @@ function deliverPmAlert(pi, text) {
 function deliverWorkerResult(pi, summary) {
   deliverPmAlert(pi, summary);
 }
+function dispatchDecisionOf(result, dispatchedType) {
+  if (!result.available || result.mode !== "auto" || result.triage_type === void 0) return void 0;
+  if (result.triage_type !== dispatchedType) return void 0;
+  const decisionId = (result.decision_id ?? "").trim();
+  if (decisionId === "") return void 0;
+  return { decisionId, acted: true };
+}
+var DP1_TYPE_CHOICES = ["coding", "research", "review"];
+var WRITE_FACE_PATH_RE = /^[A-Za-z0-9_.@+-]+(?:\/[A-Za-z0-9_.@*+-]+)+$/;
+function writeScopeDirs(entries) {
+  const out = [];
+  for (const raw of entries) {
+    const entry = raw.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+    if (!WRITE_FACE_PATH_RE.test(entry)) continue;
+    const segments = entry.split("/").filter((part) => part !== "");
+    const dirs = /\.[A-Za-z0-9]{1,8}$/.test(segments.at(-1) ?? "") ? segments.slice(0, -1) : segments;
+    let dir = dirs.join("/");
+    while (Buffer.byteLength(dir, "utf8") > 32 && dirs.length > 1) {
+      dirs.pop();
+      dir = dirs.join("/");
+    }
+    if (dir === "" || Buffer.byteLength(dir, "utf8") > 32) continue;
+    if (!out.includes(dir)) out.push(dir);
+  }
+  return out.slice(0, 12);
+}
+function writeScopeExts(entries) {
+  const seen = /* @__PURE__ */ new Set();
+  for (const raw of entries) {
+    const entry = raw.trim().replace(/\\/g, "/");
+    if (!WRITE_FACE_PATH_RE.test(entry)) continue;
+    const match2 = /\.[A-Za-z0-9]{1,8}$/.exec(entry);
+    if (match2 === null) continue;
+    const ext2 = match2[0].slice(1).toLowerCase();
+    if (ext2 === "" || Buffer.byteLength(ext2, "utf8") > 8) continue;
+    seen.add(ext2);
+  }
+  const kept = [];
+  let total = 0;
+  for (const ext2 of [...seen].sort()) {
+    const size = Buffer.byteLength(ext2, "utf8");
+    if (kept.length >= 6 || total + size > 36) continue;
+    kept.push(ext2);
+    total += size;
+  }
+  return kept;
+}
+function truncateUtf8Value(text, maxBytes) {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  let out = "";
+  let used = 0;
+  for (const char of text) {
+    const size = Buffer.byteLength(char, "utf8");
+    if (used + size > maxBytes) break;
+    out += char;
+    used += size;
+  }
+  return out;
+}
+function dispatchTaskSummary(description) {
+  const firstLine2 = (description ?? "").split(/\r?\n/).map((line) => line.trim()).find((line) => line !== "") ?? "";
+  const scrubbed = firstLine2.replace(/[A-Za-z]:[\\/][^\s,，、;；)）]*/g, "<path>").replace(/(^|\s)\/(?:[\w.@+-]+\/)+[\w.@+-]*/g, "$1<path>").replace(/\s+/g, " ").trim();
+  return truncateUtf8Value(scrubbed, 600);
+}
+function dispatchRisk(taskType, allowForeignWrite) {
+  if (allowForeignWrite) return "high";
+  return isWritelessRole(taskType) ? "low" : "mid";
+}
+var STATE_CONTEXT_KEY = "context";
+var DP1_TASK_EXCERPT_MAX = 1200;
+var STATE_CONTEXT_OVERHEAD = 16;
+function readDottedPath(state, dotted) {
+  let current = state;
+  for (const part of dotted.split(".")) {
+    if (current === null || typeof current !== "object" || Array.isArray(current)) return void 0;
+    current = current[part];
+  }
+  return current;
+}
+function isBlankStateValue(value) {
+  return value === void 0 || value === null || typeof value === "string" && value.trim() === "";
+}
+function assertStateMatchesRegistry(dpId, state) {
+  const entry = DECIDE_REGISTRY[dpId];
+  if (entry === void 0) throw new Error(`decide registry: unknown dp '${dpId}'`);
+  const required = entry.requiredStateFields.map((field) => field.name);
+  const missing = required.filter((path48) => isBlankStateValue(readDottedPath(state, path48)));
+  const allowedTopLevel = new Set(required.map((path48) => path48.split(".")[0] ?? path48));
+  allowedTopLevel.add(STATE_CONTEXT_KEY);
+  const extra = Object.keys(state).filter((key) => !allowedTopLevel.has(key));
+  const context = state[STATE_CONTEXT_KEY];
+  if (context !== void 0) {
+    if (context === null || typeof context !== "object" || Array.isArray(context)) {
+      extra.push(`${STATE_CONTEXT_KEY}:<not-an-object>`);
+    } else {
+      for (const slot of Object.keys(context)) {
+        if (!entry.contextSlots.includes(slot)) extra.push(`${STATE_CONTEXT_KEY}.${slot}`);
+      }
+    }
+  }
+  if (missing.length === 0 && extra.length === 0) return;
+  const problems = [];
+  if (missing.length > 0) problems.push(`missing=${missing.join(",")}`);
+  if (extra.length > 0) problems.push(`extra=${extra.join(",")}`);
+  throw new Error(`dp ${dpId} state does not match the registry: ${problems.join("; ")}`);
+}
+function dispatchCardSection(text, heading) {
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => line.trim() === `## ${heading}`);
+  if (start < 0) return "";
+  const body = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (/^##\s/.test(line)) break;
+    body.push(line);
+  }
+  return body.join("\n").trim();
+}
+function dispatchTaskExcerpt(text, maxBytes) {
+  if (!text) return "";
+  const sections = [dispatchCardSection(text, "\u4E0A\u4E0B\u6587"), dispatchCardSection(text, "\u8981\u6C42")].filter(
+    (section) => section !== ""
+  );
+  const source = (sections.length > 0 ? sections.join("\n\n") : text).trim();
+  if (source === "") return "";
+  return truncateUtf8Value(source, maxBytes);
+}
+function buildDp1DispatchState(plan) {
+  const taskType = plan.taskType ?? "";
+  const writeFace = plan.writeFace ?? [];
+  const state = {
+    // Same schema version the registry builder and the TS validator are pinned
+    // to (`decision_points._state_builder`).
+    schema_version: 2,
+    decision_point: DP1_ID,
+    key: (plan.key ?? "").trim(),
+    phase: (plan.phase ?? "").trim(),
+    task_type: taskType,
+    // The dispatch never rewrites the requested type, so both fields carry the
+    // plan's `type:` unless a caller says otherwise.
+    requested_type: plan.requestedType ?? taskType,
+    risk: dispatchRisk(taskType, plan.allowForeignWrite === true),
+    risk_source: "pm-label",
+    // dp1 is a P2 (reversible, local) decision point in the registry; the tier
+    // is the action's authority class, not a config mirror (D-036).
+    authority_tier: "P2",
+    task_summary: dispatchTaskSummary(plan.description),
+    questions_version: DP1_QUESTIONS_VERSION,
+    scope: { write_scope: writeScopeDirs(writeFace), file_extensions: writeScopeExts(writeFace) }
+  };
+  if (!DP1_TYPE_CHOICES.includes(taskType)) {
+    return { ok: false, reason: "missing" };
+  }
+  const prepared = prepareStructuredState(DP1_ID, state);
+  if (!prepared.ok) {
+    return {
+      ok: false,
+      reason: prepared.reason === TRIAGE_REASON_INPUT_OVERSIZE ? "oversize" : "missing"
+    };
+  }
+  const contextSlots = DECIDE_REGISTRY[DP1_ID]?.contextSlots ?? [];
+  const dropped = [...prepared.dropped];
+  let finalState = prepared.state;
+  let bytes = prepared.bytes;
+  if (contextSlots.includes("task_excerpt")) {
+    const headroom = MAX_STRUCTURED_STATE_BYTES - prepared.bytes - STATE_CONTEXT_OVERHEAD;
+    const excerpt = dispatchTaskExcerpt(plan.description, Math.min(DP1_TASK_EXCERPT_MAX, headroom));
+    if (excerpt === "") dropped.push("context.task_excerpt");
+    else {
+      finalState = { ...prepared.state, context: { task_excerpt: excerpt } };
+      bytes = canonicalStateBytes(finalState);
+    }
+  }
+  assertStateMatchesRegistry(DP1_ID, finalState);
+  return { ok: true, state: finalState, bytes, dropped };
+}
+function computeDispatchTriage(input) {
+  const policy = readDecidePolicy(input.projectDir);
+  if (!policy.enabled || !policy.dp1Enabled) return null;
+  let state = input.state;
+  let statePath = "legacy";
+  let fallbackReason = "missing";
+  let structuredBytes = 0;
+  if (input.dp1 !== void 0) {
+    const built = buildDp1DispatchState(input.dp1);
+    if (built.ok) {
+      state = built.state;
+      statePath = "structured";
+      structuredBytes = built.bytes;
+    } else {
+      fallbackReason = built.reason;
+    }
+  }
+  const stateTrace = statePath === "structured" ? `[DECISION] dp1 state=structured bytes=${structuredBytes}` : `[DECISION] dp1 state=legacy reason=${fallbackReason}`;
+  const result = triageDispatch({ projectDir: input.projectDir, state, policy, run: input.run });
+  return {
+    result,
+    alertOnDisagreement: policy.alertOnDisagreement,
+    notifyOnUnavailable: policy.notifyOnUnavailable,
+    dispatchedType: input.dispatchedType,
+    disagreement: result.available && result.triage_type !== void 0 && result.triage_type !== input.dispatchedType,
+    receipt: formatTriageReceipt(result),
+    decision: dispatchDecisionOf(result, input.dispatchedType),
+    statePath,
+    stateTrace
+  };
+}
+function emitDispatchTriage(pi, agenticdocRoot2, triage) {
+  if (!triage) return;
+  if (triage.result.available) {
+    const detail = formatTriageLedgerDetail(triage.result, triage.dispatchedType);
+    recordDispatchAlarm(agenticdocRoot2, { kind: "triage-suggestion", count: 1, detail });
+    if (triage.disagreement && triage.alertOnDisagreement) {
+      deliverPmAlert(pi, formatDispatchAlarm({ kind: "triage-suggestion", count: 1, detail }));
+    }
+    return;
+  }
+  if (triage.notifyOnUnavailable) {
+    recordDispatchAlarm(agenticdocRoot2, {
+      kind: "triage-unavailable",
+      count: 1,
+      detail: `dp=dp1 reason=${triage.result.reason ?? "unknown"}`
+    });
+  }
+}
+function appendTriageReceipt(text, triage) {
+  const line = triage?.receipt ?? "";
+  return line === "" ? text : `${text}
+${line}`;
+}
 var WATCH_ENTRY_TYPE = "agent-team-loop:watch";
 function windowClaimId() {
-  return `${os4.hostname()}:${process.pid}`;
+  return `${os5.hostname()}:${process.pid}`;
 }
 function parseClaim(claimId) {
   const m = claimId.match(/^([^:]+):(\d+)$/);
@@ -25005,12 +28251,12 @@ function claimState(claimId, self) {
   const trimmed = claimId.trim();
   if (!trimmed || trimmed === self) return "free";
   const synthetic = parseSyntheticClaim(trimmed);
-  if (synthetic !== void 0 && synthetic.host === os4.hostname()) {
+  if (synthetic !== void 0 && synthetic.host === os5.hostname()) {
     return syntheticClaimLive(trimmed) ? "held-conductor" : "held-stale";
   }
   const c = parseClaim(trimmed);
   if (!c) return "free";
-  if (c.host !== os4.hostname()) return "held-live";
+  if (c.host !== os5.hostname()) return "held-live";
   return isPidAlive(c.pid) ? "held-live" : "held-stale";
 }
 function claimHeldByAnotherWriter(state) {
@@ -25079,18 +28325,18 @@ function trunc(s, max) {
   return s.length <= max ? s : `${s.slice(0, max - 1)}\u2026`;
 }
 function ownerKeyOf(entry, agenticdocRoot2) {
-  const rel = path34.relative(agenticdocRoot2, path34.normalize(entry.taskPath));
-  return rel.split(path34.sep)[0] ?? "";
+  const rel = path39.relative(agenticdocRoot2, path39.normalize(entry.taskPath));
+  return rel.split(path39.sep)[0] ?? "";
 }
 function ownedByThisWindow(entry, watch, agenticdocRoot2) {
   return ownerKeyOf(entry, agenticdocRoot2) === watch.key || watch.dispatchedTaskKeys?.has(entry.taskKey) === true;
 }
 var OUTPUT_READBACK_MAX = 2e4;
 function readOutputBody(taskDir) {
-  const outputPath = path34.join(taskDir, "output.md");
+  const outputPath = path39.join(taskDir, "output.md");
   let content;
   try {
-    content = fs32.readFileSync(outputPath, "utf8").trim();
+    content = fs36.readFileSync(outputPath, "utf8").trim();
   } catch {
     return void 0;
   }
@@ -25101,11 +28347,11 @@ function readOutputBody(taskDir) {
 \u2026(truncated \u2014 full report: ${outputPath})`;
 }
 function readSpawnFailure(taskDir) {
-  const logPath = path34.join(taskDir, "worker.log");
+  const logPath = path39.join(taskDir, "worker.log");
   try {
-    const stat = fs32.statSync(logPath);
+    const stat = fs36.statSync(logPath);
     if (stat.size > 64 * 1024) return void 0;
-    const lines = fs32.readFileSync(logPath, "utf8").split("\n");
+    const lines = fs36.readFileSync(logPath, "utf8").split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (line.startsWith("[launcher] spawn failed")) return line;
@@ -25118,9 +28364,9 @@ function readSpawnFailure(taskDir) {
 var WORKER_LOG_TAIL_MAX = 256 * 1024;
 function readWorkerLogTail(taskDir) {
   try {
-    const stat = fs32.statSync(path34.join(taskDir, "worker.log"));
+    const stat = fs36.statSync(path39.join(taskDir, "worker.log"));
     if (stat.size > WORKER_LOG_TAIL_MAX) return void 0;
-    const lines = fs32.readFileSync(path34.join(taskDir, "worker.log"), "utf8").split("\n");
+    const lines = fs36.readFileSync(path39.join(taskDir, "worker.log"), "utf8").split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (line !== "") return line;
@@ -25140,10 +28386,10 @@ function firstLine(body) {
 }
 function readTerminalDetail(taskDir, status) {
   if (status === "failed") {
-    const spawn4 = readSpawnFailure(taskDir);
-    if (spawn4 !== void 0) {
-      const reason = spawn4.match(/^\[launcher\] spawn failed \([^)]*\):\s*(.*)$/);
-      return (reason?.[1] ?? spawn4).trim();
+    const spawn5 = readSpawnFailure(taskDir);
+    if (spawn5 !== void 0) {
+      const reason = spawn5.match(/^\[launcher\] spawn failed \([^)]*\):\s*(.*)$/);
+      return (reason?.[1] ?? spawn5).trim();
     }
     return firstLine(readLastProductSectionBody(taskDir, ["Exit Reason"])) ?? "";
   }
@@ -25233,7 +28479,7 @@ function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot2, ke
     let detail = "";
     let model = "";
     if (e.status === "running") {
-      const prog = readTaskProgress(path34.dirname(e.taskPath));
+      const prog = readTaskProgress(path39.dirname(e.taskPath));
       model = prog?.model ?? "";
       const hb = prog?.heartbeat;
       if (hb) {
@@ -25252,8 +28498,8 @@ function renderWatchLines(indexStore, workerStore, ackStore, agenticdocRoot2, ke
     } else if (e.status === "pending") {
       model = e.model;
     } else {
-      model = readTaskProgress(path34.dirname(e.taskPath))?.model ?? "";
-      detail = readTerminalDetail(path34.dirname(e.taskPath), e.status);
+      model = readTaskProgress(path39.dirname(e.taskPath))?.model ?? "";
+      detail = readTerminalDetail(path39.dirname(e.taskPath), e.status);
     }
     const badge2 = model ? ` [${model}]` : "";
     return trunc(`  ${STATUS_GLYPH[e.status]} ${e.taskKey}${badge2}${detail ? ` \u2014 ${detail}` : ""}`, WATCH_LINE_MAX);
@@ -25312,7 +28558,7 @@ function elsewhereAggregateLine(all, extraTaskKeys, watchKey, agenticdocRoot2) {
     const countText = AGGREGATE_STATUS_ORDER.filter((s) => counts[s] > 0).map((s) => `${counts[s]} ${s}`).join(", ");
     let highRisk = 0;
     for (const e of group) {
-      if (e.status === "running" && readTaskProgress(path34.dirname(e.taskPath))?.checkpoint?.risk === "high") {
+      if (e.status === "running" && readTaskProgress(path39.dirname(e.taskPath))?.checkpoint?.risk === "high") {
         highRisk++;
       }
     }
@@ -25427,8 +28673,8 @@ function registerPmKeyCommands(pi, indexStore, watch, refreshWatch, agenticdocRo
   });
 }
 async function writeSessionSnapshot(agenticdocRoot2, key, lines) {
-  const statePath = path34.join(agenticdocRoot2, key, "pm-state.md");
-  const content = fs32.existsSync(statePath) ? fs32.readFileSync(statePath, "utf8") : `# PM State: ${key}
+  const statePath = path39.join(agenticdocRoot2, key, "pm-state.md");
+  const content = fs36.existsSync(statePath) ? fs36.readFileSync(statePath, "utf8") : `# PM State: ${key}
 
 ## Notes
 `;
@@ -25445,12 +28691,12 @@ ${section}`) : `${content.trimEnd()}
 ## Notes
 
 ${section}`;
-  fs32.mkdirSync(path34.dirname(statePath), { recursive: true });
+  fs36.mkdirSync(path39.dirname(statePath), { recursive: true });
   const release = await acquireLock(`${statePath}.lock`);
   try {
     const tmpPath = `${statePath}.tmp`;
-    fs32.writeFileSync(tmpPath, next, "utf8");
-    fs32.renameSync(tmpPath, statePath);
+    fs36.writeFileSync(tmpPath, next, "utf8");
+    fs36.renameSync(tmpPath, statePath);
   } finally {
     release();
   }
@@ -25484,7 +28730,7 @@ function registerPmSaveCommand(pi, indexStore, workerStore, watch, agenticdocRoo
       lines.push("(agent: fill in below \u2014 \u5F53\u524D\u5DE5\u4F5C\u8109\u7EDC / \u5173\u952E\u51B3\u7B56 / \u8FDB\u884C\u4E2D / \u4E0B\u4E00\u6B65)");
       const statePath = await writeSessionSnapshot(agenticdocRoot2, key, lines);
       ctx.ui.notify(
-        `Saved session snapshot to ${path34.relative(agenticdocRoot2, statePath)} \u2014 asking the agent to fill in the working context.`,
+        `Saved session snapshot to ${path39.relative(agenticdocRoot2, statePath)} \u2014 asking the agent to fill in the working context.`,
         "info"
       );
       pi.sendUserMessage(
@@ -25600,6 +28846,26 @@ function planDispatchFrontmatter(input) {
       };
     }
   }
+  const triage = computeDispatchTriage({
+    projectDir: input.cwd,
+    state: buildTriageState({
+      description: input.description ?? "",
+      taskType: input.taskType,
+      cli: input.cli,
+      phase: input.phase
+    }),
+    dispatchedType: input.taskType,
+    run: input.triageRun,
+    dp1: {
+      key: input.dp1?.key,
+      phase: input.phase,
+      taskType: input.taskType,
+      requestedType: input.taskType,
+      description: input.description,
+      writeFace: input.dp1?.writeFace,
+      allowForeignWrite: input.dp1?.allowForeignWrite
+    }
+  });
   if (autoRouteSource) {
     const routeReason = reason ? `${reason}; auto-route: ${autoRouteSource} -> vision` : `auto-route: ${autoRouteSource} -> vision`;
     const routeLines = [...headLines, `model: ${effective}`, `model-reason: ${routeReason}`];
@@ -25607,21 +28873,24 @@ function planDispatchFrontmatter(input) {
       ok: true,
       frontmatter: `${routeLines.join("\n")}
 `,
-      echo: `model: dispatch.yml vision=${effective} (model-source: auto-route, ${autoRouteSource} -> vision)`
+      echo: `model: dispatch.yml vision=${effective} (model-source: auto-route, ${autoRouteSource} -> vision)`,
+      triage
     };
   }
   if (!requested) {
     return {
       ok: true,
       frontmatter: typeLines,
-      echo: configured ? `model: dispatch.yml ${role}=${configured}` : `model: route default (no dispatch.yml ${role} default)`
+      echo: configured ? `model: dispatch.yml ${role}=${configured}` : `model: route default (no dispatch.yml ${role} default)`,
+      triage
     };
   }
   if (configured && requested === configured) {
     return {
       ok: true,
       frontmatter: typeLines,
-      echo: `model: dispatch.yml ${role}=${configured} (requested value matches the configured default; not pinned)`
+      echo: `model: dispatch.yml ${role}=${configured} (requested value matches the configured default; not pinned)`,
+      triage
     };
   }
   if (configured && !reason) {
@@ -25637,7 +28906,8 @@ function planDispatchFrontmatter(input) {
     ok: true,
     frontmatter: `${lines.join("\n")}
 `,
-    echo: configured ? `model override: role default ${role}=${configured} -> ${requested} (reason: ${reason})` : `model: ${requested} (no dispatch.yml ${role} default)`
+    echo: configured ? `model override: role default ${role}=${configured} -> ${requested} (reason: ${reason})` : `model: ${requested} (no dispatch.yml ${role} default)`,
+    triage
   };
 }
 var WRITE_SURFACE_MARKER = "<!-- mw-write-surface: v1 -->";
@@ -25829,6 +29099,20 @@ ${section}
 
 ${rest}`;
 }
+function mergeReadScope(frontmatter, readScope, fileCap, byteCap) {
+  const items = (readScope ?? []).map((item) => item.trim()).filter((item) => item !== "");
+  if (items.length === 0) return frontmatter;
+  const lines = ["read_scope:", ...items.map((item) => `  - ${item}`)];
+  if (fileCap !== void 0 && Number.isFinite(fileCap) && fileCap > 0) {
+    lines.push(`l2_read_file_cap: ${Math.trunc(fileCap)}`);
+  }
+  if (byteCap !== void 0 && Number.isFinite(byteCap) && byteCap > 0) {
+    lines.push(`l2_read_byte_cap: ${Math.trunc(byteCap)}`);
+  }
+  return `${frontmatter.replace(/\r?\n$/, "")}
+${lines.join("\n")}
+`;
+}
 function mergeAllowForeignWrite(frontmatter, allowed) {
   if (!allowed || /^allow_foreign_write:/m.test(frontmatter)) return frontmatter;
   return `${frontmatter.replace(/\r?\n$/, "")}
@@ -25842,7 +29126,76 @@ function mergeWriteScope(frontmatter, writeScope) {
 ${line}
 `;
 }
+var DECISION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*:\S+$/;
+function mergeDecisionHeader(frontmatter, decision) {
+  if (!decision?.acted) return frontmatter;
+  const decisionId = decision.decisionId.trim();
+  if (!DECISION_ID_RE.test(decisionId)) return frontmatter;
+  if (/^decision:/m.test(frontmatter)) return frontmatter;
+  return `${frontmatter.replace(/\r?\n$/, "")}
+decision: ${decisionId}
+`;
+}
 var DISPATCH_CARD_CODE = "dispatch-card";
+var DISPATCH_CLAIMS_CODE = "dispatch-claims";
+function claimGateMode() {
+  const raw = (process.env.MW_CLAIM_GATE ?? CLAIM_GATE_DEFAULT).trim().toLowerCase();
+  return raw === "enforce" ? "enforce" : CLAIM_GATE_DEFAULT;
+}
+function claimReadScope(ownerKey, claims) {
+  const scope = [`.agenticdoc/${ownerKey}`, ".agenticdoc/goal.md"];
+  const seen = new Set(scope.map((entry) => entry.toLowerCase()));
+  for (const claim of claims) {
+    const entry = claim.locator.trim().replace(/:\d+(?:-\d+)?$/, "").replace(/#.*$/, "").replaceAll("\\", "/").replace(/^\.\//, "");
+    if (entry === "" || path39.isAbsolute(entry) || entry.split("/").includes("..")) continue;
+    if (seen.has(entry.toLowerCase())) continue;
+    seen.add(entry.toLowerCase());
+    scope.push(entry);
+  }
+  return scope;
+}
+var CLAIMS_OPEN_RE2 = /^<!--\s*mw-claims\s*:\s*v1\s*-->$/i;
+var CLAIMS_CLOSE_RE2 = /^<!--\s*\/\s*mw-claims\s*-->$/i;
+var CLAIMS_STOP_H2_RE2 = /^##(?!#)\s+/;
+var CLAIMS_FENCE_RE2 = /^(`{3,}|~{3,})(.*)$/;
+var CLAIMS_BLOCK_CLOSE = "<!-- /mw-claims -->";
+function claimsBlockRange(text) {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  let fence;
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const fenceMatch = CLAIMS_FENCE_RE2.exec(line);
+    if (fenceMatch !== null) {
+      const marker = fenceMatch[1] ?? "";
+      const rest = fenceMatch[2] ?? "";
+      const char = marker[0] ?? "";
+      if (fence === void 0) fence = { char, len: marker.length };
+      else if (char === fence.char && marker.length >= fence.len && rest.trim() === "") fence = void 0;
+      continue;
+    }
+    if (fence !== void 0) continue;
+    if (start < 0) {
+      if (CLAIMS_OPEN_RE2.test(line)) start = i;
+      continue;
+    }
+    if (CLAIMS_CLOSE_RE2.test(line)) return { lines, start, end: i + 1 };
+    if (CLAIMS_STOP_H2_RE2.test(line)) return { lines, start, end: i };
+  }
+  return { lines, start, end: start < 0 ? -1 : lines.length };
+}
+function extractClaimsBlockText(text) {
+  const { lines, start, end } = claimsBlockRange(text);
+  if (start < 0) return "";
+  const block = lines.slice(start, end);
+  if (block.length === 0 || !CLAIMS_CLOSE_RE2.test(block[block.length - 1] ?? "")) block.push(CLAIMS_BLOCK_CLOSE);
+  return block.join("\n");
+}
+function stripClaimsBlockText(text) {
+  const { lines, start, end } = claimsBlockRange(text);
+  if (start < 0) return text;
+  return [...lines.slice(0, start), ...lines.slice(end)].join("\n");
+}
 var CARD_SEED_MARKER = "<!-- mw-dispatch-card: v1 -->";
 var CARD_SEED_MARKER_END = "<!-- /mw-dispatch-card: v1 -->";
 var CARD_SEED_DISCLAIMER = "\u4EE5\u4E0A\u4E3A\u79CD\u5B50\uFF0C\u4E0D\u662F\u63A2\u7D22\u4E0A\u754C\uFF1B\u53EF\u81EA\u884C\u68C0\u7D22\u8865\u5145\u4E0A\u4E0B\u6587";
@@ -25935,6 +29288,8 @@ function renderCardSeedSections(sections) {
   if (contract !== "" && !parts.includes(RECOVERY_CONTRACT_HEADING)) {
     parts.push(contract, "");
   }
+  const claims = (sections.claims ?? "").trim();
+  if (claims !== "") parts.push(claims, "");
   parts.push(CARD_SEED_DISCLAIMER, CARD_SEED_MARKER_END);
   return parts.join("\n");
 }
@@ -26001,7 +29356,7 @@ ${writeFaceLine}`;
 }
 function cleanupRefusedTaskDir(taskPath) {
   try {
-    fs32.rmSync(path34.dirname(taskPath), { recursive: true, force: true });
+    fs36.rmSync(path39.dirname(taskPath), { recursive: true, force: true });
   } catch {
   }
 }
@@ -26012,74 +29367,126 @@ function writeFaceRefusalText(taskKey, refusal) {
   return `Worker dispatch of '${taskKey}' refused: ${refusal.reason}. Nothing was written (no task dir, no queue row). Narrow the card's \u5199\u5165\u5141\u8BB8\u9762 so it does not overlap an in-flight same-key worker, then re-dispatch.`;
 }
 function normalizeCardPathForHeader(cardPathInput, ownerKey, agenticdocRoot2, projectDir) {
-  const resolved = path34.isAbsolute(cardPathInput) ? path34.resolve(cardPathInput) : path34.resolve(projectDir, cardPathInput);
-  const keyTasksDir = path34.join(agenticdocRoot2, ownerKey, "tasks");
-  if (isSameOrUnder(keyTasksDir, resolved)) return `tasks/${path34.basename(resolved)}`;
-  const rel = path34.relative(projectDir, resolved);
-  if (rel !== "" && !rel.startsWith("..") && !path34.isAbsolute(rel)) return rel.split(path34.sep).join("/");
-  return path34.basename(resolved);
+  const resolved = path39.isAbsolute(cardPathInput) ? path39.resolve(cardPathInput) : path39.resolve(projectDir, cardPathInput);
+  const keyTasksDir = path39.join(agenticdocRoot2, ownerKey, "tasks");
+  if (isSameOrUnder(keyTasksDir, resolved)) return `tasks/${path39.basename(resolved)}`;
+  const rel = path39.relative(projectDir, resolved);
+  if (rel !== "" && !rel.startsWith("..") && !path39.isAbsolute(rel)) return rel.split(path39.sep).join("/");
+  return path39.basename(resolved);
 }
 var EMPTY_CARD_SECTIONS = { context: "", requirements: "", deliverables: "", extras: [] };
 function readDispatchCard(input) {
   const raw = input.cardPath.trim();
-  const resolvedPath = path34.isAbsolute(raw) ? path34.resolve(raw) : path34.resolve(input.projectDir, raw);
+  const resolvedPath = path39.isAbsolute(raw) ? path39.resolve(raw) : path39.resolve(input.projectDir, raw);
   const empty = {
     ok: false,
+    code: DISPATCH_CARD_CODE,
     resolvedPath,
     missing: [],
     headerPath: "",
     sha256: "",
-    sections: EMPTY_CARD_SECTIONS
+    sections: EMPTY_CARD_SECTIONS,
+    claims: [],
+    caps: null,
+    warnings: []
   };
   if (raw === "") return { ...empty, missing: ["card_path"] };
   const envelope = readEnvelope(resolvedPath);
   if (!envelope.ok) return { ...empty, missing: envelope.missing };
   let text;
   try {
-    text = fs32.readFileSync(resolvedPath, "utf8");
+    text = fs36.readFileSync(resolvedPath, "utf8");
   } catch {
     return { ...empty, missing: ["file"] };
   }
   const missing = [...envelope.type === "" ? [] : typeExtrasMissing(envelope.type, text), ...seedItemsMissing(text)];
   if (missing.length > 0) return { ...empty, missing };
+  const claimBlock = parseClaimsBlock(text);
+  const enforce = claimGateMode() === "enforce";
+  const audit = claimsGaps(claimBlock, { projectDir: input.projectDir, enforce: true });
+  const claimsMissing = enforce ? [...claimBlock.errors, ...audit] : [];
+  const warnings = enforce ? [] : [...claimBlock.errors, ...audit];
+  const caps = claimBlock.claims.length > 0 ? claimBudgetCaps(claimBlock.claims) : null;
+  if (claimsMissing.length > 0) {
+    return {
+      ...empty,
+      code: DISPATCH_CLAIMS_CODE,
+      missing: claimsMissing,
+      claims: claimBlock.claims,
+      caps
+    };
+  }
+  const sections = {
+    // T-05/AC-003: carry the card's `type:` into the seed so the S2 checklist
+    // can be rendered (a `CardSections` built directly from card text has no
+    // type and stays byte-identical).
+    ...extractCardSections(claimBlock.present ? stripClaimsBlockText(text) : text),
+    type: envelope.type
+  };
+  const claimsText = claimBlock.present ? extractClaimsBlockText(text) : "";
+  if (claimsText !== "") sections.claims = claimsText;
   return {
     ok: true,
+    code: DISPATCH_CARD_CODE,
     resolvedPath,
     missing: [],
     headerPath: normalizeCardPathForHeader(raw, input.ownerKey, input.agenticdocRoot, input.projectDir),
     sha256: cardDigest(resolvedPath),
-    // T-05/AC-003: carry the card's `type:` into the seed so the S2 checklist
-    // can be rendered (a `CardSections` built directly from card text has no
-    // type and stays byte-identical).
-    sections: { ...extractCardSections(text), type: envelope.type }
+    sections,
+    claims: claimBlock.claims,
+    caps,
+    warnings
   };
 }
 function dispatchCardRefusal(gate) {
+  if (gate.code === DISPATCH_CLAIMS_CODE) {
+    return `[${DISPATCH_CLAIMS_CODE}] dispatch refused: card '${gate.resolvedPath}' declares a claims block that cannot be used (missing=[${gate.missing.join(", ")}]).
+Required per claim row: \u7C7B\u578B \u2208 ${CLAIM_TYPES.join(" | ")}, \u9648\u8FF0, \u53CD\u8BC1\u6761\u4EF6, \u5B9A\u4F4D, \u5224\u636E (its prefix must match the type: cmd: / grep: / shape: / manual:), \u9884\u7B97 (a non-negative integer); \u03A3\u9884\u7B97 \u2264 40 with \u7C7B\u578B manual counted twice.
+Fix the <!-- mw-claims: v1 --> block at that path (or remove it entirely), then re-dispatch; nothing was written.`;
+  }
   const labels = gate.missing.filter((item) => item in ENVELOPE_SECTION_LABELS).map((item) => ENVELOPE_SECTION_LABELS[item]);
   return `[${DISPATCH_CARD_CODE}] dispatch refused: card '${gate.resolvedPath}' is not a complete dispatch envelope (missing=[${gate.missing.join(", ")}]).
 ` + (labels.length > 0 ? `Missing sections: ${labels.join(" / ")}.
 ` : "") + "Required: type + \u4E0A\u4E0B\u6587/\u8981\u6C42/\u4EA4\u4ED8\u683C\u5F0F; per type: coding(\u5199\u5165\u5141\u8BB8\u9762/\u5199\u5165\u7981\u6B62\u9762/\u9A8C\u6536\u547D\u4EE4/\u6539\u52A8\u5386\u53F2), research(\u552F\u4E00\u8BC1\u636E\u6587\u4EF6), review(\u5BA1\u8BA1\u76EE\u6807/\u672A\u8986\u76D6\u9762\u58F0\u660E); seeds: a goal.md reference and at least one path:line reference.\nFix the card at that path (or pass a different card_path), then re-dispatch; nothing was written.";
 }
+function claimsReceiptLine(gate) {
+  if (gate.claims.length === 0) return "";
+  const caps = gate.caps === null ? "caps=none" : `caps=${gate.caps.fileCap}/${gate.caps.byteCap}`;
+  const warnings = gate.warnings.length > 0 ? gate.warnings.join(", ") : "none";
+  return `
+[claims] ${claimGateMode()} claims=${gate.claims.length} ${caps} warnings=[${warnings}]`;
+}
 function writeDispatchTaskMd(deps, input) {
   let frontmatter = mergeAllowForeignWrite(
-    mergeWriteScope(input.frontmatter, input.writeScope),
+    mergeWriteScope(
+      mergeReadScope(input.frontmatter, input.readScope, input.readFileCap, input.readByteCap),
+      input.writeScope
+    ),
     input.allowForeignWrite
   );
   if (input.card) {
     frontmatter = mergeCardHeader(frontmatter, input.card.headerPath, input.card.sha256, input.card.sections);
   }
+  frontmatter = mergeDecisionHeader(frontmatter, input.decision);
   const taskDir = workerTaskDir(deps.agenticdocRoot, deps.ownerKey, input.taskKey);
-  fs32.mkdirSync(taskDir, { recursive: true });
-  const taskMdPath = path34.join(taskDir, "task.md");
+  fs36.mkdirSync(taskDir, { recursive: true });
+  const taskMdPath = path39.join(taskDir, "task.md");
   const body = input.card ? applyCardSeedSections(input.body, input.card.sections) : input.body;
   const plain = `${frontmatter}
 ${body}
 `;
   const content = input.injectWriteSurface ? applyWriteSurfaceContract(plain, input.type, input.writeScope) : plain;
-  fs32.writeFileSync(taskMdPath, content, "utf8");
+  fs36.writeFileSync(taskMdPath, content, "utf8");
+  if (input.decisionTrace !== void 0) {
+    try {
+      fs36.appendFileSync(path39.join(taskDir, "trace.log"), `${input.decisionTrace}
+`, "utf8");
+    } catch {
+    }
+  }
   return { ok: true, path: taskMdPath, injected: input.injectWriteSurface === true };
 }
-function registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot2, watch, projectDir = path34.dirname(agenticdocRoot2)) {
+function registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRoot2, watch, projectDir = path39.dirname(agenticdocRoot2), triageRun) {
   pi.registerTool({
     name: "dispatch_worker",
     label: "dispatch_worker",
@@ -26111,7 +29518,7 @@ function registerWorkerTools(pi, workerStore, ackStore, indexStore, agenticdocRo
       ),
       type: typebox_exports.Optional(
         typebox_exports.String({
-          description: "Task type: 'coding' | 'review' | 'research' | 'rag-research' | 'vision'. Selects the dispatch.yml role (and the worker tool allowlist). Use 'vision' for tasks that must read image files (screenshots/mockups). Default: derived from cli (pi -> coding, claude -> review, codex -> codex)."
+          description: "Task type: 'coding' | 'review' | 'research' | 'rag-research' | 'vision' | 'decide_prepare'. Selects the dispatch.yml role (and the worker tool allowlist). Use 'vision' for tasks that must read image files (screenshots/mockups). Default: derived from cli (pi -> coding, claude -> review, codex -> codex)."
         })
       ),
       images: typebox_exports.Optional(
@@ -26178,7 +29585,7 @@ ${DOC_GATE_HINT}`
         };
       }
       const taskDir = workerTaskDir(agenticdocRoot2, ownerKey, task_key);
-      if (fs32.existsSync(taskDir)) {
+      if (fs36.existsSync(taskDir)) {
         return {
           content: [
             {
@@ -26198,7 +29605,7 @@ ${DOC_GATE_HINT}`
           description,
           taskDir,
           projectRoot: projectDir,
-          keyDir: path34.join(agenticdocRoot2, ownerKey),
+          keyDir: path39.join(agenticdocRoot2, ownerKey),
           trueRoot: agenticdocRoot2,
           allowForeignWrite
         });
@@ -26237,11 +29644,16 @@ ${DOC_GATE_HINT}`
         images,
         model: model ?? "",
         modelReason: model_reason ?? "",
-        registry: _context?.modelRegistry
+        registry: _context?.modelRegistry,
+        triageRun,
+        // T-04d: owning key + the card's declared write face are the dispatch
+        // facts the dp1 structured state needs (the rest comes from the plan).
+        dp1: { key: ownerKey, writeFace: cardWriteFaceEntries(cardGate.sections), allowForeignWrite }
       });
       if (!modelPlan.ok) {
         return { content: [{ type: "text", text: modelPlan.message }], details: void 0 };
       }
+      emitDispatchTriage(pi, agenticdocRoot2, modelPlan.triage);
       const written = writeDispatchTaskMd(
         { agenticdocRoot: agenticdocRoot2, ownerKey },
         {
@@ -26250,9 +29662,19 @@ ${DOC_GATE_HINT}`
           body: description,
           frontmatter: modelPlan.frontmatter,
           writeScope: writelessRole && isShellRole(typeField) ? renderDefaultWriteScope(ownerKey, task_key) : void 0,
+          // T-02/design §4: claims-backed read budget. `caps=null` (no claims
+          // block) leaves both the bytes and the interception behaviour alone.
+          readScope: cardGate.caps === null ? void 0 : claimReadScope(ownerKey, cardGate.claims),
+          readFileCap: cardGate.caps?.fileCap,
+          readByteCap: cardGate.caps?.byteCap,
           injectWriteSurface: writelessRole,
           allowForeignWrite,
-          card: { headerPath: cardGate.headerPath, sha256: cardGate.sha256, sections: cardGate.sections }
+          card: { headerPath: cardGate.headerPath, sha256: cardGate.sha256, sections: cardGate.sections },
+          // T-08/T-04c: the decision this dispatch ADOPTED (D-041). `suggest` and
+          // unavailable advice carry no decision, so the bytes stay pre-T-08.
+          decision: modelPlan.triage?.decision,
+          // T-04d: record which dp1 state shape the child actually received.
+          decisionTrace: modelPlan.triage?.stateTrace
         }
       );
       const taskMdPath = written.path;
@@ -26270,7 +29692,10 @@ ${DOC_GATE_HINT}`
         content: [
           {
             type: "text",
-            text: `Dispatched worker '${task_key}' (type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}) under key '${ownerKey}'. Task file: ${taskMdPath}. Check mw_status to confirm the service is running.`
+            text: appendTriageReceipt(
+              `Dispatched worker '${task_key}' (type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}) under key '${ownerKey}'. Task file: ${taskMdPath}. Check mw_status to confirm the service is running.`,
+              modelPlan.triage
+            ) + claimsReceiptLine(cardGate)
           }
         ],
         details: void 0
@@ -26496,7 +29921,7 @@ function registerAdvancePhaseTool(pi, projectDir, indexStore) {
     }
   });
 }
-function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, watch, projectDir = path34.dirname(agenticdocRoot2)) {
+function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, watch, projectDir = path39.dirname(agenticdocRoot2), triageRun) {
   const USAGE2 = "Usage: /worker <claude|codex|pi> --card <card-path> [--type coding|review|research|rag-research|vision] [--model <id>] [--reason <text>] [--key <name>] [--allow-foreign-write] <task description>";
   pi.registerCommand("worker", {
     description: "Spawn a worker: /worker <claude|codex|pi> --card <card-path> [--type <t>] [--model <id>] [--reason <text>] <task description>",
@@ -26575,7 +30000,7 @@ function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, wa
           description,
           taskDir,
           projectRoot: projectDir,
-          keyDir: path34.join(agenticdocRoot2, ownerKey),
+          keyDir: path39.join(agenticdocRoot2, ownerKey),
           trueRoot: agenticdocRoot2,
           allowForeignWrite: allowForeignWriteArg
         });
@@ -26616,12 +30041,21 @@ function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, wa
         images: imagesArg,
         model,
         modelReason,
-        registry: ctx.modelRegistry
+        registry: ctx.modelRegistry,
+        triageRun,
+        // T-04d: owning key + the card's declared write face are the dispatch
+        // facts the dp1 structured state needs (the rest comes from the plan).
+        dp1: {
+          key: ownerKey,
+          writeFace: cardWriteFaceEntries(cardGate.sections),
+          allowForeignWrite: allowForeignWriteArg
+        }
       });
       if (!modelPlan.ok) {
         ctx.ui.notify(modelPlan.message, "warning");
         return;
       }
+      emitDispatchTriage(pi, agenticdocRoot2, modelPlan.triage);
       const written = writeDispatchTaskMd(
         { agenticdocRoot: agenticdocRoot2, ownerKey },
         {
@@ -26630,9 +30064,18 @@ function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, wa
           body: description,
           frontmatter: modelPlan.frontmatter,
           writeScope: writelessRole && isShellRole(typeField) ? renderDefaultWriteScope(ownerKey, taskKey) : void 0,
+          // T-02/design §4: same claims-backed read budget as dispatch_worker.
+          readScope: cardGate.caps === null ? void 0 : claimReadScope(ownerKey, cardGate.claims),
+          readFileCap: cardGate.caps?.fileCap,
+          readByteCap: cardGate.caps?.byteCap,
           injectWriteSurface: writelessRole,
           allowForeignWrite: allowForeignWriteArg,
-          card: { headerPath: cardGate.headerPath, sha256: cardGate.sha256, sections: cardGate.sections }
+          card: { headerPath: cardGate.headerPath, sha256: cardGate.sha256, sections: cardGate.sections },
+          // T-08/T-04c: the decision this dispatch ADOPTED (D-041). `suggest` and
+          // unavailable advice carry no decision, so the bytes stay pre-T-08.
+          decision: modelPlan.triage?.decision,
+          // T-04d: record which dp1 state shape the child actually received.
+          decisionTrace: modelPlan.triage?.stateTrace
         }
       );
       const taskMdPath = written.path;
@@ -26646,7 +30089,10 @@ function registerWorkerCommands(pi, workerStore, indexStore, agenticdocRoot2, wa
         return;
       }
       ctx.ui.notify(
-        `Dispatched ${cli} worker (${taskKey}) under key '${ownerKey}' [type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}].`,
+        appendTriageReceipt(
+          `Dispatched ${cli} worker (${taskKey}) under key '${ownerKey}' [type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}].`,
+          modelPlan.triage
+        ) + claimsReceiptLine(cardGate),
         "info"
       );
     }
@@ -26885,7 +30331,7 @@ async function runMwModelCommand(ctx, projectDir, argsText, runner = modelMw) {
     const value = parts[2];
     if (!role || !value || parts.length > 3) {
       ctx.ui.notify(
-        "Usage: /mw model set <role> <prefix/model> \u2014 roles: main, coding, review, research, vision (e.g. /mw model set review timi/gpt-5.6-sol)",
+        "Usage: /mw model set <role> <prefix/model> \u2014 roles: main, coding, review, research, vision, decide_prepare (e.g. /mw model set review timi/gpt-5.6-sol)",
         "warning"
       );
       return;
@@ -26940,7 +30386,7 @@ Worker roles apply on the next spawn (no serve restart); main applies at the nex
     "warning"
   );
 }
-var MW_COMMAND_DESCRIPTION = "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / rag / run-detached / ack";
+var MW_COMMAND_DESCRIPTION = "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / decide / rag / stats / run-detached / ack";
 var RAG_OUTPUT_MAX_LINES = 30;
 var RAG_FULL_OUTPUT_HINT = "\u5B8C\u6574\u8F93\u51FA\uFF1Apython mw.py rag <sub> --project <dir>";
 function parseRagArgs(raw) {
@@ -27037,6 +30483,202 @@ async function runMwRunDetachedCommand(ctx, projectDir, raw, runner = runDetache
   }
   const { pid, marker, heartbeat, log } = result.handle;
   ctx.ui.notify(`dispatched pid=${pid} marker=${marker} heartbeat=${heartbeat} log=${log}`, "info");
+}
+async function runMwStatsCommand(ctx, projectDir, raw, runner = statsMw) {
+  const args = splitCommandLine(raw);
+  let result;
+  try {
+    result = runner(projectDir, args);
+  } catch (err) {
+    ctx.ui.notify(`mw stats failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+    return;
+  }
+  ctx.ui.notify(
+    result.ok ? result.output || "mw stats: ok" : `mw stats failed: ${result.error}`,
+    result.ok ? "info" : "error"
+  );
+}
+var DECIDE_CONCLUSIONS = ["continue", "narrow", "revoke"];
+var DECIDE_USAGE = "Usage: /mw decide show | sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <key>]";
+function parseDecideArgs(argsText) {
+  const parts = splitCommandLine(argsText);
+  const sub = parts[0] ?? "";
+  if (sub === "" || sub === "show") {
+    if (parts.length > 1) {
+      return { action: "usage", error: `${DECIDE_USAGE} \u2014 \`show\` takes no arguments` };
+    }
+    return { action: "show" };
+  }
+  if (sub !== "sign") {
+    return { action: "usage", error: `${DECIDE_USAGE} \u2014 unknown sub '${sub}'` };
+  }
+  const conclusion = parts[1];
+  if (conclusion === void 0) {
+    return { action: "usage", error: `${DECIDE_USAGE} \u2014 \`sign\` needs a conclusion` };
+  }
+  if (!DECIDE_CONCLUSIONS.includes(conclusion)) {
+    return { action: "usage", error: `${DECIDE_USAGE} \u2014 invalid conclusion '${conclusion}'` };
+  }
+  let reason;
+  let allowEmpty = false;
+  let key;
+  for (let i = 2; i < parts.length; i++) {
+    const part = parts[i] ?? "";
+    if (part === "--allow-empty") {
+      allowEmpty = true;
+      continue;
+    }
+    if (part === "--reason" || part === "--key") {
+      const value = parts[i + 1];
+      if (value === void 0 || value === "" || value.startsWith("--")) {
+        return { action: "usage", error: `${DECIDE_USAGE} \u2014 ${part} needs a value` };
+      }
+      if (part === "--reason") reason = value;
+      else key = value;
+      i++;
+      continue;
+    }
+    return { action: "usage", error: `${DECIDE_USAGE} \u2014 unexpected argument '${part}'` };
+  }
+  return { action: "sign", conclusion, reason, allowEmpty, key };
+}
+var DECIDE_ERROR_TAIL_LINES = 6;
+function tailLines(text, max = DECIDE_ERROR_TAIL_LINES) {
+  const lines = text.replace(/\r\n/g, "\n").trim().split("\n");
+  return lines.slice(-max).join("\n");
+}
+function parseDecidePreview(output) {
+  const text = output.trim();
+  const candidates = [text];
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first !== -1 && last > first) candidates.push(text.slice(first, last + 1));
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+    }
+  }
+  return null;
+}
+function formatDecidePreview(payload) {
+  const facts = payload.facts ?? {};
+  const engines = Object.entries(facts.engines ?? {});
+  const lines = [
+    `counted_rows=${facts.counted_rows ?? 0} available=${facts.n_available ?? 0} acted=${facts.n_acted ?? 0} escalated=${facts.n_escalated ?? 0}`,
+    `engines: ${engines.length > 0 ? engines.map(([name, count2]) => `${name}=${count2}`).join(", ") : "-"}`
+  ];
+  for (const conclusion of DECIDE_CONCLUSIONS) {
+    const verdict = payload.verdicts?.[conclusion];
+    if (verdict === void 0) {
+      lines.push(`verdict ${conclusion}: (mw decide sign --json reported none)`);
+      continue;
+    }
+    lines.push(`verdict ${conclusion}: ${verdict.ok === false ? "REFUSED" : "ok"}`);
+    for (const problem of verdict.problems ?? []) lines.push(`  - ${problem}`);
+  }
+  lines.push(`rows_sha256: ${(facts.sha256 ?? "").slice(0, 12) || "-"}`);
+  lines.push(`p0-open: ${(facts.p0_open ?? []).join(", ") || "-"}`);
+  return lines.join("\n");
+}
+function decidePreviewArgs(key, allowEmpty) {
+  const args = ["sign", "--key", key, "--json"];
+  if (allowEmpty) args.push("--allow-empty");
+  return args;
+}
+async function runMwDecideCommand(ctx, projectDir, argsText, deps = {}) {
+  if (ctx.hasUI !== true) {
+    ctx.ui.notify(
+      "/mw decide \u9700\u8981\u4EA4\u4E92 TUI\uFF08headless / -p / rpc \u4E00\u5F8B\u62D2\uFF09\uFF1A\u7B7E\u6536\u5FC5\u987B\u6709\u786E\u8BA4\u6846\u91CC\u7684\u4E00\u6B21\u4EBA\u5DE5\u70B9\u51FB\u3002\u547D\u4EE4\u884C\u8BF7\u76F4\u63A5\u5728\u7EC8\u7AEF\u8DD1 mw decide sign\uFF08agent \u4F1A\u8BDD\u5185\u4F1A\u88AB\u62D2\uFF09\u3002",
+      "warning"
+    );
+    return;
+  }
+  const parsed = parseDecideArgs(argsText);
+  if (parsed.action === "usage") {
+    ctx.ui.notify(parsed.error, "warning");
+    return;
+  }
+  const key = (parsed.action === "sign" ? parsed.key : void 0) ?? deps.watchKey?.();
+  if (!key) {
+    ctx.ui.notify(`${DECIDE_USAGE} \u2014 \u65E0\u6CD5\u786E\u5B9A key\uFF0C\u8BF7\u7ED9 --key <key>\uFF08\u6216\u5148 /worker watch <key>\uFF09`, "warning");
+    return;
+  }
+  const allowEmpty = parsed.action === "sign" ? parsed.allowEmpty : false;
+  const runner = deps.runner ?? decideMw;
+  let preview;
+  try {
+    preview = runner(projectDir, decidePreviewArgs(key, allowEmpty));
+  } catch (err) {
+    ctx.ui.notify(`mw decide \u9884\u89C8\u5931\u8D25: ${err instanceof Error ? err.message : String(err)}`, "error");
+    return;
+  }
+  if (!preview.ok) {
+    ctx.ui.notify(`mw decide \u9884\u89C8\u5931\u8D25: ${preview.error}`, "error");
+    return;
+  }
+  const payload = parseDecidePreview(preview.output);
+  if (payload === null) {
+    ctx.ui.notify(`mw decide \u9884\u89C8\u8F93\u51FA\u4E0D\u662F JSON\uFF0C\u539F\u6587\u5C3E\u90E8:
+${tailLines(preview.output)}`, "error");
+    return;
+  }
+  if (parsed.action === "show") {
+    ctx.ui.notify(
+      `${formatDecidePreview(payload)}
+(preview only \u2014 nothing written; /mw decide sign <continue|narrow|revoke> \u624D\u5199)`,
+      "info"
+    );
+    return;
+  }
+  const chosen = payload.verdicts?.[parsed.conclusion];
+  const problems = chosen !== void 0 ? chosen.problems ?? [] : payload.problems ?? [];
+  const verdictOk = chosen !== void 0 ? chosen.ok !== false : payload.ok !== false;
+  if (!verdictOk || problems.length > 0) {
+    ctx.ui.notify(
+      `mw decide sign ${parsed.conclusion} \u672A\u901A\u8FC7\u673A\u5668\u884C\u5224\u636E\uFF0C\u672A\u5F39\u786E\u8BA4\u6846\u3001\u96F6\u5199\u5165:
+${problems.map((p) => `- ${p}`).join("\n")}`,
+      "error"
+    );
+    return;
+  }
+  const facts = payload.facts ?? {};
+  const sha = (facts.sha256 ?? "").slice(0, 12) || "-";
+  const confirmed = await ctx.ui.confirm(
+    `\u786E\u8BA4\u7B7E\u6536 ${key}`,
+    `conclusion=${parsed.conclusion} \xB7 counted_rows=${facts.counted_rows ?? 0} \xB7 rows_sha256=${sha}
+\u786E\u8BA4\u540E\u5199\u5165 evidence/review/sign-final.md\uFF08signed_via: tui\uFF09\u5E76\u8FFD\u52A0\u4E00\u6761 authority-change \u6863\u6848\u884C`
+  );
+  if (!confirmed) {
+    ctx.ui.notify("cancelled, nothing written", "info");
+    return;
+  }
+  const writeArgs = ["sign", "--key", key, "--conclusion", parsed.conclusion, "--human-confirmed"];
+  if (parsed.reason) writeArgs.push("--reason", parsed.reason);
+  if (parsed.allowEmpty) writeArgs.push("--allow-empty");
+  let written;
+  try {
+    written = runner(projectDir, writeArgs);
+  } catch (err) {
+    ctx.ui.notify(
+      `mw decide sign ${parsed.conclusion} \u5199\u5165\u5931\u8D25: ${err instanceof Error ? err.message : String(err)}`,
+      "error"
+    );
+    return;
+  }
+  if (!written.ok) {
+    ctx.ui.notify(`mw decide sign ${parsed.conclusion} \u5199\u5165\u5931\u8D25: ${written.error}`, "error");
+    return;
+  }
+  const wrote = /^wrote (.+)$/m.exec(written.output)?.[1]?.trim();
+  ctx.ui.notify(
+    `\u5DF2\u7B7E\u6536 ${key}\uFF08${parsed.conclusion}\uFF09\u2192 ${wrote ?? `${key}/evidence/review/sign-final.md`}
+authority-change \u6863\u6848\u884C\u5DF2\u8FFD\u52A0\uFF1Bkey \u76EE\u5F55\u5B58\u5728 decision-scope.md \u65F6\uFF0Cadvance_phase.py \u7684 decision_signoff \u68C0\u67E5\u73B0\u5728\u53EF\u4EE5\u63A8\u8FDB\u3002`,
+    "info"
+  );
 }
 function registerMwCommands(pi, projectDir, workerStore, ackStore, watch, agenticdocRoot2) {
   pi.registerCommand("mw", {
@@ -27148,8 +30790,16 @@ ${r.output}`, "info");
         await runMwModelCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
         return;
       }
+      if (sub === "decide") {
+        await runMwDecideCommand(ctx, projectDir, trimmed.slice(sub.length).trim(), { watchKey: () => watch.key });
+        return;
+      }
       if (sub === "rag") {
         await runMwRagCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
+        return;
+      }
+      if (sub === "stats") {
+        await runMwStatsCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
         return;
       }
       if (sub === "run-detached") {
@@ -27176,7 +30826,7 @@ ${r.output}`, "info");
         return;
       }
       ctx.ui.notify(
-        "Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | rag <sub> | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
+        "Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | decide show|sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <k>] | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
         "warning"
       );
     }
@@ -27184,7 +30834,7 @@ ${r.output}`, "info");
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/autopilot/gate-writer.ts
-import * as fs33 from "node:fs";
+import * as fs37 from "node:fs";
 var GATE_FIELD_LINE_RE2 = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
 var ANSWER_FIELDS = ["status", "answered_at", "answered_by", "note", "authorizes"];
 var PLAIN_SCALAR_RE = /^[A-Za-z0-9][A-Za-z0-9_./:+@()-]*$/;
@@ -27287,7 +30937,7 @@ async function answerGate(opts) {
   try {
     let content;
     try {
-      content = fs33.readFileSync(opts.gateFile, "utf8");
+      content = fs37.readFileSync(opts.gateFile, "utf8");
     } catch (err) {
       return { ok: false, error: `gate file not readable: ${opts.gateFile} (${String(err)})` };
     }
@@ -27295,8 +30945,8 @@ async function answerGate(opts) {
     if (!rewritten.ok) return { ok: false, error: rewritten.error };
     try {
       const tmp = `${opts.gateFile}.tmp`;
-      fs33.writeFileSync(tmp, rewritten.content, "utf8");
-      fs33.renameSync(tmp, opts.gateFile);
+      fs37.writeFileSync(tmp, rewritten.content, "utf8");
+      fs37.renameSync(tmp, opts.gateFile);
     } catch (err) {
       return { ok: false, error: `cannot write ${opts.gateFile}: ${String(err)}` };
     }
@@ -27307,8 +30957,8 @@ async function answerGate(opts) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/autopilot/monitor.ts
-import * as fs34 from "node:fs";
-import * as path35 from "node:path";
+import * as fs38 from "node:fs";
+import * as path40 from "node:path";
 var MONITOR_WIDGET_ID = "agent-team-loop-monitor";
 var MONITOR_INTERVAL_MS = 4e3;
 var PANEL_STALE_MISSED_CYCLES = 3;
@@ -27317,7 +30967,7 @@ var DISPATCH_SKIP_STATUSES = /* @__PURE__ */ new Set(["done", "stalled", "closed
 var DEP_SATISFIED_STATUSES = /* @__PURE__ */ new Set(["done", "closed-legacy"]);
 function readAutoGateMode(projectDir) {
   try {
-    const parsed = JSON.parse(fs34.readFileSync(configPath(projectDir), "utf8"));
+    const parsed = JSON.parse(fs38.readFileSync(configPath(projectDir), "utf8"));
     if (typeof parsed === "object" && parsed !== null) {
       const mode = parsed.auto_gate_mode;
       if (mode === "off" || mode === "shadow" || mode === "live") return mode;
@@ -27386,10 +31036,10 @@ function evidenceFilePath(projectDir, ref) {
   const body = ref.replace(/^[^:]*:/, "");
   const rel = body.split("#")[0].split("@")[0] ?? "";
   if (rel === "") return null;
-  const underAgenticdoc = path35.join(projectDir, ".agenticdoc", rel);
-  if (fs34.existsSync(underAgenticdoc)) return underAgenticdoc;
-  const underRoot = path35.join(projectDir, rel);
-  return fs34.existsSync(underRoot) ? underRoot : null;
+  const underAgenticdoc = path40.join(projectDir, ".agenticdoc", rel);
+  if (fs38.existsSync(underAgenticdoc)) return underAgenticdoc;
+  const underRoot = path40.join(projectDir, rel);
+  return fs38.existsSync(underRoot) ? underRoot : null;
 }
 function gateDriftDetail(projectDir, gate, createdAtMs) {
   if (createdAtMs === null || gate.evidenceRefs === void 0 || gate.evidenceRefs.length === 0) return null;
@@ -27398,7 +31048,7 @@ function gateDriftDetail(projectDir, gate, createdAtMs) {
     const file = evidenceFilePath(projectDir, ref);
     if (file === null) continue;
     try {
-      const mtimeMs = fs34.statSync(file).mtimeMs;
+      const mtimeMs = fs38.statSync(file).mtimeMs;
       if (mtimeMs > newestMs) newestMs = mtimeMs;
     } catch {
     }
@@ -27414,7 +31064,7 @@ function readMonitorState(projectDir, nowMs, deps) {
     let startedAtMs = readServeMeta(projectDir)?.startedAtMs ?? null;
     if (startedAtMs === null) {
       try {
-        startedAtMs = fs34.statSync(path35.join(projectDir, ".mw", "mw.pid")).mtimeMs;
+        startedAtMs = fs38.statSync(path40.join(projectDir, ".mw", "mw.pid")).mtimeMs;
       } catch {
         startedAtMs = null;
       }
@@ -27430,7 +31080,7 @@ function readMonitorState(projectDir, nowMs, deps) {
   let conductorPid = null;
   let conductorAlive = false;
   try {
-    const raw = fs34.readFileSync(path35.join(projectDir, ".mw", "conductor.pid"), "utf8").trim();
+    const raw = fs38.readFileSync(path40.join(projectDir, ".mw", "conductor.pid"), "utf8").trim();
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isNaN(parsed)) {
       conductorPid = parsed;
@@ -27446,7 +31096,7 @@ function readMonitorState(projectDir, nowMs, deps) {
   let everEnabled = false;
   let enabled = false;
   let paused = false;
-  if (fs34.existsSync(configPath(projectDir))) {
+  if (fs38.existsSync(configPath(projectDir))) {
     const cfg = readConfig(projectDir);
     if (cfg.ok) {
       everEnabled = true;
@@ -27466,7 +31116,7 @@ function readMonitorState(projectDir, nowMs, deps) {
   let nonTerminalRows = 0;
   const nonTerminalByKey = /* @__PURE__ */ new Map();
   const conductorInflightKeys = /* @__PURE__ */ new Set();
-  for (const entry of new WorkerStore(path35.join(projectDir, ".agenticdoc")).readAll()) {
+  for (const entry of new WorkerStore(path40.join(projectDir, ".agenticdoc")).readAll()) {
     if (!TERMINAL_WORKER_STATUSES.has(entry.status)) {
       nonTerminalRows += 1;
       const owner = workerOwnerKey(entry);
@@ -27486,7 +31136,7 @@ function readMonitorState(projectDir, nowMs, deps) {
   const gatesDirectory = gatesDir(projectDir);
   let gateFiles = [];
   try {
-    gateFiles = (deps?.readGateDir ?? ((dir) => fs34.readdirSync(dir, { withFileTypes: true })))(
+    gateFiles = (deps?.readGateDir ?? ((dir) => fs38.readdirSync(dir, { withFileTypes: true })))(
       gatesDirectory
     );
   } catch (err) {
@@ -27500,14 +31150,14 @@ function readMonitorState(projectDir, nowMs, deps) {
   const cfgResult = readConfig(projectDir);
   const reminderMax = cfgResult.ok ? cfgResult.config.gate_reminder_max : DEFAULT_CONFIG.gate_reminder_max;
   const afterMin = cfgResult.ok ? cfgResult.config.gate_reminder_after_min : DEFAULT_CONFIG.gate_reminder_after_min;
-  const reminders = readGateReminders(path35.join(projectDir, ".agenticdoc"));
+  const reminders = readGateReminders(path40.join(projectDir, ".agenticdoc"));
   if (queueState === "ok") {
     for (const entry of gateFiles) {
       if (!entry.isFile() || !/^gate-\d+\.md$/.test(entry.name)) continue;
-      const file = path35.join(gatesDirectory, entry.name);
+      const file = path40.join(gatesDirectory, entry.name);
       let text;
       try {
-        text = (deps?.readGateText ?? ((f) => fs34.readFileSync(f, "utf8")))(file);
+        text = (deps?.readGateText ?? ((f) => fs38.readFileSync(f, "utf8")))(file);
       } catch (err) {
         queueState = "partial";
         queueFailures.push(`${entry.name}: ${errorSummary(err)}`);
@@ -27596,16 +31246,16 @@ function readTimelineTail(file, opts) {
   const limit = opts?.limit ?? 400;
   let fd;
   try {
-    fd = fs34.openSync(file, "r");
+    fd = fs38.openSync(file, "r");
   } catch {
     return [];
   }
   try {
-    const size = fs34.fstatSync(fd).size;
+    const size = fs38.fstatSync(fd).size;
     if (size <= 0) return [];
     const start = Math.max(0, size - maxBytes);
     const buf = Buffer.alloc(size - start);
-    fs34.readSync(fd, buf, 0, buf.length, start);
+    fs38.readSync(fd, buf, 0, buf.length, start);
     let lines = buf.toString("utf8").split("\n");
     if (start > 0) lines = lines.slice(1);
     const events = [];
@@ -27634,7 +31284,7 @@ function readTimelineTail(file, opts) {
   } catch {
     return [];
   } finally {
-    fs34.closeSync(fd);
+    fs38.closeSync(fd);
   }
 }
 var ADVANCE_DETAIL_RE = /^(\S+) exit=(\d+)(?: class=(\S+))?$/;
@@ -27724,7 +31374,7 @@ function deriveAdvanceStalls(events, nowMs) {
 }
 function defaultIndexPhases(projectDir) {
   try {
-    const entries = new IndexStore(path35.join(projectDir, ".agenticdoc")).readAll();
+    const entries = new IndexStore(path40.join(projectDir, ".agenticdoc")).readAll();
     return new Map(entries.map((e) => [e.key, e.phase]));
   } catch {
     return /* @__PURE__ */ new Map();
@@ -27806,7 +31456,7 @@ function deriveAutopilotPanel(projectDir, nowMs, workers, deps, conductorInfligh
   }
   return {
     enabled: config?.enabled ?? false,
-    everEnabled: fs34.existsSync(configPath(projectDir)) && configResult.ok,
+    everEnabled: fs38.existsSync(configPath(projectDir)) && configResult.ok,
     tickSeq,
     tickAgeMs,
     tickStale: tickAgeMs !== null && tickAgeMs > staleAfterMs,
@@ -28294,8 +31944,8 @@ function describeEvidence(projectDir, ref) {
   const file = evidenceFilePath(projectDir, ref);
   if (file === null) return `${rel} (${MISSING_FIELD_SENTINEL})`;
   try {
-    const stat = fs35.statSync(file);
-    const sections = fs35.readFileSync(file, "utf8").split(/\r\n|\r|\n/).filter((line) => line.startsWith("## ")).map((line) => line.slice(3).trim()).filter((name) => name !== "");
+    const stat = fs39.statSync(file);
+    const sections = fs39.readFileSync(file, "utf8").split(/\r\n|\r|\n/).filter((line) => line.startsWith("## ")).map((line) => line.slice(3).trim()).filter((name) => name !== "");
     const sectionText = sections.length === 0 ? "[]" : `[${sections.slice(0, 4).join(",")}]`;
     return `${rel} (${stat.size}B, sections=${sectionText}, mtime=${new Date(stat.mtimeMs).toISOString()})`;
   } catch {
@@ -28310,7 +31960,7 @@ function evidenceDrift(projectDir, refs, createdAt) {
     const file = evidenceFilePath(projectDir, ref);
     if (file === null) continue;
     try {
-      const mtimeMs = fs35.statSync(file).mtimeMs;
+      const mtimeMs = fs39.statSync(file).mtimeMs;
       if (mtimeMs > newestMs) newestMs = mtimeMs;
     } catch {
     }
@@ -28457,7 +32107,7 @@ async function cmdGate(ctx, projectDir, rest) {
     if (values.length > 0) authorizes = values;
   }
   const result = await answerGate({
-    gateFile: path36.join(gatesDir(projectDir), `${id}.md`),
+    gateFile: path41.join(gatesDir(projectDir), `${id}.md`),
     lockFile: gatesLockPath(projectDir),
     decision,
     note,
@@ -28652,19 +32302,19 @@ function cmdRoadmap(ctx, projectDir) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/ack-store.ts
-import * as fs36 from "node:fs";
-import * as path37 from "node:path";
+import * as fs40 from "node:fs";
+import * as path42 from "node:path";
 var AckStore = class {
   constructor(agenticdocRoot2) {
-    this.filePath = path37.join(agenticdocRoot2, "_workers.acked");
-    this.lockPath = path37.join(agenticdocRoot2, "..", ".mw", "workers.lock");
+    this.filePath = path42.join(agenticdocRoot2, "_workers.acked");
+    this.lockPath = path42.join(agenticdocRoot2, "..", ".mw", "workers.lock");
   }
   /** taskKey -> ackedAt (UTC ISO). Missing file yields an empty map; `#`
    * comment lines and malformed rows are skipped. */
   readAll() {
     const result = /* @__PURE__ */ new Map();
-    if (!fs36.existsSync(this.filePath)) return result;
-    const lines = fs36.readFileSync(this.filePath, "utf8").split("\n");
+    if (!fs40.existsSync(this.filePath)) return result;
+    const lines = fs40.readFileSync(this.filePath, "utf8").split("\n");
     for (const line of lines) {
       const entry = parseAckLine(line);
       if (entry === void 0) continue;
@@ -28697,8 +32347,8 @@ var AckStore = class {
       const content = `${[...merged].map(([key, ts]) => `${key} | ${ts}`).join("\n")}
 `;
       const tmpPath = `${this.filePath}.tmp`;
-      fs36.writeFileSync(tmpPath, content, "utf8");
-      fs36.renameSync(tmpPath, this.filePath);
+      fs40.writeFileSync(tmpPath, content, "utf8");
+      fs40.renameSync(tmpPath, this.filePath);
     } finally {
       release();
     }
@@ -28735,9 +32385,9 @@ function docWriteTarget(toolName, args, projectDir, agenticdocRoot2) {
   if (toolName !== "write" && toolName !== "edit") return void 0;
   const filePath = args?.path;
   if (typeof filePath !== "string" || filePath === "") return void 0;
-  const rel = path38.relative(path38.resolve(agenticdocRoot2), path38.resolve(projectDir, filePath));
-  if (rel.startsWith("..") || path38.isAbsolute(rel)) return void 0;
-  const parts = rel.split(path38.sep);
+  const rel = path43.relative(path43.resolve(agenticdocRoot2), path43.resolve(projectDir, filePath));
+  if (rel.startsWith("..") || path43.isAbsolute(rel)) return void 0;
+  const parts = rel.split(path43.sep);
   const doc = parts.length === 2 ? parts[1] : void 0;
   if (doc !== "spec.md" && doc !== "design.md" && doc !== "plan.md") return void 0;
   const key = parts[0] ?? "";
@@ -28748,9 +32398,9 @@ function evidencePhaseFromWrite(toolName, args, projectDir, agenticdocRoot2) {
   if (toolName !== "write" && toolName !== "edit") return void 0;
   const filePath = args?.path;
   if (typeof filePath !== "string" || filePath === "") return void 0;
-  const rel = path38.relative(path38.resolve(agenticdocRoot2), path38.resolve(projectDir, filePath));
-  if (rel.startsWith("..") || path38.isAbsolute(rel)) return void 0;
-  const parts = rel.split(path38.sep);
+  const rel = path43.relative(path43.resolve(agenticdocRoot2), path43.resolve(projectDir, filePath));
+  if (rel.startsWith("..") || path43.isAbsolute(rel)) return void 0;
+  const parts = rel.split(path43.sep);
   if (parts.length !== 4 || parts[1] !== "evidence" || parts[2] !== "research") return void 0;
   const note = parts[3] ?? "";
   if (!note.endsWith(".md")) return void 0;
@@ -28893,9 +32543,9 @@ async function restoreWatch(pi, watch, indexStore, workerStore, ackStore, agenti
     claimed: data.claimed ?? false,
     ...tookOverFromConductor === void 0 ? {} : { tookOverFromConductor }
   });
-  const pmStatePath = path38.join(agenticdocRoot2, key, "pm-state.md");
-  if (fs37.existsSync(pmStatePath)) {
-    const updated = fs37.statSync(pmStatePath).mtime.toISOString();
+  const pmStatePath = path43.join(agenticdocRoot2, key, "pm-state.md");
+  if (fs41.existsSync(pmStatePath)) {
+    const updated = fs41.statSync(pmStatePath).mtime.toISOString();
     ctx.ui.notify(
       `[mw] key '${key}' \u6709\u5DF2\u4FDD\u5B58\u7684 pm-state.md\uFF08\u66F4\u65B0\u4E8E ${updated}\uFF09\u3002\u5982\u9700\u63A5\u7EED\u4E0A\u6B21\u7684\u5DE5\u4F5C\u4E0A\u4E0B\u6587\uFF0C\u8BA9 agent \u8BFB\u53D6 ${key}/pm-state.md \u7684 Notes \u533A\u3002`,
       "info"
@@ -28916,7 +32566,7 @@ function readTaskOrigin(taskContent) {
 }
 function isConductorTask(taskMdPath) {
   try {
-    return readTaskOrigin(fs37.readFileSync(taskMdPath, "utf8")) === "conductor";
+    return readTaskOrigin(fs41.readFileSync(taskMdPath, "utf8")) === "conductor";
   } catch {
     return false;
   }
@@ -28927,7 +32577,11 @@ var NOTICE_DISPATCH_ALARM_KINDS = /* @__PURE__ */ new Set([
   "orphan-repair-skipped",
   // AC-006: a run of model-error terminals refuses nothing — it is an
   // observation about the model layer, so its text must read as `提示`.
-  "model-error"
+  "model-error",
+  // T-03: DP-1 triage rows refuse nothing — the advice is advisory and the
+  // unavailable notice is informational, so both read as `提示`.
+  "triage-suggestion",
+  "triage-unavailable"
 ]);
 function isNoticeDispatchAlarm(kind) {
   return NOTICE_DISPATCH_ALARM_KINDS.has(kind);
@@ -28957,6 +32611,10 @@ function describeDispatchAlarm(alarm) {
       return `write_face gate refused ${alarm.count} task(s)${alarm.detail ? `: ${alarm.detail}` : ""} \u2014 not queued`;
     case "model-error":
       return `${alarm.count} consecutive worker run(s) ended with model-unavailable evidence${alarm.detail ? ` (latest: ${alarm.detail})` : ""} \u2014 the same key keeps settling against a failing model; check the provider route/credential or the fallback model list before the next dispatch`;
+    case "triage-suggestion":
+      return `${alarm.count} pre-dispatch triage suggestion(s), advisory only \u2014 the dispatch type/role/model were NOT changed${alarm.detail ? `: ${alarm.detail}` : ""}`;
+    case "triage-unavailable":
+      return `pre-dispatch triage produced no suggestion \u2014 dispatch proceeds unchanged${alarm.detail ? ` (${alarm.detail})` : ""}`;
   }
 }
 function formatDispatchAlarm(alarm) {
@@ -28965,16 +32623,16 @@ function formatDispatchAlarm(alarm) {
 }
 function recordDispatchAlarm(agenticdocRoot2, alarm) {
   try {
-    const ledger = path38.join(agenticdocRoot2, "_autopilot", AUTO_DECISIONS_FILE);
+    const ledger = path43.join(agenticdocRoot2, "_autopilot", AUTO_DECISIONS_FILE);
     let seq = 1;
     try {
-      seq = fs37.readFileSync(ledger, "utf8").split("\n").filter((l) => l.trim() !== "").length + 1;
+      seq = fs41.readFileSync(ledger, "utf8").split("\n").filter((l) => l.trim() !== "").length + 1;
     } catch {
       seq = 1;
     }
     const row = { seq, phase: "dispatch-alarm", kind: alarm.kind, count: alarm.count, detail: alarm.detail ?? "" };
-    fs37.mkdirSync(path38.dirname(ledger), { recursive: true });
-    fs37.appendFileSync(ledger, `${JSON.stringify(row)}
+    fs41.mkdirSync(path43.dirname(ledger), { recursive: true });
+    fs41.appendFileSync(ledger, `${JSON.stringify(row)}
 `, "utf8");
   } catch (err) {
     console.error(`[mw] dispatch alarm not recorded: ${err instanceof Error ? err.message : String(err)}`);
@@ -28983,7 +32641,7 @@ function recordDispatchAlarm(agenticdocRoot2, alarm) {
 function countWriteScopeResidualRisks(taskDir) {
   let raw;
   try {
-    raw = fs37.readFileSync(path38.join(taskDir, "trace.log"), "utf8");
+    raw = fs41.readFileSync(path43.join(taskDir, "trace.log"), "utf8");
   } catch {
     return 0;
   }
@@ -29007,7 +32665,7 @@ var MODEL_ERROR_STREAK_K = 2;
 function runModelExhausted(taskDir) {
   let raw;
   try {
-    raw = fs37.readFileSync(path38.join(taskDir, RUN_FILE_NAME), "utf8");
+    raw = fs41.readFileSync(path43.join(taskDir, RUN_FILE_NAME), "utf8");
   } catch {
     return false;
   }
@@ -29039,6 +32697,195 @@ function recordModelErrorTerminal(agenticdocRoot2, streakKey, taskKey, taskDir, 
   recordDispatchAlarm(agenticdocRoot2, { kind: "model-error", count: count2, detail: taskKey });
   return count2;
 }
+function mapTerminalToSettle(input) {
+  switch (input.status) {
+    case "done":
+      if (input.runExit !== void 0 && input.runExit !== 0) {
+        return { ok: false, reason: "inconsistent-run" };
+      }
+      return { ok: true, outcome: "ok" };
+    case "failed":
+      return input.modelError || input.runExit === 3 ? { ok: true, outcome: "inconclusive" } : { ok: true, outcome: "rework" };
+    case "lost":
+      return { ok: true, outcome: "pending", note: "lost" };
+    case "needs-clarification":
+      return { ok: false, reason: "needs-clarification" };
+    default:
+      return { ok: false, reason: "not-terminal" };
+  }
+}
+function splitDecisionId(decisionId) {
+  const at = decisionId.indexOf(":");
+  if (at <= 0 || at === decisionId.length - 1) return void 0;
+  if (/\s/.test(decisionId)) return void 0;
+  return { dp: decisionId.slice(0, at), triggerId: decisionId.slice(at + 1) };
+}
+function readDecisionSettles(archivePath) {
+  let content;
+  try {
+    content = fs41.readFileSync(archivePath, "utf8");
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const line of content.split("\n")) {
+    if (line.trim() === "") continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
+    const row = parsed;
+    if (row.kind !== "settle") continue;
+    if (typeof row.decision_id !== "string" || typeof row.outcome !== "string") continue;
+    rows.push({
+      decisionId: row.decision_id,
+      outcome: row.outcome,
+      runId: typeof row.evidence_ref === "string" && row.evidence_ref !== "" ? row.evidence_ref : null
+    });
+  }
+  return rows;
+}
+function planDecisionSettle(input) {
+  const split = splitDecisionId(input.decisionId);
+  if (!split) return { ok: false, reason: "no-decision-header" };
+  const prior = input.prior.filter((row) => row.decisionId === input.decisionId);
+  if (input.outcome === "rollback" && !prior.some((row) => row.outcome === "ok")) {
+    return { ok: false, reason: "rollback-without-ok" };
+  }
+  if (prior.some((row) => row.outcome === input.outcome && row.runId === input.runId)) {
+    return { ok: false, reason: "duplicate-settle" };
+  }
+  return {
+    ok: true,
+    row: {
+      decisionId: input.decisionId,
+      dp: split.dp,
+      key: input.ownerKey,
+      taskKey: input.taskKey,
+      outcome: input.outcome,
+      settledBy: "pm-auto",
+      evidenceRef: input.runId,
+      note: input.note ?? null
+    }
+  };
+}
+var APPEND_SETTLE_PROGRAM = [
+  "import sys, json, pathlib",
+  "sys.path.insert(0, sys.argv[1])",
+  "import decide_archive",
+  "payload = json.loads(sys.stdin.read())",
+  "decide_archive.append_settle(",
+  "    pathlib.Path(payload['archive_path']),",
+  "    decision_id=payload['decision_id'],",
+  "    dp=payload['dp'],",
+  "    key=payload['key'],",
+  "    task_key=payload['task_key'],",
+  "    outcome=payload['outcome'],",
+  "    settled_by=payload['settled_by'],",
+  "    evidence_ref=payload['evidence_ref'],",
+  "    note=payload['note'],",
+  ")"
+].join("\n");
+function archiveSettleAppender(archivePath) {
+  return (row) => {
+    const mwPy = findMwPy();
+    if (!mwPy) return { ok: false, error: "mw.py not found" };
+    const payload = JSON.stringify({
+      archive_path: archivePath,
+      decision_id: row.decisionId,
+      dp: row.dp,
+      key: row.key,
+      task_key: row.taskKey,
+      outcome: row.outcome,
+      settled_by: row.settledBy,
+      evidence_ref: row.evidenceRef,
+      note: row.note
+    });
+    const result = spawnSync6(PYTHON_EXE, ["-X", "utf8", "-c", APPEND_SETTLE_PROGRAM, path43.dirname(mwPy)], {
+      input: payload,
+      encoding: "utf8",
+      timeout: 2e4,
+      windowsHide: true
+    });
+    if (result.error) return { ok: false, error: result.error.message };
+    if (result.status !== 0) {
+      return { ok: false, error: (result.stderr ?? "").trim() || `exit ${result.status ?? "?"}` };
+    }
+    return { ok: true };
+  };
+}
+function recordDecisionSettle(agenticdocRoot2, ownerKey, entry, taskDir, hooks = {}) {
+  const result = { written: [], skipped: [] };
+  let taskContent;
+  try {
+    taskContent = fs41.readFileSync(path43.join(taskDir, "task.md"), "utf8");
+  } catch {
+    result.skipped.push({ decisionId: "", reason: "unreadable-task-md" });
+    return result;
+  }
+  const decisionId = (readTaskHeaderScalar(taskContent, "decision") ?? "").trim();
+  if (decisionId === "") {
+    result.skipped.push({ decisionId: "", reason: "no-decision-header" });
+    return result;
+  }
+  const readRun = hooks.readRun ?? readRunState;
+  const run = readRun(taskDir);
+  const mapping = mapTerminalToSettle({
+    status: entry.status,
+    runExit: run?.exit,
+    modelError: (hooks.modelError ?? isModelErrorTerminal)(taskDir)
+  });
+  if (!mapping.ok) {
+    result.skipped.push({ decisionId, reason: mapping.reason });
+    return result;
+  }
+  const archivePath = hooks.archivePath ?? path43.join(agenticdocRoot2, "_autopilot", "decisions.jsonl");
+  const append = hooks.append ?? archiveSettleAppender(archivePath);
+  const appendOne = (targetDecisionId, targetTaskKey, runId, outcome, note) => {
+    const plan = planDecisionSettle({
+      decisionId: targetDecisionId,
+      ownerKey,
+      taskKey: targetTaskKey,
+      runId,
+      outcome,
+      note,
+      // Re-read per append: the rollback leg must see the `ok` settle this same
+      // call may have just written, and a restarted PM must see the whole file.
+      prior: readDecisionSettles(archivePath)
+    });
+    if (!plan.ok) {
+      result.skipped.push({ decisionId: targetDecisionId, reason: plan.reason });
+      return;
+    }
+    const written = append(plan.row);
+    if (!written.ok) {
+      result.skipped.push({ decisionId: targetDecisionId, reason: "append-failed" });
+      return;
+    }
+    result.written.push(plan.row);
+  };
+  appendOne(decisionId, entry.taskKey, run?.run_id ?? null, mapping.outcome, mapping.note);
+  const superseded = (parseSupersedes(taskContent) ?? "").trim();
+  if (superseded === "" || mapping.outcome !== "ok") return result;
+  const supersededDir = path43.join(path43.dirname(taskDir), superseded);
+  let supersededContent;
+  try {
+    supersededContent = fs41.readFileSync(path43.join(supersededDir, "task.md"), "utf8");
+  } catch {
+    result.skipped.push({ decisionId: "", reason: "unreadable-task-md" });
+    return result;
+  }
+  const supersededDecisionId = (readTaskHeaderScalar(supersededContent, "decision") ?? "").trim();
+  if (supersededDecisionId === "") {
+    result.skipped.push({ decisionId: "", reason: "no-decision-header" });
+    return result;
+  }
+  appendOne(supersededDecisionId, superseded, readRun(supersededDir)?.run_id ?? null, "rollback");
+  return result;
+}
 function writeFaceRefusalDetail(taskKey, refusal) {
   return `${taskKey}: ${refusal.reason}`;
 }
@@ -29054,7 +32901,7 @@ function reportWriteFaceRefusal(agenticdocRoot2, taskKey, refusal, onRefusal) {
 var DEFAULT_DISPATCH_MAX_PER_SCAN = 3;
 function readDispatchMaxPerScan(agenticdocRoot2) {
   try {
-    const result = readConfig(path38.dirname(agenticdocRoot2));
+    const result = readConfig(path43.dirname(agenticdocRoot2));
     if (!result.ok) return DEFAULT_DISPATCH_MAX_PER_SCAN;
     const value = result.config.dispatch_max_per_scan;
     return Number.isInteger(value) && value >= 1 ? value : DEFAULT_DISPATCH_MAX_PER_SCAN;
@@ -29064,12 +32911,12 @@ function readDispatchMaxPerScan(agenticdocRoot2) {
 }
 function hasProductEvidence(taskDir) {
   for (const name of ["output.md", "report.md", "run.json", "trace.log"]) {
-    if (fs37.existsSync(path38.join(taskDir, name))) return true;
+    if (fs41.existsSync(path43.join(taskDir, name))) return true;
   }
   return false;
 }
 function hasTerminalProduct(taskDir) {
-  return fs37.existsSync(path38.join(taskDir, "output.md"));
+  return fs41.existsSync(path43.join(taskDir, "output.md"));
 }
 function stateDocReferencesTask(agenticdocRoot2, key, taskKey) {
   const boundary3 = "[^A-Za-z0-9._-]";
@@ -29078,7 +32925,7 @@ function stateDocReferencesTask(agenticdocRoot2, key, taskKey) {
   for (const doc of keyStateDocPaths(agenticdocRoot2, key)) {
     let text;
     try {
-      text = fs37.readFileSync(doc, "utf8");
+      text = fs41.readFileSync(doc, "utf8");
     } catch {
       continue;
     }
@@ -29087,7 +32934,7 @@ function stateDocReferencesTask(agenticdocRoot2, key, taskKey) {
   return false;
 }
 function judgeOrphanScope(agenticdocRoot2, key, candidates, row) {
-  const live = candidates.filter(({ taskMdPath }) => !hasTerminalProduct(path38.dirname(taskMdPath)));
+  const live = candidates.filter(({ taskMdPath }) => !hasTerminalProduct(path43.dirname(taskMdPath)));
   const evidence = ownerEvidenceCurrent(agenticdocRoot2, key, row);
   if (evidence.current) return { repairable: live };
   return {
@@ -29135,15 +32982,15 @@ function defaultOrphanRunVerdict(agenticdocRoot2, ownerKey) {
     taskDir: task.taskDir,
     readTaskContent: task.readTaskContent,
     resolveTaskDir: (supersededKey) => {
-      const dir = path38.join(agenticdocRoot2, ownerKey, "workers", supersededKey);
-      return fs37.existsSync(dir) ? dir : void 0;
+      const dir = path43.join(agenticdocRoot2, ownerKey, "workers", supersededKey);
+      return fs41.existsSync(dir) ? dir : void 0;
     }
   });
 }
 function ensureServiceEnvelope(taskMdPath, key, taskKey) {
   let text;
   try {
-    text = fs37.readFileSync(taskMdPath, "utf8");
+    text = fs41.readFileSync(taskMdPath, "utf8");
   } catch {
     return "unsynthesizable";
   }
@@ -29152,9 +32999,9 @@ function ensureServiceEnvelope(taskMdPath, key, taskKey) {
   const injected = synthesizeEnvelopeFallback(text);
   if (injected === null) return "unsynthesizable";
   try {
-    fs37.writeFileSync(taskMdPath, injected, "utf8");
+    fs41.writeFileSync(taskMdPath, injected, "utf8");
     const audit = `${ENVELOPE_FALLBACK_AUDIT} ${(/* @__PURE__ */ new Date()).toISOString()} ${key}/${taskKey} kind=repair synthesized=canonical-envelope-skeleton (claim-free orphan repair; envelope judgement only \u2014 write-face judgement unchanged)`;
-    fs37.appendFileSync(path38.join(path38.dirname(taskMdPath), "trace.log"), `${audit}
+    fs41.appendFileSync(path43.join(path43.dirname(taskMdPath), "trace.log"), `${audit}
 `, "utf8");
   } catch {
     return "unsynthesizable";
@@ -29171,11 +33018,11 @@ async function dispatchOrphanCandidates(workerStore, agenticdocRoot2, key, candi
   };
   for (const { taskKey, taskMdPath } of candidates) {
     if (result.queued.length >= maxPerScan) break;
-    const taskDir = path38.dirname(taskMdPath);
+    const taskDir = path43.dirname(taskMdPath);
     const verdict = runVerdict({
       taskKey,
       taskDir,
-      readTaskContent: () => fs37.readFileSync(taskMdPath, "utf8")
+      readTaskContent: () => fs41.readFileSync(taskMdPath, "utf8")
     });
     if (!verdict.ok) {
       result.refused.push({ taskKey, reason: verdict.reason, detail: verdict.detail });
@@ -29187,7 +33034,7 @@ async function dispatchOrphanCandidates(workerStore, agenticdocRoot2, key, candi
       continue;
     }
     if (envelope === "synthesized") result.synthesized.push(taskKey);
-    const taskContent = fs37.readFileSync(taskMdPath, "utf8");
+    const taskContent = fs41.readFileSync(taskMdPath, "utf8");
     const { cli, provider } = pickWorkerRoute(taskContent);
     const model = readModel(taskContent);
     try {
@@ -29216,7 +33063,7 @@ function keyHasLiveRun(rows, key) {
   return false;
 }
 async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
-  if (!fs37.existsSync(agenticdocRoot2)) return;
+  if (!fs41.existsSync(agenticdocRoot2)) return;
   const queue = workerStore.readQueue();
   if (queue.unparsable.length > 0) {
     opts.onAlarm?.({
@@ -29270,7 +33117,7 @@ async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
   };
   let owners;
   try {
-    owners = fs37.readdirSync(agenticdocRoot2, { withFileTypes: true });
+    owners = fs41.readdirSync(agenticdocRoot2, { withFileTypes: true });
   } catch {
     return;
   }
@@ -29278,10 +33125,10 @@ async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
   for (const owner of owners) {
     if (!owner.isDirectory() || owner.name.startsWith(".")) continue;
     const inScope = scope === "cli" || owner.name === SCRATCH_WORKERS_KEY || owner.name === opts.watchedKey;
-    const workersDir = path38.join(agenticdocRoot2, owner.name, "workers");
+    const workersDir = path43.join(agenticdocRoot2, owner.name, "workers");
     let taskDirs;
     try {
-      taskDirs = fs37.readdirSync(workersDir, { withFileTypes: true });
+      taskDirs = fs41.readdirSync(workersDir, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -29290,14 +33137,14 @@ async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
       if (!taskDir.isDirectory() || taskDir.name.startsWith(".")) continue;
       const taskKey = taskDir.name;
       if (dispatched.has(taskKey)) continue;
-      const taskMdPath = path38.join(workersDir, taskKey, "task.md");
-      if (!fs37.existsSync(taskMdPath)) continue;
+      const taskMdPath = path43.join(workersDir, taskKey, "task.md");
+      if (!fs41.existsSync(taskMdPath)) continue;
       if (isConductorTask(taskMdPath)) continue;
       if (opts.runVerdict) {
         const verdict = opts.runVerdict({
           taskKey,
-          taskDir: path38.join(workersDir, taskKey),
-          readTaskContent: () => fs37.readFileSync(taskMdPath, "utf8")
+          taskDir: path43.join(workersDir, taskKey),
+          readTaskContent: () => fs41.readFileSync(taskMdPath, "utf8")
         });
         if (!verdict.ok) {
           runRefused.push({ taskKey, reason: verdict.reason, detail: verdict.detail });
@@ -29310,7 +33157,7 @@ async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
       const row = indexStore.findByKey(owner.name);
       if (row !== void 0 && conductorClaimState(row.claimId) === "live") continue;
       if (row === void 0 && !keyHasOwnerTraces(agenticdocRoot2, owner.name)) {
-        if (undispatched.some((t) => !hasTerminalProduct(path38.dirname(t.taskMdPath))) && opts.watchedKey !== void 0 && !(opts.unregisteredWarned?.has(owner.name) ?? false)) {
+        if (undispatched.some((t) => !hasTerminalProduct(path43.dirname(t.taskMdPath))) && opts.watchedKey !== void 0 && !(opts.unregisteredWarned?.has(owner.name) ?? false)) {
           opts.unregisteredWarned?.add(owner.name);
           outOfScope.push(owner.name);
         }
@@ -29353,7 +33200,7 @@ async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
       continue;
     }
     if (undispatched.length === 0) continue;
-    if (queueIsEmpty && undispatched.some((t) => hasProductEvidence(path38.dirname(t.taskMdPath)))) {
+    if (queueIsEmpty && undispatched.some((t) => hasProductEvidence(path43.dirname(t.taskMdPath)))) {
       flushScanAlarms();
       opts.onAlarm?.({ kind: "queue-unreadable", count: undispatched.length, detail: owner.name });
       return;
@@ -29376,7 +33223,7 @@ async function dispatchNewTasks(workerStore, agenticdocRoot2, opts = {}) {
         opts.onAlarm?.({ kind: "dispatch-quota", count: queued });
         return;
       }
-      const taskContent = fs37.readFileSync(taskMdPath, "utf8");
+      const taskContent = fs41.readFileSync(taskMdPath, "utf8");
       const { cli, provider } = pickWorkerRoute(taskContent);
       const model = readModel(taskContent);
       try {
@@ -29435,7 +33282,331 @@ function recordDroppedGateReminder(pi, seen, reminder, reason, error) {
     ...error === void 0 ? {} : { error }
   });
 }
-function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRoot2, watch, ui, pollIntervalMs = POLL_INTERVAL_MS) {
+var DP2_CHECKPOINT_ID = "dp2-checkpoint-split";
+var DP2_CHECKPOINT_QUESTION = "checkpoint_action";
+var DP2_STEER_FILE = "steer-dp2.md";
+var DP2_NARROW_MARKER = "[mw dp2-narrow]";
+var DP2_STEER_REQUEST_HEADER = "[dp2-narrow-request]";
+var DP2_NARROW_FALLBACK_LINE = "[dp2-narrow-fallback] task not running; escalated instead";
+var DP2_QUESTIONS_CANONICAL = '[{"choices":["narrow","split","direct-exec","escalate"],"id":"checkpoint_action","type":"choice"}]';
+var DP2_QUESTIONS_VERSION = `q-${createHash4("sha256").update(DP2_QUESTIONS_CANONICAL, "utf8").digest("hex").slice(0, 8)}`;
+var DP2_CHECKPOINT_LINE_RE = /^\[CHECKPOINT\] \S+ elapsed=(\d+)s reads=(\d+) writes=(\d+) phases=\S+ uniq_targets=\d+ repeat_top=\d+ risk=(?:low|mid|high)/;
+function readCheckpointTrend(taskDir, limit = 3) {
+  let content;
+  try {
+    content = fs41.readFileSync(path43.join(taskDir, "trace.log"), "utf8");
+  } catch {
+    return { total: 0, points: [] };
+  }
+  const all = [];
+  for (const line of content.split("\n")) {
+    const match2 = DP2_CHECKPOINT_LINE_RE.exec(line);
+    if (!match2) continue;
+    all.push({
+      elapsedMin: Math.round(Number(match2[1]) / 60),
+      reads: Number(match2[2]),
+      writes: Number(match2[3])
+    });
+  }
+  return { total: all.length, points: all.slice(-limit) };
+}
+function dp2RowForceOff(row) {
+  if ("mode" in row && row.mode !== "auto" && row.mode !== "suggest") return true;
+  if ("note" in row && typeof row.note !== "string") return true;
+  if ("tier" in row && typeof row.tier !== "string") return true;
+  return "enabled" in row && typeof row.enabled !== "boolean";
+}
+function readDp2Authorization(projectDir) {
+  const fallback = { enabled: true, source: "default" };
+  let raw;
+  try {
+    raw = JSON.parse(fs41.readFileSync(path43.join(projectDir, ".mw", "decide-points.json"), "utf8"));
+  } catch {
+    return fallback;
+  }
+  const points = recordOf(recordOf(raw)?.points);
+  if (points === void 0 || !Object.hasOwn(points, DP2_CHECKPOINT_ID)) return fallback;
+  const row = recordOf(points[DP2_CHECKPOINT_ID]);
+  if (row === void 0) return { enabled: false, source: "invalid" };
+  if (dp2RowForceOff(row)) return { enabled: false, source: "invalid" };
+  return { enabled: row.enabled !== false, source: "config" };
+}
+function recordOf(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function clampUtf8(text, maxBytes) {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  let out = "";
+  let used = 0;
+  for (const char of text) {
+    const size = Buffer.byteLength(char, "utf8");
+    if (used + size > maxBytes) break;
+    out += char;
+    used += size;
+  }
+  return out;
+}
+function buildDp2CheckpointState(input) {
+  const phases = splitPhaseProgress(input.checkpoint.phases);
+  const progress = {
+    elapsed_minutes: Math.max(0, Math.round(input.checkpoint.elapsedS / 60)),
+    budget_minutes: Math.max(1, Math.round(input.budgetMin)),
+    phases_done: phases.done,
+    phases_total: phases.total,
+    // Writeless roles carry the landing suffix; a write role proves its artifact
+    // by having written at all (old lines have no `artifact=` field).
+    artifact_present: input.checkpoint.artifactPresent ?? input.checkpoint.writes > 0,
+    writes: input.checkpoint.writes,
+    uniq_targets: input.checkpoint.uniqTargets,
+    repeat_top: input.checkpoint.repeatTop,
+    trend: input.trend.map((point) => ({
+      elapsed_minutes: point.elapsedMin,
+      reads: point.reads,
+      writes: point.writes
+    }))
+  };
+  if (input.checkpoint.lastLandingS !== void 0) {
+    progress.last_land_age_min = Math.round(input.checkpoint.lastLandingS / 60);
+  }
+  const contextSlots = DECIDE_REGISTRY[DP2_CHECKPOINT_ID]?.contextSlots ?? [];
+  const context = {};
+  if (contextSlots.includes("change_summary")) {
+    const lastLand = typeof progress.last_land_age_min === "number" ? ` last_land_age=${progress.last_land_age_min}m` : "";
+    context.change_summary = clampUtf8(
+      `checkpoint elapsed=${progress.elapsed_minutes}m/${progress.budget_minutes}m phases=${progress.phases_done}/${progress.phases_total} writes=${progress.writes} artifact_present=${progress.artifact_present}${lastLand}`,
+      600
+    );
+  }
+  if (contextSlots.includes("artifact_status") && (input.artifacts?.length ?? 0) > 0) {
+    context.artifact_status = (input.artifacts ?? []).slice(0, 24).map((entry) => ({
+      path: clampUtf8(entry.path, 200),
+      exists: entry.exists === true,
+      bytes: Math.max(0, Math.round(entry.bytes))
+    }));
+  }
+  const state = {
+    // T-08 (requirement 0 / T-04b residual 1): the registry state builder and
+    // `triage-client.ts::validateStructuredState` are pinned to
+    // `schema_version: 2`; the dp2 checkpoint state must carry the same version
+    // or the future structured-input validator would reject dp2's own input.
+    schema_version: 2,
+    decision_point: DP2_CHECKPOINT_ID,
+    key: clampUtf8(input.ownerKey, 48),
+    phase: clampUtf8(input.phase, 16),
+    task_type: input.taskType,
+    risk: input.checkpoint.risk,
+    risk_source: "machine",
+    authority_tier: "P2",
+    questions_version: DECIDE_REGISTRY[DP2_CHECKPOINT_ID]?.questionsVersion ?? DP2_QUESTIONS_VERSION,
+    progress
+  };
+  if (Object.keys(context).length > 0) state.context = context;
+  assertStateMatchesRegistry(DP2_CHECKPOINT_ID, state);
+  return state;
+}
+function readDp2ArtifactStatus(taskDir) {
+  const expected = ["task.md", "output.md", "report.md", "trace.log", "worker.log"];
+  const seen = /* @__PURE__ */ new Set();
+  const rows = [];
+  const add = (rel) => {
+    if (rel === "" || seen.has(rel) || rows.length >= 24) return;
+    seen.add(rel);
+    const absolute = path43.join(taskDir, rel);
+    try {
+      const stat = fs41.statSync(absolute);
+      if (!stat.isFile()) return;
+      rows.push({ path: rel, exists: true, bytes: stat.size });
+    } catch {
+      rows.push({ path: rel, exists: false, bytes: 0 });
+    }
+  };
+  for (const rel of expected) add(rel);
+  let entries = [];
+  try {
+    entries = fs41.readdirSync(taskDir).sort();
+  } catch {
+    entries = [];
+  }
+  for (const rel of entries) add(rel);
+  return rows;
+}
+function splitPhaseProgress(phases) {
+  const match2 = /^(\d+)\/(\d+)$/.exec(phases.trim());
+  if (!match2) return { done: 0, total: 0 };
+  return { done: Number(match2[1]), total: Number(match2[2]) };
+}
+function dp2TaskType(headerType) {
+  return headerType === "research" || headerType === "review" ? headerType : "coding";
+}
+function dp2BudgetMin(timeoutHeader, env) {
+  const header = Number(timeoutHeader);
+  if (timeoutHeader !== void 0 && Number.isFinite(header) && header > 0) return header;
+  const envMs = Number(env.PI_WORKER_TIMEOUT_MS);
+  if (Number.isFinite(envMs) && envMs > 0) return Math.round(envMs / 6e4);
+  return 60;
+}
+function readDp2TaskHeader(taskDir, env = process.env) {
+  let content;
+  try {
+    content = fs41.readFileSync(path43.join(taskDir, "task.md"), "utf8");
+  } catch {
+    return void 0;
+  }
+  const phase = readTaskHeaderScalar(content, "phase") ?? "";
+  return {
+    phase: phase === "" ? "unknown" : phase,
+    taskType: dp2TaskType(readTaskType(content).type),
+    budgetMin: dp2BudgetMin(readTaskHeaderScalar(content, "timeout"), env)
+  };
+}
+function parseDecisionPayload(stdout) {
+  const trimmed = stdout.trim();
+  const attempts = [trimmed];
+  const lastLine = trimmed.split("\n").at(-1);
+  if (lastLine !== void 0 && lastLine !== trimmed) attempts.push(lastLine.trim());
+  for (const text of attempts) {
+    if (!text) continue;
+    try {
+      const parsed = recordOf(JSON.parse(text));
+      if (parsed) return parsed;
+    } catch {
+    }
+  }
+  return void 0;
+}
+function decideDp2Checkpoint(input) {
+  const policy = readDecidePolicy(input.projectDir);
+  if (!policy.enabled) return void 0;
+  const effective = resolveDecidePolicy(DP2_CHECKPOINT_ID, input.projectDir);
+  const authorization = readDp2Authorization(input.projectDir);
+  if (!authorization.enabled) return void 0;
+  const trend = readCheckpointTrend(input.taskDir);
+  const triggerId = `${input.taskKey}#ckpt${trend.total}`;
+  const base = {
+    decisionId: `${DP2_CHECKPOINT_ID}:${triggerId}`,
+    triggerId,
+    action: "none",
+    available: false,
+    acted: false,
+    budgetMin: 0,
+    elapsedMin: Math.max(0, Math.round(input.checkpoint.elapsedS / 60))
+  };
+  const header = readDp2TaskHeader(input.taskDir, input.env ?? process.env);
+  if (!header) return { ...base, reason: "input-incomplete" };
+  base.budgetMin = header.budgetMin;
+  const state = buildDp2CheckpointState({
+    ownerKey: input.ownerKey,
+    taskKey: input.taskKey,
+    phase: header.phase,
+    taskType: header.taskType,
+    budgetMin: header.budgetMin,
+    checkpoint: input.checkpoint,
+    trend: trend.points,
+    artifacts: readDp2ArtifactStatus(input.taskDir)
+  });
+  const run = input.run ?? runDecideMw;
+  let raw;
+  try {
+    raw = run({
+      projectDir: input.projectDir,
+      dp: DP2_CHECKPOINT_ID,
+      timeoutMs: Math.round(effective.timeoutS * 1e3),
+      // Structured envelope only: the registry is the question authority
+      // (D-027), so no `questions` map rides along.
+      input: JSON.stringify({ state })
+    });
+  } catch {
+    return { ...base, reason: "upstream-error" };
+  }
+  if (raw.timedOut) return { ...base, reason: "timeout" };
+  if (raw.error !== void 0 || raw.status !== 0) return { ...base, reason: "upstream-error" };
+  const payload = parseDecisionPayload(raw.stdout);
+  if (!payload) return { ...base, reason: "bad-response" };
+  if (payload.available !== true) {
+    const reason = typeof payload.reason === "string" && payload.reason !== "" ? payload.reason : "unavailable";
+    return { ...base, reason };
+  }
+  const answer = recordOf(recordOf(payload.answers)?.[DP2_CHECKPOINT_QUESTION]);
+  const value = typeof answer?.value === "string" ? answer.value.trim() : "";
+  const confidence = typeof answer?.confidence === "number" && Number.isFinite(answer.confidence) ? answer.confidence : null;
+  const mode = payload.mode === "auto" || payload.mode === "suggest" ? payload.mode : void 0;
+  const decision = { ...base, available: true, confidence };
+  if (mode !== void 0) decision.mode = mode;
+  if (typeof payload.confidence_source === "string" && payload.confidence_source !== "") {
+    decision.confidenceSource = payload.confidence_source;
+  }
+  if (value !== "") decision.answer = value;
+  if (value === "narrow") decision.action = "narrow";
+  else if (value === "split") decision.action = "split";
+  else if (value === "direct-exec" || value === "direct") decision.action = "direct";
+  else if (value === "escalate") decision.action = "escalate";
+  const confident = confidence === null || confidence >= effective.minConfidence;
+  decision.acted = mode === "auto" && decision.action === "narrow" && confident;
+  return decision;
+}
+function writeDp2SteerRequest(input) {
+  const target = path43.join(input.taskDir, DP2_STEER_FILE);
+  const remainingMin = Math.max(0, input.decision.budgetMin - input.decision.elapsedMin);
+  const content = [
+    `${DP2_STEER_REQUEST_HEADER} decision_id=${input.decision.decisionId} dp=${DP2_CHECKPOINT_ID} risk=${input.risk} elapsed_minutes=${input.decision.elapsedMin} budget_minutes=${input.decision.budgetMin} remaining_min=${remainingMin}`,
+    `${DP2_NARROW_MARKER} dp2 \u5DF2\u81EA\u52A8\u5224\u5B9A\u6536\u7A84\u672C\u4EFB\u52A1\uFF08decision_id=${input.decision.decisionId}\uFF09\uFF1A\u505C\u6B62\u5C55\u5F00\u65B0\u5DE5\u4F5C\uFF0C\u53EA\u4FDD\u7559\u80FD\u76F4\u63A5\u6536\u655B\u7684\u8DEF\u5F84\uFF0C\u4F18\u5148\u4FDD\u8BC1\u5DF2\u5B8C\u6210\u90E8\u5206\u53EF\u4EA4\u4ED8\uFF1B\u4E0D\u65B0\u589E\u6587\u4EF6\u3001\u4E0D\u6539\u9A8C\u6536\u76EE\u6807\u3002\u9884\u7B97\u5269\u4F59\u7EA6 ${remainingMin}m\u3002`,
+    ""
+  ].join("\n");
+  const tmp = `${target}.tmp`;
+  try {
+    fs41.writeFileSync(tmp, content, "utf8");
+    fs41.renameSync(tmp, target);
+    return true;
+  } catch {
+    try {
+      fs41.rmSync(tmp, { force: true });
+    } catch {
+    }
+    return false;
+  }
+}
+function appendDp2ActedTrace(taskDir, decision) {
+  try {
+    fs41.appendFileSync(
+      path43.join(taskDir, "trace.log"),
+      `[DECISION] dp2 acted=1 decision_id=${decision.decisionId} trigger=${decision.triggerId}
+`,
+      "utf8"
+    );
+  } catch {
+  }
+}
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function probeDp2TaskLiveness(taskDir, ledgerStatus) {
+  try {
+    const state = readRunState(taskDir);
+    if (state !== void 0) {
+      const kind = runStateKind(state);
+      if (kind === "terminal") return "settled";
+      if (kind === "active") {
+        const pid = state.pid;
+        if (typeof pid === "number" && Number.isInteger(pid) && pid > 0)
+          return pidAlive(pid) ? "running" : "settled";
+        return "running";
+      }
+    }
+  } catch {
+    return "unknown";
+  }
+  if (ledgerStatus === "running" || ledgerStatus === "pending") return "running";
+  if (ledgerStatus === "done" || ledgerStatus === "failed" || ledgerStatus === "needs-clarification" || ledgerStatus === "lost") {
+    return "settled";
+  }
+  return "unknown";
+}
+function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRoot2, watch, ui, pollIntervalMs = POLL_INTERVAL_MS, dp2Hooks) {
   const notified = new Set(
     workerStore.readAll().filter((e) => isTerminal(e.status)).map((e) => e.taskKey)
   );
@@ -29451,6 +33622,7 @@ function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRo
     for (const r of rows) if (r.seq > reminderWatermark) reminderWatermark = r.seq;
   }
   let reminderHistoryRead = false;
+  const dp2ProjectDir = dp2Hooks?.projectDir ?? path43.dirname(agenticdocRoot2);
   return setInterval(() => {
     try {
       const entries = workerStore.readAll();
@@ -29487,14 +33659,37 @@ function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRo
         const ownerKey = ownerKeyOf(entry, agenticdocRoot2);
         const owned = watch.dispatchedTaskKeys?.has(entry.taskKey) ?? false;
         if (!watch.key || ownerKey !== watch.key && !owned) continue;
-        const ck = readTaskProgress(path38.dirname(entry.taskPath))?.checkpoint;
+        const ck = readTaskProgress(path43.dirname(entry.taskPath))?.checkpoint;
         if (!ck || ck.risk === "low") continue;
         escalated.add(entry.taskKey);
-        const taskDir = path38.dirname(entry.taskPath);
+        const taskDir = path43.dirname(entry.taskPath);
+        const dp2 = decideDp2Checkpoint({
+          projectDir: dp2ProjectDir,
+          ownerKey,
+          taskKey: entry.taskKey,
+          taskDir,
+          checkpoint: ck,
+          run: dp2Hooks?.run
+        });
+        let dp2Fallback = false;
+        if (dp2?.acted) {
+          const liveness = probeDp2TaskLiveness(taskDir, entry.status);
+          if (liveness !== "running") {
+            dp2Fallback = true;
+          } else if (writeDp2SteerRequest({ taskDir, decision: dp2, risk: ck.risk })) {
+            appendDp2ActedTrace(taskDir, dp2);
+            displaySummary(
+              pi,
+              `[mw] dp2 \u5DF2\u81EA\u52A8\u6536\u7A84 ${entry.taskKey}\uFF08decision_id=${dp2.decisionId}\uFF0Crisk=${ck.risk}\uFF09\uFF1Bworker \u5C06\u5728\u4E0B\u4E00\u4E2A\u68C0\u67E5\u70B9 tick \u6CE8\u5165\u6536\u7A84 steer\u3002\u5982\u9700\u6539\u5224\uFF1A\u624B\u52A8\u5904\u7F6E\u6216 mw decide dp off ${DP2_CHECKPOINT_ID}\u3002`
+            );
+            continue;
+          }
+        }
         const workerLabel = ownerKey === watch.key ? `'${entry.taskKey}' ` : `'${entry.taskKey}'\uFF08owner key=${ownerKey}\uFF09`;
         deliverPmAlert(
           pi,
-          `[mw] \u53D1\u6563\u98CE\u9669\uFF1Aworker ${workerLabel}\u68C0\u67E5\u70B9 risk=${ck.risk}\uFF08elapsed ${Math.round(ck.elapsedS / 60)}m\uFF0Creads=${ck.reads} writes=${ck.writes}\uFF0Cphases=${ck.phases}\uFF0C\u91CD\u590D\u8BFB top=${ck.repeatTop}\uFF09\u3002\u673A\u5668\u5224\u636E\u4EC5\u4F9B\u53C2\u8003\u2014\u2014\u8BF7\u7ED3\u5408\u672C key \u6700\u5168\u4E0A\u4E0B\u6587\u5224\u65AD\uFF1A\u7EE7\u7EED\u7B49\u5F85 / steer \u6536\u7A84\u8303\u56F4 / \u7EC8\u6B62\u5E76\u5206\u62C6\u91CD\u6D3E / PM \u76F4\u6267\u3002\u8BC1\u636E\uFF1A${path38.join(taskDir, "trace.log")}\uFF08[CHECKPOINT] \u884C\uFF09\u4E0E ${path38.join(taskDir, "progress.md")}\uFF08\u81EA\u8BC4\u884C\uFF1B\u65E0\u5199\u5DE5\u5177\u89D2\u8272\u53E6\u542B\u6846\u67B6\u673A\u5668\u884C\uFF09\u3002`
+          `[mw] \u53D1\u6563\u98CE\u9669\uFF1Aworker ${workerLabel}\u68C0\u67E5\u70B9 risk=${ck.risk}\uFF08elapsed ${Math.round(ck.elapsedS / 60)}m\uFF0Creads=${ck.reads} writes=${ck.writes}\uFF0Cphases=${ck.phases}\uFF0C\u91CD\u590D\u8BFB top=${ck.repeatTop}\uFF09\u3002\u673A\u5668\u5224\u636E\u4EC5\u4F9B\u53C2\u8003\u2014\u2014\u8BF7\u7ED3\u5408\u672C key \u6700\u5168\u4E0A\u4E0B\u6587\u5224\u65AD\uFF1A\u7EE7\u7EED\u7B49\u5F85 / steer \u6536\u7A84\u8303\u56F4 / \u7EC8\u6B62\u5E76\u5206\u62C6\u91CD\u6D3E / PM \u76F4\u6267\u3002\u8BC1\u636E\uFF1A${path43.join(taskDir, "trace.log")}\uFF08[CHECKPOINT] \u884C\uFF09\u4E0E ${path43.join(taskDir, "progress.md")}\uFF08\u81EA\u8BC4\u884C\uFF1B\u65E0\u5199\u5DE5\u5177\u89D2\u8272\u53E6\u542B\u6846\u67B6\u673A\u5668\u884C\uFF09\u3002` + (dp2Fallback ? `
+${DP2_NARROW_FALLBACK_LINE}` : "")
         );
       }
       for (const entry of entries) {
@@ -29506,7 +33701,7 @@ function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRo
         if (ownerKeyOf(entry, agenticdocRoot2) !== watch.key) continue;
         notified.add(entry.taskKey);
         readbackDelivered.add(entry.taskKey);
-        const taskDir = path38.dirname(entry.taskPath);
+        const taskDir = path43.dirname(entry.taskPath);
         recordWriteScopeResidualRisks(agenticdocRoot2, entry.taskKey, taskDir);
         recordModelErrorTerminal(
           agenticdocRoot2,
@@ -29515,6 +33710,14 @@ function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRo
           taskDir,
           modelErrorStreaks
         );
+        const settled = recordDecisionSettle(agenticdocRoot2, ownerKeyOf(entry, agenticdocRoot2), entry, taskDir);
+        for (const skip of settled.skipped) {
+          if (skip.reason !== "append-failed") continue;
+          displaySummary(
+            pi,
+            `[mw] decision settle \u5199\u5165\u5931\u8D25\uFF1A${skip.decisionId || entry.taskKey} \u7684\u6863\u6848\u884C\u672A\u8FFD\u52A0\uFF08decisions.jsonl \u4E0D\u53EF\u5199\uFF09\uFF0C\u5173\u8054\u7ED3\u679C\u672A\u843D\u5730\u3002`
+          );
+        }
         const header = `[${entry.taskKey}] ${entry.status}${heartbeatStatsSuffix(taskDir, entry)}`;
         const body = readOutputBody(taskDir);
         if (body) {
@@ -29524,7 +33727,7 @@ ${body}
 
 ${PM_CONTINUE_HINT}`);
         } else {
-          const logPath = path38.join(taskDir, "worker.log");
+          const logPath = path43.join(taskDir, "worker.log");
           const spawnFailure = readSpawnFailure(taskDir);
           deliverWorkerResult(
             pi,
@@ -29645,7 +33848,19 @@ function pmActivate(pi) {
 
 ${PARALLEL_PROTOCOL}` };
   });
-  const pollHandle = startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRoot2, watch, ui);
+  const pollHandle = startWorkerPollLoop(
+    pi,
+    workerStore,
+    ackStore,
+    indexStore,
+    agenticdocRoot2,
+    watch,
+    ui,
+    POLL_INTERVAL_MS,
+    {
+      projectDir
+    }
+  );
   pi.on("session_shutdown", () => {
     clearInterval(pollHandle);
     stopMonitor();
@@ -29674,8 +33889,8 @@ ${PARALLEL_PROTOCOL}` };
         taskDir: task.taskDir,
         readTaskContent: task.readTaskContent,
         resolveTaskDir: (key) => {
-          const dir = path38.join(path38.dirname(task.taskDir), key);
-          return fs37.existsSync(dir) ? dir : void 0;
+          const dir = path43.join(path43.dirname(task.taskDir), key);
+          return fs41.existsSync(dir) ? dir : void 0;
         }
       }),
       onAlarm: (alarm) => {
@@ -29726,7 +33941,7 @@ ${PARALLEL_PROTOCOL}` };
     ui.ctx = ctx;
     autoStartMonitor(ctx, projectDir);
     await restoreWatch(pi, watch, indexStore, workerStore, ackStore, agenticdocRoot2, ctx);
-    const initialized = fs37.existsSync(path38.join(projectDir, ".agenticdoc"));
+    const initialized = fs41.existsSync(path43.join(projectDir, ".agenticdoc"));
     if (!initialized) {
       const result = initMw(projectDir);
       if (result.ok) {
@@ -29762,9 +33977,9 @@ ${PARALLEL_PROTOCOL}` };
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/implementation-gate.ts
-import * as fs38 from "node:fs";
-import * as os5 from "node:os";
-import * as path39 from "node:path";
+import * as fs42 from "node:fs";
+import * as os6 from "node:os";
+import * as path44 from "node:path";
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/bash-segments.ts
 function readHeredocDelimiter(command, start) {
@@ -29997,22 +34212,22 @@ function toForwardSlashes(p) {
   return p.replaceAll("\\", "/");
 }
 function expandTildePath(p) {
-  if (p === "~") return os5.homedir();
+  if (p === "~") return os6.homedir();
   if (p.startsWith("~/") || p.startsWith("~\\")) {
-    return path39.join(os5.homedir(), p.slice(2));
+    return path44.join(os6.homedir(), p.slice(2));
   }
   return p;
 }
 function isExistingDir(absPath) {
   try {
-    return fs38.statSync(absPath).isDirectory();
+    return fs42.statSync(absPath).isDirectory();
   } catch {
     return false;
   }
 }
 function defaultReadTextFile(absPath) {
   try {
-    return fs38.readFileSync(absPath, "utf8");
+    return fs42.readFileSync(absPath, "utf8");
   } catch {
     return void 0;
   }
@@ -30020,30 +34235,30 @@ function defaultReadTextFile(absPath) {
 function resolveGateRoot(env = process.env) {
   const raw = env[ENV_GATE_ROOT];
   if (typeof raw === "string" && raw !== "") {
-    return path39.resolve(expandTildePath(raw));
+    return path44.resolve(expandTildePath(raw));
   }
   return process.cwd();
 }
 function currentClaimId() {
-  return `${os5.hostname()}:${process.pid}`;
+  return `${os6.hostname()}:${process.pid}`;
 }
 function codePathRel(absPath, root) {
-  const target = toForwardSlashes(fold2(path39.normalize(absPath)));
-  const prefix = `${toForwardSlashes(fold2(path39.normalize(root)))}/${PACKAGES_DIR}/`;
+  const target = toForwardSlashes(fold2(path44.normalize(absPath)));
+  const prefix = `${toForwardSlashes(fold2(path44.normalize(root)))}/${PACKAGES_DIR}/`;
   if (!target.startsWith(prefix)) return void 0;
   return target.slice(prefix.length);
 }
 function isCodePathAbs(absPath, root) {
   const rel = codePathRel(absPath, root);
   if (rel === void 0 || rel === "") return false;
-  const ext2 = path39.extname(rel).toLowerCase();
+  const ext2 = path44.extname(rel).toLowerCase();
   if (!CODE_EXTENSIONS.includes(ext2)) return false;
   const segments = rel.split("/");
   return !segments.some((s) => CODE_EXCLUDED_SEGMENTS.includes(s));
 }
 function isCodePath(rawPath, root = resolveGateRoot(), cwd = process.cwd()) {
   if (typeof rawPath !== "string" || rawPath === "") return false;
-  return isCodePathAbs(path39.resolve(cwd, expandTildePath(rawPath)), root);
+  return isCodePathAbs(path44.resolve(cwd, expandTildePath(rawPath)), root);
 }
 function splitTableRow2(line) {
   let cells = line.split("|").map((c) => c.trim());
@@ -30081,7 +34296,7 @@ function parseIndexRows(content) {
 function hasActiveKeyClaim(root, claimId, readIndexFile = defaultReadTextFile) {
   const wanted = claimId.trim().toLowerCase();
   if (wanted === "") return false;
-  const content = readIndexFile(path39.join(root, AGENTICDOC_DIR2, INDEX_FILE));
+  const content = readIndexFile(path44.join(root, AGENTICDOC_DIR2, INDEX_FILE));
   if (content === void 0) return false;
   const rows = parseIndexRows(content);
   if (rows === void 0) return false;
@@ -30090,7 +34305,7 @@ function hasActiveKeyClaim(root, claimId, readIndexFile = defaultReadTextFile) {
 function findFreshMiniSpec(root, now = Date.now(), maxAgeMs = MINI_SPEC_FRESH_MS) {
   let entries;
   try {
-    entries = fs38.readdirSync(path39.join(root, AGENTICDOC_DIR2), { withFileTypes: true });
+    entries = fs42.readdirSync(path44.join(root, AGENTICDOC_DIR2), { withFileTypes: true });
   } catch {
     return void 0;
   }
@@ -30098,9 +34313,9 @@ function findFreshMiniSpec(root, now = Date.now(), maxAgeMs = MINI_SPEC_FRESH_MS
   let bestMtime = Number.NEGATIVE_INFINITY;
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-    const candidate = path39.join(root, AGENTICDOC_DIR2, entry.name, MINI_SPEC_FILE);
+    const candidate = path44.join(root, AGENTICDOC_DIR2, entry.name, MINI_SPEC_FILE);
     try {
-      const mtime = fs38.statSync(candidate).mtimeMs;
+      const mtime = fs42.statSync(candidate).mtimeMs;
       if (now - mtime <= maxAgeMs && mtime > bestMtime) {
         best = candidate;
         bestMtime = mtime;
@@ -30116,10 +34331,10 @@ function stripEnvAssignments(words) {
   return words.slice(i);
 }
 function resolveToken(dir, token) {
-  return path39.resolve(dir, expandTildePath(token));
+  return path44.resolve(dir, expandTildePath(token));
 }
 function joinDestName(dest, src) {
-  return path39.join(dest, path39.basename(expandTildePath(src)));
+  return path44.join(dest, path44.basename(expandTildePath(src)));
 }
 function verbTargets(verb, args, dir) {
   const operands = [];
@@ -30182,7 +34397,7 @@ function checkBashWriteTarget(command, root = resolveGateRoot(), cwd = process.c
   let dir = cwd;
   for (const segment of parseBashSegments(command)) {
     const argv = stripEnvAssignments(segment.words);
-    const verb = argv.length > 0 ? path39.basename(argv[0] ?? "") : "";
+    const verb = argv.length > 0 ? path44.basename(argv[0] ?? "") : "";
     if (verb === "cd" && argv.length === 2) {
       dir = resolveToken(dir, argv[1] ?? "");
       continue;
@@ -30199,7 +34414,7 @@ function checkBashWriteTarget(command, root = resolveGateRoot(), cwd = process.c
   return hits;
 }
 function miniSpecBasis(mini, root) {
-  const rel = path39.relative(root, mini);
+  const rel = path44.relative(root, mini);
   const shown = rel === "" || rel.startsWith("..") ? mini : rel;
   return `mini-spec:${toForwardSlashes(shown)}`;
 }
@@ -30248,10 +34463,10 @@ function gateDecision(toolName, input, env, cwd = process.cwd()) {
 }
 function recordImplGateAudit(tag, toolName, target, basis, root = resolveGateRoot()) {
   try {
-    const dir = path39.join(root, AGENTICDOC_DIR2);
-    fs38.mkdirSync(dir, { recursive: true });
-    fs38.appendFileSync(
-      path39.join(dir, GATE_LOG_FILE),
+    const dir = path44.join(root, AGENTICDOC_DIR2);
+    fs42.mkdirSync(dir, { recursive: true });
+    fs42.appendFileSync(
+      path44.join(dir, GATE_LOG_FILE),
       `[GATE] ${(/* @__PURE__ */ new Date()).toISOString()} ${tag} tool=${toolName} target=${target} basis=${basis}
 `,
       "utf8"
@@ -30277,9 +34492,9 @@ function registerImplementationGate(pi) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/protected-config.ts
-import * as fs39 from "node:fs";
-import * as os6 from "node:os";
-import * as path40 from "node:path";
+import * as fs43 from "node:fs";
+import * as os7 from "node:os";
+import * as path45 from "node:path";
 var IS_WIN323 = process.platform === "win32";
 var PROTECTED_CONFIG_FILES = ["auth.json", "models.json", "settings.json", "oauth.json"];
 var ENV_AGENT_DIR2 = "PI_CODING_AGENT_DIR";
@@ -30300,30 +34515,30 @@ function fragmentPresent(scan, frag) {
   return new RegExp(escapeRegExp(frag) + boundary()).test(scan);
 }
 function expandTildePath2(p) {
-  if (p === "~") return os6.homedir();
+  if (p === "~") return os7.homedir();
   if (p.startsWith("~/") || p.startsWith("~\\")) {
-    return path40.join(os6.homedir(), p.slice(2));
+    return path45.join(os7.homedir(), p.slice(2));
   }
   return p;
 }
 function resolveAgentDir(env = process.env) {
   const raw = env[ENV_AGENT_DIR2];
   if (typeof raw === "string" && raw !== "") {
-    return path40.resolve(expandTildePath2(raw));
+    return path45.resolve(expandTildePath2(raw));
   }
-  return path40.join(os6.homedir(), ".pi", "agent");
+  return path45.join(os7.homedir(), ".pi", "agent");
 }
 function protectedConfigPaths(agentDir) {
-  return PROTECTED_CONFIG_FILES.map((name) => path40.join(agentDir, name));
+  return PROTECTED_CONFIG_FILES.map((name) => path45.join(agentDir, name));
 }
 function isProtectedConfigPath(agentDir, rawPath, cwd = process.cwd()) {
   if (typeof rawPath !== "string" || rawPath === "") return false;
-  const target = fold3(path40.normalize(path40.resolve(cwd, expandTildePath2(rawPath))));
-  if (target === fold3(path40.normalize(agentDir))) return true;
-  return protectedConfigPaths(agentDir).some((p) => target === fold3(path40.normalize(p)));
+  const target = fold3(path45.normalize(path45.resolve(cwd, expandTildePath2(rawPath))));
+  if (target === fold3(path45.normalize(agentDir))) return true;
+  return protectedConfigPaths(agentDir).some((p) => target === fold3(path45.normalize(p)));
 }
 function expandCommandReferences(command, agentDir) {
-  const home = os6.homedir();
+  const home = os7.homedir();
   let s = command;
   for (const v of ["$HOME", `\${HOME}`, "%USERPROFILE%", "$env:USERPROFILE", "$Env:USERPROFILE"]) {
     s = s.split(v).join(home);
@@ -30338,12 +34553,12 @@ function bashScanText(command, agentDir) {
   return toForwardSlashes2(fold3(expandCommandReferences(command, agentDir)));
 }
 function protectedReferences(scan, agentDir) {
-  const homeFrag = `${toForwardSlashes2(fold3(os6.homedir()))}/.pi/agent`;
-  const dirFrag = toForwardSlashes2(fold3(path40.normalize(agentDir)));
+  const homeFrag = `${toForwardSlashes2(fold3(os7.homedir()))}/.pi/agent`;
+  const dirFrag = toForwardSlashes2(fold3(path45.normalize(agentDir)));
   const refs = [];
   if (fragmentPresent(scan, homeFrag)) refs.push(homeFrag);
   if (dirFrag !== homeFrag && fragmentPresent(scan, dirFrag)) refs.push(dirFrag);
-  const homeAbs = toForwardSlashes2(fold3(os6.homedir()));
+  const homeAbs = toForwardSlashes2(fold3(os7.homedir()));
   const cdHome = new RegExp(`(?:^|[\\s;&|(])cd\\s+["']?${escapeRegExp(homeAbs)}["']?${boundary()}`);
   if (cdHome.test(scan) && fragmentPresent(scan, ".pi/agent")) {
     refs.push(`${homeFrag} (relative after cd ~)`);
@@ -30384,11 +34599,11 @@ function checkProtectedBashCommand(agentDir, command) {
 function recordProtectedBlockTrace(toolName, detail, taskPathEnv = process.env.PI_WORKER_TASK) {
   if (!taskPathEnv) return;
   try {
-    const dir = path40.dirname(path40.resolve(taskPathEnv));
-    fs39.mkdirSync(dir, { recursive: true });
+    const dir = path45.dirname(path45.resolve(taskPathEnv));
+    fs43.mkdirSync(dir, { recursive: true });
     const first = detail.split("\n")[0] ?? "";
-    fs39.appendFileSync(
-      path40.join(dir, "trace.log"),
+    fs43.appendFileSync(
+      path45.join(dir, "trace.log"),
       `[PROTECTED_CONFIG] ${(/* @__PURE__ */ new Date()).toISOString()} blocked tool=${toolName} target=${first}
 `,
       "utf8"
@@ -30426,10 +34641,10 @@ function registerProtectedConfigGuard(pi) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/worktree-junction-guard.ts
-import { spawnSync as spawnSync5 } from "node:child_process";
-import * as fs40 from "node:fs";
-import * as os7 from "node:os";
-import * as path41 from "node:path";
+import { spawnSync as spawnSync7 } from "node:child_process";
+import * as fs44 from "node:fs";
+import * as os8 from "node:os";
+import * as path46 from "node:path";
 var MAX_SCAN_ENTRIES = 2e5;
 var GIT_GLOBAL_VALUE_OPTIONS = /* @__PURE__ */ new Set(["--git-dir", "--work-tree", "--namespace", "--exec-path"]);
 var ASSIGNMENT_RE = /^([^=\s]+)=(.*)$/;
@@ -30459,7 +34674,7 @@ function decideWorktreeRemove(command, cwd, env) {
         cwdMissing = expanded2.missing;
         effectiveCwd = void 0;
       } else if (effectiveCwd !== void 0) {
-        effectiveCwd = path41.resolve(effectiveCwd, expandTilde(expanded2.value));
+        effectiveCwd = path46.resolve(effectiveCwd, expandTilde(expanded2.value));
         cwdMissing = void 0;
       }
       continue;
@@ -30495,7 +34710,7 @@ function decideWorktreeRemove(command, cwd, env) {
     if (invocation.base !== void 0) {
       const expandedBase = expandToken(invocation.base, table);
       if (expandedBase.missing !== void 0) return unresolvedVerdict(expandedBase.missing, rawToken);
-      base = path41.resolve(effectiveCwd ?? cwd, expandTilde(expandedBase.value));
+      base = path46.resolve(effectiveCwd ?? cwd, expandTilde(expandedBase.value));
     }
     if (base === void 0) return unresolvedVerdict(cwdMissing ?? "cwd", rawToken);
     if (rawToken.includes("$(") || rawToken.includes("`")) return globVerdict(rawToken);
@@ -30505,7 +34720,7 @@ function decideWorktreeRemove(command, cwd, env) {
     if (hasGlobOrSubstitution(value)) return globVerdict(rawToken);
     if (hasTrailingSeparator(value)) return globVerdict(rawToken);
     if (isBareName(value)) return decideBareName(value, base);
-    return scanVerdict(path41.resolve(base, expandTilde(value)));
+    return scanVerdict(path46.resolve(base, expandTilde(value)));
   }
   return notRemove();
 }
@@ -30538,7 +34753,7 @@ function registerWorktreeJunctionGuard(pi) {
 function scanTree(root) {
   let rootStat;
   try {
-    rootStat = fs40.lstatSync(root);
+    rootStat = fs44.lstatSync(root);
   } catch (err) {
     if (errorCode(err) === "ENOENT") return { absent: true, hits: [] };
     return { absent: false, hits: [], error: errorCode(err) };
@@ -30551,17 +34766,17 @@ function scanTree(root) {
     const dir = stack.pop() ?? "";
     let listing;
     try {
-      listing = fs40.readdirSync(dir, { withFileTypes: true });
+      listing = fs44.readdirSync(dir, { withFileTypes: true });
     } catch (err) {
       return { absent: false, hits, error: errorCode(err) };
     }
     for (const entry of listing) {
       entries += 1;
       if (entries > MAX_SCAN_ENTRIES) return { absent: false, hits, error: "entry-budget" };
-      const full = path41.join(dir, entry.name);
+      const full = path46.join(dir, entry.name);
       let isLink;
       try {
-        isLink = fs40.lstatSync(full).isSymbolicLink();
+        isLink = fs44.lstatSync(full).isSymbolicLink();
       } catch (err) {
         return { absent: false, hits, error: errorCode(err) };
       }
@@ -30590,7 +34805,7 @@ function deleteScanRoot(value) {
   const prefix = value.slice(0, match2.index);
   if (prefix === "") return ".";
   if (/[\\/]$/.test(prefix)) return prefix;
-  return path41.dirname(prefix);
+  return path46.dirname(prefix);
 }
 function decideDeletePenetration(rawToken, base, cwdMissing, table) {
   const expanded = expandToken(rawToken, table);
@@ -30601,7 +34816,7 @@ function decideDeletePenetration(rawToken, base, cwdMissing, table) {
   if (!hasPenetratingForm(value)) return notRemove();
   if (value.includes("$(") || value.includes("`")) return deleteGlobVerdict(rawToken);
   if (base === void 0) return unresolvedVerdict(cwdMissing ?? "cwd", rawToken);
-  const target = path41.resolve(base, expandTilde(deleteScanRoot(value)));
+  const target = path46.resolve(base, expandTilde(deleteScanRoot(value)));
   const outcome = scanTree(target);
   if (outcome.absent) return { block: false, hits: [], basis: "target-absent", target };
   if (outcome.error !== void 0) return scanErrorVerdict(target, outcome.error, outcome.hits);
@@ -30620,20 +34835,20 @@ function isRegisteredWorktree(target) {
   return matches === 1;
 }
 function canonicalComparePath(value) {
-  const dir = path41.dirname(value);
+  const dir = path46.dirname(value);
   let realDir;
   try {
-    realDir = fs40.realpathSync.native(dir);
+    realDir = fs44.realpathSync.native(dir);
   } catch {
-    realDir = path41.resolve(dir);
+    realDir = path46.resolve(dir);
   }
-  const joined = path41.join(realDir, path41.basename(value));
+  const joined = path46.join(realDir, path46.basename(value));
   return process.platform === "win32" ? joined.toLowerCase() : joined;
 }
 function decideBareName(token, base) {
   const listing = listWorktrees(base);
   if (listing.error !== void 0) return scanErrorVerdict(void 0, listing.error, []);
-  const matches = (listing.paths ?? []).filter((p) => path41.basename(p).toLowerCase() === token.toLowerCase());
+  const matches = (listing.paths ?? []).filter((p) => path46.basename(p).toLowerCase() === token.toLowerCase());
   if (matches.length === 0) return { block: false, hits: [], basis: "target-absent" };
   if (matches.length > 1) {
     return {
@@ -30643,10 +34858,10 @@ function decideBareName(token, base) {
       basis: "bare-name-ambiguous"
     };
   }
-  return scanVerdict(path41.resolve(matches[0] ?? ""));
+  return scanVerdict(path46.resolve(matches[0] ?? ""));
 }
 function listWorktrees(base) {
-  const result = spawnSync5("git", ["-C", base, "worktree", "list", "--porcelain"], {
+  const result = spawnSync7("git", ["-C", base, "worktree", "list", "--porcelain"], {
     encoding: "utf8",
     windowsHide: true
   });
@@ -30759,7 +34974,7 @@ function parseDeleteInvocation(words) {
   return collectOperands(words.slice(1));
 }
 function basenameLower(word) {
-  const base = path41.basename(word).toLowerCase();
+  const base = path46.basename(word).toLowerCase();
   return base.endsWith(".exe") ? base.slice(0, -4) : base;
 }
 function createVarTable(env) {
@@ -30862,8 +35077,8 @@ function isBareName(value) {
   return true;
 }
 function expandTilde(value) {
-  if (value === "~") return os7.homedir();
-  if (value.startsWith("~/") || value.startsWith("~\\")) return path41.join(os7.homedir(), value.slice(2));
+  if (value === "~") return os8.homedir();
+  if (value.startsWith("~/") || value.startsWith("~\\")) return path46.join(os8.homedir(), value.slice(2));
   return value;
 }
 function notRemove() {
@@ -30917,7 +35132,7 @@ ${prescriptions.join("\n")}`;
 }
 function readLinkTarget(link) {
   try {
-    return stripExtendedPrefix(fs40.readlinkSync(link));
+    return stripExtendedPrefix(fs44.readlinkSync(link));
   } catch {
     return "<unreadable>";
   }
@@ -30946,11 +35161,11 @@ function recordWorktreeGuardBlockTrace(toolName, detail) {
   const taskPath = process.env.PI_WORKER_TASK;
   if (!taskPath) return;
   try {
-    const dir = path41.dirname(path41.resolve(taskPath));
-    fs40.mkdirSync(dir, { recursive: true });
+    const dir = path46.dirname(path46.resolve(taskPath));
+    fs44.mkdirSync(dir, { recursive: true });
     const first = detail.split("\n")[0] ?? "";
-    fs40.appendFileSync(
-      path41.join(dir, "trace.log"),
+    fs44.appendFileSync(
+      path46.join(dir, "trace.log"),
       `[WORKTREE_GUARD] ${(/* @__PURE__ */ new Date()).toISOString()} blocked tool=${toolName} target=${first}
 `,
       "utf8"
@@ -30960,9 +35175,9 @@ function recordWorktreeGuardBlockTrace(toolName, detail) {
 }
 
 // packages/coding-agent/src/extensions/agent-team-loop/shared/xkey-gate-guard.ts
-import * as fs41 from "node:fs";
-import * as os8 from "node:os";
-import * as path42 from "node:path";
+import * as fs45 from "node:fs";
+import * as os9 from "node:os";
+import * as path47 from "node:path";
 var IS_WIN324 = process.platform === "win32";
 var ENV_GATE_ROOT2 = "MW_XKEY_GATE_ROOT";
 var AGENTICDOC_DIR3 = ".agenticdoc";
@@ -30989,35 +35204,35 @@ function guardedFragmentPresent(scan, fragment) {
   return new RegExp(guardedFragmentPattern(fragment)).test(scan);
 }
 function expandTildePath3(p) {
-  if (p === "~") return os8.homedir();
+  if (p === "~") return os9.homedir();
   if (p.startsWith("~/") || p.startsWith("~\\")) {
-    return path42.join(os8.homedir(), p.slice(2));
+    return path47.join(os9.homedir(), p.slice(2));
   }
   return p;
 }
 function resolveXkeyGateRoot(env = process.env) {
   const raw = env[ENV_GATE_ROOT2];
   if (typeof raw === "string" && raw !== "") {
-    return path42.resolve(expandTildePath3(raw));
+    return path47.resolve(expandTildePath3(raw));
   }
   return process.cwd();
 }
 function xkeyGuardedDir(root) {
-  return path42.join(root, AGENTICDOC_DIR3, AUTOPILOT_DIR);
+  return path47.join(root, AGENTICDOC_DIR3, AUTOPILOT_DIR);
 }
 function xkeySubtreeDir(root) {
-  return path42.join(xkeyGuardedDir(root), XKEY_DIR);
+  return path47.join(xkeyGuardedDir(root), XKEY_DIR);
 }
 function isUnder2(parent, child) {
-  const p = fold4(path42.normalize(parent));
-  const c = fold4(path42.normalize(child));
+  const p = fold4(path47.normalize(parent));
+  const c = fold4(path47.normalize(child));
   if (c === p) return true;
-  const prefix = p.endsWith(path42.sep) ? p : p + path42.sep;
+  const prefix = p.endsWith(path47.sep) ? p : p + path47.sep;
   return c.startsWith(prefix);
 }
 function isXkeyGatePath(root, rawPath, cwd = process.cwd()) {
   if (typeof rawPath !== "string" || rawPath === "") return false;
-  const target = path42.resolve(cwd, expandTildePath3(rawPath));
+  const target = path47.resolve(cwd, expandTildePath3(rawPath));
   if (isUnder2(xkeyGuardedDir(root), target) && !isUnder2(xkeySubtreeDir(root), target)) return true;
   return guardedFragmentPresent(toForwardSlashes3(fold4(target)), AUTOPILOT_DIR_FRAGMENT);
 }
@@ -31033,7 +35248,7 @@ function checkXkeyGateBashCommand(root, command) {
   const scan = toForwardSlashes3(fold4(command));
   const refs = [];
   if (guardedFragmentPresent(scan, AUTOPILOT_DIR_FRAGMENT)) refs.push(AUTOPILOT_DIR_FRAGMENT);
-  const dirFrag = toForwardSlashes3(fold4(path42.normalize(xkeyGuardedDir(root))));
+  const dirFrag = toForwardSlashes3(fold4(path47.normalize(xkeyGuardedDir(root))));
   if (dirFrag !== AUTOPILOT_DIR_FRAGMENT && guardedFragmentPresent(scan, dirFrag)) refs.push(dirFrag);
   if (refs.length === 0) return { prohibited: false };
   const constructs = [];
@@ -31055,11 +35270,11 @@ function checkXkeyGateBashCommand(root, command) {
 function recordXkeyGateBlockTrace(toolName, detail, taskPathEnv = process.env.PI_WORKER_TASK) {
   if (!taskPathEnv) return;
   try {
-    const dir = path42.dirname(path42.resolve(taskPathEnv));
-    fs41.mkdirSync(dir, { recursive: true });
+    const dir = path47.dirname(path47.resolve(taskPathEnv));
+    fs45.mkdirSync(dir, { recursive: true });
     const first = detail.split("\n")[0] ?? "";
-    fs41.appendFileSync(
-      path42.join(dir, "trace.log"),
+    fs45.appendFileSync(
+      path47.join(dir, "trace.log"),
       `[XKEY_GATE] ${(/* @__PURE__ */ new Date()).toISOString()} blocked tool=${toolName} target=${first}
 `,
       "utf8"
@@ -31095,6 +35310,121 @@ function registerXkeyGateGuard(pi) {
     return void 0;
   });
 }
+var DECISION_SIGNOFF_BASENAME = "sign-final.md";
+var DECISION_SIGNOFF_FRAGMENT = `evidence/review/${DECISION_SIGNOFF_BASENAME}`;
+var DECISION_POINTS_FRAGMENT = ".mw/decide-points.json";
+var DECISION_SIGNOFF_TRACE_MARKER = "[DECISION_SIGNOFF]";
+var DECISION_GUARD_EXPLANATION = "The decision sign-off is the authority channel: evidence/review/sign-final.md is written by `mw decide sign` (the auto-* faces from an agent session, the cli/tui faces from a human) and .mw/decide-points.json is the only authorization source: `mw decide dp on|off|set|apply` writes its rows, and `mw decide dp refresh` may only append missing registry rows with their registry defaults. Directly writing the file - Set-Content, a redirect, an editor - forges that record without the verdict, so an agent tool call must not do it; call `mw decide sign` instead (it computes counted_rows/rows_sha256 from the archive and appends the authority-change row). Reads stay allowed.";
+var TABLE_WRITE_CLI_RE = /\bmw(?:\.py)?\b[^\n;&|]*\bdecide\s+dp\s+(?:on|off|set|apply)\b/i;
+function isDecisionSignoffPath(rawPath) {
+  if (typeof rawPath !== "string" || rawPath === "") return false;
+  const scan = toForwardSlashes3(fold4(rawPath)).replace(/\/+$/, "");
+  for (const fragment of [DECISION_SIGNOFF_FRAGMENT, DECISION_POINTS_FRAGMENT]) {
+    if (scan === fragment || scan.endsWith(`/${fragment}`)) return true;
+  }
+  return isDecisionSignoffEvidenceTarget(scan);
+}
+function isDecisionSignoffEvidenceTarget(rawPath) {
+  if (typeof rawPath !== "string" || rawPath === "") return false;
+  const segments = toForwardSlashes3(fold4(rawPath)).replace(/\/+$/, "").split("/").filter((segment) => segment !== "" && segment !== ".");
+  const name = segments[segments.length - 1];
+  if (name === void 0 || name !== DECISION_SIGNOFF_BASENAME) return false;
+  const dir = segments.slice(0, -1);
+  const evidenceIdx = dir.indexOf("evidence");
+  if (evidenceIdx < 0) return false;
+  const tail = dir.slice(evidenceIdx + 1);
+  return tail.length === 0 || tail.length === 1 && tail[0] === "review";
+}
+var COMMAND_TOKEN_RE = /[^\s"'`|&;<>()]+/g;
+function signoffLandingRefPresent(scan) {
+  if (!scan.includes(DECISION_SIGNOFF_BASENAME)) return false;
+  for (const match2 of scan.matchAll(COMMAND_TOKEN_RE)) {
+    if (isDecisionSignoffPath(match2[0] ?? "")) return true;
+  }
+  return false;
+}
+function checkDecisionSignoffBashCommand(command) {
+  if (typeof command !== "string" || command === "") return { prohibited: false };
+  const scan = toForwardSlashes3(fold4(command));
+  const refs = [];
+  if (scan.includes(DECISION_SIGNOFF_FRAGMENT)) refs.push(DECISION_SIGNOFF_FRAGMENT);
+  if (scan.includes(DECISION_POINTS_FRAGMENT)) refs.push(DECISION_POINTS_FRAGMENT);
+  if (refs.length === 0 && signoffLandingRefPresent(scan)) refs.push(DECISION_SIGNOFF_BASENAME);
+  const cliWrite = TABLE_WRITE_CLI_RE.test(scan);
+  if (refs.length === 0 && !cliWrite) return { prohibited: false };
+  const constructs = [];
+  if (cliWrite) constructs.push("mw decide dp write command");
+  if (refs.length > 0) {
+    if (WRITE_VERB_RE2.test(scan)) constructs.push("write verb");
+    if (POWERSHELL_WRITE_RE2.test(scan)) constructs.push("powershell write cmdlet");
+    if (SED_IN_PLACE_RE2.test(scan)) constructs.push("sed -i");
+    if (FIND_WRITE_RE2.test(scan)) constructs.push("find -delete/-exec");
+    if (INLINE_CODE_RE2.test(scan) && INLINE_WRITE_MARKER_RE2.test(scan)) constructs.push("inline code write");
+    for (const m of scan.matchAll(REDIRECT_RE2)) {
+      const target = (m[1] ?? "").replace(/^["']|["']$/g, "");
+      if (target !== "" && isDecisionSignoffPath(target)) constructs.push("redirect target");
+    }
+  }
+  if (constructs.length === 0) return { prohibited: false };
+  const where = refs.length > 0 ? ` (${refs.join(", ")})` : "";
+  return {
+    prohibited: true,
+    reason: `decision-signoff-guard: blocked a bash command targeting the decision sign-off channel${where} with a write construct (${constructs.join(", ")}). ${DECISION_GUARD_EXPLANATION}`
+  };
+}
+function recordDecisionSignoffBlockTrace(toolName, detail, taskPathEnv = process.env.PI_WORKER_TASK) {
+  if (!taskPathEnv) return;
+  try {
+    const dir = path47.dirname(path47.resolve(taskPathEnv));
+    fs45.mkdirSync(dir, { recursive: true });
+    const first = detail.split("\n")[0] ?? "";
+    fs45.appendFileSync(
+      path47.join(dir, "trace.log"),
+      `${DECISION_SIGNOFF_TRACE_MARKER} ${(/* @__PURE__ */ new Date()).toISOString()} blocked tool=${toolName} target=${first}
+`,
+      "utf8"
+    );
+  } catch {
+  }
+}
+function registerDecisionSignoffGuard(pi) {
+  pi.on("tool_call", (event) => {
+    if (event.toolName === "write" || event.toolName === "edit") {
+      const rawPath = event.input.path;
+      if (typeof rawPath === "string" && isDecisionSignoffPath(rawPath)) {
+        recordDecisionSignoffBlockTrace(event.toolName, rawPath);
+        return {
+          block: true,
+          reason: `decision-signoff-guard: blocked ${event.toolName} of ${rawPath}. ${DECISION_GUARD_EXPLANATION}`
+        };
+      }
+      return void 0;
+    }
+    if (event.toolName === "bash") {
+      const command = event.input.command;
+      if (typeof command === "string") {
+        const verdict = checkDecisionSignoffBashCommand(command);
+        if (verdict.prohibited) {
+          recordDecisionSignoffBlockTrace(event.toolName, command);
+          return { block: true, reason: verdict.reason };
+        }
+      }
+      return void 0;
+    }
+    if (event.toolName === "worker_file") {
+      const rawFile = event.input.file;
+      if (typeof rawFile === "string" && isDecisionSignoffEvidenceTarget(rawFile)) {
+        recordDecisionSignoffBlockTrace(event.toolName, rawFile);
+        return {
+          block: true,
+          reason: `decision-signoff-guard: blocked ${event.toolName} of ${rawFile}. ${DECISION_GUARD_EXPLANATION}`
+        };
+      }
+      return void 0;
+    }
+    return void 0;
+  });
+}
 
 // packages/coding-agent/src/extensions/agent-team-loop/index.ts
 var ACTIVATION_FLAG = "__agentTeamLoopActivated";
@@ -31109,10 +35439,12 @@ async function activate(pi) {
   g[ACTIVATION_FLAG] = true;
   registerProtectedConfigGuard(pi);
   registerXkeyGateGuard(pi);
+  registerDecisionSignoffGuard(pi);
   registerImplementationGate(pi);
   registerWorktreeJunctionGuard(pi);
   if (process.env.PI_WORKER_TASK) {
     await workerModeActivate(pi);
+    registerAskDecisionTool(pi);
   } else {
     pmActivate(pi);
   }

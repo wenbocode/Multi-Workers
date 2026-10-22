@@ -1,6 +1,9 @@
 import type { ExtensionAPI } from "../../../core/extensions/types.ts";
+import { type DecideRunner } from "../pm/triage-client.ts";
 import { type RagRuntime } from "../rag/tools.ts";
+import { type Claim } from "../shared/dispatch-card.ts";
 import { type WriteFace, type WriteFaceRejectCode } from "../shared/write-face.ts";
+import { type VerdictTable } from "./output-sections.ts";
 import type { TaskPhase } from "./phase-runner.ts";
 /**
  * P-08 single source for the worker runtime's recognized vocabulary. This is
@@ -35,6 +38,37 @@ export declare function isWritelessRole(taskType: string): boolean;
  * write-surface guard must cover these roles on the `write`/`edit` channel even
  * when they have no `bash` (`roadmap-writer` was unguarded before D-115). */
 export declare function hasWriteTools(taskType: string): boolean;
+export declare const DECIDE_PREPARE_TYPE = "decide_prepare";
+/** Card item carrying the send authority (`yes` = the worker may send). */
+export declare const DECISION_ALLOW_SEND_ITEM = "allow-send";
+/** The one directory a decision book may be written to. */
+export declare const DECISION_BOOK_SUBDIR = "evidence/books";
+/** The fixed decision-worker prompt (card requirement 2). */
+export declare const DECISION_TYPE_PROMPT: string;
+/** Does the task authorize the worker itself to send the book?
+ *
+ * Only an explicit `allow-send: yes` line does (`- allow-send: yes` or
+ * `allow-send: yes`); every other shape — absent, `no`, garbage — is the
+ * closed state (W8 requirement 4: the default is `no`). */
+export declare function decisionAllowsSend(taskContent: string): boolean;
+/** Block reason for one decision-worker bash command, or `null` when allowed.
+ *
+ * Splits on the shell control operators (`&&`, `||`, `;`, `|`, newline) so a
+ * chained write (`rg x && rm -rf y`) cannot hide behind an allowed prefix, and
+ * refuses redirections/known mutators outright (P1: for this role a false
+ * block costs one retry, a miss writes outside the books dir).
+ *
+ * `mw decide book new` is allowed on top of the card's read-only list because
+ * the prompt's FIRST step is that scaffold; its `--out` must stay inside
+ * `evidence/books/**` and the no-`--out` shape only prints to stdout. */
+export declare function decisionBashBlockReason(command: string, allowSend: boolean): string | null;
+/** Is this `worker_file` target inside the decision book directory?
+ *
+ * Accepts both spellings the tool documents: `evidence/books/<f>` (taskDir
+ * relative) and `.agenticdoc/<key>/evidence/books/<f>`. Everything else — the
+ * broader `<key>/evidence/**` face, `progress.md`, a source file — is refused
+ * (W8 requirement 3: the write face narrows to the books dir). */
+export declare function decisionWorkerFilePathAllowed(file: string): boolean;
 /** Checkpoint self-assessment steer text, split by role (D-104/VC-004).
  * - `hasWriteTools === true`: the pre-change wording byte for byte — the
  *   agent appends its own CKPT line to progress.md with its write tool.
@@ -217,6 +251,14 @@ interface TaskMeta {
     /** AC-010/T-12: structure of the C2 contract markers read back from this
      * task book (see {@link writeSurfaceMarkerState}). */
     writeSurfaceMarker: WriteSurfaceMarkerState;
+    /** T-04b/D-002: the `<!-- mw-claims: v1 -->` block T-02 injects into task.md
+     * (the settle-time claim contract; the mutable card file is never re-read).
+     * `undefined` when the block is absent — the zero-branch legacy path (AC-007:
+     * a claims-free book keeps `finishSuccess` byte-identical). Present-but-empty
+     * stays `[]` on purpose: the block exists, so the run DOES carry a claim
+     * contract whose claims all failed to parse (the count is then 0, never a
+     * silent "no claims"). */
+    claims?: Claim[];
 }
 /** Structure of the C2 write-surface contract markers in a task book
  * (AC-010/T-12). The producer is `pm/ui-bridge.ts::applyWriteSurfaceContract`
@@ -238,6 +280,77 @@ interface TaskMeta {
 export type WriteSurfaceMarkerState = "absent" | "ok" | "malformed";
 export declare function writeSurfaceMarkerState(content: string): WriteSurfaceMarkerState;
 export declare function parseTaskMd(taskPath: string): TaskMeta;
+/** Share of `unverified` rows above which the run did not settle its claim
+ * contract (AC-008 ②). `>` — the boundary itself passes. */
+export declare const CLAIM_UNVERIFIED_MAX_DEFAULT = 0.4;
+/** ... except for the review role, which legitimately hits the no-bash wall
+ * (RQ-3 §4 B-2: all 46 corpus review units only carry read/find/grep/ls). */
+export declare const CLAIM_UNVERIFIED_MAX_REVIEW = 0.6;
+/** One `run.json` `claims` subobject (design §3.4). `total` is the card's claim
+ * count; the three verdict counters are the rows that settled against it; and
+ * `tokens: null` is the contract's "not attributable" value (AC-005b: the
+ * worker process cannot split LLM usage per claim — the Python side joins the
+ * session ledger, and a made-up number would corrupt `tokens_per_closed_claim`).
+ * T-05's `readRunClaims` reads exactly these six keys (absent key = no claims). */
+export interface ClaimCounts {
+    total: number;
+    closed: number;
+    partial: number;
+    unverified: number;
+    /** `[FLOW] tool_call` read-class count (D-008: only allowed calls). */
+    fetches: number;
+    tokens: number | null;
+}
+/** Per-run claim counters: the card's claim set against the product's `## 断言裁决`
+ * table (first row per id wins, same as `claimCoverage`). A claims-free run has
+ * no counters to write at all — the caller guards on `meta.claims === undefined`
+ * rather than fabricating zeroes (T-05: an absent key means "not measured"). */
+export declare function claimCounts(claims: Claim[], table: VerdictTable, fetches: number): ClaimCounts;
+/** The `[CLAIMS]` trace row (design D-004): a line of its own, NEVER folded into
+ * `[END]` — both sides of `[END]` are anchored regexes (`shared/heartbeat.ts`,
+ * `packages/multi-workers/mw_common.py`). Field order is frozen here and by
+ * `usage.py::_CLAIMS_LINE_RE` (T-05). */
+export declare function formatClaimsTraceLine(counts: ClaimCounts, now?: Date): string;
+/** Append the `[CLAIMS]` row once, lifecycle style (no `[FLOW]` prefix — the line
+ * starts with its own anchor). Best-effort like every other trace anchor: a
+ * diagnostic append must never change the terminal verdict. */
+export declare function appendClaimsTraceLine(taskKey: string, agenticdocRoot: string, counts: ClaimCounts): void;
+/** The claim ids named by a gap list (`claim:<id>:<criterion>`), de-duplicated in
+ * emission order. Tokens without an id (`claims:missing-table`,
+ * `claims:unverified-ratio:…`) are skipped: their own name is the diagnostic. */
+export declare function claimGapIds(gaps: string[]): string[];
+/**
+ * The three AC-008 settlement criteria that need inputs only the worker layer
+ * holds (the role, the run clock, the trace read count) — `claimCoverage`'s
+ * per-claim criteria stay in `worker/output-sections.ts` (frozen, T-04a):
+ *
+ *   ② `claims:unverified-ratio:<u>/<n>><limit>%`  too many un-settled claims
+ *      (40%, or 60% for the review role) ⇒ the run must not read as PASS.
+ *   ③ `claims:fetches:<sum>><cap>`               Σ取数 above `min(Σ预算, 30)`.
+ *      `claims:fetches:<sum>>trace:<n>`           Σ取数 above the trace's own
+ *                                                read-class `tool_call` count
+ *                                                (B-6: an upper bound — you
+ *                                                cannot honestly report more
+ *                                                fetches than you performed).
+ *   ⑥ `claim:<id>:carried-from`                 a closed/partial row whose every
+ *      cited file predates this run's task.md and carries no `carried-from:`:
+ *      the previous round's verdict was copied without saying so.
+ *
+ * Never throws. `claims.length === 0` (no contract) returns `[]`, and an unknown
+ * `taskMtimeMs` skips ⑥ rather than guessing a clock.
+ */
+export declare function claimSettlementGaps(opts: {
+    claims: Claim[];
+    table: VerdictTable;
+    /** Task type whose role sets the ② threshold (`roleForTaskType`). */
+    role: string;
+    /** `[FLOW] tool_call` read-class count of this run (D-008). */
+    traceReads: number;
+    /** mtime of this run's task.md — the clock a "fresh" citation must beat. */
+    taskMtimeMs?: number;
+    /** Root the evidence paths resolve against (launcher cwd in production). */
+    projectDir?: string;
+}): string[];
 /** One extracted write target. */
 export interface BashWriteCandidate {
     /** Raw path exactly as written in the command. */
@@ -421,7 +534,12 @@ export interface RagRequiredCheck {
  * `researchDocEvidence`, so there is exactly one line builder.
  */
 export declare function emitRagRequiredMissing(check: RagRequiredCheck): string | null;
-export declare function workerModeActivate(pi: ExtensionAPI): Promise<void>;
+export interface WorkerModeOptions {
+    /** Test seam for the dp3 decision service (production uses the triage
+     * client's `runDecideMw`, which reuses `findMwPy()` + `PYTHON_EXE`). */
+    dp3Runner?: DecideRunner;
+}
+export declare function workerModeActivate(pi: ExtensionAPI, options?: WorkerModeOptions): Promise<void>;
 /** `PI_WORKER_TRIED_MODELS` csv -> ordered, deduped model labels
  * (`provider/model`). The launcher seeds it with the main model and every
  * fallback it moved through, so the list is the audit chain the Exit Reason
@@ -453,5 +571,230 @@ export interface ModelErrChainEntry {
 /** AC-004 exit reason: `model unavailable: tried=<m>(<n>),... last=<err>`. The
  * PM reads the tried chain and the final error text with zero text parsing. */
 export declare function formatModelUnavailableReason(entries: readonly ModelErrChainEntry[], lastError: string): string;
+/** Marker line written into `steer-dp2.md` after a delivered injection. */
+export declare const DP2_CONSUMED_MARKER = "[dp2-consumed";
+/** True when the request file already carries a consumption marker (any run). */
+export declare function hasDp2ConsumedMarker(content: string): boolean;
+/** The injected text of one steer request: the machine request header is a
+ * transport artifact, not a directive, so it is dropped; the directive keeps the
+ * `[mw dp2-narrow]` attribution prefix (added only when it is not there yet).
+ * `undefined` when nothing is left to inject (empty / header-only file) — an
+ * empty steer is not a steer. */
+export declare function formatDp2NarrowSteer(content: string): string | undefined;
+/** Atomically append the consumption marker to the request file. The file stays
+ * the single source of truth for "this steer was already injected", so the
+ * append is a tmp+rename replacement, never a partial write. */
+export declare function appendDp2ConsumedMarker(steerPath: string, content: string, runId: string): boolean;
+/** Registry id of the worker-clarification decision point (`decision_points.py`
+ * `DP_REGISTRY`; AC-011: the TS side only holds ids, never a second registry). */
+export declare const DP3_ID = "dp3-worker-clarify";
+/** `questions_version` of `DP3_ID` (`decision_points._questions_version`). */
+export declare const DP3_QUESTIONS_VERSION = "q-fcbd3847";
+/** Fixed attribution prefix of an injected dp3 answer (DS-7 guardrail). */
+export declare const DP3_ANSWER_PREFIX = "[mw dp3-answer]";
+/** Deterministic-reuse threshold of the local matcher (design Q2.2). Built-in
+ * baseline only: the effective value is derived from the resolved
+ * `min_confidence` by {@link dp3Thresholds} (0.75 = 0.7 + 0.05). */
+export declare const DP3_MIN_MATCH_SCORE = 0.75;
+/** Below this score a local match is not even a reuse candidate. */
+export declare const DP3_BORDERLINE_MATCH_SCORE = 0.6;
+/** Built-in baseline of the confidence gate (AC-016 layer 3). The effective
+ * value is `resolveDecidePolicy(DP3_ID, projectDir).minConfidence`. */
+export declare const DP3_MIN_CONFIDENCE = 0.7;
+/** `answerable` (an `noul` probability) below this is a refusal, not an answer:
+ * the model reports it cannot settle the question from the sent candidates.
+ * Built-in baseline only; derived by {@link dp3Thresholds} (0.7 - 0.2 = 0.5). */
+export declare const DP3_ANSWERABLE_MIN = 0.5;
+/** The three dp3 thresholds as a function of the effective `min_confidence`.
+ *
+ * D-050: the decision STRUCTURE does not change — only the numbers are read
+ * from policy instead of the hard-coded constants. The two satellite gates keep
+ * their historic margin to the confidence gate, so the built-in layer (0.7)
+ * reproduces the pre-AC-016 values exactly: 0.75 / 0.7 / 0.5. */
+export declare function dp3Thresholds(minConfidence: number): {
+    minMatchScore: number;
+    minConfidence: number;
+    answerableMin: number;
+};
+/** Hard cap on the local candidate list (`local_candidates`, 1..5). */
+export declare const DP3_CANDIDATE_LIMIT = 5;
+/** Client-side canonical state budget (spec §5.4). */
+export declare const DP3_MAX_STATE_BYTES = 2000;
+/** Question excerpt carried in the injected steer (L2 stays local). */
+export declare const DP3_STEER_QUESTION_MAX = 300;
+/** Three-way split (spec §4.1): 3a fact, 3b intent, 3c already-answered. */
+export type Dp3Sub = "3a" | "3b" | "3c";
+/** Failure vocabulary (AC-005, the four-value set from design Q4) plus
+ * `input-oversize` (D-028: a REFUSAL, not a degradation — the canonical state is
+ * complete, it just cannot be sent, so it must not read as `input-incomplete`).
+ *
+ * This is a worker-local SUBSET of the single shared `escalated_reason`
+ * vocabulary (design D-030 / `decision_points.ESCALATED_REASONS`), which already
+ * contains `input-oversize`. Nothing else in TS shares this union
+ * (`triage-client.ts` and `decision-tool.ts` type the field as `string`), so the
+ * member narrows nothing and widens no outward contract: the legacy
+ * `mw decide run` `reason` field keeps its frozen 8-value transport set, where
+ * `mw.py` maps `input-oversize` onto `budget-exhausted`. */
+export type Dp3EscalatedReason = "disabled" | "unavailable" | "low-confidence" | "input-incomplete" | "input-oversize";
+/** Effective dp3 authorization (`decide-points.json`) + transport gate
+ * (`.mw/decide.json`). A missing authorization file/row is the registry default
+ * (P2 → enabled, auto); a missing/invalid transport file is a complete bypass. */
+export interface Dp3Policy {
+    enabled: boolean;
+    /** Advisory mode for the ZERO-SPAWN paths (3b/3c never reach Python) and for
+     * the metric row. A dp3a answer carries Python's own `mode` in the payload and
+     * the settle hook prefers THAT (D-036). */
+    mode: "auto" | "suggest";
+    /** Effective `min_confidence` (AC-016): per-dp row > decide.json > 0.7. */
+    minConfidence: number;
+    /** Effective `max_questions` (AC-016). The dp3 question set comes from the
+     * registry, so this is carried for audit/parity, not for shaping a prompt. */
+    maxQuestions: number;
+    /** Effective `timeout_s` (AC-016): default child budget when the caller has
+     * no explicit `timeoutMs` override. */
+    timeoutS: number;
+}
+/** Read the dp3 policy fail-soft (AC-001). The transport gate is authoritative:
+ * without `.mw/decide.json` (`enabled === true`) dp3 does nothing at all, which
+ * is what keeps the closed state byte-identical to the pre-dp3 worker.
+ *
+ * NON-AUTHORITATIVE (D-036): `enabled`/`note` pre-read from
+ * `.mw/decide-points.json` exists ONLY to avoid paying for a `mw decide run`
+ * child that Python would reject. The authorization verdict belongs to
+ * `decision_points.decide_for`; if this mirror disagrees, PYTHON WINS. */
+export declare function readDp3Policy(projectDir: string): Dp3Policy;
+/** One candidate source of an already-stated answer, already bounded. */
+export interface Dp3ReuseSource {
+    label: string;
+    text: string;
+}
+/** Bounded local reuse corpus, in priority order (design Q2.2): own dispatch
+ * card → sibling cards → goal.md → pm-state `## Decisions`. The session-history
+ * level is deliberately absent (L2: user quotes never leave the machine, and
+ * this card has no session reader). */
+export declare function readDp3ReuseSources(input: {
+    projectDir: string;
+    taskDir: string;
+    taskPath: string;
+    taskContent: string;
+    trueRoot: string;
+    keyDir: string;
+    siblingLimit?: number;
+    maxBytes?: number;
+}): Dp3ReuseSource[];
+/** Content tokens for the Jaccard score: latin words verbatim + CJK bigrams
+ * (a whitespace split cannot tokenise Chinese prose). */
+export declare function dp3ContentTokens(text: string): Set<string>;
+/** Exact referents (paths / identifiers / commands / quoted errors) from a
+ * question — the second 3c condition besides the Jaccard score. */
+export declare function dp3QuestionReferents(text: string): string[];
+/** One local reuse hit. `source` is `<path>:<line>`; `quote` is the raw line. */
+export interface Dp3ReuseMatch {
+    source: string;
+    quote: string;
+    score: number;
+}
+/** Deterministic 3c matcher: the best line of each source in priority order,
+ * requiring a shared exact referent AND a content-word Jaccard >= 0.6. The
+ * first source that clears the effective match threshold (default
+ * {@link DP3_MIN_MATCH_SCORE}, derived from `min_confidence` by
+ * {@link dp3Thresholds}) wins (priority order); otherwise the best borderline
+ * hit is returned for the caller to escalate. */
+export declare function matchDp3Reuse(question: string, sources: readonly Dp3ReuseSource[], minMatchScore?: number): Dp3ReuseMatch | undefined;
+/** A fact answer must cite `path:line` (design Q2.2 3a). */
+export declare const DP3_CITATION_RE: RegExp;
+export interface Dp3DecisionInput {
+    projectDir: string;
+    taskKey: string;
+    /** `nc<N>` index of this clarification event inside the run (1-based). */
+    ncIndex: number;
+    key: string;
+    phase: string;
+    taskType: "coding" | "research" | "review";
+    risk: "low" | "mid" | "high";
+    riskSource: "machine" | "pm-label";
+    question: string;
+    harnessDetail: string;
+    taskDir: string;
+    taskPath: string;
+    taskContent: string;
+    trueRoot: string;
+    keyDir: string;
+    policy: Dp3Policy;
+    /** Test seam; production uses the triage client's `runDecideMw`. */
+    runner?: DecideRunner;
+    timeoutMs?: number;
+}
+/** Classification + (for 3a) one decision-service call. Never throws. */
+export type Dp3Decision = {
+    kind: "answer";
+    sub: "3a" | "3c";
+    answer: string;
+    source?: string;
+    decisionId: string;
+    confidence: number | null;
+    confidenceSource: string;
+    /** Effective mode for THIS answer: the child's `payload.mode` when Python
+     * answered (D-036: mode is an authorization OUTPUT), otherwise the local
+     * `policy.mode` — the 3c path never spawns, so the mirror is all there is. */
+    mode: "auto" | "suggest";
+    /** D-041: set by the CONSUMING side only — the settle hook that actually
+     * injected the `[mw dp3-answer]` steer. The classifier never fills it: an
+     * `answer` from the child is a proposal, not an executed action. */
+    acted?: boolean;
+    /** FIX-J: which local candidate was consumed and from where. The frozen
+     * `[DECIDE]` row keeps its shape; this rides its own trace line. */
+    detail?: string;
+} | {
+    kind: "escalate";
+    sub?: Dp3Sub;
+    reason: Dp3EscalatedReason | "intent";
+    detail: string;
+    decisionId: string;
+};
+/** Map an arbitrary worker role onto the dp3 `task_type` enum. A role outside
+ * the enum keeps its nature (write tools → coding, else research) instead of
+ * refusing the decision outright. */
+export declare function dp3TaskType(type: string): "coding" | "research" | "review";
+/** One locally generated dp3 candidate. `label` is the bounded repo-relative
+ * path that rides `local_candidates`; `path` is the absolute file the answer is
+ * quoted from (the child never supplies either). */
+export interface Dp3Candidate {
+    id: string;
+    label: string;
+    path: string;
+}
+/** Question tokens of the candidate matcher (FIX-J §2): ASCII words of >= 3
+ * chars and CJK runs of >= 2 chars, lowercased, stopwords dropped, first-seen
+ * order (so the line scan below is deterministic). */
+export declare function dp3CandidateTokens(question: string): string[];
+/** Deterministic local candidate list for one dp3 question (FIX-J §2): `c1` is
+ * always the convention evidence file of the task type, `c2..c5` are the best
+ * name matches under the four roots, ordered by (hit count desc, path asc). */
+export declare function buildDp3Candidates(input: Dp3DecisionInput, question: string): Dp3Candidate[];
+/** Decide one clarification (never throws; the caller owns the trace + steer). */
+export declare function decideDp3WorkerClarify(input: Dp3DecisionInput): Dp3Decision;
+/** The injected steer (DS-7: machine-attributable, never impersonates a human).
+ * The original question is quoted, never rewritten. */
+export declare function formatDp3AnswerSteer(decision: {
+    sub: "3a" | "3c";
+    answer: string;
+    source?: string;
+    decisionId: string;
+}, question: string): string;
+/** One unified dp3 metric row. Key order is FROZEN — the offline statistics
+ * parse `sub`/`acted`/`escalated_reason` and reconcile `nc_raw` against
+ * `nc_human + acted` (Q3.3). `sub=-` means no classifier ran (budget spent). */
+export declare function formatDp3TraceLine(input: {
+    triggerId: string;
+    sub?: Dp3Sub;
+    acted: boolean;
+    mode: "auto" | "suggest";
+    escalatedReason: Dp3EscalatedReason | "intent" | "-";
+    decisionId: string;
+    ncRaw: number;
+    ncHuman: number;
+    now?: Date;
+}): string;
 export {};
 //# sourceMappingURL=worker-mode.d.ts.map

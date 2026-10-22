@@ -434,11 +434,29 @@ export interface KeyRounds {
     l3: RoundBudget;
     retry: RoundBudget;
 }
+/** Per-key claim coverage (claim-driven-review T-05, design §3.4). Summed over
+ * the key's worker `run.json` files that carry a `claims` subobject; the
+ * subobject itself is written by the launcher (out of scope for T-05), so a
+ * run without one contributes nothing and a key without any measured run has
+ * no `claims` view at all. */
+export interface ClaimMetricsView {
+    total: number;
+    closed: number;
+    partial: number;
+    unverified: number;
+    fetches: number;
+    /** `Σtokens / Σclosed`; `"n/a"` when a contributing run has no attributable
+     * tokens or when `closed === 0` — never a fabricated `0`. */
+    tokensPerClosedClaim: number | "n/a";
+}
 export interface StageKeyView {
     key: string;
     phase: string;
     state: string;
     rounds: KeyRounds;
+    /** Optional so every pre-T-05 model shape (and every exact `toEqual` on it)
+     * stays valid; set only when a run.json actually carries claims. */
+    claims?: ClaimMetricsView;
 }
 export interface StageView {
     current: number;

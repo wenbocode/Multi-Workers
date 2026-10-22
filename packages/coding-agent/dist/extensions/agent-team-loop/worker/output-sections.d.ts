@@ -42,7 +42,13 @@
  * Migration: this module only answers a question; the caller decides when to
  * ask it (`worker/output-writer.ts`, `worker/worker-mode.ts`). Historical task
  * books without a header `type:` are never re-judged (P-07/P-09).
+ *
+ * The T-04a verdict-table half at the bottom is the same shape of contract for
+ * the L3 layer: `parseVerdictTable` reads the agent-authored `## 断言裁决`
+ * table and `claimCoverage` judges it against the card's claim set. Both are
+ * pure (plus `statSync`/line counts for evidence refs) and never throw.
  */
+import { type Claim } from "../shared/dispatch-card.ts";
 /** Sections every role's product must carry (design §3.2). */
 export declare const RECOVERY_SECTIONS: readonly ["结论", "证据", "残留与未验证", "上下文来源"];
 /** Extra section a role must add on top of `RECOVERY_SECTIONS`. Roles absent
@@ -108,4 +114,68 @@ export interface RecoveryVerdict {
  * Never throws: any string (including empty) yields a verdict.
  */
 export declare function checkRecovery(text: string, type: string | undefined): RecoveryVerdict;
+/** One parsed `## 断言裁决` row, all cells trimmed (never normalized away: the
+ * raw cell text is what the diagnostics quote). */
+export interface VerdictRow {
+    /** `C-01` / `C-01.3` id, upper-cased. */
+    id: string;
+    /** `类型` cell, lower-cased, `""` when the column is absent. */
+    type: string;
+    verdict: string;
+    finding: string;
+    evidence: string;
+    fetches: string;
+    reason: string;
+    /** 1-based line of the row in the parsed text (diagnostics only). */
+    row: number;
+}
+/** Result of {@link parseVerdictTable}. Never throws (P-048). */
+export interface VerdictTable {
+    /** The `## 断言裁决` H2 was seen outside a fence. */
+    present: boolean;
+    rows: VerdictRow[];
+    /** `claim:<row>:unparsable` findings, row = 1-based source line. */
+    errors: string[];
+}
+/**
+ * Parse the agent-authored `## 断言裁决` table (RQ-3 §5.1/§5.6).
+ *
+ * Tolerance is the contract (P-048): the heading may carry a suffix, column
+ * order is free, extra columns are ignored, header words take both scripts,
+ * full-width `：｜`/digits fold to ASCII, and fenced code blocks contribute
+ * nothing (the same fence state machine `h2Headings` uses). A row whose
+ * `claim` cell is not a claim id is reported as `claim:<row>:unparsable` and
+ * skipped; this function never throws.
+ */
+export declare function parseVerdictTable(text: string): VerdictTable;
+/** Options of {@link claimCoverage}. `projectDir` is the root the evidence path
+ * refs resolve against (the launcher's cwd in production, a fixture in tests). */
+export interface ClaimCoverageOptions {
+    projectDir?: string;
+}
+/**
+ * Judge the `## 断言裁决` table against the card's claim set (RQ-3 §5, B-1/B-4/
+ * B-10). Every returned string is one frozen criterion; the string IS the
+ * diagnostic, so no second vocabulary is introduced.
+ *
+ * Criteria (in emission order):
+ *   `claims:missing-table`            no `## 断言裁决` H2 at all
+ *   `claim:<id>:missing-row`          a card claim the table never adjudicates
+ *   `claims:extra-row:<id>`           a table row the card never declared
+ *   `claim:<id>:verdict`              `裁决` outside closed|partial|unverified
+ *   `claim:<id>:finding`              `判定` outside 成立|不成立|无法判定
+ *   `claim:<id>:verdict-finding`      the two columns disagree (§5.1 mapping)
+ *   `claim:<id>:evidence`             no evidence for closed/partial, or a ref
+ *                                     that is unparsable / missing on disk /
+ *                                     past EOF / wider than 200 lines
+ *   `claim:<id>:reason`               `unverified` without a 7-word reason
+ *   `claim:<id>:self-evidence`        every ref is `report*`/output/progress/task
+ *   `claim:<id>:struct-held`          a `struct` row counted as `closed` (B-10)
+ *   `claim:<id>:budget`               `取数` not a count, or > min(Σ预算, 30)
+ *   `claim:<id>:tautology`            T-01's B-5 tautology judge fired
+ *
+ * Never throws. A claim-free card returns `[]` (nothing to adjudicate), and a
+ * table-only run without claims is likewise not judged.
+ */
+export declare function claimCoverage(claims: Claim[], table: VerdictTable, opts?: ClaimCoverageOptions): string[];
 //# sourceMappingURL=output-sections.d.ts.map

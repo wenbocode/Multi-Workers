@@ -21,7 +21,7 @@ export declare const DISPATCH_ROLE_BY_TYPE: Record<string, string>;
  * Every entry has a tool allowlist entry in worker-mode.ts. `rag-research` is
  * PM-dispatched here; the conductor refuses it on the Python side
  * (`conductor_dispatchable=False` in autopilot/dispatch.py). */
-export declare const DISPATCHABLE_TYPES: readonly ["coding", "review", "research", "rag-research", "vision"];
+export declare const DISPATCHABLE_TYPES: readonly ["coding", "review", "research", "rag-research", "vision", "decide_prepare"];
 /** Role for a declared task type (unknown -> coding, same as the Python chain). */
 export declare function roleForTaskType(taskType: string): string;
 /** Record the current window model for the launcher's inheritance chain
