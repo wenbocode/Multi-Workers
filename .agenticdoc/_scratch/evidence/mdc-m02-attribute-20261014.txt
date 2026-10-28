@@ -1,0 +1,187 @@
+=== test_autopilot_verdict_freshness.py: mentions of conductor/advance/report ===
+8: module pins the fixed contract on the *real* conductor chain:
+11: approved stalled gate -> extra round -> meets) refreshes ``l3-verdict.txt``
+12: to ``meets`` and ``l3-report.md`` to the *terminal* round's bytes;
+21: Fixture harness is imported from ``test_autopilot_conductor_exec`` (never
+39: import test_autopilot_conductor_exec as harness  # noqa: E402
+40: from autopilot import conductor, roadmap, state  # noqa: E402
+44: # T-001 left-end anchors (independent evidence, not imported from conductor).
+61: "last_round_verdict": "below",
+75: monkeypatch.setattr(conductor, "_iso_now", lambda: _FROZEN_CLOCK)
+78: def _below_round(attempt: int) -> str:
+79: """A distinct ``below`` report per L3 round: the live accident key's a1/a2
+81: does / does not come from a specific round (VC-002/VC-004)."""
+82: return harness._L3_BELOW + f"\n<!-- round a{attempt} -->\n"
+86: return sorted(conductor.gates_dir(project).glob("gate-*.md"))
+106: text = conductor._closure_dossier_md(project, rm.stages[0])
+140: """Independent mirror of conductor._md_section (deliberately NOT imported)."""
+154: """Independent mirror of conductor._parse_l3_output (NOT imported)."""
+168: """(persisted, last_round_verdict, stale) for the real reverse anchor."""
+170: rounds: dict[int, pathlib.Path] = {}
+175: rounds[int(match.group(1))] = sub / "output.md"
+176: assert rounds, f"no L3 rounds for {_REVERSE_KEY}"
+177: verdict_by_round = {n: _mirror_parse_l3_output(p) for n, p in rounds.items()}
+178: last_round = max(rounds)
+179: last_verdict = verdict_by_round[last_round]
+186: report_sha = _sha256_file(report)
+187: report_matches = [
+188: n for n, path in rounds.items() if _sha256_file(path) == report_sha
+191: assert last_round in report_matches, "latest report is not from the last round"
+195: # ── conductor source region hashing (PLAN PF-2 basis, same as T-001) ─────────
+209: def _conductor_region_sha(prefix: str) -> str:
+210: text = pathlib.Path(conductor.__file__).read_text(encoding="utf-8")
+218: ) -> tuple[pathlib.Path, conductor.ConductorState, pathlib.Path, list]:
+222: fake_advance, calls = harness._fake_advance_factory(project)
+223: monkeypatch.setattr(conductor.advance, "advance", fake_advance)
+227: assert conductor.tick(project, st) == "ok"           # l3-a1
+228: harness._worker_output(project, "k1", "ap-k1-l3-a1", _below_round(1))
+230: assert conductor.tick(project, st) == "ok"           # repair-a1
+235: assert conductor.tick(project, st) == "ok"           # l3-a2
+236: harness._worker_output(project, "k1", "ap-k1-l3-a2", _below_round(2))
+238: assert conductor.tick(project, st) == "ok"           # stall at limit 2
+242: def _resume_and_run_extra_round(
+244: st: conductor.ConductorState,
+249: extra repair + L3 round with ``a3_text`` as the report."""
+253: assert conductor._resume_credits(project, "k1") == 1
+254: assert conductor.tick(project, st) == "ok"           # resume + extra repair
+256: assert len(repair_rows) == 1, repair_rows            # one extra round only
+258: assert conductor.tick(project, st) == "ok"           # l3-a3
+264: assert conductor.tick(project, st) == "ok"           # terminal event
+278: _resume_and_run_extra_round(project, st, key_dir, harness._L3_MEETS)
+279: verdict, report = conductor._l3_verdict(key_dir)
+294: def test_report_matches_terminal_round_and_dossier_row(
+299: a3_out = _resume_and_run_extra_round(project, st, key_dir, harness._L3_MEETS)
+302: report_sha = _sha256_file(report)
+303: eq_a3 = report_sha == _sha256_file(a3_out)
+304: eq_a2 = report_sha == _sha256_file(a2_out)
+308: "VC-002", report_sha_eq_a3=_b(eq_a3), report_sha_eq_a2=_b(eq_a2),
+336: assert anchor["last_round_verdict"] == _REVERSE_EXPECTED["last_round_verdict"]
+339: anchor["persisted_verdict"], anchor["last_round_verdict"], anchor["stale"]
+358: a3_out = _resume_and_run_extra_round(project, st, key_dir, _below_round(3))
+361: report_round_a3 = _sha256_file(report) == _sha256_file(a3_out)
+368: "VC-004", verdict=verdict, report_round="a3",
+369: report_sha_match=_b(report_round_a3), upgraded=_b(upgraded),
+370: ok=_b(verdict == "below" and report_round_a3 and not upgraded
+373: assert verdict == "below" and report_round_a3 and not upgraded and unchanged_mtime
+389: report_sha = _sha256_file(report)
+390: sha_changes = mtime_changes = report_changes = 0
+392: assert conductor.tick(project, st) == "ok"
+395: report_changes += int(_sha256_file(report) != report_sha)
+400: conductor._persist_l3_verdict(key_dir, "below", a2_out, st=None)
+406: conductor._persist_l3_verdict(key_dir, "meets", a2_out, st=None)
+412: ok = not any((sha_changes, mtime_changes, report_changes,
+416: verdict_mtime_changes=mtime_changes, report_sha_changes=report_changes,
+429: the *same* value after ``strip().lower()``, so neither a conductor tick nor
+439: assert conductor.tick(project, st) == "ok"
+442: conductor._persist_l3_verdict(key_dir, "meets", a2_out, st=None)
+455: fake_advance, _calls = harness._fake_advance_factory(project)
+456: monkeypatch.setattr(conductor.advance, "advance", fake_advance)
+460: assert conductor.tick(project, st) == "ok"
+466: assert conductor.tick(project, st) == "ok"           # repair-a1
+468: assert conductor.tick(project, st) == "ok"           # l3-a2
+475: assert conductor.tick(project, st) == "ok"           # meets -> degrade -> stall
+518: monkeypatch.setattr(conductor, "_iso_now", lambda: _FROZEN_CLOCK)
+520: conductor.state, "read_key_states", lambda project_root, self_id="": {}
+522: raw = conductor._closure_dossier_md(fixture_root, stage)
+560: verdict, report = conductor._l3_verdict(key_dir)
+566: src = tmp_path / "round.md"
+567: src.write_bytes(b"# round\n\n## Achieved\n\n" + b"x" * 250 + b"\n")
+568: conductor._persist_l3_verdict(key_dir, "MAYBE", src, st=None)
+582: def test_report_source_missing_keeps_existing_report(
+588: src = tmp_path / "round-a7.md"
+589: src.write_bytes(b"# round a7\n\n## Achieved\n\nok\n")
+590: conductor._persist_l3_verdict(key_dir, "below", src, st=None)
+596: missing = tmp_path / "no-verdict-round" / "output.md"
+597: conductor._persist_l3_verdict(key_dir, "below", missing, st=None)
+615: rules += int(conductor._parse_l3_output(project, "k1", 1) == "below")
+622: rules += int(conductor._parse_l3_output(project, "k1", 1) == "below")
+629: rules += int(conductor._parse_l3_output(project, "k1", 1) == "below")
+632: rules += int(conductor._parse_l3_output(project, "k1", 1) == "meets")
+634: parse_sha = _conductor_region_sha("def _parse_l3_output(")
+635: md_sha = _conductor_region_sha("def _md_section(")
+
+=== failing test region 150-196 ===
+150:     return "\n".join(out)
+151: 
+152: 
+153: def _mirror_parse_l3_output(output: pathlib.Path) -> str:
+154:     """Independent mirror of conductor._parse_l3_output (NOT imported)."""
+155:     if not output.is_file():
+156:         return "below"
+157:     text = output.read_text(encoding="utf-8", errors="replace")
+158:     qg = _mirror_md_section(text, "## Quality Gate Report")
+159:     achieved = _mirror_md_section(text, "## Achieved")
+160:     if qg is None or achieved is None:
+161:         return "below"
+162:     if re.search(r"\|\s*FAIL\b", qg):
+163:         return "below"
+164:     return "meets"
+165: 
+166: 
+167: def _mirror_recompute_reverse_key(root: pathlib.Path) -> tuple[str, str, bool]:
+168:     """(persisted, last_round_verdict, stale) for the real reverse anchor."""
+169:     key_dir = root / ".agenticdoc" / _REVERSE_KEY
+170:     rounds: dict[int, pathlib.Path] = {}
+171:     pattern = re.compile(r"^ap-" + re.escape(_REVERSE_KEY) + r"-l3-a(\d+)$")
+172:     for sub in sorted((key_dir / "workers").iterdir()):
+173:         match = pattern.match(sub.name)
+174:         if match and (sub / "output.md").is_file():
+175:             rounds[int(match.group(1))] = sub / "output.md"
+176:     assert rounds, f"no L3 rounds for {_REVERSE_KEY}"
+177:     verdict_by_round = {n: _mirror_parse_l3_output(p) for n, p in rounds.items()}
+178:     last_round = max(rounds)
+179:     last_verdict = verdict_by_round[last_round]
+180:     verdict_file = key_dir / "l3-verdict.txt"
+181:     assert verdict_file.is_file()
+182:     persisted = verdict_file.read_text(encoding="utf-8").strip().lower()
+183:     assert persisted in ("meets", "below")
+184:     report = key_dir / "l3-report.md"
+185:     assert report.is_file()
+186:     report_sha = _sha256_file(report)
+187:     report_matches = [
+188:         n for n, path in rounds.items() if _sha256_file(path) == report_sha
+189:     ]
+190:     stale = persisted != last_verdict
+191:     assert last_round in report_matches, "latest report is not from the last round"
+192:     return persisted, last_verdict, stale
+193: 
+194: 
+195: # ── conductor source region hashing (PLAN PF-2 basis, same as T-001) ─────────
+196: 
+
+=== conductor.py diff hunk headers ===
+@@ -54 +54 @@ import mw_common  # noqa: E402  (path bootstrapped above)
+@@ -640,0 +641,8 @@ def orchestrate(project_root: pathlib.Path, st: ConductorState) -> None:
+@@ -1535,0 +1544,21 @@ def _advance_failure_streak(
+@@ -1543,0 +1573,2 @@ def _record_advance_result(
+@@ -1553,0 +1585,9 @@ def _record_advance_result(
+@@ -1555 +1595 @@ def _record_advance_result(
+@@ -1558 +1598,3 @@ def _record_advance_result(
+@@ -1621 +1663,3 @@ def _advance_key(
+@@ -1623 +1667 @@ def _advance_key(
+@@ -1717 +1761,5 @@ def _plan_text(key_dir: pathlib.Path) -> str:
+@@ -1719 +1767,18 @@ def _plan_task_order(stems: list[str], plan: str) -> list[str]:
+@@ -1727,0 +1793,147 @@ def _plan_task_order(stems: list[str], plan: str) -> list[str]:
+@@ -1745 +1957 @@ def execute_loop(
+@@ -1750,3 +1962,12 @@ def execute_loop(
+@@ -1760,0 +1982 @@ def execute_loop(
+@@ -1765 +1987,72 @@ def execute_loop(
+@@ -1767,5 +2059,0 @@ def execute_loop(
+@@ -1780,6 +2068 @@ def execute_loop(
+@@ -1793,0 +2077,6 @@ def execute_loop(
+@@ -1800,6 +2089,9 @@ def execute_loop(
+@@ -2749 +3041 @@ def _done_transaction(
+@@ -2754 +3046 @@ def _done_transaction(
+@@ -3109,0 +3402,41 @@ def _emit_roadmap_warnings(
+
+diff lines=422 adds=364 dels=31
+
+=== diff: added lines touching timeline/event/in-flight/_is_in_flight ===
++        st.timeline.append("advance", key=key, detail=f"{edge} exit=0", data=payload)
++    st.timeline.append(
++        problems.append("unreadable task card: dependency data unavailable")
++        if any(_is_in_flight(r) for r in _family_rows(rows, key, stem))
++            st.timeline.append(
+
+=== diff: any NEW event name string in append( ... ) first arg ===
+event names introduced/kept in added lines: advance

@@ -1,0 +1,84 @@
+--- before/packages/multi-workers/scripts/build_decide_cases.py
++++ after/packages/multi-workers/scripts/build_decide_cases.py
+@@ -94,11 +94,11 @@
+ ASSET_DIR = HERE.parent.parent
+ DEFAULT_OUT_DIR = ASSET_DIR / "decide_cases"
+ 
+-#: ``preparation.prepared_at`` of the shipped case set: the synthesis timestamp,
+-#: fixed so the shipped bytes are deterministic (a wall-clock value would make
+-#: every regeneration a drift). It says when these synthetic cases were written,
+-#: not when a real decision was prepared.
+-CASE_PREPARED_AT = "2026-10-27T20:56:00+00:00"
++#: ``preparation.prepared_at`` of the shipped case set: the recorded authoring
++#: instant of this synthetic set (UTC, explicit ``+00:00``; frozen, never a per-run
++#: clock read) so regeneration stays byte-identical. See the T05-R2 evidence
++#: record; it is not evidence of a real preparation or authorization.
++CASE_PREPARED_AT = "2026-10-27T13:45:28+00:00"
+ 
+ #: ``meta`` of the shipped case set: local identity only (never sent). The cases
+ #: are owned by this key/task and carry their own synthetic logical id; the
+@@ -635,7 +635,7 @@
+ 
+ 
+ def _preparation(dp: str) -> dict[str, object]:
+-    """The PM-prepared basis catalog plus the deterministic prepared_at."""
++    """The PM-prepared basis catalog plus the recorded, frozen prepared_at."""
+     catalog = BASIS_CATALOG.get(dp)
+     if not catalog:
+         raise SystemExit(f"build_decide_cases: no prepared basis for {dp!r}")
+@@ -816,6 +816,35 @@
+ def render_case(case: Mapping[str, object]) -> str:
+     """Canonical on-disk form (stable key order, UTF-8, trailing newline)."""
+     return json.dumps(case, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
++
++
++#: The shipped blank template (``{"books": {...}}``): one native scaffold per
++#: active entry. It is a *skeleton*, never a prepared request.
++TEMPLATE_PATH = ASSET_DIR / "decide_book_template.json"
++
++
++def build_template() -> dict[str, object]:
++    """The blank eight-entry template, derived from the native scaffold.
++
++    ``decision_book.scaffold_book`` is the same generator the observation seam
++    uses, so the template cannot drift into a second hand-kept shape. Every book
++    stays a skeleton: placeholder material/preparation/evidence and **no**
++    ``meta`` - a local identity is a real producer's fact, not a template's.
++    """
++    return {"books": {dp: decision_book.scaffold_book(dp) for dp in CASE_IDS}}
++
++
++def render_template(template: Mapping[str, object] | None = None) -> str:
++    """Canonical on-disk form of the template (same rules as a case file)."""
++    body = build_template() if template is None else template
++    return json.dumps(body, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
++
++
++def write_template(out: pathlib.Path | str = TEMPLATE_PATH) -> pathlib.Path:
++    """Write the blank template (offline, deterministic); returns its path."""
++    target = pathlib.Path(out)
++    target.write_text(render_template(), encoding="utf-8", newline="\n")
++    return target
+ 
+ 
+ def write_cases(out_dir: pathlib.Path | str = DEFAULT_OUT_DIR) -> list[pathlib.Path]:
+@@ -885,11 +914,19 @@
+         help="output directory (default: the shipped packages/multi-workers/decide_cases)",
+     )
+     parser.add_argument("--quiet", action="store_true", help="only print the written paths")
++    parser.add_argument(
++        "--template-out",
++        default=None,
++        help="also (re)write the blank eight-entry book template to this path",
++    )
+     args = parser.parse_args(argv)
+     cases = build_cases()
+     written = write_cases(args.out)
+     for path in written:
+         print(f"wrote {path.name} ({path.stat().st_size} bytes)")
++    if args.template_out:
++        template_path = write_template(args.template_out)
++        print(f"wrote {template_path.name} ({template_path.stat().st_size} bytes)")
+     if not args.quiet:
+         print("offline registry-typed validation (no filesystem evidence):")
+         for line in typed_status(cases):

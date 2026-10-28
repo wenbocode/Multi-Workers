@@ -1,0 +1,119 @@
+{
+  "source": "agent-report",
+  "inventory_root": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/implementation-worktree",
+  "before_file_count": 1891,
+  "after_file_count": 1891,
+  "changed": [
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_book_template.json",
+      "before_sha256": "755253b61429271b4eb1fc5cb22cc2fb4e77a7fce07e7a67aa111dd896640df2",
+      "after_sha256": "1cde56dfc814afd36e2b49d610e25e25be33561b2755ebf373a0f54e3802545e",
+      "after_bytes": 12168,
+      "in_declared_face": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-QG.json",
+      "before_sha256": "43afee46e192b19a08be5a17260d2a088fa9789594066dca730fdc999273d953",
+      "after_sha256": "aacd487769caf4dceab0513b483d73c762da1d0d9914a1bfe3c6d201b1e10eb3",
+      "after_bytes": 2991,
+      "in_declared_face": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-auto.json",
+      "before_sha256": "3b8f1f267ebf50bb88b015efb53c5f7783e07e2763d3a157109060f8d36890a9",
+      "after_sha256": "b80e93a52a7e07947efd9d758e379deb09c5683d4ff7d1f09261da16ec3a75ef",
+      "after_bytes": 4747,
+      "in_declared_face": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-gate-approve.json",
+      "before_sha256": "69e7970144ed7eb2cfd685e035f66872028172d4f594c3cda387b43ce6975ebd",
+      "after_sha256": "269f07c212be2f8a9de6c3f8b7f180588133650890690dcbd1f1074287cfd67a",
+      "after_bytes": 4750,
+      "in_declared_face": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-pm-steer.json",
+      "before_sha256": "814e7abf4172aba7c6828ab4e117f568ede18c5acf90d342640dc2235c744d10",
+      "after_sha256": "6a8b946557d9d381707def7360691126f85e195495163f3ef0ba6bfff9f5967b",
+      "after_bytes": 4089,
+      "in_declared_face": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-route.json",
+      "before_sha256": "6f267c83a2dd704a17b48583d8a2c2380a6cdfdec2534797ab206424a49510d5",
+      "after_sha256": "91569d4d576622da48f8b16995fd3e27da5744a90788600cda1cb46189e5a230",
+      "after_bytes": 3994,
+      "in_declared_face": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-sign-key.json",
+      "before_sha256": "f089deabae264503f096406cf42cd909bddbeab23b80dc13eea194ceaf81e408",
+      "after_sha256": "4462e8163b6aaf6af0251eb3f6b10fd0e9571e4f71b878f791048d4e594fd232",
+      "after_bytes": 3825,
+      "in_declared_face": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-check-task.json",
+      "before_sha256": "1908330e314b3da038c3a0e745504b30885e4717be91ef349c58383fdf3cad9c",
+      "after_sha256": "e88fb31a167335824a5bd6f338ec3e0da9387d8b5e1299ce1de9fd94a1b1f7bb",
+      "after_bytes": 4622,
+      "in_declared_face": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-type.json",
+      "before_sha256": "dfb7ffc915a2c1de248629ec1d0a832c84b5d8a2920abc76427fdef60e6ddbf0",
+      "after_sha256": "f70b5aa699d2636105107d98453852b0b81aa504ec691fdeda79b44fb5247758",
+      "after_bytes": 3079,
+      "in_declared_face": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/scripts/build_decide_cases.py",
+      "before_sha256": "7987113fb597f9c8f5d6b48085292cf1a4f8c150839b2fc12efe5d4d4f6ffa70",
+      "after_sha256": "4ac24aaa1e5e811b5f4019c550dfb96780b977e7545571cf6e3cd47d1f69cc5c",
+      "after_bytes": 41082,
+      "in_declared_face": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_workbench.py",
+      "before_sha256": "0320702d37146bd856b28e2b102fee2245c67fed15c64349fe0f637c2877dc1b",
+      "after_sha256": "d221b9c8930bc9e48d661739843991ec4207c6b69b8ec774004641e9cf8f912c",
+      "after_bytes": 100533,
+      "in_declared_face": true
+    }
+  ],
+  "outside_declared_face": [],
+  "pyc_before": [
+    "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc"
+  ],
+  "pyc_after": [
+    "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc"
+  ],
+  "pyc_unchanged": true
+}

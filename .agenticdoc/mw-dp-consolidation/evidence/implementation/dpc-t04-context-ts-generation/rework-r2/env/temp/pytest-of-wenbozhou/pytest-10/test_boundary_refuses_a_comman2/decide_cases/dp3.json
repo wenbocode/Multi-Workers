@@ -1,0 +1,52 @@
+{
+  "book": {
+    "decision_point": "dp3-worker-clarify",
+    "notes": {
+      "evidence": {
+        "background.constraints_impact": "packages/multi-workers/scripts/build_decide_cases.py:153",
+        "background.current_state": "packages/multi-workers/scripts/build_decide_cases.py:151",
+        "background.decision_reason": "packages/multi-workers/scripts/build_decide_cases.py:152",
+        "background.task_goal": "packages/multi-workers/scripts/build_decide_cases.py:150",
+        "handling_options": "packages/multi-workers/scripts/build_decide_cases.py:158",
+        "question": "packages/multi-workers/scripts/build_decide_cases.py:148"
+      }
+    },
+    "schema_version": 2,
+    "state": {
+      "background": {
+        "constraints_impact": "只能只读展示，不得推断链路，也不得改写历史记录。",
+        "current_state": "详情弹窗只列日志结构，尚未摘录 signoff 行。",
+        "decision_reason": "是否展示会直接影响用户对旧数据状态的解读。",
+        "task_goal": "为工作台的旧记录提供可核对的状态说明。"
+      },
+      "decision_point": "dp3-worker-clarify",
+      "handling_options": [
+        {
+          "description": "只列历史文件里真实存在的签收行与时间，不做关联推断，缺字段标未记录。",
+          "id": "c1",
+          "label": "展示已有 signoff 记录（只读）"
+        },
+        {
+          "description": "最保守：旧记录只显示已有日志结构，signoff 一律显示未记录，零推断。",
+          "id": "c2",
+          "label": "不展示，统一标未记录"
+        }
+      ],
+      "question": "旧记录详情里能否展示该 key 已有的 signoff 记录来佐证状态？",
+      "questions_version": "q-21d2d577",
+      "schema_version": 2
+    }
+  },
+  "case_version": 1,
+  "dp": "dp3-worker-clarify",
+  "note": "合成 case：提问者带着两个可区分候选请求澄清，用于观察 dp3 的动态候选消费；候选说明原文随材料发送。",
+  "questions": {
+    "handling": {
+      "dynamic_choices": "handling_options",
+      "id": "handling",
+      "instructions": "针对这个问题，从候选处理方式中选出最合适的一项。",
+      "type": "choice"
+    }
+  },
+  "title": "旧记录 signoff 摘录：候选与影响"
+}

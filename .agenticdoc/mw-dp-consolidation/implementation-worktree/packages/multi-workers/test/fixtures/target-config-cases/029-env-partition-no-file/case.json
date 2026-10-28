@@ -1,0 +1,16 @@
+{
+  "description": "no file + both partition env vars: env activation, source=env (rule row 9)",
+  "env": {
+    "MW_PARTITION_PARENT": "../parentproj",
+    "MW_PARTITION_ROOT": "./frag"
+  },
+  "expect": {
+    "mode": "partition",
+    "source": "env",
+    "game_root_null": true,
+    "parent_root_rel": "../parentproj",
+    "partition_root_rel": "frag",
+    "roots_empty": true,
+    "vcs": null
+  }
+}

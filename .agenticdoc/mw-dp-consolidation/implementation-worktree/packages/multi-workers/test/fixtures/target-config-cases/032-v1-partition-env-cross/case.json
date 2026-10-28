@@ -1,0 +1,12 @@
+{
+  "description": "v1 file + partition env: cross env rejected (rule row 3, v1 clause)",
+  "env": {
+    "MW_PARTITION_ROOT": "./x"
+  },
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "MW_PARTITION_ROOT"
+    ]
+  }
+}

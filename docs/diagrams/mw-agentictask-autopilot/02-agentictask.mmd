@@ -1,0 +1,18 @@
+graph LR
+    SPEC["spec<br/>规格 + AC"]
+    DESIGN["design<br/>设计文档"]
+    PLAN["plan<br/>任务拆解"]
+    TASKS["tasks<br/>派发执行"]
+    EVID["evidence<br/>留证收尾"]
+    GATE["advance_phase 门禁（每次切换的唯一通道）<br/>阶段文档 ≥ 500B · 证据笔记 ≥ 1 篇<br/>spec 含 §0 目标对齐 + ≥1 条编号 AC<br/>需签收的 key：有效 finalize 签收"]
+
+    SPEC --> DESIGN --> PLAN --> TASKS --> EVID
+    EVID -.->|"每步都校验"| GATE
+    GATE -.->|"通过才放行"| SPEC
+
+    style SPEC fill:#EEEDFE,stroke:#534AB7
+    style DESIGN fill:#EEEDFE,stroke:#534AB7
+    style PLAN fill:#EEEDFE,stroke:#534AB7
+    style TASKS fill:#EEEDFE,stroke:#534AB7
+    style EVID fill:#E1F5EE,stroke:#0F6E56
+    style GATE fill:#FAEEDA,stroke:#854F0B

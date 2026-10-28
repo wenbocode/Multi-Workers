@@ -1,0 +1,296 @@
+--- before/packages/multi-workers/test_dp_consolidation_materials.py
++++ after/packages/multi-workers/test_dp_consolidation_materials.py
+@@ -975,3 +975,293 @@
+     assert refused["transport_attempts"] == 2
+     assert refused["business_decisions"] == 0
+     assert len(failed.calls) == 2
++
++
++# ---------------------------------------------------------------------------
++# 10. The question ceiling of a prepared request is a refusal, not a raise.
++# ---------------------------------------------------------------------------
++
++
++def test_question_ceiling_is_a_prepared_refusal_not_an_exception(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    """A legal pair under ``max_questions=1`` must not escape as an exception.
++
++    The same-call request needs two questions (the entry's business question and
++    the prepared basis). The generic ``decide`` face raises ``DecisionInputError``
++    above ``max_questions``; a prepared request has to report that as a visible
++    refusal with zero HTTP and zero business decisions instead of letting the
++    exception escape - and the configured ceiling must stay what it was, never be
++    raised or loosened to make the pair fit.
++    """
++    dp_id = "dp-w-type"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    fake = http(_ok_responder(dp_id, material))
++    client = _make_client(tmp_path, monkeypatch, max_questions=1)
++
++    # No ``pytest.raises`` here: escaping with DecisionInputError is the defect.
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is False
++    assert result["reason"] == "budget-exhausted"
++    assert result["business_decisions"] == 0
++    assert result["attempts"] == 0
++    assert result["transport_attempts"] == 0
++    assert result["choice"] is None
++    assert result["basis_id"] is None
++    assert result["answers"] is None
++    assert fake.calls == []
++    # The refusal names the real boundary and does not pretend to have called.
++    assert "max_questions=1" in result["detail"]
++    # The ceiling itself is untouched by the refusal.
++    assert client.cfg.max_questions == 1
++
++
++def test_question_ceiling_control_still_accepts_a_legal_pair(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    """Control: at ``max_questions=2`` the pair still fits - the ceiling holds.
++
++    This is the non-regression half of the boundary: the fix refuses above the
++    configured value, it does not widen, disable or ignore the documented
++    default.
++    """
++    dp_id = "dp-route"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    fake = http(_ok_responder(dp_id, material))
++    client = _make_client(tmp_path, monkeypatch, max_questions=2)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is True, result
++    assert result["business_decisions"] == 1
++    assert len(fake.calls) == 1
++    # The documented default is still 8: nothing in this fix widened it.
++    assert decision.DecisionConfig().max_questions == 8
++
++
++# ---------------------------------------------------------------------------
++# 11. Replay: only an explicit bool proves hit/miss.
++# ---------------------------------------------------------------------------
++
++
++@pytest.mark.parametrize("lookup", [None, "unknown", "true", "false", 1, 0, [], {}])
++def test_non_bool_replay_lookup_result_fails_closed(
++    lookup: object, tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    """``null``/unknown/other shapes prove neither a hit nor a miss.
++
++    Truthifying the result fabricated a replay hit for ``"unknown"`` and a
++    novelty claim (one real POST, one business decision) for ``null``; neither is
++    a proven lookup result, so the request fails closed with zero HTTP and zero
++    business decisions.
++    """
++    dp_id = "dp-w-type"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    fake = http(_ok_responder(dp_id, material))
++    client = _make_client(tmp_path, monkeypatch)
++    seen: list[tuple[str, str]] = []
++
++    def replay_illegal(request_dp: str, logical_id: str) -> object:
++        seen.append((request_dp, logical_id))
++        return lookup
++
++    result = client.request_prepared(
++        dp_id,
++        material,
++        preparation,
++        actor_role=dpts.ENTRY_ROLES[dp_id],
++        logical_id="t08-illegal-replay",
++        replay_check=replay_illegal,
++    )
++
++    assert seen == [(dp_id, "t08-illegal-replay")]  # the lookup really ran
++    assert result["available"] is False
++    assert result["replayed"] is False
++    assert result["reason"] == "entry-unavailable"
++    assert result["business_decisions"] == 0
++    assert result["attempts"] == 0
++    assert result["transport_attempts"] == 0
++    assert result["choice"] is None
++    assert result["basis_id"] is None
++    assert fake.calls == []
++    assert "bool" in result["detail"]
++
++
++def test_bool_replay_lookup_controls_still_prove_hit_and_miss(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    """Control: the two legal answers keep their documented meaning."""
++    dp_id = "dp-w-type"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++
++    hit_fake = http(_ok_responder(dp_id, material))
++    hit_client = _make_client(tmp_path, monkeypatch)
++    hit = hit_client.request_prepared(
++        dp_id,
++        material,
++        preparation,
++        actor_role=dpts.ENTRY_ROLES[dp_id],
++        logical_id="t08-bool-hit",
++        replay_check=lambda _dp, _logical: True,
++    )
++    assert hit["available"] is True
++    assert hit["replayed"] is True
++    assert hit["business_decisions"] == 0
++    assert hit["transport_attempts"] == 0
++    assert hit_fake.calls == []
++
++    miss_fake = http(_ok_responder(dp_id, material))
++    miss_client = _make_client(tmp_path, monkeypatch)
++    miss = miss_client.request_prepared(
++        dp_id,
++        material,
++        preparation,
++        actor_role=dpts.ENTRY_ROLES[dp_id],
++        logical_id="t08-bool-miss",
++        replay_check=lambda _dp, _logical: False,
++    )
++    assert miss["available"] is True
++    assert miss["replayed"] is False
++    assert miss["business_decisions"] == 1
++    assert len(miss_fake.calls) == 1
++
++
++# ---------------------------------------------------------------------------
++# 12. Retired ids are refused before replay, credential and backend.
++# ---------------------------------------------------------------------------
++
++
++@pytest.mark.parametrize("old_id", RETIRED_25)
++def test_retired_id_is_refused_before_replay_credential_and_backend(
++    old_id: str, tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    """Order guard: the retired disposition is decided before everything else.
++
++    The refusal must land before the caller-owned replay lookup, before the
++    credential snapshot and before any backend resolution, so no path of a
++    retired id can spend a model call or invent a business decision.
++    """
++    material = _material("dp-w-type")
++    preparation = _preparation("dp-w-type", material)
++    fake = http(lambda *_args: pytest.fail("a retired id must never reach HTTP"))
++    client = _make_client(tmp_path, monkeypatch)
++    seen: list[tuple[str, str]] = []
++
++    def replay_must_not_run(request_dp: str, logical_id: str) -> bool:
++        seen.append((request_dp, logical_id))
++        return True
++
++    def credential_must_not_run(*_args, **_kwargs):
++        raise AssertionError("a retired id must not resolve a credential")
++
++    monkeypatch.setattr(decision, "credential_snapshot", credential_must_not_run)
++
++    result = client.request_prepared(
++        old_id,
++        material,
++        preparation,
++        actor_role="pm",
++        logical_id="t08-retired-order",
++        replay_check=replay_must_not_run,
++    )
++
++    assert seen == []
++    assert result["available"] is False
++    assert result["replayed"] is False
++    assert result["reason"] == "entry-unavailable"
++    assert "retired" in result["detail"]
++    assert result["business_decisions"] == 0
++    assert result["attempts"] == 0
++    assert result["transport_attempts"] == 0
++    assert fake.calls == []
++
++
++# ---------------------------------------------------------------------------
++# 13. Transport record vs business decision: one layer each.
++# ---------------------------------------------------------------------------
++
++
++def test_transport_record_and_business_refusal_stay_separate_layers(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    """A transport answer is recorded; a refused pair adds no business decision.
++
++    The generic evidence line is the *transport* row: it records that the answer
++    came back and it structurally carries no business fields (no choice, basis,
++    business-decision count, replay flag or preparation timestamp). The business
++    truth lives only on the prepared result. The two coexist here - which is
++    exactly why this row must never be read as "a valid business decision was
++    added"; the adoption chain (store/CLI consumers) is not exercised here.
++    """
++    dp_id = "dp-gate-approve"
++    material = _material(dp_id)
++    legal = list(dpts.resolve_entry_choices(dp_id, material))
++    preparation = {
++        "basis_catalog": [
++            {
++                "id": "b-primary",
++                "text": "PM-prepared reason for a different choice",
++                "material_refs": ["gate_background"],
++                "applies_to": legal[1:],
++            }
++        ],
++        "prepared_at": PREPARED_AT,
++    }
++    choice = legal[0]
++    fake = http(
++        lambda *_args: _body(
++            dp_id,
++            {
++                BUSINESS_QIDS[dp_id]: _choice_answer(choice),
++                "basis_id": _choice_answer("b-primary"),
++            },
++        )
++    )
++    client = _make_client(tmp_path, monkeypatch)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    # Business layer: binding refusal, no default, no business decision.
++    assert result["available"] is False
++    assert result["reason"] == "bad-response"
++    assert result["business_decisions"] == 0
++    assert result["choice"] is None
++    # Transport layer: the answer really was fetched (one attempt, one POST).
++    assert result["attempts"] == 1
++    assert result["transport_attempts"] == 1
++    assert len(fake.calls) == 1
++
++    evidence = tmp_path / "triage-decisions.jsonl"
++    rows = [
++        json.loads(line)
++        for line in evidence.read_text(encoding="utf-8").splitlines()
++        if line.strip()
++    ]
++    assert len(rows) == 1
++    row = rows[0]
++    # The row is the frozen transport record, never a business ledger entry.
++    assert set(row) == set(decision._EVIDENCE_FIELDS)
++    assert not {
++        "choice",
++        "basis_id",
++        "basis_text",
++        "business_decisions",
++        "replayed",
++        "prepared_at",
++    } & set(row)
++    assert row["available"] is True  # the transport answered ...
++    assert row["dp"] == dp_id
++    assert row["attempts"] == 1
++    # ... and the refused business layer never rewrote that transport fact.
++    assert result["business_decisions"] == 0

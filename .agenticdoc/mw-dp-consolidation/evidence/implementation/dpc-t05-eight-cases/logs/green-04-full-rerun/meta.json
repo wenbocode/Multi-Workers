@@ -1,0 +1,32 @@
+﻿{
+    "label":  "green-04-full-rerun",
+    "started_at":  "2026-10-27T13:07:14.1743402Z",
+    "finished_at":  "2026-10-27T13:07:19.3582912Z",
+    "cwd":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+    "target":  "test_decision_context_workbench.py",
+    "selection":  "",
+    "argv":  [
+                 "python",
+                 "-B",
+                 "-m",
+                 "pytest",
+                 "-p",
+                 "no:cacheprovider",
+                 "-q",
+                 "test_decision_context_workbench.py"
+             ],
+    "rc":  1,
+    "home":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-04-full-rerun\\home",
+    "temp":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-04-full-rerun\\tmp",
+    "project":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-04-full-rerun\\project",
+    "env":  {
+                "HOME":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-04-full-rerun\\home",
+                "USERPROFILE":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-04-full-rerun\\home",
+                "TEMP":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-04-full-rerun\\tmp",
+                "PYTHONDONTWRITEBYTECODE":  "1",
+                "PYTHONPYCACHEPREFIX":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-04-full-rerun\\tmp",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD":  "1",
+                "PYTHONUTF8":  "1",
+                "MW_PROJECT_DIR":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-04-full-rerun\\project"
+            }
+}

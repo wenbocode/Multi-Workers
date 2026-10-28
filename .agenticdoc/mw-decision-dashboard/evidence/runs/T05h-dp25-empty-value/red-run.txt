@@ -1,0 +1,288 @@
+﻿F..F....FFFFFF...FF....F........................................         [100%]
+================================== FAILURES ===================================
+___________ test_registry_declares_empty_is_value_only_for_p0_open ____________
+
+    def test_registry_declares_empty_is_value_only_for_p0_open() -> None:
+>       assert "empty_is_value" in dpts.STATE_FIELD_CONSTRAINT_KEYS, (
+            "an undeclared spec key would be refused by _validate_state_field_contract"
+        )
+E       AssertionError: an undeclared spec key would be refused by _validate_state_field_contract
+E       assert 'empty_is_value' in ('enum', 'max_items', 'item_type', 'max_bytes', 'item_max_bytes', 'signed', ...)
+E        +  where ('enum', 'max_items', 'item_type', 'max_bytes', 'item_max_bytes', 'signed', ...) = dpts.STATE_FIELD_CONSTRAINT_KEYS
+
+test_decision_dp25_empty_value.py:237: AssertionError
+_________________ test_export_api_carries_the_field_metadata __________________
+
+    def test_export_api_carries_the_field_metadata() -> None:
+        exported = dpts.snapshot_field_dict("p0_open")
+>       assert exported["empty_is_value"] is True
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'empty_is_value'
+
+test_decision_dp25_empty_value.py:269: KeyError
+_____________ test_real_no_open_p0_state_is_a_legal_book[missing] _____________
+
+table = 'missing'
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18586/test_real_no_open_p0_state_is_0')
+
+    @pytest.mark.parametrize("table", ["missing", "config"])
+    def test_real_no_open_p0_state_is_a_legal_book(
+        table: str, tmp_path: pathlib.Path
+    ) -> None:
+        project, state = _no_open_p0_state(tmp_path, table=table)
+        assert state["p0_open"] == [], "the real producer writes [] for no open P0"
+        assert dpts.state_field_issues(DP25, state) == ()
+        assert dpts.state_unknown_key_issues(DP25, state, allow_context=True) == ()
+>       assert books.check_book(_book(DP25, state), project_dir=project) == []
+E       AssertionError: assert [Issue(code='...al evidence')] == []
+E         
+E         Left contains one more item: Issue(code='book-placeholder', path='state.p0_open', detail='unreplaced placeholder []; fill it from real evidence')
+E         Use -v to get more diff
+
+test_decision_dp25_empty_value.py:373: AssertionError
+_____________ test_real_no_open_p0_state_is_a_legal_book[config] ______________
+
+table = 'config'
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18586/test_real_no_open_p0_state_is_1')
+
+    @pytest.mark.parametrize("table", ["missing", "config"])
+    def test_real_no_open_p0_state_is_a_legal_book(
+        table: str, tmp_path: pathlib.Path
+    ) -> None:
+        project, state = _no_open_p0_state(tmp_path, table=table)
+        assert state["p0_open"] == [], "the real producer writes [] for no open P0"
+        assert dpts.state_field_issues(DP25, state) == ()
+        assert dpts.state_unknown_key_issues(DP25, state, allow_context=True) == ()
+>       assert books.check_book(_book(DP25, state), project_dir=project) == []
+E       AssertionError: assert [Issue(code='...al evidence')] == []
+E         
+E         Left contains one more item: Issue(code='book-placeholder', path='state.p0_open', detail='unreplaced placeholder []; fill it from real evidence')
+E         Use -v to get more diff
+
+test_decision_dp25_empty_value.py:373: AssertionError
+_____ test_real_no_open_p0_state_is_accepted_as_observation_book_material _____
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18586/test_real_no_open_p0_state_is_2')
+
+    def test_real_no_open_p0_state_is_accepted_as_observation_book_material(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        project, state = _no_open_p0_state(tmp_path, table="missing")
+        root = tmp_path / "run"
+        scope = _scope(root)
+        backend = decision.FakeBackend([_ok(_dp25_answers())])
+        book = _book(DP25, state)
+    
+        outcome = dpts.decide_for(
+            DP25,
+            state,
+            project,
+            client=_client(backend, scope),
+            archive=False,
+            intent="answer",
+            observation=dpts.Observation(scope=scope, book=book, submission_id=SUB),
+        )
+    
+>       assert outcome.status == "suggested", outcome.detail
+E       AssertionError: dp25-signoff-conclusion:k-t05h: observation book refused (book.state.p0_open: book-placeholder: unreplaced placeholder []; fill it from real evidence)
+E       assert 'escalated' == 'suggested'
+E         
+E         - suggested
+E         + escalated
+
+test_decision_dp25_empty_value.py:396: AssertionError
+____ test_scaffold_p0_open_is_legal_but_the_scaffold_is_still_not_signable ____
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18586/test_scaffold_p0_open_is_legal0')
+
+    def test_scaffold_p0_open_is_legal_but_the_scaffold_is_still_not_signable(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        scaffold = books.scaffold_book(DP25)
+        assert scaffold["state"]["p0_open"] == []
+        issues = _issues(scaffold)
+>       assert ("book-placeholder", "state.p0_open") not in issues, (
+            "the editor scaffold writes [] for this field, which the new rule accepts"
+        )
+E       AssertionError: the editor scaffold writes [] for this field, which the new rule accepts
+E       assert ('book-placeholder', 'state.p0_open') not in [('book-placeholder', 'state.key'), ('book-placeholder', 'state.rows_total'), ('book-placeholder', 'state.rows_availab..., 'state.p0_open'), ('book-placeholder', 'notes.evidence.key'), ('book-placeholder', 'notes.evidence.rows_total'), ...]
+
+test_decision_dp25_empty_value.py:413: AssertionError
+_ test_missing_null_and_wrong_typed_p0_open_refuse_with_zero_send[missing-sentinel-missing] _
+
+case = 'missing', value = 'sentinel-missing'
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18586/test_missing_null_and_wrong_ty0')
+
+    @pytest.mark.parametrize(
+        ("case", "value"),
+        [
+            ("missing", "sentinel-missing"),
+            ("null", None),
+            ("string", "dp8-scope-change"),
+            ("object", {"dp8-scope-change": True}),
+            ("integer", 0),
+        ],
+    )
+    def test_missing_null_and_wrong_typed_p0_open_refuse_with_zero_send(
+        case: str, value: object, tmp_path: pathlib.Path
+    ) -> None:
+        project, real = _no_open_p0_state(tmp_path, table="missing")
+        state = dict(real)
+        if case == "missing":
+            state.pop("p0_open")
+        else:
+            state["p0_open"] = value
+        book = _book(DP25, state)
+        codes = _issues(book)
+        assert codes, case
+        assert any(path.startswith("state.p0_open") for _code, path in codes), (case, codes)
+    
+        root = tmp_path / f"run-{case}"
+        scope = _scope(root)
+        backend = decision.FakeBackend([_ok(_dp25_answers())])
+    
+        # (a) the plain production/observation path (no book): typed + required gate.
+        direct = dpts.decide_for(
+            DP25,
+            state,
+            project,
+            client=_client(backend, _scope(tmp_path / f"run-{case}-direct")),
+            archive=False,
+            intent="answer",
+        )
+        assert direct.escalated_reason == "input-incomplete", direct.detail
+        assert "p0_open" in direct.detail, direct.detail
+    
+        # (b) the book path: the book is refused before the transport too.
+        book_outcome = dpts.decide_for(
+            DP25,
+            state,
+            project,
+            client=_client(backend, scope),
+            archive=False,
+            intent="answer",
+            observation=dpts.Observation(scope=scope, book=book, submission_id=SUB),
+        )
+        assert book_outcome.escalated_reason == "input-incomplete", book_outcome.detail
+        assert "p0_open" in book_outcome.detail, book_outcome.detail
+        assert backend.calls == [], f"{case}: illegal p0_open reached the transport"
+>       assert _of_kind(decision_wire.test_wire_sink(root), "book-snapshot") == []
+E       AssertionError: assert [{'actor': {'...7e17c4', ...}] == []
+E         
+E         Left contains one more item: {'actor': {'id': 'user-explicit', 'kind': 'human'}, 'answer_source': None, 'book': {'boundary_scrubbed': False, 'byte_...db20784ccc04cc430b14aec790b661db472e397a49fb6', 'decode_errors': False, ...}, 'book_ref': 'book-8cea521e087e17c4', ...}
+E         Use -v to get more diff
+
+test_decision_dp25_empty_value.py:477: AssertionError
+_ test_missing_null_and_wrong_typed_p0_open_refuse_with_zero_send[null-None] __
+
+case = 'null', value = None
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18586/test_missing_null_and_wrong_ty1')
+
+    @pytest.mark.parametrize(
+        ("case", "value"),
+        [
+            ("missing", "sentinel-missing"),
+            ("null", None),
+            ("string", "dp8-scope-change"),
+            ("object", {"dp8-scope-change": True}),
+            ("integer", 0),
+        ],
+    )
+    def test_missing_null_and_wrong_typed_p0_open_refuse_with_zero_send(
+        case: str, value: object, tmp_path: pathlib.Path
+    ) -> None:
+        project, real = _no_open_p0_state(tmp_path, table="missing")
+        state = dict(real)
+        if case == "missing":
+            state.pop("p0_open")
+        else:
+            state["p0_open"] = value
+        book = _book(DP25, state)
+        codes = _issues(book)
+>       assert codes, case
+E       AssertionError: null
+E       assert []
+
+test_decision_dp25_empty_value.py:445: AssertionError
+_______________ test_placeholder_text_inside_p0_open_is_refused _______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18586/test_placeholder_text_inside_p0')
+
+    def test_placeholder_text_inside_p0_open_is_refused(tmp_path: pathlib.Path) -> None:
+        project, real = _no_open_p0_state(tmp_path, table="missing")
+        for value in ("<dp-id>", "", "TBD", -1):
+            state = _with_p0_open(real, [value])
+            issues = _issues(_book(DP25, state))
+>           assert ("book-placeholder", "state.p0_open[0]") in issues, (value, issues)
+E           AssertionError: ('<dp-id>', [])
+E           assert ('book-placeholder', 'state.p0_open[0]') in []
+
+test_decision_dp25_empty_value.py:485: AssertionError
+___ test_empty_p0_open_without_the_flag_still_would_not_be_assumed_verified ___
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18586/test_empty_p0_open_without_the0')
+
+    def test_empty_p0_open_without_the_flag_still_would_not_be_assumed_verified(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        """``[]`` means "no open P0"; it is not a claim that the facts were verified.
+    
+        Evidence stays mandatory for the field, and the producer's real
+        zero-escalation facts stay what they are (``rows_escalated == 0``): the flag
+        waives exactly the empty-container placeholder rule, no fact is inferred.
+        """
+        project, state = _no_open_p0_state(tmp_path, table="missing")
+        assert state["rows_escalated"] == 0
+        assert state["escalated_reasons"] == [] and state["engine_violations"] == []
+        book = _book(DP25, state)
+        del book["notes"]["evidence"]["p0_open"]
+        issues = _issues(book)
+        assert ("book-evidence", "notes.evidence.p0_open") in issues, issues
+>       assert ("book-placeholder", "state.p0_open") not in issues
+E       AssertionError: assert ('book-placeholder', 'state.p0_open') not in [('book-placeholder', 'state.p0_open'), ('book-evidence', 'notes.evidence.p0_open')]
+
+test_decision_dp25_empty_value.py:509: AssertionError
+______ test_empty_p0_open_is_a_legal_book_under_the_confirmed_field_rule ______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18586/test_empty_p0_open_is_a_legal_0')
+
+    def test_empty_p0_open_is_a_legal_book_under_the_confirmed_field_rule(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        """No escalation and no open P0: the *common* real state is a legal book.
+    
+        T05c recorded the opposite behaviour (``('book-placeholder',
+        'state.p0_open')``): AC-019's "empty container == unreplaced placeholder"
+        rule hit dp25's *required* ``p0_open``, while the producer deliberately
+        writes ``[]`` for "no P0 open", so a real book could not exist. The
+        user-confirmed rule (card T05h) declares ``empty_is_value`` for exactly this
+        field and the book's placeholder scan consumes it, so the producer's own
+        value is accepted while the rule stays unchanged for every other dp (the
+        migrated optional arrays were never placeholder-checked either).
+        """
+        project = _signoff_project(tmp_path)
+        _append_row(project, dp="dp3-worker-clarify", trigger_id="t1", available=True, authority="binding")
+        dpts.clear_points_config_cache()
+        state = decide_signoff.signoff_state(decide_signoff.collect(project, KEY), KEY)
+        assert state["p0_open"] == []
+        assert state["escalated_reasons"] == [] and state["engine_violations"] == []
+        assert dpts.state_field_issues(DP25, state) == ()
+        assert dpts.state_unknown_key_issues(DP25, state, allow_context=True) == ()
+>       assert dpts.STATE_FIELD_DESCRIPTIONS["p0_open"]["empty_is_value"] is True
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'empty_is_value'
+
+test_decision_input_contract_migration.py:367: KeyError
+=========================== short test summary info ===========================
+FAILED test_decision_dp25_empty_value.py::test_registry_declares_empty_is_value_only_for_p0_open
+FAILED test_decision_dp25_empty_value.py::test_export_api_carries_the_field_metadata
+FAILED test_decision_dp25_empty_value.py::test_real_no_open_p0_state_is_a_legal_book[missing]
+FAILED test_decision_dp25_empty_value.py::test_real_no_open_p0_state_is_a_legal_book[config]
+FAILED test_decision_dp25_empty_value.py::test_real_no_open_p0_state_is_accepted_as_observation_book_material
+FAILED test_decision_dp25_empty_value.py::test_scaffold_p0_open_is_legal_but_the_scaffold_is_still_not_signable
+FAILED test_decision_dp25_empty_value.py::test_missing_null_and_wrong_typed_p0_open_refuse_with_zero_send[missing-sentinel-missing]
+FAILED test_decision_dp25_empty_value.py::test_missing_null_and_wrong_typed_p0_open_refuse_with_zero_send[null-None]
+FAILED test_decision_dp25_empty_value.py::test_placeholder_text_inside_p0_open_is_refused
+FAILED test_decision_dp25_empty_value.py::test_empty_p0_open_without_the_flag_still_would_not_be_assumed_verified
+FAILED test_decision_input_contract_migration.py::test_empty_p0_open_is_a_legal_book_under_the_confirmed_field_rule
+11 failed, 53 passed in 0.87s

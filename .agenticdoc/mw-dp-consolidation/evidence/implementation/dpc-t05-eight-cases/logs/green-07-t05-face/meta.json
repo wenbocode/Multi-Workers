@@ -1,0 +1,34 @@
+﻿{
+    "label":  "green-07-t05-face",
+    "started_at":  "2026-10-27T13:09:38.6962470Z",
+    "finished_at":  "2026-10-27T13:09:43.0721377Z",
+    "cwd":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+    "target":  "test_decision_context_workbench.py",
+    "selection":  "eight_offline or dp_pm_steer or eight_cases_pass or case_evidence or each_case_prepares or each_entry_refuses or dp_w_type or dp_w_check_task or dp_sigkey_qg or dp_sign_key_case or dp_auto_case or dp_route_case or generator_refuses or shipped_cases_match or legacy_cases_stay or shipped_assets",
+    "argv":  [
+                 "python",
+                 "-B",
+                 "-m",
+                 "pytest",
+                 "-p",
+                 "no:cacheprovider",
+                 "-q",
+                 "-k",
+                 "eight_offline or dp_pm_steer or eight_cases_pass or case_evidence or each_case_prepares or each_entry_refuses or dp_w_type or dp_w_check_task or dp_sigkey_qg or dp_sign_key_case or dp_auto_case or dp_route_case or generator_refuses or shipped_cases_match or legacy_cases_stay or shipped_assets",
+                 "test_decision_context_workbench.py"
+             ],
+    "rc":  0,
+    "home":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-07-t05-face\\home",
+    "temp":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-07-t05-face\\tmp",
+    "project":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-07-t05-face\\project",
+    "env":  {
+                "HOME":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-07-t05-face\\home",
+                "USERPROFILE":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-07-t05-face\\home",
+                "TEMP":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-07-t05-face\\tmp",
+                "PYTHONDONTWRITEBYTECODE":  "1",
+                "PYTHONPYCACHEPREFIX":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-07-t05-face\\tmp",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD":  "1",
+                "PYTHONUTF8":  "1",
+                "MW_PROJECT_DIR":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-07-t05-face\\project"
+            }
+}

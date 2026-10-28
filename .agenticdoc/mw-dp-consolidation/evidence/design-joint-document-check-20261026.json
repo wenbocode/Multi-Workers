@@ -1,0 +1,51 @@
+{
+  "check": "document-contract-only",
+  "spec_locked_bytes_equal": true,
+  "spec_sha256": "cfe737d29aed2d0c4e79d8b02107f754f254a225bb21ea8d900eaa5ba289d006",
+  "ac_count": 53,
+  "vc_count": 53,
+  "mapping_rows": 53,
+  "unbound_vcs": 0,
+  "missing_acs": 0,
+  "decision_candidates": 12,
+  "flows": 11,
+  "coverage_rows": 16,
+  "mermaid_blocks": 12,
+  "ac_fingerprint": "767fc1acdbcb",
+  "generated_at": "2026-10-26T03:08:59+08:00",
+  "evidence_requirement_generated": true,
+  "product_tests_run": false,
+  "design_approved": false,
+  "files": {
+    "design.md": {
+      "bytes": 76138,
+      "sha256": "e73df377e656490d629e984c3508e1a3e5e9ca09c019bee36a6bba39fc94b7a3"
+    },
+    "evidence-requirement.md": {
+      "bytes": 80375,
+      "sha256": "332d0a8a28cdef709752e7a3cea0d0793e2ddd78899376ab92473b5e734dc4a4"
+    },
+    "design-write-scope.md": {
+      "bytes": 13209,
+      "sha256": "8319a45e82fb2d30e8c778615bf3c6ec7992d6fe29bc978bb269aec85a05171c"
+    }
+  },
+  "commands": [
+    {
+      "argv": [
+        "python",
+        ".agents/skills/agentic-task/scripts/check_mermaid.py",
+        ".agenticdoc/mw-dp-consolidation/design.md"
+      ],
+      "rc": 0
+    },
+    {
+      "argv": [
+        "python",
+        ".agents/skills/agentic-task/scripts/audit_phase.py",
+        "mw-dp-consolidation"
+      ],
+      "rc": 0
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+fixture_root=C:\Users\WENBOZ~1\AppData\Local\Temp\t07b-isolation-8o6rmxh6\proj
+records=1
+files=5
+before .agenticdoc/_autopilot/decision-lifecycle.jsonl 59ed150a3eeb765e007a849528773f54d0b7605ac02672d7fee5674acc4bb7ea
+after  .agenticdoc/_autopilot/decision-lifecycle.jsonl 59ed150a3eeb765e007a849528773f54d0b7605ac02672d7fee5674acc4bb7ea
+before .agenticdoc/_autopilot/decisions-wire.jsonl 6da72d7b3c8461a5b9cf472f9802eda2a1bf0437854bcce5c3f440ddb05c7328
+after  .agenticdoc/_autopilot/decisions-wire.jsonl 6da72d7b3c8461a5b9cf472f9802eda2a1bf0437854bcce5c3f440ddb05c7328
+before .agenticdoc/_autopilot/decisions.jsonl c1cc437afc0bf8499b1be402d77b03b664bca7c31a1ebcea498d10b1be74b75a
+after  .agenticdoc/_autopilot/decisions.jsonl c1cc437afc0bf8499b1be402d77b03b664bca7c31a1ebcea498d10b1be74b75a
+before .agenticdoc/_autopilot/gates/gate-0001.md c9344c79e452eea39646b8ac4de3d193568cea2aec2a1050a319fd8696cd6594
+after  .agenticdoc/_autopilot/gates/gate-0001.md c9344c79e452eea39646b8ac4de3d193568cea2aec2a1050a319fd8696cd6594
+before .agenticdoc/mw-alpha/evidence/review/sign-final.md 5d0c4d7a33e454a5c1c9f790bd6570f81002109ab82c6a346287141b5c823445
+after  .agenticdoc/mw-alpha/evidence/review/sign-final.md 5d0c4d7a33e454a5c1c9f790bd6570f81002109ab82c6a346287141b5c823445
+inventory_unchanged=True
+bytes_unchanged=True
+secret_echoed=False

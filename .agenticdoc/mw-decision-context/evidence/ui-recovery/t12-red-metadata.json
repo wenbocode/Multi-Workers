@@ -1,0 +1,17 @@
+[
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "H:\\git\\Multi-Workers\\packages\\multi-workers\\test_decision_context_readable_ui.py"
+    ],
+    "cwd": "H:\\git\\Multi-Workers",
+    "utc_start": "2026-10-23T09:54:28.666117+00:00",
+    "utc_end": "2026-10-23T09:55:22.199847+00:00",
+    "exit": 1
+  }
+]

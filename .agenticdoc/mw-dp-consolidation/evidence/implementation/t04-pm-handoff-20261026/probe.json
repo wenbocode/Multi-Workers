@@ -1,0 +1,82 @@
+{
+  "imports": {
+    "gen_decide_registry_ts": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\scripts\\gen_decide_registry_ts.py",
+    "decision_points": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_points.py",
+    "decision_context": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_context.py",
+    "test_decide_registry_ts_lock": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_decide_registry_ts_lock.py"
+  },
+  "repo_root": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree",
+  "output_path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\coding-agent\\src\\extensions\\agent-team-loop\\shared\\decide-registry.generated.ts",
+  "active_ids": [
+    "dp-w-type",
+    "dp-pm-steer",
+    "dp-w-check-task",
+    "dp-QG",
+    "dp-gate-approve",
+    "dp-sign-key",
+    "dp-auto",
+    "dp-route"
+  ],
+  "retired_ids": [
+    "dp1-dispatch-type",
+    "dp2-checkpoint-split",
+    "dp3-worker-clarify",
+    "dp4-failure-handling",
+    "dp5-test-triage",
+    "dp6-qg-verdict",
+    "dp7-gate-failure",
+    "dp8-scope-change",
+    "dp9-model-select",
+    "dp10-dependency",
+    "dp11-credential",
+    "dp12-destructive",
+    "dp13-commit-release",
+    "dp14-rule-conflict",
+    "dp15-autopilot-gate",
+    "dp16-goal",
+    "dp17-spec-lock",
+    "dp18-claim",
+    "dp19-foreign-write",
+    "dp20-stage-close",
+    "dp21-refine",
+    "dp22-debug-plan",
+    "dp23-snapshot",
+    "dp24-pi-trust",
+    "dp25-signoff-conclusion"
+  ],
+  "ts_bytes_equal_fresh_render": true,
+  "json_bytes_equal_snapshot": true,
+  "retired_full_field_parity": true,
+  "field_count": 48,
+  "roles": {
+    "dp-w-type": "pm",
+    "dp-pm-steer": "pm",
+    "dp-w-check-task": "worker",
+    "dp-QG": "pm",
+    "dp-gate-approve": "pm",
+    "dp-sign-key": "pm",
+    "dp-auto": "pm",
+    "dp-route": "pm"
+  },
+  "slots": {
+    "dp-w-type": [],
+    "dp-pm-steer": [],
+    "dp-w-check-task": [],
+    "dp-QG": [
+      "error_excerpt"
+    ],
+    "dp-gate-approve": [],
+    "dp-sign-key": [],
+    "dp-auto": [
+      "error_excerpt"
+    ],
+    "dp-route": []
+  },
+  "post_t05_synthetic_listing": {
+    "kind": "synthetic directory listing, not actual T05 generation",
+    "entries": 12,
+    "accepted": false,
+    "error": "the four read-only legacy cases moved: {'dp-QG.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-auto.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-gate-approve.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-pm-steer.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-route.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-sign-key.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-w-check-task.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-w-type.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp1.json': '3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff', 'dp2.json': 'a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea', 'dp25.json': 'bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd', 'dp3.json': '82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d'}",
+    "traceback": "Traceback (most recent call last):\n  File \"H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t04-pm-handoff-20261026\\probe.py\", line 80, in <module>\n    lock.test_check_and_stdout_modes_write_nothing()\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_decide_registry_ts_lock.py\", line 296, in test_check_and_stdout_modes_write_nothing\n    assert len(legacy_cases) == 4, f\"the four read-only legacy cases moved: {legacy_cases}\"\n           ^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: the four read-only legacy cases moved: {'dp-QG.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-auto.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-gate-approve.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-pm-steer.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-route.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-sign-key.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-w-check-task.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp-w-type.json': 'af7533e25f2d9c8e546abb13e708a70b248ac7b919c9efd825d554c13323f185', 'dp1.json': '3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff', 'dp2.json': 'a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea', 'dp25.json': 'bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd', 'dp3.json': '82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d'}\n"
+  }
+}

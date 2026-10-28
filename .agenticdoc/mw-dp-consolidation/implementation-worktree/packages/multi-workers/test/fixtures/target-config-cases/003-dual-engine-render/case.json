@@ -1,0 +1,13 @@
+{
+  "description": "dual + engine; {engine}/{game} render with no leftovers",
+  "env": {},
+  "expect": {
+    "mode": "dual",
+    "source": "target-yml",
+    "game_root_rel": "game",
+    "engine_root_rel": "engine"
+  },
+  "render": {
+    "build_editor": "build {engine_root} -project {game_root}"
+  }
+}

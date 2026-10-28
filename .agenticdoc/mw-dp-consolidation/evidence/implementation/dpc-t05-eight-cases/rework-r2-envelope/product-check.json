@@ -1,0 +1,374 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T13:50:05.819118+00:00",
+  "repo_root": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/implementation-worktree",
+  "private_out": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/generator-out",
+  "cases": [
+    {
+      "dp": "dp-w-type",
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-type.json",
+      "bytes": 3079,
+      "sha256": "f70b5aa699d2636105107d98453852b0b81aa504ec691fdeda79b44fb5247758",
+      "private_out_byte_identical": true,
+      "equals_generator_build_case": true,
+      "offline_check_book_issues": 0,
+      "issue_detail": [],
+      "supported_choices": [
+        "coding",
+        "research",
+        "review",
+        "vision"
+      ],
+      "basis_checks": [
+        {
+          "choice": "coding",
+          "basis_id": "w-type-coding",
+          "issues": 0
+        },
+        {
+          "choice": "research",
+          "basis_id": "w-type-research",
+          "issues": 0
+        },
+        {
+          "choice": "review",
+          "basis_id": "w-type-review",
+          "issues": 0
+        },
+        {
+          "choice": "vision",
+          "basis_id": "w-type-vision",
+          "issues": 0
+        }
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "prepared_at_future": false,
+      "prepared_at_zone": "UTC"
+    },
+    {
+      "dp": "dp-pm-steer",
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-pm-steer.json",
+      "bytes": 4089,
+      "sha256": "6a8b946557d9d381707def7360691126f85e195495163f3ef0ba6bfff9f5967b",
+      "private_out_byte_identical": true,
+      "equals_generator_build_case": true,
+      "offline_check_book_issues": 0,
+      "issue_detail": [],
+      "supported_choices": [
+        "narrow",
+        "split",
+        "direct-exec",
+        "escalate"
+      ],
+      "basis_checks": [
+        {
+          "choice": "narrow",
+          "basis_id": "pm-steer-narrow",
+          "issues": 0
+        },
+        {
+          "choice": "split",
+          "basis_id": "pm-steer-split",
+          "issues": 0
+        },
+        {
+          "choice": "direct-exec",
+          "basis_id": "pm-steer-direct",
+          "issues": 0
+        },
+        {
+          "choice": "escalate",
+          "basis_id": "pm-steer-escalate",
+          "issues": 0
+        }
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "prepared_at_future": false,
+      "prepared_at_zone": "UTC"
+    },
+    {
+      "dp": "dp-w-check-task",
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-check-task.json",
+      "bytes": 4622,
+      "sha256": "e88fb31a167335824a5bd6f338ec3e0da9387d8b5e1299ce1de9fd94a1b1f7bb",
+      "private_out_byte_identical": true,
+      "equals_generator_build_case": true,
+      "offline_check_book_issues": 0,
+      "issue_detail": [],
+      "supported_choices": [
+        "continue",
+        "terminate",
+        "investigate"
+      ],
+      "basis_checks": [
+        {
+          "choice": "continue",
+          "basis_id": "check-continue",
+          "issues": 0
+        },
+        {
+          "choice": "terminate",
+          "basis_id": "check-terminate",
+          "issues": 0
+        },
+        {
+          "choice": "investigate",
+          "basis_id": "check-investigate",
+          "issues": 0
+        }
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "prepared_at_future": false,
+      "prepared_at_zone": "UTC"
+    },
+    {
+      "dp": "dp-QG",
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-QG.json",
+      "bytes": 2991,
+      "sha256": "aacd487769caf4dceab0513b483d73c762da1d0d9914a1bfe3c6d201b1e10eb3",
+      "private_out_byte_identical": true,
+      "equals_generator_build_case": true,
+      "offline_check_book_issues": 0,
+      "issue_detail": [],
+      "supported_choices": [
+        "pass",
+        "fix"
+      ],
+      "basis_checks": [
+        {
+          "choice": "pass",
+          "basis_id": "qg-pass",
+          "issues": 0
+        },
+        {
+          "choice": "fix",
+          "basis_id": "qg-fix",
+          "issues": 0
+        }
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "prepared_at_future": false,
+      "prepared_at_zone": "UTC"
+    },
+    {
+      "dp": "dp-gate-approve",
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-gate-approve.json",
+      "bytes": 4750,
+      "sha256": "269f07c212be2f8a9de6c3f8b7f180588133650890690dcbd1f1074287cfd67a",
+      "private_out_byte_identical": true,
+      "equals_generator_build_case": true,
+      "offline_check_book_issues": 0,
+      "issue_detail": [],
+      "supported_choices": [
+        "approve",
+        "steer",
+        "need_fix",
+        "reject"
+      ],
+      "basis_checks": [
+        {
+          "choice": "approve",
+          "basis_id": "gate-approve",
+          "issues": 0
+        },
+        {
+          "choice": "steer",
+          "basis_id": "gate-steer",
+          "issues": 0
+        },
+        {
+          "choice": "need_fix",
+          "basis_id": "gate-need-fix",
+          "issues": 0
+        },
+        {
+          "choice": "reject",
+          "basis_id": "gate-reject",
+          "issues": 0
+        }
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "prepared_at_future": false,
+      "prepared_at_zone": "UTC"
+    },
+    {
+      "dp": "dp-sign-key",
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-sign-key.json",
+      "bytes": 3825,
+      "sha256": "4462e8163b6aaf6af0251eb3f6b10fd0e9571e4f71b878f791048d4e594fd232",
+      "private_out_byte_identical": true,
+      "equals_generator_build_case": true,
+      "offline_check_book_issues": 0,
+      "issue_detail": [],
+      "supported_choices": [
+        "finalize",
+        "continue",
+        "user-confirm"
+      ],
+      "basis_checks": [
+        {
+          "choice": "finalize",
+          "basis_id": "sign-finalize",
+          "issues": 0
+        },
+        {
+          "choice": "continue",
+          "basis_id": "sign-continue",
+          "issues": 0
+        },
+        {
+          "choice": "user-confirm",
+          "basis_id": "sign-user-confirm",
+          "issues": 0
+        }
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "prepared_at_future": false,
+      "prepared_at_zone": "UTC"
+    },
+    {
+      "dp": "dp-auto",
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-auto.json",
+      "bytes": 4747,
+      "sha256": "b80e93a52a7e07947efd9d758e379deb09c5683d4ff7d1f09261da16ec3a75ef",
+      "private_out_byte_identical": true,
+      "equals_generator_build_case": true,
+      "offline_check_book_issues": 0,
+      "issue_detail": [],
+      "supported_choices": [
+        "wire-facets-now",
+        "split-projection-task",
+        "escalate-to-human"
+      ],
+      "basis_checks": [
+        {
+          "choice": "wire-facets-now",
+          "basis_id": "auto-wire-facets",
+          "issues": 0
+        },
+        {
+          "choice": "split-projection-task",
+          "basis_id": "auto-split-projection",
+          "issues": 0
+        },
+        {
+          "choice": "escalate-to-human",
+          "basis_id": "auto-escalate",
+          "issues": 0
+        }
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "prepared_at_future": false,
+      "prepared_at_zone": "UTC"
+    },
+    {
+      "dp": "dp-route",
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-route.json",
+      "bytes": 3994,
+      "sha256": "91569d4d576622da48f8b16995fd3e27da5744a90788600cda1cb46189e5a230",
+      "private_out_byte_identical": true,
+      "equals_generator_build_case": true,
+      "offline_check_book_issues": 0,
+      "issue_detail": [],
+      "supported_choices": [
+        "dp-w-type",
+        "dp-pm-steer",
+        "dp-w-check-task",
+        "dp-QG",
+        "dp-gate-approve",
+        "dp-sign-key",
+        "dp-auto"
+      ],
+      "basis_checks": [
+        {
+          "choice": "dp-w-type",
+          "basis_id": "route-w-type",
+          "issues": 0
+        },
+        {
+          "choice": "dp-pm-steer",
+          "basis_id": "route-pm-steer",
+          "issues": 0
+        },
+        {
+          "choice": "dp-w-check-task",
+          "basis_id": "route-w-check",
+          "issues": 0
+        },
+        {
+          "choice": "dp-QG",
+          "basis_id": "route-QG",
+          "issues": 0
+        },
+        {
+          "choice": "dp-gate-approve",
+          "basis_id": "route-gate",
+          "issues": 0
+        },
+        {
+          "choice": "dp-sign-key",
+          "basis_id": "route-sign-key",
+          "issues": 0
+        },
+        {
+          "choice": "dp-auto",
+          "basis_id": "route-auto",
+          "issues": 0
+        }
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "prepared_at_future": false,
+      "prepared_at_zone": "UTC"
+    }
+  ],
+  "template": {
+    "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_book_template.json",
+    "bytes": 12168,
+    "sha256": "1cde56dfc814afd36e2b49d610e25e25be33561b2755ebf373a0f54e3802545e",
+    "books": [
+      "dp-QG",
+      "dp-auto",
+      "dp-gate-approve",
+      "dp-pm-steer",
+      "dp-route",
+      "dp-sign-key",
+      "dp-w-check-task",
+      "dp-w-type"
+    ],
+    "schema_version": [
+      3
+    ],
+    "failures": [],
+    "is_skeleton": {
+      "dp-QG": true,
+      "dp-auto": true,
+      "dp-gate-approve": true,
+      "dp-pm-steer": true,
+      "dp-route": true,
+      "dp-sign-key": true,
+      "dp-w-check-task": true,
+      "dp-w-type": true
+    }
+  },
+  "legacy_cases": {
+    "dp1.json": {
+      "sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "expected": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff"
+    },
+    "dp2.json": {
+      "sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "expected": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea"
+    },
+    "dp3.json": {
+      "sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "expected": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d"
+    },
+    "dp25.json": {
+      "sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "expected": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd"
+    }
+  },
+  "legacy_cases_unchanged": true,
+  "failures": [],
+  "ok": true
+}

@@ -1,0 +1,4 @@
+﻿
+> pi-monorepo@0.0.3 check:browser-smoke
+> node scripts/check-browser-smoke.mjs
+

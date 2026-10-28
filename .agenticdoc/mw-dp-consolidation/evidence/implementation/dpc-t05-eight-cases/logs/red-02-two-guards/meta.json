@@ -1,0 +1,32 @@
+﻿{
+    "label":  "red-02-two-guards",
+    "started_at":  "2026-10-27T13:04:29.2841833Z",
+    "finished_at":  "2026-10-27T13:04:31.5875946Z",
+    "cwd":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+    "target":  "test_decision_context_workbench.py",
+    "argv":  [
+                 "python",
+                 "-B",
+                 "-m",
+                 "pytest",
+                 "-p",
+                 "no:cacheprovider",
+                 "-q",
+                 "-k,dp_route_case_routes or generator_refuses_retired",
+                 "test_decision_context_workbench.py"
+             ],
+    "rc":  4,
+    "home":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\red-02-two-guards\\home",
+    "temp":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\red-02-two-guards\\tmp",
+    "project":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\red-02-two-guards\\project",
+    "env":  {
+                "HOME":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\red-02-two-guards\\home",
+                "USERPROFILE":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\red-02-two-guards\\home",
+                "TEMP":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\red-02-two-guards\\tmp",
+                "PYTHONDONTWRITEBYTECODE":  "1",
+                "PYTHONPYCACHEPREFIX":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\red-02-two-guards\\tmp",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD":  "1",
+                "PYTHONUTF8":  "1",
+                "MW_PROJECT_DIR":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\red-02-two-guards\\project"
+            }
+}

@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "task_key": "dpc-t10-r2-replay-repair",
+  "run_id": "dpc-t10-r2-replay-repair@2026-10-28T07:29:44.606Z",
+  "owner_key": "mw-dp-consolidation",
+  "kind": "coding",
+  "status": "running",
+  "started_at": "2026-10-28T07:29:44.606Z",
+  "artifacts": [],
+  "pid": 104036,
+  "last_heartbeat_at": "2026-10-28T07:30:14.619Z"
+}

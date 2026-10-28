@@ -1,0 +1,6 @@
+### argv: python mw.py decide monitor --project <tmp>
+### cwd: /h/git/Multi-Workers/packages/multi-workers
+usage: mw.py decide [-h] {run,probe,show,set,ask,book,report,sign,dp} ...
+mw.py decide: error: argument decide_action: invalid choice: 'monitor' (choose from run, probe, show, set, ask, book, report, sign, dp)
+### exit=2
+### listening monitor ports after probe:

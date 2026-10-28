@@ -86,25 +86,29 @@ import { isSameOrUnder } from "../worker/read-scope.ts";
 export { classifyWriteTargetShape, type WriteTargetShape } from "../shared/write-surface.ts";
 
 import { isShellRole, isWritelessRole } from "../worker/worker-mode.ts";
+import { captureDecisionTaskState, copyTaskState, type TaskStateSnapshot } from "./decision-task-state.ts";
+import { type DecisionLifecycleEnvelope, type LifecycleRunner, writeDecisionLifecycle } from "./decision-tool.ts";
 import { formatDispatchAlarm, recordDispatchAlarm } from "./pm-orchestrator.ts";
+import { planReviewSplitGate } from "./review-split-gate.ts";
 import { StateManager } from "./state-manager.ts";
 import { type DispatchRefusal, dispatchTask } from "./task-dispatcher.ts";
 import {
-	buildTriageState,
 	canonicalStateBytes,
+	type DecidePolicy,
 	type DecideRunner,
+	type DecisionEnvelopeMeta,
 	DP1_ID,
-	DP1_QUESTIONS_VERSION,
+	type Dp1TaskMaterial,
 	formatTriageLedgerDetail,
 	formatTriageReceipt,
-	MAX_STRUCTURED_STATE_BYTES,
-	prepareStructuredState,
+	newDecisionMeta,
 	readDecidePolicy,
 	TRIAGE_REASON_INPUT_OVERSIZE,
 	type TriageResult,
-	type TriageState,
-	triageDispatch,
+	triageDispatchEnvelope,
 } from "./triage-client.ts";
+
+export { captureDecisionTaskState };
 
 /** Owner key for a worker task — this window's own claim first, the shared
  * active pointer second. Explicit key wins (deliberate choice — no warning).
@@ -250,15 +254,17 @@ export interface DispatchTriage {
 	 * unavailable / an anonymous answer leave it undefined, which keeps the
 	 * pre-T-08 task.md bytes. */
 	decision?: DispatchDecision;
-	/** T-04d: which `state` shape actually went on the wire. `structured` is the
-	 * normal path; `legacy` means the dp1 required-field set could not be built
-	 * from the dispatch plan (or the structured state stayed over budget after
-	 * the two-stage truncation) and the frozen pre-T-04 string state was used
-	 * instead. */
-	statePath: "structured" | "legacy";
-	/** T-04d: the one audit line the dispatch writes into the task's `trace.log`
-	 * (`[DECISION] dp1 state=structured bytes=<N>` / `state=legacy
-	 * reason=<missing|oversize>`). Never silent — the path decision is recorded. */
+	/** T03: the local envelope of the decision this dispatch created, when the
+	 * producer really called the service. `undefined` on a skipped path — there is
+	 * no decision record to join lifecycle feedback to. */
+	meta?: DecisionEnvelopeMeta;
+	/** T03: `material` = the `{material, meta}` envelope really went on the wire;
+	 * `skipped` = no call was made (role outside dp1's taxonomy / missing
+	 * material / over budget). */
+	statePath: "material" | "skipped";
+	/** T03: the one audit line the dispatch writes into the task's `trace.log`
+	 * (`[DECISION] dp1 state=material bytes=<N>` / `state=skipped
+	 * reason=<unsupported-type|missing-material|oversize>`). Never silent. */
 	stateTrace: string;
 }
 
@@ -296,152 +302,237 @@ function dispatchDecisionOf(result: TriageResult, dispatchedType: string): Dispa
 	return { decisionId, acted: true };
 }
 
-/** Dispatch-plan facts the dp1 structured state is built from (T-04d).
+/** Dispatch-plan facts the dp1 business material is built from (T03).
  *
- * The state is derived from the dispatch itself — no extra call, no config read
- * and no `.mw/decide-points.json` mirror (D-036). `writeFace` is the card's
- * `## 写入允许面` entry list (`cardWriteFaceEntries`), i.e. the PM's own
- * declaration of what this task may write; `taskType`/`phase`/`description`
- * are the plan inputs `planDispatchFrontmatter` already holds. */
+ * The material is the dispatch card's own 上下文 / 要求 / 交付格式 bodies — no
+ * summary, no risk label, no audit identity (mw-decision-context design §2).
+ * `sections` is the judged card's seed extraction (`readDispatchCard`); `key`
+ * and `taskKey` are the REAL ids this dispatch already reserved, so the decision
+ * is associated with them instead of guessing "the latest task". */
 export interface Dp1DispatchPlan {
-	/** AgenticTask key the task lands under (the decision id's trigger id). */
+	/** AgenticTask key the task lands under. */
 	key?: string;
-	/** Owner key's current phase (`dispatchPhase`); "" for `_scratch`. */
-	phase?: string;
+	/** The reserved, REAL task id (`dispatch_worker` mints it before the decision
+	 * runs). Absent/null = a PM decision with no task. */
+	taskKey?: string | null;
 	/** The dispatched `type:` (never rewritten by the advice). */
 	taskType?: string;
-	/** The PM's requested type. Today the dispatch never rewrites the type, so
-	 * this equals `taskType`; both fields exist because the registry asks for
-	 * both (`REQUIRED_STATE_FIELDS["dp1-dispatch-type"]`). */
-	requestedType?: string;
-	/** Task body — only its first line becomes the L1 `task_summary`. */
-	description?: string;
-	/** Card write-face entries, `null`/absent when the card declares none. */
-	writeFace?: string[] | null;
-	/** The PM explicitly accepted a write outside the key. */
-	allowForeignWrite?: boolean;
+	/** Card seed sections; absent means the producer has no original material. */
+	sections?: CardSections;
+	taskBefore?: TaskStateSnapshot;
 }
 
-/** Call-site facts only the dispatch entry knows; the rest of the dp1 state is
- * derived inside {@link planDispatchFrontmatter}. */
-export type Dp1DispatchFacts = Pick<Dp1DispatchPlan, "key" | "writeFace" | "allowForeignWrite">;
+/** Call-site facts only the dispatch entry knows. */
+export type Dp1DispatchFacts = Pick<Dp1DispatchPlan, "key" | "taskKey" | "sections" | "taskBefore">;
 
 const DP1_TYPE_CHOICES: readonly string[] = ["coding", "research", "review"];
 
-/** Repo-relative path shape a write-face entry must have to become dp1 input.
- * Prose in the `## 写入允许面` section ("仅本任务目录下的 task.md…") is not a
- * scope declaration and is skipped, as is anything absolute (L2: a state never
- * carries an absolute path). A card whose whole face is prose therefore yields
- * no scope and the dispatch falls back to the legacy state (traced). */
-const WRITE_FACE_PATH_RE = /^[A-Za-z0-9_.@+-]+(?:\/[A-Za-z0-9_.@*+-]+)+$/;
+/** Build result for one dp1 material envelope. The builder itself never
+ * truncates or summarises (the transport refuses over-budget material as a
+ * whole); `unsupported-type` means the role is outside dp1's three-value
+ * taxonomy and the dispatch must ask no decision at all. */
+export type Dp1MaterialBuild =
+	| { ok: true; material: Dp1TaskMaterial; bytes: number }
+	| { ok: false; reason: "unsupported-type" | "missing-material" };
 
-/** Repo-relative directories for `scope.write_scope` (D6 Q1.1: ≤12 items,
- * ≤32 UTF-8 bytes each, ≤384 total). Each path-shaped write-face entry
- * contributes its own directory, coarsened upward (parent by parent) until it
- * fits the 32-byte cap — coarsening can only WIDEN the reported scope, never
- * narrow it, so the decision input never understates the blast radius. */
-function writeScopeDirs(entries: readonly string[]): string[] {
-	const out: string[] = [];
-	for (const raw of entries) {
-		const entry = raw.trim().replace(/\\/g, "/").replace(/^\.\//, "");
-		if (!WRITE_FACE_PATH_RE.test(entry)) continue;
-		const segments = entry.split("/").filter((part) => part !== "");
-		// A trailing file segment is not a directory: write scope is directories.
-		const dirs = /\.[A-Za-z0-9]{1,8}$/.test(segments.at(-1) ?? "") ? segments.slice(0, -1) : segments;
-		let dir = dirs.join("/");
-		while (Buffer.byteLength(dir, "utf8") > 32 && dirs.length > 1) {
-			dirs.pop();
-			dir = dirs.join("/");
-		}
-		if (dir === "" || Buffer.byteLength(dir, "utf8") > 32) continue;
-		if (!out.includes(dir)) out.push(dir);
-	}
-	return out.slice(0, 12);
-}
-
-/** Extension set for `scope.file_extensions` (D6 Q1.1: ≤6 items, ≤8 bytes
- * each, ≤36 total) — the extensions of the write-face entries that name files.
- * An empty set is a missing required field, never a fabricated default. */
-function writeScopeExts(entries: readonly string[]): string[] {
-	const seen = new Set<string>();
-	for (const raw of entries) {
-		const entry = raw.trim().replace(/\\/g, "/");
-		if (!WRITE_FACE_PATH_RE.test(entry)) continue;
-		const match = /\.[A-Za-z0-9]{1,8}$/.exec(entry);
-		if (match === null) continue;
-		const ext = match[0].slice(1).toLowerCase();
-		if (ext === "" || Buffer.byteLength(ext, "utf8") > 8) continue;
-		seen.add(ext);
-	}
-	const kept: string[] = [];
-	let total = 0;
-	for (const ext of [...seen].sort()) {
-		const size = Buffer.byteLength(ext, "utf8");
-		if (kept.length >= 6 || total + size > 36) continue;
-		kept.push(ext);
-		total += size;
-	}
-	return kept;
-}
-
-/** Code-point-safe byte truncation (never splits a surrogate pair). */
-function truncateUtf8Value(text: string, maxBytes: number): string {
-	if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
-	let out = "";
-	let used = 0;
-	for (const char of text) {
-		const size = Buffer.byteLength(char, "utf8");
-		if (used + size > maxBytes) break;
-		out += char;
-		used += size;
-	}
-	return out;
-}
-
-/** L1 `task_summary` (≤600B): the description's first non-empty line, collapsed
- * to one line, with absolute paths replaced by `<path>` (L2 has no place in a
- * dp state). No summary means a missing required field, i.e. legacy fallback. */
-function dispatchTaskSummary(description: string | undefined): string {
-	const firstLine =
-		(description ?? "")
-			.split(/\r?\n/)
-			.map((line) => line.trim())
-			.find((line) => line !== "") ?? "";
-	const scrubbed = firstLine
-		.replace(/[A-Za-z]:[\\/][^\s,，、;；)）]*/g, "<path>")
-		.replace(/(^|\s)\/(?:[\w.@+-]+\/)+[\w.@+-]*/g, "$1<path>")
-		.replace(/\s+/g, " ")
-		.trim();
-	return truncateUtf8Value(scrubbed, 600);
-}
-
-/** Dispatch-time risk label for dp1.
+/** Build the dp1 business material from the dispatch card (T03).
  *
- * dp1 runs BEFORE the first checkpoint, so there is no `computeRisk` machine
- * signal to read. The label is therefore the PM's own blast-radius
- * classification of the plan it is about to dispatch — a foreign-write
- * authorization is `high`, a writeless (read-only) role is `low`, every other
- * write role is `mid` — and `risk_source` says `pm-label` so no consumer can
- * mistake it for machine evidence. It is derived from declared dispatch
- * properties, never a placeholder default (spec §5.4 / D6 Q5.1 禁静默默认值). */
-function dispatchRisk(taskType: string, allowForeignWrite: boolean): string {
-	if (allowForeignWrite) return "high";
-	return isWritelessRole(taskType) ? "low" : "mid";
+ * Exactly the registry's `modelStateFields` for dp1 — `task_goal`,
+ * `task_requirements`, `task_deliverables` — each the card's ORIGINAL body
+ * (上下文 / 要求 / 交付格式), verbatim. No summary, no risk label, no identity
+ * fields: those ride on the local envelope (`newDecisionMeta`). */
+export function buildDp1DecisionMaterial(plan: Dp1DispatchPlan): Dp1MaterialBuild {
+	const taskType = plan.taskType ?? "";
+	if (!DP1_TYPE_CHOICES.includes(taskType)) return { ok: false, reason: "unsupported-type" };
+	const sections = plan.sections;
+	const material: Dp1TaskMaterial = {
+		task_goal: (sections?.context ?? "").trim(),
+		task_requirements: (sections?.requirements ?? "").trim(),
+		task_deliverables: (sections?.deliverables ?? "").trim(),
+	};
+	if (Object.values(material).some((value) => value === "")) return { ok: false, reason: "missing-material" };
+	return { ok: true, material, bytes: canonicalStateBytes(material) };
 }
 
-/** Build result for one dp1 structured state (T-04d). `reason` maps the client
- * refusal onto the two trace values the card fixes: `missing` (any
- * `input-incomplete` — a required field absent, blank, out of enum or over its
- * cap) and `oversize` (still over 2000B after the two-stage truncation). */
-export type Dp1StateBuild =
-	| { ok: true; state: TriageState; bytes: number; dropped: string[] }
-	| { ok: false; reason: "missing" | "oversize" };
+/** Local-envelope metadata for one dp1 dispatch. The PM is the initiating role;
+ * `task_key` is the id the dispatch already reserved (never inferred). The role
+ * is T02's lowercase `pm` — the writer's closed vocabulary has a single
+ * spelling and a producer never carries a second one. */
+export function dp1DecisionMeta(plan: Dp1DispatchPlan): DecisionEnvelopeMeta {
+	return newDecisionMeta({
+		key: plan.key ?? "",
+		taskKey: plan.taskKey ?? null,
+		initiatorRole: "pm",
+		taskBefore: plan.taskBefore,
+	});
+}
 
-const STATE_CONTEXT_KEY = "context";
-/** dp1 `context.task_excerpt` cap (W6 / D-052). */
-const DP1_TASK_EXCERPT_MAX = 1200;
-/** Bytes the enclosing `"context":` key adds, reserved out of the state budget. */
-const STATE_CONTEXT_OVERHEAD = 16;
+/** One stage of the consumer's lifecycle feedback for a dp1 decision.
+ *
+ * The extension never appends a ledger row itself (the Python writer is the
+ * single lifecycle writer, T05): {@link writeDp1Lifecycle} derives the
+ * structural fact and hands it to `mw decide lifecycle --stdin --json`.
+ * `consumed` is emitted only when an answer really arrived, so "received" can
+ * never be claimed for a failed call. */
+export type Dp1ConsumerStage = "consumed" | "executed" | "settled";
+
+/** What really happened at one consumer stage (never derived from a receipt). */
+export interface Dp1ConsumerFact {
+	/** `consumed`: the answer the PM received (dp1's `triage_type`). */
+	answer?: string;
+	/** `executed`: the CLOSED T02 action label the consumer really performed. */
+	action?: string;
+	/** `executed`: what the result was based on. */
+	result?: string;
+	/** `settled`: the CLOSED T02 outcome of this round. */
+	outcome?: string;
+	reason?: string;
+	taskAfter?: TaskStateSnapshot;
+}
+
+/**
+ * One lifecycle fact for the dp1 consumer, in the shape T05's
+ * `mw decide lifecycle --stdin --json` accepts (`{meta, decision_id, dp, stage,
+ * event_id, ...}`).
+ *
+ * `undefined` means "no fact may be written": there is no real decision
+ * (skipped producer / no logical_id / no decision_id), or `consumed` was
+ * requested without an answer that really arrived. Stage fields follow T02's
+ * closed sets exactly: `consumed` carries only `answer`, `executed` only
+ * `action`+`result`, `settled` only `outcome` — mixing them is refused by the
+ * writer, so it is refused here instead of being silently dropped.
+ *
+ * `event_id` is deterministic per (logical_id, stage): a retry of the SAME write
+ * replays the same event and the writer reports `duplicate`, never a second
+ * business fact.
+ */
+export function buildDp1LifecycleFact(
+	triage: DispatchTriage | null,
+	stage: Dp1ConsumerStage,
+	fact: Dp1ConsumerFact,
+): DecisionLifecycleEnvelope | undefined {
+	const logicalId = triage?.meta?.logical_id;
+	const decisionId = triage?.result.decision_id ?? "";
+	if (triage === null || triage.meta === undefined) return undefined;
+	if (logicalId === undefined || logicalId === "" || decisionId === "") return undefined;
+	const envelope: DecisionLifecycleEnvelope = {
+		meta: triage.meta,
+		decision_id: decisionId,
+		dp: DP1_ID,
+		stage,
+		event_id: `dp1:${logicalId}:${stage}`,
+	};
+	if (fact.reason !== undefined) envelope.reason = fact.reason;
+	if (stage !== "consumed" && triage.meta.task_key !== null && fact.taskAfter !== undefined)
+		envelope.task_after = copyTaskState(fact.taskAfter);
+	if (stage === "consumed") {
+		// "Received" is only a fact when the service really answered.
+		if (!triage.result.available) return undefined;
+		if (fact.answer === undefined || fact.answer === "") return undefined;
+		envelope.answer = fact.answer;
+		return envelope;
+	}
+	if (stage === "executed") {
+		if (fact.action === undefined || fact.action === "") return undefined;
+		envelope.action = fact.action;
+		if (fact.result !== undefined) envelope.result = fact.result;
+		return envelope;
+	}
+	if (fact.outcome === undefined || fact.outcome === "") return undefined;
+	envelope.outcome = fact.outcome;
+	return envelope;
+}
+
+/** Write one dp1 consumer fact through the single Python lifecycle writer.
+ *
+ * The dispatch action is NEVER re-run from here: a failed write is reported as
+ * `failed` (the action itself is not undone), which is why the caller appends
+ * the writer's own verdict to the receipt instead of assuming success.
+ */
+export async function writeDp1Lifecycle(
+	projectDir: string,
+	triage: DispatchTriage | null,
+	stage: Dp1ConsumerStage,
+	fact: Dp1ConsumerFact,
+	runner?: LifecycleRunner,
+): Promise<{ stage: Dp1ConsumerStage; status: "written" | "duplicate" | "failed"; recorded: boolean }> {
+	const envelope = buildDp1LifecycleFact(triage, stage, fact);
+	if (envelope === undefined) return { stage, status: "failed", recorded: false };
+	const result = await writeDecisionLifecycle(projectDir, envelope, runner);
+	return { stage: result.stage, status: result.status, recorded: result.recorded };
+}
+
+/** The receipt line the dp1 consumer reports, derived ONLY from the writer's
+ * own answers (`written`/`duplicate`/`failed`). Empty when there was no real
+ * decision to report, so a skipped producer adds no bytes to the receipt. */
+export function formatDp1ConsumerReceipt(results: Array<{ stage: string; status: string }>): string {
+	if (results.length === 0) return "";
+	return `[decision] dp1 ${results.map((result) => `${result.stage}=${result.status}`).join(" ")}`;
+}
+
+/**
+ * Write the dp1 consumer feedback for ONE dispatch that already asked dp1.
+ *
+ * Order is the real order of facts: the answer was `consumed`; then either the
+ * dispatch was refused (`settled` rework, no `executed`), or it really
+ * dispatched (`executed` type-read + `settled` ok). `executed`'s result records
+ * the dispatch it did, and a disagreement keeps the original type
+ * (`kept-type:<type>`) because the advice never rewrites the dispatch.
+ *
+ * A failed write is REPORTED (`failed`), never retried with a different action
+ * and never re-run as a dispatch.
+ */
+export async function writeDp1DispatchFeedback(input: {
+	projectDir: string;
+	triage: DispatchTriage | null;
+	lifecycleRun?: LifecycleRunner;
+	taskKey: string;
+	dispatchedType: string;
+	refused: boolean;
+	taskAfter?: TaskStateSnapshot;
+}): Promise<Array<{ stage: Dp1ConsumerStage; status: "written" | "duplicate" | "failed" }>> {
+	const { projectDir, triage, lifecycleRun, taskKey, dispatchedType, refused } = input;
+	const results: Array<{ stage: Dp1ConsumerStage; status: "written" | "duplicate" | "failed" }> = [];
+	if (triage !== null && triage.statePath === "material" && triage.result.available) {
+		const answer = triage.result.triage_type;
+		if (answer !== undefined && answer !== "") {
+			results.push(await writeDp1Lifecycle(projectDir, triage, "consumed", { answer }, lifecycleRun));
+		}
+	}
+	if (results.length === 0) return results;
+	if (refused) {
+		results.push(
+			await writeDp1Lifecycle(
+				projectDir,
+				triage,
+				"settled",
+				{ outcome: "rework", reason: "dispatch-refused", taskAfter: input.taskAfter },
+				lifecycleRun,
+			),
+		);
+		return results;
+	}
+	const keptType = triage?.disagreement ?? false;
+	results.push(
+		await writeDp1Lifecycle(
+			projectDir,
+			triage,
+			"executed",
+			{ action: "type-read", result: keptType ? `kept-type:${dispatchedType}` : `dispatched:${taskKey}` },
+			lifecycleRun,
+		),
+	);
+	results.push(
+		await writeDp1Lifecycle(
+			projectDir,
+			triage,
+			"settled",
+			{ outcome: "ok", taskAfter: input.taskAfter },
+			lifecycleRun,
+		),
+	);
+	return results;
+}
 
 function readDottedPath(state: Record<string, unknown>, dotted: string): unknown {
 	let current: unknown = state;
@@ -455,6 +546,10 @@ function readDottedPath(state: Record<string, unknown>, dotted: string): unknown
 function isBlankStateValue(value: unknown): boolean {
 	return value === undefined || value === null || (typeof value === "string" && value.trim() === "");
 }
+
+/** The only top-level key a registry state may carry beyond its required set
+ * (`assertStateMatchesRegistry`; other DPs use it for engineered context). */
+const STATE_CONTEXT_KEY = "context";
 
 /** Assert one built state matches its registry row (W6: the registry is the
  * field-list authority, so a producer may never send a second hand-written
@@ -470,6 +565,11 @@ export function assertStateMatchesRegistry(dpId: string, state: Record<string, u
 	const required = entry.requiredStateFields.map((field) => field.name);
 	const missing = required.filter((path) => isBlankStateValue(readDottedPath(state, path)));
 	const allowedTopLevel = new Set(required.map((path) => path.split(".")[0] ?? path));
+	// A registry-declared optional L1 field is legal material too (dp2's
+	// `worker_execution`): it is not drift, so it must not read as `extra`.
+	for (const field of entry.optionalStateFields) {
+		allowedTopLevel.add(field.name.split(".")[0] ?? field.name);
+	}
 	allowedTopLevel.add(STATE_CONTEXT_KEY);
 	const extra = Object.keys(state).filter((key) => !allowedTopLevel.has(key));
 	const context = state[STATE_CONTEXT_KEY];
@@ -489,136 +589,70 @@ export function assertStateMatchesRegistry(dpId: string, state: Record<string, u
 	throw new Error(`dp ${dpId} state does not match the registry: ${problems.join("; ")}`);
 }
 
-/** One `## <heading>` section of a dispatch card body ("" when absent). */
-function dispatchCardSection(text: string, heading: string): string {
-	const lines = text.split("\n");
-	const start = lines.findIndex((line) => line.trim() === `## ${heading}`);
-	if (start < 0) return "";
-	const body: string[] = [];
-	for (let index = start + 1; index < lines.length; index += 1) {
-		const line = lines[index] ?? "";
-		if (/^##\s/.test(line)) break;
-		body.push(line);
-	}
-	return body.join("\n").trim();
-}
-
-/** dp1 `context.task_excerpt`: the card's `## 上下文` + `## 要求` sections, or the
- * whole body when the card has neither heading. Byte-capped so it can never
- * push the state over the 2000 B budget. */
-function dispatchTaskExcerpt(text: string | undefined, maxBytes: number): string {
-	if (!text) return "";
-	const sections = [dispatchCardSection(text, "上下文"), dispatchCardSection(text, "要求")].filter(
-		(section) => section !== "",
-	);
-	const source = (sections.length > 0 ? sections.join("\n\n") : text).trim();
-	if (source === "") return "";
-	return truncateUtf8Value(source, maxBytes);
-}
-
-/** Build the dp1 structured state from the dispatch plan (T-04d).
+/** Compute the dp1 decision advice for one dispatch. Reads `.mw/decide.json`
+ * (read-only) and asks the decision client with the card's ORIGINAL material on
+ * the local envelope; `null` on the default-off path so nothing changes.
+ * Never throws.
  *
- * Field set = `decision_points.REQUIRED_STATE_FIELDS["dp1-dispatch-type"]`
- * (universal 9 + `requested_type`/`task_summary`/`scope.write_scope`/
- * `scope.file_extensions`), plus `task_key`-free `key` and the registry
- * `questions_version`. Everything is validated + bounded by
- * {@link prepareStructuredState} (≤2000B, two-stage truncation); a refusal is
- * reported, never patched over — the caller then falls back to the legacy
- * string state. */
-export function buildDp1DispatchState(plan: Dp1DispatchPlan): Dp1StateBuild {
-	const taskType = plan.taskType ?? "";
-	const writeFace = plan.writeFace ?? [];
-	const state: TriageState = {
-		// Same schema version the registry builder and the TS validator are pinned
-		// to (`decision_points._state_builder`).
-		schema_version: 2,
-		decision_point: DP1_ID,
-		key: (plan.key ?? "").trim(),
-		phase: (plan.phase ?? "").trim(),
-		task_type: taskType,
-		// The dispatch never rewrites the requested type, so both fields carry the
-		// plan's `type:` unless a caller says otherwise.
-		requested_type: plan.requestedType ?? taskType,
-		risk: dispatchRisk(taskType, plan.allowForeignWrite === true),
-		risk_source: "pm-label",
-		// dp1 is a P2 (reversible, local) decision point in the registry; the tier
-		// is the action's authority class, not a config mirror (D-036).
-		authority_tier: "P2",
-		task_summary: dispatchTaskSummary(plan.description),
-		questions_version: DP1_QUESTIONS_VERSION,
-		scope: { write_scope: writeScopeDirs(writeFace), file_extensions: writeScopeExts(writeFace) },
-	};
-	if (!DP1_TYPE_CHOICES.includes(taskType)) {
-		// A role outside the dp1 taxonomy (vision / rag-research / codex) cannot be
-		// expressed in the required enum: report it as missing instead of guessing.
-		return { ok: false, reason: "missing" };
-	}
-	const prepared = prepareStructuredState(DP1_ID, state);
-	if (!prepared.ok) {
-		return {
-			ok: false,
-			reason: prepared.reason === TRIAGE_REASON_INPUT_OVERSIZE ? "oversize" : "missing",
-		};
-	}
-	// W6 (D-052): attach the engineered context AFTER the structured validator,
-	// which only knows the decision fields; the excerpt is then sized against the
-	// remaining 2000 B headroom so the whole state still fits the budget.
-	const contextSlots = DECIDE_REGISTRY[DP1_ID]?.contextSlots ?? [];
-	const dropped = [...prepared.dropped];
-	let finalState = prepared.state;
-	let bytes = prepared.bytes;
-	if (contextSlots.includes("task_excerpt")) {
-		const headroom = MAX_STRUCTURED_STATE_BYTES - prepared.bytes - STATE_CONTEXT_OVERHEAD;
-		const excerpt = dispatchTaskExcerpt(plan.description, Math.min(DP1_TASK_EXCERPT_MAX, headroom));
-		if (excerpt === "") dropped.push("context.task_excerpt");
-		else {
-			finalState = { ...prepared.state, context: { task_excerpt: excerpt } };
-			bytes = canonicalStateBytes(finalState);
-		}
-	}
-	assertStateMatchesRegistry(DP1_ID, finalState);
-	return { ok: true, state: finalState, bytes, dropped };
-}
-
-/** Compute the bypass advice for one dispatch. Reads `.mw/decide.json`
- * (read-only) and asks the triage client for a suggestion; returns `null` on
- * the default-off path so nothing downstream changes. Never throws.
- *
- * T-04d: when `dp1` is supplied and the plan yields the complete registry
- * required set, the request carries a STRUCTURED state — the only shape the
- * CLI routes through `decision_points.decide_for`, which is what makes
- * `decision_id` / `mode` / `acted` reachable in production. An incomplete or
- * oversized set falls back to the frozen pre-T-04 legacy string state and the
- * fallback is recorded in {@link DispatchTriage.stateTrace} (never silent). */
+ * T03: the request shape is `{material, meta}` (dp1 model state = the three
+ * business strings; identity only in `meta`). A role outside the three-value
+ * taxonomy, missing material or over-budget material is a ZERO-spawn skip,
+ * recorded in {@link DispatchTriage.stateTrace} (never silent) — the old
+ * `{state}` / string fallback branches, which also asked a `triage_risk`
+ * question and truncated the task text, are gone (spec §1.7). */
 export function computeDispatchTriage(input: {
 	projectDir: string;
-	state: string;
 	dispatchedType: string;
 	run?: DecideRunner;
-	/** T-04d dispatch-plan facts; omitted (direct API callers) = legacy state. */
+	/** Dispatch-plan facts; omitted (direct API callers) = no decision call. */
 	dp1?: Dp1DispatchPlan;
+	/** Pre-read policy (tests); read from disk when omitted. */
+	policy?: DecidePolicy;
 }): DispatchTriage | null {
-	const policy = readDecidePolicy(input.projectDir);
+	const policy = input.policy ?? readDecidePolicy(input.projectDir);
 	if (!policy.enabled || !policy.dp1Enabled) return null;
-	let state: string | TriageState = input.state;
-	let statePath: "structured" | "legacy" = "legacy";
-	let fallbackReason: "missing" | "oversize" = "missing";
-	let structuredBytes = 0;
-	if (input.dp1 !== undefined) {
-		const built = buildDp1DispatchState(input.dp1);
-		if (built.ok) {
-			state = built.state;
-			statePath = "structured";
-			structuredBytes = built.bytes;
+	let statePath: "material" | "skipped" = "skipped";
+	let skipReason: "unsupported-type" | "missing-material" | "oversize" = "missing-material";
+	let materialBytes = 0;
+	let meta: DecisionEnvelopeMeta | undefined;
+	let result: TriageResult;
+	const plan = input.dp1;
+	const candidate = plan === undefined ? undefined : dp1DecisionMeta(plan);
+	const built = plan === undefined ? undefined : buildDp1DecisionMaterial(plan);
+	if (built === undefined || !built.ok) {
+		skipReason = built === undefined ? "missing-material" : built.reason;
+		result = {
+			available: false,
+			reason: skipReason === "unsupported-type" ? "unsupported-type" : "input-incomplete",
+			confidences: {},
+			confidence_source: "unknown",
+			latency_ms: 0,
+		};
+	} else {
+		materialBytes = built.bytes;
+		const decision = triageDispatchEnvelope({
+			projectDir: input.projectDir,
+			dpId: DP1_ID,
+			material: built.material,
+			meta: candidate as DecisionEnvelopeMeta,
+			policy,
+			run: input.run,
+		});
+		result = decision;
+		if (decision.available === false && decision.escalate_to_human === true) {
+			// Zero-spawn refusal from the transport: no decision record was created.
+			skipReason = decision.reason === TRIAGE_REASON_INPUT_OVERSIZE ? "oversize" : "missing-material";
 		} else {
-			fallbackReason = built.reason;
+			// The call really happened (also when it degraded): the record exists, so
+			// its id is the association key for later feedback.
+			statePath = "material";
+			meta = candidate;
 		}
 	}
 	const stateTrace =
-		statePath === "structured"
-			? `[DECISION] dp1 state=structured bytes=${structuredBytes}`
-			: `[DECISION] dp1 state=legacy reason=${fallbackReason}`;
-	const result = triageDispatch({ projectDir: input.projectDir, state, policy, run: input.run });
+		statePath === "material"
+			? `[DECISION] dp1 state=material bytes=${materialBytes}`
+			: `[DECISION] dp1 state=skipped reason=${skipReason}`;
 	return {
 		result,
 		alertOnDisagreement: policy.alertOnDisagreement,
@@ -627,6 +661,7 @@ export function computeDispatchTriage(input: {
 		disagreement: result.available && result.triage_type !== undefined && result.triage_type !== input.dispatchedType,
 		receipt: formatTriageReceipt(result),
 		decision: dispatchDecisionOf(result, input.dispatchedType),
+		meta,
 		statePath,
 		stateTrace,
 	};
@@ -638,6 +673,9 @@ export function computeDispatchTriage(input: {
  * completely silent unless `triage_notify_on_unavailable=true`. */
 export function emitDispatchTriage(pi: ExtensionAPI, agenticdocRoot: string, triage: DispatchTriage | null): void {
 	if (!triage) return;
+	// A skipped producer asked no decision: there is no advice to record and no
+	// unavailable *call* to notice (T03). The trace line already carries the skip.
+	if (triage.statePath === "skipped") return;
 	if (triage.result.available) {
 		const detail = formatTriageLedgerDetail(triage.result, triage.dispatchedType);
 		recordDispatchAlarm(agenticdocRoot, { kind: "triage-suggestion", count: 1, detail });
@@ -1828,28 +1866,19 @@ export function planDispatchFrontmatter(input: {
 	// before any dispatch fs write — and attached to the result. It NEVER mutates
 	// the frontmatter/echo below: the default-off path returns null and changes
 	// nothing, and the suggestion never rewrites type/role/model/cli.
-	// T-04d: the request carries a structured state whenever the plan yields the
-	// registry's full dp1 required set (the only shape whose CLI response carries
-	// `decision_id`/`mode`/`acted`); otherwise the frozen legacy string state is
-	// used and the fallback is traced.
+	// T03: the request carries the card's ORIGINAL goal/requirements/deliverables
+	// on the local envelope (`{material, meta}`); identity and the reserved task
+	// id ride in `meta` only.
 	const triage = computeDispatchTriage({
 		projectDir: input.cwd,
-		state: buildTriageState({
-			description: input.description ?? "",
-			taskType: input.taskType,
-			cli: input.cli,
-			phase: input.phase,
-		}),
 		dispatchedType: input.taskType,
 		run: input.triageRun,
 		dp1: {
 			key: input.dp1?.key,
-			phase: input.phase,
+			taskKey: input.dp1?.taskKey,
+			taskBefore: input.dp1?.taskBefore,
 			taskType: input.taskType,
-			requestedType: input.taskType,
-			description: input.description,
-			writeFace: input.dp1?.writeFace,
-			allowForeignWrite: input.dp1?.allowForeignWrite,
+			sections: input.dp1?.sections,
 		},
 	});
 
@@ -2827,6 +2856,11 @@ export interface DispatchCardGate {
 	 * gaps under `MW_CLAIM_GATE=enforce`. Empty in enforce mode (they are refused
 	 * instead) and for a card without a claims block. */
 	warnings: string[];
+	/** A `<!-- mw-claims: v1 -->` block was seen on the card, even if no row parsed.
+	 * The receipt needs this to tell "no claims block" (silent, byte-identical)
+	 * apart from "a claims block that produced zero claims" (must shout: the
+	 * worker will otherwise run with no verdict scope and no read budget). */
+	claimsDeclared: boolean;
 }
 
 const EMPTY_CARD_SECTIONS: CardSections = { context: "", requirements: "", deliverables: "", extras: [] };
@@ -2875,6 +2909,7 @@ export function readDispatchCard(input: {
 		claims: [],
 		caps: null,
 		warnings: [],
+		claimsDeclared: false,
 	};
 	if (raw === "") return { ...empty, missing: ["card_path"] };
 	const envelope = readEnvelope(resolvedPath);
@@ -2907,6 +2942,7 @@ export function readDispatchCard(input: {
 			missing: claimsMissing,
 			claims: claimBlock.claims,
 			caps,
+			claimsDeclared: claimBlock.present,
 		};
 	}
 	const sections: CardSections = {
@@ -2931,6 +2967,7 @@ export function readDispatchCard(input: {
 		claims: claimBlock.claims,
 		caps,
 		warnings,
+		claimsDeclared: claimBlock.present,
 	};
 }
 
@@ -2961,12 +2998,19 @@ export function dispatchCardRefusal(gate: DispatchCardGate): string {
 
 /** The advisory claims receipt line (design §5 G1): appended ONLY when the card
  * declares claims, so a pre-claims card's receipt stays byte-identical
- * (`triage-dispatch.test.ts` pins the full string). */
+ * (`triage-dispatch.test.ts` pins the full string).
+ *
+ * A declared block that parses to ZERO claims is the dangerous case (T-07): the
+ * claim ids are `C-<2+ digits>`, so an id like `C-A1` silently drops every row,
+ * which means no `read_scope`, no caps and — without this line — no signal at
+ * all. It therefore reports `claims=0(unparsed)` plus the row errors rather
+ * than staying quiet. */
 export function claimsReceiptLine(gate: DispatchCardGate): string {
-	if (gate.claims.length === 0) return "";
+	if (!gate.claimsDeclared && gate.claims.length === 0) return "";
 	const caps = gate.caps === null ? "caps=none" : `caps=${gate.caps.fileCap}/${gate.caps.byteCap}`;
 	const warnings = gate.warnings.length > 0 ? gate.warnings.join(", ") : "none";
-	return `\n[claims] ${claimGateMode()} claims=${gate.claims.length} ${caps} warnings=[${warnings}]`;
+	const count = gate.claims.length > 0 ? String(gate.claims.length) : "0(unparsed)";
+	return `\n[claims] ${claimGateMode()} claims=${count} ${caps} warnings=[${warnings}]`;
 }
 
 /** Single write point for one dispatch's task.md (contract C4). Both dispatch
@@ -3067,6 +3111,9 @@ export function registerWorkerTools(
 	projectDir: string = path.dirname(agenticdocRoot),
 	/** T-03 test seam for the DP-1 child; production omits it. */
 	triageRun?: DecideRunner,
+	/** T-08 test seam for the dp1 feedback writer; production omits it (the real
+	 * `mw decide lifecycle` child is the single write face). */
+	lifecycleRun?: LifecycleRunner,
 ): void {
 	// dispatch_worker: create a task.md and immediately dispatch it to the worker queue.
 	pi.registerTool({
@@ -3273,6 +3320,13 @@ export function registerWorkerTools(
 				return { content: [{ type: "text", text: dispatchCardRefusal(cardGate) }], details: undefined };
 			}
 
+			// T-11/M1: `plan` stops BEFORE task.md/queue (zero side effects, GC-3).
+			// biome-ignore format: one object, kept on a single property line (card T-11: ≤6 lines per entry)
+			const splitGate = planReviewSplitGate({
+				cardPath: card_path ?? "", taskKey: task_key, ownerKey, agenticdocRoot, projectDir,
+			});
+			if (splitGate !== null) return { content: [{ type: "text", text: splitGate.text }], details: undefined };
+
 			// Model plan: validate the effective value and enforce the override
 			// reason BEFORE any filesystem write (a refusal must leave no task dir).
 			const modelPlan = planDispatchFrontmatter({
@@ -3287,9 +3341,14 @@ export function registerWorkerTools(
 				modelReason: model_reason ?? "",
 				registry: _context?.modelRegistry,
 				triageRun,
-				// T-04d: owning key + the card's declared write face are the dispatch
-				// facts the dp1 structured state needs (the rest comes from the plan).
-				dp1: { key: ownerKey, writeFace: cardWriteFaceEntries(cardGate.sections), allowForeignWrite },
+				// T03: owning key + the REAL reserved task id + the judged card's
+				// envelope bodies are the dp1 material/association facts.
+				dp1: {
+					key: ownerKey,
+					taskKey: task_key,
+					sections: cardGate.sections,
+					taskBefore: captureDecisionTaskState(workerStore, ownerKey, task_key),
+				},
 			});
 			if (!modelPlan.ok) {
 				return { content: [{ type: "text", text: modelPlan.message }], details: undefined };
@@ -3329,7 +3388,29 @@ export function registerWorkerTools(
 			);
 			if (!outcome.ok) {
 				cleanupRefusedTaskDir(taskMdPath);
-				return { content: [{ type: "text", text: writeFaceRefusalText(task_key, outcome) }], details: undefined };
+				// The refused dispatch is still a real outcome of the decision: the
+				// consumed fact stands, the round settles as `rework`, and NO executed
+				// fact is written (nothing was executed).
+				const dp1Feedback = formatDp1ConsumerReceipt(
+					await writeDp1DispatchFeedback({
+						projectDir,
+						triage: modelPlan.triage,
+						lifecycleRun,
+						taskKey: task_key,
+						dispatchedType: typeField,
+						refused: true,
+						taskAfter: captureDecisionTaskState(workerStore, ownerKey, task_key),
+					}),
+				);
+				return {
+					content: [
+						{
+							type: "text",
+							text: writeFaceRefusalText(task_key, outcome) + (dp1Feedback === "" ? "" : `\n${dp1Feedback}`),
+						},
+					],
+					details: undefined,
+				};
 			}
 
 			// Record the dispatch on this window's state (mw-task-scope-isolation) so
@@ -3337,6 +3418,21 @@ export function registerWorkerTools(
 			// key (explicit cross-key dispatch, or the global-active fallback).
 			if (watch.dispatchedTaskKeys === undefined) watch.dispatchedTaskKeys = new Set();
 			watch.dispatchedTaskKeys.add(task_key);
+
+			// The dispatch really landed: the consumer reports executed + settled
+			// through the single Python writer. A failed feedback write never undoes
+			// or repeats the dispatch — the receipt says `failed`.
+			const dp1Feedback = formatDp1ConsumerReceipt(
+				await writeDp1DispatchFeedback({
+					projectDir,
+					triage: modelPlan.triage,
+					lifecycleRun,
+					taskKey: task_key,
+					dispatchedType: typeField,
+					refused: false,
+					taskAfter: captureDecisionTaskState(workerStore, ownerKey, task_key),
+				}),
+			);
 
 			return {
 				content: [
@@ -3346,7 +3442,9 @@ export function registerWorkerTools(
 							appendTriageReceipt(
 								`Dispatched worker '${task_key}' (type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}) under key '${ownerKey}'. Task file: ${taskMdPath}. Check mw_status to confirm the service is running.`,
 								modelPlan.triage,
-							) + claimsReceiptLine(cardGate),
+							) +
+							claimsReceiptLine(cardGate) +
+							(dp1Feedback === "" ? "" : `\n${dp1Feedback}`),
 					},
 				],
 				details: undefined,
@@ -3654,6 +3752,8 @@ export function registerWorkerCommands(
 	projectDir: string = path.dirname(agenticdocRoot),
 	/** T-03 test seam for the DP-1 child; production omits it. */
 	triageRun?: DecideRunner,
+	/** T-08 test seam for the dp1 feedback writer; production omits it. */
+	lifecycleRun?: LifecycleRunner,
 ): void {
 	const USAGE =
 		"Usage: /worker <claude|codex|pi> --card <card-path> [--type coding|review|research|rag-research|vision] [--model <id>] [--reason <text>] [--key <name>] [--allow-foreign-write] <task description>";
@@ -3794,6 +3894,9 @@ export function registerWorkerCommands(
 				ctx.ui.notify(dispatchCardRefusal(cardGate), "warning");
 				return;
 			}
+			// T-11/M1: `plan` stops BEFORE task.md/queue (zero side effects, GC-3).
+			const splitGate = planReviewSplitGate({ cardPath: cardArg, taskKey, ownerKey, agenticdocRoot, projectDir });
+			if (splitGate !== null) return ctx.ui.notify(splitGate.text, "info");
 			// Model plan before any write: a refusal must leave no task dir.
 			const modelPlan = planDispatchFrontmatter({
 				cwd: projectDir,
@@ -3807,12 +3910,12 @@ export function registerWorkerCommands(
 				modelReason,
 				registry: ctx.modelRegistry,
 				triageRun,
-				// T-04d: owning key + the card's declared write face are the dispatch
-				// facts the dp1 structured state needs (the rest comes from the plan).
+				// T03: same material/association facts as dispatch_worker.
 				dp1: {
 					key: ownerKey,
-					writeFace: cardWriteFaceEntries(cardGate.sections),
-					allowForeignWrite: allowForeignWriteArg,
+					taskKey,
+					sections: cardGate.sections,
+					taskBefore: captureDecisionTaskState(workerStore, ownerKey, taskKey),
 				},
 			});
 			if (!modelPlan.ok) {
@@ -3853,15 +3956,42 @@ export function registerWorkerCommands(
 			);
 			if (!outcome.ok) {
 				cleanupRefusedTaskDir(taskMdPath);
-				ctx.ui.notify(writeFaceRefusalText(taskKey, outcome), "warning");
+				const dp1Feedback = formatDp1ConsumerReceipt(
+					await writeDp1DispatchFeedback({
+						projectDir,
+						triage: modelPlan.triage,
+						lifecycleRun,
+						taskKey,
+						dispatchedType: typeField,
+						refused: true,
+						taskAfter: captureDecisionTaskState(workerStore, ownerKey, taskKey),
+					}),
+				);
+				ctx.ui.notify(
+					writeFaceRefusalText(taskKey, outcome) + (dp1Feedback === "" ? "" : `\n${dp1Feedback}`),
+					"warning",
+				);
 				return;
 			}
 
+			const dp1Feedback = formatDp1ConsumerReceipt(
+				await writeDp1DispatchFeedback({
+					projectDir,
+					triage: modelPlan.triage,
+					lifecycleRun,
+					taskKey,
+					dispatchedType: typeField,
+					refused: false,
+					taskAfter: captureDecisionTaskState(workerStore, ownerKey, taskKey),
+				}),
+			);
 			ctx.ui.notify(
 				appendTriageReceipt(
 					`Dispatched ${cli} worker (${taskKey}) under key '${ownerKey}' [type: ${typeField}, role: ${roleForTaskType(typeField)}, ${modelPlan.echo}].`,
 					modelPlan.triage,
-				) + claimsReceiptLine(cardGate),
+				) +
+					claimsReceiptLine(cardGate) +
+					(dp1Feedback === "" ? "" : `\n${dp1Feedback}`),
 				"info",
 			);
 		},
@@ -4466,28 +4596,84 @@ export async function runMwStatsCommand(
 	);
 }
 
-/** Conclusions `mw decide sign` accepts (mirror of the Python
- * `decide_signoff.CONCLUSIONS`; only used to reject a typo before any spawn). */
+/** Conclusions the sign-off records (mirror of the Python
+ * `decide_signoff.CONCLUSIONS`). The window never picks one — the decision model
+ * produces it during the write — so the list only drives the read-only preview
+ * rendering (one verdict line per conclusion). */
 export const DECIDE_CONCLUSIONS = ["continue", "narrow", "revoke"] as const;
 
-/** Usage line of the window face (the `--key` flag only exists on `sign`). */
+/** Usage line of the window face (the `--key` flag only exists on `sign`).
+ * `sign` takes no conclusion: the decision model produces it during the write,
+ * so no caller-supplied positional remains to validate. The second line
+ * documents the read-only forwards (T12a): they need no key and therefore split
+ * off before the watched-key requirement. */
 export const DECIDE_USAGE =
-	"Usage: /mw decide show | sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <key>]";
+	"Usage: /mw decide show | sign [--allow-empty] [--key <key>]\n" +
+	"       /mw decide dp list | dp show <id> | dp export | monitor   (read-only, no key needed)";
+
+/** The four closed read-only forwards of the window face (T12a/AC-001/AC-017).
+ * Python stays the single source of parsing, rendering and of the (zero) writes. */
+export type DecideForwardAction = "dp-list" | "dp-show" | "dp-export" | "monitor";
 
 /** Parsed `/mw decide` arguments. Pure and spawn-free (the rag precedent). */
 export type ParsedDecideArgs =
 	| { action: "show" }
-	| { action: "sign"; conclusion: string; reason?: string; allowEmpty: boolean; key?: string }
+	| { action: "sign"; allowEmpty: boolean; key?: string }
+	| { action: "dp-list" }
+	| { action: "dp-show"; dp: string }
+	| { action: "dp-export" }
+	| { action: "monitor" }
 	| { action: "usage"; error: string };
 
+/** Notify label of a read-only forward. */
+const DECIDE_FORWARD_LABELS: Record<DecideForwardAction, string> = {
+	"dp-list": "dp list",
+	"dp-show": "dp show",
+	"dp-export": "dp export",
+	monitor: "monitor",
+};
+
+/** One accepted read-only forward: the action plus the exact Python argv. */
+export interface DecideForward {
+	action: DecideForwardAction;
+	argv: string[];
+}
+
 /**
- * Parse `/mw decide [show | sign <conclusion> [flags]]`.
+ * Python argv of a read-only forward, or null when the parsed input is not one.
  *
- * `""` / `show` is the read-only preview; `sign <continue|narrow|revoke>`
- * accepts `--reason <text>`, `--allow-empty` and `--key <key>`. Everything else
- * (unknown sub, missing/invalid conclusion, a flag without a value, a stray
- * positional) returns a usage error so the caller rejects without a spawn —
- * Python stays the single source of the verdict and of the machine lines.
+ * This is the SINGLE argv mapping of the window face: the caller forwards the
+ * returned vector verbatim, so `--write`, `--json`, `--live`, `--rows`, output
+ * paths and monitor status/stop arguments are structurally unrepresentable —
+ * a crafted tail can never reach Python (design §5.1: only dp list/show/export
+ * and bare monitor are allowed in the window).
+ */
+export function decideForwardArgs(parsed: ParsedDecideArgs): DecideForward | null {
+	switch (parsed.action) {
+		case "dp-list":
+			return { action: parsed.action, argv: ["dp", "list"] };
+		case "dp-show":
+			return { action: parsed.action, argv: ["dp", "show", parsed.dp] };
+		case "dp-export":
+			return { action: parsed.action, argv: ["dp", "export"] };
+		case "monitor":
+			return { action: parsed.action, argv: ["monitor"] };
+		default:
+			return null;
+	}
+}
+
+/**
+ * Parse `/mw decide [show | sign [flags] | dp list|show <id>|export | monitor]`.
+ *
+ * `""` / `show` is the read-only preview; bare `sign` (optionally
+ * `--allow-empty`, `--key <key>`) triggers the decision model and writes what it
+ * decides, so there is no conclusion positional to validate. The four read-only
+ * forwards are a closed set with no free-form tail (T12a, §5.1 of the dashboard
+ * design). Everything else (unknown sub, a flag without a value, a stray
+ * positional, a refused dp/monitor face) returns a usage error so the caller
+ * rejects without a spawn — Python stays the single source of the verdict and
+ * of the machine lines.
  */
 export function parseDecideArgs(argsText: string): ParsedDecideArgs {
 	const parts = splitCommandLine(argsText);
@@ -4498,38 +4684,73 @@ export function parseDecideArgs(argsText: string): ParsedDecideArgs {
 		}
 		return { action: "show" };
 	}
+	// Read-only faces (T12a) split off BEFORE the `sign` guard and before the
+	// watched-key requirement: `dp list`/`dp export` are project-level views and
+	// `dp show <id>` takes its id explicitly, so a key-less window can still list
+	// the same dp set as the CLI (AC-001) while every write/act face is refused
+	// here, before any spawn (AC-017).
+	if (sub === "dp") {
+		const dpSub = parts[1];
+		if (dpSub === "list" || dpSub === "export") {
+			if (parts.length > 2) {
+				return {
+					action: "usage",
+					error: `${DECIDE_USAGE} — \`dp ${dpSub}\` takes no arguments (read-only window face; --write/--json/paths are CLI-only)`,
+				};
+			}
+			return dpSub === "list" ? { action: "dp-list" } : { action: "dp-export" };
+		}
+		if (dpSub === "show") {
+			const dp = parts[2];
+			if (dp === undefined || dp === "" || dp.startsWith("-")) {
+				return { action: "usage", error: `${DECIDE_USAGE} — \`dp show\` needs a dp id` };
+			}
+			if (parts.length > 3) {
+				return {
+					action: "usage",
+					error: `${DECIDE_USAGE} — \`dp show\` takes exactly one dp id (read-only window face; flags are CLI-only)`,
+				};
+			}
+			return { action: "dp-show", dp };
+		}
+		const refused = dpSub === undefined ? "needs a sub" : `\`dp ${dpSub}\` is not a read-only window face`;
+		return {
+			action: "usage",
+			error: `${DECIDE_USAGE} — ${refused} (window: dp list | dp show <id> | dp export; write/act faces are CLI-only)`,
+		};
+	}
+	if (sub === "monitor") {
+		if (parts.length > 1) {
+			return {
+				action: "usage",
+				error: `${DECIDE_USAGE} — the window only forwards bare \`monitor\`; run mw decide monitor status|stop in the terminal`,
+			};
+		}
+		return { action: "monitor" };
+	}
 	if (sub !== "sign") {
 		return { action: "usage", error: `${DECIDE_USAGE} — unknown sub '${sub}'` };
 	}
-	const conclusion = parts[1];
-	if (conclusion === undefined) {
-		return { action: "usage", error: `${DECIDE_USAGE} — \`sign\` needs a conclusion` };
-	}
-	if (!(DECIDE_CONCLUSIONS as readonly string[]).includes(conclusion)) {
-		return { action: "usage", error: `${DECIDE_USAGE} — invalid conclusion '${conclusion}'` };
-	}
-	let reason: string | undefined;
 	let allowEmpty = false;
 	let key: string | undefined;
-	for (let i = 2; i < parts.length; i++) {
+	for (let i = 1; i < parts.length; i++) {
 		const part = parts[i] ?? "";
 		if (part === "--allow-empty") {
 			allowEmpty = true;
 			continue;
 		}
-		if (part === "--reason" || part === "--key") {
+		if (part === "--key") {
 			const value = parts[i + 1];
 			if (value === undefined || value === "" || value.startsWith("--")) {
-				return { action: "usage", error: `${DECIDE_USAGE} — ${part} needs a value` };
+				return { action: "usage", error: `${DECIDE_USAGE} — --key needs a value` };
 			}
-			if (part === "--reason") reason = value;
-			else key = value;
+			key = value;
 			i++;
 			continue;
 		}
 		return { action: "usage", error: `${DECIDE_USAGE} — unexpected argument '${part}'` };
 	}
-	return { action: "sign", conclusion, reason, allowEmpty, key };
+	return { action: "sign", allowEmpty, key };
 }
 
 /** `facts` block of the `mw decide sign --json` preview (only what the window
@@ -4546,12 +4767,19 @@ export interface DecidePreviewFacts {
 	p0_source?: string;
 }
 
-/** `mw decide sign --json` payload (preview: `conclusion`/`ok`/`path` null,
- * `verdicts` carries the three per-conclusion machine verdicts). */
+/** `mw decide sign --json` payload. The preview leaves `conclusion`/`path`
+ * null and carries every conclusion's verdict; a signed write carries the
+ * conclusion, the written `path` and (when Python reports it) `signed_via`; an
+ * unsigned write carries `note` (decision model unavailable) or the plain line
+ * Python prints before the payload (`signoff: disable`). */
 export interface DecidePreview {
 	ok?: boolean | null;
+	conclusion?: string | null;
 	problems?: string[];
 	facts?: DecidePreviewFacts;
+	note?: string;
+	path?: string | null;
+	signed_via?: string | null;
 	verdicts?: Record<string, { ok?: boolean; problems?: string[] }>;
 }
 
@@ -4615,128 +4843,232 @@ export interface DecideCommandDeps {
 	watchKey?: () => string | undefined;
 }
 
-/** The read-only preview argv (`--conclusion` omitted = nothing is written).
- * `--allow-empty` rides along so the reported verdicts match the sign intent. */
+/** The read-only preview argv: `--dry-run` is what makes it strictly zero-write
+ * (no decision-model call, no archive row, no sign-off file). `--allow-empty`
+ * rides along so the reported verdicts match the intended sign-off. */
 function decidePreviewArgs(key: string, allowEmpty: boolean): string[] {
-	const args = ["sign", "--key", key, "--json"];
+	const args = ["sign", "--key", key, "--dry-run", "--json"];
 	if (allowEmpty) args.push("--allow-empty");
 	return args;
 }
 
+/** What a completed `mw decide sign` did. `ok`/`exit 0` alone is not enough:
+ * the same exit code covers "the decision model was unavailable" and
+ * "`signoff: disable`", both of which write no file. */
+export interface DecideSignOutcome {
+	signed: boolean;
+	signedVia?: string;
+	conclusion?: string;
+	path?: string;
+}
+
+const SIGNED_VIA_LINE = /^[ \t]*signed_via:[ \t]*(\S+)[ \t]*$/m;
+const CONCLUSION_LINE = /^[ \t]*conclusion:[ \t]*(\S+)[ \t]*$/m;
+const WROTE_LINE = /^[ \t]*wrote[ \t]+(.+?)[ \t]*$/m;
+
+/** The write-side `signed_via` vocabulary (a single value since
+ * mw-signoff-decide-only, mirror of `decide_signoff.SIGNED_VIA_VALUES`). The
+ * `--json` write payload proves the write with `path` but does not repeat the
+ * field, so a signed JSON run is labelled with this value instead of dropping
+ * the line the text face prints. */
+const SIGNED_VIA_AUTO = "auto-decide";
+
+/** Read a write result. The text face prints `signed_via: <value>` (and the
+ * `conclusion:` machine line) only after the file landed; the `--json` face
+ * proves the same with a non-null `path` and carries the conclusion. Nothing
+ * else counts as signed — a run that wrote no file must never display as a
+ * signature (AC-005). */
+export function parseDecideSignOutcome(output: string): DecideSignOutcome {
+	const text = output.replace(/\r\n/g, "\n");
+	const payload = parseDecidePreview(text);
+	const jsonSignedVia = payload?.signed_via;
+	const signedVia =
+		SIGNED_VIA_LINE.exec(text)?.[1] ??
+		(typeof jsonSignedVia === "string" && jsonSignedVia !== "" ? jsonSignedVia : undefined);
+	const jsonPath = payload?.path;
+	const wroteLine = WROTE_LINE.exec(text)?.[1];
+	const path =
+		typeof jsonPath === "string" && jsonPath !== ""
+			? jsonPath
+			: wroteLine !== undefined && wroteLine !== ""
+				? wroteLine
+				: undefined;
+	const jsonConclusion = payload?.conclusion;
+	const conclusion =
+		CONCLUSION_LINE.exec(text)?.[1] ??
+		(typeof jsonConclusion === "string" && jsonConclusion !== "" ? jsonConclusion : undefined);
+	return { signed: signedVia !== undefined || path !== undefined, signedVia, conclusion, path };
+}
+
+/** Human reason of an unsigned run: the JSON `note` (decision model unavailable)
+ * or the plain line Python prints before the payload (`signoff: disable`). */
+export function parseDecideUnsignedReason(output: string, payload: DecidePreview | null): string {
+	if (typeof payload?.note === "string" && payload.note !== "") return payload.note;
+	const firstJson = output.indexOf("{");
+	const head = (firstJson === -1 ? output : output.slice(0, firstJson)).replace(/\r\n/g, "\n").trim();
+	return head !== "" ? head : "decision model unavailable / sign-off not required";
+}
+
+/** One result of the decide face: notify when a UI exists, and hand the same
+ * text back so the command handler can put it into the transcript when there is
+ * none — `ctx.ui.notify` is a no-op in headless `-p`/worker sessions, and the
+ * result must not be lost there (AC-007). */
+function reportDecide(ctx: ExtensionCommandContext, text: string, level: "info" | "warning" | "error"): string {
+	if (ctx.hasUI) ctx.ui.notify(text, level);
+	return text;
+}
+
 /**
- * `/mw decide show|sign` — the TUI face of the human sign-off (FIX-Q, user
- * ruling: option B).
+ * One read-only forward (T12a): Python owns argument validation, rendering and
+ * the (zero) writes — the window only relays `argv` and displays the text.
+ * A thrown runner (spawn-level bug) is reported like a failed spawn instead of
+ * escaping the command, so a broken mw.py never takes the window down.
  *
- * `show` runs the Python preview (`mw decide sign --key <k> --json`, which
- * writes nothing) and prints the facts. `sign` runs the same preview first,
- * refuses before any dialog when that conclusion's machine verdict does not
- * pass, and then asks `ctx.ui.confirm`; only a human confirmation forwards the
- * write with `--human-confirmed` (Python then records `signed_via: tui`). Guard
- * rails, in order:
- *   1. `ctx.hasUI !== true` refuses outright — headless / `-p` / rpc have no
- *      dialog, so there is no human click to collect and nothing to bypass;
+ * `monitor` is routing only: the service lifetime and the Chromium app window
+ * belong to the Python side, so a failure here reports Python's reason and
+ * never claims that a window opened (AC-006 is not asserted by this face).
+ *
+ * Returns the text it displayed so a headless caller can put it into the
+ * transcript (see `reportDecide`).
+ */
+async function forwardDecideReadOnly(
+	ctx: ExtensionCommandContext,
+	projectDir: string,
+	forward: DecideForward,
+	runner: (projectDir: string, args: string[]) => MwCliResult,
+): Promise<string> {
+	const { action, argv } = forward;
+	const label = DECIDE_FORWARD_LABELS[action];
+	let result: MwCliResult;
+	try {
+		result = runner(projectDir, argv);
+	} catch (err) {
+		return reportDecide(
+			ctx,
+			`mw decide ${label} failed: ${err instanceof Error ? err.message : String(err)}`,
+			"error",
+		);
+	}
+	if (!result.ok) {
+		const hint =
+			action === "monitor"
+				? "\n(窗口只转发 `mw decide monitor`；服务与开窗由 Python 侧负责 — status|stop 请在终端跑 mw decide monitor status|stop)"
+				: "";
+		return reportDecide(ctx, `mw decide ${label} failed: ${result.error}${hint}`, "error");
+	}
+	return reportDecide(ctx, result.output || `mw decide ${label}: ok`, "info");
+}
+
+/**
+ * `/mw decide show|sign` — the window face of the decision-model sign-off
+ * (mw-signoff-decide-only: the decision model signs, nothing else does).
+ *
+ * `show` runs the read-only preview (`mw decide sign --key <k> --dry-run
+ * --json`, strictly zero-write) and prints the facts. `sign` runs the same
+ * preview as a read-only pre-check, then forwards `mw decide sign --key <k>
+ * --json` once: no dialog, and the window supplies no conclusion — Python asks
+ * the decision model and writes only when it answers. Guard rails, in order:
+ *   1. the four read-only forwards (`dp list|show|export`, `monitor`) split off
+ *      first: no dialog and no key are involved, so a key-less window can still
+ *      read the dp table while the write/act tail is refused before any spawn;
  *   2. the key is `--key` > the watched key > a usage error (never guessed);
- *   3. Python stays authoritative: its verdict (exit 2, zero writes) still
- *      runs on the write call, so a preview/flag mismatch cannot fake success.
- * The runner is injectable so every branch is provable without a spawn.
+ *   3. Python stays authoritative: its verdict (exit 2, zero writes) still runs
+ *      on the write call, and `exit 0` is split into signed (`signed_via:` line /
+ *      non-null `path`) vs unsigned (decision model unavailable / `signoff:
+ *      disable`) so a run that wrote nothing never displays as a signature.
+ * No `--auto` and no `--project` are forwarded: `--auto` would persist
+ * `signoff: auto` over a project's `signoff: disable`, and `decideMw` appends
+ * the control root. The runner is injectable so every branch is provable
+ * without a spawn.
+ *
+ * Every result is also returned as text: `ctx.ui.notify` is a no-op without a
+ * UI (headless / `-p` / worker), so the `/mw` handler puts the return value into
+ * the transcript instead (AC-007 — no silent loss).
  */
 export async function runMwDecideCommand(
 	ctx: ExtensionCommandContext,
 	projectDir: string,
 	argsText: string,
 	deps: DecideCommandDeps = {},
-): Promise<void> {
-	if (ctx.hasUI !== true) {
-		ctx.ui.notify(
-			"/mw decide 需要交互 TUI（headless / -p / rpc 一律拒）：签收必须有确认框里的一次人工点击。命令行请直接在终端跑 mw decide sign（agent 会话内会被拒）。",
-			"warning",
-		);
-		return;
-	}
+): Promise<string> {
 	const parsed = parseDecideArgs(argsText);
-	if (parsed.action === "usage") {
-		ctx.ui.notify(parsed.error, "warning");
-		return;
+	if (parsed.action === "usage") return reportDecide(ctx, parsed.error, "warning");
+	// Read-only faces first (T12a/AC-001): `dp list|show|export` and `monitor`
+	// need neither an interactive dialog nor a watched key, so they are resolved
+	// before the key guard. `decideForwardArgs` returns the exact Python argv — no
+	// caller-supplied flag survives (AC-017).
+	const forward = decideForwardArgs(parsed);
+	if (forward !== null) {
+		return await forwardDecideReadOnly(ctx, projectDir, forward, deps.runner ?? decideMw);
+	}
+	// Exhaustiveness guard, not a live branch: every parsed action other than
+	// `show`/`sign` has a forward argv, so this only keeps the compiler's
+	// narrowing honest (`parsed` is the sign face below) and fails closed with
+	// the usage line if a future variant forgets an argv mapping.
+	if (parsed.action !== "show" && parsed.action !== "sign") {
+		return reportDecide(ctx, DECIDE_USAGE, "warning");
 	}
 	const key = (parsed.action === "sign" ? parsed.key : undefined) ?? deps.watchKey?.();
 	if (!key) {
-		ctx.ui.notify(`${DECIDE_USAGE} — 无法确定 key，请给 --key <key>（或先 /worker watch <key>）`, "warning");
-		return;
+		return reportDecide(
+			ctx,
+			`${DECIDE_USAGE} — 无法确定 key，请给 --key <key>（或先 /worker watch <key>）`,
+			"warning",
+		);
 	}
-	const allowEmpty = parsed.action === "sign" ? parsed.allowEmpty : false;
 	const runner = deps.runner ?? decideMw;
 
 	let preview: MwCliResult;
 	try {
-		preview = runner(projectDir, decidePreviewArgs(key, allowEmpty));
+		preview = runner(projectDir, decidePreviewArgs(key, parsed.action === "sign" ? parsed.allowEmpty : false));
 	} catch (err) {
-		ctx.ui.notify(`mw decide 预览失败: ${err instanceof Error ? err.message : String(err)}`, "error");
-		return;
+		return reportDecide(ctx, `mw decide 预览失败: ${err instanceof Error ? err.message : String(err)}`, "error");
 	}
-	if (!preview.ok) {
-		ctx.ui.notify(`mw decide 预览失败: ${preview.error}`, "error");
-		return;
-	}
+	if (!preview.ok) return reportDecide(ctx, `mw decide 预览失败: ${preview.error}`, "error");
 	const payload = parseDecidePreview(preview.output);
 	if (payload === null) {
-		ctx.ui.notify(`mw decide 预览输出不是 JSON，原文尾部:\n${tailLines(preview.output)}`, "error");
-		return;
+		return reportDecide(ctx, `mw decide 预览输出不是 JSON，原文尾部:\n${tailLines(preview.output)}`, "error");
 	}
 
 	if (parsed.action === "show") {
-		ctx.ui.notify(
-			`${formatDecidePreview(payload)}\n(preview only — nothing written; /mw decide sign <continue|narrow|revoke> 才写)`,
+		return reportDecide(
+			ctx,
+			`${formatDecidePreview(payload)}\n(preview only — nothing written; /mw decide sign 触发决策模型判定，判据通过时写入)`,
 			"info",
 		);
-		return;
 	}
 
-	const chosen = payload.verdicts?.[parsed.conclusion];
-	const problems = chosen !== undefined ? (chosen.problems ?? []) : (payload.problems ?? []);
-	const verdictOk = chosen !== undefined ? chosen.ok !== false : payload.ok !== false;
-	if (!verdictOk || problems.length > 0) {
-		ctx.ui.notify(
-			`mw decide sign ${parsed.conclusion} 未通过机器行判据，未弹确认框、零写入:\n${problems.map((p) => `- ${p}`).join("\n")}`,
-			"error",
-		);
-		return;
-	}
-
-	const facts = payload.facts ?? {};
-	const sha = (facts.sha256 ?? "").slice(0, 12) || "-";
-	const confirmed = await ctx.ui.confirm(
-		`确认签收 ${key}`,
-		`conclusion=${parsed.conclusion} · counted_rows=${facts.counted_rows ?? 0} · rows_sha256=${sha}\n` +
-			"确认后写入 evidence/review/sign-final.md（signed_via: tui）并追加一条 authority-change 档案行",
-	);
-	if (!confirmed) {
-		ctx.ui.notify("cancelled, nothing written", "info");
-		return;
-	}
-
-	const writeArgs = ["sign", "--key", key, "--conclusion", parsed.conclusion, "--human-confirmed"];
-	if (parsed.reason) writeArgs.push("--reason", parsed.reason);
-	if (parsed.allowEmpty) writeArgs.push("--allow-empty");
+	// The write argv: Python asks the decision model and writes what it answers.
+	// No `--auto` (it would persist `signoff: auto` over a project's
+	// `signoff: disable`), no caller-supplied conclusion, no exemption flag, and
+	// no `--project` (`decideMw` appends the control root).
 	let written: MwCliResult;
 	try {
-		written = runner(projectDir, writeArgs);
+		written = runner(projectDir, ["sign", "--key", key, "--json"]);
 	} catch (err) {
-		ctx.ui.notify(
-			`mw decide sign ${parsed.conclusion} 写入失败: ${err instanceof Error ? err.message : String(err)}`,
+		return reportDecide(
+			ctx,
+			`mw decide sign ${key} 写入失败: ${err instanceof Error ? err.message : String(err)}`,
 			"error",
 		);
-		return;
 	}
-	if (!written.ok) {
-		ctx.ui.notify(`mw decide sign ${parsed.conclusion} 写入失败: ${written.error}`, "error");
-		return;
+	if (!written.ok) return reportDecide(ctx, `mw decide sign ${key} 写入失败: ${written.error}`, "error");
+
+	const outcome = parseDecideSignOutcome(written.output);
+	if (!outcome.signed) {
+		const reason = parseDecideUnsignedReason(written.output, parseDecidePreview(written.output));
+		return reportDecide(
+			ctx,
+			`未签收 ${key}：${reason}\n` +
+				`(decision model unavailable / sign-off not required — 未写 ${key}/evidence/review/sign-final.md)`,
+			"info",
+		);
 	}
-	const wrote = /^wrote (.+)$/m.exec(written.output)?.[1]?.trim();
-	ctx.ui.notify(
-		`已签收 ${key}（${parsed.conclusion}）→ ${wrote ?? `${key}/evidence/review/sign-final.md`}\n` +
-			"authority-change 档案行已追加；key 目录存在 decision-scope.md 时，advance_phase.py 的 decision_signoff 检查现在可以推进。",
-		"info",
-	);
+	const lines = [`已签收 ${key} → ${outcome.path ?? `${key}/evidence/review/sign-final.md`}`];
+	lines.push(`signed_via: ${outcome.signedVia ?? SIGNED_VIA_AUTO}`);
+	if (outcome.conclusion !== undefined) lines.push(`conclusion: ${outcome.conclusion}`);
+	lines.push("authority-change 档案行已追加。");
+	return reportDecide(ctx, lines.join("\n"), "info");
 }
 
 export function registerMwCommands(
@@ -4882,11 +5214,18 @@ export function registerMwCommands(
 			}
 
 			if (sub === "decide") {
-				// Decision archive + sign-off (FIX-Q): `show` is a read-only preview,
-				// `sign` previews, asks ctx.ui.confirm and only then writes with the
-				// --human-confirmed exemption (recorded as `signed_via: tui`). Python
-				// stays the single source of the verdict and of the machine lines.
-				await runMwDecideCommand(ctx, projectDir, trimmed.slice(sub.length).trim(), { watchKey: () => watch.key });
+				// Decision archive + sign-off: `show` is the read-only preview; `sign`
+				// forwards the decision-model sign-off — no dialog, no caller conclusion,
+				// no exemption flag: Python asks the model and writes what it answers (or
+				// reports that the decision model was unavailable). The returned text
+				// goes to the transcript when there is no UI (headless `-p` / worker),
+				// where ctx.ui.notify is a no-op (AC-007).
+				// T12a adds the closed read-only set (dp list/show/export, monitor),
+				// resolved inside runMwDecideCommand before the watched-key guard.
+				const text = await runMwDecideCommand(ctx, projectDir, trimmed.slice(sub.length).trim(), {
+					watchKey: () => watch.key,
+				});
+				if (!ctx.hasUI) displaySummary(pi, text);
 				return;
 			}
 
@@ -4941,7 +5280,7 @@ export function registerMwCommands(
 			}
 
 			ctx.ui.notify(
-				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | decide show|sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <k>] | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
+				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
 				"warning",
 			);
 		},

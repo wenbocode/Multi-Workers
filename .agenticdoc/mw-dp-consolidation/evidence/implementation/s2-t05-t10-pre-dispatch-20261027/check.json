@@ -1,0 +1,205 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T12:55:06.712483+00:00",
+  "phase": "EXECUTE",
+  "T09_R2_local_handoff_verified": true,
+  "T09_original_process_history_unchanged": true,
+  "frontier": [
+    {
+      "id": "T05",
+      "task_key": "dpc-t05-eight-cases",
+      "card": "tasks/isolated/T05-eight-cases.md",
+      "card_sha256": "8a7d747000c0f0e2427f57d30d61ebd5d339c0ee93c3b170a3cdc256327b3e85",
+      "product_face": [
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_book_template.json",
+          "exists": true,
+          "sha256": "755253b61429271b4eb1fc5cb22cc2fb4e77a7fce07e7a67aa111dd896640df2",
+          "bytes": 2367,
+          "lf": 61,
+          "crlf": 0,
+          "live_exists": true,
+          "live_sha256": "755253b61429271b4eb1fc5cb22cc2fb4e77a7fce07e7a67aa111dd896640df2"
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-QG.json",
+          "exists": false,
+          "sha256": null,
+          "bytes": null,
+          "lf": null,
+          "crlf": null,
+          "live_exists": false,
+          "live_sha256": null
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-auto.json",
+          "exists": false,
+          "sha256": null,
+          "bytes": null,
+          "lf": null,
+          "crlf": null,
+          "live_exists": false,
+          "live_sha256": null
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-gate-approve.json",
+          "exists": false,
+          "sha256": null,
+          "bytes": null,
+          "lf": null,
+          "crlf": null,
+          "live_exists": false,
+          "live_sha256": null
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-pm-steer.json",
+          "exists": false,
+          "sha256": null,
+          "bytes": null,
+          "lf": null,
+          "crlf": null,
+          "live_exists": false,
+          "live_sha256": null
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-route.json",
+          "exists": false,
+          "sha256": null,
+          "bytes": null,
+          "lf": null,
+          "crlf": null,
+          "live_exists": false,
+          "live_sha256": null
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-sign-key.json",
+          "exists": false,
+          "sha256": null,
+          "bytes": null,
+          "lf": null,
+          "crlf": null,
+          "live_exists": false,
+          "live_sha256": null
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-check-task.json",
+          "exists": false,
+          "sha256": null,
+          "bytes": null,
+          "lf": null,
+          "crlf": null,
+          "live_exists": false,
+          "live_sha256": null
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-type.json",
+          "exists": false,
+          "sha256": null,
+          "bytes": null,
+          "lf": null,
+          "crlf": null,
+          "live_exists": false,
+          "live_sha256": null
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/scripts/build_decide_cases.py",
+          "exists": true,
+          "sha256": "60910516ccce4caac181f8fc20fb98432809ad2817e6141b3f2ae1a90f7117ed",
+          "bytes": 20556,
+          "lf": 475,
+          "crlf": 0,
+          "live_exists": true,
+          "live_sha256": "60910516ccce4caac181f8fc20fb98432809ad2817e6141b3f2ae1a90f7117ed"
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_workbench.py",
+          "exists": true,
+          "sha256": "8e3fddccf359f5493c1bdf46c6039df11576ec479e474bd98585e544f2cab215",
+          "bytes": 74040,
+          "lf": 1795,
+          "crlf": 0,
+          "live_exists": true,
+          "live_sha256": "8e3fddccf359f5493c1bdf46c6039df11576ec479e474bd98585e544f2cab215"
+        }
+      ],
+      "deps": [
+        "T03",
+        "T04",
+        "T09"
+      ],
+      "status": "not-queued"
+    },
+    {
+      "id": "T10",
+      "task_key": "dpc-t10-lifecycle-state",
+      "card": "tasks/isolated/T10-lifecycle-state.md",
+      "card_sha256": "46945d41cda0fd4c0e6469e7704eb26c5969ff76274a6c0aaa164674ae4c582c",
+      "product_face": [
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_lifecycle.py",
+          "exists": true,
+          "sha256": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+          "bytes": 34814,
+          "lf": 951,
+          "crlf": 0,
+          "live_exists": true,
+          "live_sha256": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248"
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_task_state.py",
+          "exists": true,
+          "sha256": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+          "bytes": 2452,
+          "lf": 48,
+          "crlf": 0,
+          "live_exists": true,
+          "live_sha256": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9"
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_wire.py",
+          "exists": true,
+          "sha256": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+          "bytes": 73650,
+          "lf": 2077,
+          "crlf": 0,
+          "live_exists": true,
+          "live_sha256": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579"
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_lifecycle.py",
+          "exists": true,
+          "sha256": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+          "bytes": 26028,
+          "lf": 715,
+          "crlf": 0,
+          "live_exists": true,
+          "live_sha256": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8"
+        },
+        {
+          "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_task_state.py",
+          "exists": true,
+          "sha256": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5",
+          "bytes": 13537,
+          "lf": 243,
+          "crlf": 0,
+          "live_exists": true,
+          "live_sha256": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5"
+        }
+      ],
+      "deps": [
+        "T03",
+        "T04",
+        "T09"
+      ],
+      "status": "not-queued"
+    }
+  ],
+  "parallel_product_face_overlap": [],
+  "shared_read_dependency": "T05 assigned test directly imports decision_lifecycle and indirectly wire/task_state owned by T10; coding parallel, acceptance against stable current imports with pre/post hash checks, PM fresh suites after both terminal; no shadow module or assertion weakening",
+  "mirror_file_count": 1883,
+  "mirror_net_changes_during_preparation": [],
+  "logical_tasks": 36,
+  "stages": 7,
+  "only_T09_metadata_changed": true,
+  "no_product_live_budget_goal_spec_or_phase_writes": true
+}

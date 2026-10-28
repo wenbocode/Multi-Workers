@@ -1,0 +1,3 @@
+# command: C:\Program Files\nodejs\node.EXE scripts/check-browser-smoke.mjs
+# exit: 0
+

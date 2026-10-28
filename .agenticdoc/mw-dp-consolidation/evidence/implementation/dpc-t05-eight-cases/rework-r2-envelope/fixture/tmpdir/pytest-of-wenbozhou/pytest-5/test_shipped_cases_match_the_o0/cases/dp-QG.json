@@ -1,0 +1,78 @@
+{
+  "book": {
+    "decision_point": "dp-QG",
+    "material": {
+      "review_evidence": [
+        "packages/multi-workers/scripts/build_decide_cases.py:1",
+        "packages/multi-workers/test_decision_context_workbench.py:1"
+      ],
+      "review_findings": "表结构、四状态与 DAG 弹窗用例通过；facets 接线与正文投影缺失，属具体整改缺口，不是要求或验收依据本身的问题。",
+      "review_requirements": "旧记录只读筛选的验收要求：只读展示、写入链路不动、四状态与十节点 DAG 断言通过、既有失败不被弱化。",
+      "uncovered_scope": "真实浏览器可见性、真实模型选择质量与投影字段补齐后的端到端未覆盖。"
+    },
+    "meta": {
+      "actor_role": "pm",
+      "key": "mw-dp-consolidation",
+      "logical_id": "case-dp-QG-v1",
+      "task_key": "dpc-t05-eight-cases",
+      "trigger_id": "case-dp-QG"
+    },
+    "notes": {
+      "evidence": {
+        "review_evidence": "packages/multi-workers/scripts/build_decide_cases.py:233",
+        "review_findings": "packages/multi-workers/scripts/build_decide_cases.py:237",
+        "review_requirements": "packages/multi-workers/scripts/build_decide_cases.py:229",
+        "uncovered_scope": "packages/multi-workers/scripts/build_decide_cases.py:241"
+      }
+    },
+    "preparation": {
+      "basis_catalog": [
+        {
+          "applies_to": [
+            "pass"
+          ],
+          "id": "qg-pass",
+          "material_refs": [
+            "review_requirements",
+            "review_evidence"
+          ],
+          "text": "要求与证据一致且无未解决阻断，可以给出通过结论。"
+        },
+        {
+          "applies_to": [
+            "fix"
+          ],
+          "id": "qg-fix",
+          "material_refs": [
+            "review_findings",
+            "uncovered_scope"
+          ],
+          "text": "要求本身清楚，但 facets 与正文投影有具体整改缺口，应判整改。"
+        }
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00"
+    },
+    "schema_version": 3
+  },
+  "case_version": 1,
+  "dp": "dp-QG",
+  "note": "合成 case：按审核要求、已审证据、发现与未覆盖面整理，用于观察 pass 与 fix 的差别；reopen 需要 basis_issue，本材料不预置该字段。",
+  "questions": {
+    "qg_verdict": {
+      "choices": [
+        "pass",
+        "fix",
+        "reopen"
+      ],
+      "id": "qg_verdict",
+      "instructions": "按正式质量审核要求给出结论，并说清可复核依据、具体缺口或依据问题及未覆盖面。",
+      "labels": {
+        "fix": "要求/依据明确，但产物或证据有具体整改缺口",
+        "pass": "满足明确质量/验收要求，必要证据充分且无未解决阻断",
+        "reopen": "要求、设计或验收依据本身有实质问题，需重新讨论确认"
+      },
+      "type": "choice"
+    }
+  },
+  "title": "质量审核结论：旧记录只读筛选的验收缺口"
+}

@@ -1,0 +1,4 @@
+﻿
+> pi-monorepo@0.0.3 check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+

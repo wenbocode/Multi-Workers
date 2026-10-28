@@ -1,11 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
 import { AckStore } from "../shared/ack-store.ts";
-import { type CheckpointInfo } from "../shared/heartbeat.ts";
 import { IndexStore } from "../shared/index-store.ts";
 import { type RunIdentityRefusal, readRunState } from "../shared/run-store.ts";
 import { type WorkerEntry, type WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 import { type DispatchRefusal } from "./task-dispatcher.ts";
-import { type DecideRunner } from "./triage-client.ts";
 import { type PmUiHolder, type PmWatchState } from "./ui-bridge.ts";
 export type PhaseDocName = "spec.md" | "design.md" | "plan.md";
 /** The key a phase-doc write/edit belongs to (see docWriteTarget). */
@@ -406,14 +404,13 @@ export declare const DP2_CHECKPOINT_QUESTION = "checkpoint_action";
  * coordination file-driven and the PM the single writer). */
 export declare const DP2_STEER_FILE = "steer-dp2.md";
 /** Attribution marker of the narrowed-scope steer (the worker injects it as a
- * followUp; kept here so the request file and its consumer cannot drift). */
+ * followUp; kept here so the PM-written request file and its consumer cannot
+ * drift). The machine no longer writes a steer itself (T03). */
 export declare const DP2_NARROW_MARKER = "[mw dp2-narrow]";
-/** Machine header line of the request file (first line of `steer-dp2.md`).
- * Exported so the worker-side consumer strips exactly what this side wrote. */
+/** Machine header line of a PM-written steer request (`steer-dp2.md`). Kept as
+ * the consumer-side contract (`worker-mode` strips exactly this line); the
+ * machine loop no longer writes the file itself (T03). */
 export declare const DP2_STEER_REQUEST_HEADER = "[dp2-narrow-request]";
-/** Appended to the PM alert when dp2 answered `narrow` but the worker can no
- * longer act on a steer (T-07b fallback, DS-4: never fail open). */
-export declare const DP2_NARROW_FALLBACK_LINE = "[dp2-narrow-fallback] task not running; escalated instead";
 /** `questions_version` for dp2 = `q-<sha256(canonical questions)[:8]>`, i.e. the
  * exact short code the Python registry derives (D-026). The suite re-derives it
  * from the registry source so a question-set edit cannot drift silently. */
@@ -450,122 +447,16 @@ export interface Dp2Authorization {
     source: "default" | "config" | "invalid";
 }
 export declare function readDp2Authorization(projectDir: string): Dp2Authorization;
-/** One `context.artifact_status` entry (W6 / D-052..D-054). */
-export interface Dp2ArtifactStatus {
-    path: string;
-    exists: boolean;
-    bytes: number;
-}
-/** Machine fields of the checkpoint, 8 + 4 (design Q5): elapsed/reads/writes/
- * phases/uniq_targets/repeat_top/risk from the line plus the writeless landing
- * suffix (land/last_land/artifact/done). Reads ride in the trend only — the
- * frozen state table has no `progress.reads`. */
-export interface Dp2CheckpointStateInput {
-    ownerKey: string;
-    taskKey: string;
-    phase: string;
-    taskType: string;
-    budgetMin: number;
-    checkpoint: CheckpointInfo;
-    trend: Dp2CheckpointPoint[];
-    /** `context.artifact_status` rows (already fs-stated, ≤24 enforced here). */
-    artifacts?: readonly Dp2ArtifactStatus[];
-}
-/** Build the dp2 structured state (spec §5.4 / D-019: L0/L1 only, ≤2000B).
- * Required fields come from `decision_points.REQUIRED_STATE_FIELDS["dp2-…"]`:
- * universal 9 + `progress.elapsed_minutes/budget_minutes/phases_done/
- * phases_total/artifact_present`; the remaining counters and the trend are
- * optional L1. */
-export declare function buildDp2CheckpointState(input: Dp2CheckpointStateInput): Record<string, unknown>;
-/** task.md header view dp2 needs: `phase:`, `type:` and `timeout:`. Undefined
- * when task.md is unreadable (the caller then keeps its original alert). */
-export declare function readDp2TaskHeader(taskDir: string, env?: NodeJS.ProcessEnv): {
-    phase: string;
-    taskType: string;
-    budgetMin: number;
-} | undefined;
-/** Normalised dp2 outcome. `action` is the closed vocabulary the caller branches
- * on: only `narrow` can ever be `acted` (D-011); `split`, `direct` and
- * `escalate` all fall through to the human alert. */
-export interface Dp2CheckpointDecision {
-    decisionId: string;
-    triggerId: string;
-    /** Raw `checkpoint_action` value when the service produced one. */
-    answer?: string;
-    action: "narrow" | "split" | "direct" | "escalate" | "none";
-    available: boolean;
-    acted: boolean;
-    /** Effective mode as reported by the child (`payload.mode`, D-036: mode is an
-     * authorization OUTPUT). Absent when Python never answered; never read from
-     * the local `.mw/decide-points.json` mirror. */
-    mode?: "auto" | "suggest";
-    reason?: string;
-    confidence?: number | null;
-    confidenceSource?: string;
-    budgetMin: number;
-    elapsedMin: number;
-}
-export interface Dp2CheckpointInput {
-    /** Project root that owns `.mw/` (the control workspace in dual-root runs). */
-    projectDir: string;
-    ownerKey: string;
-    taskKey: string;
-    taskDir: string;
-    checkpoint: CheckpointInfo;
-    /** Test seam: replaces the `mw decide run` child (production: runDecideMw). */
-    run?: DecideRunner;
-    /** Budget env override (tests); defaults to `process.env`. */
-    env?: NodeJS.ProcessEnv;
-}
-/** Ask dp2 for one checkpoint. NEVER throws and NEVER acts — it only decides
- * whether a `narrow` answer may replace the PM alert. `undefined` means the
- * feature is off for this project (design D-007 complete bypass: no spawn, no
- * write). */
-export declare function decideDp2Checkpoint(input: Dp2CheckpointInput): Dp2CheckpointDecision | undefined;
-/** Write `<taskDir>/steer-dp2.md` (design §5.3). The PM process is the single
- * writer; the worker consumes the file at its next checkpoint tick and renames
- * it away. Returns false when the request could not be written — the caller
- * must then fall back to the human alert: a narrow that never reaches the
- * worker is not an acted decision. */
-export declare function writeDp2SteerRequest(input: {
-    taskDir: string;
-    decision: Dp2CheckpointDecision;
-    risk: string;
-}): boolean;
-/** One `[DECISION] dp2 acted=1 decision_id=… trigger=…` correlation line in the
- * task's own trace (T-04d, design D-041 row 5).
- *
- * Written ONLY after the narrow actually executed — i.e. after
- * {@link writeDp2SteerRequest} returned true and the human alert was skipped. A
- * fallback to the alert (task not running / unwritable steer), `suggest` mode
- * and a disabled dp2 never write it: an un-executed decision may not claim
- * `acted=1`. Best-effort — a trace failure must never undo a written steer.
- */
-export declare function appendDp2ActedTrace(taskDir: string, decision: Dp2CheckpointDecision): void;
-/** `running` / `settled` / `unknown` — the narrow branch may only replace the
- * human alert when the worker can still act on the steer (T-07b, DS-4). */
-export type Dp2TaskLiveness = "running" | "settled" | "unknown";
-/** Is the worker this alert is about still able to consume a `steer-dp2.md`?
- *
- * The queue row is this loop's own view and is not evidence enough — it can lag
- * a run that already finished (the row is written by the launcher, the terminal
- * state by the worker itself, AC-022). So the worker's own product is consulted
- * first: `run.json` status, plus pid liveness for an `active` record (a worker
- * killed without a terminal write would otherwise look alive forever). Only
- * when the product gives no information does the ledger row decide.
- *
- * `unknown` (unreadable/unparsable record, no ledger evidence) is passed to the
- * caller as "not verified live" — the caller falls back to the human alert,
- * i.e. the fail-closed direction DS-4 requires. */
-export declare function probeDp2TaskLiveness(taskDir: string, ledgerStatus?: string): Dp2TaskLiveness;
-/** Test seams + the explicit project root for the dp2 checkpoint hook.
- * Production passes only `projectDir`; `run` lets the suite replace the
- * `mw decide run` child (the triage-client DecideRunner seam). */
-export interface Dp2CheckpointHooks {
-    projectDir?: string;
-    run?: DecideRunner;
-}
-export declare function startWorkerPollLoop(pi: ExtensionAPI, workerStore: WorkerStore, ackStore: AckStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, ui: PmUiHolder, pollIntervalMs?: number, dp2Hooks?: Dp2CheckpointHooks): NodeJS.Timeout;
+/** RETIRED (2026-10-23 user revision, mw-decision-context T08): the automatic
+ * dp2 seam that lived here (`buildDp2CheckpointState`, `decideDp2Checkpoint`,
+ * the artifact/header helpers and the steer/narrow fallback) is gone. dp2 is a
+ * PM-INITIATED decision only: the checkpoint loop wakes the PM and the PM asks
+ * through the managed `ask_decision` tool with its own business material. No
+ * machine path re-introduces a local answer, a local confidence gate or a
+ * machine-written steer. The worker-side consume contract (`DP2_STEER_FILE`,
+ * `DP2_NARROW_MARKER`, `DP2_STEER_REQUEST_HEADER`) stays, because a PM may
+ * still hand-write that request file. */
+export declare function startWorkerPollLoop(pi: ExtensionAPI, workerStore: WorkerStore, ackStore: AckStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, ui: PmUiHolder, pollIntervalMs?: number): NodeJS.Timeout;
 /** Marker opening the injected parallel-protocol block, and the idempotency
  * guard: a handler that already sees it in the chained system prompt must not
  * append it a second time (two loaded bundle copies would otherwise duplicate

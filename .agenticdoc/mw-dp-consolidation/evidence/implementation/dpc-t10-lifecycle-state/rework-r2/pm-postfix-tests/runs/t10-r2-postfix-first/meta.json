@@ -1,0 +1,57 @@
+{
+  "observed_at": "2026-10-28T07:22:16.172165+00:00",
+  "label": "t10-r2-postfix-first",
+  "argv": [
+    "--fixture-root",
+    "C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-pm-verify-20261027/pm-verification",
+    "--label",
+    "t10-r2-postfix-first",
+    "--focus"
+  ],
+  "cwd": "H:\\git\\Multi-Workers",
+  "python": "3.14.3 (tags/v3.14.3:323c59a, Feb  3 2026, 16:04:56) [MSC v.1944 64 bit (AMD64)]",
+  "executable": "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+  "dont_write_bytecode": true,
+  "fixture_root": "C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\dpc-t10-pm-verify-20261027\\pm-verification",
+  "fixture_root_created": false,
+  "label_dir": "C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\dpc-t10-pm-verify-20261027\\pm-verification\\t10-r2-postfix-first",
+  "evidence_run": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\pm-postfix-tests\\runs\\t10-r2-postfix-first",
+  "env_keys": [
+    "COMSPEC",
+    "DPC10_GUARD_FILE",
+    "DPC10_GUARD_RUN",
+    "HOME",
+    "PATH",
+    "PATHEXT",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONIOENCODING",
+    "PYTHONPATH",
+    "PYTHONPYCACHEPREFIX",
+    "PYTHONUTF8",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "WINDIR"
+  ],
+  "env_policy": "whitelist only; nothing inherited from the parent environment",
+  "scripts": {
+    "run_pm_tests.py": {
+      "sha256": "3dec1da62a249bc384b090eefce4dd6ca784024d5b98746f094230801d0fefcc",
+      "bytes": 34948
+    },
+    "sitecustomize.py": {
+      "sha256": "d5b05e987627d44e073a595e6c347bbbdb0a9e235b87bae28ed7c06d7c1f78a8",
+      "bytes": 8762
+    },
+    "guard_preflight.py": {
+      "sha256": "085cae83c3477820305af0f504bf62ffdbc4930d5ce4d9c3f1e807382d6e7cb0",
+      "bytes": 5389
+    },
+    "probe_imports.py": {
+      "sha256": "cac791a30affbd04746df9e0e4a18c20492020ac5f656aad30042cd710c26ee6",
+      "bytes": 2922
+    }
+  }
+}

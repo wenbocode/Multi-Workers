@@ -1,0 +1,12 @@
+{
+  "description": "blank EP string counts as unset: block value used, source=target-yml (AC-005)",
+  "env": {
+    "MW_PARTITION_PARENT": "  "
+  },
+  "expect": {
+    "mode": "partition",
+    "source": "target-yml",
+    "parent_root_rel": "../blockparent",
+    "partition_root_rel": "frag"
+  }
+}

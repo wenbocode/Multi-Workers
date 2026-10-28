@@ -1,0 +1,14 @@
+{
+  "before_functions": 43,
+  "after_functions": 50,
+  "preserved_exactly": true,
+  "added": [
+    "test_a_schema_refusal_on_load_never_echoes_a_known_secret",
+    "test_an_invalid_book_file_report_is_serializable_and_still_failed",
+    "test_schema_details_stay_specific_for_non_secret_values",
+    "test_schema_refusals_never_echo_a_known_secret",
+    "test_schema_version_must_be_the_real_non_bool_integer_three",
+    "test_stdin_json_string_is_data_and_never_a_file_path",
+    "test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue"
+  ]
+}

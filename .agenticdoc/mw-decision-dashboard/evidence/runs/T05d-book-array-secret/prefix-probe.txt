@@ -1,0 +1,9 @@
+# cmd: python .agenticdoc/mw-decision-dashboard/evidence/runs/T05d-book-array-secret/t05d_prefix_probe.py
+# cwd: .
+# started: 2026-10-22T06:52:22Z
+# elapsed_s: 0.2
+
+{"pre_fix_book_issues": [], "pre_fix_book_accepted": true, "outcome_status": "suggested", "outcome_reason": null, "backend_calls": 1, "book_snapshots": 1, "secret_in_sent_state": true, "secret_in_snapshot": false}
+
+
+EXIT_prefix-probe=0

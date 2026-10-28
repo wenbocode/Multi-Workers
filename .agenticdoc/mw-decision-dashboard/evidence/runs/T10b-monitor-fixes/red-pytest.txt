@@ -1,0 +1,346 @@
+....F..s....................F.FF...F..FFFFFFFFF....FF                    [100%]
+================================== FAILURES ===================================
+____ test_probe_recorded_port_reports_a_real_refusal_and_maps_windows_code ____
+
+    def test_probe_recorded_port_reports_a_real_refusal_and_maps_windows_code():
+>       refused = decision_monitor.probe_recorded_port(_closed_loopback_port())
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_monitor' has no attribute 'probe_recorded_port'
+
+test_decision_monitor.py:514: AttributeError
+____ test_submit_refuses_nested_execution_fields_before_any_provider_call _____
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_submit_refuses_nested_exe0')
+
+    def test_submit_refuses_nested_execution_fields_before_any_provider_call(tmp_path):
+        """Nested smuggling is refused by the seam, not only by the T06 provider."""
+        root = _root(tmp_path)
+        spy = _SpyPlayground()
+        deps = decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy)
+        smuggled = {
+            "state field": _book(state={"act": "apply"}),
+            "deep state field": _book(state={"nested": {"authorization": "grant"}}),
+            "context slot": {**_book(), "context": {"command": "rm -rf /"}},
+            "envelope": {**_book(), "executor": "spawn"},
+        }
+        with _running(root, deps=deps) as instance:
+            page_token = _page_token(instance)
+            for label, book in smuggled.items():
+                status, _headers, payload, _raw = _http(
+                    instance.port,
+                    "POST",
+                    "/api/test/submit",
+                    token=page_token,
+                    origin=instance.origin,
+                    body={
+                        "dp": "dp1-dispatch-type",
+                        "book": book,
+                        "submit_id": "sub-nested",
+                        "observe_only": True,
+                    },
+                )
+>               assert status == 400, label
+E               AssertionError: state field
+E               assert 200 == 400
+
+test_decision_monitor.py:1277: AssertionError
+_______ test_submit_refuses_an_unregistered_dp_before_any_provider_call _______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_submit_refuses_an_unregis0')
+
+    def test_submit_refuses_an_unregistered_dp_before_any_provider_call(tmp_path):
+        root = _root(tmp_path)
+        spy = _SpyPlayground()
+        deps = decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy)
+        with _running(root, deps=deps) as instance:
+            page_token = _page_token(instance)
+            status, _headers, payload, _raw = _http(
+                instance.port,
+                "POST",
+                "/api/test/submit",
+                token=page_token,
+                origin=instance.origin,
+                body={
+                    "dp": "dp99-not-registered",
+                    "book": _book("dp99-not-registered"),
+                    "submit_id": "sub-unknown",
+                    "observe_only": True,
+                },
+            )
+>           assert status == 400
+E           assert 200 == 400
+
+test_decision_monitor.py:1344: AssertionError
+_________ test_playground_seam_declares_the_provider_book_obligations _________
+
+    def test_playground_seam_declares_the_provider_book_obligations():
+        """The seam text pins T06's mandatory check_book duties (closed/type/enum/secret)."""
+>       obligations = " ".join(decision_monitor.PLAYGROUND_PROVIDER_OBLIGATIONS).lower()
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_monitor' has no attribute 'PLAYGROUND_PROVIDER_OBLIGATIONS'
+
+test_decision_monitor.py:1351: AttributeError
+___ test_ensure_instance_reuses_a_healthy_instance_without_rewriting_state ____
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_ensure_instance_reuses_a_0')
+
+    def test_ensure_instance_reuses_a_healthy_instance_without_rewriting_state(tmp_path):
+        root = _root(tmp_path)
+        instance = decision_monitor.ensure_instance(root)
+        try:
+            state_before = decision_monitor.state_path(root).read_bytes()
+            secret_before = decision_monitor.secret_path(root).read_bytes()
+            again = decision_monitor.ensure_instance(root)
+            try:
+                assert isinstance(again, decision_monitor.AttachedInstance)
+                assert again.identity.instance_id == instance.identity.instance_id
+                assert again.port == instance.port
+                assert again.new_window_url().startswith(
+                    f"http://{HOST}:{instance.port}/#boot="
+                )
+                assert decision_monitor.state_path(root).read_bytes() == state_before
+                assert decision_monitor.secret_path(root).read_bytes() == secret_before
+            finally:
+                stop_result = again.stop()
+>               assert stop_result["stopped"] is True
+                       ^^^^^^^^^^^^^^^^^^^^^^
+E               TypeError: 'NoneType' object is not subscriptable
+
+test_decision_monitor.py:1461: TypeError
+______ test_stale_state_and_secret_are_moved_stepwise_after_proven_death ______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_stale_state_and_secret_ar0')
+
+    def test_stale_state_and_secret_are_moved_stepwise_after_proven_death(tmp_path):
+        root = _root(tmp_path)
+        dead_pid = _spawn_exit()
+        recorded_port = _closed_loopback_port()
+        identity = decision_monitor.InstanceIdentity(
+            project_id=wire.project_id_for(root),
+            instance_id="old-instance-0001",
+            pid=dead_pid,
+            pid_start_ms=1,
+            port=recorded_port,
+            code_fingerprint=decision_monitor.code_fingerprint(),
+        )
+        decision_monitor.publish_secret(root, "old-control-token-value")
+        decision_monitor.publish_state(root, identity)
+        state_bytes = decision_monitor.state_path(root).read_bytes()
+        secret_bytes = decision_monitor.secret_path(root).read_bytes()
+    
+        instance = decision_monitor.ensure_instance(root)
+        try:
+            assert instance.recovery["recovered"] is True
+            assert instance.recovery["instance_id"] == "old-instance-0001"
+            assert instance.recovery["moved"] == ["state", "secret"]
+>           assert instance.recovery["liveness"] == "dead"
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: 'liveness'
+
+test_decision_monitor.py:1531: KeyError
+_______ test_recover_stale_bare_call_takes_and_releases_the_start_lock ________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_recover_stale_bare_call_t0')
+
+    def test_recover_stale_bare_call_takes_and_releases_the_start_lock(tmp_path):
+        root = _root(tmp_path)
+        _publish_stale(root, _closed_loopback_port())
+        report = decision_monitor.recover_stale(root)
+        assert report["recovered"] is True
+        assert report["moved"] == ["state", "secret"]
+>       assert report["liveness"] == "dead"
+               ^^^^^^^^^^^^^^^^^^
+E       KeyError: 'liveness'
+
+test_decision_monitor.py:1556: KeyError
+_______________ test_recover_stale_runs_under_a_verified_guard ________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_recover_stale_runs_under_0')
+
+    def test_recover_stale_runs_under_a_verified_guard(tmp_path):
+        root = _root(tmp_path)
+        _publish_stale(root, _closed_loopback_port())
+        with decision_monitor.start_lock(root) as guard:
+>           report = decision_monitor.recover_stale(root, guard=guard)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: recover_stale() got an unexpected keyword argument 'guard'
+
+test_decision_monitor.py:1565: TypeError
+___________ test_recover_stale_refuses_a_guard_whose_lock_was_lost ____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_recover_stale_refuses_a_g0')
+
+    def test_recover_stale_refuses_a_guard_whose_lock_was_lost(tmp_path):
+        root = _root(tmp_path)
+        _publish_stale(root, _closed_loopback_port())
+        state_before = decision_monitor.state_path(root).read_bytes()
+        secret_before = decision_monitor.secret_path(root).read_bytes()
+        with decision_monitor.start_lock(root) as guard:
+>           mw_common.release_lock(guard.path)
+                                   ^^^^^^^^^^
+E           AttributeError: 'WindowsPath' object has no attribute 'path'. Did you mean: 'match'?
+
+test_decision_monitor.py:1577: AttributeError
+_ test_recover_stale_keeps_state_when_the_recorded_port_serves_another_process _
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_recover_stale_keeps_state0')
+
+    def test_recover_stale_keeps_state_when_the_recorded_port_serves_another_process(tmp_path):
+        root = _root(tmp_path)
+        listener, port = _listening_port()
+        try:
+            _publish_stale(root, port)
+            state_before = decision_monitor.state_path(root).read_bytes()
+            secret_before = decision_monitor.secret_path(root).read_bytes()
+>           with pytest.raises(decision_monitor.MonitorError) as exc:
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE <class 'decision_monitor.MonitorError'>
+
+test_decision_monitor.py:1592: Failed
+_____ test_recover_stale_keeps_state_when_the_port_probe_is_inconclusive ______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_recover_stale_keeps_state1')
+
+    def test_recover_stale_keeps_state_when_the_port_probe_is_inconclusive(tmp_path):
+        root = _root(tmp_path, "inconclusive")
+        _publish_stale(root, decision_monitor.PORT_RANGE[0])
+        state_before = decision_monitor.state_path(root).read_bytes()
+        with pytest.raises(decision_monitor.MonitorError) as exc:
+>           decision_monitor.recover_stale(root, port_probe=lambda port: "unknown")
+E           TypeError: recover_stale() got an unexpected keyword argument 'port_probe'
+
+test_decision_monitor.py:1612: TypeError
+_ test_recover_stale_never_moves_a_fresh_secret_published_after_the_state_move _
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_recover_stale_never_moves0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001EA804648A0>
+
+    def test_recover_stale_never_moves_a_fresh_secret_published_after_the_state_move(
+        tmp_path, monkeypatch
+    ):
+        root = _root(tmp_path)
+        _publish_stale(root, _closed_loopback_port())
+        fresh = decision_monitor.InstanceIdentity(
+            project_id=wire.project_id_for(root),
+            instance_id="fresh-instance-001",
+            pid=os.getpid(),
+            pid_start_ms=mw_common.process_start_ms(os.getpid()),
+            port=_closed_loopback_port(),
+            code_fingerprint=decision_monitor.code_fingerprint(),
+        )
+        real_move = decision_monitor._move_aside
+    
+        def move_then_publish(path, *, suffix):
+            result = real_move(path, suffix=suffix)
+            if pathlib.Path(path).name == decision_monitor.STATE_NAME:
+                # Simulate a bare publisher outside the guard's discipline: the
+                # recovery must re-read the state and leave the new secret alone.
+                decision_monitor.publish_secret(root, "fresh-control-token-value")
+                decision_monitor.publish_state(root, fresh)
+            return result
+    
+        monkeypatch.setattr(decision_monitor, "_move_aside", move_then_publish)
+        with decision_monitor.start_lock(root) as guard:
+            with pytest.raises(decision_monitor.MonitorError) as exc:
+>               decision_monitor.recover_stale(root, guard=guard, port_probe=lambda port: "refused")
+E               TypeError: recover_stale() got an unexpected keyword argument 'guard'
+
+test_decision_monitor.py:1658: TypeError
+_______ test_attached_stop_reports_a_refusal_instead_of_silent_success ________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_attached_stop_reports_a_r0')
+
+    def test_attached_stop_reports_a_refusal_instead_of_silent_success(tmp_path):
+        root = _root(tmp_path)
+        with _running(root) as instance:
+            state_before = decision_monitor.state_path(root).read_bytes()
+            attached = decision_monitor.AttachedInstance(
+                control_root=root, identity=instance.identity, control_token="wrong-control-token"
+            )
+            result = attached.stop()
+>           assert result["stopped"] is False
+                   ^^^^^^^^^^^^^^^^^
+E           TypeError: 'NoneType' object is not subscriptable
+
+test_decision_monitor.py:1676: TypeError
+___________ test_attached_stop_reports_success_and_leaves_no_state ____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_attached_stop_reports_suc0')
+
+    def test_attached_stop_reports_success_and_leaves_no_state(tmp_path):
+        root = _root(tmp_path)
+        instance = decision_monitor.ensure_instance(root)
+        attached = decision_monitor.ensure_instance(root)
+        assert isinstance(attached, decision_monitor.AttachedInstance)
+        try:
+            result = attached.stop()
+>           assert result["stopped"] is True
+                   ^^^^^^^^^^^^^^^^^
+E           TypeError: 'NoneType' object is not subscriptable
+
+test_decision_monitor.py:1692: TypeError
+____________ test_detect_browser_absent_reports_an_explicit_reason ____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_detect_browser_absent_rep0')
+
+    def test_detect_browser_absent_reports_an_explicit_reason(tmp_path):
+        assert decision_monitor.detect_browser(candidates=(), exists=lambda path: False) is None
+        assert (
+            decision_monitor.detect_browser(
+                candidates=("C:/browsers/chrome.exe",), exists=lambda path: path.endswith("chrome.exe")
+            )
+            == "C:/browsers/chrome.exe"
+        )
+    
+        result = decision_monitor.launch_app_window(
+            executable=None,
+            port=decision_monitor.PORT_RANGE[0],
+            boot_code="code",
+            profile_dir=tmp_path / "profile",
+        )
+>       assert result["spawned"] is False
+               ^^^^^^^^^^^^^^^^^
+E       KeyError: 'spawned'
+
+test_decision_monitor.py:1821: KeyError
+______ test_launch_app_window_reports_failures_without_claiming_a_window ______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18372/test_launch_app_window_reports0')
+
+    def test_launch_app_window_reports_failures_without_claiming_a_window(tmp_path):
+        launched: list[list[str]] = []
+    
+        def spawn(argv):
+            launched.append(list(argv))
+            return object()
+    
+        ok = decision_monitor.launch_app_window(
+            executable="C:/browsers/chrome.exe",
+            port=decision_monitor.PORT_RANGE[0],
+            boot_code="boot-code-value",
+            profile_dir=tmp_path / "profile",
+            spawn=spawn,
+        )
+>       assert "ok" not in ok  # a spawn is never reported as a verified window
+        ^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: assert 'ok' not in {'argv': ['C:/browsers/chrome.exe', '--app=http://127.0.0.1:43170/#boot=boot-code-value', '--user-data-dir=C:\\Users\\...n', '--no-default-browser-check', '--disable-background-networking', ...], 'guide': [], 'mode': 'app', 'ok': True, ...}
+
+test_decision_monitor.py:1842: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_monitor.py::test_probe_recorded_port_reports_a_real_refusal_and_maps_windows_code
+FAILED test_decision_monitor.py::test_submit_refuses_nested_execution_fields_before_any_provider_call
+FAILED test_decision_monitor.py::test_submit_refuses_an_unregistered_dp_before_any_provider_call
+FAILED test_decision_monitor.py::test_playground_seam_declares_the_provider_book_obligations
+FAILED test_decision_monitor.py::test_ensure_instance_reuses_a_healthy_instance_without_rewriting_state
+FAILED test_decision_monitor.py::test_stale_state_and_secret_are_moved_stepwise_after_proven_death
+FAILED test_decision_monitor.py::test_recover_stale_bare_call_takes_and_releases_the_start_lock
+FAILED test_decision_monitor.py::test_recover_stale_runs_under_a_verified_guard
+FAILED test_decision_monitor.py::test_recover_stale_refuses_a_guard_whose_lock_was_lost
+FAILED test_decision_monitor.py::test_recover_stale_keeps_state_when_the_recorded_port_serves_another_process
+FAILED test_decision_monitor.py::test_recover_stale_keeps_state_when_the_port_probe_is_inconclusive
+FAILED test_decision_monitor.py::test_recover_stale_never_moves_a_fresh_secret_published_after_the_state_move
+FAILED test_decision_monitor.py::test_attached_stop_reports_a_refusal_instead_of_silent_success
+FAILED test_decision_monitor.py::test_attached_stop_reports_success_and_leaves_no_state
+FAILED test_decision_monitor.py::test_detect_browser_absent_reports_an_explicit_reason
+FAILED test_decision_monitor.py::test_launch_app_window_reports_failures_without_claiming_a_window
+16 failed, 36 passed, 1 skipped in 18.58s

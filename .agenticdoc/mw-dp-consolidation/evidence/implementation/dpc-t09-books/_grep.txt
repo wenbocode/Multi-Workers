@@ -1,0 +1,7 @@
+## .agenticdoc/mw-dp-consolidation/evidence-requirement.md
+34 所有下面AC/VC均待实现后验证，本轮无L2产品通过。caller清单包括生产工具/CLI/book/stdin/replay、观察validate/scaffold/cases/submit、config on/set/apply、human/legacy边界和提示词；静态匹配必须分active/history/security/regression并给完整未覆盖说明。安装/内存身份和部署不由源码hash推断，若不执行部署则明确保留未部署，不能伪称线上迁移通过。独立mw-decision-context26AC/monitor8AC及旧check/formatter/dp3/dropdown债不被本表勾销。
+## .agenticdoc/mw-dp-consolidation/design.md
+155 A：生成描述驱动所有表单/状态；B：生成材料/选项描述+gate/sign/followup显式组件共用只读投影。A减少组件，复杂事项显示需更多描述；B语义清晰，但必须避免ui.options另存第二业务合同。**暂推荐B**；组件可按八入口职责判别，不保留旧编号硬编码。注册集合核一致，不要求/api/dps与完整快照字节相等；生成产物仍按自身生成链字节锁。窗口tool result与事件是上下文，观察book/request/response记录是隔离test证据，两者不冒充对话或生产动作。观察回答succeeded≠业务成功；观察端无executor，不承担实际gate消费/签收写入。独立note、模型理由、后继状态引用既有生命周期与真实意图/执行证据，未知显示未记录。
+165 证据：`evidence/research/design-cli-reachability-20261026.md`。该报告“CLI只有两处真实写入”“全部经registry”“任何hash变化即实质变化”等绝对概括不采；lifecycle/book/config等亦有独立写面，human/legacy直连另列，源字节变化不等于受影响实质版本变化。
+249 每项最终名称为设计候选，不是已有API。既有工具/CLI解析入口迁移完整后才能调用目标名；book、stdin、观察submit、validate/scaffold/cases、config on/set/apply均同一个active gate。所有产物型CLI先验type，不把key-signoff交authority-change消费者。
+511     A["窗口工具和生产CLI或book及stdin"] -->|生产请求| C["活动ID及真实主体和完整合同校验"]

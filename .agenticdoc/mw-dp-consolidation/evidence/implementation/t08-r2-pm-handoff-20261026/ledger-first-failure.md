@@ -1,0 +1,1 @@
+Initial ledger-probe.mjs rc1 at header assertion: worker evidence report.md and final output.md have different change tables. Actual output.md has the directory-labelled table header; report.md does not. Preserve initial probe, test both real documents in fresh probe2. No product/parser/worker records modified.

@@ -1,0 +1,11 @@
+﻿cwd=H:\git\Multi-Workers\packages\multi-workers
+cmd=python -m pytest test_decision_wire_store.py test_decision_roots_locks.py test_decision_wire_transport.py test_decide_backends.py test_decide.py -q
+(final post-fix run over the final source, including the last docstring-comment edit)
+
+........................................................................ [ 23%]
+........................................................................ [ 47%]
+........................................................................ [ 71%]
+........................................................................ [ 94%]
+................                                                         [100%]
+304 passed in 13.69s
+exit=0

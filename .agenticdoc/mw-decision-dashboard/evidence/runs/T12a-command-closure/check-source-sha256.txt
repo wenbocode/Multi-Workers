@@ -1,0 +1,3 @@
+4c0d85d5af73913ab435e7e670094fb89787cbe045983a8a4a1647127a3a709e *packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
+222e17e5e90108e51d3f1fe3b985d2e3c2c4311a3635ca1526ba4436a538db08 *packages/coding-agent/src/extensions/agent-team-loop/shared/mw-runner.ts
+b8f35534d4b88574fd165240dd7d4123e692c30b40feba27a020b9dfdddc48db *packages/coding-agent/test/suite/decision-dashboard-command.test.ts

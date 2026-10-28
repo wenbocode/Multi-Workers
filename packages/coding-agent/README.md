@@ -482,8 +482,9 @@ Seven columns: `claim | 类型 | 陈述 | 反证条件 | 定位 | 判据 | 预�
 
 - `类型` is self-reported, never inferred, and must agree with the `判据` prefix.
 - `cmd` claims are pre-executed by the PM, not by the worker: the PM runs the command **before** dispatching and writes `verb ... => rc=<n>` (plus any measured `key=value` pairs) to `evidence/claims/<file>`; the reviewer only reads that file and cites the `evidence/claims/<file>#<claim-id>` anchor. The review roles have no shell, so an unrecorded command stays `unverified` with reason `no-access`.
-- `预算` is the planning weight: `manual` counts 2, every other type 1. `Σ预算 ≤ 40` and `manual` rows ≤ `min(4, ceil(n/3))`.
-- A claim missing `类型` / `陈述` / `反证条件` / `定位` / `判据` / `预算` is unusable and refuses the dispatch in both gate modes. Soft findings — `判据` prefix mismatch, a `cmd` locator outside `evidence/claims/`, an unresolvable or oversized locator, a tautological `反证条件` (same text as `陈述` once negation words are dropped and naming no new artifact), `Σ预算 > 40`, manual overflow — warn only (see gate modes below).
+- `claim` ids are `C-<at least two digits>` (`C-01`, not `C-1` or `C-A1`). A row whose first cell is not a claim id does not parse, and a block that parses to zero claims is reported as `claims=0(unparsed)` on the receipt: with no claims there is no read scope and no budget, so the review would run unbounded while looking green. Sub-rows (`C-01.3`) are accepted only under a `struct` parent.
+- `预算` is the **gate** weight, not the worker's fetch budget: `manual` counts 2, every other type 1. `Σ预算 ≤ 40` and `manual` rows ≤ `min(4, ceil(n/3))`. The read budget is derived from the claim count instead (`min(30, 6 × n)` calls, see below).
+- A claim missing `类型` / `陈述` / `反证条件` / `定位` / `判据` / `预算` is unusable. Soft findings — `判据` prefix mismatch, a `cmd` locator outside `evidence/claims/`, an unresolvable or oversized locator, a tautological `反证条件` (same text as `陈述` once negation words are dropped and naming no new artifact), `Σ预算 > 40`, manual overflow — are reported as warnings (see gate modes below).
 
 ### Read budget
 
@@ -493,15 +494,18 @@ With `n` claims the dispatch renders a read scope and two cap scalars into `task
 read_scope:
   - .agenticdoc/<key>
   - .agenticdoc/goal.md
-l2_read_file_cap: min(30, Σ预算)
+  - <each claim's 定位, with :line/:a-b and #<claim-id> stripped>
+l2_read_file_cap: min(30, 6 × n)
 l2_read_byte_cap: min(393216, 65536 × n)
 ```
+
+The claim locators are part of the scope because a review unit has to be able to read the files its claims are about; anything wider would let the review price itself by repo size again. `read`, `grep`, `find` and `ls` all draw on the same `l2_read_file_cap` call budget (only `read` charges bytes against `l2_read_byte_cap`), so a locator bounds both what is read and what can be searched.
 
 A card without a claims block renders neither `read_scope` nor the caps, so it keeps its pre-claims bytes and the harness default cap (8 files / 65,536 B).
 
 ### Gate modes
 
-`advisory` is the default: the dispatch receipt carries one `[claims] ... warnings=[...]` line and the dispatch proceeds. `MW_CLAIM_GATE=enforce` is the explicit opt-in that turns every finding into a refusal (code `dispatch-claims`, zero side effects). An unknown or blank value falls back to `advisory` with one diagnostic, so a typo can neither enforce silently nor stall the loop.
+`advisory` is the default: the dispatch receipt carries one `[claims] ... warnings=[...]` line and the dispatch proceeds — it refuses nothing, not even a structurally incomplete claim row (a gray-release gate that could still reject a card would let one table typo lose a dispatch). `MW_CLAIM_GATE=enforce` is the explicit opt-in that turns every finding, structural or soft, into a refusal (code `dispatch-claims`, zero side effects). An unknown or blank value falls back to `advisory` with one diagnostic, so a typo can neither enforce silently nor stall the loop.
 
 ### Verdict table
 
@@ -511,9 +515,11 @@ A claims-backed worker answers every card claim in `output.md` under a `## 断�
 | --- | --- | --- | --- | --- | --- | --- |
 
 - `裁决` ∈ `closed | partial | unverified`; `判定` ∈ `成立 | 不成立 | 无法判定` (plus `部分成立` for `partial`). The two columns must agree: `closed` takes 成立/不成立, `partial` only 部分成立, `unverified` only 无法判定.
-- `证据`: 1–3 refs separated by `;`, each either `path:line[-line][「excerpt」]` (repo-relative, inside the project, within the file, at most 200 lines wide) or `verb ... => rc=<n> [key=value]` for a pre-recorded command. Every ref pointing at `report*.md` / `output.md` / `progress.md` / `task.md` is self-witness, not evidence.
+- `证据`: 1–3 refs separated by `;` (the full-width `；` is accepted — a live review emitted it), each either `path:line[-line][「excerpt」]` (repo-relative, inside the project, within the file, at most 200 lines wide) or `verb ... => rc=<n> [key=value]` for a pre-recorded command. Every ref pointing at `report*.md` / `output.md` / `progress.md` / `task.md` is self-witness, not evidence.
 - `原因` for `unverified` is one of the closed seven words: `budget`, `no-access`, `not-found`, `ambiguous`, `environment`, `out-of-scope`, `awaiting-input`.
 - `取数` is the number of read calls spent on the claim, at most `min(Σ预算, 30)`.
+- A `closed` / `partial` row whose cited files were never **read this run** must carry `carried-from: <path:line>`: an unread citation is last round's verdict, whatever the file's mtime says. The read-scope allowed targets are what counts, so a citation of a file that was blocked or never touched is a gap.
+- The `[CLAIMS] ... fetches=<n>` trace row and `run.json.claims.fetches` count the **allowed** read-class calls only; calls blocked by the read scope are not fetches (the checkpoint's own `reads:` counter still counts every call that started).
 - A `struct` row cannot be counted as `closed` (a shape check that held is `partial`), and a row for a claim the card never declared is a gap.
 - Missing table, missing row, disagreeing verdict/finding, unusable evidence or reason, or self-witness evidence is a terminal gap: one self-check steer, then the non-zero `exit 2` terminal — never a silent `done`.
 

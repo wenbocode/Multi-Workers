@@ -1,0 +1,14 @@
+records without redactor : 3
+records with redactor    : 3
+internal projection equal: True
+credential occurrences without redactor: 65
+credential occurrences with redactor   : 0
+page(key=<credential>) with redactor   : 1
+structural_withheld per identity:
+   decision|dp1-dispatch-type:m1 -> 5 flag: True
+   decision|dp2-checkpoint-split:TEST-SECRET-abc123456789 -> 12 flag: True
+   decision|dp1-dispatch-type:a1 -> 25 flag: True
+no-redactor failure mode (existing contract):
+  structural values kept: True True
+  free text withheld   : True
+FAILURES: none

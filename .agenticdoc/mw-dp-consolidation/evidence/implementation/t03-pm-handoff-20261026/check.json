@@ -1,0 +1,50 @@
+{
+  "observed_at": "2026-10-26T02:58:06.834478+00:00",
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_points.py",
+      "sha256": "a3fb1fe8f3a9caea2a6a4acc660298ca6d2cb9921418c152025c401279089047",
+      "bytes": 304640,
+      "crlf": 7080,
+      "bare_lf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_registry.json",
+      "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "bytes": 29869,
+      "crlf": 0,
+      "bare_lf": 894
+    },
+    {
+      "path": "packages/multi-workers/test_decide_registry_contract.py",
+      "sha256": "4c6aedadca32dd26316a5d18407dc1e7889a62b986b6e6860f973d908878c1d0",
+      "bytes": 19527,
+      "crlf": 0,
+      "bare_lf": 463
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_registry.py",
+      "sha256": "af20145ead7a031a9ec5ca5ffd4227a725ef2f3615111fda9423f3f2d80b5a97",
+      "bytes": 31311,
+      "crlf": 0,
+      "bare_lf": 727
+    }
+  ],
+  "handoff_files": [
+    "packages/multi-workers/decision_points.py",
+    "packages/multi-workers/decide_registry.json",
+    "packages/multi-workers/decision_context.py",
+    "packages/multi-workers/decision_book.py",
+    "packages/multi-workers/decision.py",
+    "packages/multi-workers/mw.py",
+    "packages/multi-workers/scripts/gen_decide_registry_ts.py",
+    "packages/multi-workers/decide_cases/dp1.json",
+    "packages/multi-workers/decide_cases/dp2.json",
+    "packages/multi-workers/decide_cases/dp3.json",
+    "packages/multi-workers/decide_cases/dp25.json",
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts"
+  ],
+  "pytest_rc": 0,
+  "probe_rc": 0
+}

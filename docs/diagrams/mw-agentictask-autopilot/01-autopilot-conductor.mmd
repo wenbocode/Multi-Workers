@@ -1,0 +1,18 @@
+graph TD
+    TICK["conductor tick（每 4s）<br/>外循环的一次轮转"]
+    READ["读文件家族派生状态<br/>roadmap / gates / timeline / index"]
+    FRONT{"判定依赖前沿<br/>前置 done 才释放下游 key"}
+    ACT["派发就绪 key / 收敛 / 停滞检测<br/>受 max_parallel_keys 上限约束"]
+    GATE["gate 事项交 dp-gate-approve<br/>approve 才执行限定动作"]
+    WRITE["写回 roadmap / timeline<br/>文件即状态，断点可重开"]
+
+    TICK --> READ --> FRONT --> ACT --> WRITE
+    FRONT --> GATE --> WRITE
+    WRITE -.->|"下一 tick"| TICK
+
+    style TICK fill:#E6F1FB,stroke:#185FA5
+    style READ fill:#E6F1FB,stroke:#185FA5
+    style FRONT fill:#E6F1FB,stroke:#185FA5
+    style ACT fill:#FAEEDA,stroke:#854F0B
+    style GATE fill:#FBEAF0,stroke:#D4537E,stroke-width:2px
+    style WRITE fill:#E1F5EE,stroke:#0F6E56

@@ -1,0 +1,11 @@
+{
+  "description": "roots key using a reserved name is rejected (AC-003f)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "roots",
+      "game"
+    ]
+  }
+}

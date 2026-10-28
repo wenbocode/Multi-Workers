@@ -1,0 +1,58 @@
+bytes=41112 lines=904
+=== headings ===
+1: # M-02 · conductor tick 消费依赖前沿 + roadmap 校验 + advance 打点 — 证据
+7: ## 1. 结论（可复算）
+32: ## 2. 证据①：`_plan_task_order` / `execute_loop` before→after
+159: ## 3. 证据②：`min(上界, |前沿|)` 恒等复算
+195: ## 4. 证据③：V-problem 串行回退 + timeline 原始样例（含去重证明）
+232: ### C4：写面前沿预筛（AC-003；`_declared_write_face`，未声明/不可解析 ⇒ 不进并行前沿）
+248: ## 5. 证据④：AC-010 tick 内 roadmap 语义校验（原始事件 + 去重）
+265: ## 6. 证据⑤：AC-013 `advance.advance()` 墙钟实测量化
+293: ## 7. 证据⑥：AC-006 上界=1 两层串行（无需重启 serve）
+310: ## 8. 证据⑦：全量 pytest
+343: ## 9. 残留与未验证
+365: ## 10. 上下文来源清单
+378: ## 11. 改动清单
+389: ## 附录 A：探针脚本（可复跑）
+550:     # |frontier| = 0: every task done -> no new rows, advance executes.
+730:         # flip BOTH bounds to 1 in the config file; no serve restart
+777:     # tick wall clock: one idle enabled project tick (no advance)
+797:     # event payload demonstration on a real recorded result
+826: ## 附录 B：写面前沿预筛探针（C4 可复跑）
+
+=== all code fences (lang + first line + line no) ===
+36: FENCE-OPEN ```powershell
+39: FENCE-CLOSE
+43: FENCE-OPEN ```
+50: FENCE-CLOSE
+54: FENCE-OPEN ```python
+72: FENCE-CLOSE
+76: FENCE-OPEN ```
+92: FENCE-CLOSE
+96: FENCE-OPEN ```python
+110: FENCE-CLOSE
+114: FENCE-OPEN ```python
+140: FENCE-CLOSE
+144: FENCE-OPEN ```python
+150: FENCE-CLOSE
+152: FENCE-OPEN ```python
+157: FENCE-CLOSE
+166: FENCE-OPEN ```
+191: FENCE-CLOSE
+199: FENCE-OPEN ```
+224: FENCE-CLOSE
+236: FENCE-OPEN ```
+242: FENCE-CLOSE
+252: FENCE-OPEN ```
+259: FENCE-CLOSE
+270: FENCE-OPEN ```
+283: FENCE-CLOSE
+297: FENCE-OPEN ```
+304: FENCE-CLOSE
+312: FENCE-OPEN ```powershell
+316: FENCE-CLOSE
+320: FENCE-OPEN ```
+328: FENCE-CLOSE
+395: FENCE-OPEN ```python
+824: FENCE-CLOSE
+904: FENCE-OPEN ```

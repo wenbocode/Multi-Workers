@@ -1,0 +1,854 @@
+2298: STATE_FIELD_DESCRIPTIONS: Mapping[str, dict] = MappingProxyType(
+2299:     {
+2300:         "schema_version": {
+2301:             "type": "integer",
+2302:             "description": "State schema version (currently 2).",
+2303:         },
+2304:         "decision_point": {
+2305:             "type": "string",
+2306:             "description": "Decision point id this state was built for.",
+2307:         },
+2308:         "key": {
+2309:             "type": "string",
+2310:             "description": "AgenticTask key, e.g. mw-decision-substitution.",
+2311:         },
+2312:         "phase": {
+2313:             "type": "string",
+2314:             "description": "Current AgenticTask phase, e.g. EXECUTE.",
+2315:         },
+2316:         "task_type": {
+2317:             "type": "string",
+2318:             "description": "Task type of the work being decided: coding|review|research|rag-research|vision|verifier|reviewer|repair|phase-writer|roadmap-writer.",
+2319:         },
+2320:         "requested_type": {
+2321:             "type": "string",
+2322:             "description": "Task type the dispatch entry requested: the same vocabulary as task_type.",
+2323:         },
+2324:         "risk": {
+2325:             "type": "string",
+2326:             "description": "Risk tier of the task: low|mid|high.",
+2327:         },
+2328:         "risk_source": {
+2329:             "type": "string",
+2330:             "description": "Who assigned the risk: machine (auto-derived) | pm-label (labelled by the PM).",
+2331:         },
+2332:         "authority_tier": {
+2333:             "type": "string",
+2334:             "description": "Decision authority tier: P0|P1|P2.",
+2335:         },
+2336:         "task_summary": {
+2337:             "type": "string",
+2338:             "description": "One-line summary of the task being decided.",
+2339:         },
+2340:         "questions_version": {
+2341:             "type": "string",
+2342:             "description": "Registry question-set version, e.g. q-fcbd3847.",
+2343:         },
+2344:         # The approved four-DP business material (design §2 / plan "最小固定跨卡接口").
+2345:         # No arbitrary per-field byte/item caps here: necessary material is either
+2346:         # sent complete or refused against the existing transport budget.
+2347:         "task_goal": {
+2348:             "type": "string",
+2349:             "description": "Task goal exactly as handed to the task (原文), no summary.",
+2350:         },
+2351:         "task_requirements": {
+2352:             "type": "string",
+2353:             "description": "Task requirements exactly as handed to the task (原文).",
+2354:         },
+2355:         "task_deliverables": {
+2356:             "type": "string",
+2357:             "description": "Task deliverables exactly as handed to the task (原文).",
+2358:         },
+2359:         "pm_decision_background": {
+2360:             "type": "string",
+2361:             "description": "Why the PM needs a checkpoint decision now, plus the constraints that shape it.",
+2362:         },
+2363:         "worker_execution": {
+2364:             "type": "string",
+2365:             "description": "Optional real worker execution (done/remaining/blocked/attempted and time budget); omit when there is no worker, never invent it.",
+2366:         },
+2367:         "question": {
+2368:             "type": "string",
+2369:             "description": "The pending question verbatim (what exactly needs a decision), written before any answer.",
+2370:         },
+2371:         "background.task_goal": {
+2372:             "type": "string",
+2373:             "description": "Task goal the question is asked against.",
+2374:         },
+2375:         "background.current_state": {
+2376:             "type": "string",
+2377:             "description": "What is actually known so far; unknowns are marked unknown, never invented.",
+2378:         },
+2379:         "background.decision_reason": {
+2380:             "type": "string",
+2381:             "description": "Why this question needs a decision now.",
+2382:         },
+2383:         "background.constraints_impact": {
+2384:             "type": "string",
+2385:             "description": "Constraints and the impact of each candidate handling.",
+2386:         },
+2387:         "handling_options": {
+2388:             "type": "array",
+2389:             "description": (
+2390:                 "PM-prepared, problem-specific action candidates "
+2391:                 "[{id,label,description,consequence,risk,conditions}]; ids only need to be "
+2392:                 "unique in this request (no legacy cN/2..5 bound)."
+2393:             ),
+2394:             "item_type": "object",
+2395:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2396:         },
+2397:         "delivery_goal": {
+2398:             "type": "string",
+2399:             "description": "Delivery goal including the user's acceptance conditions.",
+2400:         },
+2401:         "actual_completion": {
+2402:             "type": "string",
+2403:             "description": "What was actually completed against the delivery goal.",
+2404:         },
+2405:         "verification_evidence.verified": {
+2406:             "type": "array",
+2407:             "description": "Verification evidence that was actually verified; [] when there is none.",
+2408:             "item_type": "string",
+2409:             "empty_is_value": True,
+2410:         },
+2411:         "verification_evidence.unverified": {
+2412:             "type": "array",
+2413:             "description": "Evidence that is not verified (or was not run); [] means a verified none, never a missing fact.",
+2414:             "item_type": "string",
+2415:             "empty_is_value": True,
+2416:         },
+2417:         "unfinished_impact": {
+2418:             "type": "array",
+2419:             "description": "Unfinished items and their impact; [] means nothing is unfinished, never a missing fact.",
+2420:             "item_type": "string",
+2421:             "empty_is_value": True,
+2422:         },
+2423:         "scope.write_scope": {
+2424:             "type": "array",
+2425:             "description": "Paths the task may write, repo-relative (string array).",
+2426:         },
+2427:         "scope.file_extensions": {
+2428:             "type": "array",
+2429:             "description": "File extensions the task touches, e.g. [\".py\"] (string array).",
+2430:         },
+2431:         "progress.elapsed_minutes": {
+2432:             "type": "integer",
+2433:             "description": "Minutes spent on the task so far (wall clock or budget clock).",
+2434:         },
+2435:         "progress.budget_minutes": {
+2436:             "type": "integer",
+2437:             "description": "Minute budget assigned to the task.",
+2438:         },
+2439:         "progress.phases_done": {
+2440:             "type": "integer",
+2441:             "description": "AgenticTask phases completed so far.",
+2442:         },
+2443:         "progress.phases_total": {
+2444:             "type": "integer",
+2445:             "description": "AgenticTask phases planned for the task.",
+2446:         },
+2447:         "progress.artifact_present": {
+2448:             "type": "boolean",
+2449:             "description": "Whether the checkpoint artifact exists on disk.",
+2450:         },
+2451:         "ambiguity.kind": {
+2452:             "type": "string",
+2453:             "description": "Kind of the ambiguity: scope|fact|intent.",
+2454:         },
+2455:         "ambiguity.question": {
+2456:             "type": "string",
+2457:             "description": "The clarifying question the worker could not answer.",
+2458:         },
+2459:         "local_candidates": {
+2460:             "type": "array",
+2461:             "description": "Candidate answers found locally: [{id, label, path?, line?}], max 5.",
+2462:         },
+2463:         "rows_total": {
+2464:             "type": "integer",
+2465:             "description": "Decide rows counted for this key in the archive (sign-off rows of dp25 itself excluded).",
+2466:         },
+2467:         "rows_available": {
+2468:             "type": "integer",
+2469:             "description": "Of rows_total, how many have available=true (a real answer came back).",
+2470:         },
+2471:         "chain_ok": {
+2472:             "type": "boolean",
+2473:             "description": "Whether the archive hash chain is intact (seq contiguous from 1, prev_sha closes).",
+2474:         },
+2475:         "p0_open": {
+2476:             "type": "array",
+2477:             "description": "Enabled P0 dp ids right now (string array; [] when none or the table is absent).",
+2478:             # The producer writes [] for "no P0 open": that empty array is the
+2479:             # real value of this field, not an unreplaced scaffold placeholder
+2480:             # (T05h). Field-level and book-only; no other field declares it.
+2481:             "empty_is_value": True,
+2482:             # The same unified array boundary every new array declares (design
+2483:             # §4.5, T05k N5): sorted registry P0 dp ids, 10 today, longest 19 B,
+2484:             # so 32 items / string / 128 B is headroom, not a producer limit.
+2485:             # No enum: the element space is dp ids, not a closed set invented
+2486:             # here.
+2487:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2488:             "item_type": "string",
+2489:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2490:         },
+2491:         # dp25 optional L1 facts (T05c): the rest of the *real*
+2492:         # ``decide_signoff.signoff_state`` escalation vocabulary. Declared here
+2493:         # so the book, the seam and the export share one contract instead of a
+2494:         # seam-only allowance.
+2495:         "rows_escalated": {
+2496:             "type": "integer",
+2497:             "description": "Of rows_total, how many carry an escalated_reason (signoff collect fact).",
+2498:             "min_value": 0,
+2499:         },
+2500:         "escalated_reasons": {
+2501:             "type": "array",
+2502:             "description": "Distinct escalated_reason values seen in the counted rows (sorted; [] when none).",
+2503:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2504:             "item_type": "string",
+2505:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2506:         },
+2507:         "engine_violations": {
+2508:             "type": "array",
+2509:             "description": "transport/model/confidence_source triples that are not the real engine (sorted; [] when all real).",
+2510:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2511:             "item_type": "string",
+2512:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2513:         },
+2514:         # ------------------------------------------------------------------
+2515:         # dp4..dp24 business contract (design §4.5). Every new string declares
+2516:         # its byte cap, every new array its ``max_items``/element cap, every
+2517:         # enum its closed value set, every new count its ``>= 0`` floor. The
+2518:         # description names the fact and where it comes from; it never invites
+2519:         # a caller to invent a value (a missing fact must stay missing).
+2520:         # ------------------------------------------------------------------
+2521:         "failure.kind": {
+2522:             "type": "string",
+2523:             "description": "Failure class observed on the attempt: transient|deterministic|infra|unknown (from the failing step's own error report).",
+2524:             "enum": ("transient", "deterministic", "infra", "unknown"),
+2525:             "max_bytes": STATE_STRING_MAX_BYTES,
+2526:         },
+2527:         "failure.attempt": {
+2528:             "type": "integer",
+2529:             "description": "How many attempts have already been made for this failure (0-based count).",
+2530:             "min_value": 0,
+2531:         },
+2532:         "failure.limit": {
+2533:             "type": "integer",
+2534:             "description": "Attempt budget the task was given; it must not be exceeded.",
+2535:             "min_value": 0,
+2536:         },
+2537:         "failure.artifact_present": {
+2538:             "type": "boolean",
+2539:             "description": "Whether the failed attempt left a usable artifact on disk (fs-stated, not assumed).",
+2540:         },
+2541:         "test.failed_cases": {
+2542:             "type": "array",
+2543:             "description": "Failing test ids exactly as the runner reported them.",
+2544:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2545:             "item_type": "string",
+2546:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2547:         },
+2548:         "test.baseline_cases": {
+2549:             "type": "array",
+2550:             "description": "Known-failing (baseline) test ids for this project, from the recorded baseline.",
+2551:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2552:             "item_type": "string",
+2553:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2554:         },
+2555:         "test.changed_paths": {
+2556:             "type": "array",
+2557:             "description": "Repo-relative paths the change touched (diff scope), not the whole write face.",
+2558:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2559:             "item_type": "string",
+2560:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2561:         },
+2562:         "test.repro_consistent": {
+2563:             "type": "boolean",
+2564:             "description": "Whether repeated runs reproduced the same failures (recorded rerun result).",
+2565:         },
+2566:         "qg.checks_total": {
+2567:             "type": "integer",
+2568:             "description": "Number of quality-gate checks the verdict was computed over.",
+2569:             "min_value": 0,
+2570:         },
+2571:         "qg.checks_failed": {
+2572:             "type": "array",
+2573:             "description": "Ids of the quality-gate checks that failed (subset of the total).",
+2574:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2575:             "item_type": "string",
+2576:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2577:         },
+2578:         "qg.blocking": {
+2579:             "type": "array",
+2580:             "description": "Failure ids the quality gate reported as blocking (cannot be waived).",
+2581:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2582:             "item_type": "string",
+2583:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2584:         },
+2585:         "qg.scope": {
+2586:             "type": "string",
+2587:             "description": "Which surface the verdict covers: impl (code) or spec (locked requirements).",
+2588:             "enum": ("impl", "spec"),
+2589:             "max_bytes": STATE_STRING_MAX_BYTES,
+2590:         },
+2591:         "gate.name": {
+2592:             "type": "string",
+2593:             "description": "Gate that failed, by its recorded gate id or name.",
+2594:             "max_bytes": STATE_STRING_MAX_BYTES,
+2595:         },
+2596:         "gate.missing_items": {
+2597:             "type": "array",
+2598:             "description": "Checklist items the gate still reports as missing.",
+2599:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2600:             "item_type": "string",
+2601:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2602:         },
+2603:         "gate.verdict_age_hours": {
+2604:             "type": "integer",
+2605:             "description": "Age in hours of the verdict that failed the freshness gate.",
+2606:             "min_value": 0,
+2607:         },
+2608:         "gate.has_config_error": {
+2609:             "type": "boolean",
+2610:             "description": "Whether the gate failure is a configuration error rather than missing work.",
+2611:         },
+2612:         "scope.requested_paths": {
+2613:             "type": "array",
+2614:             "description": "Paths the new requirement asks to write (repo-relative), as requested.",
+2615:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2616:             "item_type": "string",
+2617:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2618:         },
+2619:         "scope.cross_key_conflicts": {
+2620:             "type": "array",
+2621:             "description": "Paths or keys another key already claims (conflict facts from the claim index).",
+2622:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2623:             "item_type": "string",
+2624:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2625:         },
+2626:         "scope.requirement_delta": {
+2627:             "type": "string",
+2628:             "description": "One-line description of what the requirement adds or removes.",
+2629:             "max_bytes": STATE_STRING_MAX_BYTES,
+2630:         },
+2631:         "model.requested": {
+2632:             "type": "string",
+2633:             "description": "Model id the task asked for (config or card), before fallback.",
+2634:             "max_bytes": STATE_STRING_MAX_BYTES,
+2635:         },
+2636:         "model.available": {
+2637:             "type": "array",
+2638:             "description": "Model ids the transport reports as reachable right now.",
+2639:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2640:             "item_type": "string",
+2641:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2642:         },
+2643:         "model.transport_status": {
+2644:             "type": "string",
+2645:             "description": "Observed transport state for the requested model: ok|rate-limited|unavailable.",
+2646:             "enum": ("ok", "rate-limited", "unavailable"),
+2647:             "max_bytes": STATE_STRING_MAX_BYTES,
+2648:         },
+2649:         "dependency.name": {
+2650:             "type": "string",
+2651:             "description": "Dependency package name as declared in the manifest.",
+2652:             "max_bytes": STATE_STRING_MAX_BYTES,
+2653:         },
+2654:         "dependency.current": {
+2655:             "type": "string",
+2656:             "description": "Version currently installed or pinned.",
+2657:             "max_bytes": STATE_STRING_MAX_BYTES,
+2658:         },
+2659:         "dependency.target": {
+2660:             "type": "string",
+2661:             "description": "Version the decision would move to.",
+2662:             "max_bytes": STATE_STRING_MAX_BYTES,
+2663:         },
+2664:         "dependency.breaking": {
+2665:             "type": "boolean",
+2666:             "description": "Whether the target version is declared semver-breaking (from its changelog/metadata).",
+2667:         },
+2668:         "dependency.reviewed": {
+2669:             "type": "boolean",
+2670:             "description": "Whether the target version's changelog was actually reviewed.",
+2671:         },
+2672:         "credential.provider": {
+2673:             "type": "string",
+2674:             "description": "Credential provider (e.g. timi, anthropic); never a credential value.",
+2675:             "max_bytes": STATE_STRING_MAX_BYTES,
+2676:         },
+2677:         "credential.kind": {
+2678:             "type": "string",
+2679:             "description": "Credential kind (api-key, oauth-token, ...); never a credential value.",
+2680:             "max_bytes": STATE_STRING_MAX_BYTES,
+2681:         },
+2682:         "credential.scope": {
+2683:             "type": "string",
+2684:             "description": "Scope the credential grants or would grant; never a credential value.",
+2685:             "max_bytes": STATE_STRING_MAX_BYTES,
+2686:         },
+2687:         "credential.exposed_to": {
+2688:             "type": "array",
+2689:             "description": "Processes/roles that would see the credential (isolation facts, not values).",
+2690:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2691:             "item_type": "string",
+2692:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2693:         },
+2694:         "action.command": {
+2695:             "type": "string",
+2696:             "description": "The destructive command, redacted (no credentials); never raw secret material.",
+2697:             "max_bytes": STATE_STRING_MAX_BYTES,
+2698:         },
+2699:         "action.targets": {
+2700:             "type": "array",
+2701:             "description": "Files/dirs the destructive command would touch (repo-relative).",
+2702:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2703:             "item_type": "string",
+2704:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2705:         },
+2706:         "action.reversible": {
+2707:             "type": "boolean",
+2708:             "description": "Whether the action can be undone in this repository (git or backup facts).",
+2709:         },
+2710:         "action.backup_available": {
+2711:             "type": "boolean",
+2712:             "description": "Whether a current backup/snapshot exists that could restore the targets.",
+2713:         },
+2714:         "release.version_current": {
+2715:             "type": "string",
+2716:             "description": "Version currently published/tagged for the packages.",
+2717:             "max_bytes": STATE_STRING_MAX_BYTES,
+2718:         },
+2719:         "release.version_next": {
+2720:             "type": "string",
+2721:             "description": "Version the release decision would publish.",
+2722:             "max_bytes": STATE_STRING_MAX_BYTES,
+2723:         },
+2724:         "release.staged_paths": {
+2725:             "type": "array",
+2726:             "description": "Paths staged for the commit/release (repo-relative).",
+2727:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2728:             "item_type": "string",
+2729:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2730:         },
+2731:         "release.changelog_ready": {
+2732:             "type": "boolean",
+2733:             "description": "Whether every touched package's [Unreleased] section is updated.",
+2734:         },
+2735:         "release.ci_green": {
+2736:             "type": "boolean",
+2737:             "description": "Whether CI is green on the commit being released (recorded run status).",
+2738:         },
+2739:         "conflict.user_instruction": {
+2740:             "type": "string",
+2741:             "description": "The user instruction as given, summarized (no quotes beyond one line).",
+2742:             "max_bytes": STATE_STRING_MAX_BYTES,
+2743:         },
+2744:         "conflict.rule_ref": {
+2745:             "type": "string",
+2746:             "description": "The project rule the instruction conflicts with: <path>:<line> reference.",
+2747:             "max_bytes": STATE_STRING_MAX_BYTES,
+2748:         },
+2749:         "conflict.rule_strength": {
+2750:             "type": "string",
+2751:             "description": "How binding the rule is: hard (must ask) or advisory (may override with a reason).",
+2752:             "enum": ("hard", "advisory"),
+2753:             "max_bytes": STATE_STRING_MAX_BYTES,
+2754:         },
+2755:         "conflict.irreversible": {
+2756:             "type": "boolean",
+2757:             "description": "Whether following the instruction has irreversible external effects.",
+2758:         },
+2759:         "gate.kind": {
+2760:             "type": "string",
+2761:             "description": "Autopilot human-gate class (autopilot.gates.GATE_KINDS, 6 values).",
+2762:             "enum": GATE_KIND_ENUM,
+2763:             "max_bytes": STATE_STRING_MAX_BYTES,
+2764:         },
+2765:         "gate.pending_items": {
+2766:             "type": "array",
+2767:             "description": "Items the human gate still lists as pending.",
+2768:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2769:             "item_type": "string",
+2770:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2771:         },
+2772:         "gate.age_minutes": {
+2773:             "type": "integer",
+2774:             "description": "How long the gate has been pending, in minutes.",
+2775:             "min_value": 0,
+2776:         },
+2777:         "gate.evidence_refs": {
+2778:             "type": "array",
+2779:             "description": "Evidence references attached to the gate (<path>:<line> or command).",
+2780:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2781:             "item_type": "string",
+2782:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2783:         },
+2784:         "goal.current_digest": {
+2785:             "type": "string",
+2786:             "description": "Digest/fingerprint of the current goal document the decision is measured against.",
+2787:             "max_bytes": STATE_STRING_MAX_BYTES,
+2788:         },
+2789:         "goal.proposed_delta": {
+2790:             "type": "string",
+2791:             "description": "What the proposed goal change adds or removes, in one line.",
+2792:             "max_bytes": STATE_STRING_MAX_BYTES,
+2793:         },
+2794:         "goal.alignment": {
+2795:             "type": "string",
+2796:             "description": "Alignment verdict of the change: aligned|drift|conflict (against goal.md).",
+2797:             "enum": ("aligned", "drift", "conflict"),
+2798:             "max_bytes": STATE_STRING_MAX_BYTES,
+2799:         },
+2800:         "spec.ac_ids": {
+2801:             "type": "array",
+2802:             "description": "Every AC id in the locked spec (a key's full set fits: up to 128).",
+2803:             "max_items": STATE_ARRAY_MAX_ITEMS_WIDE,
+2804:             "item_type": "string",
+2805:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2806:         },
+2807:         "spec.ac_changed": {
+2808:             "type": "array",
+2809:             "description": "AC ids this change touches; must be a subset of spec.ac_ids (up to 128).",
+2810:             "max_items": STATE_ARRAY_MAX_ITEMS_WIDE,
+2811:             "item_type": "string",
+2812:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2813:         },
+2814:         "spec.open_questions": {
+2815:             "type": "array",
+2816:             "description": "Open questions that must be resolved before the spec can be locked.",
+2817:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2818:             "item_type": "string",
+2819:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2820:         },
+2821:         "claim.key": {
+2822:             "type": "string",
+2823:             "description": "AgenticTask key whose claim conflicts.",
+2824:             "max_bytes": STATE_STRING_MAX_BYTES,
+2825:         },
+2826:         "claim.owner": {
+2827:             "type": "string",
+2828:             "description": "Recorded claim owner (worker/session id from the claim index).",
+2829:             "max_bytes": STATE_STRING_MAX_BYTES,
+2830:         },
+2831:         "claim.heartbeat_age_min": {
+2832:             "type": "integer",
+2833:             "description": "Minutes since the owner's last heartbeat (liveness fact, not a guess).",
+2834:             "min_value": 0,
+2835:         },
+2836:         "claim.owner_active": {
+2837:             "type": "boolean",
+2838:             "description": "Whether the owner process was confirmed alive (pid/activity fact).",
+2839:         },
+2840:         "write.target_path": {
+2841:             "type": "string",
+2842:             "description": "Repo-relative path the task wants to write outside its face.",
+2843:             "max_bytes": STATE_STRING_MAX_BYTES,
+2844:         },
+2845:         "write.cross_key_owner": {
+2846:             "type": "string",
+2847:             "description": "Key that owns the foreign path, if any (from the key index).",
+2848:             "max_bytes": STATE_STRING_MAX_BYTES,
+2849:         },
+2850:         "write.write_scope": {
+2851:             "type": "array",
+2852:             "description": "The task's declared write face (repo-relative globs/paths).",
+2853:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2854:             "item_type": "string",
+2855:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2856:         },
+2857:         "write.foreign_paths": {
+2858:             "type": "array",
+2859:             "description": "Paths outside the declared face that would be written.",
+2860:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2861:             "item_type": "string",
+2862:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2863:         },
+2864:         "write.allow_foreign_write": {
+2865:             "type": "boolean",
+2866:             "description": "Fact about whether a previous authorization allowed this foreign write (not a grant).",
+2867:         },
+2868:         "stage.id": {
+2869:             "type": "string",
+2870:             "description": "Stage identifier the close decision applies to.",
+2871:             "max_bytes": STATE_STRING_MAX_BYTES,
+2872:         },
+2873:         "stage.tasks_done": {
+2874:             "type": "integer",
+2875:             "description": "Tasks of the stage already closed (must not exceed the total).",
+2876:             "min_value": 0,
+2877:         },
+2878:         "stage.tasks_total": {
+2879:             "type": "integer",
+2880:             "description": "Tasks the stage contains, per its roadmap table.",
+2881:             "min_value": 0,
+2882:         },
+2883:         "stage.open_blockers": {
+2884:             "type": "array",
+2885:             "description": "Blockers still open for the stage (ids/refs).",
+2886:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2887:             "item_type": "string",
+2888:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2889:         },
+2890:         "stage.evidence_refs": {
+2891:             "type": "array",
+2892:             "description": "Evidence files backing the stage close (<path>:<line> or command).",
+2893:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2894:             "item_type": "string",
+2895:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2896:         },
+2897:         "refine.clause": {
+2898:             "type": "string",
+2899:             "description": "The requirement clause the refinement would change.",
+2900:             "max_bytes": STATE_STRING_MAX_BYTES,
+2901:         },
+2902:         "refine.impact_paths": {
+2903:             "type": "array",
+2904:             "description": "Files the refinement would touch (repo-relative).",
+2905:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2906:             "item_type": "string",
+2907:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2908:         },
+2909:         "refine.reversible": {
+2910:             "type": "boolean",
+2911:             "description": "Whether the refinement can be undone without losing accepted work.",
+2912:         },
+2913:         "debug.signal": {
+2914:             "type": "string",
+2915:             "description": "The failing signal/stack-first-line the debug plan starts from.",
+2916:             "max_bytes": STATE_STRING_MAX_BYTES,
+2917:         },
+2918:         "debug.last_green_ref": {
+2919:             "type": "string",
+2920:             "description": "Last known-good reference (commit sha or run id) the plan compares against.",
+2921:             "max_bytes": STATE_STRING_MAX_BYTES,
+2922:         },
+2923:         "debug.repro_available": {
+2924:             "type": "boolean",
+2925:             "description": "Whether a reproduction exists/ran (recorded fact, not an assumption).",
+2926:         },
+2927:         "debug.change_scope": {
+2928:             "type": "array",
+2929:             "description": "Paths the debug change would touch (repo-relative).",
+2930:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2931:             "item_type": "string",
+2932:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2933:         },
+2934:         "snapshot.size_bytes": {
+2935:             "type": "integer",
+2936:             "description": "Current size of the memory snapshot artifact in bytes (fs-stated).",
+2937:             "min_value": 0,
+2938:         },
+2939:         "snapshot.delta_bytes": {
+2940:             "type": "integer",
+2941:             "description": "New size minus old size in bytes; negative means the snapshot shrank (signed).",
+2942:             "signed": True,
+2943:         },
+2944:         "snapshot.sections_changed": {
+2945:             "type": "array",
+2946:             "description": "Document sections the snapshot rewrite changes.",
+2947:             "max_items": STATE_ARRAY_MAX_ITEMS,
+2948:             "item_type": "string",
+2949:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+2950:         },
+2951:         "project.path": {
+2952:             "type": "string",
+2953:             "description": "Project path the trust decision applies to (as pi recorded it).",
+2954:             "max_bytes": STATE_STRING_MAX_BYTES,
+2955:         },
+2956:         "project.trust_state": {
+2957:             "type": "string",
+2958:             "description": "Current pi trust state for the project: untrusted|trusted.",
+2959:             "enum": ("untrusted", "trusted"),
+2960:             "max_bytes": STATE_STRING_MAX_BYTES,
+2961:         },
+2962:         "project.origin": {
+2963:             "type": "string",
+2964:             "description": "Where the project came from: user (created locally)|clone|foreign.",
+2965:             "enum": ("user", "clone", "foreign"),
+2966:             "max_bytes": STATE_STRING_MAX_BYTES,
+2967:         },
+2968:         "project.pending_changes": {
+2969:             "type": "boolean",
+2970:             "description": "Whether the project has uncommitted changes that the trust grant would cover.",
+2971:         },
+2972:         # ------------------------------------------------------------------
+2973:         # Optional L1 paths (design §4.5): declared, type-checked, never
+2974:         # required, dropped first when the state budget needs room.
+2975:         # ------------------------------------------------------------------
+2976:         "history": {
+2977:             "type": "object",
+2978:             "description": "Recent dispatch outcome counters (recent_done/recent_failed/...), optional L1.",
+2979:         },
+2980:         "scope.images_required": {
+2981:             "type": "boolean",
+2982:             "description": "Whether the task needs image input, optional L1.",
+2983:         },
+2984:         "progress.writes": {
+2985:             "type": "integer",
+2986:             "description": "Tool writes counted so far in the checkpoint window, optional L1.",
+2987:             "min_value": 0,
+2988:         },
+2989:         "progress.uniq_targets": {
+2990:             "type": "integer",
+2991:             "description": "Distinct files written so far, optional L1.",
+2992:             "min_value": 0,
+2993:         },
+2994:         "progress.repeat_top": {
+2995:             "type": "integer",
+2996:             "description": "Highest repeat count on one target (thrash signal), optional L1.",
+2997:             "min_value": 0,
+2998:         },
+2999:         "progress.trend": {
+3000:             "type": "array",
+3001:             "description": "Per-checkpoint {elapsed_minutes, reads, writes} points, optional L1.",
+3002:             "max_items": STATE_ARRAY_MAX_ITEMS,
+3003:             "item_type": "object",
+3004:         },
+3005:         "progress.last_land_age_min": {
+3006:             "type": "integer",
+3007:             "description": "Minutes since the worker last landed an artifact, optional L1.",
+3008:             "min_value": 0,
+3009:         },
+3010:         # ------------------------------------------------------------------
+3011:         # T03 eight-entry business material (new entries). Every field names a
+3012:         # fact the initiator really has; a missing fact must stay missing.
+3013:         # ------------------------------------------------------------------
+3014:         "images_required": {
+3015:             "type": "boolean",
+3016:             "description": "Whether the dispatched task needs to read images; true means vision only, false/absent is never an image-capability proof.",
+3017:         },
+3018:         "reachability_facts": {
+3019:             "type": "string",
+3020:             "description": "What is actually known about whether this task can be completed inside its authorization/budget.",
+3021:         },
+3022:         "completed": {
+3023:             "type": "string",
+3024:             "description": "What is actually finished so far, with evidence references; saying none is a real statement.",
+3025:         },
+3026:         "remaining": {
+3027:             "type": "string",
+3028:             "description": "What is still unfinished for this task.",
+3029:         },
+3030:         "blockers": {
+3031:             "type": "string",
+3032:             "description": "What blocks completion inside the boundary, or an explicit none.",
+3033:         },
+3034:         "constraints": {
+3035:             "type": "string",
+3036:             "description": "Constraints, remaining budget and authorization that bound this judgement.",
+3037:         },
+3038:         "investigation.unknown": {
+3039:             "type": "string",
+3040:             "description": "The one concrete unknown the bounded evidence step would resolve (investigate branch only).",
+3041:             "max_bytes": STATE_STRING_MAX_BYTES,
+3042:         },
+3043:         "investigation.evidence_source": {
+3044:             "type": "string",
+3045:             "description": "A source that can actually be consulted inside the existing authorization.",
+3046:             "max_bytes": STATE_STRING_MAX_BYTES,
+3047:         },
+3048:         "investigation.budget": {
+3049:             "type": "string",
+3050:             "description": "The real remaining budget the evidence step may use (never a reset or a new grant).",
+3051:             "max_bytes": STATE_STRING_MAX_BYTES,
+3052:         },
+3053:         "investigation.stop_condition": {
+3054:             "type": "string",
+3055:             "description": "The concrete criterion that ends the evidence step; no open-ended investigation.",
+3056:             "max_bytes": STATE_STRING_MAX_BYTES,
+3057:         },
+3058:         "review_requirements": {
+3059:             "type": "string",
+3060:             "description": "The quality/acceptance requirements this review is measured against.",
+3061:         },
+3062:         "review_evidence": {
+3063:             "type": "array",
+3064:             "description": "Evidence references the review actually examined (<path>:<line> or command); [] when none.",
+3065:             "max_items": STATE_ARRAY_MAX_ITEMS,
+3066:             "item_type": "string",
+3067:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+3068:             "empty_is_value": True,
+3069:         },
+3070:         "review_findings": {
+3071:             "type": "string",
+3072:             "description": "What the review found, including the concrete gap for a fix verdict.",
+3073:         },
+3074:         "uncovered_scope": {
+3075:             "type": "string",
+3076:             "description": "What this review did not cover; an explicit none is a real statement.",
+3077:         },
+3078:         "basis_issue": {
+3079:             "type": "string",
+3080:             "description": "The substantive requirement/design/acceptance problem that forces reopen; must be absent for pass.",
+3081:             "max_bytes": STATE_STRING_MAX_BYTES,
+3082:         },
+3083:         "gate_background": {
+3084:             "type": "string",
+3085:             "description": "The concrete gate matter and why it is being sent for a decision now.",
+3086:         },
+3087:         "current_state": {
+3088:             "type": "string",
+3089:             "description": "The current real state of the gate facts, with unknowns marked unknown.",
+3090:         },
+3091:         "condition_evidence": {
+3092:             "type": "array",
+3093:             "description": "Evidence references for the gate conditions that are claimed to hold; [] when none.",
+3094:             "max_items": STATE_ARRAY_MAX_ITEMS,
+3095:             "item_type": "string",
+3096:             "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+3097:             "empty_is_value": True,
+3098:         },
+3099:         "pm_note.subject": {
+3100:             "type": "string",
+3101:             "description": "The PM's pre-submission note: what exactly is being approved.",
+3102:             "max_bytes": STATE_STRING_MAX_BYTES,
+3103:         },
+3104:         "pm_note.planned_action": {
+3105:             "type": "string",
+3106:             "description": "The limited action the PM would take after an approve (never implied by the choice alone).",
+3107:             "max_bytes": STATE_STRING_MAX_BYTES,
+3108:         },
+3109:         "pm_note.basis.goal": {
+3110:             "type": "string",
+3111:             "description": "The goal/acceptance basis the note relies on.",
+3112:             "max_bytes": STATE_STRING_MAX_BYTES,
+3113:         },
+3114:         "pm_note.basis.evidence": {
+3115:             "type": "string",
+3116:             "description": "The evidence the note relies on, with references.",
+3117:             "max_bytes": STATE_STRING_MAX_BYTES,
+3118:         },
+3119:         "pm_note.basis.budget": {
+3120:             "type": "string",
+3121:             "description": "The remaining budget/limit the note relies on (no new budget is granted here).",
+3122:             "max_bytes": STATE_STRING_MAX_BYTES,
+3123:         },
+3124:         "pm_note.basis.authority": {
+3125:             "type": "string",
+3126:             "description": "The existing authorization the note relies on; this note never creates one.",
+3127:             "max_bytes": STATE_STRING_MAX_BYTES,
+3128:         },
+3129:         "background.tried": {
+3130:             "type": "string",
+3131:             "description": "What has already been tried for this live problem, factually.",
+3132:         },
+3133:         "background.unknowns": {
+3134:             "type": "string",
+3135:             "description": "The facts still unknown; never filled in by inference.",
+3136:         },
+3137:         "background.constraints": {
+3138:             "type": "string",
+3139:             "description": "The authorization/budget/role constraints that bound every candidate.",
+3140:         },
+3141:         "decision_actor": {
+3142:             "type": "string",
+3143:             "description": "The real business subject whose decision is needed (not a self-reported role claim).",
+3144:             "max_bytes": STATE_STRING_MAX_BYTES,
+3145:         },
+3146:         "decision_object": {
+3147:             "type": "string",
+3148:             "description": "The concrete object/artefact the pending question is about.",
+3149:             "max_bytes": STATE_STRING_MAX_BYTES,
+3150:         },
+3151:     }

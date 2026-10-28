@@ -1,0 +1,12 @@
+ M claude/scripts/advance_phase.py
+ M claude/scripts/test_advance_phase.py
+ M claude/scripts/test_update_index.py
+ M claude/scripts/update_index.py
+ M core/scripts/advance_phase.py
+ M core/scripts/test_advance_phase.py
+ M core/scripts/test_update_index.py
+ M core/scripts/update_index.py
+ M scripts/advance_phase.py
+ M scripts/test_advance_phase.py
+ M scripts/test_update_index.py
+ M scripts/update_index.py

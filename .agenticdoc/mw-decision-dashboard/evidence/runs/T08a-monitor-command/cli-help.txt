@@ -1,0 +1,49 @@
+﻿usage: mw.py decide [-h]
+                    {run,probe,show,set,ask,book,report,sign,dp,monitor} ...
+
+positional arguments:
+  {run,probe,show,set,ask,book,report,sign,dp,monitor}
+    run                 Ask one decision point (JSON request on stdin or
+                        --request-file; state is never argv)
+    probe               Probe candidate transports/endpoint shapes
+                        (diagnostic, never fails)
+    show                Print the effective config and the most recent
+                        evidence line
+    set                 Write .mw/decide.json atomically (pairs are KEY=VALUE;
+                        unknown keys are refused)
+    ask                 Ask timi/jev-latest directly (human face: --state +
+                        --noul/--choice/--score)
+    book                Decision books: generate a skeleton from the registry
+                        / check one before sending
+    report              Fold decisions.jsonl into a phase review (human table
+                        / --json; never gates)
+    sign                Sign off this key: print the decision summary, then
+                        write evidence/review/sign-final.md
+    dp                  Decision-point table:
+                        list/show/on/off/set/refresh/check/apply/export (human
+                        write face)
+    monitor             Open the local decision dashboard app window; `monitor
+                        status|stop` manage that instance
+
+options:
+  -h, --help            show this help message and exit
+---
+usage: mw.py decide monitor [-h] [--project PROJECT] [--no-open] [--json]
+                            [{open,status,stop}]
+
+Ensure one project-local monitor instance (127.0.0.1, port 43170..43269), mint
+a single-use boot code and open a Chromium `--app=` window. `status` is a
+read-only authenticated health view; `stop` is the authenticated shutdown of
+that instance only. status/stop never start a service and fail non-zero when
+no instance is recorded or the control root is unknown.
+
+positional arguments:
+  {open,status,stop}  open (default: ensure + window) | status (read-only) |
+                      stop (authenticated shutdown)
+
+options:
+  -h, --help          show this help message and exit
+  --project PROJECT   Project directory (default: .)
+  --no-open           Ensure the monitor but do not launch a browser window
+                      (prints the URL)
+  --json              Emit one machine-readable JSON object

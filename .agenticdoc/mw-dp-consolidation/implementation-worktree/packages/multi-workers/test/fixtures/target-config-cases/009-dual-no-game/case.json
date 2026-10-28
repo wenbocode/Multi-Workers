@@ -1,0 +1,10 @@
+{
+  "description": "mode dual requires a game root",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "game"
+    ]
+  }
+}

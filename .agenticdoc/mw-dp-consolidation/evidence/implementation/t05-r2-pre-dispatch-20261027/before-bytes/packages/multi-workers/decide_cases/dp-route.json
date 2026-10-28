@@ -1,0 +1,129 @@
+{
+  "book": {
+    "decision_point": "dp-route",
+    "material": {
+      "decision_actor": "mw-dp-consolidation 的 PM",
+      "decision_object": "只读筛选的 facets 接线与 detail 投影缺口",
+      "question": "facets 接线与正文投影缺口，本轮应该走哪一个决策入口？"
+    },
+    "meta": {
+      "actor_role": "pm",
+      "key": "mw-dp-consolidation",
+      "logical_id": "case-dp-route-v1",
+      "task_key": "dpc-t05-eight-cases",
+      "trigger_id": "case-dp-route"
+    },
+    "notes": {
+      "evidence": {
+        "decision_actor": "packages/multi-workers/scripts/build_decide_cases.py:342",
+        "decision_object": "packages/multi-workers/scripts/build_decide_cases.py:343",
+        "question": "packages/multi-workers/scripts/build_decide_cases.py:344"
+      }
+    },
+    "preparation": {
+      "basis_catalog": [
+        {
+          "applies_to": [
+            "dp-w-type"
+          ],
+          "id": "route-w-type",
+          "material_refs": [
+            "question"
+          ],
+          "text": "问题只在派工类型上，应由派发类型入口判断。"
+        },
+        {
+          "applies_to": [
+            "dp-pm-steer"
+          ],
+          "id": "route-pm-steer",
+          "material_refs": [
+            "decision_object"
+          ],
+          "text": "问题涉及任务编排与预算分配，应由 PM 检查点入口判断。"
+        },
+        {
+          "applies_to": [
+            "dp-w-check-task"
+          ],
+          "id": "route-w-check",
+          "material_refs": [
+            "decision_object"
+          ],
+          "text": "问题由 worker 本次可达性引起，应由 worker 自检入口判断。"
+        },
+        {
+          "applies_to": [
+            "dp-QG"
+          ],
+          "id": "route-QG",
+          "material_refs": [
+            "question"
+          ],
+          "text": "问题涉及验收与质量证据，应由质量审核入口判断。"
+        },
+        {
+          "applies_to": [
+            "dp-gate-approve"
+          ],
+          "id": "route-gate",
+          "material_refs": [
+            "decision_object"
+          ],
+          "text": "问题是一次具体 gate 的条件是否成立，应由 gate 审批入口判断。"
+        },
+        {
+          "applies_to": [
+            "dp-sign-key"
+          ],
+          "id": "route-sign-key",
+          "material_refs": [
+            "decision_object"
+          ],
+          "text": "问题涉及 key 交付能否签收，应由签收入口判断。"
+        },
+        {
+          "applies_to": [
+            "dp-auto"
+          ],
+          "id": "route-auto",
+          "material_refs": [
+            "question"
+          ],
+          "text": "问题需要从 PM 已准备的现场候选里选一项，应由动态行动入口判断。"
+        }
+      ],
+      "prepared_at": "2026-10-27T20:56:00+00:00"
+    },
+    "schema_version": 3
+  },
+  "case_version": 1,
+  "dp": "dp-route",
+  "note": "合成 case：主体、对象与待决问题清楚，用于观察路由只选入口；所选入口的业务结论仍需按它的合同另发一次决策。",
+  "questions": {
+    "entry": {
+      "choices": [
+        "dp-w-type",
+        "dp-pm-steer",
+        "dp-w-check-task",
+        "dp-QG",
+        "dp-gate-approve",
+        "dp-sign-key",
+        "dp-auto"
+      ],
+      "id": "entry",
+      "instructions": "这个临时问题应进入哪一个决策入口？只选择入口；该入口的业务结论与动作仍需按它的合同另发一次决策。",
+      "labels": {
+        "dp-QG": "正式质量审核",
+        "dp-auto": "PM 现场动态行动选择",
+        "dp-gate-approve": "具体 gate 审批",
+        "dp-pm-steer": "PM 任务编排",
+        "dp-sign-key": "key 交付签收",
+        "dp-w-check-task": "Worker 本次任务可达性",
+        "dp-w-type": "派发类型选择"
+      },
+      "type": "choice"
+    }
+  },
+  "title": "临时问题路由：只选入口，不代替业务结论"
+}

@@ -1,0 +1,221 @@
+{
+  "module_file": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_validity.py",
+  "fixture_refs_not_real_authority_or_artifacts": true,
+  "observations_only_no_effect_execution": true,
+  "results": [
+    {
+      "name": "evidence-control",
+      "changed_input": null,
+      "verdict": {
+        "status": "applies",
+        "reasons": [],
+        "stale_dependencies": [],
+        "unaffected_changes": [],
+        "reusable": true
+      }
+    },
+    {
+      "name": "evidence-contract-only-changed",
+      "changed_input": {
+        "contract_version": "v2"
+      },
+      "verdict": {
+        "status": "applies",
+        "reasons": [
+          {
+            "code": "contract_version_changed",
+            "field": "contract_version",
+            "detail": "v2"
+          }
+        ],
+        "stale_dependencies": [],
+        "unaffected_changes": [],
+        "reusable": true
+      }
+    },
+    {
+      "name": "signoff-control",
+      "changed_input": null,
+      "verdict": {
+        "status": "valid",
+        "reasons": [],
+        "writes_signoff": false,
+        "widens_scope": false
+      }
+    },
+    {
+      "name": "signoff-nonfinalize-continue",
+      "changed_input": {
+        "choice": "continue"
+      },
+      "verdict": {
+        "status": "valid",
+        "reasons": [],
+        "writes_signoff": false,
+        "widens_scope": false
+      }
+    },
+    {
+      "name": "signoff-nonfinalize-user-confirm",
+      "changed_input": {
+        "choice": "user-confirm"
+      },
+      "verdict": {
+        "status": "valid",
+        "reasons": [],
+        "writes_signoff": false,
+        "widens_scope": false
+      }
+    },
+    {
+      "name": "signoff-wrong-key",
+      "changed_input": {
+        "key": "other-key"
+      },
+      "verdict": {
+        "status": "valid",
+        "reasons": [],
+        "writes_signoff": false,
+        "widens_scope": false
+      }
+    },
+    {
+      "name": "signoff-missing-reference",
+      "changed_input": {
+        "signoff_ref": null
+      },
+      "verdict": {
+        "status": "valid",
+        "reasons": [],
+        "writes_signoff": false,
+        "widens_scope": false
+      }
+    },
+    {
+      "name": "signoff-contract-only-changed",
+      "changed_input": {
+        "current_contract_version": "v2"
+      },
+      "verdict": {
+        "status": "valid",
+        "reasons": [],
+        "writes_signoff": false,
+        "widens_scope": false
+      }
+    },
+    {
+      "name": "claim-control",
+      "changed_input": null,
+      "verdict": {
+        "status": "clear",
+        "reasons": [],
+        "conflicts": [],
+        "conflicting_owners": [],
+        "takeover": false,
+        "lock_mode": "exclusive",
+        "decision_grants_claim": false,
+        "dispatched": false
+      }
+    },
+    {
+      "name": "claim-mixed-traversal",
+      "changed_input": {
+        "files": [
+          "safe.py",
+          "../outside.py"
+        ]
+      },
+      "verdict": {
+        "status": "clear",
+        "reasons": [
+          {
+            "code": "parent_traversal",
+            "field": "files",
+            "detail": "../outside.py"
+          }
+        ],
+        "conflicts": [],
+        "conflicting_owners": [],
+        "takeover": false,
+        "lock_mode": "exclusive",
+        "decision_grants_claim": false,
+        "dispatched": false
+      }
+    },
+    {
+      "name": "claim-same-owner-other-task",
+      "changed_input": {
+        "claims": [
+          {
+            "owner": "worker-1",
+            "task_key": "other-task",
+            "files": [
+              "safe.py"
+            ]
+          }
+        ]
+      },
+      "verdict": {
+        "status": "clear",
+        "reasons": [],
+        "conflicts": [],
+        "conflicting_owners": [],
+        "takeover": false,
+        "lock_mode": "exclusive",
+        "decision_grants_claim": false,
+        "dispatched": false
+      }
+    },
+    {
+      "name": "effect-unknown-control",
+      "changed_input": {
+        "status": "unknown"
+      },
+      "verdict": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "effect_state_unknown",
+            "field": "effect",
+            "detail": "unknown"
+          }
+        ],
+        "actions": [],
+        "duplicate_actions": [],
+        "blocked": [
+          "act"
+        ]
+      }
+    },
+    {
+      "name": "effect-unrecognized-state",
+      "changed_input": {
+        "status": "unrecorded"
+      },
+      "verdict": {
+        "status": "proceed",
+        "reasons": [],
+        "actions": [
+          "act"
+        ],
+        "duplicate_actions": [],
+        "blocked": []
+      }
+    },
+    {
+      "name": "effect-missing-state",
+      "changed_input": {
+        "status": null
+      },
+      "verdict": {
+        "status": "proceed",
+        "reasons": [],
+        "actions": [
+          "act"
+        ],
+        "duplicate_actions": [],
+        "blocked": []
+      }
+    }
+  ]
+}

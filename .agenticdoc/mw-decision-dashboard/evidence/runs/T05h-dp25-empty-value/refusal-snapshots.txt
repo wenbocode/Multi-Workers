@@ -1,0 +1,12 @@
+﻿missing -> input-incomplete | calls: 0
+  detail: dp25-signoff-conclusion:k-probe: missing required state fields: p0_open
+  event kinds: ['book-snapshot', 'decision-end']
+  decision-end book_ref/archive/capture: [('book-5c06b8dfd2bc9300', None, None)]
+null -> input-incomplete | calls: 0
+  detail: dp25-signoff-conclusion:k-probe: missing required state fields: p0_open
+  event kinds: ['book-snapshot', 'decision-end']
+  decision-end book_ref/archive/capture: [('book-5c06b8dfd2bc9300', None, None)]
+string -> input-incomplete | calls: 0
+  detail: dp25-signoff-conclusion:k-probe: illegal state (p0_open: expected array, got str)
+  event kinds: ['decision-end']
+  decision-end book_ref/archive/capture: [(None, None, None)]

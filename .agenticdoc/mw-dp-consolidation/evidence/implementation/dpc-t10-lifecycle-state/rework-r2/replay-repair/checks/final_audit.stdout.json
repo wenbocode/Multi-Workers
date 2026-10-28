@@ -1,0 +1,31 @@
+{
+  "checker": "final_audit.py",
+  "diffs_verified": [
+    "diff/decision_wire.py.diff",
+    "diff/decision_lifecycle.py.diff",
+    "diff/decision_task_state.py.diff"
+  ],
+  "forbidden_modules_imported": [],
+  "inventory": [
+    "checks/baseline_verify.py",
+    "checks/baseline_verify.rc",
+    "checks/baseline_verify.stderr",
+    "checks/baseline_verify.stdout.json",
+    "checks/diff_products.py",
+    "checks/final_audit.py",
+    "checks/final_audit.rc",
+    "checks/final_audit.stderr",
+    "checks/final_audit.stdout.json",
+    "checks/static_verify.py",
+    "checks/static_verify.rc",
+    "checks/static_verify.stderr",
+    "checks/static_verify.stdout.json",
+    "diff/decision_lifecycle.py.diff",
+    "diff/decision_task_state.py.diff",
+    "diff/decision_wire.py.diff",
+    "output.md",
+    "report.md"
+  ],
+  "problems": [],
+  "table_rows": 21
+}

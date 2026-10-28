@@ -1,0 +1,30 @@
+{
+  "decision_dashboard.html": {
+    "bytes": 9619,
+    "sha256": "281c759a88ca1ffbe6073368215a11f6ff4c034457fe5968f74b68e1ea95b7b7"
+  },
+  "decision_dashboard.js": {
+    "bytes": 130739,
+    "sha256": "cd05ad33bd746be878061e2aff77739298f84307426ea1aef5fa1f49282a60f2"
+  },
+  "decision_dashboard.css": {
+    "bytes": 10666,
+    "sha256": "3dcd1122f778fe96b7f35b2236c6a8685e468a64426830cc98e69af908d7fd76"
+  },
+  "test_decision_context_workbench.py": {
+    "bytes": 73316,
+    "sha256": "4e00a9bcdb9a8cfe8785b78d7355639b8279fa81df3ade7c80a82da602339e16"
+  },
+  "test_decision_dashboard_assets.py": {
+    "bytes": 42770,
+    "sha256": "98db339a7e197aff5ad614ff5c5a380a4c286305f42d7b5b351675c28911d82b"
+  },
+  "test_decision_dashboard_contracts.py": {
+    "bytes": 32504,
+    "sha256": "d2fa1c3a7ce0cf9076afad4d61af64b243d131c5804f52e9342809841b41c502"
+  },
+  "test_decision_context_readable_ui.py": {
+    "bytes": 81464,
+    "sha256": "6673116c5f4a2f36811531f4effee119f3ea33e7f8d888d36e3286886e5da59a"
+  }
+}

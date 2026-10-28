@@ -1,0 +1,202 @@
+{
+  "task_key": "dpc-t06-validity",
+  "observed_at": "2026-10-26T20:18:44+08:00",
+  "layer": "read-only pure judgement (unit) - NOT L2, NOT real concurrency/lock/effect verification",
+  "scope_note": "Every number below is an observable of the pure verdict returned by decision_validity.py in the assigned test file. No real gate writer, ledger, lock, service, provider or business action was exercised. VC-011/019/025/027/028/029/039/052 remain open at L2 until T20/T31 run the real producers/writers/consumers on top of this file.",
+  "command": {
+    "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+    "argv": ["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", "test_dp_consolidation_concurrency.py"],
+    "runner": "evidence/implementation/dpc-t06-validity/run_pytest.py",
+    "env": "minimal passthrough env; isolated HOME/USERPROFILE/TEMP/TMP under this evidence dir; PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 -p no:cacheprovider; PYTHONIOENCODING=utf-8 PYTHONUTF8=1",
+    "final_rc": 0,
+    "final_counts": {"passed": 65, "failed": 0},
+    "final_logs": [
+      "green-06-final.log",
+      "green-07-final-rerun.log",
+      "green-09-verbose.log"
+    ]
+  },
+  "red_green": [
+    {"label": "red-01-module-missing", "rc": 2, "observed": "ImportError: No module named 'decision_validity' (collection)", "log": "red-01-module-missing.log"},
+    {"label": "red-02-facing-behaviours", "rc": 1, "observed": "63 failed, 1 passed - data model stub, every judgement raised NotImplementedError", "log": "red-02-facing-behaviours.log"},
+    {"label": "red-03-stub-after-test-fix", "rc": 1, "observed": "63 failed, 1 passed after declaring $set scope ordering in the test", "log": "red-03-stub-after-test-fix.log"},
+    {"label": "green-01-first-impl", "rc": 1, "observed": "62 passed, 2 failed (set-kind values were not canonicalised; own test bug)", "log": "green-01-first-impl.log"},
+    {"label": "green-02-second-impl", "rc": 1, "observed": "63 passed, 1 failed (test declared list order instead of $set for scope)", "log": "green-02-second-impl.log"},
+    {"label": "green-03-third-impl", "rc": 0, "observed": "64 passed", "log": "green-03-third-impl.log"},
+    {"label": "green-04-final", "rc": 0, "observed": "65 passed (added explicit unknown-state reapproval assertion)", "log": "green-04-final.log"},
+    {"label": "green-05-final-rerun", "rc": 0, "observed": "65 passed", "log": "green-05-final-rerun.log"},
+    {"label": "green-06-final", "rc": 0, "observed": "65 passed (after removing the pseudo dependency name 'contract' from evidence stale list)", "log": "green-06-final.log"},
+    {"label": "green-07-final-rerun", "rc": 0, "observed": "65 passed", "log": "green-07-final-rerun.log"},
+    {"label": "green-09-verbose", "rc": 0, "observed": "65 passed, per-test PASSED listing", "log": "green-09-verbose.log"}
+  ],
+  "vc": {
+    "VC-011": {
+      "ac": "AC-011",
+      "tests": [
+        "test_eight_entries_and_owner_table_is_total (line 215)",
+        "test_route_owns_no_business_approval (235)",
+        "test_same_matter_under_different_gate_labels_is_one_matter (246)",
+        "test_same_matter_has_exactly_one_business_owner (257)",
+        "test_non_owner_entry_is_blocked_even_with_same_matter (270)",
+        "test_retired_entry_is_refused_before_any_review (280)",
+        "test_replay_same_version_is_duplicate_without_extra_approval (289)",
+        "test_replay_different_choice_same_version_is_conflict_not_second_approval (305)",
+        "test_repeat_action_is_not_planned_when_effect_applied (315)"
+      ],
+      "observed": {
+        "approvals_for_one_gate_action_matter_over_8_entries": 1,
+        "duplicate_approvals_on_replay": 0,
+        "route_releases": 0,
+        "duplicate_actions_performed": 0,
+        "same_matter_across_3_gate_labels": true
+      },
+      "limit": "pure ownership/replay judgement; no real gate writer or concurrent replay"
+    },
+    "VC-019": {
+      "ac": "AC-019",
+      "tests": [
+        "test_substantive_change_makes_old_decision_stale_with_affected_names (337)",
+        "test_added_and_removed_dependency_counts_as_substantive_change (353)",
+        "test_formatting_and_set_order_are_semantically_equivalent (369)",
+        "test_byte_sha_change_alone_keeps_matter_and_decision_valid (397)",
+        "test_contract_version_change_is_stale (475)"
+      ],
+      "observed": {
+        "stale_release_eligible": 0,
+        "affected_dependencies_named_on_change": ["write-face"],
+        "duplicate_approvals_for_equivalent_version": 0,
+        "byte_hash_only_change_reapprovals": 0
+      },
+      "limit": "no autopilot start path / real stage start exercised"
+    },
+    "VC-025": {
+      "ac": "AC-025",
+      "tests": [
+        "test_goal_change_only_invalidates_affected_bindings (707)",
+        "test_goal_formatting_only_change_requires_no_reapproval (728)",
+        "test_goal_change_needs_user_decision_for_intent_dependencies (746)",
+        "test_goal_unknown_change_blocks_all_bindings (771)",
+        "test_authority_source_must_be_real_not_editable_or_agent_report (551)",
+        "test_approval_authority_must_not_be_manufactured (1018)"
+      ],
+      "observed": {
+        "stale_affected_releases": 0,
+        "irrelevant_reapprovals_on_formatting_only_change": 0,
+        "unauthorized_actions": 0,
+        "user_decision_items_on_intent_dependency_change": ["hard-budget:new_business_intent_required"],
+        "weak_authority_sources_rejected": ["agent-report", "editable", "preauthorized", "token", ""]
+      },
+      "limit": "authority is a supplied read-only record; no real policy file or grant issuer"
+    },
+    "VC-027": {
+      "ac": "AC-027",
+      "tests": [
+        "test_claim_conflict_with_foreign_owner_is_detected (791)",
+        "test_decision_ref_does_not_transfer_claim (813)",
+        "test_shared_lock_and_double_writer_are_conflicts (834)",
+        "test_claim_is_clear_for_own_files_and_empty_is_blocked (860)",
+        "test_write_surface_rejects_outside_absolute_and_traversal (879)"
+      ],
+      "observed": {
+        "claim_thefts": 0,
+        "concurrent_file_writers_allowed": 0,
+        "fake_dispatches": 0,
+        "decision_grants_claim": false,
+        "takeover": false,
+        "write_surface_violations_detected": ["outside_write_face", "absolute_path", "parent_traversal", "wildcard_not_allowed", "empty_write_face"]
+      },
+      "limit": "claim conflict is a pure comparison; the real O_CREAT|O_EXCL lock and two simultaneous callers are T20/T31"
+    },
+    "VC-028": {
+      "ac": "AC-028",
+      "tests": [
+        "test_contract_change_requires_complete_request_and_approval (952)",
+        "test_approval_only_covers_exact_items_and_versions (971)",
+        "test_unrelated_change_approval_is_rejected (996)",
+        "test_unauthorized_acceptance_reduction_is_rejected (1006)",
+        "test_approval_authority_must_not_be_manufactured (1018)"
+      ],
+      "observed": {
+        "reused_unrelated_change_approvals": 0,
+        "unauthorized_acceptance_reductions": 0,
+        "fabricated_completion": 0,
+        "approval_scope_checks": ["approval_scope_too_narrow", "approval_scope_expansion", "approval_version_mismatch"]
+      },
+      "limit": "no real AC/VC file was read or changed; the change/approval are read-only records"
+    },
+    "VC-029": {
+      "ac": "AC-029",
+      "tests": [
+        "test_after_approved_change_affected_evidence_must_be_reverified (1028)",
+        "test_history_objects_are_not_mutated_by_assessments (1051)",
+        "test_selection_has_no_automatic_contract_closure_or_signoff_effect (1077)",
+        "test_evidence_reuse_ignores_unrelated_dependency_change (628)",
+        "test_evidence_stale_when_covered_dependency_changes (645)"
+      ],
+      "observed": {
+        "stale_acceptance_passes": 0,
+        "rewritten_history": 0,
+        "automatic_contract_or_closure_changes": 0,
+        "unaffected_evidence_reused": true
+      },
+      "limit": "no dp-QG reopen / gate reject consumer exists here; the module only states that a selection changes nothing"
+    },
+    "VC-039": {
+      "ac": "AC-039",
+      "tests": [
+        "test_signoff_legacy_word_and_disable_bypass_are_rejected (1113)",
+        "test_signoff_scope_is_not_widened_and_required_scope_must_be_covered (1130)",
+        "test_stale_signoff_is_not_reused (1148)",
+        "test_fabricated_signoff_without_artifact_is_rejected (1163)",
+        "test_valid_finalize_is_applicable_but_this_module_never_writes (1178)"
+      ],
+      "observed": {
+        "legacy_word_bypasses": 0,
+        "signoff_scope_expansions": 0,
+        "stale_signoff_reuses": 0,
+        "historical_fabrications": 0,
+        "writes_signoff": false
+      },
+      "limit": "no real signoff file/CLI; T22 owns the writer/validator chain"
+    },
+    "VC-052": {
+      "ac": "AC-052",
+      "tests": [
+        "test_repeat_action_is_not_planned_when_effect_applied (315)",
+        "test_replay_same_version_is_duplicate_without_extra_approval (289)",
+        "test_substantive_change_makes_old_decision_stale_with_affected_names (337)",
+        "test_unknown_or_in_progress_effect_blocks_retry (1191)",
+        "test_failed_effect_can_be_retried_without_hiding_history (1209)",
+        "test_action_for_a_new_substantive_version_is_not_a_duplicate (1226)",
+        "test_different_matter_action_is_not_treated_as_duplicate (1247)",
+        "test_goal_formatting_only_change_requires_no_reapproval (728)"
+      ],
+      "observed": {
+        "duplicate_effects": 0,
+        "duplicate_approvals": 0,
+        "concurrent_writers_allowed": 0,
+        "lock_bypasses": 0,
+        "stale_releases": 0,
+        "irrelevant_reapprovals": 0,
+        "blind_retries_on_unknown_effect": 0
+      },
+      "limit": "no real lock, crash window or reconciliation; this card only judges duplicates/blocks"
+    }
+  },
+  "cross_cutting": {
+    "pure_module": "AST scan: imports limited to __future__/hashlib/json/posixpath/re/collections/dataclasses/types/typing; no open/exec/eval/compile call; no write_text/write_bytes/unlink/mkdir call; no write_grant/grant attribute",
+    "no_project_import": "decision_validity.py imports nothing from decision/decision_points/decision_context/decision_policy/decision_backends/decision_wire/decision_lifecycle/mw/mw_common/autopilot (T07/T08 keep writing those files)",
+    "determinism": "two identical assess_validity calls return equal Validity objects",
+    "history_immutability": "all inputs frozen dataclasses; assessments return new values and leave the decision/matter/evidence/change/approval objects unchanged"
+  },
+  "not_verified": [
+    "L2 producer -> writer -> consumer -> projection for any of the eight entries",
+    "real concurrency, real O_CREAT|O_EXCL lock, two simultaneous callers, crash window reconciliation",
+    "real gate/ledger/signoff writes, real AC/VC file changes, real goal adoption",
+    "dp-QG reopen / dp-gate-approve reject consumers and their non-effects",
+    "real authority/policy file readability, revocation source and budget usage source",
+    "all 25 retired ids (only dp1/dp4/dp25 sampled here; T03 owns the full rejection matrix)",
+    "D012A model-reason vs PM-prepared basis separation (T03/T08/T11 surface), failure reason/note not used as basis",
+    "human/H12 qualification, deployment identity, service switch"
+  ]
+}

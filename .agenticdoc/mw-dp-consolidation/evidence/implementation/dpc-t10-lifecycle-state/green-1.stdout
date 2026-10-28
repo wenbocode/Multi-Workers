@@ -1,0 +1,108 @@
+........................................................................ [ 63%]
+.........F.....F..........................                               [100%]
+================================== FAILURES ===================================
+_ test_terminal_requires_its_own_real_observation_and_never_follows_from_settled _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/green-1/pytest-basetemp...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_terminal_requires_its_own_real_observation_and_never_follows_from_settled(store):
+        before = _state("running", completed=[], remaining=["split the file"], blockers=None)
+        meta = _started(store, task_before=before)
+        decision_id = _decision_id(meta)
+        assert lifecycle.record_request(
+            store, meta, decision_id=decision_id, result=_result(), material=_material(), preparation=_preparation()
+        ).recorded
+        assert lifecycle.record_executed(
+            store, meta, decision_id=decision_id, dp=DP, action="split", result="split the file"
+        ).recorded
+        assert lifecycle.record_settled(
+            store, meta, decision_id=decision_id, dp=DP, outcome="ok"
+        ).recorded
+        # a settled round is not a task terminal
+        assert not any(row.get("kind") == "terminal" for row in _rows(store))
+    
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+            lifecycle.record_terminal(
+                store, meta, decision_id=decision_id, terminal="completed", reason="done", task_after=None
+            )
+        assert "task_after" in str(caught.value)
+    
+        too_early = dict(before, observed_at="2026-10-27T07:00:00+00:00")
+        with pytest.raises(lifecycle.LifecycleInputError):
+            lifecycle.record_terminal(
+                store, meta, decision_id=decision_id, terminal="completed", reason="done", task_after=too_early
+            )
+    
+        after = _state("done", source="dispatch-result", completed=["two patches"], remaining=[], blockers=[])
+        result = lifecycle.record_terminal(
+            store,
+            meta,
+            decision_id=decision_id,
+            terminal="completed",
+            reason="both patches landed",
+            evidence="workers/t10/evidence/report.md:12",
+            task_after=after,
+        )
+        assert result.recorded is True
+        row = _row(store, "terminal")
+        assert row["terminal"] == "completed"
+        assert row["reason"] == "both patches landed"
+        assert row["task_after"] == after
+        assert "done" not in row  # no fabricated completion flag
+    
+        # the recorded after observation is now a floor for any later observation
+>       earlier = _state("done", observed_at="2026-10-27T07:30:00+00:00")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: _state() got an unexpected keyword argument 'observed_at'
+
+test_decision_context_lifecycle.py:1136: TypeError
+______ test_null_and_empty_progress_axes_stay_distinct_in_the_new_facts _______
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/green-1/pytest-basetemp...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_null_and_empty_progress_axes_stay_distinct_in_the_new_facts(store):
+        before = _state("not-queued", source="worker-registry", completed=[], remaining=None, blockers=[])
+        meta = _started(store, task_before=before)
+        decision_id = _decision_id(meta)
+        assert lifecycle.record_request(
+            store,
+            meta,
+            decision_id=decision_id,
+            result=_result(),
+            material=_material(),
+            preparation=_preparation(),
+            task_before=before,
+        ).recorded
+        after = _state("incomplete", completed=None, remaining=[], blockers=["waiting for review"])
+>       assert lifecycle.record_terminal(
+            store,
+            meta,
+            decision_id=decision_id,
+            terminal="incomplete",
+            reason="review still pending",
+            task_after=after,
+        ).recorded
+
+test_decision_context_lifecycle.py:1307: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision_lifecycle.py:1448: in record_terminal
+    after = decision_task_state.validate_task_state(task_after)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+value = {'blockers': ['waiting for review'], 'completed': None, 'observed_at': '2026-10-27T08:00:00+00:00', 'remaining': [], ...}
+
+    def validate_task_state(value: object) -> dict[str, object] | None:
+        if value is None:
+            return None
+        if not isinstance(value, Mapping) or set(value) != set(FIELDS):
+            raise TaskStateInputError("task state requires exactly the declared fields")
+        if value["status"] not in STATUSES:
+>           raise TaskStateInputError("task state status is invalid")
+E           decision_task_state.TaskStateInputError: task state status is invalid
+
+decision_task_state.py:32: TaskStateInputError
+=========================== short test summary info ===========================
+FAILED test_decision_context_lifecycle.py::test_terminal_requires_its_own_real_observation_and_never_follows_from_settled
+FAILED test_decision_context_lifecycle.py::test_null_and_empty_progress_axes_stay_distinct_in_the_new_facts
+2 failed, 112 passed in 4.20s

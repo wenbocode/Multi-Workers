@@ -1,0 +1,20 @@
+{
+  "decision_history.py": {
+    "baseline_sha256": "06ff6dce259ca05299f50248e024da05436873c62f225727bd59e30802834091",
+    "current_sha256": "d114f57b18d55ee0b76b0594358d5109e918933410440d5d3e906df460beda8a",
+    "before_bytes": 172063,
+    "after_bytes": 172244,
+    "before_crlf": 0,
+    "after_crlf": 0,
+    "exact_two_insertion_replay": true
+  },
+  "decision_dashboard.js": {
+    "baseline_sha256": "d373bece3958fcd7dd55f1d3f5295a303cff7bfa4918cc104778344b58c90d73",
+    "current_sha256": "f7e2e19ee35eaa3e01ad2abf0c64d4585fddaae1f9b39d4650a93eaab5dbb90b",
+    "before_bytes": 140992,
+    "after_bytes": 142930,
+    "before_crlf": 0,
+    "after_crlf": 0,
+    "utf8_lf_preserved": true
+  }
+}

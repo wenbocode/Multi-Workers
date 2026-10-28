@@ -1,0 +1,18 @@
+--- t20-baseline/decision_history.py
++++ decision_history.py
+@@ -3057,6 +3057,7 @@
+         consumed = {
+             "ts": _struct_text(row.get("ts"), "ts"),
+             "answer": _free("receipt", "consumed.answer", row.get("answer"), sanitizer),
++            "reason": _free("receipt", "consumed.reason", row.get("reason"), sanitizer),
+             "answer_source": _struct_text(row.get("answer_source"), "token"),
+             "actor_kind": consumed_kind,
+         }
+@@ -3144,6 +3145,7 @@
+                 "ts": _struct_text(row.get("ts"), "ts"),
+                 "action": _struct_text(row.get("action"), "token"),
+                 "result": _free("action", "executed.result", row.get("result"), sanitizer),
++                "reason": _free("action", "executed.reason", row.get("reason"), sanitizer),
+                 "answer_source": _struct_text(row.get("answer_source"), "token"),
+                 "actor_kind": row_kind,
+             }

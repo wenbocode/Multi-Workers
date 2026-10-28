@@ -1,0 +1,620 @@
+...............FFFFFFFFFFFF...                                           [100%]
+================================== FAILURES ===================================
+_______ test_case_route_is_page_authenticated_and_serves_only_fixed_ids _______
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_case_route_is_page_authen0')
+
+    def test_case_route_is_page_authenticated_and_serves_only_fixed_ids(tmp_path):
+        root = monitor_suite._root(tmp_path)
+        spy = monitor_suite._SpyPlayground()
+        with monitor_suite._running(
+            root, deps=decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy)
+        ) as instance:
+            status, _headers, payload, _raw = _get(instance, "/api/test/cases")
+            assert status == 401, payload
+            assert monitor_suite._envelope_error(payload)["code"] == "missing-token"
+    
+            status, _headers, payload, _raw = _get(
+                instance, "/api/test/cases", token=instance.control_token
+            )
+            assert status == 403, payload
+            assert monitor_suite._envelope_error(payload)["code"] == "wrong-role"
+    
+            token = monitor_suite._page_token(instance)
+            status, _headers, payload, raw = _get(instance, "/api/test/cases", token=token)
+>           assert status == 200, payload
+E           AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}
+E           assert 503 == 200
+
+test_decision_context_workbench.py:860: AssertionError
+____________ test_case_route_makes_zero_credential_and_model_calls ____________
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_case_route_makes_zero_cre0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FE5FD63F70>
+
+    def test_case_route_makes_zero_credential_and_model_calls(tmp_path, monkeypatch):
+        root = monitor_suite._root(tmp_path)
+        spy = monitor_suite._SpyPlayground()
+        resolved: list[str] = []
+    
+        def _redactor_factory(_root):
+            resolved.append("redactor")
+            return REDACTOR
+    
+        def _playground_factory(_root):
+            resolved.append("playground")
+            return spy
+    
+        def _credential_snapshot(*_args, **_kwargs):
+            raise AssertionError("reading the case files must not resolve credentials")
+    
+        monkeypatch.setattr(decision, "credential_snapshot", _credential_snapshot)
+        with monitor_suite._running(
+            root,
+            deps=decision_monitor.MonitorDeps(
+                playground_factory=_playground_factory,
+                redactor_factory=_redactor_factory,
+            ),
+        ) as instance:
+            token = monitor_suite._page_token(instance)
+            for path in ("/api/test/cases", "/api/test/cases?dp=dp1-dispatch-type"):
+                status, _headers, payload, _raw = _get(instance, path, token=token)
+>               assert status == 200, payload
+E               AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}
+E               assert 503 == 200
+
+test_decision_context_workbench.py:941: AssertionError
+__________ test_edited_cases_reach_the_real_loopback_typed_validate ___________
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_edited_cases_reach_the_re0')
+
+    def test_edited_cases_reach_the_real_loopback_typed_validate(tmp_path):
+        """Load a case, edit it, and prove the *edited* body is what was validated.
+    
+        The review runs through the shipped ``DecisionPlayground`` (typed
+        ``check_book`` + registry gate) inside a real loopback monitor; no model is
+        called and the transport backend is never constructed.
+        """
+        repo = _synthetic_repo(tmp_path)
+        playground = decision_playground.DecisionPlayground(
+            repo,
+            backend_factory=lambda _cfg: (_ for _ in ()).throw(
+                AssertionError("validate must never build a transport backend")
+            ),
+        )
+        monitor_root = monitor_suite._root(tmp_path, "monitor-root")
+        with monitor_suite._running(
+            monitor_root,
+            deps=decision_monitor.MonitorDeps(redactor=REDACTOR, playground=playground),
+        ) as instance:
+            token = monitor_suite._page_token(instance)
+            status, _headers, listing, _raw = _get(instance, "/api/test/cases", token=token)
+>           assert status == 200, listing
+E           AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}
+E           assert 503 == 200
+
+test_decision_context_workbench.py:1008: AssertionError
+_________ test_case_loader_refuses_unknown_ids_traversal_and_symlinks _________
+
+raw = b'{\n  "book": {\n    "decision_point": "dp1-dispatch-type",\n    "notes": {\n      "evidence": {\n        "task_deliv...\xbb\xe7\xad\x9b\xe9\x80\x89\xef\xbc\x9a\xe4\xbb\xbb\xe5\x8a\xa1\xe7\xb1\xbb\xe5\x9e\x8b\xe5\x88\xa4\xe5\xae\x9a"\n}\n'
+dp_id = 'dp1-dispatch-type'
+
+    def _validate_case(raw: bytes, dp_id: str) -> dict:
+        """Validate the case *shell*; ``title``/``note`` stay outside the book.
+    
+        ``questions`` (T10) is the case's complete native question set: the same
+        strict DP mapping / type / instructions / criteria gate the observation path
+        applies, checked against the case state that would be sent. A slugged or
+        hand-edited shell that does not carry it is refused instead of silently
+        falling back to a second question source.
+        """
+        try:
+            parsed = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise CaseError("case-invalid", "the case file is not valid UTF-8 JSON") from exc
+        if not isinstance(parsed, dict) or set(parsed) != _CASE_SHELL_KEYS:
+            raise CaseError(
+                "case-invalid",
+                "the case shell must be exactly case_version/dp/title/note/questions/book",
+            )
+        if parsed.get("case_version") != CASE_VERSION:
+            raise CaseError("case-invalid", f"case_version must be {CASE_VERSION}")
+        if parsed.get("dp") != dp_id:
+            raise CaseError("case-invalid", "the case file names a different decision point")
+        title = parsed.get("title")
+        note = parsed.get("note")
+        if not isinstance(title, str) or not title.strip():
+            raise CaseError("case-invalid", "the case title is missing")
+        if not isinstance(note, str) or not note.strip():
+            raise CaseError("case-invalid", "the case note is missing")
+        book = parsed.get("book")
+        if not isinstance(book, dict):
+            raise CaseError("case-invalid", "case.book must be a JSON object")
+        if book.get("decision_point") != dp_id:
+            raise CaseError("case-invalid", "case.book names a different decision point")
+        if not isinstance(book.get("state"), dict):
+            raise CaseError("case-invalid", "case.book.state must be a JSON object")
+        questions = parsed.get("questions")
+        if not isinstance(questions, dict):
+            raise CaseError("case-invalid", "case.questions must be a JSON object")
+        try:
+>           issues = decision_points.question_override_issues(dp_id, questions, book["state"])
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+decision_monitor.py:378: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision_points.py:1842: in question_override_issues
+    dp_point = get_decision_point(dp_point)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decision_points.py:1384: in get_decision_point
+    return require_active_dp(dp_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+dp_id = 'dp1-dispatch-type'
+
+    def require_active_dp(dp_id: str) -> DecisionPoint:
+        """Resolve one active entry; a retired id is refused with its own contract.
+    
+        This is the first check of every request entry point: it runs before any
+        replay lookup, backend resolution, credential snapshot, archive row or
+        executor, so a retired id cannot produce a model call, a business action or
+        a new valid decision. The refusal names the disposition only and never maps
+        the old id to its successor, because that mapping would be an alias.
+        """
+        record = _RETIRED_BY_ID.get(dp_id) if isinstance(dp_id, str) else None
+        if record is not None:
+>           raise decision.DecisionInputError(
+                f"retired decision point id {dp_id!r} ({record.disposition}): "
+                "not callable; old ids are read-only history, not aliases"
+            )
+E           decision.DecisionInputError: retired decision point id 'dp1-dispatch-type' (migrated): not callable; old ids are read-only history, not aliases
+
+decision_points.py:1367: DecisionInputError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_case_loader_refuses_unkno0')
+
+    def test_case_loader_refuses_unknown_ids_traversal_and_symlinks(tmp_path):
+        assert set(decision_monitor.CASE_IDS) == set(LEGACY_CASE_FILES)
+        assert pathlib.Path(decision_monitor.DECIDE_CASES_DIR).resolve() == CASES_DIR.resolve()
+        for dp, name in LEGACY_CASE_FILES.items():
+            assert decision_monitor.CASE_IDS[dp] == name
+    
+        for bad in ("dp4-failure-handling", "", "../dp1-dispatch-type", "dp1-dispatch-type/../../x", SECRET):
+            with pytest.raises(decision_monitor.CaseError) as excinfo:
+                decision_monitor.load_case(bad)
+            assert excinfo.value.kind in ("case-unknown", "case-unsafe"), excinfo.value
+    
+        # A fixed-name copy in an injected directory is served (containment proof).
+        good = tmp_path / "cases"
+        good.mkdir()
+        shutil.copyfile(CASES_DIR / "dp1.json", good / "dp1.json")
+>       loaded = decision_monitor.load_case("dp1-dispatch-type", cases_dir=good)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_context_workbench.py:1068: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision_monitor.py:403: in load_case
+    return _validate_case(_read_case_bytes(path), dp_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+raw = b'{\n  "book": {\n    "decision_point": "dp1-dispatch-type",\n    "notes": {\n      "evidence": {\n        "task_deliv...\xbb\xe7\xad\x9b\xe9\x80\x89\xef\xbc\x9a\xe4\xbb\xbb\xe5\x8a\xa1\xe7\xb1\xbb\xe5\x9e\x8b\xe5\x88\xa4\xe5\xae\x9a"\n}\n'
+dp_id = 'dp1-dispatch-type'
+
+    def _validate_case(raw: bytes, dp_id: str) -> dict:
+        """Validate the case *shell*; ``title``/``note`` stay outside the book.
+    
+        ``questions`` (T10) is the case's complete native question set: the same
+        strict DP mapping / type / instructions / criteria gate the observation path
+        applies, checked against the case state that would be sent. A slugged or
+        hand-edited shell that does not carry it is refused instead of silently
+        falling back to a second question source.
+        """
+        try:
+            parsed = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise CaseError("case-invalid", "the case file is not valid UTF-8 JSON") from exc
+        if not isinstance(parsed, dict) or set(parsed) != _CASE_SHELL_KEYS:
+            raise CaseError(
+                "case-invalid",
+                "the case shell must be exactly case_version/dp/title/note/questions/book",
+            )
+        if parsed.get("case_version") != CASE_VERSION:
+            raise CaseError("case-invalid", f"case_version must be {CASE_VERSION}")
+        if parsed.get("dp") != dp_id:
+            raise CaseError("case-invalid", "the case file names a different decision point")
+        title = parsed.get("title")
+        note = parsed.get("note")
+        if not isinstance(title, str) or not title.strip():
+            raise CaseError("case-invalid", "the case title is missing")
+        if not isinstance(note, str) or not note.strip():
+            raise CaseError("case-invalid", "the case note is missing")
+        book = parsed.get("book")
+        if not isinstance(book, dict):
+            raise CaseError("case-invalid", "case.book must be a JSON object")
+        if book.get("decision_point") != dp_id:
+            raise CaseError("case-invalid", "case.book names a different decision point")
+        if not isinstance(book.get("state"), dict):
+            raise CaseError("case-invalid", "case.book.state must be a JSON object")
+        questions = parsed.get("questions")
+        if not isinstance(questions, dict):
+            raise CaseError("case-invalid", "case.questions must be a JSON object")
+        try:
+            issues = decision_points.question_override_issues(dp_id, questions, book["state"])
+        except decision.DecisionInputError as exc:
+>           raise CaseError("case-invalid", "the case names an unregistered decision point") from exc
+E           decision_monitor.CaseError: case-invalid: the case names an unregistered decision point
+
+decision_monitor.py:380: CaseError
+_____________ test_history_forwards_the_real_workbench_and_facets _____________
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_history_forwards_the_real0')
+
+    def test_history_forwards_the_real_workbench_and_facets(tmp_path):
+        root = _seed_workbench_records(tmp_path)
+        with monitor_suite._running(
+            root, deps=decision_monitor.MonitorDeps(redactor=REDACTOR)
+        ) as instance:
+            token = monitor_suite._page_token(instance)
+            status, _headers, payload, _raw = _get(instance, "/api/history", token=token)
+            assert status == 200, payload
+            data = payload["data"]
+    
+            # facets: the whole snapshot universe, forwarded from the T06 object.
+            assert set(data["facets"]) == {"keys", "dps"}
+            assert set(data["facets"]["keys"]) == {"mw-alpha", "mw-beta", "mw-gamma", "mw-delta"}
+            assert set(data["facets"]["dps"]) == set(LEGACY_CASE_FILES)
+    
+            workbench_keys = {
+                "record_version",
+                "processing_state",
+                "key",
+                "task_key",
+                "question_summary",
+                "dp_id",
+                "selection",
+                "initiator_role",
+                "nodes",
+            }
+            expected_states = {
+                "mw-alpha": "completed",
+                "mw-beta": "failed",
+                "mw-gamma": "processing",
+                "mw-delta": "legacy",
+            }
+            records = {record["key"]: record for record in data["records"]}
+            assert set(records) == set(expected_states)
+            for key, expected_state in expected_states.items():
+                workbench = records[key]["workbench"]
+                assert set(workbench) == workbench_keys, key
+                assert workbench["processing_state"] == expected_state, (key, workbench)
+                assert workbench["processing_state"] in STATES
+                # The list projection never carries node bodies (T06 contract).
+                assert workbench["nodes"] == []
+            alpha = records["mw-alpha"]["workbench"]
+            assert alpha["record_version"] == 2
+            assert alpha["initiator_role"] == "pm"
+            assert alpha["selection"] == {"checkpoint_action": {"value": "narrow"}}
+>           assert alpha["question_summary"], "the registered question is projected"
+E           AssertionError: the registered question is projected
+E           assert None
+
+test_decision_context_workbench.py:1228: AssertionError
+__ test_dom_workbench_table_has_five_columns_four_states_and_facet_dropdowns __
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_workbench_table_has_f0')
+
+    def test_dom_workbench_table_has_five_columns_four_states_and_facet_dropdowns(tmp_path):
+>       payloads = _workbench_dom_payload(tmp_path)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_context_workbench.py:1915: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_workbench_table_has_f0')
+
+    def _workbench_dom_payload(tmp_path: pathlib.Path):
+        """Real loopback payloads for the DOM scenarios (real T06 fold).
+    
+        The page is fed the bytes a real monitor returns for a real record tree, so
+        the DOM run exercises the projection the shipped service produces.
+        """
+        root = _seed_workbench_records(tmp_path)
+        spy = _DomPlayground()
+        with monitor_suite._running(
+            root,
+            deps=decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy),
+        ) as instance:
+            token = monitor_suite._page_token(instance)
+            status, _headers, listed, _raw = _get(instance, "/api/history", token=token)
+            assert status == 200, listed
+            records = listed["data"]["records"]
+            detail_by_opaque = {}
+            for record in records:
+                opaque = record["opaque_id"]
+                status, _headers, payload, _raw = _get(
+                    instance, "/api/history/" + opaque, token=token
+                )
+                assert status == 200, payload
+                detail_by_opaque[opaque] = {"status": 200, "body": payload}
+            status, _headers, cases, _raw = _get(instance, "/api/test/cases", token=token)
+>           assert status == 200, cases
+E           AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}
+E           assert 503 == 200
+
+test_decision_context_workbench.py:1800: AssertionError
+____ test_dom_legacy_payload_without_facets_never_fabricates_the_universe _____
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_legacy_payload_withou0')
+
+    def test_dom_legacy_payload_without_facets_never_fabricates_the_universe(tmp_path):
+>       payloads = _workbench_dom_payload(tmp_path)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_context_workbench.py:1972: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_legacy_payload_withou0')
+
+    def _workbench_dom_payload(tmp_path: pathlib.Path):
+        """Real loopback payloads for the DOM scenarios (real T06 fold).
+    
+        The page is fed the bytes a real monitor returns for a real record tree, so
+        the DOM run exercises the projection the shipped service produces.
+        """
+        root = _seed_workbench_records(tmp_path)
+        spy = _DomPlayground()
+        with monitor_suite._running(
+            root,
+            deps=decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy),
+        ) as instance:
+            token = monitor_suite._page_token(instance)
+            status, _headers, listed, _raw = _get(instance, "/api/history", token=token)
+            assert status == 200, listed
+            records = listed["data"]["records"]
+            detail_by_opaque = {}
+            for record in records:
+                opaque = record["opaque_id"]
+                status, _headers, payload, _raw = _get(
+                    instance, "/api/history/" + opaque, token=token
+                )
+                assert status == 200, payload
+                detail_by_opaque[opaque] = {"status": 200, "body": payload}
+            status, _headers, cases, _raw = _get(instance, "/api/test/cases", token=token)
+>           assert status == 200, cases
+E           AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}
+E           assert 503 == 200
+
+test_decision_context_workbench.py:1800: AssertionError
+___ test_dom_v2_record_opens_ten_node_dag_and_legacy_record_stays_log_only ____
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_v2_record_opens_ten_n0')
+
+    def test_dom_v2_record_opens_ten_node_dag_and_legacy_record_stays_log_only(tmp_path):
+>       payloads = _workbench_dom_payload(tmp_path)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_context_workbench.py:1994: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_v2_record_opens_ten_n0')
+
+    def _workbench_dom_payload(tmp_path: pathlib.Path):
+        """Real loopback payloads for the DOM scenarios (real T06 fold).
+    
+        The page is fed the bytes a real monitor returns for a real record tree, so
+        the DOM run exercises the projection the shipped service produces.
+        """
+        root = _seed_workbench_records(tmp_path)
+        spy = _DomPlayground()
+        with monitor_suite._running(
+            root,
+            deps=decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy),
+        ) as instance:
+            token = monitor_suite._page_token(instance)
+            status, _headers, listed, _raw = _get(instance, "/api/history", token=token)
+            assert status == 200, listed
+            records = listed["data"]["records"]
+            detail_by_opaque = {}
+            for record in records:
+                opaque = record["opaque_id"]
+                status, _headers, payload, _raw = _get(
+                    instance, "/api/history/" + opaque, token=token
+                )
+                assert status == 200, payload
+                detail_by_opaque[opaque] = {"status": 200, "body": payload}
+            status, _headers, cases, _raw = _get(instance, "/api/test/cases", token=token)
+>           assert status == 200, cases
+E           AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}
+E           assert 503 == 200
+
+test_decision_context_workbench.py:1800: AssertionError
+__________ test_dom_incomplete_dag_projection_is_reported_not_filled __________
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_incomplete_dag_projec0')
+
+    def test_dom_incomplete_dag_projection_is_reported_not_filled(tmp_path):
+>       payloads = _workbench_dom_payload(tmp_path)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_context_workbench.py:2063: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_incomplete_dag_projec0')
+
+    def _workbench_dom_payload(tmp_path: pathlib.Path):
+        """Real loopback payloads for the DOM scenarios (real T06 fold).
+    
+        The page is fed the bytes a real monitor returns for a real record tree, so
+        the DOM run exercises the projection the shipped service produces.
+        """
+        root = _seed_workbench_records(tmp_path)
+        spy = _DomPlayground()
+        with monitor_suite._running(
+            root,
+            deps=decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy),
+        ) as instance:
+            token = monitor_suite._page_token(instance)
+            status, _headers, listed, _raw = _get(instance, "/api/history", token=token)
+            assert status == 200, listed
+            records = listed["data"]["records"]
+            detail_by_opaque = {}
+            for record in records:
+                opaque = record["opaque_id"]
+                status, _headers, payload, _raw = _get(
+                    instance, "/api/history/" + opaque, token=token
+                )
+                assert status == 200, payload
+                detail_by_opaque[opaque] = {"status": 200, "body": payload}
+            status, _headers, cases, _raw = _get(instance, "/api/test/cases", token=token)
+>           assert status == 200, cases
+E           AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}
+E           assert 503 == 200
+
+test_decision_context_workbench.py:1800: AssertionError
+____ test_dom_offline_case_loads_and_local_validate_makes_no_network_write ____
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_offline_case_loads_an0')
+
+    def test_dom_offline_case_loads_and_local_validate_makes_no_network_write(tmp_path):
+>       payloads = _workbench_dom_payload(tmp_path)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_context_workbench.py:2093: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_offline_case_loads_an0')
+
+    def _workbench_dom_payload(tmp_path: pathlib.Path):
+        """Real loopback payloads for the DOM scenarios (real T06 fold).
+    
+        The page is fed the bytes a real monitor returns for a real record tree, so
+        the DOM run exercises the projection the shipped service produces.
+        """
+        root = _seed_workbench_records(tmp_path)
+        spy = _DomPlayground()
+        with monitor_suite._running(
+            root,
+            deps=decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy),
+        ) as instance:
+            token = monitor_suite._page_token(instance)
+            status, _headers, listed, _raw = _get(instance, "/api/history", token=token)
+            assert status == 200, listed
+            records = listed["data"]["records"]
+            detail_by_opaque = {}
+            for record in records:
+                opaque = record["opaque_id"]
+                status, _headers, payload, _raw = _get(
+                    instance, "/api/history/" + opaque, token=token
+                )
+                assert status == 200, payload
+                detail_by_opaque[opaque] = {"status": 200, "body": payload}
+            status, _headers, cases, _raw = _get(instance, "/api/test/cases", token=token)
+>           assert status == 200, cases
+E           AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}
+E           assert 503 == 200
+
+test_decision_context_workbench.py:1800: AssertionError
+____ test_dom_local_validate_refuses_placeholders_and_incomplete_material _____
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_local_validate_refuse0')
+
+    def test_dom_local_validate_refuses_placeholders_and_incomplete_material(tmp_path):
+>       payloads = _workbench_dom_payload(tmp_path)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_context_workbench.py:2135: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_local_validate_refuse0')
+
+    def _workbench_dom_payload(tmp_path: pathlib.Path):
+        """Real loopback payloads for the DOM scenarios (real T06 fold).
+    
+        The page is fed the bytes a real monitor returns for a real record tree, so
+        the DOM run exercises the projection the shipped service produces.
+        """
+        root = _seed_workbench_records(tmp_path)
+        spy = _DomPlayground()
+        with monitor_suite._running(
+            root,
+            deps=decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy),
+        ) as instance:
+            token = monitor_suite._page_token(instance)
+            status, _headers, listed, _raw = _get(instance, "/api/history", token=token)
+            assert status == 200, listed
+            records = listed["data"]["records"]
+            detail_by_opaque = {}
+            for record in records:
+                opaque = record["opaque_id"]
+                status, _headers, payload, _raw = _get(
+                    instance, "/api/history/" + opaque, token=token
+                )
+                assert status == 200, payload
+                detail_by_opaque[opaque] = {"status": 200, "body": payload}
+            status, _headers, cases, _raw = _get(instance, "/api/test/cases", token=token)
+>           assert status == 200, cases
+E           AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}
+E           assert 503 == 200
+
+test_decision_context_workbench.py:1800: AssertionError
+_ test_dom_playground_submit_stays_observe_only_and_retry_points_at_the_previous_id _
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_playground_submit_sta0')
+
+    def test_dom_playground_submit_stays_observe_only_and_retry_points_at_the_previous_id(tmp_path):
+>       payloads = _workbench_dom_payload(tmp_path)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_context_workbench.py:2170: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/tmpdir/pytest-of-wenbozhou/pytest-5/test_dom_playground_submit_sta0')
+
+    def _workbench_dom_payload(tmp_path: pathlib.Path):
+        """Real loopback payloads for the DOM scenarios (real T06 fold).
+    
+        The page is fed the bytes a real monitor returns for a real record tree, so
+        the DOM run exercises the projection the shipped service produces.
+        """
+        root = _seed_workbench_records(tmp_path)
+        spy = _DomPlayground()
+        with monitor_suite._running(
+            root,
+            deps=decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy),
+        ) as instance:
+            token = monitor_suite._page_token(instance)
+            status, _headers, listed, _raw = _get(instance, "/api/history", token=token)
+            assert status == 200, listed
+            records = listed["data"]["records"]
+            detail_by_opaque = {}
+            for record in records:
+                opaque = record["opaque_id"]
+                status, _headers, payload, _raw = _get(
+                    instance, "/api/history/" + opaque, token=token
+                )
+                assert status == 200, payload
+                detail_by_opaque[opaque] = {"status": 200, "body": payload}
+            status, _headers, cases, _raw = _get(instance, "/api/test/cases", token=token)
+>           assert status == 200, cases
+E           AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}
+E           assert 503 == 200
+
+test_decision_context_workbench.py:1800: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_context_workbench.py::test_case_route_is_page_authenticated_and_serves_only_fixed_ids
+FAILED test_decision_context_workbench.py::test_case_route_makes_zero_credential_and_model_calls
+FAILED test_decision_context_workbench.py::test_edited_cases_reach_the_real_loopback_typed_validate
+FAILED test_decision_context_workbench.py::test_case_loader_refuses_unknown_ids_traversal_and_symlinks
+FAILED test_decision_context_workbench.py::test_history_forwards_the_real_workbench_and_facets
+FAILED test_decision_context_workbench.py::test_dom_workbench_table_has_five_columns_four_states_and_facet_dropdowns
+FAILED test_decision_context_workbench.py::test_dom_legacy_payload_without_facets_never_fabricates_the_universe
+FAILED test_decision_context_workbench.py::test_dom_v2_record_opens_ten_node_dag_and_legacy_record_stays_log_only
+FAILED test_decision_context_workbench.py::test_dom_incomplete_dag_projection_is_reported_not_filled
+FAILED test_decision_context_workbench.py::test_dom_offline_case_loads_and_local_validate_makes_no_network_write
+FAILED test_decision_context_workbench.py::test_dom_local_validate_refuses_placeholders_and_incomplete_material
+FAILED test_decision_context_workbench.py::test_dom_playground_submit_stays_observe_only_and_retry_points_at_the_previous_id
+12 failed, 18 passed in 2.51s

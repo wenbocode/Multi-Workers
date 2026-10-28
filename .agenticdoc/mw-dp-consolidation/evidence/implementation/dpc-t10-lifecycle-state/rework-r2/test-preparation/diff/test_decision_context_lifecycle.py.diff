@@ -1,0 +1,428 @@
+--- before/packages/multi-workers/test_decision_context_lifecycle.py
++++ after/packages/multi-workers/test_decision_context_lifecycle.py
+@@ -35,7 +35,9 @@
+ 
+ import pytest
+ 
++import decision
+ import decision_lifecycle as lifecycle
++import decision_points
+ import decision_wire as wire
+ 
+ # Synthetic, deliberately distinctive values (never real credentials).
+@@ -1399,3 +1401,415 @@
+     assert kinds.count("request") == 1
+     assert kinds.count("terminal") == 1
+ 
++
++# ── T10 R2 (stage A): regressions for the audited lifecycle gaps ───────────
++#
++# Each block below pins one *specification* fact from the PM disposition
++# (evidence/implementation/t05-t10-audit-disposition-20261028/report.md §B) with
++# the real writer and the real single-source validators - no stub, no shadow
++# module, no fake implementation:
++#
++# * S1 - a transport refusal and the later real business decision of the same
++#   request are different facts, so the deterministic ``event_id`` of the first
++#   must not swallow the second; an identical repeat stays idempotent and a
++#   *different* choice has to be visible instead of a silent ``duplicate``;
++# * S3 - ``dp-auto`` may only record an answer that is one of the PM-prepared
++#   ``handling_options``; a missing or invalid candidate set cannot legalise an
++#   invented choice, while a choice inside a valid set still records;
++# * S5 - ``executed``/``settled`` follow the same non-decreasing ``observed_at``
++#   rule the terminal already enforces, and a failed round is never reported as
++#   an executed fact;
++# * S7 - repeating the creation fact's ``before`` (AC-050: echo, never backfill)
++#   also has to work when that snapshot contained a known secret, without ever
++#   storing the secret; ``None`` and ``[]`` stay distinct;
++# * S4 - a Windows case variant of ``.agenticdoc`` is the same production tree,
++#   so the test-scope guard must refuse it (the exact-case path is the control);
++# * S9 - the writer's consumed producer fields/reasons stay a subset of the
++#   frozen producer tuple and the same frozen reason set (one source only).
++#
++# Test-only additions. On the current product the S1/S3/S5/S7/S4 items are
++# expected red and the controls green; this worker did not execute them.
++
++AUTO_DP = "dp-auto"
++
++
++def _auto_candidate(candidate_id, label):
++    return {
++        "id": candidate_id,
++        "label": label,
++        "description": f"prepared handling {candidate_id}",
++        "consequence": f"what follows from {candidate_id}",
++        "risk": "bounded by the current gate",
++        "conditions": "the PM-prepared gate",
++    }
++
++
++def _auto_material(options):
++    return {
++        "question": "which prepared handling option applies now?",
++        "background": {
++            "task_goal": "keep the task moving",
++            "current_state": "one blocking fact is known",
++            "tried": "the direct path was tried",
++            "unknowns": "the remaining cost is unknown",
++            "constraints": "no new authority is granted",
++        },
++        "handling_options": options,
++    }
++
++
++def _auto_preparation(choice, basis_id="b-auto", text="the selected handling option"):
++    return {
++        "basis_catalog": [
++            {
++                "id": basis_id,
++                "text": text,
++                "material_refs": ["question"],
++                "applies_to": [choice],
++            }
++        ],
++        "prepared_at": PREPARED_AT,
++    }
++
++
++def _auto_result(choice, basis_id="b-auto", text="the selected handling option"):
++    return _result(dp=AUTO_DP, choice=choice, basis_id=basis_id, basis_text=text)
++
++
++def test_a_refused_request_does_not_swallow_the_later_real_choice(store):
++    """S1: the refusal's event id must not hide the later real business choice."""
++    meta = _started(store)
++    decision_id = _decision_id(meta)
++    refused = _result(
++        choice=None,
++        basis_id=None,
++        basis_text=None,
++        basis_source=None,
++        business_decisions=0,
++        reason="bad-response",
++        attempts=1,
++        transport_attempts=2,
++    )
++    first = lifecycle.record_request(
++        store,
++        meta,
++        decision_id=decision_id,
++        result=refused,
++        material=_material(),
++        preparation=_preparation(),
++    )
++    assert first.recorded is True
++    assert _row(store, "request")["business_decisions"] == 0
++
++    second = lifecycle.record_request(
++        store,
++        meta,
++        decision_id=decision_id,
++        result=_result(),
++        material=_material(),
++        preparation=_preparation(),
++    )
++
++    requests = [row for row in _rows(store) if row.get("kind") == "request"]
++    real = [
++        row
++        for row in requests
++        if row.get("business_decisions") == 1 and row.get("choice") == "narrow"
++    ]
++    conflict_visible = second.status == "failed" and "conflict" in str(second.error_class)
++    assert real or conflict_visible, (
++        "S1: the refusal's event id swallowed the later real business decision "
++        f"(status={second.status!r}, "
++        f"business_decisions={[row.get('business_decisions') for row in requests]})"
++    )
++    # the refusal row is a recorded fact of its own: it is never rewritten
++    assert requests[0].get("reason") == "bad-response"
++
++
++def test_an_identical_repeated_business_request_stays_idempotent(store):
++    """S1 control: the same content twice is one fact, not two."""
++    meta = _started(store)
++    decision_id = _decision_id(meta)
++    first = lifecycle.record_request(
++        store,
++        meta,
++        decision_id=decision_id,
++        result=_result(),
++        material=_material(),
++        preparation=_preparation(),
++    )
++    assert first.status == "written" and first.recorded is True
++    before = _raw(store)
++
++    again = lifecycle.record_request(
++        store,
++        meta,
++        decision_id=decision_id,
++        result=_result(),
++        material=_material(),
++        preparation=_preparation(),
++    )
++    assert again.status == "duplicate" and again.recorded is True
++    assert again.event_id == first.event_id
++    assert _raw(store) == before
++    assert len([row for row in _rows(store) if row.get("kind") == "request"]) == 1
++
++
++def test_a_different_choice_for_the_same_request_stays_visible(store):
++    """S1: different content under the same request id is never a silent duplicate."""
++    meta = _started(store)
++    decision_id = _decision_id(meta)
++    assert lifecycle.record_request(
++        store,
++        meta,
++        decision_id=decision_id,
++        result=_result(),
++        material=_material(),
++        preparation=_preparation(),
++    ).recorded is True
++
++    split = _result(
++        choice="split",
++        basis_id="b-split",
++        basis_text="the remaining work is two independent files",
++    )
++    second = lifecycle.record_request(
++        store,
++        meta,
++        decision_id=decision_id,
++        result=split,
++        material=_material(),
++        preparation=_preparation(),
++    )
++
++    requests = [row for row in _rows(store) if row.get("kind") == "request"]
++    written_second = len(requests) == 2 and requests[1].get("choice") == "split"
++    conflict_visible = second.status == "failed" and "conflict" in str(second.error_class)
++    assert written_second or conflict_visible, (
++        "S1: a different business choice was reported as a duplicate without any "
++        f"conflict signal (status={second.status!r}, "
++        f"choices={[row.get('choice') for row in requests]})"
++    )
++
++
++@pytest.mark.parametrize(
++    "material,choice",
++    [
++        ({"question": "which prepared handling option applies now?"}, "c-ghost"),
++        (_auto_material([_auto_candidate("c-one", "the only option")]), "c-one"),
++    ],
++    ids=["no-handling-options", "single-candidate-set"],
++)
++def test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded(
++    store, material, choice
++):
++    """S3: an illegal dp-auto answer is refused before anything is recorded."""
++    meta = _started(store)
++    decision_id = f"{AUTO_DP}:{meta.logical_id}"
++    before = _raw(store)
++    with pytest.raises(lifecycle.LifecycleInputError) as caught:
++        lifecycle.record_request(
++            store,
++            meta,
++            decision_id=decision_id,
++            result=_auto_result(choice),
++            material=material,
++            preparation=_auto_preparation(choice),
++        )
++    message = str(caught.value)
++    assert "handling_options" in message or "choice" in message or "material" in message
++    assert _raw(store) == before
++
++
++def test_a_dp_auto_choice_inside_the_prepared_candidates_is_recorded(store):
++    """S3 control: a real prepared candidate is still a recordable business fact."""
++    meta = _started(store)
++    decision_id = f"{AUTO_DP}:{meta.logical_id}"
++    material = _auto_material(
++        [
++            _auto_candidate("c-a", "take the prepared option a"),
++            _auto_candidate("c-b", "take the prepared option b"),
++        ]
++    )
++    result = lifecycle.record_request(
++        store,
++        meta,
++        decision_id=decision_id,
++        result=_auto_result("c-a"),
++        material=material,
++        preparation=_auto_preparation("c-a"),
++    )
++    assert result.recorded is True
++    row = _row(store, "request")
++    assert row["dp"] == AUTO_DP
++    assert row["business_decisions"] == 1
++    assert row["choice"] == "c-a" and row["basis_id"] == "b-auto"
++    assert row["basis_source"] == "pm-prepared"
++
++
++def test_executed_and_settled_observations_stay_non_decreasing(store):
++    """S5: executed/settled observations are non-decreasing like the terminal."""
++    before = _state("running", completed=[], remaining=["split the file"], blockers=None)
++    meta = _started(store, task_before=before)
++    decision_id = _decision_id(meta)
++    # legal control: an increasing observation order is still accepted
++    assert lifecycle.record_executed(
++        store,
++        meta,
++        decision_id=decision_id,
++        dp=DP,
++        action="split",
++        result="split the file",
++        task_after=_state(observed_at="2026-10-27T09:00:00+00:00"),
++    ).recorded is True
++    assert lifecycle.record_settled(
++        store,
++        meta,
++        decision_id=decision_id,
++        dp=DP,
++        outcome="ok",
++        task_after=_state(
++            "done", source="dispatch-result", observed_at="2026-10-27T10:00:00+00:00"
++        ),
++    ).recorded is True
++    before_bytes = _raw(store)
++
++    with pytest.raises(lifecycle.LifecycleInputError):
++        lifecycle.record_settled(
++            store,
++            meta,
++            decision_id=decision_id,
++            dp=DP,
++            outcome="rework",
++            event_id="t10-order-settled",
++            task_after=_state(
++                "done", source="dispatch-result", observed_at="2026-10-27T09:30:00+00:00"
++            ),
++        )
++    with pytest.raises(lifecycle.LifecycleInputError):
++        lifecycle.record_executed(
++            store,
++            meta,
++            decision_id=decision_id,
++            dp=DP,
++            action="continue",
++            result="older observation",
++            event_id="t10-order-executed",
++            task_after=_state(observed_at="2026-10-27T09:15:00+00:00"),
++        )
++    assert _raw(store) == before_bytes
++
++
++def test_a_failed_executed_round_is_never_recorded_as_executed(tmp_path, redactor):
++    """S5 control: a failed round reports failure and writes no executed fact."""
++    store = lifecycle.LifecycleStore.test(
++        tmp_path / "decide-test",
++        project_id="proj-test",
++        redact=redactor,
++        lock_budget_s=0.05,
++        lock_retries=2,
++        warn=lambda line: None,
++    )
++    meta = _started(store)
++    decision_id = _decision_id(meta)
++    lock = store.sink.with_name(store.sink.name + ".lock")
++    lock.write_text("held", encoding="utf-8")
++
++    result = lifecycle.record_executed(
++        store,
++        meta,
++        decision_id=decision_id,
++        dp=DP,
++        action="record",
++        result="not really executed",
++    )
++    assert result.status == "failed"
++    assert result.recorded is False
++    assert result.error_class == "lock-timeout"
++    assert not any(row.get("lifecycle") == "executed" for row in _rows(store))
++
++
++def test_a_secret_bearing_creation_before_can_be_repeated(store):
++    """S7: the recorded before is repeatable even when it held a known secret."""
++    before = _state(
++        "running", completed=[SECRET + " private step"], remaining=[], blockers=None
++    )
++    meta = _started(store, task_before=before)
++    decision_id = _decision_id(meta)
++
++    result = lifecycle.record_request(
++        store,
++        meta,
++        decision_id=decision_id,
++        result=_result(),
++        material=_material(),
++        preparation=_preparation(),
++        task_before=before,
++    )
++    assert result.recorded is True
++    row = _row(store, "request")
++    assert row["task_before"]["completed"] == ["<redacted> private step"]
++    # a repeated snapshot keeps the recorded axes: [] is observed, None is not
++    assert row["task_before"]["remaining"] == []
++    assert row["task_before"]["blockers"] is None
++    assert SECRET.encode() not in _raw(store)
++
++
++@pytest.mark.skipif(
++    os.name != "nt", reason="the case-insensitive path rule is a Windows fact"
++)
++@pytest.mark.parametrize(
++    "relative",
++    [
++        (".AgenticDoc", "_autopilot", "decisions-wire.jsonl"),
++        (".AgenticDoc", "lifecycle.jsonl"),
++    ],
++    ids=["wire-sink", "lifecycle-sink"],
++)
++def test_a_case_variant_agenticdoc_path_is_refused_in_test_scope(tmp_path, relative):
++    """S4: on Windows a case variant is the same production tree and is refused."""
++    sink = tmp_path.joinpath(*relative)
++    with pytest.raises(wire.WireScopeError):
++        wire.WireScope(
++            sink=sink,
++            project_id="proj-test",
++            scope_kind="test",
++            redact=wire.SubstringRedactor([SECRET]),
++        )
++
++
++@pytest.mark.parametrize(
++    "relative",
++    [
++        (".agenticdoc", "_autopilot", "decisions-wire.jsonl"),
++        (".agenticdoc", "lifecycle.jsonl"),
++    ],
++    ids=["wire-sink", "lifecycle-sink"],
++)
++def test_the_exact_agenticdoc_path_is_refused_in_test_scope(tmp_path, relative):
++    """S4 control: the exact-case production path is already refused."""
++    sink = tmp_path.joinpath(*relative)
++    with pytest.raises(wire.WireScopeError):
++        wire.WireScope(
++            sink=sink,
++            project_id="proj-test",
++            scope_kind="test",
++            redact=wire.SubstringRedactor([SECRET]),
++        )
++
++
++def test_the_writer_consumes_the_producers_frozen_prepared_contract():
++    """S9: one frozen producer contract, no second vocabulary in the writer."""
++    assert set(lifecycle.REQUEST_RESULT_FIELDS) <= set(decision._PREPARED_RESULT_FIELDS)
++    assert lifecycle.REQUEST_REASONS == decision._PREPARED_REASONS
++    assert lifecycle.BASIS_SOURCE == decision_points.BASIS_SOURCE
++    # the one dynamic entry has no static menu: its legal set is the prepared set
++    assert decision_points.resolve_entry_choices(AUTO_DP) == ()
++    options = [
++        _auto_candidate("c-a", "take the prepared option a"),
++        _auto_candidate("c-b", "take the prepared option b"),
++    ]
++    assert decision_points.resolve_entry_choices(AUTO_DP, _auto_material(options)) == (
++        "c-a",
++        "c-b",
++    )

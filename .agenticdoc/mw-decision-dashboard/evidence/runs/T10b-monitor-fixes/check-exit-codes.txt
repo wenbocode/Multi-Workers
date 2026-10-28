@@ -1,0 +1,22 @@
+T10b repo check exit codes (all output saved next to this file)
+
+cwd: H:\git\Multi-Workers (repo root), read-only commands only.
+
+  npx biome check --error-on-warnings .   exit 1   check-biome-readonly.txt
+      3 warnings + 2 infos, all in packages/coding-agent/test/suite/mwoc-*.test.ts
+      (mwoc-matrix-t07.test.ts, mwoc-w2-contract-judgment.test.ts,
+      mwoc-w3-ledger-extractor.test.ts) = other sessions' uncommitted files.
+      No finding in a T10b file (this card only changed Python; biome does not lint Python).
+  npm run check:pinned-deps               exit 0   check-pinned-deps.txt
+  npm run check:ts-imports                exit 0   check-ts-imports.txt
+  npm run check:shrinkwrap                exit 0   check-shrinkwrap.txt (up to date)
+  npm run check:install-lock:coding-agent exit 0   check-install-lock.txt (up to date)
+  npx tsgo --noEmit                       exit 0   check-tsgo.txt (empty = success)
+  npm run check:browser-smoke             exit 0   check-browser-smoke.txt
+
+`npm run check` was NOT run as one command: its first step is
+`biome check --write --error-on-warnings .`, which rewrites other sessions' uncommitted
+mwoc-*.test.ts files and would be a write outside this card's face. The read-only biome
+substitute plus every remaining check step was run individually (same deviation as T10/T15
+precedent). A plain biome exit 0 is not claimed: biome exited 1 here, and the other five
+steps are shown separately.

@@ -1,0 +1,195 @@
+tee: .agenticdoc/mw-decision-dashboard/evidence/runs/T12a-command-closure/red-vitest.txt: No such file or directory
+### argv: node ../../node_modules/vitest/dist/cli.js --run test/suite/decision-dashboard-command.test.ts
+### cwd: /h/git/Multi-Workers/packages/coding-agent
+### iso_home: /tmp/tmp.2AacaQHlTa  HOME=/tmp/tmp.2AacaQHlTa/home USERPROFILE=C:\Users\WENBOZ~1\AppData\Local\Temp\tmp.2AacaQHlTa\home PI_CODING_AGENT_DIR=C:\Users\WENBOZ~1\AppData\Local\Temp\tmp.2AacaQHlTa\agent
+### unset: MW_PY TIMI_API_KEY TAI_PAT_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY
+### node: v24.19.0  python: Python 3.14.3
+### env_masked: TIMI_API_KEY=<unset> TAI_PAT_TOKEN=<unset>
+tee: .agenticdoc/mw-decision-dashboard/evidence/runs/T12a-command-closure/red-vitest.txt: No such file or directory
+
+ RUN  v4.1.9 H:/git/Multi-Workers/packages/coding-agent
+
+[VERIFY] T12a refusal-spawns: cases=6 runner_calls=0 auth_writes=0
+xx·xxxxxxx
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 9 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/suite/decision-dashboard-command.test.ts > /mw decide dp read-only parsing (T12a) > accepts exactly dp list / dp show <id> / dp export and maps the argv
+AssertionError: expected { action: 'usage', …(1) } to deeply equal { action: 'dp-list' }
+
+- Expected
++ Received
+
+  {
+-   "action": "dp-list",
++   "action": "usage",
++   "error": "Usage: /mw decide show | sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <key>] — unknown sub 'dp'",
+  }
+
+ ❯ test/suite/decision-dashboard-command.test.ts:169:16
+    167|   const exported = parseDecideArgs("dp export");
+    168|
+    169|   expect(list).toEqual({ action: "dp-list" });
+       |                ^
+    170|   expect(show).toEqual({ action: "dp-show", dp: "dp3-worker-clarify" }…
+    171|   expect(exported).toEqual({ action: "dp-export" });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/9]⎯
+
+ FAIL  test/suite/decision-dashboard-command.test.ts > /mw decide dp read-only parsing (T12a) > refuses every write/act face, --write, --live and unknown tails
+TypeError: decideForwardArgs is not a function
+ ❯ test/suite/decision-dashboard-command.test.ts:211:11
+    209|    const parsed = parseDecideArgs(text);
+    210|    expect(parsed.action, text).toBe("usage");
+    211|    expect(decideForwardArgs(parsed), text).toBeNull();
+       |           ^
+    212|    if (parsed.action === "usage") expect(parsed.error.startsWith(DECID…
+    213|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/9]⎯
+
+ FAIL  test/suite/decision-dashboard-command.test.ts > /mw decide read-only forwards need no watched key (T12a) > forwards dp list/export from a headless window without a watch key
+AssertionError: expected [] to deeply equal [ [ 'dp', 'list' ] ]
+
+- Expected
++ Received
+
+- [
+-   [
+-     "dp",
+-     "list",
+-   ],
+- ]
++ []
+
+ ❯ test/suite/decision-dashboard-command.test.ts:252:18
+    250|    const { ctx, notifications } = fakeDecideCtx({ hasUI: false });
+    251|    await runMwDecideCommand(ctx, "/proj", text, { runner, watchKey: ()…
+    252|    expect(calls).toEqual([argv]);
+       |                  ^
+    253|    expect(notifications).toHaveLength(1);
+    254|    expect(notifications[0]?.type).toBe("info");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/9]⎯
+
+ FAIL  test/suite/decision-dashboard-command.test.ts > /mw decide read-only forwards need no watched key (T12a) > reports a Python failure verbatim at error level instead of throwing
+AssertionError: expected [] to deeply equal [ [ 'dp', 'show', 'nope' ] ]
+
+- Expected
++ Received
+
+- [
+-   [
+-     "dp",
+-     "show",
+-     "nope",
+-   ],
+- ]
++ []
+
+ ❯ test/suite/decision-dashboard-command.test.ts:268:17
+    266|   const { ctx, notifications } = fakeDecideCtx();
+    267|   await runMwDecideCommand(ctx, "/proj", "dp show nope", { runner });
+    268|   expect(calls).toEqual([["dp", "show", "nope"]]);
+       |                 ^
+    269|   expect(notifications[0]?.type).toBe("error");
+    270|   expect(notifications[0]?.message).toContain("unknown dp 'nope'");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/9]⎯
+
+ FAIL  test/suite/decision-dashboard-command.test.ts > /mw decide monitor routing only (T12a, no window/service) > forwards exactly `monitor`, once, and creates no monitor state
+AssertionError: expected [] to deeply equal [ [ 'monitor' ] ]
+
+- Expected
++ Received
+
+- [
+-   [
+-     "monitor",
+-   ],
+- ]
++ []
+
+ ❯ test/suite/decision-dashboard-command.test.ts:283:17
+    281|   await runMwDecideCommand(ctx, root, "monitor", { runner, watchKey: (…
+    282|
+    283|   expect(calls).toEqual([["monitor"]]);
+       |                 ^
+    284|   expect(notifications).toHaveLength(1);
+    285|   expect(notifications[0]?.message).toBe("monitor reused at http://127…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/9]⎯
+
+ FAIL  test/suite/decision-dashboard-command.test.ts > /mw decide monitor routing only (T12a, no window/service) > explains the CLI-only status/stop faces instead of forwarding them
+AssertionError: expected 'Usage: /mw decide show | sign <contin…' to contain 'mw decide monitor status|stop'
+
+Expected: "mw decide monitor status|stop"
+Received: "Usage: /mw decide show | sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <key>] — unknown sub 'monitor'"
+
+ ❯ test/suite/decision-dashboard-command.test.ts:300:37
+    298|   expect(calls).toEqual([]);
+    299|   expect(notifications[0]?.type).toBe("warning");
+    300|   expect(notifications[0]?.message).toContain("mw decide monitor statu…
+       |                                     ^
+    301|  });
+    302| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/9]⎯
+
+ FAIL  test/suite/decision-dashboard-command.test.ts > /mw decide real entry through the harness (T12a) > dp list in a key-less window equals the Python CLI's dp set (AC-001)
+AssertionError: expected 'warning' to be 'info' // Object.is equality
+
+Expected: "info"
+Received: "warning"
+
+ ❯ test/suite/decision-dashboard-command.test.ts:312:34
+    310|
+    311|   expect(notifications).toHaveLength(1);
+    312|   expect(notifications[0]?.type).toBe("info");
+       |                                  ^
+    313|   const windowText = notifications[0]?.message ?? "";
+    314|   expect(windowText).not.toContain("unknown sub");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/9]⎯
+
+ FAIL  test/suite/decision-dashboard-command.test.ts > /mw decide real entry through the harness (T12a) > dp show <id> and dp export reach the real CLI and write nothing (VC-001)
+AssertionError: expected 'Usage: /mw decide show | sign <contin…' to contain 'dp1-dispatch-type (P2)'
+
+Expected: "dp1-dispatch-type (P2)"
+Received: "Usage: /mw decide show | sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <key>] — unknown sub 'dp'"
+
+ ❯ test/suite/decision-dashboard-command.test.ts:347:20
+    345|   expect(notifications).toHaveLength(1);
+    346|   const showText = notifications[0]?.message ?? "";
+    347|   expect(showText).toContain("dp1-dispatch-type (P2)");
+       |                    ^
+    348|   expect(showText).toContain("enabled=true mode=auto source=default");
+    349|   expect(showText).toContain("questions:");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/9]⎯
+
+ FAIL  test/suite/decision-dashboard-command.test.ts > /mw decide real entry through the harness (T12a) > the registered /mw dispatcher documents the read-only faces
+AssertionError: expected 'Usage: /mw build|init|start|stop|stat…' to contain 'decide dp list|show <id>|export'
+
+Expected: "decide dp list|show <id>|export"
+Received: "Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | decide show|sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <k>] | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all"
+
+ ❯ test/suite/decision-dashboard-command.test.ts:377:21
+    375|   await harness.session.prompt("/mw bogus");
+    376|   const usageLine = notifications.at(-1)?.message ?? "";
+    377|   expect(usageLine).toContain("decide dp list|show <id>|export");
+       |                     ^
+    378|   expect(usageLine).toContain("decide monitor");
+    379|   expect(usageLine).toContain("| decide show|sign <continue|narrow|rev…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/9]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  9 failed | 1 passed (10)
+   Start at  18:41:06
+   Duration  3.66s (transform 2.04s, setup 0ms, import 2.97s, tests 582ms, environment 0ms)
+
+### exit=1
+tee: .agenticdoc/mw-decision-dashboard/evidence/runs/T12a-command-closure/red-vitest.txt: No such file or directory
+### test_file_sha256=c406a61688c47c190665b1fd21f23f67663a013ba78729c35cae6408f9521ab4

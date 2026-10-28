@@ -1,0 +1,41 @@
+{
+  "before_count": 17,
+  "after_count": 28,
+  "renamed_case_tests": {
+    "test_four_offline_cases_are_complete_and_contract_shaped": "test_eight_offline_cases_are_complete_schema3_and_contract_shaped",
+    "test_dp2_case_keeps_the_registry_question_vocabulary": "test_dp_pm_steer_case_keeps_the_registry_question_vocabulary",
+    "test_four_cases_pass_the_offline_registry_typed_check": "test_eight_cases_pass_the_offline_registry_typed_check"
+  },
+  "kept_unchanged_names": [
+    "test_shipped_cases_match_the_offline_generator",
+    "test_case_route_is_page_authenticated_and_serves_only_fixed_ids",
+    "test_case_route_makes_zero_credential_and_model_calls",
+    "test_edited_cases_reach_the_real_loopback_typed_validate",
+    "test_case_loader_refuses_unknown_ids_traversal_and_symlinks",
+    "test_history_forwards_the_real_workbench_and_facets",
+    "test_dom_workbench_table_has_five_columns_four_states_and_facet_dropdowns",
+    "test_dom_legacy_payload_without_facets_never_fabricates_the_universe",
+    "test_dom_v2_record_opens_ten_node_dag_and_legacy_record_stays_log_only",
+    "test_dom_incomplete_dag_projection_is_reported_not_filled",
+    "test_dom_offline_case_loads_and_local_validate_makes_no_network_write",
+    "test_dom_local_validate_refuses_placeholders_and_incomplete_material",
+    "test_dom_playground_submit_stays_observe_only_and_retry_points_at_the_previous_id",
+    "test_shipped_assets_keep_csp_textcontent_and_token_discipline"
+  ],
+  "added": [
+    "test_eight_offline_cases_are_complete_schema3_and_contract_shaped",
+    "test_dp_pm_steer_case_keeps_the_registry_question_vocabulary",
+    "test_eight_cases_pass_the_offline_registry_typed_check",
+    "test_case_evidence_is_really_checked_and_resolves_inside_the_copy",
+    "test_each_case_prepares_a_real_basis_for_every_supported_choice",
+    "test_dp_w_type_case_keeps_four_candidates_and_the_image_gate",
+    "test_dp_w_check_task_case_keeps_three_branches_and_needs_no_pm_wait",
+    "test_dp_sigkey_qg_and_gate_entries_refuse_their_own_missing_branch_material",
+    "test_dp_sign_key_case_keeps_the_four_parts_and_three_arrays",
+    "test_dp_auto_case_uses_free_form_pm_candidates_and_invents_nothing",
+    "test_dp_route_case_routes_to_the_other_seven_entries_without_authorising",
+    "test_generator_refuses_retired_ids_and_never_writes_legacy_cases",
+    "test_each_entry_refuses_missing_material_without_defaulting",
+    "test_legacy_cases_stay_byte_identical_read_only_history"
+  ]
+}

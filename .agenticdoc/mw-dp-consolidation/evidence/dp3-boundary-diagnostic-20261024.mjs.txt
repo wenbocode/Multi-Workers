@@ -1,0 +1,92 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import {
+  ASK_DECISION_PARAMETERS, registerAskDecisionTool, runAskDecision, validateDecisionMaterial,
+} from 'file:///H:/git/Multi-Workers/packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts';
+
+const root = 'H:/git/Multi-Workers';
+const dp = 'dp3-worker-clarify';
+const state = JSON.parse(fs.readFileSync(`${root}/packages/multi-workers/decide_cases/dp3.json`, 'utf8')).book.state;
+const pure = { question: state.question, background: state.background, handling_options: state.handling_options };
+// Same extra field names/order and value types as the actual PM call. Values
+// are synthetic: the refusal depends on membership, never on their contents.
+const extras = {
+  task_goal: 'synthetic goal', task_requirements: 'synthetic requirements',
+  task_deliverables: 'synthetic deliverables', pm_decision_background: 'synthetic PM background',
+  worker_execution: 'synthetic worker account', delivery_goal: '', actual_completion: '',
+  verification_evidence: { verified: [], unverified: [] }, unfinished_impact: [],
+};
+const mixed = { ...extras, ...pure };
+const expected = Object.keys(extras);
+const validations = { pure: validateDecisionMaterial(dp, pure), mixed: validateDecisionMaterial(dp, mixed) };
+assert.equal(validations.pure.ok, true);
+assert.equal(validations.mixed.ok, false);
+assert.deepEqual(validations.mixed.issues.map(issue => issue.field), expected);
+assert.ok(validations.mixed.issues.every(issue => issue.rule === 'not in required_state_fields (closed key set)'));
+
+async function check(material, registered) {
+  const decideCalls = [];
+  const feedbackCalls = [];
+  const runner = async request => {
+    decideCalls.push(request);
+    const envelope = JSON.parse(request.input);
+    assert.deepEqual(envelope.material, pure);
+    assert.equal(request.viaStdin, true);
+    return { status: 0, stderr: '', timedOut: false, stdout: JSON.stringify({
+      available: true, mode: 'suggest', acted: false,
+      decision_id: `${dp}:synthetic`, confidence_source: 'synthetic-faux', latency_ms: 0,
+      answers: { handling: { value: 'c1', confidence: 0.9 } },
+    }) };
+  };
+  const lifecycleRunner = async request => {
+    feedbackCalls.push(request);
+    return { status: 0, stderr: '', timedOut: false,
+      stdout: JSON.stringify({ recorded: true, status: 'written', stage: 'consumed' }) };
+  };
+  const params = { dp, trigger: 'synthetic-dp3-check', key: 'synthetic-key', task_key: 'synthetic-task', material };
+  let payload, spawned;
+  if (registered) {
+    const tools = new Map();
+    const api = { registerTool(tool) { tools.set(tool.name, tool); }, on() {} };
+    registerAskDecisionTool(api, { projectDir: process.cwd(), initiatorRole: 'pm',
+      key: 'synthetic-key', runner, lifecycleRunner });
+    const result = await tools.get('ask_decision').execute('synthetic-call', params);
+    payload = result.details;
+  } else {
+    const result = await runAskDecision({ projectDir: process.cwd(), dp, trigger: params.trigger,
+      key: params.key, taskKey: params.task_key, material, initiatorRole: 'pm', runner, lifecycleRunner });
+    payload = result.payload;
+    spawned = result.spawned;
+  }
+  if (material === pure) {
+    assert.equal(payload.available, true);
+    assert.equal(decideCalls.length, 1);
+    assert.equal(feedbackCalls.length, 1);
+    if (!registered) assert.equal(spawned, true);
+  } else {
+    assert.equal(payload.available, false);
+    assert.equal(payload.unavailable, 'input-incomplete');
+    assert.deepEqual(payload.missing_fields, expected);
+    assert.equal(decideCalls.length, 0);
+    assert.equal(feedbackCalls.length, 0);
+    if (!registered) assert.equal(spawned, false);
+  }
+  return { registered, variant: material === pure ? 'pure' : 'mixed', payload,
+    ...(spawned === undefined ? {} : { spawned }),
+    faux_decide_calls: decideCalls.length, faux_feedback_calls: feedbackCalls.length };
+}
+const results = [];
+for (const registered of [false, true]) {
+  results.push(await check(pure, registered));
+  results.push(await check(mixed, registered));
+}
+// Disk bundle identity is evidence about files, not an in-memory module hash.
+const files = ['packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts',
+  'packages/multi-workers/dist/extensions/agent-team-loop.js',
+  'C:/Users/wenbozhou/.pi/agent/extensions/agent-team-loop.js'];
+const hashes = Object.fromEntries(files.map(file => [file,
+  crypto.createHash('sha256').update(fs.readFileSync(file.startsWith('C:') ? file : `${root}/${file}`)).digest('hex')]));
+console.log(JSON.stringify({ node_version: process.version, validations, results,
+  material_schema_required: ASK_DECISION_PARAMETERS.properties.material.required ?? [],
+  real_python_children: 0, real_model_requests: 0, hashes }, null, 2));

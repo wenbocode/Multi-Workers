@@ -1,0 +1,34 @@
+{
+  "argv": [
+    "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+    "-B",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "-q",
+    "test_decision_context_contract.py",
+    "--basetemp",
+    "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t09-books\\rework-r2\\fixture\\basetemp-red-1"
+  ],
+  "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+  "env": {
+    "COMSPEC": "C:\\Windows\\system32\\cmd.exe",
+    "HOME": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t09-books\\rework-r2\\fixture\\home",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "PATH": "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONIOENCODING": "utf-8",
+    "PYTHONPATH": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+    "PYTHONUTF8": "1",
+    "SystemDrive": "C:",
+    "SystemRoot": "C:\\Windows",
+    "TEMP": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t09-books\\rework-r2\\fixture\\tmp",
+    "TMP": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t09-books\\rework-r2\\fixture\\tmp",
+    "USERPROFILE": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t09-books\\rework-r2\\fixture\\home",
+    "WINDIR": "C:\\Windows"
+  },
+  "rc": 1
+}

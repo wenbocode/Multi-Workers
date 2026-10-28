@@ -1,0 +1,12 @@
+{
+  "authority_ref": "grant-recovery",
+  "kind": "user-grant",
+  "scope": [
+    "recovery:halted",
+    "recovery:breaker"
+  ],
+  "writer": "pm-controlled-authority-writer",
+  "revoked": false,
+  "recorded_at": "2026-10-26T00:00:00+00:00",
+  "supersedes": []
+}

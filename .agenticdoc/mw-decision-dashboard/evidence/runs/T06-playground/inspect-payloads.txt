@@ -1,0 +1,281 @@
+﻿--- scaffold (book truncated) ---
+{
+  "book": {
+    "context": {
+      "error_excerpt": ""
+    },
+    "decision_point": "dp4-failure-handling",
+    "notes": {
+      "evidence": {
+        "decision_point": "<待填: path:line 或命令原文>",
+        "failure.artifact_present": "<待填: path:line 或命令原文>",
+        "failure.attempt": "<待填: path:line 或命令原文>",
+        "failure.kind": "<待填: path:line 或命令原文>",
+        "failure.limit": "<待填: path:line 或命令原文>",
+        "questions_version": "<待填: path:line 或命令原文>",
+        "schema_version": "<待填: path:line 或命令原文>"
+      }
+    },
+    "schema_version": 2,
+    "state": {
+      "decision_point": "dp4-failure-handling",
+      "failure": {
+        "artifact_present": false,
+        "attempt": -1,
+        "kind": "<string: Failure class observed on the attempt: transient|deterministic|infra|unknown (from the failing step's own error report).>",
+        "limit": -1
+      },
+      "questions_version": "q-b93176a8",
+      "schema_version": 2
+    }
+  },
+  "dp": "dp4-failure-handling",
+  "keys": [
+    "book",
+    "config_source",
+    "context_slots",
+    "default_enabled",
+    "default_mode",
+    "description",
+    "dp",
+    "enabled",
+    "max_state_bytes",
+    "mode",
+    "observe_only",
+    "optional_state_fields",
+    "questions_version",
+    "required_state_fields",
+    "tier",
+    "transport"
+  ]
+}
+--- validate ---
+{
+  "context_sent": false,
+  "context_slots": [],
+  "dp": "dp4-failure-handling",
+  "issues": [],
+  "max_state_bytes": 2000,
+  "observe_only": true,
+  "ok": true,
+  "state_bytes": 185,
+  "state_digest": "1c79990c9ad63231",
+  "transport": {
+    "detail": "transport configured but not probed: the playground never calls before an explicit submit",
+    "state": "unknown"
+  }
+}
+--- submit ---
+{
+  "accepted": true,
+  "book_ref": "book-51f7a786d35e4b2e",
+  "busy": false,
+  "call_id": null,
+  "capture_status": "ok",
+  "decision_id": "dp4-failure-handling:sub-inspect",
+  "decision_ran": true,
+  "dp": "dp4-failure-handling",
+  "duplicate": false,
+  "finished_at": "2026-10-22T11:04:16.102+00:00",
+  "http_attempts": 0,
+  "issues": [],
+  "message": null,
+  "observe_only": true,
+  "outcome": {
+    "answer": {
+      "failure_action": {
+        "confidence": 0.9,
+        "value": "retry"
+      }
+    },
+    "answers_present": true,
+    "archive_state": "skipped",
+    "book_ref": "book-51f7a786d35e4b2e",
+    "call_id": "4c1212fe08c943eb94d780cd20f7d172",
+    "capture_channel": "test-scope",
+    "capture_status": "ok",
+    "confidence_source": "unknown",
+    "decision_id": "dp4-failure-handling:sub-inspect",
+    "detail": "dp4-failure-handling:sub-inspect: answer only (mode=auto), nothing acted on",
+    "escalated_reason": null,
+    "latency_ms": 0,
+    "mode": "auto",
+    "observation": {
+      "bypassed": true,
+      "observe_only": true,
+      "scope_kind": "test",
+      "submission_id": "sub-inspect"
+    },
+    "preview": {
+      "action_outcome": "unknown",
+      "config_layer": "L0",
+      "dp": "dp4-failure-handling",
+      "enabled": false,
+      "enabled_source": "default",
+      "executor": "none",
+      "executor_invoked": false,
+      "mode": "auto",
+      "observe_only_bypass": true,
+      "tier": "P1",
+      "transport": "configured",
+      "would_act": false,
+      "would_action_label": null,
+      "would_escalated_reason": "disabled",
+      "would_status": "escalated"
+    },
+    "response": {
+      "attempts": 1,
+      "available": true,
+      "confidence_source": "unknown",
+      "latency_ms": 0,
+      "model": "jev-latest",
+      "reason": null,
+      "transport": "none"
+    },
+    "state_digest": "1c79990c9ad63231",
+    "status": "suggested",
+    "transport_reason": null,
+    "truncated": []
+  },
+  "record_status": "recorded",
+  "retry_of": null,
+  "started_at": "2026-10-22T11:04:16.092+00:00",
+  "state": "succeeded",
+  "state_digest": "1c79990c9ad63231",
+  "submission_id": "sub-inspect",
+  "zero_call": false
+}
+--- submission ---
+{
+  "accepted": true,
+  "book_ref": "book-51f7a786d35e4b2e",
+  "busy": false,
+  "call_id": "4c1212fe08c943eb94d780cd20f7d172",
+  "capture_status": "ok",
+  "decision_id": "dp4-failure-handling:sub-inspect",
+  "decision_ran": true,
+  "dp": "dp4-failure-handling",
+  "duplicate": false,
+  "finished_at": "2026-10-22T11:04:16.102+00:00",
+  "http_attempts": 0,
+  "issues": [],
+  "message": null,
+  "observe_only": true,
+  "outcome": {
+    "answers_present": true,
+    "archive": "skipped",
+    "attempts": 1,
+    "available": true,
+    "confidence": 0.9,
+    "confidence_source": "unknown",
+    "escalated_reason": null,
+    "latency_ms": 0,
+    "mode": "auto",
+    "model": "jev-latest",
+    "reason": null,
+    "status": "suggested",
+    "transport": "none",
+    "truncated": [],
+    "wire_attempts": 0
+  },
+  "record_status": "recorded",
+  "retry_of": null,
+  "scope": "test",
+  "started_at": "2026-10-22T11:04:16.092+00:00",
+  "state": "succeeded",
+  "state_digest": "1c79990c9ad63231",
+  "submission_id": "sub-inspect",
+  "zero_call": false
+}
+--- history ---
+{
+  "limit": 50,
+  "observe_only": true,
+  "records": [
+    {
+      "book_ref": "book-51f7a786d35e4b2e",
+      "call_id": "4c1212fe08c943eb94d780cd20f7d172",
+      "capture_status": "ok",
+      "decision_id": "dp4-failure-handling:sub-inspect",
+      "decision_ran": true,
+      "dp": "dp4-failure-handling",
+      "finished_at": "2026-10-22T11:04:16.102+00:00",
+      "http_attempts": 0,
+      "issues": [],
+      "outcome": {
+        "answers_present": true,
+        "archive": "skipped",
+        "attempts": 1,
+        "available": true,
+        "confidence": 0.9,
+        "confidence_source": "unknown",
+        "escalated_reason": null,
+        "latency_ms": 0,
+        "mode": "auto",
+        "model": "jev-latest",
+        "reason": null,
+        "status": "suggested",
+        "transport": "none",
+        "truncated": [],
+        "wire_attempts": 0
+      },
+      "record_status": "recorded",
+      "retry_of": null,
+      "scope": "test",
+      "started_at": "2026-10-22T11:04:16.092+00:00",
+      "state": "succeeded",
+      "state_digest": "1c79990c9ad63231",
+      "submission_id": "sub-inspect",
+      "zero_call": false
+    }
+  ],
+  "scope": "test",
+  "source": "test",
+  "total": 1,
+  "warnings": []
+}
+--- rejected submit ---
+{
+  "accepted": true,
+  "book_ref": null,
+  "busy": false,
+  "call_id": null,
+  "capture_status": null,
+  "decision_id": "dp4-failure-handling:sub-bad",
+  "decision_ran": false,
+  "dp": "dp4-failure-handling",
+  "duplicate": false,
+  "finished_at": "2026-10-22T11:04:16.107+00:00",
+  "http_attempts": null,
+  "issues": [
+    {
+      "code": "book-state",
+      "detail": "not in required_state_fields (closed key set)",
+      "path": "state.undeclared"
+    }
+  ],
+  "message": null,
+  "observe_only": true,
+  "outcome": null,
+  "record_status": "recorded",
+  "retry_of": null,
+  "started_at": "2026-10-22T11:04:16.104+00:00",
+  "state": "rejected",
+  "state_digest": "7e08024e41213ba6",
+  "submission_id": "sub-bad",
+  "zero_call": true
+}
+--- ledger ---
+{"schema_version":1,"event_id":"e0f1a9d778124857ab50eeb6ea20771b","ts":"2026-10-22T11:04:16.092+00:00","kind":"submission-start","scope":"test","project_id":"e8cee4622cd7036a","key":null,"task_key":null,"decision_id":"dp4-failure-handling:sub-inspect","call_id":null,"submission_id":"sub-inspect","origin":"test-submission","actor":{"kind":"human","id":null},"answer_source":null,"capture_status":null,"dp":"dp4-failure-handling","outcome":"started","issues":null,"retry_of":null,"zero_call":false,"book_ref":null}
+{"schema_version":1,"event_id":"91c1c4f2fe2c40cc8e92518d98b86c2c","ts":"2026-10-22T11:04:16.098+00:00","kind":"call-end","scope":"test","project_id":"e8cee4622cd7036a","key":null,"task_key":null,"decision_id":"dp4-failure-handling:sub-inspect","call_id":"4c1212fe08c943eb94d780cd20f7d172","submission_id":"sub-inspect","origin":"test-submission","actor":null,"answer_source":null,"capture_status":null,"attempts":1,"wire_attempts":0,"latency_ms":0,"available":true,"reason":null,"answers_present":true,"confidence":0.9,"confidence_source":"unknown","transport":"none","model":"jev-latest","policy":null,"zero_call":true}
+{"schema_version":1,"event_id":"3421c6be8001412f948d3fe6a328aa6d","ts":"2026-10-22T11:04:16.100+00:00","kind":"book-snapshot","scope":"test","project_id":"e8cee4622cd7036a","key":null,"task_key":null,"decision_id":"dp4-failure-handling:sub-inspect","call_id":"4c1212fe08c943eb94d780cd20f7d172","submission_id":"sub-inspect","origin":"test-submission","actor":{"kind":"human","id":"user-explicit"},"answer_source":null,"capture_status":"ok","book_ref":"book-51f7a786d35e4b2e","book":{"text":"{\"book\": {\"decision_point\": \"dp4-failure-handling\", \"notes\": {\"evidence\": {\"decision_point\": \"cmd: true\", \"failure.artifact_present\": \"cmd: true\", \"failure.attempt\": \"cmd: true\", \"failure.kind\": \"cmd: true\", \"failure.limit\": \"cmd: true\", \"questions_version\": \"cmd: true\", \"schema_version\": \"cmd: true\"}}, \"schema_version\": 2, \"state\": {\"decision_point\": \"dp4-failure-handling\", \"failure\": {\"artifact_present\": false, \"attempt\": 1, \"kind\": \"transient\", \"limit\": 2}, \"questions_version\": \"q-b93176a8\", \"schema_version\": 2}}, \"candidates\": {}, \"decision_id\": \"dp4-failure-handling:sub-inspect\", \"dp\": \"dp4-failure-handling\", \"kind\": \"book\", \"questions_version\": \"q-b93176a8\", \"state\": {\"decision_point\": \"dp4-failure-handling\", \"failure\": {\"artifact_present\": false, \"attempt\": 1, \"kind\": \"transient\", \"limit\": 2}, \"questions_version\": \"q-b93176a8\", \"schema_version\": 2}, \"state_digest\": \"1c79990c9ad63231\"}","encoding":"utf-8","wire_len":904,"stored_len":904,"captured_redacted_sha256":"f30f21cbce9d8c2217cf93ddd46c357c305aee3d18abb44d0aa30bf0a247d916","redactions":0,"truncated":false,"read_capped":false,"boundary_scrubbed":false,"decode_errors":false,"text_omitted":false,"byte_exact":true},"file_sha256":null,"book_sha256":null,"book_version":"input-memory"}
+{"schema_version":1,"event_id":"ad2d62f995d645eca72d84f7f707b5a8","ts":"2026-10-22T11:04:16.101+00:00","kind":"decision-end","scope":"test","project_id":"e8cee4622cd7036a","key":null,"task_key":null,"decision_id":"dp4-failure-handling:sub-inspect","call_id":"4c1212fe08c943eb94d780cd20f7d172","submission_id":"sub-inspect","origin":"test-submission","actor":{"kind":"human","id":"user-explicit"},"answer_source":null,"capture_status":null,"status":"suggested","escalated_reason":null,"archive":"skipped","state_digest":"1c79990c9ad63231","questions_version":"q-b93176a8","truncated":[],"mode":"auto","intent":"answer","book_ref":"book-51f7a786d35e4b2e"}
+{"schema_version":1,"event_id":"25d8000d4fbe4d3aa47efb7a87d950e9","ts":"2026-10-22T11:04:16.102+00:00","kind":"submission-end","scope":"test","project_id":"e8cee4622cd7036a","key":null,"task_key":null,"decision_id":"dp4-failure-handling:sub-inspect","call_id":"4c1212fe08c943eb94d780cd20f7d172","submission_id":"sub-inspect","origin":"test-submission","actor":{"kind":"human","id":"user-explicit"},"answer_source":null,"capture_status":"ok","dp":"dp4-failure-handling","outcome":"succeeded","issues":null,"retry_of":null,"zero_call":false,"book_ref":"book-51f7a786d35e4b2e"}
+{"schema_version":1,"event_id":"175322c3811b4c8892cae4fcc32ee958","ts":"2026-10-22T11:04:16.104+00:00","kind":"submission-start","scope":"test","project_id":"e8cee4622cd7036a","key":null,"task_key":null,"decision_id":"dp4-failure-handling:sub-bad","call_id":null,"submission_id":"sub-bad","origin":"test-submission","actor":{"kind":"human","id":null},"answer_source":null,"capture_status":null,"dp":"dp4-failure-handling","outcome":"started","issues":null,"retry_of":null,"zero_call":false,"book_ref":null}
+{"schema_version":1,"event_id":"446bd3a332cd4231974c8cbf523b0761","ts":"2026-10-22T11:04:16.107+00:00","kind":"submission-end","scope":"test","project_id":"e8cee4622cd7036a","key":null,"task_key":null,"decision_id":"dp4-failure-handling:sub-bad","call_id":null,"submission_id":"sub-bad","origin":"test-submission","actor":{"kind":"human","id":"user-explicit"},"answer_source":null,"capture_status":null,"dp":"dp4-failure-handling","outcome":"rejected","issues":["book-state state.undeclared: not in required_state_fields (closed key set)"],"retry_of":null,"zero_call":true,"book_ref":null}
+
+--- evidence ---
+{"ts": "2026-10-22T11:04:16+00:00", "dp": "dp4-failure-handling", "transport": "none", "model": "jev-latest", "attempts": 1, "latency_ms": 0, "available": true, "reason": null, "answers": {"failure_action": {"value": "retry", "confidence": 0.9}}, "confidence": 0.9, "confidence_source": "unknown"}
+
+--- production tree ---
+[]

@@ -1,0 +1,663 @@
+[
+  {
+    "source_path": ".agents/skills/agentic-task/scripts/advance_phase.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/.agents/skills/agentic-task/scripts/advance_phase.py",
+    "existed": true,
+    "sha256": "8958e5b7e76513b6403e838b063bf1412e7541c5f666521e5fde12faa1199952",
+    "bytes": 40085,
+    "crlf": 904,
+    "bare_lf": 0
+  },
+  {
+    "source_path": ".agents/skills/agentic-task/scripts/test_advance_phase.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/.agents/skills/agentic-task/scripts/test_advance_phase.py",
+    "existed": true,
+    "sha256": "8d3c2604d184231202f9d8644e918be9abfe749d2824be679e32d3b9081358b8",
+    "bytes": 27153,
+    "crlf": 575,
+    "bare_lf": 0
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/autopilot/console.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/autopilot/console.ts",
+    "existed": true,
+    "sha256": "24f190e70df722f7c971a30075e120a46bc536ec138d0ea254ac5f6739ceba26",
+    "bytes": 32038,
+    "crlf": 0,
+    "bare_lf": 777
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/autopilot/gate-writer.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/autopilot/gate-writer.ts",
+    "existed": true,
+    "sha256": "3ccf65682b403442462dadda3a6375111131456a9d41a8e42cb31246900a860e",
+    "bytes": 9550,
+    "crlf": 0,
+    "bare_lf": 224
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/autopilot/status-model.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/autopilot/status-model.ts",
+    "existed": true,
+    "sha256": "a44565a1565e3d4bbbc53f8a09c896086a017631ee645389b9273889a4b39f50",
+    "bytes": 76847,
+    "crlf": 0,
+    "bare_lf": 1932
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-followup.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/decision-followup.ts",
+    "existed": false
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-task-state.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/decision-task-state.ts",
+    "existed": true,
+    "sha256": "b261882488984232fc590d7351498bc32717bc8b481d4acb7d4ff0688a7801b9",
+    "bytes": 4903,
+    "crlf": 0,
+    "bare_lf": 135
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts",
+    "existed": true,
+    "sha256": "3c1388f5ce8ee8d4336be7207083f918c70c6e681c089d62522a36fc671f9f9e",
+    "bytes": 89846,
+    "crlf": 0,
+    "bare_lf": 2072
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts",
+    "existed": true,
+    "sha256": "82f4e7de5d7304087c673662b5e26ccdc983a0ac188ea371ce832f2a3cbcd00c",
+    "bytes": 123514,
+    "crlf": 0,
+    "bare_lf": 2679
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts",
+    "existed": true,
+    "sha256": "95be04ae586e7b48431070243fc53a39f6703a8919d41ef311bce59777762081",
+    "bytes": 22553,
+    "crlf": 0,
+    "bare_lf": 487
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts",
+    "existed": true,
+    "sha256": "70551a67c82bd463ee040267758d2d3a2d19ae3387d9329b9a6817581c651d58",
+    "bytes": 48631,
+    "crlf": 0,
+    "bare_lf": 1128
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts",
+    "existed": true,
+    "sha256": "c77017a29f9194c2c200d61be108de3dbacb00e799bc2c97062b44d1300180e9",
+    "bytes": 228859,
+    "crlf": 0,
+    "bare_lf": 5288
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-policy.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/shared/decide-policy.ts",
+    "existed": true,
+    "sha256": "572ff5fd2b005adb6c432b7f0b48c7a7059e51b7d4ab7b5a1ee236254c9cfd98",
+    "bytes": 6516,
+    "crlf": 0,
+    "bare_lf": 169
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts",
+    "existed": true,
+    "sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+    "bytes": 30264,
+    "crlf": 0,
+    "bare_lf": 930
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/shared/xkey-gate-guard.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/shared/xkey-gate-guard.ts",
+    "existed": true,
+    "sha256": "3442ed197bb74b9bb7f02843924b59e1e7358ae5a9e077656bc53b108bd71366",
+    "bytes": 28452,
+    "crlf": 0,
+    "bare_lf": 567
+  },
+  {
+    "source_path": "packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts",
+    "existed": true,
+    "sha256": "efc1d5fcc9c754b9d66773283414465f02a16137037b88e0a76f4f831675150a",
+    "bytes": 250973,
+    "crlf": 0,
+    "bare_lf": 5802
+  },
+  {
+    "source_path": "packages/coding-agent/test/suite/decision-context-agent-materials.test.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/decision-context-agent-materials.test.ts",
+    "existed": true,
+    "sha256": "cebb10e05e1754acb9566a835018fcceed90fea7f671e5e321bc1fba735e8338",
+    "bytes": 46278,
+    "crlf": 0,
+    "bare_lf": 1215
+  },
+  {
+    "source_path": "packages/coding-agent/test/suite/decision-context-pm-producers.test.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/decision-context-pm-producers.test.ts",
+    "existed": true,
+    "sha256": "e6c0b0ab739869b5d02defa843a8b6252edfead42e8a969e70999378ed13be3a",
+    "bytes": 31773,
+    "crlf": 0,
+    "bare_lf": 808
+  },
+  {
+    "source_path": "packages/coding-agent/test/suite/decision-task-state.test.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/decision-task-state.test.ts",
+    "existed": true,
+    "sha256": "7a79a2515d475e1931a51d3c9b46ad449c4ecca27555c0d942a838120d6f0bd1",
+    "bytes": 13695,
+    "crlf": 0,
+    "bare_lf": 410
+  },
+  {
+    "source_path": "packages/coding-agent/test/suite/dp-consolidation-materials.test.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-materials.test.ts",
+    "existed": false
+  },
+  {
+    "source_path": "packages/coding-agent/test/suite/dp-consolidation-pm-followup.test.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-pm-followup.test.ts",
+    "existed": false
+  },
+  {
+    "source_path": "packages/coding-agent/test/suite/dp-consolidation-projection.test.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-projection.test.ts",
+    "existed": false
+  },
+  {
+    "source_path": "packages/coding-agent/test/suite/dp-consolidation-vision.test.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-vision.test.ts",
+    "existed": false
+  },
+  {
+    "source_path": "packages/coding-agent/test/suite/dp-consolidation-worker.test.ts",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-worker.test.ts",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/autopilot/advance.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/advance.py",
+    "existed": true,
+    "sha256": "441de9d1853697f1f4a58dc0c002edd4241edaa43b9df6ede25d301c7ddff044",
+    "bytes": 7752,
+    "crlf": 0,
+    "bare_lf": 192
+  },
+  {
+    "source_path": "packages/multi-workers/autopilot/closure.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/closure.py",
+    "existed": true,
+    "sha256": "8821df55dab8a335c86e01b443d722ad2eaacd75f41681a95c3ea0c7064b6013",
+    "bytes": 7715,
+    "crlf": 0,
+    "bare_lf": 187
+  },
+  {
+    "source_path": "packages/multi-workers/autopilot/conductor.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/conductor.py",
+    "existed": true,
+    "sha256": "6faf52682d50571199f1b0a593c622aa49774835766fd230872f35d92ca0168f",
+    "bytes": 371529,
+    "crlf": 0,
+    "bare_lf": 8727
+  },
+  {
+    "source_path": "packages/multi-workers/autopilot/contract_guard.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/contract_guard.py",
+    "existed": true,
+    "sha256": "7748469cb55ed184e0df25d137bee1de1a747c7be28cace2ee443dabe0fb3e66",
+    "bytes": 15655,
+    "crlf": 0,
+    "bare_lf": 448
+  },
+  {
+    "source_path": "packages/multi-workers/autopilot/decision_recovery.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/decision_recovery.py",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/autopilot/dispatch.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/dispatch.py",
+    "existed": true,
+    "sha256": "6df4b5abf5cf5f9de6c8cd8ad5c949c7a935856817d12b1e22283eee7a3d2be2",
+    "bytes": 109690,
+    "crlf": 0,
+    "bare_lf": 2383
+  },
+  {
+    "source_path": "packages/multi-workers/autopilot/gate_effects.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/gate_effects.py",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/autopilot/gates.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/gates.py",
+    "existed": true,
+    "sha256": "25191ec07c5c7bcd4a3aff316c04340b2081d327a525293395fa1d596988cd53",
+    "bytes": 33968,
+    "crlf": 0,
+    "bare_lf": 858
+  },
+  {
+    "source_path": "packages/multi-workers/autopilot/xkey.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/xkey.py",
+    "existed": true,
+    "sha256": "2f8095bda010cfdf365031db0e1283035702890a7102c9b7bc8addc7125c01b1",
+    "bytes": 52458,
+    "crlf": 0,
+    "bare_lf": 1435
+  },
+  {
+    "source_path": "packages/multi-workers/decide_archive.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_archive.py",
+    "existed": true,
+    "sha256": "57e91a1d70780894c682b6caa2d570f50a97830d048b79fd32219b21848ae7ad",
+    "bytes": 41733,
+    "crlf": 0,
+    "bare_lf": 1156
+  },
+  {
+    "source_path": "packages/multi-workers/decide_book_template.json",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_book_template.json",
+    "existed": true,
+    "sha256": "755253b61429271b4eb1fc5cb22cc2fb4e77a7fce07e7a67aa111dd896640df2",
+    "bytes": 2367,
+    "crlf": 0,
+    "bare_lf": 61
+  },
+  {
+    "source_path": "packages/multi-workers/decide_cases/dp-QG.json",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-QG.json",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/decide_cases/dp-auto.json",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-auto.json",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/decide_cases/dp-gate-approve.json",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-gate-approve.json",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/decide_cases/dp-pm-steer.json",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-pm-steer.json",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/decide_cases/dp-route.json",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-route.json",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/decide_cases/dp-sign-key.json",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-sign-key.json",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/decide_cases/dp-w-check-task.json",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-check-task.json",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/decide_cases/dp-w-type.json",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-type.json",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/decide_registry.json",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_registry.json",
+    "existed": true,
+    "sha256": "0a5e16d64ab83b9f84a6a6776cef55b16d87349010b24bb1b40da4207d1283ae",
+    "bytes": 56194,
+    "crlf": 0,
+    "bare_lf": 1771
+  },
+  {
+    "source_path": "packages/multi-workers/decide_signoff.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_signoff.py",
+    "existed": true,
+    "sha256": "6b34af97c9a94e6483d78d5caed9bcdcd3e3853ecbed10de7c1f873a5bed4740",
+    "bytes": 28053,
+    "crlf": 714,
+    "bare_lf": 0
+  },
+  {
+    "source_path": "packages/multi-workers/decision.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision.py",
+    "existed": true,
+    "sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+    "bytes": 99249,
+    "crlf": 0,
+    "bare_lf": 2298
+  },
+  {
+    "source_path": "packages/multi-workers/decision_backends.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_backends.py",
+    "existed": true,
+    "sha256": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60",
+    "bytes": 44577,
+    "crlf": 0,
+    "bare_lf": 1123
+  },
+  {
+    "source_path": "packages/multi-workers/decision_book.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_book.py",
+    "existed": true,
+    "sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+    "bytes": 54796,
+    "crlf": 0,
+    "bare_lf": 1338
+  },
+  {
+    "source_path": "packages/multi-workers/decision_context.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_context.py",
+    "existed": true,
+    "sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+    "bytes": 11949,
+    "crlf": 288,
+    "bare_lf": 0
+  },
+  {
+    "source_path": "packages/multi-workers/decision_dashboard.css",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_dashboard.css",
+    "existed": true,
+    "sha256": "e22b11dbea889c6a2a1e94af982a3e2c927426224fdcfcfd7c4bb7dcf25335cb",
+    "bytes": 12039,
+    "crlf": 0,
+    "bare_lf": 759
+  },
+  {
+    "source_path": "packages/multi-workers/decision_dashboard.html",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_dashboard.html",
+    "existed": true,
+    "sha256": "2d13c444a6f647a57986733d534708b003102b2a41acfb6d17f0cf7cba49a06d",
+    "bytes": 10635,
+    "crlf": 0,
+    "bare_lf": 197
+  },
+  {
+    "source_path": "packages/multi-workers/decision_dashboard.js",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_dashboard.js",
+    "existed": true,
+    "sha256": "824239b070284d724fdaf6573abbc77c1058f4fb19ee57b454781e54c7054c08",
+    "bytes": 152064,
+    "crlf": 0,
+    "bare_lf": 3370
+  },
+  {
+    "source_path": "packages/multi-workers/decision_history.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_history.py",
+    "existed": true,
+    "sha256": "0041e9c818a66074e9a0416e6dc3a4d79da9431cdd6328c884a25e5ea4ece162",
+    "bytes": 174025,
+    "crlf": 0,
+    "bare_lf": 4210
+  },
+  {
+    "source_path": "packages/multi-workers/decision_lifecycle.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_lifecycle.py",
+    "existed": true,
+    "sha256": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+    "bytes": 34814,
+    "crlf": 0,
+    "bare_lf": 951
+  },
+  {
+    "source_path": "packages/multi-workers/decision_monitor.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_monitor.py",
+    "existed": true,
+    "sha256": "60f2de703ecc43d0c16d9fa197b36f69212985e728579ab0756e048e167fd046",
+    "bytes": 124534,
+    "crlf": 0,
+    "bare_lf": 3102
+  },
+  {
+    "source_path": "packages/multi-workers/decision_playground.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_playground.py",
+    "existed": true,
+    "sha256": "1a409f1af8a9f0057ddcbc4412faefd8a414e150c26fcbccc3d14f72d1e71007",
+    "bytes": 79464,
+    "crlf": 0,
+    "bare_lf": 1916
+  },
+  {
+    "source_path": "packages/multi-workers/decision_points.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_points.py",
+    "existed": true,
+    "sha256": "a92bbdc2f12e6559c6e40bd571336655d190d84aa73268bbff4ee0dc8bdf1243",
+    "bytes": 247920,
+    "crlf": 5769,
+    "bare_lf": 0
+  },
+  {
+    "source_path": "packages/multi-workers/decision_policy.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_policy.py",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/decision_signoff_result.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_signoff_result.py",
+    "existed": true,
+    "sha256": "47b51fb75605a8dc015ab9a7bbaee6457f8b7f592e35af96b4ef20032042b1dc",
+    "bytes": 28848,
+    "crlf": 0,
+    "bare_lf": 763
+  },
+  {
+    "source_path": "packages/multi-workers/decision_task_state.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_task_state.py",
+    "existed": true,
+    "sha256": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+    "bytes": 2452,
+    "crlf": 0,
+    "bare_lf": 48
+  },
+  {
+    "source_path": "packages/multi-workers/decision_validity.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_validity.py",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/decision_wire.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_wire.py",
+    "existed": true,
+    "sha256": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+    "bytes": 73650,
+    "crlf": 0,
+    "bare_lf": 2077
+  },
+  {
+    "source_path": "packages/multi-workers/mw.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/mw.py",
+    "existed": true,
+    "sha256": "35fa4689101c69f6172c1565d99a834a25a3ade5dd3e151c924a8410b9b48757",
+    "bytes": 569942,
+    "crlf": 13043,
+    "bare_lf": 0
+  },
+  {
+    "source_path": "packages/multi-workers/mw_common.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/mw_common.py",
+    "existed": true,
+    "sha256": "80af680d21efed0dbb51182c3b693a81efe2368fc0fc1114465fdb259ff7daf0",
+    "bytes": 269301,
+    "crlf": 0,
+    "bare_lf": 6248
+  },
+  {
+    "source_path": "packages/multi-workers/scripts/build_decide_cases.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/scripts/build_decide_cases.py",
+    "existed": true,
+    "sha256": "60910516ccce4caac181f8fc20fb98432809ad2817e6141b3f2ae1a90f7117ed",
+    "bytes": 20556,
+    "crlf": 0,
+    "bare_lf": 475
+  },
+  {
+    "source_path": "packages/multi-workers/scripts/gen_decide_registry_ts.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/scripts/gen_decide_registry_ts.py",
+    "existed": true,
+    "sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+    "bytes": 11684,
+    "crlf": 0,
+    "bare_lf": 285
+  },
+  {
+    "source_path": "packages/multi-workers/test_decide_archive.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decide_archive.py",
+    "existed": true,
+    "sha256": "3d65c0e739b6e987434a8f032a238b13a22d2e586be1a4822149804a3f1ca71b",
+    "bytes": 31329,
+    "crlf": 0,
+    "bare_lf": 930
+  },
+  {
+    "source_path": "packages/multi-workers/test_decide_registry_contract.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decide_registry_contract.py",
+    "existed": true,
+    "sha256": "7564cfdcb2ad261beda987299c27008f57bc3561eb3348e841aeb676106b61cb",
+    "bytes": 19538,
+    "crlf": 0,
+    "bare_lf": 435
+  },
+  {
+    "source_path": "packages/multi-workers/test_decide_registry_ts_lock.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decide_registry_ts_lock.py",
+    "existed": true,
+    "sha256": "dc6332f140f06ce9d0ca494245c1500f2f2ee14ce584c3dcf4ad821872b2a92e",
+    "bytes": 2424,
+    "crlf": 0,
+    "bare_lf": 63
+  },
+  {
+    "source_path": "packages/multi-workers/test_decide_signoff.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decide_signoff.py",
+    "existed": true,
+    "sha256": "293b78c5b1e01e93b5fee6450f5dd1019c9eb9f7d2c04d1eae820aca00236cfb",
+    "bytes": 30024,
+    "crlf": 755,
+    "bare_lf": 0
+  },
+  {
+    "source_path": "packages/multi-workers/test_decision_context_contract.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_contract.py",
+    "existed": true,
+    "sha256": "ea6429088c285382736f634a3233b7c94659c2a381e60b0ad9380a0157b8e7cf",
+    "bytes": 35858,
+    "crlf": 0,
+    "bare_lf": 961
+  },
+  {
+    "source_path": "packages/multi-workers/test_decision_context_lifecycle.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_lifecycle.py",
+    "existed": true,
+    "sha256": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+    "bytes": 26028,
+    "crlf": 0,
+    "bare_lf": 715
+  },
+  {
+    "source_path": "packages/multi-workers/test_decision_context_workbench.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_workbench.py",
+    "existed": true,
+    "sha256": "8e3fddccf359f5493c1bdf46c6039df11576ec479e474bd98585e544f2cab215",
+    "bytes": 74040,
+    "crlf": 0,
+    "bare_lf": 1795
+  },
+  {
+    "source_path": "packages/multi-workers/test_decision_dashboard_playground.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_dashboard_playground.py",
+    "existed": true,
+    "sha256": "a100ae6aaa30472b0c5952e56f026dc0319b407b194c088d8c56defd775504ad",
+    "bytes": 74244,
+    "crlf": 0,
+    "bare_lf": 1731
+  },
+  {
+    "source_path": "packages/multi-workers/test_decision_history_feedback.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_history_feedback.py",
+    "existed": true,
+    "sha256": "8f6336b8862beaa763ac13a1d64df5098cb3f4b2f10e772de55f9d5f706b7303",
+    "bytes": 7450,
+    "crlf": 0,
+    "bare_lf": 151
+  },
+  {
+    "source_path": "packages/multi-workers/test_decision_monitor.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_monitor.py",
+    "existed": true,
+    "sha256": "7c901c31dc8e71040c256123f1bdf3d4e07a0cc0d05ce27fd8f14278cb12988c",
+    "bytes": 79452,
+    "crlf": 0,
+    "bare_lf": 1970
+  },
+  {
+    "source_path": "packages/multi-workers/test_decision_task_state.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_task_state.py",
+    "existed": true,
+    "sha256": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5",
+    "bytes": 13537,
+    "crlf": 0,
+    "bare_lf": 243
+  },
+  {
+    "source_path": "packages/multi-workers/test_dp_consolidation_cli.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_cli.py",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/test_dp_consolidation_concurrency.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_concurrency.py",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/test_dp_consolidation_gate_effects.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_gate_effects.py",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/test_dp_consolidation_history.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_history.py",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/test_dp_consolidation_materials.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_materials.py",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/test_dp_consolidation_recovery.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_recovery.py",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/test_dp_consolidation_registry.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_registry.py",
+    "existed": false
+  },
+  {
+    "source_path": "packages/multi-workers/test_dp_consolidation_signoff.py",
+    "implementation_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_signoff.py",
+    "existed": false
+  }
+]

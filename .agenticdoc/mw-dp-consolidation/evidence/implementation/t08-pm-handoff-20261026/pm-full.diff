@@ -1,0 +1,1605 @@
+--- a/packages/multi-workers/decision.py
++++ b/packages/multi-workers/decision.py
+@@ -47,6 +47,7 @@
+ from __future__ import annotations
+ 
+ import contextlib
++import copy
+ import datetime
+ import json
+ import os
+@@ -79,9 +80,11 @@
+     "QuestionSpec",
+     "QuestionType",
+     "ScoreSpec",
++    "BASIS_QUESTION_ID",
+     "REASON_BAD_RESPONSE",
+     "REASON_BUDGET_EXHAUSTED",
+     "REASON_CODES",
++    "REASON_INPUT_INCOMPLETE",
+     "REASON_DISABLED",
+     "REASON_ENTRY_UNAVAILABLE",
+     "REASON_RATE_LIMITED",
+@@ -137,6 +140,20 @@
+ # BackendOutcome block in the task card omits it because backends only judge a
+ # single request. It is therefore accepted from backends but never invented.
+ REASON_BUDGET_EXHAUSTED = "budget-exhausted"
++# A *request* whose own input is incomplete (missing/illegal material, role or
++# prepared basis) is refused before any POST. The value is not new to this
++# transport family: ``decision_backends.REASON_INPUT_INCOMPLETE`` already
++# classifies the legacy dynamic-enum defect with it and ``mw``/the archive carry
++# it as an escalated reason, so the prepared gate reuses that same frozen word
++# instead of inventing a second one.
++REASON_INPUT_INCOMPLETE = "input-incomplete"
++
++#: The prepared basis question id of one same-call request (design D012A): the
++#: entry keeps its own business question id, and this second ``choice`` question
++#: asks which PM-prepared basis item supports the answered choice. It is one
++#: request, not a second call: the answer pair is decoded together and a missing
++#: or mismatched basis refuses the decision instead of asking again.
++BASIS_QUESTION_ID = "basis_id"
+ 
+ REASON_CODES = frozenset(
+     {
+@@ -150,6 +167,38 @@
+         REASON_BOX_REQUIRES_IMAGE,
+         REASON_BUDGET_EXHAUSTED,
+     }
++)
++
++#: Reason vocabulary of one prepared-request result (``request_prepared``). It
++#: is the frozen transport set plus the input gate's own word; the generic
++#: ``decide`` response contract (:data:`REASON_CODES`) is deliberately left
++#: untouched so no consumer of the old dict sees a new value.
++_PREPARED_REASONS = REASON_CODES | frozenset({REASON_INPUT_INCOMPLETE})
++
++#: Frozen keys of one prepared-request result (``request_prepared``). The
++#: transport facts stay separate from the business decision: a replayed or
++#: refused request reports ``business_decisions=0`` even when real POSTs (and
++#: therefore ``transport_attempts``/``attempts``) happened.
++_PREPARED_RESULT_FIELDS = (
++    "dp",
++    "available",
++    "replayed",
++    "choice",
++    "basis_id",
++    "basis_text",
++    "basis_source",
++    "prepared_at",
++    "reason",
++    "issues",
++    "detail",
++    "answers",
++    "attempts",
++    "transport_attempts",
++    "business_decisions",
++    "transport",
++    "model",
++    "confidence_source",
++    "latency_ms",
+ )
+ 
+ #: Frozen question vocabulary (FIX-R: the constants are typed at the source so
+@@ -1336,6 +1385,42 @@
+         else "<key>"
+         for segment in text.split(".")
+     )
++
++
++# ---------------------------------------------------------------------------
++# Protocol module (single source: ``decision_points``) — lazy, optional.
++# ---------------------------------------------------------------------------
++
++#: The protocol module is imported lazily because ``decision_points`` imports
++#: this module (and raises :class:`DecisionInputError` through it); a module-level
++#: import would be circular. A missing/broken protocol module means no prepared
++#: request can be validated, which the transport reports as ``entry-unavailable``
++#: instead of sending unvalidated material.
++_PROTOCOL_MODULE = None
++_PROTOCOL_LOADED = False
++_PROTOCOL_IMPORT_ERROR = ""
++
++
++def _protocol_module():
++    """Lazily import the eight-entry protocol module once; ``None`` when absent."""
++    global _PROTOCOL_MODULE, _PROTOCOL_LOADED, _PROTOCOL_IMPORT_ERROR
++    if not _PROTOCOL_LOADED:
++        _PROTOCOL_LOADED = True
++        try:
++            import decision_points
++        except Exception as exc:  # noqa: BLE001 - reported as a refusal, never raised
++            _PROTOCOL_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
++        else:
++            _PROTOCOL_MODULE = decision_points
++    return _PROTOCOL_MODULE
++
++
++def _prepared_catalog(preparation: object) -> list:
++    """The prepared basis catalog of one already-validated preparation block."""
++    if not isinstance(preparation, Mapping):
++        return []
++    catalog = preparation.get("basis_catalog")
++    return list(catalog) if isinstance(catalog, list) else []
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -1636,6 +1721,18 @@
+         self._pinned_credential_snapshot = credential_snapshot
+         self.last_credential_source: str | None = None
+         self._injected_redactor: object | None = None
++        #: The scrubbed detail of the last ``_emit`` (a prepared request exposes
++        #: the concrete refusal reason; the frozen ``decide`` dict has no detail
++        #: key, so it is kept as an attribute instead of changing that contract).
++        self.last_detail: str = ""
++        #: The backend of the last resolved call, so a prepared request can read
++        #: the real POST count (``last_transport_attempts``) without the wire
++        #: module being enabled.
++        self._last_backend: DecisionBackend | None = None
++        #: Real POSTs of the last logical call, summed over its backend attempts
++        #: (``None`` = no backend reported a count; the client's attempt count is
++        #: then the only measurable transport count).
++        self._transport_attempts_total: int | None = None
+ 
+     # -- public API ---------------------------------------------------------
+ 
+@@ -1673,6 +1770,287 @@
+         with context:
+             return self._decide(state, questions, dp=dp)
+ 
++    # -- prepared same-call request (T08 / design D012A) --------------------
++
++    def request_prepared(
++        self,
++        dp: str,
++        material: object,
++        preparation: object,
++        *,
++        actor_role: object = None,
++        logical_id: str | None = None,
++        replay_check: Callable[[str, str], bool] | None = None,
++    ) -> dict:
++        """One same-call business choice plus PM-prepared basis selection.
++
++        Unlike :meth:`decide` (the generic transport face), this composes the
++        eight-entry protocol and the transport in the order the design fixes:
++
++        1. the **active identity** is resolved first, so a retired or unknown id
++           never reaches the replay lookup, the backend, the credential snapshot
++           or a POST (the refusal names the retired disposition, never an alias);
++        2. an optional caller-owned **replay lookup** runs before the model: when
++           it reports an existing decision for ``logical_id`` the request is
++           answered with ``replayed=True`` and zero POSTs (the transport never
++           owns a second ledger, so the store stays in the lifecycle layer);
++        3. the pure protocol gate validates role -> complete material -> prepared
++           basis (a prepared catalog item must reference a real material fact and
++           name a legal choice) before anything is sent;
++        4. the one request carries the entry's own business question **and** the
++           prepared basis question (``BASIS_QUESTION_ID``), so the model's choice
++           and its traceable reason are decided together - no second call asks
++           for a reason, and no free-form ``reason``/``rationale`` field is read;
++        5. the answered pair is decoded against the submitted contract (choice
++           enum, ``applies_to`` of the selected basis item, branch-level material
++           rules). Any mismatch is a blocking ``bad-response``: the business
++           decision count stays 0 and no default/first candidate is applied.
++
++        The complete projected material and the complete basis catalog are sent
++        as-is: the existing size gates refuse an over-budget request instead of
++        truncating the core evidence the decision depends on.
++
++        Counting is deliberately two-axis: ``attempts`` (client backend calls),
++        ``transport_attempts`` (real POSTs, retry-after retries included) and
++        ``business_decisions`` (1 only for one valid answered pair).
++
++        Returns the frozen :data:`_PREPARED_RESULT_FIELDS` mapping; this method
++        does not raise (a broken protocol module is an ``entry-unavailable``
++        refusal, not an exception).
++        """
++        start = self._clock()
++        protocol = _protocol_module()
++        if protocol is None:
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=REASON_ENTRY_UNAVAILABLE,
++                detail=(
++                    "decision protocol module unavailable"
++                    f" ({_PROTOCOL_IMPORT_ERROR or 'import failed'}); no request sent"
++                ),
++            )
++        # 1. Active identity first (retired ids are history, never aliases).
++        try:
++            protocol.require_active_dp(dp)
++        except DecisionInputError as exc:
++            return self._prepared(
++                start, dp=dp, reason=REASON_ENTRY_UNAVAILABLE, detail=str(exc)
++            )
++        # 2. Caller-owned replay lookup: a hit never spends a model call.
++        if logical_id and replay_check is not None:
++            try:
++                already_decided = bool(replay_check(dp, logical_id))
++            except Exception as exc:  # noqa: BLE001 - a broken lookup proves nothing
++                return self._prepared(
++                    start,
++                    dp=dp,
++                    reason=REASON_ENTRY_UNAVAILABLE,
++                    detail=(
++                        f"replay lookup failed ({type(exc).__name__}); refusing to send "
++                        "without a provable novelty check"
++                    ),
++                )
++            if already_decided:
++                return self._prepared(
++                    start,
++                    dp=dp,
++                    available=True,
++                    replayed=True,
++                    detail=(
++                        f"logical_id {logical_id!r} already has a recorded decision; "
++                        "no request sent"
++                    ),
++                )
++        # 3. Role -> complete material -> complete prepared basis (zero POST).
++        issues = tuple(
++            protocol.prepared_request_issues(
++                dp, material, preparation, actor_role=actor_role
++            )
++        )
++        if issues:
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=REASON_INPUT_INCOMPLETE,
++                issues=issues,
++                detail=f"{len(issues)} blocking material/preparation issue(s); no request sent",
++            )
++        # 4. The one question set: entry question + prepared basis question.
++        try:
++            import decision_backends  # type: ignore[import-not-found]  # sibling
++
++            questions = decision_backends.build_prepared_questions(
++                dp, material, preparation
++            )
++        except Exception as exc:  # noqa: BLE001 - rendering failure stays a refusal
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=REASON_ENTRY_UNAVAILABLE,
++                detail=(
++                    f"prepared question rendering failed ({type(exc).__name__}); "
++                    "no request sent"
++                ),
++            )
++        business_qids = [qid for qid in questions if qid != BASIS_QUESTION_ID]
++        if len(business_qids) != 1:  # pragma: no cover - registry contract holds
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=REASON_ENTRY_UNAVAILABLE,
++                detail=(
++                    f"{dp} declares {len(business_qids)} business questions; "
++                    "a prepared request needs exactly one"
++                ),
++            )
++        business_qid = business_qids[0]
++        catalog = _prepared_catalog(preparation)
++        state = {
++            "material": protocol.model_state_for(dp, material),
++            "preparation": {
++                "basis_catalog": copy.deepcopy(catalog),
++                "prepared_at": preparation["prepared_at"],  # type: ignore[index]
++            },
++        }
++        # 5. Exactly one transport call (the client owns retries/budget only).
++        response = self.decide(state, questions, dp=dp)
++        attempts = int(response.get("attempts") or 0)
++        transport_attempts = self._transport_attempts(attempts)
++        shared = {
++            "attempts": attempts,
++            "transport_attempts": transport_attempts,
++            "transport": response.get("transport"),
++            "model": response.get("model"),
++            "confidence_source": response.get("confidence_source")
++            or CONFIDENCE_SOURCE_UNKNOWN,
++            "latency_ms": response.get("latency_ms"),
++        }
++        if not response.get("available"):
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=response.get("reason"),
++                detail=self.last_detail
++                or f"transport unavailable: {response.get('reason')}",
++                **shared,
++            )
++        answers = response.get("answers") or {}
++        choice = (answers.get(business_qid) or {}).get("value")
++        basis_id = (answers.get(BASIS_QUESTION_ID) or {}).get("value")
++        answer_issues = tuple(
++            protocol.entry_choice_issues(dp, choice, material)
++        ) + tuple(protocol.basis_selection_issues(basis_id, catalog, choice))
++        if answer_issues:
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=REASON_BAD_RESPONSE,
++                issues=answer_issues,
++                detail=(
++                    "the answered choice/basis does not satisfy the entry contract; "
++                    "no default selection applied, no second call made"
++                ),
++                answers=answers,
++                **shared,
++            )
++        selected = next(
++            (
++                item
++                for item in catalog
++                if isinstance(item, Mapping) and item.get("id") == basis_id
++            ),
++            None,
++        )
++        return self._prepared(
++            start,
++            dp=dp,
++            available=True,
++            choice=str(choice),
++            basis_id=str(basis_id),
++            basis_text=str(selected.get("text")) if isinstance(selected, Mapping) else None,
++            basis_source=str(getattr(protocol, "BASIS_SOURCE", "pm-prepared")),
++            prepared_at=str(preparation["prepared_at"]),  # type: ignore[index]
++            answers=answers,
++            business_decisions=1,
++            **shared,
++        )
++
++    def _transport_attempts(self, attempts: int) -> int:
++        """Real POSTs of the last call, from the backend when it reports them.
++
++        ``attempts`` is the client's backend-call count. The timi backend also
++        counts the POSTs it issues itself (a ``retry-after`` retry adds a POST
++        without a second client attempt), and the client sums that counter over
++        its own retries, so the reported number stays the real POST count. A
++        caller-injected backend has no second layer, and its ``attempts`` is the
++        only measurable transport count.
++        """
++        if self._transport_attempts_total is not None:
++            return self._transport_attempts_total
++        return attempts
++
++    def _prepared(
++        self,
++        start: float,
++        *,
++        dp: str,
++        available: bool = False,
++        replayed: bool = False,
++        choice: str | None = None,
++        basis_id: str | None = None,
++        basis_text: str | None = None,
++        basis_source: str | None = None,
++        prepared_at: str | None = None,
++        reason: str | None = None,
++        issues: Sequence[tuple[str, str]] = (),
++        detail: object = "",
++        answers: Mapping | None = None,
++        attempts: int = 0,
++        transport_attempts: int = 0,
++        business_decisions: int = 0,
++        transport: str | None = None,
++        model: str | None = None,
++        confidence_source: str = CONFIDENCE_SOURCE_UNKNOWN,
++        latency_ms: int | None = None,
++    ) -> dict:
++        """Build one frozen :data:`_PREPARED_RESULT_FIELDS` mapping (never raises)."""
++        if reason is not None and reason not in _PREPARED_REASONS:
++            reason = REASON_UPSTREAM_ERROR
++        if available:
++            reason = None
++        latency = latency_ms
++        if latency is None:
++            latency = max(0, int(round((self._clock() - start) * 1000)))
++        result: dict[str, Any] = dict.fromkeys(_PREPARED_RESULT_FIELDS)
++        result.update(
++            {
++                "dp": dp,
++                "available": bool(available),
++                "replayed": bool(replayed),
++                "choice": choice,
++                "basis_id": basis_id,
++                "basis_text": basis_text,
++                "basis_source": basis_source,
++                "prepared_at": prepared_at,
++                "reason": reason,
++                "issues": [
++                    {"field": safe_path_text(path), "issue": _redact(str(text))}
++                    for path, text in issues
++                ],
++                "detail": _scrub_detail(detail),
++                "answers": dict(answers) if isinstance(answers, Mapping) else None,
++                "attempts": int(attempts),
++                "transport_attempts": int(transport_attempts),
++                "business_decisions": int(business_decisions),
++                "transport": _redact(str(transport)) if transport else None,
++                "model": _redact(str(model)) if model else None,
++                "confidence_source": confidence_source,
++                "latency_ms": int(latency),
++            }
++        )
++        return result
++
+     def _decide(
+         self,
+         state: DecisionState,
+@@ -1684,6 +2062,8 @@
+         start = self._clock()
+         transport = self._backend_name()
+         confidence_source = self._backend_confidence_source()
++        self._last_backend = None
++        self._transport_attempts_total = None
+ 
+         if not cfg.is_configured:
+             if cfg.config_error:
+@@ -1810,6 +2190,7 @@
+ 
+         transport = self._backend_name(backend)
+         confidence_source = self._backend_confidence_source(backend)
++        self._last_backend = backend
+         deadline = start + float(cfg.timeout_s)
+         attempts = 0
+         last_reason: str | None = None
+@@ -1834,6 +2215,9 @@
+             attempts += 1
+             with use_credential_snapshot(snapshot):
+                 outcome = self._call_backend(backend, state, questions, cfg)
++            reported = getattr(backend, "last_transport_attempts", None)
++            if isinstance(reported, int) and not isinstance(reported, bool) and reported >= 0:
++                self._transport_attempts_total = (self._transport_attempts_total or 0) + reported
+             if outcome.available:
+                 answers = self._normalize_answers(outcome.answers, questions)
+                 if answers is None:
+@@ -2093,6 +2477,7 @@
+         backend: DecisionBackend | None = None,
+     ) -> dict:
+         latency_ms = max(0, int(round((self._clock() - start) * 1000)))
++        self.last_detail = _scrub_detail(detail)
+         if available:
+             reason = None
+         elif reason not in REASON_CODES:
+--- a/packages/multi-workers/decision_backends.py
++++ b/packages/multi-workers/decision_backends.py
+@@ -59,6 +59,7 @@
+ _DECISION_IMPORT_ERROR = ""
+ try:  # pragma: no cover - exercised by whichever import path is available
+     from decision import (
++        BASIS_QUESTION_ID,
+         BackendOutcome,
+         CredentialSnapshot,
+         DecisionBackend,
+@@ -70,6 +71,8 @@
+ except ImportError as _decision_import_error:  # pragma: no cover - standalone import
+     DECISION_TYPES_LOCAL = True
+     _DECISION_IMPORT_ERROR = f"{type(_decision_import_error).__name__}: {_decision_import_error}"
++    #: Standalone tolerance mirror of ``decision.BASIS_QUESTION_ID``.
++    BASIS_QUESTION_ID = "basis_id"
+ 
+     class DecisionBackend(Protocol):
+         name: str
+@@ -762,6 +765,84 @@
+     return float(raw)
+ 
+ 
++#: Model-facing instruction of the prepared basis question. It states where the
++#: candidate texts come from (the PM preparation) so a selecting model never
++#: reports them as its own wording, and it forbids substituting a failure reason
++#: or a probability for the basis.
++PREPARED_BASIS_INSTRUCTIONS = (
++    "从 PM 已准备的依据中选择最符合所选业务结论的一项；"
++    "这些依据文字由 PM 预备（不是模型原文，也不是失败原因或概率）。"
++)
++
++
++def build_prepared_questions(dp_id: str, material: object, preparation: object) -> dict:
++    """The one same-call question set of a prepared request (design D012A).
++
++    Two ``choice`` questions are asked in **one** request:
++
++    1. the entry's own business question(s), straight from the protocol registry
++       (``decision_points.questions_map``) so the entry keeps its id, choices,
++       labels and instructions; a dynamic candidate source (dp-auto) is rendered
++       here from the submitted material as an explicit choice enum, because the
++       transport sends a nested ``{material, preparation}`` state and the legacy
++       ``dynamic_choices`` renderer reads top-level state keys;
++    2. ``BASIS_QUESTION_ID`` over the prepared basis catalog, whose criteria are
++       exactly the PM-prepared ``text`` of each item.
++
++    Only ids and prepared texts are rendered - ``material_refs``/``applies_to``
++    stay validation metadata, and no free-form reason field is added. A catalog
++    that cannot render is an error (the caller turns it into a refusal); this
++    builder never invents a candidate, a default or a truncated label.
++    """
++    questions = dict(_dpts.questions_map(dp_id))
++    for qid, spec in list(questions.items()):
++        source_key = spec.get("dynamic_choices") if isinstance(spec, Mapping) else None
++        if not isinstance(source_key, str):
++            continue
++        candidates = material.get(source_key) if isinstance(material, Mapping) else None
++        labels: dict[str, str] = {}
++        if isinstance(candidates, list):
++            for item in candidates:
++                if not isinstance(item, Mapping):
++                    continue
++                candidate_id = item.get("id")
++                label = item.get("label")
++                if isinstance(candidate_id, str) and isinstance(label, str):
++                    labels[candidate_id] = label
++        if not labels:
++            raise ValueError(
++                f"{dp_id}: dynamic candidate source {source_key!r} is not renderable"
++            )
++        converted = {key: value for key, value in spec.items() if key != "dynamic_choices"}
++        converted["choices"] = list(labels)
++        converted["labels"] = labels
++        questions[str(qid)] = converted
++
++    catalog = preparation.get("basis_catalog") if isinstance(preparation, Mapping) else None
++    if not isinstance(catalog, list) or not catalog:
++        raise ValueError(
++            f"{dp_id}: preparation.basis_catalog is required for the same-call basis selection"
++        )
++    basis_labels: dict[str, str] = {}
++    for item in catalog:
++        if not isinstance(item, Mapping):
++            continue
++        basis_item_id = item.get("id")
++        text = item.get("text")
++        if isinstance(basis_item_id, str) and isinstance(text, str):
++            basis_labels[basis_item_id] = text
++    if not basis_labels:
++        raise ValueError(f"{dp_id}: preparation.basis_catalog carries no usable item")
++    questions[BASIS_QUESTION_ID] = {
++        "id": BASIS_QUESTION_ID,
++        "type": "choice",
++        "instructions": PREPARED_BASIS_INSTRUCTIONS,
++        "choices": list(basis_labels),
++        "labels": basis_labels,
++    }
++    return questions
++
++
+ # ── Outcome helpers ─────────────────────────────────────────────────────────
+ 
+ def _elapsed_ms(start: float) -> int:
+@@ -798,6 +879,13 @@
+ 
+     name = DECISIONS_TRANSPORT
+     confidence_source = CONFIDENCE_SOURCE_API
++
++    def __init__(self) -> None:
++        #: Real POSTs issued by the most recent :meth:`decide` call, including
++        #: the backend's own ``retry-after`` retries. The client reads it so the
++        #: prepared result can count transport attempts separately from the one
++        #: business decision, even when the optional wire capture is off.
++        self.last_transport_attempts = 0
+ 
+     def endpoint(self, cfg: object) -> str:
+         return _timi_base_url(cfg) + DECISIONS_PATH
+@@ -966,6 +1054,7 @@
+         attempt = 0
+         while True:
+             attempt += 1
++            self.last_transport_attempts += 1
+             try:
+                 resp = _http_post(self.endpoint(cfg), self.headers(key), payload, timeout_s)
+             except TransportTimeout as exc:
+@@ -991,6 +1080,7 @@
+ 
+     def decide(self, state: object, questions: dict, cfg: object) -> "BackendOutcome":
+         start = time.monotonic()
++        self.last_transport_attempts = 0
+         if not getattr(cfg, "enabled", True):
+             return _outcome(start, False, REASON_DISABLED, False, None, "decision feature disabled")
+         box_ids = _box_questions(questions)
+@@ -1097,6 +1187,7 @@
+ 
+ __all__ = [
+     "ANSWERABLE_TYPES",
++    "BASIS_QUESTION_ID",
+     "BackendOutcome",
+     "BOX_REQUIRES_IMAGE_DETAIL",
+     "BOX_REQUIRES_IMAGE_REASON",
+@@ -1110,6 +1201,7 @@
+     "_DECISION_IMPORT_ERROR",
+     "HttpResponse",
+     "PROBE_TARGETS",
++    "PREPARED_BASIS_INSTRUCTIONS",
+     "TIMI_AUTH_FIELD",
+     "TIMI_AUTH_JSON",
+     "TIMI_BASE_URL",
+@@ -1117,6 +1209,7 @@
+     "TransportConnectionError",
+     "TransportTimeout",
+     "credential_status",
++    "build_prepared_questions",
+     "current_credential_snapshot",
+     "probe_matrix",
+     "resolve_timi_api_key",
+--- /dev/null
++++ b/packages/multi-workers/test_dp_consolidation_materials.py
+@@ -0,0 +1,977 @@
++"""test_dp_consolidation_materials.py — T08: the timi transport's same-call
++business choice + prepared-basis selection.
++
++Scope (isolated copy only, no network, no provider, no live object):
++
++- the one POST stays ``POST /v1/decisions`` with ``model=jev-latest`` and the
++  bare ``Authorization`` value, and the original retry/time budget, boundary
++  refusal (``box-requires-image``) and model-substitution refusal still hold;
++- one prepared request carries the entry's own business question AND a second
++  choice question over the PM-prepared basis catalog, so the model's choice and
++  its basis are decided in the *same* request (no second call for a reason, no
++  free-form ``reason``/``rationale`` field is ever read);
++- a missing answer, a basis outside the catalog, a basis that does not apply to
++  the answered choice, an out-of-bounds request or a branch-contract violation
++  keeps the business decision count at 0 and never falls back to a default
++  choice; the complete material/basis contract is never truncated (the budget
++  gate refuses instead);
++- the 25 retired ids are refused before any replay lookup, backend or POST, and
++  a caller-owned replay lookup hit issues zero requests;
++- transport attempts (real POSTs) and business decisions are counted
++  separately, and each refused entry names its concrete field issues.
++
++The fake HTTP seam is ``decision_backends._http_post`` (the module's only
++network boundary); ``urllib.request.urlopen`` is poisoned in the valid-path test
++so a request can never escape to a real endpoint.
++"""
++
++from __future__ import annotations
++
++import json
++import pathlib
++import sys
++
++import pytest
++
++PACKAGE_DIR = pathlib.Path(__file__).resolve().parent
++sys.path.insert(0, str(PACKAGE_DIR))  # noqa: E402
++
++import decision  # noqa: E402
++import decision_backends as backends  # noqa: E402
++import decision_points as dpts  # noqa: E402
++
++COPY_ROOT = PACKAGE_DIR.parents[1]  # .../implementation-worktree
++API_KEY = "t08-fixture-key-0123456789"
++BUSINESS_QIDS = {
++    "dp-w-type": "triage_type",
++    "dp-pm-steer": "checkpoint_action",
++    "dp-w-check-task": "reachability",
++    "dp-QG": "qg_verdict",
++    "dp-gate-approve": "gate_decision",
++    "dp-sign-key": "q-conclusion",
++    "dp-auto": "handling",
++    "dp-route": "entry",
++}
++PREPARED_AT = "2026-10-26T12:00:00+00:00"
++
++
++# ---------------------------------------------------------------------------
++# Fixtures: legal material/preparation per entry (shapes mirror the protocol
++# copy's own fixtures; no cross-test import).
++# ---------------------------------------------------------------------------
++
++
++def _auto_candidates() -> list[dict]:
++    ids = ("patch-now", "ask-user", "rollback")
++    return [
++        {
++            "id": candidate_id,
++            "label": f"candidate {candidate_id}",
++            "description": f"prepared handling {candidate_id}",
++            "consequence": f"what follows from {candidate_id}",
++            "risk": "bounded by the existing write face",
++            "conditions": "only inside the already granted budget",
++        }
++        for candidate_id in ids
++    ]
++
++
++def _material(dp_id: str) -> dict:
++    base = {
++        "dp-w-type": {
++            "task_goal": "ship the protocol entry",
++            "task_requirements": "eight entries only",
++            "task_deliverables": "registry + snapshot + tests",
++            "images_required": False,
++        },
++        "dp-pm-steer": {
++            "task_goal": "converge the task",
++            "task_requirements": "keep the goal",
++            "task_deliverables": "a real next action",
++            "pm_decision_background": "budget is tight, the main line is unchanged",
++        },
++        "dp-w-check-task": {
++            "task_goal": "finish the assigned slice",
++            "reachability_facts": "the write face is free and the budget is enough",
++            "completed": "read the files",
++            "remaining": "write the test",
++            "blockers": "none",
++            "constraints": "existing task budget only",
++        },
++        "dp-QG": {
++            "review_requirements": "all listed acceptance checks pass",
++            "review_evidence": ["cmd: python -m pytest"],
++            "review_findings": "no unresolved blocking finding",
++            "uncovered_scope": "live deployment is out of scope",
++        },
++        "dp-gate-approve": {
++            "gate_background": "stage close needs one decision",
++            "current_state": "required keys are signed, integration check is green",
++            "condition_evidence": ["evidence/close.md:1"],
++            "pm_note": {
++                "subject": "close stage S1",
++                "planned_action": "record the stage close only",
++                "basis": {
++                    "goal": "spec 1.1",
++                    "evidence": "evidence/close.md:1",
++                    "budget": "unchanged hard budget",
++                    "authority": "existing key authorization",
++                },
++            },
++        },
++        "dp-sign-key": {
++            "delivery_goal": "deliver the eight-entry protocol",
++            "actual_completion": "registry and snapshot are in place",
++            "verification_evidence": {"verified": [], "unverified": []},
++            "unfinished_impact": [],
++        },
++        "dp-auto": {
++            "question": "the worker hit a write-face conflict",
++            "background": {
++                "task_goal": "keep the task moving",
++                "current_state": "the conflicting file is claimed by another key",
++                "tried": "asked the other window, no answer yet",
++                "unknowns": "whether the other claim is still live",
++                "constraints": "no new write permission is available",
++            },
++            "handling_options": _auto_candidates(),
++        },
++        "dp-route": {
++            "decision_actor": "PM",
++            "decision_object": "the next step of this task",
++            "question": "which entry owns this temporary question",
++        },
++    }
++    return json.loads(json.dumps(base[dp_id]))
++
++
++def _preparation(dp_id: str, material: dict, *, applies_to: object = "all", ref: str | None = None) -> dict:
++    legal = list(dpts.resolve_entry_choices(dp_id, material))
++    targets = legal if applies_to == "all" else list(applies_to)
++    first_ref = ref if ref is not None else next(iter(material))
++    return {
++        "basis_catalog": [
++            {
++                "id": "b-primary",
++                "text": "PM-prepared reason drawn from the submitted material",
++                "material_refs": [first_ref],
++                "applies_to": targets,
++            },
++            {
++                "id": "b-secondary",
++                "text": "PM-prepared alternative reason for another choice",
++                "material_refs": [first_ref],
++                "applies_to": targets[-1:],
++            },
++        ],
++        "prepared_at": PREPARED_AT,
++    }
++
++
++def _legal_choice(dp_id: str, material: dict) -> str:
++    return dpts.resolve_entry_choices(dp_id, material)[0]
++
++
++# ---------------------------------------------------------------------------
++# Fake HTTP: the only network seam of the copy.
++# ---------------------------------------------------------------------------
++
++
++class FakeHttp:
++    def __init__(self, responder):
++        self.responder = responder
++        self.calls: list[dict] = []
++
++    def __call__(self, url, headers, payload, timeout_s):
++        self.calls.append(
++            {
++                "url": url,
++                "headers": dict(headers),
++                "payload": json.loads(json.dumps(payload)),
++                "timeout_s": timeout_s,
++            }
++        )
++        return self.responder(len(self.calls), url, headers, payload)
++
++
++@pytest.fixture
++def http(monkeypatch):
++    def install(responder):
++        fake = FakeHttp(responder)
++        monkeypatch.setattr(backends, "_http_post", fake)
++        return fake
++
++    return install
++
++
++def _body(dp_id: str, answers: dict, *, model: str = "jev-latest", extra: dict | None = None) -> backends.HttpResponse:
++    payload = {"model": model, "answers": answers, "usage": {"input_tokens": 3, "output_tokens": 4}}
++    if extra:
++        payload.update(extra)
++    return backends.HttpResponse(200, "application/json", json.dumps(payload))
++
++
++def _choice_answer(choice: object, confidence: float = 0.9) -> dict:
++    return {"type": "choice", "choice": choice, "confidence": confidence}
++
++
++def _legal_answers(dp_id: str, material: dict) -> dict:
++    return {
++        BUSINESS_QIDS[dp_id]: _choice_answer(_legal_choice(dp_id, material)),
++        "basis_id": _choice_answer("b-primary"),
++    }
++
++
++def _ok_responder(dp_id: str, material: dict, **kwargs):
++    return lambda *_args: _body(dp_id, _legal_answers(dp_id, material), **kwargs)
++
++
++def _make_client(tmp_path: pathlib.Path, monkeypatch, **overrides) -> decision.DecisionClient:
++    monkeypatch.delenv("TIMI_API_KEY", raising=False)
++    cfg = decision.DecisionConfig(
++        enabled=True,
++        transport="timi-decisions",
++        model="jev-latest",
++        project_root=tmp_path,
++        evidence_path=tmp_path / "triage-decisions.jsonl",
++        backoff_base_s=0.0,
++        **overrides,
++    )
++    cfg.api_key = API_KEY
++    return decision.DecisionClient(cfg, sleep=lambda _seconds: None)
++
++
++# ---------------------------------------------------------------------------
++# 1. The isolated copy and the single transport seam.
++# ---------------------------------------------------------------------------
++
++
++def test_imports_and_http_seam_bind_the_isolated_copy() -> None:
++    for module in (decision, backends, dpts):
++        assert pathlib.Path(module.__file__).resolve().parent == PACKAGE_DIR, module.__file__
++        assert COPY_ROOT in pathlib.Path(module.__file__).resolve().parents, module.__file__
++    # The transport is one POST to the documented path and nothing else.
++    assert backends.TIMI_BASE_URL.endswith("/llmproxy")
++    assert backends.DECISIONS_PATH == "/v1/decisions"
++    assert backends.DEFAULT_MODEL == "jev-latest"
++    assert backends.TimiDecisionsBackend.name == "timi-decisions"
++
++
++# ---------------------------------------------------------------------------
++# 2. Every active entry: one same-call business choice + basis selection.
++# ---------------------------------------------------------------------------
++
++
++@pytest.mark.parametrize("dp_id", dpts.ACTIVE_DP_IDS)
++def test_each_entry_sends_one_same_call_choice_and_basis(
++    dp_id: str, tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    fake = http(_ok_responder(dp_id, material))
++    client = _make_client(tmp_path, monkeypatch)
++
++    def forbidden_urlopen(*_args, **_kwargs):
++        raise AssertionError("no real HTTP may leave the transport")
++
++    monkeypatch.setattr("urllib.request.urlopen", forbidden_urlopen)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is True, result
++    assert result["replayed"] is False
++    assert result["business_decisions"] == 1
++    assert result["attempts"] == 1
++    assert result["transport_attempts"] == 1
++    assert result["choice"] == _legal_choice(dp_id, material)
++    assert result["basis_id"] == "b-primary"
++    assert result["basis_text"] == "PM-prepared reason drawn from the submitted material"
++    assert result["basis_source"] == dpts.BASIS_SOURCE == "pm-prepared"
++    assert result["prepared_at"] == PREPARED_AT
++    assert result["reason"] is None
++    assert result["issues"] == []
++    assert len(fake.calls) == 1
++
++    call = fake.calls[0]
++    assert call["url"].endswith("/v1/decisions"), call["url"]
++    assert call["headers"]["Authorization"] == API_KEY  # bare key, no Bearer
++    assert "Bearer" not in call["headers"]["Authorization"]
++    assert call["payload"]["model"] == "jev-latest"
++
++    questions = call["payload"]["questions"]
++    business_qid = BUSINESS_QIDS[dp_id]
++    assert set(questions) == {business_qid, "basis_id"}
++    assert questions[business_qid]["type"] == "choice"
++    assert set(questions[business_qid]["criteria"]) == set(
++        dpts.resolve_entry_choices(dp_id, material)
++    )
++    basis_question = questions["basis_id"]
++    assert basis_question["type"] == "choice"
++    assert set(basis_question["criteria"]) == {"b-primary", "b-secondary"}
++    assert basis_question["criteria"]["b-primary"] == (
++        "PM-prepared reason drawn from the submitted material"
++    )
++
++    state = call["payload"]["state"]
++    assert set(state) == {"material", "preparation"}
++    # Preparation stays a separate input and carries no material/meta/context.
++    assert set(state["preparation"]) == set(dpts.PREPARATION_KEYS)
++    assert state["preparation"]["prepared_at"] == PREPARED_AT
++    # The business material is the full allowlist projection, not a summary.
++    assert state["material"] == dpts.model_state_for(dp_id, material)
++    # Local identity/association never reaches the model.
++    wire = json.dumps(call["payload"], ensure_ascii=False)
++    for local_only in ("actor_role", "logical_id", "task_key", "trigger_id", "schema_version"):
++        assert local_only not in wire
++    # The credential is only in the Authorization header, never in the body or
++    # the client's evidence line.
++    assert API_KEY not in wire
++    assert API_KEY not in json.dumps(result, ensure_ascii=False)
++    evidence = tmp_path / "triage-decisions.jsonl"
++    assert evidence.is_file()
++    assert API_KEY not in evidence.read_text(encoding="utf-8")
++
++
++@pytest.mark.parametrize("dp_id", dpts.ACTIVE_DP_IDS)
++def test_invented_choice_or_out_of_catalog_basis_is_refused(
++    dp_id: str, tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    client = _make_client(tmp_path, monkeypatch)
++
++    invented_choice = http(
++        lambda *_args: _body(
++            dp_id,
++            {
++                BUSINESS_QIDS[dp_id]: _choice_answer("definitely-not-a-choice"),
++                "basis_id": _choice_answer("b-primary"),
++            },
++        )
++    )
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++    assert result["available"] is False
++    assert result["reason"] == "bad-response"
++    assert result["business_decisions"] == 0
++    assert result["choice"] is None
++    assert len(invented_choice.calls) == 1
++
++    invented_basis = http(
++        lambda *_args: _body(
++            dp_id,
++            {
++                BUSINESS_QIDS[dp_id]: _choice_answer(_legal_choice(dp_id, material)),
++                "basis_id": _choice_answer("b-invented"),
++            },
++        )
++    )
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++    assert result["available"] is False
++    assert result["reason"] == "bad-response"
++    assert result["business_decisions"] == 0
++    assert result["basis_id"] is None
++    assert len(invented_basis.calls) == 1
++
++
++# ---------------------------------------------------------------------------
++# 3. Missing answer: no default, no second reason call.
++# ---------------------------------------------------------------------------
++
++
++def test_missing_basis_answer_is_refused_without_default_or_second_call(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-w-type"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    fake = http(
++        lambda *_args: _body(
++            dp_id, {BUSINESS_QIDS[dp_id]: _choice_answer(_legal_choice(dp_id, material))}
++        )
++    )
++    client = _make_client(tmp_path, monkeypatch)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is False
++    assert result["reason"] == "bad-response"
++    assert result["choice"] is None
++    assert result["basis_id"] is None
++    assert result["business_decisions"] == 0
++    # Exactly one request: a missing reason never triggers a second "explain it"
++    # call, and the failed answer is kept (no default first choice is applied).
++    assert result["attempts"] == 1
++    assert result["transport_attempts"] == 1
++    assert len(fake.calls) == 1
++    assert "basis_id" in result["detail"]
++
++
++def test_free_form_reason_fields_are_never_read_as_the_basis(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-QG"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    client = _make_client(tmp_path, monkeypatch)
++
++    answerless = http(
++        lambda *_args: _body(
++            dp_id,
++            {BUSINESS_QIDS[dp_id]: _choice_answer("pass")},
++            extra={"reason": "the model felt confident", "rationale": "free prose"},
++        )
++    )
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++    assert result["available"] is False
++    assert result["basis_text"] is None
++    assert result["business_decisions"] == 0
++    assert len(answerless.calls) == 1
++
++    with_free_text = http(
++        lambda *_args: _body(
++            dp_id,
++            {
++                BUSINESS_QIDS[dp_id]: _choice_answer("pass"),
++                "basis_id": _choice_answer("b-primary"),
++            },
++            extra={"reason": "free prose must not become the basis"},
++        )
++    )
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++    assert result["available"] is True
++    assert result["basis_id"] == "b-primary"
++    assert result["basis_text"] == "PM-prepared reason drawn from the submitted material"
++    assert "free prose" not in json.dumps(result, ensure_ascii=False)
++    assert len(with_free_text.calls) == 1
++
++
++# ---------------------------------------------------------------------------
++# 4. Basis applicability and preparation references.
++# ---------------------------------------------------------------------------
++
++
++def test_basis_not_applicable_to_the_answered_choice_is_refused(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-gate-approve"
++    material = _material(dp_id)
++    legal = list(dpts.resolve_entry_choices(dp_id, material))
++    # Only the *other* choices are covered by the prepared basis item.
++    preparation = {
++        "basis_catalog": [
++            {
++                "id": "b-primary",
++                "text": "PM-prepared reason for a different choice",
++                "material_refs": ["gate_background"],
++                "applies_to": legal[1:],
++            }
++        ],
++        "prepared_at": PREPARED_AT,
++    }
++    choice = legal[0]
++    fake = http(
++        lambda *_args: _body(
++            dp_id,
++            {
++                BUSINESS_QIDS[dp_id]: _choice_answer(choice),
++                "basis_id": _choice_answer("b-primary"),
++            },
++        )
++    )
++    client = _make_client(tmp_path, monkeypatch)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is False
++    assert result["reason"] == "bad-response"
++    assert result["business_decisions"] == 0
++    assert result["choice"] is None
++    assert [issue["field"] for issue in result["issues"]] == ["basis_id"]
++    assert "does not apply" in result["issues"][0]["issue"]
++    assert len(fake.calls) == 1
++
++
++def test_catalog_referencing_absent_material_is_refused_before_any_request(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-w-type"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material, ref="not-a-material-fact")
++    fake = http(_ok_responder(dp_id, material))
++    client = _make_client(tmp_path, monkeypatch)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is False
++    assert result["reason"] == "input-incomplete"
++    assert result["business_decisions"] == 0
++    assert result["attempts"] == 0
++    assert result["transport_attempts"] == 0
++    assert fake.calls == []
++    assert any(
++        "does not reference a fact present in this material" in issue["issue"]
++        for issue in result["issues"]
++    ), result["issues"]
++
++
++@pytest.mark.parametrize("preparation", [None, {}, {"basis_catalog": [], "prepared_at": PREPARED_AT}])
++def test_missing_or_empty_catalog_blocks_the_entry_with_zero_request(
++    preparation: object, tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-route"
++    material = _material(dp_id)
++    fake = http(_ok_responder(dp_id, material))
++    client = _make_client(tmp_path, monkeypatch)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is False
++    assert result["reason"] == "input-incomplete"
++    assert result["business_decisions"] == 0
++    assert result["transport_attempts"] == 0
++    assert fake.calls == []
++
++
++# ---------------------------------------------------------------------------
++# 5. Out of bounds: refused, never truncated.
++# ---------------------------------------------------------------------------
++
++
++def test_oversized_request_is_refused_without_truncation_and_zero_post(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-w-type"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    fake = http(_ok_responder(dp_id, material))
++    client = _make_client(tmp_path, monkeypatch, max_state_bytes=64)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is False
++    assert result["reason"] == "budget-exhausted"
++    assert result["business_decisions"] == 0
++    assert result["transport_attempts"] == 0
++    assert fake.calls == []
++
++
++def test_long_core_material_is_sent_complete(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-w-type"
++    material = _material(dp_id)
++    long_requirement = "R" * 2000
++    material["task_requirements"] = long_requirement
++    preparation = _preparation(dp_id, material)
++    fake = http(_ok_responder(dp_id, material))
++    client = _make_client(tmp_path, monkeypatch)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is True
++    sent = fake.calls[0]["payload"]["state"]["material"]["task_requirements"]
++    assert sent == long_requirement
++    assert len(sent) == 2000
++    assert len(fake.calls) == 1
++
++
++@pytest.mark.parametrize("dp_id", dpts.ACTIVE_DP_IDS)
++def test_every_legal_choice_of_every_entry_is_accepted_in_one_same_call(
++    dp_id: str, tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    """All shipped choices (VC-004/VC-040/VC-042 baseline) through the transport.
++
++    Each iteration prepares a basis item that applies to that one choice, so an
++    accepted answer proves the same-call pair and not a default. The selection
++    still produces no action: the result carries decision facts plus the frozen
++    transport counters only, never an executed/released/settled field.
++    """
++    for choice in dpts.resolve_entry_choices(dp_id, _material(dp_id)):
++        material = _material(dp_id)
++        if dp_id == "dp-w-check-task" and choice == "investigate":
++            material["investigation"] = {
++                "unknown": "whether the claim is still live",
++                "evidence_source": "the claim file under the project lock",
++                "budget": "the current task budget only",
++                "stop_condition": "the claim owner answers or the budget ends",
++            }
++        if dp_id == "dp-QG" and choice == "reopen":
++            material["basis_issue"] = "the review requirement itself is wrong"
++        preparation = {
++            "basis_catalog": [
++                {
++                    "id": f"b-{choice}",
++                    "text": f"PM-prepared reason for {choice}",
++                    "material_refs": [next(iter(material))],
++                    "applies_to": [choice],
++                }
++            ],
++            "prepared_at": PREPARED_AT,
++        }
++        fake = http(
++            lambda *_args, _choice=choice: _body(
++                dp_id,
++                {
++                    BUSINESS_QIDS[dp_id]: _choice_answer(_choice),
++                    "basis_id": _choice_answer(f"b-{_choice}"),
++                },
++            )
++        )
++        client = _make_client(tmp_path, monkeypatch)
++
++        result = client.request_prepared(
++            dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++        )
++
++        assert result["available"] is True, (dp_id, choice, result)
++        assert result["choice"] == choice
++        assert result["basis_id"] == f"b-{choice}"
++        assert result["business_decisions"] == 1
++        assert result["transport_attempts"] == 1
++        assert len(fake.calls) == 1
++        assert set(result) == set(decision._PREPARED_RESULT_FIELDS)
++        assert not {"action", "released", "executed", "settled", "done"} & set(result)
++
++
++def test_sign_key_keeps_real_empty_arrays_and_refuses_null(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    """AC-051 at the transport gate: ``[]`` is material, null/missing is not."""
++    dp_id = "dp-sign-key"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    fake = http(_ok_responder(dp_id, material))
++    client = _make_client(tmp_path, monkeypatch)
++
++    accepted = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++    assert accepted["available"] is True
++    assert accepted["business_decisions"] == 1
++    assert len(fake.calls) == 1
++
++    for path, nulled in (
++        ("verification_evidence.verified", {"verified": None, "unverified": []}),
++        ("verification_evidence.unverified", {"verified": [], "unverified": None}),
++    ):
++        broken = _material(dp_id)
++        broken["verification_evidence"] = nulled
++        refused = client.request_prepared(
++            dp_id, broken, _preparation(dp_id, broken), actor_role=dpts.ENTRY_ROLES[dp_id]
++        )
++        assert refused["available"] is False
++        assert refused["reason"] == "input-incomplete"
++        assert refused["business_decisions"] == 0
++        assert any(issue["field"] == path for issue in refused["issues"])
++
++    missing = _material(dp_id)
++    missing.pop("unfinished_impact")
++    refused = client.request_prepared(
++        dp_id, missing, _preparation(dp_id, missing), actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++    assert refused["reason"] == "input-incomplete"
++    assert refused["transport_attempts"] == 0
++    assert len(fake.calls) == 1  # only the one accepted request above
++
++
++# ---------------------------------------------------------------------------
++# 6. Retired ids and replay: zero requests, zero business decisions.
++# ---------------------------------------------------------------------------
++
++
++RETIRED_25 = tuple(record.id for record in dpts.RETIRED_DP_REGISTRY)
++
++
++def test_retired_directory_has_the_twenty_five_old_ids() -> None:
++    assert len(RETIRED_25) == 25
++    assert set(RETIRED_25) == set(dpts.RETIRED_DP_IDS)
++
++
++@pytest.mark.parametrize("old_id", RETIRED_25)
++def test_every_retired_id_is_refused_before_any_request(
++    old_id: str, tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    material = _material("dp-w-type")
++    preparation = _preparation("dp-w-type", material)
++    fake = http(_ok_responder("dp-w-type", material))
++    client = _make_client(tmp_path, monkeypatch)
++
++    result = client.request_prepared(
++        old_id, material, preparation, actor_role="pm"
++    )
++
++    assert result["available"] is False
++    assert result["reason"] == "entry-unavailable"
++    assert result["business_decisions"] == 0
++    assert result["attempts"] == 0
++    assert result["transport_attempts"] == 0
++    assert result["choice"] is None
++    assert result["basis_id"] is None
++    assert "retired" in result["detail"]
++    assert fake.calls == []
++
++
++def test_retired_ids_are_counted_as_zero_model_and_business_calls(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    material = _material("dp-w-type")
++    preparation = _preparation("dp-w-type", material)
++    fake = http(_ok_responder("dp-w-type", material))
++    client = _make_client(tmp_path, monkeypatch)
++
++    results = [
++        client.request_prepared(old_id, material, preparation, actor_role="pm")
++        for old_id in RETIRED_25
++    ]
++
++    assert len(results) == 25
++    assert all(result["reason"] == "entry-unavailable" for result in results)
++    assert sum(result["business_decisions"] for result in results) == 0
++    assert sum(result["transport_attempts"] for result in results) == 0
++    assert fake.calls == []
++
++
++def test_replay_lookup_hit_issues_no_request(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-w-type"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    fake = http(_ok_responder(dp_id, material))
++    client = _make_client(tmp_path, monkeypatch)
++    seen: list[tuple[str, str]] = []
++
++    def replay_hit(request_dp: str, logical_id: str) -> bool:
++        seen.append((request_dp, logical_id))
++        return True
++
++    result = client.request_prepared(
++        dp_id,
++        material,
++        preparation,
++        actor_role=dpts.ENTRY_ROLES[dp_id],
++        logical_id="t08-replay",
++        replay_check=replay_hit,
++    )
++
++    assert seen == [(dp_id, "t08-replay")]
++    assert result["replayed"] is True
++    assert result["business_decisions"] == 0
++    assert result["attempts"] == 0
++    assert result["transport_attempts"] == 0
++    assert fake.calls == []
++
++
++def test_replay_lookup_miss_proceeds_with_one_request(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-w-type"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    fake = http(_ok_responder(dp_id, material))
++    client = _make_client(tmp_path, monkeypatch)
++
++    result = client.request_prepared(
++        dp_id,
++        material,
++        preparation,
++        actor_role=dpts.ENTRY_ROLES[dp_id],
++        logical_id="t08-fresh",
++        replay_check=lambda _dp, _logical: False,
++    )
++
++    assert result["replayed"] is False
++    assert result["business_decisions"] == 1
++    assert len(fake.calls) == 1
++
++
++# ---------------------------------------------------------------------------
++# 7. Preserved transport contract: no model switch, retries, bare key, box.
++# ---------------------------------------------------------------------------
++
++
++def test_foreign_model_response_is_refused_without_fallback(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-w-type"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    fake = http(
++        lambda *_args: _body(
++            dp_id, _legal_answers(dp_id, material), model="some-other-model"
++        )
++    )
++    client = _make_client(tmp_path, monkeypatch)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is False
++    assert result["reason"] == "bad-response"
++    assert result["business_decisions"] == 0
++    assert len(fake.calls) == 1
++
++
++def test_retry_budget_and_bare_authorization_are_preserved(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-w-type"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    answers = _legal_answers(dp_id, material)
++
++    def responder(index, *_args):
++        if index == 1:
++            return backends.HttpResponse(503, "text/plain", "service unavailable")
++        return _body(dp_id, answers)
++
++    fake = http(responder)
++    client = _make_client(tmp_path, monkeypatch, max_retries=1)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is True
++    assert result["business_decisions"] == 1
++    assert result["attempts"] == 2
++    assert result["transport_attempts"] == 2
++    assert len(fake.calls) == 2
++    for call in fake.calls:
++        assert call["headers"]["Authorization"] == API_KEY
++        assert call["payload"]["model"] == "jev-latest"
++        assert call["url"].endswith("/v1/decisions")
++
++
++def test_box_question_is_still_refused_with_zero_http(tmp_path: pathlib.Path, monkeypatch, http) -> None:
++    fake = http(lambda *_args: pytest.fail("box must never reach HTTP"))
++    monkeypatch.delenv("TIMI_API_KEY", raising=False)
++    cfg = decision.DecisionConfig(enabled=True, project_root=tmp_path)
++    cfg.api_key = API_KEY
++
++    outcome = backends.TimiDecisionsBackend().decide(
++        "state", {"q": {"type": "box"}}, cfg
++    )
++
++    assert outcome.available is False
++    assert outcome.reason == "box-requires-image"
++    assert fake.calls == []
++
++
++# ---------------------------------------------------------------------------
++# 8. Role and branch contracts: refused before/after the one request.
++# ---------------------------------------------------------------------------
++
++
++@pytest.mark.parametrize("role", [None, "", "agent", "human"])
++def test_missing_or_non_eligible_role_blocks_with_zero_request(
++    role: object, tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-w-check-task"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    fake = http(_ok_responder(dp_id, material))
++    client = _make_client(tmp_path, monkeypatch)
++
++    result = client.request_prepared(dp_id, material, preparation, actor_role=role)
++
++    assert result["available"] is False
++    assert result["reason"] == "input-incomplete"
++    assert result["business_decisions"] == 0
++    assert fake.calls == []
++    assert [issue["field"] for issue in result["issues"]] == ["actor_role"]
++
++
++def test_branch_contract_violation_after_the_answer_is_refused(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-QG"
++    material = _material(dp_id)  # no `basis_issue`: reopen is not legal here
++    preparation = _preparation(dp_id, material)
++    fake = http(
++        lambda *_args: _body(
++            dp_id,
++            {
++                BUSINESS_QIDS[dp_id]: _choice_answer("reopen"),
++                "basis_id": _choice_answer("b-primary"),
++            },
++        )
++    )
++    client = _make_client(tmp_path, monkeypatch)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is False
++    assert result["reason"] == "bad-response"
++    assert result["business_decisions"] == 0
++    assert result["choice"] is None
++    assert any(issue["field"] == "basis_issue" for issue in result["issues"])
++    assert len(fake.calls) == 1
++
++
++# ---------------------------------------------------------------------------
++# 9. Attempt vs business decision: two separate counters.
++# ---------------------------------------------------------------------------
++
++
++def test_attempt_and_business_decision_counters_are_separate(
++    tmp_path: pathlib.Path, monkeypatch, http
++) -> None:
++    dp_id = "dp-route"
++    material = _material(dp_id)
++    preparation = _preparation(dp_id, material)
++    answers = _legal_answers(dp_id, material)
++
++    def responder(index, *_args):
++        if index < 3:
++            return backends.HttpResponse(503, "text/plain", "service unavailable")
++        return _body(dp_id, answers)
++
++    fake = http(responder)
++    client = _make_client(tmp_path, monkeypatch, max_retries=2)
++
++    result = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++
++    assert result["available"] is True
++    assert result["attempts"] == 3
++    assert result["transport_attempts"] == 3
++    assert result["business_decisions"] == 1
++    assert len(fake.calls) == 3
++
++    failed = http(lambda *_args: backends.HttpResponse(503, "text/plain", "down"))
++    client = _make_client(tmp_path, monkeypatch, max_retries=1)
++    refused = client.request_prepared(
++        dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
++    )
++    assert refused["available"] is False
++    assert refused["attempts"] == 2
++    assert refused["transport_attempts"] == 2
++    assert refused["business_decisions"] == 0
++    assert len(failed.calls) == 2

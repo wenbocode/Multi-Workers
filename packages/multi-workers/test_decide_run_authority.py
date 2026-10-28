@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import sys
 
@@ -37,6 +38,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent))  # noqa: E402
 
 import decision  # noqa: E402
+import decision_backends  # noqa: E402
 import decision_points as dpts  # noqa: E402
 import mw  # noqa: E402
 
@@ -71,10 +73,31 @@ AUTHORITY_KEYS = ("decision_id", "mode", "acted", "escalated_reason", "state_dig
 # ---------------------------------------------------------------------------
 
 
+def _credential_env_names() -> tuple[str, ...]:
+    """The named credentials plus every name the discovery rule would pick up.
+
+    ``decision._credential_values`` treats any ``*_API_KEY`` / ``*_TOKEN`` /
+    ``*_KEY`` / ``*_SECRET`` / ``*_PASSWORD`` variable as a secret, so leaving
+    one of those set would make the known-secret set depend on the developer's
+    shell. The fixture removes them all, not just the five named ones.
+    """
+    names = set(CRED_ENV_VARS)
+    names.update(
+        name for name in os.environ if name.upper().endswith(decision._CRED_ENV_SUFFIXES)
+    )
+    return tuple(sorted(names))
+
+
 @pytest.fixture(autouse=True)
-def _hermetic(monkeypatch: pytest.MonkeyPatch):
-    for name in CRED_ENV_VARS:
+def _hermetic(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path):
+    for name in _credential_env_names():
         monkeypatch.delenv(name, raising=False)
+    # Credential *discovery* (wire capture and the book gate) resolves the timi
+    # chain through `decision_backends._auth_json_path()`; `mw decide run` must
+    # never read the developer's real `~/.pi/agent/auth.json` (T05f N3).
+    monkeypatch.setattr(
+        decision_backends, "_auth_json_path", lambda: tmp_path / "no-auth.json"
+    )
     dpts.clear_points_config_cache()
     yield
     dpts.clear_points_config_cache()
@@ -133,30 +156,30 @@ def _request_file(project: pathlib.Path, payload: dict) -> pathlib.Path:
 
 
 def _dp3_state(**overrides) -> dict:
-    """A complete dp3 state (D6 Q1.1 required fields + FIX-I candidates)."""
+    """A complete dp3 material (the approved question + background + options)."""
     state: dict = {
         "schema_version": 2,
         "decision_point": DP3,
+        "questions_version": dpts.get_decision_point(DP3).questions_version,
         "key": "k-1",
-        "phase": "TASKS",
-        "task_type": "coding",
-        "risk": "mid",
-        "risk_source": "machine",
-        "authority_tier": "P2",
-        "task_summary": "worker asks where the decide-points table lives",
-        "ambiguity": {"kind": "fact", "question": "which file holds the decide points?"},
-        "local_candidates": [{"id": "c1", "label": ".mw/decide-points.json"}],
+        "question": "which file holds the decide-points table?",
+        "background": {
+            "task_goal": "answer one clarifying question for the worker",
+            "current_state": "the worker reports two candidate files",
+            "decision_reason": "the next edit depends on the authoritative file",
+            "constraints_impact": "each candidate changes which file is edited next",
+        },
+        "handling_options": [
+            {"id": "c1", "label": ".mw/decide-points.json", "description": "the config table"},
+            {"id": "c2", "label": "decide_registry.json", "description": "the registry"},
+        ],
     }
     state.update(overrides)
     return state
 
 
 def _dp3_answers() -> dict:
-    return {
-        "answer_kind": {"value": "fact", "confidence": 0.9},
-        "answerable": {"value": 0.9},
-        "candidate": {"value": "c1", "confidence": 0.9},
-    }
+    return {"handling": {"value": "c1", "confidence": 0.9}}
 
 def _ok(answers: dict, latency_ms: int = 3) -> decision.BackendOutcome:
     return decision.BackendOutcome(
@@ -268,8 +291,8 @@ def test_dp3_on_auto_answers_without_acting_and_archives_one_row(
     result = _run_structured(tmp_path, capsys)
 
     assert result["available"] is True
-    # `noul` answers carry no confidence, so normalization fills null (FIX-H).
-    assert result["answers"] == {**answers, "answerable": {"value": 0.9, "confidence": None}}
+    # dp3's only question is the dynamic choice; it comes back normalized.
+    assert result["answers"] == answers
     assert result["reason"] is None
     assert result["mode"] == "auto"
     assert result["acted"] is False, "intent=answer never executes an action"
@@ -290,7 +313,7 @@ def test_dp3_on_auto_answers_without_acting_and_archives_one_row(
     assert row["authority"] == "advisory"
     assert row["escalated_reason"] is None
     assert row["state_digest"] == result["state_digest"]
-    assert row["answer"] == {**answers, "answerable": {"value": 0.9, "confidence": None}}
+    assert row["answer"] == answers
 
 
 # ---------------------------------------------------------------------------
@@ -402,3 +425,38 @@ def test_unconfigured_transport_maps_to_the_legacy_disabled_reason(
     assert result["acted"] is False
     assert backend.calls == []
     assert not _archive_path(tmp_path).exists(), "no transport => no archive row"
+
+
+# ---------------------------------------------------------------------------
+# The isolation itself is checked (T05f N3)
+#
+# `mw decide run` builds a wire redactor from the credential set, which
+# resolves the timi chain through `decision_backends._auth_json_path()`. That
+# default is the developer's real `~/.pi/agent/auth.json`; the autouse fixture
+# points it at `tmp_path` instead, and this test pins the fixture rather than
+# trusting it.
+# ---------------------------------------------------------------------------
+
+
+def test_the_credential_chain_is_hermetic(tmp_path: pathlib.Path) -> None:
+    sentinel = "sk-t05f-hermetic-sentinel-0123456789"
+    auth = tmp_path / "no-auth.json"
+    assert decision_backends._auth_json_path() == auth, (
+        "the fixture must redirect the timi credential chain into tmp_path"
+    )
+    assert not auth.exists(), "the fixture path must start absent (no ambient value)"
+    leaked = sorted(
+        name for name in os.environ if name.upper().endswith(decision._CRED_ENV_SUFFIXES)
+    )
+    assert leaked == [], (
+        "credential-shaped environment variables would make discovery depend on "
+        f"the developer's shell: {leaked}"
+    )
+
+    auth.write_text(
+        json.dumps({"timi": {"key": sentinel}}), encoding="utf-8", newline="\n"
+    )
+
+    assert decision.known_credential_values(decision.DecisionConfig(enabled=True)) == (
+        sentinel,
+    ), "the chain resolved a value the fixture did not place (env or ambient auth.json)"

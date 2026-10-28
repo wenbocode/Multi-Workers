@@ -1,0 +1,47 @@
+.....................F.........                                          [100%]
+================================== FAILURES ===================================
+______ test_user_stop_and_hard_guard_cannot_be_lifted_by_a_technical_fix ______
+
+    def test_user_stop_and_hard_guard_cannot_be_lifted_by_a_technical_fix():
+        project = _new_project("userstop")
+        load = _load(project, _policy_doc())
+        source = _full_grants(project)
+    
+        user_stop = policy_mod.evaluate_halted_recovery(
+            load,
+            request=dict(HALTED_OK, halt_origin="user-stop"),
+            usage={"round": 1},
+            authority_source=source,
+            trusted_writers=TRUSTED_WRITERS,
+        )
+        assert not user_stop.allowed
+        assert "user-stop-requires-explicit-authorization" in _codes(user_stop.reasons)
+        assert user_stop.questions  # a concrete authorization question stays visible
+    
+        guard = policy_mod.evaluate_halted_recovery(
+            load,
+            request=dict(HALTED_OK, hard_guard_active=True),
+            usage={"round": 1},
+            authority_source=source,
+            trusted_writers=TRUSTED_WRITERS,
+        )
+        assert not guard.allowed
+        assert "hard-guard-bypass" in _codes(guard.reasons)
+    
+        unverified = policy_mod.evaluate_halted_recovery(
+            load,
+            request=dict(HALTED_OK, hard_guard_active=True, hard_guard_cleared=[""]),
+            usage={"round": 1},
+            authority_source=source,
+            trusted_writers=TRUSTED_WRITERS,
+        )
+        assert not unverified.allowed
+>       assert "guard-clearance-unverified" in _codes(unverified.reasons)
+E       AssertionError: assert 'guard-clearance-unverified' in ('hard-guard-bypass',)
+E        +  where ('hard-guard-bypass',) = _codes((PolicyIssue(code='hard-guard-bypass', field='hard_guard_active', detail='an active hard guard cannot be bypassed by a decision or a note'),))
+E        +    where (PolicyIssue(code='hard-guard-bypass', field='hard_guard_active', detail='an active hard guard cannot be bypassed by a decision or a note'),) = RecoveryVerdict(allowed=False, scope=(), observation_conditions=(), stop_conditions=(), preserved_facts=('worker wrote...-guard-bypass', field='hard_guard_active', detail='an active hard guard cannot be bypassed by a decision or a note'),)).reasons
+
+test_dp_consolidation_recovery.py:1136: AssertionError
+=========================== short test summary info ===========================
+FAILED test_dp_consolidation_recovery.py::test_user_stop_and_hard_guard_cannot_be_lifted_by_a_technical_fix
+1 failed, 30 passed in 0.23s

@@ -1,0 +1,38 @@
+{
+  "observed_at": "2026-10-28T07:10:27.007808+00:00",
+  "source": "agent-report",
+  "run_b": {
+    "schema": 1,
+    "task_key": "dpc-t10-r2-product-repair",
+    "run_id": "dpc-t10-r2-product-repair@2026-10-28T06:51:39.278Z",
+    "owner_key": "mw-dp-consolidation",
+    "kind": "coding",
+    "status": "needs-clarification",
+    "started_at": "2026-10-28T06:51:39.278Z",
+    "artifacts": [
+      "output.md"
+    ],
+    "pid": 20580,
+    "last_heartbeat_at": "2026-10-28T07:04:09.427Z",
+    "ended_at": "2026-10-28T07:04:25.204Z",
+    "exit": 2
+  },
+  "run_c": {
+    "schema": 1,
+    "task_key": "dpc-t10-r2-verification-preparation",
+    "run_id": "dpc-t10-r2-verification-preparation@2026-10-28T07:09:46.792Z",
+    "owner_key": "mw-dp-consolidation",
+    "kind": "coding",
+    "status": "running",
+    "started_at": "2026-10-28T07:09:46.792Z",
+    "artifacts": [],
+    "pid": 72752,
+    "last_heartbeat_at": "2026-10-28T07:10:16.804Z"
+  },
+  "original_36_tasks_7_stages": true,
+  "other35_unchanged": true,
+  "original_contracts_unchanged": true,
+  "card_sha256": "d5605310cfe85c4d57d7ff9f84c0f8f0119dae6a5d36a532a24076cc2c0897f4",
+  "single_face": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/**",
+  "semantic_handoff": false
+}

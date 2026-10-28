@@ -1,0 +1,102 @@
+# probe summary for red-ambient-auth-access-probe.json
+ambient_path: <home>/.pi/agent/auth.json
+ambient_exists: not stat'ed (intercepted)
+bytes_read_from_ambient: 0
+hits_total: 244
+tests_with_hits: 70
+
+hits per file:
+  test_decide_run_authority.py: 4 test(s)
+  test_decision_observation.py: 66 test(s)
+
+hits per operation:
+  is_file: 122
+  read_text-refused: 122
+
+distinct credential-discovery call chains reaching the ambient path:
+  [130x] decide_for <- _decide_for <- _capture_scope <- credential_redactor <- known_credential_values
+  [130x] decide_for <- _decide_for <- _capture_scope <- credential_redactor <- known_credential_values <- resolve_timi_api_key
+  [50x] test_every_dp_refuses_a_typed_violation_with_zero_send <- decide_for <- _decide_for <- known_secret_redactor <- known_credential_values
+  [50x] test_every_dp_refuses_a_typed_violation_with_zero_send <- decide_for <- _decide_for <- known_secret_redactor <- known_credential_values <- resolve_timi_api_key
+  [50x] test_every_dp_refuses_an_undeclared_key_with_zero_send <- decide_for <- _decide_for <- known_secret_redactor <- known_credential_values
+  [50x] test_every_dp_refuses_an_undeclared_key_with_zero_send <- decide_for <- _decide_for <- known_secret_redactor <- known_credential_values <- resolve_timi_api_key
+  [8x] _dp3_observation_call <- decide_for <- _decide_for <- known_secret_redactor <- known_credential_values
+  [8x] _dp3_observation_call <- decide_for <- _decide_for <- known_secret_redactor <- known_credential_values <- resolve_timi_api_key
+  [2x] test_book_snapshot_is_labelled_book_and_keeps_the_sent_state <- decide_for <- _decide_for <- known_secret_redactor <- known_credential_values
+  [2x] test_book_snapshot_is_labelled_book_and_keeps_the_sent_state <- decide_for <- _decide_for <- known_secret_redactor <- known_credential_values <- resolve_timi_api_key
+  [2x] test_observation_refuses_an_unknown_business_key <- decide_for <- _decide_for <- known_secret_redactor <- known_credential_values
+  [2x] test_observation_refuses_an_unknown_business_key <- decide_for <- _decide_for <- known_secret_redactor <- known_credential_values <- resolve_timi_api_key
+  [2x] test_snapshot_reference_is_dropped_when_the_snapshot_write_fails <- decide_for <- _decide_for <- known_secret_redactor <- known_credential_values
+  [2x] test_snapshot_reference_is_dropped_when_the_snapshot_write_fails <- decide_for <- _decide_for <- known_secret_redactor <- known_credential_values <- resolve_timi_api_key
+
+tests with hits:
+  test_decide_run_authority.py::test_dp3_on_auto_answers_without_acting_and_archives_one_row (2 access(es))
+  test_decide_run_authority.py::test_legacy_questions_request_keeps_the_old_key_set (2 access(es))
+  test_decide_run_authority.py::test_suggest_mode_archives_a_suggest_row_without_acting (2 access(es))
+  test_decide_run_authority.py::test_unconfigured_transport_maps_to_the_legacy_disabled_reason (2 access(es))
+  test_decision_observation.py::test_archive_failure_is_recorded_then_the_original_exception_escapes (2 access(es))
+  test_decision_observation.py::test_book_snapshot_is_labelled_book_and_keeps_the_sent_state (2 access(es))
+  test_decision_observation.py::test_decision_end_reports_created_replayed_and_skipped (6 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp1-dispatch-type] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp10-dependency] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp11-credential] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp12-destructive] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp13-commit-release] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp14-rule-conflict] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp15-autopilot-gate] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp16-goal] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp17-spec-lock] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp18-claim] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp19-foreign-write] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp2-checkpoint-split] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp20-stage-close] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp21-refine] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp22-debug-plan] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp23-snapshot] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp24-pi-trust] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp25-signoff-conclusion] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp3-worker-clarify] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp4-failure-handling] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp5-test-triage] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp6-qg-verdict] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp7-gate-failure] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp8-scope-change] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp9-model-select] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp1-dispatch-type] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp10-dependency] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp11-credential] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp12-destructive] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp13-commit-release] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp14-rule-conflict] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp15-autopilot-gate] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp16-goal] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp17-spec-lock] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp18-claim] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp19-foreign-write] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp2-checkpoint-split] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp20-stage-close] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp21-refine] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp22-debug-plan] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp23-snapshot] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp24-pi-trust] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp25-signoff-conclusion] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp3-worker-clarify] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp4-failure-handling] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp5-test-triage] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp6-qg-verdict] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp7-gate-failure] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp8-scope-change] (4 access(es))
+  test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp9-model-select] (4 access(es))
+  test_decision_observation.py::test_illegal_material_is_refused_before_the_budget_gate (2 access(es))
+  test_decision_observation.py::test_observation_refuses_a_book_carrying_a_credential (2 access(es))
+  test_decision_observation.py::test_observation_refuses_a_book_of_another_dp (2 access(es))
+  test_decision_observation.py::test_observation_refuses_a_book_whose_state_is_not_the_sent_state (2 access(es))
+  test_decision_observation.py::test_observation_refuses_an_incomplete_book (2 access(es))
+  test_decision_observation.py::test_observation_refuses_an_unknown_business_key (2 access(es))
+  test_decision_observation.py::test_preview_matches_the_production_verdict[dp25-signoff-conclusion-row3-expected3] (2 access(es))
+  test_decision_observation.py::test_preview_matches_the_production_verdict[dp3-worker-clarify-row1-expected1] (2 access(es))
+  test_decision_observation.py::test_preview_matches_the_production_verdict[dp3-worker-clarify-row2-expected2] (2 access(es))
+  test_decision_observation.py::test_production_structured_path_applies_the_same_typed_gate (2 access(es))
+  test_decision_observation.py::test_snapshot_reference_is_dropped_when_the_snapshot_write_fails (2 access(es))
+  test_decision_observation.py::test_unavailable_archive_writer_reports_unknown (2 access(es))
+  test_decision_observation.py::test_zero_call_client_row_is_not_a_real_http_call (2 access(es))

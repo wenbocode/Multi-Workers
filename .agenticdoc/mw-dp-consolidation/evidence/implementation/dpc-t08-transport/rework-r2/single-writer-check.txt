@@ -1,0 +1,12 @@
+﻿# single-writer observation (read-only, _workers.parallel rows for the three live R2 workers)
+# observed_at_utc: 
+2026-10-26T15:56:24.1749944Z
+
+dpc-t06-validity-r2 | running | pi | timi | H:\git\Multi-Workers\.agenticdoc\mw-dp-consolidation\workers\dpc-t06-validity-r2\task.md | 2026-10-26T15:52:18.802Z | 2026-10-26T15:52:22+00:00 |  | manual
+dpc-t07-policy-r2 | running | pi | timi | H:\git\Multi-Workers\.agenticdoc\mw-dp-consolidation\workers\dpc-t07-policy-r2\task.md | 2026-10-26T15:52:20.392Z | 2026-10-26T15:52:22+00:00 |  | manual
+dpc-t08-transport-r2 | running | pi | timi | H:\git\Multi-Workers\.agenticdoc\mw-dp-consolidation\workers\dpc-t08-transport-r2\task.md | 2026-10-26T15:52:21.769Z | 2026-10-26T15:52:22+00:00 |  | manual
+
+# write faces declared by each card frontmatter (read-only)
+dpc-t06-validity-r2 write_face: .agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_validity.py, .agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_concurrency.py, .agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t06-validity/rework-r2/**
+dpc-t07-policy-r2 write_face: .agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_policy.py, .agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_recovery.py, .agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t07-policy/rework-r2/**
+dpc-t08-transport-r2 write_face: .agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision.py, .agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_backends.py, .agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_materials.py, .agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/**

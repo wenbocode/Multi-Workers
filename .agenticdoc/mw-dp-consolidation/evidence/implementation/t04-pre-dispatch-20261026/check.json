@@ -1,0 +1,58 @@
+{
+  "observed_at": "2026-10-26T06:20:54.115967+00:00",
+  "card": "tasks/isolated/T04-context-ts-generation.md",
+  "card_sha256": "99c0fb85c70193313d734adc044e647c18c47976c72575ab77f35d1a85412200",
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_context.py",
+      "sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+      "bytes": 11949,
+      "crlf": 288,
+      "bare_lf": 0,
+      "live_sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+      "samefile": false
+    },
+    {
+      "path": "packages/multi-workers/scripts/gen_decide_registry_ts.py",
+      "sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+      "bytes": 11684,
+      "crlf": 0,
+      "bare_lf": 285,
+      "live_sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+      "samefile": false
+    },
+    {
+      "path": "packages/multi-workers/decide_registry.json",
+      "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "bytes": 29869,
+      "crlf": 0,
+      "bare_lf": 894,
+      "live_sha256": "0a5e16d64ab83b9f84a6a6776cef55b16d87349010b24bb1b40da4207d1283ae",
+      "samefile": false
+    },
+    {
+      "path": "packages/multi-workers/test_decide_registry_ts_lock.py",
+      "sha256": "dc6332f140f06ce9d0ca494245c1500f2f2ee14ce584c3dcf4ad821872b2a92e",
+      "bytes": 2424,
+      "crlf": 0,
+      "bare_lf": 63,
+      "live_sha256": "dc6332f140f06ce9d0ca494245c1500f2f2ee14ce584c3dcf4ad821872b2a92e",
+      "samefile": false
+    },
+    {
+      "path": "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts",
+      "sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+      "bytes": 30264,
+      "crlf": 0,
+      "bare_lf": 930,
+      "live_sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+      "samefile": false
+    }
+  ],
+  "mirror_file_count": 1864,
+  "t03_handoff_matches": true,
+  "product_writes": false,
+  "product_tests_run": false,
+  "generation_run": false,
+  "manual_writer_absence_proven": false
+}

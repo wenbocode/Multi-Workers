@@ -1,0 +1,22 @@
+diff --git a/packages/multi-workers/decide_archive.py b/packages/multi-workers/decide_archive.py
+index 1f84e25bf..8c7442280 100644
+--- a/packages/multi-workers/decide_archive.py
++++ b/packages/multi-workers/decide_archive.py
+@@ -260,9 +260,14 @@ def _row_sha(row: Mapping) -> str:
+ def state_digest(state: object) -> str:
+     """``sha256(decision._encode_state(state))[:16]`` — reused, not re-implemented.
+ 
+-    ``_encode_state`` (``decision.py:402-417``) produces the exact bytes that
+-    are sent to the backend, so the digest and the transmitted state cannot
+-    drift apart (D-003). The raw state is never written to the archive.
++    ``_encode_state`` is the canonical, key-sorted JSON serialization used for
++    size/digest accounting (D-003); it is **not** the transport payload. The
++    backend serializes its own request body and card T03 captures those bytes at
++    the wire boundary, so this digest identifies the canonical state a row
++    refers to (and joins it to the side ledger's ``book-snapshot``) without
++    proving anything about the HTTP request bytes (design §9: ``state_digest``
++    is an archive correlation id, not a request-byte proof). The raw state is
++    never written to the archive.
+     """
+     return hashlib.sha256(decision._encode_state(state)).hexdigest()[:16]
+ 

@@ -1,0 +1,143 @@
+# MW + AgenticTask + Autopilot 三层机制图解
+
+> 面向公开的技术图解 · 用流程图讲清楚「Autopilot 编排外循环 / MW 派发协作 / AgenticTask 阶段链」三层如何嵌套咬合
+>
+> 决策入口按最新收敛设计（`mw-dp-consolidation`）描述。配套阅读：[Agent Loop / Autopilot / Decide 三层循环](./agent-loop-autopilot-decide.md) · [决策闭环设计](./decision-loop-design.md)
+
+## 一句话定位
+
+三层各管一件事，从外到内是「编排 → 协作 → 流程」：
+
+| 层 | 谁是主体 | 循环单位 | 关键产物 | 状态载体 |
+| --- | --- | --- | --- | --- |
+| **Autopilot**（最外层） | conductor（在 `mw serve` 里） | 一个 tick（约 4s） | 派发、收敛、停滞标记、gate 事项 | `_roadmap.md` / `gates/` / `timeline.jsonl` |
+| **MW**（中间层） | PM 窗口 + Worker 进程 | 一次派发 → 收敛 | 任务卡、执行结果、终态结论 | `.agenticdoc/<key>/` + `_index.parallel` |
+| **AgenticTask**（最内层） | 单个 key 的工作流 | 一个 phase | spec / design / plan / tasks / evidence 文档 | key 目录下的阶段文档 + 门禁 |
+
+嵌套关系一句话：
+
+> **Autopilot 的一个 tick 派发若干 key → 每个 key 是一条 AgenticTask 工作流（走 spec→evidence 阶段链）→ 每条工作流的执行由 MW 的 PM 派给独立 Worker 进程完成 → 遇到决策分支时，PM 或 Worker 在固定节点直接调用对应的决策入口。**
+
+---
+
+## 图 0：三层关系总图
+
+三层的依赖关系自上而下，共同目标拆成三块，每层负责一块：
+
+![00 图 0：三层关系总图](diagrams/mw-agentictask-autopilot/00-three-layer.png)
+
+| 依赖 | 依赖的是什么 | 依据 |
+| --- | --- | --- |
+| Autopilot → MW | 派发与执行 | conductor 运行在 `mw serve` 内，经队列和 worker launcher 派发 |
+| Autopilot → AgenticTask | phase 推进 | `autopilot/advance.py`：advance_phase 是唯一推进通道，找不到框架时 conductor 拒绝启动 |
+| MW → AgenticTask | 流程语义 | 沿用 key / phase / `.agenticdoc/` 目录约定；实现门禁要求先有 key |
+
+> 读法：下层都能单独使用（AgenticTask 可单 Agent 用，MW 可不开 Autopilot 由人派发），上层在下层之上叠加能力：**AgenticTask 做对，MW 做多，Autopilot 做久**。三层只通过 `.agenticdoc/` 文件 + 文件锁交换状态。
+
+三条贯穿始终的设计性格，在三层里都能看到：
+
+| 性格 | Autopilot 里的体现 | MW 里的体现 | AgenticTask 里的体现 |
+| --- | --- | --- | --- |
+| **文件即状态** | 纯读文件派生，monitor 零写 API | `.agenticdoc/` + 文件锁协调，无中心内存 | 阶段文档落盘，断点可重开 |
+| **门禁 fail-closed** | gate 事项只有有效 approve 才放行 | 派发前 dp-w-type、实现门禁 | advance_phase 硬指标校验 |
+| **自动化克制** | 停滞即标记不硬推 | Worker 自查后出结论，不越权续跑 | 阶段不达标拒绝推进 |
+
+---
+
+## 图 1：Autopilot —— conductor 编排主循环
+
+最外层是 conductor 每 4 秒一个 tick 的编排循环。它刻意做成**无状态、纯读文件派生**——进程崩了重启，只要文件在，视图就一致：
+
+![01 图 1：Autopilot —— conductor 编排主循环](diagrams/mw-agentictask-autopilot/01-autopilot-conductor.png)
+
+<details>
+<summary>mermaid 源码</summary>
+
+```mermaid
+graph TD
+    TICK["conductor tick（每 4s）<br/>外循环的一次轮转"]
+    READ["读文件家族派生状态<br/>roadmap / gates / timeline / index"]
+    FRONT{"判定依赖前沿<br/>前置 done 才释放下游 key"}
+    ACT["派发就绪 key / 收敛 / 停滞检测<br/>受 max_parallel_keys 上限约束"]
+    GATE["gate 事项交 dp-gate-approve<br/>approve 才执行限定动作"]
+    WRITE["写回 roadmap / timeline<br/>文件即状态，断点可重开"]
+
+    TICK --> READ --> FRONT --> ACT --> WRITE
+    FRONT --> GATE --> WRITE
+    WRITE -.->|"下一 tick"| TICK
+
+    style TICK fill:#E6F1FB,stroke:#185FA5
+    style READ fill:#E6F1FB,stroke:#185FA5
+    style FRONT fill:#E6F1FB,stroke:#185FA5
+    style ACT fill:#FAEEDA,stroke:#854F0B
+    style GATE fill:#FBEAF0,stroke:#D4537E,stroke-width:2px
+    style WRITE fill:#E1F5EE,stroke:#0F6E56
+```
+
+</details>
+
+关键约束（写死在 `status-model.ts` / `config.json`）：依赖前沿只认 `done` / `closed-legacy` 释放下游；并发取 `max_parallel_keys` × `max_workers_per_key` 的 min；四种循环族各计轮次预算，取最耗的作约束；同一边缘连续失败 N 次标记 `stalled`。stage 启动 / 关闭、停滞处置、软轮次追加、halted 恢复等都作为具体 gate 事项交 **dp-gate-approve**；steer / need_fix 由 PM 组织后续，本 gate 不放行。
+
+---
+
+## 图 2：MW —— PM 与 Worker 的派发协作
+
+conductor 一个 tick 里最关键的动作是「派发一个 key」，它把 MW 层的 PM↔Worker 协作链路拉起来。粉色节点是 decision point：
+
+![图 2：MW —— PM 与 Worker 的派发协作](diagrams/mw-agentictask-autopilot/00b-mw-pm-worker.png)
+
+三个要点：
+
+- **进程级隔离**：每个 Worker 是独立 pi 进程，崩溃互不影响，凭证按需下发。
+- **文件驱动、去中心化协调**：Worker 之间不直接通信，全靠 `.agenticdoc/` + 文件锁。
+- **Worker fire-and-forget**：Worker 用 dp-w-check-task 主动判断任务能否继续，不再以「等 PM 澄清」为出口。终止本次执行不等于目标完成或取消；PM 独立吸收结论，再用 dp-pm-steer（编排）或 dp-auto（现场行动）组织后续。
+
+---
+
+## 图 3：AgenticTask —— 阶段链与门禁
+
+上图里「advance_phase 推进 key 的 phase」，展开就是 AgenticTask 的核心——每个 key 都要走过一条带门禁的阶段链：
+
+![02 图 3：AgenticTask —— 阶段链与门禁](diagrams/mw-agentictask-autopilot/02-agentictask.png)
+
+<details>
+<summary>mermaid 源码</summary>
+
+```mermaid
+graph LR
+    SPEC["spec<br/>规格 + AC"]
+    DESIGN["design<br/>设计文档"]
+    PLAN["plan<br/>任务拆解"]
+    TASKS["tasks<br/>派发执行"]
+    EVID["evidence<br/>留证收尾"]
+    GATE["advance_phase 门禁（每次切换的唯一通道）<br/>阶段文档 ≥ 500B · 证据笔记 ≥ 1 篇<br/>spec 含 §0 目标对齐 + ≥1 条编号 AC<br/>需签收的 key：有效 finalize 签收"]
+
+    SPEC --> DESIGN --> PLAN --> TASKS --> EVID
+    EVID -.->|"每步都校验"| GATE
+    GATE -.->|"通过才放行"| SPEC
+
+    style SPEC fill:#EEEDFE,stroke:#534AB7
+    style DESIGN fill:#EEEDFE,stroke:#534AB7
+    style PLAN fill:#EEEDFE,stroke:#534AB7
+    style TASKS fill:#EEEDFE,stroke:#534AB7
+    style EVID fill:#E1F5EE,stroke:#0F6E56
+    style GATE fill:#FAEEDA,stroke:#854F0B
+```
+
+</details>
+
+门禁是硬约束、fail-closed：`advance_phase` 是每次 phase 切换的唯一通道，不达标直接拒绝推进并给出原因。收尾段有三个相互独立的判断：**dp-QG** 做正式质量审核，**dp-sign-key** 做 key 交付签收（只有 finalize 写签收文件），stage 关闭则是 **dp-gate-approve** 的一个事项。质量通过不自动签收，签收也不等于 stage 关闭；三者复用同一份有效证据，不重复审批。
+
+---
+
+## 收束：三层为什么这么分
+
+1. **AgenticTask** 回答「一个任务怎么被规范地做完」——阶段链 + 门禁保证流程质量；
+2. **MW** 回答「一群 Agent 怎么并行协作」——PM/Worker 进程隔离 + 文件协调解决上下文溢出与并行；
+3. **Autopilot** 回答「一整张路线图怎么自动推进」——conductor 外循环 + 依赖前沿 + gate 审批做编排。
+
+三层能松耦合咬合，前提是共同遵守「文件即状态、门禁 fail-closed、自动化克制」——任何进程崩溃重启，只要文件在，状态就能重建；任何一处自动判断，都只在给定选项里选择，执行与授权留在调用方和人手里。
+
+---
+
+*本文基于 Multi-Workers 仓库源码与 `mw-dp-consolidation` 设计文档整理；8 入口为已批准目标设计，迁移完成情况以仓库当前版本为准。*

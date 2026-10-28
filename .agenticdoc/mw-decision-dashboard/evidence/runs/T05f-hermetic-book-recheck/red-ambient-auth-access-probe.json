@@ -1,0 +1,3497 @@
+{
+  "ambient_path": "<home>/.pi/agent/auth.json",
+  "ambient_exists": "not stat'ed (intercepted)",
+  "sentinel": "sk-t05f-probe-sentinel-0123456789",
+  "bytes_read_from_ambient": 0,
+  "hits_total": 244,
+  "tests_with_hits": [
+    "test_decide_run_authority.py::test_dp3_on_auto_answers_without_acting_and_archives_one_row",
+    "test_decide_run_authority.py::test_legacy_questions_request_keeps_the_old_key_set",
+    "test_decide_run_authority.py::test_suggest_mode_archives_a_suggest_row_without_acting",
+    "test_decide_run_authority.py::test_unconfigured_transport_maps_to_the_legacy_disabled_reason",
+    "test_decision_observation.py::test_archive_failure_is_recorded_then_the_original_exception_escapes",
+    "test_decision_observation.py::test_book_snapshot_is_labelled_book_and_keeps_the_sent_state",
+    "test_decision_observation.py::test_decision_end_reports_created_replayed_and_skipped",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp1-dispatch-type]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp10-dependency]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp11-credential]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp12-destructive]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp13-commit-release]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp14-rule-conflict]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp15-autopilot-gate]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp16-goal]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp17-spec-lock]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp18-claim]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp19-foreign-write]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp2-checkpoint-split]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp20-stage-close]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp21-refine]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp22-debug-plan]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp23-snapshot]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp24-pi-trust]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp25-signoff-conclusion]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp3-worker-clarify]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp4-failure-handling]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp5-test-triage]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp6-qg-verdict]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp7-gate-failure]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp8-scope-change]",
+    "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp9-model-select]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp1-dispatch-type]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp10-dependency]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp11-credential]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp12-destructive]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp13-commit-release]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp14-rule-conflict]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp15-autopilot-gate]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp16-goal]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp17-spec-lock]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp18-claim]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp19-foreign-write]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp2-checkpoint-split]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp20-stage-close]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp21-refine]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp22-debug-plan]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp23-snapshot]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp24-pi-trust]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp25-signoff-conclusion]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp3-worker-clarify]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp4-failure-handling]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp5-test-triage]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp6-qg-verdict]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp7-gate-failure]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp8-scope-change]",
+    "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp9-model-select]",
+    "test_decision_observation.py::test_illegal_material_is_refused_before_the_budget_gate",
+    "test_decision_observation.py::test_observation_refuses_a_book_carrying_a_credential",
+    "test_decision_observation.py::test_observation_refuses_a_book_of_another_dp",
+    "test_decision_observation.py::test_observation_refuses_a_book_whose_state_is_not_the_sent_state",
+    "test_decision_observation.py::test_observation_refuses_an_incomplete_book",
+    "test_decision_observation.py::test_observation_refuses_an_unknown_business_key",
+    "test_decision_observation.py::test_preview_matches_the_production_verdict[dp25-signoff-conclusion-row3-expected3]",
+    "test_decision_observation.py::test_preview_matches_the_production_verdict[dp3-worker-clarify-row1-expected1]",
+    "test_decision_observation.py::test_preview_matches_the_production_verdict[dp3-worker-clarify-row2-expected2]",
+    "test_decision_observation.py::test_production_structured_path_applies_the_same_typed_gate",
+    "test_decision_observation.py::test_snapshot_reference_is_dropped_when_the_snapshot_write_fails",
+    "test_decision_observation.py::test_unavailable_archive_writer_reports_unknown",
+    "test_decision_observation.py::test_zero_call_client_row_is_not_a_real_http_call"
+  ],
+  "hits": [
+    {
+      "nodeid": "test_decision_observation.py::test_decision_end_reports_created_replayed_and_skipped",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_decision_end_reports_created_replayed_and_skipped",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_decision_end_reports_created_replayed_and_skipped",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_decision_end_reports_created_replayed_and_skipped",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_decision_end_reports_created_replayed_and_skipped",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_decision_end_reports_created_replayed_and_skipped",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_archive_failure_is_recorded_then_the_original_exception_escapes",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_archive_failure_is_recorded_then_the_original_exception_escapes",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_unavailable_archive_writer_reports_unknown",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_unavailable_archive_writer_reports_unknown",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_book_snapshot_is_labelled_book_and_keeps_the_sent_state",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_book_snapshot_is_labelled_book_and_keeps_the_sent_state",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_book_snapshot_is_labelled_book_and_keeps_the_sent_state",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_book_snapshot_is_labelled_book_and_keeps_the_sent_state",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_zero_call_client_row_is_not_a_real_http_call",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_zero_call_client_row_is_not_a_real_http_call",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_preview_matches_the_production_verdict[dp3-worker-clarify-row1-expected1]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_preview_matches_the_production_verdict[dp3-worker-clarify-row1-expected1]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_preview_matches_the_production_verdict[dp3-worker-clarify-row2-expected2]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_preview_matches_the_production_verdict[dp3-worker-clarify-row2-expected2]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_preview_matches_the_production_verdict[dp25-signoff-conclusion-row3-expected3]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_preview_matches_the_production_verdict[dp25-signoff-conclusion-row3-expected3]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp1-dispatch-type]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp1-dispatch-type]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp1-dispatch-type]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp1-dispatch-type]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp2-checkpoint-split]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp2-checkpoint-split]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp2-checkpoint-split]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp2-checkpoint-split]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp3-worker-clarify]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp3-worker-clarify]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp3-worker-clarify]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp3-worker-clarify]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp4-failure-handling]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp4-failure-handling]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp4-failure-handling]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp4-failure-handling]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp5-test-triage]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp5-test-triage]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp5-test-triage]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp5-test-triage]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp6-qg-verdict]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp6-qg-verdict]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp6-qg-verdict]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp6-qg-verdict]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp7-gate-failure]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp7-gate-failure]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp7-gate-failure]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp7-gate-failure]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp8-scope-change]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp8-scope-change]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp8-scope-change]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp8-scope-change]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp9-model-select]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp9-model-select]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp9-model-select]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp9-model-select]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp10-dependency]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp10-dependency]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp10-dependency]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp10-dependency]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp11-credential]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp11-credential]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp11-credential]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp11-credential]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp12-destructive]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp12-destructive]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp12-destructive]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp12-destructive]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp13-commit-release]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp13-commit-release]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp13-commit-release]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp13-commit-release]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp14-rule-conflict]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp14-rule-conflict]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp14-rule-conflict]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp14-rule-conflict]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp15-autopilot-gate]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp15-autopilot-gate]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp15-autopilot-gate]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp15-autopilot-gate]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp16-goal]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp16-goal]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp16-goal]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp16-goal]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp17-spec-lock]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp17-spec-lock]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp17-spec-lock]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp17-spec-lock]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp18-claim]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp18-claim]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp18-claim]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp18-claim]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp19-foreign-write]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp19-foreign-write]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp19-foreign-write]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp19-foreign-write]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp20-stage-close]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp20-stage-close]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp20-stage-close]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp20-stage-close]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp21-refine]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp21-refine]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp21-refine]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp21-refine]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp22-debug-plan]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp22-debug-plan]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp22-debug-plan]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp22-debug-plan]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp23-snapshot]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp23-snapshot]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp23-snapshot]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp23-snapshot]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp24-pi-trust]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp24-pi-trust]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp24-pi-trust]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp24-pi-trust]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp25-signoff-conclusion]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp25-signoff-conclusion]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp25-signoff-conclusion]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_a_typed_violation_with_zero_send[dp25-signoff-conclusion]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_a_typed_violation_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp1-dispatch-type]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp1-dispatch-type]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp1-dispatch-type]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp1-dispatch-type]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp2-checkpoint-split]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp2-checkpoint-split]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp2-checkpoint-split]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp2-checkpoint-split]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp3-worker-clarify]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp3-worker-clarify]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp3-worker-clarify]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp3-worker-clarify]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp4-failure-handling]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp4-failure-handling]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp4-failure-handling]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp4-failure-handling]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp5-test-triage]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp5-test-triage]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp5-test-triage]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp5-test-triage]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp6-qg-verdict]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp6-qg-verdict]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp6-qg-verdict]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp6-qg-verdict]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp7-gate-failure]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp7-gate-failure]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp7-gate-failure]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp7-gate-failure]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp8-scope-change]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp8-scope-change]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp8-scope-change]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp8-scope-change]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp9-model-select]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp9-model-select]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp9-model-select]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp9-model-select]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp10-dependency]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp10-dependency]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp10-dependency]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp10-dependency]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp11-credential]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp11-credential]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp11-credential]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp11-credential]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp12-destructive]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp12-destructive]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp12-destructive]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp12-destructive]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp13-commit-release]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp13-commit-release]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp13-commit-release]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp13-commit-release]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp14-rule-conflict]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp14-rule-conflict]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp14-rule-conflict]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp14-rule-conflict]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp15-autopilot-gate]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp15-autopilot-gate]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp15-autopilot-gate]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp15-autopilot-gate]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp16-goal]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp16-goal]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp16-goal]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp16-goal]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp17-spec-lock]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp17-spec-lock]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp17-spec-lock]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp17-spec-lock]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp18-claim]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp18-claim]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp18-claim]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp18-claim]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp19-foreign-write]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp19-foreign-write]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp19-foreign-write]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp19-foreign-write]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp20-stage-close]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp20-stage-close]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp20-stage-close]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp20-stage-close]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp21-refine]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp21-refine]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp21-refine]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp21-refine]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp22-debug-plan]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp22-debug-plan]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp22-debug-plan]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp22-debug-plan]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp23-snapshot]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp23-snapshot]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp23-snapshot]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp23-snapshot]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp24-pi-trust]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp24-pi-trust]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp24-pi-trust]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp24-pi-trust]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp25-signoff-conclusion]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp25-signoff-conclusion]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp25-signoff-conclusion]",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_every_dp_refuses_an_undeclared_key_with_zero_send[dp25-signoff-conclusion]",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_every_dp_refuses_an_undeclared_key_with_zero_send",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_production_structured_path_applies_the_same_typed_gate",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_production_structured_path_applies_the_same_typed_gate",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_observation_refuses_an_unknown_business_key",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_observation_refuses_an_unknown_business_key",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_observation_refuses_an_unknown_business_key",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_observation_refuses_an_unknown_business_key",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_illegal_material_is_refused_before_the_budget_gate",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_illegal_material_is_refused_before_the_budget_gate",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_observation_refuses_a_book_of_another_dp",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "_dp3_observation_call",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_observation_refuses_a_book_of_another_dp",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "_dp3_observation_call",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_observation_refuses_an_incomplete_book",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "_dp3_observation_call",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_observation_refuses_an_incomplete_book",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "_dp3_observation_call",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_observation_refuses_a_book_carrying_a_credential",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "_dp3_observation_call",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_observation_refuses_a_book_carrying_a_credential",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "_dp3_observation_call",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_observation_refuses_a_book_whose_state_is_not_the_sent_state",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "_dp3_observation_call",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_observation_refuses_a_book_whose_state_is_not_the_sent_state",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "_dp3_observation_call",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_snapshot_reference_is_dropped_when_the_snapshot_write_fails",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "test_snapshot_reference_is_dropped_when_the_snapshot_write_fails",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decision_observation.py::test_snapshot_reference_is_dropped_when_the_snapshot_write_fails",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "test_snapshot_reference_is_dropped_when_the_snapshot_write_fails",
+        "decide_for",
+        "_decide_for",
+        "known_secret_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decide_run_authority.py::test_dp3_on_auto_answers_without_acting_and_archives_one_row",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decide_run_authority.py::test_dp3_on_auto_answers_without_acting_and_archives_one_row",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decide_run_authority.py::test_legacy_questions_request_keeps_the_old_key_set",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decide_run_authority.py::test_legacy_questions_request_keeps_the_old_key_set",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decide_run_authority.py::test_suggest_mode_archives_a_suggest_row_without_acting",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decide_run_authority.py::test_suggest_mode_archives_a_suggest_row_without_acting",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    },
+    {
+      "nodeid": "test_decide_run_authority.py::test_unconfigured_transport_maps_to_the_legacy_disabled_reason",
+      "operation": "is_file",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "is_file"
+      ]
+    },
+    {
+      "nodeid": "test_decide_run_authority.py::test_unconfigured_transport_maps_to_the_legacy_disabled_reason",
+      "operation": "read_text-refused",
+      "read_bytes": 0,
+      "callers": [
+        "decide_for",
+        "_decide_for",
+        "_capture_scope",
+        "credential_redactor",
+        "known_credential_values",
+        "resolve_timi_api_key",
+        "read_text"
+      ]
+    }
+  ]
+}

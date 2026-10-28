@@ -1,0 +1,32 @@
+[
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "H:\\git\\Multi-Workers\\packages\\multi-workers\\test_decision_context_readable_ui.py::test_graph_is_ten_nodes_with_directed_edges_and_clickable_readable_detail"
+    ],
+    "cwd": "H:\\git\\Multi-Workers",
+    "utc_start": "2026-10-23T08:45:19.370667+00:00",
+    "utc_end": "2026-10-23T08:45:26.422004+00:00",
+    "exit": 1
+  },
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "H:\\git\\Multi-Workers\\packages\\multi-workers\\test_decision_context_readable_ui.py::test_playground_submission_detail_uses_the_same_graph"
+    ],
+    "cwd": "H:\\git\\Multi-Workers",
+    "utc_start": "2026-10-23T08:45:26.422958+00:00",
+    "utc_end": "2026-10-23T08:45:29.102704+00:00",
+    "exit": 1
+  }
+]

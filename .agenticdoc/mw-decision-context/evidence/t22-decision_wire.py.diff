@@ -1,0 +1,84 @@
+--- packages/multi-workers/decision_wire.py.t22-before
++++ packages/multi-workers/decision_wire.py
+@@ -99,6 +99,7 @@
+ from typing import Protocol
+ 
+ import mw_common
++import decision_task_state
+ 
+ SCHEMA_VERSION = 1
+ 
+@@ -233,6 +234,7 @@
+         "evidence_path",
+         "evidence_sha256",
+         "snapshot_sha256",
++        "task_after",
+     ),
+     "lifecycle-error": (
+         "logical_id",
+@@ -241,7 +243,7 @@
+         "attempted_event_id",
+         "detail",
+     ),
+-    "record-start": ("logical_id", "record_version", "initiator_role", "retry_of"),
++    "record-start": ("logical_id", "record_version", "initiator_role", "retry_of", "task_before"),
+     "book-snapshot": ("book_ref", "book", "file_sha256", "book_sha256", "book_version"),
+ }
+ EVENT_KINDS = frozenset(_KIND_FIELDS)
+@@ -889,9 +891,9 @@
+     "decision-end": ("escalated_reason", "truncated"),
+     "submission-start": ("issues",),
+     "submission-end": ("issues",),
+-    "lifecycle": ("reason", "answer", "evidence", "result"),
++    "lifecycle": ("reason", "answer", "evidence", "result", "task_after"),
+     "lifecycle-error": ("detail",),
+-    "record-start": (),
++    "record-start": ("task_before",),
+     "book-snapshot": (),
+ }
+ 
+@@ -1134,6 +1136,12 @@
+         if name in ("request", "response", "book"):
+             if isinstance(value, Capture):
+                 value = value.as_dict()
++        elif name in ("task_before", "task_after"):
++            try:
++                value = decision_task_state.validate_task_state(value)
++            except decision_task_state.TaskStateInputError as exc:
++                raise WireScopeError(str(exc)) from None
++            value = _sanitize_free_text(scope, name, value)
+         elif name in free_text:
+             value = _sanitize_free_text(scope, name, value)
+         row[name] = value
+@@ -1372,6 +1380,7 @@
+     evidence_path: str | None = None,
+     evidence_sha256: str | None = None,
+     snapshot_sha256: str | None = None,
++    task_after: dict[str, object] | None = None,
+     actor: tuple[str, str] | None = None,
+     answer_source: str | None = None,
+     call: CallState | None = None,
+@@ -1398,6 +1407,7 @@
+             "evidence_path": evidence_path,
+             "evidence_sha256": evidence_sha256,
+             "snapshot_sha256": snapshot_sha256,
++            "task_after": task_after,
+         },
+     )
+ 
+@@ -1409,6 +1419,7 @@
+     record_version: int,
+     initiator_role: str,
+     retry_of: str | None = None,
++    task_before: dict[str, object] | None = None,
+     actor: tuple[str, str] | None = None,
+     event_id: str | None = None,
+ ) -> dict[str, object]:
+@@ -1429,6 +1440,7 @@
+             "record_version": record_version,
+             "initiator_role": initiator_role,
+             "retry_of": retry_of,
++            "task_before": task_before,
+         },
+     )
+ 

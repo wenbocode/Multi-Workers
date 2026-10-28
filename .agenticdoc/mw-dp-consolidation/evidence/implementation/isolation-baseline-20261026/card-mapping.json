@@ -1,0 +1,240 @@
+[
+  {
+    "id": "T03",
+    "source_card": "tasks/T03-protocol.md",
+    "source_sha256": "4b46a425d90ce4aadd66fc841d668c6377c7cd104df372147afd6058c78bbb3d",
+    "card": "tasks/isolated/T03-protocol.md",
+    "sha256": "083b206d9ec9ae9dab4a582c4b01f3187aba29936e0687b41f9856d645796a60"
+  },
+  {
+    "id": "T04",
+    "source_card": "tasks/T04-context-ts-generation.md",
+    "source_sha256": "8dce9c7040cb380d91513479deb8e510bd5be5397a10b792cb7eb3d1e831683c",
+    "card": "tasks/isolated/T04-context-ts-generation.md",
+    "sha256": "99c0fb85c70193313d734adc044e647c18c47976c72575ab77f35d1a85412200"
+  },
+  {
+    "id": "T05",
+    "source_card": "tasks/T05-eight-cases.md",
+    "source_sha256": "7f0d07d69ca7e6824917fc17e757dd8d295c1e42397869c5c459ce676539f3f7",
+    "card": "tasks/isolated/T05-eight-cases.md",
+    "sha256": "8a7d747000c0f0e2427f57d30d61ebd5d339c0ee93c3b170a3cdc256327b3e85"
+  },
+  {
+    "id": "T06",
+    "source_card": "tasks/T06-validity.md",
+    "source_sha256": "e5e7d83660dcd9c87774c3e6afdf33ec124834949f15e939de487d65611f4a14",
+    "card": "tasks/isolated/T06-validity.md",
+    "sha256": "1a81029454f59cf2e69c32643f30735efa0827c482f382ca8879c02ef37df15c"
+  },
+  {
+    "id": "T07",
+    "source_card": "tasks/T07-policy.md",
+    "source_sha256": "2cb4096c3c8ed9f882725baba1c19e421a7a1fe109b187ab66a9cd653a9c3613",
+    "card": "tasks/isolated/T07-policy.md",
+    "sha256": "88bee76800c724909e277485117335cf91d93e989ccc6d9fb09d4e9d99adeb5d"
+  },
+  {
+    "id": "T08",
+    "source_card": "tasks/T08-transport.md",
+    "source_sha256": "d4fc9d1413e35078fbe3dfeb8e3a43e6acba665447afb84945c65ab5edcbb8e4",
+    "card": "tasks/isolated/T08-transport.md",
+    "sha256": "07a719095a33f60666fef960ec89034ff96f81066bf7bea599f303178290b1e8"
+  },
+  {
+    "id": "T09",
+    "source_card": "tasks/T09-books.md",
+    "source_sha256": "30d0732782154d554d5e358f8b372f6377bb8c6eb5ad7d0fb743df8657e6c07e",
+    "card": "tasks/isolated/T09-books.md",
+    "sha256": "b1c49e8a66ea44dc841bda5445cebc6e39a8fc69a9c133f6a975ebbfbc6d7b2b"
+  },
+  {
+    "id": "T10",
+    "source_card": "tasks/T10-lifecycle-state.md",
+    "source_sha256": "eecfe7861c6cc2dc4a5c27c00f9128f5b9438ff86663fada4512dcd8c8033d95",
+    "card": "tasks/isolated/T10-lifecycle-state.md",
+    "sha256": "46945d41cda0fd4c0e6469e7704eb26c5969ff76274a6c0aaa164674ae4c582c"
+  },
+  {
+    "id": "T11",
+    "source_card": "tasks/T11-ts-tool.md",
+    "source_sha256": "b85d687ced0985eb94a938e38332161cb5afde2a7db9cb8b864dab83c4216ed7",
+    "card": "tasks/isolated/T11-ts-tool.md",
+    "sha256": "a8d5779d843da64153edf3dc40d27267ad7d85a779ee78fe696cebdf9de0a1f7"
+  },
+  {
+    "id": "T12",
+    "source_card": "tasks/T12-pm-followup.md",
+    "source_sha256": "04df8c9b38c6c2374c9390b5eaff8afdf9755f48eda7e38d107b62d6b80a6ea2",
+    "card": "tasks/isolated/T12-pm-followup.md",
+    "sha256": "c20a95cc2a7c339decc117ded03cdced0b1084121fefffe5fb535d4edfce7745"
+  },
+  {
+    "id": "T13",
+    "source_card": "tasks/T13-pm-orchestration.md",
+    "source_sha256": "6d9b9a8bea6ab8917d510bf5ddd6d427825f2db15111622111ce8cf40e9297d6",
+    "card": "tasks/isolated/T13-pm-orchestration.md",
+    "sha256": "236dbddfdab466f87b58133e09bf153a3d31288b2c0d41ae58a43e3499a141dd"
+  },
+  {
+    "id": "T14",
+    "source_card": "tasks/T14-vision-dispatch.md",
+    "source_sha256": "54e24f5aef1c37786559a02a5d498e7217c9010a9776c3893f79849dc95877c7",
+    "card": "tasks/isolated/T14-vision-dispatch.md",
+    "sha256": "ae8e02a375ab50f6705c2d0402450b2f30d12c667da4d57b129b481d1e1d606b"
+  },
+  {
+    "id": "T15",
+    "source_card": "tasks/T15-worker-reachability.md",
+    "source_sha256": "402e6dc1014c30ccdae5fa8b415a11aeaa8e5b00b9dea8b9e5c031e469d6c286",
+    "card": "tasks/isolated/T15-worker-reachability.md",
+    "sha256": "1eb27d3695e996d611fc12b6100a074c255407b8eefd9d1407b0b536479e24e3"
+  },
+  {
+    "id": "T16",
+    "source_card": "tasks/T16-ts-task-state.md",
+    "source_sha256": "6e01b267bd208cbd72eb01e728377fb8b52eebe4c6e26b8d741e719eaa784efb",
+    "card": "tasks/isolated/T16-ts-task-state.md",
+    "sha256": "3991498614a880cf7f8381c662ee58aba3380c08aaca5deda39592eeb7eb0f29"
+  },
+  {
+    "id": "T17",
+    "source_card": "tasks/T17-gate-contract.md",
+    "source_sha256": "ba4fa2625a3e97f07e01550f8a97283a3c1fe15ad1e3331c4bcf904e5baf9b2d",
+    "card": "tasks/isolated/T17-gate-contract.md",
+    "sha256": "a043d064057c7daa5c1033a593736a1d796f07f9396ef5712dd9e56060f0e5dc"
+  },
+  {
+    "id": "T18",
+    "source_card": "tasks/T18-gate-effects.md",
+    "source_sha256": "a187f61cb88aa522a0e028bcf5365834e6a9811c0f88869939d731ebb0e7391a",
+    "card": "tasks/isolated/T18-gate-effects.md",
+    "sha256": "c420af79d1f0beb95d13a269b6a424dca953d45168111b332386ba76f9be7719"
+  },
+  {
+    "id": "T19",
+    "source_card": "tasks/T19-conductor-h01-h05.md",
+    "source_sha256": "29a33c3810e0b5995bcec89a875170cd7e7c110354bccabeb490dca8ba0a10ea",
+    "card": "tasks/isolated/T19-conductor-h01-h05.md",
+    "sha256": "56ba89f5ad7757b8250bb78f2700667e58dcbc25fb7ed63edd71714c5e660982"
+  },
+  {
+    "id": "T20",
+    "source_card": "tasks/T20-xkey-contract.md",
+    "source_sha256": "e1f9a99b49ab812ce9e08a681185898b537694018238949a6ef3d74d3ee76632",
+    "card": "tasks/isolated/T20-xkey-contract.md",
+    "sha256": "f243597b8388b94feb3f50a54f974e1d8ab690db8dbbcc4ae03a4af6d60a9574"
+  },
+  {
+    "id": "T21",
+    "source_card": "tasks/T21-recovery-handler.md",
+    "source_sha256": "a7fbf0c686361323c33f61538bb11073c7a3b33ba40deb9cbdf32f3cb0fe9443",
+    "card": "tasks/isolated/T21-recovery-handler.md",
+    "sha256": "18673a47e4a067afc8875cb7aba1f74392977c9474a9823cabb7956d3f8ca8b0"
+  },
+  {
+    "id": "T22",
+    "source_card": "tasks/T22-signoff-validator.md",
+    "source_sha256": "c01379fae1e593f537a4f8eb1774eafd1ed0e48ffb0f3800755026f471d25507",
+    "card": "tasks/isolated/T22-signoff-validator.md",
+    "sha256": "257b43dae563bc46f03c630dfdfe2fad9e111f5189cda029fc0449d8594d0d75"
+  },
+  {
+    "id": "T23",
+    "source_card": "tasks/T23-cli-request-replay.md",
+    "source_sha256": "91e4a886705b68fc31c9149f253eff6b81e4275e1978cf83395c3a2d09be2ab6",
+    "card": "tasks/isolated/T23-cli-request-replay.md",
+    "sha256": "03609b39751ef02d81415b9eebaebad6cb6073059b3fd7112a43f82c5157287a"
+  },
+  {
+    "id": "T24",
+    "source_card": "tasks/T24-cli-human-sign.md",
+    "source_sha256": "533c7edd95a0b4dd7d51e16959cafcd72e1e63a133c2594e1a291a0369b7c68a",
+    "card": "tasks/isolated/T24-cli-human-sign.md",
+    "sha256": "ce915e3f8ba965a147bddce75991615320f106a37bcb14b194fbe315a2671b98"
+  },
+  {
+    "id": "T25",
+    "source_card": "tasks/T25-framework-sign-gate.md",
+    "source_sha256": "586cfe7e9d93c143af48ab5154f233d259be4616b7c18c66d581c2b5dab6ee3d",
+    "card": "tasks/isolated/T25-framework-sign-gate.md",
+    "sha256": "dbd202f7083a83f36783c9803165870f88552ce6d5a9aa4e63e8fa177eb1bcda"
+  },
+  {
+    "id": "T26",
+    "source_card": "tasks/T26-autopilot-recovery-closure.md",
+    "source_sha256": "ec6e885a1c8c5e3bc9dc95b49aea213c113d49ed53703d1f4e44b188a4b8ab0e",
+    "card": "tasks/isolated/T26-autopilot-recovery-closure.md",
+    "sha256": "3c5c100fd89e1fe845ee776a82d116032af0b005ce8c66044dfedde3a3956b31"
+  },
+  {
+    "id": "T27",
+    "source_card": "tasks/T27-history-projection.md",
+    "source_sha256": "775f6f88c12655e8b5ea18ba30e974339d3cf976cb2a99f9a0f4094912e6a32e",
+    "card": "tasks/isolated/T27-history-projection.md",
+    "sha256": "777d68e9bb5a22065531201b1abe91c2c55c20ea8c483eb003620bd5bbd9feb1"
+  },
+  {
+    "id": "T28",
+    "source_card": "tasks/T28-observation-server.md",
+    "source_sha256": "5fb46c60a130ab170a51a501cc793469157872adbaa2b608daca1833bb259bdd",
+    "card": "tasks/isolated/T28-observation-server.md",
+    "sha256": "54a0b5d941cddbc485b7d387384964561774b36435ccec25228fd4a00d90e5e5"
+  },
+  {
+    "id": "T29",
+    "source_card": "tasks/T29-web-components.md",
+    "source_sha256": "72a606f71d7eeb50415193b2f024f86254b698272b8dfde99279c29492f09501",
+    "card": "tasks/isolated/T29-web-components.md",
+    "sha256": "b50f233d2359ef04915f9a123f1bce64e768d366285c9c5219b4bc0ad496388a"
+  },
+  {
+    "id": "T30",
+    "source_card": "tasks/T30-window-console.md",
+    "source_sha256": "2415b10eacc2165c491b41fc6ade84800e1d6b261827f80e548fc4d8464a2b20",
+    "card": "tasks/isolated/T30-window-console.md",
+    "sha256": "c0785216810991f6f2292736b455a023b3f8e56dc99898fbd60cea80258398ac"
+  },
+  {
+    "id": "T31",
+    "source_card": "tasks/T31-integration-evidence.md",
+    "source_sha256": "84a2d751b58c7f3f6368009ddb2570cbce94477b15816acbd71fbe358974fb49",
+    "card": "tasks/isolated/T31-integration-evidence.md",
+    "sha256": "209c09274b39b5466ea7b319397bea6a0f504d07cd2a6f44e01c02c81421abd4"
+  },
+  {
+    "id": "T32",
+    "source_card": "tasks/T32-protected-check.md",
+    "source_sha256": "1b316918d1676c59b7a80e748248e22a0a36fe19cf3782b3cf0acb58af02e035",
+    "card": "tasks/isolated/T32-protected-check.md",
+    "sha256": "e6f3aa2ca4d8fa6d0e016cf61477c2253be4487da7ced6c6e6b6b9274cf3959d"
+  },
+  {
+    "id": "T33",
+    "source_card": "tasks/T33-review-protocol.md",
+    "source_sha256": "09325c305f6e1b21743e6ae8264aee2f4e1c5104ad99a400c8365e5cbb32ce96",
+    "card": "tasks/isolated/T33-review-protocol.md",
+    "sha256": "47dff9e8ad0f095b3d397b1d06aff7f45867ea660aa28fea83ae4db0192adc94"
+  },
+  {
+    "id": "T34",
+    "source_card": "tasks/T34-review-effects.md",
+    "source_sha256": "439483d6892fc122343650ca7761dba24d60735625eabfd15e33540e160afc49",
+    "card": "tasks/isolated/T34-review-effects.md",
+    "sha256": "ec93c9902e41862d3b203a2f123f3c669f924917475194f8ed948cd6e5c37eaa"
+  },
+  {
+    "id": "T35",
+    "source_card": "tasks/T35-review-ts-ui.md",
+    "source_sha256": "f4207ef6bb73b566e67b7e50f70fe49ed871e51c47c923e11f54434c992f232c",
+    "card": "tasks/isolated/T35-review-ts-ui.md",
+    "sha256": "0b05126db242c443d2a776e622b248cfbed021468fc17cea3c77aec3a68c599f"
+  },
+  {
+    "id": "T36",
+    "source_card": "tasks/T36-formal-qg.md",
+    "source_sha256": "d609403dca64a0704761b3c0cc49dcb4ed60bbe1a755fb1621fb1e5e46e435df",
+    "card": "tasks/isolated/T36-formal-qg.md",
+    "sha256": "0d557dc8e909f15f7fd794db5bb66bc24a85031f07cf092a9d38f7ae3124ae94"
+  }
+]

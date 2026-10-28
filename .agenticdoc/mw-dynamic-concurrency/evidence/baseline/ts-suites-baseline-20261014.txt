@@ -1,0 +1,7 @@
+MDC baseline: TS suites at MDC B0..B3
+node ../../node_modules/vitest/dist/cli.js --run test/suite/autopilot-config-parity.test.ts \
+  test/suite/autopilot-config-sync.test.ts test/suite/autopilot-console.test.ts  -> 44 passed (PM own run)
+node ../../node_modules/vitest/dist/cli.js --run test/suite/autopilot-monitor.test.ts  -> 26 passed (PM own run)
+node ../../node_modules/vitest/dist/cli.js --run test/suite/autopilot-concurrency-panel.test.ts -> 4 passed (PM own run)
+node ... --run <new + parity + sync + monitor> -> 36 passed (PM own run)
+npx tsgo --noEmit -> exit 0 (PM own run)

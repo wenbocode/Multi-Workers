@@ -1,0 +1,100 @@
+--- before/packages/multi-workers/test_decision_context_workbench.py
++++ after/packages/multi-workers/test_decision_context_workbench.py
+@@ -2272,3 +2272,97 @@
+         "pg-local-out",
+     ):
+         assert html.count(' id="' + element_id + '"') == 1, element_id
++
++
++# ---------------------------------------------------------------------------
++# T05-R2 top-up: shipped template = native scaffold, preparation time recorded
++# ---------------------------------------------------------------------------
++
++
++def test_shipped_book_template_is_the_native_eight_entry_scaffold():
++    """The template is the eight-entry schema-3 scaffold, and only the scaffold.
++
++    Generated from the shipped ``decision_book.scaffold_book`` instead of a hand
++    kept legacy list, so it cannot drift back to schema 2 / retired ids. It stays
++    a *skeleton*: no ``meta`` (a local identity belongs to a real producer), no
++    ``state``/``questions_version``, and the send gate still refuses it. A
++    template is therefore never a prepared request or a granted authorization.
++    """
++    module = _generator_module()
++    template_path = ASSET_DIR / "decide_book_template.json"
++    assert template_path.is_file(), f"missing shipped template {template_path}"
++    text = template_path.read_text(encoding="utf-8")
++    template = json.loads(text)
++    assert set(template) == {"books"}, "the template carries the eight books, nothing else"
++    books = template["books"]
++    assert set(books) == set(CASE_FILES) == set(module.CASE_IDS), (
++        "the template must name the eight active entries, not the retired two"
++    )
++    # Byte-level drift guard: the file is exactly what the native scaffold renders.
++    assert text == module.render_template(module.build_template()), (
++        "decide_book_template.json drifted from decision_book.scaffold_book; regenerate "
++        "the template instead of hand-editing it"
++    )
++    for dp, book in books.items():
++        decision_points.require_active_dp(dp)
++        assert book == decision_book.scaffold_book(dp), (
++            f"{dp}: the template book is not the registry/board scaffold"
++        )
++        assert book["schema_version"] == decision_book.BOOK_SCHEMA_VERSION == 3, dp
++        assert book["decision_point"] == dp
++        assert "state" not in book, "schema 2 history is never a template"
++        assert "questions" not in book and "questions_version" not in json.dumps(book)
++        assert "meta" not in book, "a template must not invent a local identity"
++        # The schema gate `book load`/`mw decide book check` share accepts the shape...
++        assert decision_book._schema_issues(book) == [], dp
++        # ...while the send gate refuses it. Which layer names the refusal first is
++        # the gate's business (dp-auto's empty candidate array stops at book-state),
++        # so the assertion is that the skeleton is refused and still unfilled.
++        issues = decision_book.check_book(book, repo_root=REPO_ROOT)
++        assert issues, f"{dp}: the blank template must never pass the send gate"
++        for path in decision_book.required_state_paths(dp):
++            value = _lookup_material(book["material"], path)
++            assert decision_book.is_placeholder(value), (dp, path, value)
++        assert book["preparation"]["prepared_at"] == decision_book.PREPARED_AT_PLACEHOLDER, dp
++        evidence = book["notes"]["evidence"]
++        assert evidence and all(
++            decision_book.is_placeholder(item) for item in evidence.values()
++        ), dp
++
++
++def test_case_prepared_at_is_a_recorded_past_instant_with_explicit_zone():
++    """``preparation.prepared_at`` is a frozen, recorded instant in the past.
++
++    The eight synthetic cases were prepared at the instant recorded in the T05-R2
++    evidence (explicit ``+00:00``); the constant is frozen so regeneration is
++    byte-stable. It is the authoring instant of this *synthetic fixture set*, not
++    evidence that a real decision was prepared or authorized. A future value can
++    never describe a preparation that already happened, and a per-run clock read
++    would drift on every regeneration.
++    """
++    # Local import: this block is appended so the 28 shipped test functions keep
++    # their exact lines/AST (`ast.get_source_segment` stays byte-identical).
++    from datetime import datetime, timedelta, timezone
++
++    module = _generator_module()
++    source = GENERATOR_PATH.read_text(encoding="utf-8")
++    assert "datetime.now(" not in source and "time.time(" not in source, (
++        "the case generator must never read the wall clock: the shipped bytes would "
++        "drift on every regeneration"
++    )
++    recorded = module.CASE_PREPARED_AT
++    prepared = datetime.fromisoformat(recorded)
++    assert prepared.tzinfo is not None, f"{recorded}: an instant without a zone is a guess"
++    assert prepared.utcoffset() == timedelta(0), recorded
++    assert recorded.endswith("+00:00"), f"{recorded}: the zone must be explicit in the text"
++    assert prepared <= datetime.now(timezone.utc), (
++        f"prepared_at {recorded} is in the future: it cannot claim a preparation that "
++        "already happened"
++    )
++    for dp, name in CASE_FILES.items():
++        shipped = json.loads((CASES_DIR / name).read_text(encoding="utf-8"))
++        for label, book in (("shipped", shipped["book"]), ("generated", module.build_case(dp)["book"])):
++            value = book["preparation"]["prepared_at"]
++            assert value == recorded, (dp, label, value)
++            parsed = datetime.fromisoformat(value)
++            assert parsed == prepared and parsed.utcoffset() == timedelta(0), (dp, label, value)

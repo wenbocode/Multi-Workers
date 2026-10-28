@@ -1,0 +1,92 @@
+--- .agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/product-repair/after-bytes/decision_lifecycle.py (65501 bytes, sha256 73d0ae2efda3879668b3cf84d11f32809c6d00f76da13c3b8d065f87d4c87bb5)
++++ .agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_lifecycle.py (67575 bytes, sha256 2ab3ac15d80e2f90987366a380d376fde17482917759d40d5dd07d5b427244a2)
+@@ -413,20 +413,38 @@
+     return given
+ 
+ 
+-def _recorded_after_floor(
+-    store: "LifecycleStore", meta: "DecisionMeta", task_after: dict[str, object]
++def _event_is_recorded(
++    events: Sequence[Mapping[str, object]], event_id: object
++) -> bool:
++    """True when this ledger already holds this exact idempotency key.
++
++    A hit means the call is a *replay* of a recorded fact: it appends nothing,
++    so its ``task_after`` is not a new observation and the non-decreasing floor
++    does not apply to it. The authoritative answer for a replay stays the
++    in-lock dedupe scan in :func:`decision_wire.append_event`; this helper only
++    lets the fail-fast precheck stand aside for a call the ledger already
++    recorded (an unknown or new ``event_id`` keeps the full floor check).
++    """
++    return isinstance(event_id, str) and any(
++        _event_id_of(row) == event_id for row in events
++    )
++
++
++def _refuse_preceding_after(
++    start: Mapping[str, object],
++    events: Sequence[Mapping[str, object]],
++    meta: "DecisionMeta",
++    task_after: dict[str, object],
+ ) -> None:
+-    """Refuse a new after observation that precedes one already recorded.
++    """Refuse ``task_after`` when it precedes an observation already recorded.
+ 
+     ``executed``/``settled`` follow the same non-decreasing rule the task
+     terminal already enforces: the creation fact's before is the floor, and so is
+-    every earlier ``task_after`` of the same logical record. The association is
+-    proven by :func:`_ledger_facts`, so another task's after snapshot is never
+-    borrowed and an unrecorded (``None``) axis is never guessed. The caller runs
+-    this before the write and again inside the append lock, where the rows can no
+-    longer change between the check and the append.
+-    """
+-    start, events = _ledger_facts(store, meta)
++    every earlier ``task_after`` of the same logical record. Every prior row is
++    validated before it is compared (a damaged snapshot is refused, never
++    skipped), another task's row is never borrowed, and an unrecorded (``None``)
++    axis is never guessed.
++    """
+     try:
+         stored_before = decision_task_state.validate_task_state(start.get("task_before"))
+         decision_task_state.validate_observation_order(stored_before, task_after)
+@@ -438,6 +456,23 @@
+                 decision_task_state.validate_observation_order(prior, task_after)
+     except decision_task_state.TaskStateInputError as exc:
+         raise LifecycleInputError(str(exc)) from None
++
++
++def _recorded_after_floor(
++    store: "LifecycleStore", meta: "DecisionMeta", task_after: dict[str, object]
++) -> None:
++    """The lock-scoped floor check (``append_event(..., guard=...)``).
++
++    It re-reads the ledger *inside* the append lock and applies
++    :func:`_refuse_preceding_after` again, so a newer observation recorded by
++    another writer between the fail-fast precheck and the append is still
++    refused - the read-before-write is only a fast path, the judgment is taken
++    where the rows can no longer change. The association is proven by
++    :func:`_ledger_facts`. A replay never reaches this guard: the in-lock dedupe
++    scan runs first and answers ``duplicate`` without appending anything.
++    """
++    start, events = _ledger_facts(store, meta)
++    _refuse_preceding_after(start, events, meta, task_after)
+ 
+ 
+ def _check_parent_ref(
+@@ -1067,7 +1102,15 @@
+     except decision_task_state.TaskStateInputError as exc:
+         raise LifecycleInputError(str(exc)) from None
+     if task_after is not None:
+-        _recorded_after_floor(store, meta, task_after)
++        # Fail fast on a *new* older observation, but never refuse a replay: a
++        # call that reuses an ``event_id`` this ledger already recorded appends
++        # nothing, so its snapshot is not a new observation and the floor does
++        # not apply (AC-052 idempotency). The final judgment for a new id is the
++        # same check re-run as the in-lock append guard below, and a replay is
++        # answered by the in-lock dedupe scan, which runs before that guard.
++        start, events = _ledger_facts(store, meta)
++        if not _event_is_recorded(events, event_id):
++            _refuse_preceding_after(start, events, meta, task_after)
+     actor = _check_actor(actor)
+     decision_id = _check_decision_id("decision_id", decision_id)
+     if dp is not None:

@@ -1,0 +1,7 @@
+# T19 — uniform human-readable observation feedback
+
+User explicitly requests uniform simplification after actual dp2 result: HTTP200, state failed, record recorded, model available, low-confidence0.56<0.7. Goal .agenticdoc/goal.md. JS:1770 renderSubmitResult, :1839 renderBusy, :1860 renderSubmitFailure, :2555 submit-id label. Parallel analysis: all changes in same JS/test files, serial PM writer; no dispatch/provider. Scope JS/readable UI/playground tests/key evidence/state. No backend/config/registry/framework/case changes.
+
+Default output all states: short outcome, true cause, actionable guidance, observe-only/no action boundary; no HTTP/state/id/hash/empty issue/metadata/outcome dumps. Low confidence distinct from transport failure; use only this record's recorded numeric confidence/threshold, missing unknown, never current config. Preserve explicit retry semantics, duplicate no extra call, busy no queue/call, unknown response honest completion unknown/no auto retry. Nonempty issue/message/errors remain useful. Actual detailed record/captures preserved in existing closed detail/DAG/history. Submit/retry labels plain text instead of raw id, actual submitted IDs unchanged.
+
+RED tests use real shipped JS synthetic DOM with reply variants; keep security/no auto POST/races/IDs/safety. Adjacent presentation assertions migrate only to replacement evidence. Protected full check unchanged allowed workflow, no live browser/monitor/model/build/install/commit/deployment. No broad DP consolidation yet.

@@ -1,0 +1,26 @@
+{
+  "event": "out-of-face write: __pycache__/*.pyc created by rework-r2/scripts/gen_parity.py run outside run_min.py (no PYTHONDONTWRITEBYTECODE)",
+  "detected_by": "capture_state.py after vs before mirror inventory",
+  "files": {
+    "packages/multi-workers/__pycache__/decision.cpython-314.pyc": {
+      "sha256": "9fe83c784b27a78127846ab67d7d899016646d6fe96c9e271d21319228cdbef7",
+      "bytes": 106168,
+      "mtime_ns": 1793015806404140200
+    },
+    "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc": {
+      "sha256": "b29c8808488cf5c2c2ed47317e98f8bf6966c76871d01b6f5a9aaa470ad1d8e5",
+      "bytes": 16678,
+      "mtime_ns": 1793015806390490600
+    },
+    "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc": {
+      "sha256": "c57ee653f2bd8cede3eb535955dbfb50343d2182c4de6f882caf903677df43e8",
+      "bytes": 288156,
+      "mtime_ns": 1793015806490996700
+    },
+    "packages/multi-workers/scripts/__pycache__/gen_decide_registry_ts.cpython-314.pyc": {
+      "sha256": "c09b8f27557aaec2c04f52542b9db47418ce7875e0f5a323ba39255415b8fde1",
+      "bytes": 32485,
+      "mtime_ns": 1793015806505025600
+    }
+  }
+}

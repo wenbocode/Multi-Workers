@@ -1,0 +1,54 @@
+{
+  "worktree": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree",
+  "live_root": "H:\\git\\Multi-Workers",
+  "python": "3.14.3 (tags/v3.14.3:323c59a, Feb  3 2026, 16:04:56) [MSC v.1944 64 bit (AMD64)]",
+  "files": [
+    {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_book.py",
+      "bytes": 54796,
+      "sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+      "lines": 1338,
+      "lf": 1338,
+      "crlf": 0,
+      "bare_lf": 1338,
+      "mtime": 1792981746346362800,
+      "relpath": "packages/multi-workers/decision_book.py",
+      "evidence_copy": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t09-books\\before-bytes\\packages\\multi-workers\\decision_book.py",
+      "evidence_copy_sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f"
+    },
+    {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_decision_context_contract.py",
+      "bytes": 35858,
+      "sha256": "ea6429088c285382736f634a3233b7c94659c2a381e60b0ad9380a0157b8e7cf",
+      "lines": 961,
+      "lf": 961,
+      "crlf": 0,
+      "bare_lf": 961,
+      "mtime": 1792981746556597400,
+      "relpath": "packages/multi-workers/test_decision_context_contract.py",
+      "evidence_copy": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t09-books\\before-bytes\\packages\\multi-workers\\test_decision_context_contract.py",
+      "evidence_copy_sha256": "ea6429088c285382736f634a3233b7c94659c2a381e60b0ad9380a0157b8e7cf"
+    }
+  ],
+  "live_compare": [
+    {
+      "relpath": "packages/multi-workers/decision_book.py",
+      "live_sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+      "copy_sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+      "equal": true,
+      "samefile": false
+    },
+    {
+      "relpath": "packages/multi-workers/test_decision_context_contract.py",
+      "live_sha256": "ea6429088c285382736f634a3233b7c94659c2a381e60b0ad9380a0157b8e7cf",
+      "copy_sha256": "ea6429088c285382736f634a3233b7c94659c2a381e60b0ad9380a0157b8e7cf",
+      "equal": true,
+      "samefile": false
+    }
+  ],
+  "git_status": [
+    "?? .agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_book.py",
+    "?? .agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_contract.py"
+  ],
+  "git_status_rc": 0
+}

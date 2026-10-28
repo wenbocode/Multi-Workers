@@ -1,0 +1,10 @@
+{
+  "authority_ref": "grant-narrow",
+  "kind": "user-grant",
+  "scope": [
+    "key:dpc-other"
+  ],
+  "writer": "pm-controlled-authority-writer",
+  "revoked": false,
+  "recorded_at": "2026-10-26T00:00:00+00:00"
+}

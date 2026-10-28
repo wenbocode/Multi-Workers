@@ -1,0 +1,93 @@
+{
+  "fixtures": [
+    {
+      "label": "legal-full-book-positive",
+      "passed": true,
+      "result": "(PreparedRequest(decision_point='dp-w-type', material={'task_goal': 'Validate book stdin refusals with full layered requests', 'task_requirements': 'Illegal JSON shapes produce issues, never filesystem lookup or escaped exception', 'task_deliverables': 'Book gate boundary red-green evidence', 'images_required': False}, preparation={'basis_catalog': [{'id': 'pm-checked', 'text': 'Input shape and complete material are the cited business facts', 'material_refs': ['task_goal'], 'applies_to': ['coding', 'research', 'review', 'vision']}], 'prepared_at': '2026-10-27T09:10:00+00:00'}, meta={}, book_path=None, file_sha256=None, evidence={'task_goal': 'notes.txt:1', 'task_requirements': 'notes.txt:1', 'task_deliverables': 'notes.txt:1'}), ())"
+    },
+    {
+      "label": "stdin-shape-NoneType",
+      "passed": true,
+      "result": "(None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON null, which is not a request (stdin is never a file path, an array of books or a scalar)'),))"
+    },
+    {
+      "label": "stdin-shape-list",
+      "passed": true,
+      "result": "(None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON array, which is not a request (stdin is never a file path, an array of books or a scalar)'),))"
+    },
+    {
+      "label": "stdin-shape-list",
+      "passed": true,
+      "result": "(None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON array, which is not a request (stdin is never a file path, an array of books or a scalar)'),))"
+    },
+    {
+      "label": "stdin-shape-bool",
+      "passed": true,
+      "result": "(None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON boolean, which is not a request (stdin is never a file path, an array of books or a scalar)'),))"
+    },
+    {
+      "label": "stdin-shape-int",
+      "passed": true,
+      "result": "(None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON integer, which is not a request (stdin is never a file path, an array of books or a scalar)'),))"
+    },
+    {
+      "label": "stdin-shape-float",
+      "passed": true,
+      "result": "(None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON number, which is not a request (stdin is never a file path, an array of books or a scalar)'),))"
+    },
+    {
+      "label": "stdin-string-is-not-file-authority",
+      "passed": true,
+      "result": "(None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON string, which is not a request (stdin is never a file path, an array of books or a scalar)'),))"
+    },
+    {
+      "label": "stdin-bundle-refusal-control",
+      "passed": true,
+      "result": "(None, (Issue(code='book-schema', path='book', detail=\"stdin carries exactly one request; a 'books' bundle is a file format, not a request\"),))"
+    },
+    {
+      "label": "stdin-bad-json-refusal-control",
+      "passed": true,
+      "result": "(None, (Issue(code='book-schema', path='<stdin>', detail='not valid JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)'),))"
+    },
+    {
+      "label": "invalid-file-report-as-dict-safe",
+      "passed": true,
+      "result": "{'path': 'H:\\\\git\\\\Multi-Workers\\\\.agenticdoc\\\\mw-dp-consolidation\\\\evidence\\\\implementation\\\\t09-r2-pm-handoff-20261027\\\\fixture\\\\probe-project\\\\legacy.json', 'sha256': '1478c8629ec9dce2981bf89e3633c3877821fb19d97118e3c94c95c2719f8e95', 'ok': False, 'books': [{'label': None, 'decision_point': None, 'ok': False, 'issues': [{'code': 'book-schema', 'path': 'state', 'detail': \"the legacy book contract ('state') is read-only history; the eight-entry book carries 'material' (business facts) and 'preparation' (basis_catalog/prepared_at) instead of one 'state'\"}]}], 'issues': [{'code': 'book-schema', 'path': 'state', 'detail': \"the legacy book contract ('state') is read-only history; the eight-entry book carries 'material' (business facts) and 'preparation' (basis_catalog/prepared_at) instead of one 'state'\"}]}"
+    },
+    {
+      "label": "schema-secret-refusal-unknown-top-key",
+      "passed": true,
+      "result": "[Issue(code='book-schema', path='book', detail=\"unknown top-level keys ['<key>']\")]"
+    },
+    {
+      "label": "schema-secret-refusal-unknown-notes-key",
+      "passed": true,
+      "result": "[Issue(code='book-schema', path='notes', detail=\"unknown notes keys ['<key>']; ['evidence'] is the only notes face of the book contract\")]"
+    },
+    {
+      "label": "schema-secret-refusal-bad-version",
+      "passed": true,
+      "result": "[Issue(code='book-schema', path='schema_version', detail='must be 3, got <redacted>')]"
+    },
+    {
+      "label": "schema-secret-refusal-unknown-dp",
+      "passed": true,
+      "result": "[Issue(code='book-schema', path='decision_point', detail='unknown decision point id <redacted>; the eight active entries are the only book targets')]"
+    },
+    {
+      "label": "schema-type-bool",
+      "passed": true,
+      "result": "[Issue(code='book-schema', path='schema_version', detail='must be 3, got True')]"
+    },
+    {
+      "label": "schema-type-float",
+      "passed": true,
+      "result": "[Issue(code='book-schema', path='schema_version', detail='must be 3, got 3.0')]"
+    }
+  ],
+  "passed": 17,
+  "failed": 0,
+  "product_write_performed": false,
+  "network": "denied"
+}

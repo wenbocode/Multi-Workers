@@ -1,0 +1,137 @@
+﻿ M .agenticdoc/_autopilot/auto-decisions.jsonl
+ M .agenticdoc/_index.parallel
+ M .agenticdoc/_pitfalls.md
+ M .agenticdoc/_project_log.md
+ M .agenticdoc/mw-workspace-incident-probe/achieved.md
+ M .agenticdoc/mw-workspace-incident-probe/evidence/in1-junction-incident-20261009.md
+ M .agenticdoc/mw-workspace-incident-probe/evidence/in2-file-vanish-incident-20261009.md
+ M .agenticdoc/mw-workspace-incident-probe/evidence/in2-recurrence-20261010-uncommitted-wipe.md
+ M .agenticdoc/mw-workspace-incident-probe/evidence/incidents-timeline-20261009.md
+ M .agenticdoc/mw-workspace-incident-probe/pm-state.md
+ M .agenticdoc/mw-worktree-junction-guard/mini-spec.md
+ M .agenticdoc/mw-worktree-junction-guard/spec.md
+ M packages/coding-agent/CHANGELOG.md
+ M packages/coding-agent/src/core/extensions/types.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/autopilot/console.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/autopilot/monitor.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/autopilot/status-model.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/index.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/shared/implementation-gate.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/shared/worker-store.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts
+ M packages/coding-agent/src/modes/interactive/interactive-mode.ts
+ M packages/coding-agent/src/modes/rpc/rpc-mode.ts
+ M packages/coding-agent/src/modes/rpc/rpc-types.ts
+ M packages/coding-agent/test/suite/autopilot-config-parity.test.ts
+ M packages/coding-agent/test/suite/autopilot-config-sync.test.ts
+ M packages/coding-agent/test/suite/autopilot-console.test.ts
+ M packages/coding-agent/test/suite/autopilot-monitor.test.ts
+ M packages/coding-agent/test/suite/autopilot-read-scope.test.ts
+ M packages/coding-agent/test/suite/dispatch-card-injection.test.ts
+ M packages/coding-agent/test/suite/dispatch-recovery-terminal.test.ts
+ M packages/coding-agent/test/suite/mwds-t03-bash-write-scope.test.ts
+ M packages/coding-agent/test/suite/mwds-t21-write-intent-soundness.test.ts
+ M packages/coding-agent/test/suite/mwds-t23-cutover-recheck.test.ts
+ M packages/coding-agent/test/suite/mwgal-t20-config-parity.test.ts
+ M packages/coding-agent/test/suite/mwgal-t21-qg-fixes.test.ts
+ M packages/coding-agent/test/suite/worker-store.test.ts
+ M packages/multi-workers/CHANGELOG.md
+ M packages/multi-workers/autopilot/conductor.py
+ M packages/multi-workers/autopilot/config.py
+ M packages/multi-workers/autopilot/dispatch.py
+ M packages/multi-workers/launcher.py
+ M packages/multi-workers/mw.py
+ M packages/multi-workers/mw_common.py
+ M packages/multi-workers/test/fixtures/autopilot-config-corpus.json
+ M packages/multi-workers/test_autopilot_config.py
+ M packages/multi-workers/test_autopilot_config_parity.py
+ M packages/multi-workers/test_autopilot_effective_config.py
+ M packages/multi-workers/test_autopilot_pending_review.py
+ M packages/multi-workers/test_autopilot_readcap_injection.py
+ M packages/multi-workers/test_mw_autopilot_cli.py
+ M packages/multi-workers/test_mwds_t08_doctor_blocked.py
+ M packages/multi-workers/test_mwds_t14_producer_skew.py
+ M packages/multi-workers/test_mwgal_t12_stage_close_auto.py
+ M packages/multi-workers/test_mwgal_t15_reattest_confirm.py
+ M packages/multi-workers/test_proxy_service.py
+ M packages/multi-workers/test_rag_launcher.py
+ M packages/multi-workers/test_serve_doctor.py
+ M scripts/diff-model-catalog.mjs
+?? .agenticdoc/_autopilot/timeline.jsonl
+?? .agenticdoc/_framework-reflect.md
+?? .agenticdoc/_scratch/evidence/
+?? .agenticdoc/_scratch/tasks/
+?? .agenticdoc/mw-claude-mirror-parity/
+?? .agenticdoc/mw-dynamic-concurrency/
+?? .agenticdoc/mw-widget-order-stability/
+?? .agenticdoc/mw-worker-output-contract/
+?? .agenticdoc/mw-workspace-incident-probe/evidence/quality-gate-report-20261009.md
+?? .agenticdoc/mw-worktree-junction-guard/achieved.md
+?? .agenticdoc/mw-worktree-junction-guard/design.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W01-bash-segments-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W02-worktree-cli-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W03-worktree-doctor-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W04-tree-watch-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W05-worktree-junction-guard-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W05b-delete-penetration-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W06-guard-coverage-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W07-model-catalog-script-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W08-e2e-ac012-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W09-tree-watch-doctor-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W10-prescription-allow-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W11-detach-module-test-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W13-doctor-visibility-activation-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W14-user-bash-guard-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W16-ac015-crack-ac016-markers-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W17-ps-verb-base-vocabulary-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/delta-adversarial-audit-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/negative-space-audit-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/quality-gate-report-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/research/design-guard-path-resolution-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/research/design-necessity-rq1-equivalent-guard-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/research/design-necessity-rq2-reachability-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/research/design-necessity-rq3-live-surface-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/research/design-observability-and-verification-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/research/design-registry-and-worktree-cli-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/plan.md
+?? .agenticdoc/mw-worktree-junction-guard/pm-state.md
+?? .agenticdoc/mw-worktree-junction-guard/tasks/
+?? .agenticdoc/mw-write-face-guard/
+?? packages/coding-agent/Python/
+?? packages/coding-agent/src/extensions/agent-team-loop/shared/bash-segments.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/shared/worktree-junction-guard.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/shared/write-face.ts
+?? packages/coding-agent/test/interactive-mode-widget-order.test.ts
+?? packages/coding-agent/test/suite/agent-team-loop-bash-segments.test.ts
+?? packages/coding-agent/test/suite/autopilot-concurrency-panel.test.ts
+?? packages/coding-agent/test/suite/worktree-junction-guard-coverage.test.ts
+?? packages/coding-agent/test/suite/worktree-junction-guard-decide.test.ts
+?? packages/coding-agent/test/suite/write-face-e2e.test.ts
+?? packages/coding-agent/test/suite/write-face-pm-gate.test.ts
+?? packages/coding-agent/test/suite/write-face-runtime.test.ts
+?? packages/coding-agent/test/suite/write-face.test.ts
+?? packages/multi-workers/autopilot/task_graph.py
+?? packages/multi-workers/autopilot/write_face.py
+?? packages/multi-workers/test/fixtures/write-face-corpus.json
+?? packages/multi-workers/test/test_write_face_dispatch.py
+?? packages/multi-workers/test/test_write_face_doctor.py
+?? packages/multi-workers/test/test_write_face_e2e.py
+?? packages/multi-workers/test_doctor_activation.py
+?? packages/multi-workers/test_mdc_concurrency.py
+?? packages/multi-workers/test_mdc_e2e.py
+?? packages/multi-workers/test_task_graph.py
+?? packages/multi-workers/test_tree_watch.py
+?? packages/multi-workers/test_tree_watch_doctor.py
+?? packages/multi-workers/test_worktree_cmd.py
+?? packages/multi-workers/test_worktree_doctor.py
+?? packages/multi-workers/test_worktree_e2e.py
+?? packages/multi-workers/test_write_face.py
+?? packages/multi-workers/tree_watch.py
+?? packages/multi-workers/worktree_cmd.py
+?? packages/multi-workers/worktree_doctor.py
+?? packages/multi-workers/worktree_registry.py
+?? scripts/detach-node-modules-link.mjs
+?? scripts/detach-node-modules-link.test.mjs

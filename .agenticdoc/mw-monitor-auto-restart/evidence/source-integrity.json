@@ -1,0 +1,20 @@
+{
+  "mw.py": {
+    "before_sha256": "2384f737af0cf70269d2849ded742ace5076a6ce8f4bb89842e44600e6dbb021",
+    "after_sha256": "16931954f7dc3f394d6d810384310a2d8680de7a84d90ea3b0745c4aa07016b4",
+    "before_bytes": 568074,
+    "after_bytes": 568207,
+    "before_crlf": 13015,
+    "after_crlf": 13016,
+    "exact_three_edit_replay": true
+  },
+  "decision_monitor.py": {
+    "before_sha256": "915288303e7200ce2467f2acb14c868fedcc72d9fd9b2dd3c1740b88454f9f48",
+    "after_sha256": "897161c88a2840c4c9a5a9628999359c391a029d5f59fce8c35573568b8f4c37",
+    "before_bytes": 117336,
+    "after_bytes": 123526,
+    "before_crlf": 0,
+    "after_crlf": 0,
+    "outside_declared_regions_equal": true
+  }
+}

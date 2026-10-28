@@ -1,0 +1,96 @@
+{
+  "observed_at": "2026-10-26T06:32:31.166414+00:00",
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_context.py",
+      "before_sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+      "after_sha256": "c6f5783c69bdf1931d7ca199541827ab70b879f25fbc876f9b0df48e26fb2d70",
+      "before_bytes": 11949,
+      "after_bytes": 13784,
+      "before_crlf": 288,
+      "after_crlf": 323,
+      "before_lf": 0,
+      "after_lf": 0,
+      "changed": true,
+      "readback_equal": true
+    },
+    {
+      "path": "packages/multi-workers/scripts/gen_decide_registry_ts.py",
+      "before_sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+      "after_sha256": "e454cefd2328da48c9beb67d6385cf61d83b6bed24f8fc52e0bd5505237124c6",
+      "before_bytes": 11684,
+      "after_bytes": 21280,
+      "before_crlf": 0,
+      "after_crlf": 0,
+      "before_lf": 285,
+      "after_lf": 505,
+      "changed": true,
+      "readback_equal": true
+    },
+    {
+      "path": "packages/multi-workers/decide_registry.json",
+      "before_sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "after_sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "before_bytes": 29869,
+      "after_bytes": 29869,
+      "before_crlf": 0,
+      "after_crlf": 0,
+      "before_lf": 894,
+      "after_lf": 894,
+      "changed": false,
+      "readback_equal": true
+    },
+    {
+      "path": "packages/multi-workers/test_decide_registry_ts_lock.py",
+      "before_sha256": "dc6332f140f06ce9d0ca494245c1500f2f2ee14ce584c3dcf4ad821872b2a92e",
+      "after_sha256": "9603a817d725f6bf16c4ab0e9b554ab2ca1d756c4fb66f5bd3cc4f6c828e635b",
+      "before_bytes": 2424,
+      "after_bytes": 22960,
+      "before_crlf": 0,
+      "after_crlf": 0,
+      "before_lf": 63,
+      "after_lf": 599,
+      "changed": true,
+      "readback_equal": true
+    },
+    {
+      "path": "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts",
+      "before_sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+      "after_sha256": "8c316042da5bb61419deb3d3bd9897893c7b227fa21959807220f7ac12337b8f",
+      "before_bytes": 30264,
+      "after_bytes": 20629,
+      "before_crlf": 0,
+      "after_crlf": 0,
+      "before_lf": 930,
+      "after_lf": 695,
+      "changed": true,
+      "readback_equal": true
+    }
+  ],
+  "changed_paths": [
+    "packages/multi-workers/decision_context.py",
+    "packages/multi-workers/scripts/gen_decide_registry_ts.py",
+    "packages/multi-workers/test_decide_registry_ts_lock.py",
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts"
+  ],
+  "mirror": {
+    "predispatch_files": 1864,
+    "current_files": 1864,
+    "added": [],
+    "removed": [],
+    "changed": [
+      "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts",
+      "packages/multi-workers/decision_context.py",
+      "packages/multi-workers/scripts/gen_decide_registry_ts.py",
+      "packages/multi-workers/test_decide_registry_ts_lock.py"
+    ],
+    "changed_outside_write_face": []
+  },
+  "live_samefile": {
+    "packages/multi-workers/decision_context.py": false,
+    "packages/multi-workers/scripts/gen_decide_registry_ts.py": false,
+    "packages/multi-workers/decide_registry.json": false,
+    "packages/multi-workers/test_decide_registry_ts_lock.py": false,
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts": false
+  }
+}

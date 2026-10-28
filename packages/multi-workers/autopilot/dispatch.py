@@ -485,9 +485,16 @@ UNVERIFIED_REASONS: list[str] = [
     "awaiting-input",
 ]
 CLAIM_GATE_DEFAULT = "advisory"
+#: Fetch allowance ONE claim buys (D-014) and the calibrated ceiling of the
+#: derived file cap. `claim_budget_caps` uses this pair; `CLAIM_BUDGET` below
+#: carries the same two values under their parity-locked keys, so the TS mirror
+#: (`shared/dispatch-card.ts` `CLAIM_BUDGET.perClaim` / `.callCap`) and this
+#: module cannot drift (``test_claim_parity.py`` locks both).
+CLAIM_PER_CLAIM = 6
+CLAIM_CALL_CAP = 30
 CLAIM_BUDGET: dict[str, int] = {
-    "perClaim": 6,
-    "callCap": 30,
+    "perClaim": CLAIM_PER_CLAIM,
+    "callCap": CLAIM_CALL_CAP,
     "hardCap": 35,
     "claimByteCap": 65536,
     "byteCapMax": 393216,
@@ -709,23 +716,24 @@ def parse_claims_block(text: str) -> dict:
 
 
 def claim_budget_caps(claims: Sequence[dict] | None) -> tuple[int, int]:
-    """``(file_cap, byte_cap)`` derived from a card's claims (design §4).
+    """``(file_cap, byte_cap)`` derived from a card's claims (design §4, D-014).
 
-    ``file_cap = min(30, Σ(manual ? 2 : 1))`` — a manual claim is weighted
-    double because it buys PM attention instead of worker fetches; ``byte_cap =
-    min(393216, 65536 × n)``. Both bounds come from :data:`CLAIM_BUDGET`, the
-    calibrated values (RQ-1 §5, D-007), never from a local literal. No claims
+    ``file_cap = min(30, 6 × n)`` — every claim buys :data:`CLAIM_PER_CLAIM`
+    read/search calls (capped at :data:`CLAIM_CALL_CAP`); ``byte_cap =
+    min(393216, 65536 × n)``. The file cap is a FETCH allowance, not the
+    ``Σ预算`` planning weight: ``Σ预算`` prices the card for the gate (a
+    ``manual`` claim counts double because it buys PM attention) and stays
+    gated at 40, while the worker needs a budget that scales with how many
+    claims it must settle — ``Σ预算`` gave a 5-claim grep card 5 calls and
+    starved it after the 5th (measured, T-07 e2e). Both bounds come from the
+    module constants (RQ-1 §5, D-007), never from a local literal. No claims
     returns ``(0, 0)``, which :func:`_read_scope_caps` reads as "keep the
     historical behaviour" — the byte-identity guarantee for pre-claims cards.
     """
     rows = list(claims or ())
     if not rows:
         return 0, 0
-    budget_sum = sum(
-        2 if str(row.get("type") or "").strip().lower() == "manual" else 1
-        for row in rows
-    )
-    file_cap = min(CLAIM_BUDGET["callCap"], budget_sum)
+    file_cap = min(CLAIM_CALL_CAP, CLAIM_PER_CLAIM * len(rows))
     byte_cap = min(
         CLAIM_BUDGET["byteCapMax"], CLAIM_BUDGET["claimByteCap"] * len(rows)
     )

@@ -1,0 +1,61 @@
+--- packages/multi-workers/decision_dashboard.js.t22-before
++++ packages/multi-workers/decision_dashboard.js
+@@ -1075,8 +1075,39 @@
+     }
+   }
+ 
++  const TASK_STATE_LABELS = {
++    "not-queued": "未入队", pending: "已入队，等待执行", running: "执行中",
++    done: "任务执行完成", failed: "任务执行失败", "needs-clarification": "等待澄清",
++    lost: "任务连接丢失", unknown: "任务状态未知",
++  };
++
++  function renderTaskState(holder, title, snapshot, visibility) {
++    holder.appendChild(el("h5", {text: title}));
++    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
++      holder.appendChild(visibility === "withheld"
++        ? line("任务状态暂不显示", "当时快照已记录，但安全过滤暂不显示")
++        : visibility === "invalid"
++          ? line("任务状态无法确认", "当时快照未通过读取校验或已被安全过滤，不补猜")
++          : line("任务状态未记录", "没有当时快照，不用任务现在的状态补填"));
++      return;
++    }
++    holder.appendChild(line("执行状态", TASK_STATE_LABELS[snapshot.status] || "任务状态未知"));
++    holder.appendChild(line("当时记录时间", missing(snapshot.observed_at)));
++    const sourceLabels = {
++      "worker-registry": "任务队列记录（不是进程存活证明）",
++      "dispatch-result": "派发处理记录", "agent-report": "Agent 报告（不是系统观察）",
++    };
++    holder.appendChild(line("状态来源", sourceLabels[snapshot.source] || NOT_RECORDED));
++    [["completed", "已完成"], ["remaining", "待处理"], ["blockers", "阻塞"]].forEach(function (pair) {
++      const values = snapshot[pair[0]];
++      holder.appendChild(line(pair[1], Array.isArray(values) ? values.length ? values.join("；") : "无" : NOT_RECORDED));
++    });
++  }
++
+   function renderActionFacts(holder, detail) {
+     if (detail.observe_only === true) holder.appendChild(line("观察路径", "未执行任何业务行动；不写生产接收/签收反馈"));
++    renderTaskState(holder, "决策前", detail.task_before, detail.task_before_visibility);
++    holder.appendChild(el("h5", {text: "实际处理"}));
+     const executed = Array.isArray(detail.executed) ? detail.executed : [];
+     if (!executed.length) {
+       holder.appendChild(line("已执行行动", "未记录"));
+@@ -1096,6 +1127,18 @@
+       if (!isMissing(row.reason)) holder.appendChild(line("行动说明（原记录）", formatFree(row.reason)));
+       renderAnswerSourceAudit(holder, row.answer_source);
+     });
++    renderTaskState(holder, "决策后", detail.task_after, detail.task_after_visibility);
++    holder.appendChild(el("h5", {text: "变化说明"}));
++    const beforeStatus = detail.task_before && detail.task_before.status;
++    const afterStatus = detail.task_after && detail.task_after.status;
++    const known = beforeStatus && afterStatus && beforeStatus !== "unknown" && afterStatus !== "unknown" &&
++      Object.prototype.hasOwnProperty.call(TASK_STATE_LABELS, beforeStatus) &&
++      Object.prototype.hasOwnProperty.call(TASK_STATE_LABELS, afterStatus);
++    holder.appendChild(el("p", {class: "notes", text: known
++      ? beforeStatus === afterStatus
++        ? "执行状态未变化：" + TASK_STATE_LABELS[afterStatus] + "；进度信息以两份当时记录为准。"
++        : "任务从" + TASK_STATE_LABELS[beforeStatus] + "变为" + TASK_STATE_LABELS[afterStatus] + "；不代表整个项目已交付。"
++      : "无法确认任务状态变化：前后状态缺失或未知，不根据接收或本轮结算补猜。"}));
+     const settled = detail.settled && typeof detail.settled === "object" ? detail.settled : null;
+     const outcomeLabels = {
+       ok: "本轮处理完成，不代表整个任务已交付", pending: "本轮仍待处理",

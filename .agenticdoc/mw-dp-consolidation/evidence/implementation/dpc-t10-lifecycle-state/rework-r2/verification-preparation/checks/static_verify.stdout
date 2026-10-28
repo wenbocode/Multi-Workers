@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "checks": 67,
+  "failed_checks": [],
+  "problems": [],
+  "counts": {
+    "mirror_files": 1891,
+    "pyc_files": 14,
+    "old_evidence_files": 744,
+    "own_files": 6
+  },
+  "result": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\verification-preparation\\checks\\static_verify.result.json"
+}

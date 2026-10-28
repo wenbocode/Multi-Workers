@@ -1,0 +1,130 @@
+....F.........F..F..............F..                                      [100%]
+================================== FAILURES ===================================
+______ test_real_signoff_state_is_accepted_as_observation_book_material _______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18503/test_real_signoff_state_is_acc0')
+
+    def test_real_signoff_state_is_accepted_as_observation_book_material(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        project, state = real_signoff_state(tmp_path)
+        root = tmp_path / "run"
+        scope = _scope(root)
+        backend = decision.FakeBackend([_ok(_dp25_answers())])
+    
+        outcome = dpts.decide_for(
+            DP25,
+            state,
+            project,
+            client=_client(backend, scope),
+            archive=False,
+            intent="answer",
+            observation=dpts.Observation(scope=scope, book=_book(DP25, state), submission_id=SUB),
+        )
+    
+        assert outcome.status == "suggested", outcome.detail
+        assert len(backend.calls) == 1
+        assert backend.calls[0]["state"] == state, "the book must carry the state that was sent"
+        snapshots = _of_kind(decision_wire.test_wire_sink(root), "book-snapshot")
+        assert len(snapshots) == 1
+>       assert snapshots[0]["book"]["state"] == state
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'state'
+
+test_decision_input_contract_migration.py:353: KeyError
+_________ test_dp25_book_carrying_a_secret_is_refused_with_zero_send __________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18503/test_dp25_book_carrying_a_secr0')
+
+    def test_dp25_book_carrying_a_secret_is_refused_with_zero_send(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        project, state = real_signoff_state(tmp_path)
+        state["escalated_reasons"] = [TEST_SECRET]
+        root = tmp_path / "run"
+        scope = _scope(root)
+        backend = decision.FakeBackend([_ok(_dp25_answers())])
+    
+        outcome = dpts.decide_for(
+            DP25,
+            state,
+            project,
+            client=_client(backend, scope),
+            archive=False,
+            intent="answer",
+            observation=dpts.Observation(scope=scope, book=_book(DP25, state), submission_id=SUB),
+        )
+    
+>       assert outcome.escalated_reason == "input-incomplete", outcome.detail
+E       AssertionError: dp25-signoff-conclusion:k-t05c: answer only (mode=auto), nothing acted on
+E       assert None == 'input-incomplete'
+E        +  where None = DecisionOutcome(dp='dp25-signoff-conclusion', status='suggested', escalated_reason=None, answer={'q-conclusion': {'val...ecutor:dp25-signoff-conclusion', 'executor_invoked': False, 'action_outcome': 'unknown', 'observe_only_bypass': False}).escalated_reason
+
+test_decision_input_contract_migration.py:421: AssertionError
+_______ test_oversize_refusal_keeps_the_truncated_candidate_on_purpose ________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18503/test_oversize_refusal_keeps_th0')
+
+    def test_oversize_refusal_keeps_the_truncated_candidate_on_purpose(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        """Deliberate difference from a typed refusal: the state is *legal*.
+    
+        An oversize state is complete and legal, it just cannot be sent whole, so
+        the post-truncation candidate is snapshotted (a human can see what *would*
+        have been sent). A typed/undeclared-key refusal is illegal material and is
+        never stored. The two must not be described by one blanket rule.
+        """
+        project = _project(tmp_path)
+        root = tmp_path / "run"
+        scope = _scope(root)
+        backend = decision.FakeBackend([_ok({})])
+        state = _dp5_state()
+        # Legal per its own contract (32 items, 88 B each) but over the 2000 B budget.
+        state["test"] = {
+            **state["test"],
+            "failed_cases": [f"case_{index:02d}-" + "x" * 80 for index in range(32)],
+        }
+        assert dpts.state_field_issues(DP5, state) == ()
+    
+        outcome = dpts.decide_for(
+            DP5,
+            state,
+            project,
+            client=_client(backend, scope),
+            archive=False,
+            intent="answer",
+            observation=dpts.Observation(scope=scope, submission_id=SUB),
+        )
+    
+        assert outcome.escalated_reason == "input-oversize", outcome.detail
+        assert backend.calls == []
+        sink = decision_wire.test_wire_sink(root)
+        snapshots = _of_kind(sink, "book-snapshot")
+        assert len(snapshots) == 1, "the refused-for-size candidate is kept for the human"
+>       assert snapshots[0]["kind"] == "input-state"
+E       AssertionError: assert 'book-snapshot' == 'input-state'
+E         
+E         - input-state
+E         + book-snapshot
+
+test_decision_input_contract_migration.py:524: AssertionError
+______________ test_exports_carry_the_dp25_optional_declaration _______________
+
+    def test_exports_carry_the_dp25_optional_declaration() -> None:
+        doc = json.loads((PACKAGE_DIR / "decide_registry.json").read_text(encoding="utf-8"))
+        by_id = {point["id"]: point for point in doc["points"]}
+        exported = [field["name"] for field in by_id[DP25]["optional_state_fields"]]
+>       assert exported == list(DP25_OPTIONAL)
+E       AssertionError: assert [] == ['rows_escala...e_violations']
+E         
+E         Right contains 3 more items, first extra item: 'rows_escalated'
+E         Use -v to get more diff
+
+test_decision_input_contract_migration.py:842: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_input_contract_migration.py::test_real_signoff_state_is_accepted_as_observation_book_material
+FAILED test_decision_input_contract_migration.py::test_dp25_book_carrying_a_secret_is_refused_with_zero_send
+FAILED test_decision_input_contract_migration.py::test_oversize_refusal_keeps_the_truncated_candidate_on_purpose
+FAILED test_decision_input_contract_migration.py::test_exports_carry_the_dp25_optional_declaration
+4 failed, 31 passed in 0.72s

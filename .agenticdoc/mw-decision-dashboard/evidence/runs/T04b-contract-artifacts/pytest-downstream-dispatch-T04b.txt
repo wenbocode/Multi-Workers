@@ -1,0 +1,23 @@
+$ python -m pytest test_dispatch_decide_prepare.py -q
+$ cwd=packages/multi-workers
+$ exit=1
+
+................F......                                                  [100%]
+================================== FAILURES ===================================
+______________ test_dp_without_required_state_fields_is_refused _______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18110/test_dp_without_required_state0')
+
+    def test_dp_without_required_state_fields_is_refused(tmp_path: pathlib.Path) -> None:
+        project = _project(tmp_path)
+        items = ("- dp: dp4-failure-handling", *CARD_ITEMS[1:])
+        card = _write_card(project, "d-01", items=items)
+        result = _dispatch(project)
+>       assert result.ok is False
+E       AssertionError: assert True is False
+E        +  where True = DispatchResult(ok=True, reason='', task_key='ap-k1-d-01', task_md=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/p...-wenbozhou/pytest-18110/test_dp_without_required_state0/.agenticdoc/k1/workers/ap-k1-d-01/task.md'), row_verified=True).ok
+
+test_dispatch_decide_prepare.py:257: AssertionError
+=========================== short test summary info ===========================
+FAILED test_dispatch_decide_prepare.py::test_dp_without_required_state_fields_is_refused
+1 failed, 22 passed in 0.19s

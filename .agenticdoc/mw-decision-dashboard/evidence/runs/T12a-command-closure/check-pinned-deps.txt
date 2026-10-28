@@ -1,0 +1,7 @@
+### argv: npm run check:pinned-deps
+### cwd: /h/git/Multi-Workers
+
+> pi-monorepo@0.0.3 check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+### exit=0

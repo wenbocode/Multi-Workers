@@ -1,0 +1,89 @@
+{
+  "source": "agent-report",
+  "private_out": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/fixture/generator-out",
+  "cases": [
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-type.json",
+      "bytes": 3079,
+      "sha256": "f70b5aa699d2636105107d98453852b0b81aa504ec691fdeda79b44fb5247758",
+      "byte_identical_to_private_out": true,
+      "changed": true,
+      "previous_sha256": "dfb7ffc915a2c1de248629ec1d0a832c84b5d8a2920abc76427fdef60e6ddbf0"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-pm-steer.json",
+      "bytes": 4089,
+      "sha256": "6a8b946557d9d381707def7360691126f85e195495163f3ef0ba6bfff9f5967b",
+      "byte_identical_to_private_out": true,
+      "changed": true,
+      "previous_sha256": "814e7abf4172aba7c6828ab4e117f568ede18c5acf90d342640dc2235c744d10"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-check-task.json",
+      "bytes": 4622,
+      "sha256": "e88fb31a167335824a5bd6f338ec3e0da9387d8b5e1299ce1de9fd94a1b1f7bb",
+      "byte_identical_to_private_out": true,
+      "changed": true,
+      "previous_sha256": "1908330e314b3da038c3a0e745504b30885e4717be91ef349c58383fdf3cad9c"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-QG.json",
+      "bytes": 2991,
+      "sha256": "aacd487769caf4dceab0513b483d73c762da1d0d9914a1bfe3c6d201b1e10eb3",
+      "byte_identical_to_private_out": true,
+      "changed": true,
+      "previous_sha256": "43afee46e192b19a08be5a17260d2a088fa9789594066dca730fdc999273d953"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-gate-approve.json",
+      "bytes": 4750,
+      "sha256": "269f07c212be2f8a9de6c3f8b7f180588133650890690dcbd1f1074287cfd67a",
+      "byte_identical_to_private_out": true,
+      "changed": true,
+      "previous_sha256": "69e7970144ed7eb2cfd685e035f66872028172d4f594c3cda387b43ce6975ebd"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-sign-key.json",
+      "bytes": 3825,
+      "sha256": "4462e8163b6aaf6af0251eb3f6b10fd0e9571e4f71b878f791048d4e594fd232",
+      "byte_identical_to_private_out": true,
+      "changed": true,
+      "previous_sha256": "f089deabae264503f096406cf42cd909bddbeab23b80dc13eea194ceaf81e408"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-auto.json",
+      "bytes": 4747,
+      "sha256": "b80e93a52a7e07947efd9d758e379deb09c5683d4ff7d1f09261da16ec3a75ef",
+      "byte_identical_to_private_out": true,
+      "changed": true,
+      "previous_sha256": "3b8f1f267ebf50bb88b015efb53c5f7783e07e2763d3a157109060f8d36890a9"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-route.json",
+      "bytes": 3994,
+      "sha256": "91569d4d576622da48f8b16995fd3e27da5744a90788600cda1cb46189e5a230",
+      "byte_identical_to_private_out": true,
+      "changed": true,
+      "previous_sha256": "6f267c83a2dd704a17b48583d8a2c2380a6cdfdec2534797ab206424a49510d5"
+    }
+  ],
+  "legacy_cases_unchanged": true,
+  "legacy_cases": {
+    "dp1.json": {
+      "sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "expected": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff"
+    },
+    "dp2.json": {
+      "sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "expected": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea"
+    },
+    "dp3.json": {
+      "sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "expected": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d"
+    },
+    "dp25.json": {
+      "sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "expected": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd"
+    }
+  }
+}

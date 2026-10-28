@@ -1,0 +1,535 @@
+diff --git a/packages/multi-workers/mw_common.py b/packages/multi-workers/mw_common.py
+index b211bbb0f..b6a819a75 100644
+--- a/packages/multi-workers/mw_common.py
++++ b/packages/multi-workers/mw_common.py
+@@ -42,7 +42,7 @@ import shutil
+ import subprocess
+ import time
+ import sys
+-from typing import Mapping, NamedTuple, Sequence
++from typing import Callable, Mapping, NamedTuple, Sequence
+ 
+ try:
+     import tomllib  # Python 3.11+
+@@ -2385,9 +2385,27 @@ def read_serve_identity(project_dir: pathlib.Path) -> dict[str, int] | None:
+     return {"pid": pid, "started_at_ms": started_ms}
+ 
+ 
+-def acquire_lock(lock_file: pathlib.Path, retries: int = 20, base_delay: float = 0.05) -> None:
+-    """Exclusive lock via O_CREAT|O_EXCL. Same protocol as the TS side."""
++def acquire_lock(
++    lock_file: pathlib.Path,
++    retries: int = 20,
++    base_delay: float = 0.05,
++    *,
++    deadline_s: float | None = None,
++) -> None:
++    """Exclusive lock via O_CREAT|O_EXCL. Same protocol as the TS side.
++
++    ``deadline_s`` (optional, keyword-only) is a *monotonic* total budget for
++    this single acquisition (mw-decision-dashboard §9): the retry loop gives up
++    once the budget is spent instead of sleeping through the historical
++    exponential backoff (``base_delay * (2 ** retries - 1)`` - ~14.6h at the
++    defaults, which must never gate an evidence append). Omitting it keeps the
++    historical behaviour byte-identical. The budget covers the retry sleeps
++    only; OS scheduling and fsync are not strict real-time guarantees.
++    """
++    if deadline_s is not None and deadline_s < 0:
++        raise ValueError(f"deadline_s must be >= 0, got {deadline_s!r}")
+     lock_file.parent.mkdir(parents=True, exist_ok=True)
++    deadline = None if deadline_s is None else time.monotonic() + deadline_s
+     for attempt in range(retries + 1):
+         try:
+             fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+@@ -2396,8 +2414,15 @@ def acquire_lock(lock_file: pathlib.Path, retries: int = 20, base_delay: float =
+         except FileExistsError:
+             if attempt == retries:
+                 raise RuntimeError(f"Could not acquire lock at {lock_file} after {retries} retries")
+-            import time
+-            time.sleep(base_delay * (2 ** attempt))
++            delay = base_delay * (2 ** attempt)
++            if deadline is not None:
++                remaining = deadline - time.monotonic()
++                if remaining <= 0:
++                    raise RuntimeError(
++                        f"Could not acquire lock at {lock_file} within the {deadline_s:g}s budget"
++                    )
++                delay = min(delay, remaining)
++            time.sleep(delay)
+ 
+ 
+ def release_lock(lock_file: pathlib.Path) -> None:
+@@ -2560,6 +2585,89 @@ def _is_alive(pid: int) -> bool:
+         return False
+ 
+ 
++# ── Conservative tri-state liveness (mw-decision-dashboard D-001) ────────────
++#
++# ``_is_alive`` above is a two-valued probe shared by check_pid/doctor/heartbeat
++# and keeps that historical semantics. Lock-owner recovery needs the opposite
++# bias: only a probe that *proves* the process is gone may yield ``dead``;
++# anything the OS refuses to tell us is ``unknown`` (never stealable).
++
++PROCESS_ALIVE_STATES = ("alive", "dead", "unknown")
++_WIN32_ERROR_INVALID_PARAMETER = 87
++_WIN32_STILL_ACTIVE = 259
++
++
++def _win32_open_failure_state(error_code: int | None) -> str:
++    """Map an ``OpenProcess`` failure to a conservative liveness state.
++
++    ``ERROR_INVALID_PARAMETER`` (87) is how Windows reports "no such PID", so
++    it is the only mapped value that may mean dead. ``ERROR_ACCESS_DENIED`` (5:
++    another integrity level/session) and every unexpected or missing code are
++    unknown.
++    """
++    if error_code == _WIN32_ERROR_INVALID_PARAMETER:
++        return "dead"
++    return "unknown"
++
++
++def _win32_process_state(pid: int, kernel32: object | None = None) -> str:
++    """Win32 liveness via OpenProcess + GetExitCodeProcess, tri-state.
++
++    ``kernel32`` is injectable so the ACCESS_DENIED / probe-failure paths can be
++    exercised without an actual privileged owner.
++    """
++    import ctypes
++    import ctypes.wintypes
++
++    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
++    if kernel32 is None:
++        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
++    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
++    if not handle:
++        try:
++            error_code = int(kernel32.GetLastError())
++        except Exception:  # noqa: BLE001 - an unreadable error code proves nothing
++            return "unknown"
++        return _win32_open_failure_state(error_code)
++    try:
++        exit_code = ctypes.wintypes.DWORD()
++        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
++            return "unknown"
++        return "alive" if exit_code.value == _WIN32_STILL_ACTIVE else "dead"
++    finally:
++        kernel32.CloseHandle(handle)
++
++
++def _posix_process_state(pid: int) -> str:
++    """POSIX liveness: ESRCH is dead, EPERM (foreign user) is unknown."""
++    try:
++        os.kill(pid, 0)
++    except ProcessLookupError:
++        return "dead"
++    except PermissionError:
++        return "unknown"
++    except OSError:
++        return "unknown"
++    return "alive"
++
++
++def process_alive_state(pid: int) -> str:
++    """Conservatively classify a PID: ``alive`` | ``dead`` | ``unknown``.
++
++    Any unproven case - invalid pid, injected/raising probe, refused access,
++    failed ``GetExitCodeProcess`` - is ``unknown``. Callers that may move or
++    clean up state must only act on ``dead`` (D-001).
++    """
++    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
++        return "unknown"
++    try:
++        if sys.platform == "win32":
++            return _win32_process_state(pid)
++        return _posix_process_state(pid)
++    except Exception:  # noqa: BLE001 - a broken probe is unknown, never dead
++        return "unknown"
++
++
+ def check_pid(pid_path: pathlib.Path) -> int | None:
+     """Live PID from a pid file, or None when absent/dead/malformed."""
+     if not pid_path.exists():
+@@ -2598,6 +2706,240 @@ def port_owner_pids(port: int) -> list[int]:
+     return sorted(set(pids))
+ 
+ 
++# ── Lock owner identity (mw-decision-dashboard §9 / D-001) ────────────────────
++#
++# The monitor start lock (`.mw/decide-monitor.start.lock`) must survive a
++# crashed owner without letting a second starter steal a *live* lock. After
++# acquiring the lock the owner stamps its PID plus OS process start time into
++# the lock file; recovery may only move a lock whose owner is provably dead.
++# Everything the probes cannot prove (missing/legacy record, recycled PID,
++# unreadable file, unavailable start time) is "unknown" and must not be
++# stolen - the caller reports the conflict plus the manual recovery step.
++
++LOCK_OWNER_SCHEMA = 1
++LOCK_OWNER_STATES = ("absent", "legacy", "alive", "dead", "unknown")
++# Same order of magnitude as mw.py's serve.meta identity check (PID reuse).
++_LOCK_OWNER_START_TOLERANCE_MS = 5_000
++
++
++def process_start_ms(pid: int) -> int | None:
++    """OS-reported process start time (epoch ms), or None when unavailable.
++
++    Identity half of the lock-owner record (mirrors ``mw.process_start_ms``;
++    kept local so mw_common has no import cycle with the CLI). Windows via
++    ctypes GetProcessTimes, POSIX via /proc/<pid>/stat. Any probe failure is
++    ``None`` = unknown, never "dead".
++    """
++    if pid <= 0:
++        return None
++    if sys.platform == "win32":
++        import ctypes
++        import ctypes.wintypes
++
++        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
++        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
++        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
++        if not handle:
++            return None
++        try:
++            creation = ctypes.wintypes.FILETIME()
++            exit_t = ctypes.wintypes.FILETIME()
++            kernel_t = ctypes.wintypes.FILETIME()
++            user_t = ctypes.wintypes.FILETIME()
++            if not kernel32.GetProcessTimes(
++                handle,
++                ctypes.byref(creation),
++                ctypes.byref(exit_t),
++                ctypes.byref(kernel_t),
++                ctypes.byref(user_t),
++            ):
++                return None
++            ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
++            return ticks // 10_000 - 11_644_473_600_000  # 1601-01-01 -> epoch
++        finally:
++            kernel32.CloseHandle(handle)
++    try:
++        stat = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
++        after = stat.rsplit(")", 1)[1].split()
++        start_ticks = int(after[19])
++        btime = 0
++        for line in pathlib.Path("/proc/stat").read_text(encoding="utf-8").splitlines():
++            if line.startswith("btime "):
++                btime = int(line.split()[1])
++                break
++        hz = os.sysconf("SC_CLK_TCK")
++        return btime * 1000 + int(start_ticks * 1000 / hz)
++    except (OSError, ValueError, IndexError):
++        return None
++
++
++def _lock_owner_record(raw: str) -> dict | None:
++    """Parsed owner identity from raw lock bytes, or None when not a record."""
++    if raw.strip() == "":
++        return None
++    try:
++        data = json.loads(raw)
++    except ValueError:
++        return None
++    if not isinstance(data, dict) or data.get("schema") != LOCK_OWNER_SCHEMA:
++        return None
++    pid = data.get("pid")
++    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
++        return None
++    start = data.get("start_ms")
++    if start is not None and (isinstance(start, bool) or not isinstance(start, int)):
++        return None
++    return {"pid": pid, "start_ms": start}
++
++
++def read_lock_owner(lock_file: pathlib.Path) -> dict | None:
++    """Owner identity recorded in a lock file, or None when absent/unreadable."""
++    try:
++        raw = pathlib.Path(lock_file).read_text(encoding="utf-8")
++    except (OSError, UnicodeDecodeError):
++        return None
++    return _lock_owner_record(raw)
++
++
++def write_lock_owner(
++    lock_file: pathlib.Path,
++    *,
++    pid: int | None = None,
++    start_ms: int | None = None,
++) -> dict:
++    """Stamp this process as the lock owner (call while holding the lock).
++
++    Refuses to create the lock file: a stamp must never resurrect a released
++    (or foreign) lock. ``start_ms`` defaults to the OS start time of ``pid``;
++    when that probe is unavailable the record keeps ``start_ms=None`` and its
++    readers degrade to state ``unknown`` (never to "stealable").
++    """
++    path = pathlib.Path(lock_file)
++    if not path.exists():
++        raise RuntimeError(
++            f"lock file {path} does not exist - acquire the lock before recording its owner"
++        )
++    owner_pid = os.getpid() if pid is None else int(pid)
++    if owner_pid <= 0:
++        raise ValueError(f"pid must be > 0, got {owner_pid}")
++    owner_start = process_start_ms(owner_pid) if start_ms is None else int(start_ms)
++    record = {
++        "schema": LOCK_OWNER_SCHEMA,
++        "pid": owner_pid,
++        "start_ms": owner_start,
++        "written_at": iso_now(),
++    }
++    path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
++    return record
++
++
++def lock_owner_state(
++    lock_file: pathlib.Path,
++    *,
++    alive_probe: Callable[[int], bool] | None = None,
++    start_ms_probe: Callable[[int], int | None] | None = None,
++    alive_state_probe: Callable[[int], str] | None = None,
++) -> dict:
++    """Classify a lock file's recorded owner: absent|legacy|alive|dead|unknown.
++
++    Returns ``{"state", "pid", "start_ms", "detail"}``. Only ``dead`` carries
++    "the recorded owner is provably gone", and even that is *evidence, not
++    permission*: recovery must re-read the identity under its own startup lock
++    and compare before moving anything. ``legacy`` (a lock file with no owner
++    record, e.g. one written by the pre-monitor protocol) and ``unknown``
++    (unreadable/garbage record, refused liveness probe, recycled PID,
++    unprobeable start time, alive but unidentifiable owner) are never stealable.
++
++    The default liveness probe is :func:`process_alive_state`, so an OS refusal
++    (Windows ``ACCESS_DENIED`` from another integrity level/session, ``EPERM``,
++    a failed ``GetExitCodeProcess``) yields ``unknown`` instead of ``dead``.
++    ``alive_probe`` keeps the older boolean injection for existing callers;
++    ``alive_state_probe`` injects the tri-state one.
++    """
++    path = pathlib.Path(lock_file)
++    if not path.exists():
++        return {"state": "absent", "pid": None, "start_ms": None, "detail": "lock file does not exist"}
++    try:
++        raw = path.read_text(encoding="utf-8")
++    except UnicodeDecodeError:
++        return {
++            "state": "unknown",
++            "pid": None,
++            "start_ms": None,
++            "detail": "lock file is not valid UTF-8 (owner unknown; do not steal)",
++        }
++    except OSError as exc:
++        return {
++            "state": "unknown",
++            "pid": None,
++            "start_ms": None,
++            "detail": f"lock file unreadable ({exc.__class__.__name__}); owner unknown; do not steal",
++        }
++    owner = _lock_owner_record(raw)
++    if owner is None:
++        if raw.strip() == "":
++            return {
++                "state": "legacy",
++                "pid": None,
++                "start_ms": None,
++                "detail": "lock file carries no owner identity (legacy lock); do not steal - confirm manually",
++            }
++        return {
++            "state": "unknown",
++            "pid": None,
++            "start_ms": None,
++            "detail": "lock file has no readable owner identity (garbage or unknown schema); do not steal",
++        }
++    pid = owner["pid"]
++    start = owner["start_ms"]
++    base = {"pid": pid, "start_ms": start}
++    if alive_probe is not None:
++        try:
++            alive_state = "alive" if alive_probe(pid) else "dead"
++        except Exception:  # noqa: BLE001 - a broken probe must not mean "stealable"
++            alive_state = "unknown"
++    else:
++        probe_alive = process_alive_state if alive_state_probe is None else alive_state_probe
++        try:
++            alive_state = probe_alive(pid)
++        except Exception:  # noqa: BLE001 - a broken probe must not mean "stealable"
++            alive_state = "unknown"
++        if alive_state not in ("alive", "dead"):
++            alive_state = "unknown"
++    if alive_state == "unknown":
++        return {
++            **base,
++            "state": "unknown",
++            "detail": (
++                f"owner PID {pid} liveness cannot be proven (probe refused/failed); "
++                "do not steal"
++            ),
++        }
++    if alive_state == "dead":
++        return {**base, "state": "dead", "detail": f"recorded owner PID {pid} is not alive"}
++    probe = process_start_ms if start_ms_probe is None else start_ms_probe
++    if start is None:
++        return {
++            **base,
++            "state": "unknown",
++            "detail": f"owner PID {pid} is alive but the record has no start identity; do not steal",
++        }
++    observed = probe(pid)
++    if observed is None:
++        return {
++            **base,
++            "state": "unknown",
++            "detail": f"owner PID {pid} is alive but its start time cannot be probed; do not steal",
++        }
++    if abs(observed - start) > _LOCK_OWNER_START_TOLERANCE_MS:
++        return {
++            **base,
++            "state": "unknown",
++            "detail": f"PID {pid} is alive but its start identity differs from the record (PID reuse); do not steal",
++        }
++    return {**base, "state": "alive", "detail": f"owner PID {pid} is the recorded process"}
++
++
+ def global_ext_dir() -> pathlib.Path:
+     """pi's global extensions dir: $PI_CODING_AGENT_DIR/extensions if set, else
+     ~/.pi/agent/extensions (mirrors getAgentDir() in coding-agent config)."""
+@@ -5391,6 +5733,142 @@ def workspace_root(config: dict) -> str:
+     return config["control_root"]
+ 
+ 
++# ── Control-root resolution (mw-decision-dashboard §3.1 / D-002) ──────────────
++
++# Where a resolved control root came from. "refused" means "no control
++# evidence was accepted": the caller's path is returned unchanged and must
++# never be used to write a shared archive (require_control=False only).
++_CONTROL_ROOT_SOURCES = ("project", "agenticdoc", "key", "target-root", "refused")
++_CONTROL_ROOT_ERROR_CODES = {"not-control": "E-ROOT-NOT-CONTROL", "ambiguous-root": "E-ROOT-AMBIGUOUS"}
++# How far above the given path a `target.yml`-declared control may be found.
++# Deliberately shallow: an independent game/partition root must be handed its
++# control root explicitly, never discovered by a deep upward search (§3.1).
++_CONTROL_ROOT_MAX_UP = 2
++
++
++class ControlRootError(RuntimeError):
++    """Fail-closed control-root refusal (never a guessed/second archive root)."""
++
++    def __init__(self, kind: str, message: str) -> None:
++        super().__init__(f"{_CONTROL_ROOT_ERROR_CODES[kind]}: {message}")
++        self.kind = kind
++
++
++def _canonical_root(path: pathlib.Path | str) -> pathlib.Path:
++    """Absolute, junction/symlink-resolved form used for root identity."""
++    return pathlib.Path(os.path.realpath(os.path.abspath(os.path.expanduser(str(path)))))
++
++
++def _root_key(path: pathlib.Path | str) -> str:
++    return os.path.normcase(os.path.normpath(str(path)))
++
++
++def _root_contains(parent: pathlib.Path | str, child: pathlib.Path | str) -> bool:
++    """True when child is parent or inside it (case-insensitive on Windows)."""
++    p = _root_key(parent)
++    c = _root_key(child)
++    return c == p or c.startswith(p.rstrip("\\/") + os.sep)
++
++
++def _control_shape_evidence(path: pathlib.Path) -> list[tuple[pathlib.Path, str]]:
++    """Evidence carried by the path itself: project / .agenticdoc / key shapes."""
++    out: list[tuple[pathlib.Path, str]] = []
++    if path.name == ".agenticdoc":
++        out.append((path.parent, "agenticdoc"))
++    if path.parent.name == ".agenticdoc":
++        out.append((path.parent.parent, "key"))
++    if (path / ".agenticdoc").is_dir():
++        out.append((path, "project"))
++    return out
++
++
++def _control_target_evidence(path: pathlib.Path) -> list[tuple[pathlib.Path, str]]:
++    """Evidence from `<ancestor>/.agenticdoc/target.yml`, at most 2 levels up.
++
++    A candidate counts only when the given path is the declared control root,
++    its resolved workspace root, or inside either of them. Unreadable or
++    contradictory target config propagates TargetConfigError (fail-closed -
++    never a silent fallback to single).
++    """
++    ancestors = [path]
++    ancestor = path
++    for _ in range(_CONTROL_ROOT_MAX_UP):
++        ancestor = ancestor.parent
++        ancestors.append(ancestor)
++    evidence: list[tuple[pathlib.Path, str]] = []
++    seen: set[str] = set()
++    for candidate in ancestors:
++        key = _root_key(candidate)
++        if key in seen:
++            continue
++        seen.add(key)
++        if not (candidate / ".agenticdoc" / "target.yml").is_file():
++            continue
++        config = load_target_config(candidate)
++        control = pathlib.Path(config["control_root"])
++        workspace = pathlib.Path(workspace_root(config))
++        if _root_contains(control, path) or _root_contains(workspace, path):
++            evidence.append((control, "target-root"))
++    return evidence
++
++
++def resolve_control_root(
++    project_dir: pathlib.Path | str,
++    *,
++    require_control: bool = True,
++) -> tuple[pathlib.Path, str]:
++    """Resolve the single control root that owns ``project_dir``.
++
++    Accepted evidence (§3.1): the canonical project/.agenticdoc/key shapes plus
++    a shallow (<= 2 levels) `target.yml` probe that only counts when the path is
++    a declared control root, its workspace root, or inside one. There is no
++    cwd/env/HTTP input and nothing is ever created.
++
++    Returns ``(control_root, source)`` with source in
++    :data:`_CONTROL_ROOT_SOURCES`. Raises ControlRootError(kind ``not-control``)
++    when no control evidence exists and ``require_control`` is true, and
++    ControlRootError(kind ``ambiguous-root``) whenever two distinct controls can
++    claim the path (e.g. a stray `.agenticdoc` below a control-declared game
++    root) - refusing beats creating a second archive tree. TargetConfigError
++    from a probed target.yml propagates unchanged.
++
++    With ``require_control=False`` an unsupported path resolves to itself with
++    source ``refused`` so read-only work can continue, but that root must never
++    be used for shared-archive writes.
++    """
++    path = _canonical_root(project_dir)
++    evidence = _control_shape_evidence(path)
++    evidence.extend(_control_target_evidence(path))
++
++    controls: dict[str, pathlib.Path] = {}
++    sources: dict[str, str] = {}
++    for control, source in evidence:
++        key = _root_key(control)
++        controls.setdefault(key, control)
++        # Shape evidence names the relationship the caller used; keep it over
++        # the generic "target-root" label when both agree on the same root.
++        if key not in sources or sources[key] == "target-root":
++            sources[key] = source
++
++    if len(controls) > 1:
++        listed = ", ".join(sorted(str(c) for c in controls.values()))
++        raise ControlRootError(
++            "ambiguous-root",
++            f"{path} is claimed by more than one control root ({listed}); "
++            "pass the control root explicitly instead of a workspace/mapped root",
++        )
++    if controls:
++        key = next(iter(controls))
++        return controls[key], sources[key]
++    if require_control:
++        raise ControlRootError(
++            "not-control",
++            f"{path} carries no control evidence (no .agenticdoc, no target.yml within "
++            f"{_CONTROL_ROOT_MAX_UP} levels); refusing to guess a control root",
++        )
++    return path, "refused"
++
++
+ # ── Repo dist content anchors (mw-autopilot-verify-cli D-009, AC-009) ────────
+ # Cheap, build-free, read-only checks used by `mw update-env` (T-08) to keep
+ # the tracked artifacts from silently drifting behind their sources.

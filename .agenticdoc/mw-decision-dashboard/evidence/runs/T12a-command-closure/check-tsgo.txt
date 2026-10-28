@@ -1,0 +1,3 @@
+### argv: npx tsgo --noEmit
+### cwd: /h/git/Multi-Workers
+### exit=0

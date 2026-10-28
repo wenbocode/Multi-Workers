@@ -1,0 +1,15 @@
+{
+  "check": "plan-card-documents-only",
+  "generated_at": "2026-10-26T09:03:26+08:00",
+  "stages": 7,
+  "tasks": 36,
+  "acyclic": true,
+  "unordered_product_write_overlaps": 0,
+  "product_write_faces_within_approved": true,
+  "ac_coverage": 53,
+  "vc_coverage": 53,
+  "all_written_test_files_have_commands": true,
+  "cards_readback_equal": true,
+  "product_tests_run": false,
+  "workers_dispatched": false
+}

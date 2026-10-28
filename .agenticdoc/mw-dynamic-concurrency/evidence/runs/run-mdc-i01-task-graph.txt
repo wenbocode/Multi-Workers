@@ -1,0 +1,4 @@
+source: .agenticdoc/mw-dynamic-concurrency/workers/mdc-i01-task-graph/output.md
+extracted: 1 [VERIFY]/[FLOW] lines
+
+- 证据：`.agenticdoc/mw-dynamic-concurrency/evidence/T-C-I01-task-graph.md`（TL;DR/交付物/验收输出/真实卡面 `[VERIFY]`/V1–V7 与前沿 3 组构造/残留/来源/改动历史）。

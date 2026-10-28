@@ -1,0 +1,119 @@
+--- t20-startup-baseline/decision_monitor.py
++++ decision_monitor.py
+@@ -38,10 +38,12 @@
+   ``playground-unavailable`` and make zero model calls. Only an explicit
+   ``/api/test/submit`` can ever reach the provider.
+ 
+-Nothing here executes a business action, writes a production ledger, reads a
+-credential, or opens a browser: window launching is reduced to argv construction
+-plus an injectable spawner that reports explicit failure instead of a false
+-success. The actual dashboard assets and the CLI wiring belong to T11/T12.
++Nothing here executes a business action or writes a production ledger. Command
++startup builds one in-memory credential redactor for safe historical text; no
++history GET, poll, health check or import discovers credentials. Window launching
++is reduced to argv construction plus an injectable spawner that reports explicit
++failure instead of a false success. The dashboard assets and CLI wiring belong
++to T11/T12.
+ 
+ Failure shapes are always explicit (``MonitorError.kind``): ``range-exhausted``,
+ ``start-lock-conflict``, ``instance-live``, ``instance-unresponsive``,
+@@ -2166,9 +2168,9 @@
+     provider or a factory). ``playground_factory`` is the *lazy* production
+     wiring: the provider is created at most once per control root, on the first
+     playground route, never at import and never while reading history, and it
+-    resolves no credential by itself. ``MonitorInstance`` installs the shipped
+-    factory when no deps are supplied, so ``mw decide monitor`` gets a working
+-    DP test provider without any manual wiring.
++    resolves no credential by itself. Command entry points install the shipped
++    factories and opt into a startup response-redactor snapshot; a bare instance
++    retains explicit injection. ``mw decide monitor`` needs no manual wiring.
+ 
+     ``playground`` (when injected) must honour
+     :data:`PLAYGROUND_PROVIDER_OBLIGATIONS`: ``decision_book.check_book`` first
+@@ -2183,6 +2185,7 @@
+     playground: object | None = None
+     playground_factory: Callable[[pathlib.Path], object] | None = None
+     redactor_factory: Callable[[pathlib.Path], object | None] | None = None
++    redactor_on_start: bool = False
+     capture_state: str = "disabled"
+     capture_detail: str | None = None
+     transport_state: str = "unknown"
+@@ -2232,10 +2235,11 @@
+     def resolve_redactor(self, control_root: pathlib.Path) -> object | None:
+         """The injected redactor, else the one lazily built for this root.
+ 
+-        Only the playground seam resolves this (a response that cannot be made
+-        safe must not be served). It is built once per control root on first
+-        use - never at import, never on health, never on a history read - and
+-        the credential snapshot inside it is that root's single read.
++        Command startup resolves this once before serving any request. Bare
++        injected dependencies keep the playground-only lazy contract. Neither
++        path discovers credentials at import, on health or on a history read.
++        Startup freezes the result in instance-local deps, including failure,
++        so subsequent playground/history reads cannot retry discovery.
+         """
+         if self.redactor is not None:
+             return self.redactor
+@@ -2286,31 +2290,34 @@
+ 
+ 
+ def default_redactor_factory(control_root: pathlib.Path) -> object | None:
+-    """The shipped lazy response redactor for the playground seam.
+-
+-    Built from the project's own config plus the one frozen credential snapshot
+-    of this root; the value itself never leaves memory. Called on the first
+-    playground route only (an explicit user action), never at import/health.
++    """The shipped response redactor, resolved at explicit command startup.
++
++    Built from the project's config plus one frozen credential snapshot of this
++    root; credential values stay in memory. Never resolved at import, on health,
++    on history GET or polling; bare injected deps may retain lazy playground use.
+     """
+     import decision
+ 
+     cfg = decision.DecisionConfig.from_project(control_root)[0]
+-    snapshot = decision.credential_snapshot(cfg)
++    # History can contain either the config key or the local timi credential;
++    # config precedence must not skip the latter in this read-side known set.
++    # One discovery freezes the local/env leg, then the redactor unions cfg.
++    snapshot = decision.credential_snapshot()
+     return decision.credential_redactor(cfg, snapshot=snapshot)
+ 
+ 
+ def default_monitor_deps() -> MonitorDeps:
+     """The command-path dependencies (``serve`` / ``ensure_instance``).
+ 
+-    Only these entry points install the lazy factories; a bare ``MonitorDeps()``
+-    or a directly constructed ``MonitorInstance`` keeps the explicit-injection
+-    contract (no provider, no redactor -> 503), which is what the T10 seam tests
+-    lock. The real ``mw decide monitor`` path goes through them, so it gets a
+-    working DP test provider without manual wiring.
++    These entry points opt into a startup response-redactor snapshot, while the
++    playground provider stays lazy. A bare ``MonitorDeps()`` or a directly
++    constructed ``MonitorInstance`` retains explicit injection (no provider,
++    no redactor -> playground 503). Compatible reuse never resolves credentials.
+     """
+     return MonitorDeps(
+         playground_factory=default_playground_factory,
+         redactor_factory=default_redactor_factory,
++        redactor_on_start=True,
+     )
+ 
+ 
+@@ -2355,6 +2362,16 @@
+         )
+         self.listener = listener
+         self.port = port
++        if self.deps.redactor_on_start:
++            try:
++                redactor = self.deps.resolve_redactor(self.control_root)
++            except Exception:  # noqa: BLE001 - never expose credential discovery errors
++                redactor = None
++            # Keep the snapshot instance-local (deps templates can span roots).
++            # Disable its factory even on failure: GETs cannot retry discovery.
++            self.deps = dataclasses.replace(
++                self.deps, redactor=redactor, redactor_factory=None
++            )
+         identity = InstanceIdentity(
+             project_id=self.project_id,
+             instance_id=secrets.token_hex(8),

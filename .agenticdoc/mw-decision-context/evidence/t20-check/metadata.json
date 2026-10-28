@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "cmd.exe",
+    "/d",
+    "/c",
+    "npm run check"
+  ],
+  "cwd": "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\dc-t20-check-ocuk9jgu\\repo",
+  "utc_start": "2026-10-24T01:40:04.219251+00:00",
+  "utc_end": "2026-10-24T01:40:05.683705+00:00",
+  "exit": 1,
+  "copied_files": 11835,
+  "formatter_changes": [],
+  "original_changed_during_check": [],
+  "scope": "full npm run check, copied working tree; no formatter result applied to source"
+}

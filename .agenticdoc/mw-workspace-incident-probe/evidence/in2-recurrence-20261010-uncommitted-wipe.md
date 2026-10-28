@@ -13,7 +13,7 @@
 
 ## 1. 结论
 
-**IN-2 在 2026-10-10 再次发生**，形态与 10-09 那次一致（tracked 文件先消失、随后被另一会话批量恢复），
+**IN-2 在 2026-10-10 再次发生**（IN-2 自身为第二次；连同 2026-09-09 同机制先例 `01a080f3:539/:541`，属同机制事件族**已知第三次**，见 `incidents-timeline-20261009.md` §4.4），形态与 10-09 那次一致（tracked 文件先消失、随后被另一会话批量恢复），
 但本次多了一个可量化的后果：**恢复用 HEAD 内容覆盖了工作树 ⇒ 11:29 之前落地的全部未提交改动被抹掉**。
 
 ---
@@ -40,7 +40,7 @@
 - 本文件记录时的实测：该文件 **mtime = 2026-10-10 11:29**、第 88 行仍是 `console.log`、`git status` 干净、`git diff` 为空。
 - ⇒ 11:03 的修正与批量恢复事件**时间相邻且被覆盖**；**文档（声称已修）与工作树（未修）互相矛盾**，这是本次复发可判定的第一处净损失。
 
-对照（未被覆盖的 P0 遗留）：`packages/coding-agent/src/extensions/agent-team-loop/shared/mw-runner.ts` 的 1 处未提交 diff 在 10-09 IN-2 中已丢失（见 `in2-file-vanish-incident-20261009.md`），本次复核仍为空。
+对照（未被覆盖的 P0 遗留）：`packages/coding-agent/src/extensions/agent-team-loop/shared/mw-runner.ts` 的 1 处未提交 diff 在 10-09 IN-2 中**未被坐实**（事故前 12:17–12:32 观测窗内无一手记录；QG `[QG-E10]/[QG-E11]` 更正，见 `in2-file-vanish-incident-20261009.md` §4.3），本次复核仍为空。
 
 ---
 

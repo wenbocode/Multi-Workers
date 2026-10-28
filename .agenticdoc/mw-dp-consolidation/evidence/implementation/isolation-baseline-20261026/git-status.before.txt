@@ -1,0 +1,185 @@
+ M packages/coding-agent/README.md
+ M packages/coding-agent/dist/extensions/agent-team-loop/index.d.ts.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/index.js
+ M packages/coding-agent/dist/extensions/agent-team-loop/index.js.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/decision-tool.d.ts
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/decision-tool.d.ts.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/decision-tool.js
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/decision-tool.js.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/pm-orchestrator.d.ts
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/pm-orchestrator.d.ts.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/pm-orchestrator.js
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/pm-orchestrator.js.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/triage-client.d.ts
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/triage-client.d.ts.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/triage-client.js
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/triage-client.js.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/ui-bridge.d.ts
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/ui-bridge.d.ts.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/ui-bridge.js
+ M packages/coding-agent/dist/extensions/agent-team-loop/pm/ui-bridge.js.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/shared/decide-registry.generated.d.ts
+ M packages/coding-agent/dist/extensions/agent-team-loop/shared/decide-registry.generated.d.ts.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/shared/decide-registry.generated.js
+ M packages/coding-agent/dist/extensions/agent-team-loop/shared/decide-registry.generated.js.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/shared/dispatch-card.d.ts
+ M packages/coding-agent/dist/extensions/agent-team-loop/shared/dispatch-card.d.ts.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/shared/dispatch-card.js
+ M packages/coding-agent/dist/extensions/agent-team-loop/shared/dispatch-card.js.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/shared/mw-runner.d.ts
+ M packages/coding-agent/dist/extensions/agent-team-loop/shared/mw-runner.d.ts.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/shared/mw-runner.js
+ M packages/coding-agent/dist/extensions/agent-team-loop/shared/mw-runner.js.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/worker/output-sections.d.ts.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/worker/output-sections.js
+ M packages/coding-agent/dist/extensions/agent-team-loop/worker/output-sections.js.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/worker/worker-mode.d.ts
+ M packages/coding-agent/dist/extensions/agent-team-loop/worker/worker-mode.d.ts.map
+ M packages/coding-agent/dist/extensions/agent-team-loop/worker/worker-mode.js
+ M packages/coding-agent/dist/extensions/agent-team-loop/worker/worker-mode.js.map
+ M packages/coding-agent/src/extensions/agent-team-loop/index.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/shared/dispatch-card.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/worker/output-sections.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts
+ M packages/coding-agent/test/suite/claim-block.test.ts
+ M packages/coding-agent/test/suite/claim-bypass.test.ts
+ M packages/coding-agent/test/suite/claim-coverage.test.ts
+ M packages/coding-agent/test/suite/decision-association.test.ts
+ M packages/coding-agent/test/suite/decision-tool.test.ts
+ M packages/coding-agent/test/suite/dispatch-claims-render.test.ts
+ M packages/coding-agent/test/suite/dp2-narrow.test.ts
+ M packages/coding-agent/test/suite/dp3-answer.test.ts
+ M packages/coding-agent/test/suite/triage-client-state.test.ts
+ M packages/coding-agent/test/suite/triage-dispatch.test.ts
+ M packages/multi-workers/CHANGELOG.md
+ M packages/multi-workers/README.md
+ M packages/multi-workers/autopilot/dispatch.py
+ M packages/multi-workers/decide_archive.py
+ M packages/multi-workers/decide_book_template.json
+ M packages/multi-workers/decide_registry.json
+ M packages/multi-workers/decide_signoff.py
+ M packages/multi-workers/decision.py
+ M packages/multi-workers/decision_backends.py
+ M packages/multi-workers/decision_book.py
+ M packages/multi-workers/decision_context.py
+ M packages/multi-workers/decision_points.py
+ M packages/multi-workers/dist/extensions/agent-team-loop.js
+ M packages/multi-workers/mw.py
+ M packages/multi-workers/mw_common.py
+ M packages/multi-workers/scripts/gen_decide_registry_ts.py
+ M packages/multi-workers/test_claim_dispatch.py
+ M packages/multi-workers/test_claim_parity.py
+ M packages/multi-workers/test_decide_registry_contract.py
+ M packages/multi-workers/test_decide_registry_export.py
+ M packages/multi-workers/test_decide_run_authority.py
+ M packages/multi-workers/test_decide_sign_auto.py
+ M packages/multi-workers/test_decide_signoff.py
+ M packages/multi-workers/test_decision_book.py
+ M packages/multi-workers/test_decision_context.py
+?? packages/coding-agent/Python/
+?? packages/coding-agent/dist/extensions/agent-team-loop/pm/decision-task-state.d.ts
+?? packages/coding-agent/dist/extensions/agent-team-loop/pm/decision-task-state.d.ts.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/pm/decision-task-state.js
+?? packages/coding-agent/dist/extensions/agent-team-loop/pm/decision-task-state.js.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/pm/review-split-gate.d.ts
+?? packages/coding-agent/dist/extensions/agent-team-loop/pm/review-split-gate.d.ts.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/pm/review-split-gate.js
+?? packages/coding-agent/dist/extensions/agent-team-loop/pm/review-split-gate.js.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/pm/review-split-plan.d.ts
+?? packages/coding-agent/dist/extensions/agent-team-loop/pm/review-split-plan.d.ts.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/pm/review-split-plan.js
+?? packages/coding-agent/dist/extensions/agent-team-loop/pm/review-split-plan.js.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/claim-extract.d.ts
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/claim-extract.d.ts.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/claim-extract.js
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/claim-extract.js.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/claim-pack.d.ts
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/claim-pack.d.ts.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/claim-pack.js
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/claim-pack.js.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/review-split.d.ts
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/review-split.d.ts.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/review-split.js
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/review-split.js.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/split-manifest.d.ts
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/split-manifest.d.ts.map
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/split-manifest.js
+?? packages/coding-agent/dist/extensions/agent-team-loop/shared/split-manifest.js.map
+?? packages/coding-agent/src/extensions/agent-team-loop/pm/decision-task-state.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/pm/review-split-gate.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/pm/review-split-plan.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/shared/claim-extract.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/shared/claim-pack.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/shared/review-split.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/shared/split-manifest.ts
+?? packages/coding-agent/test/suite/claim-extract.test.ts
+?? packages/coding-agent/test/suite/claim-pack.test.ts
+?? packages/coding-agent/test/suite/decision-context-agent-materials.test.ts
+?? packages/coding-agent/test/suite/decision-context-integration.test.ts
+?? packages/coding-agent/test/suite/decision-context-pm-producers.test.ts
+?? packages/coding-agent/test/suite/decision-dashboard-command.test.ts
+?? packages/coding-agent/test/suite/decision-task-state.test.ts
+?? packages/coding-agent/test/suite/fixtures/
+?? packages/coding-agent/test/suite/review-split-gate.test.ts
+?? packages/coding-agent/test/suite/review-split-mode.test.ts
+?? packages/coding-agent/test/suite/review-split-plan.test.ts
+?? packages/coding-agent/test/suite/split-manifest.test.ts
+?? packages/multi-workers/autopilot/review_split.py
+?? packages/multi-workers/decide_cases/
+?? packages/multi-workers/decision_dashboard.css
+?? packages/multi-workers/decision_dashboard.html
+?? packages/multi-workers/decision_dashboard.js
+?? packages/multi-workers/decision_history.py
+?? packages/multi-workers/decision_lifecycle.py
+?? packages/multi-workers/decision_monitor.py
+?? packages/multi-workers/decision_playground.py
+?? packages/multi-workers/decision_signoff_result.py
+?? packages/multi-workers/decision_task_state.py
+?? packages/multi-workers/decision_wire.py
+?? packages/multi-workers/scripts/build_decide_cases.py
+?? packages/multi-workers/test_decision_bare_scope_known_set.py
+?? packages/multi-workers/test_decision_book_known_secrets.py
+?? packages/multi-workers/test_decision_cli_config_snapshot.py
+?? packages/multi-workers/test_decision_context_contract.py
+?? packages/multi-workers/test_decision_context_history.py
+?? packages/multi-workers/test_decision_context_integration.py
+?? packages/multi-workers/test_decision_context_lifecycle.py
+?? packages/multi-workers/test_decision_context_readable_backend.py
+?? packages/multi-workers/test_decision_context_readable_ui.py
+?? packages/multi-workers/test_decision_context_signoff_cli.py
+?? packages/multi-workers/test_decision_context_workbench.py
+?? packages/multi-workers/test_decision_coverage_safety.py
+?? packages/multi-workers/test_decision_credential_seam.py
+?? packages/multi-workers/test_decision_dashboard_assets.py
+?? packages/multi-workers/test_decision_dashboard_contracts.py
+?? packages/multi-workers/test_decision_dashboard_playground.py
+?? packages/multi-workers/test_decision_dp25_empty_value.py
+?? packages/multi-workers/test_decision_full_value_freeze.py
+?? packages/multi-workers/test_decision_history.py
+?? packages/multi-workers/test_decision_history_basis_ui.py
+?? packages/multi-workers/test_decision_history_feedback.py
+?? packages/multi-workers/test_decision_input_contract_migration.py
+?? packages/multi-workers/test_decision_known_set_snapshot.py
+?? packages/multi-workers/test_decision_monitor.py
+?? packages/multi-workers/test_decision_monitor_auto_restart.py
+?? packages/multi-workers/test_decision_monitor_auto_restart_cli.py
+?? packages/multi-workers/test_decision_monitor_cli.py
+?? packages/multi-workers/test_decision_monitor_history_redactor.py
+?? packages/multi-workers/test_decision_observation.py
+?? packages/multi-workers/test_decision_pin_contract.py
+?? packages/multi-workers/test_decision_playground.py
+?? packages/multi-workers/test_decision_redactor_contract.py
+?? packages/multi-workers/test_decision_required_refusal.py
+?? packages/multi-workers/test_decision_roots_locks.py
+?? packages/multi-workers/test_decision_task_state.py
+?? packages/multi-workers/test_decision_task_state_ui.py
+?? packages/multi-workers/test_decision_timi_credential_snapshot.py
+?? packages/multi-workers/test_decision_wire_store.py
+?? packages/multi-workers/test_decision_wire_transport.py
+?? packages/multi-workers/test_review_split_cli.py
+?? packages/multi-workers/test_review_split_parity.py

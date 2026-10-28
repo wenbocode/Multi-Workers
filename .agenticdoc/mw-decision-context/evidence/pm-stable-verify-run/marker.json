@@ -1,0 +1,15 @@
+{
+  "schema": "mw-run/1",
+  "rc": 0,
+  "timed_out": false,
+  "started_at_ms": 1792729685119,
+  "ended_at_ms": 1792729795163,
+  "wall_sec": 110.044,
+  "pid": 5760,
+  "argv": [
+    "python",
+    "-X",
+    "utf8",
+    ".agenticdoc/mw-decision-context/evidence/pm-stable-verify.py"
+  ]
+}

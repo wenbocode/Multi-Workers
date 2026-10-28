@@ -4,14 +4,20 @@
  * D-004/D-005/D-006/D-007 + D-019/D-021).
  *
  * Contract:
- * - Input is `(dpId, state)`: `dpId` selects the decision point and `state` is
- *   a **structured object** whose field table is frozen by D6 Q1.1 (L0
- *   enums/counters, L1 capped summaries). L2 content (credentials / user
- *   quotes / absolute paths / code) has **no place in the signature** — it is
- *   excluded by construction, not washed afterwards (D-019). The legacy
- *   free-form string state stays byte-compatible (`spec.md:162` compat clause)
- *   for callers that still send `buildTriageState` output; it is bounded to
- *   16KB exactly as before.
+ * - Input is `(dpId, material, meta)` for the four-DP business contract
+ *   (mw-decision-context T03): `material` carries ONLY the registry's
+ *   `modelStateFields` for that dp (the single allowlist projection), `meta`
+ *   carries the local envelope (`record_version`, `logical_id`, `key`,
+ *   `task_key`, `initiator_role`, `retry_of`) and NEVER reaches the model.
+ *   The stdin payload is exactly `{material, meta}`.
+ * - The older **structured state** entry (`{state}`, D6 Q1.1) is still accepted
+ *   by {@link triageDispatch} for callers that do not build the envelope yet;
+ *   it validates L0 enums/counters/L1 summaries and caps the state at 2000B.
+ *   The free-form dp1 string state and its `triage_risk` question map are gone
+ *   (spec §1.7: a replaced contract is not kept as a compatibility branch).
+ *   L2 content (credentials / user quotes / absolute paths / code) has **no
+ *   place in either signature** — it is excluded by construction, not washed
+ *   afterwards (D-019).
  * - Canonical serialisation = recursive key sort + compact separators, measured
  *   in UTF-8 bytes (D6 Q1.1/Q2.2). > {@link MAX_STRUCTURED_STATE_BYTES}
  *   triggers the two-stage truncation: drop optional L1 → halve required L1 →
@@ -48,15 +54,11 @@
  *   through verbatim; callers must label `model-self-report` as an unverified
  *   self-report that is NOT usable for gating.
  */
+import { type TaskStateSnapshot } from "./decision-task-state.ts";
 /** Hard client-side wall-clock budget for one `mw decide run` child (D-006). */
 export declare const DEFAULT_TRIAGE_TIMEOUT_MS = 20000;
 /** Client-side canonical budget for a structured state (spec §5.4 / D6 Q1). */
 export declare const MAX_STRUCTURED_STATE_BYTES = 2000;
-/** Largest free-form `state` string forwarded on the legacy path (design
- * D-004 `max_state_bytes`; kept below the Python default so a long task body
- * does not trip the server budget check). Structured states use
- * {@link MAX_STRUCTURED_STATE_BYTES} instead. */
-export declare const MAX_TRIAGE_STATE_BYTES = 16000;
 /** Decision point id for the pre-dispatch triage (D-006). The Python registry
  * owns the id set and the question set; this module only holds ids — and they
  * are the **registry ids verbatim** (`decision_points.DP_REGISTRY`), never short
@@ -69,28 +71,55 @@ export declare const TRIAGE_REASON_INPUT_INCOMPLETE = "input-incomplete";
 export declare const TRIAGE_REASON_INPUT_OVERSIZE = "input-oversize";
 export declare const CONFIDENCE_SOURCE_API = "api";
 export declare const CONFIDENCE_SOURCE_MODEL_SELF_REPORT = "model-self-report";
-/** Legacy DP-1 question set (D-006 wire shape).
+/** Record version of the local decision envelope (mw-decision-context §4.1).
+ * Lives in the immutable creation fact, never in a wire-capture absence probe. */
+export declare const DECISION_RECORD_VERSION = 2;
+/** Initiating role vocabulary: the PM, the three dp1 worker types, or an
+ * unverifiable caller. dp1 always says `pm` (the dispatch is the PM's), and the
+ * vocabulary is T02's single lowercase one: Python's
+ * `decision_lifecycle.INITIATOR_ROLES` refuses a second spelling table here (it
+ * only case-normalises as a defensive fallback), so a `PM` producer would send
+ * a role the writer never meant to accept. */
+export type DecisionInitiatorRole = "pm" | "coding" | "research" | "review" | "unknown";
+/** Local envelope metadata. Never part of the model material. */
+export interface DecisionEnvelopeMeta {
+    record_version: typeof DECISION_RECORD_VERSION;
+    /** One new UUID per real decision; every attempt/feedback row joins on it. */
+    logical_id: string;
+    /** AgenticTask key the decision was made under. */
+    key: string;
+    /** The REAL reserved task id, or null when the PM decision has no task
+     * (never "the latest task" by inference). */
+    task_key: string | null;
+    initiator_role: DecisionInitiatorRole;
+    /** Set only when this decision retries another (new id,指前次). */
+    retry_of: string | null;
+    task_before?: TaskStateSnapshot;
+}
+/** The stdin payload for `mw decide run <dp> --stdin` (four-DP contract). */
+export interface DecisionMaterialEnvelope {
+    material: TriageState;
+    meta: DecisionEnvelopeMeta;
+}
+/** A dp1 task-material triple,原文 from the dispatch card. */
+export interface Dp1TaskMaterial extends TriageState {
+    task_goal: string;
+    task_requirements: string;
+    task_deliverables: string;
+}
+/** Build the local envelope metadata for one NEW decision.
  *
- * `spec.md:162` keeps the `isinstance(state, str)` branch byte-compatible, and
- * `mw.py:718` still requires a non-empty `questions` map in that request, so the
- * legacy path must keep forwarding exactly these choices. The **structured**
- * path does not use it: the question set is authoritative in the Python
- * decision registry (design §2.1). Delete this constant together with the
- * legacy branch once Python fills `questions` from the registry. */
-export declare const DP1_QUESTIONS: Record<string, {
-    type: "choice";
-    choices: string[];
-}>;
-/** `questions_version` for dp1 = `q-<sha256(canonical questions)[:8]>`, exactly
- * `decision_points._questions_version()` for the registry's dp1 question set
- * (`q-09d3aad3` today). Derived from {@link DP1_QUESTIONS} instead of hardcoded
- * so the two cannot drift; the canonical form is Python's
- * `json.dumps(list(questions), ensure_ascii=False, sort_keys=True,
- * separators=(",", ":"))` — the same mirror `pm-orchestrator.ts` uses for dp2.
- *
- * A structured dp1 state must carry this value or `decide_for` refuses it as
- * `input-incomplete` (registry `REQUIRED_STATE_FIELDS`). */
-export declare const DP1_QUESTIONS_VERSION: string;
+ * `logical_id` is minted here (one UUID per decision, independent of the task
+ * id) so a caller cannot reuse a previous decision's id by accident. `retry_of`
+ * is explicit: a retry mints a new id and points at the previous one; a first
+ * attempt keeps `null`. A missing task stays `null` instead of being guessed. */
+export declare function newDecisionMeta(input: {
+    key: string;
+    taskKey?: string | null;
+    initiatorRole?: DecisionInitiatorRole;
+    retryOf?: string | null;
+    taskBefore?: TaskStateSnapshot;
+}): DecisionEnvelopeMeta;
 /** Effective `.mw/decide.json` policy relevant to the dispatch path. */
 export interface DecidePolicy {
     /** Global `enabled` flag. False for a missing / invalid config. */
@@ -114,6 +143,11 @@ export interface DecideRunRequest {
     /** Request JSON (`state`, plus `questions` on the legacy path); piped on
      * stdin, never argv. */
     input: string;
+    /** True for the four-DP envelope (`{material, meta}`): the CLI only takes the
+     * versioned `--stdin` path, which is what mints the record-start fact and
+     * requires the local meta. The legacy `{state}` request keeps the implicit
+     * stdin read (no flag needed). */
+    viaStdin?: boolean;
 }
 /** Raw child result — the seam tests replace (no real subprocess). */
 export interface RawDecideRun {
@@ -171,9 +205,9 @@ export interface TriageRunInput {
     dpId?: string;
     /** @deprecated legacy alias of {@link dpId}; kept for existing callers. */
     dp?: string;
-    /** Structured state object (canonical ≤2000B) or the legacy free-form
-     * string state (`spec.md:162` compat clause, ≤16KB). */
-    state: string | TriageState;
+    /** Structured state object (canonical ≤2000B). The four-DP business contract
+     * goes through {@link triageDispatchEnvelope} instead. */
+    state: TriageState;
     /** Pre-read policy; read from disk when omitted. */
     policy?: DecidePolicy;
     /** Runner override (tests); the real mw.py child when omitted. */
@@ -188,13 +222,21 @@ export declare function readDecidePolicy(projectDir: string): DecidePolicy;
  * no-window contract (`windowsHide`) plus `-X utf8` for the Chinese
  * diagnostics (design D-001; `agentic-scripts.ts:65-71` precedent). */
 export declare const runDecideMw: DecideRunner;
-/** `required_if` matrix (D6 Q5.1): each dp only carries its own block.
+/** `required_if` matrix (D6 Q5.1): each structured dp only carries its own block.
  *
  * Keys are **canonical ids from `packages/multi-workers/decision_points.py`
  * `DP_REGISTRY`** — the registry owns the id set, so a short form (`dp1`,
  * `dp3-clarify`) would never match a real dpId and `?? []` would silently drop
  * the whole dp-specific requirement. Exported only so the cross-layer drift
- * lock can assert every key against the live registry. */
+ * lock can assert every key against the live registry.
+ *
+ * The four business-material dps (dp1/dp2/dp3/dp25) deliberately have NO row:
+ * their required fields are the generated registry contract
+ * (`DECIDE_REGISTRY.requiredStateFields`) consumed by the material validators.
+ * A row here would be composed with {@link UNIVERSAL_REQUIRED_FIELDS} (the
+ * audit keys `phase`/`risk`/...), forcing business material to carry them —
+ * exactly the retired pre-T01 compatibility branch (spec §1.7). dp4/dp5/dp6/
+ * dp13 remain explicit legacy debt for the structured path. */
 export declare const REQUIRED_FIELDS_BY_DP: Record<string, string[]>;
 /** Required-field refusal list for one dp: field names only (L0). An empty
  * array means the state is sendable. */
@@ -233,21 +275,50 @@ export type StructuredStatePreparation = {
 };
 /** Validate → canonicalise → bound, in that order. A refusal means ZERO spawn. */
 export declare function prepareStructuredState(dpId: string, state: TriageState, maxBytes?: number): StructuredStatePreparation;
-/** Build the DP-1 `state` string from the dispatch-time inputs (D-006 legacy
- * path; the structured path uses a caller-built object instead). */
-export declare function buildTriageState(input: {
-    description: string;
-    taskType: string;
-    cli: string;
-    phase?: string;
-}): string;
-/** Bound the legacy `state` payload so a long task body cannot trip the Python
- * `max_state_bytes` budget (fail-soft: the advice is skipped, not the
- * dispatch). Byte-accurate because the Python side measures UTF-8 bytes. */
-export declare function boundTriageState(state: string, maxBytes?: number): string;
+/** Field names of a meta whose value/type would be refused. Names only (L0),
+ * never values. */
+export declare function validateDecisionMeta(meta: DecisionEnvelopeMeta): string[];
+/** Result of preparing one material envelope for the wire. */
+export type DecisionEnvelopePreparation = {
+    ok: true;
+    envelope: DecisionMaterialEnvelope;
+    bytes: number;
+} | {
+    ok: false;
+    reason: string;
+    missing: string[];
+};
+/** Validate → canonicalise → bound the business material, in that order.
+ *
+ * The allowlist is the registry's `modelStateFields` for the dp: any extra key
+ * (identity / audit / a second question) is a refusal, never forwarded. A
+ * missing / blank required field is `input-incomplete`; material over an
+ * explicitly configured budget is `input-oversize`. Both are ZERO-spawn
+ * refusals: necessary material is never silently truncated (design §2).
+ *
+ * `maxBytes = 0` means the legacy 2000B client constant does NOT gate the
+ * material: the design's rule is to check against the ACTUAL transport budget,
+ * which lives in Python (`max_state_bytes` defaults to 0 = off; the token gates
+ * apply there), and no new client ceiling may be invented before the four-case
+ * measurement. Shape validation still happens here, so a malformed material is
+ * refused before any spawn. */
+export declare function prepareDecisionEnvelope(dpId: string, material: TriageState, meta: DecisionEnvelopeMeta, maxBytes?: number): DecisionEnvelopePreparation;
 /** Run one decision point. Never throws; a non-enabled policy is a `disabled`
  * no-op that performs no spawn. */
 export declare function triageDispatch(input: TriageRunInput): TriageResult;
+/** Run one decision point with the four-DP business material on the local
+ * envelope (`{material, meta}` piped to the SAME `mw decide run` stdin
+ * wrapper). Never throws; a non-enabled policy performs no spawn. */
+export declare function triageDispatchEnvelope(input: {
+    projectDir: string;
+    dpId: string;
+    material: TriageState;
+    meta: DecisionEnvelopeMeta;
+    policy?: DecidePolicy;
+    run?: DecideRunner;
+    timeoutMs?: number;
+    maxBytes?: number;
+}): TriageResult;
 /** Provenance-qualified confidence wording. Only `api` may read as a real
  * confidence; `model-self-report` must carry the "not for gating" marker
  * (design D-002/D-004 hard rule). */

@@ -1,0 +1,303 @@
+{
+  "module_file": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_validity.py",
+  "boundaries": [
+    {
+      "name": "signoff-continue",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "not_a_required_signoff",
+            "field": "choice",
+            "detail": "continue"
+          }
+        ],
+        "writes_signoff": false,
+        "widens_scope": false
+      },
+      "passed": true
+    },
+    {
+      "name": "signoff-user-confirm",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "not_a_required_signoff",
+            "field": "choice",
+            "detail": "user-confirm"
+          }
+        ],
+        "writes_signoff": false,
+        "widens_scope": false
+      },
+      "passed": true
+    },
+    {
+      "name": "signoff-wrong-key",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "signoff_key_mismatch",
+            "field": "key",
+            "detail": "other-key"
+          }
+        ],
+        "writes_signoff": false,
+        "widens_scope": false
+      },
+      "passed": true
+    },
+    {
+      "name": "signoff-missing-ref",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "missing_signoff_reference",
+            "field": "signoff_ref",
+            "detail": ""
+          }
+        ],
+        "writes_signoff": false,
+        "widens_scope": false
+      },
+      "passed": true
+    },
+    {
+      "name": "evidence-contract-change",
+      "actual": {
+        "status": "stale",
+        "reasons": [
+          {
+            "code": "contract_version_changed",
+            "field": "contract_version",
+            "detail": "v2"
+          }
+        ],
+        "stale_dependencies": [],
+        "unaffected_changes": [],
+        "reusable": false
+      },
+      "passed": true
+    },
+    {
+      "name": "claim-mixed-traversal",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "parent_traversal",
+            "field": "files",
+            "detail": "../outside.py"
+          },
+          {
+            "code": "invalid_claim_request",
+            "field": "files",
+            "detail": "requested write face is not a legal path set"
+          }
+        ],
+        "conflicts": [],
+        "conflicting_owners": [],
+        "takeover": false,
+        "lock_mode": "exclusive",
+        "decision_grants_claim": false,
+        "dispatched": false
+      },
+      "passed": true
+    },
+    {
+      "name": "claim-other-task-same-owner",
+      "actual": {
+        "status": "conflict",
+        "reasons": [
+          {
+            "code": "own_claim_on_other_task",
+            "field": "files",
+            "detail": "safe.py"
+          }
+        ],
+        "conflicts": [
+          "safe.py"
+        ],
+        "conflicting_owners": [
+          "worker-1"
+        ],
+        "takeover": false,
+        "lock_mode": "exclusive",
+        "decision_grants_claim": false,
+        "dispatched": false
+      },
+      "passed": true
+    },
+    {
+      "name": "effect-unrecognized",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "effect_state_unrecognised",
+            "field": "effect",
+            "detail": "'unrecorded'"
+          }
+        ],
+        "actions": [],
+        "duplicate_actions": [],
+        "blocked": [
+          "act"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "name": "effect-missing",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "effect_state_unrecognised",
+            "field": "effect",
+            "detail": "None"
+          }
+        ],
+        "actions": [],
+        "duplicate_actions": [],
+        "blocked": [
+          "act"
+        ]
+      },
+      "passed": true
+    }
+  ],
+  "controls": [
+    {
+      "name": "finalize-control",
+      "actual": {
+        "status": "valid",
+        "reasons": [],
+        "writes_signoff": false,
+        "widens_scope": false
+      },
+      "passed": true
+    },
+    {
+      "name": "same-contract",
+      "actual": {
+        "status": "applies",
+        "reasons": [],
+        "stale_dependencies": [],
+        "unaffected_changes": [],
+        "reusable": true
+      },
+      "passed": true
+    },
+    {
+      "name": "byte-only",
+      "actual": {
+        "status": "applies",
+        "reasons": [],
+        "stale_dependencies": [],
+        "unaffected_changes": [],
+        "reusable": true
+      },
+      "passed": true
+    },
+    {
+      "name": "same-task-exclusive-reentry",
+      "actual": {
+        "status": "clear",
+        "reasons": [],
+        "conflicts": [],
+        "conflicting_owners": [],
+        "takeover": false,
+        "lock_mode": "exclusive",
+        "decision_grants_claim": false,
+        "dispatched": false
+      },
+      "passed": true
+    },
+    {
+      "name": "no-record-control",
+      "actual": {
+        "status": "proceed",
+        "reasons": [],
+        "actions": [
+          "act"
+        ],
+        "duplicate_actions": [],
+        "blocked": []
+      },
+      "passed": true
+    },
+    {
+      "name": "effect-control-failed",
+      "actual": {
+        "status": "proceed",
+        "reasons": [],
+        "actions": [
+          "act"
+        ],
+        "duplicate_actions": [],
+        "blocked": []
+      },
+      "passed": true
+    },
+    {
+      "name": "effect-control-applied",
+      "actual": {
+        "status": "already-applied",
+        "reasons": [],
+        "actions": [],
+        "duplicate_actions": [
+          "act"
+        ],
+        "blocked": []
+      },
+      "passed": true
+    },
+    {
+      "name": "effect-control-unknown",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "effect_state_unknown",
+            "field": "effect",
+            "detail": "unknown"
+          }
+        ],
+        "actions": [],
+        "duplicate_actions": [],
+        "blocked": [
+          "act"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "name": "effect-control-in-progress",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "effect_state_unknown",
+            "field": "effect",
+            "detail": "in-progress"
+          }
+        ],
+        "actions": [],
+        "duplicate_actions": [],
+        "blocked": [
+          "act"
+        ]
+      },
+      "passed": true
+    }
+  ],
+  "boundary_failures": 0,
+  "control_failures": 0,
+  "pure_calls_not_real_artifact_authority_claim_or_effect_execution": true,
+  "signoff_contract_binding_and_real_reference_resolution_not_covered": true,
+  "whole_claim_lock_validation_and_production_reentry_still_consumer_responsibility": true
+}

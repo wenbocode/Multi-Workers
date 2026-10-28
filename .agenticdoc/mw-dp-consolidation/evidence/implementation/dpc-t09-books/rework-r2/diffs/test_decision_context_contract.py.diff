@@ -1,0 +1,250 @@
+--- a/packages/multi-workers/test_decision_context_contract.py
++++ b/packages/multi-workers/test_decision_context_contract.py
+@@ -27,6 +27,7 @@
+ import os
+ import pathlib
+ import sys
++from unittest import mock
+ 
+ import pytest
+ 
+@@ -1346,3 +1347,239 @@
+     empty = books.book_state(books.scaffold_book("dp-QG"))
+     assert "context" not in empty
+     assert set(empty) == set(dpts.REQUIRED_STATE_FIELDS["dp-QG"])
++
++
++# ---------------------------------------------------------------------------
++# 8. R2 boundary regressions (four reproduced PM fixture roots)
++#
++# 1. stdin carries exactly one book object: a parsed non-object (null/array/
++#    bool/int/float, and a JSON string that names a real book file) is a
++#    ``book-schema`` refusal, never a filesystem lookup and never an escaped
++#    TypeError. ``prepare_request(path)`` stays the only file authority.
++# 2. an unloadable file keeps a complete, serializable ``BookReport``
++#    (``ok=false`` + the concrete issue), so ``as_dict()`` never raises.
++# 3. schema refusals never echo a known secret; the details stay specific.
++# 4. ``schema_version`` must be the real non-bool integer 3, not 3.0.
++# ---------------------------------------------------------------------------
++
++#: Synthetic known-secret sentinel of this card (never a real credential).
++KNOWN_SECRET = "pm-known-opaque-business-secret"
++
++
++def _no_file_authority(*_args: object, **_kwargs: object) -> None:
++    raise AssertionError("a non-object stdin payload must never load a file")
++
++
++@pytest.mark.parametrize(
++    ("value", "json_kind"),
++    [
++        (None, "null"),
++        ([], "array"),
++        ([{"schema_version": 3, "decision_point": "dp-w-type"}], "array"),
++        (True, "boolean"),
++        (17, "integer"),
++        (3.14, "number"),
++    ],
++    ids=["null", "empty-array", "array-of-books", "boolean", "integer", "number"],
++)
++def test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue(
++    value: object, json_kind: str, project: pathlib.Path
++) -> None:
++    with mock.patch.object(books, "load_book", _no_file_authority), mock.patch.object(
++        books, "_read_json", _no_file_authority
++    ), mock.patch.object(books, "book_sha256", _no_file_authority):
++        prepared, issues = books.prepare_stdin_request(
++            json.dumps(value),
++            project_dir=project,
++            repo_root=project,
++            limits=GENEROUS_LIMITS,
++        )
++    assert prepared is None
++    assert issues, json_kind
++    assert issues[0].code == "book-schema", rendered(issues)
++    assert has_issue(issues, "book", "one book object"), rendered(issues)
++    assert json_kind in issues[0].detail, rendered(issues)
++    # Nothing on disk was consulted or written (no ledger, no receipt).
++    assert sorted(path.name for path in project.iterdir()) == ["notes.txt"]
++
++
++def test_stdin_json_string_is_data_and_never_a_file_path(
++    project: pathlib.Path,
++) -> None:
++    book = legal_book("dp-w-type")
++    path = project / "book.json"
++    path.write_text(json.dumps(book), encoding="utf-8")
++    with mock.patch.object(books, "load_book", _no_file_authority), mock.patch.object(
++        books, "_read_json", _no_file_authority
++    ), mock.patch.object(books, "book_sha256", _no_file_authority):
++        prepared, issues = books.prepare_stdin_request(
++            json.dumps(str(path)),
++            project_dir=project,
++            repo_root=project,
++            limits=GENEROUS_LIMITS,
++        )
++    assert prepared is None
++    assert issues and issues[0].code == "book-schema", rendered(issues)
++    assert has_issue(issues, "book", "one book object"), rendered(issues)
++    # The file API remains the only path authority, and it still works.
++    prepared, issues = books.prepare_request(
++        path, project_dir=project, repo_root=project, limits=GENEROUS_LIMITS
++    )
++    assert not issues, rendered(issues)
++    assert prepared is not None
++    assert prepared.book_path == str(path)
++    assert prepared.file_sha256 == books.book_sha256(path)
++
++
++def test_an_invalid_book_file_report_is_serializable_and_still_failed(
++    tmp_path: pathlib.Path, project: pathlib.Path
++) -> None:
++    legacy = tmp_path / "legacy.json"
++    legacy.write_text(
++        json.dumps(
++            {
++                "schema_version": 2,
++                "decision_point": "dp-w-type",
++                "state": material_for("dp-w-type"),
++            }
++        ),
++        encoding="utf-8",
++    )
++    report = books.check_book_file(
++        legacy, project_dir=project, repo_root=project, limits=GENEROUS_LIMITS
++    )
++    data = report.as_dict()
++    assert data["ok"] is False
++    assert data["issues"] and data["issues"][0]["code"] == "book-schema"
++    assert [entry["ok"] for entry in data["books"]] == [False]
++    assert data["books"][0]["issues"] == data["issues"]
++    assert data["books"][0]["label"] is None
++    assert data["sha256"] == books.book_sha256(legacy)
++    assert report.ok is False and report.issues
++
++    broken = tmp_path / "broken.json"
++    broken.write_text("{not json", encoding="utf-8")
++    data = books.check_book_file(
++        broken, project_dir=project, repo_root=project, limits=GENEROUS_LIMITS
++    ).as_dict()
++    assert data["ok"] is False
++    assert data["books"][0]["ok"] is False
++    assert "not valid JSON" in data["issues"][0]["detail"]
++
++
++@pytest.mark.parametrize(
++    "layer",
++    [
++        "unknown-top-key",
++        "unknown-notes-key",
++        "bad-version",
++        "unknown-dp",
++        "unknown-meta-key",
++        "unknown-context-key",
++    ],
++)
++def test_schema_refusals_never_echo_a_known_secret(
++    layer: str, project: pathlib.Path
++) -> None:
++    known = KNOWN_SECRET
++    redactor = decision.known_secret_redactor(extra_secrets=[known])
++    book = legal_book("dp-w-type")
++    if layer == "unknown-top-key":
++        book[known] = "x"
++        expected = ("book-schema", "book", "unknown top-level keys")
++    elif layer == "unknown-notes-key":
++        book["notes"][known] = "x"
++        expected = ("book-schema", "notes", "unknown notes keys")
++    elif layer == "bad-version":
++        book["schema_version"] = known
++        expected = ("book-schema", "schema_version", "must be 3")
++    elif layer == "unknown-dp":
++        book["decision_point"] = known
++        expected = ("book-schema", "decision_point", "unknown decision point id")
++    elif layer == "unknown-meta-key":
++        book["meta"][known] = "x"
++        expected = ("book-meta", "meta", "unknown meta keys")
++    else:
++        book["context"] = {known: "x"}
++        expected = ("book-context", "context.<key>", "slot not allowed")
++    issues = check(book, project, redactor=redactor)
++    code, path, fragment = expected
++    assert issues, layer
++    assert has_issue(issues, path, fragment), (layer, rendered(issues))
++    assert code in codes(issues), (layer, rendered(issues))
++    assert all(known not in issue.format() for issue in issues), rendered(issues)
++
++
++def test_a_schema_refusal_on_load_never_echoes_a_known_secret(
++    tmp_path: pathlib.Path, project: pathlib.Path
++) -> None:
++    known = KNOWN_SECRET
++    redactor = decision.known_secret_redactor(extra_secrets=[known])
++    book = legal_book("dp-w-type")
++    book[known] = "x"
++    path = tmp_path / "secret-top-key.json"
++    path.write_text(json.dumps(book), encoding="utf-8")
++    with pytest.raises(books.BookError) as excinfo:
++        books.load_book(path, redactor=redactor)
++    message = str(excinfo.value)
++    assert known not in message
++    assert "unknown top-level keys" in message
++    report = books.check_book_file(
++        path,
++        project_dir=project,
++        repo_root=project,
++        limits=GENEROUS_LIMITS,
++        redactor=redactor,
++    )
++    assert report.ok is False
++    assert all(known not in issue.format() for issue in report.issues)
++
++
++def test_schema_details_stay_specific_for_non_secret_values(
++    project: pathlib.Path,
++) -> None:
++    unknown_dp = legal_book("dp-w-type")
++    unknown_dp["decision_point"] = "dp-not-a-real-entry"
++    assert has_issue(
++        check(unknown_dp, project), "decision_point", "dp-not-a-real-entry"
++    ), rendered(check(unknown_dp, project))
++
++    old_version = legal_book("dp-w-type")
++    old_version["schema_version"] = 2
++    assert has_issue(
++        check(old_version, project), "schema_version", "must be 3"
++    ), rendered(check(old_version, project))
++
++    extra_note = legal_book("dp-w-type")
++    extra_note["notes"]["extra_note"] = "x"
++    assert has_issue(
++        check(extra_note, project), "notes", "unknown notes keys"
++    ), rendered(check(extra_note, project))
++
++
++@pytest.mark.parametrize(
++    "value",
++    [3.0, 2, "3", True, None, [3]],
++    ids=["float-3.0", "int-2", "string-3", "bool-true", "null", "array"],
++)
++def test_schema_version_must_be_the_real_non_bool_integer_three(
++    value: object, tmp_path: pathlib.Path, project: pathlib.Path
++) -> None:
++    book = legal_book("dp-w-type")
++    book["schema_version"] = value
++    issues = check(book, project)
++    assert has_issue(issues, "schema_version", "must be 3"), rendered(issues)
++    assert "book-schema" in codes(issues)
++    prepared, prep_issues = books.prepare_request(
++        book, project_dir=project, repo_root=project, limits=GENEROUS_LIMITS
++    )
++    assert prepared is None and prep_issues
++    path = tmp_path / "version.json"
++    path.write_text(json.dumps(book), encoding="utf-8")
++    with pytest.raises(books.BookError) as excinfo:
++        books.load_book(path)
++    assert "schema_version" in str(excinfo.value)
++    # The legal control: the real integer 3 still passes the schema gate.
++    assert "schema_version" not in {
++        issue.path for issue in check(legal_book("dp-w-type"), project)
++    }

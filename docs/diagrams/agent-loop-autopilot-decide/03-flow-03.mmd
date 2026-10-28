@@ -1,0 +1,20 @@
+graph LR
+    subgraph PMS["PM 发起"]
+        WT["dp-w-type<br/>派发类型"]
+        ST["dp-pm-steer<br/>任务编排"]
+        QG["dp-QG<br/>正式质量审核"]
+        GA["dp-gate-approve<br/>gate 审批"]
+        SK["dp-sign-key<br/>key 签收"]
+        AU["dp-auto<br/>现场动态行动"]
+    end
+    subgraph WKS["Worker 发起"]
+        CT["dp-w-check-task<br/>本次任务可达性"]
+    end
+    RT["dp-route<br/>临时问题先路由"]
+    RT -->|"选七个目标之一"| PMS
+    RT -->|"选七个目标之一"| WKS
+
+    classDef fixed fill:#E6F1FB,stroke:#185FA5,color:#0C447C
+    classDef common fill:#E1F5EE,stroke:#0F6E56,color:#085041
+    class WT,ST,QG,GA,SK,CT fixed
+    class AU,RT common

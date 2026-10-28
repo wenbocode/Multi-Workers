@@ -297,7 +297,10 @@ export interface ClaimCounts {
     closed: number;
     partial: number;
     unverified: number;
-    /** `[FLOW] tool_call` read-class count (D-008: only allowed calls). */
+    /** Read-class calls the read scope ALLOWED (D-008/D-014): a call blocked by
+     * the scope is not a fetch — counting it inflated the `tokens_per_closed_claim`
+     * denominator (T-07 e2e measured `fetches=12` against a `fileCap=5`, 7 of the
+     * 12 blocked). `readCount` in the run scope keeps the raw call count. */
     fetches: number;
     tokens: number | null;
 }
@@ -321,8 +324,9 @@ export declare function appendClaimsTraceLine(taskKey: string, agenticdocRoot: s
 export declare function claimGapIds(gaps: string[]): string[];
 /**
  * The three AC-008 settlement criteria that need inputs only the worker layer
- * holds (the role, the run clock, the trace read count) — `claimCoverage`'s
- * per-claim criteria stay in `worker/output-sections.ts` (frozen, T-04a):
+ * holds (the role, the allowed read targets, the allowed read-call count) —
+ * `claimCoverage`'s per-claim criteria stay in `worker/output-sections.ts`
+ * (frozen, T-04a):
  *
  *   ② `claims:unverified-ratio:<u>/<n>><limit>%`  too many un-settled claims
  *      (40%, or 60% for the review role) ⇒ the run must not read as PASS.
@@ -332,22 +336,26 @@ export declare function claimGapIds(gaps: string[]): string[];
  *                                                (B-6: an upper bound — you
  *                                                cannot honestly report more
  *                                                fetches than you performed).
- *   ⑥ `claim:<id>:carried-from`                 a closed/partial row whose every
- *      cited file predates this run's task.md and carries no `carried-from:`:
- *      the previous round's verdict was copied without saying so.
+ *   ⑥ `claim:<id>:carried-from`                 a closed/partial row whose
+ *      cited files were never ALLOWED to be read by this run and that carries
+ *      no `carried-from:`: the previous round's verdict was copied without
+ *      saying so (D-014 — a file's mtime says nothing about who read it, the
+ *      T-07 e2e proved that 0% of its carried-from verdicts were real).
  *
- * Never throws. `claims.length === 0` (no contract) returns `[]`, and an unknown
- * `taskMtimeMs` skips ⑥ rather than guessing a clock.
+ * Never throws. `claims.length === 0` (no contract) returns `[]`, and an absent
+ * `readTargets` skips ⑥ rather than guessing what the run touched.
  */
 export declare function claimSettlementGaps(opts: {
     claims: Claim[];
     table: VerdictTable;
     /** Task type whose role sets the ② threshold (`roleForTaskType`). */
     role: string;
-    /** `[FLOW] tool_call` read-class count of this run (D-008). */
+    /** Read-class calls this run was ALLOWED (D-008/D-014) — the ③ upper bound. */
     traceReads: number;
-    /** mtime of this run's task.md — the clock a "fresh" citation must beat. */
-    taskMtimeMs?: number;
+    /** Repo-relative targets this run was allowed to read/search (the read-scope
+     * allow branch). `undefined` skips ⑥; `[]` means "read nothing", so every
+     * cited file is a copied verdict. */
+    readTargets?: string[];
     /** Root the evidence paths resolve against (launcher cwd in production). */
     projectDir?: string;
 }): string[];
@@ -701,7 +709,7 @@ export interface Dp3ReuseMatch {
  * {@link dp3Thresholds}) wins (priority order); otherwise the best borderline
  * hit is returned for the caller to escalate. */
 export declare function matchDp3Reuse(question: string, sources: readonly Dp3ReuseSource[], minMatchScore?: number): Dp3ReuseMatch | undefined;
-/** A fact answer must cite `path:line` (design Q2.2 3a). */
+/** A fact answer must cite `path:line` (design Q2.2 3a; legacy 3c reuse path). */
 export declare const DP3_CITATION_RE: RegExp;
 export interface Dp3DecisionInput {
     projectDir: string;
@@ -721,11 +729,15 @@ export interface Dp3DecisionInput {
     trueRoot: string;
     keyDir: string;
     policy: Dp3Policy;
+    /** The ASKING agent's business material (T04 design §2): `question` 原文,
+     * `background{...}` and 2..5 `handling_options`. When absent the clarification
+     * is NOT answered from local guesses — the human path proceeds. */
+    material?: Record<string, unknown>;
     /** Test seam; production uses the triage client's `runDecideMw`. */
     runner?: DecideRunner;
     timeoutMs?: number;
 }
-/** Classification + (for 3a) one decision-service call. Never throws. */
+/** Classification + (for a material answer) one decision-service call. Never throws. */
 export type Dp3Decision = {
     kind: "answer";
     sub: "3a" | "3c";
@@ -744,6 +756,21 @@ export type Dp3Decision = {
     acted?: boolean;
     /** FIX-J: which local candidate was consumed and from where. The frozen
      * `[DECIDE]` row keeps its shape; this rides its own trace line. */
+    detail?: string;
+} | {
+    /** The native `handling` choice of the agent-supplied candidates (T04).
+     * It is a RECEIPT for the asking agent — never an executed action: the
+     * consumer does not narrow, split, kill a worker or write an authorization. */
+    kind: "handling";
+    option: {
+        id: string;
+        label?: string;
+        description?: string;
+    };
+    decisionId: string;
+    mode: "auto" | "suggest";
+    confidence: number | null;
+    confidenceSource: string;
     detail?: string;
 } | {
     kind: "escalate";
@@ -772,6 +799,23 @@ export declare function dp3CandidateTokens(question: string): string[];
  * always the convention evidence file of the task type, `c2..c5` are the best
  * name matches under the four roots, ordered by (hit count desc, path asc). */
 export declare function buildDp3Candidates(input: Dp3DecisionInput, question: string): Dp3Candidate[];
+/** Resolve the model's `candidate` choice into a LOCALLY quoted answer (FIX-J
+ * §4). Nothing the child wrote in free text reaches `answer`: the text is the
+ * local line, the citation is the local `<path>:<line>`.
+ *
+ * Legacy path: T04 replaced the dp3 question set with the agent's own
+ * `handling_options`, so `decideDp3WorkerClarify` no longer calls this. It stays
+ * for the historical 3c reuse contract until T08 migrates the old assertions.
+ */
+export declare function resolveDp3CandidateAnswer(input: Dp3DecisionInput, question: string, candidates: readonly Dp3Candidate[], rawCandidate: unknown): {
+    ok: true;
+    answer: string;
+    source?: string;
+    detail: string;
+} | {
+    ok: false;
+    detail: string;
+};
 /** Decide one clarification (never throws; the caller owns the trace + steer). */
 export declare function decideDp3WorkerClarify(input: Dp3DecisionInput): Dp3Decision;
 /** The injected steer (DS-7: machine-attributable, never impersonates a human).

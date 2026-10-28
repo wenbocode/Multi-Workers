@@ -28,10 +28,33 @@ Pre-transport escalations (disabled / transport-unavailable / input-incomplete /
 input-oversize) write no archive row, matching the row column of the Q2
 control-flow table in
 ``evidence/research/design-registry-config-20261019.md``.
+
+Four-DP contract (key ``mw-decision-context``, design §2): dp1/dp2/dp3/dp25
+declare the approved business material only. :data:`MODEL_STATE_FIELDS` is the
+single per-dp model key table (exported to JSON/TS) and :func:`model_state_for`
+is the one projection the decide path applies before the budget, the snapshot
+and the transport, so identity (``schema_version``/``decision_point``/
+``questions_version``) and local association facts (``key``/``task_key``/
+``trigger_id``) never reach the model. The other 21 dps have no allowlist entry
+and keep their existing contract unchanged.
+
+Observation seam (card T05, design §5.3 / D-003): ``decide_for(observation=...)``
+is the explicit human observe-only channel. It validates the paired contract
+(``intent="answer"``, ``archive=False``, an isolated ``test`` scope with its own
+``evidence_path``) before doing any work, bypasses **only** the per-DP
+authorization gate, and never reaches the executor. Every decision that gets a
+capture scope also writes a ``decision-end`` row (status plus the archive
+signal ``created``/``replayed``/``skipped``/``failed``/``unknown``/
+``not-attempted``; an archive exception is recorded as ``failed`` and then
+re-raised unchanged) and, when state material existed, a ``book-snapshot`` row
+(``book`` or ``input-state`` plus the rendered candidate enum) through the
+injected redactor. ``authorization_preview`` is the shared pure verdict used by
+the monitor: it never claims an act, let alone a successful one.
 """
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import datetime
 import hashlib
@@ -41,7 +64,7 @@ import logging
 import math
 import pathlib
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
@@ -50,11 +73,16 @@ import decision
 import decision_context
 
 __all__ = [
+    "ACTOR_ID_MAX_BYTES",
+    "ACTOR_KINDS",
+    "ARCHIVE_STATES",
+    "CAPTURE_CHANNELS",
     "DECISIONS_RELATIVE_PATH",
     "DECIDE_POINTS_RELATIVE_PATH",
     "DP_REGISTRY",
     "ESCALATED_REASONS",
     "EXPECTED_DP_COUNT",
+    "GATE_KIND_ENUM",
     "INTENTS",
     "MAX_STATE_BYTES",
     "CONTEXT_MAX_BYTES",
@@ -66,14 +94,36 @@ __all__ = [
     "POLICY_LAYERS",
     "POLICY_ROW_BOUNDS",
     "SNAPSHOT_WIRING_KEYS",
+    "STATE_ARRAY_ITEM_MAX_BYTES",
+    "STATE_ARRAY_MAX_ITEMS",
+    "STATE_ARRAY_MAX_ITEMS_WIDE",
+    "STATE_FIELD_CONSTRAINT_KEYS",
+    "STATE_FIELD_CROSS_CHECKS",
     "STATE_FIELD_DESCRIPTIONS",
+    "STATE_FIELD_TYPES",
+    "STATE_STRING_MAX_BYTES",
     "DecisionOutcome",
     "DecisionPoint",
+    "Observation",
+    "MODEL_STATE_FIELDS",
+    "AUDIT_STATE_PATHS",
+    "NON_MATERIAL_STATE_KEYS",
+    "QUESTION_INSTRUCTIONS_MAX_BYTES",
+    "QUESTION_OVERRIDE_FIELDS",
+    "QuestionOverride",
+    "apply_question_override",
+    "question_override_issues",
+    "resolve_question_override",
+    "send_state",
+    "model_state_for",
     "PointConfig",
     "PointsConfig",
+    "SNAPSHOT_KINDS",
     "TIERS",
     "Trigger",
     "UNWIRED_SNAPSHOT_WIRING",
+    "OPTIONAL_STATE_FIELDS",
+    "authorization_preview",
     "clear_points_config_cache",
     "decide_for",
     "decide_points_config_path",
@@ -88,6 +138,11 @@ __all__ = [
     "resolve_dynamic_choices",
     "resolve_policy",
     "resolve_policy_origins",
+    "snapshot_field_dict",
+    "state_field_issues",
+    "state_identity_issues",
+    "state_unknown_key_issues",
+    "register_book_validator",
 ]
 
 _LOGGER = logging.getLogger("multi_workers.decision_points")
@@ -105,9 +160,23 @@ STATUSES = ("acted", "suggested", "escalated")
 #: ``answer`` returns the advice only (executor skipped, ``acted=false`` row).
 INTENTS = ("act", "answer")
 
-#: Structured input budget (spec §5.4 / design D-019); transport keeps its own
-#: 16 KiB ceiling in ``decision.DecisionConfig.max_state_bytes``.
-MAX_STATE_BYTES = 2000
+#: Structured input budget (spec §5.4 / design D-019). Measured, not guessed:
+#: the four shipped complete cases encode to 385/1095/831/856 B and the real
+#: T03 pm-producers card material (its `## 上下文` / `## 要求` / `## 交付格式`
+#: sections, verbatim) encodes to 2570 B — every real worker card on disk since
+#: then stays at or below 3868 B. 8192 B is the smallest power of two at least
+#: twice that measured maximum, so a complete real material fits with headroom
+#: while a genuinely oversized state is still refused whole (never truncated)
+#: by :func:`_fit_state` / ``decide_for``. The transport keeps its own real
+#: gates in ``decision.DecisionConfig`` (``max_state_plus_question_tokens``
+#: default 32768, ``max_total_tokens`` 65536, optional project byte ceiling
+#: ``max_state_bytes`` default 0 = off); 8192 B is far inside them: the measured
+#: real card is 769 estimated tokens, and even 8192 all-ASCII bytes are ~2048.
+MAX_STATE_BYTES = 8192
+#: The state ``schema_version`` the builder writes and every producer must echo.
+#: Single authority for the state identity (the decision book delegates to the
+#: same constant/check instead of keeping a second version table).
+STATE_SCHEMA_VERSION = 2
 #: Context budget (W6 / D-053): the ``context`` block alone never exceeds 4000 B,
 #: and inside a state it is fitted to the headroom under :data:`MAX_STATE_BYTES`.
 CONTEXT_MAX_BYTES = decision_context.CONTEXT_MAX_BYTES
@@ -409,7 +478,7 @@ def _state_builder(dp_id: str) -> Callable[[Trigger], dict]:
     """
 
     def build_state(trigger: Trigger) -> dict:
-        state: dict[str, Any] = {"schema_version": 2, "decision_point": dp_id}
+        state: dict[str, Any] = {"schema_version": STATE_SCHEMA_VERSION, "decision_point": dp_id}
         for name, value in dict(trigger.data or {}).items():
             state.setdefault(name, value)
         if trigger.key and not state.get("key"):
@@ -519,17 +588,6 @@ DP_REGISTRY: tuple[DecisionPoint, ...] = (
                     "review": "审计别人已完成的产出",
                 },
             },
-            {
-                "id": "triage_risk",
-                "type": "choice",
-                "choices": ["low", "mid", "high"],
-                "instructions": "这个任务做错了的代价有多大？",
-                "labels": {
-                    "low": "可随时撤销且不影响他人",
-                    "mid": "影响同一 key 的其它任务或需要返工",
-                    "high": "跨会话或跨 key 冲突或不可逆（发布、删除、凭据变更）",
-                },
-            },
         ),
         executor=_unwired_executor("dp1-dispatch-type"),
     ),
@@ -556,35 +614,13 @@ DP_REGISTRY: tuple[DecisionPoint, ...] = (
     _point(
         dp_id="dp3-worker-clarify",
         tier="P2",
-        description="worker 澄清（dp3a 事实可查 / dp3b 意图需人 / dp3c 已表态复用）",
+        description="worker 澄清（问题原文 + 四项背景 + 针对问题的处理候选）",
         questions=(
             {
-                "id": "answer_kind",
+                "id": "handling",
                 "type": "choice",
-                "choices": ["fact", "intent", "reuse"],
-                "instructions": (
-                    "这条澄清属于哪一类：能凭已给材料查到答案、需要人的意图判断、还是已有表态可复用？"
-                ),
-                "labels": {
-                    "fact": "答案存在于给出的状态或候选条目里",
-                    "intent": "取决于人想要什么（材料里没有）",
-                    "reuse": "之前的表态或产物已经回答了它",
-                },
-            },
-            {
-                "id": "answerable",
-                "type": "noul",
-                "instructions": "仅凭 state 里给出的内容与候选条目，能否确定地回答上面这条澄清？",
-                "criteria": {
-                    "true": "材料里直接有答案",
-                    "false": "材料不足或需要人表态",
-                },
-            },
-            {
-                "id": "candidate",
-                "type": "choice",
-                "dynamic_choices": "local_candidates",
-                "instructions": "state.local_candidates 里哪一条最可能承载答案？",
+                "dynamic_choices": "handling_options",
+                "instructions": "针对这个问题，从候选处理方式中选出最合适的一项。",
             },
         ),
         executor=_unwired_executor("dp3-worker-clarify"),
@@ -832,19 +868,15 @@ DP_REGISTRY: tuple[DecisionPoint, ...] = (
             {
                 "id": "q-conclusion",
                 "type": "choice",
-                "choices": ["continue", "narrow", "revoke"],
+                "choices": ["finalize", "continue", "user-confirm"],
                 "instructions": (
-                    "给出该 key 的收尾签收结论（任意 AgenticTask key 通用，key 由调用方传入）。判据：continue 需要 rows_available>=1、"
-                    "chain_ok=true，且每一行都来自真实 jev 引擎 "
-                    "timi-decisions/jev-latest/api（engine_violations 为空）；narrow 用于"
-                    "降级：有证据但不足以为全量结论背书（N=0、部分行上抛、范围过大）；"
-                    "revoke 用于 chain_ok=false（档案链断/被篡改）或 engine 不符（出现"
-                    "非 jev 引擎的行）。信息不足时选 narrow，不要选 continue。"
+                    "按交付目标、实际完成与验证证据判断：这次交付可以收尾，还是需要继续完成，"
+                    "或交用户确认？不以任务数量或完成声明代替证据。"
                 ),
                 "labels": {
-                    "continue": "证据充分：N>=1、链闭合、每行都是真实 jev 引擎",
-                    "narrow": "降级：证据不足以背书全量结论，缩小范围后继续",
-                    "revoke": "撤回：档案链断或出现非 jev 引擎的行",
+                    "finalize": "可以收尾：按交付目标与验收条件直接签收",
+                    "continue": "继续完成：交 PM 推进未完成的缺口",
+                    "user-confirm": "交用户确认：由 PM 提出具体待确认项",
                 },
             },
         ),
@@ -918,7 +950,11 @@ SNAPSHOT_QUESTION_KEYS = (
 #: 2 = per-point wiring (``wired``/``trigger``/``adopted_at``/``wiring_note``)
 #: plus ``required_state_fields`` as ``{name, type, description}`` objects; the
 #: generated snapshot owns no top-level ``wiring`` section any more.
-SNAPSHOT_SCHEMA = 2
+#: 3 = per-point ``optional_state_fields`` plus the declared field constraints
+#: (``enum``/``max_items``/``item_type``/``max_bytes``/``item_max_bytes``/
+#: ``signed``/``min_value``) on every exported field, i.e. the typed business
+#: contract of design §4.5 is exported, not just the required path names.
+SNAPSHOT_SCHEMA = 3
 
 #: Per-point wiring keys, in frozen order (hand-maintained TS call sites, which
 #: the Python registry cannot know; the export writer merges them in).
@@ -946,25 +982,47 @@ def _executor_kind(executor: object) -> str:
     return "unwired" if getattr(executor, "unwired", False) else "wired"
 
 
-def _snapshot_state_fields(dp_id: str) -> list[dict]:
-    """``required_state_fields`` of one dp as ``{name, type, description}``.
+def snapshot_field_dict(path: str) -> dict:
+    """One declared state path as an exportable field spec.
 
-    Order follows :data:`REQUIRED_STATE_FIELDS` (the authority for *which*
-    paths are required); :data:`STATE_FIELD_DESCRIPTIONS` supplies the meaning.
-    A path without an entry is a registry bug, so it fails loud instead of
-    exporting a bare string the reader has to guess at.
+    ``{name, type, description}`` in a frozen order, plus every declared
+    constraint from :data:`STATE_FIELD_CONSTRAINT_KEYS` (``enum`` as a JSON
+    array). A path without a :data:`STATE_FIELD_DESCRIPTIONS` entry is a
+    registry bug, so it fails loud instead of exporting a field the reader has
+    to guess at. This is the single renderer for the required *and* the optional
+    field list, so both artifacts carry one vocabulary.
     """
-    fields: list[dict] = []
-    for path in REQUIRED_STATE_FIELDS.get(dp_id, ()):
-        spec = STATE_FIELD_DESCRIPTIONS.get(path)
-        if spec is None:
-            raise ValueError(
-                f"{dp_id}: required state path {path!r} has no STATE_FIELD_DESCRIPTIONS entry"
-            )
-        fields.append(
-            {"name": path, "type": spec["type"], "description": spec["description"]}
-        )
-    return fields
+    spec = STATE_FIELD_DESCRIPTIONS.get(path)
+    if spec is None:
+        raise ValueError(f"state path {path!r} has no STATE_FIELD_DESCRIPTIONS entry")
+    field: dict = {
+        "name": path,
+        "type": spec["type"],
+        "description": spec["description"],
+    }
+    for key in STATE_FIELD_CONSTRAINT_KEYS:
+        if key not in spec:
+            continue
+        value = spec[key]
+        field[key] = list(value) if key == "enum" else value
+    return field
+
+
+def _snapshot_state_fields(paths: Iterable[str]) -> list[dict]:
+    """Render declared state paths (required or optional) for the export."""
+    return [snapshot_field_dict(path) for path in paths]
+
+
+def _model_state_fields_export(dp_id: str) -> dict:
+    """The per-dp model key table, exported only for the four approved dps.
+
+    An absent key means "no allowlist declared": the 21 legacy dps keep sending
+    their declared state unchanged (``model_state_for`` returns it as-is).
+    """
+    paths = MODEL_STATE_FIELDS.get(dp_id)
+    if paths is None:
+        return {}
+    return {"model_state_fields": list(paths)}
 
 
 def _snapshot_question(question: Mapping) -> dict:
@@ -986,13 +1044,16 @@ def registry_snapshot() -> dict:
     every value is JSON-ready, so the same registry always renders the same
     bytes (``registry_snapshot_text``) and drift is a byte comparison.
 
-    Every point is self-describing: ``required_state_fields`` reads
-    :data:`REQUIRED_STATE_FIELDS` + :data:`STATE_FIELD_DESCRIPTIONS` at call
-    time (both definitions sit in the structured-input section below) and
-    renders ``[{name, type, description}]``, ``[]`` for a dp without an entry;
-    a required path without a description raises here (an exported field with
-    no semantics is the gap this shape closes). The four wiring keys fall back
-    to :data:`UNWIRED_SNAPSHOT_WIRING`: they name TS call sites, which the
+    Every point is self-describing: ``required_state_fields`` /
+    ``optional_state_fields`` read :data:`REQUIRED_STATE_FIELDS` /
+    :data:`OPTIONAL_STATE_FIELDS` + :data:`STATE_FIELD_DESCRIPTIONS` at call
+    time (both definitions sit in the structured-input section below) and render
+    ``[{name, type, description, ...constraints}]``, ``[]`` for a dp without an
+    entry; a declared path without a description raises here (an exported field
+    with no semantics is the gap this shape closes). ``model_state_fields`` is
+    the approved four-DP model key table and is absent for the 21 legacy dps
+    (absent = no allowlist, state sent unchanged). The four wiring keys fall
+    back to :data:`UNWIRED_SNAPSHOT_WIRING`: they name TS call sites, which the
     registry cannot know, so the export writer merges the hand-written values
     in point by point (``mw._dp_export_doc``).
     """
@@ -1012,7 +1073,13 @@ def registry_snapshot() -> dict:
                 "adopted_at": UNWIRED_SNAPSHOT_WIRING["adopted_at"],
                 "wiring_note": UNWIRED_SNAPSHOT_WIRING["wiring_note"],
                 "executor": _executor_kind(dp_point.executor),
-                "required_state_fields": _snapshot_state_fields(dp_point.id),
+                "required_state_fields": _snapshot_state_fields(
+                    REQUIRED_STATE_FIELDS.get(dp_point.id, ())
+                ),
+                "optional_state_fields": _snapshot_state_fields(
+                    OPTIONAL_STATE_FIELDS.get(dp_point.id, ())
+                ),
+                **_model_state_fields_export(dp_point.id),
                 "questions": [_snapshot_question(question) for question in dp_point.questions],
             }
         )
@@ -1121,72 +1188,516 @@ def resolve_dynamic_choices(
 
 
 # ---------------------------------------------------------------------------
+# Observation-only question overrides (T10): one validated, normalised shape
+# ---------------------------------------------------------------------------
+
+#: The only keys an override of one registered question may carry. Everything
+#: except ``instructions`` is validated against the registry (or, for a dynamic
+#: choice, against ``state``) and is never taken from the override: the registry
+#: and the state stay the single authority for types, choices and criteria.
+QUESTION_OVERRIDE_FIELDS: tuple[str, ...] = (
+    "id",
+    "type",
+    "instructions",
+    "choices",
+    "labels",
+    "criteria",
+    "dynamic_choices",
+)
+#: A test-edited instruction is model-facing prose, not material: bound it so a
+#: question override can never be used to smuggle an unbounded request body.
+QUESTION_INSTRUCTIONS_MAX_BYTES = 2048
+#: ``score`` criteria levels, mirroring the wire builder's documented bounds
+#: (``decision_backends.MIN_SCORE_LEVELS`` / ``MAX_SCORE_LEVELS``). Only the
+#: shape is validated here; the registry/builder stays the generation authority.
+_SCORE_CRITERIA_MIN_LEVELS = 2
+_SCORE_CRITERIA_MAX_LEVELS = 10
+
+
+@dataclass(frozen=True)
+class QuestionOverride:
+    """One observation-only question override: the normalised set or the issues.
+
+    ``questions`` is ``None`` when ``issues`` is non-empty. The normalised set is
+    the registry questions with only ``instructions`` replaced, so the request
+    builder keeps generating types/choices/criteria from the registry and, for a
+    dynamic choice, from ``state`` (dp3: ``handling_options`` is the one
+    candidate source).
+    """
+
+    questions: dict[str, dict] | None
+    issues: tuple[tuple[str, str], ...] = ()
+
+
+def _generated_choice_criteria(spec: Mapping) -> dict:
+    """The criteria the wire builder generates for a registered static choice.
+
+    Mirrors ``decision_backends._choice_criteria`` for a registry spec (declared
+    ``criteria`` first, then ``labels`` over ``choices``). It is used only to
+    validate/normalise an override; the builder remains the send authority.
+    """
+    declared = spec.get("criteria")
+    if isinstance(declared, Mapping) and declared:
+        return dict(declared)
+    labels = spec.get("labels") if isinstance(spec.get("labels"), Mapping) else {}
+    options = [str(choice) for choice in spec.get("choices", ())]
+    if not options and labels:
+        options = [str(option) for option in labels]
+    return {
+        option: labels.get(option) if isinstance(labels.get(option), str) else None
+        for option in options
+    }
+
+
+def _criteria_override_issues(
+    qid: str, base: Mapping, criteria: object, rendered: Mapping[str, str] | None
+) -> list[tuple[str, str]]:
+    """Legal criteria shape plus the one-authority conflict check."""
+    qtype = base.get("type")
+    if qtype == decision.QUESTION_CHOICE:
+        expected = dict(rendered) if rendered is not None else _generated_choice_criteria(base)
+        if not isinstance(criteria, Mapping):
+            return [(f"{qid}.criteria", "must be a mapping of option -> label")]
+        if set(criteria) != set(expected):
+            return [
+                (
+                    f"{qid}.criteria",
+                    "must name exactly the legal choice ids of this question",
+                )
+            ]
+        issues: list[tuple[str, str]] = []
+        for option, label in criteria.items():
+            if rendered is None and (
+                not isinstance(label, str) or not label.strip() or "\x00" in label
+                or len(label.encode("utf-8")) > QUESTION_INSTRUCTIONS_MAX_BYTES
+            ):
+                issues.append((f"{qid}.criteria.{option}", "must be a non-empty, bounded description without NUL"))
+            elif rendered is not None and label != expected.get(option):
+                issues.append(
+                    (
+                        f"{qid}.criteria.{option}",
+                        "conflicts with the state/registry rendered label (one candidate source)",
+                    )
+                )
+        return issues
+    if qtype == decision.QUESTION_SCORE:
+        if not isinstance(criteria, list) or not all(
+            isinstance(item, str) and item.strip() for item in criteria
+        ):
+            return [(f"{qid}.criteria", "must be a list of non-empty level labels")]
+        if not _SCORE_CRITERIA_MIN_LEVELS <= len(criteria) <= _SCORE_CRITERIA_MAX_LEVELS:
+            return [
+                (
+                    f"{qid}.criteria",
+                    f"must have {_SCORE_CRITERIA_MIN_LEVELS}..{_SCORE_CRITERIA_MAX_LEVELS} levels",
+                )
+            ]
+        declared = base.get("criteria")
+        if isinstance(declared, list) and list(criteria) != list(declared):
+            return [(f"{qid}.criteria", "conflicts with the registered score levels")]
+        return []
+    if qtype == decision.QUESTION_NOUL:
+        declared = base.get("criteria")
+        if not isinstance(declared, Mapping):
+            return [
+                (
+                    f"{qid}.criteria",
+                    "the registered question declares no criteria; a per-send override is not supported",
+                )
+            ]
+        if criteria != dict(declared):
+            return [(f"{qid}.criteria", "conflicts with the registered criteria")]
+        return []
+    return [(f"{qid}.criteria", f"is not a legal field for type {qtype!r}")]
+
+
+def question_override_issues(
+    dp_point: DecisionPoint | str,
+    questions: object,
+    state: object = None,
+) -> tuple[tuple[str, str], ...]:
+    """Strict validation of one observation-only question override.
+
+    Enforced, in this order: the DP's own question mapping (exactly its ids, no
+    more, no less); legal types (a different type conflicts instead of being
+    coerced); non-blank, bounded ``instructions``; legal ``criteria`` whose keys
+    are the question's legal choice set, with editable static descriptions or
+    labels matching ``state``'s rendered candidates (dynamic); and no unknown
+    key (so an execution/authorization field cannot ride along). Field paths and
+    registry-owned text only are reported - never a submitted value.
+    """
+    if isinstance(dp_point, str):
+        dp_point = get_decision_point(dp_point)
+    registry = questions_map(dp_point)
+    if not isinstance(questions, Mapping) or not questions:
+        return (("questions", "must be a non-empty mapping of this dp's question ids"),)
+    issues: list[tuple[str, str]] = []
+    for qid in sorted(set(questions) - set(registry), key=str):
+        issues.append((str(qid), "is not a registered question id of this decision point"))
+    for qid in sorted(set(registry) - set(questions), key=str):
+        issues.append((str(qid), "is missing: an override carries every registered question id"))
+    dynamic = dynamic_choice_labels(registry, state)
+    for qid, base in registry.items():
+        if qid not in questions:
+            continue
+        spec = questions[qid]
+        if not isinstance(spec, Mapping):
+            issues.append((qid, "must be a mapping"))
+            continue
+        for name in sorted(set(spec) - set(QUESTION_OVERRIDE_FIELDS)):
+            issues.append((f"{qid}.{name}", "is not an overridable question field"))
+        if "id" in spec and spec.get("id") != qid:
+            issues.append((f"{qid}.id", "must equal the question id it overrides"))
+        qtype = base.get("type")
+        if "type" in spec and spec.get("type") != qtype:
+            issues.append((f"{qid}.type", f"conflicts with the registered type {qtype!r}"))
+        if "instructions" in spec:
+            instructions = spec.get("instructions")
+            if not isinstance(instructions, str) or not instructions.strip():
+                issues.append((f"{qid}.instructions", "must be a non-empty string"))
+            elif "\x00" in instructions:
+                issues.append((f"{qid}.instructions", "must not contain a NUL character"))
+            elif len(instructions.encode("utf-8")) > QUESTION_INSTRUCTIONS_MAX_BYTES:
+                issues.append(
+                    (
+                        f"{qid}.instructions",
+                        f"is longer than {QUESTION_INSTRUCTIONS_MAX_BYTES} UTF-8 bytes",
+                    )
+                )
+        for name in ("choices", "labels", "dynamic_choices"):
+            if name in spec and spec.get(name) != base.get(name):
+                issues.append(
+                    (f"{qid}.{name}", "conflicts with the registered question definition")
+                )
+        if "criteria" in spec:
+            rendered = (dynamic or {}).get(qid)
+            if base.get("dynamic_choices") is not None and rendered is None:
+                issues.append(
+                    (
+                        f"{qid}.dynamic_choices",
+                        "the dynamic candidates cannot be rendered from the submitted state",
+                    )
+                )
+            else:
+                issues.extend(
+                    _criteria_override_issues(qid, base, spec.get("criteria"), rendered)
+                )
+    return tuple(issues)
+
+
+def apply_question_override(
+    dp_point: DecisionPoint | str, questions: Mapping
+) -> dict[str, dict]:
+    """Registry identity/options plus validated observation text.
+
+    Static criteria descriptions and instructions may differ for this send.
+    Dynamic criteria are always regenerated from state, never the override.
+    Preview and send consume this same normalised question set.
+    """
+    if isinstance(dp_point, str):
+        dp_point = get_decision_point(dp_point)
+    normalised: dict[str, dict] = {}
+    for qid, base in questions_map(dp_point).items():
+        spec = dict(base)
+        override = questions.get(qid)
+        instructions = override.get("instructions") if isinstance(override, Mapping) else None
+        if isinstance(instructions, str) and instructions.strip():
+            spec["instructions"] = instructions
+        if isinstance(override, Mapping) and "criteria" in override and base.get("dynamic_choices") is None:
+            criteria = override["criteria"]
+            spec["criteria"] = dict(criteria) if isinstance(criteria, Mapping) else list(criteria)
+        normalised[qid] = spec
+    return normalised
+
+
+def resolve_question_override(
+    dp_point: DecisionPoint | str, questions: object, state: object = None
+) -> QuestionOverride:
+    """Validate and normalise one override; ``questions=None`` when refused."""
+    issues = question_override_issues(dp_point, questions, state)
+    if issues:
+        return QuestionOverride(questions=None, issues=issues)
+    return QuestionOverride(questions=apply_question_override(dp_point, questions))
+
+
+#: The identity/association facts that are not decision material. Used only to
+#: describe what a stored input body says about the business state. The values
+#: mirror ``AUDIT_STATE_PATHS`` (defined later in this module) plus the identity
+#: keys every builder writes; the literal keeps this block free of a forward
+#: reference at import time.
+NON_MATERIAL_STATE_KEYS: tuple[str, ...] = (
+    "schema_version",
+    "decision_point",
+    "questions_version",
+    "key",
+    "task_key",
+    "trigger_id",
+)
+
+
+def send_state(dp_id: str, state: Mapping) -> tuple[dict, tuple[str, ...], int]:
+    """The exact model projection + canonical budget fit :func:`decide_for` sends.
+
+    One authority for the send material: the observation preview calls this same
+    function, so a preview can never describe a state the send path would not
+    produce.
+    """
+    return _fit_state(model_state_for(dp_id, state))
+
+
+# ---------------------------------------------------------------------------
 # Structured input: required fields, optional fields, truncation (design D-019)
 # ---------------------------------------------------------------------------
 
+#: JSON-native kinds a declared state path may use (design §4.5).
+STATE_FIELD_TYPES: tuple[str, ...] = (
+    "string",
+    "integer",
+    "number",
+    "boolean",
+    "array",
+    "object",
+)
+#: A new plain string value may carry at most this many UTF-8 bytes.
+STATE_STRING_MAX_BYTES = 512
+#: A new plain string *array element* may carry at most this many UTF-8 bytes.
+STATE_ARRAY_ITEM_MAX_BYTES = 128
+#: ``max_items`` of a new plain array (design §4.5 unified boundary).
+STATE_ARRAY_MAX_ITEMS = 32
+#: ``max_items`` of the wide arrays (dp17 covers a key's full AC set).
+STATE_ARRAY_MAX_ITEMS_WIDE = 128
+#: Optional declaration keys of one field spec, in export order. ``type`` and
+#: ``description`` are mandatory; everything here is a declared constraint:
+#:
+#: - ``enum``: closed value set (strings only);
+#: - ``max_items`` / ``item_type`` / ``item_max_bytes``: array shape;
+#: - ``max_bytes``: string byte cap (also used for array elements);
+#: - ``signed``: negative integers are legal (dp23 ``snapshot.delta_bytes``);
+#: - ``min_value``: integer floor (``0`` for the new counts/sizes);
+#: - ``empty_is_value``: an empty array/object of this field is the producer's
+#:   real "none" value, not an unreplaced placeholder (dp25 ``p0_open``: ``[]``
+#:   means "no P0 open right now"). Only the decision book's placeholder scan
+#:   consumes it (and keeps refusing placeholder text inside the array); the
+#:   typed contract, the closed key set, the missing/null refusal and the
+#:   evidence requirement are unchanged (T05h).
+STATE_FIELD_CONSTRAINT_KEYS: tuple[str, ...] = (
+    "enum",
+    "max_items",
+    "item_type",
+    "max_bytes",
+    "item_max_bytes",
+    "signed",
+    "min_value",
+    "empty_is_value",
+)
+
+#: The structural identity keys `_state_builder` writes for every dp; a dp's
+#: business contract is declared *in addition* to these (design §4.5 "每 DP plus
+#: 结构身份").
+STATE_IDENTITY_PATHS: tuple[str, ...] = (
+    "schema_version",
+    "decision_point",
+    "questions_version",
+)
+
+#: The autopilot human-gate vocabulary (``autopilot.gates.GATE_KINDS``). Kept as
+#: a literal here (no import-time dependency on the autopilot package) and
+#: locked against the authority by ``test_decision_dashboard_contracts``.
+GATE_KIND_ENUM: tuple[str, ...] = (
+    "stage-confirm",
+    "stage-close",
+    "stalled",
+    "budget-exhausted",
+    "goal-change",
+    "xkey-authorize",
+)
+
 #: Required state paths per dp (missing / None / blank string => input-incomplete).
-#: dp1/dp2/dp3 sets come from the structured-input contract (D6 Q5.1); the
-#: generic builder already guarantees ``schema_version``/``decision_point``/
+#: dp1/dp2/dp3 sets come from the structured-input contract (D6 Q5.1); dp4..dp24
+#: carry the typed business contract of design §4.5 (each dp: the three
+#: structural identity keys the builder always writes, plus its business facts);
+#: dp25 keeps exactly the facts `decide_signoff.collect()` folds. The generic
+#: builder already guarantees ``schema_version``/``decision_point``/
 #: ``questions_version``.
 REQUIRED_STATE_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         "dp1-dispatch-type": (
-            "schema_version",
-            "decision_point",
-            "key",
-            "phase",
-            "task_type",
-            "requested_type",
-            "risk",
-            "risk_source",
-            "authority_tier",
-            "task_summary",
-            "questions_version",
-            "scope.write_scope",
-            "scope.file_extensions",
+            "task_goal",
+            "task_requirements",
+            "task_deliverables",
         ),
         "dp2-checkpoint-split": (
-            "schema_version",
-            "decision_point",
-            "key",
-            "phase",
-            "task_type",
-            "risk",
-            "risk_source",
-            "authority_tier",
-            "questions_version",
-            "progress.elapsed_minutes",
-            "progress.budget_minutes",
-            "progress.phases_done",
-            "progress.phases_total",
-            "progress.artifact_present",
+            "task_goal",
+            "task_requirements",
+            "task_deliverables",
+            "pm_decision_background",
         ),
         "dp3-worker-clarify": (
-            "schema_version",
-            "decision_point",
-            "key",
-            "phase",
-            "task_type",
-            "risk",
-            "risk_source",
-            "authority_tier",
-            "task_summary",
-            "questions_version",
-            "ambiguity.kind",
-            "ambiguity.question",
-            # FIX-I: the candidate question renders its enum from these entries;
-            # without them the question set cannot be sent (zero HTTP).
-            "local_candidates",
+            "question",
+            "background.task_goal",
+            "background.current_state",
+            "background.decision_reason",
+            "background.constraints_impact",
+            "handling_options",
         ),
-        # dp25 (spec §15 AC-027 / design D-067): exactly the facts
-        # `decide_signoff.collect()` folds out of the archive. No diff, no code,
-        # no document is part of this state.
+        # dp4..dp24 (design §4.5): the typed business contract. Identity-only
+        # state is refused as `input-incomplete` (zero HTTP) — an "empty" book is
+        # a virtual test channel, not a decision.
+        "dp4-failure-handling": (
+            *STATE_IDENTITY_PATHS,
+            "failure.kind",
+            "failure.attempt",
+            "failure.limit",
+            "failure.artifact_present",
+        ),
+        "dp5-test-triage": (
+            *STATE_IDENTITY_PATHS,
+            "test.failed_cases",
+            "test.baseline_cases",
+            "test.changed_paths",
+            "test.repro_consistent",
+        ),
+        "dp6-qg-verdict": (
+            *STATE_IDENTITY_PATHS,
+            "qg.checks_total",
+            "qg.checks_failed",
+            "qg.blocking",
+            "qg.scope",
+        ),
+        "dp7-gate-failure": (
+            *STATE_IDENTITY_PATHS,
+            "gate.name",
+            "gate.missing_items",
+            "gate.verdict_age_hours",
+            "gate.has_config_error",
+        ),
+        "dp8-scope-change": (
+            *STATE_IDENTITY_PATHS,
+            "scope.requested_paths",
+            "scope.write_scope",
+            "scope.cross_key_conflicts",
+            "scope.requirement_delta",
+        ),
+        "dp9-model-select": (
+            *STATE_IDENTITY_PATHS,
+            "model.requested",
+            "model.available",
+            "model.transport_status",
+        ),
+        "dp10-dependency": (
+            *STATE_IDENTITY_PATHS,
+            "dependency.name",
+            "dependency.current",
+            "dependency.target",
+            "dependency.breaking",
+            "dependency.reviewed",
+        ),
+        "dp11-credential": (
+            *STATE_IDENTITY_PATHS,
+            "credential.provider",
+            "credential.kind",
+            "credential.scope",
+            "credential.exposed_to",
+        ),
+        "dp12-destructive": (
+            *STATE_IDENTITY_PATHS,
+            "action.command",
+            "action.targets",
+            "action.reversible",
+            "action.backup_available",
+        ),
+        "dp13-commit-release": (
+            *STATE_IDENTITY_PATHS,
+            "release.version_current",
+            "release.version_next",
+            "release.staged_paths",
+            "release.changelog_ready",
+            "release.ci_green",
+        ),
+        "dp14-rule-conflict": (
+            *STATE_IDENTITY_PATHS,
+            "conflict.user_instruction",
+            "conflict.rule_ref",
+            "conflict.rule_strength",
+            "conflict.irreversible",
+        ),
+        "dp15-autopilot-gate": (
+            *STATE_IDENTITY_PATHS,
+            "gate.kind",
+            "gate.pending_items",
+            "gate.age_minutes",
+            "gate.evidence_refs",
+        ),
+        "dp16-goal": (
+            *STATE_IDENTITY_PATHS,
+            "goal.current_digest",
+            "goal.proposed_delta",
+            "goal.alignment",
+        ),
+        "dp17-spec-lock": (
+            *STATE_IDENTITY_PATHS,
+            "spec.ac_ids",
+            "spec.ac_changed",
+            "spec.open_questions",
+        ),
+        "dp18-claim": (
+            *STATE_IDENTITY_PATHS,
+            "claim.key",
+            "claim.owner",
+            "claim.heartbeat_age_min",
+            "claim.owner_active",
+        ),
+        "dp19-foreign-write": (
+            *STATE_IDENTITY_PATHS,
+            "write.target_path",
+            "write.cross_key_owner",
+            "write.write_scope",
+            "write.foreign_paths",
+            "write.allow_foreign_write",
+        ),
+        "dp20-stage-close": (
+            *STATE_IDENTITY_PATHS,
+            "stage.id",
+            "stage.tasks_done",
+            "stage.tasks_total",
+            "stage.open_blockers",
+            "stage.evidence_refs",
+        ),
+        "dp21-refine": (
+            *STATE_IDENTITY_PATHS,
+            "refine.clause",
+            "refine.impact_paths",
+            "refine.reversible",
+        ),
+        "dp22-debug-plan": (
+            *STATE_IDENTITY_PATHS,
+            "debug.signal",
+            "debug.last_green_ref",
+            "debug.repro_available",
+            "debug.change_scope",
+        ),
+        "dp23-snapshot": (
+            *STATE_IDENTITY_PATHS,
+            "snapshot.size_bytes",
+            "snapshot.delta_bytes",
+            "snapshot.sections_changed",
+        ),
+        "dp24-pi-trust": (
+            *STATE_IDENTITY_PATHS,
+            "project.path",
+            "project.trust_state",
+            "project.origin",
+            "project.pending_changes",
+        ),
+        # dp25 (design §2 / §4.4): the four business parts the PM writes. No
+        # diff, no code, no count and no engine fact is part of this state; those
+        # stay in the local envelope/archive.
         "dp25-signoff-conclusion": (
-            "key",
-            "rows_total",
-            "rows_available",
-            "chain_ok",
-            "p0_open",
+            "delivery_goal",
+            "actual_completion",
+            "verification_evidence.verified",
+            "verification_evidence.unverified",
+            "unfinished_impact",
         ),
     }
 )
@@ -1241,6 +1752,80 @@ STATE_FIELD_DESCRIPTIONS: Mapping[str, dict] = MappingProxyType(
         "questions_version": {
             "type": "string",
             "description": "Registry question-set version, e.g. q-fcbd3847.",
+        },
+        # The approved four-DP business material (design §2 / plan "最小固定跨卡接口").
+        # No arbitrary per-field byte/item caps here: necessary material is either
+        # sent complete or refused against the existing transport budget.
+        "task_goal": {
+            "type": "string",
+            "description": "Task goal exactly as handed to the task (原文), no summary.",
+        },
+        "task_requirements": {
+            "type": "string",
+            "description": "Task requirements exactly as handed to the task (原文).",
+        },
+        "task_deliverables": {
+            "type": "string",
+            "description": "Task deliverables exactly as handed to the task (原文).",
+        },
+        "pm_decision_background": {
+            "type": "string",
+            "description": "Why the PM needs a checkpoint decision now, plus the constraints that shape it.",
+        },
+        "worker_execution": {
+            "type": "string",
+            "description": "Optional real worker execution (done/remaining/blocked/attempted and time budget); omit when there is no worker, never invent it.",
+        },
+        "question": {
+            "type": "string",
+            "description": "The clarifying question verbatim, written before any answer.",
+        },
+        "background.task_goal": {
+            "type": "string",
+            "description": "Task goal the question is asked against.",
+        },
+        "background.current_state": {
+            "type": "string",
+            "description": "What is actually known so far; unknowns are marked unknown, never invented.",
+        },
+        "background.decision_reason": {
+            "type": "string",
+            "description": "Why this question needs a decision now.",
+        },
+        "background.constraints_impact": {
+            "type": "string",
+            "description": "Constraints and the impact of each candidate handling.",
+        },
+        "handling_options": {
+            "type": "array",
+            "description": "Problem-specific handling candidates [{id,label,description}] rendered as the native dynamic choice.",
+            "item_type": "object",
+        },
+        "delivery_goal": {
+            "type": "string",
+            "description": "Delivery goal including the user's acceptance conditions.",
+        },
+        "actual_completion": {
+            "type": "string",
+            "description": "What was actually completed against the delivery goal.",
+        },
+        "verification_evidence.verified": {
+            "type": "array",
+            "description": "Verification evidence that was actually verified; [] when there is none.",
+            "item_type": "string",
+            "empty_is_value": True,
+        },
+        "verification_evidence.unverified": {
+            "type": "array",
+            "description": "Evidence that is not verified (or was not run); [] means a verified none, never a missing fact.",
+            "item_type": "string",
+            "empty_is_value": True,
+        },
+        "unfinished_impact": {
+            "type": "array",
+            "description": "Unfinished items and their impact; [] means nothing is unfinished, never a missing fact.",
+            "item_type": "string",
+            "empty_is_value": True,
         },
         "scope.write_scope": {
             "type": "array",
@@ -1297,24 +1882,1077 @@ STATE_FIELD_DESCRIPTIONS: Mapping[str, dict] = MappingProxyType(
         "p0_open": {
             "type": "array",
             "description": "Enabled P0 dp ids right now (string array; [] when none or the table is absent).",
+            # The producer writes [] for "no P0 open": that empty array is the
+            # real value of this field, not an unreplaced scaffold placeholder
+            # (T05h). Field-level and book-only; no other field declares it.
+            "empty_is_value": True,
+            # The same unified array boundary every new array declares (design
+            # §4.5, T05k N5): sorted registry P0 dp ids, 10 today, longest 19 B,
+            # so 32 items / string / 128 B is headroom, not a producer limit.
+            # No enum: the element space is dp ids, not a closed set invented
+            # here.
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        # dp25 optional L1 facts (T05c): the rest of the *real*
+        # ``decide_signoff.signoff_state`` escalation vocabulary. Declared here
+        # so the book, the seam and the export share one contract instead of a
+        # seam-only allowance.
+        "rows_escalated": {
+            "type": "integer",
+            "description": "Of rows_total, how many carry an escalated_reason (signoff collect fact).",
+            "min_value": 0,
+        },
+        "escalated_reasons": {
+            "type": "array",
+            "description": "Distinct escalated_reason values seen in the counted rows (sorted; [] when none).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "engine_violations": {
+            "type": "array",
+            "description": "transport/model/confidence_source triples that are not the real engine (sorted; [] when all real).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        # ------------------------------------------------------------------
+        # dp4..dp24 business contract (design §4.5). Every new string declares
+        # its byte cap, every new array its ``max_items``/element cap, every
+        # enum its closed value set, every new count its ``>= 0`` floor. The
+        # description names the fact and where it comes from; it never invites
+        # a caller to invent a value (a missing fact must stay missing).
+        # ------------------------------------------------------------------
+        "failure.kind": {
+            "type": "string",
+            "description": "Failure class observed on the attempt: transient|deterministic|infra|unknown (from the failing step's own error report).",
+            "enum": ("transient", "deterministic", "infra", "unknown"),
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "failure.attempt": {
+            "type": "integer",
+            "description": "How many attempts have already been made for this failure (0-based count).",
+            "min_value": 0,
+        },
+        "failure.limit": {
+            "type": "integer",
+            "description": "Attempt budget the task was given; it must not be exceeded.",
+            "min_value": 0,
+        },
+        "failure.artifact_present": {
+            "type": "boolean",
+            "description": "Whether the failed attempt left a usable artifact on disk (fs-stated, not assumed).",
+        },
+        "test.failed_cases": {
+            "type": "array",
+            "description": "Failing test ids exactly as the runner reported them.",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "test.baseline_cases": {
+            "type": "array",
+            "description": "Known-failing (baseline) test ids for this project, from the recorded baseline.",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "test.changed_paths": {
+            "type": "array",
+            "description": "Repo-relative paths the change touched (diff scope), not the whole write face.",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "test.repro_consistent": {
+            "type": "boolean",
+            "description": "Whether repeated runs reproduced the same failures (recorded rerun result).",
+        },
+        "qg.checks_total": {
+            "type": "integer",
+            "description": "Number of quality-gate checks the verdict was computed over.",
+            "min_value": 0,
+        },
+        "qg.checks_failed": {
+            "type": "array",
+            "description": "Ids of the quality-gate checks that failed (subset of the total).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "qg.blocking": {
+            "type": "array",
+            "description": "Failure ids the quality gate reported as blocking (cannot be waived).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "qg.scope": {
+            "type": "string",
+            "description": "Which surface the verdict covers: impl (code) or spec (locked requirements).",
+            "enum": ("impl", "spec"),
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "gate.name": {
+            "type": "string",
+            "description": "Gate that failed, by its recorded gate id or name.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "gate.missing_items": {
+            "type": "array",
+            "description": "Checklist items the gate still reports as missing.",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "gate.verdict_age_hours": {
+            "type": "integer",
+            "description": "Age in hours of the verdict that failed the freshness gate.",
+            "min_value": 0,
+        },
+        "gate.has_config_error": {
+            "type": "boolean",
+            "description": "Whether the gate failure is a configuration error rather than missing work.",
+        },
+        "scope.requested_paths": {
+            "type": "array",
+            "description": "Paths the new requirement asks to write (repo-relative), as requested.",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "scope.cross_key_conflicts": {
+            "type": "array",
+            "description": "Paths or keys another key already claims (conflict facts from the claim index).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "scope.requirement_delta": {
+            "type": "string",
+            "description": "One-line description of what the requirement adds or removes.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "model.requested": {
+            "type": "string",
+            "description": "Model id the task asked for (config or card), before fallback.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "model.available": {
+            "type": "array",
+            "description": "Model ids the transport reports as reachable right now.",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "model.transport_status": {
+            "type": "string",
+            "description": "Observed transport state for the requested model: ok|rate-limited|unavailable.",
+            "enum": ("ok", "rate-limited", "unavailable"),
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "dependency.name": {
+            "type": "string",
+            "description": "Dependency package name as declared in the manifest.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "dependency.current": {
+            "type": "string",
+            "description": "Version currently installed or pinned.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "dependency.target": {
+            "type": "string",
+            "description": "Version the decision would move to.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "dependency.breaking": {
+            "type": "boolean",
+            "description": "Whether the target version is declared semver-breaking (from its changelog/metadata).",
+        },
+        "dependency.reviewed": {
+            "type": "boolean",
+            "description": "Whether the target version's changelog was actually reviewed.",
+        },
+        "credential.provider": {
+            "type": "string",
+            "description": "Credential provider (e.g. timi, anthropic); never a credential value.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "credential.kind": {
+            "type": "string",
+            "description": "Credential kind (api-key, oauth-token, ...); never a credential value.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "credential.scope": {
+            "type": "string",
+            "description": "Scope the credential grants or would grant; never a credential value.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "credential.exposed_to": {
+            "type": "array",
+            "description": "Processes/roles that would see the credential (isolation facts, not values).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "action.command": {
+            "type": "string",
+            "description": "The destructive command, redacted (no credentials); never raw secret material.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "action.targets": {
+            "type": "array",
+            "description": "Files/dirs the destructive command would touch (repo-relative).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "action.reversible": {
+            "type": "boolean",
+            "description": "Whether the action can be undone in this repository (git or backup facts).",
+        },
+        "action.backup_available": {
+            "type": "boolean",
+            "description": "Whether a current backup/snapshot exists that could restore the targets.",
+        },
+        "release.version_current": {
+            "type": "string",
+            "description": "Version currently published/tagged for the packages.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "release.version_next": {
+            "type": "string",
+            "description": "Version the release decision would publish.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "release.staged_paths": {
+            "type": "array",
+            "description": "Paths staged for the commit/release (repo-relative).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "release.changelog_ready": {
+            "type": "boolean",
+            "description": "Whether every touched package's [Unreleased] section is updated.",
+        },
+        "release.ci_green": {
+            "type": "boolean",
+            "description": "Whether CI is green on the commit being released (recorded run status).",
+        },
+        "conflict.user_instruction": {
+            "type": "string",
+            "description": "The user instruction as given, summarized (no quotes beyond one line).",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "conflict.rule_ref": {
+            "type": "string",
+            "description": "The project rule the instruction conflicts with: <path>:<line> reference.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "conflict.rule_strength": {
+            "type": "string",
+            "description": "How binding the rule is: hard (must ask) or advisory (may override with a reason).",
+            "enum": ("hard", "advisory"),
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "conflict.irreversible": {
+            "type": "boolean",
+            "description": "Whether following the instruction has irreversible external effects.",
+        },
+        "gate.kind": {
+            "type": "string",
+            "description": "Autopilot human-gate class (autopilot.gates.GATE_KINDS, 6 values).",
+            "enum": GATE_KIND_ENUM,
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "gate.pending_items": {
+            "type": "array",
+            "description": "Items the human gate still lists as pending.",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "gate.age_minutes": {
+            "type": "integer",
+            "description": "How long the gate has been pending, in minutes.",
+            "min_value": 0,
+        },
+        "gate.evidence_refs": {
+            "type": "array",
+            "description": "Evidence references attached to the gate (<path>:<line> or command).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "goal.current_digest": {
+            "type": "string",
+            "description": "Digest/fingerprint of the current goal document the decision is measured against.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "goal.proposed_delta": {
+            "type": "string",
+            "description": "What the proposed goal change adds or removes, in one line.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "goal.alignment": {
+            "type": "string",
+            "description": "Alignment verdict of the change: aligned|drift|conflict (against goal.md).",
+            "enum": ("aligned", "drift", "conflict"),
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "spec.ac_ids": {
+            "type": "array",
+            "description": "Every AC id in the locked spec (a key's full set fits: up to 128).",
+            "max_items": STATE_ARRAY_MAX_ITEMS_WIDE,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "spec.ac_changed": {
+            "type": "array",
+            "description": "AC ids this change touches; must be a subset of spec.ac_ids (up to 128).",
+            "max_items": STATE_ARRAY_MAX_ITEMS_WIDE,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "spec.open_questions": {
+            "type": "array",
+            "description": "Open questions that must be resolved before the spec can be locked.",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "claim.key": {
+            "type": "string",
+            "description": "AgenticTask key whose claim conflicts.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "claim.owner": {
+            "type": "string",
+            "description": "Recorded claim owner (worker/session id from the claim index).",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "claim.heartbeat_age_min": {
+            "type": "integer",
+            "description": "Minutes since the owner's last heartbeat (liveness fact, not a guess).",
+            "min_value": 0,
+        },
+        "claim.owner_active": {
+            "type": "boolean",
+            "description": "Whether the owner process was confirmed alive (pid/activity fact).",
+        },
+        "write.target_path": {
+            "type": "string",
+            "description": "Repo-relative path the task wants to write outside its face.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "write.cross_key_owner": {
+            "type": "string",
+            "description": "Key that owns the foreign path, if any (from the key index).",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "write.write_scope": {
+            "type": "array",
+            "description": "The task's declared write face (repo-relative globs/paths).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "write.foreign_paths": {
+            "type": "array",
+            "description": "Paths outside the declared face that would be written.",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "write.allow_foreign_write": {
+            "type": "boolean",
+            "description": "Fact about whether a previous authorization allowed this foreign write (not a grant).",
+        },
+        "stage.id": {
+            "type": "string",
+            "description": "Stage identifier the close decision applies to.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "stage.tasks_done": {
+            "type": "integer",
+            "description": "Tasks of the stage already closed (must not exceed the total).",
+            "min_value": 0,
+        },
+        "stage.tasks_total": {
+            "type": "integer",
+            "description": "Tasks the stage contains, per its roadmap table.",
+            "min_value": 0,
+        },
+        "stage.open_blockers": {
+            "type": "array",
+            "description": "Blockers still open for the stage (ids/refs).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "stage.evidence_refs": {
+            "type": "array",
+            "description": "Evidence files backing the stage close (<path>:<line> or command).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "refine.clause": {
+            "type": "string",
+            "description": "The requirement clause the refinement would change.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "refine.impact_paths": {
+            "type": "array",
+            "description": "Files the refinement would touch (repo-relative).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "refine.reversible": {
+            "type": "boolean",
+            "description": "Whether the refinement can be undone without losing accepted work.",
+        },
+        "debug.signal": {
+            "type": "string",
+            "description": "The failing signal/stack-first-line the debug plan starts from.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "debug.last_green_ref": {
+            "type": "string",
+            "description": "Last known-good reference (commit sha or run id) the plan compares against.",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "debug.repro_available": {
+            "type": "boolean",
+            "description": "Whether a reproduction exists/ran (recorded fact, not an assumption).",
+        },
+        "debug.change_scope": {
+            "type": "array",
+            "description": "Paths the debug change would touch (repo-relative).",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "snapshot.size_bytes": {
+            "type": "integer",
+            "description": "Current size of the memory snapshot artifact in bytes (fs-stated).",
+            "min_value": 0,
+        },
+        "snapshot.delta_bytes": {
+            "type": "integer",
+            "description": "New size minus old size in bytes; negative means the snapshot shrank (signed).",
+            "signed": True,
+        },
+        "snapshot.sections_changed": {
+            "type": "array",
+            "description": "Document sections the snapshot rewrite changes.",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "string",
+            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+        },
+        "project.path": {
+            "type": "string",
+            "description": "Project path the trust decision applies to (as pi recorded it).",
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "project.trust_state": {
+            "type": "string",
+            "description": "Current pi trust state for the project: untrusted|trusted.",
+            "enum": ("untrusted", "trusted"),
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "project.origin": {
+            "type": "string",
+            "description": "Where the project came from: user (created locally)|clone|foreign.",
+            "enum": ("user", "clone", "foreign"),
+            "max_bytes": STATE_STRING_MAX_BYTES,
+        },
+        "project.pending_changes": {
+            "type": "boolean",
+            "description": "Whether the project has uncommitted changes that the trust grant would cover.",
+        },
+        # ------------------------------------------------------------------
+        # Optional L1 paths (design §4.5): declared, type-checked, never
+        # required, dropped first when the state budget needs room.
+        # ------------------------------------------------------------------
+        "history": {
+            "type": "object",
+            "description": "Recent dispatch outcome counters (recent_done/recent_failed/...), optional L1.",
+        },
+        "scope.images_required": {
+            "type": "boolean",
+            "description": "Whether the task needs image input, optional L1.",
+        },
+        "progress.writes": {
+            "type": "integer",
+            "description": "Tool writes counted so far in the checkpoint window, optional L1.",
+            "min_value": 0,
+        },
+        "progress.uniq_targets": {
+            "type": "integer",
+            "description": "Distinct files written so far, optional L1.",
+            "min_value": 0,
+        },
+        "progress.repeat_top": {
+            "type": "integer",
+            "description": "Highest repeat count on one target (thrash signal), optional L1.",
+            "min_value": 0,
+        },
+        "progress.trend": {
+            "type": "array",
+            "description": "Per-checkpoint {elapsed_minutes, reads, writes} points, optional L1.",
+            "max_items": STATE_ARRAY_MAX_ITEMS,
+            "item_type": "object",
+        },
+        "progress.last_land_age_min": {
+            "type": "integer",
+            "description": "Minutes since the worker last landed an artifact, optional L1.",
+            "min_value": 0,
         },
     }
 )
 
-#: Optional L1 paths dropped first when the canonical state exceeds the budget.
-OPTIONAL_STATE_PATHS: tuple[str, ...] = (
-    "history",
-    "scope.images_required",
-    "progress.writes",
-    "progress.uniq_targets",
-    "progress.repeat_top",
-    "progress.last_land_age_min",
+#: Optional L1 paths per dp (the closed set of *legal but not required* input).
+#: Only the approved four-DP contract keeps an optional model field here; the
+#: replaced dp1/dp2/dp3/dp25 audit and count facts are no longer part of the
+#: business contract (identity/association stay in the local envelope).
+OPTIONAL_STATE_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        # The PM may attach real worker execution (done/remaining/blocked/tried),
+        # but no worker or no self-assessment is legal and never fabricates one.
+        "dp2-checkpoint-split": ("worker_execution",),
+    }
+)
+
+#: The exact business keys sent to the model, per dp (design D001: one allowlist
+#: projection, declared here and exported to TS). ``None``/absent means the dp
+#: keeps its pre-existing contract and :func:`model_state_for` returns the state
+#: unchanged. Identity (``STATE_IDENTITY_PATHS``) and association/audit facts
+#: (``AUDIT_STATE_PATHS``) never appear here, so they can never be projected.
+MODEL_STATE_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "dp1-dispatch-type": (
+            "task_goal",
+            "task_requirements",
+            "task_deliverables",
+        ),
+        "dp2-checkpoint-split": (
+            "task_goal",
+            "task_requirements",
+            "task_deliverables",
+            "pm_decision_background",
+            "worker_execution",
+        ),
+        "dp3-worker-clarify": (
+            "question",
+            "background.task_goal",
+            "background.current_state",
+            "background.decision_reason",
+            "background.constraints_impact",
+            "handling_options",
+        ),
+        "dp25-signoff-conclusion": (
+            "delivery_goal",
+            "actual_completion",
+            "verification_evidence.verified",
+            "verification_evidence.unverified",
+            "unfinished_impact",
+        ),
+    }
+)
+
+#: Local association/audit keys of the four model-contract dps: legal in the
+#: local state (a ``Trigger.from_mapping`` payload carries them) but never part
+#: of the business allowlist, so the projection and the transport drop them.
+AUDIT_STATE_PATHS: tuple[str, ...] = ("key", "task_key", "trigger_id")
+
+#: Optional L1 paths dropped first when the canonical state exceeds the budget
+#: (lowest decision value first; derived from :data:`OPTIONAL_STATE_FIELDS`).
+OPTIONAL_STATE_PATHS: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        path
+        for paths in OPTIONAL_STATE_FIELDS.values()
+        for path in paths
+    )
 )
 
 #: Required L1 paths truncated (halved) when dropping optional fields is not enough.
 TRUNCATABLE_STATE_PATHS: tuple[str, ...] = ("task_summary", "ambiguity.question")
 
+#: Cross-field facts the registry owns (design §4.5): the left/array value must
+#: stay consistent with the bound it is compared to. ``lte`` = integer <=
+#: integer, ``count_lte`` = array length <= integer, ``subset`` = every item is
+#: present in the other array. A rule names only declared required paths.
+STATE_FIELD_CROSS_CHECKS: Mapping[str, tuple[dict[str, str], ...]] = MappingProxyType(
+    {
+        "dp4-failure-handling": (
+            {"kind": "lte", "left": "failure.attempt", "right": "failure.limit"},
+        ),
+        "dp6-qg-verdict": (
+            {
+                "kind": "count_lte",
+                "array": "qg.checks_failed",
+                "bound": "qg.checks_total",
+            },
+        ),
+        "dp17-spec-lock": (
+            {"kind": "subset", "items": "spec.ac_changed", "of": "spec.ac_ids"},
+        ),
+        "dp20-stage-close": (
+            {"kind": "lte", "left": "stage.tasks_done", "right": "stage.tasks_total"},
+        ),
+        # The native dynamic-choice protocol needs at least two distinguishable
+        # candidates with problem-specific explanations (design §2 dp3).
+        "dp3-worker-clarify": (
+            {"kind": "dynamic_candidates", "array": "handling_options"},
+        ),
+    }
+)
+
 _MISSING = object()
+
+
+def _declared_state_paths(dp_id: str) -> tuple[str, ...]:
+    """Required + optional paths of one dp, in declaration order (no duplicates)."""
+    return tuple(
+        dict.fromkeys(
+            (*REQUIRED_STATE_FIELDS.get(dp_id, ()), *OPTIONAL_STATE_FIELDS.get(dp_id, ()))
+        )
+    )
+
+
+def _utf8_len(value: str) -> int:
+    return len(value.encode("utf-8"))
+
+
+def _value_matches_type(value: object, kind: str) -> bool:
+    """JSON-native type check (``bool`` is never an ``integer``/``number``)."""
+    if kind == "string":
+        return isinstance(value, str)
+    if kind == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if kind == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if kind == "boolean":
+        return isinstance(value, bool)
+    if kind == "array":
+        return isinstance(value, list)
+    if kind == "object":
+        return isinstance(value, Mapping)
+    return False
+
+
+def _value_issues(path: str, value: object, spec: Mapping) -> list[tuple[str, str]]:
+    """Enforce one declared value against its own spec (type/enum/caps)."""
+    kind = str(spec["type"])
+    if not _value_matches_type(value, kind):
+        return [(path, f"expected {kind}, got {type(value).__name__}")]
+    issues: list[tuple[str, str]] = []
+    options = spec.get("enum")
+    if options is not None and value not in options:
+        # Closed-set output only (T05c N3): path/type/allowed set are safe facts,
+        # the offending value is caller free text and is never echoed.
+        issues.append(
+            (path, f"must be one of {list(options)}, got str ({_utf8_len(value)} B)")
+        )
+    if kind == "string":
+        max_bytes = spec.get("max_bytes")
+        if not value.strip():
+            issues.append((path, "must be a non-empty string"))
+        elif max_bytes is not None and _utf8_len(value) > max_bytes:
+            issues.append((path, f"{_utf8_len(value)} B > {max_bytes} B"))
+    elif kind == "integer":
+        min_value = spec.get("min_value")
+        if min_value is not None and value < min_value:
+            issues.append((path, f"must be >= {min_value}, got {value}"))
+    elif kind == "array":
+        max_items = spec.get("max_items")
+        if max_items is not None and len(value) > max_items:
+            issues.append((path, f"{len(value)} items > max_items {max_items}"))
+        item_type = spec.get("item_type")
+        if item_type is None:
+            # Existing arrays (dp1/dp2/dp3/dp25) keep their pre-contract shape:
+            # no declared element type means no new element rule.
+            return issues
+        item_max_bytes = spec.get("item_max_bytes")
+        for index, item in enumerate(value):
+            item_path = f"{path}[{index}]"
+            if not _value_matches_type(item, item_type):
+                issues.append(
+                    (item_path, f"expected {item_type}, got {type(item).__name__}")
+                )
+                continue
+            if item_type != "string":
+                continue
+            if not item.strip():
+                issues.append((item_path, "must be a non-empty string"))
+            elif item_max_bytes is not None and _utf8_len(item) > item_max_bytes:
+                issues.append((item_path, f"{_utf8_len(item)} B > {item_max_bytes} B"))
+    return issues
+
+
+def _cross_field_issues(dp_id: str, state: Mapping) -> list[tuple[str, str]]:
+    """Enforce the declared cross-field facts of one dp (skips missing values)."""
+    issues: list[tuple[str, str]] = []
+    for rule in STATE_FIELD_CROSS_CHECKS.get(dp_id, ()):
+        kind = rule["kind"]
+        if kind in ("lte", "count_lte"):
+            left_path = rule["left"] if kind == "lte" else rule["array"]
+            right_path = rule["right"] if kind == "lte" else rule["bound"]
+            left = _lookup(state, left_path)
+            right = _lookup(state, right_path)
+            if kind == "lte":
+                if not isinstance(left, int) or isinstance(left, bool):
+                    continue
+                left_value: object = left
+            else:
+                if not isinstance(left, list):
+                    continue
+                left_value = len(left)
+            if not isinstance(right, int) or isinstance(right, bool):
+                continue
+            if kind == "lte" and left_value > right:
+                issues.append(
+                    (
+                        left_path,
+                        f"{left_path} ({left_value}) must be <= {right_path} ({right})",
+                    )
+                )
+            elif kind == "count_lte" and left_value > right:
+                issues.append(
+                    (
+                        left_path,
+                        f"{left_path} has {left_value} items > {right_path} ({right})",
+                    )
+                )
+        elif kind == "dynamic_candidates":
+            path = rule["array"]
+            candidates = _lookup(state, path)
+            # Type/shape of a non-list is reported by the typed check above.
+            if not isinstance(candidates, list):
+                continue
+            if len(candidates) < 2:
+                issues.append(
+                    (
+                        path,
+                        "needs at least 2 distinguishable handling candidates "
+                        f"(got {len(candidates)}); a single candidate is not a choice",
+                    )
+                )
+                continue
+            problem = dynamic_choices_value_error(candidates)
+            if problem:
+                issues.append((path, problem))
+                continue
+            labels: set[str] = set()
+            for index, item in enumerate(candidates):
+                item_path = f"{path}[{index}]"
+                description = item.get("description")
+                if not isinstance(description, str) or not description.strip():
+                    issues.append((f"{item_path}.description", "must be a non-empty string"))
+                    continue
+                label = str(item.get("label"))
+                if label in labels:
+                    issues.append(
+                        (f"{item_path}.label", "must be distinct from every other candidate label")
+                    )
+                labels.add(label)
+        elif kind == "subset":
+            items_path = rule["items"]
+            of_path = rule["of"]
+            items = _lookup(state, items_path)
+            of = _lookup(state, of_path)
+            if not isinstance(items, list) or not isinstance(of, list):
+                continue
+            missing = [item for item in items if item not in of]
+            if missing:
+                issues.append(
+                    (
+                        items_path,
+                        f"{items_path} must be a subset of {of_path}; not present: {missing}",
+                    )
+                )
+    return issues
+
+
+def state_field_issues(dp_id: str, state: Mapping) -> tuple[tuple[str, str], ...]:
+    """``(dotted path, detail)`` for every declared path that violates its spec.
+
+    This is the single typed-contract checker behind the decision book (and the
+    observation seam T05 reuses): it enforces the *present* declared values
+    (required and optional) against type / ``enum`` / ``max_items`` / element
+    byte caps / integer floors, then the cross-field facts. Missing required
+    fields are reported by the closed-key-set gate instead (one defect, one
+    code), and ``None`` on an optional path means "not reported".
+
+    Unknown paths are not judged here: the closed key set is checked by
+    :func:`state_unknown_key_issues`, the same checker the decision book uses.
+    """
+    issues: list[tuple[str, str]] = []
+    for path in _declared_state_paths(dp_id):
+        spec = STATE_FIELD_DESCRIPTIONS.get(path)
+        if spec is None:  # pragma: no cover - import-time validation forbids it
+            continue
+        value = _lookup(state, path)
+        if value is _MISSING or value is None:
+            continue
+        issues.extend(_value_issues(path, value, spec))
+    issues.extend(_cross_field_issues(dp_id, state))
+    return tuple(issues)
+
+
+def state_identity_issues(dp_id: str, state: Mapping) -> tuple[tuple[str, str], ...]:
+    """``(dotted path, detail)`` for identity values that contradict the registry.
+
+    The three structural keys (``schema_version`` / ``decision_point`` /
+    ``questions_version``) are written by the builder, so a *missing* value is
+    not a defect (``_join_digest`` normalizes it the same way); an explicitly
+    present value must equal the one authority:
+
+    * ``schema_version`` == :data:`STATE_SCHEMA_VERSION`;
+    * ``decision_point`` == the dp being decided;
+    * ``questions_version`` == the registry entry of that dp.
+
+    Pure and shared: the decision book delegates here (T05c N2) instead of
+    keeping a second version table, and the seam runs it in step 5b so a
+    non-book producer cannot send a state that names another dp/version. Details
+    name only closed-set facts (the dp id, the registry version, the JSON type)
+    — never the arbitrary value itself.
+    """
+    issues: list[tuple[str, str]] = []
+    registry_dp = _REGISTRY_BY_ID.get(dp_id)
+    expected = {
+        "schema_version": STATE_SCHEMA_VERSION,
+        "decision_point": dp_id,
+        "questions_version": (
+            None if registry_dp is None else registry_dp.questions_version
+        ),
+    }
+    kinds = {
+        "schema_version": "integer",
+        "decision_point": "string",
+        "questions_version": "string",
+    }
+    for path in STATE_IDENTITY_PATHS:
+        value = _lookup(state, path)
+        if value is _MISSING or value is None:
+            continue
+        kind = kinds[path]
+        if not _value_matches_type(value, kind):
+            issues.append((path, f"expected {kind}, got {type(value).__name__}"))
+            continue
+        wanted = expected[path]
+        if wanted is None or value == wanted:
+            continue
+        if path == "schema_version":
+            issues.append((path, f"must be {wanted}, got a different integer"))
+        elif path == "decision_point":
+            issues.append((path, f"must equal the decision's dp {dp_id!r}"))
+        else:
+            issues.append((path, f"must equal the registry value {wanted!r}"))
+    return tuple(issues)
+
+
+def _flatten_state(value: object, prefix: str = "") -> dict[str, object]:
+    """Nested mapping -> ``{dotted_path: leaf}`` (empty mappings stay leaves).
+
+    The flattening rule is shared with the decision book's closed-key gate so
+    both surfaces report the same path for the same nested defect.
+    """
+    if isinstance(value, Mapping) and value:
+        out: dict[str, object] = {}
+        for key, child in value.items():
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            out.update(_flatten_state(child, child_prefix))
+        return out
+    if isinstance(value, Mapping) and not prefix:
+        return {}
+    return {prefix: value}
+
+
+def state_unknown_key_issues(
+    dp_id: str,
+    state: Mapping,
+    *,
+    allow_context: bool = False,
+    redactor: object | None = None,
+) -> tuple[tuple[str, str], ...]:
+    """``(dotted path, detail)`` for every state key the registry does not declare.
+
+    The single closed-key-set checker (T05b F1): the registry's required +
+    optional paths of one dp, plus :data:`STATE_IDENTITY_PATHS`, are the only
+    legal keys; a subtree under a declared optional path is legal too (dp1
+    ``history`` owns its whole tree). ``allow_context=True`` additionally admits
+    the engineered ``context`` block, which production producers may attach and
+    :mod:`decision_context` fits - the decision book keeps ``context`` at the top
+    level instead, so its gate stays strict (``allow_context=False``).
+
+    Missing required fields are reported by :func:`_missing_required` and the
+    decision book's required check (one defect, one code); this checker only
+    answers "is this key part of the contract at all?". The declared optional
+    paths are the *only* widening (no caller-supplied allowance any more, T05c).
+
+    Returned paths are display paths: the closed-key decision is still made on
+    the raw flattened key (so field associations and the legal set do not
+    change), but a segment that is arbitrary text or known-secret material is
+    reported as ``<key>`` (``decision.safe_path_text``). ``redactor`` is the
+    call's actual known-secret set (F3/T05e); ``None`` keeps the env/Bearer/
+    ``sk-`` heuristic.
+    """
+    required = REQUIRED_STATE_FIELDS.get(dp_id, ())
+    required_set = set(required)
+    allowed = set(_declared_state_paths(dp_id)) | set(STATE_IDENTITY_PATHS)
+    # Local association/audit facts are legal material for the local state of
+    # EVERY dp (``Trigger.from_mapping`` injects them); ``model_state_for`` strips
+    # them from the sent state, so they can never reach the model (design D001).
+    allowed |= set(AUDIT_STATE_PATHS)
+    optional_paths = OPTIONAL_STATE_FIELDS.get(dp_id, ())
+    context_key = decision_context.CONTEXT_KEY
+    issues: list[tuple[str, str]] = []
+    for path in _flatten_state(state):
+        if path in allowed:
+            continue
+        if any(path.startswith(item + ".") for item in optional_paths):
+            continue
+        if allow_context and (path == context_key or path.startswith(context_key + ".")):
+            continue
+        parent_of_required = any(item.startswith(path + ".") for item in required_set)
+        display = decision.safe_path_text(path, redactor)
+        if parent_of_required:
+            holding = sorted(
+                item for item in required_set if item.startswith(path + ".")
+            )
+            issues.append((display, f"must be an object holding {holding}"))
+        else:
+            issues.append(
+                (display, "not in required_state_fields (closed key set)")
+            )
+    return tuple(issues)
+
+
+def _validate_state_field_contract() -> None:
+    """Import-time validation of the typed contract (a broken table is a bug).
+
+    Fail-loud like :func:`_validate_registry`: an undeclared path, an unknown
+    constraint key, an enum on a non-string, a non-array ``max_items``, a
+    non-integer ``signed``/``min_value``, an optional path that is also required,
+    or a cross-field rule naming an undeclared path must stop the import instead
+    of exporting a contract no caller can satisfy.
+    """
+
+    def check_path(owner: str, path: str) -> None:
+        spec = STATE_FIELD_DESCRIPTIONS.get(path)
+        if spec is None:
+            raise ValueError(
+                f"{owner}: state path {path!r} has no STATE_FIELD_DESCRIPTIONS entry"
+            )
+        unknown = set(spec) - {"type", "description"} - set(STATE_FIELD_CONSTRAINT_KEYS)
+        if unknown:
+            raise ValueError(f"{owner}: {path!r} has unknown spec keys {sorted(unknown)}")
+        kind = spec["type"]
+        if kind not in STATE_FIELD_TYPES:
+            raise ValueError(f"{owner}: {path!r} has unknown type {kind!r}")
+        if not isinstance(spec["description"], str) or not spec["description"].strip():
+            raise ValueError(f"{owner}: {path!r} has an empty description")
+        options = spec.get("enum")
+        if options is not None:
+            if kind != "string":
+                raise ValueError(f"{owner}: {path!r} declares enum on type {kind!r}")
+            if (
+                not isinstance(options, tuple)
+                or not options
+                or not all(isinstance(option, str) and option for option in options)
+                or len(set(options)) != len(options)
+            ):
+                raise ValueError(f"{owner}: {path!r} enum must be unique non-empty strings")
+        if "max_items" in spec or "item_type" in spec or "item_max_bytes" in spec:
+            if kind != "array":
+                raise ValueError(f"{owner}: {path!r} declares array constraints on {kind!r}")
+        max_items = spec.get("max_items")
+        if max_items is not None and (
+            not isinstance(max_items, int) or isinstance(max_items, bool) or max_items < 1
+        ):
+            raise ValueError(f"{owner}: {path!r} max_items must be a positive integer")
+        item_type = spec.get("item_type")
+        if item_type is not None and item_type not in STATE_FIELD_TYPES:
+            raise ValueError(f"{owner}: {path!r} has unknown item_type {item_type!r}")
+        if "item_max_bytes" in spec and item_type != "string":
+            raise ValueError(
+                f"{owner}: {path!r} item_max_bytes needs item_type 'string'"
+            )
+        for key in ("max_bytes", "item_max_bytes"):
+            limit = spec.get(key)
+            if limit is not None and (
+                not isinstance(limit, int) or isinstance(limit, bool) or limit < 1
+            ):
+                raise ValueError(f"{owner}: {path!r} {key} must be a positive integer")
+        if "signed" in spec:
+            if kind != "integer" or not isinstance(spec["signed"], bool):
+                raise ValueError(f"{owner}: {path!r} signed must be a boolean on an integer")
+        min_value = spec.get("min_value")
+        if "empty_is_value" in spec:
+            if kind not in ("array", "object") or not isinstance(
+                spec["empty_is_value"], bool
+            ):
+                raise ValueError(
+                    f"{owner}: {path!r} empty_is_value must be a boolean on an "
+                    "array/object"
+                )
+        if min_value is not None and (
+            kind != "integer" or not isinstance(min_value, int) or isinstance(min_value, bool)
+        ):
+            raise ValueError(f"{owner}: {path!r} min_value must be an integer on an integer")
+
+    for dp_id, paths in REQUIRED_STATE_FIELDS.items():
+        if dp_id not in _REGISTRY_BY_ID:
+            raise ValueError(f"REQUIRED_STATE_FIELDS: unknown dp id {dp_id!r}")
+        if len(set(paths)) != len(paths):
+            raise ValueError(f"{dp_id}: duplicate required state path")
+        for path in paths:
+            check_path(dp_id, path)
+    for dp_id, paths in OPTIONAL_STATE_FIELDS.items():
+        if dp_id not in _REGISTRY_BY_ID:
+            raise ValueError(f"OPTIONAL_STATE_FIELDS: unknown dp id {dp_id!r}")
+        overlap = set(paths) & set(REQUIRED_STATE_FIELDS.get(dp_id, ()))
+        if overlap:
+            raise ValueError(f"{dp_id}: optional paths are also required: {sorted(overlap)}")
+        for path in paths:
+            check_path(dp_id, path)
+    for dp_id, rules in STATE_FIELD_CROSS_CHECKS.items():
+        declared = set(REQUIRED_STATE_FIELDS.get(dp_id, ()))
+        for rule in rules:
+            for key in ("left", "right", "array", "bound", "items", "of"):
+                if key in rule and rule[key] not in declared:
+                    raise ValueError(
+                        f"{dp_id}: cross-field rule names undeclared path {rule[key]!r}"
+                    )
+    for dp_id, paths in MODEL_STATE_FIELDS.items():
+        if dp_id not in _REGISTRY_BY_ID:
+            raise ValueError(f"MODEL_STATE_FIELDS: unknown dp id {dp_id!r}")
+        if len(set(paths)) != len(paths):
+            raise ValueError(f"{dp_id}: duplicate model state path")
+        declared = set(_declared_state_paths(dp_id))
+        for path in paths:
+            if path not in declared:
+                raise ValueError(f"{dp_id}: model path {path!r} is not a declared state path")
+            if path in STATE_IDENTITY_PATHS or path in AUDIT_STATE_PATHS:
+                raise ValueError(f"{dp_id}: model path {path!r} is local-only material")
+        missing = set(REQUIRED_STATE_FIELDS.get(dp_id, ())) - set(paths)
+        if missing:
+            raise ValueError(
+                f"{dp_id}: required paths missing from MODEL_STATE_FIELDS: {sorted(missing)}"
+            )
+        unprojected_optional = set(OPTIONAL_STATE_FIELDS.get(dp_id, ())) - set(paths)
+        if unprojected_optional:
+            raise ValueError(
+                f"{dp_id}: optional paths missing from MODEL_STATE_FIELDS: "
+                f"{sorted(unprojected_optional)}"
+            )
 
 
 def _lookup(state: Mapping, dotted: str) -> object:
@@ -1326,6 +2964,46 @@ def _lookup(state: Mapping, dotted: str) -> object:
     return current
 
 
+def _set_path(target: dict, dotted: str, value: object) -> None:
+    """Set one dotted path on ``target``, creating the intermediate objects."""
+    parts = dotted.split(".")
+    current = target
+    for part in parts[:-1]:
+        child = current.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            current[part] = child
+        current = child
+    current[parts[-1]] = value
+
+
+def model_state_for(dp_id: str, state: Mapping) -> dict:
+    """The single model allowlist projection of one dp's local state.
+
+    A dp with a :data:`MODEL_STATE_FIELDS` entry sends exactly those business
+    paths: identity (``schema_version``/``decision_point``/
+    ``questions_version``) and local association/audit facts (``key``/
+    ``task_key``/``trigger_id``) stay local, and any non-declared material was
+    already refused by the closed key set, so this function never silently
+    decides business content. Values are deep-copied so the caller's material
+    and the sent payload cannot mutate each other.
+
+    The other 21 dps have no allowlist entry and therefore keep their existing
+    contract unchanged (a shallow copy of the state).
+    """
+    paths = MODEL_STATE_FIELDS.get(dp_id)
+    local_only = {key: value for key, value in state.items() if key not in AUDIT_STATE_PATHS}
+    if paths is None:
+        return dict(local_only)
+    projected: dict = {}
+    for path in paths:
+        value = _lookup(state, path)
+        if value is _MISSING:
+            continue
+        _set_path(projected, path, copy.deepcopy(value))
+    return projected
+
+
 def _is_blank(value: object) -> bool:
     if value is _MISSING or value is None:
         return True
@@ -1335,6 +3013,9 @@ def _is_blank(value: object) -> bool:
 def _missing_required(state: Mapping, dp_id: str) -> tuple[str, ...]:
     missing = [path for path in REQUIRED_STATE_FIELDS.get(dp_id, ()) if _is_blank(_lookup(state, path))]
     return tuple(missing)
+
+
+_validate_state_field_contract()
 
 
 def _without_path(state: Mapping, dotted: str) -> dict:
@@ -1397,8 +3078,8 @@ def _fit_state(state: Mapping, *, limit: int = MAX_STATE_BYTES) -> tuple[dict, t
 
     The engineered ``context`` block is fitted FIRST, against the headroom the
     rest of the state leaves (W6 / D-052): it is optional input, so it loses to
-    every required field, and its bytes are counted inside the same 2000 B
-    budget instead of riding on top of it.
+    every required field, and its bytes are counted inside the same
+    :data:`MAX_STATE_BYTES` budget instead of riding on top of it.
     """
     current = dict(state)
     dropped: list[str] = []
@@ -1994,6 +3675,558 @@ class DecisionOutcome:
     answers: Mapping | None = None
     confidence_source: str | None = None
     latency_ms: int = 0
+    # ------------------------------------------------------------------
+    # Observation / capture facts (mw-decision-dashboard T05). All additive
+    # and ``None`` on a decision whose side ledger was not consulted, so the
+    # pre-T05 outcome (and every frozen key) stays byte-identical.
+    # ------------------------------------------------------------------
+    #: Logical client call id of this decision (same id the ``call-end`` row
+    #: carries); ``None`` when no client call happened (step 2/4 returns).
+    call_id: str | None = None
+    #: Reference of the per-call material snapshot (``book-<hex>`` /
+    #: ``state-<hex>``); ``None`` when no state material existed.
+    snapshot_ref: str | None = None
+    #: Archive signal of this decision, a member of :data:`ARCHIVE_STATES`.
+    archive_state: str | None = None
+    #: Worst capture status of this decision (``ok``/``partial``/``failed``),
+    #: ``None`` when nothing was captured (see :attr:`capture_channel`).
+    capture_status: str | None = None
+    #: Why capture did or did not happen, a member of :data:`CAPTURE_CHANNELS`.
+    capture_channel: str | None = None
+    #: Observation facts (``observe_only``/``bypassed``/``submission_id``);
+    #: ``None`` on a production decision.
+    observation: Mapping | None = None
+    #: Pure authorization preview (:func:`authorization_preview`); only filled
+    #: for an observation, where production's verdict is the thing observed.
+    preview: Mapping | None = None
+
+
+# ---------------------------------------------------------------------------
+# Observation seam (design §5.3 / D-003; consumer = card T06)
+# ---------------------------------------------------------------------------
+
+#: Closed set of the ``decision-end`` archive signal (design §4.4).
+#: ``not-attempted`` is this card's explicit value for the pre-transport
+#: escalations (disabled / unavailable / input-*): no archive write was
+#: attempted there by design, which is *not* the same fact as ``unknown``
+#: (attempted, module unavailable or reason unknown).
+ARCHIVE_STATES = ("created", "replayed", "skipped", "failed", "unknown", "not-attempted")
+
+#: Why the side ledger did or did not receive this decision. ``no-scope`` means
+#: "nothing was expected here" (the decision returned before a capture scope
+#: existed), ``module-unavailable`` means "expected but broken" - the two must
+#: stay distinguishable (T03 review F-1).
+CAPTURE_CHANNELS = (
+    "module-unavailable",
+    "scope-error",
+    "test-scope",
+    "production-scope",
+    "no-scope",
+)
+
+#: Snapshot kinds: the loaded decision book or the state that was actually sent.
+SNAPSHOT_KINDS = ("book", "input-state")
+
+#: Actor kinds the side ledger accepts. The authority is
+#: ``decision_history.ACTOR_KINDS`` (T07c); it is repeated as a literal here
+#: because ``decision_history`` imports ``decide_signoff``, which imports this
+#: module (`decision_points` -> `decision_history` would be circular). The
+#: dashboard contract test locks the two tuples to each other, so a drift is a
+#: test failure instead of a silently accepted actor kind.
+ACTOR_KINDS: tuple[str, ...] = ("human", "system", "unknown")
+
+#: Byte cap for ``Observation.actor_id``, the metadata cap the side ledger
+#: applies to actor ids (``decision_wire.METADATA_TEXT_LIMIT``), locked by the
+#: same contract test.
+ACTOR_ID_MAX_BYTES = 512
+
+
+@dataclass(frozen=True)
+class Observation:
+    """Explicit human observe-only submission (design §5.3; card T06 submits).
+
+    The seam is a *paired* contract, enforced by :func:`decide_for` before any
+    state is built: ``intent`` must be ``answer`` and ``archive`` must be
+    ``False``, otherwise the same call could observe *and* archive/act. The
+    scope is the caller's isolated test scope (``scope_kind="test"`` with its
+    own ``evidence_path``); production capture is never derived from it.
+
+    Only the per-DP authorization gate is bypassed (``.mw/decide-points.json``
+    ``enabled``/P0). The global transport switch, credentials, the typed input
+    gate, the size budget and the answer check keep applying exactly as in
+    production, so an observation cannot manufacture a request production
+    would refuse.
+
+    ``book`` is the loaded decision book when the submission came from one; it
+    is snapshotted as the ``book`` kind. Without it the seam snapshots the sent
+    state as ``input-state`` (never as a fabricated book).
+    """
+
+    scope: Any
+    observe_only: bool = True
+    submission_id: str | None = None
+    book: Mapping | None = None
+    actor_kind: str = "human"
+    actor_id: str = "user-explicit"
+
+
+def known_secret_superset(
+    snapshot: decision.CredentialSnapshot | None,
+) -> tuple[str, ...]:
+    """The legacy timi leg of this call's snapshot - frozen, never re-resolved.
+
+    :func:`decision.credential_snapshot` freezes the value the transport sends.
+    When it came from the explicit ``cfg`` leg (``cfg.api_key`` /
+    ``cfg.extras["api_key"]``), the timi chain was deliberately not consulted
+    for the sent value, while the book gate and the capture redactor always
+    included it (T05e). Keeping that leg makes the known set a *superset* of the
+    frozen value and of the legacy discovery - it never becomes smaller, so
+    nothing that used to be refused or redacted turns acceptable or storable
+    because of T05j.
+
+    T05l: the leg is read from the snapshot (:meth:`CredentialSnapshot.
+    known_superset`), which resolves it at most once per snapshot and then
+    freezes it. This function no longer performs a discovery of its own: every
+    gate/capture face of one decision gets the same tuple, and a credential
+    rotated mid-call cannot make two faces disagree.
+
+    T05n: an object that is not a :class:`decision.CredentialSnapshot` has no
+    frozen contract (``known_superset``/``frozen_known_values``), so returning
+    ``()`` would silently shrink this decision's known set to empty and let the
+    material be sent. Refuse with a value-free ``DecisionInputError`` instead.
+    """
+    if snapshot is None:
+        return ()
+    if not isinstance(snapshot, decision.CredentialSnapshot):
+        raise decision.DecisionInputError(
+            "refusing a foreign credential snapshot: the known-secret set of this "
+            "decision requires decision.CredentialSnapshot (frozen cfg/env/"
+            "Authorization values and the legacy timi leg); an object of type "
+            f"{type(snapshot).__name__} cannot prove any of them, so nothing is sent"
+        )
+    return snapshot.known_superset()
+
+
+def _command_known_values(
+    cfg: object, snapshot: decision.CredentialSnapshot | None
+) -> tuple[str, ...]:
+    """The complete frozen known-set values one decision must protect (T05l).
+
+    Exactly the values :func:`command_known_secret_redactor` builds a redactor
+    from: the snapshot's frozen cfg/extras/Authorization/env values (T05n: taken
+    at snapshot creation, never re-read here), the actual ``Authorization``, the
+    legacy timi leg frozen on the snapshot, caller extras and the Bearer/
+    ``sk-`` layers (the last are regex layers, not values).
+    """
+    return decision.known_credential_values(
+        cfg, extra_secrets=known_secret_superset(snapshot), snapshot=snapshot
+    )
+
+
+def command_known_secret_redactor(
+    cfg: object = None, *, snapshot: decision.CredentialSnapshot | None = None
+) -> decision.KnownSecretRedactor:
+    """The known-secret set of one command/decision (T05j seam).
+
+    Same discovery as ``decision.known_secret_redactor`` (cfg values, the env
+    heuristics, Bearer/``sk-``), plus this call's frozen credential and the
+    legacy timi leg frozen on the snapshot (T05l: the snapshot resolves it once;
+    this seam never re-resolves it). Shared by the CLI book gate (``mw.py``) and
+    the decision gates below, so one command cannot end up with two different
+    definitions of "this member is a secret".
+
+    When the frozen snapshot already recorded a failed discovery, the snapshot's
+    ``discovery_error`` makes the returned redactor fail closed (every text is a
+    hit) instead of accepting material nobody could prove clean. T05n: a foreign
+    snapshot object without the frozen contract is refused by
+    :func:`known_secret_superset` (value-free ``DecisionInputError``) instead of
+    silently becoming an empty set at this gate.
+    """
+    return decision.known_secret_redactor(
+        cfg, extra_secrets=known_secret_superset(snapshot), snapshot=snapshot
+    )
+
+
+def _wire_api() -> Any | None:
+    """The side ledger module, or ``None`` when it is missing/broken.
+
+    ``decision`` is the single owner of that optional import (card T03), so this
+    is a read of *its* state instead of a second import cache that could
+    disagree with the transport about whether capture exists.
+    """
+    try:
+        return decision._wire_module()
+    except Exception:  # noqa: BLE001 - capture must never break a decision
+        return None
+
+
+#: The side-ledger entry points this seam actually consumes. A module that is
+#: importable but lacks them is "broken", not "absent" (T03 review F-1).
+_WIRE_REQUIRED_API = ("record_event", "production_scope", "test_scope", "SubstringRedactor")
+
+
+def _wire_ready() -> bool:
+    """True only when the capture module exposes the API this seam uses."""
+    wire = _wire_api()
+    if wire is None:
+        return False
+    return all(callable(getattr(wire, name, None)) for name in _WIRE_REQUIRED_API)
+
+
+def _preview_of(
+    dp_point: DecisionPoint,
+    effective: PointConfig,
+    *,
+    config_layer: str,
+    mode: str,
+    transport_configured: bool,
+) -> dict[str, Any]:
+    """The single pure authorization preview (production gate order, no I/O).
+
+    Evaluated in exactly the order :func:`decide_for` applies its gates:
+    per-DP authorization -> global transport -> mode -> executor capability.
+    ``would_act`` is a *capability label*: it says the registered executor
+    would be invoked, never that it would succeed (``executor_invoked=False``,
+    ``action_outcome="unknown"``). Gates that need an answer (input gate,
+    budget, answer legality, confidence) are deliberately not predicted here.
+    """
+    executor = _executor_kind(dp_point.executor)
+    if not effective.enabled:
+        would_status, reason = "escalated", "disabled"
+    elif not transport_configured:
+        would_status, reason = "escalated", "unavailable"
+    elif mode == "suggest":
+        would_status, reason = "suggested", None
+    elif executor != "wired":
+        # ``none`` and the ``unwired`` placeholder both end in step 11
+        # (``over-authority``); neither may read as "would act".
+        would_status, reason = "escalated", "over-authority"
+    else:
+        would_status, reason = "acted", None
+    return {
+        "dp": dp_point.id,
+        "tier": dp_point.tier,
+        "enabled": bool(effective.enabled),
+        "enabled_source": effective.source,
+        "config_layer": config_layer,
+        "mode": mode,
+        "transport": "configured" if transport_configured else "unavailable",
+        "executor": executor,
+        "would_status": would_status,
+        "would_escalated_reason": reason,
+        "would_act": would_status == "acted",
+        "would_action_label": f"executor:{dp_point.id}" if would_status == "acted" else None,
+        "executor_invoked": False,
+        "action_outcome": "unknown",
+        "observe_only_bypass": False,
+    }
+
+
+def authorization_preview(
+    dp_id: str,
+    project_dir: pathlib.Path | str = ".",
+    *,
+    points_config: PointsConfig | None = None,
+    config: decision.DecisionConfig | None = None,
+) -> dict[str, Any]:
+    """Read-only authorization preview for one dp (``mw decide monitor`` list).
+
+    Pure apart from reading ``.mw/decide-points.json`` / ``.mw/decide.json``:
+    no state is built, no client is created, no request is made and nothing is
+    written. A disabled point or a disabled transport is reported as such
+    (``would_status``/``would_escalated_reason``) instead of being "fixed"
+    here.
+    """
+    dp_point = get_decision_point(dp_id)
+    project = _coerce_project_dir(project_dir)
+    view = points_config if points_config is not None else load_points_config(project)
+    effective = view.effective(dp_point)
+    cfg = config
+    if cfg is None:
+        cfg, _cfg_error = decision.DecisionConfig.from_project(project)
+    mode = effective.mode if effective.mode in MODES else dp_point.default_mode
+    return _preview_of(
+        dp_point,
+        effective,
+        config_layer=view.layer,
+        mode=mode,
+        transport_configured=bool(cfg is not None and cfg.is_configured),
+    )
+
+
+@dataclass
+class _ArchiveTrace:
+    """Mutable archive signal of one decision (created/replayed/skipped/...).
+
+    ``state`` stays ``None`` until :func:`_maybe_archive` is called, which lets
+    the emitter distinguish "no archive write was attempted" (``not-attempted``)
+    from a recorded outcome instead of guessing one from ``archived=False``.
+    """
+
+    state: str | None = None
+
+    def mark(self, state: str) -> None:
+        if state not in ARCHIVE_STATES:
+            raise ValueError(f"archive state {state!r} is not in {ARCHIVE_STATES}")
+        self.state = state
+
+
+@dataclass
+class _DecisionCapture:
+    """Per-decision capture state: scope, snapshot material and the preview.
+
+    One instance per :func:`decide_for` call. It holds no credential itself;
+    the scope carries the injected redactor and the ledger sink.
+    """
+
+    observation: Observation | None = None
+    intent: str = "act"
+    scope: Any | None = None
+    channel: str = "no-scope"
+    bypassed: bool = False
+    mode: str | None = None
+    dp_id: str | None = None
+    decision_id: str | None = None
+    questions_version: str | None = None
+    state: Mapping | None = None
+    questions: Mapping | None = None
+    state_digest: str | None = None
+    #: The policy echo of this decision (T10). The resolved per-dp policy is set
+    #: at step 4b and re-stamped with the *effective* confidence threshold once
+    #: step 8 computes it, so the persisted snapshot carries the same value the
+    #: archive row does and no reader has to re-resolve the config.
+    policy: Mapping | None = None
+    preview: Mapping | None = None
+    call_id: str | None = None
+    snapshot_ref: str | None = None
+    #: Set when the caller's material was refused as illegal (a missing/blank
+    #: required field, the typed contract, the closed key set or the observation
+    #: book). Refused material is never stored as a snapshot: only the refusal
+    #: facts belong in the ledger (T05b F1/F2, T05k N1).
+    material_refused: bool = False
+
+    def attach(
+        self,
+        scope: Any | None,
+        channel: str,
+        *,
+        dp_id: str,
+        decision_id: str,
+        questions_version: str,
+    ) -> None:
+        if channel not in CAPTURE_CHANNELS:
+            raise ValueError(f"capture channel {channel!r} is not in {CAPTURE_CHANNELS}")
+        self.scope = scope
+        self.channel = channel
+        self.dp_id = dp_id
+        self.decision_id = decision_id
+        self.questions_version = questions_version
+
+    def remember_state(
+        self,
+        state: Mapping,
+        *,
+        questions: Mapping | None,
+        state_digest: str | None,
+    ) -> None:
+        """Keep the material of this call (never a reconstruction of it)."""
+        self.state = dict(state)
+        self.questions = questions
+        self.state_digest = state_digest
+
+    def record_call(self, client: Any) -> None:
+        call_id = getattr(client, "last_call_id", None)
+        if not isinstance(call_id, str) or not call_id:
+            call_id = getattr(self.scope, "last_call_id", None)
+        self.call_id = call_id if isinstance(call_id, str) and call_id else None
+
+    # -- snapshot ---------------------------------------------------------
+
+    def _snapshot_document(self) -> dict[str, Any] | None:
+        if self.state is None or self.dp_id is None:
+            return None
+        if self.material_refused:
+            return None
+        rendered = dynamic_choice_labels(self.questions or {}, self.state) or {}
+        kind = (
+            "book"
+            if self.observation is not None and self.observation.book is not None
+            else "input-state"
+        )
+        if kind not in SNAPSHOT_KINDS:  # pragma: no cover - closed by construction
+            raise ValueError(f"snapshot kind {kind!r} is not in {SNAPSHOT_KINDS}")
+        document: dict[str, Any] = {
+            "kind": kind,
+            "decision_id": self.decision_id,
+            "dp": self.dp_id,
+            "questions_version": self.questions_version,
+            "state_digest": self.state_digest,
+            # The decision's own policy facts (T10/AC-023): the effective
+            # threshold this decision applied, persisted with the material it
+            # belongs to (an observation writes no archive row).
+            "policy": dict(self.policy) if self.policy is not None else None,
+            # The rendered enum of this call (design §4.3): a later human answer
+            # is validated against these ids, so they must be stored, not rerendered.
+            "candidates": {
+                qid: [{"id": cid, "label": label} for cid, label in labels.items()]
+                for qid, labels in rendered.items()
+            },
+            "state": self.state,
+        }
+        if kind == "book":
+            document["book"] = self.observation.book if self.observation is not None else None
+        return document
+
+    def _snapshot_ref(self, document: Mapping) -> str:
+        """Internally generated, validated identifier (never a path/credential)."""
+        identity = {
+            "kind": document.get("kind"),
+            "decision_id": document.get("decision_id"),
+            "dp": document.get("dp"),
+            "questions_version": document.get("questions_version"),
+            "state_digest": document.get("state_digest"),
+            "candidates": {
+                qid: [item["id"] for item in items if isinstance(item, Mapping)]
+                for qid, items in (document.get("candidates") or {}).items()
+            },
+        }
+        canonical = json.dumps(identity, ensure_ascii=False, sort_keys=True, default=str)
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+        prefix = "book" if document.get("kind") == "book" else "state"
+        return f"{prefix}-{digest}"
+
+    # -- emission ---------------------------------------------------------
+
+    def _actor(self) -> tuple[str, str] | None:
+        if self.observation is None:
+            return None
+        return (self.observation.actor_kind, self.observation.actor_id)
+
+    def finish(
+        self,
+        trace: _ArchiveTrace,
+        *,
+        outcome: DecisionOutcome | None,
+    ) -> dict[str, Any]:
+        """Write ``book-snapshot`` + ``decision-end``; return outcome updates.
+
+        Never raises: a capture failure is a fact on the outcome
+        (``capture_status="failed"``), not a change to the decision result.
+        ``outcome=None`` is the exception path (the archive write raised): the
+        decision's own status was never returned, so it is recorded as unknown
+        instead of being guessed.
+        """
+        archive_state = trace.state or "not-attempted"
+        wire = _wire_api()
+        capture_status: str | None = None
+        if wire is not None and self.scope is not None:
+            emitted = self._emit(
+                wire,
+                status=None if outcome is None else outcome.status,
+                escalated_reason=None if outcome is None else outcome.escalated_reason,
+                truncated=() if outcome is None else outcome.truncated,
+                archive_state=archive_state,
+            )
+            capture_status = "failed" if not emitted else _capture_status_of(self.scope)
+        elif self.channel in ("module-unavailable", "scope-error"):
+            capture_status = "failed"
+        return {
+            "archive_state": archive_state,
+            "capture_channel": self.channel,
+            "capture_status": capture_status,
+            "call_id": self.call_id,
+            "snapshot_ref": self.snapshot_ref,
+            "observation": (
+                {
+                    "observe_only": True,
+                    "bypassed": bool(self.bypassed),
+                    "submission_id": (
+                        self.observation.submission_id if self.observation is not None else None
+                    ),
+                    "scope_kind": "test",
+                }
+                if self.observation is not None
+                else None
+            ),
+            "preview": (
+                {**dict(self.preview or {}), "observe_only_bypass": bool(self.bypassed)}
+                if self.observation is not None and self.preview is not None
+                else None
+            ),
+        }
+
+    def _emit(
+        self,
+        wire: Any,
+        *,
+        status: str | None,
+        escalated_reason: str | None,
+        truncated: Iterable[str],
+        archive_state: str,
+    ) -> bool:
+        """Append the snapshot and the decision-end row; ``False`` means failed."""
+        scope = self.scope
+        written = True
+        document = self._snapshot_document()
+        if document is not None:
+            # A failed snapshot write is isolated on purpose: the decision-end
+            # row still has to say what happened (T05b F4).
+            try:
+                text = json.dumps(
+                    document, ensure_ascii=False, sort_keys=True, default=str
+                )
+                snapshot_ref = self._snapshot_ref(document)
+                result = wire.record_event(
+                    scope,
+                    "book-snapshot",
+                    fields={
+                        "book_ref": snapshot_ref,
+                        "book": scope.capture(text),
+                        "file_sha256": None,
+                        "book_sha256": None,
+                        "book_version": "input-memory",
+                    },
+                    actor=self._actor(),
+                )
+                if bool(getattr(result, "written", False)):
+                    # A reference may only point at a row that really exists
+                    # (T05b F4): a failed/raised write leaves snapshot_ref None
+                    # and the decision-end row carries no dangling book_ref.
+                    self.snapshot_ref = snapshot_ref
+                else:
+                    written = False
+            except Exception:  # noqa: BLE001 - capture must never break the decision
+                written = False
+        try:
+            result = wire.record_event(
+                scope,
+                "decision-end",
+                fields={
+                    "status": status,
+                    "escalated_reason": escalated_reason,
+                    "archive": archive_state,
+                    "state_digest": self.state_digest,
+                    "questions_version": self.questions_version,
+                    "truncated": list(truncated),
+                    "mode": self.mode,
+                    "intent": self.intent,
+                    "book_ref": self.snapshot_ref,
+                },
+                actor=self._actor(),
+            )
+            written = written and bool(getattr(result, "written", False))
+        except Exception:  # noqa: BLE001 - capture must never break the decision
+            return False
+        return written
+
+
+def _capture_status_of(scope: Any) -> str | None:
+    """Scope-level capture status (``ok``/``partial``/``failed``), never raises."""
+    try:
+        status = getattr(scope, "capture_status", None)
+    except Exception:  # noqa: BLE001
+        return "failed"
+    return status if isinstance(status, str) else None
 
 
 # ---------------------------------------------------------------------------
@@ -2134,11 +4367,31 @@ def _is_replay(result: object) -> bool:
     return isinstance(result, tuple) and len(result) == 2 and result[1] is False
 
 
-def _maybe_archive(archive: bool, **kwargs: Any) -> tuple[bool, bool]:
-    """``archive=False`` short-circuits; else ``_archive_decision`` -> (archived, replayed)."""
+def _maybe_archive(
+    archive: bool, *, trace: _ArchiveTrace | None = None, **kwargs: Any
+) -> tuple[bool, bool]:
+    """``archive=False`` short-circuits; else ``_archive_decision`` -> (archived, replayed).
+
+    ``trace`` receives the observation signal of design §4.4 (T05):
+    ``skipped`` for an explicit ``archive=False``, ``created``/``replayed`` for a
+    written row, ``unknown`` when the writer module is missing (nothing was
+    written and the reason is not a hard failure), and ``failed`` when the
+    archive raised - the original exception is then re-raised unchanged
+    (the archive stays a correctness dependency, design D-005).
+    """
     if not archive:
+        if trace is not None:
+            trace.mark("skipped")
         return False, False
-    return _archive_decision(**kwargs)
+    try:
+        archived, replayed = _archive_decision(**kwargs)
+    except BaseException:
+        if trace is not None:
+            trace.mark("failed")
+        raise
+    if trace is not None:
+        trace.mark("unknown" if not archived else ("replayed" if replayed else "created"))
+    return archived, replayed
 
 
 def _aggregate_confidence(answers: Mapping | None) -> float | None:
@@ -2275,6 +4528,433 @@ def _coerce_project_dir(project_dir: pathlib.Path | str | None) -> pathlib.Path:
     return pathlib.Path(project_dir)
 
 
+def _actor_issue(observation: Observation) -> str | None:
+    """Why this actor declaration is illegal, or ``None`` when it is legal.
+
+    The wire's ``_actor_of`` promises a closed actor-kind set but never checks
+    it; an observation is the caller-controlled entry point, so the declaration
+    is validated here, before any fact is written (T05b F5). The id must be
+    single-line printable text within the wire's metadata cap; it is still an
+    unproven claim (a declared ``human`` does not prove a human acted).
+    """
+    if observation.actor_kind not in ACTOR_KINDS:
+        return (
+            f"observation.actor_kind must be one of {list(ACTOR_KINDS)},"
+            f" got {observation.actor_kind!r}"
+        )
+    actor_id = observation.actor_id
+    if not isinstance(actor_id, str) or not actor_id.strip():
+        return f"observation.actor_id must be a non-empty string, got {actor_id!r}"
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in actor_id):
+        return "observation.actor_id must be single-line printable text"
+    if len(actor_id.encode("utf-8")) > ACTOR_ID_MAX_BYTES:
+        return f"observation.actor_id is {len(actor_id.encode('utf-8'))} B > {ACTOR_ID_MAX_BYTES} B"
+    return None
+
+
+def _validate_observation(
+    observation: Observation | None,
+    *,
+    intent: str,
+    archive: bool,
+    client: decision.DecisionClient | None,
+    project: pathlib.Path,
+) -> None:
+    """Enforce the paired observation contract before any work happens.
+
+    Everything here is an argument/scope contract, so a misconfigured observe
+    call fails with exit-2 semantics instead of observing *and* archiving, or
+    observing into a ledger nobody proved isolated (design §5.3).
+    """
+    if observation is None:
+        return
+    if not isinstance(observation, Observation):
+        raise decision.DecisionInputError(
+            f"observation must be a decision_points.Observation, got {type(observation).__name__}"
+        )
+    actor_issue = _actor_issue(observation)
+    if actor_issue is not None:
+        raise decision.DecisionInputError(actor_issue)
+    if not observation.observe_only:
+        raise decision.DecisionInputError(
+            "observation.observe_only must stay True: an observation never acts or archives"
+        )
+    if intent != "answer":
+        raise decision.DecisionInputError(
+            f"observation requires intent='answer', got {intent!r}; "
+            "an observe-only call must not run an executor"
+        )
+    if archive is not False:
+        raise decision.DecisionInputError(
+            "observation requires archive=False: a test submission writes no production row"
+        )
+    scope = observation.scope
+    scope_kind = getattr(scope, "scope_kind", None)
+    if scope_kind != "test":
+        raise decision.DecisionInputError(
+            f"observation requires an isolated test scope, got scope_kind={scope_kind!r}"
+        )
+    evidence = getattr(scope, "evidence_path", None)
+    if evidence is None:
+        raise decision.DecisionInputError(
+            "observation requires an explicit test evidence_path "
+            "(no fallback to the production triage ledger)"
+        )
+    try:
+        resolved_evidence = pathlib.Path(evidence).resolve()
+    except OSError:  # pragma: no cover - unresolvable path is still not the production one
+        resolved_evidence = pathlib.Path(evidence)
+    if resolved_evidence == (project / decision.EVIDENCE_RELATIVE_PATH).resolve():
+        raise decision.DecisionInputError(
+            "observation evidence_path must not be the production triage ledger"
+        )
+    scope_submission = getattr(scope, "submission_id", None)
+    if (
+        observation.submission_id is not None
+        and scope_submission is not None
+        and observation.submission_id != scope_submission
+    ):
+        raise decision.DecisionInputError(
+            "observation.submission_id must match the test scope's submission_id "
+            f"({scope_submission!r})"
+        )
+    client_scope = getattr(client, "_wire_scope", None) if client is not None else None
+    if client_scope is not None and client_scope is not scope:
+        raise decision.DecisionInputError(
+            "observation scope must be the client's wire scope "
+            "(one isolated ledger per submission)"
+        )
+
+
+#: DI seam: the read-only decision-book validator, registered by
+#: :mod:`decision_book` at import time. A module hook instead of an import:
+#: ``decision_book`` imports this module, so the reverse import would be circular
+#: (T05b F2). ``None`` means no validator is available, which refuses book
+#: material instead of trusting it.
+BOOK_VALIDATOR: Callable[..., tuple[tuple[str, str], ...]] | None = None
+
+
+def register_book_validator(
+    validator: Callable[..., tuple[tuple[str, str], ...]],
+) -> None:
+    """Register the decision-book validator (called by ``decision_book``).
+
+    Repeatable for the same registration (a reload of ``decision_book`` hands
+    over the same callable) but never a silent replacement: an illegal value or
+    a different callable over an existing one raises, so the book authority
+    cannot be swapped at runtime by a caller (T05c N4). ``None`` stays
+    fail-closed (a book is refused until a validator is registered).
+
+    The registered callable is invoked as
+    ``validator(book, project_dir, *, redactor=<this call's known-secret set>)``
+    (T05e F1); a validator that cannot prove the configured known secrets must
+    refuse rather than silently accept.
+    """
+    global BOOK_VALIDATOR
+    if not callable(validator):
+        raise TypeError(
+            f"book validator must be callable, got {type(validator).__name__}"
+        )
+    current = BOOK_VALIDATOR
+    if current is not None and current is not validator:
+        raise ValueError(
+            "a decision-book validator is already registered; "
+            "replace it deliberately instead of overwriting it"
+        )
+    BOOK_VALIDATOR = validator
+
+
+def _book_issue_path(path: str) -> str:
+    """Prefix a book issue path so the refusal names the refused surface."""
+    if path == "book" or path.startswith("book."):
+        return path
+    return f"book.{path}"
+
+
+def _join_digest(state: Mapping, dp_point: DecisionPoint) -> str:
+    """Canonical digest of a state with the builder-owned identity normalized.
+
+    ``check_book`` has already validated every identity value of a book, and the
+    builder writes the three identity keys for every dp, so a state that omits
+    ``questions_version`` is still the same material (the sent state genuinely
+    may not carry it). Every other key must match byte for byte.
+    """
+    normalized = dict(state)
+    normalized.setdefault("schema_version", STATE_SCHEMA_VERSION)
+    normalized.setdefault("decision_point", dp_point.id)
+    normalized.setdefault("questions_version", dp_point.questions_version)
+    return _state_digest(normalized)
+
+
+def _observation_book_issues(
+    book: Mapping,
+    *,
+    dp_point: DecisionPoint,
+    sent_state: Mapping,
+    project: pathlib.Path,
+    redactor: object | None = None,
+) -> tuple[tuple[str, str], ...]:
+    """Why this book cannot be the material of record of this call (T05b F2).
+
+    A caller-supplied ``Observation.book`` is a claim: it must belong to this
+    dp, pass the same validation ``mw decide book check`` runs (schema, closed
+    state, placeholders, evidence, budget, secrets) and carry the state that is
+    actually sent. Anything less is refused before the transport, so an
+    unvalidated book is never snapshotted as material.
+
+    ``redactor`` is this call's actual known-secret set
+    (``decision.known_secret_redactor(cfg)``: cfg/Authorization values, the
+    resolved timi credential, env rules + Bearer/``sk-``); it is handed to the
+    registered validator so the observation gate checks the same values the
+    transport is configured with, not only the env heuristic (T05e F1).
+    """
+    if not isinstance(book, Mapping):
+        return (("book", f"must be a JSON object, got {type(book).__name__}"),)
+    book_dp = book.get("decision_point")
+    if book_dp != dp_point.id:
+        return (
+            (
+                "book.decision_point",
+                f"must equal this decision's dp {dp_point.id!r}, got {book_dp!r}",
+            ),
+        )
+    issues: list[tuple[str, str]] = []
+    book_state = book.get("state")
+    if not isinstance(book_state, Mapping):
+        issues.append(("book.state", "must be a JSON object"))
+    validator = BOOK_VALIDATOR
+    if validator is None:
+        issues.append(
+            (
+                "book",
+                "no book validator is registered (decision_book is not imported); "
+                "refusing unverified book material",
+            )
+        )
+    else:
+        for path, detail in validator(book, project, redactor=redactor):
+            issues.append((_book_issue_path(path), detail))
+    if isinstance(book_state, Mapping) and _join_digest(
+        book_state, dp_point
+    ) != _join_digest(sent_state, dp_point):
+        issues.append(
+            (
+                "book.state",
+                "the book state is not the state of this call (digest join failed)",
+            )
+        )
+    return tuple(issues)
+
+
+def _redactor_covers(redactor: object, value: str) -> bool:
+    """True when ``redactor`` provably removes ``value`` from captured text.
+
+    T05q: the judgement itself lives in :func:`decision._redactor_covers` (a
+    boundary probe: complete value, long tail, protocol). ``decision_points``
+    owns its own *entry*, not its own definition of "covered", so the two
+    consumptions cannot drift: the points seam previously carried a copy of the
+    ``hits > 0`` / "text changed" test and leaked the same partial replacements
+    as the client-only path.
+    """
+    return decision._redactor_covers(redactor, value)
+
+
+def _caller_owned_scope(capture: _DecisionCapture, client: object | None) -> Any | None:
+    """The scope this decision did **not** build itself (caller-owned ledger)."""
+    observation = capture.observation
+    if observation is not None:
+        return observation.scope
+    return getattr(client, "_wire_scope", None) if client is not None else None
+
+
+def _caller_scope_coverage_issue(
+    scope: object | None,
+    snapshot: decision.CredentialSnapshot | None,
+    *,
+    cfg: object = None,
+) -> str | None:
+    """Why a caller-owned capture redactor cannot be called safe for this call.
+
+    T05j. A caller-owned scope keeps its redactor (the transport never replaces
+    it, by contract); this decision only *verifies* that the filter covers the
+    material of this call. ``redact=None`` is fine: a test ledger without a
+    redactor stores metadata only (fail-closed by design) and a production
+    ledger gets one injected from this decision's snapshot.
+
+    T05l: coverage is verified against the **complete frozen known set**
+    (cfg/extras, the actual ``Authorization``, the legacy timi leg), not only the
+    sent value - sending A never exempts captured B material. Any filter that
+    misses one of those values is an unprovable capture: the caller must rebuild
+    it from the snapshot instead of letting one decision send a value its ledger
+    would store raw.
+
+    T05q: ``_redactor_covers`` also rejects a partial replacement (a long tail of
+    the value surviving) and a filter without ``scrub_tail_prefix``; the latter is
+    reported as a protocol refusal rather than a silent zero-row capture.
+
+    The message names no value: only the fact (a count) and the remedy.
+    """
+    if scope is None or snapshot is None:
+        return None
+    redactor = getattr(scope, "redact", None)
+    if redactor is None:
+        return None
+    contract_issue = decision._capture_filter_contract_issue(redactor)
+    if contract_issue is not None:
+        # T05q F-2: a filter without the capture boundary contract would make
+        # ``WireScope.capture`` raise (swallowed into a silent zero-row capture).
+        # Refuse it here, before the transport, with the same value-free detail.
+        return f"refusing an unprovable capture: {contract_issue}"
+    values = _command_known_values(cfg, snapshot)
+    if not values:
+        return None
+    missing = sum(1 for value in values if not _redactor_covers(redactor, value))
+    if not missing:
+        return None
+    return (
+        "refusing an unprovable capture: the caller-owned capture redactor does "
+        f"not cover {missing} of the {len(values)} known-secret values of this "
+        "decision (client and capture would diverge); rebuild the redactor from "
+        "the same decision.credential_snapshot() the gate and the client use"
+    )
+
+
+def _decision_credential_snapshot(
+    cfg: decision.DecisionConfig, client: decision.DecisionClient | None
+) -> decision.CredentialSnapshot:
+    """The one credential snapshot of this decision (T05j).
+
+    A client that already pinned one (the CLI resolves it once per command,
+    before the book gate) *is* the authority: the decision reuses that exact
+    object instead of resolving a second, later value. Without a pin the
+    credential is resolved here - after the per-DP budget clone and before any
+    known-set gate, the capture scope or the client - and exactly once.
+
+    T05n: a pinned object must implement the frozen :class:`decision.
+    CredentialSnapshot` contract. A duck object cannot prove this decision's
+    known set, and continuing with it would either send unprovable material or
+    shrink the set to empty; refuse before any capture/send instead.
+
+    T05o: the class alone is not the contract either - a ``CredentialSnapshot``
+    constructed directly (``frozen_known_values() is None``) froze nothing, so
+    its known set is equally unprovable. Refuse it at this entry before the
+    gates, the capture scope or the transport; the class itself stays usable as
+    non-send data.
+    """
+    pinned = (
+        getattr(client, "_pinned_credential_snapshot", None) if client is not None else None
+    )
+    if pinned is not None:
+        if not isinstance(pinned, decision.CredentialSnapshot):
+            raise decision.DecisionInputError(
+                "refusing a foreign credential snapshot pinned on the client: this "
+                "decision's known-secret gate/capture requires "
+                "decision.CredentialSnapshot (frozen cfg/env/Authorization values and "
+                f"the legacy timi leg), got {type(pinned).__name__}; nothing is sent"
+            )
+        if pinned.frozen_known_values() is None:
+            raise decision.DecisionInputError(
+                "refusing a credential snapshot pinned on the client without a "
+                "frozen known set: this decision's known-secret gate/capture "
+                "requires decision.credential_snapshot() (the cfg/env/"
+                "Authorization values and the legacy timi leg frozen at "
+                "creation); the pinned object was constructed directly and "
+                "cannot prove any of them, so nothing is sent"
+            )
+        return pinned
+    return decision.credential_snapshot(cfg)
+
+
+@contextlib.contextmanager
+def _bound_credential_snapshot(
+    client: decision.DecisionClient | None, snapshot: decision.CredentialSnapshot | None
+):
+    """Bind this decision's snapshot to a caller-owned client for one call.
+
+    An unpinned caller client would resolve its own credential at call time and
+    could send a value the gate and the capture set never saw. The pin is set
+    for the transport call only and restored in ``finally``; a client the caller
+    already pinned is left untouched (it supplied the snapshot), so one decision
+    can never rewrite the credential of the next one.
+    """
+    if client is None or snapshot is None:
+        yield
+        return
+    if getattr(client, "_pinned_credential_snapshot", None) is not None:
+        yield
+        return
+    try:
+        client._pinned_credential_snapshot = snapshot
+    except AttributeError as exc:  # pragma: no cover - a foreign client object
+        raise decision.DecisionInputError(
+            "refusing an unprovable transport: this decision cannot bind its "
+            "credential snapshot to the caller-owned client, so the sent "
+            "Authorization could differ from the gate/capture set; construct "
+            "the client with credential_snapshot=decision.credential_snapshot(cfg)"
+        ) from exc
+    try:
+        yield
+    finally:
+        client._pinned_credential_snapshot = None
+
+
+def _capture_scope(
+    capture: _DecisionCapture,
+    *,
+    project: pathlib.Path,
+    cfg: decision.DecisionConfig | None,
+    client: decision.DecisionClient | None,
+    dp_point: DecisionPoint,
+    decision_id: str,
+    trigger: Trigger,
+    snapshot: decision.CredentialSnapshot | None = None,
+) -> tuple[Any | None, str]:
+    """``(scope, channel)`` for this decision; a *fresh* production scope per call.
+
+    The production scope is created here and carries a freshly built credential
+    redactor (T03 review F-3: a rotated credential must never be captured through
+    a reused redactor). A caller-provided client scope wins - it is the already
+    explicit, already isolated ledger of that client - so no second scope can
+    split one call across two files.
+
+    ``snapshot`` (T05j) is this decision's single credential object: the
+    production redactor is built from it, so the captured text and the sent
+    ``Authorization`` cannot diverge and no second resolution happens here. A
+    caller-owned scope keeps its own redactor; the caller's filter was verified
+    against this snapshot before this function ran.
+    """
+    observation = capture.observation
+    if observation is not None:
+        return observation.scope, "test-scope"
+    client_scope = getattr(client, "_wire_scope", None) if client is not None else None
+    if client_scope is not None:
+        kind = getattr(client_scope, "scope_kind", "production")
+        return client_scope, ("test-scope" if kind == "test" else "production-scope")
+    wire = _wire_api()
+    if wire is None:
+        return None, "module-unavailable"
+    try:
+        redactor = (
+            decision.credential_redactor(
+                cfg, extra_secrets=known_secret_superset(snapshot), snapshot=snapshot
+            )
+            if cfg is not None
+            else None
+        )
+        scope = wire.production_scope(
+            project,
+            origin="decide",
+            decision_id=decision_id,
+            dp=dp_point.id,
+            key=trigger.key or None,
+            task_key=trigger.task_key,
+            redact=redactor,
+        )
+    except Exception:  # noqa: BLE001 - a scope failure never blocks a production decision
+        return None, "scope-error"
+    return scope, "production-scope"
+
+
 def decide_for(
     dp_id: str,
     trigger: Trigger | Mapping | None = None,
@@ -2287,6 +4967,8 @@ def decide_for(
     min_confidence: float | None = None,
     archive: bool = True,
     intent: str = "act",
+    observation: Observation | None = None,
+    questions: Mapping[str, Mapping] | None = None,
 ) -> DecisionOutcome:
     """The only entry point for decision points (design §2.3).
 
@@ -2299,7 +4981,7 @@ def decide_for(
     3. ``mode`` read and validated against the registry;
     4. transport budget/availability -> ``escalate("unavailable")``;
     5. ``build_state`` + required fields -> ``escalate("input-incomplete")``;
-    6. canonical size > 2000 B -> drop optional L1, halve required L1, then
+    6. canonical size > MAX_STATE_BYTES -> drop optional L1, halve required, then
        ``escalate("input-oversize")`` if still oversized;
     7. ``DecisionClient.decide`` -> ``available=false`` -> ``escalate("unavailable")``;
     8. unusable answer (empty / missing qid / illegal value) ->
@@ -2316,6 +4998,25 @@ def decide_for(
     ``answer`` (skip steps 10/11; the answer plus ``decision_id``/``mode``/
     ``state_digest`` is what the caller wanted). An unknown intent is an
     argument error like an unknown dp id (exit 2 at the CLI).
+
+    ``observation`` (card T05) is the explicit human observe-only submission
+    seam. It is a paired contract - ``intent="answer"``, ``archive=False``, an
+    isolated ``test`` scope with its own ``evidence_path`` - validated before
+    anything else runs, and it bypasses **only** step 2 (the per-DP
+    ``enabled``/P0 gate): the global transport switch, credentials, the typed
+    input gate, the budget, the answer check and the confidence gate stay in
+    force, and the executor is never reached. The returned outcome carries the
+    observation facts, the pure authorization preview and the capture facts
+    (``capture_channel``/``capture_status``/``archive_state``/``call_id``/
+    ``snapshot_ref``).
+
+    ``questions`` (card T10) is the optional observation-only override of the
+    registered question set: the DP's own ids, legal types/instructions/
+    criteria and the legal choice set are validated by
+    :func:`resolve_question_override`, only validated observation text is taken from it
+    and everything else is regenerated from the registry (dp3: from
+    ``state.handling_options``). Without it the registry questions are used
+    unchanged, so every existing caller keeps its behaviour.
     """
     # Step 1 — unknown ids fail loudly (never a silent degradation).
     dp_point = get_decision_point(dp_id)
@@ -2325,29 +5026,93 @@ def decide_for(
         )
     trigger_obj = _coerce_trigger(trigger)
     project = _coerce_project_dir(project_dir)
+    _validate_observation(
+        observation, intent=intent, archive=archive, client=client, project=project
+    )
+    if observation is not None and not _wire_ready():
+        raise decision.DecisionInputError(
+            "observation requires a working wire capture module (record_event/scope API); "
+            "refusing to fall back to an unwatched production path"
+        )
+    capture = _DecisionCapture(observation=observation, intent=intent)
+    trace = _ArchiveTrace()
+    try:
+        outcome = _decide_for(
+            dp_point,
+            trigger_obj,
+            project,
+            client=client,
+            config=config,
+            backend=backend,
+            points_config=points_config,
+            min_confidence=min_confidence,
+            archive=archive,
+            intent=intent,
+            questions_override=questions,
+            capture=capture,
+            trace=trace,
+        )
+    except Exception:
+        # Record what is known (archive=failed when the archive raised) and
+        # re-raise the original exception unchanged (design §4.4).
+        capture.finish(trace, outcome=None)
+        raise
+    return replace(outcome, **capture.finish(trace, outcome=outcome))
+
+
+def _decide_for(
+    dp_point: DecisionPoint,
+    trigger_obj: Trigger,
+    project: pathlib.Path,
+    *,
+    client: decision.DecisionClient | None,
+    config: decision.DecisionConfig | None,
+    backend: decision.DecisionBackend | None,
+    points_config: PointsConfig | None,
+    min_confidence: float | None,
+    archive: bool,
+    intent: str,
+    questions_override: Mapping[str, Mapping] | None,
+    capture: _DecisionCapture,
+    trace: _ArchiveTrace,
+) -> DecisionOutcome:
+    """Steps 2..11 of :func:`decide_for` (argument contract already validated)."""
     decision_id = f"{dp_point.id}:{trigger_obj.resolved_id()}"
 
     # Step 2 — authorization gate. Nothing expensive may run before this return.
     view = points_config if points_config is not None else load_points_config(project)
     effective = view.effective(dp_point)
     if not effective.enabled:
+        if capture.observation is None:
+            _LOGGER.debug(
+                "decision point %s disabled (source=%s, layer=%s); escalating without spawn",
+                dp_point.id,
+                effective.source,
+                view.layer,
+            )
+            return _outcome(
+                dp_point=dp_point,
+                trigger=trigger_obj,
+                status="escalated",
+                escalated_reason="disabled",
+                detail=f"{decision_id}: disabled by config (source={effective.source}, layer={view.layer})",
+                mode=effective.mode,
+            )
+        # The single observation exception (design §5.3 / AC-010): an explicit
+        # human observe-only submission records the bypass and continues, but the
+        # authorization facts stay visible on the outcome preview.
+        capture.bypassed = True
         _LOGGER.debug(
-            "decision point %s disabled (source=%s, layer=%s); escalating without spawn",
+            "decision point %s disabled (source=%s, layer=%s); observation bypasses "
+            "only this gate",
             dp_point.id,
             effective.source,
             view.layer,
         )
-        return _outcome(
-            dp_point=dp_point,
-            trigger=trigger_obj,
-            status="escalated",
-            escalated_reason="disabled",
-            detail=f"{decision_id}: disabled by config (source={effective.source}, layer={view.layer})",
-            mode=effective.mode,
-        )
 
     # Step 3 — mode: config value wins, registry default is the fallback.
     mode = effective.mode if effective.mode in MODES else dp_point.default_mode
+    capture.mode = mode
 
     # Step 4 — transport availability/budget (`.mw/decide.json` owns transport).
     cfg: decision.DecisionConfig | None = config
@@ -2355,8 +5120,38 @@ def decide_for(
         cfg = client.cfg
     elif cfg is None:
         cfg, _cfg_error = decision.DecisionConfig.from_project(project)
-    if cfg is None or not cfg.is_configured:
-        detail = cfg.config_error or (
+    transport_configured = cfg is not None and cfg.is_configured
+    # The shared, pure authorization preview is computed from the *real* gates
+    # (per-dp authorization, this transport state, the effective mode and the
+    # registered executor), so it can never claim an act production would refuse.
+    capture.preview = _preview_of(
+        dp_point,
+        effective,
+        config_layer=view.layer,
+        mode=mode,
+        transport_configured=transport_configured,
+    )
+    if not transport_configured:
+        # Nothing is sent and no known-set gate runs here (no book gate, no
+        # transport call), so this refusal keeps the pre-T05j capture facts: the
+        # scope is built from this cfg, without a credential snapshot pin.
+        scope, channel = _capture_scope(
+            capture,
+            project=project,
+            cfg=cfg,
+            client=client,
+            dp_point=dp_point,
+            decision_id=decision_id,
+            trigger=trigger_obj,
+        )
+        capture.attach(
+            scope,
+            channel,
+            dp_id=dp_point.id,
+            decision_id=decision_id,
+            questions_version=dp_point.questions_version,
+        )
+        detail = (cfg.config_error if cfg is not None else None) or (
             "decision transport disabled (.mw/decide.json missing or enabled=false)"
         )
         return _outcome(
@@ -2374,6 +5169,61 @@ def decide_for(
     # layer) and before the first archive row (which echoes it, D-051).
     policy = resolve_policy(dp_point.id, view.row(dp_point.id), cfg)
     cfg = _apply_per_dp_budget(cfg, policy)
+    # The decision's own policy echo: captured with the same values the archive
+    # row reports, so the persisted snapshot and the row cannot disagree (T10).
+    capture.policy = policy
+
+    # Step 4c — the one credential snapshot of this decision (T05j). Taken after
+    # the per-DP budget clone (the object the transport sits on) and before any
+    # known-set gate, the capture scope and the client: the gate set, the
+    # captured text and the sent Authorization are one frozen value, and the
+    # next decision resolves a fresh one. A caller-pinned snapshot (the CLI's
+    # per-command object) wins here instead of being resolved a second time.
+    snapshot = _decision_credential_snapshot(cfg, client)
+    # T05l: freeze the complete known-safe set of this decision (cfg/extras, the
+    # actual Authorization, the legacy timi leg, the env heuristics) on this
+    # snapshot, once. Every face below - the known-set gates, the production
+    # capture redactor, the caller-owned scope verification and the client's own
+    # redactor - reads this one tuple, so a credential rotated mid-call cannot
+    # make two faces disagree. The next decision resolves afresh (no cache).
+    freeze = getattr(snapshot, "known_superset", None)
+    if callable(freeze):
+        freeze()
+    scope, channel = _capture_scope(
+        capture,
+        project=project,
+        cfg=cfg,
+        client=client,
+        dp_point=dp_point,
+        decision_id=decision_id,
+        trigger=trigger_obj,
+        snapshot=snapshot,
+    )
+    capture.attach(
+        scope,
+        channel,
+        dp_id=dp_point.id,
+        decision_id=decision_id,
+        questions_version=dp_point.questions_version,
+    )
+    discovery_error = getattr(snapshot, "discovery_error", None)
+    if discovery_error:
+        # Fail closed (T05l): the known-secret discovery raised, so this
+        # decision's set is incomplete and neither the gates nor the capture
+        # could prove the material safe. Zero send, zero snapshot; the detail
+        # names the failure kind only (never the message or a value).
+        capture.material_refused = True
+        return _outcome(
+            dp_point=dp_point,
+            trigger=trigger_obj,
+            status="escalated",
+            escalated_reason="unavailable",
+            detail=(
+                f"{decision_id}: {discovery_error}; refusing to send "
+                "(known-secret set incomplete)"
+            ),
+            mode=mode,
+        )
 
     # Step 5 — structured state + required fields (missing => never sent).
     try:
@@ -2399,6 +5249,11 @@ def decide_for(
     state = dict(built)
     missing = _missing_required(state, dp_point.id)
     if missing:
+        # A missing/null/blank required field is illegal material exactly like a
+        # typed refusal (step 5b): it is never sent and never stored as a
+        # snapshot, while the decision-end row keeps the refusal fact (T05k N1).
+        capture.material_refused = True
+        capture.remember_state(state, questions=None, state_digest=None)
         # Field names only: values may be L2 material (spec §5.4).
         return _outcome(
             dp_point=dp_point,
@@ -2409,8 +5264,79 @@ def decide_for(
             mode=mode,
             state_digest=_state_digest(state),
         )
+    # Step 5b — the typed business contract of this dp (T05b F1): type / enum /
+    # array caps / element lengths / cross-field facts plus the closed key set,
+    # from the single registry authority. Before T05b only ``check_book``
+    # enforced this, so every non-book producer (and the observation seam) sent
+    # material production would refuse. Refused material is never snapshotted
+    # and never reaches the budget or the transport.
+    contract_issues = state_field_issues(dp_point.id, state)
+    # Identity values, shared with the book (T05c N2): an explicit wrong
+    # dp/version is illegal material, while a missing one keeps the builder's
+    # own default semantics.
+    contract_issues += state_identity_issues(dp_point.id, state)
+    if dp_point.id in REQUIRED_STATE_FIELDS:
+        # A dp with a declared contract has a closed key set; an ad-hoc dp
+        # injected by tests has no declared paths, so there is nothing to close.
+        # The display paths are sanitized with this call's actual known-secret
+        # set (F3/T05e), built only on the refusal path so a legal decision does
+        # not resolve a credential it never echoes.
+        #
+        # ``context`` is optional engineered input, never decision material: it
+        # is legal when this dp still has a context slot producer, or when the dp
+        # has a model allowlist (identity/local facts are stripped there, so the
+        # block rides along locally and is fitted by ``_fit_state``). The four
+        # rewritten dps declare no slot, so they keep the strict closed set.
+        allow_context = dp_point.id not in MODEL_STATE_FIELDS or bool(
+            decision_context.slot_names_for(dp_point.id)
+        )
+        unknown_keys = state_unknown_key_issues(
+            dp_point.id, state, allow_context=allow_context
+        )
+        if unknown_keys:
+            unknown_keys = state_unknown_key_issues(
+                dp_point.id,
+                state,
+                allow_context=allow_context,
+                redactor=command_known_secret_redactor(cfg, snapshot=snapshot),
+            )
+        contract_issues += unknown_keys
+    if contract_issues:
+        capture.material_refused = True
+        capture.remember_state(state, questions=None, state_digest=None)
+        # Paths and registry-owned constraint text only (no free-text values).
+        detail = "; ".join(f"{path}: {issue}" for path, issue in contract_issues)
+        return _outcome(
+            dp_point=dp_point,
+            trigger=trigger_obj,
+            status="escalated",
+            escalated_reason="input-incomplete",
+            detail=f"{decision_id}: illegal state ({detail})",
+            mode=mode,
+            state_digest=_state_digest(state),
+        )
     questions = questions_map(dp_point)
+    if questions_override is not None:
+        # Observation-only question override (T10): validated against this dp's
+        # own question mapping and the state that would be sent. A conflict is
+        # illegal input like any other: zero send, no snapshot, paths only.
+        override = resolve_question_override(dp_point, questions_override, state)
+        if override.issues:
+            capture.material_refused = True
+            detail = "; ".join(f"{path}: {issue}" for path, issue in override.issues)
+            return _outcome(
+                dp_point=dp_point,
+                trigger=trigger_obj,
+                status="escalated",
+                escalated_reason="input-incomplete",
+                detail=f"{decision_id}: illegal questions ({detail})",
+                mode=mode,
+                state_digest=_state_digest(state),
+            )
+        assert override.questions is not None
+        questions = override.questions
     if not questions:
+        capture.remember_state(state, questions=None, state_digest=None)
         return _outcome(
             dp_point=dp_point,
             trigger=trigger_obj,
@@ -2421,9 +5347,16 @@ def decide_for(
             state_digest=_state_digest(state),
         )
 
-    # Step 6 — canonical budget <= 2000 B (two-stage truncation, then refuse).
-    state, dropped_paths, size = _fit_state(state)
+    # Step 6 — the single model projection, then the canonical budget
+    # (drop optional L1, then halve the legacy truncatable paths, then refuse).
+    # The projected object is the material that is actually sent and digested,
+    # so identity/association facts can never ride along (design D001).
+    # ``send_state`` is the one authority the observation preview reuses (T10).
+    state, dropped_paths, size = send_state(dp_point.id, state)
     digest = _state_digest(state)
+    # The material that is actually sent (post-truncation) is what gets
+    # snapshotted; the rendered candidate enum belongs to the same call.
+    capture.remember_state(state, questions=questions, state_digest=digest)
     if size > MAX_STATE_BYTES:
         dropped_note = f"; dropped: {', '.join(dropped_paths)}" if dropped_paths else ""
         return _outcome(
@@ -2437,14 +5370,67 @@ def decide_for(
             truncated=dropped_paths,
         )
 
+    # Step 6b — a caller-supplied book is a material-of-record claim (T05b F2):
+    # it must be this dp's book, pass `check_book` and carry the state that is
+    # actually sent. A refused book sends nothing, stores no snapshot and leaves
+    # no book_ref behind.
+    book = capture.observation.book if capture.observation is not None else None
+    if book is not None:
+        book_issues = _observation_book_issues(
+            book,
+            dp_point=dp_point,
+            sent_state=state,
+            project=project,
+            redactor=command_known_secret_redactor(cfg, snapshot=snapshot),
+        )
+        if book_issues:
+            capture.material_refused = True
+            detail = "; ".join(f"{path}: {issue}" for path, issue in book_issues)
+            return _outcome(
+                dp_point=dp_point,
+                trigger=trigger_obj,
+                status="escalated",
+                escalated_reason="input-incomplete",
+                detail=f"{decision_id}: observation book refused ({detail})",
+                mode=mode,
+                state_digest=digest,
+                truncated=dropped_paths,
+            )
+
     # Step 7 — one transport call; `decision.DecisionClient` never raises here.
+    # A caller-owned capture ledger must be able to prove this call's actual
+    # credential safe *before* the transport runs: a filter that misses it would
+    # store the sent value raw. Material that was already refused never reaches
+    # here, so this never displaces a business refusal.
+    coverage_issue = _caller_scope_coverage_issue(
+        _caller_owned_scope(capture, client), snapshot, cfg=cfg
+    )
+    if coverage_issue is not None:
+        # An unprovable capture stores nothing: no material of record for this
+        # call (T05l), and the caller's redactor/client stay untouched.
+        capture.material_refused = True
+        raise decision.DecisionInputError(coverage_issue)
     if client is None:
-        client = decision.DecisionClient(cfg=cfg, backend=backend, project_root=project)
-    response = client.decide(state, questions, dp=dp_point.id)
+        client = decision.DecisionClient(
+            cfg=cfg, backend=backend, project_root=project, credential_snapshot=snapshot
+        )
+    wire = _wire_api()
+    # A caller-owned client is bound to this decision's snapshot for exactly one
+    # call (T05j): it must send the value the gate and the capture set saw.
+    with _bound_credential_snapshot(client, snapshot):
+        if wire is not None and capture.scope is not None:
+            # The client binds its own ``call``; this only hands it this decision's
+            # scope, so attempt/call rows and the decision-end row share one ledger.
+            with wire.scope_context(capture.scope):
+                response = client.decide(state, questions, dp=dp_point.id)
+        else:
+            response = client.decide(state, questions, dp=dp_point.id)
+    capture.record_call(client)
     if not response.get("available"):
         transport_reason = response.get("reason") or decision.REASON_UPSTREAM_ERROR
         archived, replayed = _maybe_archive(
             archive,
+            trace=trace,
             dp_point=dp_point,
             trigger=trigger_obj,
             project_dir=project,
@@ -2477,6 +5463,12 @@ def decide_for(
     confidence = _aggregate_confidence(answers)
     threshold = _confidence_threshold(cfg, min_confidence, policy)
     confidence_source = response.get("confidence_source")
+    # The *effective* threshold is the decision's persisted fact (T10/AC-023):
+    # the archive policy echo and the snapshot carry the value this decision
+    # actually applied (an explicit ``min_confidence`` argument wins over the
+    # resolved policy), so a reader never has to re-resolve the current config.
+    policy = {**policy, "min_confidence": threshold}
+    capture.policy = policy
 
     # Step 8 — input side first: a decision can only be acted on when every
     # registry question carries an acceptable value. No usable answer is the one
@@ -2490,6 +5482,7 @@ def decide_for(
         )
         archived, replayed = _maybe_archive(
             archive,
+            trace=trace,
             dp_point=dp_point,
             trigger=trigger_obj,
             project_dir=project,
@@ -2527,6 +5520,7 @@ def decide_for(
     ):
         archived, replayed = _maybe_archive(
             archive,
+            trace=trace,
             dp_point=dp_point,
             trigger=trigger_obj,
             project_dir=project,
@@ -2562,6 +5556,7 @@ def decide_for(
     if mode == "suggest" or intent == "answer":
         archived, replayed = _maybe_archive(
             archive,
+            trace=trace,
             dp_point=dp_point,
             trigger=trigger_obj,
             project_dir=project,
@@ -2600,6 +5595,7 @@ def decide_for(
     if dp_point.executor is None:
         archived, replayed = _maybe_archive(
             archive,
+            trace=trace,
             dp_point=dp_point,
             trigger=trigger_obj,
             project_dir=project,
@@ -2632,6 +5628,7 @@ def decide_for(
     except Exception as exc:  # noqa: BLE001 - step 11: executor failure => human
         archived, replayed = _maybe_archive(
             archive,
+            trace=trace,
             dp_point=dp_point,
             trigger=trigger_obj,
             project_dir=project,
@@ -2662,6 +5659,7 @@ def decide_for(
     if not isinstance(actual_action, str) or not actual_action.strip():
         archived, replayed = _maybe_archive(
             archive,
+            trace=trace,
             dp_point=dp_point,
             trigger=trigger_obj,
             project_dir=project,
@@ -2692,6 +5690,7 @@ def decide_for(
 
     archived, replayed = _maybe_archive(
         archive,
+        trace=trace,
         dp_point=dp_point,
         trigger=trigger_obj,
         project_dir=project,

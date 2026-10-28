@@ -1,0 +1,31 @@
+﻿{
+    "label":  "green-01-eight-cases",
+    "started_at":  "2026-10-27T13:04:52.4243678Z",
+    "finished_at":  "2026-10-27T13:04:56.9366965Z",
+    "cwd":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+    "target":  "test_decision_context_workbench.py",
+    "argv":  [
+                 "python",
+                 "-B",
+                 "-m",
+                 "pytest",
+                 "-p",
+                 "no:cacheprovider",
+                 "-q",
+                 "test_decision_context_workbench.py"
+             ],
+    "rc":  1,
+    "home":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-01-eight-cases\\home",
+    "temp":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-01-eight-cases\\tmp",
+    "project":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-01-eight-cases\\project",
+    "env":  {
+                "HOME":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-01-eight-cases\\home",
+                "USERPROFILE":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-01-eight-cases\\home",
+                "TEMP":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-01-eight-cases\\tmp",
+                "PYTHONDONTWRITEBYTECODE":  "1",
+                "PYTHONPYCACHEPREFIX":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-01-eight-cases\\tmp",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD":  "1",
+                "PYTHONUTF8":  "1",
+                "MW_PROJECT_DIR":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\logs\\green-01-eight-cases\\project"
+            }
+}

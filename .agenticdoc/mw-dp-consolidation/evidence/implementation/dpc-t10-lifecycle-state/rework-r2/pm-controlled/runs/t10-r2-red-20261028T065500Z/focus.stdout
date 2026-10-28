@@ -1,0 +1,284 @@
+F.FFF.F.FFF...                                                           [100%]
+================================== FAILURES ===================================
+________ test_a_refused_request_does_not_swallow_the_later_real_choice ________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-pm-verify-20261027/pm-verification/t10-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_a_refused_request_does_not_swallow_the_later_real_choice(store):
+        """S1: the refusal's event id must not hide the later real business choice."""
+        meta = _started(store)
+        decision_id = _decision_id(meta)
+        refused = _result(
+            choice=None,
+            basis_id=None,
+            basis_text=None,
+            basis_source=None,
+            business_decisions=0,
+            reason="bad-response",
+            attempts=1,
+            transport_attempts=2,
+        )
+        first = lifecycle.record_request(
+            store,
+            meta,
+            decision_id=decision_id,
+            result=refused,
+            material=_material(),
+            preparation=_preparation(),
+        )
+        assert first.recorded is True
+        assert _row(store, "request")["business_decisions"] == 0
+    
+        second = lifecycle.record_request(
+            store,
+            meta,
+            decision_id=decision_id,
+            result=_result(),
+            material=_material(),
+            preparation=_preparation(),
+        )
+    
+        requests = [row for row in _rows(store) if row.get("kind") == "request"]
+        real = [
+            row
+            for row in requests
+            if row.get("business_decisions") == 1 and row.get("choice") == "narrow"
+        ]
+        conflict_visible = second.status == "failed" and "conflict" in str(second.error_class)
+>       assert real or conflict_visible, (
+            "S1: the refusal's event id swallowed the later real business decision "
+            f"(status={second.status!r}, "
+            f"business_decisions={[row.get('business_decisions') for row in requests]})"
+        )
+E       AssertionError: S1: the refusal's event id swallowed the later real business decision (status='duplicate', business_decisions=[0])
+E       assert ([] or False)
+
+test_decision_context_lifecycle.py:1520: AssertionError
+_________ test_a_different_choice_for_the_same_request_stays_visible __________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-pm-verify-20261027/pm-verification/t10-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_a_different_choice_for_the_same_request_stays_visible(store):
+        """S1: different content under the same request id is never a silent duplicate."""
+        meta = _started(store)
+        decision_id = _decision_id(meta)
+        assert lifecycle.record_request(
+            store,
+            meta,
+            decision_id=decision_id,
+            result=_result(),
+            material=_material(),
+            preparation=_preparation(),
+        ).recorded is True
+    
+        split = _result(
+            choice="split",
+            basis_id="b-split",
+            basis_text="the remaining work is two independent files",
+        )
+        second = lifecycle.record_request(
+            store,
+            meta,
+            decision_id=decision_id,
+            result=split,
+            material=_material(),
+            preparation=_preparation(),
+        )
+    
+        requests = [row for row in _rows(store) if row.get("kind") == "request"]
+        written_second = len(requests) == 2 and requests[1].get("choice") == "split"
+        conflict_visible = second.status == "failed" and "conflict" in str(second.error_class)
+>       assert written_second or conflict_visible, (
+            "S1: a different business choice was reported as a duplicate without any "
+            f"conflict signal (status={second.status!r}, "
+            f"choices={[row.get('choice') for row in requests]})"
+        )
+E       AssertionError: S1: a different business choice was reported as a duplicate without any conflict signal (status='duplicate', choices=['narrow'])
+E       assert (False or False)
+
+test_decision_context_lifecycle.py:1588: AssertionError
+_ test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded[no-handling-options] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-pm-verify-20261027/pm-verification/t10-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+material = {'question': 'which prepared handling option applies now?'}
+choice = 'c-ghost'
+
+    @pytest.mark.parametrize(
+        "material,choice",
+        [
+            ({"question": "which prepared handling option applies now?"}, "c-ghost"),
+            (_auto_material([_auto_candidate("c-one", "the only option")]), "c-one"),
+        ],
+        ids=["no-handling-options", "single-candidate-set"],
+    )
+    def test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded(
+        store, material, choice
+    ):
+        """S3: an illegal dp-auto answer is refused before anything is recorded."""
+        meta = _started(store)
+        decision_id = f"{AUTO_DP}:{meta.logical_id}"
+        before = _raw(store)
+>       with pytest.raises(lifecycle.LifecycleInputError) as caught:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE <class 'decision_lifecycle.LifecycleInputError'>
+
+test_decision_context_lifecycle.py:1610: Failed
+_ test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded[single-candidate-set] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-pm-verify-20261027/pm-verification/t10-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+material = {'background': {'constraints': 'no new authority is granted', 'current_state': 'one blocking fact is known', 'task_goa...scription': 'prepared handling c-one', 'id': 'c-one', ...}], 'question': 'which prepared handling option applies now?'}
+choice = 'c-one'
+
+    @pytest.mark.parametrize(
+        "material,choice",
+        [
+            ({"question": "which prepared handling option applies now?"}, "c-ghost"),
+            (_auto_material([_auto_candidate("c-one", "the only option")]), "c-one"),
+        ],
+        ids=["no-handling-options", "single-candidate-set"],
+    )
+    def test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded(
+        store, material, choice
+    ):
+        """S3: an illegal dp-auto answer is refused before anything is recorded."""
+        meta = _started(store)
+        decision_id = f"{AUTO_DP}:{meta.logical_id}"
+        before = _raw(store)
+>       with pytest.raises(lifecycle.LifecycleInputError) as caught:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE <class 'decision_lifecycle.LifecycleInputError'>
+
+test_decision_context_lifecycle.py:1610: Failed
+_________ test_executed_and_settled_observations_stay_non_decreasing __________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-pm-verify-20261027/pm-verification/t10-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_executed_and_settled_observations_stay_non_decreasing(store):
+        """S5: executed/settled observations are non-decreasing like the terminal."""
+        before = _state("running", completed=[], remaining=["split the file"], blockers=None)
+        meta = _started(store, task_before=before)
+        decision_id = _decision_id(meta)
+        # legal control: an increasing observation order is still accepted
+        assert lifecycle.record_executed(
+            store,
+            meta,
+            decision_id=decision_id,
+            dp=DP,
+            action="split",
+            result="split the file",
+            task_after=_state(observed_at="2026-10-27T09:00:00+00:00"),
+        ).recorded is True
+        assert lifecycle.record_settled(
+            store,
+            meta,
+            decision_id=decision_id,
+            dp=DP,
+            outcome="ok",
+            task_after=_state(
+                "done", source="dispatch-result", observed_at="2026-10-27T10:00:00+00:00"
+            ),
+        ).recorded is True
+        before_bytes = _raw(store)
+    
+>       with pytest.raises(lifecycle.LifecycleInputError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE <class 'decision_lifecycle.LifecycleInputError'>
+
+test_decision_context_lifecycle.py:1677: Failed
+____________ test_a_secret_bearing_creation_before_can_be_repeated ____________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-pm-verify-20261027/pm-verification/t10-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_a_secret_bearing_creation_before_can_be_repeated(store):
+        """S7: the recorded before is repeatable even when it held a known secret."""
+        before = _state(
+            "running", completed=[SECRET + " private step"], remaining=[], blockers=None
+        )
+        meta = _started(store, task_before=before)
+        decision_id = _decision_id(meta)
+    
+>       result = lifecycle.record_request(
+            store,
+            meta,
+            decision_id=decision_id,
+            result=_result(),
+            material=_material(),
+            preparation=_preparation(),
+            task_before=before,
+        )
+
+test_decision_context_lifecycle.py:1740: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision_lifecycle.py:1369: in record_request
+    before = _check_before(start, task_before)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decision_lifecycle.py:396: in _check_before
+    _refuse(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+field = 'task_before'
+rule = "must repeat the creation fact's recorded before snapshot; a later before cannot be backfilled"
+
+    def _refuse(field: str, rule: str) -> None:
+>       raise LifecycleInputError(f"{field} is not valid: {rule}")
+E       decision_lifecycle.LifecycleInputError: task_before is not valid: must repeat the creation fact's recorded before snapshot; a later before cannot be backfilled
+
+decision_lifecycle.py:230: LifecycleInputError
+___ test_a_case_variant_agenticdoc_path_is_refused_in_test_scope[wire-sink] ___
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-pm-verify-20261027/pm-verification/t10-r2-red-20261028T065500Z/pytest-basetemp-focus/test_a_case_variant_agenticdoc0')
+relative = ('.AgenticDoc', '_autopilot', 'decisions-wire.jsonl')
+
+    @pytest.mark.skipif(
+        os.name != "nt", reason="the case-insensitive path rule is a Windows fact"
+    )
+    @pytest.mark.parametrize(
+        "relative",
+        [
+            (".AgenticDoc", "_autopilot", "decisions-wire.jsonl"),
+            (".AgenticDoc", "lifecycle.jsonl"),
+        ],
+        ids=["wire-sink", "lifecycle-sink"],
+    )
+    def test_a_case_variant_agenticdoc_path_is_refused_in_test_scope(tmp_path, relative):
+        """S4: on Windows a case variant is the same production tree and is refused."""
+        sink = tmp_path.joinpath(*relative)
+>       with pytest.raises(wire.WireScopeError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE <class 'decision_wire.WireScopeError'>
+
+test_decision_context_lifecycle.py:1772: Failed
+_ test_a_case_variant_agenticdoc_path_is_refused_in_test_scope[lifecycle-sink] _
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-pm-verify-20261027/pm-verification/t10-r2-red-20261028T065500Z/pytest-basetemp-focus/test_a_case_variant_agenticdoc1')
+relative = ('.AgenticDoc', 'lifecycle.jsonl')
+
+    @pytest.mark.skipif(
+        os.name != "nt", reason="the case-insensitive path rule is a Windows fact"
+    )
+    @pytest.mark.parametrize(
+        "relative",
+        [
+            (".AgenticDoc", "_autopilot", "decisions-wire.jsonl"),
+            (".AgenticDoc", "lifecycle.jsonl"),
+        ],
+        ids=["wire-sink", "lifecycle-sink"],
+    )
+    def test_a_case_variant_agenticdoc_path_is_refused_in_test_scope(tmp_path, relative):
+        """S4: on Windows a case variant is the same production tree and is refused."""
+        sink = tmp_path.joinpath(*relative)
+>       with pytest.raises(wire.WireScopeError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE <class 'decision_wire.WireScopeError'>
+
+test_decision_context_lifecycle.py:1772: Failed
+=========================== short test summary info ===========================
+FAILED test_decision_context_lifecycle.py::test_a_refused_request_does_not_swallow_the_later_real_choice
+FAILED test_decision_context_lifecycle.py::test_a_different_choice_for_the_same_request_stays_visible
+FAILED test_decision_context_lifecycle.py::test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded[no-handling-options]
+FAILED test_decision_context_lifecycle.py::test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded[single-candidate-set]
+FAILED test_decision_context_lifecycle.py::test_executed_and_settled_observations_stay_non_decreasing
+FAILED test_decision_context_lifecycle.py::test_a_secret_bearing_creation_before_can_be_repeated
+FAILED test_decision_context_lifecycle.py::test_a_case_variant_agenticdoc_path_is_refused_in_test_scope[wire-sink]
+FAILED test_decision_context_lifecycle.py::test_a_case_variant_agenticdoc_path_is_refused_in_test_scope[lifecycle-sink]
+8 failed, 6 passed in 0.70s

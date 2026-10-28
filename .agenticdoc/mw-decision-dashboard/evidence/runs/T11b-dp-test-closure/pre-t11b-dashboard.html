@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mw decide monitor</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header>
+  <h1>mw decide monitor</h1>
+  <p id="boot-status" class="status" role="status">正在读取一次性引导码…</p>
+  <p class="hint">本页面由本地 monitor 服务提供，只监听 127.0.0.1。打开、刷新与筛选不会发起任何模型请求；DP 测试页签的提交能力尚未接入。</p>
+</header>
+<nav aria-label="dashboard tabs">
+  <button type="button" id="tab-history" data-tab="history" aria-selected="true">决策历史</button>
+  <button type="button" id="tab-playground" data-tab="playground" aria-selected="false">DP 测试（待接入）</button>
+</nav>
+<p id="error-banner" class="error" role="alert"></p>
+<main>
+  <section id="panel-history" data-panel="history" aria-labelledby="tab-history">
+    <form id="filter-form" class="filters">
+      <label>key <input id="filter-key" name="key" type="text" autocomplete="off" spellcheck="false"></label>
+      <label>DP <input id="filter-dp" name="dp" type="text" autocomplete="off" spellcheck="false"></label>
+      <label>来源
+        <select id="filter-source" name="source">
+          <option value="">全部</option>
+          <option value="human">human</option>
+          <option value="model">model</option>
+          <option value="system">system</option>
+          <option value="unknown">unknown</option>
+        </select>
+      </label>
+      <label>状态
+        <select id="filter-status" name="status">
+          <option value="">全部</option>
+          <option value="pending">pending</option>
+          <option value="ok">ok</option>
+          <option value="rework">rework</option>
+          <option value="rollback">rollback</option>
+          <option value="inconclusive">inconclusive</option>
+          <option value="unknown">unknown</option>
+        </select>
+      </label>
+      <label>范围
+        <select id="filter-scope" name="scope">
+          <option value="production" selected>production</option>
+          <option value="test">test</option>
+        </select>
+      </label>
+      <button type="button" id="filter-apply">刷新 / 应用筛选</button>
+      <button type="button" id="filter-reset">清除筛选</button>
+    </form>
+    <p id="filters-notes" class="notes"></p>
+    <p id="history-summary" class="summary"></p>
+    <div class="table-wrap">
+      <table>
+        <caption>项目决策历史（默认跨 key，按记录时间倒序）</caption>
+        <thead>
+          <tr>
+            <th scope="col">时间</th>
+            <th scope="col">key / task</th>
+            <th scope="col">DP</th>
+            <th scope="col">类型</th>
+            <th scope="col">状态</th>
+            <th scope="col">来源</th>
+            <th scope="col">actor</th>
+            <th scope="col">answer_source</th>
+            <th scope="col">阶段</th>
+            <th scope="col">调用</th>
+            <th scope="col">usage</th>
+            <th scope="col">capture / 输出</th>
+            <th scope="col">详情</th>
+          </tr>
+        </thead>
+        <tbody id="history-rows"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <button type="button" id="page-prev">上一页</button>
+      <span id="page-info"></span>
+      <button type="button" id="page-next">下一页</button>
+    </div>
+  </section>
+  <section id="panel-playground" data-panel="playground" aria-labelledby="tab-playground" hidden>
+    <h2>DP 测试</h2>
+    <p id="playground-note">DP 测试页签尚未接入（等待 T06 观察提交通道）：本页没有提交按钮，也不会发起任何模型请求。</p>
+    <ul id="playground-pending">
+      <li>决策本骨架与字段契约：待接入</li>
+      <li>validate / 显式 submit：待接入</li>
+      <li>真实调用观察与采纳/动作预览：待接入</li>
+    </ul>
+  </section>
+  <section id="detail-panel" aria-labelledby="detail-title" hidden>
+    <h2 id="detail-title">决策详情</h2>
+    <button type="button" id="detail-close">关闭详情</button>
+    <div id="detail-body"></div>
+  </section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

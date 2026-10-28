@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "cmd.exe",
+    "/d",
+    "/c",
+    "npm run check"
+  ],
+  "cwd": "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\dc-t20-startup-check-bc0wyetb\\repo",
+  "utc_start": "2026-10-24T02:17:42.656264+00:00",
+  "utc_end": "2026-10-24T02:17:44.093645+00:00",
+  "exit": 1,
+  "copied_files": 11861,
+  "formatter_changes": [],
+  "original_changed_during_check": [],
+  "scope": "full npm run check, copied working tree; no formatter result applied to source"
+}

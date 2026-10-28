@@ -1,0 +1,19 @@
+file	sha256_16	size_B	baseline_sha256_16	baseline_size_B
+packages/multi-workers/decision_points.py	27ccffebb9c37f82	203904	3da22ca342c6588f	199585
+packages/multi-workers/decision_book.py	4e6394a1c9560f67	49461	149c32370c9c01b4	50535
+packages/multi-workers/test_decision_observation.py	33e7c94fdf8b302d	60184	912d386d3e58759c	59639
+packages/multi-workers/test_decision_input_contract_migration.py	1265e47dec735c74	34427	-	-
+packages/multi-workers/decide_registry.json	86ea4f03299205ec	63210	c836bc7e776a7f31	62396
+packages/multi-workers/decide_book_template.json	ba84d388455dbc90	3178	ba84d388455dbc90	3178
+packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts	cc19eb2d8e052cf4	33935	36a84c1edb3cfb8f	33283
+packages/multi-workers/decide_signoff.py	05dd4f0eb2f7a2d2	26204	05dd4f0eb2f7a2d2	26204
+
+== git status (my surface) ==
+ M packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts
+ M packages/multi-workers/decide_book_template.json
+ M packages/multi-workers/decide_registry.json
+ M packages/multi-workers/decision_book.py
+ M packages/multi-workers/decision_points.py
+?? packages/multi-workers/test_decision_input_contract_migration.py
+?? packages/multi-workers/test_decision_observation.py
+

@@ -1,0 +1,120 @@
+--- T21 baseline
++++ T21 source
+@@ -505,7 +505,7 @@
+         const block = el("div", { class: "selection", "data-question": entry.question || "" });
+         block.appendChild(el("div", { text: entry.value + (entry.label ? " · " + entry.label : "") }));
+         if (entry.question) block.appendChild(el("div", { class: "basis", text: "question=" + entry.question }));
+-        if (entry.basis) block.appendChild(el("div", { class: "basis", text: "依据：" + entry.basis }));
++        if (entry.basis) renderBasis(block, entry.basis);
+         selectionCell.appendChild(block);
+       });
+     }
+@@ -883,6 +883,56 @@
+ 
+   // -- decide node: policy verdict, never "API failure" for an HTTP 200 ------
+ 
++  function renderBasis(holder, basis, title) {
++    const values = Array.isArray(basis) ? basis : typeof basis === "string" ? basis.split("; ") : [];
++    const recorded = values.filter(function (value) { return typeof value === "string" && value.length > 0; });
++    const explanations = {
++      "record-start.record_version": "创建记录标明了本次决策的记录版本",
++      "record-start.key": "创建记录登记了所属项目",
++      "record-start.task_key": "创建记录登记了关联任务",
++      "record-start.retry_of": "创建记录登记了本次重试关联的旧决策",
++      "record-start.initiator_role": "创建记录登记了发起角色",
++      "record-start.actor.kind (the actor id is only in the log detail)": "创建记录登记了参与者类型；身份详情仅在审计中查看",
++      "decision_id prefix (a value, not a path)": "决策编号标明了判断类型，不是文件路径",
++      "question_summary is the dp's registered question (definition, not a record fact)": "问题摘要来自该决策点的定义，不证明这次已执行",
++      "decision-end": "决策结束记录登记了本次处理状态",
++      "no decision-end row": "没有决策结束记录，不能推断处理结果",
++      "ledger.book-snapshot (the stored input body)": "存储的输入副本记录了本次提交内容，不使用当前编辑器补填",
++      "ledger.call-end": "调用结束记录确认了模型和返回情况，不等于业务动作已执行",
++      "ledger.decision-end": "决策结束记录登记了本次处理状态，不等于整个任务已完成",
++      "archive.decide": "决策归档保存了本次判断结果",
++      "archive.decide.confidence": "本次决策归档记录了置信度",
++      "archive.decide.confidence_source": "本次决策归档标明了置信度的来源",
++      "ledger.call-end.confidence": "本次调用记录了置信度",
++      "ledger.call-end.confidence_source": "本次调用记录了置信度的来源",
++      "archive.decide.answer (the model's recorded selection)": "模型选择来自本次保存的答案，不按当前配置猜填",
++      "the recorded advice path (suggest/answer): nothing was acted on": "决策接口本次只返回建议，不代表已采纳或执行",
++      "ledger.book-snapshot.policy.min_confidence (the effective threshold this decision applied)": "输入快照记录了本次生效阈值，未使用当前配置补猜",
++      "escalated_reason=low-confidence: a policy refusal, not an API failure": "记录表明本次因置信度不足而未采纳，不是接口调用失败",
++      "ledger.attempt-start (the stored request copy)": "请求记录保存了实际发送内容，不是未发送的预览",
++      "ledger.attempt-end (the stored response copy)": "返回记录保存了实际响应内容，不代表业务动作已完成",
++      "consumed is receipt only: it never means completed": "接收回执只证明答案已被接收，不证明任务已完成",
++      "no consumed/signoff fact was recorded for this logical record": "没有接收或签收记录，不能据此断言动作未发生",
++      "ledger.lifecycle.executed (a declared action really happened)": "行动回执记录了某个动作；是否完成还需看结算结果",
++      "settled outcome from ledger.lifecycle.settled": "本轮处理结果来自结算回执，不是模型答案本身的正确性判定",
++      "no executed/settled feedback was recorded for this logical record": "没有行动或结算回执，不能推断本轮处理已完成",
++      "no call-end/decision-end row for this decision": "缺少调用或决策结束记录，不能确认本次处理结果",
++      "no recorded transport/model for this decision": "未记录本次使用的传输方式或模型",
++      "the decide interface recorded no available answer": "决策接口记录了未返回可用答案",
++    };
++    const readable = recorded.map(function (value) {
++      return Object.prototype.hasOwnProperty.call(explanations, value)
++        ? explanations[value]
++        : "原始依据已记录，但其含义尚未识别；不据此推断执行结果";
++    }).filter(function (value, index, all) { return all.indexOf(value) === index; });
++    holder.appendChild(el("p", {class: "basis", text: (title || "依据") + "：" + (readable.length ? readable.join("；") : NOT_RECORDED)}));
++    if (!recorded.length) return;
++    const audit = el("details", {class: "basis-audit", "data-testid": "basis-audit"});
++    audit.appendChild(el("summary", {text: "原始依据出处（按需查看）"}));
++    audit.appendChild(el("pre", {class: "copy-text", text: recorded.join("\n")}));
++    holder.appendChild(audit);
++  }
++
+   function policyDispositionLabel(disposition) {
+     if (disposition === "adopted") return "已采纳（adopted）";
+     if (disposition === "suggested") return "模型建议（不代表已采纳或执行）";
+@@ -944,7 +994,7 @@
+       ));
+       if (!isMissing(policy.reason)) holder.appendChild(line("判定原因", String(policy.reason)));
+       if (Array.isArray(policy.basis) && policy.basis.length) {
+-        holder.appendChild(line("判定依据", policy.basis.join("; ")));
++        renderBasis(holder, policy.basis, "判定依据");
+       }
+     } else {
+       holder.appendChild(line("策略判定：未记录", "本记录未持久化本次阈值/处置，不按当前配置推断"));
+@@ -1039,7 +1089,9 @@
+     executed.forEach(function (row) {
+       holder.appendChild(line(
+         "已执行行动（" + missing(row.action) + "）",
+-        (actionLabels[row.action] || missing(row.action)) + " · 记录结果：" + formatFree(row.result) + " · 时间：" + missing(row.ts)
++        (row.action === "record" && row.result === "answer-returned"
++          ? "仅记录了模型返回，不代表 worker 已启动"
++          : actionLabels[row.action] || missing(row.action)) + " · 记录结果：" + formatFree(row.result) + " · 时间：" + missing(row.ts)
+       ));
+       if (!isMissing(row.reason)) holder.appendChild(line("行动说明（原记录）", formatFree(row.reason)));
+       renderAnswerSourceAudit(holder, row.answer_source);
+@@ -1052,7 +1104,10 @@
+     holder.appendChild(line(
+       "处理结果",
+       settled
+-        ? (outcomeLabels[settled.outcome] || missing(settled.outcome)) + "（" + missing(settled.outcome) + "） · 原因：" + formatFree(settled.reason) + " · 时间：" + missing(settled.ts)
++        ? (outcomeLabels[settled.outcome] || missing(settled.outcome)) + "（" + missing(settled.outcome) + "） · 原因：" +
++          (settled.outcome === "rework" && settled.reason === "dispatch-refused"
++            ? "派发被拒绝，需要处理派发阻塞；不代表模型答案被判错（dispatch-refused）"
++            : formatFree(settled.reason)) + " · 时间：" + missing(settled.ts)
+         : "未记录（不能推断行动未发生）"
+     ));
+   }
+@@ -1514,6 +1569,7 @@
+     const detail = source.detail;
+     if (source.id === "input") {
+       renderInputNode(holder, detail);
++      if (detail && Array.isArray(detail.basis) && detail.basis.length) renderBasis(holder, detail.basis);
+       return;
+     }
+     if (isMissing(detail)) {
+@@ -1567,10 +1623,7 @@
+       if (source.id === "model") renderAnswerSourceAudit(holder, detail.answer_source);
+     }
+     const basis = Array.isArray(detail.basis) ? detail.basis : Array.isArray(source.basis) ? source.basis : [];
+-    holder.appendChild(el("p", {
+-      class: "basis",
+-      text: "依据：" + (basis.length ? basis.join("; ") : NOT_RECORDED),
+-    }));
++    renderBasis(holder, basis);
+   }
+ 
+   function renderDag(workbench, isDag) {

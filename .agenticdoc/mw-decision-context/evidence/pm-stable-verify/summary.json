@@ -1,0 +1,205 @@
+[
+  {
+    "name": "decision-context-integration",
+    "exit": 0,
+    "start": "2026-10-23T04:28:05.393892+00:00",
+    "end": "2026-10-23T04:28:24.887032+00:00",
+    "log": "decision-context-integration.log"
+  },
+  {
+    "name": "decision-context-pm-producers",
+    "exit": 0,
+    "start": "2026-10-23T04:28:24.887598+00:00",
+    "end": "2026-10-23T04:28:29.368070+00:00",
+    "log": "decision-context-pm-producers.log"
+  },
+  {
+    "name": "decision-context-agent-materials",
+    "exit": 0,
+    "start": "2026-10-23T04:28:29.368434+00:00",
+    "end": "2026-10-23T04:28:33.714350+00:00",
+    "log": "decision-context-agent-materials.log"
+  },
+  {
+    "name": "triage-client-state",
+    "exit": 0,
+    "start": "2026-10-23T04:28:33.714741+00:00",
+    "end": "2026-10-23T04:28:34.468640+00:00",
+    "log": "triage-client-state.log"
+  },
+  {
+    "name": "triage-dispatch",
+    "exit": 0,
+    "start": "2026-10-23T04:28:34.468967+00:00",
+    "end": "2026-10-23T04:28:37.819334+00:00",
+    "log": "triage-dispatch.log"
+  },
+  {
+    "name": "decision-association",
+    "exit": 0,
+    "start": "2026-10-23T04:28:37.819662+00:00",
+    "end": "2026-10-23T04:28:39.939074+00:00",
+    "log": "decision-association.log"
+  },
+  {
+    "name": "dp2-narrow",
+    "exit": 0,
+    "start": "2026-10-23T04:28:39.939472+00:00",
+    "end": "2026-10-23T04:28:41.148904+00:00",
+    "log": "dp2-narrow.log"
+  },
+  {
+    "name": "dp3-answer",
+    "exit": 0,
+    "start": "2026-10-23T04:28:41.149228+00:00",
+    "end": "2026-10-23T04:28:42.299537+00:00",
+    "log": "dp3-answer.log"
+  },
+  {
+    "name": "decision-tool",
+    "exit": 0,
+    "start": "2026-10-23T04:28:42.299867+00:00",
+    "end": "2026-10-23T04:28:43.569443+00:00",
+    "log": "decision-tool.log"
+  },
+  {
+    "name": "test_decision_context_integration",
+    "exit": 0,
+    "start": "2026-10-23T04:28:43.569850+00:00",
+    "end": "2026-10-23T04:28:46.562577+00:00",
+    "log": "test_decision_context_integration.log"
+  },
+  {
+    "name": "test_decision_context_contract",
+    "exit": 0,
+    "start": "2026-10-23T04:28:46.563069+00:00",
+    "end": "2026-10-23T04:28:47.919846+00:00",
+    "log": "test_decision_context_contract.log"
+  },
+  {
+    "name": "test_decision_context_lifecycle",
+    "exit": 0,
+    "start": "2026-10-23T04:28:47.920235+00:00",
+    "end": "2026-10-23T04:28:48.713374+00:00",
+    "log": "test_decision_context_lifecycle.log"
+  },
+  {
+    "name": "test_decision_context_history",
+    "exit": 0,
+    "start": "2026-10-23T04:28:48.713752+00:00",
+    "end": "2026-10-23T04:28:49.624596+00:00",
+    "log": "test_decision_context_history.log"
+  },
+  {
+    "name": "test_decision_context_signoff_cli",
+    "exit": 0,
+    "start": "2026-10-23T04:28:49.625212+00:00",
+    "end": "2026-10-23T04:28:52.535539+00:00",
+    "log": "test_decision_context_signoff_cli.log"
+  },
+  {
+    "name": "test_decision_context_workbench",
+    "exit": 0,
+    "start": "2026-10-23T04:28:52.535937+00:00",
+    "end": "2026-10-23T04:29:07.690837+00:00",
+    "log": "test_decision_context_workbench.log"
+  },
+  {
+    "name": "test_decide_registry_contract",
+    "exit": 0,
+    "start": "2026-10-23T04:29:07.691328+00:00",
+    "end": "2026-10-23T04:29:08.531846+00:00",
+    "log": "test_decide_registry_contract.log"
+  },
+  {
+    "name": "test_decision_book",
+    "exit": 0,
+    "start": "2026-10-23T04:29:08.532243+00:00",
+    "end": "2026-10-23T04:29:09.499520+00:00",
+    "log": "test_decision_book.log"
+  },
+  {
+    "name": "test_decision_input_contract_migration",
+    "exit": 0,
+    "start": "2026-10-23T04:29:09.499897+00:00",
+    "end": "2026-10-23T04:29:10.753412+00:00",
+    "log": "test_decision_input_contract_migration.log"
+  },
+  {
+    "name": "test_decision_context",
+    "exit": 0,
+    "start": "2026-10-23T04:29:10.753773+00:00",
+    "end": "2026-10-23T04:29:11.534253+00:00",
+    "log": "test_decision_context.log"
+  },
+  {
+    "name": "test_decision_dashboard_contracts",
+    "exit": 0,
+    "start": "2026-10-23T04:29:11.534789+00:00",
+    "end": "2026-10-23T04:29:12.811358+00:00",
+    "log": "test_decision_dashboard_contracts.log"
+  },
+  {
+    "name": "test_decision_dashboard_assets",
+    "exit": 0,
+    "start": "2026-10-23T04:29:12.811954+00:00",
+    "end": "2026-10-23T04:29:20.380940+00:00",
+    "log": "test_decision_dashboard_assets.log"
+  },
+  {
+    "name": "test_decision_monitor",
+    "exit": 0,
+    "start": "2026-10-23T04:29:20.381553+00:00",
+    "end": "2026-10-23T04:29:39.436146+00:00",
+    "log": "test_decision_monitor.log"
+  },
+  {
+    "name": "test_decision_dashboard_playground",
+    "exit": 0,
+    "start": "2026-10-23T04:29:39.436577+00:00",
+    "end": "2026-10-23T04:29:49.190332+00:00",
+    "log": "test_decision_dashboard_playground.log"
+  },
+  {
+    "name": "test_decide_signoff",
+    "exit": 0,
+    "start": "2026-10-23T04:29:49.190792+00:00",
+    "end": "2026-10-23T04:29:50.089529+00:00",
+    "log": "test_decide_signoff.log"
+  },
+  {
+    "name": "test_decide_sign_auto",
+    "exit": 0,
+    "start": "2026-10-23T04:29:50.090004+00:00",
+    "end": "2026-10-23T04:29:50.982448+00:00",
+    "log": "test_decide_sign_auto.log"
+  },
+  {
+    "name": "test_decide_run_authority",
+    "exit": 0,
+    "start": "2026-10-23T04:29:50.982962+00:00",
+    "end": "2026-10-23T04:29:51.831578+00:00",
+    "log": "test_decide_run_authority.log"
+  },
+  {
+    "name": "test_decision_dp25_empty_value",
+    "exit": 0,
+    "start": "2026-10-23T04:29:51.831961+00:00",
+    "end": "2026-10-23T04:29:52.701208+00:00",
+    "log": "test_decision_dp25_empty_value.log"
+  },
+  {
+    "name": "test_decision_required_refusal",
+    "exit": 0,
+    "start": "2026-10-23T04:29:52.701650+00:00",
+    "end": "2026-10-23T04:29:53.577913+00:00",
+    "log": "test_decision_required_refusal.log"
+  },
+  {
+    "name": "test_decision_observation",
+    "exit": 0,
+    "start": "2026-10-23T04:29:53.578480+00:00",
+    "end": "2026-10-23T04:29:54.924615+00:00",
+    "log": "test_decision_observation.log"
+  }
+]

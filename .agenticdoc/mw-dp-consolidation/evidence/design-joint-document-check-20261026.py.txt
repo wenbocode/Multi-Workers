@@ -1,0 +1,141 @@
+from pathlib import Path
+import hashlib
+import json
+import re
+import os
+import subprocess
+import sys
+from datetime import datetime
+
+root = Path('H:/git/Multi-Workers')
+key = root / '.agenticdoc/mw-dp-consolidation'
+spec_bytes = (key / 'spec.md').read_bytes()
+assert spec_bytes == (key / 'evidence/spec-locked-20261025.md').read_bytes(), 'locked spec bytes changed'
+assert hashlib.sha256(spec_bytes).hexdigest() == 'cfe737d29aed2d0c4e79d8b02107f754f254a225bb21ea8d900eaa5ba289d006'
+spec = spec_bytes.decode('utf-8')
+design = (key / 'design.md').read_text(encoding='utf-8')
+ac_rows = re.findall(r'^\| (AC-\d{3}) \| (.*?) \|$', spec, re.M)
+expected_ac = [f'AC-{i:03}' for i in range(1, 54)]
+expected_vc = [f'VC-{i:03}' for i in range(1, 54)]
+assert [item[0] for item in ac_rows] == expected_ac
+blocks = re.findall(r'^(VC-\d{3}): (.*?)\n       Layer: (.*?)\n       Output: (.*?)\n       Source: (AC-\d{3})\n', design, re.M)
+assert [item[0] for item in blocks] == expected_vc
+assert [item[4] for item in blocks] == expected_ac
+mapping_text = design.split('## §8 AC → VC 映射表\n', 1)[1].split('## §9 ', 1)[0]
+mapping = re.findall(r'^\| (AC-\d{3}) \| (.*?) \| (VC-\d{3}) \| (.*?) \|$', mapping_text, re.M)
+assert [item[0] for item in mapping] == expected_ac
+assert [item[2] for item in mapping] == expected_vc
+assert all(item[0] == vc[4] and item[2] == vc[0] for item, vc in zip(mapping, blocks))
+sections = re.findall(r'^## §(\d+) ', design, re.M)
+assert sections == [str(i) for i in range(12)], sections
+assert len(re.findall(r'^### D-\d{3} ', design, re.M)) == 12
+assert len(re.findall(r'^### F-\d{2} ', design, re.M)) == 11
+assert len(re.findall(r'^\| C\d{2} \|', design, re.M)) == 16
+mermaids = re.findall(r'^```mermaid\n(.*?)^```', design, re.M | re.S)
+assert len(mermaids) == 12
+for graph in mermaids:
+    assert graph.startswith('graph TD\n')
+    ids = set(re.findall(r'^\s*([A-Za-z0-9_]+)(?:\[|\{|\s+-->)', graph, re.M))
+    ids.update(re.findall(r'\|\s*([A-Za-z0-9_]+)(?:\[|\{|\s*$)', graph, re.M))
+    assert len(ids) <= 15, (len(ids), graph)
+    assert '-->' not in re.sub(r'-->\|[^"|]+\|', '', graph), 'quoted or missing edge label'
+assert 'draft-for-review' in design and '未获用户批准' in design
+assert '## §11 精确候选写面与批准条件' in design
+all_ac = sorted(set(re.findall(r'AC-\d{3}', spec)))
+assert all_ac == expected_ac
+fingerprint = hashlib.sha1(('\n'.join(all_ac) + '\n').encode()).hexdigest()[:12]
+now = datetime.now().astimezone().isoformat(timespec='seconds')
+header = f'''# Evidence Requirement: mw-dp-consolidation
+
+> 状态：候选证据合同，未获设计/VC冻结批准。生成不表示已经验证或签收；本轮没有产品测试结果。
+
+## 锁定指纹
+
+| 字段 | 值 |
+|---|---|
+| spec_path | `.agenticdoc/mw-dp-consolidation/spec.md` |
+| spec_locked_at | 2026-10-25T23:37:14+08:00 |
+| spec_sha256 | `cfe737d29aed2d0c4e79d8b02107f754f254a225bb21ea8d900eaa5ba289d006` |
+| ac_payload_sha256 | `d73c3050ab0ec4a0af7ddeb169264257638cdfdfb5f34d63f734528d4a20737e` |
+| ac_fingerprint | `{fingerprint}` |
+| ac_ids | {', '.join(expected_ac)} |
+| vc_ids | {', '.join(expected_vc)} |
+| generated_at | {now} |
+
+ac_fingerprint遵循workflow-quality-gate：SPEC全部AC ID排序去重、每行LF（含最后LF）后sha1前12位；它仅锁ID集合。SPEC/AC正文另用以上SHA256，不能只用编号fingerprint判断承诺未变。VC尚未批准/冻结，不能把本生成时间当锁定时间。
+
+## 证据载体与充分性通则
+
+- 单次隔离运行目录：本key `evidence/runs/<run-id>/`，由后续获批任务具体创建，不是本轮既存证据。每个运行必须有输入/fixture清单、生产入口、源码/生成合同版本、环境隔离说明、完整stdout/stderr、exit code、真实request/response/lifecycle/action定位和可机械对照assertions.json；不能手写生产gate/ledger或仅凭worker done/PASS行。
+- 每VC的输出必须严格匹配design §7预期字段；assertions.json给每个正向、边界、异常case的expected/observed、路径、失败理由、model_attempts/business_decisions/business_actions及原始证据引用。输出汇总和逐case断言同时成立才充分。
+- 全部VC需L2：faux/hermetic真实producer→writer→consumer→projection链。L0注册/grep/生成锁或局部validator可以辅助，不能代生产路径证据。TS在suite/harness.ts+faux provider；Python隔离project/home/env、注入fake backend；没有真实凭证/服务/provider。配置、gate、恢复及签收仅由隔离生产writer产生。
+- 输出中的violations=0必须按每项规定的违规事件实际测量；计数基于fixture局部范围，运输重试attempt和业务判断另计。不存在事件时不能随便用null或捏造0；没有观测写unverified，该VC不通过。
+- 历史/四旧case字节清单、fixture周界及禁止面before/after hashes需覆盖相关cases；安全拒绝审计允许，但不得计有效成功。秘密使用合成canary，确认发送、记录、DOM均不漏；XSS用无真实攻击目标的faux DOM/browser断言。
+- H12必须真实入口资格/受限writer负例：普通熔断链、Worker/伪origin、失效授权、人工撤权、不可用均不解锁；仅布尔preauthorized、page token或移动tick位置不充分。无法证明实际隔离则AC036/037不通过。
+- 并发/崩溃证据须真实既有文件锁、同时两个调用者、动作前后故障窗口及实际对象对账；unknown不盲重放。不能靠两个预写fixture或全hash变化推导同事项/实质失效。
+- D012A须另记录PM prepared_at/note/basis catalog、同次两个问题的原始model回答、所选basis的真实材料引用和applies_to一致性；显示“文本源自PM预备、选择来自模型”。若用户要求原生自由理由则须更新经批准的设计/VC并提供正式上游能力证据，不能沿用A称达标。
+- 来源/time关联保持真实key/task/logical_id、非递减observed_at、null与[]差异，旧before不可回填；sign三数组仍必需。观察observe_only没有executor，不能用观察回答证明gate/签收效果。
+
+## 待验证范围
+
+所有下面AC/VC均待实现后验证，本轮无L2产品通过。caller清单包括生产工具/CLI/book/stdin/replay、观察validate/scaffold/cases/submit、config on/set/apply、human/legacy边界和提示词；静态匹配必须分active/history/security/regression并给完整未覆盖说明。安装/内存身份和部署不由源码hash推断，若不执行部署则明确保留未部署，不能伪称线上迁移通过。独立mw-decision-context26AC/monitor8AC及旧check/formatter/dp3/dropdown债不被本表勾销。
+
+'''
+parts = [header]
+for (ac_id, ac_text), block, row in zip(ac_rows, blocks, mapping):
+    vc_id, assertion, layer, output, source = block
+    paths = row[3]
+    parts.append(f'''## {ac_id}: {row[1]}
+
+锁定AC原文：{ac_text}
+
+VC断言：{assertion}
+
+| 证据来源 | 证据类型 | 期望内容 | 充分性判定 |
+|---|---|---|---|
+| `{output}` | 真实L2生产路径完整输出 | design §7该VC所有预期字段与逐case结果 | 所有规定正向/边界/异常逐case断言成立，非汇总自评 |
+| `{vc_id}` 对应assertions.json与原始记录 | 请求/回答/动作/来源及状态证据 | {paths}；实际producer/writer/consumer/projection引用及失败出口 | 测量值和原始证据一一关联，无手写成功或缺失观测 |
+| 对应run manifest与完整日志 | 可复核执行与隔离边界 | 版本、命令、exit code、before/after周界，模型与业务次数分清 | 原始日志无截断；未验证明确，不以L0/观察/worker终态替代 |
+
+''')
+parts.append('''## 质检门禁使用说明
+
+本文件供后续获批quality-gate逐AC/VC核充分性。缺任何规定case、来源、真实执行、秘密/历史/权限证明或硬门时列具体缺口，不计通过。仅文档结构/Mermaid/audit PASS不代表本表产品验收。D012、human-only隔离及框架写面须先用户确认；本生成不触发签收/phase推进。
+''')
+requirement = ''.join(parts)
+(key / 'evidence-requirement.md').write_text(requirement, encoding='utf-8', newline='\n')
+assert re.findall(r'^## (AC-\d{3}):', requirement, re.M) == expected_ac
+assert all(f'`[VERIFY] {vc}:' in requirement for vc in expected_vc)
+result = {'check': 'document-contract-only', 'spec_locked_bytes_equal': True,
+                  'spec_sha256': hashlib.sha256(spec_bytes).hexdigest(),
+                  'ac_count': len(ac_rows), 'vc_count': len(blocks),
+                  'mapping_rows': len(mapping), 'unbound_vcs': 0, 'missing_acs': 0,
+                  'decision_candidates': 12, 'flows': 11, 'coverage_rows': 16,
+                  'mermaid_blocks': len(mermaids), 'ac_fingerprint': fingerprint,
+                  'generated_at': now, 'evidence_requirement_generated': True,
+                  'product_tests_run': False, 'design_approved': False,
+                  'files': {p: {'bytes': len((key/p).read_bytes()),
+                                'sha256': hashlib.sha256((key/p).read_bytes()).hexdigest()}
+                            for p in ['design.md', 'evidence-requirement.md', 'design-write-scope.md']}}
+commands = [
+    [sys.executable, '.agents/skills/agentic-task/scripts/check_mermaid.py', '.agenticdoc/mw-dp-consolidation/design.md'],
+    [sys.executable, '.agents/skills/agentic-task/scripts/audit_phase.py', 'mw-dp-consolidation'],
+]
+logs = []
+result['commands'] = []
+for argv in commands:
+    run = subprocess.run(argv, cwd=root, env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    stdout = run.stdout.decode('utf-8')
+    stderr = run.stderr.decode('utf-8')
+    result['commands'].append({'argv': ['python'] + argv[1:], 'rc': run.returncode})
+    logs.append('COMMAND ' + ' '.join(['python'] + argv[1:]) + '\nRC ' + str(run.returncode)
+                + '\nSTDOUT\n' + stdout + '\nSTDERR\n' + stderr)
+    print(stdout, end='')
+    print(stderr, end='', file=sys.stderr)
+log_path = key / 'evidence/design-joint-document-check-20261026.log'
+log_path.write_text('\n\n'.join(logs), encoding='utf-8', newline='\n')
+json_path = key / 'evidence/design-joint-document-check-20261026.json'
+json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8', newline='\n')
+print(json.dumps(result, ensure_ascii=False, indent=2))
+assert all(command['rc'] == 0 for command in result['commands']), 'document checker command failed'

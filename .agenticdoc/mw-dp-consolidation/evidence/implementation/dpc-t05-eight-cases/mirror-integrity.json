@@ -1,0 +1,49 @@
+{
+  "captured_at": "2026-10-27T13:10:13.713350+00:00",
+  "inventory_source": "evidence/implementation/s2-t05-t10-pre-dispatch-20261027/mirror-inventory.json",
+  "inventory_files": 1883,
+  "missing": [],
+  "changed": [
+    {
+      "file": "packages/multi-workers/decision_lifecycle.py",
+      "before_sha256": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+      "after_sha256": "426b6c2c6d48c7fb652c1e876fa1f7e12eefa6aed61f4a010758db9ebe20f5c5"
+    },
+    {
+      "file": "packages/multi-workers/decision_task_state.py",
+      "before_sha256": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+      "after_sha256": "a6dd6898251c25fca662492acc73b062390a9fdd610bcddf11541716b3fe329f"
+    },
+    {
+      "file": "packages/multi-workers/decision_wire.py",
+      "before_sha256": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+      "after_sha256": "a2630e98d0286fcbe19ae17ae8bfd0239f68323679164666cfc8c75cd984de05"
+    },
+    {
+      "file": "packages/multi-workers/test_decision_context_lifecycle.py",
+      "before_sha256": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+      "after_sha256": "0aa37ab6e375d9da879fb2fa29a6df16f74458db99f9a10624ac667a547bc28e"
+    },
+    {
+      "file": "packages/multi-workers/test_decision_context_workbench.py",
+      "before_sha256": "8e3fddccf359f5493c1bdf46c6039df11576ec479e474bd98585e544f2cab215",
+      "after_sha256": "0320702d37146bd856b28e2b102fee2245c67fed15c64349fe0f637c2877dc1b"
+    },
+    {
+      "file": "packages/multi-workers/test_decision_task_state.py",
+      "before_sha256": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5",
+      "after_sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f"
+    },
+    {
+      "file": "packages/multi-workers/scripts/build_decide_cases.py",
+      "before_sha256": "60910516ccce4caac181f8fc20fb98432809ad2817e6141b3f2ae1a90f7117ed",
+      "after_sha256": "7987113fb597f9c8f5d6b48085292cf1a4f8c150839b2fc12efe5d4d4f6ffa70"
+    },
+    {
+      "file": "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+      "before_sha256": "e4b51f5b85198575ba723fca7f85e48a0962da44b2820f4f53f4ebea3de80677",
+      "after_sha256": "b95f933d321d7cba48808279d4a9823d4c8719fe26ee26013d705439d7bcb280"
+    }
+  ],
+  "notes": "The four T10-owned files and the decision.pyc cache are not this card's writes; see report.md and pyc-deviation.md."
+}

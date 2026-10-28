@@ -1,0 +1,191 @@
+{
+  "source": "agent-report",
+  "observed_at_utc": "2026-10-27T13:50:06.044073+00:00",
+  "package_copy": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+  "products": [
+    {
+      "rel": "scripts/build_decide_cases.py",
+      "bytes": 41082,
+      "sha256": "4ac24aaa1e5e811b5f4019c550dfb96780b977e7545571cf6e3cd47d1f69cc5c",
+      "lines": 938,
+      "lf": 938,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decide_book_template.json",
+      "bytes": 12168,
+      "sha256": "1cde56dfc814afd36e2b49d610e25e25be33561b2755ebf373a0f54e3802545e",
+      "lines": 306,
+      "lf": 306,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "test_decision_context_workbench.py",
+      "bytes": 100533,
+      "sha256": "d221b9c8930bc9e48d661739843991ec4207c6b69b8ec774004641e9cf8f912c",
+      "lines": 2368,
+      "lf": 2368,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decide_cases/dp-w-type.json",
+      "bytes": 3079,
+      "sha256": "f70b5aa699d2636105107d98453852b0b81aa504ec691fdeda79b44fb5247758",
+      "lines": 94,
+      "lf": 94,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decide_cases/dp-pm-steer.json",
+      "bytes": 4089,
+      "sha256": "6a8b946557d9d381707def7360691126f85e195495163f3ef0ba6bfff9f5967b",
+      "lines": 99,
+      "lf": 99,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decide_cases/dp-w-check-task.json",
+      "bytes": 4622,
+      "sha256": "e88fb31a167335824a5bd6f338ec3e0da9387d8b5e1299ce1de9fd94a1b1f7bb",
+      "lines": 100,
+      "lf": 100,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decide_cases/dp-QG.json",
+      "bytes": 2991,
+      "sha256": "aacd487769caf4dceab0513b483d73c762da1d0d9914a1bfe3c6d201b1e10eb3",
+      "lines": 78,
+      "lf": 78,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decide_cases/dp-gate-approve.json",
+      "bytes": 4750,
+      "sha256": "269f07c212be2f8a9de6c3f8b7f180588133650890690dcbd1f1074287cfd67a",
+      "lines": 114,
+      "lf": 114,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decide_cases/dp-sign-key.json",
+      "bytes": 3825,
+      "sha256": "4462e8163b6aaf6af0251eb3f6b10fd0e9571e4f71b878f791048d4e594fd232",
+      "lines": 100,
+      "lf": 100,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decide_cases/dp-auto.json",
+      "bytes": 4747,
+      "sha256": "b80e93a52a7e07947efd9d758e379deb09c5683d4ff7d1f09261da16ec3a75ef",
+      "lines": 110,
+      "lf": 110,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decide_cases/dp-route.json",
+      "bytes": 3994,
+      "sha256": "91569d4d576622da48f8b16995fd3e27da5744a90788600cda1cb46189e5a230",
+      "lines": 129,
+      "lf": 129,
+      "crlf": 0,
+      "ends_with_newline": true
+    }
+  ],
+  "legacy_cases_read_only": [
+    {
+      "rel": "decide_cases/dp1.json",
+      "bytes": 1645,
+      "sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "lines": 42,
+      "lf": 42,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decide_cases/dp2.json",
+      "bytes": 2689,
+      "sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "lines": 48,
+      "lf": 48,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decide_cases/dp3.json",
+      "bytes": 2320,
+      "sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "lines": 52,
+      "lf": 52,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decide_cases/dp25.json",
+      "bytes": 2682,
+      "sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "lines": 58,
+      "lf": 58,
+      "crlf": 0,
+      "ends_with_newline": true
+    }
+  ],
+  "t10_protected": [
+    {
+      "rel": "decision_wire.py",
+      "bytes": 79832,
+      "sha256": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+      "lines": 2264,
+      "lf": 2264,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decision_lifecycle.py",
+      "bytes": 60811,
+      "sha256": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+      "lines": 1548,
+      "lf": 1548,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "decision_task_state.py",
+      "bytes": 3871,
+      "sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+      "lines": 82,
+      "lf": 82,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "test_decision_context_lifecycle.py",
+      "bytes": 50338,
+      "sha256": "bdedfd4301fab76929beb0156f429f973fcb6404382b8893d2cbecbfaa711d1a",
+      "lines": 1401,
+      "lf": 1401,
+      "crlf": 0,
+      "ends_with_newline": true
+    },
+    {
+      "rel": "test_decision_task_state.py",
+      "bytes": 15480,
+      "sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f",
+      "lines": 278,
+      "lf": 278,
+      "crlf": 0,
+      "ends_with_newline": true
+    }
+  ]
+}

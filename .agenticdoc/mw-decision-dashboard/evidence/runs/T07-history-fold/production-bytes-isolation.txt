@@ -1,0 +1,14 @@
+cwd=H:\git\Multi-Workers\packages\multi-workers
+cmd=python -m pytest test_decision_history.py -q (via this isolation check)
+pytest_exit=0
+.......................                                                  [100%]
+23 passed in 0.26s
+before auto-decisions.jsonl 930b770c29739b63da58dfa4c44c972ea6c340360a34444ead1624d7d5729f8b
+after  auto-decisions.jsonl 930b770c29739b63da58dfa4c44c972ea6c340360a34444ead1624d7d5729f8b
+before decisions.jsonl b49f92d4197ad8dea48411e7c3e231186fcc3f81cbc175091491106a8843f704
+after  decisions.jsonl b49f92d4197ad8dea48411e7c3e231186fcc3f81cbc175091491106a8843f704
+before timeline.jsonl 788a81f77152ef91a6886871a961282d0c83e81b3513f83b50b10b8143d58258
+after  timeline.jsonl 788a81f77152ef91a6886871a961282d0c83e81b3513f83b50b10b8143d58258
+before triage-decisions.jsonl 624b9963b56e102980e2c7fb263600707f68ec258e82cfe8b2d52844903531b4
+after  triage-decisions.jsonl 624b9963b56e102980e2c7fb263600707f68ec258e82cfe8b2d52844903531b4
+unchanged=True

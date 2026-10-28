@@ -1,0 +1,7 @@
+$ python ../../.agenticdoc/mw-decision-dashboard/evidence/runs/T04b-contract-artifacts/verify-probe-table.py
+$ cwd=packages/multi-workers
+$ exit=0
+
+probe_table_entries=102 dps_built=25/25
+template_matches_render=True
+problems=0

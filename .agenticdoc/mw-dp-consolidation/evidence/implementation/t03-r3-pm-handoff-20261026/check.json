@@ -1,0 +1,52 @@
+{
+  "observed_at": "2026-10-26T06:19:11.944480+00:00",
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_points.py",
+      "sha256": "78e72e03cfe3b03f0349d95113c1947713b91c4a143bbaaada404f08db7443e6",
+      "bytes": 305745,
+      "crlf": 7102,
+      "bare_lf": 0,
+      "changed_r3": false
+    },
+    {
+      "path": "packages/multi-workers/decide_registry.json",
+      "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "bytes": 29869,
+      "crlf": 0,
+      "bare_lf": 894,
+      "changed_r3": false
+    },
+    {
+      "path": "packages/multi-workers/test_decide_registry_contract.py",
+      "sha256": "c0e35cf1961d1b7eb5abfacdd8c75c8fda201f4f96ee0a82f021b820fd69d719",
+      "bytes": 39079,
+      "crlf": 0,
+      "bare_lf": 964,
+      "changed_r3": true
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_registry.py",
+      "sha256": "f7bf030231558c258921bb286593bb89bb58b85f37ea4548b2e6c2eb4ce75d2f",
+      "bytes": 35149,
+      "crlf": 0,
+      "bare_lf": 815,
+      "changed_r3": false
+    }
+  ],
+  "handoff_rows": 13,
+  "evidence_boundary_files": 83,
+  "actual_diff_hunks": 6,
+  "tests": [
+    {
+      "label": "pm-green.log",
+      "rc": 0
+    },
+    {
+      "label": "pm-probe.log",
+      "rc": 0
+    }
+  ],
+  "product_writes": false,
+  "full_l2_verified": false
+}

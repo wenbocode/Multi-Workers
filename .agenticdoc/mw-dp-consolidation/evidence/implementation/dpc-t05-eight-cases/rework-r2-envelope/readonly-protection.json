@@ -1,0 +1,194 @@
+{
+  "source": "agent-report",
+  "entry_face": {
+    "task_md": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/workers/dpc-t05-eight-cases-r2-envelope/task.md",
+    "write_face_entries": 12,
+    "entries": [
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/scripts/build_decide_cases.py",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_book_template.json",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_workbench.py",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-type.json",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-pm-steer.json",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-check-task.json",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-QG.json",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-gate-approve.json",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-sign-key.json",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-auto.json",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-route.json",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/**"
+    ],
+    "eleven_products_plus_own_evidence": true,
+    "evidence_glob_is_own_attempt_dir": true
+  },
+  "card": {
+    "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/tasks/isolated/T05-eight-cases-r2-envelope.md",
+    "sha256": "49ebb4b47c610493632647c386e0c7f3feee1805924a83736a321584dd52394d",
+    "sha256_claimed_by_task_header": "49ebb4b47c610493632647c386e0c7f3feee1805924a83736a321584dd52394d",
+    "matches": true
+  },
+  "protected": {
+    "pm_handoff": [
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/t05-pm-handoff-20261027/probe.py",
+        "exists": true,
+        "sha256": "7c49b560b283e2af7ffbf859e8c785f1f68e30d8def8f2f493048bc6743b0fbe"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/t05-pm-handoff-20261027/probe.json",
+        "exists": true,
+        "sha256": "b970228f687a7cc23a87f68414c1784babf18a2864541174c338d5568398487e"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/t05-pm-handoff-20261027/check.py",
+        "exists": true,
+        "sha256": "8f894f68257b494a885e26835fc14675b2af4416dc165ab5eb95557785f46634"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/t05-pm-handoff-20261027/check.json",
+        "exists": true,
+        "sha256": "b7099a46200cc013fb60883930842c35c856b04cd6960480b221b6b80c8a009a"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/t05-pm-handoff-20261027/report.md",
+        "exists": true,
+        "sha256": "8f733584280c58914b4471a631f576dc42516eacd85c1de7cd64758db42441d7"
+      }
+    ],
+    "pm_pre_dispatch": [
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/t05-r2-envelope-pre-dispatch-20261027/check.json",
+        "exists": true,
+        "sha256": "45a90a79227035fd1212a39865f28e93e1fb07816a1da07231af87119ce3d41a"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/t05-r2-envelope-pre-dispatch-20261027/carrier.json",
+        "exists": true,
+        "sha256": "a06a51c471a0960a299c1aabc72be597b14c77a47a3f7e96c088fb0274e741fa"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/t05-r2-envelope-pre-dispatch-20261027/before-metadata.json",
+        "exists": true,
+        "sha256": "9e98e8718f69f8041f05a892895a89bb8ef1fd535df5a55a7ed6b94de011cad5"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/t05-r2-envelope-pre-dispatch-20261027/T05-R2-envelope-card.md",
+        "exists": true,
+        "sha256": "49ebb4b47c610493632647c386e0c7f3feee1805924a83736a321584dd52394d"
+      }
+    ],
+    "pm_state_and_dag": [
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/pm-state.md",
+        "exists": true,
+        "sha256": "b89c3068dff105bf1329ed5fa4deda653a114e95c190049aebbe9e3d60461747"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/implementation-dag.json",
+        "exists": true,
+        "sha256": "40537009bd89cb2dbdc6956fa0f6853d9f4297dac061ea34596f4e096171c26c"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/implementation-isolated-dag.json",
+        "exists": true,
+        "sha256": "5b2bc0ac46397bbba71b668ec43511d166306cbc233d5e43fe8a971a0f515c84"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/spec.md",
+        "exists": true,
+        "sha256": "cfe737d29aed2d0c4e79d8b02107f754f254a225bb21ea8d900eaa5ba289d006"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/design.md",
+        "exists": true,
+        "sha256": "06e3c510e093df7599b3b7aa1391e3240b4cdf24aea88cbd3a4fdeb180408135"
+      }
+    ],
+    "original_worker_evidence": [
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/report.md",
+        "exists": true,
+        "sha256": "57174f546238a218019f8b65f29ffa0e73490579c9c62136e321faaa6dcf6620"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/before-metadata.json",
+        "exists": true,
+        "sha256": "b6e90883ae9892b694270e2b59bbda601e261a420eb227d8137f9cec1d3d7cf3"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/comparison-baseline-vs-final.json",
+        "exists": true,
+        "sha256": "ee24d46320135a223f0e29c27dccd886344ced8de2b214ecf9344d3508a6cc73"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/workers/dpc-t05-eight-cases/output.md",
+        "exists": true,
+        "sha256": "3e569165c73a4c3a34f96bded30563cfd803386171125c90b0d0ce83a4590e35"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/workers/dpc-t05-eight-cases/run.json",
+        "exists": true,
+        "sha256": "a80239646f8a1b1c47ed68d74134609007799e5a23d97262600ebdffb2a3b1a6"
+      }
+    ],
+    "original_r2_envelope_blocker": [
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2/report.md",
+        "exists": true,
+        "sha256": "49be3c1d8ec3d81a2526c49043fc31c2d7c9afd7d2b8f1ab40075be80e0aeae9"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2/output.md",
+        "exists": true,
+        "sha256": "c1cf9e0db930914692af653fb52af1877b8d4a76f5c5d48b9765767094430fa9"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2/blocker/face-mismatch.json",
+        "exists": true,
+        "sha256": "a17be33ae608884dcf5d8b6395f611ab4b1cd5c694e666543fdc053761ed457c"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases/rework-r2/blocker/guard-refusal.json",
+        "exists": true,
+        "sha256": "f869da87f7c8ef53ca113891b155211c12167ec98ced5bee6baf3d4a4e87c2ab"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/workers/dpc-t05-eight-cases-r2/task.md",
+        "exists": true,
+        "sha256": "e2ec3bb20c5742f0b2b0a6f2f74ad834898e830751e24845bcefb6433af1311e"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/workers/dpc-t05-eight-cases-r2/output.md",
+        "exists": true,
+        "sha256": "c97eb7295e72a4ed3daf5fe29eec1ffd2a0619a93d5c5d8ccf53625e8ecd81f3"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/workers/dpc-t05-eight-cases-r2/run.json",
+        "exists": true,
+        "sha256": "2a8035a570459f9bee9e440e09816a5b00506d5b0027cbe26ce9745c10539d3c"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/workers/dpc-t05-eight-cases-r2/worker.log",
+        "exists": true,
+        "sha256": "14475008f3229e7d22c743a13634f3351ffd57cd508258959e770f79610d57c6"
+      }
+    ],
+    "t10_evidence": [
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/report.md",
+        "exists": true,
+        "sha256": "0f2dbaa1dd1cf63a8091e3121bb36c12883dd3865c58a179523b5ecdde34f474"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/workers/dpc-t10-lifecycle-state/output.md",
+        "exists": true,
+        "sha256": "bbbfc852f840f40de163b6636a483f4563531a146c4d758c924fcf47f1557d8f"
+      },
+      {
+        "file": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/workers/dpc-t10-lifecycle-state/run.json",
+        "exists": true,
+        "sha256": "4548d3c44766329da00591bb9c52fb62808a4bf62070edfc184d7d739cbe74c4"
+      }
+    ]
+  },
+  "root": "H:/git/Multi-Workers"
+}

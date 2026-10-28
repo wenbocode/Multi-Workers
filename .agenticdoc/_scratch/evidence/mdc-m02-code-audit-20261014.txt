@@ -1,0 +1,580 @@
+--- '_ROADMAP_VALIDATION_SEEN' @ 3403 ---
+3401: 
+3402: #: (roadmap path, problem text) already announced this session (process lifetime).
+3403: _ROADMAP_VALIDATION_SEEN: set[tuple[str, str]] = set()
+3404: 
+3405: 
+3406: def _emit_roadmap_validation(
+3407:     project_root: pathlib.Path, st: ConductorState, rm: roadmap.Roadmap
+3408: ) -> int:
+3409:     """Announce each roadmap SEMANTIC problem once (AC-010, M-02).
+3410: 
+3411:     `roadmap.validate_roadmap` (dangling / self / forward-stage / cycle /
+3412:     duplicate key / empty goal / key-status mismatch) is the same validator the
+3413:     CLI and doctor run; until now the conductor never called it, so a broken key
+3414:     graph was a silent permanent lock. This is observation only — it never
+3415:     suppresses or authorizes a dispatch, so the fail-closed direction is
+3416:     unchanged. Parse warnings are skipped here because
+3417:     :func:`_emit_roadmap_warnings` already surfaces them (no double alarm).
+3418: 
+3419:     Deduplicated per (path, problem): a 4s tick cannot flood; a problem that is
+3420:     fixed and later recurs is announced again. Returns the number of newly
+3421:     announced problems.
+3422:     """
+3423:     path = str(roadmap.roadmap_path(project_root))
+3424:     problems = [
+3425:         problem for problem in roadmap.validate_roadmap(rm)
+3426:         if not problem.startswith("roadmap parse warning:")
+3427:     ]
+3428:     current = {(path, problem) for problem in problems}
+3429:     for seen in [item for item in _ROADMAP_VALIDATION_SEEN if item[0] == path]:
+3430:         if seen not in current:
+3431:             _ROADMAP_VALIDATION_SEEN.discard(seen)  # fixed: allow a recurrence
+3432:     emitted = 0
+3433:     for problem in problems:
+3434:         item = (path, problem)
+3435:         if item in _ROADMAP_VALIDATION_SEEN:
+3436:             continue
+
+--- '_ROADMAP_VALIDATION_SEEN' @ 3429 ---
+3427:     ]
+3428:     current = {(path, problem) for problem in problems}
+3429:     for seen in [item for item in _ROADMAP_VALIDATION_SEEN if item[0] == path]:
+3430:         if seen not in current:
+3431:             _ROADMAP_VALIDATION_SEEN.discard(seen)  # fixed: allow a recurrence
+3432:     emitted = 0
+3433:     for problem in problems:
+3434:         item = (path, problem)
+3435:         if item in _ROADMAP_VALIDATION_SEEN:
+3436:             continue
+3437:         _ROADMAP_VALIDATION_SEEN.add(item)
+3438:         _emit_alarm(st, f"roadmap validation: {problem}")
+3439:         emitted += 1
+3440:     return emitted
+3441: 
+3442: 
+3443: def _gate_stage_context(
+3444:     project_root: pathlib.Path,
+3445:     st: ConductorState,
+3446: ) -> tuple[dict[int, str] | None, dict[str, int] | None]:
+3447:     """The stage facts one reminder pass needs, read from the roadmap ONCE
+3448:     (AC-002 / DD-11): `(stage_status, stage_of_key)`.
+3449: 
+3450:     A missing or structurally-unparseable roadmap degrades to `(None, None)`,
+3451:     which the pure judgment reads as "no suppression" (fail-open, D-015). The
+3452:     degraded state is announced once per (file, line) on stderr and the
+3453:     timeline — `mw serve` redirects the conductor's streams to
+3454:     `.mw/conductor.log`, and `/autopilot timeline` replays the config event —
+3455:     so it is visible rather than silent, and the tick never raises.
+3456: 
+3457:     Row-level keys-table damage is NOT structural anymore (T-20):
+3458:     `roadmap.load_roadmap` recovers an unescaped '|' row and skips an
+3459:     unrecoverable one, so a single bad row can no longer disable
+3460:     stage-terminal suppression. Only `roadmap.RoadmapError` (missing file,
+3461:     no stages, missing header, bad enum, ...) degrades the facts."""
+3462:     try:
+
+--- '_ROADMAP_VALIDATION_SEEN' @ 3431 ---
+3429:     for seen in [item for item in _ROADMAP_VALIDATION_SEEN if item[0] == path]:
+3430:         if seen not in current:
+3431:             _ROADMAP_VALIDATION_SEEN.discard(seen)  # fixed: allow a recurrence
+3432:     emitted = 0
+3433:     for problem in problems:
+3434:         item = (path, problem)
+3435:         if item in _ROADMAP_VALIDATION_SEEN:
+3436:             continue
+3437:         _ROADMAP_VALIDATION_SEEN.add(item)
+3438:         _emit_alarm(st, f"roadmap validation: {problem}")
+3439:         emitted += 1
+3440:     return emitted
+3441: 
+3442: 
+3443: def _gate_stage_context(
+3444:     project_root: pathlib.Path,
+3445:     st: ConductorState,
+3446: ) -> tuple[dict[int, str] | None, dict[str, int] | None]:
+3447:     """The stage facts one reminder pass needs, read from the roadmap ONCE
+3448:     (AC-002 / DD-11): `(stage_status, stage_of_key)`.
+3449: 
+3450:     A missing or structurally-unparseable roadmap degrades to `(None, None)`,
+3451:     which the pure judgment reads as "no suppression" (fail-open, D-015). The
+3452:     degraded state is announced once per (file, line) on stderr and the
+3453:     timeline — `mw serve` redirects the conductor's streams to
+3454:     `.mw/conductor.log`, and `/autopilot timeline` replays the config event —
+3455:     so it is visible rather than silent, and the tick never raises.
+3456: 
+3457:     Row-level keys-table damage is NOT structural anymore (T-20):
+3458:     `roadmap.load_roadmap` recovers an unescaped '|' row and skips an
+3459:     unrecoverable one, so a single bad row can no longer disable
+3460:     stage-terminal suppression. Only `roadmap.RoadmapError` (missing file,
+3461:     no stages, missing header, bad enum, ...) degrades the facts."""
+3462:     try:
+3463:         rm = roadmap.load_roadmap(roadmap.roadmap_path(project_root))
+3464:     except roadmap.RoadmapError as exc:
+
+--- '_ROADMAP_VALIDATION_SEEN' @ 3435 ---
+3433:     for problem in problems:
+3434:         item = (path, problem)
+3435:         if item in _ROADMAP_VALIDATION_SEEN:
+3436:             continue
+3437:         _ROADMAP_VALIDATION_SEEN.add(item)
+3438:         _emit_alarm(st, f"roadmap validation: {problem}")
+3439:         emitted += 1
+3440:     return emitted
+3441: 
+3442: 
+3443: def _gate_stage_context(
+3444:     project_root: pathlib.Path,
+3445:     st: ConductorState,
+3446: ) -> tuple[dict[int, str] | None, dict[str, int] | None]:
+3447:     """The stage facts one reminder pass needs, read from the roadmap ONCE
+3448:     (AC-002 / DD-11): `(stage_status, stage_of_key)`.
+3449: 
+3450:     A missing or structurally-unparseable roadmap degrades to `(None, None)`,
+3451:     which the pure judgment reads as "no suppression" (fail-open, D-015). The
+3452:     degraded state is announced once per (file, line) on stderr and the
+3453:     timeline — `mw serve` redirects the conductor's streams to
+3454:     `.mw/conductor.log`, and `/autopilot timeline` replays the config event —
+3455:     so it is visible rather than silent, and the tick never raises.
+3456: 
+3457:     Row-level keys-table damage is NOT structural anymore (T-20):
+3458:     `roadmap.load_roadmap` recovers an unescaped '|' row and skips an
+3459:     unrecoverable one, so a single bad row can no longer disable
+3460:     stage-terminal suppression. Only `roadmap.RoadmapError` (missing file,
+3461:     no stages, missing header, bad enum, ...) degrades the facts."""
+3462:     try:
+3463:         rm = roadmap.load_roadmap(roadmap.roadmap_path(project_root))
+3464:     except roadmap.RoadmapError as exc:
+3465:         _emit_roadmap_failure(
+3466:             project_root, st, exc,
+3467:             context=(
+3468:                 "gate reminders: roadmap unavailable, "
+
+--- '_TASK_GRAPH_ALARM_SEEN' @ 1861 ---
+1859: 
+1860: #: (tasks dir, key) -> problem signatures already announced this session.
+1861: _TASK_GRAPH_ALARM_SEEN: dict[tuple[str, str], set[str]] = {}
+1862: 
+1863: 
+1864: def _write_face_wait_reason(reason: str) -> bool:
+1865:     """True when a dispatch refusal is the write-face serial-only/overlap
+1866:     limiter rather than an author error."""
+1867:     return str(reason).startswith(_WRITE_FACE_WAIT_REFUSALS)
+1868: 
+1869: 
+1870: def _declared_write_face(
+1871:     project_root: pathlib.Path, key: str, stem: str
+1872: ) -> write_face.WriteFace | None:
+1873:     """The card's declared write face, or ``None`` when it declares none.
+1874: 
+1875:     WFG D-003 + plan §6 (mw-dynamic-concurrency): a card without a declared
+1876:     face is **serial-only** and must never be treated as "no overlap".  The
+1877:     declaration is read with WFG's own seam (``dispatch``'s card section ->
+1878:     ``render_write_face_line`` -> ``write_face.parse_write_face``), never a
+1879:     re-implementation; the overlap judgement itself stays in
+1880:     ``dispatch._write_face_verdict``.  A present-but-unparseable declaration
+1881:     also yields ``None`` (serial, fail-closed)."""
+1882:     extract = getattr(dispatch, "_card_write_face_entries", None)
+1883:     if extract is None:  # the WFG private seam moved: do not guess, stay serial
+1884:         return None
+1885:     card = dispatch.dispatch_card(pathlib.Path(project_root), key, stem)
+1886:     entries = extract(card)
+1887:     if not entries:
+1888:         return None  # no section, or present-but-empty -> undeclared
+1889:     parsed = write_face.parse_write_face(
+1890:         dispatch.render_write_face_line(entries),
+1891:         base=dispatch.write_face_base(pathlib.Path(project_root)),
+1892:         case_insensitive=dispatch.write_face_case_insensitive(),
+1893:     )
+1894:     return parsed if isinstance(parsed, write_face.WriteFace) else None
+
+--- '_TASK_GRAPH_ALARM_SEEN' @ 1921 ---
+1919:         token = problem.token or problem.snippet
+1920:         problems.append(f"{problem.kind}:{problem.card_id}@{problem.line}:{token}")
+1921:     seen = _TASK_GRAPH_ALARM_SEEN.get(seen_key, set())
+1922:     emitted = 0
+1923:     for detail in problems:
+1924:         if detail in seen:
+1925:             continue
+1926:         _emit_alarm(
+1927:             st,
+1928:             f"task graph unusable for {key}: {detail}; "
+1929:             "falling back to serial (plan order)",
+1930:             key=key,
+1931:         )
+1932:         emitted += 1
+1933:     if problems:
+1934:         _TASK_GRAPH_ALARM_SEEN[seen_key] = set(problems)
+1935:     else:
+1936:         _TASK_GRAPH_ALARM_SEEN.pop(seen_key, None)
+1937:     return emitted
+1938: 
+1939: 
+1940: def _exec_prompt(key: str, stem: str) -> str:
+1941:     return (
+1942:         f"执行任务 {stem}（key {key}）:\n"
+1943:         f"- 任务书：.agenticdoc/{key}/tasks/{stem}.md（先完整阅读）\n"
+1944:         "- 按任务书执行；验证步骤用 [VERIFY] VC-NNN: key=value 行记录到 output.md\n"
+1945:         "- 完成后更新任务文件的执行记录节；只碰任务书列出的文件"
+1946:     )
+1947: 
+1948: 
+1949: def execute_loop(
+1950:     project_root: pathlib.Path,
+1951:     st: ConductorState,
+1952:     key: str,
+1953:     cfg: dict,
+1954:     rows: list[dict],
+
+--- '_TASK_GRAPH_ALARM_SEEN' @ 1934 ---
+1932:         emitted += 1
+1933:     if problems:
+1934:         _TASK_GRAPH_ALARM_SEEN[seen_key] = set(problems)
+1935:     else:
+1936:         _TASK_GRAPH_ALARM_SEEN.pop(seen_key, None)
+1937:     return emitted
+1938: 
+1939: 
+1940: def _exec_prompt(key: str, stem: str) -> str:
+1941:     return (
+1942:         f"执行任务 {stem}（key {key}）:\n"
+1943:         f"- 任务书：.agenticdoc/{key}/tasks/{stem}.md（先完整阅读）\n"
+1944:         "- 按任务书执行；验证步骤用 [VERIFY] VC-NNN: key=value 行记录到 output.md\n"
+1945:         "- 完成后更新任务文件的执行记录节；只碰任务书列出的文件"
+1946:     )
+1947: 
+1948: 
+1949: def execute_loop(
+1950:     project_root: pathlib.Path,
+1951:     st: ConductorState,
+1952:     key: str,
+1953:     cfg: dict,
+1954:     rows: list[dict],
+1955:     rounds: dict[str, int],
+1956: ) -> bool:
+1957:     """EXECUTE task loop (D-111 + D-102/D-104).
+1958: 
+1959:     - task identity = the tasks/ file stem; queue key ``ap-{key}-{stem}``
+1960:       (attempt 1), retries ``ap-{key}-{stem}-a<N>`` — same loop label
+1961:       ``exec:{key}:{stem}``, so used_rounds counts real attempts
+1962:     - the task dependency graph (card header ``deps:``, M-01 module) decides
+1963:       which stems are READY; the per-key upper bound decides how many may run
+1964:       at once: ``started = min(max_workers_per_key, |frontier|)`` (D-102).
+1965:       The write-face gate stays the parallel-safety source of truth: a
+1966:       dispatch it refuses as serial-only/overlap simply ends this tick's
+1967:       batch (wait), never a stall.
+
+--- '_TASK_GRAPH_ALARM_SEEN' @ 1936 ---
+1934:         _TASK_GRAPH_ALARM_SEEN[seen_key] = set(problems)
+1935:     else:
+1936:         _TASK_GRAPH_ALARM_SEEN.pop(seen_key, None)
+1937:     return emitted
+1938: 
+1939: 
+1940: def _exec_prompt(key: str, stem: str) -> str:
+1941:     return (
+1942:         f"执行任务 {stem}（key {key}）:\n"
+1943:         f"- 任务书：.agenticdoc/{key}/tasks/{stem}.md（先完整阅读）\n"
+1944:         "- 按任务书执行；验证步骤用 [VERIFY] VC-NNN: key=value 行记录到 output.md\n"
+1945:         "- 完成后更新任务文件的执行记录节；只碰任务书列出的文件"
+1946:     )
+1947: 
+1948: 
+1949: def execute_loop(
+1950:     project_root: pathlib.Path,
+1951:     st: ConductorState,
+1952:     key: str,
+1953:     cfg: dict,
+1954:     rows: list[dict],
+1955:     rounds: dict[str, int],
+1956: ) -> bool:
+1957:     """EXECUTE task loop (D-111 + D-102/D-104).
+1958: 
+1959:     - task identity = the tasks/ file stem; queue key ``ap-{key}-{stem}``
+1960:       (attempt 1), retries ``ap-{key}-{stem}-a<N>`` — same loop label
+1961:       ``exec:{key}:{stem}``, so used_rounds counts real attempts
+1962:     - the task dependency graph (card header ``deps:``, M-01 module) decides
+1963:       which stems are READY; the per-key upper bound decides how many may run
+1964:       at once: ``started = min(max_workers_per_key, |frontier|)`` (D-102).
+1965:       The write-face gate stays the parallel-safety source of truth: a
+1966:       dispatch it refuses as serial-only/overlap simply ends this tick's
+1967:       batch (wait), never a stall.
+1968:     - any V1-V7 problem / ambiguity / unreadable card folds the WHOLE key back
+1969:       to serial (start exactly one, in plan order) and is announced once
+
+--- '_TASK_GRAPH_ALARM_SEEN =': NO HIT ---
+
+--- 'def _emit_roadmap_validation' @ 3406 ---
+3404: 
+3405: 
+3406: def _emit_roadmap_validation(
+3407:     project_root: pathlib.Path, st: ConductorState, rm: roadmap.Roadmap
+3408: ) -> int:
+3409:     """Announce each roadmap SEMANTIC problem once (AC-010, M-02).
+3410: 
+3411:     `roadmap.validate_roadmap` (dangling / self / forward-stage / cycle /
+3412:     duplicate key / empty goal / key-status mismatch) is the same validator the
+3413:     CLI and doctor run; until now the conductor never called it, so a broken key
+3414:     graph was a silent permanent lock. This is observation only — it never
+3415:     suppresses or authorizes a dispatch, so the fail-closed direction is
+3416:     unchanged. Parse warnings are skipped here because
+3417:     :func:`_emit_roadmap_warnings` already surfaces them (no double alarm).
+3418: 
+3419:     Deduplicated per (path, problem): a 4s tick cannot flood; a problem that is
+3420:     fixed and later recurs is announced again. Returns the number of newly
+3421:     announced problems.
+3422:     """
+3423:     path = str(roadmap.roadmap_path(project_root))
+3424:     problems = [
+3425:         problem for problem in roadmap.validate_roadmap(rm)
+3426:         if not problem.startswith("roadmap parse warning:")
+3427:     ]
+3428:     current = {(path, problem) for problem in problems}
+3429:     for seen in [item for item in _ROADMAP_VALIDATION_SEEN if item[0] == path]:
+3430:         if seen not in current:
+3431:             _ROADMAP_VALIDATION_SEEN.discard(seen)  # fixed: allow a recurrence
+3432:     emitted = 0
+3433:     for problem in problems:
+3434:         item = (path, problem)
+3435:         if item in _ROADMAP_VALIDATION_SEEN:
+3436:             continue
+3437:         _ROADMAP_VALIDATION_SEEN.add(item)
+3438:         _emit_alarm(st, f"roadmap validation: {problem}")
+3439:         emitted += 1
+
+--- 'def _timed_advance' @ 1544 ---
+1542: 
+1543: 
+1544: def _timed_advance(
+1545:     key: str,
+1546:     phase: str,
+1547:     project_root: pathlib.Path,
+1548:     *,
+1549:     summary: str,
+1550: ) -> tuple[int, str, str, int]:
+1551:     """One `advance.advance()` call plus its wall-clock blocking cost (AC-013).
+1552: 
+1553:     The conductor compares the sum of these `ms` values against the sum of
+1554:     tick wall-clock time (`window_share = Σ advance_ms / Σ tick_ms`) to decide
+1555:     whether the synchronous subprocess is the concurrency bottleneck. Returns
+1556:     the historical `(code, out, err)` triple plus `ms`; an exception still
+1557:     propagates exactly as before (the callers' existing handling is unchanged).
+1558:     """
+1559:     started = time.monotonic()
+1560:     code, out, err = advance.advance(key, phase, project_root, summary=summary)
+1561:     ms = int(round((time.monotonic() - started) * 1000))
+1562:     return code, out, err, ms
+1563: 
+1564: 
+1565: def _record_advance_result(
+1566:     project_root: pathlib.Path,
+1567:     st: ConductorState,
+1568:     key: str,
+1569:     edge: str,
+1570:     code: int,
+1571:     err: str,
+1572:     cfg: dict,
+1573:     *,
+1574:     ms: int | None = None,
+1575: ) -> None:
+1576:     """Log one advance attempt and bound the retry loop (AC-002/AC-003).
+1577: 
+
+--- 'def _declared_write_face' @ 1870 ---
+1868: 
+1869: 
+1870: def _declared_write_face(
+1871:     project_root: pathlib.Path, key: str, stem: str
+1872: ) -> write_face.WriteFace | None:
+1873:     """The card's declared write face, or ``None`` when it declares none.
+1874: 
+1875:     WFG D-003 + plan §6 (mw-dynamic-concurrency): a card without a declared
+1876:     face is **serial-only** and must never be treated as "no overlap".  The
+1877:     declaration is read with WFG's own seam (``dispatch``'s card section ->
+1878:     ``render_write_face_line`` -> ``write_face.parse_write_face``), never a
+1879:     re-implementation; the overlap judgement itself stays in
+1880:     ``dispatch._write_face_verdict``.  A present-but-unparseable declaration
+1881:     also yields ``None`` (serial, fail-closed)."""
+1882:     extract = getattr(dispatch, "_card_write_face_entries", None)
+1883:     if extract is None:  # the WFG private seam moved: do not guess, stay serial
+1884:         return None
+1885:     card = dispatch.dispatch_card(pathlib.Path(project_root), key, stem)
+1886:     entries = extract(card)
+1887:     if not entries:
+1888:         return None  # no section, or present-but-empty -> undeclared
+1889:     parsed = write_face.parse_write_face(
+1890:         dispatch.render_write_face_line(entries),
+1891:         base=dispatch.write_face_base(pathlib.Path(project_root)),
+1892:         case_insensitive=dispatch.write_face_case_insensitive(),
+1893:     )
+1894:     return parsed if isinstance(parsed, write_face.WriteFace) else None
+1895: 
+1896: 
+1897: def _audit_task_graph_problems(
+1898:     project_root: pathlib.Path,
+1899:     st: ConductorState,
+1900:     key: str,
+1901:     graph: task_graph.TaskGraph,
+1902:     read_failed: bool,
+1903: ) -> int:
+
+--- 'def _audit_task_graph_problems' @ 1897 ---
+1895: 
+1896: 
+1897: def _audit_task_graph_problems(
+1898:     project_root: pathlib.Path,
+1899:     st: ConductorState,
+1900:     key: str,
+1901:     graph: task_graph.TaskGraph,
+1902:     read_failed: bool,
+1903: ) -> int:
+1904:     """Announce each unusable-task-graph problem once, then stop repeating.
+1905: 
+1906:     AC-003/AC-009 (mw-dynamic-concurrency M-02): any V1-V7 problem, any
+1907:     ambiguity, or an unreadable card makes the whole key fall back to serial
+1908:     (the caller enforces the "start one" part). The damage must be visible
+1909:     (an audit line) but must never become a per-tick flood, so the same
+1910:     problem is announced once and only re-announced after it was fixed and
+1911:     recurred. Reuses the existing `config` event through `_emit_alarm` — no
+1912:     new timeline event name."""
+1913:     path = str(pathlib.Path(project_root) / ".agenticdoc" / key / "tasks")
+1914:     seen_key = (path, key)
+1915:     problems: list[str] = []
+1916:     if read_failed:
+1917:         problems.append("unreadable task card: dependency data unavailable")
+1918:     for problem in graph.problems:
+1919:         token = problem.token or problem.snippet
+1920:         problems.append(f"{problem.kind}:{problem.card_id}@{problem.line}:{token}")
+1921:     seen = _TASK_GRAPH_ALARM_SEEN.get(seen_key, set())
+1922:     emitted = 0
+1923:     for detail in problems:
+1924:         if detail in seen:
+1925:             continue
+1926:         _emit_alarm(
+1927:             st,
+1928:             f"task graph unusable for {key}: {detail}; "
+1929:             "falling back to serial (plan order)",
+1930:             key=key,
+
+--- 'def _stable_dependency_order' @ 1793 ---
+1791: 
+1792: 
+1793: def _stable_dependency_order(
+1794:     order: list[str], deps_by_stem: dict[str, tuple[str, ...]]
+1795: ) -> list[str]:
+1796:     """Kahn topological sort that keeps ``order`` as the tie-break.
+1797: 
+1798:     Only edges between two declared stems count (an unknown prerequisite
+1799:     cannot block here; the graph validator owns that judgement). A cycle
+1800:     returns ``order`` unchanged — fail-closed to the historical plan order
+1801:     rather than an arbitrary permutation."""
+1802:     position = {stem: index for index, stem in enumerate(order)}
+1803:     known = set(position)
+1804:     indegree = {stem: 0 for stem in order}
+1805:     dependents: dict[str, list[str]] = {stem: [] for stem in order}
+1806:     for stem in order:
+1807:         for dep in deps_by_stem.get(stem, ()):
+1808:             dep = str(dep)
+1809:             if dep in known and dep != stem:
+1810:                 indegree[stem] += 1
+1811:                 dependents[dep].append(stem)
+1812:     ready = sorted(
+1813:         (stem for stem in order if indegree[stem] == 0),
+1814:         key=lambda stem: position[stem],
+1815:     )
+1816:     out: list[str] = []
+1817:     while ready:
+1818:         stem = ready.pop(0)
+1819:         out.append(stem)
+1820:         for dependent in dependents[stem]:
+1821:             indegree[dependent] -= 1
+1822:             if indegree[dependent] == 0:
+1823:                 ready.append(dependent)
+1824:                 ready.sort(key=lambda item: position[item])
+1825:     if len(out) != len(order):
+1826:         return list(order)  # cycle: already a V-problem; stay on plan order
+
+--- 'class _WriteFaceWait': NO HIT ---
+
+--- '_write_face_wait_reason' @ 1864 ---
+1862: 
+1863: 
+1864: def _write_face_wait_reason(reason: str) -> bool:
+1865:     """True when a dispatch refusal is the write-face serial-only/overlap
+1866:     limiter rather than an author error."""
+1867:     return str(reason).startswith(_WRITE_FACE_WAIT_REFUSALS)
+1868: 
+1869: 
+1870: def _declared_write_face(
+1871:     project_root: pathlib.Path, key: str, stem: str
+1872: ) -> write_face.WriteFace | None:
+1873:     """The card's declared write face, or ``None`` when it declares none.
+1874: 
+1875:     WFG D-003 + plan §6 (mw-dynamic-concurrency): a card without a declared
+1876:     face is **serial-only** and must never be treated as "no overlap".  The
+1877:     declaration is read with WFG's own seam (``dispatch``'s card section ->
+1878:     ``render_write_face_line`` -> ``write_face.parse_write_face``), never a
+1879:     re-implementation; the overlap judgement itself stays in
+1880:     ``dispatch._write_face_verdict``.  A present-but-unparseable declaration
+1881:     also yields ``None`` (serial, fail-closed)."""
+1882:     extract = getattr(dispatch, "_card_write_face_entries", None)
+1883:     if extract is None:  # the WFG private seam moved: do not guess, stay serial
+1884:         return None
+1885:     card = dispatch.dispatch_card(pathlib.Path(project_root), key, stem)
+1886:     entries = extract(card)
+1887:     if not entries:
+1888:         return None  # no section, or present-but-empty -> undeclared
+1889:     parsed = write_face.parse_write_face(
+1890:         dispatch.render_write_face_line(entries),
+1891:         base=dispatch.write_face_base(pathlib.Path(project_root)),
+1892:         case_insensitive=dispatch.write_face_case_insensitive(),
+1893:     )
+1894:     return parsed if isinstance(parsed, write_face.WriteFace) else None
+1895: 
+1896: 
+1897: def _audit_task_graph_problems(
+
+--- '_write_face_wait_reason' @ 2077 ---
+2075:         )
+2076:         if not result.ok:
+2077:             if _write_face_wait_reason(result.reason):
+2078:                 # Write-face serial-only / overlap: this stem cannot run beside
+2079:                 # an in-flight same-owner worker. Wait for the next tick; the
+2080:                 # gate already wrote its own audit event, and stalling here
+2081:                 # would manufacture a permanent failure for a normal cap.
+2082:                 return dispatched_any
+2083:             mark_stalled(
+2084:                 project_root, st, key,
+2085:                 f"exec dispatch refused at {stem} attempt {used + 1}",
+2086:                 reason_code="exec-dispatch-refused", loop=loop,
+2087:                 used_rounds=used, round_limit=budget, credits_used=credits,
+2088:             )
+2089:             return False
+2090:         if plan and stem not in plan:
+2091:             st.timeline.append(
+2092:                 "config", key=key,
+2093:                 detail=f"orphan task {stem} (not referenced by plan.md) dispatched",
+2094:             )
+2095:         inflight_stems.add(stem)
+2096:         dispatched_any = True
+2097:     return dispatched_any
+2098: 
+2099: 
+2100: # ── VERIFY: L3 review loop + done transaction (D-108/D-112, T-12) ────────────
+2101: 
+2102: 
+2103: def _md_section(text: str, header: str) -> str | None:
+2104:     """One markdown section (header line to the next ## header); None when
+2105:     the section is missing."""
+2106:     lines = text.splitlines()
+2107:     start = next((i for i, l in enumerate(lines) if l.strip() == header), None)
+2108:     if start is None:
+2109:         return None
+2110:     out = [lines[start]]
+
+=== `_is_in_flight` / `in_flight_keys` / `max_parallel_keys` current text ===
+706:     in_flight_keys = {
+752:             if len(in_flight_keys) >= max(1, int(cfg["max_parallel_keys"])):
+1964:       at once: ``started = min(max_workers_per_key, |frontier|)`` (D-102).
+1989:     cap = max(1, int(cfg.get("max_workers_per_key", 4)))
+3872: def _is_in_flight(row: dict) -> bool:

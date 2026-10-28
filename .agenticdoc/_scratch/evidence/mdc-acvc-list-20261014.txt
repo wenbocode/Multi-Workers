@@ -1,0 +1,25 @@
+===== spec.md =====
+| AC-001 | 在 roadmap 的 `depends_on` 可解析时，conductor 每 tick 计算的前沿集合 = {key | deps 全部终态 且 该 key 非终态}，且实起 key 数 = `min(配置上界, |前沿|)`（对 ≥3 组构造语料复算恒等） |
+| AC-002 | 在 key 内任务依赖与写面可解析时，conductor 对单 key 的实起 worker 数 = `min(per-key 上界, |可并行任务前沿|)`，且不与在飞 worker 写面重叠（重叠对 = 0） |
+| AC-003 | 在依赖数据或写面数据缺失/不可解析时，该层回退到串行（实起 = 1）并写审计行；不得默认放大 |
+| AC-008 | 任务级依赖载体：任务卡头一行 `deps:`（`-`/空 = 无；逗号分隔任务 id，语法与 roadmap `depends_on` 同构），由**新增的独立解析器**读取（**不能复用 `card_audit._header_value`**：卡首行是 H1，`_HEADER_RE` 在 `card_audit.py:160-162` 直接 break，实测 5/5 真实卡返回空串）+ 卡头区域规则（H1 / 空行 / `## 元
+| AC-009 | 任务级依赖图校验：悬空 id / 自依赖 / 环 / 跨 key 引用被检测；任一问题 → **整 key 串行回退**且写 timeline 事件，不得静默永锁。**id→卡文件 stem 的 join 必须用「数字核心」规则**（实测 146 个真实 dep token：stem 精确命中 0、既有 `_plan_task_file_stems` 命中 0、数字核心唯一命中 125），并对同核心多卡（如 `T-01-file-lo
+| AC-010 | key 层依赖图的语义校验在 conductor tick 内被执行（今日只有 CLI/doctor）；悬空/环/前向 stage 被发现时写 timeline 审计事件，不改 key 的 fail-closed 不派发行为 |
+| AC-011 | **派发判定与队列写入在同一临界区**："该 key/卡是否已在飞"的复查必须在 `.mw/workers.lock` 内完成（check → append 之间无窗口），且同一 `task_key` 不可能被两个进程各 append 一次（用可观测的并发测试或双进程对拍证伪，不得只依赖 `upsert_worker_row` 的覆盖语义） |
+| AC-012 | **在飞口径单源**：`_is_in_flight` / `_row_belongs_to` 的意义只由一处导出谓词定义，并同时服务于派发闸（`conductor.py:698-704/742/1770/2365/2556`）、gate facts（`:6986-6992`）、stage 关闭（`:1288-1292`）、提醒抑制（`:3001-3004`）/defer（`:7986-7990`）与面板 `slotsUsed`（`mo
+| AC-013 | **`advance.advance()` 不得成为并发瓶颈**：per-key 并发 N > 1 时，任一 worker 的一次 advance（同步 `subprocess.run`，`advance.py:181-188`，超时 120s）不得阻塞同 tick 内其它 key/卡的派发判定；或给出实测量化（N 倍 tick 延迟可接受）作为等价证据 |
+| AC-004 | 配置语义：`max_parallel_keys` 作为 key 层**上界**（默认值、floor、取值域两侧镜像一致）；新增 per-key 上界键（名称/默认/取值域两侧镜像一致），且既有 materialized config 文件不因此变为非法 |
+| AC-005 | 呈现：autopilot monitor 同时显示"配置上界"与"本 tick effective 并发"两个量，且二者口径在同一快照内可复算一致 |
+| AC-006 | 回退：把上界配置改为 1 时，key 层与 per-key 层均回到串行（实起 ≤1），无需重启 serve |
+| AC-007 | 两语言配置镜像：TS `status-model.ts` 与 Python `config.py` 对新增/变更键的默认值、取值域、校验行为逐字段一致（parity 语料） |
+
+===== design.md =====
+| VC-101 | 前沿恒等：对 ≥3 组构造 roadmap/任务图复算，实起 = `min(配置上界, |前沿|)`，逐 tick 可重现 |
+| VC-102 | 窄前沿不放大：链式依赖（前沿恒 1）时无论上界多大，实起 = 1 |
+| VC-103 | 回退：上界 = 1 时两层实起 ≤ 1，且**不需要重启 serve**（配置热读已验证 `conductor.py:3432-3447`） |
+| VC-104 | fail-closed：依赖不可解析/悬空/环/写面未声明 → 该层实起 = 1 + 审计行；不得默认放大 |
+| VC-105 | 并发安全：N≥4 并行时用 `_workers.parallel` + 写面复算，同文件多写者对 = 0 |
+| VC-106 | 无重复派发：注入并发（双进程/双 tick 重入）下同 `task_key` 只产生 1 行（AC-011） |
+| VC-107 | 口径一致：面板三量与 conductor 同快照复算一致（AC-012/AC-109） |
+| VC-108 | parity：新增键的默认值/取值域/校验两侧逐字段一致，语料冻结值更新 |
+| VC-109 | 性能：`advance` 墙钟占比实测（`window_share=Σadvance_ms/Σtick_ms`，经 `beat.data`）；并发 N≥4 时 tick stall 量化（AC-013） |

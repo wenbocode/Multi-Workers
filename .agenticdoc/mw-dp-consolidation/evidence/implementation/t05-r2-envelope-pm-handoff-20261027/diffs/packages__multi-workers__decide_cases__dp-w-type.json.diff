@@ -1,0 +1,11 @@
+--- before/packages/multi-workers/decide_cases/dp-w-type.json
++++ after/packages/multi-workers/decide_cases/dp-w-type.json
+@@ -64,7 +64,7 @@
+           "text": "材料不含图片依赖，vision 只在图像能力已证明时才是合法选择。"
+         }
+       ],
+-      "prepared_at": "2026-10-27T20:56:00+00:00"
++      "prepared_at": "2026-10-27T13:45:28+00:00"
+     },
+     "schema_version": 3
+   },

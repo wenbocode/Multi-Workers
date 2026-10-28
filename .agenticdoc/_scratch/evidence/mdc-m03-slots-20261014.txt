@@ -1,0 +1,175 @@
+=== monitor.ts: slotsUsed / cap / eff / frontier context ===
+89:  * dependency frontier (AC-005). */
+241: 	slotsUsed: number;
+242: 	slotsMax: number;
+243: 	/** Config key-layer upper bound (AC-005). Same value as `slotsMax`, kept as
+246: 	slotsCap?: number;
+247: 	/** This tick's effective key-layer concurrency: `min(cap, |F|)` (AC-005).
+250: 	/** Dependency-frontier size `|F|` (AC-005): running-stage keys whose key
+253: 	frontierSize?: number;
+513: 	// AC-012 / D-106: the `slotsUsed` source of truth, the SAME predicate the
+515: 	// (so `pending` counts) AND origin=conductor AND a `.agenticdoc/<key>/` path
+948: 	// AC-005 |F|: the dependency frontier — keys in a `running` stage whose key
+951: 	// which this view does not read, so the panel's frontier is an
+952: 	// over-approximation (`frontierSize >= |F_conductor|`) and `eff` is an
+954: 	let frontierSize = 0;
+964: 				if (depsSatisfied) frontierSize += 1;
+968: 	const slotsCap = config?.max_parallel_keys ?? DEFAULT_CONFIG.max_parallel_keys;
+980: 	const busyKeys = new Set<string>();
+982: 		if (allKeys.includes(owner)) busyKeys.add(owner);
+991: 		slotsUsed: busyKeys.size,
+992: 		slotsMax: slotsCap,
+993: 		slotsCap,
+994: 		slotsEffective: Math.min(slotsCap, frontierSize),
+995: 		frontierSize,
+1279: 				`autopilot: ${tick}${stale} | slots ${a.slotsUsed}/${a.slotsMax} | ` +
+1289: 		if (a.slotsEffective !== undefined && a.frontierSize !== undefined) {
+1292: 					`autopilot: cap ${a.slotsCap ?? a.slotsMax} | eff ${a.slotsEffective} (frontier ${a.frontierSize})`,
+1497: 			slotsUsed: 0,
+1498: 			slotsMax: 0,
+
+=== monitor.ts: the used-slot counting block (search 'busyKeys' span) ===
+--- around 241 ---
+201: 			const mode = (parsed as Record<string, unknown>).auto_gate_mode;
+202: 			if (mode === "off" || mode === "shadow" || mode === "live") return mode;
+203: 		}
+204: 	} catch {
+205: 		// missing/invalid config — autopilot never enabled
+206: 	}
+207: 	return "off";
+208: }
+209: 
+210: /** One roadmap key as the autopilot section shows it (AC-006). */
+211: export interface MonitorKey {
+212: 	key: string;
+213: 	/** Phase from _index.parallel ("—" when the key has no index row yet). */
+214: 	phase: string;
+215: 	/** Roadmap key-status (running|done|stalled|closed-legacy|unknown). */
+216: 	status: string;
+217: 	inFlight: number;
+218: 	/** Deps whose status is not terminal — the reason an idle key waits. */
+219: 	blockedBy: string[];
+220: }
+221: 
+222: /** One key's most recent advance failure run (AC-006). */
+223: export interface MonitorStall {
+224: 	key: string;
+225: 	edge: string;
+226: 	count: number;
+227: 	primaryClass: string;
+228: 	classCounts: Record<string, number>;
+229: 	lastError: string;
+230: 	ageMs: number | null;
+231: }
+232: 
+233: /** The autopilot progress section (AC-006/AC-007). */
+234: export interface MonitorAutopilot {
+235: 	enabled: boolean;
+236: 	everEnabled: boolean;
+237: 	tickSeq: number | null;
+238: 	tickAgeMs: number | null;
+239: 	/** age > max(30s, 5 x poll_interval): the conductor stopped ticking. */
+240: 	tickStale: boolean;
+241: 	slotsUsed: number;
+242: 	slotsMax: number;
+243: 	/** Config key-layer upper bound (AC-005). Same value as `slotsMax`, kept as
+244: 	 * its own field so the panel can print `cap` independent of the `U/M`
+245: 	 * summary slot. Optional so hand-built snapshots stay constructible. */
+246: 	slotsCap?: number;
+247: 	/** This tick's effective key-layer concurrency: `min(cap, |F|)` (AC-005).
+--- around 991 ---
+951: 	// which this view does not read, so the panel's frontier is an
+952: 	// over-approximation (`frontierSize >= |F_conductor|`) and `eff` is an
+953: 	// upper bound; equation `eff == min(cap, |F|)` holds on the panel's own |F|.
+954: 	let frontierSize = 0;
+955: 	if (roadmap.ok) {
+956: 		for (const stage of roadmap.stages) {
+957: 			if (stage.status !== "running") continue;
+958: 			for (const row of stage.keys) {
+959: 				const keyStatus = stage.keyStatus[row.key] ?? "running";
+960: 				if (DISPATCH_SKIP_STATUSES.has(keyStatus)) continue;
+961: 				const depsSatisfied = row.dependsOn.every((dep) =>
+962: 					DEP_SATISFIED_STATUSES.has(statusByKey.get(dep) ?? ""),
+963: 				);
+964: 				if (depsSatisfied) frontierSize += 1;
+965: 			}
+966: 		}
+967: 	}
+968: 	const slotsCap = config?.max_parallel_keys ?? DEFAULT_CONFIG.max_parallel_keys;
+969: 	// AC-012 / D-106: prefer the caller's conductor-equivalent in-flight set
+970: 	// (built from ALL non-terminal rows, so `pending` counts and `manual` does
+971: 	// not). Direct callers that pass no set keep the historical running-only
+972: 	// worker scan, so the panel degrades to its old value instead of "0".
+973: 	const inflightOwners = new Set<string>(conductorInflightKeys ?? []);
+974: 	if (conductorInflightKeys === undefined) {
+975: 		for (const w of workers) {
+976: 			const owner = workerOwnerKey(w);
+977: 			if (owner !== "" && workerBelongsToKey(w, owner)) inflightOwners.add(owner);
+978: 		}
+979: 	}
+980: 	const busyKeys = new Set<string>();
+981: 	for (const owner of inflightOwners) {
+982: 		if (allKeys.includes(owner)) busyKeys.add(owner);
+983: 	}
+984: 
+985: 	return {
+986: 		enabled: config?.enabled ?? false,
+987: 		everEnabled: fs.existsSync(configPath(projectDir)) && configResult.ok,
+988: 		tickSeq,
+989: 		tickAgeMs,
+990: 		tickStale: tickAgeMs !== null && tickAgeMs > staleAfterMs,
+991: 		slotsUsed: busyKeys.size,
+992: 		slotsMax: slotsCap,
+993: 		slotsCap,
+994: 		slotsEffective: Math.min(slotsCap, frontierSize),
+995: 		frontierSize,
+996: 		stallTicks: config?.advance_stall_ticks ?? DEFAULT_CONFIG.advance_stall_ticks,
+997: 		keys,
+--- around 1497 ---
+1457:  * live one. `stale`/`staleDetail` flag it once the stamp has not moved for
+1458:  * more than {@link PANEL_STALE_MISSED_CYCLES} refresh periods.
+1459:  *
+1460:  * BOUNDARY (D-018): if the FIRST collection already failed there is no
+1461:  * previous frame to reuse, so the frame carries only `collectedAtMs` (this
+1462:  * failed attempt) plus the error summary; `stale` stays false because there is
+1463:  * no past stamp to measure from. The frame is still emitted — never dropped
+1464:  * silently.
+1465:  */
+1466: function degradedSnapshot(err: unknown, nowMs: number, intervalMs: number): MonitorSnapshot {
+1467: 	const summary = trunc(errorSummary(err), 160);
+1468: 	// The anchor does not advance on a failed read: freshness is measured from
+1469: 	// the last real collection (or the run start when there has been none), so
+1470: 	// a panel stuck on failures eventually says STALE PANEL instead of looking
+1471: 	// freshly stamped (AC-015).
+1472: 	const anchor = anchorAtMs ?? nowMs;
+1473: 	const ageMs = Math.max(0, nowMs - anchor);
+1474: 	const late = ageMs > intervalMs * PANEL_STALE_MISSED_CYCLES;
+1475: 	const diagnostics = {
+1476: 		collectedAtMs: anchor,
+1477: 		tickCount: monitorTickCount,
+1478: 		degraded: true,
+1479: 		lastErrorAtMs: nowMs,
+1480: 		lastError: summary,
+1481: 		stale: late,
+1482: 		staleDetail: late ? `no refresh since ${new Date(anchor).toISOString()}, ${formatDuration(ageMs)}` : undefined,
+1483: 	};
+1484: 	if (lastGoodSnapshot !== null) return { ...lastGoodSnapshot, ...diagnostics };
+1485: 	// BOUNDARY (D-018): before the first successful collection there is no
+1486: 	// previous payload to reuse — only the (non-advancing) anchor stamp and the
+1487: 	// error summary. The frame is still emitted, never dropped silently.
+1488: 	return {
+1489: 		serve: { running: false, pid: null, stale: false, staleDetail: "", upMs: null },
+1490: 		conductor: { pid: null, alive: false, enabled: false, paused: false, everEnabled: false },
+1491: 		autopilot: {
+1492: 			enabled: false,
+1493: 			everEnabled: false,
+1494: 			tickSeq: null,
+1495: 			tickAgeMs: null,
+1496: 			tickStale: false,
+1497: 			slotsUsed: 0,
+1498: 			slotsMax: 0,
+1499: 			stallTicks: 0,
+1500: 			keys: [],
+1501: 			stalls: [],
+1502: 		},
+1503: 		workers: [],

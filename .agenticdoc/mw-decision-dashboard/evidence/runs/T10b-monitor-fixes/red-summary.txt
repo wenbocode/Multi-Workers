@@ -1,0 +1,56 @@
+T10b RED summary (full output: red-pytest.txt)
+
+Command: cd packages/multi-workers && python -m pytest test_decision_monitor.py -q
+Result: exit 1, 16 failed, 36 passed, 1 skipped in 18.58s
+These tests were written/applied before the implementation edits; every failure is a missing new
+behaviour/API or the exact old behaviour the finding describes.
+
+Missing API (new surfaces not implemented yet):
+- test_probe_recorded_port_reports_a_real_refusal_and_maps_windows_code
+    AttributeError: module 'decision_monitor' has no attribute 'probe_recorded_port'
+- test_playground_seam_declares_the_provider_book_obligations
+    AttributeError: module 'decision_monitor' has no attribute 'PLAYGROUND_PROVIDER_OBLIGATIONS'
+- test_recover_stale_bare_call_takes_and_releases_the_start_lock
+    KeyError: 'liveness' (report lacked the probe/liveness observation)
+- test_recover_stale_runs_under_a_verified_guard
+    TypeError: recover_stale() got an unexpected keyword argument 'guard'
+- test_recover_stale_refuses_a_guard_whose_lock_was_lost
+    AttributeError: 'WindowsPath' object has no attribute 'path' (start_lock yielded a bare path)
+- test_recover_stale_keeps_state_when_the_port_probe_is_inconclusive
+    TypeError: recover_stale() got an unexpected keyword argument 'port_probe'
+- test_recover_stale_never_moves_a_fresh_secret_published_after_the_state_move
+    TypeError: recover_stale() got an unexpected keyword argument 'guard'
+
+Wrong old behaviour (the finding itself):
+- test_recover_stale_keeps_state_when_the_recorded_port_serves_another_process
+    Failed: DID NOT RAISE MonitorError (old code moved the state without any port observation)
+- test_submit_refuses_nested_execution_fields_before_any_provider_call
+    AssertionError: assert 200 == 400 (nested {"act": "apply"} reached the injected provider)
+- test_submit_refuses_an_unregistered_dp_before_any_provider_call
+    assert 200 == 400 (unknown dp reached the provider)
+- test_attached_stop_reports_a_refusal_instead_of_silent_success
+    TypeError: 'NoneType' object is not subscriptable (stop() returned None after a refusal)
+- test_attached_stop_reports_success_and_leaves_no_state
+    TypeError: 'NoneType' object is not subscriptable (no structured result)
+- test_stale_state_and_secret_are_moved_stepwise_after_proven_death
+    KeyError: 'liveness' (no ECONNREFUSED/observation in the recovery report)
+- test_ensure_instance_reuses_a_healthy_instance_without_rewriting_state
+    TypeError: 'NoneType' object is not subscriptable (AttachedInstance.stop returned None)
+- test_detect_browser_absent_reports_an_explicit_reason
+    KeyError: 'spawned'
+- test_launch_app_window_reports_failures_without_claiming_a_window
+    AssertionError: launch_app_window returned {"ok": True, ...} for a mere spawn
+
+Not-a-RED notes (honest):
+- The RED run's unrelated-listener test failed with "DID NOT RAISE" before it reached the
+  connect-back assertion. After the implementation it exposed a test-fixture detail: the helper's
+  listener backlog was 1, and the monitor's own probe connection filled it, so the test's second
+  connect then timed out on Windows. The fixture now listens with backlog 16 (test-only change; no
+  assertion was weakened, and the occupant check still connects and succeeds).
+- test_full_100_port_isolated_range_exhaustion_leaves_every_occupant_alive PASSED against the
+  pre-fix implementation: the loop behaviour was already correct, but the old test only exercised a
+  single occupied port. This card replaces that under-tested metric, it does not change the loop.
+- test_submit_accepts_registered_typed_fields_whose_names_look_forbidden PASSED before the fix
+  (the old seam had no scan at all); it exists to pin the "no blind recursion" requirement.
+- test_history_read_side_contract_is_jointly_verified_with_current_history_api PASSED before the fix;
+  it is the joint T07 API/redaction-marks regression, not a behaviour change.

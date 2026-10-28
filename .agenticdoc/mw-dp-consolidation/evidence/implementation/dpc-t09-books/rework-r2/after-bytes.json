@@ -1,0 +1,114 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T09:41:52Z",
+  "products": {
+    "decision_book.py": {
+      "product_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_book.py",
+      "before_sha256": "dbe2329aa0b84ae10c484f526e812cae36545590c17d857bbfde040f302d32a0",
+      "after_sha256": "07c08bf4aff069c2f99d606d7e6a73859873bb5b6ddd9a7c7b1f7b09375f071f",
+      "before_bytes": 59531,
+      "after_bytes": 62612,
+      "after_lines": 1646,
+      "lf": 1646,
+      "crlf": 0,
+      "utf8_bom": false,
+      "ends_with_newline": true,
+      "diff_path": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/diffs/decision_book.py.diff",
+      "diff_bytes": 14308,
+      "diff_hunks": 21,
+      "diff_added_lines": 127,
+      "diff_removed_lines": 40
+    },
+    "test_decision_context_contract.py": {
+      "product_path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_contract.py",
+      "before_sha256": "9bbf89d6e03a6b6d60dd511d37509cc632d61e6c4ea9f3ae7c821da079ff2176",
+      "after_sha256": "e1d46887fdbb2ab4e36243d6813218f31e58a4129aa3e796966801612a21e1f0",
+      "before_bytes": 51264,
+      "after_bytes": 60473,
+      "after_lines": 1585,
+      "lf": 1585,
+      "crlf": 0,
+      "utf8_bom": false,
+      "ends_with_newline": true,
+      "diff_path": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/diffs/test_decision_context_contract.py.diff",
+      "diff_bytes": 9834,
+      "diff_hunks": 2,
+      "diff_added_lines": 237,
+      "diff_removed_lines": 0
+    }
+  },
+  "pyc_count": 14,
+  "pyc_unchanged": true,
+  "pyc": [
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+      "bytes": 120300,
+      "sha256": "e4b51f5b85198575ba723fca7f85e48a0962da44b2820f4f53f4ebea3de80677"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+      "bytes": 62804,
+      "sha256": "2649c554ab1103a7c48d040de1dde3ec018ed8364ab1f7ff8e9541e46f35fe57"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+      "bytes": 16678,
+      "sha256": "b29c8808488cf5c2c2ed47317e98f8bf6966c76871d01b6f5a9aaa470ad1d8e5"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+      "bytes": 288156,
+      "sha256": "c57ee653f2bd8cede3eb535955dbfb50343d2182c4de6f882caf903677df43e8"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+      "bytes": 4188,
+      "sha256": "4b1cc3224b96398931b28919fe7e99d59af246ff1df9f578974412425ea91ab1"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+      "bytes": 96718,
+      "sha256": "e9b984aa744f93adac5919d43c7286f2df67fd713d4daa0ff06a4567b9a4cbb9"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+      "bytes": 330072,
+      "sha256": "8e7c1fdef55dae94f7fcd1e62bd580a605f2874073aef8e705d5fa10879babb0"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+      "bytes": 220,
+      "sha256": "1ab0437409a85f933637ad619d30b1ee6e6de990fee3d7955c3787c2326d05de"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+      "bytes": 15663,
+      "sha256": "e54a6e4004576a45d3a48769c3538cc3ecd35e3ddf28929eda15a34356cc1c5b"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+      "bytes": 23500,
+      "sha256": "595357ff2cbac84f30f6b3f27132f449d7bc058155fc0ae5807742326e70f08e"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+      "bytes": 12728,
+      "sha256": "7f5936ad7d8a14b298dab8bbaf62b01536501305fba0932554c819aa9df0faa1"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+      "bytes": 39408,
+      "sha256": "3909b8a4fbfe71376a29a2eddabe123576bcefd5ee2b13423e9f20b9eb839a9c"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+      "bytes": 40708,
+      "sha256": "d0bfdbdeae20ca110ba310e4fc778ad97d5f929e3522595eb2dc1e38814a3eb8"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc",
+      "bytes": 26461,
+      "sha256": "3c515fe1736c61061fc8d6bc8b1ec2cd1ab27a98b3c3c097d3a09fcb3cb32739"
+    }
+  ]
+}

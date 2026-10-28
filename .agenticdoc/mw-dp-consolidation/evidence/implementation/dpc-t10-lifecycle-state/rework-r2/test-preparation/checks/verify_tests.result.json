@@ -1,0 +1,348 @@
+{
+  "observed_at": "2026-10-28T06:45:02.742065+00:00",
+  "source": "agent-report",
+  "role": "test-preparation-only (no product import, no pytest, no product execution)",
+  "python": "3.14.3 (tags/v3.14.3:323c59a, Feb  3 2026, 16:04:56) [MSC v.1944 64 bit (AMD64)]",
+  "dont_write_bytecode": true,
+  "root": "H:\\git\\Multi-Workers",
+  "worktree": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree",
+  "checks": {
+    "files": {
+      "test_decision_context_lifecycle.py": {
+        "current_bytes": 65105,
+        "current_sha256": "1bca28c56c7ab039de5c3a91638fd20c1e2fa89f4a1ec996169cfd933c1e6ae9",
+        "before_bytes": 50338,
+        "before_sha256": "bdedfd4301fab76929beb0156f429f973fcb6404382b8893d2cbecbfaa711d1a",
+        "lines_before": 1401,
+        "lines_after": 1815,
+        "crlf": 0,
+        "old_functions": 64,
+        "new_functions_total": 79,
+        "old_functions_preserved": true,
+        "old_estimate_items": 91,
+        "old_estimate_unknown": [],
+        "new_estimate_items": 105,
+        "new_estimate_unknown": [],
+        "skip_markers": [
+          "test_a_case_variant_agenticdoc_path_is_refused_in_test_scope:skipif"
+        ],
+        "diff_lines": 428,
+        "appended_chars": 14703,
+        "read_to_eof": true
+      },
+      "test_decision_task_state.py": {
+        "current_bytes": 15480,
+        "current_sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f",
+        "before_bytes": 15480,
+        "before_sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f",
+        "lines_before": 278,
+        "lines_after": 278,
+        "crlf": 0,
+        "old_functions": 24,
+        "new_functions_total": 24,
+        "old_functions_preserved": true,
+        "old_estimate_items": 25,
+        "old_estimate_unknown": [],
+        "new_estimate_items": 25,
+        "new_estimate_unknown": [],
+        "skip_markers": [],
+        "diff_lines": 0,
+        "appended_chars": 2,
+        "read_to_eof": true
+      }
+    },
+    "item_estimate": {
+      "old_total": 116,
+      "expected_old_total": 116,
+      "estimator_matches_known_116": true,
+      "new_total": 130,
+      "delta": 14,
+      "expected_red_count": 8,
+      "expected_green_count": 6,
+      "expected_red": [
+        "test_a_refused_request_does_not_swallow_the_later_real_choice",
+        "test_a_different_choice_for_the_same_request_stays_visible",
+        "test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded",
+        "test_executed_and_settled_observations_stay_non_decreasing",
+        "test_a_secret_bearing_creation_before_can_be_repeated",
+        "test_a_case_variant_agenticdoc_path_is_refused_in_test_scope"
+      ],
+      "expected_green": [
+        "test_an_identical_repeated_business_request_stays_idempotent",
+        "test_a_dp_auto_choice_inside_the_prepared_candidates_is_recorded",
+        "test_a_failed_executed_round_is_never_recorded_as_executed",
+        "test_the_exact_agenticdoc_path_is_refused_in_test_scope",
+        "test_the_writer_consumes_the_producers_frozen_prepared_contract"
+      ]
+    },
+    "mirror": {
+      "before_files": 1891,
+      "current_files": 1891,
+      "diff": {
+        "added": [],
+        "removed": [],
+        "changed": [
+          "packages/multi-workers/test_decision_context_lifecycle.py"
+        ]
+      },
+      "legal_stage_diff_only": true
+    },
+    "pyc": {
+      "before": 14,
+      "current": 14,
+      "unchanged": true
+    },
+    "live_and_products": {
+      "packages/multi-workers/decision_wire.py": {
+        "expected_live_sha256": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+        "current_live_sha256": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+        "isolated_sha256": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+        "current_isolated_sha256": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6"
+      },
+      "packages/multi-workers/decision_lifecycle.py": {
+        "expected_live_sha256": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+        "current_live_sha256": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+        "isolated_sha256": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+        "current_isolated_sha256": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4"
+      },
+      "packages/multi-workers/decision_task_state.py": {
+        "expected_live_sha256": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+        "current_live_sha256": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+        "isolated_sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+        "current_isolated_sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d"
+      },
+      "packages/multi-workers/test_decision_context_lifecycle.py": {
+        "expected_live_sha256": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+        "current_live_sha256": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+        "isolated_sha256": "bdedfd4301fab76929beb0156f429f973fcb6404382b8893d2cbecbfaa711d1a",
+        "current_isolated_sha256": "1bca28c56c7ab039de5c3a91638fd20c1e2fa89f4a1ec996169cfd933c1e6ae9"
+      },
+      "packages/multi-workers/test_decision_task_state.py": {
+        "expected_live_sha256": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5",
+        "current_live_sha256": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5",
+        "isolated_sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f",
+        "current_isolated_sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f"
+      }
+    },
+    "old_evidence": {
+      "before_files": 744,
+      "current_files": 744,
+      "diff": {
+        "added": [],
+        "removed": [],
+        "changed": []
+      }
+    },
+    "scripts": {
+      "run_pm_tests.py": {
+        "sha256": "7513cbec9075b030a980576f1d35faf3201ee773ad228da7ea46509a4ce83d4d",
+        "bytes": 31847,
+        "lines": 729,
+        "imports": [
+          "__future__",
+          "argparse",
+          "ast",
+          "datetime",
+          "hashlib",
+          "json",
+          "os",
+          "pathlib",
+          "re",
+          "subprocess",
+          "sys"
+        ],
+        "literals": {
+          "ASSIGNED_TESTS": [
+            "test_decision_context_lifecycle.py",
+            "test_decision_task_state.py"
+          ],
+          "PRODUCTS": {
+            "decision_wire.py": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+            "decision_lifecycle.py": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+            "decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d"
+          },
+          "LIVE_SHA256": {
+            "decision_wire.py": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+            "decision_lifecycle.py": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+            "decision_task_state.py": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+            "test_decision_context_lifecycle.py": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+            "test_decision_task_state.py": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5"
+          },
+          "ASSIGNED_TEST_SHA256": {
+            "test_decision_context_lifecycle.py": "1bca28c56c7ab039de5c3a91638fd20c1e2fa89f4a1ec996169cfd933c1e6ae9"
+          },
+          "OLD_EVIDENCE_DIRS": [
+            "dpc-t10-lifecycle-state",
+            "dpc-t05-eight-cases",
+            "t05-r2-envelope-pm-handoff-20261027",
+            "t05-t10-audit-disposition-20261028"
+          ],
+          "OLD_EVIDENCE_FILES": [
+            "t05-handoff-audit-20261027.md",
+            "t10-handoff-audit-20261027.md"
+          ],
+          "OWN_STAGE_PREFIX": "evidence/implementation/dpc-t10-lifecycle-state/rework-r2/",
+          "EXPECTED_OLD_EVIDENCE_FILES": 744,
+          "EXPECTED_PYC_FILES": 14,
+          "EXPECTED_MIRROR_FILES": 1891,
+          "EXISTING_ITEM_FLOOR": 116,
+          "NEW_NODE_IDS": [
+            "test_a_refused_request_does_not_swallow_the_later_real_choice",
+            "test_an_identical_repeated_business_request_stays_idempotent",
+            "test_a_different_choice_for_the_same_request_stays_visible",
+            "test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded",
+            "test_a_dp_auto_choice_inside_the_prepared_candidates_is_recorded",
+            "test_executed_and_settled_observations_stay_non_decreasing",
+            "test_a_failed_executed_round_is_never_recorded_as_executed",
+            "test_a_secret_bearing_creation_before_can_be_repeated",
+            "test_a_case_variant_agenticdoc_path_is_refused_in_test_scope",
+            "test_the_exact_agenticdoc_path_is_refused_in_test_scope",
+            "test_the_writer_consumes_the_producers_frozen_prepared_contract"
+          ],
+          "EXPECTED_RED_NODE_IDS": [
+            "test_a_refused_request_does_not_swallow_the_later_real_choice",
+            "test_a_different_choice_for_the_same_request_stays_visible",
+            "test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded",
+            "test_executed_and_settled_observations_stay_non_decreasing",
+            "test_a_secret_bearing_creation_before_can_be_repeated",
+            "test_a_case_variant_agenticdoc_path_is_refused_in_test_scope"
+          ],
+          "EXPECTED_GREEN_NODE_IDS": [
+            "test_an_identical_repeated_business_request_stays_idempotent",
+            "test_a_dp_auto_choice_inside_the_prepared_candidates_is_recorded",
+            "test_a_failed_executed_round_is_never_recorded_as_executed",
+            "test_the_exact_agenticdoc_path_is_refused_in_test_scope",
+            "test_the_writer_consumes_the_producers_frozen_prepared_contract"
+          ],
+          "CHILD_ENV_PASSTHROUGH": [
+            "SYSTEMROOT",
+            "WINDIR",
+            "PATH",
+            "PATHEXT",
+            "COMSPEC"
+          ]
+        }
+      },
+      "sitecustomize.py": {
+        "sha256": "1f3bbcc91a9c4c1e298a27ce2ccaacaf227af550c0a77c9e8dfb8ba130b21a2f",
+        "bytes": 7444,
+        "lines": 232,
+        "imports": [
+          "__future__",
+          "json",
+          "os",
+          "socket",
+          "subprocess",
+          "sys",
+          "time"
+        ],
+        "literals": {
+          "_CREDENTIAL_MARKERS": [
+            "API_KEY",
+            "APIKEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "PASSWD",
+            "CREDENTIAL",
+            "AUTH",
+            "COOKIE"
+          ],
+          "_CREDENTIAL_PREFIXES": [
+            "PI_",
+            "MW_",
+            "TIMI_",
+            "TYPESAFE_",
+            "OPENAI_",
+            "ANTHROPIC_",
+            "DASHSCOPE_",
+            "AWS_",
+            "AZURE_",
+            "GCP_"
+          ],
+          "GUARD_INSTALLED": true
+        }
+      },
+      "guard_preflight.py": {
+        "sha256": "6c4da5e7030e3697c39a20180bbec017f22a02151bd325316c7826912cf9633b",
+        "bytes": 4722,
+        "lines": 128,
+        "imports": [
+          "__future__",
+          "json",
+          "os",
+          "socket",
+          "subprocess",
+          "sys"
+        ],
+        "literals": {}
+      },
+      "probe_imports.py": {
+        "sha256": "cac791a30affbd04746df9e0e4a18c20492020ac5f656aad30042cd710c26ee6",
+        "bytes": 2922,
+        "lines": 90,
+        "imports": [
+          "__future__",
+          "hashlib",
+          "importlib",
+          "importlib.util",
+          "json",
+          "os",
+          "sys"
+        ],
+        "literals": {
+          "PRODUCT_MODULES": [
+            "decision",
+            "decision_backends",
+            "decision_points",
+            "decision_lifecycle",
+            "decision_wire",
+            "decision_task_state",
+            "decision_history",
+            "decision_context",
+            "decision_book"
+          ],
+          "TEST_MODULES": [
+            "test_decision_context_lifecycle",
+            "test_decision_task_state"
+          ]
+        }
+      }
+    },
+    "node_ids": {
+      "new_node_ids": [
+        "test_a_refused_request_does_not_swallow_the_later_real_choice",
+        "test_an_identical_repeated_business_request_stays_idempotent",
+        "test_a_different_choice_for_the_same_request_stays_visible",
+        "test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded",
+        "test_a_dp_auto_choice_inside_the_prepared_candidates_is_recorded",
+        "test_executed_and_settled_observations_stay_non_decreasing",
+        "test_a_failed_executed_round_is_never_recorded_as_executed",
+        "test_a_secret_bearing_creation_before_can_be_repeated",
+        "test_a_case_variant_agenticdoc_path_is_refused_in_test_scope",
+        "test_the_exact_agenticdoc_path_is_refused_in_test_scope",
+        "test_the_writer_consumes_the_producers_frozen_prepared_contract"
+      ],
+      "expected_red_node_ids": [
+        "test_a_refused_request_does_not_swallow_the_later_real_choice",
+        "test_a_different_choice_for_the_same_request_stays_visible",
+        "test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded",
+        "test_executed_and_settled_observations_stay_non_decreasing",
+        "test_a_secret_bearing_creation_before_can_be_repeated",
+        "test_a_case_variant_agenticdoc_path_is_refused_in_test_scope"
+      ],
+      "expected_green_node_ids": [
+        "test_an_identical_repeated_business_request_stays_idempotent",
+        "test_a_dp_auto_choice_inside_the_prepared_candidates_is_recorded",
+        "test_a_failed_executed_round_is_never_recorded_as_executed",
+        "test_the_exact_agenticdoc_path_is_refused_in_test_scope",
+        "test_the_writer_consumes_the_producers_frozen_prepared_contract"
+      ],
+      "expected_red_items": 8,
+      "expected_green_items": 6,
+      "uncovered": []
+    }
+  },
+  "problems": [],
+  "ok": true
+}

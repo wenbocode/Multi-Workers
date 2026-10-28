@@ -1,0 +1,10 @@
+﻿baseline (before the first T05e edit, recorded 2026-10-22):
+917706c22b2f9cd6008e1012a9bc14162256b35b52ee35f2178c669ceb1ea8d2  packages/multi-workers/decision.py
+e2140aad87ef4303d1650fd3c7dbcdb061bce648d9f92553bbe2608af54aec04  packages/multi-workers/decision_book.py
+27ccffebb9c37f82ebad3b0ace55d8780b23939532f55c917229837f6c48ee30  packages/multi-workers/decision_points.py
+5214794799ae680d816a6d7acf4ffc8c114899f073653207e25bdfaf3091fff2  packages/multi-workers/mw.py
+
+reconstruct/reverse.py rebuilds these exact bytes (SHA256 verified OK for all four)
+in a temp copy from the current files; red-cold-start-prefix.txt is the RED run of
+the two cold-start tests against that hash-verified pre-fix tree (no working-tree
+mutation, no git checkout/stash).

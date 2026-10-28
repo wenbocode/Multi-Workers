@@ -1,0 +1,83 @@
+# cmd: python -m pytest test_decision_input_contract_migration.py -k real_dp25_arrays_are_scanned or array_scan_reuses or nested_objects_and_arrays or legal_array_item_key or legal_arrays_and_long or secret_scan_is_separate --tb=short -rf
+# cwd: packages/multi-workers
+# started: 2026-10-22T06:49:29Z
+# elapsed_s: 0.9
+
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0
+rootdir: H:\git\Multi-Workers\packages\multi-workers
+configfile: pytest.ini
+plugins: anyio-4.12.1, Faker-40.13.0, respx-0.23.1
+collected 45 items / 36 deselected / 9 selected
+
+test_decision_input_contract_migration.py FFFFFFF..                      [100%]
+
+================================== FAILURES ===================================
+_ test_real_dp25_arrays_are_scanned_and_a_secret_refuses_with_zero_send[escalated_reasons-escalated for sk-t05c-migration-0123456789abcdef] _
+test_decision_input_contract_migration.py:1004: in test_real_dp25_arrays_are_scanned_and_a_secret_refuses_with_zero_send
+    assert _secret_issues(issues) == [("book-secret", f"state.{path}[0]")], (
+E   AssertionError: ('escalated_reasons', [])
+E   assert [] == [('book-secre..._reasons[0]')]
+E     
+E     Right contains one more item: ('book-secret', 'state.escalated_reasons[0]')
+E     Use -v to get more diff
+_ test_real_dp25_arrays_are_scanned_and_a_secret_refuses_with_zero_send[engine_violations-other/m2/unknown Bearer t05d-bearer-token-0123456789] _
+test_decision_input_contract_migration.py:1004: in test_real_dp25_arrays_are_scanned_and_a_secret_refuses_with_zero_send
+    assert _secret_issues(issues) == [("book-secret", f"state.{path}[0]")], (
+E   AssertionError: ('engine_violations', [])
+E   assert [] == [('book-secre...olations[0]')]
+E     
+E     Right contains one more item: ('book-secret', 'state.engine_violations[0]')
+E     Use -v to get more diff
+_ test_array_scan_reuses_the_existing_three_recognition_classes[sk-pattern-use sk-t05c-migration-0123456789abcdef here-None] _
+test_decision_input_contract_migration.py:1061: in test_array_scan_reuses_the_existing_three_recognition_classes
+    assert _secret_issues(issues) == [("book-secret", "state.test.failed_cases[1]")], (
+E   AssertionError: ('sk-pattern', [])
+E   assert [] == [('book-secre...ed_cases[1]')]
+E     
+E     Right contains one more item: ('book-secret', 'state.test.failed_cases[1]')
+E     Use -v to get more diff
+_ test_array_scan_reuses_the_existing_three_recognition_classes[bearer-pattern-call with Bearer t05d-bearer-0123456789abcdef-None] _
+test_decision_input_contract_migration.py:1061: in test_array_scan_reuses_the_existing_three_recognition_classes
+    assert _secret_issues(issues) == [("book-secret", "state.test.failed_cases[1]")], (
+E   AssertionError: ('bearer-pattern', [])
+E   assert [] == [('book-secre...ed_cases[1]')]
+E     
+E     Right contains one more item: ('book-secret', 'state.test.failed_cases[1]')
+E     Use -v to get more diff
+_ test_array_scan_reuses_the_existing_three_recognition_classes[env-known-value-copied t05d-env-known-0123456789abcdef-env2] _
+test_decision_input_contract_migration.py:1061: in test_array_scan_reuses_the_existing_three_recognition_classes
+    assert _secret_issues(issues) == [("book-secret", "state.test.failed_cases[1]")], (
+E   AssertionError: ('env-known-value', [])
+E   assert [] == [('book-secre...ed_cases[1]')]
+E     
+E     Right contains one more item: ('book-secret', 'state.test.failed_cases[1]')
+E     Use -v to get more diff
+__ test_nested_objects_and_arrays_of_arrays_inside_a_legal_array_are_scanned __
+test_decision_input_contract_migration.py:1088: in test_nested_objects_and_arrays_of_arrays_inside_a_legal_array_are_scanned
+    assert _secret_issues(issues) == [
+E   AssertionError: []
+E   assert [] == [('book-secre...es[1].label')]
+E     
+E     Right contains 2 more items, first extra item: ('book-secret', 'state.local_candidates[0][0]')
+E     Use -v to get more diff
+_____ test_a_credential_in_a_legal_array_item_key_is_scanned_without_echo _____
+test_decision_input_contract_migration.py:1129: in test_a_credential_in_a_legal_array_item_key_is_scanned_without_echo
+    assert _secret_issues(issues) == [("book-secret", "state.local_candidates[0].<key>")], (
+E   AssertionError: []
+E   assert [] == [('book-secre...es[0].<key>')]
+E     
+E     Right contains one more item: ('book-secret', 'state.local_candidates[0].<key>')
+E     Use -v to get more diff
+=========================== short test summary info ===========================
+FAILED test_decision_input_contract_migration.py::test_real_dp25_arrays_are_scanned_and_a_secret_refuses_with_zero_send[escalated_reasons-escalated for sk-t05c-migration-0123456789abcdef]
+FAILED test_decision_input_contract_migration.py::test_real_dp25_arrays_are_scanned_and_a_secret_refuses_with_zero_send[engine_violations-other/m2/unknown Bearer t05d-bearer-token-0123456789]
+FAILED test_decision_input_contract_migration.py::test_array_scan_reuses_the_existing_three_recognition_classes[sk-pattern-use sk-t05c-migration-0123456789abcdef here-None]
+FAILED test_decision_input_contract_migration.py::test_array_scan_reuses_the_existing_three_recognition_classes[bearer-pattern-call with Bearer t05d-bearer-0123456789abcdef-None]
+FAILED test_decision_input_contract_migration.py::test_array_scan_reuses_the_existing_three_recognition_classes[env-known-value-copied t05d-env-known-0123456789abcdef-env2]
+FAILED test_decision_input_contract_migration.py::test_nested_objects_and_arrays_of_arrays_inside_a_legal_array_are_scanned
+FAILED test_decision_input_contract_migration.py::test_a_credential_in_a_legal_array_item_key_is_scanned_without_echo
+================= 7 failed, 2 passed, 36 deselected in 0.30s ==================
+
+
+EXIT_red-new-tests=1

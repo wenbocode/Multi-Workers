@@ -1,0 +1,34 @@
+[
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "test_decision_monitor_auto_restart.py"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\packages\\multi-workers",
+    "start_utc": "2026-10-23T18:06:33.949129+00:00",
+    "end_utc": "2026-10-23T18:06:34.618186+00:00",
+    "exit_code": 1
+  },
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "test_decision_monitor_auto_restart_cli.py"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\packages\\multi-workers",
+    "start_utc": "2026-10-23T18:06:34.618646+00:00",
+    "end_utc": "2026-10-23T18:06:36.051167+00:00",
+    "exit_code": 1
+  }
+]

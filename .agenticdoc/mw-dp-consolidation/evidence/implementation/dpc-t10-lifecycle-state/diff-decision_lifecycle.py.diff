@@ -1,0 +1,641 @@
+--- before/decision_lifecycle.py
++++ after/decision_lifecycle.py
+@@ -50,6 +50,31 @@
+ row exists. If that sidecar write fails too, ``error_recorded=False`` says so -
+ the caller/reader must show "missing", not "recorded".
+ 
++Request, PM note and task terminal (T10, additive)
++--------------------------------------------------
++The four feedback words above stay the only feedback vocabulary. Three separate
++facts carry the rest of one round, each in its own kind and with a deterministic
++``event_id`` so a repeated call cannot produce a second effect:
++
++* ``request`` - the frozen ``request_prepared`` result plus the schema-3
++  ``material``/``preparation`` layers it came from. ``available``/``attempts``
++  are transport facts, ``business_decisions``/``choice``/``basis_*`` are the one
++  business decision; a transport success with zero business decisions is stored
++  as a refusal and never as an approval, replay signal or execution permission.
++  The basis is re-checked through :mod:`decision_points` and the catalogue
++  digest is recorded, so "the basis came from this PM preparation" is verifiable.
++* ``note`` - the PM's pre-submission note with its own ``prepared_at``. Only a
++  PM-initiated record may carry it, and it never shares a row with the model's
++  selected basis (AC-007 keeps the two sources separate).
++* ``terminal`` - this task's real terminal observation with its real reason and
++  the post snapshot. It is not ``settled`` and not "done": it requires its own
++  observation, refuses to precede any recorded observation, and no reader may
++  derive it from a settled round.
++
++Both the note and the request may echo the creation fact's before snapshot, but
++only by exact equality: a later "before" (the current state) is refused as a
++backfill. ``None`` and ``[]`` stay distinct in every snapshot that is stored.
++
+ Safety
+ ------
+ Every structural string this writer owns is checked against the injected
+@@ -60,13 +85,17 @@
+ 
+ from __future__ import annotations
+ 
++import datetime
+ import hashlib
++import json
+ import os
+ import pathlib
+ import re
+ from collections.abc import Callable, Mapping, Sequence
+ from dataclasses import dataclass
+ 
++import decision
++import decision_points
+ import decision_task_state
+ import decision_wire
+ 
+@@ -113,6 +142,38 @@
+ #: The only four feedback words this writer emits.
+ STAGES = ("consumed", "executed", "settled", "signoff")
+ 
++#: Required keys of the frozen ``DecisionClient.request_prepared`` result this
++#: writer consumes. A caller cannot hand over a look-alike mapping that lacks
++#: the transport/business split, and extra frozen fields are accepted untouched.
++REQUEST_RESULT_FIELDS = (
++    "dp",
++    "available",
++    "replayed",
++    "choice",
++    "basis_id",
++    "basis_text",
++    "basis_source",
++    "prepared_at",
++    "reason",
++    "attempts",
++    "transport_attempts",
++    "business_decisions",
++)
++
++#: Frozen refusal vocabulary of a prepared request (the transport module owns
++#: the constants; this is the same set, never a new word).
++REQUEST_REASONS = frozenset(decision.REASON_CODES | {decision.REASON_INPUT_INCOMPLETE})
++
++#: The prepared basis of a valid business decision always comes from the PM.
++BASIS_SOURCE = decision_points.BASIS_SOURCE
++
++#: A PM note is authored by the PM before submission; nothing else qualifies.
++NOTE_SOURCE = "pm-prepared"
++
++#: This task's real terminal observation (AC-046 wording). It is not a key/
++#: phase closure and never follows from ``settled``.
++TASK_TERMINALS = ("completed", "incomplete", "blocked")
++
+ RESULT_STATUSES = ("written", "duplicate", "failed")
+ 
+ _KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+@@ -236,6 +297,280 @@
+     if not isinstance(actor_id, str) or not actor_id:
+         _refuse("actor.id", "expected a non-empty declared identity")
+     return actor
++
++
++def _check_timestamp(field: str, value: object) -> str:
++    """Validate an ISO-8601 stamp with an explicit offset; the text is kept as-is.
++
++    The recorded value is the producer's own ``prepared_at``/``observed_at``:
++    it is never normalised and never replaced by "now" (a write-time clock is
++    not a preparation time).
++    """
++    if not isinstance(value, str) or not value or "T" not in value:
++        _refuse(field, "expected an ISO-8601 timestamp with an explicit offset")
++    try:
++        parsed = datetime.datetime.fromisoformat(
++            value[:-1] + "+00:00" if value.endswith("Z") else value
++        )
++    except ValueError:
++        _refuse(field, "expected an ISO-8601 timestamp")
++    if parsed.tzinfo is None:
++        _refuse(field, "expected an explicit timezone offset (Z or +hh:mm)")
++    return value
++
++
++def _bounded_text(store: "LifecycleStore", field: str, text: object, limit: int) -> str:
++    """Redact first, then refuse an over-long value instead of clipping it.
++
++    A clipped note/reason looks complete while the tail is gone ("不截断理由"),
++    so the storage bound is a refusal, not a truncation. The redacted form is
++    what the store would persist, so the check runs on exactly that text.
++    """
++    if not isinstance(text, str) or not text.strip():
++        _refuse(field, "expected non-empty text")
++    try:
++        redacted = store.redact.redact(text).text
++    except Exception:  # noqa: BLE001 - a broken redactor proves nothing
++        raise LifecycleInputError(f"{field} could not be proven secret-free") from None
++    size = len(redacted.encode("utf-8"))
++    if size > limit:
++        _refuse(field, f"is {size} bytes, over the {limit}-byte storage bound; it is not truncated")
++    return redacted
++
++
++def _stable_event_id(prefix: str, *parts: str) -> str:
++    """Deterministic idempotency key: one fact per real subject, never two."""
++    digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
++    return f"{prefix}-{digest[:32]}"
++
++
++def _ledger_facts(
++    store: "LifecycleStore", meta: "DecisionMeta"
++) -> tuple[dict[str, object], list[dict[str, object]]]:
++    """The same task's single creation fact plus the readable ledger rows.
++
++    Raises :class:`LifecycleInputError` when the creation association is not
++    provable (damaged ledger, no creation fact, or a fact of another task). An
++    unreadable ledger propagates ``OSError``: "cannot read" must never look like
++    "nothing recorded".
++    """
++    prior = read_lifecycle(store)
++    if any(
++        (
++            prior.stats.bad_json,
++            prior.stats.bad_utf8,
++            prior.stats.unknown_schema,
++            prior.stats.oversized_line,
++            prior.stats.incomplete_tail,
++        )
++    ):
++        _refuse("logical_id", "creation association is not provable on a damaged ledger")
++    starts = [
++        row
++        for row in prior.events
++        if row.get("kind") == "record-start" and row.get("logical_id") == meta.logical_id
++    ]
++    if len(starts) != 1 or starts[0].get("key") != meta.key or starts[0].get("task_key") != meta.task_key:
++        _refuse("logical_id", "requires the same task's creation fact")
++    return starts[0], prior.events
++
++
++def _check_before(
++    start: Mapping[str, object], task_before: dict[str, object] | None
++) -> dict[str, object] | None:
++    """A later fact may repeat the recorded before, never replace it.
++
++    The creation fact was written *before* the transport call, so its snapshot is
++    the only legal before. Passing a different snapshot (typically the current
++    state read later) is a backfill and is refused; passing none keeps "not
++    recorded" honest instead of inventing a value.
++    """
++    try:
++        given = decision_task_state.validate_task_state(task_before)
++        stored = decision_task_state.validate_task_state(start.get("task_before"))
++    except decision_task_state.TaskStateInputError as exc:
++        raise LifecycleInputError(str(exc)) from None
++    if given is None:
++        return None
++    if stored is None or not decision_task_state.same_snapshot(stored, given):
++        _refuse(
++            "task_before",
++            "must repeat the creation fact's recorded before snapshot; a later before cannot be backfilled",
++        )
++    return given
++
++
++def _check_parent_ref(
++    parent_ref: str | None,
++    decision_id: str,
++    meta: "DecisionMeta",
++    events: Sequence[Mapping[str, object]],
++) -> str | None:
++    """A successor link must point at a decision this ledger really recorded.
++
++    The parent and the successor belong to the same key (one gate's steering is
++    the same key's next request); an unrecorded or cross-key reference is refused
++    instead of stored as an unverifiable link. The parent's own rows are never
++    rewritten, so the gate selection is not evidence that the parent released.
++    """
++    if parent_ref is None:
++        return None
++    parent_ref = _check_decision_id("parent_ref", parent_ref)
++    if parent_ref == decision_id:
++        _refuse("parent_ref", "a decision cannot be its own parent")
++    rows = [row for row in events if row.get("decision_id") == parent_ref]
++    if not rows:
++        _refuse("parent_ref", "must name a decision already recorded in this ledger")
++    keys = {row.get("key") for row in rows if isinstance(row.get("key"), str)}
++    if keys and meta.key not in keys:
++        _refuse("parent_ref", "must belong to the same key as the successor record")
++    return parent_ref
++
++
++def _count(field: str, value: object) -> int:
++    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
++        _refuse(field, "expected a non-negative integer")
++    return value
++
++
++def _request_fields(result: object) -> dict[str, object]:
++    """Validate the frozen prepared-request result and the transport/business split.
++
++    The pair is decoded once: ``available``/``attempts`` are wire facts, and a
++    business choice only exists when ``business_decisions == 1``. A transport
++    success with zero business decisions therefore stays a refusal (with its
++    frozen reason) and can never be read as an approval, a replay signal or an
++    execution permission.
++    """
++    if not isinstance(result, Mapping):
++        _refuse("result", "expected the frozen prepared-request result mapping")
++    missing = [name for name in REQUEST_RESULT_FIELDS if name not in result]
++    if missing:
++        _refuse("result", f"missing prepared-request field(s) {missing}")
++    available = result["available"]
++    replayed = result["replayed"]
++    if not isinstance(available, bool) or not isinstance(replayed, bool):
++        _refuse("result", "available/replayed must be booleans")
++    business = _count("business_decisions", result["business_decisions"])
++    if business > 1:
++        _refuse("business_decisions", "expected 0 or 1 for one prepared request")
++    attempts = _count("attempts", result["attempts"])
++    transport_attempts = _count("transport_attempts", result["transport_attempts"])
++    dp = _check_token("dp", result["dp"])
++    prepared_at = _check_timestamp("prepared_at", result["prepared_at"])
++    reason = result["reason"]
++    if reason is not None:
++        reason = _check_token("reason", reason)
++        if reason not in REQUEST_REASONS:
++            _refuse("reason", "is not in the frozen prepared-request reason vocabulary")
++    choice = result["choice"]
++    basis_id = result["basis_id"]
++    basis_text = result["basis_text"]
++    basis_source = result["basis_source"]
++
++    if business == 0:
++        if choice is not None or basis_id is not None or basis_text is not None or basis_source is not None:
++            _refuse(
++                "choice",
++                "a request without a valid business decision cannot claim a choice or a basis",
++            )
++        if replayed:
++            # A replay answers from the recorded decision: it is neither a new
++            # business decision nor a failure, and it sends nothing.
++            if reason is not None:
++                _refuse("reason", "a replayed request carries no failure reason")
++            if transport_attempts != 0 or attempts != 0:
++                _refuse("transport_attempts", "a replayed request makes no transport attempt")
++        elif reason is None:
++            _refuse("reason", "a request without a business decision must record its frozen reason")
++    else:
++        if not available:
++            _refuse("available", "a valid business decision requires an available transport")
++        if replayed:
++            _refuse("replayed", "a replay is not a new business decision")
++        if attempts < 1:
++            _refuse("attempts", "a valid business decision requires a real request attempt")
++        if reason is not None:
++            _refuse("reason", "a valid business decision cannot also carry a failure reason")
++        choice = _check_token("choice", choice)
++        basis_id = _check_token("basis_id", basis_id)
++        if not isinstance(basis_text, str) or not basis_text.strip():
++            _refuse("basis_text", "a valid business decision requires the selected basis text")
++        if basis_source != BASIS_SOURCE:
++            _refuse("basis_source", f"expected {BASIS_SOURCE!r} (the PM-prepared catalog)")
++    return {
++        "dp": dp,
++        "available": available,
++        "replayed": replayed,
++        "choice": choice,
++        "basis_id": basis_id,
++        "basis_text": basis_text,
++        "basis_source": basis_source,
++        "prepared_at": prepared_at,
++        "reason": reason,
++        "attempts": attempts,
++        "transport_attempts": transport_attempts,
++        "business_decisions": business,
++    }
++
++
++def _preparation_provenance(
++    store: "LifecycleStore", fields: Mapping[str, object], material: object, preparation: object
++) -> str:
++    """Re-validate the schema-3 ``preparation``/``material`` pair via the authority.
++
++    The single source of the preparation contract is :mod:`decision_points`:
++    this writer does not carry a second copy of the catalogue rules. It adds the
++    two facts the writer owns - the result's ``prepared_at`` must be the
++    preparation's own stamp (no write-time clock), and the recorded
++    ``basis_text`` must be the selected catalogue item's text (never free text
++    from the model or the transport). Returns the catalogue digest.
++    """
++    if not isinstance(preparation, Mapping):
++        _refuse("preparation", f"expected the prepared object {list(decision_points.PREPARATION_KEYS)}")
++    if not isinstance(material, Mapping) or not material:
++        _refuse("material", "a valid business decision requires the material it was prepared from")
++    try:
++        issues = decision_points.preparation_issues(
++            str(fields["dp"]),
++            preparation,
++            material,
++            choice=fields["choice"],
++            basis_id=fields["basis_id"],
++        )
++    except decision.DecisionInputError:
++        _refuse("dp", "is not an active eight-entry decision point")
++    if issues:
++        name, rule = issues[0]
++        # The authority's message is caller-derived text (it can name
++        # caller-chosen preparation keys), so it is echoed only when the injected
++        # redactor proves it safe; otherwise only the field name is reported.
++        if store.redact is not None and store.redact.redact(rule).hits:
++            rule = "does not satisfy the prepared-basis contract; the value is withheld"
++        _refuse(name, rule)
++    if preparation.get("prepared_at") != fields["prepared_at"]:
++        _refuse(
++            "prepared_at",
++            "must be the preparation's recorded prepared_at; the write clock is not a preparation time",
++        )
++    catalog = preparation.get("basis_catalog")
++    selected = next(
++        (
++            item
++            for item in catalog
++            if isinstance(item, Mapping) and item.get("id") == fields["basis_id"]
++        ),
++        None,
++    )
++    if selected is None or selected.get("text") != fields["basis_text"]:
++        _refuse("basis_text", "must be the selected prepared item's text, not caller-provided prose")
++    try:
++        body = json.dumps(
++            preparation, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
++        )
++    except (TypeError, ValueError):
++        _refuse("preparation", "must be serialisable (canonical digest for provenance)")
++    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -908,6 +1243,268 @@
+ 
+ 
+ # ---------------------------------------------------------------------------
++# T10 facts: PM note, real request with basis provenance, task terminal
++# ---------------------------------------------------------------------------
++
++
++def record_note(
++    store: LifecycleStore,
++    meta: DecisionMeta,
++    *,
++    decision_id: str,
++    pm_note: str,
++    prepared_at: str,
++    parent_ref: str | None = None,
++    task_before: dict[str, object] | None = None,
++    actor: tuple[str, str] | None = None,
++    event_id: str | None = None,
++) -> LifecycleResult:
++    """Store the PM's pre-submission note as its own fact (spec AC-007).
++
++    Only a PM-initiated record may carry a PM note: a coding/research/review
++    record (or an ``unknown`` initiator) is refused instead of impersonating the
++    PM. ``prepared_at`` is the note's own pre-submission time and is required -
++    the write clock is never used as a substitute. The note never shares a row
++    with the model's selected basis, so the two sources stay separable.
++    """
++    if not isinstance(meta, DecisionMeta):
++        _refuse("meta", "expected a DecisionMeta")
++    if meta.initiator_role != "pm":
++        _refuse("initiator_role", "a PM note requires a PM-initiated record")
++    decision_id = _check_decision_id("decision_id", decision_id)
++    prepared_at = _check_timestamp("prepared_at", prepared_at)
++    text = _bounded_text(store, "pm_note", pm_note, decision_wire.NOTE_TEXT_BYTES)
++    actor = _check_actor(actor)
++    start, events = _ledger_facts(store, meta)
++    before = _check_before(start, task_before)
++    parent_ref = _check_parent_ref(parent_ref, decision_id, meta, events)
++    if event_id is not None:
++        event_id = _check_token("event_id", event_id)
++    else:
++        event_id = _stable_event_id("nt", meta.logical_id, prepared_at)
++    for field, value in (
++        ("key", meta.key),
++        ("task_key", meta.task_key),
++        ("logical_id", meta.logical_id),
++        ("retry_of", meta.retry_of),
++        ("decision_id", decision_id),
++        ("prepared_at", prepared_at),
++        ("parent_ref", parent_ref),
++        ("event_id", event_id),
++    ):
++        _guard_secret(store, field, value)
++
++    scope = store._scope(
++        decision_id=decision_id, key=meta.key, task_key=meta.task_key, actor=actor
++    )
++    event = decision_wire.note_event(
++        scope,
++        logical_id=meta.logical_id,
++        pm_note=text,
++        prepared_at=prepared_at,
++        note_source=NOTE_SOURCE,
++        parent_ref=parent_ref,
++        task_before=before,
++        event_id=event_id,
++    )
++    return _append(
++        store, meta, stage="note", scope=scope, event=event, decision_id=decision_id
++    )
++
++
++def record_request(
++    store: LifecycleStore,
++    meta: DecisionMeta,
++    *,
++    decision_id: str,
++    result: Mapping[str, object],
++    material: Mapping[str, object] | None = None,
++    preparation: Mapping[str, object] | None = None,
++    parent_ref: str | None = None,
++    task_before: dict[str, object] | None = None,
++    actor: tuple[str, str] | None = None,
++    event_id: str | None = None,
++) -> LifecycleResult:
++    """Store the one real prepared request (transport, choice and basis apart).
++
++    The input is the frozen :meth:`decision.DecisionClient.request_prepared`
++    result plus the schema-3 ``material``/``preparation`` layers it was prepared
++    from. It is *not* an approval: ``available``/``attempts`` are wire facts,
++    ``business_decisions``/``choice`` are the single business decision, and a
++    transport success with zero business decisions is recorded as a refusal
++    (its frozen ``reason``, no choice, no basis). A replayed result records no
++    new business decision and no transport attempt.
++
++    Basis provenance is re-checked through :mod:`decision_points` (the single
++    preparation authority) and the catalogue digest is recorded, so a reader can
++    join this row back to the exact prepared revision. ``basis_text`` is stored
++    whole or refused - never clipped.
++    """
++    if not isinstance(meta, DecisionMeta):
++        _refuse("meta", "expected a DecisionMeta")
++    decision_id = _check_decision_id("decision_id", decision_id)
++    fields = _request_fields(result)
++    try:
++        decision_points.require_active_dp(str(fields["dp"]))
++    except decision.DecisionInputError:
++        _refuse("dp", "is not an active eight-entry decision point")
++    if not decision_id.startswith(str(fields["dp"]) + ":"):
++        _refuse("dp", "does not match the decision_id prefix")
++    basis_catalog_sha256: str | None = None
++    basis_text: str | None = None
++    if fields["business_decisions"] == 1:
++        basis_catalog_sha256 = _preparation_provenance(store, fields, material, preparation)
++        basis_text = _bounded_text(
++            store, "basis_text", fields["basis_text"], decision_wire.BASIS_TEXT_BYTES
++        )
++    elif preparation is not None:
++        # A refused request can still cite the preparation it attempted; only
++        # the stamp is provable without the material, and no basis is adopted.
++        if not isinstance(preparation, Mapping):
++            _refuse("preparation", f"expected the prepared object {list(decision_points.PREPARATION_KEYS)}")
++        if preparation.get("prepared_at") != fields["prepared_at"]:
++            _refuse("prepared_at", "must be the preparation's recorded prepared_at")
++    actor = _check_actor(actor)
++    start, events = _ledger_facts(store, meta)
++    before = _check_before(start, task_before)
++    parent_ref = _check_parent_ref(parent_ref, decision_id, meta, events)
++    if event_id is not None:
++        event_id = _check_token("event_id", event_id)
++    else:
++        event_id = _stable_event_id(
++            "rq", meta.logical_id, str(fields["dp"]), parent_ref or "-"
++        )
++    for field, value in (
++        ("key", meta.key),
++        ("task_key", meta.task_key),
++        ("logical_id", meta.logical_id),
++        ("retry_of", meta.retry_of),
++        ("decision_id", decision_id),
++        ("choice", fields["choice"] if isinstance(fields["choice"], str) else None),
++        ("basis_id", fields["basis_id"] if isinstance(fields["basis_id"], str) else None),
++        ("parent_ref", parent_ref),
++        ("event_id", event_id),
++    ):
++        _guard_secret(store, field, value)
++
++    scope = store._scope(
++        decision_id=decision_id,
++        dp=str(fields["dp"]),
++        key=meta.key,
++        task_key=meta.task_key,
++        actor=actor,
++    )
++    event = decision_wire.request_event(
++        scope,
++        logical_id=meta.logical_id,
++        dp=str(fields["dp"]),
++        available=bool(fields["available"]),
++        replayed=bool(fields["replayed"]),
++        choice=fields["choice"] if isinstance(fields["choice"], str) else None,
++        basis_id=fields["basis_id"] if isinstance(fields["basis_id"], str) else None,
++        basis_text=basis_text,
++        basis_source=fields["basis_source"] if isinstance(fields["basis_source"], str) else None,
++        prepared_at=str(fields["prepared_at"]),
++        basis_catalog_sha256=basis_catalog_sha256,
++        business_decisions=int(fields["business_decisions"]),
++        transport_attempts=int(fields["transport_attempts"]),
++        attempts=int(fields["attempts"]),
++        reason=fields["reason"] if isinstance(fields["reason"], str) else None,
++        parent_ref=parent_ref,
++        task_before=before,
++        event_id=event_id,
++    )
++    return _append(
++        store, meta, stage="request", scope=scope, event=event, decision_id=decision_id
++    )
++
++
++def record_terminal(
++    store: LifecycleStore,
++    meta: DecisionMeta,
++    *,
++    decision_id: str,
++    terminal: str,
++    reason: str,
++    task_after: dict[str, object] | None,
++    evidence: str | None = None,
++    parent_ref: str | None = None,
++    actor: tuple[str, str] | None = None,
++    event_id: str | None = None,
++) -> LifecycleResult:
++    """Store this task's real terminal observation (never derived from settled).
++
++    The stamp is the producer's own ``observed_at``, it must not precede the
++    creation fact's before snapshot nor any already recorded after snapshot, and
++    the real reason is required. A terminal fact does not close the key, phase,
++    claim or sign-off: a ``settled`` row alone never produces one.
++    """
++    if not isinstance(meta, DecisionMeta):
++        _refuse("meta", "expected a DecisionMeta")
++    if terminal not in TASK_TERMINALS:
++        _refuse("terminal", f"expected one of {TASK_TERMINALS}")
++    if meta.task_key is None:
++        _refuse("task_key", "a task terminal requires an associated task")
++    decision_id = _check_decision_id("decision_id", decision_id)
++    note = _bounded_text(store, "reason", reason, decision_wire.REASON_LIMIT)
++    evidence_text: str | None = None
++    if evidence is not None:
++        # Same bound the managed store applies to ``lifecycle.evidence``: the
++        # value is refused over the limit, never silently clipped afterwards.
++        evidence_text = _bounded_text(
++            store, "evidence", evidence, decision_wire.METADATA_TEXT_LIMIT
++        )
++    after = decision_task_state.validate_task_state(task_after)
++    if after is None:
++        _refuse("task_after", "a task terminal requires the real post observation")
++    actor = _check_actor(actor)
++    start, events = _ledger_facts(store, meta)
++    try:
++        stored_before = decision_task_state.validate_task_state(start.get("task_before"))
++        decision_task_state.validate_observation_order(stored_before, after)
++        for row in events:
++            if row.get("logical_id") != meta.logical_id:
++                continue
++            prior = decision_task_state.validate_task_state(row.get("task_after"))
++            if prior is not None:
++                decision_task_state.validate_observation_order(prior, after)
++    except decision_task_state.TaskStateInputError as exc:
++        raise LifecycleInputError(str(exc)) from None
++    parent_ref = _check_parent_ref(parent_ref, decision_id, meta, events)
++    if event_id is not None:
++        event_id = _check_token("event_id", event_id)
++    else:
++        event_id = _stable_event_id("tm", meta.logical_id, terminal)
++    for field, value in (
++        ("key", meta.key),
++        ("task_key", meta.task_key),
++        ("logical_id", meta.logical_id),
++        ("retry_of", meta.retry_of),
++        ("decision_id", decision_id),
++        ("parent_ref", parent_ref),
++        ("event_id", event_id),
++    ):
++        _guard_secret(store, field, value)
++
++    scope = store._scope(
++        decision_id=decision_id, key=meta.key, task_key=meta.task_key, actor=actor
++    )
++    event = decision_wire.terminal_event(
++        scope,
++        logical_id=meta.logical_id,
++        terminal=terminal,
++        reason=note,
++        evidence=evidence_text,
++        parent_ref=parent_ref,
++        task_after=after,
++        event_id=event_id,
++    )
++    return _append(
++        store, meta, stage="terminal", scope=scope, event=event, decision_id=decision_id
++    )
++
++
++# ---------------------------------------------------------------------------
+ # Read side (the same managed ledger)
+ # ---------------------------------------------------------------------------
+ 

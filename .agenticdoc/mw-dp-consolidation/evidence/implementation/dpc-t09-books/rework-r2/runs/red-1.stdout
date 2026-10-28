@@ -1,0 +1,739 @@
+........................................................................ [ 54%]
+.....................................FFFFFFFFFFFF..F.F.....              [100%]
+================================== FAILURES ===================================
+___ test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue[null] ____
+
+value = None, json_kind = 'null'
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_stdin_refuses_every_non_o0/project')
+
+    @pytest.mark.parametrize(
+        ("value", "json_kind"),
+        [
+            (None, "null"),
+            ([], "array"),
+            ([{"schema_version": 3, "decision_point": "dp-w-type"}], "array"),
+            (True, "boolean"),
+            (17, "integer"),
+            (3.14, "number"),
+        ],
+        ids=["null", "empty-array", "array-of-books", "boolean", "integer", "number"],
+    )
+    def test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue(
+        value: object, json_kind: str, project: pathlib.Path
+    ) -> None:
+        with mock.patch.object(books, "load_book", _no_file_authority), mock.patch.object(
+            books, "_read_json", _no_file_authority
+        ), mock.patch.object(books, "book_sha256", _no_file_authority):
+>           prepared, issues = books.prepare_stdin_request(
+                json.dumps(value),
+                project_dir=project,
+                repo_root=project,
+                limits=GENEROUS_LIMITS,
+            )
+
+test_decision_context_contract.py:1391: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision_book.py:1432: in prepare_stdin_request
+    return prepare_request(
+decision_book.py:1363: in prepare_request
+    path = pathlib.Path(source)
+           ^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <[AttributeError("'pathlib.WindowsPath' object has no attribute '_raw_paths'") raised in repr()] WindowsPath object at 0x17e907795b0>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:150: TypeError
+_ test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue[empty-array] _
+
+value = [], json_kind = 'array'
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_stdin_refuses_every_non_o1/project')
+
+    @pytest.mark.parametrize(
+        ("value", "json_kind"),
+        [
+            (None, "null"),
+            ([], "array"),
+            ([{"schema_version": 3, "decision_point": "dp-w-type"}], "array"),
+            (True, "boolean"),
+            (17, "integer"),
+            (3.14, "number"),
+        ],
+        ids=["null", "empty-array", "array-of-books", "boolean", "integer", "number"],
+    )
+    def test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue(
+        value: object, json_kind: str, project: pathlib.Path
+    ) -> None:
+        with mock.patch.object(books, "load_book", _no_file_authority), mock.patch.object(
+            books, "_read_json", _no_file_authority
+        ), mock.patch.object(books, "book_sha256", _no_file_authority):
+>           prepared, issues = books.prepare_stdin_request(
+                json.dumps(value),
+                project_dir=project,
+                repo_root=project,
+                limits=GENEROUS_LIMITS,
+            )
+
+test_decision_context_contract.py:1391: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision_book.py:1432: in prepare_stdin_request
+    return prepare_request(
+decision_book.py:1363: in prepare_request
+    path = pathlib.Path(source)
+           ^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <[AttributeError("'pathlib.WindowsPath' object has no attribute '_raw_paths'") raised in repr()] WindowsPath object at 0x17e90636180>
+args = ([],), paths = [], arg = [], path = []
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'list'
+
+C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:150: TypeError
+_ test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue[array-of-books] _
+
+value = [{'decision_point': 'dp-w-type', 'schema_version': 3}]
+json_kind = 'array'
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_stdin_refuses_every_non_o2/project')
+
+    @pytest.mark.parametrize(
+        ("value", "json_kind"),
+        [
+            (None, "null"),
+            ([], "array"),
+            ([{"schema_version": 3, "decision_point": "dp-w-type"}], "array"),
+            (True, "boolean"),
+            (17, "integer"),
+            (3.14, "number"),
+        ],
+        ids=["null", "empty-array", "array-of-books", "boolean", "integer", "number"],
+    )
+    def test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue(
+        value: object, json_kind: str, project: pathlib.Path
+    ) -> None:
+        with mock.patch.object(books, "load_book", _no_file_authority), mock.patch.object(
+            books, "_read_json", _no_file_authority
+        ), mock.patch.object(books, "book_sha256", _no_file_authority):
+>           prepared, issues = books.prepare_stdin_request(
+                json.dumps(value),
+                project_dir=project,
+                repo_root=project,
+                limits=GENEROUS_LIMITS,
+            )
+
+test_decision_context_contract.py:1391: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision_book.py:1432: in prepare_stdin_request
+    return prepare_request(
+decision_book.py:1363: in prepare_request
+    path = pathlib.Path(source)
+           ^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <[AttributeError("'pathlib.WindowsPath' object has no attribute '_raw_paths'") raised in repr()] WindowsPath object at 0x17e906368f0>
+args = ([{'decision_point': 'dp-w-type', 'schema_version': 3}],), paths = []
+arg = [{'decision_point': 'dp-w-type', 'schema_version': 3}]
+path = [{'decision_point': 'dp-w-type', 'schema_version': 3}]
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'list'
+
+C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:150: TypeError
+__ test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue[boolean] __
+
+value = True, json_kind = 'boolean'
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_stdin_refuses_every_non_o3/project')
+
+    @pytest.mark.parametrize(
+        ("value", "json_kind"),
+        [
+            (None, "null"),
+            ([], "array"),
+            ([{"schema_version": 3, "decision_point": "dp-w-type"}], "array"),
+            (True, "boolean"),
+            (17, "integer"),
+            (3.14, "number"),
+        ],
+        ids=["null", "empty-array", "array-of-books", "boolean", "integer", "number"],
+    )
+    def test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue(
+        value: object, json_kind: str, project: pathlib.Path
+    ) -> None:
+        with mock.patch.object(books, "load_book", _no_file_authority), mock.patch.object(
+            books, "_read_json", _no_file_authority
+        ), mock.patch.object(books, "book_sha256", _no_file_authority):
+>           prepared, issues = books.prepare_stdin_request(
+                json.dumps(value),
+                project_dir=project,
+                repo_root=project,
+                limits=GENEROUS_LIMITS,
+            )
+
+test_decision_context_contract.py:1391: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision_book.py:1432: in prepare_stdin_request
+    return prepare_request(
+decision_book.py:1363: in prepare_request
+    path = pathlib.Path(source)
+           ^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <[AttributeError("'pathlib.WindowsPath' object has no attribute '_raw_paths'") raised in repr()] WindowsPath object at 0x17e907794d0>
+args = (True,), paths = [], arg = True, path = True
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'bool'
+
+C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:150: TypeError
+__ test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue[integer] __
+
+value = 17, json_kind = 'integer'
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_stdin_refuses_every_non_o4/project')
+
+    @pytest.mark.parametrize(
+        ("value", "json_kind"),
+        [
+            (None, "null"),
+            ([], "array"),
+            ([{"schema_version": 3, "decision_point": "dp-w-type"}], "array"),
+            (True, "boolean"),
+            (17, "integer"),
+            (3.14, "number"),
+        ],
+        ids=["null", "empty-array", "array-of-books", "boolean", "integer", "number"],
+    )
+    def test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue(
+        value: object, json_kind: str, project: pathlib.Path
+    ) -> None:
+        with mock.patch.object(books, "load_book", _no_file_authority), mock.patch.object(
+            books, "_read_json", _no_file_authority
+        ), mock.patch.object(books, "book_sha256", _no_file_authority):
+>           prepared, issues = books.prepare_stdin_request(
+                json.dumps(value),
+                project_dir=project,
+                repo_root=project,
+                limits=GENEROUS_LIMITS,
+            )
+
+test_decision_context_contract.py:1391: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision_book.py:1432: in prepare_stdin_request
+    return prepare_request(
+decision_book.py:1363: in prepare_request
+    path = pathlib.Path(source)
+           ^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <[AttributeError("'pathlib.WindowsPath' object has no attribute '_raw_paths'") raised in repr()] WindowsPath object at 0x17e909aec70>
+args = (17,), paths = [], arg = 17, path = 17
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'int'
+
+C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:150: TypeError
+__ test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue[number] ___
+
+value = 3.14, json_kind = 'number'
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_stdin_refuses_every_non_o5/project')
+
+    @pytest.mark.parametrize(
+        ("value", "json_kind"),
+        [
+            (None, "null"),
+            ([], "array"),
+            ([{"schema_version": 3, "decision_point": "dp-w-type"}], "array"),
+            (True, "boolean"),
+            (17, "integer"),
+            (3.14, "number"),
+        ],
+        ids=["null", "empty-array", "array-of-books", "boolean", "integer", "number"],
+    )
+    def test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue(
+        value: object, json_kind: str, project: pathlib.Path
+    ) -> None:
+        with mock.patch.object(books, "load_book", _no_file_authority), mock.patch.object(
+            books, "_read_json", _no_file_authority
+        ), mock.patch.object(books, "book_sha256", _no_file_authority):
+>           prepared, issues = books.prepare_stdin_request(
+                json.dumps(value),
+                project_dir=project,
+                repo_root=project,
+                limits=GENEROUS_LIMITS,
+            )
+
+test_decision_context_contract.py:1391: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision_book.py:1432: in prepare_stdin_request
+    return prepare_request(
+decision_book.py:1363: in prepare_request
+    path = pathlib.Path(source)
+           ^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <[AttributeError("'pathlib.WindowsPath' object has no attribute '_raw_paths'") raised in repr()] WindowsPath object at 0x17e909aca50>
+args = (3.14,), paths = [], arg = 3.14, path = 3.14
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'float'
+
+C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:150: TypeError
+____________ test_stdin_json_string_is_data_and_never_a_file_path _____________
+
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_stdin_json_string_is_data0/project')
+
+    def test_stdin_json_string_is_data_and_never_a_file_path(
+        project: pathlib.Path,
+    ) -> None:
+        book = legal_book("dp-w-type")
+        path = project / "book.json"
+        path.write_text(json.dumps(book), encoding="utf-8")
+        with mock.patch.object(books, "load_book", _no_file_authority), mock.patch.object(
+            books, "_read_json", _no_file_authority
+        ), mock.patch.object(books, "book_sha256", _no_file_authority):
+>           prepared, issues = books.prepare_stdin_request(
+                json.dumps(str(path)),
+                project_dir=project,
+                repo_root=project,
+                limits=GENEROUS_LIMITS,
+            )
+
+test_decision_context_contract.py:1415: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision_book.py:1432: in prepare_stdin_request
+    return prepare_request(
+decision_book.py:1365: in prepare_request
+    book = load_book(path)
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+_args = (WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_stdin_json_string_is_data0/project/book.json'),)
+_kwargs = {}
+
+    def _no_file_authority(*_args: object, **_kwargs: object) -> None:
+>       raise AssertionError("a non-object stdin payload must never load a file")
+E       AssertionError: a non-object stdin payload must never load a file
+
+test_decision_context_contract.py:1370: AssertionError
+______ test_an_invalid_book_file_report_is_serializable_and_still_failed ______
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_an_invalid_book_file_repo0')
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_an_invalid_book_file_repo0/project')
+
+    def test_an_invalid_book_file_report_is_serializable_and_still_failed(
+        tmp_path: pathlib.Path, project: pathlib.Path
+    ) -> None:
+        legacy = tmp_path / "legacy.json"
+        legacy.write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "decision_point": "dp-w-type",
+                    "state": material_for("dp-w-type"),
+                }
+            ),
+            encoding="utf-8",
+        )
+        report = books.check_book_file(
+            legacy, project_dir=project, repo_root=project, limits=GENEROUS_LIMITS
+        )
+>       data = report.as_dict()
+               ^^^^^^^^^^^^^^^^
+
+test_decision_context_contract.py:1451: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = BookReport(path='H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t09-books\\re...try book carries 'material' (business facts) and 'preparation' (basis_catalog/prepared_at) instead of one 'state'")]}])
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "sha256": self.sha256,
+            "ok": self.ok,
+            "books": [
+                {
+                    "label": book["label"],
+                    "decision_point": book["decision_point"],
+>                   "ok": book["ok"],
+                          ^^^^^^^^^^
+                    "issues": [issue.as_dict() for issue in book["issues"]],
+                }
+                for book in self.books
+            ],
+            "issues": [issue.as_dict() for issue in self.issues],
+        }
+E       KeyError: 'ok'
+
+decision_book.py:199: KeyError
+_______ test_schema_refusals_never_echo_a_known_secret[unknown-top-key] _______
+
+layer = 'unknown-top-key'
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_schema_refusals_never_ech0/project')
+
+    @pytest.mark.parametrize(
+        "layer",
+        [
+            "unknown-top-key",
+            "unknown-notes-key",
+            "bad-version",
+            "unknown-dp",
+            "unknown-meta-key",
+            "unknown-context-key",
+        ],
+    )
+    def test_schema_refusals_never_echo_a_known_secret(
+        layer: str, project: pathlib.Path
+    ) -> None:
+        known = KNOWN_SECRET
+        redactor = decision.known_secret_redactor(extra_secrets=[known])
+        book = legal_book("dp-w-type")
+        if layer == "unknown-top-key":
+            book[known] = "x"
+            expected = ("book-schema", "book", "unknown top-level keys")
+        elif layer == "unknown-notes-key":
+            book["notes"][known] = "x"
+            expected = ("book-schema", "notes", "unknown notes keys")
+        elif layer == "bad-version":
+            book["schema_version"] = known
+            expected = ("book-schema", "schema_version", "must be 3")
+        elif layer == "unknown-dp":
+            book["decision_point"] = known
+            expected = ("book-schema", "decision_point", "unknown decision point id")
+        elif layer == "unknown-meta-key":
+            book["meta"][known] = "x"
+            expected = ("book-meta", "meta", "unknown meta keys")
+        else:
+            book["context"] = {known: "x"}
+            expected = ("book-context", "context.<key>", "slot not allowed")
+        issues = check(book, project, redactor=redactor)
+        code, path, fragment = expected
+        assert issues, layer
+        assert has_issue(issues, path, fragment), (layer, rendered(issues))
+        assert code in codes(issues), (layer, rendered(issues))
+>       assert all(known not in issue.format() for issue in issues), rendered(issues)
+E       AssertionError: ["book-schema book: unknown top-level keys ['pm-known-opaque-business-secret']"]
+E       assert False
+E        +  where False = all(<generator object test_schema_refusals_never_echo_a_known_secret.<locals>.<genexpr> at 0x0000017E9009E960>)
+
+test_decision_context_contract.py:1510: AssertionError
+______ test_schema_refusals_never_echo_a_known_secret[unknown-notes-key] ______
+
+layer = 'unknown-notes-key'
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_schema_refusals_never_ech1/project')
+
+    @pytest.mark.parametrize(
+        "layer",
+        [
+            "unknown-top-key",
+            "unknown-notes-key",
+            "bad-version",
+            "unknown-dp",
+            "unknown-meta-key",
+            "unknown-context-key",
+        ],
+    )
+    def test_schema_refusals_never_echo_a_known_secret(
+        layer: str, project: pathlib.Path
+    ) -> None:
+        known = KNOWN_SECRET
+        redactor = decision.known_secret_redactor(extra_secrets=[known])
+        book = legal_book("dp-w-type")
+        if layer == "unknown-top-key":
+            book[known] = "x"
+            expected = ("book-schema", "book", "unknown top-level keys")
+        elif layer == "unknown-notes-key":
+            book["notes"][known] = "x"
+            expected = ("book-schema", "notes", "unknown notes keys")
+        elif layer == "bad-version":
+            book["schema_version"] = known
+            expected = ("book-schema", "schema_version", "must be 3")
+        elif layer == "unknown-dp":
+            book["decision_point"] = known
+            expected = ("book-schema", "decision_point", "unknown decision point id")
+        elif layer == "unknown-meta-key":
+            book["meta"][known] = "x"
+            expected = ("book-meta", "meta", "unknown meta keys")
+        else:
+            book["context"] = {known: "x"}
+            expected = ("book-context", "context.<key>", "slot not allowed")
+        issues = check(book, project, redactor=redactor)
+        code, path, fragment = expected
+        assert issues, layer
+        assert has_issue(issues, path, fragment), (layer, rendered(issues))
+        assert code in codes(issues), (layer, rendered(issues))
+>       assert all(known not in issue.format() for issue in issues), rendered(issues)
+E       AssertionError: ["book-schema notes: unknown notes keys ['pm-known-opaque-business-secret']; ['evidence'] is the only notes face of the book contract"]
+E       assert False
+E        +  where False = all(<generator object test_schema_refusals_never_echo_a_known_secret.<locals>.<genexpr> at 0x0000017E8FFFEF80>)
+
+test_decision_context_contract.py:1510: AssertionError
+_________ test_schema_refusals_never_echo_a_known_secret[bad-version] _________
+
+layer = 'bad-version'
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_schema_refusals_never_ech2/project')
+
+    @pytest.mark.parametrize(
+        "layer",
+        [
+            "unknown-top-key",
+            "unknown-notes-key",
+            "bad-version",
+            "unknown-dp",
+            "unknown-meta-key",
+            "unknown-context-key",
+        ],
+    )
+    def test_schema_refusals_never_echo_a_known_secret(
+        layer: str, project: pathlib.Path
+    ) -> None:
+        known = KNOWN_SECRET
+        redactor = decision.known_secret_redactor(extra_secrets=[known])
+        book = legal_book("dp-w-type")
+        if layer == "unknown-top-key":
+            book[known] = "x"
+            expected = ("book-schema", "book", "unknown top-level keys")
+        elif layer == "unknown-notes-key":
+            book["notes"][known] = "x"
+            expected = ("book-schema", "notes", "unknown notes keys")
+        elif layer == "bad-version":
+            book["schema_version"] = known
+            expected = ("book-schema", "schema_version", "must be 3")
+        elif layer == "unknown-dp":
+            book["decision_point"] = known
+            expected = ("book-schema", "decision_point", "unknown decision point id")
+        elif layer == "unknown-meta-key":
+            book["meta"][known] = "x"
+            expected = ("book-meta", "meta", "unknown meta keys")
+        else:
+            book["context"] = {known: "x"}
+            expected = ("book-context", "context.<key>", "slot not allowed")
+        issues = check(book, project, redactor=redactor)
+        code, path, fragment = expected
+        assert issues, layer
+        assert has_issue(issues, path, fragment), (layer, rendered(issues))
+        assert code in codes(issues), (layer, rendered(issues))
+>       assert all(known not in issue.format() for issue in issues), rendered(issues)
+E       AssertionError: ["book-schema schema_version: must be 3, got 'pm-known-opaque-business-secret'"]
+E       assert False
+E        +  where False = all(<generator object test_schema_refusals_never_echo_a_known_secret.<locals>.<genexpr> at 0x0000017E8FFFF4C0>)
+
+test_decision_context_contract.py:1510: AssertionError
+_________ test_schema_refusals_never_echo_a_known_secret[unknown-dp] __________
+
+layer = 'unknown-dp'
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_schema_refusals_never_ech3/project')
+
+    @pytest.mark.parametrize(
+        "layer",
+        [
+            "unknown-top-key",
+            "unknown-notes-key",
+            "bad-version",
+            "unknown-dp",
+            "unknown-meta-key",
+            "unknown-context-key",
+        ],
+    )
+    def test_schema_refusals_never_echo_a_known_secret(
+        layer: str, project: pathlib.Path
+    ) -> None:
+        known = KNOWN_SECRET
+        redactor = decision.known_secret_redactor(extra_secrets=[known])
+        book = legal_book("dp-w-type")
+        if layer == "unknown-top-key":
+            book[known] = "x"
+            expected = ("book-schema", "book", "unknown top-level keys")
+        elif layer == "unknown-notes-key":
+            book["notes"][known] = "x"
+            expected = ("book-schema", "notes", "unknown notes keys")
+        elif layer == "bad-version":
+            book["schema_version"] = known
+            expected = ("book-schema", "schema_version", "must be 3")
+        elif layer == "unknown-dp":
+            book["decision_point"] = known
+            expected = ("book-schema", "decision_point", "unknown decision point id")
+        elif layer == "unknown-meta-key":
+            book["meta"][known] = "x"
+            expected = ("book-meta", "meta", "unknown meta keys")
+        else:
+            book["context"] = {known: "x"}
+            expected = ("book-context", "context.<key>", "slot not allowed")
+        issues = check(book, project, redactor=redactor)
+        code, path, fragment = expected
+        assert issues, layer
+        assert has_issue(issues, path, fragment), (layer, rendered(issues))
+        assert code in codes(issues), (layer, rendered(issues))
+>       assert all(known not in issue.format() for issue in issues), rendered(issues)
+E       AssertionError: ["book-schema decision_point: unknown decision point id 'pm-known-opaque-business-secret'; the eight active entries are the only book targets"]
+E       assert False
+E        +  where False = all(<generator object test_schema_refusals_never_echo_a_known_secret.<locals>.<genexpr> at 0x0000017E8FFFF760>)
+
+test_decision_context_contract.py:1510: AssertionError
+__________ test_a_schema_refusal_on_load_never_echoes_a_known_secret __________
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_a_schema_refusal_on_load_0')
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_a_schema_refusal_on_load_0/project')
+
+    def test_a_schema_refusal_on_load_never_echoes_a_known_secret(
+        tmp_path: pathlib.Path, project: pathlib.Path
+    ) -> None:
+        known = KNOWN_SECRET
+        redactor = decision.known_secret_redactor(extra_secrets=[known])
+        book = legal_book("dp-w-type")
+        book[known] = "x"
+        path = tmp_path / "secret-top-key.json"
+        path.write_text(json.dumps(book), encoding="utf-8")
+        with pytest.raises(books.BookError) as excinfo:
+>           books.load_book(path, redactor=redactor)
+E           TypeError: load_book() got an unexpected keyword argument 'redactor'
+
+test_decision_context_contract.py:1523: TypeError
+___ test_schema_version_must_be_the_real_non_bool_integer_three[float-3.0] ____
+
+value = 3.0
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_schema_version_must_be_th0')
+project = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/fixture/basetemp-red-1/test_schema_version_must_be_th0/project')
+
+    @pytest.mark.parametrize(
+        "value",
+        [3.0, 2, "3", True, None, [3]],
+        ids=["float-3.0", "int-2", "string-3", "bool-true", "null", "array"],
+    )
+    def test_schema_version_must_be_the_real_non_bool_integer_three(
+        value: object, tmp_path: pathlib.Path, project: pathlib.Path
+    ) -> None:
+        book = legal_book("dp-w-type")
+        book["schema_version"] = value
+        issues = check(book, project)
+>       assert has_issue(issues, "schema_version", "must be 3"), rendered(issues)
+E       AssertionError: []
+E       assert False
+E        +  where False = has_issue([], 'schema_version', 'must be 3')
+
+test_decision_context_contract.py:1571: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_context_contract.py::test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue[null]
+FAILED test_decision_context_contract.py::test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue[empty-array]
+FAILED test_decision_context_contract.py::test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue[array-of-books]
+FAILED test_decision_context_contract.py::test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue[boolean]
+FAILED test_decision_context_contract.py::test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue[integer]
+FAILED test_decision_context_contract.py::test_stdin_refuses_every_non_object_json_shape_as_a_schema_issue[number]
+FAILED test_decision_context_contract.py::test_stdin_json_string_is_data_and_never_a_file_path
+FAILED test_decision_context_contract.py::test_an_invalid_book_file_report_is_serializable_and_still_failed
+FAILED test_decision_context_contract.py::test_schema_refusals_never_echo_a_known_secret[unknown-top-key]
+FAILED test_decision_context_contract.py::test_schema_refusals_never_echo_a_known_secret[unknown-notes-key]
+FAILED test_decision_context_contract.py::test_schema_refusals_never_echo_a_known_secret[bad-version]
+FAILED test_decision_context_contract.py::test_schema_refusals_never_echo_a_known_secret[unknown-dp]
+FAILED test_decision_context_contract.py::test_a_schema_refusal_on_load_never_echoes_a_known_secret
+FAILED test_decision_context_contract.py::test_schema_version_must_be_the_real_non_bool_integer_three[float-3.0]
+14 failed, 117 passed in 3.10s

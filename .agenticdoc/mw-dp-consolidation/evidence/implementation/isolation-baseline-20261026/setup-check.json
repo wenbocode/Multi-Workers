@@ -1,0 +1,23 @@
+{
+  "observed_at": "2026-10-26T10:29:10.715431+08:00",
+  "key": "mw-dp-consolidation",
+  "implementation_root": ".agenticdoc/mw-dp-consolidation/implementation-worktree",
+  "copied_regular_files": 1862,
+  "approved_physical_files": 85,
+  "mapped_cards": 34,
+  "original_contract_hashes": {
+    "spec.md": "cfe737d29aed2d0c4e79d8b02107f754f254a225bb21ea8d900eaa5ba289d006",
+    "design.md": "06e3c510e093df7599b3b7aa1391e3240b4cdf24aea88cbd3a4fdeb180408135",
+    "evidence-requirement.md": "0558b0c839504df81e141679f621c1c71790e97ef02c70ad19636bd55f0ae00f",
+    "design-write-scope.md": "c7c1bde606d9141b6f8fa1d85f5ca73b91a7a44e086c48687e055f17a80221a4"
+  },
+  "source_bytes_unchanged": true,
+  "card_dag_ac_vc_unchanged": true,
+  "unordered_overlapping_writers": 0,
+  "source_links_created": 0,
+  "live_state_copied": false,
+  "dependencies_equivalence_verified": false,
+  "product_tests_run": false,
+  "product_acceptance": false,
+  "new_manifest_sha256": "d680acf7bed0e6587e9ddd8842b113eb335672a0865237c1da16fa5c65cea4e1"
+}

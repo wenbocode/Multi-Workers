@@ -1,0 +1,33 @@
+LEGAL_EXIT 2 {
+  "path": "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\tmpx0n5gb_d\\legal.json",
+  "sha256": "069427ddba8c2b4f736409bae38068eb17d34321e4e574fd93843c9ad35caf7a",
+  "ok": false,
+  "books": [
+    {
+      "label": null,
+      "decision_point": "dp25-signoff-conclusion",
+      "ok": false,
+      "issues": [
+        {
+          "code": "book-placeholder",
+          "path": "state.p0_open",
+          "d 
+ILLEGAL_EXIT 2 {
+  "path": "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\tmpx0n5gb_d\\illegal.json",
+  "sha256": "81f6b8c22c503ca92fbbdc239e5786e867e06fe867c3e1d3c5b9c7e9f8aaa427",
+  "ok": false,
+  "books": [
+    {
+      "label": null,
+      "decision_point": "dp25-signoff-conclusion",
+      "ok": false,
+      "issues": [
+        {
+          "code": "book-state",
+          "path": "state.rows_escalated",
+          "detail": "must be >= 0, got -1"
+        },
+        {
+          "code": "book-placeholder",
+          "path": "state.p0_open",
+          "detail": "unreplaced placeholder []; fill it from real eviden 

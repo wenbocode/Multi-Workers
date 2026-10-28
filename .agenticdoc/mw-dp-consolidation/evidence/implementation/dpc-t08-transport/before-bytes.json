@@ -1,0 +1,30 @@
+{
+  "observed_at": "2026-10-26T12:13:01.316641+00:00",
+  "copy_root": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+  "files": [
+    {
+      "exists": true,
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision.py",
+      "bytes": 99249,
+      "sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+      "crlf": 0,
+      "bare_lf": 2298,
+      "ends_with_newline": true,
+      "lines": 2298
+    },
+    {
+      "exists": true,
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_backends.py",
+      "bytes": 44577,
+      "sha256": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60",
+      "crlf": 0,
+      "bare_lf": 1123,
+      "ends_with_newline": true,
+      "lines": 1123
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_materials.py",
+      "exists": false
+    }
+  ]
+}

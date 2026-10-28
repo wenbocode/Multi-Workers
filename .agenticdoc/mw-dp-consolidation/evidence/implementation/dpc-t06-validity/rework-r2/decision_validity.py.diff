@@ -1,0 +1,233 @@
+--- before/decision_validity.py
++++ after/decision_validity.py
+@@ -29,6 +29,14 @@
+   :func:`assess_write_surface`, :func:`assess_signoff` and
+   :func:`plan_actions` are the remaining pure judgements. None of them writes
+   a grant, a decision row, a gate, a signoff, a claim or a file.
++* Fail-closed boundaries: a *required* successful signoff is only the
++  ``finalize`` word (``continue`` / ``user-confirm`` stay legal menu words but
++  are not a signoff), bound to the required key and to a non-empty traceable
++  reference; evidence pinned to a different contract version is recorded and
++  is not reusable; one unusable claimed path fails the whole request and an
++  active claim on another task of the same owner is not clear; a matched effect
++  record whose status is unrecognised or missing blocks instead of being read
++  as "never executed".
+ 
+ Design section 4.3: "a decision is valid only when the current role, matter,
+ contract, substantive evidence and authorization still apply". Reuse of a
+@@ -84,8 +92,12 @@
+ DEPENDENCY_KINDS: tuple[str, ...] = ("structured", "set", "prose", "ref")
+ EVIDENCE_KINDS: tuple[str, ...] = ("quality", "verification", "review", "signoff")
+ 
+-#: The only signoff words: the same three words as ``dp-sign-key``.
++#: The only signoff words: the same three words as ``dp-sign-key``. They are
++#: the menu the decision entry may offer, not three equivalents of a required
++#: successful signoff (see ``REQUIRED_SIGNOFF_CHOICES``).
+ FINALIZE_CHOICES: tuple[str, ...] = ("finalize", "continue", "user-confirm")
++#: The only word that satisfies a *required* successful signoff.
++REQUIRED_SIGNOFF_CHOICES: tuple[str, ...] = ("finalize",)
+ #: Old labels that must not satisfy a required signoff by name alone.
+ LEGACY_SIGNOFF_WORDS: frozenset[str] = frozenset(
+     {"approve", "approved", "sign", "signed", "lgtm", "done", "pass", "passed",
+@@ -1001,7 +1013,13 @@
+     *,
+     previous_matter: Matter | None = None,
+ ) -> EvidenceApplicability:
+-    """Judgement for one evidence item (read-only, no re-approval by hash)."""
++    """Judgement for one evidence item (read-only, no re-approval by hash).
++
++    A contract-version change is recorded *and* it stops reuse: the evidence was
++    produced against a different contract, so ``applies``/``reusable`` may not
++    survive it. Unaffected dependencies of the same contract and byte-only or
++    formatting-only differences still reuse without a new review.
++    """
+ 
+     if evidence.matter_key != current_matter.matter_key:
+         return EvidenceApplicability(
+@@ -1011,7 +1029,9 @@
+     reasons: list[VerdictReason] = []
+     stale: list[str] = []
+     unknown = False
++    contract_changed = False
+     if evidence.contract_version != current_matter.contract_version:
++        contract_changed = True
+         reasons.append(
+             VerdictReason(
+                 "contract_version_changed",
+@@ -1057,7 +1077,7 @@
+ 
+     if unknown:
+         status = "unknown"
+-    elif stale:
++    elif stale or contract_changed:
+         status = "stale"
+     else:
+         status = "applies"
+@@ -1438,17 +1458,34 @@
+ 
+ 
+ def assess_claim(claims: Sequence[Claim], request: ClaimRequest) -> ClaimVerdict:
+-    """Read-only claim check: no takeover, no double writer, no fake dispatch."""
++    """Read-only claim check: no takeover, no double writer, no fake dispatch.
++
++    One unusable path fails the *whole* requested write face (a partially
++    readable request is not a smaller claim), and a claim is bound to its task:
++    an active claim of the same owner on another task is not clear either. A
++    re-entry of the same owner on the same task stays clear.
++    """
+ 
+     reasons: list[VerdictReason] = []
+     normalised: list[str] = []
++    invalid_path = False
+     for path in request.files:
+         candidate, problem = _path_problem(path)
+         if problem is not None:
+             reasons.append(VerdictReason(problem, "files", str(path)))
++            invalid_path = True
+             continue
+         assert candidate is not None
+         normalised.append(candidate)
++    if invalid_path:
++        reasons.append(
++            VerdictReason(
++                "invalid_claim_request",
++                "files",
++                "requested write face is not a legal path set",
++            )
++        )
++        return ClaimVerdict("blocked", tuple(reasons))
+     if not normalised:
+         reasons.append(VerdictReason("empty_write_face", "files", ""))
+         return ClaimVerdict("blocked", tuple(reasons))
+@@ -1456,7 +1493,7 @@
+     conflicts: list[str] = []
+     owners: list[str] = []
+     for claim in claims:
+-        if not claim.active or claim.owner == request.actor:
++        if not claim.active:
+             continue
+         claim_files = {
+             normalised_path
+@@ -1466,12 +1503,22 @@
+         overlap = [path for path in normalised if path in claim_files]
+         if not overlap:
+             continue
++        same_task = claim.owner == request.actor and claim.task_key == request.task_key
++        if same_task:
++            continue
+         if claim.lock_mode != "exclusive":
+             reasons.append(
+                 VerdictReason("lock_mode_not_exclusive", "claims.lock_mode", claim.owner)
+             )
++        own_other_task = claim.owner == request.actor
+         for path in overlap:
+-            reasons.append(VerdictReason("foreign_claim", "files", path))
++            reasons.append(
++                VerdictReason(
++                    "own_claim_on_other_task" if own_other_task else "foreign_claim",
++                    "files",
++                    path,
++                )
++            )
+             if path not in conflicts:
+                 conflicts.append(path)
+         if claim.owner not in owners:
+@@ -1527,7 +1574,13 @@
+     *,
+     required_scope: Sequence[str],
+ ) -> SignoffVerdict:
+-    """Read-only applicability of a signoff reference (never writes one)."""
++    """Read-only applicability of a signoff reference (never writes one).
++
++    A required successful signoff is only ``finalize``; ``continue`` and
++    ``user-confirm`` are legal menu words of the same entry but do not satisfy a
++    required signoff. The reference must name the required key and carry a
++    non-empty traceable signoff reference.
++    """
+ 
+     reasons: list[VerdictReason] = []
+     if signoff.historical:
+@@ -1536,8 +1589,12 @@
+         )
+     if signoff.disable_requested:
+         reasons.append(VerdictReason("signoff_bypass", "signoff", "disable requested"))
+-    if signoff.choice in FINALIZE_CHOICES:
++    if signoff.choice in REQUIRED_SIGNOFF_CHOICES:
+         pass
++    elif signoff.choice in FINALIZE_CHOICES:
++        reasons.append(
++            VerdictReason("not_a_required_signoff", "choice", str(signoff.choice))
++        )
+     elif signoff.choice in LEGACY_SIGNOFF_WORDS:
+         reasons.append(VerdictReason("legacy_word", "choice", signoff.choice))
+     else:
+@@ -1545,6 +1602,18 @@
+     if signoff.matter_key != current_matter.matter_key:
+         reasons.append(
+             VerdictReason("different_matter", "matter_key", current_matter.matter_key)
++        )
++    signoff_key = signoff.key if isinstance(signoff.key, str) else ""
++    required_keys = {str(item) for item in required_scope}
++    if not signoff_key.strip():
++        reasons.append(VerdictReason("missing_signoff_key", "key", ""))
++    elif signoff_key.strip() not in required_keys:
++        reasons.append(
++            VerdictReason("signoff_key_mismatch", "key", signoff_key.strip())
++        )
++    if not isinstance(signoff.signoff_ref, str) or not signoff.signoff_ref.strip():
++        reasons.append(
++            VerdictReason("missing_signoff_reference", "signoff_ref", "")
+         )
+     if signoff.substantive_version != current_matter.substantive_version:
+         reasons.append(VerdictReason("stale_signoff", "substantive_version", ""))
+@@ -1588,7 +1657,10 @@
+     Only an ``applied`` effect for the same matter and substantive version makes
+     an action a duplicate. ``in-progress``/``unknown`` block instead of guessing
+     (no blind retry after a crash); a ``failed`` effect stays recorded and the
+-    action may be attempted again.
++    action may be attempted again, and a genuinely absent record leaves the
++    action free. Other recognised non-effect states (``not-started``) are not
++    treated as executed either. A *matched* record whose status is unrecognised
++    (or missing) is not a proof of "never executed", so it blocks as well.
+     """
+ 
+     requested: list[str] = []
+@@ -1611,15 +1683,36 @@
+         ]
+         if any(effect.status == "applied" for effect in matching):
+             duplicate.append(action)
+-        elif any(effect.status in {"unknown", "in-progress"} for effect in matching):
++            continue
++        ambiguous = [
++            effect
++            for effect in matching
++            if effect.status in {"unknown", "in-progress"}
++        ]
++        if ambiguous:
+             status = next(
+                 effect.status
+-                for effect in matching
++                for effect in ambiguous
+                 if effect.status in {"unknown", "in-progress"}
+             )
+             blocked.append(action)
+             reasons.append(
+                 VerdictReason("effect_state_unknown", "effect", status)
++            )
++            continue
++        unrecognised = [
++            effect
++            for effect in matching
++            if not isinstance(effect.status, str) or effect.status not in EFFECT_STATES
++        ]
++        if unrecognised:
++            blocked.append(action)
++            reasons.append(
++                VerdictReason(
++                    "effect_state_unrecognised",
++                    "effect",
++                    repr(unrecognised[0].status),
++                )
+             )
+ 
+     remaining = [

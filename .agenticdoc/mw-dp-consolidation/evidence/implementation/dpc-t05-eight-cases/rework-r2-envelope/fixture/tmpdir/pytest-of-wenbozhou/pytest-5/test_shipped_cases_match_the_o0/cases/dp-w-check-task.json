@@ -1,0 +1,100 @@
+{
+  "book": {
+    "decision_point": "dp-w-check-task",
+    "material": {
+      "blockers": "旧记录 detail 没有 workbench 字段，页面只能显示未记录；补齐该字段属于投影写入方的范围。",
+      "completed": "已完成五列表、四状态、十节点 DAG 弹窗与日志弹窗，对应定向用例通过，日志留在本卡证据目录。",
+      "constraints": "只读，不写 archive、signoff 或 authority；剩余预算 25 分钟，无新增授权，工具白名单不变。",
+      "investigation": {
+        "budget": "只读检索 10 分钟，不启动服务、不调用模型。",
+        "evidence_source": "decision_history.py 的列表与详情投影函数，可在副本内只读检索。",
+        "stop_condition": "找到字段来源即停止；找不到则按未记录收尾并写清阻断。",
+        "unknown": "旧记录 detail 是否已存在可复用的 workbench 投影字段。"
+      },
+      "reachability_facts": "旧记录字段与投影函数在副本内可只读检索，表结构与弹窗已有定向用例；剩余接线依赖的 workbench 字段当前不存在。",
+      "remaining": "facets 下拉与正文渲染仍缺后端投影字段，本任务预算内无法自证完成。",
+      "task_goal": "给 mw decide monitor 增加旧记录只读筛选，同时保持现有写入链路完全不动。"
+    },
+    "meta": {
+      "actor_role": "worker",
+      "key": "mw-dp-consolidation",
+      "logical_id": "case-dp-w-check-task-v1",
+      "task_key": "dpc-t05-eight-cases",
+      "trigger_id": "case-dp-w-check-task"
+    },
+    "notes": {
+      "evidence": {
+        "blockers": "packages/multi-workers/scripts/build_decide_cases.py:209",
+        "completed": "packages/multi-workers/scripts/build_decide_cases.py:202",
+        "constraints": "packages/multi-workers/scripts/build_decide_cases.py:213",
+        "investigation.budget": "packages/multi-workers/scripts/build_decide_cases.py:221",
+        "investigation.evidence_source": "packages/multi-workers/scripts/build_decide_cases.py:219",
+        "investigation.stop_condition": "packages/multi-workers/scripts/build_decide_cases.py:223",
+        "investigation.unknown": "packages/multi-workers/scripts/build_decide_cases.py:217",
+        "reachability_facts": "packages/multi-workers/scripts/build_decide_cases.py:198",
+        "remaining": "packages/multi-workers/scripts/build_decide_cases.py:206",
+        "task_goal": "packages/multi-workers/scripts/build_decide_cases.py:162"
+      }
+    },
+    "preparation": {
+      "basis_catalog": [
+        {
+          "applies_to": [
+            "continue"
+          ],
+          "id": "check-continue",
+          "material_refs": [
+            "reachability_facts",
+            "constraints"
+          ],
+          "text": "剩余工作都在已授权只读范围内，条件充足，可以继续。"
+        },
+        {
+          "applies_to": [
+            "terminate"
+          ],
+          "id": "check-terminate",
+          "material_refs": [
+            "blockers",
+            "remaining"
+          ],
+          "text": "投影字段不在本任务授权面内，应写清完成与阻断后结束本次执行。"
+        },
+        {
+          "applies_to": [
+            "investigate"
+          ],
+          "id": "check-investigate",
+          "material_refs": [
+            "investigation.unknown",
+            "investigation.budget"
+          ],
+          "text": "字段是否存在只需一次有界只读检索即可确认，先补证再决定。"
+        }
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00"
+    },
+    "schema_version": 3
+  },
+  "case_version": 1,
+  "dp": "dp-w-check-task",
+  "note": "合成 case：worker 带着完成、剩余、阻断与预算边界判断本次任务是否可继续；investigate 分支给出有界补证的来源、预算与结束判据。",
+  "questions": {
+    "reachability": {
+      "choices": [
+        "continue",
+        "terminate",
+        "investigate"
+      ],
+      "id": "reachability",
+      "instructions": "当前任务条件是否足以继续？条件不足时写出真实结论并结束本次执行；可在边界内补证时先做有界补证。",
+      "labels": {
+        "continue": "条件充足：继续任务",
+        "investigate": "继续任务并为具体未知做有界补证（须给来源、预算与结束判据）",
+        "terminate": "条件不足：写出完成/未完成/阻断及证据，结束本次执行（不是取消目标或 key）"
+      },
+      "type": "choice"
+    }
+  },
+  "title": "Worker 本次任务可达性：旧记录只读筛选"
+}

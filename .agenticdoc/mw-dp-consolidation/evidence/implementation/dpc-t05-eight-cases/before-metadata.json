@@ -1,0 +1,128 @@
+{
+  "captured_at": "2026-10-27T12:58:28.215003+00:00",
+  "worktree": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree",
+  "product_files": [
+    {
+      "path": "packages/multi-workers/scripts/build_decide_cases.py",
+      "exists": true,
+      "sha256": "60910516ccce4caac181f8fc20fb98432809ad2817e6141b3f2ae1a90f7117ed",
+      "bytes": 20556,
+      "lf": 475,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_book_template.json",
+      "exists": true,
+      "sha256": "755253b61429271b4eb1fc5cb22cc2fb4e77a7fce07e7a67aa111dd896640df2",
+      "bytes": 2367,
+      "lf": 61,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/test_decision_context_workbench.py",
+      "exists": true,
+      "sha256": "8e3fddccf359f5493c1bdf46c6039df11576ec479e474bd98585e544f2cab215",
+      "bytes": 74040,
+      "lf": 1795,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-w-type.json",
+      "exists": false,
+      "sha256": null,
+      "bytes": null,
+      "lf": null,
+      "crlf": null
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-pm-steer.json",
+      "exists": false,
+      "sha256": null,
+      "bytes": null,
+      "lf": null,
+      "crlf": null
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-w-check-task.json",
+      "exists": false,
+      "sha256": null,
+      "bytes": null,
+      "lf": null,
+      "crlf": null
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-QG.json",
+      "exists": false,
+      "sha256": null,
+      "bytes": null,
+      "lf": null,
+      "crlf": null
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-gate-approve.json",
+      "exists": false,
+      "sha256": null,
+      "bytes": null,
+      "lf": null,
+      "crlf": null
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-sign-key.json",
+      "exists": false,
+      "sha256": null,
+      "bytes": null,
+      "lf": null,
+      "crlf": null
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-auto.json",
+      "exists": false,
+      "sha256": null,
+      "bytes": null,
+      "lf": null,
+      "crlf": null
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-route.json",
+      "exists": false,
+      "sha256": null,
+      "bytes": null,
+      "lf": null,
+      "crlf": null
+    }
+  ],
+  "legacy_files": [
+    {
+      "path": "packages/multi-workers/decide_cases/dp1.json",
+      "exists": true,
+      "sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "bytes": 1645,
+      "lf": 42,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp2.json",
+      "exists": true,
+      "sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "bytes": 2689,
+      "lf": 48,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp3.json",
+      "exists": true,
+      "sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "bytes": 2320,
+      "lf": 52,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp25.json",
+      "exists": true,
+      "sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "bytes": 2682,
+      "lf": 58,
+      "crlf": 0
+    }
+  ]
+}

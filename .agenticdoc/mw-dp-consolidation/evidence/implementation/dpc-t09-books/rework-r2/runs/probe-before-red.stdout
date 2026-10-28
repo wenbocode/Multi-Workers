@@ -1,0 +1,29 @@
+{
+  "label": "before-red",
+  "passed": 7,
+  "failed": 14,
+  "base_17_passed": 4,
+  "base_17_failed": 13,
+  "network": "denied"
+}
+PASS legal-full-book-positive: (PreparedRequest(decision_point='dp-w-type', material={'task_goal': 'Validate book stdin refusals with full layered requests', 'task_requirements': 'Illegal JSON shapes produce issues, never filesystem lookup or escaped 
+FAIL stdin-shape-NoneType: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+FAIL stdin-shape-empty-array: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'list'
+FAIL stdin-shape-array-with-book: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'list'
+FAIL stdin-shape-bool: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'bool'
+FAIL stdin-shape-int: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'int'
+FAIL stdin-shape-float: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'float'
+FAIL stdin-string-is-not-file-authority: a non-object stdin payload must never load a file
+PASS stdin-bundle-refusal-control: (None, (Issue(code='book-schema', path='book', detail="stdin carries exactly one request; a 'books' bundle is a file format, not a request"),))
+PASS stdin-bad-json-refusal-control: (None, (Issue(code='book-schema', path='<stdin>', detail='not valid JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)'),))
+FAIL invalid-file-report-as-dict-safe: 'ok'
+FAIL schema-secret-refusal-unknown-top-key: [Issue(code='book-schema', path='book', detail="unknown top-level keys ['pm-known-opaque-business-secret']")]
+FAIL schema-secret-refusal-unknown-notes-key: [Issue(code='book-schema', path='notes', detail="unknown notes keys ['pm-known-opaque-business-secret']; ['evidence'] is the only notes face of the book contract")]
+FAIL schema-secret-refusal-bad-version: [Issue(code='book-schema', path='schema_version', detail="must be 3, got 'pm-known-opaque-business-secret'")]
+FAIL schema-secret-refusal-unknown-dp: [Issue(code='book-schema', path='decision_point', detail="unknown decision point id 'pm-known-opaque-business-secret'; the eight active entries are the only book targets")]
+PASS schema-type-bool: [Issue(code='book-schema', path='schema_version', detail='must be 3, got True')]
+FAIL schema-type-float: []
+PASS extra-nested-schema-shapes-no-echo: [{'layer': 'notes-not-object', 'codes': ['book-schema'], 'echoes_secret': False, 'first_path': 'notes'}, {'layer': 'material-not-object', 'codes': ['book-schema'], 'echoes_secret': False, 'first_path': 'material'}, {'lay
+PASS extra-unknown-dp-still-specific: ["book-schema decision_point: unknown decision point id 'dp-not-a-real-entry'; the eight active entries are the only book targets"]
+PASS extra-mixed-bundle-independent: {'ok': False, 'flags': {'sign': True, 'bad': False}}
+FAIL extra-version-controls: [{'value': '3', 'refused': False}, {'value': '3.0', 'refused': False}, {'value': "'3'", 'refused': True}, {'value': 'True', 'refused': True}]

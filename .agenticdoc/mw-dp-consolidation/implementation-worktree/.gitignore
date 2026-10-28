@@ -1,0 +1,73 @@
+node_modules/
+/dist/
+.artifacts/
+*.log
+.DS_Store
+*.tsbuildinfo
+# packages/*/node_modules/
+packages/*/dist-chrome/
+packages/*/dist-firefox/
+packages/ai/src/providers/data/
+packages/ai/src/providers/.model-generation-*/
+*.cpuprofile
+
+# Environment
+.env
+
+# Editor files
+.vscode/
+.zed/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# Package specific
+.npm/
+coverage/
+.nyc_output/
+.pi_config/
+tui-debug.log
+compaction-results/
+.opencode/
+syntax.jsonl
+out.jsonl
+pi-*.html
+out.html
+packages/coding-agent/binaries/
+todo.md
+plans/
+.pi/hf-sessions/
+.pi/hf-sessions-backup/
+collect.sh
+
+# AgenticTask framework source cache (populated by `mw pull-agentictask`)
+packages/multi-workers/.tmp/
+
+# Python runtime
+__pycache__/
+*.pyc
+
+# mw runtime state (logs, pids, launcher beats, toolchain cache)
+.mw/
+
+# AgenticTask framework install (machine-local, `mw pull-agentictask` + install)
+.agentic-framework
+.agents/
+
+# Local scratch (codex proxy debugging)
+.codex-fix/
+
+# Local worker/agent scratch dirs (ad-hoc scripts, captures)
+.tmp/
+
+# pi context autosaves
+context-autosave-*.md
+
+# agenticdoc runtime state: worker run dirs, live worker tables, lock files
+.agenticdoc/**/workers/
+.agenticdoc/**/_workers*
+.agenticdoc/.mw/
+.agenticdoc/**/*.lock
+.agenticdoc/**/.mw-achieved-baddraft.json

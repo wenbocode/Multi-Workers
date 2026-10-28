@@ -1,0 +1,86 @@
+from pathlib import Path
+from datetime import datetime
+from functools import lru_cache
+import hashlib
+import json
+import re
+import subprocess
+import sys
+
+root = Path('H:/git/Multi-Workers')
+key = root / '.agenticdoc/mw-dp-consolidation'
+manifest = json.loads((key/'implementation-dag.json').read_text(encoding='utf-8'))
+tasks = manifest['tasks']
+by_id = {t['id']:t for t in tasks}
+assert len(tasks) == len(by_id) == 36
+scope = (key/'design-write-scope.md').read_text(encoding='utf-8')
+block = scope.split('## 2.',1)[1].split('## 6.',1)[0]
+allowed = set(re.findall(r'(?:packages/|\.agents/skills/agentic-task/)[A-Za-z0-9_.\-/]+',block))
+forbidden = {f'packages/multi-workers/decide_cases/dp{x}.json' for x in (1,2,3,25)}
+@lru_cache(None)
+def ancestors(tid, trail=()):
+    assert tid not in trail, 'cycle '+tid
+    result = set()
+    for dep in by_id[tid]['deps']:
+        assert dep in by_id
+        result.add(dep)
+        result.update(ancestors(dep,trail+(tid,)))
+    return frozenset(result)
+closure = {tid:ancestors(tid) for tid in by_id}
+for i,a in enumerate(tasks):
+    assert set(a['product_write_face']) <= allowed
+    assert not (set(a['product_write_face']) & forbidden)
+    if a['stage']:
+        assert {t['id'] for t in tasks if t['stage']==a['stage']-1} <= set(a['deps'])
+    for b in tasks[i+1:]:
+        overlap = set(a['product_write_face']) & set(b['product_write_face'])
+        assert not overlap or a['id'] in closure[b['id']] or b['id'] in closure[a['id']]
+expected = {
+'spec.md':'cfe737d29aed2d0c4e79d8b02107f754f254a225bb21ea8d900eaa5ba289d006',
+'design.md':'06e3c510e093df7599b3b7aa1391e3240b4cdf24aea88cbd3a4fdeb180408135',
+'evidence-requirement.md':'0558b0c839504df81e141679f621c1c71790e97ef02c70ad19636bd55f0ae00f',
+'design-write-scope.md':'c7c1bde606d9141b6f8fa1d85f5ca73b91a7a44e086c48687e055f17a80221a4',
+}
+for rel,sha in expected.items():
+    assert hashlib.sha256((key/rel).read_bytes()).hexdigest()==sha, 'changed approved contract '+rel
+spec = (key/'spec.md').read_text(encoding='utf-8')
+design = (key/'design.md').read_text(encoding='utf-8')
+ac = dict(re.findall(r'^\| (AC-\d{3}) \| (.*?) \|$',spec,re.M))
+vc = {m.group(1):m.group(0).rstrip() for m in re.finditer(r'^(VC-\d{3}): .*?\n       Layer: .*?\n       Output: .*?\n       Source: AC-\d{3}\n',design,re.M)}
+assert len(ac)==len(vc)==53
+card_hashes = {}
+for t in tasks:
+    text = (key/t['card']).read_text(encoding='utf-8')
+    for heading in ('上下文','要求','交付格式','写入允许面','写入禁止面'):
+        assert '\n## '+heading+'\n' in text, (t['id'],heading)
+    assert '.agenticdoc/goal.md:5' in text
+    assert 'spec.md:128' in text
+    assert all(ac[ref] in text and vc['VC-'+ref[3:]] in text for ref in t['ac_refs'])
+    assert all(path in text for path in t['product_write_face'])
+    if t['type']=='coding':
+        assert '\n## 验收命令\n' in text and '\n## 改动历史\n' in text
+        commands = ' '.join(' '.join(c['argv']) for c in t['commands'])
+        written_tests = [p for p in t['product_write_face'] if '/test_' in p or '/test/suite/' in p]
+        assert all(Path(p).name in commands for p in written_tests)
+    elif t['type']=='research':
+        assert '\n## 唯一证据文件\n'+t['evidence'] in text
+    else:
+        assert '\n## 审计目标\n' in text and '\n## 未覆盖面声明\n' in text
+    card_hashes[t['id']] = hashlib.sha256((key/t['card']).read_bytes()).hexdigest()
+    if t['id'] in ('T01','T02'):
+        seed = (key/'workers'/t['task_key']/'task.md').read_text(encoding='utf-8')
+        assert 'card_sha256: '+card_hashes[t['id']] in seed
+        assert 'write_face: '+t['evidence'] in seed
+        assert 'reload' in seed
+coverage = {r for t in tasks if t['type']=='coding' for r in t['ac_refs']}
+assert coverage==set(ac)
+audit = subprocess.run([sys.executable,str(root/'.agents/skills/agentic-task/scripts/audit_phase.py'),'mw-dp-consolidation'],cwd=root,capture_output=True,text=True,encoding='utf-8')
+assert audit.returncode==0 and 'phase=EXECUTE' in audit.stdout and 'VERDICT: PASS' in audit.stdout
+out = {'checked_at':datetime.now().astimezone().isoformat(timespec='seconds'),'scope':'PM plan/cards/phase only, not product verification','phase':'EXECUTE','stages':7,'tasks':36,'acyclic':True,'unordered_shared_file_writers':0,'approved_contract_hashes_unchanged':expected,'product_write_paths_within_approved':True,'forbidden_old_case_writers':0,'written_test_files_have_commands':True,'ac_coverage':53,'vc_coverage':53,'card_envelopes_valid':True,'dispatch_seed_hashes_match':True,'card_hashes':card_hashes,'audit_rc':audit.returncode,'product_tests_run':False,'product_acceptance':False}
+json_path = key/'evidence/plan-execute-document-check-20261026.json'
+log_path = key/'evidence/plan-execute-document-check-20261026.log'
+assert not json_path.exists() and not log_path.exists()
+json_path.write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
+log_path.write_text(audit.stdout+audit.stderr+'\n'+json.dumps(out,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
+print(audit.stdout,end='')
+print(json.dumps({k:v for k,v in out.items() if k not in ('card_hashes','approved_contract_hashes_unchanged')},ensure_ascii=False,indent=2))

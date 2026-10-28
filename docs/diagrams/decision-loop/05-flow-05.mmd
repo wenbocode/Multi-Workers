@@ -1,0 +1,11 @@
+graph LR
+    H["人"] -->|"写授权"| P["只读授权文件<br/>机器不能改"]
+    P --> D["decide 授权检查"]
+    BR["自动熔断"] -->|"被熔断链路"| NO["不能自批解锁"]
+    H -->|"受控恢复请求"| ISO["隔离恢复通道<br/>预授权 原因消除 机器检查"]
+    ISO --> D
+
+    style H fill:#F1EFE8,stroke:#888780
+    style P fill:#E6F1FB,stroke:#185FA5
+    style ISO fill:#E6F1FB,stroke:#185FA5
+    style NO fill:#FAEEDA,stroke:#854F0B

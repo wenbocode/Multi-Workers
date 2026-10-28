@@ -1,0 +1,58 @@
+--- packages/multi-workers/decision_history.py.t22-before
++++ packages/multi-workers/decision_history.py
+@@ -171,6 +171,7 @@
+ import decide_archive
+ import decide_signoff
+ import decision_lifecycle
++import decision_task_state
+ import decision_signoff_result
+ import decision_points
+ import decision_wire
+@@ -2275,6 +2276,20 @@
+     return sanitizer.text(f"workbench.{node_id}.{name}", value)
+ 
+ 
++def _task_state_fact(value: object, sanitizer: _Sanitizer) -> tuple[dict[str, object] | None, str]:
++    try:
++        snapshot = decision_task_state.validate_task_state(value)
++        if snapshot is None:
++            return None, "unrecorded"
++        clean = sanitizer.payload("workbench.action.task_state", snapshot)
++        if not sanitizer.enabled:
++            return None, "withheld"
++        return decision_task_state.validate_task_state(clean), "recorded"
++    except decision_task_state.TaskStateInputError:
++        sanitizer.invalid_field("workbench.action.task_state")
++        return None, "invalid"
++
++
+ def _signoff_fact(
+     row: Mapping[str, Any] | None,
+     *,
+@@ -3162,6 +3177,17 @@
+         }
+     elif outcome is not None:
+         settled = {"ts": None, "outcome": outcome, "reason": None}
++    task_before, task_before_visibility = _task_state_fact(start.get("task_before") if start is not None and node_task is not None else None, sanitizer)
++    after_row = settled_rows[-1] if settled_rows else executed_rows[-1] if executed_rows else None
++    task_after, task_after_visibility = _task_state_fact(after_row.get("task_after") if after_row is not None and node_task is not None else None, sanitizer)
++    try:
++        if task_after is not None and (start is None or after_row is None or len(facts.starts) != 1 or any(after_row.get(name) != start.get(name) for name in ("logical_id", "key", "task_key"))):
++            raise decision_task_state.TaskStateInputError("task after creation association is invalid")
++        decision_task_state.validate_observation_order(task_before, task_after)
++    except decision_task_state.TaskStateInputError:
++        sanitizer.invalid_field("workbench.action.task_after.observed_at")
++        task_after = None
++        task_after_visibility = "invalid"
+     action_errors = _failure_rows(events, frozenset({"executed", "settled"}))
+     errors_action: list[dict[str, object]] = []
+     for row in action_errors:
+@@ -3189,7 +3215,7 @@
+         _node(
+             "action",
+             "failed" if action_failed else ("observed" if (executed or settled is not None) else "missing"),
+-            {"executed": executed, "settled": settled, "errors": errors_action, "basis": action_basis},
++            {"executed": executed, "settled": settled, "task_before": task_before, "task_after": task_after, "task_before_visibility": task_before_visibility, "task_after_visibility": task_after_visibility, "errors": errors_action, "basis": action_basis},
+         )
+     )
+ 

@@ -1,0 +1,346 @@
+{
+  "captured_at": "2026-10-27T13:09:59.425994+00:00",
+  "worktree": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree",
+  "changed_files": [
+    {
+      "file": "packages/multi-workers/scripts/build_decide_cases.py",
+      "before_exists": true,
+      "before_sha256": "60910516ccce4caac181f8fc20fb98432809ad2817e6141b3f2ae1a90f7117ed",
+      "before_bytes": 20556,
+      "after_exists": true,
+      "after_sha256": "7987113fb597f9c8f5d6b48085292cf1a4f8c150839b2fc12efe5d4d4f6ffa70",
+      "after_bytes": 39431,
+      "lf": 901,
+      "crlf": 0,
+      "changed": true
+    },
+    {
+      "file": "packages/multi-workers/decide_book_template.json",
+      "before_exists": true,
+      "before_sha256": "755253b61429271b4eb1fc5cb22cc2fb4e77a7fce07e7a67aa111dd896640df2",
+      "before_bytes": 2367,
+      "after_exists": true,
+      "after_sha256": "755253b61429271b4eb1fc5cb22cc2fb4e77a7fce07e7a67aa111dd896640df2",
+      "after_bytes": 2367,
+      "lf": 61,
+      "crlf": 0,
+      "changed": false
+    },
+    {
+      "file": "packages/multi-workers/test_decision_context_workbench.py",
+      "before_exists": true,
+      "before_sha256": "8e3fddccf359f5493c1bdf46c6039df11576ec479e474bd98585e544f2cab215",
+      "before_bytes": 74040,
+      "after_exists": true,
+      "after_sha256": "0320702d37146bd856b28e2b102fee2245c67fed15c64349fe0f637c2877dc1b",
+      "after_bytes": 95205,
+      "lf": 2274,
+      "crlf": 0,
+      "changed": true
+    },
+    {
+      "file": "packages/multi-workers/decide_cases/dp-w-type.json",
+      "before_exists": false,
+      "before_sha256": null,
+      "before_bytes": null,
+      "after_exists": true,
+      "after_sha256": "dfb7ffc915a2c1de248629ec1d0a832c84b5d8a2920abc76427fdef60e6ddbf0",
+      "after_bytes": 3079,
+      "lf": 94,
+      "crlf": 0,
+      "changed": true
+    },
+    {
+      "file": "packages/multi-workers/decide_cases/dp-pm-steer.json",
+      "before_exists": false,
+      "before_sha256": null,
+      "before_bytes": null,
+      "after_exists": true,
+      "after_sha256": "814e7abf4172aba7c6828ab4e117f568ede18c5acf90d342640dc2235c744d10",
+      "after_bytes": 4089,
+      "lf": 99,
+      "crlf": 0,
+      "changed": true
+    },
+    {
+      "file": "packages/multi-workers/decide_cases/dp-w-check-task.json",
+      "before_exists": false,
+      "before_sha256": null,
+      "before_bytes": null,
+      "after_exists": true,
+      "after_sha256": "1908330e314b3da038c3a0e745504b30885e4717be91ef349c58383fdf3cad9c",
+      "after_bytes": 4622,
+      "lf": 100,
+      "crlf": 0,
+      "changed": true
+    },
+    {
+      "file": "packages/multi-workers/decide_cases/dp-QG.json",
+      "before_exists": false,
+      "before_sha256": null,
+      "before_bytes": null,
+      "after_exists": true,
+      "after_sha256": "43afee46e192b19a08be5a17260d2a088fa9789594066dca730fdc999273d953",
+      "after_bytes": 2991,
+      "lf": 78,
+      "crlf": 0,
+      "changed": true
+    },
+    {
+      "file": "packages/multi-workers/decide_cases/dp-gate-approve.json",
+      "before_exists": false,
+      "before_sha256": null,
+      "before_bytes": null,
+      "after_exists": true,
+      "after_sha256": "69e7970144ed7eb2cfd685e035f66872028172d4f594c3cda387b43ce6975ebd",
+      "after_bytes": 4750,
+      "lf": 114,
+      "crlf": 0,
+      "changed": true
+    },
+    {
+      "file": "packages/multi-workers/decide_cases/dp-sign-key.json",
+      "before_exists": false,
+      "before_sha256": null,
+      "before_bytes": null,
+      "after_exists": true,
+      "after_sha256": "f089deabae264503f096406cf42cd909bddbeab23b80dc13eea194ceaf81e408",
+      "after_bytes": 3825,
+      "lf": 100,
+      "crlf": 0,
+      "changed": true
+    },
+    {
+      "file": "packages/multi-workers/decide_cases/dp-auto.json",
+      "before_exists": false,
+      "before_sha256": null,
+      "before_bytes": null,
+      "after_exists": true,
+      "after_sha256": "3b8f1f267ebf50bb88b015efb53c5f7783e07e2763d3a157109060f8d36890a9",
+      "after_bytes": 4747,
+      "lf": 110,
+      "crlf": 0,
+      "changed": true
+    },
+    {
+      "file": "packages/multi-workers/decide_cases/dp-route.json",
+      "before_exists": false,
+      "before_sha256": null,
+      "before_bytes": null,
+      "after_exists": true,
+      "after_sha256": "6f267c83a2dd704a17b48583d8a2c2380a6cdfdec2534797ab206424a49510d5",
+      "after_bytes": 3994,
+      "lf": 129,
+      "crlf": 0,
+      "changed": true
+    },
+    {
+      "file": "packages/multi-workers/decide_cases/dp1.json",
+      "before_exists": true,
+      "before_sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "before_bytes": 1645,
+      "after_exists": true,
+      "after_sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "after_bytes": 1645,
+      "lf": 42,
+      "crlf": 0,
+      "changed": false
+    },
+    {
+      "file": "packages/multi-workers/decide_cases/dp2.json",
+      "before_exists": true,
+      "before_sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "before_bytes": 2689,
+      "after_exists": true,
+      "after_sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "after_bytes": 2689,
+      "lf": 48,
+      "crlf": 0,
+      "changed": false
+    },
+    {
+      "file": "packages/multi-workers/decide_cases/dp3.json",
+      "before_exists": true,
+      "before_sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "before_bytes": 2320,
+      "after_exists": true,
+      "after_sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "after_bytes": 2320,
+      "lf": 52,
+      "crlf": 0,
+      "changed": false
+    },
+    {
+      "file": "packages/multi-workers/decide_cases/dp25.json",
+      "before_exists": true,
+      "before_sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "before_bytes": 2682,
+      "after_exists": true,
+      "after_sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "after_bytes": 2682,
+      "lf": 58,
+      "crlf": 0,
+      "changed": false
+    }
+  ],
+  "pyc_protection": {
+    "packages/multi-workers/__pycache__/decision.cpython-314.pyc": {
+      "expected": "e4b51f5b85198575ba723fca7f85e48a0962da44b2820f4f53f4ebea3de80677",
+      "actual": "b95f933d321d7cba48808279d4a9823d4c8719fe26ee26013d705439d7bcb280",
+      "unchanged": false
+    },
+    "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc": {
+      "expected": "2649c554ab1103a7c48d040de1dde3ec018ed8364ab1f7ff8e9541e46f35fe57",
+      "actual": "2649c554ab1103a7c48d040de1dde3ec018ed8364ab1f7ff8e9541e46f35fe57",
+      "unchanged": true
+    },
+    "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc": {
+      "expected": "b29c8808488cf5c2c2ed47317e98f8bf6966c76871d01b6f5a9aaa470ad1d8e5",
+      "actual": "b29c8808488cf5c2c2ed47317e98f8bf6966c76871d01b6f5a9aaa470ad1d8e5",
+      "unchanged": true
+    },
+    "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc": {
+      "expected": "c57ee653f2bd8cede3eb535955dbfb50343d2182c4de6f882caf903677df43e8",
+      "actual": "c57ee653f2bd8cede3eb535955dbfb50343d2182c4de6f882caf903677df43e8",
+      "unchanged": true
+    },
+    "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc": {
+      "expected": "4b1cc3224b96398931b28919fe7e99d59af246ff1df9f578974412425ea91ab1",
+      "actual": "4b1cc3224b96398931b28919fe7e99d59af246ff1df9f578974412425ea91ab1",
+      "unchanged": true
+    },
+    "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc": {
+      "expected": "e9b984aa744f93adac5919d43c7286f2df67fd713d4daa0ff06a4567b9a4cbb9",
+      "actual": "e9b984aa744f93adac5919d43c7286f2df67fd713d4daa0ff06a4567b9a4cbb9",
+      "unchanged": true
+    },
+    "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc": {
+      "expected": "8e7c1fdef55dae94f7fcd1e62bd580a605f2874073aef8e705d5fa10879babb0",
+      "actual": "8e7c1fdef55dae94f7fcd1e62bd580a605f2874073aef8e705d5fa10879babb0",
+      "unchanged": true
+    },
+    "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc": {
+      "expected": "e54a6e4004576a45d3a48769c3538cc3ecd35e3ddf28929eda15a34356cc1c5b",
+      "actual": "e54a6e4004576a45d3a48769c3538cc3ecd35e3ddf28929eda15a34356cc1c5b",
+      "unchanged": true
+    },
+    "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc": {
+      "expected": "595357ff2cbac84f30f6b3f27132f449d7bc058155fc0ae5807742326e70f08e",
+      "actual": "595357ff2cbac84f30f6b3f27132f449d7bc058155fc0ae5807742326e70f08e",
+      "unchanged": true
+    },
+    "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc": {
+      "expected": "7f5936ad7d8a14b298dab8bbaf62b01536501305fba0932554c819aa9df0faa1",
+      "actual": "7f5936ad7d8a14b298dab8bbaf62b01536501305fba0932554c819aa9df0faa1",
+      "unchanged": true
+    },
+    "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc": {
+      "expected": "3909b8a4fbfe71376a29a2eddabe123576bcefd5ee2b13423e9f20b9eb839a9c",
+      "actual": "3909b8a4fbfe71376a29a2eddabe123576bcefd5ee2b13423e9f20b9eb839a9c",
+      "unchanged": true
+    },
+    "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc": {
+      "expected": "d0bfdbdeae20ca110ba310e4fc778ad97d5f929e3522595eb2dc1e38814a3eb8",
+      "actual": "d0bfdbdeae20ca110ba310e4fc778ad97d5f929e3522595eb2dc1e38814a3eb8",
+      "unchanged": true
+    },
+    "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc": {
+      "expected": "3c515fe1736c61061fc8d6bc8b1ec2cd1ab27a98b3c3c097d3a09fcb3cb32739",
+      "actual": "3c515fe1736c61061fc8d6bc8b1ec2cd1ab27a98b3c3c097d3a09fcb3cb32739",
+      "unchanged": true
+    },
+    "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc": {
+      "expected": "1ab0437409a85f933637ad619d30b1ee6e6de990fee3d7955c3787c2326d05de",
+      "actual": "1ab0437409a85f933637ad619d30b1ee6e6de990fee3d7955c3787c2326d05de",
+      "unchanged": true
+    }
+  },
+  "t10_shared_read_dependencies": [
+    {
+      "module": "decision_lifecycle",
+      "imported_from": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_lifecycle.py",
+      "inside_copy": true,
+      "sha256": "426b6c2c6d48c7fb652c1e876fa1f7e12eefa6aed61f4a010758db9ebe20f5c5"
+    },
+    {
+      "module": "decision_task_state",
+      "imported_from": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_task_state.py",
+      "inside_copy": true,
+      "sha256": "a6dd6898251c25fca662492acc73b062390a9fdd610bcddf11541716b3fe329f"
+    },
+    {
+      "module": "decision_wire",
+      "imported_from": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_wire.py",
+      "inside_copy": true,
+      "sha256": "a2630e98d0286fcbe19ae17ae8bfd0239f68323679164666cfc8c75cd984de05"
+    }
+  ],
+  "isolated_generator_run": {
+    "argv": [
+      "python",
+      "-B",
+      "-X",
+      "utf8",
+      "scripts/build_decide_cases.py",
+      "--out",
+      "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t05-eight-cases\\generator-out",
+      "--quiet"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+    "rc": 0,
+    "stdout": "wrote dp-w-type.json (3079 bytes)\nwrote dp-pm-steer.json (4089 bytes)\nwrote dp-w-check-task.json (4622 bytes)\nwrote dp-QG.json (2991 bytes)\nwrote dp-gate-approve.json (4750 bytes)\nwrote dp-sign-key.json (3825 bytes)\nwrote dp-auto.json (4747 bytes)\nwrote dp-route.json (3994 bytes)\n",
+    "stderr": "",
+    "files": [
+      "dp-QG.json",
+      "dp-auto.json",
+      "dp-gate-approve.json",
+      "dp-pm-steer.json",
+      "dp-route.json",
+      "dp-sign-key.json",
+      "dp-w-check-task.json",
+      "dp-w-type.json"
+    ]
+  },
+  "shipped_vs_generated": {
+    "dp-w-type.json": {
+      "generated": true,
+      "equal": true,
+      "sha256": "dfb7ffc915a2c1de248629ec1d0a832c84b5d8a2920abc76427fdef60e6ddbf0"
+    },
+    "dp-pm-steer.json": {
+      "generated": true,
+      "equal": true,
+      "sha256": "814e7abf4172aba7c6828ab4e117f568ede18c5acf90d342640dc2235c744d10"
+    },
+    "dp-w-check-task.json": {
+      "generated": true,
+      "equal": true,
+      "sha256": "1908330e314b3da038c3a0e745504b30885e4717be91ef349c58383fdf3cad9c"
+    },
+    "dp-QG.json": {
+      "generated": true,
+      "equal": true,
+      "sha256": "43afee46e192b19a08be5a17260d2a088fa9789594066dca730fdc999273d953"
+    },
+    "dp-gate-approve.json": {
+      "generated": true,
+      "equal": true,
+      "sha256": "69e7970144ed7eb2cfd685e035f66872028172d4f594c3cda387b43ce6975ebd"
+    },
+    "dp-sign-key.json": {
+      "generated": true,
+      "equal": true,
+      "sha256": "f089deabae264503f096406cf42cd909bddbeab23b80dc13eea194ceaf81e408"
+    },
+    "dp-auto.json": {
+      "generated": true,
+      "equal": true,
+      "sha256": "3b8f1f267ebf50bb88b015efb53c5f7783e07e2763d3a157109060f8d36890a9"
+    },
+    "dp-route.json": {
+      "generated": true,
+      "equal": true,
+      "sha256": "6f267c83a2dd704a17b48583d8a2c2380a6cdfdec2534797ab206424a49510d5"
+    }
+  }
+}

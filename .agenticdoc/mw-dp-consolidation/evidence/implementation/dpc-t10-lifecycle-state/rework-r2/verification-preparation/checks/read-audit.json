@@ -1,0 +1,234 @@
+{
+  "observed_at": "2026-10-28T07:21:43.478992+00:00",
+  "read_audit": {
+    "implementation-worktree/packages/multi-workers/decision_wire.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_wire.py",
+      "bytes": 82286,
+      "sha256": "429201ace7028968ae18cfbcc33dbf5aa0d2fa11b8f5d2dd7604cae0dec4e7dc",
+      "lines": 2314,
+      "lf": 2314,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "implementation-worktree/packages/multi-workers/decision_lifecycle.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_lifecycle.py",
+      "bytes": 65501,
+      "sha256": "73d0ae2efda3879668b3cf84d11f32809c6d00f76da13c3b8d065f87d4c87bb5",
+      "lines": 1647,
+      "lf": 1647,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "implementation-worktree/packages/multi-workers/decision_task_state.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_task_state.py",
+      "bytes": 3871,
+      "sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+      "lines": 82,
+      "lf": 82,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "implementation-worktree/packages/multi-workers/test_decision_context_lifecycle.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_decision_context_lifecycle.py",
+      "bytes": 65105,
+      "sha256": "1bca28c56c7ab039de5c3a91638fd20c1e2fa89f4a1ec996169cfd933c1e6ae9",
+      "lines": 1815,
+      "lf": 1815,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "implementation-worktree/packages/multi-workers/test_decision_task_state.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_decision_task_state.py",
+      "bytes": 15480,
+      "sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f",
+      "lines": 278,
+      "lf": 278,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "rework-r2/pm-controlled/run_pm_tests.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\pm-controlled\\run_pm_tests.py",
+      "bytes": 33108,
+      "sha256": "5b019aec41bdf7017b56698d339402827f0890556e50a0b9d7116794fd203cbc",
+      "lines": 754,
+      "lf": 754,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "rework-r2/pm-controlled/sitecustomize.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\pm-controlled\\sitecustomize.py",
+      "bytes": 8302,
+      "sha256": "d2a15fad32af1b755f0164a16d3cfb3543ef8fd5169f13eacbc8971e0809ea5a",
+      "lines": 245,
+      "lf": 245,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "rework-r2/pm-controlled/guard_preflight.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\pm-controlled\\guard_preflight.py",
+      "bytes": 5389,
+      "sha256": "085cae83c3477820305af0f504bf62ffdbc4930d5ce4d9c3f1e807382d6e7cb0",
+      "lines": 142,
+      "lf": 142,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "rework-r2/pm-controlled/probe_imports.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\pm-controlled\\probe_imports.py",
+      "bytes": 2922,
+      "sha256": "cac791a30affbd04746df9e0e4a18c20492020ac5f656aad30042cd710c26ee6",
+      "lines": 90,
+      "lf": 90,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "implementation-worktree/packages/multi-workers/decision_points.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_points.py",
+      "bytes": 305745,
+      "sha256": "78e72e03cfe3b03f0349d95113c1947713b91c4a143bbaaada404f08db7443e6",
+      "lines": 7102,
+      "lf": 7102,
+      "crlf": 7102,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": false,
+      "ranges_read": [
+        [
+          1340,
+          1400
+        ],
+        [
+          2085,
+          2115
+        ],
+        [
+          3230,
+          3310
+        ],
+        [
+          3820,
+          4340
+        ]
+      ]
+    },
+    "implementation-worktree/packages/multi-workers/decision.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision.py",
+      "bytes": 119248,
+      "sha256": "ef9c2c68eee18bb93ad716c76c7b146279ac5f111c9f626c68a01d1c35ed691e",
+      "lines": 2740,
+      "lf": 2740,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": false,
+      "ranges_read": [
+        [
+          140,
+          210
+        ]
+      ]
+    },
+    "implementation-worktree/packages/multi-workers/mw_common.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\mw_common.py",
+      "bytes": 269301,
+      "sha256": "80af680d21efed0dbb51182c3b693a81efe2368fc0fc1114465fdb259ff7daf0",
+      "lines": 6248,
+      "lf": 6248,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": false,
+      "ranges_read": [
+        [
+          null,
+          null
+        ]
+      ]
+    },
+    "rework-r2/verification-preparation/run_pm_tests.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\verification-preparation\\run_pm_tests.py",
+      "bytes": 55026,
+      "sha256": "2e6db8d2a0382f47f2b9aa4b9eb5d40556ed3a1848ba81e46a16cb0fe949adc9",
+      "lines": 1352,
+      "lf": 1352,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "rework-r2/verification-preparation/sitecustomize.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\verification-preparation\\sitecustomize.py",
+      "bytes": 8902,
+      "sha256": "34a7fb04db4506250211f63870e4c54b7cb769547ac11bfe99cf306a4f90e94d",
+      "lines": 262,
+      "lf": 262,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "rework-r2/verification-preparation/guard_preflight.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\verification-preparation\\guard_preflight.py",
+      "bytes": 6255,
+      "sha256": "6515a78ea8bef8e76ecef815c7087f91231dd7a100e892a86638d73b79ec9bb2",
+      "lines": 173,
+      "lf": 173,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "rework-r2/verification-preparation/probe_imports.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\verification-preparation\\probe_imports.py",
+      "bytes": 3483,
+      "sha256": "f2ff1a7bf5f5b7f48f124cd1812d79c5101acc002b64c2c9656dd655179665cb",
+      "lines": 104,
+      "lf": 104,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "rework-r2/verification-preparation/test_t10_r2_boundaries.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\verification-preparation\\test_t10_r2_boundaries.py",
+      "bytes": 33533,
+      "sha256": "5abd812bf5f496ae37b91888f7cb9dc90f31b0290eefd2a1f454bf30bd90f771",
+      "lines": 856,
+      "lf": 856,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    },
+    "rework-r2/verification-preparation/static_verify.py": {
+      "path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\verification-preparation\\static_verify.py",
+      "bytes": 25622,
+      "sha256": "2241916b1f35fbc24557f780d8bc6425d0cdb218598cc0e1a1a3b82c64f978e1",
+      "lines": 649,
+      "lf": 649,
+      "crlf": 0,
+      "utf8_bom": false,
+      "final_newline": true,
+      "read_to_eof": true
+    }
+  },
+  "surface_read_scope": "decision_points.py / decision.py / mw_common.py are declared as surface reads: only the cited ranges/functions were read, the whole file was not"
+}

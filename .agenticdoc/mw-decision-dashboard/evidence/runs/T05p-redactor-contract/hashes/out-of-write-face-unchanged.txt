@@ -1,0 +1,19 @@
+﻿# T05p out-of-write-face check
+
+Session wrote only:
+- packages/multi-workers/decision.py (modified)
+- packages/multi-workers/test_decision_redactor_contract.py (new)
+- .agenticdoc/mw-decision-dashboard/workers/dd-redactor-contract/**
+- .agenticdoc/mw-decision-dashboard/evidence/runs/T05p-redactor-contract/**
+
+Dependency hashes before the implementation edit are the [DEPS BEFORE] block of
+logs/red-02-redactor-contract.log; the block after it is hashes/current-deps.sha256.
+Compared line by line: the ONLY differing entry is decision.py
+(c227a64b... -> 106ebaef...). decision_points.py, mw.py, decision_backends.py,
+decision_book.py, decision_wire.py, decision_monitor.py and the new test file are
+byte-identical between RED and the final tree (the test file was already final
+when red-02 ran; red-01 recorded the earlier draft bytes 8d3fe37f...).
+
+Other dirty paths in git status belong to concurrent sessions / earlier
+uncommitted cards (documented in the repo before this card started); this card
+neither touched nor reverted them.

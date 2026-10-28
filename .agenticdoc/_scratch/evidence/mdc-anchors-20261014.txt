@@ -1,0 +1,232 @@
+=== packages/multi-workers/autopilot/conductor.py  (8390 lines) ===
+28: through advance.advance() → advance_phase.py.
+54: from autopilot import advance, audit_evidence, closure, config, contract_guard, dispatch, effective_config, evidence, gates, index_parallel, roadmap, 
+601:     (D-102). Phase transitions go ONLY through advance.advance() ->
+602:     advance_phase.py (AC-005); goal.md is never written here."""
+698:     in_flight_keys = {
+702:             _is_in_flight(row) and _row_belongs_to(row, key) for row in rows
+742:             if key in in_flight_keys:
+744:             if len(in_flight_keys) >= max(1, int(cfg["max_parallel_keys"])):
+746:             if _advance_key(project_root, st, key, rows, rounds, cfg, rm_path):
+747:                 in_flight_keys.add(key)
+989:     is allowed (the conductor's three call sites only ever advance)."""
+1189:             r["task_key"] == info.task_key and _is_in_flight(r) for r in rows
+1289:         _is_in_flight(row) and _row_belongs_to(row, e.key)
+1432:     "timeout", "timed out", "locate", "advanceerror", "no such file",
+1444: def _classify_advance_failure(text: str) -> str:
+1445:     """Classify one advance failure message (design D-3).
+1462: def _advance_stall_ticks(cfg: dict) -> int:
+1463:     """Consecutive-failure threshold (config ``advance_stall_ticks``)."""
+1465:         value = int(cfg.get("advance_stall_ticks", 5))
+1471: def _advance_failure_streak(
+1478:     Walking newest → oldest: ``beat`` is skipped; a failing ``advance`` event
+1479:     for the same (key, edge) counts; a successful advance of that edge stops
+1482:     progress and stops the walk. An ``advance`` event of a *different* edge is
+1491:     ``advance`` + its ``config``), so the threshold-5 default spans ~10 events
+1514:             if "advance" in text and error_text == "":
+1518:         if name == "advance":
+1527:             cls = matched.group(3) or _classify_advance_failure(error_text)
+1536: def _record_advance_result(
+1545:     """Log one advance attempt and bound the retry loop (AC-002/AC-003).
+1550:     failed ``advance_stall_ticks`` times in a row, the key is marked stalled —
+1555:         st.timeline.append("advance", key=key, detail=f"{edge} exit=0")
+1557:     cls = _classify_advance_failure(err)
+1558:     st.timeline.append("advance", key=key, detail=f"{edge} exit={code} class={cls}")
+1560:         "config", key=key, detail=f"advance {edge} failed: {_one_line(err, 200)}"
+1562:     count, hist, snippet = _advance_failure_streak(project_root, key, edge)
+1563:     if count < _advance_stall_ticks(cfg):
+1571:             f"advance {edge} 连续 {count} 次失败（class={cls}；{dist}）: {snippet}", 300
+1573:         reason_code="advance-class",
+1577: def _advance_key(
+1621:         code, _out, err = advance.advance(key, nxt, project_root, summary=summary)
+1622:         _record_advance_result(
+1717: def _plan_task_order(stems: list[str], plan: str) -> list[str]:
+1737: def execute_loop(
+1753:     - all tasks done → advance execute→verify (the framework gate re-checks
+1765:     for stem in _plan_task_order([f.stem for f in files], plan):
+1770:         if any(_is_in_flight(r) for r in fam):
+1801:     code, _out, err = advance.advance(
+1804:     _record_advance_result(project_root, st, key, "execute->verify", code, err, cfg)
+1877:     "  未获授权的改写会被 advance done 前检查拒绝（fail-closed）。"
+2366:         if any(_is_in_flight(r) for r in rows if r["task_key"].startswith(prefix)):
+2505:                 # advance streak, so the streak cannot bound this loop).
+2536:             # advanced, or gated for a non-vocabulary reason (PASS lock /
+2538:             # advance-stall streak (AC-006)
+2556:         if any(_is_in_flight(r) for r in fam):
+2622:     """Rerun the framework's update_index.py set-phase (advance post-check
+2625:         script = advance.locate_platform_dir(project_root) / "scripts" / "update_index.py"
+2632:     except (advance.AdvanceError, OSError, subprocess.TimeoutExpired) as exc:
+2643:     ``(verdict, err)`` with verdict advanced | below | gated; ``err`` carries
+2644:     the full advance stderr only on the gate-blocked advance-failure path
+2650:     advance (machine-classified `contract-refused` event + a
+2658:         return "advanced", ""  # crash-after-advance resume
+2748:         # 5. advance done (framework gates re-verify the 三件套)
+2749:         code, _out, err = advance.advance(
+2752:         _record_advance_result(
+2777:         # advance exit=0 → lazily clear a marker left behind by a draft that
+2788:         # 6. advance 后验 index：exit 0 后回读 phase 列；失配重跑 set-phase
+2793:                 detail="index phase mismatch after advance done; rerunning set-phase",
+2805:         return "advanced", ""
+3001:         if key and any(_is_in_flight(row) and _row_belongs_to(row, key) for row in rows):
+3539: def _is_in_flight(row: dict) -> bool:
+4109:         if not any(_is_in_flight(row) and _row_belongs_to(row, key) for row in rows)
+4427:     `mark_stalled` / `_advance_key`, outside this card's write surface; this is
+4982: def _xkey_proposal_in_flight(
+4995:         pat.match(str(row.get("task_key", ""))) and _is_in_flight(row)
+5085:     if _xkey_proposal_in_flight(rows, source_key, base_stem):
+6217:     "advance-class",        # _record_advance_result :1091
+6218:     "l2-budget-rejected",   # _advance_key budget gate rejected :1177
+6219:     "l2-bonus-exhausted",   # _advance_key bonus spent :1182
+6220:     "l2-dispatch-refused",  # _advance_key verifier dispatch refused :1205
+6403:     if facts.get("in_flight_keys"):
+6406:             f"in-flight worker row(s): {', '.join(facts['in_flight_keys'])}",
+6588:             "in_flight_keys": [],
+6735:     # `reason_code == cause_class` stays true (missing this => advance-class
+6739:     return "advance"
+6784:     return "advance-class"
+6795:     # cannot be reproduced (`advance-class` => stalled-reason-drift).
+6800:         return "advance-class" if verdict.ok else "contract-unauthorized"
+6953:         "in_flight_keys": [],
+6986:     facts["in_flight_keys"] = [
+6990:             _is_in_flight(row) and _row_belongs_to(row, key) for row in rows
+=== packages/multi-workers/autopilot/config.py  (258 lines) ===
+6: raises :class:`ConfigError` instead of silently falling back to defaults —
+7: a wrong config must fail loudly, never run quietly on defaults (T-02/AC-025,
+9: and yields the defaults with zero footprint (no file or directory is created).
+11: Field set and defaults (D-110):
+16:     max_parallel_keys  int     2    (floor 2)
+18:     worker_timeout_min int     30
+24:                                     by default so every existing flow is
+36:                                     EFFECTIVE_KEYS, so the machine layer cannot
+40:                                     Bounded by default: an absent value or an
+53:     gate_reminder_after_min int 30  (1..1440; T-07/G2 age threshold in minutes
+63: (bool, default false when absent). It is the T-14 service-layer envelope
+80:     """config.json exists but is invalid. Never a silent default fallback."""
+87:     "max_parallel_keys": 2,
+89:     "worker_timeout_min": 30,
+102:     "gate_reminder_after_min": 30,
+122:     "max_parallel_keys": (2, None),
+124:     "worker_timeout_min": (1, None),
+133:     "gate_reminder_after_min": (1, 1440),
+142: def default_config() -> dict:
+143:     """Fresh copy of the defaults (callers may mutate freely)."""
+195:     """Load config.json. Missing file -> defaults, zero footprint (nothing is
+199:     actually carries, never a silent default fill.
+202:     :func:`default_config` or :func:`autopilot.effective_config.load_effective`;
+207:         return default_config()
+234:     The launcher's envelope gate is fail-closed by default; this knob is the
+=== packages/coding-agent/src/extensions/agent-team-loop/autopilot/status-model.ts  (1799 lines) ===
+24:  *   - key phase                        → _index.parallel via shared/index-store.ts
+80: 	max_parallel_keys: number;
+83: 	l2_read_file_cap: number;
+84: 	l2_read_byte_cap: number;
+101: 	/** Automatic gate-decision kill switch (mw-autopilot-slot-capacity AC-018,
+107: 	/** Launcher concurrency cap (T-18/D-027, AC-021): 1..64, default 8. Bounded
+118: 	/** G1 dedicated `l3abort:` re-roll cap (T-02/D-003, AC-003): 0..10, default
+127: 	 * range max is 2 by design — a config can only lower the cap, never raise
+136: 	max_parallel_keys: 2,
+139: 	l2_read_file_cap: 8,
+140: 	l2_read_byte_cap: 65536,
+163: // the optional `envelope_fallback` escape hatch. It is deliberately NOT in
+196: 	max_parallel_keys: [2, null],
+199: 	l2_read_file_cap: [1, null],
+200: 	l2_read_byte_cap: [1, null],
+328: 			| "max_parallel_keys"
+331: 			| "l2_read_file_cap"
+332: 			| "l2_read_byte_cap"
+350: 		max_parallel_keys: intOf("max_parallel_keys"),
+353: 		l2_read_file_cap: intOf("l2_read_file_cap"),
+354: 		l2_read_byte_cap: intOf("l2_read_byte_cap"),
+382: 		max_parallel_keys: config.max_parallel_keys,
+385: 		l2_read_file_cap: config.l2_read_file_cap,
+386: 		l2_read_byte_cap: config.l2_read_byte_cap,
+692:  * (`gate-queue-unreadable > key-in-flight > cap-reached > stage-terminal >
+699: 	"cap-reached",
+710: 	"cap-reached",
+741: 	if (input.reminders + 1 > input.reminderMax) return "cap-reached";
+899:  * ('' escaping), null literal, or plain string. Double-quoted scalars are
+900:  * rejected (no escape-rule support on the Python side either). */
+1185: // ── auto-decisions ledger (reminder rows; cap axis input for AC-003) ────────
+1248: /** Reminders already recorded for one gate — the ledger is the cap axis's only
+1278: 	// Gate redesign (mw-autopilot-slot-capacity, D-005/D-006/D-009): names are
+1606: 	max_parallel_keys: number;
+1742: 					max_parallel_keys: config.max_parallel_keys,
+1794: 			` | round_budget=${status.config.round_budget} | max_parallel_keys=${status.config.max_parallel_keys}` +
+=== packages/coding-agent/src/extensions/agent-team-loop/autopilot/monitor.ts  (1502 lines) ===
+2:  * monitor.ts — the /autopilot monitor panel (autopilot-monitor T-01, design
+13:  *      `status: pending` rows; autopilot progress (tick freshness, slots,
+16:  *      _index.parallel + a bounded timeline tail (mw-autopilot-stall-feedback
+18:  *   2. render   — renderMonitorLines: a fixed-section panel (header + serve
+20:  *      panel height never flickers), 110-column truncation, the same
+68: /** Widget id for the monitor panel (the watch widget is
+77:  * refresh periods". This is the panel-cadence instance of the conductor's
+80:  * variable's VALUE, because the conductor beat and the panel refresh are
+84: /** Panel line width cap (same as the watch widget's WATCH_LINE_MAX). */
+111: /** One running queue row plus its panel-computed age. The full
+127: 	 * the panel cannot show the gate's age (AC-012). Optional so hand-built
+145: 	/** `phase:"remind"` ledger rows for this gate (cap-axis input, AC-003). */
+204: 	/** Phase from _index.parallel ("—" when the key has no index row yet). */
+232: 	slotsUsed: number;
+233: 	slotsMax: number;
+255: 	 * gate list above is NOT "no gates" but "could not read gates" — the panel
+261: 	/** T-21 R-2: per-file failure samples behind `queueState`, so the panel can
+275: 	 * is always 0 at render time and therefore proves nothing). A frozen panel
+296: 	/** G4 AC-017: one-line error summary (`name: message`, capped). */
+302: /** Parse one gate file's frontmatter text for the fields the panel needs
+305:  * non-gate or unparsable files) is skipped. Also captures `created_at`,
+306:  * `reason_code` and `evidence_refs` so the panel can show age/reason and
+400: 	// Compact by design: the panel only flags the drift; the full mtime pair
+418:  * instead of throwing — a half-present project still renders a full panel
+513: 	// queue": it becomes `queueState` so the panel can say
+677:  * panel O(window) instead of O(history) on a multi-megabyte timeline. Torn
+761:  * Mirrors the conductor's watch on purpose, so the panel never reports
+765:  * deliberate difference is the trailing edge — the panel keeps showing the
+860:  * still renders a full panel). Pure read-only. */
+932: 		slotsUsed: busyKeys.size,
+=== packages/multi-workers/test/fixtures/autopilot-config-corpus.json  (876 lines) ===
+5:       "id": "int-literal-4-0",
+18:       "id": "int-literal-4-00",
+31:       "id": "int-literal-1e2",
+44:       "id": "int-literal-upper-e2",
+57:       "id": "int-literal-neg-zero",
+70:       "id": "int-literal-4-5",
+83:       "id": "int-literal-1e400",
+96:       "id": "int-valid-4",
+107:       "id": "int-from-string",
+120:       "id": "int-from-bool",
+133:       "id": "int-from-null",
+146:       "id": "bool-from-string",
+159:       "id": "bool-from-int",
+172:       "id": "bool-valid",
+183:       "id": "string-from-int",
+196:       "id": "list-not-list",
+209:       "id": "list-empty-item",
+222:       "id": "root-array",
+233:       "id": "root-null",
+244:       "id": "range-poll-low",
+257:       "id": "range-poll-high",
+270:       "id": "range-poll-min",
+281:       "id": "range-poll-max",
+292:       "id": "range-max-parallel-low",
+296:       "payload_text": "{\"max_parallel_keys\": 1}",
+300:           "max_parallel_keys"
+305:       "id": "range-max-parallel-min",
+309:       "payload_text": "{\"max_parallel_keys\": 2}",
+316:       "id": "range-stall-high",
+329:       "id": "range-stall-max",
+340:       "id": "enum-auto-gate-mode-invalid",
+353:       "id": "bigint-2p53",
+357:       "payload_text": "{\"max_parallel_keys\": 9007199254740992}",
+364:       "id": "bigint-2p53-minus-1",
+368:       "payload_text": "{\"max_parallel_keys\": 9007199254740991}",
+375:       "id": "unknown-key",
+388:       "id": "partial-single",
+399:       "id": "partial-two",
+410:       "id": "empty-object",
+421:       "id": "list-empty",
+
+=== 计数锁 20（parity/sync 测试里同时含 config 键数的文件）===
+packages\coding-agent\test\suite\autopilot-console.test.ts
+packages\multi-workers\test_autopilot_config.py
+packages\multi-workers\test_mwgal_t12_stage_close_auto.py
+packages\multi-workers\test_mwgal_t15_reattest_confirm.py

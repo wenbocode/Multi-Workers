@@ -1,0 +1,26 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T13:40:05.680389+00:00",
+  "blocked_original_R2_done_exit0_acked_no_product_changes": true,
+  "blocked_R2_actual_run_id": "dpc-t05-eight-cases-r2@2026-10-27T13:28:05.534Z",
+  "guard_rejection_preserved": true,
+  "new_card_sha256": "49ebb4b47c610493632647c386e0c7f3feee1805924a83736a321584dd52394d",
+  "new_card_12_entry_extraction_render_parse_roundtrip": true,
+  "original_control_12_old_bad_control_1": true,
+  "original_11_product_face_exact": true,
+  "current_before_bytes_saved": 11,
+  "current_test_functions_preserved": 28,
+  "mirror_1891_unchanged_since_failed_envelope": true,
+  "all_original_PM_worker_histories_protected": true,
+  "pyc_14_current_bytes_protected_prior_1_drift_not_erased": true,
+  "T10_five_products_protected": true,
+  "carrier_argv": [
+    "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+    "-B",
+    "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t05-r2-envelope-pre-dispatch-20261027\\carrier.py"
+  ],
+  "carrier_rc": 0,
+  "actual_new_worker_dispatched": false,
+  "logical_tasks": 36,
+  "stages": 7
+}

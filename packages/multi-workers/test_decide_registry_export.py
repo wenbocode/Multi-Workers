@@ -135,6 +135,16 @@ def test_wired_set_is_the_three_documented_call_sites() -> None:
     )
 
 
+def _expected_field(path: str) -> dict:
+    """Independent re-derivation of one exported field from the semantics table."""
+    spec = dpts.STATE_FIELD_DESCRIPTIONS[path]
+    field = {"name": path, "type": spec["type"], "description": spec["description"]}
+    for key in dpts.STATE_FIELD_CONSTRAINT_KEYS:
+        if key in spec:
+            field[key] = list(spec[key]) if key == "enum" else spec[key]
+    return field
+
+
 def test_questions_version_and_required_state_fields_follow_the_registry() -> None:
     by_id = _points_by_id()
     for point in dpts.DP_REGISTRY:
@@ -149,13 +159,11 @@ def test_questions_version_and_required_state_fields_follow_the_registry() -> No
             f"{point.id}: questions_version drifted; regenerate the export"
         )
         assert exported["required_state_fields"] == [
-            {
-                "name": path,
-                "type": dpts.STATE_FIELD_DESCRIPTIONS[path]["type"],
-                "description": dpts.STATE_FIELD_DESCRIPTIONS[path]["description"],
-            }
-            for path in dpts.REQUIRED_STATE_FIELDS.get(point.id, ())
+            _expected_field(path) for path in dpts.REQUIRED_STATE_FIELDS.get(point.id, ())
         ], f"{point.id}: required_state_fields drifted from REQUIRED_STATE_FIELDS"
+        assert exported["optional_state_fields"] == [
+            _expected_field(path) for path in dpts.OPTIONAL_STATE_FIELDS.get(point.id, ())
+        ], f"{point.id}: optional_state_fields drifted from OPTIONAL_STATE_FIELDS"
         assert [question["id"] for question in exported["questions"]] == [
             str(question["id"]) for question in point.questions
         ], f"{point.id}: the exported question set drifted"
@@ -201,7 +209,7 @@ def test_write_regenerates_without_losing_wiring(
     payload = json.loads(capsys.readouterr().out)
     assert len(payload["points"]) == 25
     assert set(payload) == {"schema", "generated_from", "question_types", "points"}
-    assert payload["schema"] == 2
+    assert payload["schema"] == dpts.SNAPSHOT_SCHEMA == 3
     assert sum(1 for point in payload["points"] if point["wired"]) == 3
 
 
@@ -243,7 +251,7 @@ def test_write_migrates_a_legacy_top_level_wiring_section(
     capsys.readouterr()
     migrated = json.loads(target.read_text(encoding="utf-8"))
     assert "wiring" not in migrated
-    assert migrated["schema"] == 2
+    assert migrated["schema"] == dpts.SNAPSHOT_SCHEMA == 3
     assert migrated == current, "the migration lost a hand-written wiring entry"
     assert target.read_bytes() == EXPORT_PATH.read_bytes()
 

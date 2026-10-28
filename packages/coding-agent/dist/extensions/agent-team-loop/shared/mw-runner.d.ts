@@ -274,9 +274,16 @@ export declare function partitionMw(projectDir: string, args: string[]): MwCliRe
  * ordered fallback chains (set-fallback / clear-fallback). */
 export declare function modelMw(projectDir: string, args: string[]): MwCliResult;
 /** `mw.py decide <args...>` — decision archive / dp authority / sign-off. The
- * window face only forwards (`/mw decide sign` adds the `--human-confirmed`
- * exemption after its own confirm dialog); Python stays the single source of
- * parsing, validation, verdicts and rendering. */
+ * window face only forwards: `/mw decide show|sign` sends
+ * `sign --key <k> --dry-run --json` (read-only pre-judge) or
+ * `sign --key <k> --json` (the decision model decides and writes) — no caller
+ * conclusion, no human-sign exemption flag, and no `--auto`, so a project's
+ * `signoff: disable` keeps working. Python stays the single source of parsing,
+ * validation, verdicts and rendering. The argv tail is verbatim: the T12a
+ * read-only faces (`dp list`, `dp show <id>`, `dp export`) and the bare
+ * `monitor` arrive here exactly as `decideForwardArgs` built them, and
+ * `--project=<control root>` is appended once so the dp table, the archive tail
+ * and the monitor identity resolve against this window's project. */
 export declare function decideMw(projectDir: string, args: string[]): MwCliResult;
 /** `mw.py stats [args...]` — token + wall-clock attribution over a time window
  * (mw-usage-monitor T-04/AC-006). Thin wrapper: Python owns the ledger scan,

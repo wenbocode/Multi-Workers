@@ -1,0 +1,24 @@
+{
+  "decision_book.py.diff": {
+    "path": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/diffs/decision_book.py.diff",
+    "bytes": 76761,
+    "sha256": "254d18042238b93b9f43233620e372b93bd61d14dd423325bfc705dc76f6f8fd",
+    "hunks": 27
+  },
+  "test_decision_context_contract.py.diff": {
+    "path": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/diffs/test_decision_context_contract.py.diff",
+    "bytes": 90078,
+    "sha256": "d178bf84fc3684499c4f8c6a12f0eaefcdc9f3b3b57328dd31b9d35472fb76d5",
+    "hunks": 4
+  },
+  "baseline/decision_book.py": {
+    "path": ".agenticdoc/mw-dp-consolidation/evidence/implementation/isolation-baseline-20261026/original-bytes/packages/multi-workers/decision_book.py",
+    "bytes": 54796,
+    "sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f"
+  },
+  "baseline/test_decision_context_contract.py": {
+    "path": ".agenticdoc/mw-dp-consolidation/evidence/implementation/isolation-baseline-20261026/original-bytes/packages/multi-workers/test_decision_context_contract.py",
+    "bytes": 35858,
+    "sha256": "ea6429088c285382736f634a3233b7c94659c2a381e60b0ad9380a0157b8e7cf"
+  }
+}

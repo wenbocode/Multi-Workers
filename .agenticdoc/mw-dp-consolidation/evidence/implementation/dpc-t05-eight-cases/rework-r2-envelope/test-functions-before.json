@@ -1,0 +1,342 @@
+[
+  {
+    "name": "test_eight_offline_cases_are_complete_schema3_and_contract_shaped",
+    "lineno": 390,
+    "end_lineno": 457,
+    "decorators": [],
+    "args": [],
+    "assert_count": 23,
+    "ast_sha256": "9fc413194e90148e2f137298d8993767c9bc54f10810a44b0506e17018f8b887",
+    "source_sha256": "c3c8eebafbad2e50a5f3332b2f546a294ebf10974192d24287b9746999b38095",
+    "source": "def test_eight_offline_cases_are_complete_schema3_and_contract_shaped():\n    module = _generator_module()\n    assert set(CASE_FILES) == set(module.CASE_IDS), \"the generator owns exactly eight case ids\"\n    assert not set(module.CASE_IDS) & set(LEGACY_CASE_FILES), \"no legacy id is generated\"\n    cases = module.build_cases()\n    assert set(cases) == set(CASE_FILES)\n\n    for dp, shell in cases.items():\n        assert set(shell) == {\"case_version\", \"dp\", \"title\", \"note\", \"book\", \"questions\"}, (\n            f\"{dp}: the case includes the complete observation questions\"\n        )\n        assert shell[\"questions\"] == decision_points.questions_map(dp)\n        _assert_no_placeholders(shell[\"questions\"], dp + \".questions\")\n        assert shell[\"case_version\"] == 1\n        assert shell[\"dp\"] == dp\n        assert isinstance(shell[\"title\"], str) and len(shell[\"title\"]) > 8\n        assert isinstance(shell[\"note\"], str) and len(shell[\"note\"]) > 20\n        _assert_no_placeholders({\"title\": shell[\"title\"], \"note\": shell[\"note\"]}, dp)\n\n        book = shell[\"book\"]\n        assert set(book) <= set(decision_book.BOOK_TOP_LEVEL_KEYS)\n        assert book[\"schema_version\"] == decision_book.BOOK_SCHEMA_VERSION == 3\n        assert book[\"decision_point\"] == dp\n        assert \"state\" not in book, \"a schema-3 book never carries the legacy state shape\"\n        material = book[\"material\"]\n        preparation = book[\"preparation\"]\n        meta = book[\"meta\"]\n        assert isinstance(material, dict) and isinstance(preparation, dict)\n        _assert_case_materials(dp, material)\n        _assert_no_placeholders(material, dp)\n        _assert_no_placeholders(preparation, dp + \".preparation\")\n\n        # Local identity: exact closed key set and the entry's real initiator role.\n        assert set(meta) == set(decision_book.META_KEYS)\n        assert all(isinstance(value, str) and value.strip() for value in meta.values())\n        assert not decision_points.role_issues(dp, meta[\"actor_role\"]), dp\n\n        # Complete: every string leaf is real prose, not a skeleton value\n        # (candidate ids are keys, not material, so they are exempt).\n        for path, text in _iter_texts(material, dp):\n            if path.endswith(\".id\"):\n                assert text.strip(), f\"{path} must carry a candidate id\"\n                continue\n            assert len(text.strip()) >= 8, f\"{path} looks like a stub ({text!r})\"\n\n        # The title/note shell never enters the book.\n        serialised = json.dumps(book, ensure_ascii=False)\n        assert shell[\"title\"] not in serialised\n        assert shell[\"note\"] not in serialised\n\n        # The existing no-truncation budget gate applies to the send payload.\n        payload = {\n            \"material\": decision_points.model_state_for(dp, material),\n            \"preparation\": preparation,\n        }\n        encoded = decision._encode_state(payload)\n        assert len(encoded) <= decision_points.MAX_STATE_BYTES, (\n            f\"{dp}: send payload is {len(encoded)} bytes, the existing budget is \"\n            f\"{decision_points.MAX_STATE_BYTES}; shorten the material instead of truncating\"\n        )\n\n        _assert_evidence_points_at_the_material(dp, material, book)\n        for field in DESIGN_STATE_FIELDS[dp]:\n            assert any(\n                path == field or path.startswith(field + \".\") for path in book[\"notes\"][\"evidence\"]\n            ) or field in {\"images_required\"}, (\n                f\"{dp}: design §2 field {field!r} has no evidence entry\"\n            )"
+  },
+  {
+    "name": "test_dp_pm_steer_case_keeps_the_registry_question_vocabulary",
+    "lineno": 460,
+    "end_lineno": 473,
+    "decorators": [],
+    "args": [],
+    "assert_count": 7,
+    "ast_sha256": "ffc05267f3c2607d2565eccdc3f80036f2ca8b89bcc010e1af78c7ec0eba3745",
+    "source_sha256": "ebd117698e0778f81c503f1a9b700505a554236429f5fff8f92c7ca13e9ffb58",
+    "source": "def test_dp_pm_steer_case_keeps_the_registry_question_vocabulary():\n    point = decision_points.get_decision_point(\"dp-pm-steer\")\n    questions = point.questions\n    assert [question[\"id\"] for question in questions] == [\"checkpoint_action\"]\n    choices = list(questions[0][\"choices\"])\n    assert choices == DP2_CHOICES\n    assert \"continue\" not in choices\n    assert set(questions[0][\"labels\"]) == set(DP2_CHOICES)\n    assert \"继续\" in questions[0][\"instructions\"]\n    # The case material keeps the original goal/requirements instead of narrowing\n    # them for the checkpoint decision.\n    material = _generator_module().build_case(\"dp-pm-steer\")[\"book\"][\"material\"]\n    assert material[\"task_goal\"].startswith(\"给 mw decide monitor 增加旧记录只读筛选\")\n    assert \"不改其余入口的既有契约\" in material[\"task_requirements\"]"
+  },
+  {
+    "name": "test_eight_cases_pass_the_offline_registry_typed_check",
+    "lineno": 476,
+    "end_lineno": 490,
+    "decorators": [],
+    "args": [],
+    "assert_count": 1,
+    "ast_sha256": "90575332dde138a2585f6da33d7a79dea39468e7d646952dc1e4985aac156fdd",
+    "source_sha256": "2db29a3e7cc76763552e1e89b929775fee31c2e766f2e383f4347083c0ff8f7f",
+    "source": "def test_eight_cases_pass_the_offline_registry_typed_check():\n    \"\"\"Offline ``check_book`` (no credential, no model) accepts 8/8 cases.\n\n    The gate runs with the *implementation copy* as its repository root, so the\n    ``path:line`` evidence resolves inside the copy and never against the live\n    tree. The real HTTP body/edit assertion still needs the monitor route\n    migration and remains a separate integration step.\n    \"\"\"\n    module = _generator_module()\n    failures = {}\n    for dp, case in module.build_cases().items():\n        issues = decision_book.check_book(case[\"book\"], repo_root=REPO_ROOT)\n        if issues:\n            failures[dp] = [(issue.code, issue.path, issue.detail) for issue in issues]\n    assert failures == {}, failures"
+  },
+  {
+    "name": "test_case_evidence_is_really_checked_and_resolves_inside_the_copy",
+    "lineno": 493,
+    "end_lineno": 514,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 5,
+    "ast_sha256": "5b07035370e0a6eaec3166e546dee5424c2886a8ffdfc8ea477f010081e89568",
+    "source_sha256": "f8040b3085404f084998d95cd954fe3ad2bd1ea6c4e83e5866b56e514b3ee282",
+    "source": "def test_case_evidence_is_really_checked_and_resolves_inside_the_copy(tmp_path):\n    \"\"\"The evidence gate is not vacuous: a wrong root really refuses the book.\"\"\"\n    module = _generator_module()\n    cases = module.build_cases()\n    for dp, case in cases.items():\n        evidence = case[\"book\"][\"notes\"][\"evidence\"]\n        for reference in evidence.values():\n            relative, _, line = reference.rpartition(\":\")\n            resolved = (REPO_ROOT / relative).resolve()\n            assert resolved.is_file(), reference\n            assert REPO_ROOT in resolved.parents\n            assert resolved == GENERATOR_PATH.resolve()\n            int(line)\n\n    empty_repo = tmp_path / \"empty-repo\"\n    empty_repo.mkdir()\n    issues = decision_book.check_book(\n        cases[\"dp-sign-key\"][\"book\"], repo_root=empty_repo\n    )\n    paths = {issue.path for issue in issues}\n    assert \"notes.evidence.delivery_goal\" in paths, issues\n    assert any(issue.code == \"book-evidence\" for issue in issues)"
+  },
+  {
+    "name": "test_each_case_prepares_a_real_basis_for_every_supported_choice",
+    "lineno": 517,
+    "end_lineno": 556,
+    "decorators": [],
+    "args": [],
+    "assert_count": 7,
+    "ast_sha256": "45482ceee91d5aa1983702a7384c957b6b27193a2ef569982d57e2771dae0376",
+    "source_sha256": "8a1e6277effc951e952ebe4455302f358958786341607b3a790c6904715b32e2",
+    "source": "def test_each_case_prepares_a_real_basis_for_every_supported_choice():\n    \"\"\"Every choice the material supports has exactly one prepared reason (D012A).\n\n    The model selects one of these items in the same call; the catalog is a\n    preparation input, so a failure reason, a probability or the PM note can\n    never impersonate it.\n    \"\"\"\n    module = _generator_module()\n    for dp, case in module.build_cases().items():\n        book = case[\"book\"]\n        material = book[\"material\"]\n        preparation = book[\"preparation\"]\n        meta = book[\"meta\"]\n        assert set(preparation) == {\"basis_catalog\", \"prepared_at\"}\n        assert preparation[\"prepared_at\"].endswith(\"+00:00\")\n\n        legal = decision_points.resolve_entry_choices(dp, material)\n        assert legal, dp\n        supported = [\n            choice\n            for choice in legal\n            if not decision_points.entry_choice_issues(dp, choice, material)\n        ]\n        covered = {\n            choice for item in preparation[\"basis_catalog\"] for choice in item[\"applies_to\"]\n        }\n        assert covered == set(supported), dp\n        for item in preparation[\"basis_catalog\"]:\n            assert set(item) == {\"id\", \"text\", \"material_refs\", \"applies_to\"}\n            assert item[\"material_refs\"], dp\n            for choice in item[\"applies_to\"]:\n                issues = decision_points.prepared_request_issues(\n                    dp,\n                    material,\n                    preparation,\n                    actor_role=meta[\"actor_role\"],\n                    choice=choice,\n                    basis_id=item[\"id\"],\n                )\n                assert issues == (), (dp, choice, issues)"
+  },
+  {
+    "name": "test_dp_w_type_case_keeps_four_candidates_and_the_image_gate",
+    "lineno": 559,
+    "end_lineno": 570,
+    "decorators": [],
+    "args": [],
+    "assert_count": 4,
+    "ast_sha256": "3b0ab68e0fc87260cbfa531f1cf29bc9a93600682ee54ebd7325be37e56dbfb6",
+    "source_sha256": "7465aeda5005f7e2013301938af347197737a6592966fa3413b7d412cce43d0b",
+    "source": "def test_dp_w_type_case_keeps_four_candidates_and_the_image_gate():\n    module = _generator_module()\n    case = module.build_case(\"dp-w-type\")\n    material = case[\"book\"][\"material\"]\n    point = decision_points.get_decision_point(\"dp-w-type\")\n    assert list(point.questions[0][\"choices\"]) == [\"coding\", \"research\", \"review\", \"vision\"]\n    # The case states a real fact (\"no image reading\"); that is never a proof of\n    # image capability, so a vision dispatch stays refused by the hard gate.\n    assert material[\"images_required\"] is False\n    assert decision_points.vision_dispatch_issues(material, \"coding\", \"proven\") == ()\n    vision = decision_points.vision_dispatch_issues(material, \"vision\", \"proven\")\n    assert (\"vision\", \"requires images_required=true on the real dispatch material\") in vision"
+  },
+  {
+    "name": "test_dp_w_check_task_case_keeps_three_branches_and_needs_no_pm_wait",
+    "lineno": 573,
+    "end_lineno": 587,
+    "decorators": [],
+    "args": [],
+    "assert_count": 4,
+    "ast_sha256": "2e641e7628e94deed1bf10086e98ab2d87be98e511942e7580a411052c6dc9ac",
+    "source_sha256": "1169089a3c9c1201c9c2ea7f94b1f1641e2961e10bbb44e9a2b948f1d197bee1",
+    "source": "def test_dp_w_check_task_case_keeps_three_branches_and_needs_no_pm_wait():\n    module = _generator_module()\n    book = module.build_case(\"dp-w-check-task\")[\"book\"]\n    material = dict(book[\"material\"])\n    point = decision_points.get_decision_point(\"dp-w-check-task\")\n    assert list(point.questions[0][\"choices\"]) == [\"continue\", \"terminate\", \"investigate\"]\n\n    without_plan = dict(material)\n    without_plan.pop(\"investigation\")\n    issues = decision_points.entry_choice_issues(\"dp-w-check-task\", \"investigate\", without_plan)\n    assert (\"investigation.unknown\", \"required by the investigate branch (bounded evidence plan)\") in issues\n    for choice in (\"continue\", \"terminate\", \"investigate\"):\n        assert decision_points.entry_choice_issues(\"dp-w-check-task\", choice, material) == ()\n    # fire-and-forget: no field asks the worker to block on a PM answer.\n    assert \"等待\" not in json.dumps(material, ensure_ascii=False)"
+  },
+  {
+    "name": "test_dp_sigkey_qg_and_gate_entries_refuse_their_own_missing_branch_material",
+    "lineno": 590,
+    "end_lineno": 612,
+    "decorators": [],
+    "args": [],
+    "assert_count": 6,
+    "ast_sha256": "8d0d1e0f3e59208b6e387a5886c2044861504ef701b2dac2cbfd09488c38b568",
+    "source_sha256": "0a8b1a644bf7f943f98ec4e23caebc7ce7acd0da3e0087b9fcc337ea30d4ca81",
+    "source": "def test_dp_sigkey_qg_and_gate_entries_refuse_their_own_missing_branch_material():\n    \"\"\"Branch-conditional material is required, never defaulted (AC-043).\"\"\"\n    module = _generator_module()\n    qg = dict(module.build_case(\"dp-QG\")[\"book\"][\"material\"])\n    reopen = decision_points.entry_choice_issues(\"dp-QG\", \"reopen\", qg)\n    assert (\"basis_issue\", \"required by reopen: name the substantive basis problem\") in reopen\n\n    with_issue = dict(qg)\n    with_issue[\"basis_issue\"] = \"验收要求与设计正文冲突，需要重新确认口径。\"\n    assert decision_points.entry_choice_issues(\"dp-QG\", \"reopen\", with_issue) == ()\n    pass_with_issue = decision_points.entry_choice_issues(\"dp-QG\", \"pass\", with_issue)\n    assert (\"basis_issue\", \"pass cannot be combined with an unresolved basis problem\") in pass_with_issue\n    assert decision_points.entry_choice_issues(\"dp-QG\", \"pass\", qg) == ()\n\n    gate = dict(module.build_case(\"dp-gate-approve\")[\"book\"][\"material\"])\n    no_authority = json.loads(json.dumps(gate, ensure_ascii=False))\n    no_authority[\"pm_note\"][\"basis\"].pop(\"authority\")\n    gate_issues = decision_points.entry_material_issues(\"dp-gate-approve\", no_authority)\n    assert (\"pm_note.basis.authority\", \"must be a non-empty string\") in gate_issues\n    # No default gate answer: a missing selection is refused, not approve.\n    assert decision_points.entry_choice_issues(\"dp-gate-approve\", None, gate) == (\n        (\"choice\", \"missing selection: no default candidate is applied\"),\n    )"
+  },
+  {
+    "name": "test_dp_sign_key_case_keeps_the_four_parts_and_three_arrays",
+    "lineno": 615,
+    "end_lineno": 643,
+    "decorators": [],
+    "args": [],
+    "assert_count": 5,
+    "ast_sha256": "e7cf876cc7e3a85dfb3a9dd2470d87e679670af1d211fb0b92b4fe930c69b8f1",
+    "source_sha256": "11ddfdd1fd797fa0bff39591484ebe5ee85f150e787ca76556aa68818c973202",
+    "source": "def test_dp_sign_key_case_keeps_the_four_parts_and_three_arrays():\n    module = _generator_module()\n    book = module.build_case(\"dp-sign-key\")[\"book\"]\n    material = dict(book[\"material\"])\n    assert set(material) == {\n        \"delivery_goal\",\n        \"actual_completion\",\n        \"verification_evidence\",\n        \"unfinished_impact\",\n    }\n    for choice in (\"finalize\", \"continue\", \"user-confirm\"):\n        assert decision_points.entry_choice_issues(\"dp-sign-key\", choice, material) == ()\n\n    # AC-051: [] is the real \"none\"; null/missing can never be upgraded to it.\n    empty = json.loads(json.dumps(material, ensure_ascii=False))\n    empty[\"verification_evidence\"][\"verified\"] = []\n    empty[\"verification_evidence\"][\"unverified\"] = []\n    empty[\"unfinished_impact\"] = []\n    assert decision_points.sign_key_material_issues(empty) == ()\n\n    nulled = json.loads(json.dumps(material, ensure_ascii=False))\n    nulled[\"verification_evidence\"][\"verified\"] = None\n    paths = {path for path, _detail in decision_points.sign_key_material_issues(nulled)}\n    assert \"verification_evidence.verified\" in paths\n\n    missing = json.loads(json.dumps(material, ensure_ascii=False))\n    missing.pop(\"unfinished_impact\")\n    paths = {path for path, _detail in decision_points.sign_key_material_issues(missing)}\n    assert \"unfinished_impact\" in paths"
+  },
+  {
+    "name": "test_dp_auto_case_uses_free_form_pm_candidates_and_invents_nothing",
+    "lineno": 646,
+    "end_lineno": 679,
+    "decorators": [],
+    "args": [],
+    "assert_count": 6,
+    "ast_sha256": "c42b84add4dd249b951c5aa6368b051ef3cb1c7913cf94f8478eabfdb38dd691",
+    "source_sha256": "3d3714553c479d7408ef25f1d52d8da5e8eeb600dc52c0b0b9ac94087d4dd5bc",
+    "source": "def test_dp_auto_case_uses_free_form_pm_candidates_and_invents_nothing():\n    module = _generator_module()\n    case = module.build_case(\"dp-auto\")\n    book = case[\"book\"]\n    material = book[\"material\"]\n    candidates = material[\"handling_options\"]\n    prepared = [candidate[\"id\"] for candidate in candidates]\n\n    # The registry-derived enum *is* the prepared set (no second candidate copy).\n    assert decision_points.resolve_entry_choices(\"dp-auto\", material) == tuple(prepared)\n    assert \"dynamic_choices\" not in json.dumps(material, ensure_ascii=False)\n    assert case[\"questions\"] == decision_points.questions_map(\"dp-auto\")\n\n    for candidate in prepared:\n        issues = decision_points.prepared_request_issues(\n            \"dp-auto\",\n            material,\n            book[\"preparation\"],\n            actor_role=book[\"meta\"][\"actor_role\"],\n            choice=candidate,\n            basis_id=next(\n                item[\"id\"]\n                for item in book[\"preparation\"][\"basis_catalog\"]\n                if candidate in item[\"applies_to\"]\n            ),\n        )\n        assert issues == (), (candidate, issues)\n\n    invented = decision_points.entry_choice_issues(\"dp-auto\", \"c1\", material)\n    assert (\"choice\", \"must be one of the 3 legal ids of dp-auto; invented or retired ids are refused\") in invented\n\n    single = json.loads(json.dumps(material, ensure_ascii=False))\n    single[\"handling_options\"] = single[\"handling_options\"][:1]\n    assert decision_points.entry_choice_issues(\"dp-auto\", prepared[0], single)"
+  },
+  {
+    "name": "test_dp_route_case_routes_to_the_other_seven_entries_without_authorising",
+    "lineno": 682,
+    "end_lineno": 720,
+    "decorators": [],
+    "args": [],
+    "assert_count": 6,
+    "ast_sha256": "d532351904b2042b29144df12590be317ea0d6389bb890d8112662c1529f0739",
+    "source_sha256": "2c7ea9bbfc547c4e7f4d2d71ec4839dfeef52b177911144c9bf1df1fb71d029b",
+    "source": "def test_dp_route_case_routes_to_the_other_seven_entries_without_authorising():\n    module = _generator_module()\n    book = module.build_case(\"dp-route\")[\"book\"]\n    material = book[\"material\"]\n    point = decision_points.get_decision_point(\"dp-route\")\n    targets = list(point.questions[0][\"choices\"])\n    assert targets == [\n        \"dp-w-type\",\n        \"dp-pm-steer\",\n        \"dp-w-check-task\",\n        \"dp-QG\",\n        \"dp-gate-approve\",\n        \"dp-sign-key\",\n        \"dp-auto\",\n    ]\n    assert \"dp-route\" not in targets\n    assert decision_points.resolve_entry_choices(\"dp-route\", material) == tuple(targets)\n\n    for target in targets:\n        basis = next(\n            item[\"id\"] for item in book[\"preparation\"][\"basis_catalog\"] if target in item[\"applies_to\"]\n        )\n        issues = decision_points.prepared_request_issues(\n            \"dp-route\",\n            material,\n            book[\"preparation\"],\n            actor_role=book[\"meta\"][\"actor_role\"],\n            choice=target,\n            basis_id=basis,\n        )\n        assert issues == (), (target, issues)\n\n    # Routing to itself is refused, and the material is only the routing fact:\n    # it carries no business conclusion, no release and no action field.\n    assert decision_points.entry_choice_issues(\"dp-route\", \"dp-route\", material) == (\n        (\"choice\", \"must be one of the 7 legal ids of dp-route; invented or retired ids are refused\"),\n        (\"choice\", \"dp-route may not route to itself\"),\n    )\n    assert set(material) == {\"decision_actor\", \"decision_object\", \"question\"}"
+  },
+  {
+    "name": "test_generator_refuses_retired_ids_and_never_writes_legacy_cases",
+    "lineno": 723,
+    "end_lineno": 738,
+    "decorators": [],
+    "args": [
+      "tmp_path",
+      "monkeypatch"
+    ],
+    "assert_count": 4,
+    "ast_sha256": "25837b1e88351cb076e81b954c85976a6876defce40bef3f105034e57d90ff26",
+    "source_sha256": "cb3de10fb21958619748612519ab8022019f5cafdf88e06c31adb3959dd57b2b",
+    "source": "def test_generator_refuses_retired_ids_and_never_writes_legacy_cases(tmp_path, monkeypatch):\n    module = _generator_module()\n    assert set(module.LEGACY_CASE_IDS) == set(LEGACY_CASE_FILES)\n    assert \"dp1.json\" not in set(module.CASE_IDS.values())\n    for legacy_dp in LEGACY_CASE_FILES:\n        with pytest.raises(SystemExit):\n            module.build_case(legacy_dp)\n\n    out = tmp_path / \"cases\"\n    monkeypatch.setitem(module.CASE_IDS, \"dp1-dispatch-type\", \"dp1.json\")\n    with pytest.raises(SystemExit) as excinfo:\n        module.build_case(\"dp1-dispatch-type\")\n    assert \"retired\" in str(excinfo.value)\n    with pytest.raises(SystemExit):\n        module.write_cases(out)\n    assert not (out / \"dp1.json\").exists(), \"a legacy case file is never written\""
+  },
+  {
+    "name": "test_shipped_cases_match_the_offline_generator",
+    "lineno": 741,
+    "end_lineno": 755,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 5,
+    "ast_sha256": "1faca012ad6ff47057c082618b83a67e284f4f63dd7f297094403a75ac0f09a3",
+    "source_sha256": "6b6323341da3088c2e14388666d61fd57f4365b332474de4cbc7d699f5b682ee",
+    "source": "def test_shipped_cases_match_the_offline_generator(tmp_path):\n    module = _generator_module()\n    out = tmp_path / \"cases\"\n    written = module.write_cases(out)\n    assert sorted(path.name for path in written) == sorted(CASE_FILES.values())\n    assert not set(path.name for path in out.glob(\"*.json\")) & set(LEGACY_CASE_FILES.values())\n    for dp, name in CASE_FILES.items():\n        shipped = CASES_DIR / name\n        assert shipped.is_file(), f\"missing shipped case {shipped}\"\n        generated = (out / name).read_text(encoding=\"utf-8\")\n        assert shipped.read_text(encoding=\"utf-8\") == generated, (\n            f\"{name} drifted from the offline generator; regenerate with \"\n            \"'python scripts/build_decide_cases.py' (offline, no model, no credential)\"\n        )\n        assert json.loads(shipped.read_text(encoding=\"utf-8\"))[\"dp\"] == dp"
+  },
+  {
+    "name": "test_each_entry_refuses_missing_material_without_defaulting",
+    "lineno": 758,
+    "end_lineno": 799,
+    "decorators": [],
+    "args": [],
+    "assert_count": 4,
+    "ast_sha256": "aeaeaf61b0584f30776e43b170d18036c5fdb5880ba70c6d3fc770f444892625",
+    "source_sha256": "8179c1380b2bc59bdd5ee18d04ab15cfae7995d37a00f31589a5acb08524df23",
+    "source": "def test_each_entry_refuses_missing_material_without_defaulting():\n    \"\"\"All eight entries block on missing/wrong material and on a wrong basis.\n\n    The case layer proves the failure side of AC-043 without a live service:\n    a missing required fact, a wrong type and a basis that does not apply are\n    each refused, and a missing selection is never defaulted to the first\n    candidate or to approve.\n    \"\"\"\n    module = _generator_module()\n    for dp in CASE_FILES:\n        case = module.build_case(dp)\n        material = json.loads(json.dumps(case[\"book\"][\"material\"], ensure_ascii=False))\n        required = decision_book.required_state_paths(dp)\n        first = required[0]\n        parts = first.split(\".\")\n        holder = material\n        for part in parts[:-1]:\n            holder = holder[part]\n        holder.pop(parts[-1])\n        issues = decision_points.entry_material_issues(dp, material)\n        assert (first, \"missing or blank (input-incomplete)\") in issues, (dp, issues)\n        assert decision_points.entry_choice_issues(dp, None, material) == (\n            (\"choice\", \"missing selection: no default candidate is applied\"),\n        ), dp\n\n        wrong_type = json.loads(json.dumps(case[\"book\"][\"material\"], ensure_ascii=False))\n        holder = wrong_type\n        for part in parts[:-1]:\n            holder = holder[part]\n        holder[parts[-1]] = 5\n        type_issues = dict(decision_points.entry_material_issues(dp, wrong_type))\n        assert type_issues.get(first) == \"expected string, got int\", (dp, type_issues)\n\n        preparation = case[\"book\"][\"preparation\"]\n        item = preparation[\"basis_catalog\"][0]\n        legal = decision_points.resolve_entry_choices(dp, case[\"book\"][\"material\"])\n        other = [choice for choice in legal if choice not in item[\"applies_to\"]]\n        if other:\n            selection = decision_points.basis_selection_issues(\n                item[\"id\"], preparation[\"basis_catalog\"], other[0]\n            )\n            assert (\"basis_id\", \"does not apply to the selected choice\") in selection, dp"
+  },
+  {
+    "name": "test_legacy_cases_stay_byte_identical_read_only_history",
+    "lineno": 802,
+    "end_lineno": 826,
+    "decorators": [],
+    "args": [],
+    "assert_count": 7,
+    "ast_sha256": "0fe345b89ab67d6494cc3efe4138c7ad99e4757c971b374e55b3da60b25f1c6d",
+    "source_sha256": "b8c9a25eaf80af227188ece728e2299677839ab3f9954edcab2cf6849893d0f1",
+    "source": "def test_legacy_cases_stay_byte_identical_read_only_history():\n    # The 25 retired ids are refused at this face too: no generation, no alias.\n    retired_ids = [entry[\"id\"] for entry in decision_points.registry_snapshot()[\"retired\"]]\n    assert len(retired_ids) == 25\n    module = _generator_module()\n    for retired_id in retired_ids:\n        assert retired_id not in module.CASE_IDS\n        with pytest.raises(SystemExit):\n            module.build_case(retired_id)\n\n    for name, sha256 in LEGACY_CASE_SHA256.items():\n        shipped = CASES_DIR / name\n        assert shipped.is_file(), f\"missing legacy case {shipped}\"\n        assert hashlib.sha256(shipped.read_bytes()).hexdigest() == sha256, (\n            f\"{name} is read-only history and must never change; the eight-case \"\n            \"generator writes only the eight active entries\"\n        )\n        # The legacy book is refused by the schema-3 gate before any material is\n        # parsed: the old ``state`` shape and the retired id are both hard stops.\n        book = json.loads(shipped.read_text(encoding=\"utf-8\"))[\"book\"]\n        issues = decision_book.check_book(book, repo_root=REPO_ROOT)\n        assert issues, name\n        assert any(issue.code == \"book-schema\" for issue in issues), name\n        detail = \" \".join(issue.detail for issue in issues)\n        assert \"retired\" in detail or \"legacy book contract\" in detail, name"
+  },
+  {
+    "name": "test_case_route_is_page_authenticated_and_serves_only_fixed_ids",
+    "lineno": 842,
+    "end_lineno": 911,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 23,
+    "ast_sha256": "79da08dbafe99db96af04b88b18fed6cbcc7daa2246c529f0b202cd15b782887",
+    "source_sha256": "17eb47c73494f6adf93cf3160391b1673707144e573c3934cb602221df1cf277",
+    "source": "def test_case_route_is_page_authenticated_and_serves_only_fixed_ids(tmp_path):\n    root = monitor_suite._root(tmp_path)\n    spy = monitor_suite._SpyPlayground()\n    with monitor_suite._running(\n        root, deps=decision_monitor.MonitorDeps(redactor=REDACTOR, playground=spy)\n    ) as instance:\n        status, _headers, payload, _raw = _get(instance, \"/api/test/cases\")\n        assert status == 401, payload\n        assert monitor_suite._envelope_error(payload)[\"code\"] == \"missing-token\"\n\n        status, _headers, payload, _raw = _get(\n            instance, \"/api/test/cases\", token=instance.control_token\n        )\n        assert status == 403, payload\n        assert monitor_suite._envelope_error(payload)[\"code\"] == \"wrong-role\"\n\n        token = monitor_suite._page_token(instance)\n        status, _headers, payload, raw = _get(instance, \"/api/test/cases\", token=token)\n        assert status == 200, payload\n        cases = payload[\"data\"][\"cases\"]\n        assert [case[\"dp\"] for case in cases] == list(LEGACY_CASE_FILES)\n        assert payload[\"data\"][\"case_version\"] == 1\n        assert payload[\"data\"][\"source\"] == \"offline\"\n        for case in cases:\n            assert set(case) == {\"dp\", \"title\", \"note\", \"book\", \"questions\", \"sha256\", \"bytes\"}\n            shipped = json.loads((CASES_DIR / LEGACY_CASE_FILES[case[\"dp\"]]).read_text(encoding=\"utf-8\"))\n            assert case[\"book\"] == shipped[\"book\"]\n            assert case[\"questions\"] == shipped[\"questions\"]\n            assert case[\"title\"] == shipped[\"title\"]\n            assert case[\"note\"] == shipped[\"note\"]\n            canonical = json.dumps(\n                case[\"book\"], ensure_ascii=False, sort_keys=True, separators=(\",\", \":\")\n            ).encode(\"utf-8\")\n            assert case[\"sha256\"] == hashlib.sha256(canonical).hexdigest()\n            assert case[\"bytes\"] == len(canonical)\n            assert case[\"title\"] not in json.dumps(case[\"book\"], ensure_ascii=False)\n            assert case[\"note\"] not in json.dumps(case[\"book\"], ensure_ascii=False)\n\n        status, _headers, payload, _raw = _get(\n            instance, \"/api/test/cases?dp=dp3-worker-clarify\", token=token\n        )\n        assert status == 200, payload\n        assert [case[\"dp\"] for case in payload[\"data\"][\"cases\"]] == [\"dp3-worker-clarify\"]\n\n        for bad in (\n            \"/api/test/cases?dp=dp4-failure-handling\",\n            \"/api/test/cases?dp=../dp1.json\",\n            \"/api/test/cases?dp=\" + SECRET,\n            \"/api/test/cases?path=dp1.json\",\n            \"/api/test/cases?case_file=/etc/passwd\",\n        ):\n            status, _headers, payload, _raw = _get(instance, bad, token=token)\n            assert status == 400, (bad, payload)\n\n        for bad_path in (\n            \"/api/test/cases/\",\n            \"/api/test/cases/dp1.json\",\n            \"/api/test/cases/../../dp1.json\",\n            \"/api/test/cases/%2e%2e/dp1.json\",\n        ):\n            status, _headers, payload, _raw = _get(instance, bad_path, token=token)\n            assert status == 404, (bad_path, payload)\n\n        status, _headers, payload, _raw = _post(\n            instance, \"/api/test/cases\", token=token, origin=instance.origin, body={}\n        )\n        assert status == 405, payload\n\n        # Read-only and zero-send: the provider seam is never touched.\n        assert spy.calls == []"
+  },
+  {
+    "name": "test_case_route_makes_zero_credential_and_model_calls",
+    "lineno": 914,
+    "end_lineno": 943,
+    "decorators": [],
+    "args": [
+      "tmp_path",
+      "monkeypatch"
+    ],
+    "assert_count": 3,
+    "ast_sha256": "9a72bbfd644b6ff301d218a079ebeb1056385356a31757be358fe681fc1bd6b6",
+    "source_sha256": "ccb8fe9aa53a298656ef4936922a3165a5859e457e54e1c0ad5988e655874709",
+    "source": "def test_case_route_makes_zero_credential_and_model_calls(tmp_path, monkeypatch):\n    root = monitor_suite._root(tmp_path)\n    spy = monitor_suite._SpyPlayground()\n    resolved: list[str] = []\n\n    def _redactor_factory(_root):\n        resolved.append(\"redactor\")\n        return REDACTOR\n\n    def _playground_factory(_root):\n        resolved.append(\"playground\")\n        return spy\n\n    def _credential_snapshot(*_args, **_kwargs):\n        raise AssertionError(\"reading the case files must not resolve credentials\")\n\n    monkeypatch.setattr(decision, \"credential_snapshot\", _credential_snapshot)\n    with monitor_suite._running(\n        root,\n        deps=decision_monitor.MonitorDeps(\n            playground_factory=_playground_factory,\n            redactor_factory=_redactor_factory,\n        ),\n    ) as instance:\n        token = monitor_suite._page_token(instance)\n        for path in (\"/api/test/cases\", \"/api/test/cases?dp=dp1-dispatch-type\"):\n            status, _headers, payload, _raw = _get(instance, path, token=token)\n            assert status == 200, payload\n        assert resolved == [], f\"the case route resolved {resolved!r}\"\n        assert spy.calls == []"
+  },
+  {
+    "name": "test_edited_cases_reach_the_real_loopback_typed_validate",
+    "lineno": 987,
+    "end_lineno": 1050,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 15,
+    "ast_sha256": "d8513b2000c0899b9e65592dc16c0514d565b57e23cdc81b18d66cc257096bdc",
+    "source_sha256": "0df29e697e46b7984b5cb527f98d4f6f58c8202e9aa853c09332c18d0d4cf2e5",
+    "source": "def test_edited_cases_reach_the_real_loopback_typed_validate(tmp_path):\n    \"\"\"Load a case, edit it, and prove the *edited* body is what was validated.\n\n    The review runs through the shipped ``DecisionPlayground`` (typed\n    ``check_book`` + registry gate) inside a real loopback monitor; no model is\n    called and the transport backend is never constructed.\n    \"\"\"\n    repo = _synthetic_repo(tmp_path)\n    playground = decision_playground.DecisionPlayground(\n        repo,\n        backend_factory=lambda _cfg: (_ for _ in ()).throw(\n            AssertionError(\"validate must never build a transport backend\")\n        ),\n    )\n    monitor_root = monitor_suite._root(tmp_path, \"monitor-root\")\n    with monitor_suite._running(\n        monitor_root,\n        deps=decision_monitor.MonitorDeps(redactor=REDACTOR, playground=playground),\n    ) as instance:\n        token = monitor_suite._page_token(instance)\n        status, _headers, listing, _raw = _get(instance, \"/api/test/cases\", token=token)\n        assert status == 200, listing\n        cases = {case[\"dp\"]: case for case in listing[\"data\"][\"cases\"]}\n        assert set(cases) == set(LEGACY_CASE_FILES)\n\n        for dp, (field, edited_value) in EDITS.items():\n            case = json.loads(json.dumps(cases[dp], ensure_ascii=False))\n            book = case[\"book\"]\n            original = book[\"state\"][field]\n            assert isinstance(original, str) and original != edited_value\n            book[\"state\"][field] = edited_value\n            # The shell never travels with the book.\n            assert \"title\" not in book and \"note\" not in book\n            assert case[\"title\"] not in json.dumps(book, ensure_ascii=False)\n\n            status, _headers, payload, _raw = _post(\n                instance,\n                \"/api/test/validate\",\n                token=token,\n                origin=instance.origin,\n                body={\"dp\": dp, \"book\": book},\n            )\n            assert status == 200, (dp, payload)\n            data = payload[\"data\"]\n            assert data[\"ok\"] is True, (dp, data[\"issues\"])\n            assert data[\"issues\"] == []\n            assert data[\"observe_only\"] is True\n            assert data[\"context_sent\"] is False\n\n            # The reviewed object is exactly the edited state, not the shipped one.\n            trigger = decision_points.Trigger.from_mapping(dict(book[\"state\"]))\n            sent_state = decision_points.get_decision_point(dp).build_state(trigger)\n            assert sent_state[field] == edited_value\n            assert data[\"state_digest\"] == decision_book.state_digest(sent_state)\n            assert data[\"state_bytes\"] == len(decision._encode_state(sent_state))\n            assert data[\"state_digest\"] != decision_book.state_digest(\n                decision_points.get_decision_point(dp).build_state(\n                    decision_points.Trigger.from_mapping(\n                        dict(json.loads((CASES_DIR / LEGACY_CASE_FILES[dp]).read_text(encoding=\"utf-8\"))[\"book\"][\"state\"])\n                    )\n                )\n            ), \"the edited field must change the reviewed digest\"\n            rendered = json.dumps(payload, ensure_ascii=False)\n            assert case[\"title\"] not in rendered and case[\"note\"] not in rendered"
+  },
+  {
+    "name": "test_case_loader_refuses_unknown_ids_traversal_and_symlinks",
+    "lineno": 1053,
+    "end_lineno": 1092,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 9,
+    "ast_sha256": "7f976feece117c96fbd91d449dd1d959b9081246a8bd4b2c671ecadd089dd059",
+    "source_sha256": "a335513492f1e2007d1bb94efd97f3b916b6e2617265926a3f73a50932e6eefb",
+    "source": "def test_case_loader_refuses_unknown_ids_traversal_and_symlinks(tmp_path):\n    assert set(decision_monitor.CASE_IDS) == set(LEGACY_CASE_FILES)\n    assert pathlib.Path(decision_monitor.DECIDE_CASES_DIR).resolve() == CASES_DIR.resolve()\n    for dp, name in LEGACY_CASE_FILES.items():\n        assert decision_monitor.CASE_IDS[dp] == name\n\n    for bad in (\"dp4-failure-handling\", \"\", \"../dp1-dispatch-type\", \"dp1-dispatch-type/../../x\", SECRET):\n        with pytest.raises(decision_monitor.CaseError) as excinfo:\n            decision_monitor.load_case(bad)\n        assert excinfo.value.kind in (\"case-unknown\", \"case-unsafe\"), excinfo.value\n\n    # A fixed-name copy in an injected directory is served (containment proof).\n    good = tmp_path / \"cases\"\n    good.mkdir()\n    shutil.copyfile(CASES_DIR / \"dp1.json\", good / \"dp1.json\")\n    loaded = decision_monitor.load_case(\"dp1-dispatch-type\", cases_dir=good)\n    assert loaded[\"dp\"] == \"dp1-dispatch-type\"\n    assert loaded[\"book\"][\"decision_point\"] == \"dp1-dispatch-type\"\n\n    # A symlinked case file is refused (no escape to a caller-chosen target).\n    linked = tmp_path / \"linked\"\n    linked.mkdir()\n    target = tmp_path / \"outside.json\"\n    shutil.copyfile(CASES_DIR / \"dp1.json\", target)\n    try:\n        os.symlink(target, linked / \"dp1.json\")\n    except (OSError, NotImplementedError):\n        pytest.skip(\"this platform/user cannot create symlinks\")\n    with pytest.raises(decision_monitor.CaseError) as excinfo:\n        decision_monitor.load_case(\"dp1-dispatch-type\", cases_dir=linked)\n    assert excinfo.value.kind == \"case-unsafe\"\n\n    # A malformed/foreign document in the fixed slot is refused, never echoed.\n    broken = tmp_path / \"broken\"\n    broken.mkdir()\n    (broken / \"dp1.json\").write_text('{\"case_version\": 2, \"dp\": \"x\"}', encoding=\"utf-8\")\n    with pytest.raises(decision_monitor.CaseError) as excinfo:\n        decision_monitor.load_case(\"dp1-dispatch-type\", cases_dir=broken)\n    assert excinfo.value.kind == \"case-invalid\"\n    assert SECRET not in str(excinfo.value)"
+  },
+  {
+    "name": "test_history_forwards_the_real_workbench_and_facets",
+    "lineno": 1183,
+    "end_lineno": 1265,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 26,
+    "ast_sha256": "907bbab52586eeabcd65f3d6fbc6668647f5487502658c7c0023dd810fcc5e1a",
+    "source_sha256": "23aa6ef06bdd5818fa2364484076576c6b1ea322b7b38fde5d5f34f07896dd9b",
+    "source": "def test_history_forwards_the_real_workbench_and_facets(tmp_path):\n    root = _seed_workbench_records(tmp_path)\n    with monitor_suite._running(\n        root, deps=decision_monitor.MonitorDeps(redactor=REDACTOR)\n    ) as instance:\n        token = monitor_suite._page_token(instance)\n        status, _headers, payload, _raw = _get(instance, \"/api/history\", token=token)\n        assert status == 200, payload\n        data = payload[\"data\"]\n\n        # facets: the whole snapshot universe, forwarded from the T06 object.\n        assert set(data[\"facets\"]) == {\"keys\", \"dps\"}\n        assert set(data[\"facets\"][\"keys\"]) == {\"mw-alpha\", \"mw-beta\", \"mw-gamma\", \"mw-delta\"}\n        assert set(data[\"facets\"][\"dps\"]) == set(LEGACY_CASE_FILES)\n\n        workbench_keys = {\n            \"record_version\",\n            \"processing_state\",\n            \"key\",\n            \"task_key\",\n            \"question_summary\",\n            \"dp_id\",\n            \"selection\",\n            \"initiator_role\",\n            \"nodes\",\n        }\n        expected_states = {\n            \"mw-alpha\": \"completed\",\n            \"mw-beta\": \"failed\",\n            \"mw-gamma\": \"processing\",\n            \"mw-delta\": \"legacy\",\n        }\n        records = {record[\"key\"]: record for record in data[\"records\"]}\n        assert set(records) == set(expected_states)\n        for key, expected_state in expected_states.items():\n            workbench = records[key][\"workbench\"]\n            assert set(workbench) == workbench_keys, key\n            assert workbench[\"processing_state\"] == expected_state, (key, workbench)\n            assert workbench[\"processing_state\"] in STATES\n            # The list projection never carries node bodies (T06 contract).\n            assert workbench[\"nodes\"] == []\n        alpha = records[\"mw-alpha\"][\"workbench\"]\n        assert alpha[\"record_version\"] == 2\n        assert alpha[\"initiator_role\"] == \"pm\"\n        assert alpha[\"selection\"] == {\"checkpoint_action\": {\"value\": \"narrow\"}}\n        assert alpha[\"question_summary\"], \"the registered question is projected\"\n        delta = records[\"mw-delta\"][\"workbench\"]\n        assert delta[\"record_version\"] is None\n        assert delta[\"initiator_role\"] is None\n        assert delta[\"selection\"] is None\n        assert \"workbench\" not in json.dumps(data.get(\"dag_available\", \"\")), (\n            \"the route never adds a derived dag flag outside the T06 projection\"\n        )\n\n        # detail: the fixed ten-node DAG from the same read chain.\n        status, _headers, detail, _raw = _get(\n            instance, \"/api/history/\" + records[\"mw-alpha\"][\"opaque_id\"], token=token\n        )\n        assert status == 200, detail\n        nodes = detail[\"data\"][\"workbench\"][\"nodes\"]\n        assert [node[\"id\"] for node in nodes] == NODE_IDS\n        assert all(node[\"status\"] in NODE_STATUSES for node in nodes)\n        assert any(node[\"status\"] == \"observed\" for node in nodes)\n        assert any(node[\"status\"] == \"missing\" for node in nodes)\n\n        # legacy detail keeps nodes empty: no DAG, no guessed association.\n        status, _headers, legacy_detail, _raw = _get(\n            instance, \"/api/history/\" + records[\"mw-delta\"][\"opaque_id\"], token=token\n        )\n        assert legacy_detail[\"data\"][\"workbench\"][\"nodes\"] == []\n\n        # A filtered/limited page does not shrink the dropdown universe.\n        status, _headers, filtered, _raw = _get(\n            instance, \"/api/history?limit=1&key=mw-alpha\", token=token\n        )\n        assert len(filtered[\"data\"][\"records\"]) == 1\n        assert filtered[\"data\"][\"facets\"] == data[\"facets\"]\n\n        # No second workbench filter contract is invented here (T06 owns it).\n        status, _headers, refused, _raw = _get(\n            instance, \"/api/history?processing_state=completed\", token=token\n        )\n        assert status == 400, refused"
+  },
+  {
+    "name": "test_dom_workbench_table_has_five_columns_four_states_and_facet_dropdowns",
+    "lineno": 1914,
+    "end_lineno": 1968,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 19,
+    "ast_sha256": "fd591be2829a57862c557002bd8235d1df92e5e98d941dd3336dba1b04812d10",
+    "source_sha256": "9bc60b53160fbe8beafcb7e30e43f1f8c324720477a716d47db538eea14ccb97",
+    "source": "def test_dom_workbench_table_has_five_columns_four_states_and_facet_dropdowns(tmp_path):\n    payloads = _workbench_dom_payload(tmp_path)\n    scenario = {\n        \"hash\": \"#boot=dom-boot-code\",\n        \"bootstrap\": _bootstrap(payloads[\"token\"]),\n        \"history\": payloads[\"default\"],\n        \"detailByOpaque\": payloads[\"detailByOpaque\"],\n        \"steps\": [],\n    }\n    boot = _snapshot(_run_dom(tmp_path, scenario), \"boot\")\n\n    assert boot[\"error\"] in (None, \"\")\n    assert boot[\"storage\"] == [], \"the page token stays in memory\"\n    assert all(payloads[\"token\"] not in call[\"url\"] for call in boot[\"fetchCalls\"]), (\n        \"the page token never appears in a URL\"\n    )\n\n    # Five business columns, no extra technical column.\n    assert [header.strip() for header in boot[\"headers\"]] == [\n        \"key / task\",\n        \"问题摘要\",\n        \"DP\",\n        \"选择\",\n        \"状态\",\n    ], boot[\"headers\"]\n    assert boot[\"rowCount\"] == 4\n    # Every row carries the backend's closed state, mapped by record handle.\n    expected = {info[\"opaque\"]: info[\"state\"] for info in payloads[\"by_key\"].values()}\n    assert sorted(boot[\"rowOpaques\"]) == sorted(expected)\n    assert dict(zip(boot[\"rowOpaques\"], boot[\"stateValues\"])) == expected\n    assert set(boot[\"stateValues\"]) == set(STATES)\n    assert set(boot[\"states\"]) == set(STATE_LABELS.values())\n    for row in boot[\"rows\"]:\n        assert \"logical_id\" not in row, row\n        assert \"+已行动\" not in row and \"已接收\" not in row, row\n    alpha_row = next(\n        row for row, opaque in zip(boot[\"rows\"], boot[\"rowOpaques\"])\n        if opaque == payloads[\"by_key\"][\"mw-alpha\"][\"opaque\"]\n    )\n    assert \"narrow\" in alpha_row\n    assert \"继续\" in alpha_row, \"the registered dp2 question is the summary\"\n    delta_row = next(\n        row for row, opaque in zip(boot[\"rows\"], boot[\"rowOpaques\"])\n        if opaque == payloads[\"by_key\"][\"mw-delta\"][\"opaque\"]\n    )\n    assert \"未记录\" in delta_row, \"a legacy row never invents a question or selection\"\n    assert \"旧数据无状态\" in delta_row\n\n    # key/DP dropdowns carry the full facet universe (page-independent).\n    expected_keys = sorted(payloads[\"default\"][\"body\"][\"data\"][\"facets\"][\"keys\"])\n    expected_dps = sorted(payloads[\"default\"][\"body\"][\"data\"][\"facets\"][\"dps\"])\n    assert [option[\"value\"] for option in boot[\"keyOptions\"]] == [\"\", *expected_keys]\n    assert [option[\"value\"] for option in boot[\"dpOptions\"]] == [\"\", *expected_dps]\n    assert boot[\"facetsNote\"] in (None, \"\"), \"facet diagnostics are not normal page content\"\n    assert boot[\"imgCount\"] == 0 and boot[\"pwned\"] is False"
+  },
+  {
+    "name": "test_dom_legacy_payload_without_facets_never_fabricates_the_universe",
+    "lineno": 1971,
+    "end_lineno": 1985,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 3,
+    "ast_sha256": "795272e20e50609a2a518b5e4279f7d20c1420c454395d305903f996af1ac6c2",
+    "source_sha256": "f170a5bd60f54aaf7225cae72d6c7e0ffdd0f6bfdeba90c4b75abfe089edcf30",
+    "source": "def test_dom_legacy_payload_without_facets_never_fabricates_the_universe(tmp_path):\n    payloads = _workbench_dom_payload(tmp_path)\n    body = json.loads(json.dumps(payloads[\"default\"][\"body\"]))\n    body[\"data\"].pop(\"facets\", None)\n    scenario = {\n        \"hash\": \"#boot=dom-boot-code\",\n        \"bootstrap\": _bootstrap(payloads[\"token\"]),\n        \"history\": {\"status\": 200, \"body\": body},\n        \"detailByOpaque\": payloads[\"detailByOpaque\"],\n        \"steps\": [],\n    }\n    boot = _snapshot(_run_dom(tmp_path, scenario), \"boot\")\n    assert [option[\"value\"] for option in boot[\"keyOptions\"]] == [\"\"]\n    assert [option[\"value\"] for option in boot[\"dpOptions\"]] == [\"\"]\n    assert boot[\"facetsNote\"] in (None, \"\"), \"missing facets do not generate debug prose\""
+  },
+  {
+    "name": "test_dom_v2_record_opens_ten_node_dag_and_legacy_record_stays_log_only",
+    "lineno": 1993,
+    "end_lineno": 2059,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 29,
+    "ast_sha256": "e6026dc7d955e012e8665d72b22043972431cc2a4702fdd92b7b1502515ec5f2",
+    "source_sha256": "29454d3b6f76142bb5e1022ff791878d4c02a8c48f23353dc5ddc8591c5b75e8",
+    "source": "def test_dom_v2_record_opens_ten_node_dag_and_legacy_record_stays_log_only(tmp_path):\n    payloads = _workbench_dom_payload(tmp_path)\n    alpha = payloads[\"by_key\"][\"mw-alpha\"][\"opaque\"]\n    delta = payloads[\"by_key\"][\"mw-delta\"][\"opaque\"]\n    scenario = {\n        \"hash\": \"#boot=dom-boot-code\",\n        \"bootstrap\": _bootstrap(payloads[\"token\"]),\n        \"history\": payloads[\"default\"],\n        \"detailByOpaque\": payloads[\"detailByOpaque\"],\n        \"steps\": [\n            {\n                \"type\": \"click\",\n                \"target\": '[data-testid=\"record-dag-open\"][data-opaque=\"' + alpha + '\"]',\n                \"snapshot\": \"dag\",\n            },\n            {\n                \"type\": \"click\",\n                \"target\": '[data-testid=\"dag-node\"][data-node-id=\"key\"]',\n                \"snapshot\": \"node-detail\",\n            },\n            {\"type\": \"click\", \"target\": \"#detail-close\"},\n            {\n                \"type\": \"click\",\n                \"target\": '[data-testid=\"record-open\"][data-opaque=\"' + delta + '\"]',\n                \"snapshot\": \"legacy\",\n            },\n        ],\n    }\n    result = _run_dom(tmp_path, scenario)\n    boot = _snapshot(result, \"boot\")\n    assert boot[\"dagOpenCount\"] == 3, \"only the three v2 records expose a DAG entry\"\n    assert boot[\"legacyOpenCount\"] == 1, \"the legacy row has only the log-only entry\"\n    assert boot[\"logOpenCount\"] == 3, \"a v2 row can also open the technical log\"\n\n    dag = _snapshot(result, \"dag\")\n    assert dag[\"dialogVisible\"] is True\n    assert dag[\"dagTabDisabled\"] is False\n    assert dag[\"dagPanelVisible\"] is True\n    assert dag[\"dagNodes\"] == 10, dag[\"dagNodeIds\"]\n    assert dag[\"dagNodeIds\"] == NODE_IDS\n    assert \"10/10\" in (dag[\"dagSummary\"] or \"\")\n    assert all(status in NODE_STATUSES for status in dag[\"dagNodeStates\"])\n    assert \"已记录\" in \" \".join(dag[\"dagNodeTexts\"])\n    assert \"未记录\" in \" \".join(dag[\"dagNodeTexts\"])\n    assert \"pm\" in (dag[\"dialogMeta\"] or \"\"), dag[\"dialogMeta\"]\n    detail_calls = [call for call in dag[\"fetchCalls\"] if call[\"url\"].startswith(\"/api/history/\")]\n    assert detail_calls and detail_calls[-1][\"headers\"].get(\"X-MW-Monitor-Token\") == payloads[\"token\"]\n\n    node = _snapshot(result, \"node-detail\")\n    assert \"mw-alpha\" in (node[\"dagNodeDetail\"] or \"\")\n    assert \"T07-workbench-cases\" in (node[\"dagNodeDetail\"] or \"\")\n    assert \"logical_id\" not in (node[\"dagNodeDetail\"] or \"\")\n    assert \"record_version\" not in (node[\"dagNodeDetail\"] or \"\")\n    raw_key = next(n for n in payloads[\"detailByOpaque\"][alpha][\"body\"][\"data\"][\"workbench\"][\"nodes\"] if n[\"id\"] == \"key\")\n    assert raw_key[\"detail\"][\"logical_id\"]\n    assert raw_key[\"detail\"][\"record_version\"] == 2\n    assert node[\"pwned\"] is False\n\n    legacy = _snapshot(result, \"legacy\")\n    assert legacy[\"dialogVisible\"] is True\n    assert legacy[\"dagTabDisabled\"] is True, \"legacy records have no DAG entry\"\n    assert legacy[\"dagPanelVisible\"] is False\n    assert legacy[\"logPanelVisible\"] is True\n    assert legacy[\"dagNodes\"] == 0\n    assert \"旧数据无状态\" in (legacy[\"legacyNote\"] or \"\"), legacy[\"legacyNote\"]\n    assert \"接收与处理结果\" in (legacy[\"detailText\"] or \"\")\n    assert \"决策本\" not in (legacy[\"detailText\"] or \"\")"
+  },
+  {
+    "name": "test_dom_incomplete_dag_projection_is_reported_not_filled",
+    "lineno": 2062,
+    "end_lineno": 2084,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 3,
+    "ast_sha256": "8d8d818740267b4522de62ae581f6fd6ec4197e9bb5146e6c700ed0cb415f3f2",
+    "source_sha256": "91e150ff97c76b5b2c94b3d473e0628b408836f8d856718192f2c49fc00564c5",
+    "source": "def test_dom_incomplete_dag_projection_is_reported_not_filled(tmp_path):\n    payloads = _workbench_dom_payload(tmp_path)\n    alpha = payloads[\"by_key\"][\"mw-alpha\"][\"opaque\"]\n    working = json.loads(json.dumps(payloads[\"detailByOpaque\"]))\n    v2_detail = working[alpha]\n    v2_detail[\"body\"][\"data\"][\"workbench\"][\"nodes\"] = v2_detail[\"body\"][\"data\"][\"workbench\"][\"nodes\"][:8]\n    scenario = {\n        \"hash\": \"#boot=dom-boot-code\",\n        \"bootstrap\": _bootstrap(payloads[\"token\"]),\n        \"history\": payloads[\"default\"],\n        \"detailByOpaque\": working,\n        \"steps\": [\n            {\n                \"type\": \"click\",\n                \"target\": '[data-testid=\"record-dag-open\"][data-opaque=\"' + alpha + '\"]',\n                \"snapshot\": \"incomplete\",\n            },\n        ],\n    }\n    dag = _snapshot(_run_dom(tmp_path, scenario), \"incomplete\")\n    assert dag[\"dagNodes\"] == 8\n    assert \"8/10\" in (dag[\"dagSummary\"] or \"\")\n    assert \"不补造\" in (dag[\"dagSummary\"] or \"\")"
+  },
+  {
+    "name": "test_dom_offline_case_loads_and_local_validate_makes_no_network_write",
+    "lineno": 2092,
+    "end_lineno": 2131,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 12,
+    "ast_sha256": "918e0b64112a7940bf2ddb9b587aab7f3ba6a897cffbb797e0efd961b69d508a",
+    "source_sha256": "75fd1cc74d1503f9cdf3d428575485071ddf330c41fb5dfd6863c926be65edce",
+    "source": "def test_dom_offline_case_loads_and_local_validate_makes_no_network_write(tmp_path):\n    payloads = _workbench_dom_payload(tmp_path)\n    scenario = {\n        \"hash\": \"#boot=dom-boot-code\",\n        \"bootstrap\": _bootstrap(payloads[\"token\"]),\n        \"history\": payloads[\"default\"],\n        \"detailByOpaque\": payloads[\"detailByOpaque\"],\n        \"cases\": payloads[\"cases\"],\n        \"steps\": [\n            {\"type\": \"click\", \"target\": \"#tab-playground\"},\n            {\"type\": \"click\", \"target\": \"#pg-load\", \"snapshot\": \"loaded\"},\n            {\"type\": \"click\", \"target\": \"#pg-cases-load\", \"snapshot\": \"cases\"},\n            {\"type\": \"setValue\", \"target\": \"#case-select\", \"value\": \"dp3-worker-clarify\"},\n            {\"type\": \"click\", \"target\": \"#pg-case-open\", \"snapshot\": \"opened\"},\n            {\"type\": \"click\", \"target\": \"#pg-local-validate\", \"snapshot\": \"local\"},\n        ],\n    }\n    result = _run_dom(tmp_path, scenario)\n\n    loaded = _snapshot(result, \"loaded\")\n    assert loaded[\"playgroundVisible\"] is True\n    assert any(call[\"url\"] == \"/api/dps\" for call in loaded[\"fetchCalls\"])\n\n    cases = _snapshot(result, \"cases\")\n    assert [option[\"value\"] for option in cases[\"caseOptions\"]] == [\"\", *LEGACY_CASE_FILES]\n    assert \"4\" in (cases[\"caseStatus\"] or \"\")\n\n    opened = _snapshot(result, \"opened\")\n    shipped_dp3 = json.loads((CASES_DIR / \"dp3.json\").read_text(encoding=\"utf-8\"))\n    assert json.loads(opened[\"editorValue\"]) == shipped_dp3[\"book\"]\n    assert shipped_dp3[\"title\"] not in opened[\"editorValue\"]\n    assert shipped_dp3[\"note\"] not in opened[\"editorValue\"]\n    assert \"dp3-worker-clarify\" in opened[\"editorValue\"]\n\n    local = _snapshot(result, \"local\")\n    posts = [call for call in local[\"fetchCalls\"] if call[\"method\"] == \"POST\" and call[\"url\"] != \"/api/bootstrap\"]\n    assert posts == [], f\"loading and local validation never POST: {posts}\"\n    assert \"本地校验\" in (local[\"localOut\"] or \"\")\n    assert \"通过\" in (local[\"localOut\"] or \"\")\n    assert local[\"pwned\"] is False"
+  },
+  {
+    "name": "test_dom_local_validate_refuses_placeholders_and_incomplete_material",
+    "lineno": 2134,
+    "end_lineno": 2161,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 3,
+    "ast_sha256": "f1b09797de7a06b64c4f22e4a62106743879df00d599e0fc02b659e97d017ce0",
+    "source_sha256": "9a9d591360845117fd3f853dcaad8d4dc3b2aa963abd1f782316bdc650e236b9",
+    "source": "def test_dom_local_validate_refuses_placeholders_and_incomplete_material(tmp_path):\n    payloads = _workbench_dom_payload(tmp_path)\n    broken = json.loads((CASES_DIR / \"dp3.json\").read_text(encoding=\"utf-8\"))[\"book\"]\n    broken[\"state\"][\"handling_options\"] = broken[\"state\"][\"handling_options\"][:1]\n    broken[\"state\"][\"question\"] = \"<string: question>\"\n    editor_text = json.dumps(broken, ensure_ascii=False, indent=2)\n    scenario = {\n        \"hash\": \"#boot=dom-boot-code\",\n        \"bootstrap\": _bootstrap(payloads[\"token\"]),\n        \"history\": payloads[\"default\"],\n        \"detailByOpaque\": payloads[\"detailByOpaque\"],\n        \"cases\": payloads[\"cases\"],\n        \"steps\": [\n            {\"type\": \"click\", \"target\": \"#tab-playground\"},\n            {\"type\": \"click\", \"target\": \"#pg-load\"},\n            {\"type\": \"click\", \"target\": \"#pg-cases-load\"},\n            {\"type\": \"setValue\", \"target\": \"#case-select\", \"value\": \"dp3-worker-clarify\"},\n            {\"type\": \"click\", \"target\": \"#pg-case-open\", \"snapshot\": \"opened\"},\n            {\"type\": \"setValue\", \"target\": \"#book-editor\", \"value\": editor_text},\n            {\"type\": \"click\", \"target\": \"#pg-local-validate\", \"snapshot\": \"local\"},\n        ],\n    }\n    local = _snapshot(_run_dom(tmp_path, scenario), \"local\")\n    out = local[\"localOut\"] or \"\"\n    assert \"未通过\" in out, out\n    assert \"占位符\" in out and \"候选\" in out, out\n    posts = [call for call in local[\"fetchCalls\"] if call[\"method\"] == \"POST\" and call[\"url\"] != \"/api/bootstrap\"]\n    assert posts == []"
+  },
+  {
+    "name": "test_dom_playground_submit_stays_observe_only_and_retry_points_at_the_previous_id",
+    "lineno": 2169,
+    "end_lineno": 2230,
+    "decorators": [],
+    "args": [
+      "tmp_path"
+    ],
+    "assert_count": 13,
+    "ast_sha256": "76019c549443772de4fd60f4cffa35a2a74ef43b5cb48c812da87f81e5b6844e",
+    "source_sha256": "a1d349cee86257e9da0631b322c2fae83fe6f4d4672ac1b2520f7027de464de0",
+    "source": "def test_dom_playground_submit_stays_observe_only_and_retry_points_at_the_previous_id(tmp_path):\n    payloads = _workbench_dom_payload(tmp_path)\n    book = json.loads((CASES_DIR / \"dp1.json\").read_text(encoding=\"utf-8\"))[\"book\"]\n    scenario = {\n        \"hash\": \"#boot=dom-boot-code\",\n        \"bootstrap\": _bootstrap(payloads[\"token\"]),\n        \"history\": payloads[\"default\"],\n        \"detailByOpaque\": payloads[\"detailByOpaque\"],\n        \"cases\": payloads[\"cases\"],\n        \"dps\": payloads[\"dps\"],\n        \"testHistory\": payloads[\"testHistory\"],\n        \"submission\": payloads[\"submission\"],\n        \"submit\": {\"status\": 200, \"body\": _envelope({\n            \"submission_id\": \"ui-sent\",\n            \"dp\": \"dp1-dispatch-type\",\n            \"state\": \"succeeded\",\n            \"accepted\": True,\n            \"observe_only\": True,\n            \"record_status\": \"recorded\",\n            \"decision_ran\": True,\n            \"zero_call\": False,\n            \"http_attempts\": 1,\n            \"answer_persisted\": False,\n            \"projection_status\": \"not-recorded\",\n            \"issues\": [],\n            \"outcome\": {\"status\": \"suggested\", \"mode\": \"auto\"},\n            \"attempts\": [],\n        })},\n        \"steps\": [\n            {\"type\": \"click\", \"target\": \"#tab-playground\"},\n            {\"type\": \"click\", \"target\": \"#pg-load\"},\n            {\"type\": \"setValue\", \"target\": \"#dp-select\", \"value\": \"dp1-dispatch-type\"},\n            {\"type\": \"setValue\", \"target\": \"#book-editor\", \"value\": json.dumps(book, ensure_ascii=False, indent=2)},\n            {\"type\": \"click\", \"target\": \"#pg-submit\", \"snapshot\": \"submitted\"},\n            {\"type\": \"click\", \"target\": \"#pg-retry\", \"snapshot\": \"retried\"},\n            {\"type\": \"click\", \"target\": '[data-testid=\"pg-history-open\"]', \"snapshot\": \"pg-dag\"},\n        ],\n    }\n    result = _run_dom(tmp_path, scenario)\n    submitted = _snapshot(result, \"submitted\")\n    submit_calls = [call for call in submitted[\"fetchCalls\"] if call[\"url\"] == \"/api/test/submit\"]\n    assert len(submit_calls) == 1\n    body = json.loads(submit_calls[0][\"body\"])\n    assert body[\"observe_only\"] is True\n    assert body[\"dp\"] == \"dp1-dispatch-type\"\n    assert body[\"book\"] == book\n    assert isinstance(body[\"submit_id\"], str) and body[\"submit_id\"]\n    assert \"retry_of\" not in body\n\n    retried = _snapshot(result, \"retried\")\n    retry_calls = [call for call in retried[\"fetchCalls\"] if call[\"url\"] == \"/api/test/submit\"]\n    assert len(retry_calls) == 2\n    retry_body = json.loads(retry_calls[1][\"body\"])\n    assert retry_body[\"observe_only\"] is True\n    assert retry_body[\"retry_of\"] == body[\"submit_id\"]\n    assert retry_body[\"submit_id\"] != body[\"submit_id\"], \"a retry uses a new submission id\"\n\n    # The submission detail renders its own honest DAG (observe-only action).\n    pg_dag = _snapshot(result, \"pg-dag\")\n    assert pg_dag[\"pgDagNodes\"] == 10\n    assert \"not-executed\" in pg_dag[\"pgDagStates\"]\n    assert \"未执行\" in \" \".join(pg_dag[\"pgDagTexts\"])"
+  },
+  {
+    "name": "test_shipped_assets_keep_csp_textcontent_and_token_discipline",
+    "lineno": 2238,
+    "end_lineno": 2274,
+    "decorators": [],
+    "args": [],
+    "assert_count": 12,
+    "ast_sha256": "7bff1391972210be003ab624fcd3c21d0422125c602c12901587d583c78dffcb",
+    "source_sha256": "aa0c6380eee876b30d93cc6ad3e86c7ab7f4d699e3461bf0cd2afd9367e551e9",
+    "source": "def test_shipped_assets_keep_csp_textcontent_and_token_discipline():\n    html = (ASSET_DIR / \"decision_dashboard.html\").read_text(encoding=\"utf-8\")\n    js = (ASSET_DIR / \"decision_dashboard.js\").read_text(encoding=\"utf-8\")\n    css = (ASSET_DIR / \"decision_dashboard.css\").read_text(encoding=\"utf-8\")\n\n    for needle in (\"innerHTML\", \"outerHTML\", \"insertAdjacentHTML\", \"document.write\", \"eval(\", \"new Function\"):\n        assert needle not in js, needle\n    assert \"textContent\" in js\n    assert \"localStorage\" not in js and \"sessionStorage\" not in js and \"document.cookie\" not in js\n    assert \"X-MW-Monitor-Token\" in js\n    assert \"@import\" not in css\n    assert not re.search(r\"<[^>]+\\son[a-z]+\\s*=\", html), \"no inline event handler attributes\"\n    assert \"<script>\" not in html and \"javascript:\" not in html\n\n    csp = decision_monitor._CSP\n    assert csp.startswith(\"default-src 'none'\")\n    assert \"script-src 'self'\" in csp\n    assert \"form-action 'none'\" in csp\n    assert \"'unsafe-inline'\" not in csp and \"unsafe-eval\" not in csp\n\n    # The workbench ids the DOM contract relies on are present exactly once.\n    for element_id in (\n        \"filter-key\",\n        \"filter-dp\",\n        \"history-safety\",\n        \"record-dialog\",\n        \"record-dialog-tab-dag\",\n        \"record-dialog-dag-panel\",\n        \"dag-graph\",\n        \"dag-node-detail\",\n        \"case-select\",\n        \"pg-cases-load\",\n        \"pg-case-open\",\n        \"pg-local-validate\",\n        \"pg-local-out\",\n    ):\n        assert html.count(' id=\"' + element_id + '\"') == 1, element_id"
+  }
+]

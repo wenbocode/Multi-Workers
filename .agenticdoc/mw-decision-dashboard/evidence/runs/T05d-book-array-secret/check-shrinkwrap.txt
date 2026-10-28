@@ -1,0 +1,13 @@
+# cmd: npm.cmd run check:shrinkwrap
+# cwd: .
+# started: 2026-10-22T06:50:33Z
+# elapsed_s: 0.3
+
+
+> pi-monorepo@0.0.3 check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+
+EXIT_check-shrinkwrap=0

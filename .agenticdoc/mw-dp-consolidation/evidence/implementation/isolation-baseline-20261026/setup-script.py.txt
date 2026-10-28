@@ -1,0 +1,271 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+from datetime import datetime
+
+ROOT = Path('H:/git/Multi-Workers').resolve()
+KEY = ROOT / '.agenticdoc/mw-dp-consolidation'
+COPY_REL = '.agenticdoc/mw-dp-consolidation/implementation-worktree'
+COPY = ROOT / COPY_REL
+EV = KEY / 'evidence/implementation/isolation-baseline-20261026'
+NEW_DAG = KEY / 'implementation-isolated-dag.json'
+CARDS = KEY / 'tasks/isolated'
+assert not COPY.exists(), 'refuse to reuse/overwrite an existing implementation copy'
+assert not EV.exists() and not NEW_DAG.exists() and not CARDS.exists()
+
+
+def sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def fresh(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('xb') as handle:
+        handle.write(data)
+    assert path.read_bytes() == data
+
+
+def dump(path: Path, value: object) -> None:
+    fresh(path, (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode('utf-8'))
+
+
+def linked(path: Path) -> bool:
+    value = path.lstat()
+    return path.is_symlink() or bool(getattr(value, 'st_file_attributes', 0) & 0x400)
+
+
+def run_git(cwd: Path, *args: str) -> bytes:
+    result = subprocess.run(['git', '-c', 'core.quotepath=false', *args], cwd=cwd, capture_output=True)
+    assert result.returncode == 0, (args, result.returncode, result.stderr.decode('utf-8', 'replace'))
+    return result.stdout
+
+
+locked = {
+    'spec.md': 'cfe737d29aed2d0c4e79d8b02107f754f254a225bb21ea8d900eaa5ba289d006',
+    'design.md': '06e3c510e093df7599b3b7aa1391e3240b4cdf24aea88cbd3a4fdeb180408135',
+    'evidence-requirement.md': '0558b0c839504df81e141679f621c1c71790e97ef02c70ad19636bd55f0ae00f',
+    'design-write-scope.md': 'c7c1bde606d9141b6f8fa1d85f5ca73b91a7a44e086c48687e055f17a80221a4',
+}
+for name, expected in locked.items():
+    assert sha((KEY / name).read_bytes()) == expected, name
+source_dag_bytes = (KEY / 'implementation-dag.json').read_bytes()
+source_dag = json.loads(source_dag_bytes)
+assert len(source_dag['tasks']) == 36 and len(source_dag['stages']) == 7
+scope = (KEY / 'design-write-scope.md').read_text(encoding='utf-8').split('## 6.')[0]
+approved = set()
+for line in scope.splitlines():
+    found = re.match(r'^\| (packages/[^ |]+) \|', line) or re.match(r'^- `?((?:packages/|\.agents/skills/)[^` :]+)', line)
+    if found:
+        approved.add(found.group(1))
+faces = set().union(*(set(task['product_write_face']) for task in source_dag['tasks']))
+assert faces <= approved, sorted(faces - approved)
+assert not any('/dist/' in path or '/node_modules/' in path for path in faces)
+
+COPY.mkdir(parents=True)
+EV.mkdir(parents=True)
+fresh(EV / 'source-dag.json', source_dag_bytes)
+fresh(EV / 'git-status.before.txt', run_git(ROOT, 'status', '--short', '--', 'packages', 'scripts'))
+framework = ROOT / '.agents/skills/agentic-task'
+fresh(EV / 'framework-status.before.txt', run_git(framework, 'status', '--short'))
+
+# Explicit source/dependency-metadata mirrors; never traverse runtime/home/install trees.
+blocked_dirs = {'.git', '.mw', '.agenticdoc', '.pi', '.pytest_cache', '__pycache__',
+                'node_modules', 'dist', 'coverage', '.venv', 'venv', '.tmp', 'tmp',
+                'python', '.artifacts', 'sessions', 'logs'}
+blocked_names = {'providers.json', 'auth.json', 'oauth.json', 'credentials.json', 'settings.json'}
+blocked_ext = {'.jsonl', '.log', '.pyc', '.pyo', '.sqlite', '.db', '.pem', '.key', '.pfx', '.p12'}
+roots = ['packages', 'scripts', '.agents/skills/agentic-task/scripts',
+         '.agents/skills/agentic-task/references']
+files: set[str] = set()
+skipped: list[dict[str, str]] = []
+for relative in roots:
+    start = ROOT / relative
+    assert start.is_dir() and not linked(start), relative
+    for folder, dirs, names in os.walk(start, followlinks=False):
+        parent = Path(folder)
+        kept = []
+        for name in dirs:
+            entry = parent / name
+            if name.casefold() in blocked_dirs or linked(entry):
+                skipped.append({'path': entry.relative_to(ROOT).as_posix(), 'reason': 'runtime-or-link-directory'})
+            else:
+                kept.append(name)
+        dirs[:] = kept
+        for name in names:
+            entry = parent / name
+            relative_file = entry.relative_to(ROOT).as_posix()
+            if linked(entry) or name.casefold() in blocked_names or name.startswith('.env') or entry.suffix.casefold() in blocked_ext:
+                skipped.append({'path': relative_file, 'reason': 'runtime-credential-name-or-link-file'})
+                continue
+            if entry.is_file():
+                files.add(relative_file)
+for relative in ['package.json', 'package-lock.json', 'biome.json', 'tsconfig.json',
+                 'tsconfig.base.json', 'vitest.base.ts', '.gitattributes', '.gitignore',
+                 '.npmrc', 'AGENTS.md', 'test.sh', '.agents/skills/agentic-task/SKILL.md']:
+    path = ROOT / relative
+    assert path.is_file() and not linked(path), relative
+    files.add(relative)
+for relative in faces:
+    source = ROOT / relative
+    if source.exists():
+        assert relative in files and not linked(source), ('approved source omitted', relative)
+
+inventory = []
+for relative in sorted(files):
+    source = ROOT / relative
+    before = source.stat()
+    data = source.read_bytes()
+    target = COPY / relative
+    fresh(target, data)
+    assert not linked(target) and not os.path.samefile(source, target), relative
+    assert source.read_bytes() == data, ('source changed during snapshot', relative)
+    row = {'path': relative, 'sha256': sha(data), 'bytes': len(data),
+           'mtime_ns': before.st_mtime_ns, 'crlf': data.count(b'\r\n'),
+           'bare_lf': data.count(b'\n') - data.count(b'\r\n'),
+           'mutable': relative in faces}
+    inventory.append(row)
+    if relative not in faces:
+        target.chmod(stat.S_IREAD)
+
+baseline = []
+for relative in sorted(faces):
+    source = ROOT / relative
+    row = {'source_path': relative, 'implementation_path': COPY_REL + '/' + relative,
+           'existed': source.exists()}
+    if source.exists():
+        data = source.read_bytes()
+        assert data == (COPY / relative).read_bytes(), ('snapshot drift', relative)
+        fresh(EV / 'original-bytes' / relative, data)
+        row.update(sha256=sha(data), bytes=len(data), crlf=data.count(b'\r\n'),
+                   bare_lf=data.count(b'\n') - data.count(b'\r\n'))
+        if relative.startswith('.agents/skills/agentic-task/'):
+            git_cwd = framework
+            git_path = relative.removeprefix('.agents/skills/agentic-task/')
+        else:
+            git_cwd, git_path = ROOT, relative
+        fresh(EV / 'original-diff' / (relative + '.diff'),
+              run_git(git_cwd, 'diff', '--no-ext-diff', '--no-textconv', '--binary', 'HEAD', '--', git_path))
+    baseline.append(row)
+
+# An empty marker prevents incidental root search falling through to the live .agenticdoc.
+# It contains no copied key, policy, ledger, grant or signature.
+(COPY / '.agenticdoc').mkdir()
+fresh(COPY / '.agenticdoc/ISOLATED-NOT-LIVE.md',
+      b'Isolated source copy only. No live project state or authority. Tests require private fixture roots.\n')
+
+new_dag = json.loads(source_dag_bytes)
+new_dag['source'] = 'original approved DAG + user-approved isolated physical mapping'
+new_dag['implementation_root'] = COPY_REL
+new_dag['source_manifest_sha256'] = sha(source_dag_bytes)
+new_dag['approval'] = 'evidence/implementation/isolation-approval-20261026.md'
+new_dag['live_cutover_authorized'] = False
+new_dag['actual_runtime_identity_verified'] = False
+new_dag['s0_disposition'] = {
+    'source_only_frontier': ['T03'], 'requires_setup_check': True,
+    'live_cutover': 'blocked; separate authorization',
+    'human_h12': 'unverified; original affected consumer and acceptance gates remain blocking'}
+card_rows = []
+for task in new_dag['tasks']:
+    if task['id'] in {'T01', 'T02'}:
+        continue
+    original = KEY / task['card']
+    raw = original.read_bytes()
+    text = raw.decode('utf-8')
+    assert text.startswith('---\n') or text.startswith('---\r\n'), original
+    eol = '\r\n' if b'\r\n' in raw else '\n'
+    normalized = text.replace('\r\n', '\n')
+    source_faces = task['product_write_face'][:]
+    task['source_product_write_face'] = source_faces
+    task['source_card'] = task['card']
+    task['source_card_sha256'] = sha(raw)
+    task['product_write_face'] = [COPY_REL + '/' + path for path in source_faces]
+    for source in sorted(source_faces, key=len, reverse=True):
+        normalized = normalized.replace(source, COPY_REL + '/' + source)
+    for command in task['commands']:
+        cwd = command['cwd']
+        command['source_cwd'] = cwd
+        command['cwd'] = COPY_REL + ('/' + cwd if cwd != '.' else '')
+        normalized = normalized.replace('cwd=' + cwd + '；', 'cwd=' + command['cwd'] + '；')
+    normalized = normalized.replace('implementation-dag.json', 'implementation-isolated-dag.json')
+    head, body = normalized.split('\n---\n', 1)
+    notice = (
+        '\n## 隔离实施覆盖（用户已批准，优先于旧物理路径）\n'
+        f'实际源码/生成器/测试cwd根：`{COPY_REL}`；证据仍写本卡主key evidence目录。'
+        '只改本卡frontmatter/write_face列出的副本exact文件，原仓库同名文件禁止写。'
+        '源卡为未执行历史，依赖/AC/VC/业务合同原样继承。\n'
+        '原字节/SHA/EOL/既有diff：evidence/implementation/isolation-baseline-20261026/；'
+        '实施映射/入口条件见implementation-isolation.md与implementation-isolated-dag.json。'
+        '下一writer必须读副本当前EOF并保存本卡before/after，不能拿原仓源码代最新副本。\n'
+        '所有测试先检查实际导入file/生成器输出/子进程脚本绝对路径在副本内；'
+        'fixture project/home/TEMP限本卡evidence，采用最小环境（不继承provider/worker/项目配置），'
+        'PYTHONDONTWRITEBYTECODE=1、PYTEST_DISABLE_PLUGIN_AUTOLOAD=1、禁pytest cache。'
+        '测试源完整读后只跑已列具体文件，fake backend，不真实HTTP/决策CLI/服务探针。'
+        '源码树内不写运行config/gate/ledger；仅独立fixture可由生产writer写测试对象，不能fixture伪造业务PASS。\n'
+        '只读mirror/旧case不可修改；不建源symlink/junction/hardlink、不重新复制覆盖已修改副本，'
+        '不改权限/预算/watchdog或live对象。TS依赖解析与完整check等价性未证，届时先核再测；'
+        '完整npm check只T32 PM-direct另建等价保护副本，不在共享实施副本运行写式formatter。'
+        'human/H12实际资格及运行切换未证仍原验收阻塞，本覆盖不造真实grant。\n'
+    )
+    mapped = (head + '\n---\n' + notice + body).replace('\n', eol).encode('utf-8')
+    new_card = CARDS / original.name
+    fresh(new_card, mapped)
+    fresh(EV / 'source-cards' / original.name, raw)
+    task['card'] = 'tasks/isolated/' + original.name
+    card_rows.append({'id': task['id'], 'source_card': original.relative_to(KEY).as_posix(),
+                      'source_sha256': sha(raw), 'card': task['card'], 'sha256': sha(mapped)})
+
+# Structural invariants of the remap, never a product verification claim.
+old_tasks = {task['id']: task for task in source_dag['tasks']}
+by_id = {task['id']: task for task in new_dag['tasks']}
+ancestors: dict[str, set[str]] = {}
+def visit(task_id: str, stack: set[str]) -> set[str]:
+    assert task_id not in stack, ('cycle', task_id)
+    if task_id not in ancestors:
+        result: set[str] = set()
+        for dependency in by_id[task_id]['deps']:
+            result.add(dependency)
+            result.update(visit(dependency, stack | {task_id}))
+        ancestors[task_id] = result
+    return ancestors[task_id]
+for task in new_dag['tasks']:
+    original = old_tasks[task['id']]
+    for field in ('deps', 'stage', 'ac_refs', 'vc_refs', 'goal', 'requirements', 'type', 'execution'):
+        assert task[field] == original[field], (task['id'], field)
+    visit(task['id'], set())
+for index, left in enumerate(new_dag['tasks']):
+    for right in new_dag['tasks'][index + 1:]:
+        overlap = set(left['product_write_face']) & set(right['product_write_face'])
+        assert not overlap or left['id'] in ancestors[right['id']] or right['id'] in ancestors[left['id']], (left['id'], right['id'], overlap)
+for name, expected in locked.items():
+    assert sha((KEY / name).read_bytes()) == expected, name
+for row in baseline:
+    source = ROOT / row['source_path']
+    assert source.exists() == row['existed'], row['source_path']
+    if row['existed']:
+        assert sha(source.read_bytes()) == row['sha256'], ('original drift', row['source_path'])
+for row in inventory:
+    assert sha((COPY / row['path']).read_bytes()) == row['sha256'], row['path']
+
+fresh(EV / 'git-status.after.txt', run_git(ROOT, 'status', '--short', '--', 'packages', 'scripts'))
+fresh(EV / 'framework-status.after.txt', run_git(framework, 'status', '--short'))
+dump(EV / 'source-inventory.json', inventory)
+dump(EV / 'skipped-paths.json', skipped)
+dump(EV / 'approved-file-baselines.json', baseline)
+dump(EV / 'card-mapping.json', card_rows)
+dump(NEW_DAG, new_dag)
+result = {'observed_at': datetime.now().astimezone().isoformat(), 'key': source_dag['key'],
+          'implementation_root': COPY_REL, 'copied_regular_files': len(inventory),
+          'approved_physical_files': len(faces), 'mapped_cards': len(card_rows),
+          'original_contract_hashes': locked, 'source_bytes_unchanged': True,
+          'card_dag_ac_vc_unchanged': True, 'unordered_overlapping_writers': 0,
+          'source_links_created': 0, 'live_state_copied': False,
+          'dependencies_equivalence_verified': False, 'product_tests_run': False,
+          'product_acceptance': False, 'new_manifest_sha256': sha(NEW_DAG.read_bytes())}
+dump(EV / 'setup-check.json', result)
+print(json.dumps(result, ensure_ascii=False, indent=2))

@@ -1,0 +1,17 @@
+platform win32 python 3.14.3
+PROBE_TIMEOUT_S 3.0
+REFUSED_ERRNOS [10061]
+PORT_RANGE (43170, 43269)
+real closed loopback 56942 {'result': 'refused', 'port': 56942, 'errno': 10061, 'detail': 'connection refused'} elapsed 2.06s
+unrelated listener 54230 {'result': 'connected', 'port': 54230, 'errno': None, 'detail': 'a listener answered on the recorded port'}
+classify TimeoutError unknown
+classify ETIMEDOUT unknown
+classify EACCES unknown
+classify 10061 refused
+isolated block 25101..25200 held 100 rejected []
+bind_listener kind range-exhausted
+attempted_count 100
+attempted_echo 20
+error_class_sample OSError
+occupants still accepting 100
+occupant sockets open 100

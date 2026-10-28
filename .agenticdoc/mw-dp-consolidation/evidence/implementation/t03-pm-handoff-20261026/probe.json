@@ -1,0 +1,65 @@
+{
+  "imports": {
+    "decision_points": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_points.py",
+    "test_dp_consolidation_registry": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_dp_consolidation_registry.py",
+    "test_decide_registry_contract": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_decide_registry_contract.py"
+  },
+  "pure_helpers": [
+    {
+      "entry": "dp-w-type",
+      "valid_pre_request_issues": [],
+      "omitted_role_issues": [],
+      "malformed_timestamp_issues": []
+    },
+    {
+      "entry": "dp-pm-steer",
+      "valid_pre_request_issues": [],
+      "omitted_role_issues": [],
+      "malformed_timestamp_issues": []
+    },
+    {
+      "entry": "dp-w-check-task",
+      "valid_pre_request_issues": [],
+      "omitted_role_issues": [],
+      "malformed_timestamp_issues": []
+    },
+    {
+      "entry": "dp-QG",
+      "valid_pre_request_issues": [],
+      "omitted_role_issues": [],
+      "malformed_timestamp_issues": []
+    },
+    {
+      "entry": "dp-gate-approve",
+      "valid_pre_request_issues": [],
+      "omitted_role_issues": [],
+      "malformed_timestamp_issues": []
+    },
+    {
+      "entry": "dp-sign-key",
+      "valid_pre_request_issues": [],
+      "omitted_role_issues": [],
+      "malformed_timestamp_issues": []
+    },
+    {
+      "entry": "dp-auto",
+      "valid_pre_request_issues": [],
+      "omitted_role_issues": [],
+      "malformed_timestamp_issues": []
+    },
+    {
+      "entry": "dp-route",
+      "valid_pre_request_issues": [],
+      "omitted_role_issues": [],
+      "malformed_timestamp_issues": []
+    }
+  ],
+  "generated_test_transition_probe": {
+    "synthetic_only": true,
+    "result": "rejected-eight-entry-input",
+    "assertion": "the generated TS changed unexpectedly; regeneration belongs to T04"
+  },
+  "network": "blocked",
+  "source_writes": false,
+  "business_requests": false
+}

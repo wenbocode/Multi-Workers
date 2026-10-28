@@ -1,0 +1,158 @@
+--- a/packages/multi-workers/decision_backends.py
++++ b/packages/multi-workers/decision_backends.py
+@@ -59,6 +59,7 @@
+ _DECISION_IMPORT_ERROR = ""
+ try:  # pragma: no cover - exercised by whichever import path is available
+     from decision import (
++        BASIS_QUESTION_ID,
+         BackendOutcome,
+         CredentialSnapshot,
+         DecisionBackend,
+@@ -70,6 +71,8 @@
+ except ImportError as _decision_import_error:  # pragma: no cover - standalone import
+     DECISION_TYPES_LOCAL = True
+     _DECISION_IMPORT_ERROR = f"{type(_decision_import_error).__name__}: {_decision_import_error}"
++    #: Standalone tolerance mirror of ``decision.BASIS_QUESTION_ID``.
++    BASIS_QUESTION_ID = "basis_id"
+ 
+     class DecisionBackend(Protocol):
+         name: str
+@@ -762,6 +765,84 @@
+     return float(raw)
+ 
+ 
++#: Model-facing instruction of the prepared basis question. It states where the
++#: candidate texts come from (the PM preparation) so a selecting model never
++#: reports them as its own wording, and it forbids substituting a failure reason
++#: or a probability for the basis.
++PREPARED_BASIS_INSTRUCTIONS = (
++    "从 PM 已准备的依据中选择最符合所选业务结论的一项；"
++    "这些依据文字由 PM 预备（不是模型原文，也不是失败原因或概率）。"
++)
++
++
++def build_prepared_questions(dp_id: str, material: object, preparation: object) -> dict:
++    """The one same-call question set of a prepared request (design D012A).
++
++    Two ``choice`` questions are asked in **one** request:
++
++    1. the entry's own business question(s), straight from the protocol registry
++       (``decision_points.questions_map``) so the entry keeps its id, choices,
++       labels and instructions; a dynamic candidate source (dp-auto) is rendered
++       here from the submitted material as an explicit choice enum, because the
++       transport sends a nested ``{material, preparation}`` state and the legacy
++       ``dynamic_choices`` renderer reads top-level state keys;
++    2. ``BASIS_QUESTION_ID`` over the prepared basis catalog, whose criteria are
++       exactly the PM-prepared ``text`` of each item.
++
++    Only ids and prepared texts are rendered - ``material_refs``/``applies_to``
++    stay validation metadata, and no free-form reason field is added. A catalog
++    that cannot render is an error (the caller turns it into a refusal); this
++    builder never invents a candidate, a default or a truncated label.
++    """
++    questions = dict(_dpts.questions_map(dp_id))
++    for qid, spec in list(questions.items()):
++        source_key = spec.get("dynamic_choices") if isinstance(spec, Mapping) else None
++        if not isinstance(source_key, str):
++            continue
++        candidates = material.get(source_key) if isinstance(material, Mapping) else None
++        labels: dict[str, str] = {}
++        if isinstance(candidates, list):
++            for item in candidates:
++                if not isinstance(item, Mapping):
++                    continue
++                candidate_id = item.get("id")
++                label = item.get("label")
++                if isinstance(candidate_id, str) and isinstance(label, str):
++                    labels[candidate_id] = label
++        if not labels:
++            raise ValueError(
++                f"{dp_id}: dynamic candidate source {source_key!r} is not renderable"
++            )
++        converted = {key: value for key, value in spec.items() if key != "dynamic_choices"}
++        converted["choices"] = list(labels)
++        converted["labels"] = labels
++        questions[str(qid)] = converted
++
++    catalog = preparation.get("basis_catalog") if isinstance(preparation, Mapping) else None
++    if not isinstance(catalog, list) or not catalog:
++        raise ValueError(
++            f"{dp_id}: preparation.basis_catalog is required for the same-call basis selection"
++        )
++    basis_labels: dict[str, str] = {}
++    for item in catalog:
++        if not isinstance(item, Mapping):
++            continue
++        basis_item_id = item.get("id")
++        text = item.get("text")
++        if isinstance(basis_item_id, str) and isinstance(text, str):
++            basis_labels[basis_item_id] = text
++    if not basis_labels:
++        raise ValueError(f"{dp_id}: preparation.basis_catalog carries no usable item")
++    questions[BASIS_QUESTION_ID] = {
++        "id": BASIS_QUESTION_ID,
++        "type": "choice",
++        "instructions": PREPARED_BASIS_INSTRUCTIONS,
++        "choices": list(basis_labels),
++        "labels": basis_labels,
++    }
++    return questions
++
++
+ # ── Outcome helpers ─────────────────────────────────────────────────────────
+ 
+ def _elapsed_ms(start: float) -> int:
+@@ -798,6 +879,13 @@
+ 
+     name = DECISIONS_TRANSPORT
+     confidence_source = CONFIDENCE_SOURCE_API
++
++    def __init__(self) -> None:
++        #: Real POSTs issued by the most recent :meth:`decide` call, including
++        #: the backend's own ``retry-after`` retries. The client reads it so the
++        #: prepared result can count transport attempts separately from the one
++        #: business decision, even when the optional wire capture is off.
++        self.last_transport_attempts = 0
+ 
+     def endpoint(self, cfg: object) -> str:
+         return _timi_base_url(cfg) + DECISIONS_PATH
+@@ -966,6 +1054,7 @@
+         attempt = 0
+         while True:
+             attempt += 1
++            self.last_transport_attempts += 1
+             try:
+                 resp = _http_post(self.endpoint(cfg), self.headers(key), payload, timeout_s)
+             except TransportTimeout as exc:
+@@ -991,6 +1080,7 @@
+ 
+     def decide(self, state: object, questions: dict, cfg: object) -> "BackendOutcome":
+         start = time.monotonic()
++        self.last_transport_attempts = 0
+         if not getattr(cfg, "enabled", True):
+             return _outcome(start, False, REASON_DISABLED, False, None, "decision feature disabled")
+         box_ids = _box_questions(questions)
+@@ -1097,6 +1187,7 @@
+ 
+ __all__ = [
+     "ANSWERABLE_TYPES",
++    "BASIS_QUESTION_ID",
+     "BackendOutcome",
+     "BOX_REQUIRES_IMAGE_DETAIL",
+     "BOX_REQUIRES_IMAGE_REASON",
+@@ -1110,6 +1201,7 @@
+     "_DECISION_IMPORT_ERROR",
+     "HttpResponse",
+     "PROBE_TARGETS",
++    "PREPARED_BASIS_INSTRUCTIONS",
+     "TIMI_AUTH_FIELD",
+     "TIMI_AUTH_JSON",
+     "TIMI_BASE_URL",
+@@ -1117,6 +1209,7 @@
+     "TransportConnectionError",
+     "TransportTimeout",
+     "credential_status",
++    "build_prepared_questions",
+     "current_credential_snapshot",
+     "probe_matrix",
+     "resolve_timi_api_key",

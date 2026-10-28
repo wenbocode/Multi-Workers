@@ -1,0 +1,57 @@
+{
+  "checker": "baseline_verify.py",
+  "declared_before_products": {
+    "decision_lifecycle.py": {
+      "baseline_copy": "rework-r2/product-repair/after-bytes/decision_lifecycle.py",
+      "bytes": 65501,
+      "declared_before_sha256": "73d0ae2efda3879668b3cf84d11f32809c6d00f76da13c3b8d065f87d4c87bb5",
+      "equal_to_declared": true,
+      "lines": 1647,
+      "sha256": "73d0ae2efda3879668b3cf84d11f32809c6d00f76da13c3b8d065f87d4c87bb5",
+      "worktree_equal_to_baseline_now": false
+    },
+    "decision_task_state.py": {
+      "baseline_copy": "rework-r2/product-repair/after-bytes/decision_task_state.py",
+      "bytes": 3871,
+      "declared_before_sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+      "equal_to_declared": true,
+      "lines": 82,
+      "sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+      "worktree_equal_to_baseline_now": true
+    },
+    "decision_wire.py": {
+      "baseline_copy": "rework-r2/product-repair/after-bytes/decision_wire.py",
+      "bytes": 82286,
+      "declared_before_sha256": "429201ace7028968ae18cfbcc33dbf5aa0d2fa11b8f5d2dd7604cae0dec4e7dc",
+      "equal_to_declared": true,
+      "lines": 2314,
+      "sha256": "429201ace7028968ae18cfbcc33dbf5aa0d2fa11b8f5d2dd7604cae0dec4e7dc",
+      "worktree_equal_to_baseline_now": false
+    }
+  },
+  "immutable_evidence_sha256": {
+    "pm/postfix-first-report": "d987ed6dd849316bbebdb2c377ab3b5032fd6340c7ae56a963195e1f7e561a6f",
+    "pm/postfix-second-report": "cd5f409f081680b23836ccfd3ceb59e2a845eac185c142eaff72e4c08e6200e0",
+    "pm/probe-run-meta": "6f72f8ca81dee807da637a4e2fbc2c722253062fa1a7ae272d37ea7440dca805",
+    "pm/probe-run-stdout": "ffb0ce1b292ebb38a30361be5a418dbb3a2392aef71461b840c023f8cc0efa1e",
+    "pm/probe-test": "62c03940ac97b9a9ab945a30d4974f37da7c6d367fff2fcf35ee346a5e4371fb",
+    "stageB/report": "d7cd1ca5f5157d1271eb9316e81f250effcd6e27344347d119894c2091a44bd4",
+    "stageC/run_pm_tests.py": "2e6db8d2a0382f47f2b9aa4b9eb5d40556ed3a1848ba81e46a16cb0fe949adc9",
+    "stageC/static_verify.result.json": "e2768ebd7cf9f82255a017901dd4f3308d02af814ebc14c35eb9dc3a54af84b2",
+    "stageC/test_t10_r2_boundaries.py": "5abd812bf5f496ae37b91888f7cb9dc90f31b0290eefd2a1f454bf30bd90f771"
+  },
+  "mode": "read-only bytes; no product import, no pytest, no writes",
+  "problems": [],
+  "protected_tests": {
+    "test_decision_context_lifecycle.py": {
+      "bytes": 65105,
+      "equal_to_protected": true,
+      "sha256": "1bca28c56c7ab039de5c3a91638fd20c1e2fa89f4a1ec996169cfd933c1e6ae9"
+    },
+    "test_decision_task_state.py": {
+      "bytes": 15480,
+      "equal_to_protected": true,
+      "sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f"
+    }
+  }
+}

@@ -1,0 +1,102 @@
+--- /dev/null
++++ after/packages/multi-workers/decide_cases/dp-pm-steer.json
+@@ -0,0 +1,99 @@
++{
++  "book": {
++    "decision_point": "dp-pm-steer",
++    "material": {
++      "pm_decision_background": "历史投影尚未交付，表结构、弹窗与本地 case 已完成；facets 下拉与正文渲染仍等后端字段。当前预算只够做一块，需要判断收窄到 facets 接线、拆成两个任务、PM 直接做完，还是以高风险上抛给人。",
++      "task_deliverables": "旧记录只读筛选的结论说明；本次任务的 report.md 与定向验证日志。",
++      "task_goal": "给 mw decide monitor 增加旧记录只读筛选，同时保持现有写入链路完全不动。",
++      "task_requirements": "只读，不写 archive、signoff 或 authority；不新增第二套事件协议；不改其余入口的既有契约。",
++      "worker_execution": "已完成：五列表结构、四状态渲染、十节点 DAG 弹窗与日志弹窗。剩余：facets 下拉接线与正文渲染，等历史投影字段。阻塞：旧记录 detail 没有 workbench 字段，只能显示未记录。尝试：改过两版节点顺序，最终按后端投影顺序渲染。时间预算：已用 35 分钟，剩余 25 分钟。"
++    },
++    "meta": {
++      "actor_role": "pm",
++      "key": "mw-dp-consolidation",
++      "logical_id": "case-dp-pm-steer-v1",
++      "task_key": "dpc-t05-eight-cases",
++      "trigger_id": "case-dp-pm-steer"
++    },
++    "notes": {
++      "evidence": {
++        "pm_decision_background": "packages/multi-workers/scripts/build_decide_cases.py:183",
++        "task_deliverables": "packages/multi-workers/scripts/build_decide_cases.py:167",
++        "task_goal": "packages/multi-workers/scripts/build_decide_cases.py:162",
++        "task_requirements": "packages/multi-workers/scripts/build_decide_cases.py:164",
++        "worker_execution": "packages/multi-workers/scripts/build_decide_cases.py:188"
++      }
++    },
++    "preparation": {
++      "basis_catalog": [
++        {
++          "applies_to": [
++            "narrow"
++          ],
++          "id": "pm-steer-narrow",
++          "material_refs": [
++            "worker_execution",
++            "pm_decision_background"
++          ],
++          "text": "剩余预算只够 facets 接线，收窄后可在本轮完成一块可验证的改动。"
++        },
++        {
++          "applies_to": [
++            "split"
++          ],
++          "id": "pm-steer-split",
++          "material_refs": [
++            "pm_decision_background",
++            "worker_execution"
++          ],
++          "text": "投影字段与 facets 接线是两块独立工作，拆开重派能各自闭环。"
++        },
++        {
++          "applies_to": [
++            "direct-exec"
++          ],
++          "id": "pm-steer-direct",
++          "material_refs": [
++            "worker_execution"
++          ],
++          "text": "剩余接线只涉及只读展示，PM 直接做完比再派一次更省预算。"
++        },
++        {
++          "applies_to": [
++            "escalate"
++          ],
++          "id": "pm-steer-escalate",
++          "material_refs": [
++            "pm_decision_background"
++          ],
++          "text": "投影缺口跨越写入方边界，只有人才能确认是否放宽本轮范围。"
++        }
++      ],
++      "prepared_at": "2026-10-27T20:56:00+00:00"
++    },
++    "schema_version": 3
++  },
++  "case_version": 1,
++  "dp": "dp-pm-steer",
++  "note": "合成 case：PM 正在判断检查点动作，附一段真实形态的 worker 执行情况；选项仍由 registry 原文提供，case 不改写问题。",
++  "questions": {
++    "checkpoint_action": {
++      "choices": [
++        "narrow",
++        "split",
++        "direct-exec",
++        "escalate"
++      ],
++      "id": "checkpoint_action",
++      "instructions": "以当前进度，这一步该继续、拆小、直接执行还是上抛人？",
++      "labels": {
++        "direct-exec": "PM 自己直接做完",
++        "escalate": "风险高到必须问人",
++        "narrow": "收窄到剩余预算内能完成的一小块",
++        "split": "拆成多个任务重派"
++      },
++      "type": "choice"
++    }
++  },
++  "title": "检查点：收窄、拆分、直接执行还是上抛人"
++}

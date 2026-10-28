@@ -1,0 +1,284 @@
+=== AC-014: dispatch() 相关行（含锁 / task.md 写 / 队列行）===
+1118: def _write_face_verdict(
+1129:     Returns a zero-side-effect refusal (`ok=False`, no taskDir / task.md / queue
+1130:     row) when this dispatch must not be queued, or ``None`` to proceed.
+1132:     The in-flight set is recomputed here from the live queue file (AC-008 — no
+1133:     queue column is added, D-004); ``mw_common.parse_workers_file`` is the
+1134:     lock-free reader (a second ``acquire_lock`` while already holding the lock
+1238: def dispatch(
+1253:     and the queue row under one workers.lock critical section, then verify the
+1256:     Rejections (zero queue rows, zero task.md, timeline event):
+1262:         first, with zero side effects: no task dir, no queue row)
+1399:     content = render_task_md(
+1435:         mw_common.acquire_lock(lock)
+1461:         task_dir.mkdir(parents=True, exist_ok=True)
+1462:         task_md.write_text(content, encoding="utf-8", newline="\n")
+1469:             wpath.parent.mkdir(parents=True, exist_ok=True)
+1478:             mw_common.upsert_worker_row(wpath, row)
+1482:                 reason=f"queue-write-failed: {exc}",
+1493:     for queued in mw_common.parse_workers_file(wpath):
+1494:         if queued["task_key"] == task_key:
+1497:                 queued["task_path"] == str(task_md)
+1498:                 and queued["cli"] == entry.cli
+1499:                 and queued["status"] == "pending"
+1500:                 and queued.get("origin") == mw_common.WORKER_ORIGIN_CONDUCTOR
+
+=== AC-006: mw.py 中与 timeline / auto-decisions / write-face 相关的行 ===
+46: from autopilot import timeline as _ap_timeline
+319:             msg = "[mw serve] FATAL: no route has credentials; refusing to start. Set at least one credential (env or configured file source) before m
+438:                 # warns (stderr -> mw.log + timeline `config`); it never restarts
+562:     # Conductor row (D-101): PID, alive, last tick watermark (timeline tail).
+760:             # refuse instead of migrating/rewriting on top of it.
+2127: # other sections survive), refuse existing targets unless --force, and make
+2247:     # refusal/plan logic can turn it into an error.
+2255:     refusals: list[tuple[pathlib.Path, str]] = []
+2260:             refusals.append((path, "already exists (use --force to overwrite)"))
+2261:             report.append(("refuse", path, "already exists (use --force to overwrite)"))
+2271:             refusals.append((target_yml, target_detail))
+2272:             report.append(("refuse", target_yml, target_detail))
+2275:             refusals.append((target_yml, reason))
+2276:             report.append(("refuse", target_yml, reason))
+2291:             refusals.append((roots_path, reason))
+2292:             report.append(("refuse", roots_path, reason))
+2307:         refusals.append((target_yml, reason))
+2308:         report.append(("refuse", target_yml, reason))
+2316:     if refusals:
+2317:         for path, reason in refusals:
+2318:             print(f"[mw rag init] Error: refusing to write {path}: {reason}", file=sys.stderr)
+2469:     mapping — mw-target-partition FIX-7: the CLI writers must refuse a
+2890:             # refuse before any .bak / migration touches the disk.
+3277:         # fail-open: only a hard "no" refuses (missing/unavailable stays
+3464:     uses; any failure refuses to write. The write itself only goes through
+3712:     "goal-change": ("new goal adopted, keys re-validate", "goal change refused, halt and report", "no"),
+3713:     "xkey-authorize": ("cross-key write ticket authorized", "ticket refused, blocker recorded", "no"),
+3929:     destructive and is refused without `--confirm-destructive`, with the
+3932:     writer, so `answered_by`/`answered_at`/the timeline audit is preserved."""
+3937:         _ap_timeline.Timeline(_ap_timeline.timeline_path(project_dir)),
+3962:     Exit 0 = the done gate would not refuse (no anchor included); 1 = an
+3976:     def refused(entry: dict) -> bool:
+3981:     failed = any(refused(entry) for entry in entries)
+3992:                     "refused": refused(entry),
+3997:             "refused": failed,
+3998:             "unauthorized": sum(1 for entry in entries if refused(entry)),
+4019:                 f"carrier={carrier} ok=no refused"
+4059:         (present and equal to the current text -> default skip), ``refused``
+4063:         print and the refusal diagnostic.
+4102:             statuses[name] = {"status": "refused", "ids": ids}
+4125:     untouched (``unchanged``); an existing block whose text changed is refused
+4161:     refused = any(statuses[name]["status"] == "refused" for name in ("ac", "vc"))
+4173:         return 1 if refused else 0
+4189:         if status == "refused":
+4192:     return 1 if refused else 0
+4672: def _refuse_dirty_build(label: str, dirty: list[str], paths: list[str],
+4688:     """False (after printing the refusal) when the root `npm run build` in
+4697:     _refuse_dirty_build("mw bootstrap", dirty, _BOOTSTRAP_DIRTY_PATHS,
+4707:             _refuse_dirty_build("mw build", dirty, _BUILD_DIRTY_PATHS,
+5703:     timeline `config`, rate-limited by `(code_dir, meta_commit, head_commit,
+5720:         # Both channels carry the identical `detail` (the timeline is the
+5723:         _ap_timeline.Timeline(_ap_timeline.timeline_path(project_dir)).append(
+
+=== AC-006: autopilot/*.py 里读 timeline 的地方 ===
+packages\multi-workers\autopilot\timeline.py:3: The timeline is one JSONL file — ``.agenticdoc/_autopilot/timeline.jsonl`` —
+packages\multi-workers\autopilot\timeline.py:24: (``timeline.jsonl.1`` = newest rotation … ``timeline.jsonl.N`` = oldest),
+packages\multi-workers\autopilot\timeline.py:124: """Default timeline location: `.agenticdoc/_autopilot/timeline.jsonl`.
+packages\multi-workers\autopilot\timeline.py:129: return pathlib.Path(project_root) / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test\test_write_face_dispatch.py:62: project / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test\test_write_face_dispatch.py:437: tl = tl_mod.Timeline(root / ".agenticdoc" / "_autopilot" / "timeline.jsonl")
+packages\multi-workers\test\test_write_face_e2e.py:567: timeline = timeline_mod.Timeline(project / ".agenticdoc" / "_autopilot" / "timeline.jsonl")
+packages\multi-workers\test_autopilot_auto_decision.py:385: writer = timeline.Timeline(tmp_path / "timeline.jsonl")
+packages\multi-workers\test_autopilot_auto_decision.py:388: events = timeline.query_events(tmp_path / "timeline.jsonl").events
+packages\multi-workers\test_autopilot_dispatch.py:80: tmp_path / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test_autopilot_dispatch.py:155: tmp_path / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test_autopilot_dispatch.py:194: tmp_path / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test_autopilot_dispatch.py:236: tmp_path / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test_autopilot_dispatch.py:260: tmp_path / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test_autopilot_dispatch.py:553: tmp_path / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test_autopilot_gate_consumption.py:103: for candidate in [path, *sorted(path.parent.glob("timeline.jsonl.*"))]:
+packages\multi-workers\test_autopilot_stall.py:469: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:83: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:112: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:132: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:152: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:168: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:189: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:214: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:242: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:261: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:279: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:293: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:311: missing = tl.query_events(tmp_path / "nothing" / "timeline.jsonl")
+packages\multi-workers\test_autopilot_timeline.py:314: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:331: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:356: writer = tl.Timeline(blocked / "timeline.jsonl")
+packages\multi-workers\test_autopilot_timeline.py:361: assert not (blocked / "timeline.jsonl").exists()
+packages\multi-workers\test_autopilot_timeline.py:369: path = tmp_path / "timeline.jsonl"
+packages\multi-workers\test_autopilot_timeline.py:386: assert tl.timeline_path(tmp_path) == tmp_path / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test_mwds_t08_doctor_blocked.py:116: path = project / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test_mwds_t10_dispatch_run_state.py:88: tmp_path / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test_mwds_t20_roadmap_table.py:363: timeline_events=len(events),
+packages\multi-workers\test_mwgal_t11_suppression.py:153: path = project / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test_mwgal_t13_drift_identity.py:441: tl = project / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+packages\multi-workers\test_mwgal_t13_drift_identity.py:458: assert not (project / ".agenticdoc" / "_autopilot" / "timeline.jsonl").exists()
+packages\multi-workers\test_rag_research.py:102: tmp_path / ".agenticdoc" / "_autopilot" / "timeline.jsonl"
+
+=== AC-006: doctor_report / cmd_doctor 的 section 生成点 ===
+mw_common.py:603: def _rag_target_section(project_root: pathlib.Path) -> tuple[dict, str | None]:
+mw_common.py:3676:     if not report["service"]["running"]:
+mw_common.py:3683:         if not report["service"]["running"]:
+mw_common.py:3687:     if report["queue"]["stale_count"]:
+mw_common.py:3689:             f"{report['queue']['stale_count']} stale queue entries (task.md missing) - "
+mw_common.py:3695:     queue_section = report["queue"]
+mw_common.py:3721:     if report["launcher_log"].get("fatal"):
+mw_common.py:3836:     if report["bundle"].get("stale"):
+mw_common.py:3876:     if report["orphan_proxy"]["detected"]:
+mw_common.py:3877:         ports = ", ".join(str(p["port"]) for p in report["orphan_proxy"]["ports"])
+mw_common.py:3883:         f"{r['route']} ({r['missing']})" for r in report["credentials"]["routes"] if not r["available"]
+mw_common.py:3889:     if report["launcher_log"].get("error_count"):
+mw_common.py:3891:             f"launcher.log has {report['launcher_log']['error_count']} error line(s) - inspect the tail"
+mw_common.py:4039: def doctor_report(
+mw_common.py:4057:         report["fix"] = {"applied": doctor_fix(project_dir)}
+mw_common.py:4058:     report["service"] = _doctor_service(project_dir)
+mw_common.py:4059:     report["proxy"] = _doctor_proxy(config)
+mw_common.py:4060:     report["proxy_log"] = _doctor_proxy_log(project_dir)
+mw_common.py:4061:     report["orphan_proxy"] = _doctor_orphan(report["service"], report["proxy"])
+mw_common.py:4062:     report["launcher_log"] = _doctor_launcher_log(project_dir)
+mw_common.py:4063:     report["queue"] = _doctor_queue(project_dir)
+mw_common.py:4064:     report["worker_liveness"] = worker_liveness(project_dir, stale_after_sec)
+mw_common.py:4065:     report["credentials"] = route_precheck(config, os.environ)
+mw_common.py:4066:     report["bundle"] = _doctor_bundle()
+mw_common.py:4067:     report["target"] = _doctor_target(project_dir)
+mw_common.py:4068:     report["autopilot"] = _doctor_autopilot(project_dir)
+mw_common.py:4069:     report["gates"] = _doctor_gates(project_dir)
+mw_common.py:4070:     report["dispatch"] = _doctor_dispatch(project_dir)
+mw_common.py:4071:     report["pi_shell"] = ensure_pi_shell_path(env=os.environ, fix=fix)
+mw_common.py:4072:     if fix and report["pi_shell"].get("status") in ("filled", "replaced"):
+mw_common.py:4073:         report["fix"]["applied"].append(
+mw_common.py:4074:             f"pi settings.json shellPath {report['pi_shell']['status']}: "
+mw_common.py:4075:             f"{report['pi_shell']['shell_path']}"
+mw_common.py:4083:     report["worktree_links"] = worktree_doctor.build_section(
+mw_common.py:4089:     report["activation"] = _doctor_activation(project_dir)
+mw_common.py:4091:     report["summary"] = {"healthy": not issues, "issues": issues, "suggestions": suggestions}
+mw_common.py:4098:     svc = report["service"]
+mw_common.py:4102:     for p in report["proxy"]:
+mw_common.py:4107:     if report["proxy"] and not any(p["route"] in avail_routes for p in report["proxy"]):
+mw_common.py:4114:     orphan = report["orphan_proxy"]
+mw_common.py:4122:     log = report["launcher_log"]
+mw_common.py:4130:     queue = report["queue"]
+mw_common.py:4291:     for r in report["credentials"]["routes"]:
+mw_common.py:4294:     bundle = report["bundle"]
+mw_common.py:4306:         applied = report["fix"]["applied"]
+mw_common.py:4308:     summary = report["summary"]
+mw.py:587: def cmd_doctor(args: argparse.Namespace) -> int:
+mw.py:614:     report["conductor"] = _ap_conductor.conductor_status(project_dir)
+mw.py:617:     report["rag"] = _doctor_rag(project_dir)
+mw.py:621:     serve_code = _serve_code_doctor_section(project_dir)
+mw.py:622:     report["serve_code"] = serve_code
+mw.py:624:         report["summary"]["issues"].append(serve_code["detail"])
+mw.py:625:         report["summary"]["healthy"] = False
+mw.py:627:         report["summary"]["suggestions"].append(serve_code["detail"])
+mw.py:629:         report["summary"]["suggestions"].append(serve_code["identity_mismatch"])
+mw.py:633:         print(mw_common.format_doctor_text(report))
+mw.py:636:             print(_format_rag_doctor_line(rag))
+mw.py:638:     return 0 if report["summary"]["healthy"] else 1
+mw.py:2034:     report["citations"] = citations
+mw.py:2035:     report["calls"] = calls
+mw.py:2036:     report["missing"] = [c for c in citations if c["status"] == "missing"]
+mw.py:2037:     report["unverified"] = [c for c in citations if c["status"] == "unverified"]
+mw.py:2038:     report["required_missing"] = required_missing
+mw.py:2053:         f"[mw rag audit] calls={len(report['calls'])} "
+mw.py:2054:         f"citations={len(report['citations'])} missing={len(report['missing'])} "
+mw.py:2055:         f"unverified={len(report['unverified'])} "
+mw.py:2056:         f"required_missing={len(report['required_missing'])}",
+mw.py:2058:     for record in report["missing"]:
+mw.py:2063:     for record in report["unverified"]:
+mw.py:2068:     for record in report["required_missing"]:
+mw.py:2093:         print(f"[mw rag audit] Error: {report['error']}", file=sys.stderr)
+mw.py:2116:     if report["missing"] or report["unverified"] or report["required_missing"]:
+mw.py:2364: def _doctor_rag(project_dir: pathlib.Path) -> dict:
+mw.py:2365:     """RAG section for `mw doctor` (shape of mw_common._doctor_dispatch).
+mw.py:2413: def _format_rag_doctor_line(section: dict) -> str:
+mw.py:3900:     section = mw_common._doctor_gates(project_dir)
+mw.py:5246:     report["conductor"] = _ap_conductor.conductor_status(project_dir)
+mw.py:5247:     print(mw_common.format_doctor_text(report))
+mw.py:5248:     issues = list(report["summary"]["issues"])
+mw.py:5730: def _serve_code_doctor_section(project_dir: pathlib.Path) -> dict:
+mw.py:5952:     b = mw_common._doctor_bundle()
+mw.py:6160:     by_id = {c["id"]: c for c in report["checks"]}
+mw.py:6219:     lines = [f"[mw update-env] project: {report['project']}"]
+mw.py:6221:         lines.append(f"[mw update-env] 框架源: {report['framework_source']}")
+mw.py:6224:     for c in report["checks"]:
+mw.py:6233:     s = report["summary"]
+mw.py:6238:         lines.extend(f"  ✓ {a}" for a in report["applied"])
+mw.py:6241:         lines.extend(f"  • {m}" for m in report["manual"])
+mw.py:6270:     report["applied"] = applied
+mw.py:6271:     report["manual"] = manual_notes + [
+mw.py:6272:         f"[{c['id']}] {c['fix']}" for c in report["checks"]
+mw.py:6280:     return 0 if report["summary"]["healthy"] else 1
+
+=== 现有测试文件（doctor/audit/timeline）===
+  test_target_baseline.py
+  test_write_face_dispatch.py
+  test_write_face_e2e.py
+
+=== TS 侧 auto-decisions 读取面（status-model.ts:1180-1240）===
+1180: 	}
+1181: 	found.sort((a, b) => a.seq - b.seq || a.gate.id.localeCompare(b.gate.id));
+1182: 	return { gates: found.map((f) => f.gate), errors };
+1183: }
+1184: 
+1185: // ── auto-decisions ledger (reminder rows; cap axis input for AC-003) ────────
+1186: 
+1187: /** One pending-gate reminder row from the autopilot ledger
+1188:  * (`.agenticdoc/_autopilot/auto-decisions.jsonl`, design D-006). The Python
+1189:  * conductor is the single writer and the only judge of "pending past
+1190:  * threshold"; the read side never recomputes the decision (D-005 — one judge,
+1191:  * no TS/Python threshold drift). Moved here (mw-autopilot-gate-alarm-liveness
+1192:  * T-10 / DRQ-2) so BOTH the PM poll loop and the monitor panel read the same
+1193:  * rows without a monitor → pm-orchestrator import cycle. */
+1194: export interface GateReminder {
+1195: 	/** 1-based ledger position; the delivery watermark. */
+1196: 	seq: number;
+1197: 	gateId: string;
+1198: 	gateKind: string;
+1199: 	/** `gate.key`; "" for stage-level / keyless gates. */
+1200: 	gateKey: string;
+1201: 	/** 1-based reminder ordinal (1..`gate_reminder_max`, default 2). */
+1202: 	reminderN: number;
+1203: 	detail: string;
+1204: }
+1205: 
+1206: /** Read `phase:"remind"` rows from the autopilot ledger (read-only, D-005/
+1207:  * D-006). `agenticdocRoot` is the `.agenticdoc/` directory (same parameter as
+1208:  * the PM poll loop's original reader, so dual-root layouts stay byte-identical).
+1209:  * Malformed / torn lines are skipped: a broken ledger must never take the poll
+1210:  * loop down, and the conductor's per-line append makes a partial trailing line
+1211:  * the only realistic failure. Returns `[]` when the ledger is absent. */
+1212: export function readGateReminders(agenticdocRoot: string): GateReminder[] {
+1213: 	const ledger = path.join(agenticdocRoot, "_autopilot", "auto-decisions.jsonl");
+1214: 	let raw: string;
+1215: 	try {
+1216: 		raw = fs.readFileSync(ledger, "utf8");
+1217: 	} catch {
+1218: 		return []; // no ledger yet (producer absent or nothing recorded) — nothing to deliver
+1219: 	}
+1220: 	const out: GateReminder[] = [];
+1221: 	for (const line of raw.split("\n")) {
+1222: 		const trimmed = line.trim();
+1223: 		if (trimmed === "") continue;
+1224: 		let parsed: unknown;
+1225: 		try {
+1226: 			parsed = JSON.parse(trimmed);
+1227: 		} catch {
+1228: 			continue; // torn/partial line during a concurrent append
+1229: 		}
+1230: 		if (typeof parsed !== "object" || parsed === null) continue;
+1231: 		const row = parsed as Record<string, unknown>;
+1232: 		if (row.phase !== "remind") continue;
+1233: 		const gateId = typeof row.gate_id === "string" ? row.gate_id : "";
+1234: 		const reminderN = typeof row.reminder_n === "number" ? row.reminder_n : 0;
+1235: 		if (gateId === "" || reminderN <= 0) continue;
+1236: 		out.push({
+1237: 			seq: typeof row.seq === "number" ? row.seq : 0,
+1238: 			gateId,
+1239: 			gateKind: typeof row.gate_kind === "string" ? row.gate_kind : "",
+1240: 			gateKey: typeof row.gate_key === "string" ? row.gate_key : "",

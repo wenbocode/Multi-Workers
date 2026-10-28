@@ -1,0 +1,13 @@
+{
+  "observed_at": "2026-10-28T04:19:26.018694+00:00",
+  "source": "agent-report",
+  "two_audit_attempts_done_exit0_acked": true,
+  "only_two_attempt_metadata_changed_original_all_contracts_and_other_34_tasks_preserved": true,
+  "1891_product_bytes_current_14_pyc_unchanged": true,
+  "original_two_reports_unchanged": true,
+  "T05_T10_full_handoffs_false_S2_open": true,
+  "new_product_runs": [],
+  "new_OS_fixture_creation_or_use": false,
+  "structure_audit_rc": 0,
+  "structure_audit_not_L2_QG_signoff": true
+}

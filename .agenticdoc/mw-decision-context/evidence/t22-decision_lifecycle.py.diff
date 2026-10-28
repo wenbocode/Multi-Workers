@@ -1,0 +1,167 @@
+--- packages/multi-workers/decision_lifecycle.py.t22-before
++++ packages/multi-workers/decision_lifecycle.py
+@@ -67,6 +67,7 @@
+ from collections.abc import Callable, Mapping, Sequence
+ from dataclasses import dataclass
+ 
++import decision_task_state
+ import decision_wire
+ 
+ #: The record version of a decision created by this contract (design §4.1).
+@@ -81,6 +82,7 @@
+     "initiator_role",
+     "retry_of",
+ )
++META_ALLOWED_KEYS = META_KEYS + ("task_before",)
+ 
+ #: Who initiated the decision. ``unknown`` is an explicit value, never a guess:
+ #: the CLI reports ``unknown`` when it cannot know the role instead of
+@@ -251,6 +253,7 @@
+     task_key: str | None = None
+     retry_of: str | None = None
+     record_version: int = RECORD_VERSION
++    task_before: dict[str, object] | None = None
+ 
+     def __post_init__(self) -> None:
+         if isinstance(self.record_version, bool) or self.record_version != RECORD_VERSION:
+@@ -263,6 +266,12 @@
+             _check_token("task_key", self.task_key)
+         if self.retry_of is not None:
+             _check_token("retry_of", self.retry_of)
++        if self.task_before is not None and self.task_key is None:
++            _refuse("task_before", "requires an associated task")
++        try:
++            object.__setattr__(self, "task_before", decision_task_state.validate_task_state(self.task_before))
++        except decision_task_state.TaskStateInputError as exc:
++            raise LifecycleInputError(str(exc)) from None
+ 
+     @classmethod
+     def create(
+@@ -274,6 +283,7 @@
+         retry_of: str | None = None,
+         logical_id: str | None = None,
+         record_version: int = RECORD_VERSION,
++        task_before: dict[str, object] | None = None,
+     ) -> "DecisionMeta":
+         """Create the meta of one real decision (one fresh ``logical_id``)."""
+         return cls(
+@@ -283,11 +293,12 @@
+             task_key=task_key,
+             retry_of=retry_of,
+             record_version=record_version,
++            task_before=task_before,
+         )
+ 
+     def as_meta(self) -> dict[str, object]:
+         """The exact local meta mapping, in ``META_KEYS`` order."""
+-        return {
++        result = {
+             "record_version": self.record_version,
+             "logical_id": self.logical_id,
+             "key": self.key,
+@@ -295,6 +306,9 @@
+             "initiator_role": self.initiator_role,
+             "retry_of": self.retry_of,
+         }
++        if self.task_before is not None:
++            result["task_before"] = decision_task_state.validate_task_state(self.task_before)
++        return result
+ 
+     def as_envelope(self, material: Mapping[str, object]) -> dict[str, object]:
+         """``{"material": ..., "meta": ...}`` - the meta never enters material."""
+@@ -310,7 +324,7 @@
+         raw = envelope.get("meta")
+         if not isinstance(raw, Mapping):
+             _refuse("envelope.meta", "required for a versioned record")
+-        unknown = [key for key in raw if key not in META_KEYS]
++        unknown = [key for key in raw if key not in META_ALLOWED_KEYS]
+         if unknown:
+             # Count only: a caller-chosen key must not be echoed into an error.
+             _refuse("envelope.meta", f"carries {len(unknown)} unknown key(s)")
+@@ -324,6 +338,7 @@
+             task_key=raw.get("task_key"),
+             retry_of=raw.get("retry_of"),
+             record_version=raw["record_version"],
++            task_before=raw.get("task_before"),
+         )
+ 
+ 
+@@ -615,6 +630,7 @@
+         record_version=meta.record_version,
+         initiator_role=meta.initiator_role,
+         retry_of=meta.retry_of,
++        task_before=meta.task_before,
+         actor=actor,
+         event_id=event_id if event_id is not None else _start_event_id(meta),
+     )
+@@ -643,6 +659,7 @@
+     evidence_path: str | None = None,
+     evidence_sha256: str | None = None,
+     snapshot_sha256: str | None = None,
++    task_after: dict[str, object] | None = None,
+     answer_source: str | None = None,
+     actor: tuple[str, str] | None = None,
+     event_id: str | None = None,
+@@ -659,6 +676,22 @@
+         _refuse("meta", "expected a DecisionMeta")
+     if stage not in STAGES:
+         _refuse("stage", f"expected one of {STAGES}")
++    if task_after is not None and (stage not in ("executed", "settled") or meta.task_key is None):
++        _refuse("task_after", "requires an associated task and executed/settled stage")
++    try:
++        task_after = decision_task_state.validate_task_state(task_after)
++        decision_task_state.validate_observation_order(meta.task_before, task_after)
++        if task_after is not None:
++            prior = read_lifecycle(store)
++            if any((prior.stats.bad_json, prior.stats.bad_utf8, prior.stats.unknown_schema, prior.stats.oversized_line, prior.stats.incomplete_tail)):
++                _refuse("task_after", "creation association is not provable")
++            starts = [row for row in prior.events if row.get("kind") == "record-start" and row.get("logical_id") == meta.logical_id]
++            if len(starts) != 1 or starts[0].get("key") != meta.key or starts[0].get("task_key") != meta.task_key:
++                _refuse("task_after", "requires the same task's creation fact")
++            saved_before = decision_task_state.validate_task_state(starts[0].get("task_before"))
++            decision_task_state.validate_observation_order(saved_before, task_after)
++    except decision_task_state.TaskStateInputError as exc:
++        raise LifecycleInputError(str(exc)) from None
+     actor = _check_actor(actor)
+     decision_id = _check_decision_id("decision_id", decision_id)
+     if dp is not None:
+@@ -745,6 +778,7 @@
+         evidence_path=evidence_path,
+         evidence_sha256=evidence_sha256,
+         snapshot_sha256=snapshot_sha256,
++        task_after=task_after,
+         answer_source=answer_source,
+         actor=actor,
+         event_id=event_id,
+@@ -793,6 +827,7 @@
+     decision_id: str,
+     action: str,
+     dp: str | None = None,
++    task_after: dict[str, object] | None = None,
+     result: str | None = None,
+     reason: str | None = None,
+     answer_source: str | None = None,
+@@ -806,6 +841,7 @@
+         stage="executed",
+         decision_id=decision_id,
+         dp=dp,
++        task_after=task_after,
+         action=action,
+         result=result,
+         reason=reason,
+@@ -822,6 +858,7 @@
+     decision_id: str,
+     outcome: str,
+     dp: str | None = None,
++    task_after: dict[str, object] | None = None,
+     reason: str | None = None,
+     event_id: str | None = None,
+     actor: tuple[str, str] | None = None,
+@@ -833,6 +870,7 @@
+         stage="settled",
+         decision_id=decision_id,
+         dp=dp,
++        task_after=task_after,
+         outcome=outcome,
+         reason=reason,
+         event_id=event_id,

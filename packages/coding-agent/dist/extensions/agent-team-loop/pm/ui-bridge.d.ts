@@ -9,7 +9,10 @@ import { type RunDetachedOptions, type RunDetachedResult } from "../shared/run-d
 import type { WorkerEntry, WorkerStatus, WorkerStore } from "../shared/worker-store.ts";
 import { type WriteTargetShape } from "../shared/write-surface.ts";
 export { classifyWriteTargetShape, type WriteTargetShape } from "../shared/write-surface.ts";
-import { type DecideRunner, type TriageResult, type TriageState } from "./triage-client.ts";
+import { captureDecisionTaskState, type TaskStateSnapshot } from "./decision-task-state.ts";
+import { type DecisionLifecycleEnvelope, type LifecycleRunner } from "./decision-tool.ts";
+import { type DecidePolicy, type DecideRunner, type DecisionEnvelopeMeta, type Dp1TaskMaterial, type TriageResult } from "./triage-client.ts";
+export { captureDecisionTaskState };
 /** Owner key for a worker task — this window's own claim first, the shared
  * active pointer second. Explicit key wins (deliberate choice — no warning).
  * Otherwise, when this window watches a key whose _index.parallel row it
@@ -55,58 +58,144 @@ export interface DispatchTriage {
      * unavailable / an anonymous answer leave it undefined, which keeps the
      * pre-T-08 task.md bytes. */
     decision?: DispatchDecision;
-    /** T-04d: which `state` shape actually went on the wire. `structured` is the
-     * normal path; `legacy` means the dp1 required-field set could not be built
-     * from the dispatch plan (or the structured state stayed over budget after
-     * the two-stage truncation) and the frozen pre-T-04 string state was used
-     * instead. */
-    statePath: "structured" | "legacy";
-    /** T-04d: the one audit line the dispatch writes into the task's `trace.log`
-     * (`[DECISION] dp1 state=structured bytes=<N>` / `state=legacy
-     * reason=<missing|oversize>`). Never silent — the path decision is recorded. */
+    /** T03: the local envelope of the decision this dispatch created, when the
+     * producer really called the service. `undefined` on a skipped path — there is
+     * no decision record to join lifecycle feedback to. */
+    meta?: DecisionEnvelopeMeta;
+    /** T03: `material` = the `{material, meta}` envelope really went on the wire;
+     * `skipped` = no call was made (role outside dp1's taxonomy / missing
+     * material / over budget). */
+    statePath: "material" | "skipped";
+    /** T03: the one audit line the dispatch writes into the task's `trace.log`
+     * (`[DECISION] dp1 state=material bytes=<N>` / `state=skipped
+     * reason=<unsupported-type|missing-material|oversize>`). Never silent. */
     stateTrace: string;
 }
-/** Dispatch-plan facts the dp1 structured state is built from (T-04d).
+/** Dispatch-plan facts the dp1 business material is built from (T03).
  *
- * The state is derived from the dispatch itself — no extra call, no config read
- * and no `.mw/decide-points.json` mirror (D-036). `writeFace` is the card's
- * `## 写入允许面` entry list (`cardWriteFaceEntries`), i.e. the PM's own
- * declaration of what this task may write; `taskType`/`phase`/`description`
- * are the plan inputs `planDispatchFrontmatter` already holds. */
+ * The material is the dispatch card's own 上下文 / 要求 / 交付格式 bodies — no
+ * summary, no risk label, no audit identity (mw-decision-context design §2).
+ * `sections` is the judged card's seed extraction (`readDispatchCard`); `key`
+ * and `taskKey` are the REAL ids this dispatch already reserved, so the decision
+ * is associated with them instead of guessing "the latest task". */
 export interface Dp1DispatchPlan {
-    /** AgenticTask key the task lands under (the decision id's trigger id). */
+    /** AgenticTask key the task lands under. */
     key?: string;
-    /** Owner key's current phase (`dispatchPhase`); "" for `_scratch`. */
-    phase?: string;
+    /** The reserved, REAL task id (`dispatch_worker` mints it before the decision
+     * runs). Absent/null = a PM decision with no task. */
+    taskKey?: string | null;
     /** The dispatched `type:` (never rewritten by the advice). */
     taskType?: string;
-    /** The PM's requested type. Today the dispatch never rewrites the type, so
-     * this equals `taskType`; both fields exist because the registry asks for
-     * both (`REQUIRED_STATE_FIELDS["dp1-dispatch-type"]`). */
-    requestedType?: string;
-    /** Task body — only its first line becomes the L1 `task_summary`. */
-    description?: string;
-    /** Card write-face entries, `null`/absent when the card declares none. */
-    writeFace?: string[] | null;
-    /** The PM explicitly accepted a write outside the key. */
-    allowForeignWrite?: boolean;
+    /** Card seed sections; absent means the producer has no original material. */
+    sections?: CardSections;
+    taskBefore?: TaskStateSnapshot;
 }
-/** Call-site facts only the dispatch entry knows; the rest of the dp1 state is
- * derived inside {@link planDispatchFrontmatter}. */
-export type Dp1DispatchFacts = Pick<Dp1DispatchPlan, "key" | "writeFace" | "allowForeignWrite">;
-/** Build result for one dp1 structured state (T-04d). `reason` maps the client
- * refusal onto the two trace values the card fixes: `missing` (any
- * `input-incomplete` — a required field absent, blank, out of enum or over its
- * cap) and `oversize` (still over 2000B after the two-stage truncation). */
-export type Dp1StateBuild = {
+/** Call-site facts only the dispatch entry knows. */
+export type Dp1DispatchFacts = Pick<Dp1DispatchPlan, "key" | "taskKey" | "sections" | "taskBefore">;
+/** Build result for one dp1 material envelope. The builder itself never
+ * truncates or summarises (the transport refuses over-budget material as a
+ * whole); `unsupported-type` means the role is outside dp1's three-value
+ * taxonomy and the dispatch must ask no decision at all. */
+export type Dp1MaterialBuild = {
     ok: true;
-    state: TriageState;
+    material: Dp1TaskMaterial;
     bytes: number;
-    dropped: string[];
 } | {
     ok: false;
-    reason: "missing" | "oversize";
+    reason: "unsupported-type" | "missing-material";
 };
+/** Build the dp1 business material from the dispatch card (T03).
+ *
+ * Exactly the registry's `modelStateFields` for dp1 — `task_goal`,
+ * `task_requirements`, `task_deliverables` — each the card's ORIGINAL body
+ * (上下文 / 要求 / 交付格式), verbatim. No summary, no risk label, no identity
+ * fields: those ride on the local envelope (`newDecisionMeta`). */
+export declare function buildDp1DecisionMaterial(plan: Dp1DispatchPlan): Dp1MaterialBuild;
+/** Local-envelope metadata for one dp1 dispatch. The PM is the initiating role;
+ * `task_key` is the id the dispatch already reserved (never inferred). The role
+ * is T02's lowercase `pm` — the writer's closed vocabulary has a single
+ * spelling and a producer never carries a second one. */
+export declare function dp1DecisionMeta(plan: Dp1DispatchPlan): DecisionEnvelopeMeta;
+/** One stage of the consumer's lifecycle feedback for a dp1 decision.
+ *
+ * The extension never appends a ledger row itself (the Python writer is the
+ * single lifecycle writer, T05): {@link writeDp1Lifecycle} derives the
+ * structural fact and hands it to `mw decide lifecycle --stdin --json`.
+ * `consumed` is emitted only when an answer really arrived, so "received" can
+ * never be claimed for a failed call. */
+export type Dp1ConsumerStage = "consumed" | "executed" | "settled";
+/** What really happened at one consumer stage (never derived from a receipt). */
+export interface Dp1ConsumerFact {
+    /** `consumed`: the answer the PM received (dp1's `triage_type`). */
+    answer?: string;
+    /** `executed`: the CLOSED T02 action label the consumer really performed. */
+    action?: string;
+    /** `executed`: what the result was based on. */
+    result?: string;
+    /** `settled`: the CLOSED T02 outcome of this round. */
+    outcome?: string;
+    reason?: string;
+    taskAfter?: TaskStateSnapshot;
+}
+/**
+ * One lifecycle fact for the dp1 consumer, in the shape T05's
+ * `mw decide lifecycle --stdin --json` accepts (`{meta, decision_id, dp, stage,
+ * event_id, ...}`).
+ *
+ * `undefined` means "no fact may be written": there is no real decision
+ * (skipped producer / no logical_id / no decision_id), or `consumed` was
+ * requested without an answer that really arrived. Stage fields follow T02's
+ * closed sets exactly: `consumed` carries only `answer`, `executed` only
+ * `action`+`result`, `settled` only `outcome` — mixing them is refused by the
+ * writer, so it is refused here instead of being silently dropped.
+ *
+ * `event_id` is deterministic per (logical_id, stage): a retry of the SAME write
+ * replays the same event and the writer reports `duplicate`, never a second
+ * business fact.
+ */
+export declare function buildDp1LifecycleFact(triage: DispatchTriage | null, stage: Dp1ConsumerStage, fact: Dp1ConsumerFact): DecisionLifecycleEnvelope | undefined;
+/** Write one dp1 consumer fact through the single Python lifecycle writer.
+ *
+ * The dispatch action is NEVER re-run from here: a failed write is reported as
+ * `failed` (the action itself is not undone), which is why the caller appends
+ * the writer's own verdict to the receipt instead of assuming success.
+ */
+export declare function writeDp1Lifecycle(projectDir: string, triage: DispatchTriage | null, stage: Dp1ConsumerStage, fact: Dp1ConsumerFact, runner?: LifecycleRunner): Promise<{
+    stage: Dp1ConsumerStage;
+    status: "written" | "duplicate" | "failed";
+    recorded: boolean;
+}>;
+/** The receipt line the dp1 consumer reports, derived ONLY from the writer's
+ * own answers (`written`/`duplicate`/`failed`). Empty when there was no real
+ * decision to report, so a skipped producer adds no bytes to the receipt. */
+export declare function formatDp1ConsumerReceipt(results: Array<{
+    stage: string;
+    status: string;
+}>): string;
+/**
+ * Write the dp1 consumer feedback for ONE dispatch that already asked dp1.
+ *
+ * Order is the real order of facts: the answer was `consumed`; then either the
+ * dispatch was refused (`settled` rework, no `executed`), or it really
+ * dispatched (`executed` type-read + `settled` ok). `executed`'s result records
+ * the dispatch it did, and a disagreement keeps the original type
+ * (`kept-type:<type>`) because the advice never rewrites the dispatch.
+ *
+ * A failed write is REPORTED (`failed`), never retried with a different action
+ * and never re-run as a dispatch.
+ */
+export declare function writeDp1DispatchFeedback(input: {
+    projectDir: string;
+    triage: DispatchTriage | null;
+    lifecycleRun?: LifecycleRunner;
+    taskKey: string;
+    dispatchedType: string;
+    refused: boolean;
+    taskAfter?: TaskStateSnapshot;
+}): Promise<Array<{
+    stage: Dp1ConsumerStage;
+    status: "written" | "duplicate" | "failed";
+}>>;
 /** Assert one built state matches its registry row (W6: the registry is the
  * field-list authority, so a producer may never send a second hand-written
  * list). Missing required paths AND uncontrolled keys throw; `context` is the
@@ -116,33 +205,25 @@ export type Dp1StateBuild = {
  * only, while a dp may also carry OPTIONAL L1 children (dp2's
  * `progress.writes`/`trend`), which must not read as drift. */
 export declare function assertStateMatchesRegistry(dpId: string, state: Record<string, unknown>): void;
-/** Build the dp1 structured state from the dispatch plan (T-04d).
+/** Compute the dp1 decision advice for one dispatch. Reads `.mw/decide.json`
+ * (read-only) and asks the decision client with the card's ORIGINAL material on
+ * the local envelope; `null` on the default-off path so nothing changes.
+ * Never throws.
  *
- * Field set = `decision_points.REQUIRED_STATE_FIELDS["dp1-dispatch-type"]`
- * (universal 9 + `requested_type`/`task_summary`/`scope.write_scope`/
- * `scope.file_extensions`), plus `task_key`-free `key` and the registry
- * `questions_version`. Everything is validated + bounded by
- * {@link prepareStructuredState} (≤2000B, two-stage truncation); a refusal is
- * reported, never patched over — the caller then falls back to the legacy
- * string state. */
-export declare function buildDp1DispatchState(plan: Dp1DispatchPlan): Dp1StateBuild;
-/** Compute the bypass advice for one dispatch. Reads `.mw/decide.json`
- * (read-only) and asks the triage client for a suggestion; returns `null` on
- * the default-off path so nothing downstream changes. Never throws.
- *
- * T-04d: when `dp1` is supplied and the plan yields the complete registry
- * required set, the request carries a STRUCTURED state — the only shape the
- * CLI routes through `decision_points.decide_for`, which is what makes
- * `decision_id` / `mode` / `acted` reachable in production. An incomplete or
- * oversized set falls back to the frozen pre-T-04 legacy string state and the
- * fallback is recorded in {@link DispatchTriage.stateTrace} (never silent). */
+ * T03: the request shape is `{material, meta}` (dp1 model state = the three
+ * business strings; identity only in `meta`). A role outside the three-value
+ * taxonomy, missing material or over-budget material is a ZERO-spawn skip,
+ * recorded in {@link DispatchTriage.stateTrace} (never silent) — the old
+ * `{state}` / string fallback branches, which also asked a `triage_risk`
+ * question and truncated the task text, are gone (spec §1.7). */
 export declare function computeDispatchTriage(input: {
     projectDir: string;
-    state: string;
     dispatchedType: string;
     run?: DecideRunner;
-    /** T-04d dispatch-plan facts; omitted (direct API callers) = legacy state. */
+    /** Dispatch-plan facts; omitted (direct API callers) = no decision call. */
     dp1?: Dp1DispatchPlan;
+    /** Pre-read policy (tests); read from disk when omitted. */
+    policy?: DecidePolicy;
 }): DispatchTriage | null;
 /** Durable + wake channel for one triage outcome (design D-005 item 3).
  * Best-effort: the ledger writer never throws; `deliverPmAlert` (one PM turn)
@@ -751,6 +832,11 @@ export interface DispatchCardGate {
      * gaps under `MW_CLAIM_GATE=enforce`. Empty in enforce mode (they are refused
      * instead) and for a card without a claims block. */
     warnings: string[];
+    /** A `<!-- mw-claims: v1 -->` block was seen on the card, even if no row parsed.
+     * The receipt needs this to tell "no claims block" (silent, byte-identical)
+     * apart from "a claims block that produced zero claims" (must shout: the
+     * worker will otherwise run with no verdict scope and no read budget). */
+    claimsDeclared: boolean;
 }
 /**
  * G-1 tool-layer gate (design §4): resolve the card path, judge the envelope
@@ -790,7 +876,13 @@ export declare function readDispatchCard(input: {
 export declare function dispatchCardRefusal(gate: DispatchCardGate): string;
 /** The advisory claims receipt line (design §5 G1): appended ONLY when the card
  * declares claims, so a pre-claims card's receipt stays byte-identical
- * (`triage-dispatch.test.ts` pins the full string). */
+ * (`triage-dispatch.test.ts` pins the full string).
+ *
+ * A declared block that parses to ZERO claims is the dangerous case (T-07): the
+ * claim ids are `C-<2+ digits>`, so an id like `C-A1` silently drops every row,
+ * which means no `read_scope`, no caps and — without this line — no signal at
+ * all. It therefore reports `claims=0(unparsed)` plus the row errors rather
+ * than staying quiet. */
 export declare function claimsReceiptLine(gate: DispatchCardGate): string;
 /** Single write point for one dispatch's task.md (contract C4). Both dispatch
  * entries — the `dispatch_worker` tool and the `/worker` command — go through
@@ -856,7 +948,10 @@ export declare function writeDispatchTaskMd(deps: {
  */
 export declare function registerWorkerTools(pi: ExtensionAPI, workerStore: WorkerStore, ackStore: AckStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, projectDir?: string, 
 /** T-03 test seam for the DP-1 child; production omits it. */
-triageRun?: DecideRunner): void;
+triageRun?: DecideRunner, 
+/** T-08 test seam for the dp1 feedback writer; production omits it (the real
+ * `mw decide lifecycle` child is the single write face). */
+lifecycleRun?: LifecycleRunner): void;
 /** Register the agent-callable switch_key tool: same takeover as
  * /pm-key switch, callable mid-conversation. Tool description + prompt
  * guidelines teach the agent when to call it (explicit user request, or
@@ -878,7 +973,9 @@ export declare function registerAdvancePhaseTool(pi: ExtensionAPI, projectDir: s
  */
 export declare function registerWorkerCommands(pi: ExtensionAPI, workerStore: WorkerStore, indexStore: IndexStore, agenticdocRoot: string, watch: PmWatchState, projectDir?: string, 
 /** T-03 test seam for the DP-1 child; production omits it. */
-triageRun?: DecideRunner): void;
+triageRun?: DecideRunner, 
+/** T-08 test seam for the dp1 feedback writer; production omits it. */
+lifecycleRun?: LifecycleRunner): void;
 /**
  * Render the RAG row exactly like `mw.py:_format_rag_doctor_line` (D-308): an
  * `error` wins, an empty `enabled` list yields the not-enabled form, otherwise
@@ -1024,32 +1121,66 @@ export declare function runMwRunDetachedCommand(ctx: ExtensionCommandContext, pr
  * (`invalid --since`, bad `--source`) is never swallowed. A thrown runner
  * (spawn-level bug) is reported the same way instead of escaping the command. */
 export declare function runMwStatsCommand(ctx: ExtensionCommandContext, projectDir: string, raw: string, runner?: (projectDir: string, args: string[]) => MwCliResult): Promise<void>;
-/** Conclusions `mw decide sign` accepts (mirror of the Python
- * `decide_signoff.CONCLUSIONS`; only used to reject a typo before any spawn). */
+/** Conclusions the sign-off records (mirror of the Python
+ * `decide_signoff.CONCLUSIONS`). The window never picks one — the decision model
+ * produces it during the write — so the list only drives the read-only preview
+ * rendering (one verdict line per conclusion). */
 export declare const DECIDE_CONCLUSIONS: readonly ["continue", "narrow", "revoke"];
-/** Usage line of the window face (the `--key` flag only exists on `sign`). */
-export declare const DECIDE_USAGE = "Usage: /mw decide show | sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <key>]";
+/** Usage line of the window face (the `--key` flag only exists on `sign`).
+ * `sign` takes no conclusion: the decision model produces it during the write,
+ * so no caller-supplied positional remains to validate. The second line
+ * documents the read-only forwards (T12a): they need no key and therefore split
+ * off before the watched-key requirement. */
+export declare const DECIDE_USAGE: string;
+/** The four closed read-only forwards of the window face (T12a/AC-001/AC-017).
+ * Python stays the single source of parsing, rendering and of the (zero) writes. */
+export type DecideForwardAction = "dp-list" | "dp-show" | "dp-export" | "monitor";
 /** Parsed `/mw decide` arguments. Pure and spawn-free (the rag precedent). */
 export type ParsedDecideArgs = {
     action: "show";
 } | {
     action: "sign";
-    conclusion: string;
-    reason?: string;
     allowEmpty: boolean;
     key?: string;
+} | {
+    action: "dp-list";
+} | {
+    action: "dp-show";
+    dp: string;
+} | {
+    action: "dp-export";
+} | {
+    action: "monitor";
 } | {
     action: "usage";
     error: string;
 };
+/** One accepted read-only forward: the action plus the exact Python argv. */
+export interface DecideForward {
+    action: DecideForwardAction;
+    argv: string[];
+}
 /**
- * Parse `/mw decide [show | sign <conclusion> [flags]]`.
+ * Python argv of a read-only forward, or null when the parsed input is not one.
  *
- * `""` / `show` is the read-only preview; `sign <continue|narrow|revoke>`
- * accepts `--reason <text>`, `--allow-empty` and `--key <key>`. Everything else
- * (unknown sub, missing/invalid conclusion, a flag without a value, a stray
- * positional) returns a usage error so the caller rejects without a spawn —
- * Python stays the single source of the verdict and of the machine lines.
+ * This is the SINGLE argv mapping of the window face: the caller forwards the
+ * returned vector verbatim, so `--write`, `--json`, `--live`, `--rows`, output
+ * paths and monitor status/stop arguments are structurally unrepresentable —
+ * a crafted tail can never reach Python (design §5.1: only dp list/show/export
+ * and bare monitor are allowed in the window).
+ */
+export declare function decideForwardArgs(parsed: ParsedDecideArgs): DecideForward | null;
+/**
+ * Parse `/mw decide [show | sign [flags] | dp list|show <id>|export | monitor]`.
+ *
+ * `""` / `show` is the read-only preview; bare `sign` (optionally
+ * `--allow-empty`, `--key <key>`) triggers the decision model and writes what it
+ * decides, so there is no conclusion positional to validate. The four read-only
+ * forwards are a closed set with no free-form tail (T12a, §5.1 of the dashboard
+ * design). Everything else (unknown sub, a flag without a value, a stray
+ * positional, a refused dp/monitor face) returns a usage error so the caller
+ * rejects without a spawn — Python stays the single source of the verdict and
+ * of the machine lines.
  */
 export declare function parseDecideArgs(argsText: string): ParsedDecideArgs;
 /** `facts` block of the `mw decide sign --json` preview (only what the window
@@ -1065,12 +1196,19 @@ export interface DecidePreviewFacts {
     p0_open?: string[];
     p0_source?: string;
 }
-/** `mw decide sign --json` payload (preview: `conclusion`/`ok`/`path` null,
- * `verdicts` carries the three per-conclusion machine verdicts). */
+/** `mw decide sign --json` payload. The preview leaves `conclusion`/`path`
+ * null and carries every conclusion's verdict; a signed write carries the
+ * conclusion, the written `path` and (when Python reports it) `signed_via`; an
+ * unsigned write carries `note` (decision model unavailable) or the plain line
+ * Python prints before the payload (`signoff: disable`). */
 export interface DecidePreview {
     ok?: boolean | null;
+    conclusion?: string | null;
     problems?: string[];
     facts?: DecidePreviewFacts;
+    note?: string;
+    path?: string | null;
+    signed_via?: string | null;
     verdicts?: Record<string, {
         ok?: boolean;
         problems?: string[];
@@ -1088,23 +1226,50 @@ export interface DecideCommandDeps {
     runner?: (projectDir: string, args: string[]) => MwCliResult;
     watchKey?: () => string | undefined;
 }
+/** What a completed `mw decide sign` did. `ok`/`exit 0` alone is not enough:
+ * the same exit code covers "the decision model was unavailable" and
+ * "`signoff: disable`", both of which write no file. */
+export interface DecideSignOutcome {
+    signed: boolean;
+    signedVia?: string;
+    conclusion?: string;
+    path?: string;
+}
+/** Read a write result. The text face prints `signed_via: <value>` (and the
+ * `conclusion:` machine line) only after the file landed; the `--json` face
+ * proves the same with a non-null `path` and carries the conclusion. Nothing
+ * else counts as signed — a run that wrote no file must never display as a
+ * signature (AC-005). */
+export declare function parseDecideSignOutcome(output: string): DecideSignOutcome;
+/** Human reason of an unsigned run: the JSON `note` (decision model unavailable)
+ * or the plain line Python prints before the payload (`signoff: disable`). */
+export declare function parseDecideUnsignedReason(output: string, payload: DecidePreview | null): string;
 /**
- * `/mw decide show|sign` — the TUI face of the human sign-off (FIX-Q, user
- * ruling: option B).
+ * `/mw decide show|sign` — the window face of the decision-model sign-off
+ * (mw-signoff-decide-only: the decision model signs, nothing else does).
  *
- * `show` runs the Python preview (`mw decide sign --key <k> --json`, which
- * writes nothing) and prints the facts. `sign` runs the same preview first,
- * refuses before any dialog when that conclusion's machine verdict does not
- * pass, and then asks `ctx.ui.confirm`; only a human confirmation forwards the
- * write with `--human-confirmed` (Python then records `signed_via: tui`). Guard
- * rails, in order:
- *   1. `ctx.hasUI !== true` refuses outright — headless / `-p` / rpc have no
- *      dialog, so there is no human click to collect and nothing to bypass;
+ * `show` runs the read-only preview (`mw decide sign --key <k> --dry-run
+ * --json`, strictly zero-write) and prints the facts. `sign` runs the same
+ * preview as a read-only pre-check, then forwards `mw decide sign --key <k>
+ * --json` once: no dialog, and the window supplies no conclusion — Python asks
+ * the decision model and writes only when it answers. Guard rails, in order:
+ *   1. the four read-only forwards (`dp list|show|export`, `monitor`) split off
+ *      first: no dialog and no key are involved, so a key-less window can still
+ *      read the dp table while the write/act tail is refused before any spawn;
  *   2. the key is `--key` > the watched key > a usage error (never guessed);
- *   3. Python stays authoritative: its verdict (exit 2, zero writes) still
- *      runs on the write call, so a preview/flag mismatch cannot fake success.
- * The runner is injectable so every branch is provable without a spawn.
+ *   3. Python stays authoritative: its verdict (exit 2, zero writes) still runs
+ *      on the write call, and `exit 0` is split into signed (`signed_via:` line /
+ *      non-null `path`) vs unsigned (decision model unavailable / `signoff:
+ *      disable`) so a run that wrote nothing never displays as a signature.
+ * No `--auto` and no `--project` are forwarded: `--auto` would persist
+ * `signoff: auto` over a project's `signoff: disable`, and `decideMw` appends
+ * the control root. The runner is injectable so every branch is provable
+ * without a spawn.
+ *
+ * Every result is also returned as text: `ctx.ui.notify` is a no-op without a
+ * UI (headless / `-p` / worker), so the `/mw` handler puts the return value into
+ * the transcript instead (AC-007 — no silent loss).
  */
-export declare function runMwDecideCommand(ctx: ExtensionCommandContext, projectDir: string, argsText: string, deps?: DecideCommandDeps): Promise<void>;
+export declare function runMwDecideCommand(ctx: ExtensionCommandContext, projectDir: string, argsText: string, deps?: DecideCommandDeps): Promise<string>;
 export declare function registerMwCommands(pi: ExtensionAPI, projectDir: string, workerStore: WorkerStore, ackStore: AckStore, watch: PmWatchState, agenticdocRoot: string): void;
 //# sourceMappingURL=ui-bridge.d.ts.map

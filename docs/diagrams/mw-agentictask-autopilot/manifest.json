@@ -1,0 +1,22 @@
+[
+  {
+    "index": 1,
+    "title": "图 1：Autopilot —— conductor 编排主循环",
+    "slug": "autopilot-conductor",
+    "mmd": "01-autopilot-conductor.mmd",
+    "png": "01-autopilot-conductor.png",
+    "kind": "flow",
+    "start": 1940,
+    "end": 2665
+  },
+  {
+    "index": 2,
+    "title": "图 3：AgenticTask —— 阶段链与门禁",
+    "slug": "agentictask",
+    "mmd": "02-agentictask.mmd",
+    "png": "02-agentictask.png",
+    "kind": "flow",
+    "start": 3543,
+    "end": 4204
+  }
+]

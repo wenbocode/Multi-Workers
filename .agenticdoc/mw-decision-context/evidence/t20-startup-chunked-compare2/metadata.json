@@ -1,0 +1,92 @@
+[
+  {
+    "version": "baseline",
+    "attempt": 1,
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "test_decision_monitor.py::test_body_limit_and_chunked_rejection"
+    ],
+    "utc_start": "2026-10-24T02:17:07.321521+00:00",
+    "exit": 0
+  },
+  {
+    "version": "baseline",
+    "attempt": 2,
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "test_decision_monitor.py::test_body_limit_and_chunked_rejection"
+    ],
+    "utc_start": "2026-10-24T02:17:08.044149+00:00",
+    "exit": 0
+  },
+  {
+    "version": "baseline",
+    "attempt": 3,
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "test_decision_monitor.py::test_body_limit_and_chunked_rejection"
+    ],
+    "utc_start": "2026-10-24T02:17:08.787042+00:00",
+    "exit": 0
+  },
+  {
+    "version": "current",
+    "attempt": 1,
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "test_decision_monitor.py::test_body_limit_and_chunked_rejection"
+    ],
+    "utc_start": "2026-10-24T02:17:09.515920+00:00",
+    "exit": 0
+  },
+  {
+    "version": "current",
+    "attempt": 2,
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "test_decision_monitor.py::test_body_limit_and_chunked_rejection"
+    ],
+    "utc_start": "2026-10-24T02:17:10.225070+00:00",
+    "exit": 0
+  },
+  {
+    "version": "current",
+    "attempt": 3,
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "test_decision_monitor.py::test_body_limit_and_chunked_rejection"
+    ],
+    "utc_start": "2026-10-24T02:17:10.911267+00:00",
+    "exit": 0
+  }
+]

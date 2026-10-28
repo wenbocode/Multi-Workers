@@ -1,0 +1,49 @@
+{
+  "card": "dpc-t08-transport",
+  "card_path": "tasks/isolated/T08-transport.md",
+  "card_sha256": "07a719095a33f60666fef960ec89034ff96f81066bf7bea599f303178290b1e8",
+  "observed_at": "2026-10-26T12:20:00+00:00",
+  "copy_root": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+  "before": {
+    "decision.py": {"bytes": 99249, "sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0", "crlf": 0, "bare_lf": 2298},
+    "decision_backends.py": {"bytes": 44577, "sha256": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60", "crlf": 0, "bare_lf": 1123},
+    "test_dp_consolidation_materials.py": {"exists": false}
+  },
+  "after": {
+    "decision.py": {"bytes": 116092, "sha256": "89500080e9f59c80e98b757a3a2b547b1db06985edc04a7489d068cb5f80a5e5", "crlf": 0, "bare_lf": 2683, "added": 385, "removed": 0},
+    "decision_backends.py": {"bytes": 48970, "sha256": "a13a8597bba7abe796022148bd50d02b26fc6a85e1d7d3b1af9f5129f0a3e22b", "crlf": 0, "bare_lf": 1216, "added": 93, "removed": 0},
+    "test_dp_consolidation_materials.py": {"bytes": 36376, "sha256": "2ab2d758350eb0a3b714512e9a70d81e14c645459f94cc8c850b98a4638454f8", "crlf": 0, "bare_lf": 977, "before": "absent"}
+  },
+  "runs": [
+    {"run": "red-1", "argv": ["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", "--basetemp=<evidence>/fixture/basetemp", "test_dp_consolidation_materials.py"], "rc": 1, "summary": "61 failed, 3 passed in 0.80s", "reason": "AttributeError: 'DecisionClient' object has no attribute 'request_prepared' (the red business assertion fails before any implementation exists)", "log": "runs/red-1/pytest.log"},
+    {"run": "green-1", "argv": ["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", "--basetemp=<evidence>/fixture/basetemp", "test_dp_consolidation_materials.py"], "rc": 1, "summary": "3 failed, 61 passed in 0.46s", "reason": "first implementation attempt: per-call (not cumulative) transport-attempt counter and one over-strict issue-path literal in the test", "log": "runs/green-1/pytest.log"},
+    {"run": "green-2", "argv": ["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", "--basetemp=<evidence>/fixture/basetemp", "test_dp_consolidation_materials.py"], "rc": 0, "summary": "64 passed in 0.44s", "log": "runs/green-2/pytest.log"},
+    {"run": "green-3", "argv": ["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", "--basetemp=<evidence>/fixture/basetemp", "test_dp_consolidation_materials.py"], "rc": 0, "summary": "64 passed in 0.41s", "reason": "after scoping the prepared reason vocabulary so the frozen decide() REASON_CODES set is untouched", "log": "runs/green-3/pytest.log"},
+    {"run": "green-4", "argv": ["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", "--basetemp=<evidence>/fixture/basetemp", "test_dp_consolidation_materials.py"], "rc": 0, "summary": "73 passed in 0.34s", "reason": "added all-legal-choice coverage (VC-004/040/042 baseline) and the sign-key []/null gate", "log": "runs/green-4/pytest.log"},
+    {"run": "acceptance-final", "argv": ["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", "test_dp_consolidation_materials.py"], "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers", "rc": 0, "summary": "73 passed in 0.25s", "env": {"PYTHONDONTWRITEBYTECODE": "1", "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "HOME/USERPROFILE": "<evidence>/fixture/home", "TMP/TEMP": "<evidence>/fixture/tmp", "TIMI_API_KEY": "absent"}, "log": "runs/acceptance-final/stdout-stderr.log"}
+  ],
+  "measured_at_this_layer": {
+    "VC-002": "rejected_old_ids=25 transport_attempts=0 business_decisions=0 valid_decisions=0 (test_every_retired_id_is_refused_before_any_request x25 + test_retired_ids_are_counted_as_zero_model_and_business_calls)",
+    "VC-002(replay)": "replay_hit_requests=0 business_decisions=0 (test_replay_lookup_hit_issues_no_request)",
+    "VC-004": "legal_choices_accepted=31 (4+4+3+3+4+3+7 fixed choices + 3 dp-auto prepared candidates), baseline_contract_violations=0",
+    "VC-040": "routed_targets=7 route_releases=0 route_actions=0 (no action/executed/settled key in the prepared result)",
+    "VC-042": "dp-auto free ids accepted=3, invented_candidates=0, invalid_basis_refs=0",
+    "VC-043": "failed_entries=8 (one invented-choice and one out-of-catalog-basis case per active entry), failure_actions=0, default_first_choice=0",
+    "VC-051": "sign [] accepted=1, null/missing refused=3, invalid_sign_arrays_accepted=0",
+    "transport": "one POST /v1/decisions, model=jev-latest, bare Authorization, retry budget preserved, box refused with zero HTTP, foreign model refused"
+  },
+  "residual": [
+    "real mw.py active-before-replay guard and all production CLI/book/stdin entry points are T23 (not executed here)",
+    "dp-auto's dynamic_choices question is rendered as an explicit choice enum for the nested {material, preparation} state; consumers of a top-level dynamic render (T09/T11) must use build_prepared_questions",
+    "existing decide/decision_backends suites were not run (not in this card's listed files; T31/T32 own the full regression)",
+    "the worktree is not deployed; no live service/prodiver/grant was touched"
+  ],
+  "incidents": [
+    {
+      "what": "two __pycache__ directories were created inside the implementation copy at 2026-10-26T20:16:49+08:00 by an unguarded `python -c` import (no PYTHONDONTWRITEBYTECODE)",
+      "paths": ["packages/multi-workers/__pycache__ (7 .pyc)", "packages/multi-workers/autopilot/__pycache__ (7 .pyc)"],
+      "impact": "gitignored, no source effect; the later test runs wrote nothing new (timestamps unchanged)",
+      "action": "removal attempted and blocked by the write-scope guard (outside this card's write face); needs PM removal"
+    }
+  ]
+}

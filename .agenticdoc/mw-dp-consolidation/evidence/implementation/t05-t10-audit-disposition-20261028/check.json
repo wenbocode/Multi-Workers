@@ -1,0 +1,42 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-28T04:15:00.645537+00:00",
+  "workers": [
+    {
+      "task_key": "dpc-t05-handoff-audit",
+      "run_id": "dpc-t05-handoff-audit@2026-10-28T04:04:09.258Z",
+      "status": "done",
+      "exit": 0,
+      "ended_at": "2026-10-28T04:11:23.599Z",
+      "acked_by_PM_tool": true,
+      "source": "agent-report",
+      "evidence": "evidence/implementation/t05-handoff-audit-20261027.md",
+      "sha256": "df2b1e218769fdb98a9c934ecb0741652f71633fa0b4003a64f7224ae54abe65",
+      "bytes": 20488,
+      "logical_lines": 138,
+      "PM_actual_read": "whole evidence to EOF; T05 1..end; T10 1..110 +111..end; not production EOF"
+    },
+    {
+      "task_key": "dpc-t10-handoff-audit",
+      "run_id": "dpc-t10-handoff-audit@2026-10-28T04:04:13.035Z",
+      "status": "done",
+      "exit": 0,
+      "ended_at": "2026-10-28T04:12:21.460Z",
+      "acked_by_PM_tool": true,
+      "source": "agent-report",
+      "evidence": "evidence/implementation/t10-handoff-audit-20261027.md",
+      "sha256": "264c0d613a7ad583521504617a34dfeeaf8f72b4c6922bdaaf99437b61c514a4",
+      "bytes": 32318,
+      "logical_lines": 341,
+      "PM_actual_read": "whole evidence to EOF; T05 1..end; T10 1..110 +111..end; not production EOF"
+    }
+  ],
+  "both_terminal_reports_absorbed_and_acked": true,
+  "new_product_tests_or_production_imports_run": [],
+  "mirror_count": 1891,
+  "mirror_and_14_pyc_unchanged_since_dispatch": true,
+  "T05_full_handoff": false,
+  "T10_full_handoff": false,
+  "S2_closed": false,
+  "OS_permission_requested_not_granted": true
+}

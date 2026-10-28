@@ -428,6 +428,15 @@ describe("evidence ref grammar (RQ-3 §5.3)", () => {
 		expect(evidenceGaps("report.md:12")).toEqual(["claim:C-01:self-evidence"]);
 		expect(evidenceGaps("src/a.ts:3「line 3」")).toEqual([]);
 	});
+
+	// T-07e live run: a real reviewer joined two refs with `；` and the
+	// ASCII-only split read the pair as one nonexistent path (false `:evidence`
+	// + false `:carried-from`, P-048).
+	it("accepts the full-width `；` as a ref separator", () => {
+		expect(evidenceGaps("src/a.ts:1；src/long.ts:2")).toEqual([]);
+		expect(evidenceGaps("src/a.ts:1;src/long.ts:2")).toEqual([]);
+		expect(evidenceGaps("src/a.ts:1；src/none.ts:2")).toEqual(["claim:C-01:evidence"]);
+	});
 });
 
 // ── 4. readTerminalGaps: field-identical no-claims path + ok fold ────────────

@@ -1,0 +1,4 @@
+ M packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts
+ M packages/multi-workers/decide_registry.json
+ M packages/multi-workers/decision_context.py
+ M packages/multi-workers/scripts/gen_decide_registry_ts.py

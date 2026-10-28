@@ -1,0 +1,15 @@
+{
+  "observed_at": "2026-10-26T10:34:05.598496+08:00",
+  "mapped_cards": 34,
+  "task_dependencies_and_business_body_equal": true,
+  "ac_count": 53,
+  "vc_count": 53,
+  "approved_original_paths_unchanged": 85,
+  "copy_links": 0,
+  "generator_layout_root_is_copy": true,
+  "t03_eligible_source_only": true,
+  "other_stage_semantic_acceptance": false,
+  "product_tests_run": false,
+  "dependency_equivalence_verified": false,
+  "product_acceptance": false
+}

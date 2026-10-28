@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "task_key": "dpc-t10-r2-verification-preparation",
+  "run_id": "dpc-t10-r2-verification-preparation@2026-10-28T07:09:46.792Z",
+  "owner_key": "mw-dp-consolidation",
+  "kind": "coding",
+  "status": "running",
+  "started_at": "2026-10-28T07:09:46.792Z",
+  "artifacts": [],
+  "pid": 72752,
+  "last_heartbeat_at": "2026-10-28T07:10:16.804Z"
+}

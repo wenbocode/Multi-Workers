@@ -1,0 +1,246 @@
+{
+  "policy_file": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_policy.py",
+  "fixture_authority_in_memory_not_production": true,
+  "results": [
+    {
+      "name": "pending-control",
+      "changed_input": [
+        "key:allowed"
+      ],
+      "allowed": true,
+      "scope": [
+        "key:allowed"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "pending-outside-policy",
+      "changed_input": [
+        "key:outside"
+      ],
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "review-scope-uncovered (scope): policy does not grant: key:outside"
+      ]
+    },
+    {
+      "name": "pending-missing-scope",
+      "changed_input": null,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "required-scope-missing (required_scope): an explicit non-empty scope is required; an empty requirement is not a grant"
+      ]
+    },
+    {
+      "name": "halted-control",
+      "changed_input": null,
+      "allowed": true,
+      "scope": [
+        "recovery:halted"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "halted-unverified-guard",
+      "changed_input": {
+        "hard_guard_active": true,
+        "hard_guard_cleared": [
+          "self-reported-clear"
+        ]
+      },
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "guard-clearance-unverified (hard_guard_cleared): guard clearance needs a machine-verified result, not a self-report"
+      ]
+    },
+    {
+      "name": "halted-unknown-origin",
+      "changed_input": {},
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "halt-origin-unknown (halt_origin): None is not a recorded halt origin (technical, user-stop, revoked); an unknown stop stays in force"
+      ]
+    },
+    {
+      "name": "halted-unrelated-authority",
+      "changed_input": {},
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "recovery-authority-unrelated (note.authority_ref): the request authorization is neither the policy recovery authorization nor an explicitly recorded replacement of it"
+      ]
+    },
+    {
+      "name": "breaker-control",
+      "changed_input": null,
+      "allowed": true,
+      "scope": [
+        "recovery:breaker"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "breaker-unrelated-preauthorization",
+      "changed_input": "other-ref",
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "recovery-authority-unrelated (preauthorization_ref): the preauthorization is neither the policy recovery authorization nor an explicitly recorded replacement of it"
+      ]
+    },
+    {
+      "name": "breaker-unknown-disable",
+      "changed_input": null,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "breaker-disable-unknown (user_disabled): None is not a recorded user state; the brake stays engaged"
+      ]
+    },
+    {
+      "name": "breaker-revoked-rule-bypass",
+      "changed_input": null,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "authority-revoked (rule-ref): authorization revoked",
+        "recovery-authority-unrelated (preauthorization_ref): the preauthorization is neither the policy recovery authorization nor an explicitly recorded replacement of it"
+      ]
+    },
+    {
+      "name": "halted-revoked-rule-bypass",
+      "changed_input": null,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "authority-revoked (rule-ref): authorization revoked",
+        "recovery-authority-unrelated (note.authority_ref): the request authorization is neither the policy recovery authorization nor an explicitly recorded replacement of it"
+      ]
+    },
+    {
+      "name": "h11-fresh-human-control",
+      "changed_input": null,
+      "allowed": true,
+      "scope": [
+        "recovery:halted"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "h11-revoked-rule-unrelated-lift",
+      "changed_input": null,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "authority-revoked (rule-ref): authorization revoked"
+      ]
+    },
+    {
+      "name": "h11-explicit-restoration-control",
+      "changed_input": null,
+      "allowed": true,
+      "scope": [
+        "recovery:halted"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "machine-guard-control",
+      "changed_input": null,
+      "allowed": true,
+      "scope": [
+        "recovery:halted"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "halted-null-guard",
+      "changed_input": {
+        "hard_guard_active": null
+      },
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "hard-guard-unknown (hard_guard_active): None is not a verified guard state; the stop stays in force"
+      ]
+    },
+    {
+      "name": "halted-string-guard",
+      "changed_input": {
+        "hard_guard_active": "false"
+      },
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "hard-guard-unknown (hard_guard_active): 'false' is not a verified guard state; the stop stays in force"
+      ]
+    },
+    {
+      "name": "halted-string-verified",
+      "changed_input": {
+        "hard_guard_active": true,
+        "hard_guard_cleared": [
+          "self-report"
+        ],
+        "hard_guard_cleared_verified": "true"
+      },
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "guard-clearance-unverified (hard_guard_cleared): guard clearance needs a machine-verified result, not a self-report"
+      ]
+    },
+    {
+      "name": "breaker-disabled",
+      "changed_input": {
+        "user_disabled": true
+      },
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "user-disabled (user_disabled): the user disabled or revoked automation; the brake stays engaged"
+      ]
+    },
+    {
+      "name": "breaker-null-disable",
+      "changed_input": {
+        "user_disabled": null
+      },
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "breaker-disable-unknown (user_disabled): None is not a recorded user state; the brake stays engaged"
+      ]
+    },
+    {
+      "name": "breaker-string-disable",
+      "changed_input": {
+        "user_disabled": "false"
+      },
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "breaker-disable-unknown (user_disabled): 'false' is not a recorded user state; the brake stays engaged"
+      ]
+    },
+    {
+      "name": "breaker-null-origin",
+      "changed_input": {
+        "origin": null
+      },
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "breaker-origin-unknown (origin): no recorded recovery origin; the brake stays engaged",
+        "breaker-origin-not-allowed (origin): '' is not an allowed recovery origin"
+      ]
+    }
+  ],
+  "failures": [],
+  "control_count": 6,
+  "negative_count": 17
+}

@@ -1,0 +1,36 @@
+{
+  "sample": "dual",
+  "a_projection": {
+    "mode": "dual",
+    "controlRoot": "<CTRL>",
+    "gameRoot": "<CTRL>\\game",
+    "engineRoot": "<CTRL>\\engine",
+    "vcs": "git",
+    "uproject": "MyGame.uproject",
+    "toolchain": {
+      "build_editor": "\"{engine}/Engine/Build/BatchFiles/Build.bat\" MyGameEditor Win64 Development -project=\"{uproject}\"",
+      "regen": "python {game}/Tools/regen.py --engine {engine}"
+    },
+    "ignore": {
+      "deny_globs": [
+        "**/*.uasset",
+        "**/DerivedDataCache/**"
+      ]
+    },
+    "contract": {
+      "forbidden_paths": [
+        "**/Generated/*"
+      ],
+      "conventions": "Line one of the conventions.\nLine two of the conventions.\n",
+      "docs": [
+        "docs/contract-notes.md"
+      ]
+    },
+    "source": "target-yml"
+  },
+  "d_profile_block": "<!-- mw-profile: v1 -->\n[mw] Workspace profile (target.yml essentials, injected at dispatch;\nfull file: <CTRL>\\.agenticdoc\\target.yml)\nControl workspace: <CTRL>\nGame root: <CTRL>\\game\nEngine root: <CTRL>\\engine\nToolchain commands (placeholders resolved):\n- build_editor: \"<CTRL>\\engine/Engine/Build/BatchFiles/Build.bat\" MyGameEditor Win64 Development -project=\"<CTRL>\\game\\MyGame.uproject\"\n- regen: python <CTRL>\\game/Tools/regen.py --engine <CTRL>\\engine\nContext firewall (deny globs, enforced by the read-scope layer):\n- **/*.uasset\n- **/DerivedDataCache/**\nContract:\n- forbidden paths: **/Generated/*\n- conventions:\n  Line one of the conventions.\n  Line two of the conventions.\n  \n- docs (references, not inlined):\n  - <CTRL>\\docs\\contract-notes.md\n",
+  "render_toolchain": {
+    "build_editor": "\"<CTRL>\\engine/Engine/Build/BatchFiles/Build.bat\" MyGameEditor Win64 Development -project=\"<CTRL>\\game\\MyGame.uproject\"",
+    "regen": "python <CTRL>\\game/Tools/regen.py --engine <CTRL>\\engine"
+  }
+}

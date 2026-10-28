@@ -1,0 +1,171 @@
+ M .agenticdoc/_autopilot/auto-decisions.jsonl
+ M .agenticdoc/_index.parallel
+ M .agenticdoc/_pitfalls.md
+ M .agenticdoc/_project_log.md
+ M .agenticdoc/mw-timi-models-add/mini-spec.md
+ M .agenticdoc/mw-workspace-incident-probe/achieved.md
+ M .agenticdoc/mw-workspace-incident-probe/evidence/in1-junction-incident-20261009.md
+ M .agenticdoc/mw-workspace-incident-probe/evidence/in2-file-vanish-incident-20261009.md
+ M .agenticdoc/mw-workspace-incident-probe/evidence/in2-recurrence-20261010-uncommitted-wipe.md
+ M .agenticdoc/mw-workspace-incident-probe/evidence/incidents-timeline-20261009.md
+ M .agenticdoc/mw-workspace-incident-probe/pm-state.md
+ M .agenticdoc/mw-worktree-junction-guard/mini-spec.md
+ M .agenticdoc/mw-worktree-junction-guard/spec.md
+ M packages/coding-agent/README.md
+ M packages/coding-agent/src/extensions/agent-team-loop/index.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/shared/dispatch-card.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/worker/output-sections.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts
+ M packages/coding-agent/test/suite/claim-block.test.ts
+ M packages/coding-agent/test/suite/claim-bypass.test.ts
+ M packages/coding-agent/test/suite/claim-coverage.test.ts
+ M packages/coding-agent/test/suite/decision-association.test.ts
+ M packages/coding-agent/test/suite/decision-tool.test.ts
+ M packages/coding-agent/test/suite/dispatch-claims-render.test.ts
+ M packages/coding-agent/test/suite/dp2-narrow.test.ts
+ M packages/coding-agent/test/suite/dp3-answer.test.ts
+ M packages/coding-agent/test/suite/triage-client-state.test.ts
+ M packages/coding-agent/test/suite/triage-dispatch.test.ts
+ M packages/multi-workers/CHANGELOG.md
+ M packages/multi-workers/README.md
+ M packages/multi-workers/autopilot/dispatch.py
+ M packages/multi-workers/decide_archive.py
+ M packages/multi-workers/decide_book_template.json
+ M packages/multi-workers/decide_registry.json
+ M packages/multi-workers/decide_signoff.py
+ M packages/multi-workers/decision.py
+ M packages/multi-workers/decision_backends.py
+ M packages/multi-workers/decision_book.py
+ M packages/multi-workers/decision_context.py
+ M packages/multi-workers/decision_points.py
+ M packages/multi-workers/dist/extensions/agent-team-loop.js
+ M packages/multi-workers/mw.py
+ M packages/multi-workers/mw_common.py
+ M packages/multi-workers/scripts/gen_decide_registry_ts.py
+ M packages/multi-workers/test_claim_dispatch.py
+ M packages/multi-workers/test_claim_parity.py
+ M packages/multi-workers/test_decide_registry_contract.py
+ M packages/multi-workers/test_decide_registry_export.py
+ M packages/multi-workers/test_decide_run_authority.py
+ M packages/multi-workers/test_decide_sign_auto.py
+ M packages/multi-workers/test_decide_signoff.py
+ M packages/multi-workers/test_decision_book.py
+ M packages/multi-workers/test_decision_context.py
+?? .agenticdoc/_autopilot/decisions-wire.jsonl
+?? .agenticdoc/_autopilot/decisions.jsonl
+?? .agenticdoc/_autopilot/timeline.jsonl
+?? .agenticdoc/_autopilot/triage-decisions.jsonl
+?? .agenticdoc/_scratch/evidence/
+?? .agenticdoc/_scratch/output-writer.mine.ts
+?? .agenticdoc/_scratch/tasks/
+?? .agenticdoc/_scratch/worker-mode.mine.ts
+?? .agenticdoc/claim-driven-review-orchestration/
+?? .agenticdoc/claim-driven-review/
+?? .agenticdoc/mw-claude-mirror-parity/
+?? .agenticdoc/mw-decision-context/
+?? .agenticdoc/mw-decision-dashboard/
+?? .agenticdoc/mw-dynamic-concurrency/
+?? .agenticdoc/mw-phase-writer-recovery-contract/
+?? .agenticdoc/mw-widget-order-stability/
+?? .agenticdoc/mw-workspace-incident-probe/evidence/quality-gate-report-20261009.md
+?? .agenticdoc/mw-worktree-junction-guard/achieved.md
+?? .agenticdoc/mw-worktree-junction-guard/design.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W01-bash-segments-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W02-worktree-cli-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W03-worktree-doctor-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W04-tree-watch-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W05-worktree-junction-guard-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W05b-delete-penetration-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W06-guard-coverage-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W07-model-catalog-script-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W08-e2e-ac012-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W09-tree-watch-doctor-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W10-prescription-allow-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W11-detach-module-test-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W13-doctor-visibility-activation-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W14-user-bash-guard-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W16-ac015-crack-ac016-markers-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/T-W17-ps-verb-base-vocabulary-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/delta-adversarial-audit-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/negative-space-audit-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/quality-gate-report-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/research/design-guard-path-resolution-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/research/design-necessity-rq1-equivalent-guard-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/research/design-necessity-rq2-reachability-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/research/design-necessity-rq3-live-surface-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/research/design-observability-and-verification-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/evidence/research/design-registry-and-worktree-cli-20261013.md
+?? .agenticdoc/mw-worktree-junction-guard/plan.md
+?? .agenticdoc/mw-worktree-junction-guard/pm-state.md
+?? .agenticdoc/mw-worktree-junction-guard/tasks/
+?? .agenticdoc/mw-write-face-guard/
+?? .agenticdoc/review-split-on-trap/
+?? Python/
+?? decision.py
+?? packages/coding-agent/Python/
+?? packages/coding-agent/src/extensions/agent-team-loop/pm/review-split-gate.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/pm/review-split-plan.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/shared/claim-extract.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/shared/claim-pack.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/shared/review-split.ts
+?? packages/coding-agent/src/extensions/agent-team-loop/shared/split-manifest.ts
+?? packages/coding-agent/test/suite/claim-extract.test.ts
+?? packages/coding-agent/test/suite/claim-pack.test.ts
+?? packages/coding-agent/test/suite/decision-context-agent-materials.test.ts
+?? packages/coding-agent/test/suite/decision-context-integration.test.ts
+?? packages/coding-agent/test/suite/decision-context-pm-producers.test.ts
+?? packages/coding-agent/test/suite/decision-dashboard-command.test.ts
+?? packages/coding-agent/test/suite/fixtures/
+?? packages/coding-agent/test/suite/review-split-gate.test.ts
+?? packages/coding-agent/test/suite/review-split-mode.test.ts
+?? packages/coding-agent/test/suite/review-split-plan.test.ts
+?? packages/coding-agent/test/suite/split-manifest.test.ts
+?? packages/multi-workers/autopilot/review_split.py
+?? packages/multi-workers/decide_cases/
+?? packages/multi-workers/decision_dashboard.css
+?? packages/multi-workers/decision_dashboard.html
+?? packages/multi-workers/decision_dashboard.js
+?? packages/multi-workers/decision_history.py
+?? packages/multi-workers/decision_lifecycle.py
+?? packages/multi-workers/decision_monitor.py
+?? packages/multi-workers/decision_playground.py
+?? packages/multi-workers/decision_signoff_result.py
+?? packages/multi-workers/decision_wire.py
+?? packages/multi-workers/scripts/build_decide_cases.py
+?? packages/multi-workers/test_decision_bare_scope_known_set.py
+?? packages/multi-workers/test_decision_book_known_secrets.py
+?? packages/multi-workers/test_decision_cli_config_snapshot.py
+?? packages/multi-workers/test_decision_context_contract.py
+?? packages/multi-workers/test_decision_context_history.py
+?? packages/multi-workers/test_decision_context_integration.py
+?? packages/multi-workers/test_decision_context_lifecycle.py
+?? packages/multi-workers/test_decision_context_signoff_cli.py
+?? packages/multi-workers/test_decision_context_workbench.py
+?? packages/multi-workers/test_decision_coverage_safety.py
+?? packages/multi-workers/test_decision_credential_seam.py
+?? packages/multi-workers/test_decision_dashboard_assets.py
+?? packages/multi-workers/test_decision_dashboard_contracts.py
+?? packages/multi-workers/test_decision_dashboard_playground.py
+?? packages/multi-workers/test_decision_dp25_empty_value.py
+?? packages/multi-workers/test_decision_full_value_freeze.py
+?? packages/multi-workers/test_decision_history.py
+?? packages/multi-workers/test_decision_input_contract_migration.py
+?? packages/multi-workers/test_decision_known_set_snapshot.py
+?? packages/multi-workers/test_decision_monitor.py
+?? packages/multi-workers/test_decision_monitor_cli.py
+?? packages/multi-workers/test_decision_observation.py
+?? packages/multi-workers/test_decision_pin_contract.py
+?? packages/multi-workers/test_decision_playground.py
+?? packages/multi-workers/test_decision_redactor_contract.py
+?? packages/multi-workers/test_decision_required_refusal.py
+?? packages/multi-workers/test_decision_roots_locks.py
+?? packages/multi-workers/test_decision_timi_credential_snapshot.py
+?? packages/multi-workers/test_decision_wire_store.py
+?? packages/multi-workers/test_decision_wire_transport.py
+?? packages/multi-workers/test_review_split_cli.py
+?? packages/multi-workers/test_review_split_parity.py

@@ -1,0 +1,23 @@
+{
+  "material": {
+    "task_goal": "T22 实机验收：确认新的 dp1 决策记录能保存任务前后快照（goal.md: .agenticdoc/goal.md:5）。",
+    "task_requirements": "只验证 task_before 是否被写进 record-start 并被读侧投影；不改源码、不派 worker。",
+    "task_deliverables": "判断 research 类型即可；证据是决策账本记录本身。"
+  },
+  "meta": {
+    "record_version": 2,
+    "logical_id": "9f4c1d2e-aaaa-4bbb-8ccc-111122223333",
+    "key": "mw-decision-context",
+    "task_key": "t22-live-verify-cli",
+    "initiator_role": "pm",
+    "retry_of": null,
+    "task_before": {
+      "status": "not-queued",
+      "source": "worker-registry",
+      "observed_at": "2026-10-25T07:10:00Z",
+      "completed": null,
+      "remaining": null,
+      "blockers": null
+    }
+  }
+}

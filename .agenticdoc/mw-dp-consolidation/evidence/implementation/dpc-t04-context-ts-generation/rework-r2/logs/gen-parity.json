@@ -1,0 +1,49 @@
+{
+  "paths": {
+    "gen_module": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\scripts\\gen_decide_registry_ts.py",
+    "gen_module_bound_to_worktree": true,
+    "gen_script": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\scripts\\gen_decide_registry_ts.py",
+    "gen_script_bound_to_worktree": true,
+    "gen_repo_root": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree",
+    "gen_repo_root_equals_worktree": true,
+    "gen_mw_root": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+    "output_path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\coding-agent\\src\\extensions\\agent-team-loop\\shared\\decide-registry.generated.ts",
+    "output_path_bound_to_worktree": true,
+    "decision_context_module": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_context.py",
+    "decision_context_bound_to_worktree": true,
+    "decision_points_module": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_points.py",
+    "decision_points_bound_to_worktree": true,
+    "subprocess_argv0": "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+    "subprocess_cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+    "subprocess_argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "scripts/gen_decide_registry_ts.py"
+    ]
+  },
+  "check": {
+    "rc": 0,
+    "stdout": "",
+    "stdout_empty": true,
+    "stderr": ""
+  },
+  "stdout_mode": {
+    "rc": 0,
+    "stderr": "",
+    "bytes": 21324,
+    "sha256": "5256c03e5cedb0e795c95994883e91b240609f4468e5173ff95c60f5d7d5c999",
+    "crcrlf": 695,
+    "bare_lf": 0,
+    "raw_equals_disk_bytes": false,
+    "lf_folded_equals_disk_bytes": true,
+    "raw_minus_disk_bytes": 695
+  },
+  "disk": {
+    "bytes": 20629,
+    "equals_stdout_bytes": false,
+    "equals_render_encode": true,
+    "sha256": "8c316042da5bb61419deb3d3bd9897893c7b227fa21959807220f7ac12337b8f",
+    "crlf": 0,
+    "bare_lf": 695
+  },
+  "text_mode_note": "subprocess.run(..., text=True) without an explicit encoding decodes the child pipe with the process locale (GBK here unless PYTHONUTF8/PYTHONIOENCODING make it UTF-8) and applies universal-newline translation; it is a text witness, not the byte proof. The byte proof is stdout bytes == disk bytes == render().encode('utf-8') recorded above."
+}

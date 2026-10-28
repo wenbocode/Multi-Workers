@@ -1,0 +1,216 @@
+﻿FFFFF                                                                    [100%]
+================================== FAILURES ===================================
+_________________ test_true_below_without_resume_stays_below __________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-13410/test_true_below_without_resume0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000022CC9E06D70>
+
+    def test_true_below_without_resume_stays_below(
+        tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _freeze_clock(monkeypatch)
+        project, _st, key_dir, _calls = _drive_to_first_stall(tmp_path, monkeypatch)
+        verdict = (key_dir / "l3-verdict.txt").read_text(encoding="utf-8").strip()
+        row = _dossier_row(project, "k1")
+        fixture_ok = verdict == "below" and "| below |" in row
+        assert fixture_ok, (verdict, row)
+    
+        # Real key: independent mirror recompute (no tested judgement imported),
+        # cross-checked against the T-001d frozen recompute evidence.
+        root = _e2feature_root()
+>       live_persisted, live_last, live_stale = _mirror_recompute_reverse_key(root)
+                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_autopilot_verdict_freshness.py:329: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+root = WindowsPath('H:/git/E2Feature')
+
+    def _mirror_recompute_reverse_key(root: pathlib.Path) -> tuple[str, str, bool]:
+        """(persisted, last_round_verdict, stale) for the real reverse anchor."""
+        key_dir = root / ".agenticdoc" / _REVERSE_KEY
+        rounds: dict[int, pathlib.Path] = {}
+        pattern = re.compile(r"^ap-" + re.escape(_REVERSE_KEY) + r"-l3-a(\d+)$")
+        for sub in sorted((key_dir / "workers").iterdir()):
+            match = pattern.match(sub.name)
+            if match and (sub / "output.md").is_file():
+                rounds[int(match.group(1))] = sub / "output.md"
+        assert rounds, f"no L3 rounds for {_REVERSE_KEY}"
+        verdict_by_round = {n: _mirror_parse_l3_output(p) for n, p in rounds.items()}
+        last_round = max(rounds)
+        last_verdict = verdict_by_round[last_round]
+        verdict_file = key_dir / "l3-verdict.txt"
+        assert verdict_file.is_file()
+        persisted = verdict_file.read_text(encoding="utf-8").strip().lower()
+        assert persisted in ("meets", "below")
+        report = key_dir / "l3-report.md"
+        assert report.is_file()
+        report_sha = _sha256_file(report)
+        report_matches = [
+            n for n, path in rounds.items() if _sha256_file(path) == report_sha
+        ]
+        stale = persisted != last_verdict
+>       assert last_round in report_matches, "latest report is not from the last round"
+E       AssertionError: latest report is not from the last round
+E       assert 3 in [2]
+
+test_autopilot_verdict_freshness.py:191: AssertionError
+_ TestTaskTypeCallsiteWiring.test_bom_historical_books_read_through_both_callsites _
+
+self = <test_launcher.TestTaskTypeCallsiteWiring object at 0x0000022CC9D079B0>
+
+    def test_bom_historical_books_read_through_both_callsites(self) -> None:
+        import mw
+    
+        seen: list[str] = []
+        for rel in _BOM_BOOKS:
+            path = _CORPUS_ROOT / rel
+>           assert path.is_file(), f"historical BOM book missing: {rel}"
+E           AssertionError: historical BOM book missing: mw-dispatch-reliability/workers/mw-dr-glm53/task.md
+E           assert False
+E            +  where False = is_file()
+E            +    where is_file = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dispatch-reliability/workers/mw-dr-glm53/task.md').is_file
+
+test_launcher.py:1559: AssertionError
+__________________________ test_bom_historical_books __________________________
+
+    def test_bom_historical_books() -> None:
+        measured = _measured()
+        py_corpus, ts_corpus = measured["py_corpus"], measured["ts_corpus"]
+        for rel in BOM_BOOKS:
+>           assert rel in py_corpus, f"historical BOM book missing from corpus: {rel}"
+E           AssertionError: historical BOM book missing from corpus: mw-dispatch-reliability/workers/mw-dr-glm53/task.md
+E           assert 'mw-dispatch-reliability/workers/mw-dr-glm53/task.md' in {'_scratch/workers/manual-1789974535494/task.md': {'body_type_lines': [], 'bom_stripped': False, 'fenced': False, 'sou...dr-autodispatch/task.md': {'body_type_lines': [], 'bom_stripped': True, 'fenced': False, 'source': 'header', ...}, ...}
+
+test_task_type_parity.py:413: AssertionError
+____ TestCrossLanguageParity.test_python_mirror_matches_the_real_ts_judge _____
+
+self = <test_mwds_t27_service_envelope.TestCrossLanguageParity object at 0x0000022CC9DC3750>
+
+    def test_python_mirror_matches_the_real_ts_judge(self) -> None:
+>       ts_rows = _run_ts_parity(_PARITY_CASES)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_mwds_t27_service_envelope.py:486: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cases = [('compliant', 'type: coding\nphase: EXECUTE\n\n## 上下文\n背景：本卡说明为什么做。\n\n## 要求\n实现 X；AC-001 必须通过。\n\n## 交付格式\n产物 packag...issing-type', '\n## 上下文\n背景：本卡说明为什么做。\n\n## 要求\n实现 X；AC-001 必须通过。\n\n## 交付格式\n产物 packages/multi-workers/x.py。\n'), ...]
+
+    def _run_ts_parity(cases: list[tuple[str, str]]) -> list[dict]:
+        node = shutil.which("node")
+        if node is None:
+            pytest.fail("node interpreter not found; TS parity cannot be measured (fail-closed, P-016)")
+        if not _TS_MODULE.is_file():
+            pytest.fail(f"TS mirror missing: {_TS_MODULE} (fail-closed)")
+        with tempfile.TemporaryDirectory() as tmp:
+            cases_path = pathlib.Path(tmp) / "cases.json"
+            cases_path.write_text(json.dumps(cases), encoding="utf-8")
+            env = dict(os.environ)
+            env["MW_T03_TS_MODULE"] = str(_TS_MODULE)
+            env["MW_T03_CASES"] = str(cases_path)
+            proc = subprocess.run(
+                [node, "--experimental-strip-types", "-e", _TS_SCRIPT],
+                capture_output=True, text=True, timeout=180, env=env,
+            )
+>       if proc.returncode != 0 or "T03_JSON_BEGIN" not in proc.stdout:
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: argument of type 'NoneType' is not a container or iterable
+
+test_mwds_t27_service_envelope.py:475: TypeError
+___________ TestParity.test_python_judge_matches_the_real_ts_judge ____________
+
+self = <test_mwds_t29_producer_signal.TestParity object at 0x0000022CC9DC3D90>
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-13410/test_python_judge_matches_the_0')
+
+    def test_python_judge_matches_the_real_ts_judge(self, tmp_path: pathlib.Path) -> None:
+        card_file = tmp_path / "card.md"
+        card_file.write_text(_CODING_CARD_TEXT, encoding="utf-8")
+        rendered = dispatch.render_task_md(
+            "vision", _CODING_CARD_TEXT, loop="L", attempt=1,
+            card={
+                "path": "tasks/T-09.md",
+                "sha256": dispatch.card_digest(card_file),
+                "context": "背景。",
+                "requirements": "AC-001 必须通过。",
+                "deliverables": "产物 report.md。",
+            },
+        )
+        cases = [("conductor-render", rendered), ("legacy", _LEGACY_CARD_TEXT)]
+>       out = _run_ts({"cases": cases, "digests": {}})
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_mwds_t29_producer_signal.py:597: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+payload = {'cases': [('conductor-render', '---\ntype: vision\ncard_path: tasks/T-09.md\ncard_sha256: c141e9bafa9f6565f5c6cb6f4b4...式\n\n产物 report.md。\n\n以上为种子，不是探索上界；可自行检索补充上下文。\n\n'), ('legacy', 'type: coding\nDo something useful.')], 'digests': {}}
+
+    def _run_ts(payload: dict) -> dict:
+        node = shutil.which("node")
+        if node is None:
+            pytest.fail("node interpreter not found; TS parity cannot be measured (fail-closed, P-016)")
+        if not _TS_CARD.is_file() or not _TS_DIGEST.is_file():
+            pytest.fail(f"TS mirror missing under {_TS_DIR} (fail-closed)")
+        with tempfile.TemporaryDirectory() as tmp:
+            cases_path = pathlib.Path(tmp) / "cases.json"
+            cases_path.write_text(json.dumps(payload["cases"]), encoding="utf-8")
+            env = dict(os.environ)
+            env["MW_T29_CARD_MODULE"] = str(_TS_CARD)
+            env["MW_T29_DIGEST_MODULE"] = str(_TS_DIGEST)
+            env["MW_T29_CASES"] = str(cases_path)
+            env["MW_T29_DIGESTS"] = json.dumps(payload["digests"])
+            proc = subprocess.run(
+                [node, "--experimental-strip-types", "-e", _TS_SCRIPT],
+                capture_output=True, text=True, timeout=180, env=env,
+            )
+>       if proc.returncode != 0 or "T29_JSON_BEGIN" not in proc.stdout:
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: argument of type 'NoneType' is not a container or iterable
+
+test_mwds_t29_producer_signal.py:573: TypeError
+============================== warnings summary ===============================
+test_mwds_t27_service_envelope.py::TestCrossLanguageParity::test_python_mirror_matches_the_real_ts_judge
+  C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-3 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+      self._context.run(self.run)
+      ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+    File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+      self._target(*self._args, **self._kwargs)
+      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py", line 1613, in _readerthread
+      buffer.append(fh.read())
+                    ~~~~~~~^^
+  UnicodeDecodeError: 'gbk' codec can't decode byte 0x87 in position 111: illegal multibyte sequence
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+test_mwds_t29_producer_signal.py::TestParity::test_python_judge_matches_the_real_ts_judge
+  C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-5 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+      self._context.run(self.run)
+      ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+    File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+      self._target(*self._args, **self._kwargs)
+      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\subprocess.py", line 1613, in _readerthread
+      buffer.append(fh.read())
+                    ~~~~~~~^^
+  UnicodeDecodeError: 'gbk' codec can't decode byte 0xae in position 219: illegal multibyte sequence
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED test_autopilot_verdict_freshness.py::test_true_below_without_resume_stays_below
+FAILED test_launcher.py::TestTaskTypeCallsiteWiring::test_bom_historical_books_read_through_both_callsites
+FAILED test_task_type_parity.py::test_bom_historical_books - AssertionError: ...
+FAILED test_mwds_t27_service_envelope.py::TestCrossLanguageParity::test_python_mirror_matches_the_real_ts_judge
+FAILED test_mwds_t29_producer_signal.py::TestParity::test_python_judge_matches_the_real_ts_judge
+5 failed, 2 warnings in 1.01s

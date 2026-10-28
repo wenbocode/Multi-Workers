@@ -1,0 +1,518 @@
+--- before/test_decide_registry_contract.py
++++ after/test_decide_registry_contract.py
+@@ -18,8 +18,9 @@
+ 5. every point has a non-empty question set whose frozen enum comes from the one
+    Python table (``ENTRY_CHOICES`` / ``ROUTE_TARGETS``);
+ 6. the cross-layer debt is explicit and stage-aware: ``triage-client.ts`` keeps
+-   the documented legacy rows for retired ids only (plus, after T04, rows of the
+-   active entries), and the generated TS registry is asserted to be *either* the
++   the documented legacy rows for retired ids only (their content is locked while
++   a row exists; after T04 they may stay or disappear, and rows of active entries
++   are then legal), and the generated TS registry is asserted to be *either* the
+    frozen pre-T03 artifact *or* the eight-entry projection T04 regenerates. A
+    one-sided rename must turn red here, and no test claims the field-level
+    parity T04 owes.
+@@ -417,37 +418,135 @@
+ # ---------------------------------------------------------------------------
+ 
+ 
++#: A quoted id or a ``[CONST]`` key of the TS ``required_if`` table.
++_TS_TABLE_KEY = re.compile(r'"(?P<quoted>[^"\\\n]+)"|\[(?P<constant>[A-Za-z_$][\w$]*)\]')
++#: A single-value string constant usable as a table key (``const X = "id";``).
++_TS_STRING_CONST = re.compile(
++    r'^(?:export )?const (?P<name>[A-Za-z_$][\w$]*) = "(?P<value>[^"\n]+)";\s*$',
++    re.M,
++)
++
++
++def _ts_skip(text: str, index: int, stop: int) -> int:
++    """Skip whitespace and ``//`` / ``/* */`` comments inside a TS literal."""
++    while index < stop:
++        char = text[index]
++        if char.isspace():
++            index += 1
++            continue
++        if text.startswith("//", index):
++            newline = text.find("\n", index, stop)
++            index = stop if newline == -1 else newline + 1
++            continue
++        if text.startswith("/*", index):
++            close = text.find("*/", index + 2, stop)
++            assert close != -1, "unterminated block comment in the TS required-field table"
++            index = close + 2
++            continue
++        break
++    return index
++
++
++def _ts_string_list(text: str, index: int, stop: int) -> tuple[list[str], int]:
++    """Parse one ``["a", "b"]`` literal; fields must be non-empty strings."""
++    assert index < stop and text[index] == "[", "expected a '[' for the required-field list"
++    index += 1
++    fields: list[str] = []
++    expect_value = True
++    while True:
++        index = _ts_skip(text, index, stop)
++        assert index < stop, "unterminated required-field list (truncated TS peer)"
++        char = text[index]
++        if char == "]":
++            return fields, index + 1
++        if not expect_value:
++            assert char == ",", (
++                f"expected ',' or ']' in the required-field list, got {char!r}"
++            )
++            expect_value = True
++            index += 1
++            continue
++        assert char == '"', (
++            f"required-field entries must be double-quoted strings, got {char!r}"
++        )
++        close = text.find('"', index + 1, stop)
++        assert close != -1, "unterminated string in the required-field list"
++        value = text[index + 1 : close]
++        assert value.strip(), "empty required-field name"
++        fields.append(value)
++        expect_value = False
++        index = close + 1
++
++
+ def _ts_required_fields() -> tuple[list[str], dict[str, list[str]]]:
+     """Extract ``UNIVERSAL_REQUIRED_FIELDS`` + the per-dp matrix from the TS peer.
+ 
+     TS composes the two blocks at validation time (``universal + by_dp[dpId]``),
+     so a dp's *effective* list is the union; the names themselves must match the
+     Python side once T04 regenerates the TS contract.
++
++    Parse proof is structural, never a retired id: both declaration anchors and
++    the table terminator must exist, every key must be a double-quoted id or a
++    ``[CONST]`` whose ``const`` declaration names a string, every value a
++    non-empty double-quoted string list, no id twice, and nothing is left
++    unparsed. An empty table is a parse failure, so the frozen legacy matrix and
++    an active-only matrix (post-T04) go through exactly the same proof.
+     """
+     text = TRIAGE_CLIENT.read_text(encoding="utf-8")
+ 
+-    universal_start = text.index("const UNIVERSAL_REQUIRED_FIELDS = [")
+-    universal_open = text.index("[", universal_start)
+-    universal_close = text.index("];", universal_open)
++    universal_start = text.find("const UNIVERSAL_REQUIRED_FIELDS = [")
++    assert universal_start != -1, "UNIVERSAL_REQUIRED_FIELDS declaration not found"
++    universal_open = text.find("[", universal_start)
++    universal_close = text.find("];", universal_open)
++    assert universal_open != -1 and universal_close != -1, (
++        "UNIVERSAL_REQUIRED_FIELDS is truncated"
++    )
+     universal = re.findall(r'"([^"]+)"', text[universal_open:universal_close])
+     assert universal, "UNIVERSAL_REQUIRED_FIELDS parsed empty"
+ 
+-    table_start = text.index("export const REQUIRED_FIELDS_BY_DP")
+-    table_open = text.index("{", table_start)
+-    table_close = text.index("\n};", table_open)
+-    body = text[table_open + 1 : table_close]
+-
+-    dp1_match = re.search(r'export const DP1_ID = "([^"]+)";', text)
+-    assert dp1_match is not None, "DP1_ID declaration not found"
+-    dp1_id = dp1_match.group(1)
+-
++    table_start = text.find("export const REQUIRED_FIELDS_BY_DP")
++    assert table_start != -1, "REQUIRED_FIELDS_BY_DP declaration not found"
++    table_open = text.find("{", table_start)
++    table_close = text.find("\n};", table_open)
++    assert table_open != -1 and table_close != -1, (
++        "REQUIRED_FIELDS_BY_DP table is truncated (no '\n};' terminator)"
++    )
++
++    constants = {
++        match.group("name"): match.group("value")
++        for match in _TS_STRING_CONST.finditer(text)
++    }
+     by_dp: dict[str, list[str]] = {}
+-    for key, inner in re.findall(r'(\[DP1_ID\]|"[^"]+")\s*:\s*\[([^\]]*)\]', body, re.S):
+-        dp_id = dp1_id if key == "[DP1_ID]" else key.strip('"')
+-        by_dp[dp_id] = re.findall(r'"([^"]+)"', inner)
+-    assert {"dp4-failure-handling"} <= set(by_dp), (
+-        f"the required_if matrix was not parsed: {sorted(by_dp)}"
+-    )
++    index = _ts_skip(text, table_open + 1, table_close)
++    while index < table_close:
++        key_match = _TS_TABLE_KEY.match(text, index)
++        assert key_match is not None, (
++            "unparsed REQUIRED_FIELDS_BY_DP key: "
++            f"{text[index : index + 24]!r}"
++        )
++        if key_match.group("quoted") is not None:
++            dp_id = key_match.group("quoted")
++        else:
++            constant = key_match.group("constant")
++            assert constant in constants, (
++                f"REQUIRED_FIELDS_BY_DP key [{constant}] names no declared string constant"
++            )
++            dp_id = constants[constant]
++        assert dp_id not in by_dp, f"duplicate id in REQUIRED_FIELDS_BY_DP: {dp_id}"
++        colon = _ts_skip(text, key_match.end(), table_close)
++        assert colon < table_close and text[colon] == ":", (
++            f"{dp_id}: expected ':' after the required_if key"
++        )
++        fields, index = _ts_string_list(text, _ts_skip(text, colon + 1, table_close), table_close)
++        by_dp[dp_id] = fields
++        index = _ts_skip(text, index, table_close)
++        if index >= table_close:
++            break
++        assert text[index] == ",", (
++            f"{dp_id}: expected ',' or the end of the table after its row"
++        )
++        index = _ts_skip(text, index + 1, table_close)
++    assert by_dp, "the required_if matrix was not parsed: no row found"
+     return universal, by_dp
+ 
+ 
+@@ -480,10 +579,16 @@
+ def test_ts_required_rows_follow_the_registry_stage() -> None:
+     """The required_if matrix may only move together with the registry stage.
+ 
+-    Retired ids keep exactly the four documented legacy rows (read-only history);
+-    unknown ids never appear; and an *active* entry may only own a row once the
+-    generated TS was regenerated for the eight entries (post-T04). Before that,
+-    such a row means the pair was edited one-sidedly by hand.
++    Unknown ids never appear. A retired id may only keep its documented legacy
++    row with exactly that content: while the row exists, its fields are locked.
++    An *active* entry may only own a row once the generated TS was regenerated
++    for the eight entries (post-T04); before that, such a row means the pair was
++    edited one-sidedly by hand.
++
++    Post-T04 the legacy rows are debt a later card (T11) retires: they may stay
++    unchanged or disappear, but are never required to stay. T04 regenerates only
++    the TS peer; it does not rewrite ``triage-client.ts`` in the same round, so
++    neither "all four rows stay" nor "all four are gone" is a stage lock.
+     """
+     _universal, by_dp = _ts_required_fields()
+     stage = _generated_ts_stage()
+@@ -492,9 +597,17 @@
+         f"unknown ids in REQUIRED_FIELDS_BY_DP: {sorted(set(by_dp) - known)}"
+     )
+     retired_rows = {key: row for key, row in by_dp.items() if dpts.is_retired_dp(key)}
+-    assert retired_rows == LEGACY_TS_ROWS, (
+-        "the documented legacy rows of retired ids changed; only those retired ids "
+-        f"may keep a row: {sorted(set(retired_rows) - set(LEGACY_TS_ROWS))}"
++    unexpected_retired = sorted(set(retired_rows) - set(LEGACY_TS_ROWS))
++    assert unexpected_retired == [], (
++        "a retired id grew a row that is not documented legacy debt; only those "
++        f"retired ids may keep a row: {unexpected_retired}"
++    )
++    drifted = {
++        key: row for key, row in retired_rows.items() if row != LEGACY_TS_ROWS[key]
++    }
++    assert drifted == {}, (
++        "the documented legacy rows of retired ids changed: "
++        + repr({key: (LEGACY_TS_ROWS[key], row) for key, row in drifted.items()})
+     )
+     for entry_id, fields in by_dp.items():
+         assert fields and all(isinstance(name, str) and name.strip() for name in fields), (
+@@ -502,6 +615,10 @@
+         )
+     active_rows = sorted(set(by_dp) & set(dpts.ACTIVE_DP_IDS))
+     if stage == "pre-t04":
++        assert retired_rows == LEGACY_TS_ROWS, (
++            "the frozen pre-T04 pair still carries all four legacy rows; a missing "
++            f"one is a one-sided edit: {sorted(set(LEGACY_TS_ROWS) - set(retired_rows))}"
++        )
+         assert active_rows == [], (
+             "an active entry grew a legacy TS row before T04 regenerated the pair: "
+             f"{active_rows}"
+@@ -521,6 +638,296 @@
+         "authority_tier",
+         "questions_version",
+     ]
++
++
++# ---------------------------------------------------------------------------
++# 6b. Stage-aware required-row regressions (synthetic TS text, parser only)
++#
++# Every fixture below is a *parser input*: it is not the T04 artifact, it proves
++# no field-level parity or wiring, and it is never compiled. The real peer/stage
++# checks above remain the product acceptance.
++# ---------------------------------------------------------------------------
++
++_UNIVERSAL_FIELDS = [
++    "schema_version",
++    "decision_point",
++    "key",
++    "phase",
++    "task_type",
++    "risk",
++    "risk_source",
++    "authority_tier",
++    "questions_version",
++]
++
++
++def _ts_rows(pairs: dict[str, list[str]]) -> str:
++    return "".join(
++        f'\t"{dp_id}": [{", ".join(json.dumps(field) for field in fields)}],\n'
++        for dp_id, fields in pairs.items()
++    )
++
++
++def _synthetic_ts_peer(
++    rows: str,
++    *,
++    constants: str = 'export const DP1_ID = "dp1-dispatch-type";\n',
++) -> str:
++    """A minimal triage-client peer: identity block + the required_if table."""
++    return (
++        "// SYNTHETIC FIXTURE ONLY: parser input, not the T04 triage-client, no wiring proof.\n"
++        "const UNIVERSAL_REQUIRED_FIELDS = [\n"
++        + "".join(f'\t"{field}",\n' for field in _UNIVERSAL_FIELDS)
++        + "];\n"
++        + constants
++        + "export const REQUIRED_FIELDS_BY_DP: Record<string, string[]> = {\n"
++        + rows
++        + "};\n"
++    )
++
++
++def _synthetic_generated_ts(entry_ids: tuple[str, ...]) -> str:
++    """A minimal generated-registry shape: parser input, not the T04 artifact."""
++    body = "".join(
++        f'\t"{dp_id}": {{\n\t\trequiredStateFields: [\n\t\t],\n\t}},\n'
++        for dp_id in entry_ids
++    )
++    return (
++        "// @generated by packages/multi-workers/scripts/gen_decide_registry_ts.py "
++        "\u2014 SYNTHETIC FIXTURE ONLY (not T04 output; no parity/compile proof)\n"
++        "export interface DecideRegistryEntry {}\n"
++        "export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {\n"
++        + body
++        + "};\n"
++    )
++
++
++def _use_synthetic_peers(
++    monkeypatch: pytest.MonkeyPatch,
++    tmp_path: pathlib.Path,
++    *,
++    peer: str,
++    generated: str,
++) -> None:
++    """Point the cross-layer checks at synthetic TS text (a path swap only)."""
++    module = sys.modules[__name__]
++    peer_path = tmp_path / "triage-client.synthetic.ts"
++    generated_path = tmp_path / "decide-registry.synthetic.ts"
++    peer_path.write_text(peer, encoding="utf-8")
++    generated_path.write_text(generated, encoding="utf-8")
++    monkeypatch.setattr(module, "TRIAGE_CLIENT", peer_path)
++    monkeypatch.setattr(module, "GENERATED_TS", generated_path)
++
++
++def test_ts_required_parser_accepts_the_active_only_eight_entry_matrix(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
++) -> None:
++    """The parser accepts the eight active rows with no retired id at all."""
++    active_only = {
++        dp_id: list(dpts.REQUIRED_STATE_FIELDS[dp_id]) for dp_id in dpts.ACTIVE_DP_IDS
++    }
++    _use_synthetic_peers(
++        monkeypatch,
++        tmp_path,
++        peer=_synthetic_ts_peer(_ts_rows(active_only), constants=""),
++        generated=_synthetic_generated_ts(dpts.ACTIVE_DP_IDS),
++    )
++    universal, by_dp = _ts_required_fields()
++    assert universal == _UNIVERSAL_FIELDS
++    assert by_dp == active_only
++    test_ts_required_rows_follow_the_registry_stage()
++
++
++def test_ts_required_stage_keeps_the_legacy_rows_during_the_transition(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
++) -> None:
++    """T04 regenerates only the TS peer, so the four legacy rows may stay."""
++    _use_synthetic_peers(
++        monkeypatch,
++        tmp_path,
++        peer=_synthetic_ts_peer(_ts_rows(LEGACY_TS_ROWS)),
++        generated=_synthetic_generated_ts(dpts.ACTIVE_DP_IDS),
++    )
++    _universal, by_dp = _ts_required_fields()
++    assert by_dp == LEGACY_TS_ROWS
++    test_ts_required_rows_follow_the_registry_stage()
++
++
++def test_ts_required_stage_does_not_demand_every_legacy_row_after_t04(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
++) -> None:
++    """Post-T04 a partially retired legacy matrix is legal, not a drift."""
++    partial = {"dp4-failure-handling": LEGACY_TS_ROWS["dp4-failure-handling"]}
++    _use_synthetic_peers(
++        monkeypatch,
++        tmp_path,
++        peer=_synthetic_ts_peer(_ts_rows(partial)),
++        generated=_synthetic_generated_ts(dpts.ACTIVE_DP_IDS),
++    )
++    _universal, by_dp = _ts_required_fields()
++    assert by_dp == partial
++    test_ts_required_rows_follow_the_registry_stage()
++
++
++def test_ts_required_parser_accepts_new_name_constants_and_literal_keys(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
++) -> None:
++    """No old ``DP1_ID`` is needed: a new constant or a literal key parses."""
++    rows = {
++        dp_id: list(dpts.REQUIRED_STATE_FIELDS[dp_id])
++        for dp_id in dpts.ACTIVE_DP_IDS
++        if dp_id not in ("dp-w-check-task", "dp-sign-key")
++    }
++    constants = 'const CHECK_TASK_ID = "dp-w-check-task";\nconst SIGN_KEY_ID = "dp-sign-key";\n'
++    ordered = (
++        _ts_rows(rows)
++        + "\t[CHECK_TASK_ID]: ["
++        + ", ".join(json.dumps(f) for f in dpts.REQUIRED_STATE_FIELDS["dp-w-check-task"])
++        + "],\n\t[SIGN_KEY_ID]: ["
++        + ", ".join(json.dumps(f) for f in dpts.REQUIRED_STATE_FIELDS["dp-sign-key"])
++        + "],\n"
++    )
++    expected = {
++        dp_id: list(dpts.REQUIRED_STATE_FIELDS[dp_id]) for dp_id in dpts.ACTIVE_DP_IDS
++    }
++    _use_synthetic_peers(
++        monkeypatch,
++        tmp_path,
++        peer=_synthetic_ts_peer(ordered, constants=constants),
++        generated=_synthetic_generated_ts(dpts.ACTIVE_DP_IDS),
++    )
++    _universal, by_dp = _ts_required_fields()
++    assert by_dp == expected
++    test_ts_required_rows_follow_the_registry_stage()
++
++
++@pytest.mark.parametrize(
++    ("rows", "constants", "message"),
++    [
++        pytest.param(
++            '\t"dp-w-type": ["task_goal"],\n\t"dp-w-type": ["task_goal"],\n',
++            'export const DP1_ID = "dp1-dispatch-type";\n',
++            "duplicate id in REQUIRED_FIELDS_BY_DP",
++            id="duplicate-key",
++        ),
++        pytest.param(
++            '\tdp-w-type: ["task_goal"],\n',
++            'export const DP1_ID = "dp1-dispatch-type";\n',
++            "unparsed REQUIRED_FIELDS_BY_DP key",
++            id="unquoted-key",
++        ),
++        pytest.param(
++            '\t"dp-w-type": ["task_goal", 42],\n',
++            'export const DP1_ID = "dp1-dispatch-type";\n',
++            "must be double-quoted strings",
++            id="non-string-field",
++        ),
++        pytest.param(
++            '\t"dp-w-type": [""],\n',
++            'export const DP1_ID = "dp1-dispatch-type";\n',
++            "empty required-field name",
++            id="empty-field",
++        ),
++        pytest.param(
++            '\t[UNKNOWN_ID]: ["task_goal"],\n',
++            'export const DP1_ID = "dp1-dispatch-type";\n',
++            "names no declared string constant",
++            id="unknown-constant",
++        ),
++        pytest.param(
++            "",
++            'export const DP1_ID = "dp1-dispatch-type";\n',
++            "no row",
++            id="empty-matrix",
++        ),
++        pytest.param(
++            '\t"dp-w-type": ["task_goal"\n',
++            'export const DP1_ID = "dp1-dispatch-type";\n',
++            "unterminated required-field list",
++            id="unterminated-row",
++        ),
++    ],
++)
++def test_ts_required_parser_refuses_malformed_required_field_tables(
++    monkeypatch: pytest.MonkeyPatch,
++    tmp_path: pathlib.Path,
++    rows: str,
++    constants: str,
++    message: str,
++) -> None:
++    _use_synthetic_peers(
++        monkeypatch,
++        tmp_path,
++        peer=_synthetic_ts_peer(rows, constants=constants),
++        generated=_synthetic_generated_ts(dpts.ACTIVE_DP_IDS),
++    )
++    with pytest.raises(AssertionError, match=message):
++        _ts_required_fields()
++
++
++def test_ts_required_parser_refuses_a_truncated_table(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
++) -> None:
++    peer = _synthetic_ts_peer(_ts_rows(LEGACY_TS_ROWS)).replace("\n};", "")
++    _use_synthetic_peers(
++        monkeypatch,
++        tmp_path,
++        peer=peer,
++        generated=_synthetic_generated_ts(dpts.ACTIVE_DP_IDS),
++    )
++    with pytest.raises(AssertionError, match="truncated"):
++        _ts_required_fields()
++
++
++def test_ts_required_stage_refuses_unknown_ids_in_the_matrix(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
++) -> None:
++    _use_synthetic_peers(
++        monkeypatch,
++        tmp_path,
++        peer=_synthetic_ts_peer(_ts_rows({"dp99-unknown": ["task_goal"]})),
++        generated=_synthetic_generated_ts(tuple(dpts.RETIRED_DP_IDS)),
++    )
++    with pytest.raises(AssertionError, match="unknown ids in REQUIRED_FIELDS_BY_DP"):
++        test_ts_required_rows_follow_the_registry_stage()
++
++
++def test_ts_required_stage_still_refuses_active_rows_before_t04(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
++) -> None:
++    rows = dict(LEGACY_TS_ROWS)
++    rows["dp-w-type"] = list(dpts.REQUIRED_STATE_FIELDS["dp-w-type"])
++    _use_synthetic_peers(
++        monkeypatch,
++        tmp_path,
++        peer=_synthetic_ts_peer(_ts_rows(rows)),
++        generated=_synthetic_generated_ts(tuple(dpts.RETIRED_DP_IDS)),
++    )
++    with pytest.raises(AssertionError, match="grew a legacy TS row before T04"):
++        test_ts_required_rows_follow_the_registry_stage()
++
++
++def test_generated_ts_stage_refuses_mixed_and_duplicate_entry_ids(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
++) -> None:
++    module = sys.modules[__name__]
++    mixed = tmp_path / "mixed.synthetic.ts"
++    mixed.write_text(
++        _synthetic_generated_ts((*dpts.ACTIVE_DP_IDS, "dp4-failure-handling")),
++        encoding="utf-8",
++    )
++    monkeypatch.setattr(module, "GENERATED_TS", mixed)
++    with pytest.raises(AssertionError, match="neither the frozen pre-T03 artifact"):
++        _generated_ts_stage()
++
++    duplicate = tmp_path / "duplicate.synthetic.ts"
++    duplicate.write_text(
++        _synthetic_generated_ts((*dpts.ACTIVE_DP_IDS, dpts.ACTIVE_DP_IDS[0])),
++        encoding="utf-8",
++    )
++    monkeypatch.setattr(module, "GENERATED_TS", duplicate)
++    with pytest.raises(AssertionError, match="duplicate entry ids"):
++        _generated_ts_stage()
+ 
+ 
+ def test_generated_ts_registry_is_the_frozen_legacy_or_the_t04_projection() -> None:

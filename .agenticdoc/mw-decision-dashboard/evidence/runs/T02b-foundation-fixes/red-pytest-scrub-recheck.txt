@@ -1,0 +1,198 @@
+﻿..FFFFFFFF                                                               [100%]
+================================== FAILURES ===================================
+______ test_long_secret_prefix_split_at_the_segment_boundary_is_scrubbed ______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18151/test_long_secret_prefix_split_0')
+
+    def test_long_secret_prefix_split_at_the_segment_boundary_is_scrubbed(tmp_path):
+        # 90 chars of a 130 char secret cross the segment cap: the reported defect
+        # only inspects the last 64 chars, so this leftover used to be persisted.
+        scope = wire.WireScope(
+            sink=tmp_path / "wire.jsonl",
+            project_id="p",
+            redact=wire.SubstringRedactor([LONG_SECRET]),
+            segment_cap=200,
+        )
+        raw = b"a" * (200 - 90) + LONG_SECRET_B[:90] + b"zzzz"
+        cap = scope.capture(raw)
+        stored = cap.text.encode(cap.encoding)
+        assert cap.truncated is True
+>       assert cap.boundary_scrubbed is True
+E       AssertionError: assert False is True
+E        +  where False = Capture(text='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...87', redactions=0, truncated=True, read_capped=False, boundary_scrubbed=False, decode_errors=False, text_omitted=False).boundary_scrubbed
+
+test_decision_wire_store.py:953: AssertionError
+_______ test_long_secret_prefix_split_at_the_read_boundary_is_scrubbed ________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18151/test_long_secret_prefix_split_1')
+
+    def test_long_secret_prefix_split_at_the_read_boundary_is_scrubbed(tmp_path):
+        # read_window=0 makes the read cap identical to the segment cap, so the
+        # leftover at the read boundary is exactly what reaches storage.
+        scope = wire.WireScope(
+            sink=tmp_path / "wire.jsonl",
+            project_id="p",
+            redact=wire.SubstringRedactor([LONG_SECRET]),
+            segment_cap=200,
+            read_window=0,
+        )
+        raw = b"a" * 110 + LONG_SECRET_B[:90] + b"q" * 500
+        cap = scope.capture(raw)
+        assert cap.read_capped is True
+>       assert cap.boundary_scrubbed is True
+E       AssertionError: assert False is True
+E        +  where False = Capture(text='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...87', redactions=0, truncated=False, read_capped=True, boundary_scrubbed=False, decode_errors=False, text_omitted=False).boundary_scrubbed
+
+test_decision_wire_store.py:972: AssertionError
+___ test_longer_than_read_window_secret_prefix_is_scrubbed_at_default_caps ____
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18151/test_longer_than_read_window_s0')
+
+    def test_longer_than_read_window_secret_prefix_is_scrubbed_at_default_caps(tmp_path):
+        # At the default caps (24 KiB segment + 4 KiB read window) a leftover prefix
+        # is only reachable when it is longer than the read window. The fixed 64
+        # char window is wrong for any length; this pins the generic boundary check.
+        big_secret = "sk-" + "".join(f"{i:04d}" for i in range(1100))  # 4404 chars
+        assert len(big_secret) > wire.READ_WINDOW_BYTES + 64
+        scope = wire.WireScope(
+            sink=tmp_path / "wire.jsonl",
+            project_id="p",
+            redact=wire.SubstringRedactor([big_secret]),
+        )
+        head_cap = scope.segment_cap + scope.read_window
+        # 4300 leftover chars, 4096 of them inside the read window: 204 secret chars
+        # survive the segment trim, i.e. more than the 64 char window can detect.
+        leftover = 4300
+        raw = b"a" * (head_cap - leftover) + big_secret.encode()[:leftover] + b"q" * 1000
+        cap = scope.capture(raw)
+        assert cap.read_capped is True
+>       assert cap.boundary_scrubbed is True
+E       AssertionError: assert False is True
+E        +  where False = Capture(text='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...179', redactions=0, truncated=True, read_capped=True, boundary_scrubbed=False, decode_errors=False, text_omitted=False).boundary_scrubbed
+
+test_decision_wire_store.py:995: AssertionError
+_________ test_long_secret_prefix_split_by_the_utf8_trim_is_scrubbed __________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18151/test_long_secret_prefix_split_2')
+
+    def test_long_secret_prefix_split_by_the_utf8_trim_is_scrubbed(tmp_path):
+        # The read window is small, so the segment trim itself cuts inside the
+        # secret and leaves 80 chars at the stored tail (> the old 64 char window).
+        scope = wire.WireScope(
+            sink=tmp_path / "wire.jsonl",
+            project_id="p",
+            redact=wire.SubstringRedactor([LONG_SECRET]),
+            segment_cap=100,
+            read_window=5,
+        )
+        filler = ("中" * 6).encode() + b"ab"  # valid UTF-8, 20 bytes
+        raw = filler + LONG_SECRET_B[:85] + b"q" * 200
+        cap = scope.capture(raw)
+        assert cap.encoding == "utf-8"
+        assert cap.read_capped is True
+>       assert cap.boundary_scrubbed is True
+E       AssertionError: assert False is True
+E        +  where False = Capture(text='中中中中中中absk-live-4f9c2b7e-Authorization-Bearer-0123456789abcdefghijklmnopqrstuvwxyzQWERTY', encoding='utf...a79', redactions=0, truncated=True, read_capped=True, boundary_scrubbed=False, decode_errors=False, text_omitted=False).boundary_scrubbed
+
+test_decision_wire_store.py:1015: AssertionError
+______ test_long_secret_prefix_split_at_the_latin1_boundary_is_scrubbed _______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18151/test_long_secret_prefix_split_3')
+
+    def test_long_secret_prefix_split_at_the_latin1_boundary_is_scrubbed(tmp_path):
+        scope = wire.WireScope(
+            sink=tmp_path / "wire.jsonl",
+            project_id="p",
+            redact=wire.SubstringRedactor([LONG_SECRET]),
+            segment_cap=200,
+            read_window=0,
+        )
+        raw = b"\xff\xfe" + b"a" * 108 + LONG_SECRET_B[:90]
+        cap = scope.capture(raw)
+        assert cap.encoding == "latin-1"
+        assert cap.decode_errors is True
+>       assert cap.boundary_scrubbed is True
+E       AssertionError: assert False is True
+E        +  where False = Capture(text='\xff\xfeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...83', redactions=0, truncated=False, read_capped=False, boundary_scrubbed=False, decode_errors=True, text_omitted=False).boundary_scrubbed
+
+test_decision_wire_store.py:1033: AssertionError
+_____ test_long_secret_prefix_split_by_the_serialized_shrink_is_scrubbed ______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18151/test_long_secret_prefix_split_4')
+
+    def test_long_secret_prefix_split_by_the_serialized_shrink_is_scrubbed(tmp_path):
+        # 75% of 920 chars lands 90 chars into the secret, i.e. deeper than 64.
+        scope = wire.WireScope(
+            sink=tmp_path / "wire.jsonl",
+            project_id="p",
+            redact=wire.SubstringRedactor([LONG_SECRET]),
+            segment_cap=24576,
+            line_cap=1200,
+        )
+        payload = b"a" * 600 + LONG_SECRET_B[:100] + b"b" * 220
+        event = wire.build_event(scope, "book-snapshot", fields={"book": scope.capture(payload)})
+        line, fitted = wire.serialize_event(scope, event)
+        assert len(line) <= 1200
+        book = fitted["book"]
+        assert isinstance(book, dict)
+>       assert book["boundary_scrubbed"] is True
+E       assert False is True
+
+test_decision_wire_store.py:1054: AssertionError
+_____________ test_persisted_line_never_holds_a_long_secret_piece _____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18151/test_persisted_line_never_hold0')
+
+    def test_persisted_line_never_holds_a_long_secret_piece(tmp_path):
+        # End to end: the written line (not only the row) must be clean.
+        scope = wire.WireScope(
+            sink=tmp_path / "wire.jsonl",
+            project_id="p",
+            redact=wire.SubstringRedactor([LONG_SECRET]),
+            segment_cap=200,
+            read_window=0,
+        )
+        payload = b"a" * 110 + LONG_SECRET_B[:90] + b"q" * 500
+        result = wire.record_attempt_start(
+            scope, wire.new_call(), request=payload, url_path="/v1/decisions"
+        )
+        assert result.status == "written"
+        data = scope.sink.read_bytes()
+        for size in range(4, len(LONG_SECRET)):
+>           assert LONG_SECRET.encode()[:size] not in data, f"persisted {size} secret chars"
+E           AssertionError: persisted 4 secret chars
+E           assert b'sk-l' not in b'{"schema_version":1,"event_id":"85407c696596485e85678b05e5491774","ts":"2026-10-22T04:29:00.857+00:00","kind":"attem...":false,"read_capped":true,"boundary_scrubbed":false,"decode_errors":false,"text_omitted":false,"byte_exact":false}}\n'
+
+test_decision_wire_store.py:1077: AssertionError
+______ test_one_to_three_character_boundary_tail_is_scrubbed_and_marked _______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18151/test_one_to_three_character_bo0')
+
+    def test_one_to_three_character_boundary_tail_is_scrubbed_and_marked(tmp_path):
+        for size in (1, 2, 3):
+            scope = wire.WireScope(
+                sink=tmp_path / f"wire-{size}.jsonl",
+                project_id="p",
+                redact=wire.SubstringRedactor([SECRET]),
+                segment_cap=64,
+            )
+            raw = b"a" * (64 - size) + SECRET_B[:size]
+            cap = scope.capture(raw)
+            stored = cap.text.encode(cap.encoding)
+>           assert not stored.endswith(SECRET_B[:size]), f"{size} char tail was kept"
+E           AssertionError: 1 char tail was kept
+E           assert not True
+E            +  where True = <built-in method endswith of bytes object at 0x000001F93CAE8960>(b'T')
+E            +    where <built-in method endswith of bytes object at 0x000001F93CAE8960> = b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaT'.endswith
+
+test_decision_wire_store.py:1091: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_wire_store.py::test_long_secret_prefix_split_at_the_segment_boundary_is_scrubbed
+FAILED test_decision_wire_store.py::test_long_secret_prefix_split_at_the_read_boundary_is_scrubbed
+FAILED test_decision_wire_store.py::test_longer_than_read_window_secret_prefix_is_scrubbed_at_default_caps
+FAILED test_decision_wire_store.py::test_long_secret_prefix_split_by_the_utf8_trim_is_scrubbed
+FAILED test_decision_wire_store.py::test_long_secret_prefix_split_at_the_latin1_boundary_is_scrubbed
+FAILED test_decision_wire_store.py::test_long_secret_prefix_split_by_the_serialized_shrink_is_scrubbed
+FAILED test_decision_wire_store.py::test_persisted_line_never_holds_a_long_secret_piece
+FAILED test_decision_wire_store.py::test_one_to_three_character_boundary_tail_is_scrubbed_and_marked
+8 failed, 2 passed, 68 deselected in 0.25s

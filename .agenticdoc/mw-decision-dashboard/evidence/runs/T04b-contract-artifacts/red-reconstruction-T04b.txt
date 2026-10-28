@@ -1,0 +1,27 @@
+$ python ../../.agenticdoc/mw-decision-dashboard/evidence/runs/T04b-contract-artifacts/red-reconstruction.py
+$ cwd=packages/multi-workers
+$ exit=0
+
+old_probe_table_entries=20 dps_with_gap=21/21
+  dp4-failure-handling: dp4-failure-handling: no probe value for required state path 'failure.kind'
+  dp5-test-triage: dp5-test-triage: no probe value for required state path 'test.failed_cases'
+  dp6-qg-verdict: dp6-qg-verdict: no probe value for required state path 'qg.checks_total'
+  dp7-gate-failure: dp7-gate-failure: no probe value for required state path 'gate.name'
+  dp8-scope-change: dp8-scope-change: no probe value for required state path 'scope.requested_paths'
+  dp9-model-select: dp9-model-select: no probe value for required state path 'model.requested'
+  dp10-dependency: dp10-dependency: no probe value for required state path 'dependency.name'
+  dp11-credential: dp11-credential: no probe value for required state path 'credential.provider'
+  dp12-destructive: dp12-destructive: no probe value for required state path 'action.command'
+  dp13-commit-release: dp13-commit-release: no probe value for required state path 'release.version_current'
+  dp14-rule-conflict: dp14-rule-conflict: no probe value for required state path 'conflict.user_instruction'
+  dp15-autopilot-gate: dp15-autopilot-gate: no probe value for required state path 'gate.kind'
+  dp16-goal: dp16-goal: no probe value for required state path 'goal.current_digest'
+  dp17-spec-lock: dp17-spec-lock: no probe value for required state path 'spec.ac_ids'
+  dp18-claim: dp18-claim: no probe value for required state path 'claim.key'
+  dp19-foreign-write: dp19-foreign-write: no probe value for required state path 'write.target_path'
+  dp20-stage-close: dp20-stage-close: no probe value for required state path 'stage.id'
+  dp21-refine: dp21-refine: no probe value for required state path 'refine.clause'
+  dp22-debug-plan: dp22-debug-plan: no probe value for required state path 'debug.signal'
+  dp23-snapshot: dp23-snapshot: no probe value for required state path 'snapshot.size_bytes'
+  dp24-pi-trust: dp24-pi-trust: no probe value for required state path 'project.path'
+pre-T04b template == scaffold_book(dp6): NO (RED)

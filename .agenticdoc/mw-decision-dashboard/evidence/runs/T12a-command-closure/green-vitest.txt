@@ -1,0 +1,25 @@
+### argv: node ../../node_modules/vitest/dist/cli.js --run test/suite/decision-dashboard-command.test.ts
+### cwd: /h/git/Multi-Workers/packages/coding-agent
+### iso_home: /tmp/tmp.wxM7DdXfws  HOME=/tmp/tmp.wxM7DdXfws/home USERPROFILE=C:\Users\WENBOZ~1\AppData\Local\Temp\tmp.wxM7DdXfws\home PI_CODING_AGENT_DIR=C:\Users\WENBOZ~1\AppData\Local\Temp\tmp.wxM7DdXfws\agent
+### unset: MW_PY TIMI_API_KEY TAI_PAT_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY
+### node: v24.19.0  python: Python 3.14.3
+### env_masked: TIMI_API_KEY=<unset> TAI_PAT_TOKEN=<unset>
+
+ RUN  v4.1.9 H:/git/Multi-Workers/packages/coding-agent
+
+[VERIFY] T12a parse-readonly: list=["dp","list"] show=["dp","show","dp3-worker-clarify"] export=["dp","export"]
+[VERIFY] T12a parse-refused: cases=20 sign_kept=true show_kept=true
+[VERIFY] T12a refusal-spawns: cases=6 runner_calls=0 auth_writes=0
+[VERIFY] T12a no-key: dp_list_argv=[dp,list] dp_export_argv=[dp,export] key_required=false
+[VERIFY] T12a monitor: argv=[monitor] calls=1 state_files=0 browser_launched=false
+[VERIFY] T12a real-dp-list: window_rows=25 cli_ids=25 equal=true unknown_sub=0 provider_turns=0
+·······[VERIFY] T12a real-show/export: show_dp=dp1-dispatch-type export_points=25 registry_sha256=7d075e01ff5f registry_unchanged=true points_table_written=false provider_turns=0
+·[VERIFY] T12a usage: usage_documents_dp=true usage_documents_monitor=true legacy_sign_kept=true
+··
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Start at  18:42:56
+   Duration  5.66s (transform 2.30s, setup 0ms, import 3.28s, tests 2.26s, environment 0ms)
+
+### test_file_sha256=d72f4014b01b7302918f28a8a1e4575e9fcd4c67b03caff3a90180dc6bf0b0e0

@@ -30,12 +30,14 @@ import {
 	ASK_DECISION_DP_IDS,
 	ASK_DECISION_ENFORCED_STATE_DP_IDS,
 	ASK_DECISION_GUESS_DIRECTIVE,
+	ASK_DECISION_MATERIAL_DP_IDS,
 	ASK_DECISION_MAX_BLOCKED_PER_TURN,
 	ASK_DECISION_MAX_STATE_BYTES,
 	ASK_DECISION_TOOL,
 	type AskDecisionPayload,
 	buildDecideArgv,
 	buildDecisionState,
+	DECISION_RECEIPT_TOOL,
 	type DecideRunner,
 	type DecideRunRequest,
 	missingDecisionStateFields,
@@ -44,10 +46,17 @@ import {
 	registerAskDecisionTool,
 	runAskDecision,
 	runDecideMw,
+	type SignRequest,
+	type SignRunner,
 	spawnWithTimeout,
 } from "../../src/extensions/agent-team-loop/pm/decision-tool.ts";
+import { DECIDE_REGISTRY } from "../../src/extensions/agent-team-loop/shared/decide-registry.generated.ts";
 
 // ── temp isolated projects ──────────────────────────────────────────────────
+
+function registryFields(dp: string): string[] {
+	return [...(DECIDE_REGISTRY[dp]?.requiredStateFields ?? [])].map((field) => field.name);
+}
 
 const tempDirs: string[] = [];
 
@@ -347,11 +356,11 @@ describe("ask_decision structured state", () => {
 			task_key: "ds-t05-ask-tool",
 			task_summary: "stuck",
 		});
-		// The gated dp reports its own block (names only) — the dp-specific table
-		// is triage-client's `REQUIRED_FIELDS_BY_DP`, never a local copy.
+		// The four business dps report the GENERATED REGISTRY's required paths (the
+		// legacy structured-state table no longer describes them).
 		expect(
 			missingDecisionStateFields("dp3-worker-clarify", buildDecisionState({ dp: "dp3-worker-clarify" })),
-		).toEqual(expect.arrayContaining(["task_summary", "ambiguity.kind", "ambiguity.question"]));
+		).toEqual([...(DECIDE_REGISTRY["dp3-worker-clarify"]?.requiredStateFields ?? [])].map((field) => field.name));
 		// Ungated dp: the registry requires nothing beyond
 		// schema_version/decision_point/questions_version.
 		expect(missingDecisionStateFields(TEST_DP, buildDecisionState({ dp: TEST_DP }))).toEqual([]);
@@ -365,52 +374,12 @@ describe("ask_decision structured state", () => {
 	it("refuses dp1/dp2/dp3 with exactly the registry's missing field names and zero spawn", async () => {
 		const projectDir = makeTempDir("mw-ask-state-");
 		const { calls, runner } = fakeRunner({ status: 0, stdout: okStdout(), stderr: "", timedOut: false });
-		// Expected lists are `decision_points._missing_required(build_state(...))`
-		// as a set (probed against the registry; `note` supplies task_summary);
-		// the order follows triage-client (universal block, then the dp block).
+		// Expected lists are the generated registry's required paths per dp (the
+		// same table Python's step 5 enforces), in registry order.
 		const cases: Array<{ dp: string; fields: string[] }> = [
-			{
-				dp: "dp1-dispatch-type",
-				fields: [
-					"phase",
-					"task_type",
-					"risk",
-					"risk_source",
-					"authority_tier",
-					"requested_type",
-					"scope.write_scope",
-					"scope.file_extensions",
-				],
-			},
-			{
-				dp: "dp2-checkpoint-split",
-				fields: [
-					"phase",
-					"task_type",
-					"risk",
-					"risk_source",
-					"authority_tier",
-					"progress.elapsed_minutes",
-					"progress.budget_minutes",
-					"progress.phases_done",
-					"progress.phases_total",
-					"progress.artifact_present",
-				],
-			},
-			{
-				dp: "dp3-worker-clarify",
-				fields: [
-					"phase",
-					"task_type",
-					"risk",
-					"risk_source",
-					"authority_tier",
-					"ambiguity.kind",
-					"ambiguity.question",
-					// W4 made `local_candidates` a required dp3 field (Python registry).
-					"local_candidates",
-				],
-			},
+			{ dp: "dp1-dispatch-type", fields: registryFields("dp1-dispatch-type") },
+			{ dp: "dp2-checkpoint-split", fields: registryFields("dp2-checkpoint-split") },
+			{ dp: "dp3-worker-clarify", fields: registryFields("dp3-worker-clarify") },
 		];
 
 		for (const { dp, fields } of cases) {
@@ -420,6 +389,12 @@ describe("ask_decision structured state", () => {
 				trigger: "ds-t05-ask-tool",
 				note: "stuck on a failing test",
 				taskKey: "ds-t05-ask-tool",
+				// dp2 is PM-only (structural role gate); the others accept a worker role.
+				initiatorRole: dp === "dp2-checkpoint-split" ? "pm" : "coding",
+				key: "mw-decision-tool",
+				// A material dp is refused with the registry's field names; dp1 keeps the
+				// legacy state envelope, whose registry projection lists the same paths.
+				material: dp === "dp1-dispatch-type" ? undefined : {},
 				runner,
 			});
 			// A state `decide_for` step 5 must refuse is never sent (MAJOR-2).
@@ -429,6 +404,97 @@ describe("ask_decision structured state", () => {
 			expect(payload.missing_fields, dp).toEqual(fields);
 		}
 		expect(calls).toHaveLength(0);
+	});
+});
+
+// ── 3. unavailable ──────────────────────────────────────────────────────────
+
+describe("ask_decision material budget: the CLI is the only authority", () => {
+	const longQuestion = `dp3 预算比对：${"问".repeat(900)}`;
+
+	it("does not pre-refuse a >2000B material before the child runs", async () => {
+		const projectDir = makeTempDir("mw-ask-budget-material-");
+		const { calls, runner } = fakeRunner({
+			status: 0,
+			stdout: unavailableStdout("budget-exhausted", "input-oversize"),
+			stderr: "",
+			timedOut: false,
+		});
+
+		const outcome = await runAskDecision({
+			projectDir,
+			dp: "dp3-worker-clarify",
+			trigger: "ds-t05-ask-tool#budget",
+			initiatorRole: "coding",
+			key: "mw-decision-tool",
+			material: {
+				question: longQuestion,
+				background: {
+					task_goal: "goal",
+					current_state: "state",
+					decision_reason: "reason",
+					constraints_impact: "impact",
+				},
+				handling_options: [
+					{ id: "c1", label: "continue", description: "keep going" },
+					{ id: "c2", label: "ask", description: "hand the question back" },
+				],
+			},
+			runner,
+		});
+
+		// The child really ran: the 2000B legacy constant never gated material.
+		expect(calls).toHaveLength(1);
+		expect(outcome.spawned).toBe(true);
+		const payload = expectUnavailableText(outcome.text, "budget-exhausted");
+		if (payload.available) throw new Error("unreachable");
+		expect(payload.escalated_reason).toBe("input-oversize");
+	});
+
+	it("maps the dp25 sign CLI's own input-oversize refusal instead of a bare upstream-error", async () => {
+		const projectDir = makeTempDir("mw-ask-budget-sign-");
+		const calls: SignRequest[] = [];
+		const signRunner: SignRunner = async (request) => {
+			calls.push(request);
+			return {
+				status: 2,
+				stdout: JSON.stringify({
+					dp: "dp25-signoff-conclusion",
+					logical_id: "6d0a0d3a-9f83-4f4f-a1d7-159c50d5a3f1",
+					conclusion: null,
+					signoff_status: "failed",
+					second_approval: 0,
+					problems: [
+						"dp25 did not produce a conclusion (input-oversize)",
+						"dp25-signoff-conclusion:x: state is 9618B > 8192B",
+					],
+				}),
+				stderr: "",
+				timedOut: false,
+			};
+		};
+
+		const outcome = await runAskDecision({
+			projectDir,
+			dp: "dp25-signoff-conclusion",
+			trigger: "mw-decision-tool",
+			initiatorRole: "pm",
+			key: "mw-decision-tool",
+			material: {
+				delivery_goal: "goal",
+				actual_completion: "completion",
+				verification_evidence: { verified: [], unverified: [] },
+				unfinished_impact: [`${longQuestion}${"y".repeat(1200)}`],
+			},
+			signRunner,
+		});
+
+		// The sign child ran and its own refusal vocabulary is reported.
+		expect(calls).toHaveLength(1);
+		expect(outcome.spawned).toBe(true);
+		const payload = expectUnavailableText(outcome.text, "input-oversize");
+		if (payload.available) throw new Error("unreachable");
+		expect(payload.escalated_reason).toBe("input-oversize");
 	});
 });
 
@@ -692,9 +758,12 @@ describe("ask_decision anti-retry breaker", () => {
 
 		capture.active = ["read", "bash", "worker_file"];
 		capture.fire("before_agent_start");
-		expect(capture.active).toEqual(["read", "bash", "worker_file", ASK_DECISION_TOOL]);
+		// BOTH shared decision tools are appended: the ask entry and its receipt op.
+		expect(capture.active).toEqual(["read", "bash", "worker_file", ASK_DECISION_TOOL, DECISION_RECEIPT_TOOL]);
 		capture.fire("before_agent_start");
-		expect(capture.active.filter((name) => name === ASK_DECISION_TOOL)).toHaveLength(1);
+		expect(
+			capture.active.filter((name) => name === ASK_DECISION_TOOL || name === DECISION_RECEIPT_TOOL),
+		).toHaveLength(2);
 	});
 });
 
@@ -711,8 +780,9 @@ describe("ask_decision registry parity", () => {
 	});
 
 	it("pins the client-side required-field dp set to decision_points.REQUIRED_STATE_FIELDS", () => {
-		// Only these dps are pre-refused on a missing field; the field names come
-		// from triage-client, the id set from the Python mapping.
+		// The four business dps are pre-refused from the GENERATED REGISTRY (one
+		// authority); every other dp keeps the legacy structured-input table. The
+		// TS constants are pinned to the Python mapping below (ids and fields).
 		const start = registrySource.indexOf("REQUIRED_STATE_FIELDS: Mapping");
 		const end = registrySource.indexOf("OPTIONAL_STATE_PATHS", start);
 		expect(start).toBeGreaterThan(-1);
@@ -720,7 +790,16 @@ describe("ask_decision registry parity", () => {
 		const block = registrySource.slice(start, end);
 		const ids = [...block.matchAll(/^\s+"([a-z0-9-]+)": \($/gm)].map(([, id]) => id);
 		expect(ids.length).toBeGreaterThan(0);
-		expect([...ASK_DECISION_ENFORCED_STATE_DP_IDS].sort()).toEqual([...ids].sort());
+		// The TS constant names the four business dps whose required fields are now
+		// read from the GENERATED REGISTRY; each id must exist in the Python table
+		// (a stale/renamed id would fail here).
+		const material = new Set<string>(ASK_DECISION_MATERIAL_DP_IDS);
+		material.add("dp1-dispatch-type");
+		expect([...ASK_DECISION_ENFORCED_STATE_DP_IDS].sort()).toEqual([...material].sort());
+		for (const id of ASK_DECISION_ENFORCED_STATE_DP_IDS) {
+			expect(ids, id).toContain(id);
+			expect(DECIDE_REGISTRY[id]?.requiredStateFields.length, id).toBeGreaterThan(0);
+		}
 	});
 
 	it("builds a decide-run argv that carries the state via --request-file only", () => {

@@ -1,0 +1,9 @@
+﻿flagged fields: ['dp25-signoff-conclusion/p0_open']
+p0_open export: {"description": "Enabled P0 dp ids right now (string array; [] when none or the table is absent).", "empty_is_value": true, "name": "p0_open", "type": "array"}
+checked-in json == writer doc: True [] None
+generator render == checked-in ts: True
+ts unified diff (n=0):
+--- without-flag
++++ current
+@@ -707,0 +708 @@
++				emptyIsValue: true,

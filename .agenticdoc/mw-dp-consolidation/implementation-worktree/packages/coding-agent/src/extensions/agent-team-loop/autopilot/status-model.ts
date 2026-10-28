@@ -1,0 +1,1932 @@
+/**
+ * status-model.ts — the /autopilot console's stateless view model
+ * (goal-autopilot T-15, design D-005/D-109/D-110, AC-015/AC-018).
+ *
+ * Everything here is DERIVED FROM FILES on every call — the console keeps no
+ * process state (D-005: 断点重开 = 正常重开). One derivation feeds both the
+ * human-readable view and `--json` (view parity, VC-017).
+ *
+ * File-family schemas are owned by the Python side; this module mirrors the
+ * read-side rules it needs:
+ *   - _roadmap.md                      → autopilot/roadmap.py (D-105 section
+ *     schema; lenient view-side parse — malformed pieces become warnings,
+ *     while the conductor is the one that hard-fails and skips its tick)
+ *   - gates/gate-{seq:04d}.md          → autopilot/gates.py (12-field
+ *     frontmatter YAML subset, status enum, seq-ordered directory scan)
+ *   - timeline.jsonl + .1/.2 rotations → autopilot/timeline.py (query_events
+ *     watermark / ev_filter / pruned semantics, D-109)
+ *   - _autopilot/config.json           → autopilot/config.py (14 fields,
+ *     D-110; present-but-invalid fails closed, missing file = defaults)
+ *   - rounds derivation                → autopilot/state.py used_rounds
+ *     (distinct attempt per loop label; a missing attempt label degrades to
+ *     directory-identity counting — VC-020 locks both implementations to
+ *     the same result over the same task dirs)
+ *   - key phase                        → _index.parallel via shared/index-store.ts
+ *
+ * Loop families per key (design §4.1 round table): `l2:{key}:{edge}` → l2,
+ * `l3:{key}` → l3, `exec:{key}:{stem}` and `repair:{key}` → retry. A
+ * family's `used` is its most-consumed loop — budgets are enforced per loop
+ * (AC-008/AC-011), so the maximum is the binding constraint; a key that
+ * spent one round on each of several edges is NOT exhausted. `max` is
+ * config round_budget for all three families (single source, AC-011).
+ */
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { IndexStore } from "../shared/index-store.ts";
+import { extractTaskHeader } from "../shared/task-frontmatter.ts";
+
+// ── Autopilot file-family paths (explicit, derived from projectDir) ─────────
+
+export function autopilotDir(projectDir: string): string {
+	return path.join(projectDir, ".agenticdoc", "_autopilot");
+}
+
+export function roadmapPath(projectDir: string): string {
+	return path.join(autopilotDir(projectDir), "_roadmap.md");
+}
+
+export function gatesDir(projectDir: string): string {
+	return path.join(autopilotDir(projectDir), "gates");
+}
+
+export function timelinePath(projectDir: string): string {
+	return path.join(autopilotDir(projectDir), "timeline.jsonl");
+}
+
+export function configPath(projectDir: string): string {
+	return path.join(autopilotDir(projectDir), "config.json");
+}
+
+/** `.mw/gates.lock` — the O_CREAT|O_EXCL gate answer lock (D-105). */
+export function gatesLockPath(projectDir: string): string {
+	return path.join(projectDir, ".mw", "gates.lock");
+}
+
+/** `.mw/autopilot-config.lock` — the O_CREAT|O_EXCL lock guarding the
+ * config.json read-modify-write (mw-autopilot-verify-cli D-006). Same path
+ * family and protocol as the other `.mw/` locks; the Python writer takes the
+ * byte-identical path (plan §2.2), so the two sides are mutually exclusive. */
+export function configLockPath(projectDir: string): string {
+	return path.join(projectDir, ".mw", "autopilot-config.lock");
+}
+
+// ── config.json (mirror of autopilot/config.py, D-110) ──────────────────────
+
+export interface AutopilotConfig {
+	enabled: boolean;
+	paused: boolean;
+	poll_interval_sec: number;
+	/** Key-layer concurrency UPPER BOUND (D-101): the effective concurrency is
+	 * min(this, dependency frontier). Floor 1 is the kill switch. */
+	max_parallel_keys: number;
+	/** Per-key concurrency UPPER BOUND (D-102): how many workers one key may
+	 * run at once. Floor 1 = one worker per key at a time. */
+	max_workers_per_key: number;
+	round_budget: number;
+	worker_timeout_min: number;
+	l2_read_file_cap: number;
+	l2_read_byte_cap: number;
+	/** Consecutive same-edge advance failures before the key is marked
+	 * stalled (mw-autopilot-stall-feedback AC-003). Optional in the file —
+	 * absent falls back to the default. */
+	advance_stall_ticks: number;
+	/** Cross-key red repair channel (xkey-repair-mechanism AC-008). Off by
+	 * default so every existing flow is untouched until a project opts in. */
+	xkey_repair: boolean;
+	/** Per-project verification argv — no shell, so a list is the contract
+	 * (D-007). */
+	xkey_verify_cmd: string[];
+	/** Conductor verification-subprocess timeout in seconds (>= 1). */
+	xkey_verify_timeout_s: number;
+	/** Workspace-root selector for xkey verification (conductor-resolved).
+	 * "" = auto (workspace_root). The schema only requires a string; the
+	 * root-name validity is resolved at parse time (plan §2.2). */
+	xkey_verify_cwd: string;
+	/** Automatic gate-decision kill switch (mw-autopilot-slot-capacity AC-018,
+	 * D-010): closed set off|shadow|live, default "off" leaves every existing
+	 * flow untouched. Project layer only — deliberately NOT in the Python
+	 * effective_config EFFECTIVE_KEYS, so a machine-layer entry cannot
+	 * silently turn automation on. Any other value fails closed. */
+	auto_gate_mode: string;
+	/** Launcher concurrency cap (T-18/D-027, AC-021): 1..64, default 8. Bounded
+	 * by default — an absent value (and an explicit `None` on the Python side)
+	 * must never mean "unbounded"; IN-3 spawned 66 workers at once that way. */
+	launcher_max_workers: number;
+	/** Max NEW queue rows one dispatch scan may add (T-17/D-026, AC-021). A
+	 * quota of rows, not of tasks; the rest of the scan is refused + alarmed. */
+	dispatch_max_per_scan: number;
+	/** Doctor `queue-burst-shape` threshold (T-18/D-027): more than this many
+	 * non-terminal rows AND > 90% of the queue non-terminal is the IN-3
+	 * fingerprint (252 rows, 0 terminal). 10..10000, default 50. */
+	queue_alarm_delta: number;
+	/** G1 dedicated `l3abort:` re-roll cap (T-02/D-003, AC-003): 0..10, default
+	 * 1. Counted on its own loop label, so it never spends the shared l3
+	 * budget. */
+	l3_abort_retry_limit: number;
+	/** G2 pending-gate reminder threshold in minutes (T-02/D-007, AC-005):
+	 * 1..1440, default 30. Capped at 24h so the active channel always fires
+	 * before `mw doctor`'s 24h/72h text. */
+	gate_reminder_after_min: number;
+	/** G2 reminders per gate (T-02/D-007, AC-005): closed 1..2, default 2. The
+	 * range max is 2 by design — a config can only lower the cap, never raise
+	 * it past AC-005's "at most 2". */
+	gate_reminder_max: number;
+}
+
+export const DEFAULT_CONFIG: AutopilotConfig = {
+	enabled: false,
+	paused: false,
+	poll_interval_sec: 4,
+	max_parallel_keys: 8,
+	max_workers_per_key: 4,
+	round_budget: 2,
+	worker_timeout_min: 30,
+	l2_read_file_cap: 8,
+	l2_read_byte_cap: 65536,
+	advance_stall_ticks: 5,
+	xkey_repair: false,
+	xkey_verify_cmd: [],
+	xkey_verify_timeout_s: 1800,
+	xkey_verify_cwd: "",
+	auto_gate_mode: "off",
+	launcher_max_workers: 8,
+	dispatch_max_per_scan: 3,
+	queue_alarm_delta: 50,
+	l3_abort_retry_limit: 1,
+	gate_reminder_after_min: 30,
+	gate_reminder_max: 2,
+};
+
+/** Fresh copy of the defaults that callers may mutate freely — mirror of
+ * config.py default_config(). `xkey_verify_cmd` is an array, so a shallow
+ * spread would hand every reader the same mutable DEFAULT_CONFIG element. */
+function freshDefaults(): AutopilotConfig {
+	return { ...DEFAULT_CONFIG, xkey_verify_cmd: [...DEFAULT_CONFIG.xkey_verify_cmd] };
+}
+
+// Mirror of the Python `_BOOL_FIELDS` registry (autopilot/config.py), including
+// the optional `envelope_fallback` escape hatch. It is deliberately NOT in
+// DEFAULT_CONFIG on either side: Python registers it in `_BOOL_FIELDS`, keeps it
+// out of the frozen 21-key schema (config.py docstring), validates it via
+// `_BOOL_FIELDS`, and reads it through `envelope_fallback_enabled`.
+export const BOOL_FIELDS = ["enabled", "paused", "xkey_repair", "envelope_fallback"] as const;
+
+/** Keys registered in a type registry but deliberately OUTSIDE the frozen
+ * 21-key DEFAULT_CONFIG — the TS mirror of Python's `ENVELOPE_FALLBACK_KEY`.
+ * Derived from the registries instead of hand-copied, so an optional key can
+ * never be registered on one side only. `validateConfigData` admits exactly
+ * these keys on top of the 21 defaults (config.py validate_config's
+ * `- {ENVELOPE_FALLBACK_KEY}` allowance), while DEFAULT_CONFIG and the merged
+ * read/write shape stay 21 keys: `saveConfig` never materializes an optional
+ * key (Python's effective view drops it too). */
+export const OPTIONAL_CONFIG_KEYS: readonly string[] = BOOL_FIELDS.filter(
+	(field) => !Object.hasOwn(DEFAULT_CONFIG, field),
+);
+
+/** field → list of non-empty strings — identical to config.py _LIST_FIELDS. */
+export const LIST_FIELDS = ["xkey_verify_cmd"] as const;
+
+/** Plain string fields — identical to config.py _STRING_FIELDS. */
+export const STR_FIELDS = ["xkey_verify_cwd"] as const;
+
+/** field → closed set of allowed strings — identical to config.py
+ * _ENUM_FIELDS. Membership is validated fail-closed like every other rule. */
+export const ENUM_FIELDS: Record<string, readonly string[]> = {
+	auto_gate_mode: ["off", "shadow", "live"],
+};
+
+/** field → [min, max|null] — identical to config.py _INT_RANGES. */
+export const INT_RANGES: Record<string, [number, number | null]> = {
+	poll_interval_sec: [1, 5],
+	max_parallel_keys: [1, null],
+	max_workers_per_key: [1, null],
+	round_budget: [1, null],
+	worker_timeout_min: [1, null],
+	l2_read_file_cap: [1, null],
+	l2_read_byte_cap: [1, null],
+	advance_stall_ticks: [1, 50],
+	xkey_verify_timeout_s: [1, null],
+	launcher_max_workers: [1, 64],
+	dispatch_max_per_scan: [1, 64],
+	queue_alarm_delta: [10, 10000],
+	l3_abort_retry_limit: [0, 10],
+	gate_reminder_after_min: [1, 1440],
+	gate_reminder_max: [1, 2],
+};
+
+/** Node >= 22 hands the reviver a third argument whose `context.source` is the
+ * ORIGINAL literal text for primitive values. That is the only way to tell
+ * `4.0` / `4.00` / `1e2` / `-0.0` apart from `4` — JSON.parse normalizes all of
+ * them to the integer number 4 (design D-007 Direction B). The lib.es5
+ * `JSON.parse` overload has no such parameter, so the reviver is narrowed here
+ * and cast once at the call site (no `any`). */
+type ConfigReviverContext = { source?: string };
+
+/** Pure JSON integer literal — exactly the forms Python's `int` accepts from
+ * `json.loads`, so the two schema owners agree on every literal. */
+const INT_LITERAL_RE = /^-?(?:0|[1-9]\d*)$/;
+
+/** Raised by configReviver so readConfig can report the field and literal
+ * instead of a generic parse error. */
+class IntegerLiteralError extends Error {
+	constructor(field: string, literal: string) {
+		super(`invalid _autopilot/config.json: ${field}: expected an integer literal, got ${literal}`);
+		this.name = "IntegerLiteralError";
+	}
+}
+
+/** JSON.parse reviver rejecting non-integer literals for the int fields. */
+function configReviver(this: unknown, key: string, value: unknown, context?: ConfigReviverContext): unknown {
+	if (typeof value !== "number" || !Number.isInteger(value)) return value;
+	if (!Object.hasOwn(INT_RANGES, key)) return value;
+	const source = context?.source;
+	if (source !== undefined && !INT_LITERAL_RE.test(source)) throw new IntegerLiteralError(key, source);
+	return value;
+}
+
+/** Validate a raw config object exactly like config.py validate_config:
+ * unknown fields and out-of-range values fail closed, naming every offender.
+ * Bool fields are checked before the int rules (JSON booleans would
+ * otherwise pass number checks). Absent fields are fine — they fall back to
+ * their defaults at read time. */
+export function validateConfigData(data: unknown): string[] {
+	if (typeof data !== "object" || data === null || Array.isArray(data)) {
+		return ["config root must be a JSON object"];
+	}
+	const cfg = data as Record<string, unknown>;
+	const errors: string[] = [];
+	const known = new Set<string>([...Object.keys(DEFAULT_CONFIG), ...OPTIONAL_CONFIG_KEYS]);
+	const unknown = Object.keys(cfg)
+		.filter((k) => !known.has(k))
+		.sort();
+	if (unknown.length > 0) errors.push(`unknown field(s): ${unknown.join(", ")}`);
+	for (const field of BOOL_FIELDS) {
+		if (field in cfg && typeof cfg[field] !== "boolean") {
+			errors.push(`${field}: expected true/false, got ${JSON.stringify(cfg[field])}`);
+		}
+	}
+	for (const field of LIST_FIELDS) {
+		if (!(field in cfg)) continue;
+		const value = cfg[field];
+		if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item !== "")) {
+			errors.push(`${field}: expected a list of non-empty strings, got ${JSON.stringify(value)}`);
+		}
+	}
+	for (const field of STR_FIELDS) {
+		if (field in cfg && typeof cfg[field] !== "string") {
+			errors.push(`${field}: expected string, got ${JSON.stringify(cfg[field])}`);
+		}
+	}
+	for (const [field, allowed] of Object.entries(ENUM_FIELDS)) {
+		if (!(field in cfg)) continue;
+		const value = cfg[field];
+		if (typeof value !== "string" || !allowed.includes(value)) {
+			errors.push(`${field}: expected one of ${allowed.join(", ")}, got ${JSON.stringify(value)}`);
+		}
+	}
+	for (const [field, [lo, hi]] of Object.entries(INT_RANGES)) {
+		if (!(field in cfg)) continue;
+		const value = cfg[field];
+		if (typeof value !== "number" || !Number.isInteger(value)) {
+			errors.push(`${field}: expected integer, got ${JSON.stringify(value)}`);
+			continue;
+		}
+		if (value < lo) errors.push(`${field}: must be >= ${lo}, got ${value}`);
+		if (hi !== null && value > hi) errors.push(`${field}: must be <= ${hi}, got ${value}`);
+	}
+	return errors;
+}
+
+export type ConfigResult = { ok: true; config: AutopilotConfig } | { ok: false; error: string };
+
+/** Read _autopilot/config.json. A missing file is NOT an error — it means
+ * "autopilot never enabled" and yields the defaults with zero footprint
+ * (D-110). A present-but-invalid file fails closed with every offending
+ * field named (config.py load_config semantics). Fields absent from a
+ * partial file fall back to their defaults (view-side robustness; saves
+ * normalize the file to the full canonical set). */
+export function readConfig(projectDir: string): ConfigResult {
+	const file = configPath(projectDir);
+	let raw: string;
+	try {
+		raw = fs.readFileSync(file, "utf8");
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ok: true, config: freshDefaults() };
+		return { ok: false, error: `cannot read ${file}: ${String(err)}` };
+	}
+	let data: unknown;
+	try {
+		data = JSON.parse(raw, configReviver as (this: unknown, key: string, value: unknown) => unknown);
+	} catch (err) {
+		if (err instanceof IntegerLiteralError) return { ok: false, error: err.message };
+		return { ok: false, error: `cannot parse ${file}: ${String(err)}` };
+	}
+	const errors = validateConfigData(data);
+	if (errors.length > 0) return { ok: false, error: `invalid _autopilot/config.json: ${errors.join("; ")}` };
+	// Post-validation every present field has the right type; absent fields
+	// keep their defaults.
+	const cfg = data as Record<string, unknown>;
+	const boolOf = (name: "enabled" | "paused" | "xkey_repair"): boolean =>
+		typeof cfg[name] === "boolean" ? (cfg[name] as boolean) : DEFAULT_CONFIG[name];
+	const intOf = (
+		name:
+			| "poll_interval_sec"
+			| "max_parallel_keys"
+			| "max_workers_per_key"
+			| "round_budget"
+			| "worker_timeout_min"
+			| "l2_read_file_cap"
+			| "l2_read_byte_cap"
+			| "advance_stall_ticks"
+			| "xkey_verify_timeout_s"
+			| "launcher_max_workers"
+			| "dispatch_max_per_scan"
+			| "queue_alarm_delta"
+			| "l3_abort_retry_limit"
+			| "gate_reminder_after_min"
+			| "gate_reminder_max",
+	): number => (typeof cfg[name] === "number" ? (cfg[name] as number) : DEFAULT_CONFIG[name]);
+	const listOf = (name: "xkey_verify_cmd"): string[] =>
+		Array.isArray(cfg[name]) ? (cfg[name] as string[]) : [...DEFAULT_CONFIG[name]];
+	const strOf = (name: "xkey_verify_cwd" | "auto_gate_mode"): string =>
+		typeof cfg[name] === "string" ? cfg[name] : DEFAULT_CONFIG[name];
+	const merged: AutopilotConfig = {
+		enabled: boolOf("enabled"),
+		paused: boolOf("paused"),
+		poll_interval_sec: intOf("poll_interval_sec"),
+		max_parallel_keys: intOf("max_parallel_keys"),
+		max_workers_per_key: intOf("max_workers_per_key"),
+		round_budget: intOf("round_budget"),
+		worker_timeout_min: intOf("worker_timeout_min"),
+		l2_read_file_cap: intOf("l2_read_file_cap"),
+		l2_read_byte_cap: intOf("l2_read_byte_cap"),
+		advance_stall_ticks: intOf("advance_stall_ticks"),
+		xkey_repair: boolOf("xkey_repair"),
+		xkey_verify_cmd: listOf("xkey_verify_cmd"),
+		xkey_verify_timeout_s: intOf("xkey_verify_timeout_s"),
+		xkey_verify_cwd: strOf("xkey_verify_cwd"),
+		auto_gate_mode: strOf("auto_gate_mode"),
+		launcher_max_workers: intOf("launcher_max_workers"),
+		dispatch_max_per_scan: intOf("dispatch_max_per_scan"),
+		queue_alarm_delta: intOf("queue_alarm_delta"),
+		l3_abort_retry_limit: intOf("l3_abort_retry_limit"),
+		gate_reminder_after_min: intOf("gate_reminder_after_min"),
+		gate_reminder_max: intOf("gate_reminder_max"),
+	};
+	return { ok: true, config: merged };
+}
+
+/** Validate, then atomically write config.json (tmp + rename, UTF-8, LF,
+ * indent-2 + trailing newline — the exact shape config.py save_config
+ * writes and parses back). The write always normalizes to the full
+ * canonical field set in DEFAULT_CONFIG order. */
+export function saveConfig(projectDir: string, config: AutopilotConfig): { ok: true } | { ok: false; error: string } {
+	const errors = validateConfigData(config);
+	if (errors.length > 0) return { ok: false, error: `invalid _autopilot/config.json: ${errors.join("; ")}` };
+	const ordered: AutopilotConfig = {
+		enabled: config.enabled,
+		paused: config.paused,
+		poll_interval_sec: config.poll_interval_sec,
+		max_parallel_keys: config.max_parallel_keys,
+		max_workers_per_key: config.max_workers_per_key,
+		round_budget: config.round_budget,
+		worker_timeout_min: config.worker_timeout_min,
+		l2_read_file_cap: config.l2_read_file_cap,
+		l2_read_byte_cap: config.l2_read_byte_cap,
+		advance_stall_ticks: config.advance_stall_ticks,
+		xkey_repair: config.xkey_repair,
+		xkey_verify_cmd: [...config.xkey_verify_cmd],
+		xkey_verify_timeout_s: config.xkey_verify_timeout_s,
+		xkey_verify_cwd: config.xkey_verify_cwd,
+		auto_gate_mode: config.auto_gate_mode,
+		launcher_max_workers: config.launcher_max_workers,
+		dispatch_max_per_scan: config.dispatch_max_per_scan,
+		queue_alarm_delta: config.queue_alarm_delta,
+		l3_abort_retry_limit: config.l3_abort_retry_limit,
+		gate_reminder_after_min: config.gate_reminder_after_min,
+		gate_reminder_max: config.gate_reminder_max,
+	};
+	const file = configPath(projectDir);
+	try {
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		const tmp = `${file}.tmp`;
+		fs.writeFileSync(tmp, `${JSON.stringify(ordered, null, 2)}\n`, "utf8");
+		fs.renameSync(tmp, file);
+	} catch (err) {
+		return { ok: false, error: `cannot write ${file}: ${String(err)}` };
+	}
+	return { ok: true };
+}
+
+// ── _roadmap.md (lenient view-side parse of the D-105 schema) ────────────────
+
+export const STAGE_STATUSES = ["pending", "approved", "running", "closed", "closed-human", "halted"] as const;
+export const KEY_STATUSES = ["running", "done", "stalled", "closed-legacy", "pending-review"] as const;
+
+/** Stage-status rank — the exact mirror of `conductor.py::_STAGE_STATUS_RANK`
+ * (`pending`/`approved` = 0, `running` = 1, the terminal family = 2). The gate
+ * suppression axis (mw-autopilot-gate-alarm-liveness AC-003 `stage-terminal`)
+ * consumes this rank, the same one the Python stage-status write guard owns,
+ * so both languages share one definition of "terminal stage". */
+export const STAGE_STATUS_RANK: Record<string, number> = {
+	pending: 0,
+	approved: 0,
+	running: 1,
+	closed: 2,
+	"closed-human": 2,
+	halted: 2,
+};
+
+/** `conductor.py::_STAGE_TERMINAL_RANK` — the threshold of the absorbing
+ * terminal family. An unresolvable status (`undefined`/unknown) is NOT
+ * terminal (fail-open: a missing record must never suppress a reminder). */
+export const STAGE_TERMINAL_RANK = 2;
+
+export function isStageTerminal(status: string | undefined): boolean {
+	const rank = status === undefined ? undefined : STAGE_STATUS_RANK[status];
+	return rank !== undefined && rank >= STAGE_TERMINAL_RANK;
+}
+
+export interface RoadmapKey {
+	key: string;
+	role: string;
+	dependsOn: string[];
+}
+
+export interface RoadmapStage {
+	number: number;
+	title: string;
+	goal: string;
+	status: string;
+	/** key → running|done|stalled|closed-legacy|pending-review (D-105 KEY_STATUSES).
+	 * `pending-review` (T-08 / D-005) is the non-terminal deferred-review state.
+	 * Values are kept verbatim; ones outside the enum surface as parse
+	 * warnings instead of being dropped. */
+	keyStatus: Record<string, string>;
+	keys: RoadmapKey[];
+}
+
+export interface RoadmapParse {
+	stages: RoadmapStage[];
+	warnings: string[];
+}
+
+const STAGE_PREFIX_RE = /^##\s*Stage\b/;
+const STAGE_HEADER_RE = /^##\s*Stage\s+(\d+)\s*:\s*(.+)$/;
+const ROADMAP_FIELD_RE = /^>\s*([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/;
+const SEPARATOR_CELL_RE = /^:?-+:?$/;
+
+function splitTableRow(line: string): string[] {
+	let body = line.startsWith("|") ? line.slice(1) : line;
+	if (body.endsWith("|")) body = body.slice(0, -1);
+	return body.split("|").map((c) => c.trim());
+}
+
+function isKeysHeaderRow(cells: string[]): boolean {
+	return (
+		cells.length === 3 &&
+		cells[0].toLowerCase() === "key" &&
+		cells[1].toLowerCase() === "role" &&
+		cells[2].toLowerCase() === "depends_on"
+	);
+}
+
+function parseDependsOn(cell: string): string[] {
+	const trimmed = cell.trim();
+	if (trimmed === "" || trimmed === "-") return [];
+	const deps: string[] = [];
+	for (const part of trimmed.split(",")) {
+		const p = part.trim();
+		if (p !== "" && p !== "-") deps.push(p);
+	}
+	return deps;
+}
+
+/** Parse roadmap markdown into stages + warnings. Never throws — this is the
+ * view side of roadmap.py's strict parser: structural problems the conductor
+ * treats as skip-the-tick errors degrade here to warnings plus whatever
+ * stages did parse, so the console always has something honest to show. */
+export function parseRoadmapText(text: string): RoadmapParse {
+	const warnings: string[] = [];
+	const stages: RoadmapStage[] = [];
+	let cur: { stage: RoadmapStage; seenKeys: Set<string>; seenFields: Set<string> } | null = null;
+	let inKeysTable = false;
+	let tableHeaderSeen = false;
+
+	const finish = (): void => {
+		if (cur === null) return;
+		if (!cur.seenFields.has("status")) {
+			warnings.push(`stage ${cur.stage.number}: missing '> status:' line (shown as pending)`);
+			cur.stage.status = "pending";
+		}
+		if (!cur.seenFields.has("goal")) {
+			warnings.push(`stage ${cur.stage.number}: missing '> goal:' line`);
+		}
+		stages.push(cur.stage);
+		cur = null;
+	};
+
+	const lines = text.split(/\r\n|\r|\n/);
+	for (let lineno = 1; lineno <= lines.length; lineno++) {
+		const line = lines[lineno - 1].trim();
+		if (line === "") continue;
+		if (line.startsWith("#")) {
+			if (line.startsWith("###")) {
+				const heading = line.replace(/^#+/, "").trim();
+				if (cur !== null && heading.toLowerCase() === "keys") {
+					inKeysTable = true;
+					tableHeaderSeen = false;
+				} else {
+					inKeysTable = false; // any other subsection ends the keys table
+				}
+				continue;
+			}
+			if (line.startsWith("##")) {
+				if (STAGE_PREFIX_RE.test(line)) {
+					const m = STAGE_HEADER_RE.exec(line);
+					if (m === null) {
+						warnings.push(`line ${lineno}: malformed stage header (expected '## Stage <number>: <title>')`);
+						finish();
+						inKeysTable = false;
+						continue;
+					}
+					finish();
+					cur = {
+						stage: {
+							number: Number(m[1]),
+							title: (m[2] ?? "").trim(),
+							goal: "",
+							status: "pending",
+							keyStatus: {},
+							keys: [],
+						},
+						seenKeys: new Set(),
+						seenFields: new Set(),
+					};
+				} else {
+					finish(); // an unrelated H2 section ends the current stage
+				}
+				inKeysTable = false;
+				continue;
+			}
+			// H1 title or deeper heading — ignored.
+			inKeysTable = false;
+			continue;
+		}
+		if (line.startsWith("|")) {
+			if (cur !== null && inKeysTable) {
+				const cells = splitTableRow(line);
+				if (cells.length > 0 && cells.every((c) => SEPARATOR_CELL_RE.test(c))) continue; // |----| separator row
+				if (!tableHeaderSeen && isKeysHeaderRow(cells)) {
+					tableHeaderSeen = true;
+					continue;
+				}
+				if (cells.length !== 3) {
+					warnings.push(
+						`line ${lineno} (stage ${cur.stage.number}): keys table row must have 3 columns (key | role | depends_on), got ${cells.length}`,
+					);
+					continue;
+				}
+				const key = cells[0] ?? "";
+				if (key === "") {
+					warnings.push(`line ${lineno} (stage ${cur.stage.number}): keys table row has empty key cell`);
+					continue;
+				}
+				if (cur.seenKeys.has(key)) {
+					warnings.push(`line ${lineno} (stage ${cur.stage.number}): duplicate key row '${key}'`);
+					continue;
+				}
+				cur.seenKeys.add(key);
+				cur.stage.keys.push({ key, role: cells[1] ?? "", dependsOn: parseDependsOn(cells[2] ?? "") });
+			}
+			// Pipe rows outside a keys table (prose tables) are ignored.
+			continue;
+		}
+		if (line.startsWith(">")) {
+			const m = ROADMAP_FIELD_RE.exec(line);
+			const name = m?.[1] ?? "";
+			const value = (m?.[2] ?? "").trim();
+			if (cur !== null) {
+				if (name === "goal" || name === "status" || name === "key-status") {
+					if (cur.seenFields.has(name)) {
+						warnings.push(
+							`line ${lineno} (stage ${cur.stage.number}): duplicate '> ${name}:' line (last one wins)`,
+						);
+					} else {
+						cur.seenFields.add(name);
+					}
+					if (name === "goal") cur.stage.goal = value;
+					else if (name === "status") {
+						if (!(STAGE_STATUSES as readonly string[]).includes(value)) {
+							warnings.push(`line ${lineno} (stage ${cur.stage.number}): invalid status '${value}'`);
+						}
+						cur.stage.status = value;
+					} else {
+						parseKeyStatusLine(value, cur.stage, lineno, warnings);
+					}
+				}
+				// Other blockquote lines (prose, header fields) are ignored.
+				inKeysTable = false;
+			}
+			continue;
+		}
+		// Any other line (prose) is ignored but ends the keys table.
+		inKeysTable = false;
+	}
+	finish();
+	if (stages.length === 0) warnings.push("no '## Stage <number>: <title>' sections found");
+	return { stages, warnings };
+}
+
+function parseKeyStatusLine(value: string, stage: RoadmapStage, lineno: number, warnings: string[]): void {
+	for (const part of value.split(",")) {
+		const entry = part.trim();
+		if (entry === "") continue;
+		const eq = entry.indexOf("=");
+		if (eq <= 0) {
+			warnings.push(
+				`line ${lineno} (stage ${stage.number}): malformed key-status entry '${entry}' (expected <key>=<status>)`,
+			);
+			continue;
+		}
+		const key = entry.slice(0, eq).trim();
+		const status = entry.slice(eq + 1).trim();
+		if (key === "") {
+			warnings.push(
+				`line ${lineno} (stage ${stage.number}): malformed key-status entry '${entry}' (expected <key>=<status>)`,
+			);
+			continue;
+		}
+		if (!(KEY_STATUSES as readonly string[]).includes(status)) {
+			warnings.push(`line ${lineno} (stage ${stage.number}): key '${key}' has invalid status '${status}'`);
+		}
+		if (key in stage.keyStatus) {
+			warnings.push(
+				`line ${lineno} (stage ${stage.number}): duplicate key-status entry for '${key}' (last one wins)`,
+			);
+		}
+		stage.keyStatus[key] = status;
+	}
+}
+
+export type RoadmapResult = { ok: true; stages: RoadmapStage[]; warnings: string[] } | { ok: false; error: string };
+
+export function readRoadmap(projectDir: string): RoadmapResult {
+	const file = roadmapPath(projectDir);
+	let text: string;
+	try {
+		text = fs.readFileSync(file, "utf8");
+	} catch {
+		return { ok: false, error: `roadmap file not found: ${file}` };
+	}
+	const parse = parseRoadmapText(text);
+	return { ok: true, stages: parse.stages, warnings: parse.warnings };
+}
+
+// ── gates (view-side enumeration, mirror of autopilot/gates.py) ──────────────
+
+export const GATE_KINDS = [
+	"stage-confirm",
+	"stage-close",
+	"stalled",
+	"budget-exhausted",
+	"goal-change",
+	"xkey-authorize",
+] as const;
+export const GATE_STATUSES = ["pending", "approved", "rejected"] as const;
+
+/** Closed six-value suppression-reason enum (mw-autopilot-gate-alarm-liveness
+ * AC-003 / design D3). The five suppression values are ordered by the exact
+ * funnel precedence of `conductor.pending_gate_reminders`
+ * (`gate-queue-unreadable > key-in-flight > cap-reached > stage-terminal >
+ * not-due`); `unresolved-scope` is deliberately orthogonal to suppression
+ * (AC-002: an unresolvable key/stage must NEVER silence a reminder) and is
+ * rendered as a scope marker beside `reason`, never as a `reason=` value. */
+export const GATE_REASONS = [
+	"gate-queue-unreadable",
+	"key-in-flight",
+	"cap-reached",
+	"stage-terminal",
+	"not-due",
+	"unresolved-scope",
+] as const;
+export type GateReason = (typeof GATE_REASONS)[number];
+
+/** The suppression subset in funnel order (highest priority first). */
+export const GATE_SUPPRESSION_PRIORITY = [
+	"gate-queue-unreadable",
+	"key-in-flight",
+	"cap-reached",
+	"stage-terminal",
+	"not-due",
+] as const satisfies readonly GateReason[];
+export type GateSuppressionReason = (typeof GATE_SUPPRESSION_PRIORITY)[number];
+
+/** The orthogonal scope marker: a fact about resolvability, not a suppression. */
+export const GATE_SCOPE_UNRESOLVED: GateReason = "unresolved-scope";
+
+/** Inputs of the pure suppression-reason derivation — all facts are read from
+ * disk in the same tick (no persisted suppression state, design D3).
+ *
+ * `due` is tri-state on purpose: `null` means the gate's `created_at` is
+ * unparsable, so "not due" would be a guess — the caller renders
+ * `reason=-` plus the `unresolved-scope` marker instead of inventing an
+ * answer (DRQ-2 C2 residual 5). */
+export interface GateReasonInput {
+	queueUnreadable: boolean;
+	inFlightForKey: number;
+	reminders: number;
+	reminderMax: number;
+	stageTerminal: boolean;
+	due: boolean | null;
+}
+
+/** Pure funnel judgment (AC-003): the first condition that actually stops the
+ * reminder wins, exactly as in `conductor.pending_gate_reminders`; `null`
+ * means "no suppression — the gate is due and would be reminded". */
+export function deriveGateReason(input: GateReasonInput): GateSuppressionReason | null {
+	if (input.queueUnreadable) return "gate-queue-unreadable";
+	if (input.inFlightForKey > 0) return "key-in-flight";
+	if (input.reminders + 1 > input.reminderMax) return "cap-reached";
+	if (input.stageTerminal) return "stage-terminal";
+	if (input.due === null) return null; // unknown anchor: the scope marker carries it
+	if (!input.due) return "not-due";
+	return null;
+}
+/** Closed set of action types a gate may authorize (gates.py AUTHORIZES_ACTIONS,
+ * design D-011). This is the ONE TS declaration of the set — `gate-writer.ts`
+ * imports it, and `autopilot-gate-presentation.test.ts` locks it against the
+ * Python side, so the two languages can never drift into separate copies.
+ * `install` is deliberately excluded (no machine consumer). */
+export const AUTHORIZES_ACTIONS = ["contract-change", "retry"] as const;
+const AUTHORIZES_ACTION_SET = new Set<string>(AUTHORIZES_ACTIONS);
+
+/** Closed set of blocker classes (gates.py BLOCKER_CLASSES, T-14 / AC-007,
+ * design D6). `paperwork` = the blockage's evidence can be collected
+ * deterministically; `judgment` = everything else, including an absent field.
+ * This is the ONE TS declaration of the set — the cross-language lock in
+ * `autopilot-gate-presentation.test.ts` compares it with the Python side. */
+export const BLOCKER_CLASSES = ["judgment", "paperwork"] as const;
+export type BlockerClass = (typeof BLOCKER_CLASSES)[number];
+const BLOCKER_CLASS_SET = new Set<string>(BLOCKER_CLASSES);
+
+/** Judgment-layer fold of `blockerClass` (the TS mirror of
+ * `conductor.blocker_class_of`, T-14 / AC-007): only an explicit
+ * `"paperwork"` is paperwork; `null`/absent and every other value fold to
+ * `"judgment"` (fail-closed — an unclassified gate is never auto-released).
+ * Pure, so every derivation surface reads the same direction. */
+export function blockerClassOf(record: { blockerClass: string | null }): BlockerClass {
+	return record.blockerClass === "paperwork" ? "paperwork" : "judgment";
+}
+
+/** Canonical frontmatter field order (gates.py FRONTMATTER_FIELDS). The first
+ * 12 names are the frozen base schema; the remaining 28 are the additive v2
+ * set (design D1.1 1..26 + the consumption record). Both sides fail closed on
+ * an unknown field, so this list must stay item-for-item in the Python order
+ * (VC-D6-06). */
+export const GATE_FRONTMATTER_FIELDS = [
+	"id",
+	"kind",
+	"stage",
+	"key",
+	"created_at",
+	"created_by",
+	"question",
+	"context_refs",
+	"status",
+	"answered_at",
+	"answered_by",
+	"note",
+	"reason_code",
+	"evidence_refs",
+	"loop",
+	"used_rounds",
+	"round_limit",
+	"credits_used",
+	"observed_at",
+	"verdicts_final",
+	"open_items",
+	"subject_sha256",
+	"roadmap_validation",
+	"proposal_sha256",
+	"goal_sha256",
+	"constraints",
+	"goal_sha256_before",
+	"goal_sha256_after",
+	"goal_diff",
+	"write_scope",
+	"blast_radius",
+	"answer_source",
+	"auto_policy_id",
+	"expires_at",
+	"evidence_anchor_mtime_ns",
+	"default_action",
+	"out_of_band_actions",
+	"gate_schema",
+	"consumed_at",
+	"consumed_seq",
+] as const;
+
+/** The one missing-value sentinel (design D4/D6): every presentation layer
+ * renders this exact literal for a field that is absent. Never prose, never a
+ * guess, never derived from `question`/`note`. */
+export const MISSING_FIELD_SENTINEL = "unknown (no field)";
+
+export interface GateRecord {
+	id: string;
+	kind: string;
+	status: string;
+	stage: number | null;
+	key: string | null;
+	question: string;
+	createdAt: string;
+	path: string;
+	/** v2 mirror (design D1.1) — parsed so the console can render the 13-line
+	 * card without re-reading the file. Absent fields are null / []. */
+	contextRefs: string[];
+	evidenceRefs: string[];
+	reasonCode: string | null;
+	observedAt: string | null;
+	subjectSha256: string | null;
+	proposalSha256: string | null;
+	goalSha256: string | null;
+	loop: string | null;
+	usedRounds: number | null;
+	roundLimit: number | null;
+	creditsUsed: number | null;
+	verdictsFinal: unknown;
+	openItems: unknown;
+	roadmapValidation: unknown;
+	constraints: string[];
+	answerSource: string | null;
+	expiresAt: string | null;
+	defaultAction: string | null;
+	outOfBandActions: string[];
+	/** G3 (D-011): recognized contract field OUTSIDE the frozen 40-name order,
+	 * declared as a single-line JSON array. [] / absent = not authorized. */
+	authorizes: string[];
+	/** T-14 / AC-007: recognized scalar field OUTSIDE the frozen 40-name
+	 * order. Raw parsed value; null when the field is absent. The `judgment`
+	 * fold is applied by `blockerClassOf` at the derivation layer, never in
+	 * the parser (absent and explicit-judgment stay distinguishable). */
+	blockerClass: string | null;
+	gateSchema: number;
+	answeredAt: string | null;
+	answeredBy: string | null;
+	note: string | null;
+}
+
+class GateFormatError extends Error {}
+
+const GATE_FILE_RE = /^gate-(\d+)\.md$/;
+/** Named block-list fields (gates.py _LIST_FIELDS) — one set, two impls. */
+const GATE_LIST_FIELDS = new Set(["context_refs", "evidence_refs"]);
+/** Single-line JSON substring fields (gates.py _JSON_LIST_FIELDS/_JSON_OBJ_FIELDS).
+ * `authorizes` is a recognized extension field: it is NOT in
+ * GATE_FRONTMATTER_FIELDS (frozen 40-name cross-language order), but the parse
+ * surface accepts it as a JSON-list field so Python and TS read the same
+ * shape (D-011 REVISED). */
+export const GATE_JSON_LIST_FIELDS = new Set([
+	"verdicts_final",
+	"open_items",
+	"roadmap_validation",
+	"constraints",
+	"write_scope",
+	"out_of_band_actions",
+	"authorizes",
+]);
+const GATE_JSON_OBJ_FIELDS = new Set(["goal_diff", "blast_radius"]);
+/** Scalar extension fields recognized OUTSIDE the frozen 40-name order — the
+ * `authorizes` pattern applied to a scalar (T-14 / AC-007). A scalar must NOT
+ * join GATE_JSON_LIST_FIELDS: those members are JSON-decoded. */
+export const GATE_SCALAR_EXTENSION_FIELDS = new Set(["blocker_class"]);
+const GATE_FIELD_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(.*))?[ \t]*$/;
+const GATE_LIST_ITEM_RE = /^[ \t]+-[ \t]+(.*)$/;
+const GATE_NULL_LITERALS = new Set(["", "~", "-", "null", "Null", "NULL"]);
+
+/** YAML-subset scalar, mirroring gates.py _parse_scalar: single-quoted string
+ * ('' escaping), null literal, or plain string. Double-quoted scalars are
+ * rejected (no escape-rule support on the Python side either). */
+function gateScalar(raw: string | undefined, file: string, lineno: number): string | null {
+	if (raw === undefined) return null;
+	if (raw.startsWith("'")) {
+		if (raw.length < 2 || !raw.endsWith("'")) {
+			throw new GateFormatError(`${file}: unterminated single-quoted scalar (line ${lineno}): '${raw}'`);
+		}
+		return raw.slice(1, -1).replaceAll("''", "'");
+	}
+	if (raw.startsWith('"')) {
+		throw new GateFormatError(`${file}: double-quoted scalars are not supported (line ${lineno}): '${raw}'`);
+	}
+	if (GATE_NULL_LITERALS.has(raw)) return null;
+	return raw;
+}
+
+function isIsoTimestamp(value: string): boolean {
+	return !Number.isNaN(Date.parse(value));
+}
+
+/** Parse one gate file into a GateRecord. Throws GateFormatError on any
+ * frontmatter/schema violation — corrupt gate files surface as errors, never
+ * as silently wrong queue entries (gates.py parse semantics). */
+export function parseGateFile(text: string, file: string): GateRecord {
+	const lines = text.split(/\r\n|\r|\n/);
+	if (lines.length === 0 || lines[0].trim() !== "---") {
+		throw new GateFormatError(`${file}: frontmatter must open with a '---' line`);
+	}
+	const fields = new Map<string, string | null>();
+	const listValues = new Map<string, string[]>();
+	for (const name of GATE_LIST_FIELDS) listValues.set(name, []);
+	const seen = new Set<string>();
+	let activeList: string | null = null;
+	let closed = false;
+	for (let i = 1; i < lines.length; i++) {
+		const line = lines[i];
+		if (line.trim() === "---") {
+			closed = true;
+			break;
+		}
+		if (activeList !== null) {
+			const item = GATE_LIST_ITEM_RE.exec(line);
+			if (item !== null) {
+				const ref = gateScalar(item[1], file, i + 1);
+				if (ref === null || ref === "")
+					throw new GateFormatError(`${file}: empty ${activeList} item (line ${i + 1})`);
+				listValues.get(activeList)?.push(ref);
+				continue;
+			}
+			activeList = null; // dedent: fall through to a normal field line
+		}
+		const field = GATE_FIELD_LINE_RE.exec(line);
+		if (field === null) throw new GateFormatError(`${file}: invalid frontmatter line ${i + 1}: '${line}'`);
+		const name = field[1] ?? "";
+		// The frozen 40-name order OR a recognized extension field (`authorizes`
+		// JSON list, `blocker_class` scalar) parses; anything else stays
+		// fail-closed (gates.py parse-surface membership check, D-011/AC-007).
+		if (
+			!(GATE_FRONTMATTER_FIELDS as readonly string[]).includes(name) &&
+			!GATE_JSON_LIST_FIELDS.has(name) &&
+			!GATE_SCALAR_EXTENSION_FIELDS.has(name)
+		) {
+			throw new GateFormatError(`${file}: unknown frontmatter field '${name}' (line ${i + 1})`);
+		}
+		if (seen.has(name)) throw new GateFormatError(`${file}: duplicate frontmatter field '${name}' (line ${i + 1})`);
+		seen.add(name);
+		const raw = field[2];
+		if (GATE_LIST_FIELDS.has(name)) {
+			if (raw === undefined || raw === "") {
+				fields.set(name, null);
+				activeList = name;
+			} else if (raw === "[]") {
+				fields.set(name, null);
+			} else if (raw.startsWith("'")) {
+				// Single-line JSON array substring (gates.py _parse_list_field).
+				const scalar = gateScalar(raw, file, i + 1);
+				let decoded: unknown;
+				try {
+					decoded = JSON.parse(scalar ?? "");
+				} catch {
+					throw new GateFormatError(
+						`${file}: ${name} must be a block list, [] or a single-line JSON array (line ${i + 1})`,
+					);
+				}
+				if (!Array.isArray(decoded) || !decoded.every((x) => typeof x === "string" && x !== "")) {
+					throw new GateFormatError(`${file}: ${name} JSON array must contain non-empty strings (line ${i + 1})`);
+				}
+				listValues.set(name, decoded as string[]);
+			} else {
+				throw new GateFormatError(`${file}: ${name} must be a block list or [] (line ${i + 1})`);
+			}
+		} else {
+			fields.set(name, gateScalar(raw, file, i + 1));
+		}
+	}
+	if (!closed) throw new GateFormatError(`${file}: frontmatter never closes with a '---' line`);
+
+	const required = (name: string): string => {
+		const value = fields.get(name);
+		if (typeof value !== "string" || value === "") {
+			throw new GateFormatError(`${file}: field '${name}' must be a non-empty string`);
+		}
+		return value;
+	};
+	const optional = (name: string): string | null => {
+		const value = fields.get(name) ?? null;
+		return typeof value === "string" && value !== "" ? value : null;
+	};
+	const intField = (name: string): number | null => {
+		const value = optional(name);
+		if (value === null) return null;
+		if (!/^-?\d+$/.test(value))
+			throw new GateFormatError(`${file}: field '${name}' must be an integer, got '${value}'`);
+		return Number.parseInt(value, 10);
+	};
+	const isoField = (name: string, value: string | null): string | null => {
+		if (value !== null && !isIsoTimestamp(value)) {
+			throw new GateFormatError(`${file}: ${name} is not an ISO-8601 timestamp: '${value}'`);
+		}
+		return value;
+	};
+	const jsonField = (name: string, wantArray: boolean): unknown => {
+		const value = optional(name);
+		if (value === null) return null;
+		let decoded: unknown;
+		try {
+			decoded = JSON.parse(value);
+		} catch {
+			throw new GateFormatError(
+				`${file}: field '${name}' must be a single-line JSON ${wantArray ? "array" : "object"}`,
+			);
+		}
+		const isArray = Array.isArray(decoded);
+		const isObject = typeof decoded === "object" && decoded !== null && !isArray;
+		if ((wantArray && !isArray) || (!wantArray && !isObject)) {
+			throw new GateFormatError(`${file}: field '${name}' must decode to a JSON ${wantArray ? "array" : "object"}`);
+		}
+		return decoded;
+	};
+	const jsonStringList = (name: string): string[] => {
+		const decoded = jsonField(name, true);
+		if (decoded === null) return [];
+		if (!Array.isArray(decoded) || !decoded.every((x) => typeof x === "string")) {
+			throw new GateFormatError(`${file}: field '${name}' JSON array must contain strings`);
+		}
+		return decoded;
+	};
+
+	const authorizes = jsonStringList("authorizes");
+	const outOfSet = [...new Set(authorizes.filter((action) => !AUTHORIZES_ACTION_SET.has(action)))].sort();
+	if (outOfSet.length > 0) {
+		throw new GateFormatError(
+			`${file}: unknown authorizes action(s) ${outOfSet.join(", ")} (expected one of: ${[...AUTHORIZES_ACTIONS].sort().join(", ")})`,
+		);
+	}
+	// T-14 / AC-007: closed-set scalar. An absent/blank value is null (kept
+	// unclassified); an out-of-set value is fail-closed, never ignored.
+	const blockerClass = optional("blocker_class");
+	if (blockerClass !== null && !BLOCKER_CLASS_SET.has(blockerClass)) {
+		throw new GateFormatError(
+			`${file}: unknown blocker_class '${blockerClass}' (expected one of: ${[...BLOCKER_CLASSES].sort().join(", ")})`,
+		);
+	}
+
+	const contextRefs = listValues.get("context_refs") ?? [];
+	const evidenceRefs = listValues.get("evidence_refs") ?? [];
+	const id = required("id");
+	if (!/^gate-\d+$/.test(id)) throw new GateFormatError(`${file}: id must match 'gate-<digits>', got '${id}'`);
+	const kind = required("kind");
+	if (!(GATE_KINDS as readonly string[]).includes(kind)) {
+		throw new GateFormatError(`${file}: unknown kind '${kind}' (expected one of: ${GATE_KINDS.join(", ")})`);
+	}
+	const status = required("status");
+	if (!(GATE_STATUSES as readonly string[]).includes(status)) {
+		throw new GateFormatError(`${file}: unknown status '${status}' (expected one of: ${GATE_STATUSES.join(", ")})`);
+	}
+	const stageRaw = optional("stage");
+	let stage: number | null = null;
+	if (stageRaw !== null) {
+		if (!/^-?\d+$/.test(stageRaw)) throw new GateFormatError(`${file}: stage must be an integer, got '${stageRaw}'`);
+		stage = Number.parseInt(stageRaw, 10);
+	}
+	const createdAt = required("created_at");
+	if (!isIsoTimestamp(createdAt)) {
+		throw new GateFormatError(`${file}: created_at is not an ISO-8601 timestamp: '${createdAt}'`);
+	}
+	const answeredAt = isoField("answered_at", optional("answered_at"));
+	required("created_by");
+	const question = required("question");
+	// Validate every declared JSON field/consumption field (fail-closed, same
+	// as gates.py) even when this view does not render it.
+	for (const name of GATE_JSON_LIST_FIELDS) jsonField(name, true);
+	for (const name of GATE_JSON_OBJ_FIELDS) jsonField(name, false);
+	intField("evidence_anchor_mtime_ns");
+	intField("consumed_seq");
+	isoField("consumed_at", optional("consumed_at"));
+	let gateSchema = intField("gate_schema");
+	if (gateSchema === null) gateSchema = 1;
+	if (gateSchema !== 1 && gateSchema !== 2) {
+		throw new GateFormatError(`${file}: gate_schema must be one of 1, 2, got ${gateSchema}`);
+	}
+
+	return {
+		id,
+		kind,
+		status,
+		stage,
+		key: optional("key"),
+		question,
+		createdAt,
+		path: file,
+		contextRefs,
+		evidenceRefs,
+		reasonCode: optional("reason_code"),
+		observedAt: isoField("observed_at", optional("observed_at")),
+		subjectSha256: optional("subject_sha256"),
+		proposalSha256: optional("proposal_sha256"),
+		goalSha256: optional("goal_sha256"),
+		loop: optional("loop"),
+		usedRounds: intField("used_rounds"),
+		roundLimit: intField("round_limit"),
+		creditsUsed: intField("credits_used"),
+		verdictsFinal: jsonField("verdicts_final", true),
+		openItems: jsonField("open_items", true),
+		roadmapValidation: jsonField("roadmap_validation", true),
+		constraints: jsonStringList("constraints"),
+		answerSource: optional("answer_source"),
+		expiresAt: isoField("expires_at", optional("expires_at")),
+		defaultAction: optional("default_action"),
+		outOfBandActions: jsonStringList("out_of_band_actions"),
+		authorizes,
+		blockerClass,
+		gateSchema,
+		answeredAt,
+		answeredBy: optional("answered_by"),
+		note: optional("note"),
+	};
+}
+
+/** All gates in the directory, ordered by seq — the directory scan IS the
+ * queue (D-105). A missing directory is an empty queue. Corrupt gate files
+ * are reported in `errors` (the console surfaces them as warnings) and
+ * excluded from the list, mirroring gates.py enumerate()'s explicit errors.
+ * T-21 R-3: a `readdir` failure that is NOT ENOENT (EACCES/EPERM/EBUSY/ENOTDIR
+ * — e.g. the gates path is a plain file) is reported too: an unreadable queue
+ * must never render as `0 pending` (AC-003). */
+export function listGates(projectDir: string): { gates: GateRecord[]; errors: string[] } {
+	const dir = gatesDir(projectDir);
+	const errors: string[] = [];
+	const found: Array<{ seq: number; gate: GateRecord }> = [];
+	let entries: fs.Dirent[];
+	try {
+		entries = fs.readdirSync(dir, { withFileTypes: true });
+	} catch (err) {
+		// An absent directory is a legitimately empty queue; anything else is
+		// "cannot read the queue" and must be visible on the status surface.
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return { gates: [], errors: [] };
+		return { gates: [], errors: [`${dir}: ${String(err)}`] };
+	}
+	for (const entry of entries) {
+		const m = GATE_FILE_RE.exec(entry.name);
+		if (m === null || !entry.isFile()) continue; // non-gate files and leftover .tmp files
+		const file = path.join(dir, entry.name);
+		let text: string;
+		try {
+			text = fs.readFileSync(file, "utf8");
+		} catch (err) {
+			errors.push(`${file}: ${String(err)}`);
+			continue;
+		}
+		try {
+			const gate = parseGateFile(text, file);
+			if (gate.id !== entry.name.replace(/\.md$/, "")) {
+				errors.push(`${file}: frontmatter id '${gate.id}' does not match file name`);
+				continue;
+			}
+			found.push({ seq: Number(m[1]), gate });
+		} catch (err) {
+			errors.push(err instanceof Error ? err.message : String(err));
+		}
+	}
+	found.sort((a, b) => a.seq - b.seq || a.gate.id.localeCompare(b.gate.id));
+	return { gates: found.map((f) => f.gate), errors };
+}
+
+// ── auto-decisions ledger (reminder rows; cap axis input for AC-003) ────────
+
+/** One pending-gate reminder row from the autopilot ledger
+ * (`.agenticdoc/_autopilot/auto-decisions.jsonl`, design D-006). The Python
+ * conductor is the single writer and the only judge of "pending past
+ * threshold"; the read side never recomputes the decision (D-005 — one judge,
+ * no TS/Python threshold drift). Moved here (mw-autopilot-gate-alarm-liveness
+ * T-10 / DRQ-2) so BOTH the PM poll loop and the monitor panel read the same
+ * rows without a monitor → pm-orchestrator import cycle. */
+export interface GateReminder {
+	/** 1-based ledger position; the delivery watermark. */
+	seq: number;
+	gateId: string;
+	gateKind: string;
+	/** `gate.key`; "" for stage-level / keyless gates. */
+	gateKey: string;
+	/** 1-based reminder ordinal (1..`gate_reminder_max`, default 2). */
+	reminderN: number;
+	detail: string;
+}
+
+/** Read `phase:"remind"` rows from the autopilot ledger (read-only, D-005/
+ * D-006). `agenticdocRoot` is the `.agenticdoc/` directory (same parameter as
+ * the PM poll loop's original reader, so dual-root layouts stay byte-identical).
+ * Malformed / torn lines are skipped: a broken ledger must never take the poll
+ * loop down, and the conductor's per-line append makes a partial trailing line
+ * the only realistic failure. Returns `[]` when the ledger is absent. */
+export function readGateReminders(agenticdocRoot: string): GateReminder[] {
+	const ledger = path.join(agenticdocRoot, "_autopilot", "auto-decisions.jsonl");
+	let raw: string;
+	try {
+		raw = fs.readFileSync(ledger, "utf8");
+	} catch {
+		return []; // no ledger yet (producer absent or nothing recorded) — nothing to deliver
+	}
+	const out: GateReminder[] = [];
+	for (const line of raw.split("\n")) {
+		const trimmed = line.trim();
+		if (trimmed === "") continue;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(trimmed);
+		} catch {
+			continue; // torn/partial line during a concurrent append
+		}
+		if (typeof parsed !== "object" || parsed === null) continue;
+		const row = parsed as Record<string, unknown>;
+		if (row.phase !== "remind") continue;
+		const gateId = typeof row.gate_id === "string" ? row.gate_id : "";
+		const reminderN = typeof row.reminder_n === "number" ? row.reminder_n : 0;
+		if (gateId === "" || reminderN <= 0) continue;
+		out.push({
+			seq: typeof row.seq === "number" ? row.seq : 0,
+			gateId,
+			gateKind: typeof row.gate_kind === "string" ? row.gate_kind : "",
+			gateKey: typeof row.gate_key === "string" ? row.gate_key : "",
+			reminderN,
+			detail: typeof row.detail === "string" ? row.detail : "",
+		});
+	}
+	return out;
+}
+
+/** Reminders already recorded for one gate — the ledger is the cap axis's only
+ * authority (`conductor.py::_reminder_count`). Row count, not distinct
+ * `reminder_n`: a malformed duplicate row still consumed an append slot, and
+ * matching Python's counter is what keeps the two sides from drifting. */
+export function reminderCountForGate(reminders: readonly GateReminder[], gateId: string): number {
+	return reminders.filter((r) => r.gateId === gateId).length;
+}
+
+// ── timeline (mirror of autopilot/timeline.py query_events, D-109) ──────────
+
+/** Event type vocabulary (D-109). Used for the console's default beat-free
+ * include-set — NOT for rejection: unknown ev values parse fine. */
+export const EVENT_TYPES = new Set([
+	"beat",
+	"dispatch",
+	"worker-terminal",
+	"advance",
+	"gate-created",
+	"gate-answered",
+	"stalled",
+	"skip",
+	"stage-close",
+	"config",
+	"goal-halt",
+	"goal-snapshot",
+	"type-rejected",
+	"target-config-rejected",
+	"reconcile",
+	"resume",
+	"l3-no-verdict",
+	// Gate redesign (mw-autopilot-slot-capacity, D-005/D-006/D-009): names are
+	// pre-admitted in lockstep with autopilot/timeline.py EVENT_TYPES so the
+	// parity test locks both sides; the producers land in T-07/T-08. Unused
+	// vocabulary is inert — the set is a console include-set, not a gate.
+	"gate-auto-decision",
+	"gate-auto-revoke",
+	"review-decided",
+	"review-escalated",
+	"evidence-reconciliation",
+	"stage-reopen-refused",
+	// Gate verdict hardening (mw-gate-verdict-hardening, T-05, design D-002/
+	// D-016): the TS half of the T-03 vocabulary. Names are verbatim from
+	// timeline.py EVENT_TYPES; the parity test asserts set equality, so
+	// neither side may rename or prefix them. Producers land in T-01/T-07/
+	// T-10 — pre-admitted vocabulary is safe (include-set, not a gate).
+	"l3-aborted",
+	"gate-reminder",
+	"contract-refused",
+	// Gate verdict hardening (mw-gate-verdict-hardening, T-23, AC-025): the TS
+	// half of the Python `contract-frozen` anchor event. The parity test asserts
+	// set equality, so the name is verbatim from timeline.py EVENT_TYPES.
+	"contract-frozen",
+]);
+
+export const BEAT_EV = "beat";
+
+/** The default timeline view's include-set: every event type except beats. */
+export function nonBeatFilter(): Set<string> {
+	const filter = new Set(EVENT_TYPES);
+	filter.delete(BEAT_EV);
+	return filter;
+}
+
+export interface TimelineEvent {
+	ts: string;
+	seq: number;
+	ev: string;
+	key: string;
+	stage: number | null;
+	detail: string;
+	/** Optional structured payload (design D-009, e.g. `gate-auto-decision`).
+	 * Absent — never null — on legacy lines that carry none. */
+	data?: Record<string, unknown>;
+}
+
+export interface TimelineQuery {
+	/** Parsed lines with seq > watermark, sorted ascending (rotations
+	 * oldest → newest, then the current file). */
+	events: TimelineEvent[];
+	/** Events past the watermark that rotation no longer retains (超 2 代轮
+	 * 转) — never a silent gap. */
+	pruned: number;
+	/** Unparseable (torn) lines encountered — counted, not silently dropped. */
+	skipped: number;
+	/** Highest-seq event in the retained chain — the watermark to persist
+	 * (D-109: every status/timeline view stores {seq, ts}). */
+	head: { seq: number; ts: string } | undefined;
+}
+
+/** Rotated generations, oldest → newest (`.N` → `.1`). Discovered by
+ * directory scan so queries keep working whatever the retention is. */
+function rotationChain(timelinePath: string): string[] {
+	const dir = path.dirname(timelinePath);
+	const prefix = `${path.basename(timelinePath)}.`;
+	let entries: fs.Dirent[];
+	try {
+		entries = fs.readdirSync(dir, { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	const found: Array<{ gen: number; file: string }> = [];
+	for (const entry of entries) {
+		if (!entry.name.startsWith(prefix)) continue;
+		const suffix = entry.name.slice(prefix.length);
+		if (/^\d+$/.test(suffix) && entry.isFile()) {
+			found.push({ gen: Number(suffix), file: path.join(dir, entry.name) });
+		}
+	}
+	found.sort((a, b) => b.gen - a.gen); // higher generation = older
+	return found.map((f) => f.file);
+}
+
+function readTimelineEvents(file: string): { events: TimelineEvent[]; skipped: number } {
+	let data: Buffer;
+	try {
+		data = fs.readFileSync(file);
+	} catch {
+		return { events: [], skipped: 0 }; // unreadable/absent file contributes nothing
+	}
+	const events: TimelineEvent[] = [];
+	let skipped = 0;
+	for (const raw of data.toString("utf8").split("\n")) {
+		const line = raw.trim();
+		if (line === "") continue;
+		let obj: unknown;
+		try {
+			obj = JSON.parse(line);
+		} catch {
+			skipped += 1; // torn line (mid-write crash) — counted, never hidden
+			continue;
+		}
+		if (typeof obj !== "object" || obj === null) {
+			skipped += 1;
+			continue;
+		}
+		const rec = obj as Record<string, unknown>;
+		const seq = rec.seq;
+		if (typeof seq !== "number" || !Number.isInteger(seq)) {
+			skipped += 1;
+			continue;
+		}
+		const event: TimelineEvent = {
+			ts: typeof rec.ts === "string" ? rec.ts : "",
+			seq,
+			ev: typeof rec.ev === "string" ? rec.ev : "",
+			key: typeof rec.key === "string" ? rec.key : "-",
+			stage: typeof rec.stage === "number" && Number.isInteger(rec.stage) ? rec.stage : null,
+			detail: typeof rec.detail === "string" ? rec.detail : "",
+		};
+		// Payload whitelist stays closed: only the optional `data` object is
+		// admitted (design D-009); every other extra key is still dropped.
+		if (typeof rec.data === "object" && rec.data !== null && !Array.isArray(rec.data)) {
+			event.data = rec.data as Record<string, unknown>;
+		}
+		events.push(event);
+	}
+	return { events, skipped };
+}
+
+/** Replay timeline events with seq > watermark (D-109 回放协议): rotated
+ * generations oldest → newest, then the current file; union filtered by seq,
+ * sorted ascending. `evFilter` is an include-set (pass nonBeatFilter() for
+ * the console's default beat-free view; undefined keeps every type).
+ *
+ * A watermark predating the oldest retained line yields a non-zero `pruned`
+ * count — the replay explicitly reports what rotation ate instead of
+ * silently starting mid-history. */
+export function queryTimeline(timelinePath: string, watermark: number, evFilter?: ReadonlySet<string>): TimelineQuery {
+	const mark = Number.isInteger(watermark) && watermark > 0 ? watermark : 0;
+	const all: TimelineEvent[] = [];
+	let skipped = 0;
+	for (const source of [...rotationChain(timelinePath), timelinePath]) {
+		const result = readTimelineEvents(source);
+		all.push(...result.events);
+		skipped += result.skipped;
+	}
+	all.sort((a, b) => a.seq - b.seq);
+	const last = all.length > 0 ? all[all.length - 1] : undefined;
+	let pruned: number;
+	if (all.length > 0) {
+		pruned = Math.max(0, all[0].seq - mark - 1);
+	} else {
+		// Empty chain but a positive watermark: everything the console ever
+		// saw is gone — report at least the watermark's worth (lower bound).
+		pruned = mark > 0 ? mark : 0;
+	}
+	const events = all.filter((e) => e.seq > mark && (evFilter === undefined || evFilter.has(e.ev)));
+	return { events, pruned, skipped, head: last === undefined ? undefined : { seq: last.seq, ts: last.ts } };
+}
+
+/** Map an --since ISO timestamp onto the seq watermark protocol: the highest
+ * seq among events at-or-before that timestamp (0 = replay everything). */
+export function watermarkFromSince(timelinePath: string, sinceIso: string): number {
+	const since = Date.parse(sinceIso);
+	if (Number.isNaN(since)) return 0;
+	let mark = 0;
+	for (const source of [...rotationChain(timelinePath), timelinePath]) {
+		for (const ev of readTimelineEvents(source).events) {
+			const ts = Date.parse(ev.ts);
+			if (!Number.isNaN(ts) && ts <= since && ev.seq > mark) mark = ev.seq;
+		}
+	}
+	return mark;
+}
+
+// ── rounds (parity with autopilot/state.py used_rounds, VC-020) ──────────────
+
+const TASK_FM_LINE_RE = /^([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*?)[ \t]*$/;
+
+/** Frontmatter scalar labels of one task.md (loop/attempt/origin/type...).
+ * Lenient mirror of state.py parse_task_labels: a missing frontmatter or a
+ * malformed line simply yields no label; nested blocks (read_scope lists)
+ * are skipped, not parsed. The header boundary comes from the single-source
+ * extractor (AC-005/P3) while the fenced-only semantics stay local: a task.md
+ * with no `---` fence has no autopilot labels here. */
+export function parseTaskLabels(taskMdPath: string): Map<string, string> {
+	let text: string;
+	try {
+		text = fs.readFileSync(taskMdPath, "utf8");
+	} catch {
+		return new Map();
+	}
+	const region = extractTaskHeader(text);
+	if (!region.fenced) return new Map();
+	const lines = text.split(/\r\n|\r|\n/);
+	const labels = new Map<string, string>();
+	for (let i = region.startLine; i <= region.endLine; i++) {
+		const line = lines[i] ?? "";
+		const m = TASK_FM_LINE_RE.exec(line);
+		if (m === null) continue;
+		labels.set(m[1] ?? "", m[2] ?? "");
+	}
+	return labels;
+}
+
+/** Per-loop used-round counts from task.md loop/attempt labels — the VC-020
+ * parity surface with state.py used_rounds. A round = one distinct attempt
+ * value within a loop (D-111 round table): same-attempt repair dispatches
+ * and orphan re-insertions do not add rounds. A task.md whose attempt label
+ * is missing degrades to file-count semantics keyed by its directory, so
+ * rewrites of the same dir never double-count. In-flight dispatches count —
+ * their task.md exists from the dispatch transaction on (D-102). */
+export function usedRounds(workersDirs: string[]): Map<string, number> {
+	const units = new Map<string, Set<string>>();
+	for (const workersDir of workersDirs) {
+		let entries: fs.Dirent[];
+		try {
+			entries = fs.readdirSync(workersDir, { withFileTypes: true });
+		} catch {
+			continue; // owner has no workers/ dir
+		}
+		const names = entries
+			.filter((e) => e.isDirectory())
+			.map((e) => e.name)
+			.sort();
+		for (const name of names) {
+			const labels = parseTaskLabels(path.join(workersDir, name, "task.md"));
+			const loop = labels.get("loop");
+			if (loop === undefined || loop === "") continue;
+			const attempt = (labels.get("attempt") ?? "").trim();
+			const unit = attempt !== "" ? attempt : `@${name}`;
+			let attempts = units.get(loop);
+			if (attempts === undefined) {
+				attempts = new Set();
+				units.set(loop, attempts);
+			}
+			attempts.add(unit);
+		}
+	}
+	const result = new Map<string, number>();
+	for (const [loop, attempts] of units) result.set(loop, attempts.size);
+	return result;
+}
+
+// ── the status model (D-005: derived from files only) ────────────────────────
+
+export const STATUS_SCHEMA = "autopilot-status/1";
+
+export interface RoundBudget {
+	used: number;
+	max: number;
+}
+
+export interface KeyRounds {
+	l2: RoundBudget;
+	l3: RoundBudget;
+	retry: RoundBudget;
+}
+
+/** Per-key claim coverage (claim-driven-review T-05, design §3.4). Summed over
+ * the key's worker `run.json` files that carry a `claims` subobject; the
+ * subobject itself is written by the launcher (out of scope for T-05), so a
+ * run without one contributes nothing and a key without any measured run has
+ * no `claims` view at all. */
+export interface ClaimMetricsView {
+	total: number;
+	closed: number;
+	partial: number;
+	unverified: number;
+	fetches: number;
+	/** `Σtokens / Σclosed`; `"n/a"` when a contributing run has no attributable
+	 * tokens or when `closed === 0` — never a fabricated `0`. */
+	tokensPerClosedClaim: number | "n/a";
+}
+
+export interface StageKeyView {
+	key: string;
+	phase: string;
+	state: string;
+	rounds: KeyRounds;
+	/** Optional so every pre-T-05 model shape (and every exact `toEqual` on it)
+	 * stays valid; set only when a run.json actually carries claims. */
+	claims?: ClaimMetricsView;
+}
+
+export interface StageView {
+	current: number;
+	status: string;
+	keys: StageKeyView[];
+}
+
+export interface GateView {
+	id: string;
+	kind: string;
+	status: string;
+	/** Milliseconds since the gate file's `created_at` (D-009/AC-008), computed
+	 * at derivation time. `null` when the timestamp is unavailable — never a
+	 * fallback to `expires_at`: every historical (v1) gate lacks that field,
+	 * so keying age off it would report "unknown" forever (D-007). */
+	ageMs: number | null;
+}
+
+/** Worker statuses that end a run — the `mw_common._TERMINAL_STATUSES` mirror
+ * (T-20/D-022: `done`, `failed`, `needs-clarification`, `lost`). A row in any
+ * of these is no longer in flight; `pending` and `running` are. */
+export const TERMINAL_WORKER_STATUSES: ReadonlySet<string> = new Set(["done", "failed", "needs-clarification", "lost"]);
+
+/** G2 `BLOCKED_ON_HUMAN` truth table (T-05, design D-008; per-key revision by
+ * mw-autopilot-gate-alarm-liveness T-10 / design D2). A gate is human-blocked
+ * when NO non-terminal worker row is in flight for that gate's OWN key.
+ * Deliberately NOT `status == "running"` — a `pending` row starts on the next
+ * tick, so counting it as "in flight" avoids a false reminder. An unresolvable
+ * scope (empty key, key off the roadmap) NEVER suppresses (fail-open, AC-002):
+ * such a gate is human-blocked by construction. The third axis (`conductor
+ * still ticking`) is a TS render-time concern owned by `monitor.ts`'s
+ * `tickStale`.
+ *
+ * BACK-COMPAT: callers that do not yet pass `perKey` keep the legacy
+ * project-level axis (`nonTerminalRows === 0`). The per-key axis is wired by
+ * T-11 in `monitor.ts` / `mw_common.py`; T-10 owns only this derivation. */
+export interface BlockedOnHumanPerKey {
+	/** Keys of the pending gates (null/"" = unresolved scope → fail-open). */
+	gateKeys: ReadonlyArray<string | null>;
+	/** Non-terminal worker rows per owning key (canonical ownership). */
+	nonTerminalByKey: ReadonlyMap<string, number>;
+}
+
+export function blockedOnHuman(pendingGates: number, nonTerminalRows: number, perKey?: BlockedOnHumanPerKey): boolean {
+	if (pendingGates === 0) return false;
+	if (perKey === undefined) return nonTerminalRows === 0; // legacy project-level axis
+	for (const raw of perKey.gateKeys) {
+		const key = (raw ?? "").trim();
+		if (key === "") return true; // unresolved scope → never suppressed (fail-open)
+		if ((perKey.nonTerminalByKey.get(key) ?? 0) === 0) return true;
+	}
+	return false;
+}
+
+export interface TimelineWatermark {
+	seq: number;
+	ts: string;
+}
+
+export interface StatusConfigView {
+	enabled: boolean;
+	poll_interval_sec: number;
+	round_budget: number;
+	max_parallel_keys: number;
+	max_workers_per_key: number;
+}
+
+/** The versioned `/autopilot status --json` payload (design §4.1, D-109 N8).
+ * Field set and shapes are locked by the design example. */
+export interface AutopilotStatus {
+	schema: typeof STATUS_SCHEMA;
+	stage: StageView;
+	gates: GateView[];
+	timeline: TimelineWatermark;
+	config: StatusConfigView;
+}
+
+/** Derivation outcome: `status` is the schema-exact JSON surface; `paused`
+ * and `warnings` are human-view extras (the D-110 pause flag lives in the
+ * config file, not the versioned status schema). */
+export interface StatusModel {
+	status: AutopilotStatus;
+	paused: boolean;
+	warnings: string[];
+	/** T-14 / AC-007: per-gate folded blocker class (id -> paperwork|judgment)
+	 * computed by the derivation layer via `blockerClassOf`. Kept out of the
+	 * locked `GateView` (`autopilot-console.test.ts` exact `toEqual`), and
+	 * optional so hand-built models stay constructible. */
+	gateBlockerClasses?: Record<string, BlockerClass>;
+}
+
+export type StatusModelResult = { ok: true; model: StatusModel } | { ok: false; error: string };
+
+/** The stage the conductor is currently driving: the running stage; else the
+ * first stage not yet closed (pending/approved/halted — halted still awaits
+ * a human decision, so it stays current); else the last stage (everything
+ * closed — a terminal view). Undefined when there is no roadmap. */
+function currentStage(stages: RoadmapStage[]): RoadmapStage | undefined {
+	if (stages.length === 0) return undefined;
+	const running = stages.find((s) => s.status === "running");
+	if (running !== undefined) return running;
+	const open = stages.find((s) => s.status !== "closed" && s.status !== "closed-human");
+	return open ?? stages[stages.length - 1];
+}
+
+/** Aggregate a key's per-loop used rounds into the three families the status
+ * schema exposes: `l2:{key}:{edge}` → l2, `l3:{key}` → l3, `exec:{key}:{stem}`
+ * and `repair:{key}` → retry. A family's used value is its most-consumed
+ * loop — budgets are enforced per loop (AC-008/AC-011), so the maximum is
+ * the binding constraint. max = config round_budget for every family. */
+function keyRounds(perLoop: Map<string, number>, key: string, budget: number): KeyRounds {
+	let l2 = 0;
+	let l3 = 0;
+	let retry = 0;
+	for (const [loop, used] of perLoop) {
+		if (loop.startsWith(`l2:${key}:`)) l2 = Math.max(l2, used);
+		else if (loop === `l3:${key}`) l3 = Math.max(l3, used);
+		else if (loop.startsWith(`exec:${key}:`) || loop === `repair:${key}`) retry = Math.max(retry, used);
+	}
+	return {
+		l2: { used: l2, max: budget },
+		l3: { used: l3, max: budget },
+		retry: { used: retry, max: budget },
+	};
+}
+
+/** One `run.json` `claims` subobject (design §3.4: `{total, closed, partial,
+ * unverified, fetches, tokens}`, `tokens: null` = not attributable). */
+interface RunClaims {
+	total: number;
+	closed: number;
+	partial: number;
+	unverified: number;
+	fetches: number;
+	tokens: number | null;
+}
+
+/** A non-negative integer counter, or `null` when the field is not one. */
+function claimCounter(value: unknown): number | null {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+	return Math.trunc(value);
+}
+
+/** Read one `run.json` claim payload. Anything unreadable/partial is `null`:
+ * a half-written subobject is not a measurement, so nothing is inferred. */
+function readRunClaims(file: string): RunClaims | null {
+	let raw: string;
+	try {
+		raw = fs.readFileSync(file, "utf8");
+	} catch {
+		return null;
+	}
+	let data: unknown;
+	try {
+		data = JSON.parse(raw);
+	} catch {
+		return null;
+	}
+	if (typeof data !== "object" || data === null) return null;
+	const claims = (data as Record<string, unknown>).claims;
+	if (typeof claims !== "object" || claims === null) return null;
+	const fields = claims as Record<string, unknown>;
+	const total = claimCounter(fields.total);
+	const closed = claimCounter(fields.closed);
+	const partial = claimCounter(fields.partial);
+	const unverified = claimCounter(fields.unverified);
+	const fetches = claimCounter(fields.fetches);
+	if (total === null || closed === null || partial === null || unverified === null || fetches === null) {
+		return null;
+	}
+	// A missing `tokens` key means unattributable (same as an explicit null).
+	const tokens = claimCounter(fields.tokens);
+	return { total, closed, partial, unverified, fetches, tokens };
+}
+
+/** Aggregate one key's worker runs into a `claims` view (design §3.4:
+ * `Σtokens / Σclosed`). Unknown for any single run makes the ratio `n/a` — a
+ * partial sum would understate the cost per closed claim. */
+function keyClaims(workersDir: string): ClaimMetricsView | undefined {
+	let entries: fs.Dirent[];
+	try {
+		entries = fs.readdirSync(workersDir, { withFileTypes: true });
+	} catch {
+		return undefined; // no workers/ dir: nothing was measured for this key
+	}
+	const names = entries
+		.filter((e) => e.isDirectory())
+		.map((e) => e.name)
+		.sort();
+	const totals = { total: 0, closed: 0, partial: 0, unverified: 0, fetches: 0 };
+	let tokens = 0;
+	let tokensKnown = true;
+	let seen = false;
+	for (const name of names) {
+		const payload = readRunClaims(path.join(workersDir, name, "run.json"));
+		if (payload === null) continue;
+		seen = true;
+		totals.total += payload.total;
+		totals.closed += payload.closed;
+		totals.partial += payload.partial;
+		totals.unverified += payload.unverified;
+		totals.fetches += payload.fetches;
+		if (payload.tokens === null) tokensKnown = false;
+		else tokens += payload.tokens;
+	}
+	if (!seen) return undefined;
+	return {
+		...totals,
+		tokensPerClosedClaim: !tokensKnown || totals.closed === 0 ? "n/a" : tokens / totals.closed,
+	};
+}
+
+/** Derive the full status view from files alone (AC-015: a reopened console
+ * rebuilds this in <10s with zero process state). The only hard failure is
+ * an invalid config.json (D-110 fail-closed); a missing/parse-failed
+ * roadmap, corrupt gate files, and an absent timeline all degrade to empty
+ * views plus warnings. */
+export function deriveStatusModel(projectDir: string, nowMs: number = Date.now()): StatusModelResult {
+	const cfg = readConfig(projectDir);
+	if (!cfg.ok) return cfg;
+	const config = cfg.config;
+
+	const warnings: string[] = [];
+	const roadmap = readRoadmap(projectDir);
+	if (roadmap.ok) {
+		warnings.push(...roadmap.warnings);
+	} else {
+		warnings.push(roadmap.error);
+	}
+	const stage = currentStage(roadmap.ok ? roadmap.stages : []);
+
+	const agenticdoc = path.join(projectDir, ".agenticdoc");
+	const phaseByKey = new Map(new IndexStore(agenticdoc).readAll().map((e) => [e.key, e.phase]));
+
+	const keys: StageKeyView[] = [];
+	if (stage !== undefined) {
+		for (const row of stage.keys) {
+			const workersDir = path.join(agenticdoc, row.key, "workers");
+			const perLoop = usedRounds([workersDir]);
+			const claims = keyClaims(workersDir);
+			const view: StageKeyView = {
+				key: row.key,
+				phase: phaseByKey.get(row.key) ?? "—",
+				// key-status line absent (fresh proposal) → the only non-terminal
+				// enum value, "running" (D-105 KEY_STATUSES has no "pending").
+				state: stage.keyStatus[row.key] ?? "running",
+				rounds: keyRounds(perLoop, row.key, config.round_budget),
+			};
+			// D-109 N8 shape lock: the key exists only when a run.json measured
+			// claims, so a project without claims serializes exactly as before.
+			if (claims !== undefined) view.claims = claims;
+			keys.push(view);
+		}
+	}
+
+	const gateScan = listGates(projectDir);
+	warnings.push(...gateScan.errors);
+	// Age is computed HERE (collect) from the gate's own created_at; the
+	// renderer stays a pure function of the model (same split as monitor.ts).
+	const gates: GateView[] = gateScan.gates.map((g) => {
+		const createdMs = Date.parse(g.createdAt);
+		return {
+			id: g.id,
+			kind: g.kind,
+			status: g.status,
+			ageMs: Number.isNaN(createdMs) ? null : Math.max(0, nowMs - createdMs),
+		};
+	});
+	// T-14 / AC-007: the TS derivation-layer fold. `None`/absent folds to
+	// `judgment` (the same direction as Python `gate_facts` /
+	// `auto_decision_for_rule`), so the two languages cannot disagree.
+	const gateBlockerClasses: Record<string, BlockerClass> = {};
+	for (const g of gateScan.gates) gateBlockerClasses[g.id] = blockerClassOf(g);
+
+	const head = queryTimeline(timelinePath(projectDir), 0).head;
+
+	return {
+		ok: true,
+		model: {
+			status: {
+				schema: STATUS_SCHEMA,
+				stage: {
+					current: stage === undefined ? 0 : stage.number,
+					status: stage === undefined ? "none" : stage.status,
+					keys,
+				},
+				gates,
+				timeline: head === undefined ? { seq: 0, ts: "" } : { seq: head.seq, ts: head.ts },
+				config: {
+					enabled: config.enabled,
+					poll_interval_sec: config.poll_interval_sec,
+					round_budget: config.round_budget,
+					max_parallel_keys: config.max_parallel_keys,
+					max_workers_per_key: config.max_workers_per_key,
+				},
+			},
+			paused: config.paused,
+			warnings,
+			gateBlockerClasses,
+		},
+	};
+}
+
+/** "45s" / "3m" / "2h 3m" — coarse pending age for the status text (D-009).
+ * Mirrors monitor.ts's formatDuration so the two surfaces read the same. */
+function formatCoarseAge(ms: number): string {
+	const s = Math.max(0, Math.floor(ms / 1000));
+	if (s < 60) return `${s}s`;
+	const m = Math.floor(s / 60);
+	if (m < 60) return `${m}m`;
+	return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+/** Human-readable rendering of the SAME derivation that produced the --json
+ * payload (view parity, VC-017): every number below is taken from the model
+ * object, so the two views cannot drift. */
+export function renderStatusText(model: StatusModel): string {
+	const { status, paused, warnings } = model;
+	const lines: string[] = [];
+	if (status.stage.current > 0) {
+		lines.push(`stage ${status.stage.current} (${status.stage.status})`);
+		for (const k of status.stage.keys) {
+			// T-05: appended at the END of the line, never inserted before the
+			// L2/L3/retry columns. A downstream 110-column cut (monitor.ts) then
+			// trims the claims tail first, so the existing fields keep their
+			// columns. Absent claims add nothing at all.
+			const claims =
+				k.claims === undefined
+					? ""
+					: ` | claims ${k.claims.total}/${k.claims.closed}c ${k.claims.partial}p ${k.claims.unverified}u`;
+			lines.push(
+				`  ${k.key} | phase=${k.phase} | state=${k.state} | L2 ${k.rounds.l2.used}/${k.rounds.l2.max}` +
+					` | L3 ${k.rounds.l3.used}/${k.rounds.l3.max} | retry ${k.rounds.retry.used}/${k.rounds.retry.max}` +
+					claims,
+			);
+		}
+		if (status.stage.keys.length === 0) lines.push("  (no keys)");
+	} else {
+		lines.push("stage: none (no roadmap — autopilot not initialized or no stages parsed)");
+	}
+	const pending = status.gates.filter((g) => g.status === "pending");
+	lines.push(`gates: ${status.gates.length} total, ${pending.length} pending`);
+	for (const g of status.gates) {
+		// D-009: pending age in the human row ("age=?" when unknown).
+		const age = g.ageMs === null ? "?" : formatCoarseAge(g.ageMs);
+		// T-14 / AC-007: surface the folded class so an operator can answer
+		// "who is holding this gate" from the status line itself.
+		const blocker = model.gateBlockerClasses?.[g.id];
+		const blockerToken = blocker === undefined ? "" : ` blocker=${blocker}`;
+		lines.push(`  ${g.id} ${g.kind} ${g.status} age=${age}${blockerToken}`);
+	}
+	lines.push(`timeline: seq=${status.timeline.seq} ts=${status.timeline.ts}`);
+	lines.push(
+		`config: enabled=${status.config.enabled} | poll_interval_sec=${status.config.poll_interval_sec}` +
+			` | round_budget=${status.config.round_budget} | max_parallel_keys=${status.config.max_parallel_keys}` +
+			` | max_workers_per_key=${status.config.max_workers_per_key}` +
+			`${paused ? " | paused" : ""}`,
+	);
+	for (const w of warnings) lines.push(`warning: ${w}`);
+	return lines.join("\n");
+}

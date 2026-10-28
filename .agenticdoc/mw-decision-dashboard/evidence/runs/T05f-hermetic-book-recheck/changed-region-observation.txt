@@ -1,0 +1,113 @@
+# reconstruction sha256 == baseline-hashes.txt: 33e7c94fdf8b302dad5a1e42dd1171cb3d4bb50d25c859e0681d1b8fa42c31b3 OK
+# changed lines (excluding headers): 65
+
+--- test_decision_observation.py (baseline, sha256 verified)
++++ test_decision_observation.py (T05f)
+@@ -27,20 +27,22 @@
+ 
+ from __future__ import annotations
+ 
+ import dataclasses
+ import hashlib
+ import json
++import os
+ import pathlib
+ import sys
+ 
+ import pytest
+ 
+ sys.path.insert(0, str(pathlib.Path(__file__).parent))  # noqa: E402
+ 
+ import decision  # noqa: E402
++import decision_backends  # noqa: E402
+ import decision_book as books  # noqa: E402
+ import decision_points as dpts  # noqa: E402
+ import decision_wire  # noqa: E402
+ 
+ CRED_ENV_VARS = (
+     "TIMI_API_KEY",
+@@ -60,16 +62,38 @@
+ 
+ # ---------------------------------------------------------------------------
+ # Fixtures and helpers
+ # ---------------------------------------------------------------------------
+ 
+ 
++def _credential_env_names() -> tuple[str, ...]:
++    """The named credentials plus every name the discovery rule would pick up.
++
++    ``decision._credential_values`` treats any ``*_API_KEY`` / ``*_TOKEN`` /
++    ``*_KEY`` / ``*_SECRET`` / ``*_PASSWORD`` variable as a secret, so leaving
++    one of those set would make the known-secret set depend on the developer's
++    shell. The fixture removes them all, not just the five named ones.
++    """
++    names = set(CRED_ENV_VARS)
++    names.update(
++        name for name in os.environ if name.upper().endswith(decision._CRED_ENV_SUFFIXES)
++    )
++    return tuple(sorted(names))
++
++
+ @pytest.fixture(autouse=True)
+-def _hermetic(monkeypatch: pytest.MonkeyPatch):
+-    for name in CRED_ENV_VARS:
++def _hermetic(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path):
++    for name in _credential_env_names():
+         monkeypatch.delenv(name, raising=False)
++    # Credential *discovery* (wire capture and the book gate) resolves the timi
++    # chain through `decision_backends._auth_json_path()`; every test in this
++    # module must stay inside `tmp_path` and must never read the developer's
++    # real `~/.pi/agent/auth.json` (T05f N3, design §9).
++    monkeypatch.setattr(
++        decision_backends, "_auth_json_path", lambda: tmp_path / "no-auth.json"
++    )
+     dpts.clear_points_config_cache()
+     yield
+     dpts.clear_points_config_cache()
+ 
+ 
+ def _write_decide_config(project: pathlib.Path, **fields) -> pathlib.Path:
+@@ -1674,6 +1698,43 @@
+ 
+     assert outcome.status == "suggested"
+     end = _of_kind(decision_wire.test_wire_sink(test_root), "decision-end")[0]
+     assert end["actor"] == {"kind": "system", "id": "nightly"}, (
+         "the ledger records the declaration; it does not prove a human acted"
+     )
++
++
++# ---------------------------------------------------------------------------
++# 12. The isolation itself is checked (T05f N3)
++#
++# N3 of the T05e review: the book/wire credential discovery resolves the timi
++# chain through `decision_backends._auth_json_path()`, which defaults to the
++# developer's real `~/.pi/agent/auth.json`. These suites used to read that file
++# (read-only, never asserted) and are now pointed at `tmp_path`. The fixture is
++# a claim, so this test pins it: the only credential the chain can discover is
++# the synthetic sentinel written at the fixture's own path.
++# ---------------------------------------------------------------------------
++
++
++def test_the_credential_chain_is_hermetic(tmp_path: pathlib.Path) -> None:
++    sentinel = "sk-t05f-hermetic-sentinel-0123456789"
++    auth = tmp_path / "no-auth.json"
++    assert decision_backends._auth_json_path() == auth, (
++        "the fixture must redirect the timi credential chain into tmp_path"
++    )
++    assert not auth.exists(), "the fixture path must start absent (no ambient value)"
++    leaked = sorted(
++        name for name in os.environ if name.upper().endswith(decision._CRED_ENV_SUFFIXES)
++    )
++    assert leaked == [], (
++        "credential-shaped environment variables would make discovery depend on "
++        f"the developer's shell: {leaked}"
++    )
++
++    auth.write_text(
++        json.dumps({"timi": {"key": sentinel}}), encoding="utf-8", newline="\n"
++    )
++
++    assert decision.known_credential_values(decision.DecisionConfig(enabled=True)) == (
++        sentinel,
++    ), "the chain resolved a value the fixture did not place (env or ambient auth.json)"
++

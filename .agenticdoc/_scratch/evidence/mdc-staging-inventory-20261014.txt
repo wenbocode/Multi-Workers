@@ -1,0 +1,52 @@
+## A. 计划的源码/测试面（porcelain）
+   M  packages/multi-workers/autopilot/dispatch.py
+   M  packages/multi-workers/autopilot/conductor.py
+   M  packages/multi-workers/autopilot/config.py
+  ??  packages/multi-workers/autopilot/task_graph.py
+  ??  packages/multi-workers/autopilot/write_face.py
+  ??  packages/multi-workers/test_mdc_concurrency.py
+  ??  packages/multi-workers/test_mdc_e2e.py
+  ??  packages/multi-workers/test/fixtures/write-face-corpus.json
+  ??  packages/multi-workers/test/test_write_face_dispatch.py
+   M  packages/multi-workers/test_rag_launcher.py
+  ??  packages/coding-agent/src/extensions/agent-team-loop/shared/write-face.ts
+   M  packages/coding-agent/src/extensions/agent-team-loop/autopilot/status-model.ts
+   M  packages/coding-agent/src/extensions/agent-team-loop/autopilot/monitor.ts
+   M  packages/coding-agent/src/extensions/agent-team-loop/autopilot/console.ts
+   M  packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts
+   M  packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts
+   M  packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
+   M  packages/coding-agent/src/core/extensions/types.ts
+   M  packages/coding-agent/src/modes/interactive/interactive-mode.ts
+   M  packages/coding-agent/src/modes/rpc/rpc-mode.ts
+   M  packages/coding-agent/src/modes/rpc/rpc-types.ts
+  ??  packages/coding-agent/test/suite/autopilot-concurrency-panel.test.ts
+   M  packages/coding-agent/test/suite/autopilot-monitor.test.ts
+  ??  packages/coding-agent/test/suite/write-face.test.ts
+  ??  packages/coding-agent/test/interactive-mode-widget-order.test.ts
+  CLEAN(未改)  packages/coding-agent/test/interactive-mode-status.test.ts
+   M  packages/coding-agent/CHANGELOG.md
+   M  packages/multi-workers/CHANGELOG.md
+
+## B. 我遗留在 test/suite 的临时探针（zz-*.tmp.test.ts）
+  (none)
+
+## C. .agenticdoc 里本 key 的记录状态
+   M .agenticdoc/_index.parallel
+   M .agenticdoc/_pitfalls.md
+   M .agenticdoc/_project_log.md
+  ?? .agenticdoc/mw-dynamic-concurrency/
+  ?? .agenticdoc/mw-write-face-guard/
+
+## D. dist 变更统计
+  packages/coding-agent/dist: 62 (M=50, ??=12)
+  packages/multi-workers/dist: 1 (M=1, ??=0)
+
+## E. dist 入口 index.js 是否 import 其它 window 的新模块（完整性判据）
+  index.js imports bash-segments: False
+  index.js imports worktree-junction-guard: True
+  index.js imports write-face: False
+  index.js imports implementation-gate: True
+
+## F. .gitignore 命中（确认 dist 是否被忽略）
+  (not ignored)

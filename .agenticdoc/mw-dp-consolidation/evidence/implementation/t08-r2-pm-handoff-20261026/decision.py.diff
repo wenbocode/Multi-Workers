@@ -1,0 +1,111 @@
+--- before/packages/multi-workers/decision.py
++++ after/packages/multi-workers/decision.py
+@@ -1793,7 +1793,11 @@
+         2. an optional caller-owned **replay lookup** runs before the model: when
+            it reports an existing decision for ``logical_id`` the request is
+            answered with ``replayed=True`` and zero POSTs (the transport never
+-           owns a second ledger, so the store stays in the lifecycle layer);
++           owns a second ledger, so the store stays in the lifecycle layer).
++           Only an explicit ``True``/``False`` proves that hit/miss; any other
++           result (``null``, a string such as ``"unknown"``, a number, a
++           container) proves neither and fails closed with zero POSTs instead of
++           being truthified into a fabricated replay hit or novelty claim;
+         3. the pure protocol gate validates role -> complete material -> prepared
+            basis (a prepared catalog item must reference a real material fact and
+            name a legal choice) before anything is sent;
+@@ -1808,7 +1812,11 @@
+ 
+         The complete projected material and the complete basis catalog are sent
+         as-is: the existing size gates refuse an over-budget request instead of
+-        truncating the core evidence the decision depends on.
++        truncating the core evidence the decision depends on. The same-call pair
++        needs two questions (the entry's business question plus the basis), so a
++        ``max_questions`` below that is reported as a ``budget-exhausted``
++        refusal with zero POSTs and zero business decisions - never as an escaping
++        ``DecisionInputError``, and never by raising the configured ceiling.
+ 
+         Counting is deliberately two-axis: ``attempts`` (client backend calls),
+         ``transport_attempts`` (real POSTs, retry-after retries included) and
+@@ -1840,7 +1848,7 @@
+         # 2. Caller-owned replay lookup: a hit never spends a model call.
+         if logical_id and replay_check is not None:
+             try:
+-                already_decided = bool(replay_check(dp, logical_id))
++                lookup = replay_check(dp, logical_id)
+             except Exception as exc:  # noqa: BLE001 - a broken lookup proves nothing
+                 return self._prepared(
+                     start,
+@@ -1851,7 +1859,24 @@
+                         "without a provable novelty check"
+                     ),
+                 )
+-            if already_decided:
++            if not isinstance(lookup, bool):
++                # A lookup proves a hit or a miss only by answering True/False.
++                # ``null``, ``"unknown"``, a number or any other shape proves
++                # neither: truthifying it would fabricate a replay hit (no POST)
++                # or claim novelty and send a request on an unproven check. Both
++                # are refusals with zero HTTP and zero business decisions, and the
++                # detail names the shape only - never a value.
++                return self._prepared(
++                    start,
++                    dp=dp,
++                    reason=REASON_ENTRY_UNAVAILABLE,
++                    detail=(
++                        f"replay lookup returned {type(lookup).__name__}, not a bool; "
++                        "only an explicit True (hit) or False (miss) proves the "
++                        "novelty of this request - refusing to send"
++                    ),
++                )
++            if lookup:
+                 return self._prepared(
+                     start,
+                     dp=dp,
+@@ -1905,6 +1930,25 @@
+                 ),
+             )
+         business_qid = business_qids[0]
++        # The pair needs two questions (business + prepared basis). The generic
++        # ``decide`` face raises ``DecisionInputError`` above ``max_questions``;
++        # escaping with that exception would leave the caller without a result and
++        # without the visible reason, so the boundary is reported as a refusal
++        # with zero POSTs. The configured ceiling is never raised and the question
++        # set is never truncated to fit.
++        ceiling = int(getattr(self.cfg, "max_questions", 0) or 0)
++        if len(questions) > ceiling:
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=REASON_BUDGET_EXHAUSTED,
++                detail=(
++                    f"{dp} needs {len(questions)} questions in one prepared request "
++                    f"(business + {BASIS_QUESTION_ID}) but max_questions={ceiling}; "
++                    "no request sent, the ceiling is not raised and the question "
++                    "set is not truncated"
++                ),
++            )
+         catalog = _prepared_catalog(preparation)
+         state = {
+             "material": protocol.model_state_for(dp, material),
+@@ -1914,7 +1958,20 @@
+             },
+         }
+         # 5. Exactly one transport call (the client owns retries/budget only).
+-        response = self.decide(state, questions, dp=dp)
++        # The generic face raises only on invalid arguments; a prepared request
++        # reports that as a refusal instead of letting it escape.
++        try:
++            response = self.decide(state, questions, dp=dp)
++        except DecisionInputError as exc:
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=REASON_INPUT_INCOMPLETE,
++                detail=(
++                    "prepared request rejected by the transport input contract "
++                    f"({_scrub_detail(exc)}); no request sent"
++                ),
++            )
+         attempts = int(response.get("attempts") or 0)
+         transport_attempts = self._transport_attempts(attempts)
+         shared = {

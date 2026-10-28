@@ -1,0 +1,6 @@
+# T17 successful observation feedback
+Actually read Test6 screenshot: renderSubmitResult's pg-submit-out, separate from closed submission/DAG log. User requests removal of successful-call logs. Changed strict succeeded+recorded+notduplicate branch to headline plus observe-only/no business action notice, returning before audit definition list/empty issues/outcome/answer logs. Nonempty issue/message/error retained. Failure/duplicate/busy branches unchanged; actual facts/answer/captures remain detail/history/DAG.
+
+Baseline t17-baseline three originals/hashes. New RED failed missing action boundary; GREEN readable37/playground13/assets9/workbench17/contracts119 =195P all0. Migrated successful-output presentation assertions to absence in feedback plus exact call/book/answer presence in actual detail; safety/token/redaction/duplicate/busy assertions retained. Logs/metadata ui-recovery/t17-{red,green}-*.
+Full protected check latest11752-byte-copied files exit1 same external three mwoc files3warnings2infos, no formatter/source changes, downstream chain not run; t17-check/.
+No model/browser/shared monitor/build/install/commit/deploy/framework operation. Source-only. Case dropdown-only selection/prefill defect remains separately open after user confirmed case2 but screenshot dp1; not fixed by this task. EXECUTE unchanged.

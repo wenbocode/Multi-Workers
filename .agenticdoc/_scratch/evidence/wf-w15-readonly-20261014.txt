@@ -1,0 +1,10 @@
+_write_face_detail_parts: 13 lines, violations=[]
+_parse_write_face_event: 40 lines, violations=[]
+_parse_write_face_ledger_row: 29 lines, violations=[]
+_doctor_write_face: 74 lines, violations=[]
+_format_write_face_doctor_line: 37 lines, violations=[]
+
+cmd_doctor write_face lines:
+  621: report["write_face"] = _doctor_write_face(project_dir)
+  641: print(_format_write_face_doctor_line(report["write_face"]))
+  2609: def _format_write_face_doctor_line(section: dict) -> str:

@@ -1,0 +1,70 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T13:01:01.783877+00:00",
+  "records": [
+    {
+      "id": "T05",
+      "run": {
+        "schema": 1,
+        "task_key": "dpc-t05-eight-cases",
+        "run_id": "dpc-t05-eight-cases@2026-10-27T12:56:07.446Z",
+        "owner_key": "mw-dp-consolidation",
+        "kind": "coding",
+        "status": "running",
+        "started_at": "2026-10-27T12:56:07.446Z",
+        "artifacts": [],
+        "pid": 83532,
+        "last_heartbeat_at": "2026-10-27T13:00:37.532Z"
+      },
+      "seed_and_exact_face_checked_before_manifest_write_in": "check.py + T05-task.md",
+      "product_progress": null
+    },
+    {
+      "id": "T10",
+      "run": {
+        "schema": 1,
+        "task_key": "dpc-t10-lifecycle-state",
+        "run_id": "dpc-t10-lifecycle-state@2026-10-27T12:56:07.428Z",
+        "owner_key": "mw-dp-consolidation",
+        "kind": "coding",
+        "status": "running",
+        "started_at": "2026-10-27T12:56:07.428Z",
+        "artifacts": [],
+        "pid": 84564,
+        "last_heartbeat_at": "2026-10-27T13:00:37.486Z"
+      },
+      "seed_and_exact_face_checked_before_manifest_write_in": "check.py + T10-task.md",
+      "product_progress": null
+    }
+  ],
+  "logical_tasks": 36,
+  "stages": 7,
+  "contracts_preserved": true,
+  "phase": "EXECUTE",
+  "phase_audit_rc": 0,
+  "T09_R2_local_handoff_true": true,
+  "T05_T10_handoff_false_pending_terminal_and_independent_tests": true,
+  "mirror_files": 1883,
+  "changes": [
+    {
+      "path": "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+      "before": "e4b51f5b85198575ba723fca7f85e48a0962da44b2820f4f53f4ebea3de80677",
+      "after": "b95f933d321d7cba48808279d4a9823d4c8719fe26ee26013d705439d7bcb280",
+      "authorized_product": false
+    }
+  ],
+  "out_of_face_changes": [
+    {
+      "path": "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+      "before": "e4b51f5b85198575ba723fca7f85e48a0962da44b2820f4f53f4ebea3de80677",
+      "after": "b95f933d321d7cba48808279d4a9823d4c8719fe26ee26013d705439d7bcb280",
+      "authorized_product": false
+    }
+  ],
+  "write_surface_audit_pass": false,
+  "14_cache_names_exist_13_bytes_unchanged_1_changed": true,
+  "no_cache_cleanup_or_restore_authority_used": true,
+  "16_relevant_live_baselines_unchanged": true,
+  "prior_T09_products_and_original_PM_R2_worker_evidence_protected": true,
+  "no_deployment_or_final_QG_signoff": true
+}

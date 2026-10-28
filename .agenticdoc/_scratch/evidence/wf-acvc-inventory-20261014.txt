@@ -1,0 +1,84 @@
+=== spec.md AC lines ===
+- `.agenticdoc/_workers.parallel`（在飞行；注意：**不能承载写面**——9 列上限见 AC-008，写面靠 task.md 头/卡 envelope）
+| AC-001 | 在任务书声明写面时，`dispatch_worker` / `dispatch.dispatch` 将写面解析为机器可读结构（路径 glob 列表），解析失败返回稳定 refusal code 且零副作用（不写 task.md、不建队列行） |
+| AC-002 | 在派发新 worker 时，若其写面与同 key 任一在飞 worker 的写面存在非空 glob 交集，派发被拒绝并给出 `overlap-with:<task_key>` 形态的机器可判原因 |
+| AC-003 | 在任务书未声明写面时，派发按 fail-closed 处置（拒绝或标记 serial-only），并写审计行；不得静默放行 |
+| AC-004 | 写面声明被渲染进 task.md 且 worker 运行期据此拒绝越界写：范围必须覆盖**所有可写角色**（`coding`/`repair`/`phase-writer`/`vision`/`fallback` + 经 bash 写文件的 read-only 角色），不得再限于 `research`；越界写返回 `[TOOL_ERR]` 且记 trace |
+| AC-005 | 同一时刻同 key 的同文件多写者样本为 0：以 `_workers.parallel` 在飞行 + 写面字段复算，并发派发 N≥4 时无交集对 |
+| AC-006 | `mw doctor`（或等价只读面）能列出写面重叠拒绝的计数与最近样本，无重叠时显示 0 而非报错 |
+| AC-007 | 两条通道（conductor / PM 手工）对同一写面输入给出相同判定（同语料对照，结果一致） |
+| AC-008 | 写面不占用队列列：`_workers.parallel` 的 `WORKER_COLS_MAX=9` 必须保持（实测 10 列行被两侧判为 unparsable → PM 扫描整轮中止、launcher 静默丢行），写面载体只能是 task.md 头部 / 任务卡 envelope |
+| AC-009 | 写面字段名不与既有含义冲突：不得沿用与 xkey gate frontmatter 的 JSON list 同名的 `write_scope`（`gates.py:175/790`）而不加区分；新字段名或显式限定词必须二选一并写进 spec |
+| AC-010 | 写面声明覆盖"read-only 角色经 bash 写证据文件"路径：research/review 角色无 `write` 工具（只有 basename 限定的 `worker_file`），证据文件经 bash 落盘，故写面判定不能只看 `write`/`edit` 调用 |
+| AC-011 | **载体单源**：现存 4 个互不相通的写面载体（W1 task.md `write_scope:` / W2 gate v2 `write_scope` / W3 卡 envelope `写入允许面·写入禁止面` / W4 `mw-write-surface` marker）必须收敛为**一个权威载体**，其余三个各自给出显式处置（保持、注释为异语义、废弃）；不得新增第五个 |
+| AC-012 | **C 不得替代 B**（可证伪）：两个 coding worker 都合法声明同一路径时，派发层必须已经拒绝第二个（而不是靠运行期各写各的各自放行）；以构造语料 + trace 区间复算证伪 |
+| AC-013 | 写面前提不引入新的假阻：worker 侧 bash 写面守卫对"引语/文档内容"的文本判定不得误阻（本轮实测 `xkey-gate-guard` 误拦 2 次、AC-005b 守卫误拦 3 次，稳定 repro `Write-Output a <term> --glob x`）；以回归用例锁住 |
+| AC-014 | `task.md` 的创建不得在 `.mw/workers.lock` 之外发生（今日 `dispatch.py:1132` 写 task.md 早于取锁 `:1156`）——否则拒绝路径会留下无队列行的孤儿任务目录 |
+- 风险 2（已实测收窄，W1 修正）：写面**不是"唯一载体"而是 4 个互不相通的载体**（W1 task.md `write_scope:` / W2 gate v2 `write_scope`（异语义：`blast_radius ⊆ write_scope`）/ W3 卡 envelope `写入允许面·写入禁止面`（只做存在性检查，`typeExtrasMissing` 从不抽值）/ W4 `mw-write-surface` marker）；W1 的生产端只有 PM 且仅 `writelessRole && isShellRole`（`ui-bridge.ts:2431/2925`），解析端无条件（`worker-mode.ts:440-466`），消费端**仅 `research`**（`worker-mode.ts:2216-2266`）；conductor 的 `rend
+- 风险 3（已实测坐实，W1）：写面"声明为假"之外还有更硬的一条——**coding 类角色的越界写今天零运行期守卫**（`worker-file-tool` 结构性不命中、`read-scope` 只拦读、`implementation-gate` 被 `PI_WORKER_TASK` 放行）。⇒ AC-004 扩到全角色；IN-1/IN-2 的 3,456 文件穿透删除即该缺口的一个实例（`git worktree remove` 不在任何 bash 写动词词表内；G4 worktree-junction-guard 已于 2026-10-14 落地，属另一 key 的 VERIFY 面）。
+- 风险 7（新，实测）：**锁不覆盖源码写** —— `.mw/*.lock` 只护账本类文件；`dispatch.py:1132` 写 `task.md` **在取锁 `:1156` 之前**；worker 对 `packages/**` 的 write/edit/bash 不在任何锁内。锁不能替代"该不该写"的判定（AC-014 只收窄副作用面，不假装加锁 = 并发安全）。
+- 风险 9（新，实测）：**运行期写面闸自身会假阻** —— 现行 bash 守卫在 2026-10-13 又误拦一条只读命令（trace `pattern=redirect target=|| token.text ===`），与 E3 同族；根因未定位。⇒ AC-013 必须有回归用例（引号内容 / heredoc / `--glob` 旗标操作数 / 变量拼接 / 文本引用，共 11 条向量）。
+- 写面载体只能走 task.md 头部 / 任务卡 envelope：队列不能加列（AC-008）；且 conductor 今天**根本不渲染** `write_scope`（与 PM 侧只在 `writelessRole && isShellRole` 时渲染），所以两条通道需要同一个渲染咽喉点，否则 AC-007（两通道同判定）不可达。
+- read-only 角色（research/review/verifier）经 **bash** 写证据文件（无 `write` 工具，`worker_file` 仅限 basename白名单），且 worker 侧 bash 写面守卫会按命令文本拦截；写面判定不能只看 `write`/`edit` 调用（AC-010）。实证：本轮 `mdc-rq2` worker 因命令文本同时含 `.agenticdoc/_autopilot` 片段 + 写动词而被 xkey-gate-guard 拦截，改走 `ReadAllText/WriteAllText` 迂回。
+- 文本判定对**引语/文档内容**假阳性（W3 §7.8 一手观察）：写面守卫按“命令文本含 X + 含写构造”判，会把当作数据/文档引用的字符串当成写目标（与 `dd` 假阳性同族）；本 key 自己新增的判定必须避免同型假阻（AC-013）。
+
+=== design.md VC lines ===
+| VC-001 | 交集算子语料：与 `read_scope` 同语义的向量集 + 边界（`a/**` vs `a`、大小写、`**` 中段、deny 优先）双语言一致 |
+| VC-002 | 两通道同输入同判定（同语料过 Python 与 TS 入口，比较 refusal code 与 overlap_with） |
+| VC-003 | 零副作用：被拒绝的派发不产生 taskDir/task.md/队列行（实测目录快照 diff） |
+| VC-004 | serial-only：未声明写面的卡在存在同 key 在飞时被延迟（不进 `in_flight`，且不拒绝）；无在飞时正常派发 |
+| VC-005 | 临界区：双进程对拍（或注入 sleep）下同 `task_key` 只产生 1 行 |
+| VC-006 | 运行期：coding 角色越界 `write`/`edit`/bash 写目标被 block 并落 `[WRITE_SCOPE]` |
+| VC-007 | 假阻回归：`Write-Output a <term> --glob x` 型命令不被写面闸误判（AC-013） |
+| VC-008 | `mw doctor` 计数：无重叠显示 0，有拒绝显示计数 + 最近样本 |
+7. 书面口径变化（W-10 残留 R2）：`mwds-t03` 的 VC-024「coding/repair/vision 不装闸」与「summary 只给 writeless 角色」是 D-007 明确反转的**旧口径断言**，必须按新语义重写（"有闸且不误拦合法写"/"每个 shell 角色各一行 summary"），**不得删除或放宽**。
+
+=== tasks (19) ac_refs/vc_refs ===
+T-W-D1-glob-intersection.md: ac=- vc=-
+T-W-D2-runtime-guard.md: ac=- vc=-
+T-W-I01-write-face-operator-py.md: ac=- vc=-
+T-W-I02-write-face-operator-ts.md: ac=- vc=-
+T-W-I03-dispatch-refusal.md: ac=AC-001,AC-002,AC-003,AC-008,AC-014 vc=-
+T-W-I04-operator-py-fix.md: ac=- vc=-
+T-W-I05-operator-ts-fix.md: ac=- vc=-
+T-W-I06-operator-py-defer.md: ac=- vc=-
+T-W-I07-render-comma-safe.md: ac=- vc=-
+T-W-I08-pm-gate-render.md: ac=AC-001,AC-007,AC-008 vc=-
+T-W-I09-queue-single-writer.md: ac=AC-008,AC-014 vc=-
+T-W-I10-runtime-guard.md: ac=AC-004,AC-005,AC-013 vc=-
+T-W-I11-carrier-convergence.md: ac=AC-004,AC-007,AC-011,AC-013 vc=VC-024
+T-W-I12-e2e-parity.md: ac=AC-005,AC-007,AC-013 vc=-
+T-W-I13-pm-refusal-audit.md: ac=AC-003,AC-008 vc=-
+T-W-I14-reject-reason-parity.md: ac=AC-007 vc=-
+T-W1-write-face-sources.md: ac=- vc=-
+T-W2-write-face-enforcement.md: ac=- vc=-
+T-W3-write-face-safety.md: ac=- vc=-
+
+=== pm-state.md ===
+# PM State: mw-write-face-guard
+
+## 1. Snapshot
+- Key: mw-write-face-guard
+- Claim-Id: WENBOZHOU-PC4:8740
+- Phase: EXECUTE
+- Next Action: —
+- Started: 2026-10-14 01:10
+- Updated: 2026-10-14 10:52
+
+## 2. Task Status
+*(empty)*
+
+## 3. Evidence Ledger
+*(empty)*
+
+## 4. Hypothesis Queue
+*(empty)*
+
+## 5. Decisions
+*(empty)*
+
+## 6. Turn End Records
+*(empty)*
+
+## 7. Process Log
+*(empty)*

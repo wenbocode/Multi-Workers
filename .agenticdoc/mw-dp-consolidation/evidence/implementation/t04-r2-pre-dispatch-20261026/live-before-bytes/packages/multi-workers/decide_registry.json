@@ -1,0 +1,1771 @@
+{
+  "schema": 3,
+  "generated_from": "decision_points.DP_REGISTRY",
+  "question_types": [
+    "box",
+    "choice",
+    "noul",
+    "score"
+  ],
+  "points": [
+    {
+      "id": "dp1-dispatch-type",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "派发 type/角色/范围",
+      "questions_version": "q-ac4a6184",
+      "p0_consequences": null,
+      "wired": true,
+      "trigger": "packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts:1730",
+      "adopted_at": "packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts:281",
+      "wiring_note": "PM 派发 frontmatter 前调 computeDispatchTriage；采纳=dispatchDecisionOf 仅当 mode=auto 且类型一致时写 decision 头行",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "task_goal",
+          "type": "string",
+          "description": "Task goal exactly as handed to the task (原文), no summary."
+        },
+        {
+          "name": "task_requirements",
+          "type": "string",
+          "description": "Task requirements exactly as handed to the task (原文)."
+        },
+        {
+          "name": "task_deliverables",
+          "type": "string",
+          "description": "Task deliverables exactly as handed to the task (原文)."
+        }
+      ],
+      "optional_state_fields": [],
+      "model_state_fields": [
+        "task_goal",
+        "task_requirements",
+        "task_deliverables"
+      ],
+      "questions": [
+        {
+          "id": "triage_type",
+          "type": "choice",
+          "instructions": "这个任务应该派给哪一类 worker？",
+          "choices": [
+            "coding",
+            "research",
+            "review"
+          ],
+          "labels": {
+            "coding": "需要写代码或改代码或跑命令",
+            "research": "只做检索取证不改代码",
+            "review": "审计别人已完成的产出"
+          }
+        }
+      ]
+    },
+    {
+      "id": "dp2-checkpoint-split",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "checkpoint 拆/收/直执",
+      "questions_version": "q-ba8e970f",
+      "p0_consequences": null,
+      "wired": true,
+      "trigger": "packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts:2602",
+      "adopted_at": "packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts:2620",
+      "wiring_note": "PM 轮询 loop 收敛检查点（checkpoint risk mid/high，每任务一次）；narrow 是唯一可执行动作，写 taskDir/steer-dp2.md",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "task_goal",
+          "type": "string",
+          "description": "Task goal exactly as handed to the task (原文), no summary."
+        },
+        {
+          "name": "task_requirements",
+          "type": "string",
+          "description": "Task requirements exactly as handed to the task (原文)."
+        },
+        {
+          "name": "task_deliverables",
+          "type": "string",
+          "description": "Task deliverables exactly as handed to the task (原文)."
+        },
+        {
+          "name": "pm_decision_background",
+          "type": "string",
+          "description": "Why the PM needs a checkpoint decision now, plus the constraints that shape it."
+        }
+      ],
+      "optional_state_fields": [
+        {
+          "name": "worker_execution",
+          "type": "string",
+          "description": "Optional real worker execution (done/remaining/blocked/attempted and time budget); omit when there is no worker, never invent it."
+        }
+      ],
+      "model_state_fields": [
+        "task_goal",
+        "task_requirements",
+        "task_deliverables",
+        "pm_decision_background",
+        "worker_execution"
+      ],
+      "questions": [
+        {
+          "id": "checkpoint_action",
+          "type": "choice",
+          "instructions": "以当前进度，这一步该继续、拆小、直接执行还是上抛人？",
+          "choices": [
+            "narrow",
+            "split",
+            "direct-exec",
+            "escalate"
+          ],
+          "labels": {
+            "narrow": "收窄到剩余预算内能完成的一小块",
+            "split": "拆成多个任务重派",
+            "direct-exec": "PM 自己直接做完",
+            "escalate": "风险高到必须问人"
+          }
+        }
+      ]
+    },
+    {
+      "id": "dp3-worker-clarify",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "worker 澄清（问题原文 + 四项背景 + 针对问题的处理候选）",
+      "questions_version": "q-21d2d577",
+      "p0_consequences": null,
+      "wired": true,
+      "trigger": "packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts:3903",
+      "adopted_at": "packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts:3753",
+      "wiring_note": "settle exitCode===2 唯一插入点；答案本地生成后 followUp 注入 [mw dp3-answer]",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "question",
+          "type": "string",
+          "description": "The clarifying question verbatim, written before any answer."
+        },
+        {
+          "name": "background.task_goal",
+          "type": "string",
+          "description": "Task goal the question is asked against."
+        },
+        {
+          "name": "background.current_state",
+          "type": "string",
+          "description": "What is actually known so far; unknowns are marked unknown, never invented."
+        },
+        {
+          "name": "background.decision_reason",
+          "type": "string",
+          "description": "Why this question needs a decision now."
+        },
+        {
+          "name": "background.constraints_impact",
+          "type": "string",
+          "description": "Constraints and the impact of each candidate handling."
+        },
+        {
+          "name": "handling_options",
+          "type": "array",
+          "description": "Problem-specific handling candidates [{id,label,description}] rendered as the native dynamic choice.",
+          "item_type": "object"
+        }
+      ],
+      "optional_state_fields": [],
+      "model_state_fields": [
+        "question",
+        "background.task_goal",
+        "background.current_state",
+        "background.decision_reason",
+        "background.constraints_impact",
+        "handling_options"
+      ],
+      "questions": [
+        {
+          "id": "handling",
+          "type": "choice",
+          "instructions": "针对这个问题，从候选处理方式中选出最合适的一项。",
+          "dynamic_choices": "handling_options"
+        }
+      ]
+    },
+    {
+      "id": "dp4-failure-handling",
+      "tier": "P1",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "失败处置",
+      "questions_version": "q-b93176a8",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；失败处置现由 PM 人工重派/告警承担（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "failure.kind",
+          "type": "string",
+          "description": "Failure class observed on the attempt: transient|deterministic|infra|unknown (from the failing step's own error report).",
+          "enum": [
+            "transient",
+            "deterministic",
+            "infra",
+            "unknown"
+          ],
+          "max_bytes": 512
+        },
+        {
+          "name": "failure.attempt",
+          "type": "integer",
+          "description": "How many attempts have already been made for this failure (0-based count).",
+          "min_value": 0
+        },
+        {
+          "name": "failure.limit",
+          "type": "integer",
+          "description": "Attempt budget the task was given; it must not be exceeded.",
+          "min_value": 0
+        },
+        {
+          "name": "failure.artifact_present",
+          "type": "boolean",
+          "description": "Whether the failed attempt left a usable artifact on disk (fs-stated, not assumed)."
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "failure_action",
+          "type": "choice",
+          "choices": [
+            "retry",
+            "rework",
+            "escalate"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp5-test-triage",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "测试失败归类",
+      "questions_version": "q-cc104f59",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；测试失败归类现由人工按 baseline/flaky/regression 判断（占位执行器 act 必抛 over-authority）",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "test.failed_cases",
+          "type": "array",
+          "description": "Failing test ids exactly as the runner reported them.",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "test.baseline_cases",
+          "type": "array",
+          "description": "Known-failing (baseline) test ids for this project, from the recorded baseline.",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "test.changed_paths",
+          "type": "array",
+          "description": "Repo-relative paths the change touched (diff scope), not the whole write face.",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "test.repro_consistent",
+          "type": "boolean",
+          "description": "Whether repeated runs reproduced the same failures (recorded rerun result)."
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "test_category",
+          "type": "choice",
+          "choices": [
+            "baseline-env",
+            "flaky",
+            "regression",
+            "unknown"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp6-qg-verdict",
+      "tier": "P1",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "QG 结论处置",
+      "questions_version": "q-16b4bb5c",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；QG 结论现由 quality gate 人工审核（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "qg.checks_total",
+          "type": "integer",
+          "description": "Number of quality-gate checks the verdict was computed over.",
+          "min_value": 0
+        },
+        {
+          "name": "qg.checks_failed",
+          "type": "array",
+          "description": "Ids of the quality-gate checks that failed (subset of the total).",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "qg.blocking",
+          "type": "array",
+          "description": "Failure ids the quality gate reported as blocking (cannot be waived).",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "qg.scope",
+          "type": "string",
+          "description": "Which surface the verdict covers: impl (code) or spec (locked requirements).",
+          "enum": [
+            "impl",
+            "spec"
+          ],
+          "max_bytes": 512
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "qg_verdict",
+          "type": "choice",
+          "choices": [
+            "pass",
+            "fix",
+            "reopen"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp7-gate-failure",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "相位门禁失败",
+      "questions_version": "q-c8e23cc7",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；相位门禁失败现走 autopilot 门禁告警（占位执行器 act 必抛 over-authority）",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "gate.name",
+          "type": "string",
+          "description": "Gate that failed, by its recorded gate id or name.",
+          "max_bytes": 512
+        },
+        {
+          "name": "gate.missing_items",
+          "type": "array",
+          "description": "Checklist items the gate still reports as missing.",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "gate.verdict_age_hours",
+          "type": "integer",
+          "description": "Age in hours of the verdict that failed the freshness gate.",
+          "min_value": 0
+        },
+        {
+          "name": "gate.has_config_error",
+          "type": "boolean",
+          "description": "Whether the gate failure is a configuration error rather than missing work."
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "gate_cause",
+          "type": "choice",
+          "choices": [
+            "missing-evidence",
+            "stale-verdict",
+            "config",
+            "unknown"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp8-scope-change",
+      "tier": "P0",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "变更范围",
+      "questions_version": "q-e5d928e8",
+      "p0_consequences": "扩面会改动他人写面外的文件，跨会话冲突不可在一次重派内撤回",
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；改范围由人直接决定，P0 默认关（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "scope.requested_paths",
+          "type": "array",
+          "description": "Paths the new requirement asks to write (repo-relative), as requested.",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "scope.write_scope",
+          "type": "array",
+          "description": "Paths the task may write, repo-relative (string array)."
+        },
+        {
+          "name": "scope.cross_key_conflicts",
+          "type": "array",
+          "description": "Paths or keys another key already claims (conflict facts from the claim index).",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "scope.requirement_delta",
+          "type": "string",
+          "description": "One-line description of what the requirement adds or removes.",
+          "max_bytes": 512
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "scope_decision",
+          "type": "choice",
+          "instructions": "这次变更应该保持、收窄还是扩大范围？",
+          "choices": [
+            "keep",
+            "narrow",
+            "expand"
+          ],
+          "labels": {
+            "keep": "按原范围",
+            "narrow": "缩小到原范围内的一子集",
+            "expand": "扩大到原范围之外"
+          }
+        },
+        {
+          "id": "scope_reason",
+          "type": "choice",
+          "instructions": "为什么需要或不需要改范围？",
+          "choices": [
+            "outside-write-face",
+            "cross-key-conflict",
+            "scope-creep",
+            "unclear-boundary"
+          ],
+          "labels": {
+            "outside-write-face": "目标文件在授权写面之外",
+            "cross-key-conflict": "会与他人写面重叠",
+            "scope-creep": "需求本身扩大了",
+            "unclear-boundary": "边界不清需要先界定"
+          }
+        }
+      ]
+    },
+    {
+      "id": "dp9-model-select",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "模型/降级选择",
+      "questions_version": "q-bc7918b9",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；模型/降级由 dispatch.yml + launcher 静态解析（占位执行器 act 必抛 over-authority）",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "model.requested",
+          "type": "string",
+          "description": "Model id the task asked for (config or card), before fallback.",
+          "max_bytes": 512
+        },
+        {
+          "name": "model.available",
+          "type": "array",
+          "description": "Model ids the transport reports as reachable right now.",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "model.transport_status",
+          "type": "string",
+          "description": "Observed transport state for the requested model: ok|rate-limited|unavailable.",
+          "enum": [
+            "ok",
+            "rate-limited",
+            "unavailable"
+          ],
+          "max_bytes": 512
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "model_class",
+          "type": "choice",
+          "choices": [
+            "primary",
+            "fallback",
+            "degrade"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp10-dependency",
+      "tier": "P1",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "依赖升级",
+      "questions_version": "q-3bbd9e44",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；依赖升级按 AGENTS.md 人工评审（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "dependency.name",
+          "type": "string",
+          "description": "Dependency package name as declared in the manifest.",
+          "max_bytes": 512
+        },
+        {
+          "name": "dependency.current",
+          "type": "string",
+          "description": "Version currently installed or pinned.",
+          "max_bytes": 512
+        },
+        {
+          "name": "dependency.target",
+          "type": "string",
+          "description": "Version the decision would move to.",
+          "max_bytes": 512
+        },
+        {
+          "name": "dependency.breaking",
+          "type": "boolean",
+          "description": "Whether the target version is declared semver-breaking (from its changelog/metadata)."
+        },
+        {
+          "name": "dependency.reviewed",
+          "type": "boolean",
+          "description": "Whether the target version's changelog was actually reviewed."
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "dependency_decision",
+          "type": "choice",
+          "choices": [
+            "upgrade",
+            "hold",
+            "pin"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp11-credential",
+      "tier": "P0",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "凭据/权限",
+      "questions_version": "q-080722b1",
+      "p0_consequences": "凭据隔离一旦放宽会外溢到其他 provider，泄露不可撤销",
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；凭据隔离由 launcher env 剥离 + pi provider 机制承担，P0 默认关（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "credential.provider",
+          "type": "string",
+          "description": "Credential provider (e.g. timi, anthropic); never a credential value.",
+          "max_bytes": 512
+        },
+        {
+          "name": "credential.kind",
+          "type": "string",
+          "description": "Credential kind (api-key, oauth-token, ...); never a credential value.",
+          "max_bytes": 512
+        },
+        {
+          "name": "credential.scope",
+          "type": "string",
+          "description": "Scope the credential grants or would grant; never a credential value.",
+          "max_bytes": 512
+        },
+        {
+          "name": "credential.exposed_to",
+          "type": "array",
+          "description": "Processes/roles that would see the credential (isolation facts, not values).",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "credential_action",
+          "type": "choice",
+          "choices": [
+            "isolate",
+            "rotate",
+            "deny"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp12-destructive",
+      "tier": "P0",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "破坏性操作",
+      "questions_version": "q-02f737ab",
+      "p0_consequences": "删除/覆盖他人工作区文件或历史不可恢复，属外部副作用",
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；破坏性确认仍由 pi 核心兜着，P0 默认关（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "action.command",
+          "type": "string",
+          "description": "The destructive command, redacted (no credentials); never raw secret material.",
+          "max_bytes": 512
+        },
+        {
+          "name": "action.targets",
+          "type": "array",
+          "description": "Files/dirs the destructive command would touch (repo-relative).",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "action.reversible",
+          "type": "boolean",
+          "description": "Whether the action can be undone in this repository (git or backup facts)."
+        },
+        {
+          "name": "action.backup_available",
+          "type": "boolean",
+          "description": "Whether a current backup/snapshot exists that could restore the targets."
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "destructive_action",
+          "type": "choice",
+          "choices": [
+            "proceed",
+            "block",
+            "ask-human"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp13-commit-release",
+      "tier": "P0",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "提交(P1) / 发布+版本号(P0)",
+      "questions_version": "q-6d26173d",
+      "p0_consequences": "发布与版本号推进对外可见且不可撤回（tag 已推送即不可重发同一版本）",
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；提交与发布由人执行，P0 默认关（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "release.version_current",
+          "type": "string",
+          "description": "Version currently published/tagged for the packages.",
+          "max_bytes": 512
+        },
+        {
+          "name": "release.version_next",
+          "type": "string",
+          "description": "Version the release decision would publish.",
+          "max_bytes": 512
+        },
+        {
+          "name": "release.staged_paths",
+          "type": "array",
+          "description": "Paths staged for the commit/release (repo-relative).",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "release.changelog_ready",
+          "type": "boolean",
+          "description": "Whether every touched package's [Unreleased] section is updated."
+        },
+        {
+          "name": "release.ci_green",
+          "type": "boolean",
+          "description": "Whether CI is green on the commit being released (recorded run status)."
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "release_action",
+          "type": "choice",
+          "choices": [
+            "commit",
+            "version-bump",
+            "publish",
+            "hold"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp14-rule-conflict",
+      "tier": "P0",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "用户指令 vs 规则",
+      "questions_version": "q-b667b8d3",
+      "p0_consequences": "越过项目硬规则会改变授权边界，影响后续所有会话",
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；规则冲突由人裁决，P0 默认关（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "conflict.user_instruction",
+          "type": "string",
+          "description": "The user instruction as given, summarized (no quotes beyond one line).",
+          "max_bytes": 512
+        },
+        {
+          "name": "conflict.rule_ref",
+          "type": "string",
+          "description": "The project rule the instruction conflicts with: <path>:<line> reference.",
+          "max_bytes": 512
+        },
+        {
+          "name": "conflict.rule_strength",
+          "type": "string",
+          "description": "How binding the rule is: hard (must ask) or advisory (may override with a reason).",
+          "enum": [
+            "hard",
+            "advisory"
+          ],
+          "max_bytes": 512
+        },
+        {
+          "name": "conflict.irreversible",
+          "type": "boolean",
+          "description": "Whether following the instruction has irreversible external effects."
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "conflict_resolution",
+          "type": "choice",
+          "choices": [
+            "follow-rule",
+            "follow-instruction",
+            "ask-human"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp15-autopilot-gate",
+      "tier": "P0",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "6 类人工门",
+      "questions_version": "q-09e25bec",
+      "p0_consequences": "自动越过 autopilot 人工门会让无人监管的推进落地，单次最贵的不可逆面",
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；autopilot 人工门由 gate 文件 + conductor 放行规则承担，P0 默认关（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "gate.kind",
+          "type": "string",
+          "description": "Autopilot human-gate class (autopilot.gates.GATE_KINDS, 6 values).",
+          "enum": [
+            "stage-confirm",
+            "stage-close",
+            "stalled",
+            "budget-exhausted",
+            "goal-change",
+            "xkey-authorize"
+          ],
+          "max_bytes": 512
+        },
+        {
+          "name": "gate.pending_items",
+          "type": "array",
+          "description": "Items the human gate still lists as pending.",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "gate.age_minutes",
+          "type": "integer",
+          "description": "How long the gate has been pending, in minutes.",
+          "min_value": 0
+        },
+        {
+          "name": "gate.evidence_refs",
+          "type": "array",
+          "description": "Evidence references attached to the gate (<path>:<line> or command).",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "gate_decision",
+          "type": "choice",
+          "choices": [
+            "continue",
+            "narrow",
+            "revoke"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp16-goal",
+      "tier": "P0",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "goal 确立/变更",
+      "questions_version": "q-ba34304c",
+      "p0_consequences": "改项目级目标会让所有 worker 的方向对齐失效，历史上不可追溯",
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；goal.md 由人维护，P0 默认关（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "goal.current_digest",
+          "type": "string",
+          "description": "Digest/fingerprint of the current goal document the decision is measured against.",
+          "max_bytes": 512
+        },
+        {
+          "name": "goal.proposed_delta",
+          "type": "string",
+          "description": "What the proposed goal change adds or removes, in one line.",
+          "max_bytes": 512
+        },
+        {
+          "name": "goal.alignment",
+          "type": "string",
+          "description": "Alignment verdict of the change: aligned|drift|conflict (against goal.md).",
+          "enum": [
+            "aligned",
+            "drift",
+            "conflict"
+          ],
+          "max_bytes": 512
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "goal_decision",
+          "type": "choice",
+          "choices": [
+            "keep",
+            "amend",
+            "defer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp17-spec-lock",
+      "tier": "P1",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "spec/AC 锁定",
+      "questions_version": "q-f81bd06d",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；spec/AC 锁定由 requirements 流程承担（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "spec.ac_ids",
+          "type": "array",
+          "description": "Every AC id in the locked spec (a key's full set fits: up to 128).",
+          "max_items": 128,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "spec.ac_changed",
+          "type": "array",
+          "description": "AC ids this change touches; must be a subset of spec.ac_ids (up to 128).",
+          "max_items": 128,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "spec.open_questions",
+          "type": "array",
+          "description": "Open questions that must be resolved before the spec can be locked.",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "spec_lock",
+          "type": "choice",
+          "choices": [
+            "lock",
+            "reopen",
+            "amend"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp18-claim",
+      "tier": "P1",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "key 抢占冲突",
+      "questions_version": "q-094db8cc",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；key 抢占由 _index.parallel 锁协议承担（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "claim.key",
+          "type": "string",
+          "description": "AgenticTask key whose claim conflicts.",
+          "max_bytes": 512
+        },
+        {
+          "name": "claim.owner",
+          "type": "string",
+          "description": "Recorded claim owner (worker/session id from the claim index).",
+          "max_bytes": 512
+        },
+        {
+          "name": "claim.heartbeat_age_min",
+          "type": "integer",
+          "description": "Minutes since the owner's last heartbeat (liveness fact, not a guess).",
+          "min_value": 0
+        },
+        {
+          "name": "claim.owner_active",
+          "type": "boolean",
+          "description": "Whether the owner process was confirmed alive (pid/activity fact)."
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "claim_conflict",
+          "type": "choice",
+          "choices": [
+            "wait",
+            "steal",
+            "new-key"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp19-foreign-write",
+      "tier": "P0",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "越面写预授权",
+      "questions_version": "q-df9c727d",
+      "p0_consequences": "越面写会覆盖其他会话/其他 key 的文件，写坏即他人工作丢失",
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；越面写由 write-face 守卫 + allow_foreign_write 逃生口承担，P0 默认关（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "write.target_path",
+          "type": "string",
+          "description": "Repo-relative path the task wants to write outside its face.",
+          "max_bytes": 512
+        },
+        {
+          "name": "write.cross_key_owner",
+          "type": "string",
+          "description": "Key that owns the foreign path, if any (from the key index).",
+          "max_bytes": 512
+        },
+        {
+          "name": "write.write_scope",
+          "type": "array",
+          "description": "The task's declared write face (repo-relative globs/paths).",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "write.foreign_paths",
+          "type": "array",
+          "description": "Paths outside the declared face that would be written.",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "write.allow_foreign_write",
+          "type": "boolean",
+          "description": "Fact about whether a previous authorization allowed this foreign write (not a grant)."
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "write_decision",
+          "type": "choice",
+          "choices": [
+            "allow",
+            "deny",
+            "redirect"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp20-stage-close",
+      "tier": "P0",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "stage 闭环",
+      "questions_version": "q-30afd59f",
+      "p0_consequences": "stage 闭环会推进不可回退的门禁与产物状态，错误闭环需要人工重建",
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；stage 闭环由 autopilot stage-close 人工门承担，P0 默认关（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "stage.id",
+          "type": "string",
+          "description": "Stage identifier the close decision applies to.",
+          "max_bytes": 512
+        },
+        {
+          "name": "stage.tasks_done",
+          "type": "integer",
+          "description": "Tasks of the stage already closed (must not exceed the total).",
+          "min_value": 0
+        },
+        {
+          "name": "stage.tasks_total",
+          "type": "integer",
+          "description": "Tasks the stage contains, per its roadmap table.",
+          "min_value": 0
+        },
+        {
+          "name": "stage.open_blockers",
+          "type": "array",
+          "description": "Blockers still open for the stage (ids/refs).",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "stage.evidence_refs",
+          "type": "array",
+          "description": "Evidence files backing the stage close (<path>:<line> or command).",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "stage_action",
+          "type": "choice",
+          "choices": [
+            "close",
+            "hold",
+            "rework"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp21-refine",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "project-refine 升级",
+      "questions_version": "q-ddd23fe2",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；project-refine 人工确认条款承担（占位执行器 act 必抛 over-authority）",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "refine.clause",
+          "type": "string",
+          "description": "The requirement clause the refinement would change.",
+          "max_bytes": 512
+        },
+        {
+          "name": "refine.impact_paths",
+          "type": "array",
+          "description": "Files the refinement would touch (repo-relative).",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        },
+        {
+          "name": "refine.reversible",
+          "type": "boolean",
+          "description": "Whether the refinement can be undone without losing accepted work."
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "refine_decision",
+          "type": "choice",
+          "choices": [
+            "accept",
+            "defer",
+            "reject"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp22-debug-plan",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "debug 方案确认",
+      "questions_version": "q-a1ed6dbc",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；debug workflow 人工确认条款承担（占位执行器 act 必抛 over-authority）",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "debug.signal",
+          "type": "string",
+          "description": "The failing signal/stack-first-line the debug plan starts from.",
+          "max_bytes": 512
+        },
+        {
+          "name": "debug.last_green_ref",
+          "type": "string",
+          "description": "Last known-good reference (commit sha or run id) the plan compares against.",
+          "max_bytes": 512
+        },
+        {
+          "name": "debug.repro_available",
+          "type": "boolean",
+          "description": "Whether a reproduction exists/ran (recorded fact, not an assumption)."
+        },
+        {
+          "name": "debug.change_scope",
+          "type": "array",
+          "description": "Paths the debug change would touch (repo-relative).",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "debug_plan",
+          "type": "choice",
+          "choices": [
+            "hypothesis-first",
+            "repro-first",
+            "rollback"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp23-snapshot",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "memory 快照",
+      "questions_version": "q-f5cecffb",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；pm-mind 快照人工确认条款承担（占位执行器 act 必抛 over-authority）",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "snapshot.size_bytes",
+          "type": "integer",
+          "description": "Current size of the memory snapshot artifact in bytes (fs-stated).",
+          "min_value": 0
+        },
+        {
+          "name": "snapshot.delta_bytes",
+          "type": "integer",
+          "description": "New size minus old size in bytes; negative means the snapshot shrank (signed).",
+          "signed": true
+        },
+        {
+          "name": "snapshot.sections_changed",
+          "type": "array",
+          "description": "Document sections the snapshot rewrite changes.",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "snapshot_decision",
+          "type": "choice",
+          "choices": [
+            "write",
+            "defer",
+            "skip"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp24-pi-trust",
+      "tier": "P0",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "pi core 交互",
+      "questions_version": "q-20850ffa",
+      "p0_consequences": "影响 pi 核心信任边界，误判后会话权限升级不可在一次重派内撤回",
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "未接线；pi core project-trust 机制承担，P0 默认关（executor=None）",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "schema_version",
+          "type": "integer",
+          "description": "State schema version (currently 2)."
+        },
+        {
+          "name": "decision_point",
+          "type": "string",
+          "description": "Decision point id this state was built for."
+        },
+        {
+          "name": "questions_version",
+          "type": "string",
+          "description": "Registry question-set version, e.g. q-fcbd3847."
+        },
+        {
+          "name": "project.path",
+          "type": "string",
+          "description": "Project path the trust decision applies to (as pi recorded it).",
+          "max_bytes": 512
+        },
+        {
+          "name": "project.trust_state",
+          "type": "string",
+          "description": "Current pi trust state for the project: untrusted|trusted.",
+          "enum": [
+            "untrusted",
+            "trusted"
+          ],
+          "max_bytes": 512
+        },
+        {
+          "name": "project.origin",
+          "type": "string",
+          "description": "Where the project came from: user (created locally)|clone|foreign.",
+          "enum": [
+            "user",
+            "clone",
+            "foreign"
+          ],
+          "max_bytes": 512
+        },
+        {
+          "name": "project.pending_changes",
+          "type": "boolean",
+          "description": "Whether the project has uncommitted changes that the trust grant would cover."
+        }
+      ],
+      "optional_state_fields": [],
+      "questions": [
+        {
+          "id": "trust_decision",
+          "type": "choice",
+          "choices": [
+            "trust-once",
+            "trust-always",
+            "deny"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dp25-signoff-conclusion",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "任意 key 收尾的签收结论（按 key 计算，替代人签）",
+      "questions_version": "q-134a64cd",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "on-demand CLI caller for ANY AgenticTask key, no TS call site: `mw decide sign --key <key>` (or `--project .agenticdoc/<key>`) builds the state from decide_signoff.collect(project, key) and calls decide_for(intent=answer) in decide_signoff.auto_conclusion; the sign file is written by the sign command, not by the executor",
+      "executor": "wired",
+      "required_state_fields": [
+        {
+          "name": "delivery_goal",
+          "type": "string",
+          "description": "Delivery goal including the user's acceptance conditions."
+        },
+        {
+          "name": "actual_completion",
+          "type": "string",
+          "description": "What was actually completed against the delivery goal."
+        },
+        {
+          "name": "verification_evidence.verified",
+          "type": "array",
+          "description": "Verification evidence that was actually verified; [] when there is none.",
+          "item_type": "string",
+          "empty_is_value": true
+        },
+        {
+          "name": "verification_evidence.unverified",
+          "type": "array",
+          "description": "Evidence that is not verified (or was not run); [] means a verified none, never a missing fact.",
+          "item_type": "string",
+          "empty_is_value": true
+        },
+        {
+          "name": "unfinished_impact",
+          "type": "array",
+          "description": "Unfinished items and their impact; [] means nothing is unfinished, never a missing fact.",
+          "item_type": "string",
+          "empty_is_value": true
+        }
+      ],
+      "optional_state_fields": [],
+      "model_state_fields": [
+        "delivery_goal",
+        "actual_completion",
+        "verification_evidence.verified",
+        "verification_evidence.unverified",
+        "unfinished_impact"
+      ],
+      "questions": [
+        {
+          "id": "q-conclusion",
+          "type": "choice",
+          "instructions": "按交付目标、实际完成与验证证据判断：这次交付可以收尾，还是需要继续完成，或交用户确认？不以任务数量或完成声明代替证据。",
+          "choices": [
+            "finalize",
+            "continue",
+            "user-confirm"
+          ],
+          "labels": {
+            "finalize": "可以收尾：按交付目标与验收条件直接签收",
+            "continue": "继续完成：交 PM 推进未完成的缺口",
+            "user-confirm": "交用户确认：由 PM 提出具体待确认项"
+          }
+        }
+      ]
+    }
+  ]
+}

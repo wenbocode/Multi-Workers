@@ -1,0 +1,9 @@
+{
+  "ambient_path": "<home>/.pi/agent/auth.json",
+  "ambient_exists": "not stat'ed (intercepted)",
+  "sentinel": "sk-t05f-probe-sentinel-0123456789",
+  "bytes_read_from_ambient": 0,
+  "hits_total": 0,
+  "tests_with_hits": [],
+  "hits": []
+}

@@ -1,0 +1,77 @@
+{
+  "observed_at": "2026-10-26T20:12:19+0800",
+  "card": {
+    "path": ".agenticdoc/mw-dp-consolidation/tasks/isolated/T07-policy.md",
+    "exists": true,
+    "bytes": 11550,
+    "sha256": "88bee76800c724909e277485117335cf91d93e989ccc6d9fb09d4e9d99adeb5d",
+    "eol": "lf",
+    "trailing_newline": true,
+    "lines": 108
+  },
+  "task_envelope": {
+    "path": ".agenticdoc/mw-dp-consolidation/workers/dpc-t07-policy/task.md",
+    "exists": true,
+    "bytes": 13852,
+    "sha256": "77a8354d2ccb2f98418b8f58196126b5af4737e09b12dbbc514bb913923f1da1",
+    "eol": "lf",
+    "trailing_newline": true,
+    "lines": 128
+  },
+  "filtered_task_envelope": {
+    "note": "task.md carries the dispatch envelope; the full card was read to EOF from tasks/isolated/T07-policy.md"
+  },
+  "targets": [
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_policy.py",
+      "exists": false
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_recovery.py",
+      "exists": false
+    }
+  ],
+  "peer_faces": [
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_validity.py",
+      "exists": false
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_concurrency.py",
+      "exists": false
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision.py",
+      "exists": true,
+      "bytes": 99249,
+      "sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+      "eol": "lf",
+      "trailing_newline": true,
+      "lines": 2298
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_backends.py",
+      "exists": true,
+      "bytes": 44577,
+      "sha256": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60",
+      "eol": "lf",
+      "trailing_newline": true,
+      "lines": 1123
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_materials.py",
+      "exists": false
+    }
+  ],
+  "single_writer": {
+    "claim": "no other writer on the two T07 target files; both absent before this worker",
+    "concurrent_peer_tasks": [
+      "T06 decision_validity.py",
+      "T08 decision.py/decision_backends.py"
+    ]
+  },
+  "frozen_config_units_read_only": [
+    "round_budget",
+    "worker_timeout_min"
+  ]
+}

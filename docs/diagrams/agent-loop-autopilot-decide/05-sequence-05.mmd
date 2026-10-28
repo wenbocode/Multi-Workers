@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant W as Worker 内循环
+    participant D as decide
+    participant PM as PM 外循环
+
+    W->>W: Agent Loop 执行中发现条件不足
+    W->>D: dp-w-check-task 请求
+    D-->>W: 合法选择
+    alt 继续或有界补证
+        W->>W: 按结束判据继续执行
+    else 终止
+        W->>W: 写出完成 未完成 阻断及证据
+        W-->>PM: 终态结论 不等待答复
+        PM->>D: dp-pm-steer 或 dp-auto 请求
+        D-->>PM: 合法选择
+        PM->>PM: 重核条件后派发后续任务
+    end
+    PM->>PM: 请求 答案 执行结果分别留痕

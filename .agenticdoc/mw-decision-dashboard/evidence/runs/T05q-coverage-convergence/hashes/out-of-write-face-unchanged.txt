@@ -1,0 +1,19 @@
+[T05q] baseline vs final comparison of the seven shared dependency files
+
+decision.py             CHANGED by this card (owner face): 106ebaef -> c2b6d0a6
+decision_points.py      CHANGED by this card (owner face): 0693a98c -> d299f67e
+mw.py                   unchanged: 72a29cd0
+decision_backends.py    unchanged: f1c6e3aa
+decision_book.py        unchanged: fc6d74a3
+decision_wire.py        unchanged: 47ef6322
+decision_monitor.py     changed CONCURRENTLY by another session (dashboard static
+                        assets work): 2c2afb0e -> c6e8e11f. Outside this card's
+                        write face; decision_monitor.py mtime and the
+                        decision_dashboard.js rewrite (18:43:24 local) fall inside
+                        the adjacent-suite window, which is why
+                        test_decision_dashboard_assets.py failed there and passes
+                        on recheck (logs/dashboard-assets-recheck.log).
+
+Verdict: the only files this card changed are decision.py, decision_points.py
+and the new test file; the forbidden surfaces (decision_wire, decision_backends,
+decision_book, mw.py, registry/typed/required/budget/ref) are byte-identical.

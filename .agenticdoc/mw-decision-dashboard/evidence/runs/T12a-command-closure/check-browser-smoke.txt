@@ -1,0 +1,7 @@
+### argv: npm run check:browser-smoke
+### cwd: /h/git/Multi-Workers
+
+> pi-monorepo@0.0.3 check:browser-smoke
+> node scripts/check-browser-smoke.mjs
+
+### exit=0

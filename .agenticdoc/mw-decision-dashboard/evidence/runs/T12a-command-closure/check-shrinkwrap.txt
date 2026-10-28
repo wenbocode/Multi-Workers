@@ -1,0 +1,8 @@
+### argv: npm run check:shrinkwrap
+### cwd: /h/git/Multi-Workers
+
+> pi-monorepo@0.0.3 check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+### exit=0

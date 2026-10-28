@@ -1,0 +1,94 @@
+{
+  "checker": "static_verify.py",
+  "forbidden_modules_imported": [],
+  "lifecycle_order_checks": {
+    "floor_compares_creation_before": true,
+    "floor_compares_every_prior_after": true,
+    "floor_raises_input_error": true,
+    "floor_skips_other_logical_ids": true,
+    "floor_validates_prior_snapshot": true,
+    "guard_reads_ledger_in_lock": true,
+    "guard_still_bound_at_append": true,
+    "precheck_skips_only_recorded_event": true,
+    "replay_is_event_id_only": true
+  },
+  "problems": [],
+  "products": {
+    "decision_lifecycle.py": {
+      "added_definitions": [
+        "_event_is_recorded",
+        "_refuse_preceding_after"
+      ],
+      "after_sha256": "2ab3ac15d80e2f90987366a380d376fde17482917759d40d5dd07d5b427244a2",
+      "before_sha256": "73d0ae2efda3879668b3cf84d11f32809c6d00f76da13c3b8d065f87d4c87bb5",
+      "bytes": 67575,
+      "changed_definitions": [
+        "_recorded_after_floor",
+        "record_lifecycle"
+      ],
+      "lines": 1690,
+      "module_docstring_changed": false,
+      "removed_definitions": []
+    },
+    "decision_task_state.py": {
+      "added_definitions": [],
+      "after_sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+      "before_sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+      "bytes": 3871,
+      "changed_definitions": [],
+      "lines": 82,
+      "module_docstring_changed": false,
+      "removed_definitions": []
+    },
+    "decision_wire.py": {
+      "added_definitions": [],
+      "after_sha256": "03f4373f6328b05d5abedd5d686dda3b155b08436908beb8f6d29585dcf0639c",
+      "before_sha256": "429201ace7028968ae18cfbcc33dbf5aa0d2fa11b8f5d2dd7604cae0dec4e7dc",
+      "bytes": 83177,
+      "changed_definitions": [
+        "append_event"
+      ],
+      "lines": 2327,
+      "module_docstring_changed": true,
+      "removed_definitions": []
+    }
+  },
+  "protected_tests": {
+    "test_decision_context_lifecycle.py": {
+      "equal_to_protected": true,
+      "sha256": "1bca28c56c7ab039de5c3a91638fd20c1e2fa89f4a1ec996169cfd933c1e6ae9"
+    },
+    "test_decision_task_state.py": {
+      "equal_to_protected": true,
+      "sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f"
+    }
+  },
+  "stage_c_pinned_expectations_now_superseded": {
+    "lifecycle_floor_precheck_before_append": false,
+    "new_lifecycle_helpers_not_in_stage_c_expectation": [
+      "_event_is_recorded",
+      "_refuse_preceding_after"
+    ],
+    "note": "each False/extra above is the intended state: stage C pinned the stage-B bytes, the guard-before-dedupe order and its own helper set; its 16 behavioural boundary items, not this preparation-time checker, are the acceptance oracle for this round",
+    "product_matches_delivered_after": {
+      "decision_lifecycle.py": false,
+      "decision_task_state.py": true,
+      "decision_wire.py": false
+    },
+    "wire_guard_slot_before_dedupe": false
+  },
+  "wire_helpers_kept": {
+    "append_uses_the_scope_sink": true,
+    "dedupe_scan_defined": true,
+    "recorded_task_state_defined": true
+  },
+  "wire_order_checks": {
+    "append_releases_the_lock": true,
+    "append_still_opens_the_locked_sink": true,
+    "dedupe_branch_before_guard": true,
+    "dedupe_scan_is_the_in_lock_one": true,
+    "duplicate_returns_before_guard": true,
+    "guard_before_the_real_append": true,
+    "no_second_lock_added": true
+  }
+}

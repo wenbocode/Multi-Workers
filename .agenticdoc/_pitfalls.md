@@ -528,3 +528,25 @@ worker 改第二个文件被 `write-scope` 拦，任务降级为 partial（W2 pa
 
 规避：卡片里写死运行约束——禁止整文件读 `mw.py`/`worker-mode.ts`，单次 read ≤120 行且只围绕锚点；命令 stdout ≤30 行，
 长输出落盘再读尾；要求 worker 先在 report.md 写一段计划（避免长时间无内部输出）。重派时换新 task_key。
+
+## 2026-10-22 「拆分确定性」被路径写法击穿（同一张卡拆出 8 与 12 个单元）
+
+现象：`claim-pack.ts` 按 claim 的 `定位` / `判据` token 聚簇。同一张 review 卡、同一批 23 条 claim，
+直接调组合器得 `units=8`，经门禁（`acIndex` 值拼成 `.agenticdoc/<key>/spec.md:42`）得 `units=12`。
+聚簇输入里只要混进一种路径拼法，拆法就不可复现 —— 而 manifest 的 sha 链正是用来防"事后被改"的，
+拆法本身不稳定会让 sha 链变成摆设。
+
+规避：**任何进入聚簇/去重/关联的路径，先规范成 `basename:line[-end]`**（`canonicalizeLocator`），
+并写一条断言：同一输入用两种路径拼法 → `units` / `ids` / 序列化产物逐字节相同。
+同类风险点：manifest sha（口径必须 EOL 归一化才能与 `card_sha256` 对照）、`acIndex`、
+`read_scope` 锚点（`isSameOrUnder` 同样按字符串比较）。
+
+## 2026-10-22 自动化提取会把「人判清单」原样搬成 claim，制造 0% 机检的假拆分
+
+现象：把真实 QG 卡（`T-QG-evidence-closure`）的 AC 引用提成 claim 后，34 条 claim 全是 `manual`，
+装箱阶段 12/12 单元被判 `split:unit-infeasible:manual-only`，读预算通胀 6.2 倍。
+根因不是实现 bug：`CLAIM_MANUAL_CAP = min(4, ceil(n/3))` 决定"逐条判 N 条 AC"根本无法用 claims 忠实编码。
+
+规避：**claim 驱动只适用于"断言可机检"的评审**（有 `cmd:`/`grep:`/`shape:` 判据）。
+遇到"逐条人判"的审计卡，不要为了凑数把 manual 包装成 `grep:`（结算期被 `tautology`/`judgement` 判掉），
+直接判"不适用"。派生反证条件同理：机器类可派生具体反证，人判类必须上游提供，缺就计数。

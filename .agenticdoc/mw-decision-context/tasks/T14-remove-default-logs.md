@@ -1,0 +1,6 @@
+# T14 — remove screenshot default log blocks (PM direct)
+
+Goal: .agenticdoc/goal.md. User explicitly requested vision inspection and removal of two screenshot log-like sections. Parallel analysis: independent read-only vision worker inspecting images; PM implementation exclusively owns JS/HTML/readable UI test. No worker source writes. References: decision_dashboard.js:1962 renderSelectedDp, :2127 renderSubmissionDetail; evidence/Vision/Monitor-DP-Test1.png and Monitor-DP-Test2.png.
+
+Remove from default display DP configuration diagnostics and submission audit/answer/outcome boilerplate preceding DAG. Preserve technical facts only behind explicit closed details for actual submissions; local unstarted/scaffold/preview must not render fabricated submission/audit sections. DAG remains primary with selected-node body, concise status/errors and polling untouched. Keep real registry/API/auth/secret/budget/production behavior unchanged.
+Allowed: packages/multi-workers/decision_dashboard.html/js; test_decision_context_readable_ui.py; key task/evidence/PM-state. No service/browser/provider/build/install/commit/framework/config. Vision worker alone owns evidence/research/vision-log-blocks-20261023.md. Freeze bytes before edits, RED/GREEN, targeted suites, protected full check. No deployed acceptance claim.

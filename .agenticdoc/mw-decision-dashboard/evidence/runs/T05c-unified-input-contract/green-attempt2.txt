@@ -1,0 +1,18 @@
+................................F..                                      [100%]
+================================== FAILURES ===================================
+______________ test_exports_carry_the_dp25_optional_declaration _______________
+
+    def test_exports_carry_the_dp25_optional_declaration() -> None:
+        doc = json.loads((PACKAGE_DIR / "decide_registry.json").read_text(encoding="utf-8"))
+        by_id = {point["id"]: point for point in doc["points"]}
+        exported = [field["name"] for field in by_id[DP25]["optional_state_fields"]]
+>       assert exported == list(DP25_OPTIONAL)
+E       AssertionError: assert [] == ['rows_escala...e_violations']
+E         
+E         Right contains 3 more items, first extra item: 'rows_escalated'
+E         Use -v to get more diff
+
+test_decision_input_contract_migration.py:849: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_input_contract_migration.py::test_exports_carry_the_dp25_optional_declaration
+1 failed, 34 passed in 0.63s

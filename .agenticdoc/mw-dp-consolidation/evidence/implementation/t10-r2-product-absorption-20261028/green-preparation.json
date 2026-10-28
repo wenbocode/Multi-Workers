@@ -1,0 +1,37 @@
+{
+  "observed_at": "2026-10-28T07:21:35.926510+00:00",
+  "source": "agent-report",
+  "scripts": {
+    "run_pm_tests.py": {
+      "before": "5b019aec41bdf7017b56698d339402827f0890556e50a0b9d7116794fd203cbc",
+      "after": "3dec1da62a249bc384b090eefce4dd6ca784024d5b98746f094230801d0fefcc",
+      "bytes": 34948
+    },
+    "sitecustomize.py": {
+      "before": "d2a15fad32af1b755f0164a16d3cfb3543ef8fd5169f13eacbc8971e0809ea5a",
+      "after": "d5b05e987627d44e073a595e6c347bbbdb0a9e235b87bae28ed7c06d7c1f78a8",
+      "bytes": 8762
+    },
+    "guard_preflight.py": {
+      "before": "085cae83c3477820305af0f504bf62ffdbc4930d5ce4d9c3f1e807382d6e7cb0",
+      "after": "085cae83c3477820305af0f504bf62ffdbc4930d5ce4d9c3f1e807382d6e7cb0",
+      "bytes": 5389
+    },
+    "probe_imports.py": {
+      "before": "cac791a30affbd04746df9e0e4a18c20492020ac5f656aad30042cd710c26ee6",
+      "after": "cac791a30affbd04746df9e0e4a18c20492020ac5f656aad30042cd710c26ee6",
+      "bytes": 2922
+    }
+  },
+  "products": {
+    "decision_wire.py": "429201ace7028968ae18cfbcc33dbf5aa0d2fa11b8f5d2dd7604cae0dec4e7dc",
+    "decision_lifecycle.py": "73d0ae2efda3879668b3cf84d11f32809c6d00f76da13c3b8d065f87d4c87bb5",
+    "decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+    "test_decision_context_lifecycle.py": "1bca28c56c7ab039de5c3a91638fd20c1e2fa89f4a1ec996169cfd933c1e6ae9",
+    "test_decision_task_state.py": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f"
+  },
+  "PM_current_five_files_full_EOF": true,
+  "popen_signature": "(self, args, bufsize=-1, executable=None, stdin=None, stdout=None, stderr=None, preexec_fn=None, close_fds=True, shell=False, cwd=None, env=None, universal_newlines=None, startupinfo=None, creationflags=0, restore_signals=True, start_new_session=False, pass_fds=(), *, user=None, group=None, extra_groups=None, encoding=None, errors=None, text=None, umask=-1, pipesize=-1, process_group=None)",
+  "test_execution": false,
+  "note": "new PM harness only; old red scripts/evidence untouched; single-source contracts unchanged in protected mirror"
+}

@@ -1,0 +1,20 @@
+Concurrent-write / flake note (evidence integrity, card T05h)
+
+1. Concurrent source writes during one acceptance run
+   One run of the acceptance command reported 62 failed / 373 passed; the same
+   command re-ran clean twice (435 passed, PYTEST_EXIT=0, see
+   final-verification.txt). Another pi session was rewriting shared source files
+   while that run imported them. Files written in the same window (all outside
+   this card's write face):
+     decision.py                      16:02:53
+     decision_backends.py             16:03:10
+     test_decision_timi_credential_snapshot.py  16:01:58
+
+2. Intermittent monitor-server test
+   test_decision_monitor.py::test_attached_stop_reports_a_refusal_instead_of_silent_success
+   failed in 2 of 4 grouped runs and passed alone and in the other grouped runs
+   (final clean run: 317 passed / 1 skipped, PYTEST_EXIT=0 in green-adjacent.txt).
+   The test spawns a real local monitor instance and probes its port, so it is
+   load/timing sensitive when several sessions run suites concurrently. The
+   monitor files are untouched by this card (mtimes 13:54 / 13:58) and the test
+   does not exercise the decision-book placeholder scan this card changed.

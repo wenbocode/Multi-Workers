@@ -1,0 +1,50 @@
+[
+  {
+    "path": "packages/multi-workers/decision_lifecycle.py",
+    "bytes": 32444,
+    "sha256": "7e78cc74868185c1ac0c498cd4dd918ab4aa98567408a62b9ec44d180afd222f",
+    "crlf": 0
+  },
+  {
+    "path": "packages/multi-workers/decision_wire.py",
+    "bytes": 72087,
+    "sha256": "ad6df01d09ef950767b8834b72fab16b144e572778aff13ca4fb044399a8dfbf",
+    "crlf": 0
+  },
+  {
+    "path": "packages/multi-workers/decision_history.py",
+    "bytes": 172244,
+    "sha256": "d114f57b18d55ee0b76b0594358d5109e918933410440d5d3e906df460beda8a",
+    "crlf": 0
+  },
+  {
+    "path": "packages/multi-workers/mw.py",
+    "bytes": 568207,
+    "sha256": "16931954f7dc3f394d6d810384310a2d8680de7a84d90ea3b0745c4aa07016b4",
+    "crlf": 13016
+  },
+  {
+    "path": "packages/multi-workers/decision_dashboard.js",
+    "bytes": 147903,
+    "sha256": "2bca8a49b66702dc1d06493bee6d38be72b082b50713bb3875cd77d78f4cfd50",
+    "crlf": 0
+  },
+  {
+    "path": "packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts",
+    "bytes": 48227,
+    "sha256": "f5cc0e6bcdd01419f5bafe079c9c353c15d26d9f97cefb2e827d57ef1f84682b",
+    "crlf": 0
+  },
+  {
+    "path": "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts",
+    "bytes": 88198,
+    "sha256": "5bc271d88d024a3275ee9c824d1e9a1a445b3f3718754a2a9b3edec0db75f45d",
+    "crlf": 0
+  },
+  {
+    "path": "packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts",
+    "bytes": 227804,
+    "sha256": "35591dcb95d1961c4eb535870fd4175de445bb2287c4be84eb766978bd2e72b2",
+    "crlf": 0
+  }
+]

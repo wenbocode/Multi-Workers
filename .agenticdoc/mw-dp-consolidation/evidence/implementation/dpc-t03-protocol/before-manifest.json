@@ -1,0 +1,38 @@
+{
+  "stage": "before",
+  "label": "before",
+  "root": "implementation-worktree",
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_points.py",
+      "exists": true,
+      "sha256": "a92bbdc2f12e6559c6e40bd571336655d190d84aa73268bbff4ee0dc8bdf1243",
+      "bytes": 247920,
+      "crlf": 5769,
+      "bare_lf": 0,
+      "lines": 5769
+    },
+    {
+      "path": "packages/multi-workers/decide_registry.json",
+      "exists": true,
+      "sha256": "0a5e16d64ab83b9f84a6a6776cef55b16d87349010b24bb1b40da4207d1283ae",
+      "bytes": 56194,
+      "crlf": 0,
+      "bare_lf": 1771,
+      "lines": 1771
+    },
+    {
+      "path": "packages/multi-workers/test_decide_registry_contract.py",
+      "exists": true,
+      "sha256": "7564cfdcb2ad261beda987299c27008f57bc3561eb3348e841aeb676106b61cb",
+      "bytes": 19538,
+      "crlf": 0,
+      "bare_lf": 435,
+      "lines": 435
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_registry.py",
+      "exists": false
+    }
+  ]
+}

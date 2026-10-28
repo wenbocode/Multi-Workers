@@ -1,0 +1,394 @@
+{
+  "observed_at": "2026-10-28T06:48:06.048522+00:00",
+  "status": "executed",
+  "label": "t10-r2-red-20261028T065500Z",
+  "fixture_root": "C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\dpc-t10-pm-verify-20261027\\pm-verification",
+  "fixture_root_created": true,
+  "label_dir": "C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\dpc-t10-pm-verify-20261027\\pm-verification\\t10-r2-red-20261028T065500Z",
+  "evidence_run": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\pm-controlled\\runs\\t10-r2-red-20261028T065500Z",
+  "env_keys": [
+    "COMSPEC",
+    "DPC10_GUARD_FILE",
+    "DPC10_GUARD_RUN",
+    "HOME",
+    "PATH",
+    "PATHEXT",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONIOENCODING",
+    "PYTHONPATH",
+    "PYTHONPYCACHEPREFIX",
+    "PYTHONUTF8",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "WINDIR"
+  ],
+  "commands": {
+    "guard_preflight": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-B",
+      "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\pm-controlled\\guard_preflight.py"
+    ],
+    "import_probe": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-B",
+      "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\pm-controlled\\probe_imports.py",
+      "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers"
+    ],
+    "collect": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-B",
+      "-m",
+      "pytest",
+      "-p",
+      "no:cacheprovider",
+      "-q",
+      "--collect-only",
+      "test_decision_context_lifecycle.py",
+      "test_decision_task_state.py"
+    ],
+    "pytest": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-B",
+      "-m",
+      "pytest",
+      "-p",
+      "no:cacheprovider",
+      "-q",
+      "--basetemp",
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\dpc-t10-pm-verify-20261027\\pm-verification\\t10-r2-red-20261028T065500Z\\pytest-basetemp",
+      "test_decision_context_lifecycle.py",
+      "test_decision_task_state.py"
+    ],
+    "focus": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-B",
+      "-m",
+      "pytest",
+      "-p",
+      "no:cacheprovider",
+      "-q",
+      "--basetemp=C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\dpc-t10-pm-verify-20261027\\pm-verification\\t10-r2-red-20261028T065500Z\\pytest-basetemp-focus",
+      "test_decision_context_lifecycle.py::test_a_refused_request_does_not_swallow_the_later_real_choice",
+      "test_decision_context_lifecycle.py::test_an_identical_repeated_business_request_stays_idempotent",
+      "test_decision_context_lifecycle.py::test_a_different_choice_for_the_same_request_stays_visible",
+      "test_decision_context_lifecycle.py::test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded",
+      "test_decision_context_lifecycle.py::test_a_dp_auto_choice_inside_the_prepared_candidates_is_recorded",
+      "test_decision_context_lifecycle.py::test_executed_and_settled_observations_stay_non_decreasing",
+      "test_decision_context_lifecycle.py::test_a_failed_executed_round_is_never_recorded_as_executed",
+      "test_decision_context_lifecycle.py::test_a_secret_bearing_creation_before_can_be_repeated",
+      "test_decision_context_lifecycle.py::test_a_case_variant_agenticdoc_path_is_refused_in_test_scope",
+      "test_decision_context_lifecycle.py::test_the_exact_agenticdoc_path_is_refused_in_test_scope",
+      "test_decision_context_lifecycle.py::test_the_writer_consumes_the_producers_frozen_prepared_contract"
+    ]
+  },
+  "rc": {
+    "guard_preflight": 0,
+    "import_probe": 0,
+    "collect": 0,
+    "pytest": 1
+  },
+  "collection": {
+    "count": 130,
+    "existing_floor": 116,
+    "new_node_ids_present": true,
+    "missing_new_node_ids": [],
+    "lost_test_functions": {},
+    "node_ids_file": "collection.node-ids.txt"
+  },
+  "pytest": {
+    "summary_line": "8 failed, 122 passed in 2.50s",
+    "counts": {
+      "failed": 8,
+      "passed": 122
+    },
+    "failed_node_ids": [
+      "test_decision_context_lifecycle.py::test_a_refused_request_does_not_swallow_the_later_real_choice",
+      "test_decision_context_lifecycle.py::test_a_different_choice_for_the_same_request_stays_visible",
+      "test_decision_context_lifecycle.py::test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded[no-handling-options]",
+      "test_decision_context_lifecycle.py::test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded[single-candidate-set]",
+      "test_decision_context_lifecycle.py::test_executed_and_settled_observations_stay_non_decreasing",
+      "test_decision_context_lifecycle.py::test_a_secret_bearing_creation_before_can_be_repeated",
+      "test_decision_context_lifecycle.py::test_a_case_variant_agenticdoc_path_is_refused_in_test_scope[wire-sink]",
+      "test_decision_context_lifecycle.py::test_a_case_variant_agenticdoc_path_is_refused_in_test_scope[lifecycle-sink]"
+    ],
+    "stdout_file": "pytest.stdout",
+    "stderr_file": "pytest.stderr",
+    "meta_file": "pytest.meta.json"
+  },
+  "focus": {
+    "rc": 1,
+    "summary": {
+      "last_line": "8 failed, 6 passed in 0.70s",
+      "counts": {
+        "failed": 8,
+        "passed": 6
+      },
+      "failed_node_ids": [
+        "test_decision_context_lifecycle.py::test_a_refused_request_does_not_swallow_the_later_real_choice",
+        "test_decision_context_lifecycle.py::test_a_different_choice_for_the_same_request_stays_visible",
+        "test_decision_context_lifecycle.py::test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded[no-handling-options]",
+        "test_decision_context_lifecycle.py::test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded[single-candidate-set]",
+        "test_decision_context_lifecycle.py::test_executed_and_settled_observations_stay_non_decreasing",
+        "test_decision_context_lifecycle.py::test_a_secret_bearing_creation_before_can_be_repeated",
+        "test_decision_context_lifecycle.py::test_a_case_variant_agenticdoc_path_is_refused_in_test_scope[wire-sink]",
+        "test_decision_context_lifecycle.py::test_a_case_variant_agenticdoc_path_is_refused_in_test_scope[lifecycle-sink]"
+      ]
+    },
+    "stderr_chars": 0
+  },
+  "expected_red": {
+    "items": 8,
+    "observed": [
+      "test_a_case_variant_agenticdoc_path_is_refused_in_test_scope",
+      "test_a_different_choice_for_the_same_request_stays_visible",
+      "test_a_dp_auto_choice_outside_the_prepared_candidates_is_not_recorded",
+      "test_a_refused_request_does_not_swallow_the_later_real_choice",
+      "test_a_secret_bearing_creation_before_can_be_repeated",
+      "test_executed_and_settled_observations_stay_non_decreasing"
+    ],
+    "missing": [],
+    "unexpected_failures": [],
+    "note": "S1/S3/S5/S7/S4 regressions are expected red before the product fix and green after it; the controls stay green in both runs"
+  },
+  "guard_preflight": {
+    "rc": 0,
+    "checks": {
+      "guard_installed": true,
+      "credential_env_names": [],
+      "dns": {
+        "refused": true,
+        "error": "GuardRefusal",
+        "guard_message": true
+      },
+      "tcp": {
+        "refused": true,
+        "error": "GuardRefusal",
+        "guard_message": true
+      },
+      "udp": {
+        "refused": true,
+        "error": "GuardRefusal",
+        "guard_message": true
+      },
+      "non_python_child": {
+        "refused": true,
+        "error": "GuardRefusal",
+        "guard_message": true
+      },
+      "python_child_rc": 0,
+      "python_child_stdout": "child-ok 84056",
+      "python_child_pid": 84056,
+      "file_io": true
+    },
+    "file": "guard-preflight.json"
+  },
+  "imports": {
+    "file": "imports.json",
+    "packages_dir": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers"
+  },
+  "protection": {
+    "mirror": {
+      "before_files": 1891,
+      "after_files": 1891,
+      "diff": {
+        "added": [],
+        "removed": [],
+        "changed": []
+      }
+    },
+    "pyc": {
+      "count_before": 14,
+      "count_after": 14,
+      "diff": {
+        "added": [],
+        "removed": [],
+        "changed": []
+      }
+    },
+    "old_evidence": {
+      "before_files": 744,
+      "after_files": 744,
+      "diff": {
+        "added": [],
+        "removed": [],
+        "changed": []
+      }
+    },
+    "live": {
+      "before": {
+        "decision_wire.py": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+        "decision_lifecycle.py": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+        "decision_task_state.py": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+        "test_decision_context_lifecycle.py": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+        "test_decision_task_state.py": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5"
+      },
+      "after": {
+        "decision_wire.py": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+        "decision_lifecycle.py": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+        "decision_task_state.py": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+        "test_decision_context_lifecycle.py": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+        "test_decision_task_state.py": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5"
+      },
+      "unchanged": true
+    },
+    "products": {
+      "expected": {
+        "decision_wire.py": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+        "decision_lifecycle.py": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+        "decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d"
+      },
+      "before": {
+        "decision_wire.py": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+        "decision_lifecycle.py": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+        "decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d"
+      },
+      "after": {
+        "decision_wire.py": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+        "decision_lifecycle.py": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+        "decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d"
+      },
+      "unchanged": true
+    }
+  },
+  "checks": {
+    "protection": {
+      "mirror": {
+        "before_files": 1891,
+        "after_files": 1891,
+        "diff": {
+          "added": [],
+          "removed": [],
+          "changed": []
+        }
+      },
+      "pyc": {
+        "count_before": 14,
+        "count_after": 14,
+        "diff": {
+          "added": [],
+          "removed": [],
+          "changed": []
+        }
+      },
+      "old_evidence": {
+        "before_files": 744,
+        "after_files": 744,
+        "diff": {
+          "added": [],
+          "removed": [],
+          "changed": []
+        }
+      },
+      "live": {
+        "before": {
+          "decision_wire.py": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+          "decision_lifecycle.py": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+          "decision_task_state.py": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+          "test_decision_context_lifecycle.py": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+          "test_decision_task_state.py": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5"
+        },
+        "after": {
+          "decision_wire.py": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+          "decision_lifecycle.py": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+          "decision_task_state.py": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+          "test_decision_context_lifecycle.py": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+          "test_decision_task_state.py": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5"
+        },
+        "unchanged": true
+      },
+      "products": {
+        "expected": {
+          "decision_wire.py": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+          "decision_lifecycle.py": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+          "decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d"
+        },
+        "before": {
+          "decision_wire.py": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+          "decision_lifecycle.py": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+          "decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d"
+        },
+        "after": {
+          "decision_wire.py": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+          "decision_lifecycle.py": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+          "decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d"
+        },
+        "unchanged": true
+      }
+    },
+    "guard": {
+      "children_seen": [
+        21528,
+        24764,
+        28576,
+        84056,
+        85600,
+        93576
+      ],
+      "preflight_pid": 28576,
+      "sentinels": {
+        "21528": {
+          "stages": [
+            "import",
+            "guard-installed"
+          ],
+          "network_denied": 0,
+          "subprocess_denied": 0,
+          "run": "t10-r2-red-20261028T065500Z"
+        },
+        "24764": {
+          "stages": [
+            "import",
+            "guard-installed"
+          ],
+          "network_denied": 0,
+          "subprocess_denied": 0,
+          "run": "t10-r2-red-20261028T065500Z"
+        },
+        "28576": {
+          "stages": [
+            "import",
+            "guard-installed",
+            "network-denied",
+            "subprocess-denied"
+          ],
+          "network_denied": 3,
+          "subprocess_denied": 1,
+          "run": "t10-r2-red-20261028T065500Z"
+        },
+        "84056": {
+          "stages": [
+            "import",
+            "guard-installed"
+          ],
+          "network_denied": 0,
+          "subprocess_denied": 0,
+          "run": "t10-r2-red-20261028T065500Z"
+        },
+        "85600": {
+          "stages": [
+            "import",
+            "guard-installed"
+          ],
+          "network_denied": 0,
+          "subprocess_denied": 0,
+          "run": "t10-r2-red-20261028T065500Z"
+        },
+        "93576": {
+          "stages": [
+            "import",
+            "guard-installed"
+          ],
+          "network_denied": 0,
+          "subprocess_denied": 0,
+          "run": "t10-r2-red-20261028T065500Z"
+        }
+      },
+      "total_sentinel_lines": 16
+    }
+  },
+  "problems": [],
+  "network_claim": "the guard was installed in every python child and refused DNS/TCP/UDP in the self-control; there is no packet capture, so this is not a proof about the OS stack"
+}

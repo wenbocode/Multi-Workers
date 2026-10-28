@@ -1,0 +1,173 @@
+﻿{
+  "files": {
+    "decision_wire.py": {
+      "before_sha256": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+      "before_bytes": 79832,
+      "before_lines": 2264,
+      "after_sha256": "429201ace7028968ae18cfbcc33dbf5aa0d2fa11b8f5d2dd7604cae0dec4e7dc",
+      "after_bytes": 82286,
+      "after_lines": 2314,
+      "after_eol": "LF",
+      "after_final_newline": true,
+      "syntax_ast_parse": "ok",
+      "top_level_added": [
+        "_same_path_component",
+        "recorded_task_state"
+      ],
+      "top_level_removed": [],
+      "function_defs_before": 88,
+      "function_defs_after": 90,
+      "imports_before": [
+        "__future__",
+        "collections.abc",
+        "contextlib",
+        "contextvars",
+        "copy",
+        "dataclasses",
+        "datetime",
+        "decision_task_state",
+        "hashlib",
+        "json",
+        "mw_common",
+        "os",
+        "pathlib",
+        "re",
+        "sys",
+        "time",
+        "typing",
+        "uuid"
+      ],
+      "imports_after": [
+        "__future__",
+        "collections.abc",
+        "contextlib",
+        "contextvars",
+        "copy",
+        "dataclasses",
+        "datetime",
+        "decision_task_state",
+        "hashlib",
+        "json",
+        "mw_common",
+        "os",
+        "pathlib",
+        "re",
+        "sys",
+        "time",
+        "typing",
+        "uuid"
+      ]
+    },
+    "decision_lifecycle.py": {
+      "before_sha256": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+      "before_bytes": 60811,
+      "before_lines": 1548,
+      "after_sha256": "73d0ae2efda3879668b3cf84d11f32809c6d00f76da13c3b8d065f87d4c87bb5",
+      "after_bytes": 65501,
+      "after_lines": 1647,
+      "after_eol": "LF",
+      "after_final_newline": true,
+      "syntax_ast_parse": "ok",
+      "top_level_added": [
+        "_recorded_after_floor",
+        "_canonical_json",
+        "_dynamic_entry_answer_issues",
+        "_refuse_entry_issues"
+      ],
+      "top_level_removed": [],
+      "function_defs_before": 46,
+      "function_defs_after": 50,
+      "imports_before": [
+        "__future__",
+        "collections.abc",
+        "dataclasses",
+        "datetime",
+        "decision",
+        "decision_points",
+        "decision_task_state",
+        "decision_wire",
+        "hashlib",
+        "json",
+        "os",
+        "pathlib",
+        "re"
+      ],
+      "imports_after": [
+        "__future__",
+        "collections.abc",
+        "dataclasses",
+        "datetime",
+        "decision",
+        "decision_points",
+        "decision_task_state",
+        "decision_wire",
+        "hashlib",
+        "json",
+        "os",
+        "pathlib",
+        "re"
+      ]
+    },
+    "decision_task_state.py": {
+      "before_sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+      "before_bytes": 3871,
+      "before_lines": 82,
+      "after_sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+      "after_bytes": 3871,
+      "after_lines": 82,
+      "after_eol": "LF",
+      "after_final_newline": true,
+      "syntax_ast_parse": "ok",
+      "top_level_added": [],
+      "top_level_removed": [],
+      "function_defs_before": 4,
+      "function_defs_after": 4,
+      "imports_before": [
+        "__future__",
+        "collections.abc",
+        "datetime"
+      ],
+      "imports_after": [
+        "__future__",
+        "collections.abc",
+        "datetime"
+      ]
+    },
+    "test_decision_context_lifecycle.py": {
+      "sha256": "1bca28c56c7ab039de5c3a91638fd20c1e2fa89f4a1ec996169cfd933c1e6ae9",
+      "bytes": 65105,
+      "unchanged_vs_protected": true
+    },
+    "test_decision_task_state.py": {
+      "sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f",
+      "bytes": 15480,
+      "unchanged_vs_protected": true
+    }
+  },
+  "checks": {
+    "s1_content_addressed_request_id": true,
+    "s1_dedupe_still_under_append_lock": true,
+    "s3_dynamic_single_source": true,
+    "s3_no_candidate_syntax_copy": true,
+    "s5_recorded_after_floor": true,
+    "s5_guard_inside_append_lock": true,
+    "s7_recorded_before_representation": true,
+    "s7_before_refusal_kept": true,
+    "s4_case_insensitive_component": true,
+    "s4_production_rule_intact": true,
+    "s4_no_live_path_probe": true,
+    "no_global_decision_id_uniqueness": true,
+    "no_task_state_change": true,
+    "control_executed_action_vocabulary": true,
+    "control_outcome_vocabulary": true,
+    "control_secret_guard_kept": true,
+    "control_redactor_required": true,
+    "control_orphan_action_label_kept": true,
+    "s3_check_runs_after_preparation_inside_business_branch": true,
+    "s5_floor_before_append_and_guard_inside_lock": true,
+    "s7_same_sanitizer_on_both_sides": true,
+    "s1_id_covers_the_recorded_row": true
+  },
+  "problems": [],
+  "ok": true
+}

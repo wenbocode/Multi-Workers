@@ -1,0 +1,1 @@
+PM preparer首次运行rc1：`KeyError: 'exit_code'`，check.py line19错误猜测run字段名。实际run.json字段为`exit: 0`，真实done/end09:18:05.048Z未变。这是PM记账脚本错误，不是产品red/worker失败。失败发生在manifest或产品写入前，仅保存mirror-inventory/dag-before。已读取实际run全文后定点改正字段，保留本失败，不修改worker run/history。

@@ -1,0 +1,7 @@
+# captured 2026-10-22T06:48:51Z
+# git HEAD 54f194d69caea6675285345df57fb0765f769b0c
+packages/multi-workers/decision_book.py	sha256=4e6394a1c9560f677eed817e93e85c15d90ff88be09579750121db95a2d6c727	blob=cb8a35ddafdbbb9c2c1f57dab20eb64295ca001a	size=49461
+packages/multi-workers/test_decision_input_contract_migration.py	sha256=1265e47dec735c7446330c93b7a7e02b049329ee340efdd5475491750e6b772a	blob=6bb6fead7cf3265283cdea1fcc31f137a9958201	size=34427
+# git status --short (my write surface)
+M packages/multi-workers/decision_book.py
+?? packages/multi-workers/test_decision_input_contract_migration.py

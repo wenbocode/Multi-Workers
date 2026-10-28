@@ -1,0 +1,114 @@
+{
+  "book": {
+    "decision_point": "dp-gate-approve",
+    "material": {
+      "condition_evidence": [
+        "packages/multi-workers/decision_book.py:1",
+        "cmd: python -B -m pytest -p no:cacheprovider -q test_decision_context_workbench.py"
+      ],
+      "current_state": "表结构、四状态与十节点 DAG 弹窗已有用例；facets 接线未完成；发布、部署与活配置变更均未执行。",
+      "gate_background": "只读筛选已完成本地定向用例，PM 请求按获批范围在 stage 内收尾，需要 gate 判断是否批准这一受限推进。",
+      "pm_note": {
+        "basis": {
+          "authority": "现有 key 的 worker 写面与只读约束；本次请求不新增授权。",
+          "budget": "剩余预算 25 分钟，只够收尾与交接，不含新实现。",
+          "evidence": "本卡证据目录内的定向用例日志与 changed-files 清单。",
+          "goal": "验收要求是只读展示与既有失败不被弱化，未要求本轮补齐投影。"
+        },
+        "planned_action": "批准后仅标记本阶段收尾并交接未完成的 facets 接线，不部署、不改活配置。",
+        "subject": "只读筛选的表结构、四状态与 DAG 弹窗，按本卡 write face 收尾。"
+      }
+    },
+    "meta": {
+      "actor_role": "pm",
+      "key": "mw-dp-consolidation",
+      "logical_id": "case-dp-gate-approve-v1",
+      "task_key": "dpc-t05-eight-cases",
+      "trigger_id": "case-dp-gate-approve"
+    },
+    "notes": {
+      "evidence": {
+        "condition_evidence": "packages/multi-workers/scripts/build_decide_cases.py:254",
+        "current_state": "packages/multi-workers/scripts/build_decide_cases.py:250",
+        "gate_background": "packages/multi-workers/scripts/build_decide_cases.py:246",
+        "pm_note.basis.authority": "packages/multi-workers/scripts/build_decide_cases.py:267",
+        "pm_note.basis.budget": "packages/multi-workers/scripts/build_decide_cases.py:266",
+        "pm_note.basis.evidence": "packages/multi-workers/scripts/build_decide_cases.py:265",
+        "pm_note.basis.goal": "packages/multi-workers/scripts/build_decide_cases.py:264",
+        "pm_note.planned_action": "packages/multi-workers/scripts/build_decide_cases.py:260",
+        "pm_note.subject": "packages/multi-workers/scripts/build_decide_cases.py:258"
+      }
+    },
+    "preparation": {
+      "basis_catalog": [
+        {
+          "applies_to": [
+            "approve"
+          ],
+          "id": "gate-approve",
+          "material_refs": [
+            "pm_note",
+            "condition_evidence"
+          ],
+          "text": "note 的受限动作在现有授权与预算内，条件证据成立，可以批准。"
+        },
+        {
+          "applies_to": [
+            "steer"
+          ],
+          "id": "gate-steer",
+          "material_refs": [
+            "gate_background"
+          ],
+          "text": "收尾顺序涉及任务组织，应交 PM 发起检查点编排而不是直接批准。"
+        },
+        {
+          "applies_to": [
+            "need_fix"
+          ],
+          "id": "gate-need-fix",
+          "material_refs": [
+            "current_state"
+          ],
+          "text": "facets 接线缺口是具体技术缺口，应补材料后再谈批准。"
+        },
+        {
+          "applies_to": [
+            "reject"
+          ],
+          "id": "gate-reject",
+          "material_refs": [
+            "current_state",
+            "condition_evidence"
+          ],
+          "text": "当前证据不足以支撑本阶段收尾，本次推进方案应被拒绝。"
+        }
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00"
+    },
+    "schema_version": 3
+  },
+  "case_version": 1,
+  "dp": "dp-gate-approve",
+  "note": "合成 case：PM 送审前写好 subject、planned_action 与四段依据，用于观察 gate 判断；note 本身不构成任何新授权。",
+  "questions": {
+    "gate_decision": {
+      "choices": [
+        "approve",
+        "steer",
+        "need_fix",
+        "reject"
+      ],
+      "id": "gate_decision",
+      "instructions": "按 PM 送审前的 note 与当前条件判断：批准本 gate、交 PM 编排、补具体缺口，还是拒绝本次方案。",
+      "labels": {
+        "approve": "满足本 gate 条件，按 note 中的受限动作继续或收尾",
+        "need_fix": "推进方式基本明确但有具体技术/材料缺口，交 PM 发起 dp-auto",
+        "reject": "拒绝本次推进方案；只有 note 另有明确获授权遗留方案才按其收尾",
+        "steer": "任务组织/主线/拆分/执行主体需调整，交 PM 发起 dp-pm-steer"
+      },
+      "type": "choice"
+    }
+  },
+  "title": "Gate 审批：只读筛选按获批范围收尾"
+}

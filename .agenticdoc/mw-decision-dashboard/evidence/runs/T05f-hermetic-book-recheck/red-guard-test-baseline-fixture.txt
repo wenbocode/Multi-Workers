@@ -1,0 +1,26 @@
+# guard test (test_the_credential_chain_is_hermetic) against the BASELINE fixture
+# ambient HOME kept (the default path is the real ~/.pi/agent/auth.json);
+# the guard test fails on the path comparison before any credential is read
+# exit: 1
+
+F                                                                        [100%]probe_red: ambient auth hits=0 bytes_read=0
+
+================================== FAILURES ===================================
+____________________ test_the_credential_chain_is_hermetic ____________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18569/test_the_credential_chain_is_h0')
+
+    def test_the_credential_chain_is_hermetic(tmp_path: pathlib.Path) -> None:
+        auth = tmp_path / "no-auth.json"
+>       assert decision_backends._auth_json_path() == auth, (
+            "the fixture must redirect the timi credential chain into tmp_path"
+        )
+E       AssertionError: the fixture must redirect the timi credential chain into tmp_path
+E       assert WindowsPath('C:/Users/wenbozhou/.pi/agent/auth.json') == WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18569/test_the_credential_chain_is_h0/no-auth.json')
+E        +  where WindowsPath('C:/Users/wenbozhou/.pi/agent/auth.json') = <function _auth_json_path at 0x000001593A284930>()
+E        +    where <function _auth_json_path at 0x000001593A284930> = decision_backends._auth_json_path
+
+test_guard_red.py:35: AssertionError
+=========================== short test summary info ===========================
+FAILED test_guard_red.py::test_the_credential_chain_is_hermetic - AssertionEr...
+1 failed in 0.13s

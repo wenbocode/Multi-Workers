@@ -1,0 +1,48 @@
+==============================================================================
+test_rag_launcher.py :: test_dispatch_end_to_end_is_stable  (occurrences: [372])
+372:     def test_dispatch_end_to_end_is_stable(self) -> None:
+373:         self._fixture_project()
+374:         first = dispatch_mod.dispatch(
+375:             self.root, "k1", "t07", "repair", "Do the RAG work.",
+376:             loop="L", attempt=1,
+377:         )
+378:         self.assertTrue(first.ok and first.row_verified)
+379:         text = first.task_md.read_text(encoding="utf-8")  # type: ignore[union-attr]
+380:         self.assertIn(mc.RAG_MARKER_V1, text)
+381:         self.assertTrue(text.endswith(GOLDEN_BLOCK_TEXT + "\n"))
+382:         # Re-dispatch over the existing task.md is byte-identical.
+383:         second = dispatch_mod.dispatch(
+384:             self.root, "k1", "t07", "repair", "Do the RAG work.",
+385:             loop="L", attempt=1,
+386:         )
+387:         self.assertTrue(second.ok)
+388:         self.assertEqual(second.task_md.read_text(encoding="utf-8"), text)  # type: ignore[union-attr]
+389: 
+390: 
+391: if __name__ == "__main__":
+392:     unittest.main()
+393: 
+394: 
+395: # ── spawn-path integration (VC-022: the refusal, not just the check) ──────────
+396: 
+==============================================================================
+test_rag_init.py :: test_vc204_zero_interaction  (occurrences: [213])
+213:     def test_vc204_zero_interaction(self) -> None:
+214:         result = self._run()
+215:         self.assertEqual(result.returncode, 0, result.stderr)
+216: 
+217:         init_slice = _init_source_slice()
+218:         self.assertNotIn("input(", init_slice)
+219:         self.assertNotIn("sys.stdin", init_slice)
+220:         templates = (pathlib.Path(__file__).parent / "rag_templates.py").read_text(encoding="utf-8")
+221:         self.assertNotIn("input(", templates)
+222:         self.assertNotIn("sys.stdin", templates)
+223:         _verify(
+224:             "VC-204",
+225:             subprocess_exit=result.returncode,
+226:             input_hits=0,
+227:             stdin_hits=0,
+228:         )
+229: 
+230:     # ── VC-205 ───────────────────────────────────────────────────────────
+231: 

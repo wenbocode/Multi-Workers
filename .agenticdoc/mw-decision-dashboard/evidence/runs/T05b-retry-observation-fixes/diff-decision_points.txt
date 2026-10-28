@@ -1,0 +1,390 @@
+﻿diff --git a/H:/git/Multi-Workers/.agenticdoc/mw-decision-dashboard/evidence/runs/T05b-retry-observation-fixes/baseline-decision_points.py b/packages/multi-workers/decision_points.py
+index f65495e80..e67185adb 100644
+--- a/H:/git/Multi-Workers/.agenticdoc/mw-decision-dashboard/evidence/runs/T05b-retry-observation-fixes/baseline-decision_points.py
++++ b/packages/multi-workers/decision_points.py
+@@ -64,4 +64,6 @@ import decision_context
+ 
+ __all__ = [
++    "ACTOR_ID_MAX_BYTES",
++    "ACTOR_KINDS",
+     "ARCHIVE_STATES",
+     "CAPTURE_CHANNELS",
+@@ -118,4 +120,6 @@ __all__ = [
+     "snapshot_field_dict",
+     "state_field_issues",
++    "state_unknown_key_issues",
++    "register_book_validator",
+ ]
+ 
+@@ -2073,4 +2077,20 @@ OPTIONAL_STATE_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+ )
+ 
++#: Producer facts the live dp25 state carries but the exported registry contract
++#: does not declare yet (``decide_signoff.signoff_state``). The seam's closed-key
++#: gate accepts them so an existing producer is not broken by T05b F1; declaring
++#: them in OPTIONAL_STATE_FIELDS (and regenerating decide_registry.json) is
++#: migration debt for the registry owner. The decision book keeps refusing them
++#: until then, so an observation cannot claim them as book material.
++LEGACY_PRODUCER_STATE_PATHS: Mapping[str, tuple[str, ...]] = MappingProxyType(
++    {
++        "dp25-signoff-conclusion": (
++            "rows_escalated",
++            "escalated_reasons",
++            "engine_violations",
++        ),
++    }
++)
++
+ #: Optional L1 paths dropped first when the canonical state exceeds the budget
+ #: (lowest decision value first; derived from :data:`OPTIONAL_STATE_FIELDS`).
+@@ -2251,6 +2271,6 @@ def state_field_issues(dp_id: str, state: Mapping) -> tuple[tuple[str, str], ...
+     code), and ``None`` on an optional path means "not reported".
+ 
+-    Unknown paths are not judged here: the closed key set is a book-level
+-    concern (``decision_book._check_state_closed``).
++    Unknown paths are not judged here: the closed key set is checked by
++    :func:`state_unknown_key_issues`, the same checker the decision book uses.
+     """
+     issues: list[tuple[str, str]] = []
+@@ -2267,4 +2287,71 @@ def state_field_issues(dp_id: str, state: Mapping) -> tuple[tuple[str, str], ...
+ 
+ 
++def _flatten_state(value: object, prefix: str = "") -> dict[str, object]:
++    """Nested mapping -> ``{dotted_path: leaf}`` (empty mappings stay leaves).
++
++    The flattening rule is shared with the decision book's closed-key gate so
++    both surfaces report the same path for the same nested defect.
++    """
++    if isinstance(value, Mapping) and value:
++        out: dict[str, object] = {}
++        for key, child in value.items():
++            child_prefix = f"{prefix}.{key}" if prefix else str(key)
++            out.update(_flatten_state(child, child_prefix))
++        return out
++    if isinstance(value, Mapping) and not prefix:
++        return {}
++    return {prefix: value}
++
++
++def state_unknown_key_issues(
++    dp_id: str,
++    state: Mapping,
++    *,
++    allow_context: bool = False,
++    allow_paths: Iterable[str] = (),
++) -> tuple[tuple[str, str], ...]:
++    """``(dotted path, detail)`` for every state key the registry does not declare.
++
++    The single closed-key-set checker (T05b F1): the registry's required +
++    optional paths of one dp, plus :data:`STATE_IDENTITY_PATHS`, are the only
++    legal keys; a subtree under a declared optional path is legal too (dp1
++    ``history`` owns its whole tree). ``allow_context=True`` additionally admits
++    the engineered ``context`` block, which production producers may attach and
++    :mod:`decision_context` fits - the decision book keeps ``context`` at the top
++    level instead, so its gate stays strict (``allow_context=False``).
++
++    Missing required fields are reported by :func:`_missing_required` and the
++    decision book's required check (one defect, one code); this checker only
++    answers "is this key part of the contract at all?". ``allow_paths`` is an
++    explicit caller-declared allowance (the legacy dp25 producer facts), never
++    an implicit widening of the registry contract.
++    """
++    required = REQUIRED_STATE_FIELDS.get(dp_id, ())
++    required_set = set(required)
++    extra_allowed = set(allow_paths)
++    allowed = set(_declared_state_paths(dp_id)) | set(STATE_IDENTITY_PATHS) | extra_allowed
++    optional_paths = OPTIONAL_STATE_FIELDS.get(dp_id, ())
++    context_key = decision_context.CONTEXT_KEY
++    issues: list[tuple[str, str]] = []
++    for path in _flatten_state(state):
++        if path in allowed:
++            continue
++        if any(path.startswith(item + ".") for item in optional_paths):
++            continue
++        if allow_context and (path == context_key or path.startswith(context_key + ".")):
++            continue
++        parent_of_required = any(item.startswith(path + ".") for item in required_set)
++        if parent_of_required:
++            holding = sorted(
++                item for item in required_set if item.startswith(path + ".")
++            )
++            issues.append((path, f"must be an object holding {holding}"))
++        else:
++            issues.append(
++                (path, "not in required_state_fields (closed key set)")
++            )
++    return tuple(issues)
++
++
+ def _validate_state_field_contract() -> None:
+     """Import-time validation of the typed contract (a broken table is a bug).
+@@ -3089,4 +3176,17 @@ CAPTURE_CHANNELS = (
+ SNAPSHOT_KINDS = ("book", "input-state")
+ 
++#: Actor kinds the side ledger accepts. The authority is
++#: ``decision_history.ACTOR_KINDS`` (T07c); it is repeated as a literal here
++#: because ``decision_history`` imports ``decide_signoff``, which imports this
++#: module (`decision_points` -> `decision_history` would be circular). The
++#: dashboard contract test locks the two tuples to each other, so a drift is a
++#: test failure instead of a silently accepted actor kind.
++ACTOR_KINDS: tuple[str, ...] = ("human", "system", "unknown")
++
++#: Byte cap for ``Observation.actor_id``, the metadata cap the side ledger
++#: applies to actor ids (``decision_wire.METADATA_TEXT_LIMIT``), locked by the
++#: same contract test.
++ACTOR_ID_MAX_BYTES = 512
++
+ 
+ @dataclass(frozen=True)
+@@ -3266,4 +3366,8 @@ class _DecisionCapture:
+     call_id: str | None = None
+     snapshot_ref: str | None = None
++    #: Set when the caller's material was refused as illegal (typed contract,
++    #: closed key set or observation book). Refused material is never stored as
++    #: a snapshot: only the refusal facts belong in the ledger (T05b F1/F2).
++    material_refused: bool = False
+ 
+     def attach(
+@@ -3307,4 +3411,6 @@ class _DecisionCapture:
+         if self.state is None or self.dp_id is None:
+             return None
++        if self.material_refused:
++            return None
+         rendered = dynamic_choice_labels(self.questions or {}, self.state) or {}
+         kind = (
+@@ -3423,16 +3529,18 @@ class _DecisionCapture:
+         scope = self.scope
+         written = True
+-        try:
+-            document = self._snapshot_document()
+-            if document is not None:
++        document = self._snapshot_document()
++        if document is not None:
++            # A failed snapshot write is isolated on purpose: the decision-end
++            # row still has to say what happened (T05b F4).
++            try:
+                 text = json.dumps(
+                     document, ensure_ascii=False, sort_keys=True, default=str
+                 )
+-                self.snapshot_ref = self._snapshot_ref(document)
++                snapshot_ref = self._snapshot_ref(document)
+                 result = wire.record_event(
+                     scope,
+                     "book-snapshot",
+                     fields={
+-                        "book_ref": self.snapshot_ref,
++                        "book_ref": snapshot_ref,
+                         "book": scope.capture(text),
+                         "file_sha256": None,
+@@ -3442,5 +3550,14 @@ class _DecisionCapture:
+                     actor=self._actor(),
+                 )
+-                written = written and bool(getattr(result, "written", False))
++                if bool(getattr(result, "written", False)):
++                    # A reference may only point at a row that really exists
++                    # (T05b F4): a failed/raised write leaves snapshot_ref None
++                    # and the decision-end row carries no dangling book_ref.
++                    self.snapshot_ref = snapshot_ref
++                else:
++                    written = False
++            except Exception:  # noqa: BLE001 - capture must never break the decision
++                written = False
++        try:
+             result = wire.record_event(
+                 scope,
+@@ -3773,4 +3890,28 @@ def _coerce_project_dir(project_dir: pathlib.Path | str | None) -> pathlib.Path:
+ 
+ 
++def _actor_issue(observation: Observation) -> str | None:
++    """Why this actor declaration is illegal, or ``None`` when it is legal.
++
++    The wire's ``_actor_of`` promises a closed actor-kind set but never checks
++    it; an observation is the caller-controlled entry point, so the declaration
++    is validated here, before any fact is written (T05b F5). The id must be
++    single-line printable text within the wire's metadata cap; it is still an
++    unproven claim (a declared ``human`` does not prove a human acted).
++    """
++    if observation.actor_kind not in ACTOR_KINDS:
++        return (
++            f"observation.actor_kind must be one of {list(ACTOR_KINDS)},"
++            f" got {observation.actor_kind!r}"
++        )
++    actor_id = observation.actor_id
++    if not isinstance(actor_id, str) or not actor_id.strip():
++        return f"observation.actor_id must be a non-empty string, got {actor_id!r}"
++    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in actor_id):
++        return "observation.actor_id must be single-line printable text"
++    if len(actor_id.encode("utf-8")) > ACTOR_ID_MAX_BYTES:
++        return f"observation.actor_id is {len(actor_id.encode('utf-8'))} B > {ACTOR_ID_MAX_BYTES} B"
++    return None
++
++
+ def _validate_observation(
+     observation: Observation | None,
+@@ -3793,4 +3934,7 @@ def _validate_observation(
+             f"observation must be a decision_points.Observation, got {type(observation).__name__}"
+         )
++    actor_issue = _actor_issue(observation)
++    if actor_issue is not None:
++        raise decision.DecisionInputError(actor_issue)
+     if not observation.observe_only:
+         raise decision.DecisionInputError(
+@@ -3844,4 +3988,95 @@ def _validate_observation(
+ 
+ 
++#: DI seam: the read-only decision-book validator, registered by
++#: :mod:`decision_book` at import time. A module hook instead of an import:
++#: ``decision_book`` imports this module, so the reverse import would be circular
++#: (T05b F2). ``None`` means no validator is available, which refuses book
++#: material instead of trusting it.
++BOOK_VALIDATOR: Callable[..., tuple[tuple[str, str], ...]] | None = None
++
++
++def register_book_validator(
++    validator: Callable[..., tuple[tuple[str, str], ...]],
++) -> None:
++    """Register the decision-book validator (called by ``decision_book``)."""
++    global BOOK_VALIDATOR
++    BOOK_VALIDATOR = validator
++
++
++def _book_issue_path(path: str) -> str:
++    """Prefix a book issue path so the refusal names the refused surface."""
++    if path == "book" or path.startswith("book."):
++        return path
++    return f"book.{path}"
++
++
++def _join_digest(state: Mapping, dp_point: DecisionPoint) -> str:
++    """Canonical digest of a state with the builder-owned identity normalized.
++
++    ``check_book`` has already validated every identity value of a book, and the
++    builder writes the three identity keys for every dp, so a state that omits
++    ``questions_version`` is still the same material (the sent state genuinely
++    may not carry it). Every other key must match byte for byte.
++    """
++    normalized = dict(state)
++    normalized.setdefault("schema_version", 2)
++    normalized.setdefault("decision_point", dp_point.id)
++    normalized.setdefault("questions_version", dp_point.questions_version)
++    return _state_digest(normalized)
++
++
++def _observation_book_issues(
++    book: Mapping,
++    *,
++    dp_point: DecisionPoint,
++    sent_state: Mapping,
++    project: pathlib.Path,
++) -> tuple[tuple[str, str], ...]:
++    """Why this book cannot be the material of record of this call (T05b F2).
++
++    A caller-supplied ``Observation.book`` is a claim: it must belong to this
++    dp, pass the same validation ``mw decide book check`` runs (schema, closed
++    state, placeholders, evidence, budget, secrets) and carry the state that is
++    actually sent. Anything less is refused before the transport, so an
++    unvalidated book is never snapshotted as material.
++    """
++    if not isinstance(book, Mapping):
++        return (("book", f"must be a JSON object, got {type(book).__name__}"),)
++    book_dp = book.get("decision_point")
++    if book_dp != dp_point.id:
++        return (
++            (
++                "book.decision_point",
++                f"must equal this decision's dp {dp_point.id!r}, got {book_dp!r}",
++            ),
++        )
++    issues: list[tuple[str, str]] = []
++    book_state = book.get("state")
++    if not isinstance(book_state, Mapping):
++        issues.append(("book.state", "must be a JSON object"))
++    validator = BOOK_VALIDATOR
++    if validator is None:
++        issues.append(
++            (
++                "book",
++                "no book validator is registered (decision_book is not imported); "
++                "refusing unverified book material",
++            )
++        )
++    else:
++        for path, detail in validator(book, project):
++            issues.append((_book_issue_path(path), detail))
++    if isinstance(book_state, Mapping) and _join_digest(
++        book_state, dp_point
++    ) != _join_digest(sent_state, dp_point):
++        issues.append(
++            (
++                "book.state",
++                "the book state is not the state of this call (digest join failed)",
++            )
++        )
++    return tuple(issues)
++
++
+ def _capture_scope(
+     capture: _DecisionCapture,
+@@ -4124,4 +4359,34 @@ def _decide_for(
+             state_digest=_state_digest(state),
+         )
++    # Step 5b 鈥?the typed business contract of this dp (T05b F1): type / enum /
++    # array caps / element lengths / cross-field facts plus the closed key set,
++    # from the single registry authority. Before T05b only ``check_book``
++    # enforced this, so every non-book producer (and the observation seam) sent
++    # material production would refuse. Refused material is never snapshotted
++    # and never reaches the budget or the transport.
++    contract_issues = state_field_issues(dp_point.id, state)
++    if dp_point.id in REQUIRED_STATE_FIELDS:
++        # A dp with a declared contract has a closed key set; an ad-hoc dp
++        # injected by tests has no declared paths, so there is nothing to close.
++        contract_issues += state_unknown_key_issues(
++            dp_point.id,
++            state,
++            allow_context=True,
++            allow_paths=LEGACY_PRODUCER_STATE_PATHS.get(dp_point.id, ()),
++        )
++    if contract_issues:
++        capture.material_refused = True
++        capture.remember_state(state, questions=None, state_digest=None)
++        # Paths and registry-owned constraint text only (no free-text values).
++        detail = "; ".join(f"{path}: {issue}" for path, issue in contract_issues)
++        return _outcome(
++            dp_point=dp_point,
++            trigger=trigger_obj,
++            status="escalated",
++            escalated_reason="input-incomplete",
++            detail=f"{decision_id}: illegal state ({detail})",
++            mode=mode,
++            state_digest=_state_digest(state),
++        )
+     questions = questions_map(dp_point)
+     if not questions:
+@@ -4156,4 +4421,27 @@ def _decide_for(
+         )
+ 
++    # Step 6b 鈥?a caller-supplied book is a material-of-record claim (T05b F2):
++    # it must be this dp's book, pass `check_book` and carry the state that is
++    # actually sent. A refused book sends nothing, stores no snapshot and leaves
++    # no book_ref behind.
++    book = capture.observation.book if capture.observation is not None else None
++    if book is not None:
++        book_issues = _observation_book_issues(
++            book, dp_point=dp_point, sent_state=state, project=project
++        )
++        if book_issues:
++            capture.material_refused = True
++            detail = "; ".join(f"{path}: {issue}" for path, issue in book_issues)
++            return _outcome(
++                dp_point=dp_point,
++                trigger=trigger_obj,
++                status="escalated",
++                escalated_reason="input-incomplete",
++                detail=f"{decision_id}: observation book refused ({detail})",
++                mode=mode,
++                state_digest=digest,
++                truncated=dropped_paths,
++            )
++
+     # Step 7 鈥?one transport call; `decision.DecisionClient` never raises here.
+     if client is None:

@@ -1,0 +1,17 @@
+[
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "H:\\git\\Multi-Workers\\packages\\multi-workers\\test_decision_context_readable_ui.py::test_invalid_business_editor_never_submits_the_previous_book"
+    ],
+    "cwd": "H:\\git\\Multi-Workers",
+    "utc_start": "2026-10-23T10:11:58.088644+00:00",
+    "utc_end": "2026-10-23T10:12:03.182527+00:00",
+    "exit": 1
+  }
+]

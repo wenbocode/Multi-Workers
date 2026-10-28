@@ -1,0 +1,34 @@
+{
+  "label": "red-02",
+  "argv": [
+    "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+    "-B",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "-q",
+    "test_dp_consolidation_recovery.py"
+  ],
+  "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+  "env_keys": [
+    "DPC_T07_FIXTURE_ROOT",
+    "HOME",
+    "PATH",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONIOENCODING",
+    "PYTHONUTF8",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "USERPROFILE",
+    "WINDIR"
+  ],
+  "started_at": "2026-10-26T15:55:44.164560+00:00",
+  "finished_at": "2026-10-26T15:55:44.681657+00:00",
+  "rc": 1,
+  "stdout_bytes": 6736,
+  "stderr_bytes": 0
+}

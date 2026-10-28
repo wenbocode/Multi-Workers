@@ -1,0 +1,98 @@
+diff --git a/packages/multi-workers/decide_signoff.py b/packages/multi-workers/decide_signoff.py
+index 1e987d647..99c6503f9 100644
+--- a/packages/multi-workers/decide_signoff.py
++++ b/packages/multi-workers/decide_signoff.py
+@@ -51,6 +51,7 @@ from typing import Any
+ import decide_archive
+ import decision
+ import decision_points
++import decision_signoff_result
+ 
+ __all__ = [
+     "AGENT_SESSION_ENV_VARS",
+@@ -120,7 +121,9 @@ _GENESIS_PREV = "0" * 16
+ 
+ _MACHINE_LINE_RE = re.compile(
+     r"^(conclusion|counted_rows|rows_sha256|engine|allow_empty|key|claim|ts|reason"
+-    r"|promote|demote|p0-open|signed_via|decide_fallback):\s*(.*?)\s*$",
++    r"|promote|demote|p0-open|signed_via|decide_fallback|record_version|dp|logical_id"
++    r"|decision_id|material_sha256|evidence_sha256|snapshot_sha256|initiator_role"
++    r"|retry_of|transport|model|confidence_source):\s*(.*?)\s*$",
+     re.MULTILINE,
+ )
+ 
+@@ -521,9 +524,17 @@ def render(
+     ts: str | None = None,
+     signed_via: str | None = "auto-decide",
+     decide_fallback: str | None = None,
++    result: decision_signoff_result.SignoffResult | None = None,
+ ) -> str:
+     """Markdown sign-off file: column-0 machine lines + the human tables.
+ 
++    ``result`` is the minimal dp25 result record of the new ``sign --stdin``
++    path. When present, the file carries the exact ``logical_id`` + snapshot it
++    signs (``decision_signoff_result.validate_signoff`` is the reader). The
++    legacy count-based fields stay untouched for old call sites, so already
++    signed files keep parsing and the done gate sees the same shape it always
++    did.
++
+     ``conclusion:`` is written at column 0 on its own line because the done
+     gate matches ``(?m)^conclusion:\\s*(continue|narrow|revoke)\\s*$``;
+     ``promote`` / ``demote`` / ``p0-open`` are the machine lines the existing
+@@ -564,6 +575,29 @@ def render(
+         "demote: -",
+         f"p0-open: {p0_machine}",
+     ]
++    if result is not None:
++        # New (approved) snapshot association. The row hash above is part of the
++        # snapshot, so an archive append after the model call also invalidates
++        # this conclusion. No second approval is implied by any of these lines.
++        if result.rows_sha256 and result.rows_sha256 != facts.sha256:
++            raise SignoffError(
++                "sign-off snapshot does not match the archive it describes"
++            )
++        lines += [
++            f"record_version: {result.record_version}",
++            f"dp: {result.dp}",
++            f"logical_id: {result.logical_id}",
++            f"decision_id: {result.decision_id}",
++            f"material_sha256: {result.material_sha256}",
++            f"evidence_sha256: {result.evidence_sha256}",
++            f"snapshot_sha256: {result.snapshot_sha256}",
++            f"initiator_role: {result.initiator_role or 'unknown'}",
++            f"retry_of: {result.retry_of or '-'}",
++        ]
++        for name in ("transport", "model", "confidence_source"):
++            value = getattr(result, name)
++            if isinstance(value, str) and value:
++                lines.append(f"{name}: {value}")
+     if signed_via:
+         lines.append(f"signed_via: {signed_via}")
+     if decide_fallback:
+@@ -669,18 +703,12 @@ def write_signoff(
+     """Write ``<key>/evidence/review/sign-final.md`` (parents created, atomic).
+ 
+     No agent-session gate any more (spec §2 / design §3.3): the sign-off is
+-    written whenever :func:`auto_conclusion` produced a conclusion, and the
+-    authority is the decision model rather than the process running the
+-    command. :data:`AGENT_SESSION_ENV_VARS` stays exported because ``mw.py``
+-    still uses it for the ``dp apply`` guard, not for this write.
++    written whenever the decision model produced a conclusion, and the authority
++    is the decision model rather than the process running the command.
++    :data:`AGENT_SESSION_ENV_VARS` stays exported because ``mw.py`` still uses
++    it for the ``dp apply`` guard, not for this write.
+     """
+-    path = signoff_path(project_dir, key)
+-    path.parent.mkdir(parents=True, exist_ok=True)
+-    tmp = path.with_name(path.name + ".tmp")
+-    try:
+-        tmp.write_text(text, encoding="utf-8", newline="\n")
+-        os.replace(tmp, path)
+-    finally:
+-        if tmp.exists():
+-            tmp.unlink(missing_ok=True)
+-    return path
++    # The result module owns the safe atomic publish (parent-chain containment,
++    # no symbolic link, temp write, fsync, replace). The file's success is the
++    # sign-off success; any logging/feedback failure is reported separately.
++    return decision_signoff_result.write_signoff_text(key_dir(project_dir, key), text)

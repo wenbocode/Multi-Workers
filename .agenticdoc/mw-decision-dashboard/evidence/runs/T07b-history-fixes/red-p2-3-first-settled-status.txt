@@ -1,0 +1,42 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+______________ test_repeated_settled_events_agree_with_the_stage ______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18361/test_repeated_settled_events_a0')
+
+    def test_repeated_settled_events_agree_with_the_stage(tmp_path):
+        root = _root(tmp_path)
+        decision_id = "dp1-dispatch-type:repeated-settle"
+        _add_lifecycle(
+            root, lifecycle="suggested", decision_id=decision_id, actor=("system", "conductor")
+        )
+        _add_lifecycle(
+            root, lifecycle="settled", decision_id=decision_id, result="ok", actor=("system", "pm-auto")
+        )
+        _add_lifecycle(
+            root,
+            lifecycle="settled",
+            decision_id=decision_id,
+            result="rollback",
+            actor=("human", "user-explicit"),
+        )
+    
+        record = _by_decision(_snapshot(root))[decision_id]
+    
+>       assert record.status == "rollback", "status must not come from the first settled event"
+E       AssertionError: status must not come from the first settled event
+E       assert 'ok' == 'rollback'
+E         
+E         - rollback
+E         + ok
+
+test_decision_history.py:1537: AssertionError
+============================== warnings summary ===============================
+C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\cacheprovider.py:475
+  C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\cacheprovider.py:475: PytestCacheWarning: could not create cache path H:\git\Multi-Workers\.agenticdoc\mw-decision-dashboard\evidence\runs\T07b-history-fixes\mutant-p2-3-first-settled-status\.pytest_cache\v\cache\nodeids: [WinError 5] ¾Ü¾ø·ÃÎÊ¡£: 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-decision-dashboard\\evidence\\runs\\T07b-history-fixes\\mutant-p2-3-first-settled-status\\pytest-cache-files-7vchelvo' -> 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-decision-dashboard\\evidence\\runs\\T07b-history-fixes\\mutant-p2-3-first-settled-status\\.pytest_cache'
+    config.cache.set("cache/nodeids", sorted(self.cached_nodeids))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED test_decision_history.py::test_repeated_settled_events_agree_with_the_stage
+1 failed, 1 warning in 0.23s

@@ -1,0 +1,8 @@
+# label: adjacent-monitor-history-final
+# cwd: packages/multi-workers
+# HOME/USERPROFILE: C:\Users\WENBOZ~1\AppData\Local\Temp\t05f-home-6mv0tpro
+# command: C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\python.exe -m pytest test_decision_monitor.py test_decision_history.py -q
+# exit: 0
+.......s................................................................ [ 69%]
+................................                                         [100%]
+103 passed, 1 skipped in 19.15s

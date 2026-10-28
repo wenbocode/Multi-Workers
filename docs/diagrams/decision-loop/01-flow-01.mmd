@@ -1,0 +1,22 @@
+graph TD
+    Q["遇到决策分支"] --> F{"是固定业务节点?"}
+    F -->|"是"| FIX["直接调用对应入口"]
+    F -->|"否"| SPLIT["PM 拆清主体 对象 问题"]
+    SPLIT --> RT["dp-route<br/>在七个入口中选一个"]
+    RT --> FIX
+    FIX --> E1["dp-w-type 派发类型"]
+    FIX --> E2["dp-pm-steer 任务编排"]
+    FIX --> E3["dp-w-check-task Worker 自查"]
+    FIX --> E4["dp-QG 质量审核"]
+    FIX --> E5["dp-gate-approve gate 审批"]
+    FIX --> E6["dp-sign-key key 签收"]
+    FIX --> E7["dp-auto 现场动态行动"]
+
+    style RT fill:#E1F5EE,stroke:#0F6E56
+    style E7 fill:#E1F5EE,stroke:#0F6E56
+    style E1 fill:#E6F1FB,stroke:#185FA5
+    style E2 fill:#E6F1FB,stroke:#185FA5
+    style E3 fill:#E6F1FB,stroke:#185FA5
+    style E4 fill:#E6F1FB,stroke:#185FA5
+    style E5 fill:#E6F1FB,stroke:#185FA5
+    style E6 fill:#E6F1FB,stroke:#185FA5

@@ -1,0 +1,36 @@
+{
+  "imports_copy_local": true,
+  "output_root_copy_local": true,
+  "ts_actual_disk_bytes_equal_render": true,
+  "json_actual_bytes_equal_snapshot": true,
+  "active_ids": [
+    "dp-w-type",
+    "dp-pm-steer",
+    "dp-w-check-task",
+    "dp-QG",
+    "dp-gate-approve",
+    "dp-sign-key",
+    "dp-auto",
+    "dp-route"
+  ],
+  "retired_full_field_parity": true,
+  "legacy_exact_names": [
+    "dp1.json",
+    "dp2.json",
+    "dp3.json",
+    "dp25.json"
+  ],
+  "active_case_names": [
+    "dp-w-type.json",
+    "dp-pm-steer.json",
+    "dp-w-check-task.json",
+    "dp-QG.json",
+    "dp-gate-approve.json",
+    "dp-sign-key.json",
+    "dp-auto.json",
+    "dp-route.json"
+  ],
+  "network_forbidden": true,
+  "t05_business_generation_run": false,
+  "ts_compile_run": false
+}

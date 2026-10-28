@@ -1,0 +1,16 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T09:07:03.066109+00:00",
+  "mirror_files": 1883,
+  "mirror_net_changes_since_PM_verification": [],
+  "card_sha256": "f34bf2252bef66d990cc2c5b97a2c57402015eedcbc5ae6dd497ade2d46bf9bc",
+  "logical_task": "T09",
+  "attempt": "R2",
+  "assigned_PM_runs_passed": 109,
+  "real_independent_fixture_failures": 13,
+  "local_handoff_verified": false,
+  "original_attempt_status": "done/exit0/acked",
+  "original_history_preserved": true,
+  "only_existing_two_product_faces": true,
+  "dispatch_done": false
+}

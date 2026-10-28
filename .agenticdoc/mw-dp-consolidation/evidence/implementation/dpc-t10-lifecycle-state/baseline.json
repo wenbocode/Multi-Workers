@@ -1,0 +1,114 @@
+{
+  "files": {
+    "decision_wire.py": {
+      "worktree": {
+        "exists": true,
+        "bytes": 73650,
+        "sha256": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+        "lf": 2077,
+        "crlf": 0,
+        "ends_with_lf": true
+      },
+      "live": {
+        "exists": true,
+        "bytes": 73650,
+        "sha256": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+        "lf": 2077,
+        "crlf": 0,
+        "ends_with_lf": true
+      },
+      "worktree_equals_live": true,
+      "existing_worktree_tracked_diff_rc": 0,
+      "existing_worktree_tracked_diff_bytes": 0,
+      "existing_worktree_tracked_diff_head": ""
+    },
+    "decision_lifecycle.py": {
+      "worktree": {
+        "exists": true,
+        "bytes": 34814,
+        "sha256": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+        "lf": 951,
+        "crlf": 0,
+        "ends_with_lf": true
+      },
+      "live": {
+        "exists": true,
+        "bytes": 34814,
+        "sha256": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+        "lf": 951,
+        "crlf": 0,
+        "ends_with_lf": true
+      },
+      "worktree_equals_live": true,
+      "existing_worktree_tracked_diff_rc": 0,
+      "existing_worktree_tracked_diff_bytes": 0,
+      "existing_worktree_tracked_diff_head": ""
+    },
+    "decision_task_state.py": {
+      "worktree": {
+        "exists": true,
+        "bytes": 2452,
+        "sha256": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+        "lf": 48,
+        "crlf": 0,
+        "ends_with_lf": true
+      },
+      "live": {
+        "exists": true,
+        "bytes": 2452,
+        "sha256": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+        "lf": 48,
+        "crlf": 0,
+        "ends_with_lf": true
+      },
+      "worktree_equals_live": true,
+      "existing_worktree_tracked_diff_rc": 0,
+      "existing_worktree_tracked_diff_bytes": 0,
+      "existing_worktree_tracked_diff_head": ""
+    },
+    "test_decision_context_lifecycle.py": {
+      "worktree": {
+        "exists": true,
+        "bytes": 26028,
+        "sha256": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+        "lf": 715,
+        "crlf": 0,
+        "ends_with_lf": true
+      },
+      "live": {
+        "exists": true,
+        "bytes": 26028,
+        "sha256": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+        "lf": 715,
+        "crlf": 0,
+        "ends_with_lf": true
+      },
+      "worktree_equals_live": true,
+      "existing_worktree_tracked_diff_rc": 0,
+      "existing_worktree_tracked_diff_bytes": 0,
+      "existing_worktree_tracked_diff_head": ""
+    },
+    "test_decision_task_state.py": {
+      "worktree": {
+        "exists": true,
+        "bytes": 13537,
+        "sha256": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5",
+        "lf": 243,
+        "crlf": 0,
+        "ends_with_lf": true
+      },
+      "live": {
+        "exists": true,
+        "bytes": 13537,
+        "sha256": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5",
+        "lf": 243,
+        "crlf": 0,
+        "ends_with_lf": true
+      },
+      "worktree_equals_live": true,
+      "existing_worktree_tracked_diff_rc": 0,
+      "existing_worktree_tracked_diff_bytes": 0,
+      "existing_worktree_tracked_diff_head": ""
+    }
+  }
+}

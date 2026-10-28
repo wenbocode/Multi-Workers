@@ -1,0 +1,13 @@
+control_root        : H:\git\Multi-Workers
+records             : 38
+archive rows        : 44 damaged: 0 chain_breaks: 0 seq_breaks: 0
+wire/lifecycle      : 5 / 0 damaged: 0 / 0
+dropped/invalid keys: 0 / 0
+structural_withheld : 0 (dummy secret set matches nothing)
+structural flags    : none
+warnings            : 0
+page records        : 38 has_more: False
+page payload bytes  : 151878
+detail errors       : none
+secret_marker_echoed: False
+FAILURES: none

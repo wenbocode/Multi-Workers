@@ -1,0 +1,3582 @@
+{
+  "key": "mw-dp-consolidation",
+  "generated_at": "2026-10-26T09:03:26+08:00",
+  "source": "original approved DAG + user-approved isolated physical mapping",
+  "stages": [
+    {
+      "id": "S0",
+      "goal": "范围/基线/资格核对",
+      "exit": "两只读证据齐备；未列面和身份/框架冲突具体解决；没有默许权限。"
+    },
+    {
+      "id": "S1",
+      "goal": "八入口协议单源",
+      "exit": "T03/T04合同/快照/TS锁通过；不调用正在运行的旧缓存入口。"
+    },
+    {
+      "id": "S2",
+      "goal": "纯有效性/政策/传输/材料及case",
+      "exit": "只读规则与完整依据、book/真实关联及八case验证；四旧case字节不变。"
+    },
+    {
+      "id": "S3",
+      "goal": "并行producer及gate基础",
+      "exit": "TS/PM/Worker/vision与三轴/受限effects验证；共享测试按DAG串行。"
+    },
+    {
+      "id": "S4",
+      "goal": "场景消费者/CLI/signoff/隔离恢复",
+      "exit": "H01～H13实链与框架接口验证；human/H12资格未证则阻塞。"
+    },
+    {
+      "id": "S5",
+      "goal": "历史/观察/窗口投影",
+      "exit": "只读安全投影/八表单，observe_only零生产副作用；旧债不改。"
+    },
+    {
+      "id": "S6",
+      "goal": "集成/check/独立审计/QG",
+      "exit": "所有规定L2和完整check证据充分，三个独立审计吸收；QG/签收各有真实合法决定。"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T01",
+      "task_key": "dpc-t01-python-preflight",
+      "card": "tasks/T01-python-preflight.md",
+      "stage": 0,
+      "type": "research",
+      "execution": "worker",
+      "deps": [],
+      "ac_refs": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-027",
+        "AC-038",
+        "AC-039",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-001",
+        "VC-002",
+        "VC-003",
+        "VC-027",
+        "VC-038",
+        "VC-039",
+        "VC-052"
+      ],
+      "product_write_face": [],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t01-python-preflight.md",
+      "commands": [],
+      "goal": "实施前核对Python生产调用/生成入口、已批准文件现有diff和未列迁移面，输出明确可开始或具体阻塞。",
+      "requirements": "25分钟静态取证；复用RQ18/19/21/22，不重新设计。rg盘点Python生产源码/配置模板/测试引用并分类active/history/security/regression；重点mw.py的replay/legacy/export和registry。采用主文件需分段读到EOF或明确未读范围，不能宣称全仓审计；不读活config/gate/ledger/凭证，不运行CLI/产品测试/服务/provider。列现有dirty文件基线hash/相关diff、生成副作用路径、pytest插件/conftest隔离风险。未列需要修改的文件给exact path/原因/最小补面；不可把设计批准扩成任意目录授权。",
+      "status": "done",
+      "previous_observation": {
+        "status": "running",
+        "observed_at": "2026-10-26T09:06:22+08:00",
+        "source": "agent-report",
+        "completed": null,
+        "remaining": null,
+        "blockers": null
+      },
+      "observation": {
+        "status": "done",
+        "observed_at": "2026-10-26T09:15:54+08:00",
+        "source": "agent-report",
+        "completed": [
+          "静态证据/output/run全文回读并ack"
+        ],
+        "remaining": null,
+        "blockers": null
+      },
+      "code_status": "不适用",
+      "verification_status": "静态证据已吸收；S0出口未满足"
+    },
+    {
+      "id": "T02",
+      "task_key": "dpc-t02-ts-framework-preflight",
+      "card": "tasks/T02-ts-framework-preflight.md",
+      "stage": 0,
+      "type": "research",
+      "execution": "worker",
+      "deps": [],
+      "ac_refs": [
+        "AC-003",
+        "AC-014",
+        "AC-027",
+        "AC-036",
+        "AC-037",
+        "AC-038",
+        "AC-039",
+        "AC-044",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-003",
+        "VC-014",
+        "VC-027",
+        "VC-036",
+        "VC-037",
+        "VC-038",
+        "VC-039",
+        "VC-044",
+        "VC-052"
+      ],
+      "product_write_face": [],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t02-ts-framework-preflight.md",
+      "commands": [],
+      "goal": "实施前核对TS/框架原diff、真实PM/Worker与human/H12入口身份边界、单writer及未列迁移面。",
+      "requirements": "25分钟静态取证；复用RQ15/16/20和既有源码证据，不读其他key活状态/图片/凭证。盘点TS旧ID调用/提示/工具枚举和框架签收validator。真实身份只能来自可证进程/受控生产入口，page token、自报role、TTY或布尔origin不单独证明human/H12资格；明确当前机制可证部分与缺口，缺口阻塞相应编码而非删功能或自建授权。框架只有scripts/advance_phase.py及test_advance_phase.py可改，其既有diff必须保存/协调；mirrors/安装/重启只读不碰。主要采用源码读EOF或明确范围，不把报告EOF当独立全仓审计。",
+      "status": "done",
+      "previous_observation": {
+        "status": "running",
+        "observed_at": "2026-10-26T09:06:22+08:00",
+        "source": "agent-report",
+        "completed": null,
+        "remaining": null,
+        "blockers": null
+      },
+      "observation": {
+        "status": "done",
+        "observed_at": "2026-10-26T09:15:54+08:00",
+        "source": "agent-report",
+        "completed": [
+          "静态证据/output/run全文回读并ack"
+        ],
+        "remaining": null,
+        "blockers": null
+      },
+      "code_status": "不适用",
+      "verification_status": "静态证据已吸收；S0出口未满足"
+    },
+    {
+      "id": "T03",
+      "task_key": "dpc-t03-protocol",
+      "card": "tasks/isolated/T03-protocol.md",
+      "stage": 1,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T01",
+        "T02"
+      ],
+      "ac_refs": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-005",
+        "AC-007",
+        "AC-012",
+        "AC-040",
+        "AC-041",
+        "AC-042",
+        "AC-043",
+        "AC-044",
+        "AC-046",
+        "AC-051",
+        "AC-053"
+      ],
+      "vc_refs": [
+        "VC-001",
+        "VC-002",
+        "VC-003",
+        "VC-004",
+        "VC-005",
+        "VC-007",
+        "VC-012",
+        "VC-040",
+        "VC-041",
+        "VC-042",
+        "VC-043",
+        "VC-044",
+        "VC-046",
+        "VC-051",
+        "VC-053"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_points.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_registry.json",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decide_registry_contract.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_registry.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t03-protocol",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_decide_registry_contract.py",
+            "test_dp_consolidation_registry.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "八活动ID/独立退役目录、材料/角色/选择/依据投影单源成立，25旧ID在replay之前明确拒绝。",
+      "requirements": "只改注册/描述/纯validator及对应生成快照，不建执行权限。固化八入口和技术选择ID，auto不套旧2..5/cN，route静态七目标。D012辅助依据与sign四部材料独立，[]不转null。先红测各旧ID/非法角色/八合法合同及四选择基线，再实现；生成快照走已核离线单源writer，仅授权本卡输出，保留只读历史解释。若字段/新接口需改变已确认职责或传输预算，报告而非偷改契约。",
+      "status": "done",
+      "previous_observation": {
+        "status": "running",
+        "observed_at": "2026-10-26T10:37:01+08:00",
+        "source": "agent-report",
+        "completed": null,
+        "remaining": null,
+        "blockers": null
+      },
+      "observation": {
+        "status": "done",
+        "observed_at": "2026-10-26T11:00:24.1218666+08:00",
+        "source": "agent-report",
+        "completed": [
+          "原run真实done/exit0，output/report全文回读并ack",
+          "PM隔离重跑142 passed，四文件及13交接路径hash核对"
+        ],
+        "remaining": [
+          "原T03请求缺角色/非法时间与永久锁旧TS测试需定点返工",
+          "T04～T36未排队；全L2/QG/签收未验"
+        ],
+        "blockers": [
+          "blocked on decision dp4-failure-handling；UNAVAILABLE(input-incomplete) meta.task_before"
+        ]
+      },
+      "run_id": "dpc-t03-protocol@2026-10-26T02:35:17.454Z",
+      "ended_at": "2026-10-26T02:50:13.596Z",
+      "exit": 0,
+      "acked": true,
+      "code_status": "代码完成",
+      "verification_status": "局部验证通过",
+      "code_status_note": "原T03/R2终态及失败裁决历史保留；R3done/exit0/acked，本轮PM181 passed/probe rc0及hash核对，两个测试锁已修，局部semantic handoff仅释放T04前置，不代表S1/全L2/QG/签收",
+      "rework_attempt": {
+        "task_key": "dpc-t03-protocol-r2",
+        "card": "tasks/isolated/T03-protocol-r2.md",
+        "dispatch_recorded_card_path_label": "tasks/T03-protocol-r2.md",
+        "card_sha256": "4e6d63b51dbe420aedf7d7b807eb180477ab54abfefd894e5042691988fdf756",
+        "run_id": "dpc-t03-protocol-r2@2026-10-26T03:31:06.522Z",
+        "status": "done",
+        "started_at": "2026-10-26T03:31:06.522Z",
+        "ended_at": "2026-10-26T03:38:08.302Z",
+        "exit": 0,
+        "acked": true,
+        "observation": {
+          "status": "done",
+          "source": "agent-report",
+          "observed_at": "2026-10-26T11:42:23.2010986+08:00",
+          "completed": [
+            "真实终态/output/report全文吸收并ack",
+            "PM独立166 passed/rc0及四文件/13handoff hash核对",
+            "缺角色/非法prepared_at两个validator复验通过"
+          ],
+          "remaining": [
+            "第三项仍强制旧四行矩阵及解析器dp4存在",
+            "T04～T36未派；真实生成/全L2/QG/签收未验"
+          ],
+          "blockers": [
+            "semantic_handoff_verified=false",
+            "blocked on decision dp4-failure-handling；UNAVAILABLE meta.task_before"
+          ]
+        },
+        "pm_absorption_evidence": "evidence/implementation/t03-r2-pm-handoff-20261026/report.md",
+        "failure_handling_decision": {
+          "available": false,
+          "dp": "dp4-failure-handling",
+          "unavailable": "input-incomplete",
+          "missing_fields": [
+            "meta.task_before"
+          ],
+          "action_taken": false
+        },
+        "approval_evidence": "evidence/implementation/t03-rework-approval-20261026.md",
+        "pre_dispatch_evidence": "evidence/implementation/t03-r2-pre-dispatch-check.json",
+        "evidence": "evidence/implementation/dpc-t03-protocol/rework-r2/",
+        "dispatch_write_face_verified": true,
+        "completed": null,
+        "remaining": null,
+        "blockers": null,
+        "semantic_handoff_verified": false
+      },
+      "rework_attempt_r3": {
+        "task_key": "dpc-t03-protocol-r3",
+        "card": "tasks/isolated/T03-protocol-r3.md",
+        "dispatch_recorded_card_path_label": "tasks/T03-protocol-r3.md",
+        "card_sha256": "93951b69fd8d53ced07fe2366b096dfc1bab489c52a40261970e43bec5ccbc56",
+        "run_id": "dpc-t03-protocol-r3@2026-10-26T04:29:26.047Z",
+        "status": "done",
+        "started_at": "2026-10-26T04:29:26.047Z",
+        "ended_at": "2026-10-26T04:38:59.726Z",
+        "exit": 0,
+        "acked": true,
+        "previous_observation": {
+          "status": "running",
+          "observed_at": "2026-10-26T12:29:54.8298669+08:00",
+          "source": "agent-report",
+          "completed": null,
+          "remaining": null,
+          "blockers": null
+        },
+        "observed_at": "2026-10-26T06:20:54.115967+00:00",
+        "source": "agent-report",
+        "completed": [
+          "终态/output/report全文吸收并ack",
+          "PM新鲜181 passed/probe rc0、四文件/13handoff/83证据核对",
+          "真实parser及阶段断言两个残留修复"
+        ],
+        "remaining": [
+          "实际T04生成/TS parity/全L2/QG/签收未验"
+        ],
+        "blockers": [],
+        "approval_evidence": "evidence/implementation/t03-r3-approval-20261026.md",
+        "pre_dispatch_evidence": "evidence/implementation/t03-r3-pre-dispatch-check.json",
+        "dispatch_evidence": "evidence/implementation/t03-r3-dispatch-20261026.md",
+        "evidence": "evidence/implementation/dpc-t03-protocol/rework-r3/",
+        "product_write_face": [
+          ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decide_registry_contract.py"
+        ],
+        "dispatch_write_face_verified": true,
+        "semantic_handoff_verified": true,
+        "pm_absorption_evidence": "evidence/implementation/t03-r3-pm-handoff-20261026/report.md"
+      },
+      "semantic_handoff_verified": true,
+      "pm_absorption_evidence": "evidence/implementation/t03-r3-pm-handoff-20261026/report.md",
+      "previous_pm_absorption_evidence": "evidence/implementation/t03-pm-handoff-20261026/report.md",
+      "failure_handling_decision": {
+        "available": false,
+        "dp": "dp4-failure-handling",
+        "unavailable": "input-incomplete",
+        "missing_fields": [
+          "meta.task_before"
+        ],
+        "action_taken": false
+      },
+      "dispatch_input_card": "tasks/isolated/T03-protocol.md",
+      "dispatch_recorded_card_path_label": "tasks/T03-protocol.md",
+      "dispatch_card_sha256": "083b206d9ec9ae9dab4a582c4b01f3187aba29936e0687b41f9856d645796a60",
+      "dispatch_write_face_verified": true,
+      "source_product_write_face": [
+        "packages/multi-workers/decision_points.py",
+        "packages/multi-workers/decide_registry.json",
+        "packages/multi-workers/test_decide_registry_contract.py",
+        "packages/multi-workers/test_dp_consolidation_registry.py"
+      ],
+      "source_card": "tasks/T03-protocol.md",
+      "source_card_sha256": "4b46a425d90ce4aadd66fc841d668c6377c7cd104df372147afd6058c78bbb3d"
+    },
+    {
+      "id": "T04",
+      "task_key": "dpc-t04-context-ts-generation",
+      "card": "tasks/isolated/T04-context-ts-generation.md",
+      "stage": 1,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T01",
+        "T02",
+        "T03"
+      ],
+      "ac_refs": [
+        "AC-001",
+        "AC-003",
+        "AC-004",
+        "AC-014",
+        "AC-040",
+        "AC-041",
+        "AC-043",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-001",
+        "VC-003",
+        "VC-004",
+        "VC-014",
+        "VC-040",
+        "VC-041",
+        "VC-043",
+        "VC-051"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_context.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/scripts/gen_decide_registry_ts.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_registry.json",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decide_registry_ts_lock.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t04-context-ts-generation",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_decide_registry_ts_lock.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "Python描述生成TS八入口合同/角色/白名单/字段约束，核心材料不进入可裁剪context。",
+      "requirements": "只有本卡生成器写generated.ts；从T03保存的hash接管decide_registry.json，按同源更新。保留empty_is_value、真实上下文来源和可选裁剪说明。执行生成器后--check，字节锁测试；不能另建TS手写菜单或为了lint删声明。纯生成命令不得写其他输出或四旧case。",
+      "status": "done",
+      "acked": true,
+      "code_status": "代码完成（原T04及测试-only R2局部交接）",
+      "verification_status": "局部验证通过（UTF8前提）；47passed/实际check-parity，非L2或QG",
+      "rework_attempt": {
+        "task_key": "dpc-t04-context-ts-generation-r2",
+        "card": "tasks/isolated/T04-context-ts-generation-r2.md",
+        "card_sha256": "80d2d2ec0b62515f36e041bb394dc4cbf16a0fec3b825e1a3a16de7992960064",
+        "dispatch_recorded_card_path_label": "tasks/T04-context-ts-generation-r2.md",
+        "run_id": "dpc-t04-context-ts-generation-r2@2026-10-26T11:51:04.007Z",
+        "started_at": "2026-10-26T11:51:04.007Z",
+        "status": "done",
+        "pid": 61788,
+        "ended_at": "2026-10-26T12:00:52.013Z",
+        "exit": 0,
+        "acked": true,
+        "previous_observation": {
+          "status": "running",
+          "observed_at": "2026-10-26T11:51:04.007Z",
+          "source": "agent-report",
+          "completed": null,
+          "remaining": null,
+          "blockers": null
+        },
+        "observation": {
+          "status": "done",
+          "observed_at": "2026-10-26T12:04:12.042701+00:00",
+          "source": "agent-report",
+          "completed": [
+            "真实终态/report/output吸收并工具ack",
+            "PM47passed/实际TS-JSON bytes同源及一测试3hunk/1864副本/112证据/five-live基线核对",
+            "四旧精确名与八新共存及直接case全增删改保护复验"
+          ],
+          "remaining": [
+            "GBK旧locale失败需后续具体owner/授权；当前局部UTF8通过",
+            "TScompile/全L2/QG/签收及实际运行身份仍未验"
+          ],
+          "blockers": []
+        },
+        "product_write_face": [
+          ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decide_registry_ts_lock.py"
+        ],
+        "evidence": "evidence/implementation/dpc-t04-context-ts-generation/rework-r2/",
+        "approval_evidence": "evidence/implementation/t04-r2-approval-20261026.md",
+        "pre_dispatch_evidence": "evidence/implementation/t04-r2-pre-dispatch-20261026/check.json",
+        "dispatch_evidence": "evidence/implementation/t04-r2-dispatch-20261026.md",
+        "dispatch_write_face_verified": true,
+        "semantic_handoff_verified": true,
+        "pm_absorption_evidence": "evidence/implementation/t04-r2-pm-handoff-20261026/report.md",
+        "historical_scope_violation": "worker reported four pyc generated outside allowed face then deleted; history preserved"
+      },
+      "semantic_handoff_verified": true,
+      "current_pm_absorption_evidence": "evidence/implementation/t04-r2-pm-handoff-20261026/report.md",
+      "ended_at": "2026-10-26T06:34:10.048Z",
+      "exit": 0,
+      "pm_absorption_evidence": "evidence/implementation/t04-pm-handoff-20261026/report.md",
+      "failure_handling": {
+        "available": false,
+        "unavailable": "input-incomplete",
+        "action": "blocked-ask-human",
+        "missing_fields": [
+          "meta.task_before"
+        ],
+        "decision_id": null,
+        "receipt_written": false
+      },
+      "run_id": "dpc-t04-context-ts-generation@2026-10-26T06:22:40.974Z",
+      "started_at": "2026-10-26T06:22:40.974Z",
+      "dispatch_card_sha256": "99c0fb85c70193313d734adc044e647c18c47976c72575ab77f35d1a85412200",
+      "dispatch_input_card": "tasks/isolated/T04-context-ts-generation.md",
+      "dispatch_recorded_card_path_label": "tasks/T04-context-ts-generation.md",
+      "dispatch_write_face_verified": true,
+      "pre_dispatch_evidence": "evidence/implementation/t04-pre-dispatch-20261026/check.json",
+      "dispatch_evidence": "evidence/implementation/t04-dispatch-20261026.md",
+      "previous_observation": {
+        "status": "running",
+        "observed_at": "2026-10-26T06:22:40.974Z",
+        "source": "agent-report",
+        "completed": null,
+        "remaining": null,
+        "blockers": null
+      },
+      "observation": {
+        "status": "done",
+        "observed_at": "2026-10-26T11:24:13.398865+00:00",
+        "source": "agent-report",
+        "completed": [
+          "真实终态全文吸收；PM35passed/check/实际TS与JSON同源bytes及五after核对，整副本1864净差仅四允许文件"
+        ],
+        "remaining": [
+          "定点修复永久四case断言后重验，才判断T04语义交接"
+        ],
+        "blockers": [
+          "真实新测试line296拒绝T05合法十二case目录列表；dp4处理UNAVAILABLE，等具体人工批准，不重复或绕通道"
+        ]
+      },
+      "source_product_write_face": [
+        "packages/multi-workers/decision_context.py",
+        "packages/multi-workers/scripts/gen_decide_registry_ts.py",
+        "packages/multi-workers/decide_registry.json",
+        "packages/multi-workers/test_decide_registry_ts_lock.py",
+        "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts"
+      ],
+      "source_card": "tasks/T04-context-ts-generation.md",
+      "source_card_sha256": "8dce9c7040cb380d91513479deb8e510bd5be5397a10b792cb7eb3d1e831683c"
+    },
+    {
+      "id": "T05",
+      "task_key": "dpc-t05-eight-cases",
+      "card": "tasks/isolated/T05-eight-cases.md",
+      "stage": 2,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T03",
+        "T04",
+        "T09"
+      ],
+      "ac_refs": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-013",
+        "AC-040",
+        "AC-042",
+        "AC-043",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-001",
+        "VC-002",
+        "VC-003",
+        "VC-004",
+        "VC-013",
+        "VC-040",
+        "VC-042",
+        "VC-043",
+        "VC-051"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/scripts/build_decide_cases.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_book_template.json",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_workbench.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-type.json",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-pm-steer.json",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-check-task.json",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-QG.json",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-gate-approve.json",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-sign-key.json",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-auto.json",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-route.json"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t05-eight-cases",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_decision_context_workbench.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "八个完整隔离case从单源产生，四旧case原字节只读保留且不再出现在可提交菜单。",
+      "requirements": "生成真实可验证合成材料/note/basis及独立provenance；模型问题原文来自registry。修改原workbench断言仅为新八入口衔接，原既有失败fixture/原因保留，不能顺手修独立UI债。生成只写八目标文件，旧dp1/2/3/25不得再生成或修改。漂移验证在临时目录用生产generator，不能运行生产观察submit。",
+      "status": "done",
+      "code_status": "两个根因R2局部修复完成；完整消费者/交接资格待核",
+      "verification_status": "PM原byte-identical probe及生成/模板补充三个rc0，原模板3/time8负例归零；worker整文件12F18P仍待PM独立复现，完整handofffalse",
+      "source_product_write_face": [
+        "packages/multi-workers/scripts/build_decide_cases.py",
+        "packages/multi-workers/decide_book_template.json",
+        "packages/multi-workers/test_decision_context_workbench.py",
+        "packages/multi-workers/decide_cases/dp-w-type.json",
+        "packages/multi-workers/decide_cases/dp-pm-steer.json",
+        "packages/multi-workers/decide_cases/dp-w-check-task.json",
+        "packages/multi-workers/decide_cases/dp-QG.json",
+        "packages/multi-workers/decide_cases/dp-gate-approve.json",
+        "packages/multi-workers/decide_cases/dp-sign-key.json",
+        "packages/multi-workers/decide_cases/dp-auto.json",
+        "packages/multi-workers/decide_cases/dp-route.json"
+      ],
+      "source_card": "tasks/T05-eight-cases.md",
+      "source_card_sha256": "7f0d07d69ca7e6824917fc17e757dd8d295c1e42397869c5c459ce676539f3f7",
+      "observation_history": [
+        {
+          "status": "not-queued",
+          "observed_at": null,
+          "source": "agent-report",
+          "completed": null,
+          "remaining": null,
+          "blockers": null,
+          "unrecorded_prior_observation_time": true
+        }
+      ],
+      "run_id": "dpc-t05-eight-cases@2026-10-27T12:56:07.446Z",
+      "started_at": "2026-10-27T12:56:07.446Z",
+      "pid": 83532,
+      "dispatch_card_sha256": "8a7d747000c0f0e2427f57d30d61ebd5d339c0ee93c3b170a3cdc256327b3e85",
+      "dispatch_recorded_card_path_label": "tasks/T05-eight-cases.md",
+      "dispatch_write_face_verified": true,
+      "pre_dispatch_evidence": "evidence/implementation/s2-t05-t10-pre-dispatch-20261027/check.json",
+      "dispatch_evidence": "evidence/implementation/s2-t05-t10-dispatch-20261027/check.json",
+      "semantic_handoff_verified": false,
+      "previous_observation": {
+        "status": "running",
+        "observed_at": "2026-10-27T13:42:53.940837+00:00",
+        "source": "agent-report",
+        "completed": [
+          "原T05done/exit0已吸收ack，局部8case门PM复验",
+          "坏R2done/BLOCKED/0产品改动已吸收ack；PM卡格式回归明确，原证据保持",
+          "修正卡真实12条机器face与shipped roundtrip通过并实际重派"
+        ],
+        "remaining": [
+          "两根因真实red-green、原28test函数保留、八case重新生成",
+          "PM同原负例新输出/稳定整文件suite与边界复验"
+        ],
+        "blockers": [
+          "原suite12项消费者相关失败尚未PM独立重现/迁移",
+          "既有1pyc漂移保持，无清理权"
+        ]
+      },
+      "observation": {
+        "status": "done",
+        "observed_at": "2026-10-28T04:06:20.013963+00:00",
+        "source": "agent-report",
+        "completed": ["修正R2真实done/exit0/acked", "PM原负例新输出及更强骨架控制全部通过", "原28函数与11产品面/当前14pyc及T10保护核"],
+        "remaining": ["整文件suite独立稳定复现", "12消费者根因/owner/验证顺序补核"],
+        "blockers": ["完整semantic_handoff=false/S2未关闭", "原1pyc及T10失日志/越面历史保留"]
+      },
+      "pm_previous_observations": [
+        {
+          "status": "running",
+          "observed_at": "2026-10-27T12:58:21.932651+00:00",
+          "source": "agent-report",
+          "completed": null,
+          "remaining": null,
+          "blockers": null
+        }
+      ],
+      "pm_terminal_absorption_20261027": {
+        "observed_at": "2026-10-27T13:42:53.940837+00:00",
+        "source": "agent-report",
+        "status": "done",
+        "actual_run_id": "dpc-t05-eight-cases@2026-10-27T12:56:07.446Z",
+        "exit": 0,
+        "acked": true,
+        "semantic_handoff": false
+      },
+      "current_rework_attempt": {
+        "task_key": "dpc-t05-eight-cases-r2-envelope",
+        "card": "tasks/isolated/T05-eight-cases-r2-envelope.md",
+        "card_sha256": "49ebb4b47c610493632647c386e0c7f3feee1805924a83736a321584dd52394d",
+        "run_id": "dpc-t05-eight-cases-r2-envelope@2026-10-27T13:40:49.191Z",
+        "status": "done",
+        "exit": 0,
+        "ended_at": "2026-10-27T13:50:33.520Z",
+        "acked": true,
+        "two_root_cause_repair_independently_verified": true,
+        "pm_handoff_evidence": "evidence/implementation/t05-r2-envelope-pm-handoff-20261027/report.md",
+        "completed": ["PM原负例新输出及更强模板控制通过", "原28函数AST/source/位置和旧byte前缀保持"],
+        "remaining": ["完整workbench当前源码/稳定suite独立复现", "12消费者根因/owner与验证顺序补核"],
+        "blockers": ["完整T05/S2交接尚未通过"],
+        "pid": 93992,
+        "started_at": "2026-10-27T13:40:49.191Z",
+        "source": "agent-report",
+        "observed_at": "2026-10-28T04:06:20.013963+00:00",
+        "previous_observation": {"status": "running", "observed_at": "2026-10-27T13:42:53.940837+00:00", "source": "agent-report", "completed": null, "remaining": null, "blockers": null, "product_progress": null},
+        "product_progress": null,
+        "semantic_handoff": false,
+        "replaces_bad_envelope_attempt": {
+          "task_key": "dpc-t05-eight-cases-r2",
+          "run_id": "dpc-t05-eight-cases-r2@2026-10-27T13:28:05.534Z",
+          "status": "done",
+          "exit": 0,
+          "business_result": "BLOCKED/0 product bytes",
+          "acked": true,
+          "root_cause": "PM卡正文未显式列11产品，机器仅evidence；不是dispatcher defect"
+        },
+        "seed_12_exact_entries_verified": true,
+        "evidence": "evidence/implementation/dpc-t05-eight-cases/rework-r2-envelope/**"
+      },
+      "handoff_audit_attempt": {
+        "task_key": "dpc-t05-handoff-audit",
+        "run_id": "dpc-t05-handoff-audit@2026-10-28T04:04:09.258Z",
+        "status": "done",
+        "exit": 0,
+        "ended_at": "2026-10-28T04:11:23.599Z",
+        "acked": true,
+        "type": "research",
+        "pid": 76744,
+        "observed_at": "2026-10-28T04:15:00.645537+00:00",
+        "previous_observation": {"status": "running", "observed_at": "2026-10-28T04:06:20.013963+00:00", "source": "agent-report", "completed": null, "remaining": null, "blockers": null},
+        "source": "agent-report",
+        "completed": ["唯一报告全文吸收/终态ack", "12项既有失败静态链定位T28 monitor/T27 history及T05断言；DOM未执行无T29缺陷证据"],
+        "remaining": ["PM完整suite稳定复现", "原owner消费者实现及测试迁移", "带失败收口资格策略未采纳"],
+        "blockers": ["完整T05/S2语义交接仍false"],
+        "pm_disposition_evidence": "evidence/implementation/t05-t10-audit-disposition-20261028/report.md",
+        "card": "tasks/isolated/T05-handoff-audit.md",
+        "evidence": "evidence/implementation/t05-handoff-audit-20261027.md",
+        "dispatch_evidence": "evidence/implementation/handoff-audit-dispatch-20261027/check.json",
+        "semantic_handoff_verified": false
+      }
+    },
+    {
+      "id": "T06",
+      "task_key": "dpc-t06-validity",
+      "card": "tasks/isolated/T06-validity.md",
+      "stage": 2,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T03",
+        "T04"
+      ],
+      "ac_refs": [
+        "AC-011",
+        "AC-019",
+        "AC-025",
+        "AC-027",
+        "AC-028",
+        "AC-029",
+        "AC-039",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-011",
+        "VC-019",
+        "VC-025",
+        "VC-027",
+        "VC-028",
+        "VC-029",
+        "VC-039",
+        "VC-052"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_validity.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_concurrency.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t06-validity",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_dp_consolidation_concurrency.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "实现只读事项/实质依赖/授权及证据适用性核验，不以全字节hash变动强制重复审批。",
+      "requirements": "结构化依赖语义等价、受影响变更、撤权、claim/版本冲突、自然语言unknown均有负例；纯函数不import CLI/conductor或写grant。T20/T31后续接管同一测试文件须依赖及hash交接；本卡先测纯判断，不冒充实际并发对账已验证。",
+      "status": "done",
+      "code_status": "局部代码完成；原尝试记录保留",
+      "verification_status": "R2局部复验通过：PM73passed/原九边界及九正例；非L2或真实签收",
+      "run_id": "dpc-t06-validity@2026-10-26T12:08:35.978Z",
+      "started_at": "2026-10-26T12:08:35.978Z",
+      "ended_at": "2026-10-26T12:20:16.189Z",
+      "pid": 1872,
+      "exit": 0,
+      "acked": true,
+      "semantic_handoff_verified": true,
+      "original_attempt_semantic_handoff_verified": false,
+      "pm_absorption_evidence": "evidence/implementation/t06-r2-pm-handoff-20261026/report.md",
+      "rework_attempt_r2": {
+        "task_key": "dpc-t06-validity-r2",
+        "card": "tasks/isolated/T06-validity-r2.md",
+        "run_id": "dpc-t06-validity-r2@2026-10-26T15:52:28.139Z",
+        "status": "done",
+        "exit": 0,
+        "acked": true,
+        "ended_at": "2026-10-26T15:56:54.988Z",
+        "source": "agent-report",
+        "observed_at": "2026-10-27T03:51:08.699315+00:00",
+        "completed": [
+          "终态已吸收/ack",
+          "指定套件新鲜73passed与边界证据复验"
+        ],
+        "remaining": [
+          "真实签收ref/claim-lock/effects及后继集成验证"
+        ],
+        "blockers": [],
+        "semantic_handoff_verified": true,
+        "approval_evidence": "evidence/implementation/s2-r2-approval-20261026.md",
+        "verification_evidence": "evidence/implementation/t06-r2-pm-handoff-20261026/completion/check.json"
+      },
+      "dispatch_card_sha256": "1a81029454f59cf2e69c32643f30735efa0827c482f382ca8879c02ef37df15c",
+      "dispatch_recorded_card_path_label": "tasks/T06-validity.md",
+      "dispatch_write_face_verified": true,
+      "dispatch_evidence": "evidence/implementation/s2-frontier-dispatch-20261026.md",
+      "pre_dispatch_evidence": "evidence/implementation/s2-frontier-pre-dispatch-20261026/check.json",
+      "source_product_write_face": [
+        "packages/multi-workers/decision_validity.py",
+        "packages/multi-workers/test_dp_consolidation_concurrency.py"
+      ],
+      "source_card": "tasks/T06-validity.md",
+      "source_card_sha256": "e5e7d83660dcd9c87774c3e6afdf33ec124834949f15e939de487d65611f4a14"
+    },
+    {
+      "id": "T07",
+      "task_key": "dpc-t07-policy",
+      "card": "tasks/isolated/T07-policy.md",
+      "stage": 2,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T03",
+        "T04"
+      ],
+      "ac_refs": [
+        "AC-008",
+        "AC-020",
+        "AC-021",
+        "AC-022",
+        "AC-034",
+        "AC-035",
+        "AC-036",
+        "AC-037"
+      ],
+      "vc_refs": [
+        "VC-008",
+        "VC-020",
+        "VC-021",
+        "VC-022",
+        "VC-034",
+        "VC-035",
+        "VC-036",
+        "VC-037"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_policy.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_recovery.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t07-policy",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_dp_consolidation_recovery.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "只读policy校验真实授权引用/范围/单位/累计预算及恢复条件，缺失或非法fail-closed。",
+      "requirements": "不修改冻结config21键/默认值，不创建活policy或新grant，不把round_budget/worker_timeout当项目硬授权。模拟授权只在隔离fixture有真实受控writer来源；自报origin/TTY/token等不充分。缺原因消除/观察/停止条件保持阻塞，不设新预算数值。T21在本卡后接管恢复测试。",
+      "status": "done",
+      "code_status": "局部代码完成；原scope/撤权失败留史",
+      "verification_status": "R2局部复验通过：PM35passed/17负例6正例；生产writer/human/H12未验",
+      "run_id": "dpc-t07-policy@2026-10-26T12:08:35.966Z",
+      "started_at": "2026-10-26T12:08:35.966Z",
+      "ended_at": "2026-10-26T12:17:46.874Z",
+      "pid": 76360,
+      "exit": 0,
+      "acked": true,
+      "semantic_handoff_verified": true,
+      "original_attempt_semantic_handoff_verified": false,
+      "rework_attempt_r2": {
+        "task_key": "dpc-t07-policy-r2",
+        "card": "tasks/isolated/T07-policy-r2.md",
+        "run_id": "dpc-t07-policy-r2@2026-10-26T15:52:28.129Z",
+        "status": "done",
+        "exit": 0,
+        "acked": true,
+        "ended_at": "2026-10-26T15:58:55.567Z",
+        "source": "agent-report",
+        "observed_at": "2026-10-27T03:51:08.699315+00:00",
+        "completed": [
+          "终态已吸收/ack",
+          "指定套件新鲜35passed及17负例6正例复验"
+        ],
+        "remaining": [
+          "真实supersedes writer/human/H12/锁与后继集成验证"
+        ],
+        "blockers": [],
+        "semantic_handoff_verified": true,
+        "approval_evidence": "evidence/implementation/s2-r2-approval-20261026.md",
+        "verification_evidence": "evidence/implementation/t07-r2-pm-handoff-20261026/completion/check.json"
+      },
+      "dispatch_card_sha256": "88bee76800c724909e277485117335cf91d93e989ccc6d9fb09d4e9d99adeb5d",
+      "dispatch_recorded_card_path_label": "tasks/T07-policy.md",
+      "dispatch_write_face_verified": true,
+      "dispatch_evidence": "evidence/implementation/s2-frontier-dispatch-20261026.md",
+      "pre_dispatch_evidence": "evidence/implementation/s2-frontier-pre-dispatch-20261026/check.json",
+      "pm_absorption_evidence": "evidence/implementation/t07-r2-pm-handoff-20261026/report.md",
+      "previous_pm_absorption_evidence": "evidence/implementation/t07-pm-handoff-20261026/report.md",
+      "failure_handling": {
+        "available": false,
+        "unavailable": "input-incomplete",
+        "missing_fields": [
+          "meta.task_before"
+        ],
+        "action": "blocked-ask-human",
+        "decision_id": null,
+        "receipt_written": false,
+        "request_question_registry_verified": false,
+        "request_material_dp4_schema_verified": false
+      },
+      "source_product_write_face": [
+        "packages/multi-workers/decision_policy.py",
+        "packages/multi-workers/test_dp_consolidation_recovery.py"
+      ],
+      "source_card": "tasks/T07-policy.md",
+      "source_card_sha256": "2cb4096c3c8ed9f882725baba1c19e421a7a1fe109b187ab66a9cd653a9c3613"
+    },
+    {
+      "id": "T08",
+      "task_key": "dpc-t08-transport",
+      "card": "tasks/isolated/T08-transport.md",
+      "stage": 2,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T03",
+        "T04"
+      ],
+      "ac_refs": [
+        "AC-002",
+        "AC-004",
+        "AC-007",
+        "AC-012",
+        "AC-014",
+        "AC-040",
+        "AC-042",
+        "AC-043",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-002",
+        "VC-004",
+        "VC-007",
+        "VC-012",
+        "VC-014",
+        "VC-040",
+        "VC-042",
+        "VC-043",
+        "VC-051"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_backends.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_materials.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_dp_consolidation_materials.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "原timi通道同次业务choice与basis选择校验成立，失败无默认执行，完整材料不截断。",
+      "requirements": "固定POST /v1/decisions、jev-latest、bare Authorization，保留原重试/预算/box拒绝；不猜自由reason字段、不换provider、无第二补理由调用。fake HTTP覆盖缺回答/错basis/引用不存在/不适用/超界、25ID及replay零请求；记录attempt与业务决定分别计数。禁止真实endpoint/凭证。",
+      "status": "done",
+      "code_status": "R2局部代码复验通过；原needs-clarification/exit2保留",
+      "verification_status": "独立110passed/39fixture及新鲜110passed；报告误解析已PM处置，仅局部技术交接",
+      "run_id": "dpc-t08-transport@2026-10-26T12:08:35.871Z",
+      "started_at": "2026-10-26T12:08:35.871Z",
+      "ended_at": "2026-10-26T12:20:09.756Z",
+      "pid": 67744,
+      "exit": 0,
+      "acked": true,
+      "semantic_handoff_verified": true,
+      "original_attempt_semantic_handoff_verified": false,
+      "pm_absorption_evidence": "evidence/implementation/t08-r2-pm-handoff-20261026/pm-disposition-20261027.md",
+      "previous_pm_absorption_evidence": "evidence/implementation/t08-r2-pm-handoff-20261026/report.md",
+      "rework_attempt_r2": {
+        "task_key": "dpc-t08-transport-r2",
+        "card": "tasks/isolated/T08-transport-r2.md",
+        "run_id": "dpc-t08-transport-r2@2026-10-26T15:52:28.169Z",
+        "status": "needs-clarification",
+        "exit": 2,
+        "acked": true,
+        "ended_at": "2026-10-26T15:58:15.259Z",
+        "source": "agent-report",
+        "observed_at": "2026-10-27T08:43:48.692484+00:00",
+        "previous_observation": {
+          "observed_at": "2026-10-27T03:49:47.027931+00:00",
+          "source": "agent-report",
+          "completed": [
+            "终态已吸收/ack",
+            "PM指定110passed两次/39fixture通过",
+            "只读ledger表头误解析复现"
+          ],
+          "remaining": [
+            "具体账本恢复/带遗留交接处置",
+            "T09及其后继尚未派发"
+          ],
+          "blockers": [
+            "原recovery-incomplete终态仍未处置；不改原run/output/parser/账本"
+          ],
+          "semantic_handoff_verified": false
+        },
+        "completed": [
+          "独立产品及范围验证",
+          "新鲜110passed/原ledger误解析复现",
+          "用户开发纠偏后PM处置并接受局部技术交接"
+        ],
+        "remaining": [
+          "原exit2/机器unknown历史保留，不声明运行恢复",
+          "业务store/CLI/真实权限与集成在原后继验证"
+        ],
+        "blockers": [],
+        "pm_disposition_evidence": "evidence/implementation/t08-r2-pm-handoff-20261026/pm-disposition-20261027.md",
+        "fresh_recheck_evidence": "evidence/implementation/t09-pre-dispatch-20261027/check.json",
+        "local_rework_boundary_verified": true,
+        "semantic_handoff_verified": true,
+        "approval_evidence": "evidence/implementation/s2-r2-approval-20261026.md",
+        "verification_evidence": "evidence/implementation/t08-r2-pm-handoff-20261026/check.json",
+        "ledger_probe_evidence": "evidence/implementation/t08-r2-pm-handoff-20261026/ledger-probe2.json"
+      },
+      "dispatch_card_sha256": "07a719095a33f60666fef960ec89034ff96f81066bf7bea599f303178290b1e8",
+      "dispatch_recorded_card_path_label": "tasks/T08-transport.md",
+      "dispatch_write_face_verified": true,
+      "dispatch_evidence": "evidence/implementation/s2-frontier-dispatch-20261026.md",
+      "pre_dispatch_evidence": "evidence/implementation/s2-frontier-pre-dispatch-20261026/check.json",
+      "historical_scope_violation": "T08 self-reports unguarded python-c produced 14 pyc outside face at20-16-49; PM independently confirms files exist, not exclusive process authorship; no cleanup authority or deletion",
+      "source_product_write_face": [
+        "packages/multi-workers/decision.py",
+        "packages/multi-workers/decision_backends.py",
+        "packages/multi-workers/test_dp_consolidation_materials.py"
+      ],
+      "source_card": "tasks/T08-transport.md",
+      "source_card_sha256": "d4fc9d1413e35078fbe3dfeb8e3a43e6acba665447afb84945c65ab5edcbb8e4"
+    },
+    {
+      "id": "T09",
+      "task_key": "dpc-t09-books",
+      "card": "tasks/isolated/T09-books.md",
+      "stage": 2,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T03",
+        "T04",
+        "T08"
+      ],
+      "ac_refs": [
+        "AC-002",
+        "AC-004",
+        "AC-007",
+        "AC-012",
+        "AC-014",
+        "AC-040",
+        "AC-042",
+        "AC-043",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-002",
+        "VC-004",
+        "VC-007",
+        "VC-012",
+        "VC-014",
+        "VC-040",
+        "VC-042",
+        "VC-043",
+        "VC-051"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_book.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_contract.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_decision_context_contract.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "book及stdin准备器采用八入口完整合同，material/meta/preparation分层，非法状态先拒绝。",
+      "requirements": "保持签收四部及三数组，basis独立完整必需，固定/动态验证引用单源。原独立26AC不抹除，旧合同输入仅历史/拒绝回归用途，不恢复旧调用。不能新增legacy questions逃避active gate；CLI及观察实链由后继任务验证。",
+      "status": "done",
+      "code_status": "局部代码完成",
+      "verification_status": "R2局部技术交接通过；非S2/L2/QG/signoff，完整读取声明勘误见report",
+      "run_id": "dpc-t09-books@2026-10-27T08:45:30.551Z",
+      "started_at": "2026-10-27T08:45:30.551Z",
+      "ended_at": "2026-10-27T09:02:24.684Z",
+      "pid": 87640,
+      "exit": 0,
+      "acked": true,
+      "semantic_handoff_verified": true,
+      "original_attempt_semantic_handoff_verified": false,
+      "pm_absorption_evidence": "evidence/implementation/t09-pm-handoff-20261027/report.md",
+      "rework_attempt_r2": {
+        "task_key": "dpc-t09-books-r2",
+        "run_id": "dpc-t09-books-r2@2026-10-27T09:07:42.696Z",
+        "started_at": "2026-10-27T09:07:42.696Z",
+        "pid": 22708,
+        "status": "done",
+        "exit": 0,
+        "ended_at": "2026-10-27T09:18:05.048Z",
+        "acked": true,
+        "card": "tasks/isolated/T09-books-r2.md",
+        "card_sha256": "f34bf2252bef66d990cc2c5b97a2c57402015eedcbc5ae6dd497ade2d46bf9bc",
+        "pre_dispatch_evidence": "evidence/implementation/t09-r2-pre-dispatch-20261027/check.json",
+        "write_face": [
+          ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_book.py",
+          ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_contract.py",
+          ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/**"
+        ],
+        "semantic_handoff_verified": true,
+        "previous_observation": {
+          "task_key": "dpc-t09-books-r2",
+          "run_id": "dpc-t09-books-r2@2026-10-27T09:07:42.696Z",
+          "started_at": "2026-10-27T09:07:42.696Z",
+          "pid": 22708,
+          "status": "running",
+          "exit": null,
+          "ended_at": null,
+          "acked": false,
+          "card": "tasks/isolated/T09-books-r2.md",
+          "card_sha256": "f34bf2252bef66d990cc2c5b97a2c57402015eedcbc5ae6dd497ade2d46bf9bc",
+          "pre_dispatch_evidence": "evidence/implementation/t09-r2-pre-dispatch-20261027/check.json",
+          "write_face": [
+            ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_book.py",
+            ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_contract.py",
+            ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/**"
+          ],
+          "semantic_handoff_verified": false
+        },
+        "pm_handoff_evidence": "evidence/implementation/t09-r2-pm-handoff-20261027/report.md",
+        "observed_at": "2026-10-27T12:58:21.932651+00:00"
+      },
+      "dispatch_card_sha256": "b1c49e8a66ea44dc841bda5445cebc6e39a8fc69a9c133f6a975ebbfbc6d7b2b",
+      "dispatch_recorded_card_path_label": "tasks/T09-books.md",
+      "dispatch_write_face_verified": true,
+      "pre_dispatch_evidence": "evidence/implementation/t09-pre-dispatch-20261027/check.json",
+      "dispatch_evidence": "evidence/implementation/t09-dispatch-20261027.md",
+      "observation": {
+        "status": "done",
+        "source": "agent-report",
+        "observed_at": "2026-10-27T12:58:21.932651+00:00",
+        "completed": [
+          "R2真实终态吸收acked",
+          "指定suite PM两次131passed",
+          "原PM byte-identical17fixtures全部通过",
+          "43原测试函数AST/source保留；EOF声明勘误保留"
+        ],
+        "remaining": [
+          "CLI及context/观察/完整集成由原authorized owners继续"
+        ],
+        "blockers": []
+      },
+      "source_product_write_face": [
+        "packages/multi-workers/decision_book.py",
+        "packages/multi-workers/test_decision_context_contract.py"
+      ],
+      "source_card": "tasks/T09-books.md",
+      "source_card_sha256": "30d0732782154d554d5e358f8b372f6377bb8c6eb5ad7d0fb743df8657e6c07e",
+      "PM_qualification_history": [
+        {
+          "source": "agent-report",
+          "observed_at": "2026-10-27T12:55:06.712483+00:00",
+          "previous_semantic_handoff_verified": false,
+          "evidence": "evidence/implementation/t09-r2-pm-handoff-20261027/report.md",
+          "attempt": "dpc-t09-books-r2",
+          "actual_worker_status": "done",
+          "actual_worker_exit_code": 0,
+          "acked": true,
+          "assigned_passed": 131,
+          "assigned_runs": 2,
+          "independent_fixtures_passed": 17,
+          "preserved_old_test_functions": 43,
+          "qualification_scope": "local original-DAG technical dependency only",
+          "read_truncation_erratum_preserved": true
+        }
+      ],
+      "previous_observation": {
+        "status": "done",
+        "observed_at": "2026-10-27T09:05:25.760274+00:00",
+        "source": "agent-report",
+        "previous_observation": {
+          "status": "running",
+          "observed_at": "2026-10-27T08:46:16.7832843Z",
+          "source": "agent-report",
+          "completed": null,
+          "remaining": null,
+          "blockers": null
+        },
+        "completed": [
+          "原终态吸收/acked",
+          "当前两after源码已全文读到EOF",
+          "PM两次109passed及范围字节/diff/history保护"
+        ],
+        "remaining": [
+          "原面R2关闭四根因/17边界fixture13fail",
+          "T05/T10后继尚未派发"
+        ],
+        "blockers": [
+          "stdin非对象抛TypeError/JSON字符串当文件加载",
+          "非法书报告as_dict缺ok KeyError",
+          "schema secret回显及float版本被接受"
+        ]
+      },
+      "pm_latest_handoff_evidence": "evidence/implementation/t09-r2-pm-handoff-20261027/report.md"
+    },
+    {
+      "id": "T10",
+      "task_key": "dpc-t10-lifecycle-state",
+      "card": "tasks/isolated/T10-lifecycle-state.md",
+      "stage": 2,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T03",
+        "T04",
+        "T09"
+      ],
+      "ac_refs": [
+        "AC-004",
+        "AC-012",
+        "AC-014",
+        "AC-049",
+        "AC-050",
+        "AC-051",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-004",
+        "VC-012",
+        "VC-014",
+        "VC-049",
+        "VC-050",
+        "VC-051",
+        "VC-052"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_wire.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_lifecycle.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_task_state.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_lifecycle.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_task_state.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_decision_context_lifecycle.py",
+            "test_decision_task_state.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "真实request/action/settled/terminal与前后快照关联，独立保存PM note与模型选择依据。",
+      "requirements": "只沿用原账本/安全过滤，不回填before/null或制造时间/ID。prepare/basis来源与父后继引用可核；未执行、失败、settled不是done。先用fake生产writer对空值/秘密/生命周期不同节点验证，旧历史逐字节不改。",
+      "status": "done",
+      "code_status": "worker局部实现完成；PM独立资格未通过",
+      "verification_status": "worker三次116P及before31F85P待PM独立复验，原40setup失败stdout被覆盖、OS私有sink偏差保持；不凭exit0放行",
+      "source_product_write_face": [
+        "packages/multi-workers/decision_wire.py",
+        "packages/multi-workers/decision_lifecycle.py",
+        "packages/multi-workers/decision_task_state.py",
+        "packages/multi-workers/test_decision_context_lifecycle.py",
+        "packages/multi-workers/test_decision_task_state.py"
+      ],
+      "source_card": "tasks/T10-lifecycle-state.md",
+      "source_card_sha256": "eecfe7861c6cc2dc4a5c27c00f9128f5b9438ff86663fada4512dcd8c8033d95",
+      "observation_history": [
+        {
+          "status": "not-queued",
+          "observed_at": null,
+          "source": "agent-report",
+          "completed": null,
+          "remaining": null,
+          "blockers": null,
+          "unrecorded_prior_observation_time": true
+        }
+      ],
+      "run_id": "dpc-t10-lifecycle-state@2026-10-27T12:56:07.428Z",
+      "started_at": "2026-10-27T12:56:07.428Z",
+      "pid": 84564,
+      "dispatch_card_sha256": "46945d41cda0fd4c0e6469e7704eb26c5969ff76274a6c0aaa164674ae4c582c",
+      "dispatch_recorded_card_path_label": "tasks/T10-lifecycle-state.md",
+      "dispatch_write_face_verified": true,
+      "pre_dispatch_evidence": "evidence/implementation/s2-t05-t10-pre-dispatch-20261027/check.json",
+      "dispatch_evidence": "evidence/implementation/s2-t05-t10-dispatch-20261027/check.json",
+      "semantic_handoff_verified": false,
+      "observation": {
+        "status": "done",
+        "observed_at": "2026-10-27T13:42:53.940837+00:00",
+        "source": "agent-report",
+        "completed": [
+          "真实原done/exit0结果已完整吸收并ack",
+          "worker报告/五产品afterbytes在PM before保护"
+        ],
+        "remaining": [
+          "当前五产品与test完整源码EOF审计及新鲜独立两suite验证",
+          "真实关联/单源basis/terminal与settled分层、历史投影及消费者后继核",
+          "合法测试sink与日志丢失/越面历史独立处置"
+        ],
+        "blockers": [
+          "尚未独立验证116cases和实际record链路",
+          "首次40setup失败日志被覆盖不可伪恢复",
+          "TEMP超原evidence允许面须保持真实偏差，不事后视已授权",
+          "既有pyc1漂移不能归独占作者或清理"
+        ]
+      },
+      "pm_previous_observations": [
+        {
+          "status": "running",
+          "observed_at": "2026-10-27T12:58:21.932651+00:00",
+          "source": "agent-report",
+          "completed": null,
+          "remaining": null,
+          "blockers": null
+        }
+      ],
+      "pm_terminal_absorption_20261027": {
+        "observed_at": "2026-10-27T13:42:53.940837+00:00",
+        "source": "agent-report",
+        "status": "done",
+        "actual_run_id": "dpc-t10-lifecycle-state@2026-10-27T12:56:07.428Z",
+        "exit": 0,
+        "acked": true,
+        "semantic_handoff": false
+      },
+      "handoff_audit_attempt": {
+        "task_key": "dpc-t10-handoff-audit",
+        "run_id": "dpc-t10-handoff-audit@2026-10-28T04:04:13.035Z",
+        "status": "done",
+        "exit": 0,
+        "ended_at": "2026-10-28T04:12:21.460Z",
+        "acked": true,
+        "type": "research",
+        "pid": 74740,
+        "observed_at": "2026-10-28T04:15:00.645537+00:00",
+        "previous_observation": {"status": "running", "observed_at": "2026-10-28T04:06:20.013963+00:00", "source": "agent-report", "completed": null, "remaining": null, "blockers": null},
+        "source": "agent-report",
+        "completed": ["唯一报告全文吸收/终态ack", "五产品SHA/原断言静态补证，9项预测及scope合法路径限制"],
+        "remaining": ["S1/S3/S4/S5等独立fake red复现及原五面定点修复", "S2/S6/S8/S9对已批真实链合同判别", "assigned两suite独立验证；非116P即自动失败说法不采纳"],
+        "blockers": ["具体外部fixture目录权限未获批准", "产品缺口/完整交接仍待验证，不是仅目录阻塞"],
+        "pm_disposition_evidence": "evidence/implementation/t05-t10-audit-disposition-20261028/report.md",
+        "card": "tasks/isolated/T10-handoff-audit.md",
+        "evidence": "evidence/implementation/t10-handoff-audit-20261027.md",
+        "dispatch_evidence": "evidence/implementation/handoff-audit-dispatch-20261027/check.json",
+        "semantic_handoff_verified": false
+      }
+    },
+    {
+      "id": "T11",
+      "task_key": "dpc-t11-ts-tool",
+      "card": "tasks/isolated/T11-ts-tool.md",
+      "stage": 3,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09",
+        "T10"
+      ],
+      "ac_refs": [
+        "AC-001",
+        "AC-002",
+        "AC-004",
+        "AC-005",
+        "AC-007",
+        "AC-012",
+        "AC-014",
+        "AC-040",
+        "AC-041",
+        "AC-042",
+        "AC-043",
+        "AC-051",
+        "AC-053"
+      ],
+      "vc_refs": [
+        "VC-001",
+        "VC-002",
+        "VC-004",
+        "VC-005",
+        "VC-007",
+        "VC-012",
+        "VC-014",
+        "VC-040",
+        "VC-041",
+        "VC-042",
+        "VC-043",
+        "VC-051",
+        "VC-053"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/shared/decide-policy.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-materials.test.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/decision-context-agent-materials.test.ts"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t11-ts-tool",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent",
+          "argv": [
+            "node",
+            "../../node_modules/vitest/dist/cli.js",
+            "--run",
+            "test/suite/dp-consolidation-materials.test.ts",
+            "test/suite/decision-context-agent-materials.test.ts"
+          ],
+          "source_cwd": "packages/coding-agent"
+        }
+      ],
+      "goal": "PM/Worker工具schema消费生成八合同，真实bound actor与辅助材料分层，退役hook不代造请求。",
+      "requirements": "保留真实meta/window上下文和同次sign行为，非法旧ID/replay先拒绝；不把外部L0 note冒充PM business note。原exit2无自备材料只能提示自主准备或真实失败；harness+faux，不真实provider；不顺手处理原formatter差异。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts",
+        "packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts",
+        "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-policy.ts",
+        "packages/coding-agent/test/suite/dp-consolidation-materials.test.ts",
+        "packages/coding-agent/test/suite/decision-context-agent-materials.test.ts"
+      ],
+      "source_card": "tasks/T11-ts-tool.md",
+      "source_card_sha256": "b85d687ced0985eb94a938e38332161cb5afde2a7db9cb8b864dab83c4216ed7"
+    },
+    {
+      "id": "T12",
+      "task_key": "dpc-t12-pm-followup",
+      "card": "tasks/isolated/T12-pm-followup.md",
+      "stage": 3,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09",
+        "T10"
+      ],
+      "ac_refs": [
+        "AC-011",
+        "AC-012",
+        "AC-027",
+        "AC-041",
+        "AC-045",
+        "AC-049",
+        "AC-050",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-011",
+        "VC-012",
+        "VC-027",
+        "VC-041",
+        "VC-045",
+        "VC-049",
+        "VC-050",
+        "VC-052"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/decision-followup.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-pm-followup.test.ts"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t12-pm-followup",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent",
+          "argv": [
+            "node",
+            "../../node_modules/vitest/dist/cli.js",
+            "--run",
+            "test/suite/dp-consolidation-pm-followup.test.ts"
+          ],
+          "source_cwd": "packages/coding-agent"
+        }
+      ],
+      "goal": "已准备PM意图恢复/去重和真实后继请求可核，不新建决策账本或同步等待Worker。",
+      "requirements": "父决定、材料/依据版本、真实PM身份、pending/running/未知结果逐项核；未发起/失败/有回答/实际执行分开。窗口失联不可凭文件代造Worker判断；崩溃未知停止对账，不承诺无事务exactly-once。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-followup.ts",
+        "packages/coding-agent/test/suite/dp-consolidation-pm-followup.test.ts"
+      ],
+      "source_card": "tasks/T12-pm-followup.md",
+      "source_card_sha256": "04df8c9b38c6c2374c9390b5eaff8afdf9755f48eda7e38d107b62d6b80a6ea2"
+    },
+    {
+      "id": "T13",
+      "task_key": "dpc-t13-pm-orchestration",
+      "card": "tasks/isolated/T13-pm-orchestration.md",
+      "stage": 3,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09",
+        "T10",
+        "T11",
+        "T12"
+      ],
+      "ac_refs": [
+        "AC-004",
+        "AC-009",
+        "AC-011",
+        "AC-012",
+        "AC-017",
+        "AC-027",
+        "AC-041",
+        "AC-042",
+        "AC-045",
+        "AC-049",
+        "AC-050"
+      ],
+      "vc_refs": [
+        "VC-004",
+        "VC-009",
+        "VC-011",
+        "VC-012",
+        "VC-017",
+        "VC-027",
+        "VC-041",
+        "VC-042",
+        "VC-045",
+        "VC-049",
+        "VC-050"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/decision-context-pm-producers.test.ts"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t13-pm-orchestration",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent",
+          "argv": [
+            "node",
+            "../../node_modules/vitest/dist/cli.js",
+            "--run",
+            "test/suite/decision-context-pm-producers.test.ts"
+          ],
+          "source_cwd": "packages/coding-agent"
+        }
+      ],
+      "goal": "PM真实准备note/basis、四编排选择与steer/need_fix后继调用接线，不降低目标或夺claim。",
+      "requirements": "保留任务原文/真实worker执行/在途协调，direct-exec用当前窗口上下文，escalate给具体权限风险问题。路由只选入口；临时复合事项拆清，固定节点不强制route。不得通知即执行、失败改成功。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/coding-agent/src/extensions/agent-team-loop/pm/pm-orchestrator.ts",
+        "packages/coding-agent/test/suite/decision-context-pm-producers.test.ts"
+      ],
+      "source_card": "tasks/T13-pm-orchestration.md",
+      "source_card_sha256": "6d9b9a8bea6ab8917d510bf5ddd6d427825f2db15111622111ce8cf40e9297d6"
+    },
+    {
+      "id": "T14",
+      "task_key": "dpc-t14-vision-dispatch",
+      "card": "tasks/isolated/T14-vision-dispatch.md",
+      "stage": 3,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09",
+        "T10",
+        "T11"
+      ],
+      "ac_refs": [
+        "AC-004",
+        "AC-012",
+        "AC-027",
+        "AC-044",
+        "AC-045"
+      ],
+      "vc_refs": [
+        "VC-004",
+        "VC-012",
+        "VC-027",
+        "VC-044",
+        "VC-045"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-vision.test.ts"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t14-vision-dispatch",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent",
+          "argv": [
+            "node",
+            "../../node_modules/vitest/dist/cli.js",
+            "--run",
+            "test/suite/dp-consolidation-vision.test.ts"
+          ],
+          "source_cwd": "packages/coding-agent"
+        }
+      ],
+      "goal": "四任务类型选择与真实有效image capability门接线；未知/不支持不启动且不退coding。",
+      "requirements": "测试用faux能力与派发writer，不读真实图片，不调用vision provider。不删其他框架task类型、不改model/provider/默认预算；必要依赖的外部API类型读node_modules不猜。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/coding-agent/src/extensions/agent-team-loop/pm/task-dispatcher.ts",
+        "packages/coding-agent/test/suite/dp-consolidation-vision.test.ts"
+      ],
+      "source_card": "tasks/T14-vision-dispatch.md",
+      "source_card_sha256": "54e24f5aef1c37786559a02a5d498e7217c9010a9776c3893f79849dc95877c7"
+    },
+    {
+      "id": "T15",
+      "task_key": "dpc-t15-worker-reachability",
+      "card": "tasks/isolated/T15-worker-reachability.md",
+      "stage": 3,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09",
+        "T10",
+        "T11"
+      ],
+      "ac_refs": [
+        "AC-004",
+        "AC-012",
+        "AC-041",
+        "AC-046",
+        "AC-047",
+        "AC-050",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-004",
+        "VC-012",
+        "VC-041",
+        "VC-046",
+        "VC-047",
+        "VC-050",
+        "VC-051"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/mw_common.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/autopilot/status-model.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-worker.test.ts"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t15-worker-reachability",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent",
+          "argv": [
+            "node",
+            "../../node_modules/vitest/dist/cli.js",
+            "--run",
+            "test/suite/dp-consolidation-worker.test.ts"
+          ],
+          "source_cwd": "packages/coding-agent"
+        }
+      ],
+      "goal": "Worker自主continue/terminate/investigate三分支、真实结论/有界补证消费成立。",
+      "requirements": "沿用终态闭集加真实原因，continue不即刻终态，terminate结束本次不是取消key/缩验收；补证先给来源/权限/剩余预算/结束判据，不重置watchdog。自动hook不代材料，无PM同步等待或默认送人。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/mw_common.py",
+        "packages/coding-agent/src/extensions/agent-team-loop/worker/worker-mode.ts",
+        "packages/coding-agent/src/extensions/agent-team-loop/autopilot/status-model.ts",
+        "packages/coding-agent/test/suite/dp-consolidation-worker.test.ts"
+      ],
+      "source_card": "tasks/T15-worker-reachability.md",
+      "source_card_sha256": "402e6dc1014c30ccdae5fa8b415a11aeaa8e5b00b9dea8b9e5c031e469d6c286"
+    },
+    {
+      "id": "T16",
+      "task_key": "dpc-t16-ts-task-state",
+      "card": "tasks/isolated/T16-ts-task-state.md",
+      "stage": 3,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09",
+        "T10",
+        "T11"
+      ],
+      "ac_refs": [
+        "AC-014",
+        "AC-050",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-014",
+        "VC-050",
+        "VC-051"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/decision-task-state.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/decision-task-state.test.ts"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t16-ts-task-state",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent",
+          "argv": [
+            "node",
+            "../../node_modules/vitest/dist/cli.js",
+            "--run",
+            "test/suite/decision-task-state.test.ts"
+          ],
+          "source_cwd": "packages/coding-agent"
+        }
+      ],
+      "goal": "TS任务前后快照与Python事实链保持真实关联和null/[]区分。",
+      "requirements": "不回填历史/时间/身份、不把agent-report当权限，签收数组不混；旧独立测试原失败保留。不可顺手选择此前formatter retain/revert，必要影响具体报告。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-task-state.ts",
+        "packages/coding-agent/test/suite/decision-task-state.test.ts"
+      ],
+      "source_card": "tasks/T16-ts-task-state.md",
+      "source_card_sha256": "6e01b267bd208cbd72eb01e728377fb8b52eebe4c6e26b8d741e719eaa784efb"
+    },
+    {
+      "id": "T17",
+      "task_key": "dpc-t17-gate-contract",
+      "card": "tasks/isolated/T17-gate-contract.md",
+      "stage": 3,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09",
+        "T10"
+      ],
+      "ac_refs": [
+        "AC-007",
+        "AC-008",
+        "AC-011",
+        "AC-012",
+        "AC-049",
+        "AC-050",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-007",
+        "VC-008",
+        "VC-011",
+        "VC-012",
+        "VC-049",
+        "VC-050",
+        "VC-052"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/gates.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_gate_effects.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/autopilot/gate-writer.ts"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t17-gate-contract",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_dp_consolidation_gate_effects.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "gate transport/business/effect三轴writer/parser与事项引用跨语言一致，answered不是released。",
+      "requirements": "保留既有O_CREAT|O_EXCL锁/原子写与旧记录只读解释，不接回旧approved/rejected执行路径。只改合同/serializer及测试；T18/T19/T26接管同一测试文件必须严格依赖。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/autopilot/gates.py",
+        "packages/multi-workers/test_dp_consolidation_gate_effects.py",
+        "packages/coding-agent/src/extensions/agent-team-loop/autopilot/gate-writer.ts"
+      ],
+      "source_card": "tasks/T17-gate-contract.md",
+      "source_card_sha256": "ba4fa2625a3e97f07e01550f8a97283a3c1fe15ad1e3331c4bcf904e5baf9b2d"
+    },
+    {
+      "id": "T18",
+      "task_key": "dpc-t18-gate-effects",
+      "card": "tasks/isolated/T18-gate-effects.md",
+      "stage": 3,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09",
+        "T10",
+        "T17"
+      ],
+      "ac_refs": [
+        "AC-007",
+        "AC-008",
+        "AC-010",
+        "AC-011",
+        "AC-012",
+        "AC-020",
+        "AC-021",
+        "AC-023",
+        "AC-024",
+        "AC-027",
+        "AC-035",
+        "AC-049",
+        "AC-050",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-007",
+        "VC-008",
+        "VC-010",
+        "VC-011",
+        "VC-012",
+        "VC-020",
+        "VC-021",
+        "VC-023",
+        "VC-024",
+        "VC-027",
+        "VC-035",
+        "VC-049",
+        "VC-050",
+        "VC-052"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/gate_effects.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_gate_effects.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t18-gate-effects",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_dp_consolidation_gate_effects.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "四分支受限effects/CAS/真实失败出口成立，approve重核当前条件，reject不默认关停/返工。",
+      "requirements": "先检查角色/授权/预算/claim/实质版本，再提交note限定效果；steer/need_fix仅真实PM意图未放行；遗留收尾需已有明确权限。崩溃未知inspect真实对象，不盲重放；测试均隔离生产writer。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/autopilot/gate_effects.py",
+        "packages/multi-workers/test_dp_consolidation_gate_effects.py"
+      ],
+      "source_card": "tasks/T18-gate-effects.md",
+      "source_card_sha256": "a187f61cb88aa522a0e028bcf5365834e6a9811c0f88869939d731ebb0e7391a"
+    },
+    {
+      "id": "T19",
+      "task_key": "dpc-t19-conductor-h01-h05",
+      "card": "tasks/isolated/T19-conductor-h01-h05.md",
+      "stage": 4,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18"
+      ],
+      "ac_refs": [
+        "AC-007",
+        "AC-008",
+        "AC-010",
+        "AC-011",
+        "AC-015",
+        "AC-016",
+        "AC-017",
+        "AC-018",
+        "AC-019",
+        "AC-020",
+        "AC-021",
+        "AC-022",
+        "AC-023",
+        "AC-048",
+        "AC-049",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-007",
+        "VC-008",
+        "VC-010",
+        "VC-011",
+        "VC-015",
+        "VC-016",
+        "VC-017",
+        "VC-018",
+        "VC-019",
+        "VC-020",
+        "VC-021",
+        "VC-022",
+        "VC-023",
+        "VC-048",
+        "VC-049",
+        "VC-052"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/conductor.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_gate_effects.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t19-conductor-h01-h05",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_dp_consolidation_gate_effects.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "H01启动/H02关闭/H03停滞/H04软追加/H05复核条件接入原conductor且不自批解锁。",
+      "requirements": "同事项一个owner；真实补证不是权限授予，软追加不提高硬量，reject不默认rework/halted。只在测试temp stage运行，不调用活tick/改真实gate/brake/roadmap；H12恢复handler不得注册到普通熔断链。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/autopilot/conductor.py",
+        "packages/multi-workers/test_dp_consolidation_gate_effects.py"
+      ],
+      "source_card": "tasks/T19-conductor-h01-h05.md",
+      "source_card_sha256": "29a33c3810e0b5995bcec89a875170cd7e7c110354bccabeb490dca8ba0a10ea"
+    },
+    {
+      "id": "T20",
+      "task_key": "dpc-t20-xkey-contract",
+      "card": "tasks/isolated/T20-xkey-contract.md",
+      "stage": 4,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18"
+      ],
+      "ac_refs": [
+        "AC-024",
+        "AC-025",
+        "AC-026",
+        "AC-027",
+        "AC-028",
+        "AC-029",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-024",
+        "VC-025",
+        "VC-026",
+        "VC-027",
+        "VC-028",
+        "VC-029",
+        "VC-052"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/xkey.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/contract_guard.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_concurrency.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/shared/xkey-gate-guard.ts"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t20-xkey-contract",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_dp_consolidation_concurrency.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "H06指定goal采用/H07受限跨key/H08具体冻结条目变更复核与实质重验。",
+      "requirements": "不写真实goal/spec/他key；隔离fixtures真实claim/排序锁验证。任何回答不自动刷新baseline；reopen不是改AC授权，权限不能从目录包含关系推导；历史原要求/失败/批准不改。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/autopilot/xkey.py",
+        "packages/multi-workers/autopilot/contract_guard.py",
+        "packages/multi-workers/test_dp_consolidation_concurrency.py",
+        "packages/coding-agent/src/extensions/agent-team-loop/shared/xkey-gate-guard.ts"
+      ],
+      "source_card": "tasks/T20-xkey-contract.md",
+      "source_card_sha256": "e1f9a99b49ab812ce9e08a681185898b537694018238949a6ef3d74d3ee76632"
+    },
+    {
+      "id": "T21",
+      "task_key": "dpc-t21-recovery-handler",
+      "card": "tasks/isolated/T21-recovery-handler.md",
+      "stage": 4,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18"
+      ],
+      "ac_refs": [
+        "AC-008",
+        "AC-021",
+        "AC-030",
+        "AC-031",
+        "AC-034",
+        "AC-035",
+        "AC-036",
+        "AC-037",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-008",
+        "VC-021",
+        "VC-030",
+        "VC-031",
+        "VC-034",
+        "VC-035",
+        "VC-036",
+        "VC-037",
+        "VC-052"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/decision_recovery.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_recovery.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t21-recovery-handler",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_dp_consolidation_recovery.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "H11/H12独立受控handler验证真实来源/预授权/原因消除/观察再熔断，普通链自调用明确拒绝。",
+      "requirements": "先吸收T02资格缺口结论；无法在已批面证明真实来源则对应任务blocked，不能造布尔授权/人类身份。handler不改policy/权限/预算，失效/撤权/不可用保持停止，无新通道。入口实链须和T24/T26验证，纯handler测试不代入口证明。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/autopilot/decision_recovery.py",
+        "packages/multi-workers/test_dp_consolidation_recovery.py"
+      ],
+      "source_card": "tasks/T21-recovery-handler.md",
+      "source_card_sha256": "a7fbf0c686361323c33f61538bb11073c7a3b33ba40deb9cbdf32f3cb0fe9443"
+    },
+    {
+      "id": "T22",
+      "task_key": "dpc-t22-signoff-validator",
+      "card": "tasks/isolated/T22-signoff-validator.md",
+      "stage": 4,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T06",
+        "T10",
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18"
+      ],
+      "ac_refs": [
+        "AC-004",
+        "AC-005",
+        "AC-006",
+        "AC-010",
+        "AC-013",
+        "AC-038",
+        "AC-039",
+        "AC-050",
+        "AC-051",
+        "AC-053"
+      ],
+      "vc_refs": [
+        "VC-004",
+        "VC-005",
+        "VC-006",
+        "VC-010",
+        "VC-013",
+        "VC-038",
+        "VC-039",
+        "VC-050",
+        "VC-051",
+        "VC-053"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_signoff_result.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_archive.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_signoff.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decide_archive.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decide_signoff.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_signoff.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t22-signoff-validator",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_decide_archive.py",
+            "test_decide_signoff.py",
+            "test_dp_consolidation_signoff.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "当前valid且finalize与对应证据成立，key签收和authority-change typed消费严格隔离。",
+      "requirements": "保留原适用范围和三数组；continue/user-confirm无签收，旧词表/缺logical_id不走成功legacy。finalize不加入promote/demote词表；不删除helper/回写旧签收，不把QG文件或文件存在代完成。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/decision_signoff_result.py",
+        "packages/multi-workers/decide_archive.py",
+        "packages/multi-workers/decide_signoff.py",
+        "packages/multi-workers/test_decide_archive.py",
+        "packages/multi-workers/test_decide_signoff.py",
+        "packages/multi-workers/test_dp_consolidation_signoff.py"
+      ],
+      "source_card": "tasks/T22-signoff-validator.md",
+      "source_card_sha256": "c01379fae1e593f537a4f8eb1774eafd1ed0e48ffb0f3800755026f471d25507"
+    },
+    {
+      "id": "T23",
+      "task_key": "dpc-t23-cli-request-replay",
+      "card": "tasks/isolated/T23-cli-request-replay.md",
+      "stage": 4,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T09",
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18"
+      ],
+      "ac_refs": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-012",
+        "AC-040",
+        "AC-041",
+        "AC-042",
+        "AC-043",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-001",
+        "VC-002",
+        "VC-003",
+        "VC-004",
+        "VC-012",
+        "VC-040",
+        "VC-041",
+        "VC-042",
+        "VC-043",
+        "VC-051"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/mw.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_cli.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t23-cli-request-replay",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_dp_consolidation_cli.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "所有生产CLI/book/stdin/replay先活动身份/合同校验，25旧ID明确拒绝而非复用历史成功。",
+      "requirements": "只接请求/准备/错误路径，不执行活decide/gate/签收；测试fake subprocess/HTTP与临时home/project。分类legacy入口，不能靠改标签藏额外业务路径；T24之后接管同一大文件和测试。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/mw.py",
+        "packages/multi-workers/test_dp_consolidation_cli.py"
+      ],
+      "source_card": "tasks/T23-cli-request-replay.md",
+      "source_card_sha256": "91e4a886705b68fc31c9149f253eff6b81e4275e1978cf83395c3a2d09be2ab6"
+    },
+    {
+      "id": "T24",
+      "task_key": "dpc-t24-cli-human-sign",
+      "card": "tasks/isolated/T24-cli-human-sign.md",
+      "stage": 4,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T21",
+        "T22",
+        "T23"
+      ],
+      "ac_refs": [
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-008",
+        "AC-012",
+        "AC-014",
+        "AC-036",
+        "AC-037",
+        "AC-038",
+        "AC-039",
+        "AC-041",
+        "AC-049",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-002",
+        "VC-003",
+        "VC-004",
+        "VC-008",
+        "VC-012",
+        "VC-014",
+        "VC-036",
+        "VC-037",
+        "VC-038",
+        "VC-039",
+        "VC-041",
+        "VC-049",
+        "VC-051"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/mw.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_cli.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t24-cli-human-sign",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_dp_consolidation_cli.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "CLI human-only保留隔离、同次sign writer/只读validator接口及typed apply明确拒绝串接成立。",
+      "requirements": "human/恢复来源不能从--role/token/TTY自报推导；T02未证明的资格缺口必须实链解决或具体阻塞，不删除ask/legacy显示或dead helper。sign单次判断/写入失败分清；不把观察回答当生产动作；公开只读validator typed接口供T25。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/mw.py",
+        "packages/multi-workers/test_dp_consolidation_cli.py"
+      ],
+      "source_card": "tasks/T24-cli-human-sign.md",
+      "source_card_sha256": "533c7edd95a0b4dd7d51e16959cafcd72e1e63a133c2594e1a291a0369b7c68a"
+    },
+    {
+      "id": "T25",
+      "task_key": "dpc-t25-framework-sign-gate",
+      "card": "tasks/isolated/T25-framework-sign-gate.md",
+      "stage": 4,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T24"
+      ],
+      "ac_refs": [
+        "AC-008",
+        "AC-010",
+        "AC-038",
+        "AC-039",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-008",
+        "VC-010",
+        "VC-038",
+        "VC-039",
+        "VC-052"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/.agents/skills/agentic-task/scripts/advance_phase.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/.agents/skills/agentic-task/scripts/test_advance_phase.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t25-framework-sign-gate",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            ".agents/skills/agentic-task/scripts/test_advance_phase.py"
+          ],
+          "source_cwd": "."
+        }
+      ],
+      "goal": "只在原必需范围用只读validator识别当前valid且finalize及对应证据，不豁免其他phase硬门。",
+      "requirements": "保存/吸收独立clone既有diff，先确认与原作者写面无冲突；仅两个特批文件，不碰任何mirror/install/commit/push。测试临时key，不拿本活key执行done/sign或改门来让当前任务通过。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        ".agents/skills/agentic-task/scripts/advance_phase.py",
+        ".agents/skills/agentic-task/scripts/test_advance_phase.py"
+      ],
+      "source_card": "tasks/T25-framework-sign-gate.md",
+      "source_card_sha256": "586cfe7e9d93c143af48ab5154f233d259be4616b7c18c66d581c2b5dab6ee3d"
+    },
+    {
+      "id": "T26",
+      "task_key": "dpc-t26-autopilot-recovery-closure",
+      "card": "tasks/isolated/T26-autopilot-recovery-closure.md",
+      "stage": 4,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T19",
+        "T20",
+        "T21",
+        "T25"
+      ],
+      "ac_refs": [
+        "AC-009",
+        "AC-010",
+        "AC-011",
+        "AC-015",
+        "AC-018",
+        "AC-021",
+        "AC-030",
+        "AC-031",
+        "AC-032",
+        "AC-033",
+        "AC-034",
+        "AC-035",
+        "AC-036",
+        "AC-037",
+        "AC-038",
+        "AC-039",
+        "AC-048",
+        "AC-049",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-009",
+        "VC-010",
+        "VC-011",
+        "VC-015",
+        "VC-018",
+        "VC-021",
+        "VC-030",
+        "VC-031",
+        "VC-032",
+        "VC-033",
+        "VC-034",
+        "VC-035",
+        "VC-036",
+        "VC-037",
+        "VC-038",
+        "VC-039",
+        "VC-048",
+        "VC-049",
+        "VC-052"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/dispatch.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/advance.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/autopilot/closure.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_gate_effects.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t26-autopilot-recovery-closure",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_dp_consolidation_gate_effects.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "H09/H10有界恢复/重规划、H11/H12受控入口及H13签收/阶段关闭实际接线保留旧失败与累计量。",
+      "requirements": "新stage仍独立H01，关闭须整体验收及非阻断遗留披露，不清标记/次数造成功；原phase硬失败先auto处置且复验后才推进。普通auto链不能自发恢复请求，实链负例必须覆盖；拒绝不默认关闭。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/autopilot/dispatch.py",
+        "packages/multi-workers/autopilot/advance.py",
+        "packages/multi-workers/autopilot/closure.py",
+        "packages/multi-workers/test_dp_consolidation_gate_effects.py"
+      ],
+      "source_card": "tasks/T26-autopilot-recovery-closure.md",
+      "source_card_sha256": "ec6e885a1c8c5e3bc9dc95b49aea213c113d49ed53703d1f4e44b188a4b8ab0e"
+    },
+    {
+      "id": "T27",
+      "task_key": "dpc-t27-history-projection",
+      "card": "tasks/isolated/T27-history-projection.md",
+      "stage": 5,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T10",
+        "T15",
+        "T18",
+        "T19",
+        "T20",
+        "T21",
+        "T22",
+        "T23",
+        "T24",
+        "T25",
+        "T26"
+      ],
+      "ac_refs": [
+        "AC-007",
+        "AC-013",
+        "AC-014",
+        "AC-049",
+        "AC-050",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-007",
+        "VC-013",
+        "VC-014",
+        "VC-049",
+        "VC-050",
+        "VC-051"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_history.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_history_feedback.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_history.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t27-history-projection",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_decision_history_feedback.py",
+            "test_dp_consolidation_history.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "八入口note/模型依据/后继/request/action/settled真实只读投影，退役原记录不回填。",
+      "requirements": "读取原历史缺项显示未记录，安全过滤请求/记录/DOM边界分别证明；观察scope不得出现fakeexecutor。保留十节点独立债及原历史bytes，不能从最新配置猜旧事实。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/decision_history.py",
+        "packages/multi-workers/test_decision_history_feedback.py",
+        "packages/multi-workers/test_dp_consolidation_history.py"
+      ],
+      "source_card": "tasks/T27-history-projection.md",
+      "source_card_sha256": "775f6f88c12655e8b5ea18ba30e974339d3cf976cb2a99f9a0f4094912e6a32e"
+    },
+    {
+      "id": "T28",
+      "task_key": "dpc-t28-observation-server",
+      "card": "tasks/isolated/T28-observation-server.md",
+      "stage": 5,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T05",
+        "T19",
+        "T20",
+        "T21",
+        "T22",
+        "T23",
+        "T24",
+        "T25",
+        "T26",
+        "T27"
+      ],
+      "ac_refs": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-007",
+        "AC-012",
+        "AC-013",
+        "AC-014",
+        "AC-040",
+        "AC-042",
+        "AC-043",
+        "AC-049",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-001",
+        "VC-002",
+        "VC-003",
+        "VC-007",
+        "VC-012",
+        "VC-013",
+        "VC-014",
+        "VC-040",
+        "VC-042",
+        "VC-043",
+        "VC-049",
+        "VC-051"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_monitor.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_playground.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_monitor.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_dashboard_playground.py"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t28-observation-server",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_decision_monitor.py",
+            "test_decision_dashboard_playground.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "观察八合同/退役只读目录及隔离WireScope提交成立，观察成功无业务executor。",
+      "requirements": "生成快照字节锁与/api/dps动态projection分开；page/control token不授业务角色，legacy/disabled不绕退役。测试路由temp scope，零生产gate/签收副作用；不顺带monitor重启或独立dropdown修复。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/decision_monitor.py",
+        "packages/multi-workers/decision_playground.py",
+        "packages/multi-workers/test_decision_monitor.py",
+        "packages/multi-workers/test_decision_dashboard_playground.py"
+      ],
+      "source_card": "tasks/T28-observation-server.md",
+      "source_card_sha256": "5fb46c60a130ab170a51a501cc793469157872adbaa2b608daca1833bb259bdd"
+    },
+    {
+      "id": "T29",
+      "task_key": "dpc-t29-web-components",
+      "card": "tasks/isolated/T29-web-components.md",
+      "stage": 5,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T19",
+        "T20",
+        "T21",
+        "T22",
+        "T23",
+        "T24",
+        "T25",
+        "T26",
+        "T27"
+      ],
+      "ac_refs": [
+        "AC-007",
+        "AC-012",
+        "AC-013",
+        "AC-014",
+        "AC-049",
+        "AC-050",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-007",
+        "VC-012",
+        "VC-013",
+        "VC-014",
+        "VC-049",
+        "VC-050",
+        "VC-051"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_dashboard.js",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_dashboard.html",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_dashboard.css"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t29-web-components",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_decision_dashboard_assets.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        }
+      ],
+      "goal": "八生成合同表单与独立note/依据/后继/执行/结算语义组件和安全DOM成立。",
+      "requirements": "与T28只读接口契约交接后可并行，不读图片/不用真实浏览器或provider。无第二ui.options菜单，先确认faux DOM负例再改实现；原页面样式/下拉缺陷不额外重设计。T30/T31补跨语言链。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/decision_dashboard.js",
+        "packages/multi-workers/decision_dashboard.html",
+        "packages/multi-workers/decision_dashboard.css"
+      ],
+      "source_card": "tasks/T29-web-components.md",
+      "source_card_sha256": "72a606f71d7eeb50415193b2f024f86254b698272b8dfde99279c29492f09501"
+    },
+    {
+      "id": "T30",
+      "task_key": "dpc-t30-window-console",
+      "card": "tasks/isolated/T30-window-console.md",
+      "stage": 5,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T19",
+        "T20",
+        "T21",
+        "T22",
+        "T23",
+        "T24",
+        "T25",
+        "T26",
+        "T28",
+        "T29"
+      ],
+      "ac_refs": [
+        "AC-004",
+        "AC-007",
+        "AC-012",
+        "AC-013",
+        "AC-014",
+        "AC-027",
+        "AC-044",
+        "AC-049",
+        "AC-050",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-004",
+        "VC-007",
+        "VC-012",
+        "VC-013",
+        "VC-014",
+        "VC-027",
+        "VC-044",
+        "VC-049",
+        "VC-050",
+        "VC-051"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/src/extensions/agent-team-loop/autopilot/console.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-projection.test.ts"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t30-window-console",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent",
+          "argv": [
+            "node",
+            "../../node_modules/vitest/dist/cli.js",
+            "--run",
+            "test/suite/dp-consolidation-projection.test.ts"
+          ],
+          "source_cwd": "packages/coding-agent"
+        }
+      ],
+      "goal": "窗口/console消费八合同与真实状态，未知能力/依据/动作不伪报成功。",
+      "requirements": "faux provider/DOM验窗口tool结果及观察对象不同来源，不假扮会话或实际动作；未知能力不正向猜补，不顺手旧formatter处置。console不得增改活policy/权限/预算。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts",
+        "packages/coding-agent/src/extensions/agent-team-loop/autopilot/console.ts",
+        "packages/coding-agent/test/suite/dp-consolidation-projection.test.ts"
+      ],
+      "source_card": "tasks/T30-window-console.md",
+      "source_card_sha256": "2415b10eacc2165c491b41fc6ade84800e1d6b261827f80e548fc4d8464a2b20"
+    },
+    {
+      "id": "T31",
+      "task_key": "dpc-t31-integration-evidence",
+      "card": "tasks/isolated/T31-integration-evidence.md",
+      "stage": 6,
+      "type": "coding",
+      "execution": "worker",
+      "deps": [
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
+      ],
+      "ac_refs": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-005",
+        "AC-006",
+        "AC-007",
+        "AC-008",
+        "AC-009",
+        "AC-010",
+        "AC-011",
+        "AC-012",
+        "AC-013",
+        "AC-014",
+        "AC-015",
+        "AC-016",
+        "AC-017",
+        "AC-018",
+        "AC-019",
+        "AC-020",
+        "AC-021",
+        "AC-022",
+        "AC-023",
+        "AC-024",
+        "AC-025",
+        "AC-026",
+        "AC-027",
+        "AC-028",
+        "AC-029",
+        "AC-030",
+        "AC-031",
+        "AC-032",
+        "AC-033",
+        "AC-034",
+        "AC-035",
+        "AC-036",
+        "AC-037",
+        "AC-038",
+        "AC-039",
+        "AC-040",
+        "AC-041",
+        "AC-042",
+        "AC-043",
+        "AC-044",
+        "AC-045",
+        "AC-046",
+        "AC-047",
+        "AC-048",
+        "AC-049",
+        "AC-050",
+        "AC-051",
+        "AC-052",
+        "AC-053"
+      ],
+      "vc_refs": [
+        "VC-001",
+        "VC-002",
+        "VC-003",
+        "VC-004",
+        "VC-005",
+        "VC-006",
+        "VC-007",
+        "VC-008",
+        "VC-009",
+        "VC-010",
+        "VC-011",
+        "VC-012",
+        "VC-013",
+        "VC-014",
+        "VC-015",
+        "VC-016",
+        "VC-017",
+        "VC-018",
+        "VC-019",
+        "VC-020",
+        "VC-021",
+        "VC-022",
+        "VC-023",
+        "VC-024",
+        "VC-025",
+        "VC-026",
+        "VC-027",
+        "VC-028",
+        "VC-029",
+        "VC-030",
+        "VC-031",
+        "VC-032",
+        "VC-033",
+        "VC-034",
+        "VC-035",
+        "VC-036",
+        "VC-037",
+        "VC-038",
+        "VC-039",
+        "VC-040",
+        "VC-041",
+        "VC-042",
+        "VC-043",
+        "VC-044",
+        "VC-045",
+        "VC-046",
+        "VC-047",
+        "VC-048",
+        "VC-049",
+        "VC-050",
+        "VC-051",
+        "VC-052",
+        "VC-053"
+      ],
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_registry.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_materials.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_gate_effects.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_recovery.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_cli.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_signoff.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_history.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_concurrency.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-materials.test.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-pm-followup.test.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-worker.test.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-vision.test.ts",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent/test/suite/dp-consolidation-projection.test.ts"
+      ],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t31-integration-evidence",
+      "commands": [
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+          "argv": [
+            "python",
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "test_dp_consolidation_registry.py",
+            "test_dp_consolidation_materials.py",
+            "test_dp_consolidation_gate_effects.py",
+            "test_dp_consolidation_recovery.py",
+            "test_dp_consolidation_cli.py",
+            "test_dp_consolidation_signoff.py",
+            "test_dp_consolidation_history.py",
+            "test_dp_consolidation_concurrency.py"
+          ],
+          "source_cwd": "packages/multi-workers"
+        },
+        {
+          "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/coding-agent",
+          "argv": [
+            "node",
+            "../../node_modules/vitest/dist/cli.js",
+            "--run",
+            "test/suite/dp-consolidation-materials.test.ts",
+            "test/suite/dp-consolidation-pm-followup.test.ts",
+            "test/suite/dp-consolidation-worker.test.ts",
+            "test/suite/dp-consolidation-vision.test.ts",
+            "test/suite/dp-consolidation-projection.test.ts"
+          ],
+          "source_cwd": "packages/coding-agent"
+        }
+      ],
+      "goal": "逐VC真实producer→writer→consumer→projection L2证据完整，并发/崩溃/秘密/旧ID/角色负例有实测断言。",
+      "requirements": "各前序测试文件已结束writer并hash交接；本卡只补集成测试/证据，发现产品缺陷回原writer任务，不越面修源码。不能fixture手写gate/ledger/PASS或以done/observe_only/全grep代验收。原Windows89基线和所有旧失败保留分类，无真实provider；每VC输出与逐case原始记录同时充分。",
+      "status": "not-queued",
+      "code_status": "未开始",
+      "verification_status": "未验证",
+      "source_product_write_face": [
+        "packages/multi-workers/test_dp_consolidation_registry.py",
+        "packages/multi-workers/test_dp_consolidation_materials.py",
+        "packages/multi-workers/test_dp_consolidation_gate_effects.py",
+        "packages/multi-workers/test_dp_consolidation_recovery.py",
+        "packages/multi-workers/test_dp_consolidation_cli.py",
+        "packages/multi-workers/test_dp_consolidation_signoff.py",
+        "packages/multi-workers/test_dp_consolidation_history.py",
+        "packages/multi-workers/test_dp_consolidation_concurrency.py",
+        "packages/coding-agent/test/suite/dp-consolidation-materials.test.ts",
+        "packages/coding-agent/test/suite/dp-consolidation-pm-followup.test.ts",
+        "packages/coding-agent/test/suite/dp-consolidation-worker.test.ts",
+        "packages/coding-agent/test/suite/dp-consolidation-vision.test.ts",
+        "packages/coding-agent/test/suite/dp-consolidation-projection.test.ts"
+      ],
+      "source_card": "tasks/T31-integration-evidence.md",
+      "source_card_sha256": "84a2d751b58c7f3f6368009ddb2570cbce94477b15816acbd71fbe358974fb49"
+    },
+    {
+      "id": "T32",
+      "task_key": "dpc-t32-protected-check",
+      "card": "tasks/isolated/T32-protected-check.md",
+      "stage": 6,
+      "type": "coding",
+      "execution": "pm-direct",
+      "deps": [
+        "T27",
+        "T28",
+        "T29",
+        "T30",
+        "T31"
+      ],
+      "ac_refs": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-005",
+        "AC-006",
+        "AC-007",
+        "AC-008",
+        "AC-009",
+        "AC-010",
+        "AC-011",
+        "AC-012",
+        "AC-013",
+        "AC-014",
+        "AC-015",
+        "AC-016",
+        "AC-017",
+        "AC-018",
+        "AC-019",
+        "AC-020",
+        "AC-021",
+        "AC-022",
+        "AC-023",
+        "AC-024",
+        "AC-025",
+        "AC-026",
+        "AC-027",
+        "AC-028",
+        "AC-029",
+        "AC-030",
+        "AC-031",
+        "AC-032",
+        "AC-033",
+        "AC-034",
+        "AC-035",
+        "AC-036",
+        "AC-037",
+        "AC-038",
+        "AC-039",
+        "AC-040",
+        "AC-041",
+        "AC-042",
+        "AC-043",
+        "AC-044",
+        "AC-045",
+        "AC-046",
+        "AC-047",
+        "AC-048",
+        "AC-049",
+        "AC-050",
+        "AC-051",
+        "AC-052",
+        "AC-053"
+      ],
+      "vc_refs": [
+        "VC-001",
+        "VC-002",
+        "VC-003",
+        "VC-004",
+        "VC-005",
+        "VC-006",
+        "VC-007",
+        "VC-008",
+        "VC-009",
+        "VC-010",
+        "VC-011",
+        "VC-012",
+        "VC-013",
+        "VC-014",
+        "VC-015",
+        "VC-016",
+        "VC-017",
+        "VC-018",
+        "VC-019",
+        "VC-020",
+        "VC-021",
+        "VC-022",
+        "VC-023",
+        "VC-024",
+        "VC-025",
+        "VC-026",
+        "VC-027",
+        "VC-028",
+        "VC-029",
+        "VC-030",
+        "VC-031",
+        "VC-032",
+        "VC-033",
+        "VC-034",
+        "VC-035",
+        "VC-036",
+        "VC-037",
+        "VC-038",
+        "VC-039",
+        "VC-040",
+        "VC-041",
+        "VC-042",
+        "VC-043",
+        "VC-044",
+        "VC-045",
+        "VC-046",
+        "VC-047",
+        "VC-048",
+        "VC-049",
+        "VC-050",
+        "VC-051",
+        "VC-052",
+        "VC-053"
+      ],
+      "product_write_face": [],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t32-protected-check",
+      "commands": [],
+      "goal": "PM串行执行等字节保护副本中的完整npm run check与生成锁，输出真实完整结果及旧债/新回归分类。",
+      "requirements": "pm-direct-only，不派worker写真实工作树。冻结本keywriters，构造隔离工作树等字节源/config/scripts清单；既有node_modules只读复用，workspace链接/源码解析等价性须可证，不安装/生成build或写real dist。npm run check含biome --write --error-on-warnings，保留完整输出，失败后链未运行项明确列出。不得把旧失败吞掉或声称check通过；必要格式修复只回原writer且不替他人处理旧formatter，非授权补面具体上抛。",
+      "status": "not-queued",
+      "code_status": "不适用",
+      "verification_status": "未验证",
+      "source_product_write_face": [],
+      "source_card": "tasks/T32-protected-check.md",
+      "source_card_sha256": "1b316918d1676c59b7a80e748248e22a0a36fe19cf3782b3cf0acb58af02e035"
+    },
+    {
+      "id": "T33",
+      "task_key": "dpc-t33-review-protocol",
+      "card": "tasks/isolated/T33-review-protocol.md",
+      "stage": 6,
+      "type": "review",
+      "execution": "worker",
+      "deps": [
+        "T27",
+        "T28",
+        "T29",
+        "T30",
+        "T32"
+      ],
+      "ac_refs": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-005",
+        "AC-006",
+        "AC-007",
+        "AC-012",
+        "AC-014",
+        "AC-038",
+        "AC-039",
+        "AC-040",
+        "AC-041",
+        "AC-042",
+        "AC-043",
+        "AC-051",
+        "AC-053"
+      ],
+      "vc_refs": [
+        "VC-001",
+        "VC-002",
+        "VC-003",
+        "VC-004",
+        "VC-005",
+        "VC-006",
+        "VC-007",
+        "VC-012",
+        "VC-014",
+        "VC-038",
+        "VC-039",
+        "VC-040",
+        "VC-041",
+        "VC-042",
+        "VC-043",
+        "VC-051",
+        "VC-053"
+      ],
+      "product_write_face": [],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t33-review-protocol.md",
+      "commands": [],
+      "goal": "独立只读审计八协议/传输/CLI/signoff/human边界及对应原始L2证据。",
+      "requirements": "审计目标：T03/T04/T05/T08/T09/T10/T11/T22/T23/T24/T25及其diff/日志；主采用文件EOF，不以worker自称PASS替审核。逐问题给severity/path:line/AC/实测证据或未验影响；不执行命令/模型/签收、不改产品、只写唯一审计证据。",
+      "status": "not-queued",
+      "code_status": "不适用",
+      "verification_status": "未验证",
+      "source_product_write_face": [],
+      "source_card": "tasks/T33-review-protocol.md",
+      "source_card_sha256": "09325c305f6e1b21743e6ae8264aee2f4e1c5104ad99a400c8365e5cbb32ce96"
+    },
+    {
+      "id": "T34",
+      "task_key": "dpc-t34-review-effects",
+      "card": "tasks/isolated/T34-review-effects.md",
+      "stage": 6,
+      "type": "review",
+      "execution": "worker",
+      "deps": [
+        "T27",
+        "T28",
+        "T29",
+        "T30",
+        "T32"
+      ],
+      "ac_refs": [
+        "AC-007",
+        "AC-008",
+        "AC-009",
+        "AC-010",
+        "AC-011",
+        "AC-015",
+        "AC-016",
+        "AC-017",
+        "AC-018",
+        "AC-019",
+        "AC-020",
+        "AC-021",
+        "AC-022",
+        "AC-023",
+        "AC-024",
+        "AC-025",
+        "AC-026",
+        "AC-027",
+        "AC-028",
+        "AC-029",
+        "AC-030",
+        "AC-031",
+        "AC-032",
+        "AC-033",
+        "AC-034",
+        "AC-035",
+        "AC-036",
+        "AC-037",
+        "AC-048",
+        "AC-049",
+        "AC-050",
+        "AC-052"
+      ],
+      "vc_refs": [
+        "VC-007",
+        "VC-008",
+        "VC-009",
+        "VC-010",
+        "VC-011",
+        "VC-015",
+        "VC-016",
+        "VC-017",
+        "VC-018",
+        "VC-019",
+        "VC-020",
+        "VC-021",
+        "VC-022",
+        "VC-023",
+        "VC-024",
+        "VC-025",
+        "VC-026",
+        "VC-027",
+        "VC-028",
+        "VC-029",
+        "VC-030",
+        "VC-031",
+        "VC-032",
+        "VC-033",
+        "VC-034",
+        "VC-035",
+        "VC-036",
+        "VC-037",
+        "VC-048",
+        "VC-049",
+        "VC-050",
+        "VC-052"
+      ],
+      "product_write_face": [],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t34-review-effects.md",
+      "commands": [],
+      "goal": "独立只读审计H01～H13/真实授权/恢复隔离/锁/预算/对账及效果证据。",
+      "requirements": "审计目标：T06/T07/T17～T21/T26及集成证据；source actor资格与受限writer负例不能仅token/自报origin。事项版本与原字节不同，reject与legacy closure不同；指出不能证明的入口/故障窗口，不能用纸面图/纯validator替实际效果。无命令/外部模型/活状态写。",
+      "status": "not-queued",
+      "code_status": "不适用",
+      "verification_status": "未验证",
+      "source_product_write_face": [],
+      "source_card": "tasks/T34-review-effects.md",
+      "source_card_sha256": "439483d6892fc122343650ca7761dba24d60735625eabfd15e33540e160afc49"
+    },
+    {
+      "id": "T35",
+      "task_key": "dpc-t35-review-ts-ui",
+      "card": "tasks/isolated/T35-review-ts-ui.md",
+      "stage": 6,
+      "type": "review",
+      "execution": "worker",
+      "deps": [
+        "T27",
+        "T28",
+        "T29",
+        "T30",
+        "T32"
+      ],
+      "ac_refs": [
+        "AC-004",
+        "AC-007",
+        "AC-012",
+        "AC-013",
+        "AC-014",
+        "AC-027",
+        "AC-041",
+        "AC-044",
+        "AC-045",
+        "AC-046",
+        "AC-047",
+        "AC-049",
+        "AC-050",
+        "AC-051"
+      ],
+      "vc_refs": [
+        "VC-004",
+        "VC-007",
+        "VC-012",
+        "VC-013",
+        "VC-014",
+        "VC-027",
+        "VC-041",
+        "VC-044",
+        "VC-045",
+        "VC-046",
+        "VC-047",
+        "VC-049",
+        "VC-050",
+        "VC-051"
+      ],
+      "product_write_face": [],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t35-review-ts-ui.md",
+      "commands": [],
+      "goal": "独立只读审计PM/Worker/vision/窗口观察历史的资格、真实终态与来源安全。",
+      "requirements": "审计目标：T11～T16/T27～T30及原始TS/DOM日志；原26AC/monitor8AC债不结清。源码审计采用EOF或明确缺口，任何need-image任务资格不能unknown猜补；不读取其他key图片、不运行命令/浏览器/provider，只写唯一证据。",
+      "status": "not-queued",
+      "code_status": "不适用",
+      "verification_status": "未验证",
+      "source_product_write_face": [],
+      "source_card": "tasks/T35-review-ts-ui.md",
+      "source_card_sha256": "f4207ef6bb73b566e67b7e50f70fe49ed871e51c47c923e11f54434c992f232c"
+    },
+    {
+      "id": "T36",
+      "task_key": "dpc-t36-formal-qg",
+      "card": "tasks/isolated/T36-formal-qg.md",
+      "stage": 6,
+      "type": "review",
+      "execution": "pm-direct",
+      "deps": [
+        "T27",
+        "T28",
+        "T29",
+        "T30",
+        "T33",
+        "T34",
+        "T35"
+      ],
+      "ac_refs": [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "AC-005",
+        "AC-006",
+        "AC-007",
+        "AC-008",
+        "AC-009",
+        "AC-010",
+        "AC-011",
+        "AC-012",
+        "AC-013",
+        "AC-014",
+        "AC-015",
+        "AC-016",
+        "AC-017",
+        "AC-018",
+        "AC-019",
+        "AC-020",
+        "AC-021",
+        "AC-022",
+        "AC-023",
+        "AC-024",
+        "AC-025",
+        "AC-026",
+        "AC-027",
+        "AC-028",
+        "AC-029",
+        "AC-030",
+        "AC-031",
+        "AC-032",
+        "AC-033",
+        "AC-034",
+        "AC-035",
+        "AC-036",
+        "AC-037",
+        "AC-038",
+        "AC-039",
+        "AC-040",
+        "AC-041",
+        "AC-042",
+        "AC-043",
+        "AC-044",
+        "AC-045",
+        "AC-046",
+        "AC-047",
+        "AC-048",
+        "AC-049",
+        "AC-050",
+        "AC-051",
+        "AC-052",
+        "AC-053"
+      ],
+      "vc_refs": [
+        "VC-001",
+        "VC-002",
+        "VC-003",
+        "VC-004",
+        "VC-005",
+        "VC-006",
+        "VC-007",
+        "VC-008",
+        "VC-009",
+        "VC-010",
+        "VC-011",
+        "VC-012",
+        "VC-013",
+        "VC-014",
+        "VC-015",
+        "VC-016",
+        "VC-017",
+        "VC-018",
+        "VC-019",
+        "VC-020",
+        "VC-021",
+        "VC-022",
+        "VC-023",
+        "VC-024",
+        "VC-025",
+        "VC-026",
+        "VC-027",
+        "VC-028",
+        "VC-029",
+        "VC-030",
+        "VC-031",
+        "VC-032",
+        "VC-033",
+        "VC-034",
+        "VC-035",
+        "VC-036",
+        "VC-037",
+        "VC-038",
+        "VC-039",
+        "VC-040",
+        "VC-041",
+        "VC-042",
+        "VC-043",
+        "VC-044",
+        "VC-045",
+        "VC-046",
+        "VC-047",
+        "VC-048",
+        "VC-049",
+        "VC-050",
+        "VC-051",
+        "VC-052",
+        "VC-053"
+      ],
+      "product_write_face": [],
+      "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t36-formal-qg.md",
+      "commands": [],
+      "goal": "PM正式QG核对53AC/VC与独立审核证据，明确可签收或具体缺口，不自动完成/关闭stage。",
+      "requirements": "pm-direct-only，逐AC充分性审查；产品check非零、核心L2缺失、human/H12入口未证或角色风险未消除不得pass。只有当前合法dp-QG可正式判断，缓存进程不识别新入口则具体阻塞，不回用旧dp6/25/换通道/自动重启或新增预算。最终签收必须合法dp-sign-key同次valid且finalize及对应文件/证据；其执行另依原权限/框架门，不由本计划伪签或二次模型批准。",
+      "status": "not-queued",
+      "code_status": "不适用",
+      "verification_status": "未验证",
+      "source_product_write_face": [],
+      "source_card": "tasks/T36-formal-qg.md",
+      "source_card_sha256": "d609403dca64a0704761b3c0cc49dcb4ed60bbe1a755fb1621fb1e5e46e435df"
+    }
+  ],
+  "implementation_root": ".agenticdoc/mw-dp-consolidation/implementation-worktree",
+  "source_manifest_sha256": "40537009bd89cb2dbdc6956fa0f6853d9f4297dac061ea34596f4e096171c26c",
+  "approval": "evidence/implementation/isolation-approval-20261026.md",
+  "live_cutover_authorized": false,
+  "actual_runtime_identity_verified": false,
+  "s0_disposition": {
+    "source_only_frontier": [
+      "T03"
+    ],
+    "requires_setup_check": true,
+    "live_cutover": "blocked; separate authorization",
+    "human_h12": "unverified; original affected consumer and acceptance gates remain blocking"
+  }
+}

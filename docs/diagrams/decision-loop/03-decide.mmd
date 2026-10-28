@@ -1,0 +1,20 @@
+graph TD
+    A["入口是否在<br/>8 个活动名中"] -->|"是"| B["发起者角色<br/>是否有资格"]
+    B -->|"是"| C["材料 选项 依据<br/>是否完整合法"]
+    C -->|"是"| D["授权与预算<br/>是否允许"]
+    D -->|"是"| S["派发给模型"]
+    S --> R{"回答是否<br/>合法选项 + 合法依据"}
+    R -->|"是"| OK["交给 apply"]
+    A -->|"否"| X["阻塞并留原因"]
+    B -->|"否"| X
+    C -->|"否"| X
+    D -->|"否"| X
+    R -->|"否"| X
+
+    style A fill:#E6F1FB,stroke:#185FA5
+    style B fill:#E6F1FB,stroke:#185FA5
+    style C fill:#E6F1FB,stroke:#185FA5
+    style D fill:#E6F1FB,stroke:#185FA5
+    style R fill:#E6F1FB,stroke:#185FA5
+    style OK fill:#E1F5EE,stroke:#0F6E56
+    style X fill:#FAEEDA,stroke:#854F0B

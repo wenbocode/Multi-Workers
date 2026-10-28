@@ -1,0 +1,48 @@
+{
+  "book": {
+    "decision_point": "dp2-checkpoint-split",
+    "notes": {
+      "evidence": {
+        "pm_decision_background": "packages/multi-workers/scripts/build_decide_cases.py:134",
+        "task_deliverables": "packages/multi-workers/scripts/build_decide_cases.py:131",
+        "task_goal": "packages/multi-workers/scripts/build_decide_cases.py:124",
+        "task_requirements": "packages/multi-workers/scripts/build_decide_cases.py:127",
+        "worker_execution": "packages/multi-workers/scripts/build_decide_cases.py:140"
+      }
+    },
+    "schema_version": 2,
+    "state": {
+      "decision_point": "dp2-checkpoint-split",
+      "pm_decision_background": "T06 的 history 投影尚未交付，T07 已独立完成表结构、弹窗与本地 case；facets 下拉与 workbench 正文仍等后端。当前预算只够一块，需要判断是收窄到 facets 接线、拆成投影与路由两个任务、PM 直接做完，还是以高风险上抛给人。",
+      "questions_version": "q-ba8e970f",
+      "schema_version": 2,
+      "task_deliverables": "workbench 投影的接线说明；旧记录日志弹窗；四状态与 DAG 的 DOM 断言日志。",
+      "task_goal": "在旧记录只读筛选完成后判断检查点动作：收窄、拆分、直接执行还是上抛人。",
+      "task_requirements": "主表五列与四个处理状态必须保留；旧记录不得展开 DAG；不得按 key 或时间推断关联。",
+      "worker_execution": "已完成：五列表结构、四状态渲染、十节点 DAG 弹窗与日志弹窗。剩余：facets 下拉接线与 workbench 正文渲染，等 T06 投影。阻塞：旧记录 detail 无 workbench 字段，只能显示未记录。尝试：改过两版 DAG 节点顺序，最终按后端投影顺序渲染。时间预算：已用 35 分钟，剩余 25 分钟。"
+    }
+  },
+  "case_version": 1,
+  "dp": "dp2-checkpoint-split",
+  "note": "合成 case：PM 正在判断检查点动作，附一段真实形态的 worker 执行情况；选项仍由 registry 原文提供，case 不改写问题。",
+  "questions": {
+    "checkpoint_action": {
+      "choices": [
+        "narrow",
+        "split",
+        "direct-exec",
+        "escalate"
+      ],
+      "id": "checkpoint_action",
+      "instructions": "以当前进度，这一步该继续、拆小、直接执行还是上抛人？",
+      "labels": {
+        "direct-exec": "PM 自己直接做完",
+        "escalate": "风险高到必须问人",
+        "narrow": "收窄到剩余预算内能完成的一小块",
+        "split": "拆成多个任务重派"
+      },
+      "type": "choice"
+    }
+  },
+  "title": "检查点：收窄、拆分、直接执行还是上抛人"
+}

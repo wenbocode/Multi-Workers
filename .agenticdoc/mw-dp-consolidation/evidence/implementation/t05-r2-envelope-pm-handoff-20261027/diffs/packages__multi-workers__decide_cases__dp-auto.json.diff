@@ -1,0 +1,11 @@
+--- before/packages/multi-workers/decide_cases/dp-auto.json
++++ after/packages/multi-workers/decide_cases/dp-auto.json
+@@ -91,7 +91,7 @@
+           "text": "先后顺序需要人判断，本轮不新增实现更稳妥。"
+         }
+       ],
+-      "prepared_at": "2026-10-27T20:56:00+00:00"
++      "prepared_at": "2026-10-27T13:45:28+00:00"
+     },
+     "schema_version": 3
+   },

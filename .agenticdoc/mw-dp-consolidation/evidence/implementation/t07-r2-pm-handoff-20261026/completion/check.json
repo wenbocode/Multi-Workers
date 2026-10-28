@@ -1,0 +1,55 @@
+{
+  "started_at": "2026-10-27T02:20:56.118792+00:00",
+  "observed_at": "2026-10-27T02:20:57.765896+00:00",
+  "products": [
+    {
+      "path": "packages/multi-workers/decision_policy.py",
+      "before_sha256": "f4c44456316b8c60c7934a209de389ef6366aa864f026f9ba5fba40569dde6bb",
+      "after_sha256": "77a9282fb8e7cbcd5ec6ffcea8cf2ded73e16f87a06a7808f6ef6d14e06c259c",
+      "bytes": 68600,
+      "lf": 1989,
+      "crlf": 0,
+      "pm_diff_sha256": "1e25f72af00beab3cf108fd0417a9752c99937d645b6e7793009684da9a2538f"
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_recovery.py",
+      "before_sha256": "434412b3ea60e60807ea23b52cdc474e892457a0a1747ecf7cb6bf809380a974",
+      "after_sha256": "3947d05db48887ac15df9a7ab5cfe58492e1e017497d0c9d603c5dde4cd94761",
+      "bytes": 68653,
+      "lf": 1910,
+      "crlf": 0,
+      "pm_diff_sha256": "b8815538cef5f001a3814c841aaa624fe247e224150e432cb9c6149c218d9cf0"
+    }
+  ],
+  "assigned_passed": 35,
+  "assigned_rc": [
+    0,
+    0
+  ],
+  "old_test_functions_ast_preserved": 31,
+  "new_tests": [
+    "test_breaker_recovery_verifies_the_policy_rule_authority_and_disable_state",
+    "test_halted_recovery_unknown_guard_and_halt_origin_stay_blocked",
+    "test_halted_recovery_verifies_the_policy_rule_authority_and_supersession",
+    "test_pending_review_requires_policy_and_request_scope"
+  ],
+  "negative_probes": 17,
+  "positive_controls": 6,
+  "probe_failures": [],
+  "mirror_files": 1883,
+  "verification_net_changes": [],
+  "frontier_allowed_net_changes": [
+    "packages/multi-workers/decision.py",
+    "packages/multi-workers/decision_policy.py",
+    "packages/multi-workers/decision_validity.py",
+    "packages/multi-workers/test_dp_consolidation_concurrency.py",
+    "packages/multi-workers/test_dp_consolidation_materials.py",
+    "packages/multi-workers/test_dp_consolidation_recovery.py"
+  ],
+  "old_worker_evidence_preserved": 818,
+  "pyc_preserved": 14,
+  "two_live_product_paths_absent": true,
+  "local_rework_boundary_verified": true,
+  "real_writer_human_h12_lock_effects_not_verified": true,
+  "full_l2_qg_signoff_stage_close": false
+}

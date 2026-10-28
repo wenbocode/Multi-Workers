@@ -1,0 +1,110 @@
+{
+  "book": {
+    "decision_point": "dp-auto",
+    "material": {
+      "background": {
+        "constraints": "只读，不写 archive、signoff 或 authority；剩余预算 25 分钟；无新增授权。",
+        "current_state": "表结构、四状态与 DAG 弹窗已有定向用例；detail 投影字段与 facets 接线缺失。",
+        "task_goal": "为工作台的旧记录提供可核对的状态说明。",
+        "tried": "试过按后端投影顺序渲染 DAG 节点，也试过在前端补默认值，最后撤掉了默认值。",
+        "unknowns": "历史投影是否会在本轮交付 detail 字段，未知。"
+      },
+      "handling_options": [
+        {
+          "conditions": "需要 facets 字段已在列表投影中存在。",
+          "consequence": "交互先可用，正文缺口保留并写进交接说明。",
+          "description": "把 facets 下拉接到现有列表投影字段，正文继续显示未记录。",
+          "id": "wire-facets-now",
+          "label": "本轮只接 facets 下拉",
+          "risk": "低：只动只读展示，不触碰写入链路。"
+        },
+        {
+          "conditions": "PM 确认可拆且预算允许重派。",
+          "consequence": "缺口由后续任务闭环，本轮交付范围变小。",
+          "description": "把 detail 投影字段补齐拆成独立任务，本轮只交接依赖。",
+          "id": "split-projection-task",
+          "label": "拆出投影字段任务再接线",
+          "risk": "中：跨任务依赖需要新的调度确认。"
+        },
+        {
+          "conditions": "只有顺序确实需要人判断时才用。",
+          "consequence": "本轮收尾为只读用例交付，顺序由人决定。",
+          "description": "把 facets 与正文的先后顺序交人确认，本轮不新增实现。",
+          "id": "escalate-to-human",
+          "label": "上抛给人确认优先级",
+          "risk": "低：不产生代码动作，但会停一轮。"
+        }
+      ],
+      "question": "旧记录 detail 缺少 workbench 字段时，本轮该怎样推进 facets 与正文渲染？"
+    },
+    "meta": {
+      "actor_role": "pm",
+      "key": "mw-dp-consolidation",
+      "logical_id": "case-dp-auto-v1",
+      "task_key": "dpc-t05-eight-cases",
+      "trigger_id": "case-dp-auto"
+    },
+    "notes": {
+      "evidence": {
+        "background.constraints": "packages/multi-workers/scripts/build_decide_cases.py:310",
+        "background.current_state": "packages/multi-workers/scripts/build_decide_cases.py:301",
+        "background.task_goal": "packages/multi-workers/scripts/build_decide_cases.py:299",
+        "background.tried": "packages/multi-workers/scripts/build_decide_cases.py:305",
+        "background.unknowns": "packages/multi-workers/scripts/build_decide_cases.py:308",
+        "handling_options": "packages/multi-workers/scripts/build_decide_cases.py:317",
+        "question": "packages/multi-workers/scripts/build_decide_cases.py:297"
+      }
+    },
+    "preparation": {
+      "basis_catalog": [
+        {
+          "applies_to": [
+            "wire-facets-now"
+          ],
+          "id": "auto-wire-facets",
+          "material_refs": [
+            "background.current_state",
+            "handling_options"
+          ],
+          "text": "facets 字段已存在，先接下拉是预算内可验证的一步。"
+        },
+        {
+          "applies_to": [
+            "split-projection-task"
+          ],
+          "id": "auto-split-projection",
+          "material_refs": [
+            "background.tried",
+            "handling_options"
+          ],
+          "text": "投影字段与接线是两块工作，拆开才能各自闭环。"
+        },
+        {
+          "applies_to": [
+            "escalate-to-human"
+          ],
+          "id": "auto-escalate",
+          "material_refs": [
+            "background.constraints",
+            "handling_options"
+          ],
+          "text": "先后顺序需要人判断，本轮不新增实现更稳妥。"
+        }
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00"
+    },
+    "schema_version": 3
+  },
+  "case_version": 1,
+  "dp": "dp-auto",
+  "note": "合成 case：PM 为现场问题准备了三个可区分候选（自由 id，非 cN），用于观察动态候选消费；模型只能从这批候选里选，动作仍由 PM 执行。",
+  "questions": {
+    "handling": {
+      "dynamic_choices": "handling_options",
+      "id": "handling",
+      "instructions": "从 PM 已准备的候选处理方式中选出最合适的一项；不得提出未准备的方案，也不得以失败原因或概率代替依据。",
+      "type": "choice"
+    }
+  },
+  "title": "现场行动选择：facets 接线与正文投影缺口"
+}

@@ -1,0 +1,133 @@
+diff --git a/before-bytes/decision_wire.py b/after-bytes/decision_wire.py
+index 3d3ebb8..56ccdf2 100644
+--- a/before-bytes/decision_wire.py
++++ b/after-bytes/decision_wire.py
+@@ -45,9 +45,11 @@ Contract for the wiring cards (T03/T05/T06/T07)
+   not become a silent null).
+   ``append_event`` serialises, fits the 64 KiB line budget, then appends under a
+   short lock budget with tail-newline repair, a short-write loop and fsync.
+-  It never raises: the first failure of a logical unit (a ``call_id``, or the
+-  scope itself for call-less events) opens a breaker, so the remaining events
+-  of that unit fail immediately instead of spending the lock budget again.
++  It never raises (the one exception is a caller's own lock-scoped ``guard``
++  refusal, which writes nothing): the first failure of a logical unit (a
++  ``call_id``, or the scope itself for call-less events) opens a breaker, so the
++  remaining events of that unit fail immediately instead of spending the lock
++  budget again.
+   Failures aggregate into one warning per logical call and are reported through
+   ``WriteResult`` / ``scope.capture_status``; the caller's business result is
+   never changed.
+@@ -78,7 +80,10 @@ Additive T02 extension (decision lifecycle, design D004 §4.1/§4.2):
+ * ``append_event(..., dedupe_event_id=True)`` - idempotent append: the event id
+   is looked up *inside the append lock* and a hit writes nothing
+   (``status="duplicate"``). Deduplication is by ``event_id`` only, never by
+-  ``(decision_id, kind word)``: two real actions stay two rows.
++  ``(decision_id, kind word)``: two real actions stay two rows. An optional
++  ``guard`` runs inside the same lock, so a ledger-derived precondition (for
++  example a non-decreasing observation order) cannot be passed by two writers
++  at once; its own refusal propagates and nothing is appended.
+ 
+ Additive T10 extension (request / PM note / task terminal, design §4.6 AC-050):
+ 
+@@ -552,8 +557,22 @@ def canonical_path(path: pathlib.Path | str) -> pathlib.Path:
+     return pathlib.Path(os.path.realpath(os.path.abspath(str(path))))
+ 
+ 
++#: Windows resolves ``.AgenticDoc`` and ``.agenticdoc`` to the same directory.
++#: The guard therefore compares components with the platform's own identity rule
++#: instead of a byte equality that a case variant slips through. 8.3 short names
++#: are *not* resolved here (no live-path probe); that case stays out of scope.
++_CASE_INSENSITIVE_PATHS = os.name == "nt"
++
++
++def _same_path_component(part: str, name: str) -> bool:
++    """True when ``part`` names the same component as ``name`` on this platform."""
++    if part == name:
++        return True
++    return _CASE_INSENSITIVE_PATHS and os.path.normcase(part) == os.path.normcase(name)
++
++
+ def _is_inside_agenticdoc(path: pathlib.Path) -> bool:
+-    return any(part == ".agenticdoc" for part in path.parts)
++    return any(_same_path_component(part, ".agenticdoc") for part in path.parts)
+ 
+ 
+ 
+@@ -1150,6 +1169,27 @@ def _sanitize_free_text(scope: WireScope, name: str, value: object) -> object:
+     return _sanitize_text(scope, value, limit)
+ 
+ 
++def recorded_task_state(
++    scope: WireScope, value: object
++) -> dict[str, object] | None:
++    """The exact representation a task snapshot has *after* it is stored.
++
++    A writer that must compare a caller's snapshot with the ledger's recorded
++    one has to compare like with like: the stored form went through the scope's
++    redact/clip policy (the same one :func:`build_event` applies), while the
++    caller still holds the raw value. Returning the sanitized, validated
++    snapshot is what lets a known-secret-bearing ``before`` be repeated by exact
++    equality without ever re-reading or writing the secret. ``None`` stays
++    ``None`` and an empty list stays an empty list (no axis is filled in).
++    """
++    try:
++        validated = decision_task_state.validate_task_state(value)
++    except decision_task_state.TaskStateInputError as exc:
++        raise WireScopeError(str(exc)) from None
++    recorded = _sanitize_free_text(scope, "task_before", validated)
++    return recorded if isinstance(recorded, dict) else None
++
++
+ def build_event(
+     scope: WireScope,
+     kind: str,
+@@ -1220,11 +1260,7 @@ def build_event(
+             if isinstance(value, Capture):
+                 value = value.as_dict()
+         elif name in ("task_before", "task_after"):
+-            try:
+-                value = decision_task_state.validate_task_state(value)
+-            except decision_task_state.TaskStateInputError as exc:
+-                raise WireScopeError(str(exc)) from None
+-            value = _sanitize_free_text(scope, name, value)
++            value = recorded_task_state(scope, value)
+         elif name in free_text:
+             value = _sanitize_free_text(scope, name, value)
+         row[name] = value
+@@ -1936,7 +1972,11 @@ def _event_id_present(sink: pathlib.Path, event_id: str) -> bool:
+ 
+ 
+ def append_event(
+-    scope: WireScope, event: Mapping[str, object], *, dedupe_event_id: bool = False
++    scope: WireScope,
++    event: Mapping[str, object],
++    *,
++    dedupe_event_id: bool = False,
++    guard: Callable[[], None] | None = None,
+ ) -> WriteResult:
+     """Append one event; never raises into the caller's business result.
+ 
+@@ -1945,6 +1985,12 @@ def append_event(
+     ``status="duplicate"`` is returned. Deduplication is by ``event_id`` only -
+     never by ``(decision_id, kind word)``: the same word twice is two real
+     actions and must stay two rows.
++
++    ``guard`` is a read-only precondition that runs while the append lock is
++    held, so a precondition based on the ledger's current rows cannot be passed
++    by two writers at once (a read-then-append outside the lock is a TOCTOU). A
++    refusal by the guard is the caller's own input error, not a capture failure:
++    it propagates as-is, nothing is appended and no failure sidecar is written.
+     """
+     if event.get("schema_version") != SCHEMA_VERSION:
+         return _fail(scope, "schema", WireScopeError("schema_version mismatch"), event)
+@@ -1988,6 +2034,10 @@ def append_event(
+ 
+     tail_repaired = False
+     try:
++        if guard is not None:
++            # Ledger-derived precondition: it must see the same rows the append
++            # is about to extend, which is only true while this lock is held.
++            guard()
+         if dedupe_event_id:
+             event_id = event.get("event_id")
+             if not isinstance(event_id, str) or not event_id:

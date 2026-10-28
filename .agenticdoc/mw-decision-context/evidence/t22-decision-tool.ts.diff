@@ -1,0 +1,143 @@
+--- packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts.t22-before
++++ packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts
+@@ -80,6 +80,12 @@
+ import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.ts";
+ import { controlRootFromTaskPath } from "../shared/paths.ts";
+ import { readTaskType } from "../shared/task-frontmatter.ts";
++import {
++	AGENT_TASK_STATE_SCHEMA,
++	copyTaskState,
++	isTaskStateSnapshot,
++	type TaskStateSnapshot,
++} from "./decision-task-state.ts";
+ import { canonicalStateBytes, MAX_STRUCTURED_STATE_BYTES, validateStructuredState } from "./triage-client.ts";
+ 
+ /** Registered tool name (referenced by `activeToolsForType` wiring in index.ts). */
+@@ -466,6 +472,7 @@
+ 	initiator_role: DecisionInitiatorRole;
+ 	/** Set only when this decision retries another one (new id, points at前次). */
+ 	retry_of: string | null;
++	task_before?: TaskStateSnapshot;
+ }
+ 
+ /** The stdin payload for `mw decide run <dp> --stdin` (design §4.1). */
+@@ -673,6 +680,7 @@
+ 	taskKey?: string | null;
+ 	initiatorRole: DecisionInitiatorRole;
+ 	retryOf?: string | null;
++	taskBefore?: TaskStateSnapshot;
+ }): DecisionToolMeta {
+ 	const taskKey = input.taskKey?.trim() ?? "";
+ 	const retryOf = input.retryOf?.trim() ?? "";
+@@ -683,6 +691,7 @@
+ 		task_key: taskKey === "" ? null : taskKey,
+ 		initiator_role: input.initiatorRole,
+ 		retry_of: retryOf === "" ? null : retryOf,
++		...(input.taskBefore === undefined ? {} : { task_before: copyTaskState(input.taskBefore) }),
+ 	};
+ }
+ 
+@@ -789,6 +798,7 @@
+ 	dp: string | null;
+ 	stage: "consumed" | "executed" | "settled";
+ 	event_id: string;
++	task_after?: TaskStateSnapshot;
+ 	answer?: string;
+ 	action?: string;
+ 	result?: string;
+@@ -1162,6 +1172,7 @@
+ 	material?: Record<string, unknown>;
+ 	/** Points at the previous `logical_id` when this call retries another one. */
+ 	retryOf?: string | null;
++	taskBefore?: TaskStateSnapshot;
+ 	/** Runner override (tests); the real async child when omitted. */
+ 	runner?: DecideRunner;
+ 	/** Feedback runner override (tests); the real `decide lifecycle` child when omitted. */
+@@ -1215,6 +1226,11 @@
+ 	// The originator is structural (the registering window), so a worker cannot
+ 	// reach a PM decision point even by naming it (AC-006).
+ 	if (isPmOnlyDp(dp) && role !== "pm") return unavailable(ASK_DECISION_REASON_ROLE_FORBIDDEN, dp, false);
++	if (
++		input.taskBefore !== undefined &&
++		(!(input.taskKey ?? "").trim() || !isTaskStateSnapshot(input.taskBefore) || !isMaterialDp(dp))
++	)
++		return unavailable(ASK_DECISION_REASON_INPUT_INCOMPLETE, dp, false, { missing_fields: ["meta.task_before"] });
+ 	// dp25 is the ONE judgment that really signs (T05 `decide sign --stdin`): the
+ 	// sign CLI calls the model itself and writes `sign-final.md` (or hands a
+ 	// concrete next step back). Routing it through `decide run` would need a
+@@ -1295,6 +1311,7 @@
+ 		taskKey: input.taskKey ?? null,
+ 		initiatorRole: role,
+ 		retryOf: input.retryOf ?? null,
++		taskBefore: input.taskBefore,
+ 	});
+ 	const request: DecideRunRequest = {
+ 		projectDir: input.projectDir,
+@@ -1385,6 +1402,7 @@
+ 		taskKey: input.taskKey ?? null,
+ 		initiatorRole: role,
+ 		retryOf: input.retryOf ?? null,
++		taskBefore: input.taskBefore,
+ 	});
+ 	let raw: RawDecideResult;
+ 	try {
+@@ -1726,6 +1744,7 @@
+ 				description: "Owning AgenticTask key (PM mode: required; workers get it from their card)",
+ 			}),
+ 		),
++		task_before: Type.Optional(AGENT_TASK_STATE_SCHEMA),
+ 		task_key: Type.Optional(
+ 			Type.String({
+ 				minLength: 1,
+@@ -1753,6 +1772,7 @@
+ 		),
+ 		reason: Type.Optional(Type.String({ description: "settled/executed: short free-text reason" })),
+ 		event_id: Type.Optional(Type.String({ description: "Reuse the SAME id only when retrying this very write" })),
++		task_after: Type.Optional(AGENT_TASK_STATE_SCHEMA),
+ 	},
+ 	{ additionalProperties: false },
+ );
+@@ -1839,6 +1859,7 @@
+ 			DECISION_MATERIAL_PROMPTS.dp3,
+ 			DECISION_MATERIAL_PROMPTS.dp2,
+ 			DECISION_MATERIAL_PROMPTS.dp25,
++			"task_before is an optional local Agent report of this task BEFORE the decision, never model material. Use source=agent-report, an ISO timestamp with timezone, and null for unrecorded progress; do not substitute current state for past state or invent observations.",
+ 			"dp2/dp25 are PM decisions: a worker window is refused (role-forbidden) and must report the block " +
+ 				"instead of asking.",
+ 			"After the selection: act only inside your existing authority, then call decision_receipt with the " +
+@@ -1881,6 +1902,7 @@
+ 				material: params.material,
+ 				key: requestedKey,
+ 				taskKey: requestedTask,
++				taskBefore: params.task_before,
+ 				initiatorRole,
+ 				runner: options.runner,
+ 				lifecycleRunner: options.lifecycleRunner,
+@@ -1958,6 +1980,7 @@
+ 			"settled needs one closed outcome: pending, ok, rework, rollback, inconclusive. settled is this round, " +
+ 				"not the whole task.",
+ 			"Never receipt an action you did not perform; a failed receipt is reported, not retried with a new action.",
++			"task_after is an optional local Agent report AFTER the actual handling, for this decision's exact task. It does not execute work. Use source=agent-report and the actual observation time; missing progress is null, not guessed. Round ok is not task done.",
+ 		],
+ 		parameters: DECISION_RECEIPT_PARAMETERS,
+ 		executionMode: "sequential",
+@@ -1980,6 +2003,11 @@
+ 			};
+ 			const known = asked.get(params.decision_id);
+ 			if (known === undefined) return refusal(ASK_DECISION_REASON_UNKNOWN_DECISION, null);
++			if (
++				params.task_after !== undefined &&
++				(known.meta.task_key === null || !isTaskStateSnapshot(params.task_after))
++			)
++				return refusal(ASK_DECISION_REASON_INPUT_INCOMPLETE, known.dp);
+ 			const eventId = params.event_id ?? randomUUID();
+ 			let envelope: DecisionLifecycleEnvelope;
+ 			if (params.stage === "executed") {
+@@ -2013,6 +2041,7 @@
+ 				};
+ 				if (params.reason !== undefined) envelope.reason = params.reason;
+ 			}
++			if (params.task_after !== undefined) envelope.task_after = copyTaskState(params.task_after);
+ 			const feedback = await writeDecisionLifecycle(projectDir, envelope, options.lifecycleRunner ?? runLifecycleMw);
+ 			appendDecisionTrace(
+ 				tracePath,

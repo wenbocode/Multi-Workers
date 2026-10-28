@@ -15,8 +15,7 @@
  *  5. The structured state is the 8+4 checkpoint fields plus the ≤3-point
  *     trend, carries the dp2 question-set version, and stays under 2000 bytes.
  *
- * Fixtures are pure files + a fake `pi` + a fake `DecideRunner` (the
- * triage-client seam): no provider APIs, keys, or network.
+ * Fixtures are pure files + a fake `pi`: no provider APIs, keys, or network.
  */
 
 import * as fs from "node:fs";
@@ -25,24 +24,18 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import * as pmOrchestrator from "../../src/extensions/agent-team-loop/pm/pm-orchestrator.ts";
 import {
 	DP2_CHECKPOINT_ID,
 	DP2_CHECKPOINT_QUESTION,
-	DP2_NARROW_FALLBACK_LINE,
 	DP2_NARROW_MARKER,
 	DP2_QUESTIONS_VERSION,
 	DP2_STEER_FILE,
 	DP2_STEER_REQUEST_HEADER,
-	probeDp2TaskLiveness,
 	readCheckpointTrend,
 	readDp2Authorization,
 	startWorkerPollLoop,
 } from "../../src/extensions/agent-team-loop/pm/pm-orchestrator.ts";
-import type {
-	DecideRunner,
-	DecideRunRequest,
-	RawDecideRun,
-} from "../../src/extensions/agent-team-loop/pm/triage-client.ts";
 import {
 	assertStateMatchesRegistry,
 	type PmUiHolder,
@@ -162,48 +155,8 @@ function fakePi(): { pi: ExtensionAPI; sent: Sent[] } {
 	return { pi, sent };
 }
 
-interface RunnerOptions {
-	answer?: string;
-	/** Aggregated `answers[...].confidence` of the child (AC-016 gate input). */
-	confidence?: number;
-	/** `payload.mode` echoed by the child. `null` omits the key: a child that
-	 * reports no mode must fail closed (no `acted`). Default `auto`. */
-	mode?: string | null;
-	available?: boolean;
-	reason?: string;
-	status?: number;
-	stdout?: string;
-	timedOut?: boolean;
-}
-
-function fakeRunner(options: RunnerOptions = {}): { run: DecideRunner; calls: DecideRunRequest[] } {
-	const calls: DecideRunRequest[] = [];
-	const run: DecideRunner = (request) => {
-		calls.push(request);
-		const raw = (payload: unknown): RawDecideRun => ({
-			status: 0,
-			stdout: JSON.stringify(payload),
-			stderr: "",
-			timedOut: false,
-		});
-		if (options.timedOut) return { status: null, stdout: "", stderr: "", timedOut: true };
-		if (options.status !== undefined && options.status !== 0) {
-			return { status: options.status, stdout: "", stderr: "boom", timedOut: false };
-		}
-		if (options.stdout !== undefined) return { status: 0, stdout: options.stdout, stderr: "", timedOut: false };
-		if (options.available === false) return raw({ available: false, reason: options.reason ?? "entry-unavailable" });
-		return raw({
-			available: true,
-			...(options.mode === null ? {} : { mode: options.mode ?? "auto" }),
-			confidence_source: "model-self-report",
-			answers: { [DP2_CHECKPOINT_QUESTION]: { value: options.answer, confidence: options.confidence ?? 0.8 } },
-		});
-	};
-	return { run, calls };
-}
-
 /** Run the real poll loop for `ticks` ticks against this project. */
-async function runTicks(projectDir: string, run: DecideRunner | undefined, ticks = 4): Promise<Sent[]> {
+async function runTicks(projectDir: string, ticks = 4): Promise<Sent[]> {
 	const agenticdocRoot = path.join(projectDir, ".agenticdoc");
 	const watch: PmWatchState = { key: OWNER };
 	const ui: PmUiHolder = { ctx: undefined };
@@ -219,7 +172,6 @@ async function runTicks(projectDir: string, run: DecideRunner | undefined, ticks
 			watch,
 			ui,
 			INTERVAL_MS,
-			{ projectDir, run },
 		);
 		vi.advanceTimersByTime(INTERVAL_MS * ticks + 10);
 		clearInterval(handle);
@@ -239,10 +191,8 @@ describe("dp2 closed states (D-007 / AC-015)", () => {
 		const { agenticdocRoot, taskDir } = makeTask(projectDir);
 		await queueRunning(agenticdocRoot, taskDir);
 
-		const runner = fakeRunner({ answer: "narrow" });
-		const sent = await runTicks(projectDir, runner.run);
+		const sent = await runTicks(projectDir);
 
-		expect(runner.calls).toHaveLength(0);
 		expect(sent).toHaveLength(1);
 		expect(sent[0]?.triggerTurn).toBe(true);
 		expect(sent[0]?.content.startsWith(ALERT_PREFIX)).toBe(true);
@@ -259,14 +209,12 @@ describe("dp2 closed states (D-007 / AC-015)", () => {
 			const projectDir = mkProject();
 			const { agenticdocRoot, taskDir } = makeTask(projectDir);
 			await queueRunning(agenticdocRoot, taskDir);
-			const baseline = await runTicks(projectDir, fakeRunner({ answer: "narrow" }).run);
+			const baseline = await runTicks(projectDir);
 
 			writeDecideConfig(projectDir);
 			writePoints(projectDir, row);
-			const runner = fakeRunner({ answer: "narrow" });
-			const sent = await runTicks(projectDir, runner.run);
+			const sent = await runTicks(projectDir);
 
-			expect(runner.calls, JSON.stringify(row)).toHaveLength(0);
 			expect(sent[0]?.triggerTurn).toBe(true);
 			expect(sent[0]?.content).toBe(baseline[0]?.content);
 			expect(fs.existsSync(path.join(taskDir, DP2_STEER_FILE))).toBe(false);
@@ -277,18 +225,16 @@ describe("dp2 closed states (D-007 / AC-015)", () => {
 		const projectDir = mkProject();
 		const { agenticdocRoot, taskDir } = makeTask(projectDir);
 		await queueRunning(agenticdocRoot, taskDir);
-		const baseline = await runTicks(projectDir, fakeRunner({ answer: "narrow" }).run);
+		const baseline = await runTicks(projectDir);
 
 		writeDecideConfig(projectDir);
 		writePoints(projectDir, "yes");
-		const runner = fakeRunner({ answer: "narrow" });
-		const sent = await runTicks(projectDir, runner.run);
+		const sent = await runTicks(projectDir);
 
 		// decision_points.py L2 force-off: a row that is not an object disables the
 		// dp. Falling back to the registry default here would pay for a child that
 		// Python rejects.
 		expect(readDp2Authorization(projectDir)).toEqual({ enabled: false, source: "invalid" });
-		expect(runner.calls).toHaveLength(0);
 		expect(sent).toHaveLength(1);
 		expect(sent[0]?.triggerTurn).toBe(true);
 		expect(sent[0]?.content).toBe(baseline[0]?.content);
@@ -329,12 +275,22 @@ describe("dp2 closed states (D-007 / AC-015)", () => {
 	});
 });
 
-// ── 2. narrow is the only acted action ──────────────────────────────────────
+// ── 2. the machine-side dp2 seam is RETIRED (user revision 2026-10-23) ─────
 
-describe("dp2 narrow: acted via steer request + displaySummary", () => {
-	it("writes steer-dp2.md and reports without triggerTurn", async () => {
+describe("dp2 automatic checkpoint seam (retired)", () => {
+	it("no decide seam is exported: dp2 is PM-initiated only", () => {
+		const pm = pmOrchestrator as unknown as Record<string, unknown>;
+		for (const removed of ["decideDp2Checkpoint", "buildDp2CheckpointState", "probeDp2TaskLiveness"]) {
+			expect(pm, removed).not.toHaveProperty(removed);
+		}
+		// The file-transport contract a PM-written request file still uses stays.
+		expect(pm.DP2_STEER_FILE).toBe("steer-dp2.md");
+		expect(pm.DP2_NARROW_MARKER).toBe("[mw dp2-narrow]");
+		expect(pm.DP2_STEER_REQUEST_HEADER).toBe("[dp2-narrow-request]");
+	});
+
+	it("the poll loop only wakes the PM: no decision child, no steer file", async () => {
 		const projectDir = mkProject();
-		// four checkpoints: `#ckpt4` is the trigger, the trend keeps the last 3
 		const { agenticdocRoot, taskDir } = makeTask(projectDir, {
 			checkpoints: [
 				checkpointLine(600, 4, 1),
@@ -344,96 +300,119 @@ describe("dp2 narrow: acted via steer request + displaySummary", () => {
 			],
 		});
 		await queueRunning(agenticdocRoot, taskDir);
-		const baseline = await runTicks(projectDir, fakeRunner({ answer: "narrow" }).run);
-		expect(baseline[0]?.content.startsWith(ALERT_PREFIX)).toBe(true);
 
+		// Even with a usable dp2 row and an enabled transport, the machine has no
+		// path that asks dp2 or acts on an answer.
 		writeDecideConfig(projectDir);
 		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
-		const runner = fakeRunner({ answer: "narrow" });
-		const sent = await runTicks(projectDir, runner.run);
+		const sent = await runTicks(projectDir);
 
-		const decisionId = `${DP2_CHECKPOINT_ID}:${TASK}#ckpt4`;
-		expect(runner.calls).toHaveLength(1);
 		expect(sent).toHaveLength(1);
-		expect(sent[0]?.triggerTurn).toBeUndefined();
-		expect(sent[0]?.customType).toBe("agent-team-loop:worker-summary");
-		expect(sent[0]?.content).toContain(`[mw] dp2 已自动收窄 ${TASK}`);
-		expect(sent[0]?.content).toContain(`decision_id=${decisionId}`);
-		expect(sent[0]?.content).not.toBe(baseline[0]?.content);
-
-		const steer = fs.readFileSync(path.join(taskDir, DP2_STEER_FILE), "utf8");
-		expect(steer).toContain("[dp2-narrow-request]");
-		expect(steer).toContain(`decision_id=${decisionId}`);
-		expect(steer).toContain("risk=mid");
-		expect(steer).toContain("[mw dp2-narrow]");
-
-		// T-04d: the executed narrow leaves ONE acted correlation line in the task
-		// trace; an un-executed decision (fallback / suggest / disabled) must not.
-		const actedTrace = fs
-			.readFileSync(path.join(taskDir, "trace.log"), "utf8")
-			.split("\n")
-			.filter((line) => line.startsWith("[DECISION] dp2 acted=1"));
-		expect(actedTrace).toEqual([`[DECISION] dp2 acted=1 decision_id=${decisionId} trigger=${TASK}#ckpt4`]);
-		console.log(`[VERIFY] dp2 acted trace: ${actedTrace[0]}`);
-
-		// Structured envelope: registry-owned questions (no `questions` map), dp id,
-		// the 8+4 checkpoint fields and the 3-point trend.
-		const request = runner.calls[0] as DecideRunRequest;
-		expect(request.dp).toBe(DP2_CHECKPOINT_ID);
-		const envelope = JSON.parse(request.input) as { state: Record<string, unknown>; questions?: unknown };
-		expect(envelope.questions).toBeUndefined();
-		const state = envelope.state;
-		expect(state.schema_version).toBe(2);
-		expect(state.decision_point).toBe(DP2_CHECKPOINT_ID);
-		expect(state.key).toBe(OWNER);
-		expect(state.task_key).toBeUndefined();
-		expect(state.phase).toBe("EXECUTE");
-		expect(state.task_type).toBe("coding");
-		expect(state.risk).toBe("mid");
-		expect(state.risk_source).toBe("machine");
-		expect(state.authority_tier).toBe("P2");
-		expect(state.questions_version).toBe(DP2_QUESTIONS_VERSION);
-		const progress = state.progress as Record<string, unknown>;
-		expect(progress.elapsed_minutes).toBe(35);
-		expect(progress.budget_minutes).toBe(40);
-		expect(progress.phases_done).toBe(1);
-		expect(progress.phases_total).toBe(3);
-		expect(progress.artifact_present).toBe(true);
-		expect(progress.writes).toBe(3);
-		expect(progress.uniq_targets).toBe(2);
-		expect(progress.repeat_top).toBe(5);
-		const trend = progress.trend as Array<Record<string, number>>;
-		expect(trend.map((point) => point.elapsed_minutes)).toEqual([20, 30, 35]);
-		expect(trend.map((point) => point.reads)).toEqual([9, 12, 13]);
-		// W6: the engineered context carries a one-line change summary plus the
-		// fs-stated artifact rows (expected outputs first, ≤24).
-		const context = state.context as {
-			change_summary?: string;
-			artifact_status?: Array<{ path: string; exists: boolean; bytes: number }>;
-		};
-		expect(context.change_summary).toContain("elapsed=35m/40m");
-		expect(context.change_summary).toContain("phases=1/3");
-		const artifacts = context.artifact_status ?? [];
-		expect(artifacts.length).toBeGreaterThan(0);
-		expect(artifacts.length).toBeLessThanOrEqual(24);
-		const taskMd = artifacts.find((entry) => entry.path === "task.md");
-		expect(taskMd?.exists).toBe(true);
-		expect(taskMd?.bytes).toBeGreaterThan(0);
-		expect(artifacts.find((entry) => entry.path === "output.md")?.exists).toBe(false);
-		expect(Buffer.byteLength(request.input, "utf8")).toBeLessThan(2000);
-		console.log(`[VERIFY] dp2 narrow: decision=${decisionId}, state=${Buffer.byteLength(request.input)}B`);
+		expect(sent[0]?.triggerTurn).toBe(true);
+		expect(sent[0]?.content.startsWith(ALERT_PREFIX)).toBe(true);
+		expect(fs.existsSync(path.join(taskDir, DP2_STEER_FILE))).toBe(false);
+		expect(fs.readFileSync(path.join(taskDir, "trace.log"), "utf8")).not.toContain("[DECISION] dp2 acted=1");
+		console.log(`[VERIFY] dp2 retired seam: alert=${sent[0]?.content.slice(0, 40)} steer=absent`);
 	});
 
-	it("assertStateMatchesRegistry rejects a dp2 state that drifts from the registry (W6)", () => {
-		const partial: Record<string, unknown> = {
-			schema_version: 2,
-			decision_point: DP2_CHECKPOINT_ID,
-			key: OWNER,
-		};
-		expect(() => assertStateMatchesRegistry(DP2_CHECKPOINT_ID, partial)).toThrow(/missing=phase/);
-		expect(() => assertStateMatchesRegistry(DP2_CHECKPOINT_ID, { ...partial, task_key: TASK })).toThrow(
-			/extra=task_key/,
-		);
+	it("a newer mid/high checkpoint never wakes twice (one alert per task per session)", async () => {
+		const projectDir = mkProject();
+		const { agenticdocRoot, taskDir } = makeTask(projectDir);
+		await queueRunning(agenticdocRoot, taskDir);
+		writeDecideConfig(projectDir);
+		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
+
+		const { pi, sent } = fakePi();
+		vi.useFakeTimers();
+		try {
+			const handle = startWorkerPollLoop(
+				pi,
+				new WorkerStore(agenticdocRoot),
+				new AckStore(agenticdocRoot),
+				new IndexStore(agenticdocRoot),
+				agenticdocRoot,
+				{ key: OWNER },
+				{ ctx: undefined },
+				INTERVAL_MS,
+			);
+			vi.advanceTimersByTime(INTERVAL_MS * 4);
+			expect(sent).toHaveLength(1);
+
+			fs.appendFileSync(path.join(taskDir, "trace.log"), `${checkpointLine(2400, 20, 4, "high")}\n`, "utf8");
+			vi.advanceTimersByTime(INTERVAL_MS * 6);
+			expect(sent).toHaveLength(1);
+			clearInterval(handle);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("low-risk checkpoints still never wake", async () => {
+		const projectDir = mkProject();
+		const { agenticdocRoot, taskDir } = makeTask(projectDir, { checkpoints: [checkpointLine(1800, 12, 3, "low")] });
+		await queueRunning(agenticdocRoot, taskDir);
+		writeDecideConfig(projectDir);
+		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
+
+		const sent = await runTicks(projectDir);
+		expect(sent).toHaveLength(0);
+	});
+
+	it("a worker owned by another key never wakes this window (ownership gate first)", async () => {
+		const projectDir = mkProject();
+		const { agenticdocRoot, taskDir } = makeTask(projectDir);
+		await queueRunning(agenticdocRoot, taskDir);
+		writeDecideConfig(projectDir);
+		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
+
+		const { pi, sent } = fakePi();
+		vi.useFakeTimers();
+		try {
+			const handle = startWorkerPollLoop(
+				pi,
+				new WorkerStore(agenticdocRoot),
+				new AckStore(agenticdocRoot),
+				new IndexStore(agenticdocRoot),
+				agenticdocRoot,
+				{ key: "another-key" },
+				{ ctx: undefined },
+				INTERVAL_MS,
+			);
+			vi.advanceTimersByTime(INTERVAL_MS * 4);
+			expect(sent).toHaveLength(0);
+			expect(fs.existsSync(path.join(taskDir, DP2_STEER_FILE))).toBe(false);
+			clearInterval(handle);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
+// ── 3. dp2 material contract + trend (the PM-side entry, T-03/T-08) ────────
+
+describe("dp2 material and trend", () => {
+	it("assertStateMatchesRegistry rejects a dp2 material that drifts from the registry (W6)", () => {
+		const partial: Record<string, unknown> = { task_goal: "goal" };
+		expect(() => assertStateMatchesRegistry(DP2_CHECKPOINT_ID, partial)).toThrow(/missing=/);
+		expect(() =>
+			assertStateMatchesRegistry(DP2_CHECKPOINT_ID, {
+				task_goal: "goal",
+				task_requirements: "req",
+				task_deliverables: "del",
+				pm_decision_background: "why now",
+				initiator_role: "pm",
+			}),
+		).toThrow(/extra=initiator_role/);
+		// The full registry set (worker_execution is a legal optional L1 child).
+		expect(() =>
+			assertStateMatchesRegistry(DP2_CHECKPOINT_ID, {
+				task_goal: "goal",
+				task_requirements: "req",
+				task_deliverables: "del",
+				pm_decision_background: "why now",
+				worker_execution: "done: a; remaining: b",
+			}),
+		).not.toThrow();
 	});
 
 	it("readCheckpointTrend: total count drives #ckpt<N>, only the last 3 are kept", () => {
@@ -451,200 +430,6 @@ describe("dp2 narrow: acted via steer request + displaySummary", () => {
 		expect(series.total).toBe(5);
 		expect(series.points.map((point) => point.elapsedMin)).toEqual([21, 31, 41]);
 		expect(readCheckpointTrend(path.join(projectDir, "missing")).total).toBe(0);
-	});
-});
-
-// ── 3. split / direct / escalate keep the human path ───────────────────────
-
-describe("dp2 non-narrow answers keep the original escalation path", () => {
-	for (const answer of ["split", "direct-exec", "escalate", "wait", ""]) {
-		it(`answer=${JSON.stringify(answer)} => alert byte-identical + triggerTurn`, async () => {
-			const projectDir = mkProject();
-			const { agenticdocRoot, taskDir } = makeTask(projectDir);
-			await queueRunning(agenticdocRoot, taskDir);
-			const baseline = await runTicks(projectDir, fakeRunner({ answer: "narrow" }).run);
-
-			writeDecideConfig(projectDir);
-			writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
-			const runner = fakeRunner({ answer });
-			const sent = await runTicks(projectDir, runner.run);
-
-			expect(runner.calls).toHaveLength(1);
-			expect(sent).toHaveLength(1);
-			expect(sent[0]?.triggerTurn).toBe(true);
-			expect(sent[0]?.content).toBe(baseline[0]?.content);
-			expect(fs.existsSync(path.join(taskDir, DP2_STEER_FILE))).toBe(false);
-		});
-	}
-
-	it("mode=suggest records the answer but never acts (AC-015)", async () => {
-		const projectDir = mkProject();
-		const { agenticdocRoot, taskDir } = makeTask(projectDir);
-		await queueRunning(agenticdocRoot, taskDir);
-		const baseline = await runTicks(projectDir, fakeRunner({ answer: "narrow" }).run);
-
-		writeDecideConfig(projectDir);
-		writePoints(projectDir, { tier: "P2", enabled: true, mode: "suggest" });
-		// The child echoes the effective mode; that echo — not the local row — is
-		// what the acted verdict consumes (D-036).
-		const runner = fakeRunner({ answer: "narrow", mode: "suggest" });
-		const sent = await runTicks(projectDir, runner.run);
-
-		expect(runner.calls).toHaveLength(1);
-		expect(sent[0]?.triggerTurn).toBe(true);
-		expect(sent[0]?.content).toBe(baseline[0]?.content);
-		expect(fs.existsSync(path.join(taskDir, DP2_STEER_FILE))).toBe(false);
-		// T-04d: suggest never acted, so it never claims `dp2 acted=1`.
-		expect(fs.readFileSync(path.join(taskDir, "trace.log"), "utf8")).not.toContain("[DECISION] dp2 acted=1");
-	});
-
-	it("acted follows the child's mode, not the local row (D-036)", async () => {
-		const projectDir = mkProject();
-		const { agenticdocRoot, taskDir } = makeTask(projectDir);
-		await queueRunning(agenticdocRoot, taskDir);
-		const baseline = await runTicks(projectDir, fakeRunner({ answer: "narrow" }).run);
-
-		writeDecideConfig(projectDir);
-		// The local mirror says auto (so the child is spawned), Python answers
-		// suggest: `suggest` must win — the answer is recorded, nothing is acted.
-		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
-		const runner = fakeRunner({ answer: "narrow", mode: "suggest" });
-		const sent = await runTicks(projectDir, runner.run);
-
-		expect(runner.calls).toHaveLength(1);
-		expect(sent[0]?.triggerTurn).toBe(true);
-		expect(sent[0]?.content).toBe(baseline[0]?.content);
-		expect(fs.existsSync(path.join(taskDir, DP2_STEER_FILE))).toBe(false);
-		expect(fs.readFileSync(path.join(taskDir, "trace.log"), "utf8")).not.toContain("[DECISION] dp2 acted=1");
-		console.log("[VERIFY] dp2 acted: payload.mode=suggest wins over local mode=auto");
-	});
-
-	for (const [label, options] of [
-		["unavailable", { available: false, reason: "entry-unavailable" }],
-		["child exit != 0", { status: 1 }],
-		["non-JSON stdout", { stdout: "not json at all" }],
-		["timeout", { timedOut: true }],
-		["child reports no mode", { answer: "narrow", mode: null }],
-	] as Array<[string, RunnerOptions]>) {
-		it(`degraded (${label}) => fail-closed onto the alert`, async () => {
-			const projectDir = mkProject();
-			const { agenticdocRoot, taskDir } = makeTask(projectDir);
-			await queueRunning(agenticdocRoot, taskDir);
-			const baseline = await runTicks(projectDir, fakeRunner({ answer: "narrow" }).run);
-
-			writeDecideConfig(projectDir);
-			writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
-			const runner = fakeRunner(options);
-			const sent = await runTicks(projectDir, runner.run);
-
-			expect(runner.calls).toHaveLength(1);
-			expect(sent[0]?.triggerTurn).toBe(true);
-			expect(sent[0]?.content).toBe(baseline[0]?.content);
-			expect(fs.existsSync(path.join(taskDir, DP2_STEER_FILE))).toBe(false);
-			// T-04d: a degraded path falls back to the alert and records no acted line.
-			expect(fs.readFileSync(path.join(taskDir, "trace.log"), "utf8")).not.toContain("[DECISION] dp2 acted=1");
-		});
-	}
-});
-
-// ── 4. once-per-task bound is unchanged ────────────────────────────────────
-
-describe("dp2 escalation bound", () => {
-	it("a newer mid/high checkpoint does not decide or wake twice", async () => {
-		const projectDir = mkProject();
-		const { agenticdocRoot, taskDir } = makeTask(projectDir);
-		await queueRunning(agenticdocRoot, taskDir);
-		writeDecideConfig(projectDir);
-		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
-
-		const runner = fakeRunner({ answer: "split" });
-		const { pi, sent } = fakePi();
-		vi.useFakeTimers();
-		try {
-			const handle = startWorkerPollLoop(
-				pi,
-				new WorkerStore(agenticdocRoot),
-				new AckStore(agenticdocRoot),
-				new IndexStore(agenticdocRoot),
-				agenticdocRoot,
-				{ key: OWNER },
-				{ ctx: undefined },
-				INTERVAL_MS,
-				{ projectDir, run: runner.run },
-			);
-			vi.advanceTimersByTime(INTERVAL_MS * 4);
-			expect(runner.calls).toHaveLength(1);
-			expect(sent).toHaveLength(1);
-
-			fs.appendFileSync(path.join(taskDir, "trace.log"), `${checkpointLine(2400, 20, 4, "high")}\n`, "utf8");
-			vi.advanceTimersByTime(INTERVAL_MS * 6);
-			expect(runner.calls).toHaveLength(1);
-			expect(sent).toHaveLength(1);
-			clearInterval(handle);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it("a narrow answer is delivered as one steer request, never twice", async () => {
-		const projectDir = mkProject();
-		const { agenticdocRoot, taskDir } = makeTask(projectDir);
-		await queueRunning(agenticdocRoot, taskDir);
-		writeDecideConfig(projectDir);
-		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
-
-		const runner = fakeRunner({ answer: "narrow" });
-		const sent = await runTicks(projectDir, runner.run, 8);
-		expect(runner.calls).toHaveLength(1);
-		expect(sent).toHaveLength(1);
-		expect(fs.readFileSync(path.join(taskDir, DP2_STEER_FILE), "utf8")).toContain(
-			`${DP2_CHECKPOINT_ID}:${TASK}#ckpt1`,
-		);
-	});
-
-	it("low-risk checkpoints still never reach dp2", async () => {
-		const projectDir = mkProject();
-		const { agenticdocRoot, taskDir } = makeTask(projectDir, { checkpoints: [checkpointLine(1800, 12, 3, "low")] });
-		await queueRunning(agenticdocRoot, taskDir);
-		writeDecideConfig(projectDir);
-		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
-
-		const runner = fakeRunner({ answer: "narrow" });
-		const sent = await runTicks(projectDir, runner.run);
-		expect(runner.calls).toHaveLength(0);
-		expect(sent).toHaveLength(0);
-	});
-
-	it("a worker owned by another key never reaches dp2 (ownership gate first)", async () => {
-		const projectDir = mkProject();
-		const { agenticdocRoot, taskDir } = makeTask(projectDir);
-		await queueRunning(agenticdocRoot, taskDir);
-		writeDecideConfig(projectDir);
-		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
-
-		const runner = fakeRunner({ answer: "narrow" });
-		const { pi, sent } = fakePi();
-		vi.useFakeTimers();
-		try {
-			const handle = startWorkerPollLoop(
-				pi,
-				new WorkerStore(agenticdocRoot),
-				new AckStore(agenticdocRoot),
-				new IndexStore(agenticdocRoot),
-				agenticdocRoot,
-				{ key: "another-key" },
-				{ ctx: undefined },
-				INTERVAL_MS,
-				{ projectDir, run: runner.run },
-			);
-			vi.advanceTimersByTime(INTERVAL_MS * 4);
-			expect(runner.calls).toHaveLength(0);
-			expect(sent).toHaveLength(0);
-			expect(fs.existsSync(path.join(taskDir, DP2_STEER_FILE))).toBe(false);
-			clearInterval(handle);
-		} finally {
-			vi.useRealTimers();
-		}
 	});
 });
 
@@ -871,9 +656,9 @@ describe("dp2 narrow consumer (worker side, T-07b)", () => {
 	});
 });
 
-// ── 7. PM fallback: a settled task goes back to the human (T-07b / DS-4) ────
+// ── 5. no machine-side fallback / probe / policy gate remains ───────────────
 
-describe("dp2 narrow falls back to the human alert when the task is not running", () => {
+describe("dp2 fallback, liveness and per-dp knobs (retired)", () => {
 	function writeRunJson(taskDir: string, status: string, extra: Record<string, unknown> = {}): void {
 		fs.writeFileSync(
 			path.join(taskDir, "run.json"),
@@ -888,145 +673,42 @@ describe("dp2 narrow falls back to the human alert when the task is not running"
 		);
 	}
 
-	it("run.json terminal => alert with [dp2-narrow-fallback] and no steer file", async () => {
-		const projectDir = mkProject();
-		const { agenticdocRoot, taskDir } = makeTask(projectDir);
-		await queueRunning(agenticdocRoot, taskDir);
-		writeRunJson(taskDir, "done");
-		writeDecideConfig(projectDir);
-		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
+	it("a terminal run, a live run and no run.json all produce the same single alert", async () => {
+		for (const variant of ["done", "running", "absent"] as const) {
+			const projectDir = mkProject();
+			const { agenticdocRoot, taskDir } = makeTask(projectDir);
+			await queueRunning(agenticdocRoot, taskDir);
+			if (variant !== "absent") {
+				writeRunJson(taskDir, variant, variant === "running" ? { pid: process.pid } : {});
+			}
+			writeDecideConfig(projectDir);
+			writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
 
-		const runner = fakeRunner({ answer: "narrow" });
-		const sent = await runTicks(projectDir, runner.run);
-
-		expect(runner.calls).toHaveLength(1);
-		expect(sent).toHaveLength(1);
-		expect(sent[0]?.triggerTurn).toBe(true);
-		expect(sent[0]?.content.startsWith(ALERT_PREFIX)).toBe(true);
-		expect(sent[0]?.content.endsWith(DP2_NARROW_FALLBACK_LINE)).toBe(true);
-		expect(sent[0]?.content).toContain("[dp2-narrow-fallback] task not running; escalated instead");
-		// T-04d: the fallback alert is NOT an executed narrow — no acted line.
-		expect(fs.readFileSync(path.join(taskDir, "trace.log"), "utf8")).not.toContain("[DECISION] dp2 acted=1");
-		expect(fs.existsSync(path.join(taskDir, DP2_STEER_FILE))).toBe(false);
-		console.log("[VERIFY] dp2 fallback: settled run => alert, steer=absent");
+			const sent = await runTicks(projectDir);
+			expect(sent, variant).toHaveLength(1);
+			expect(sent[0]?.triggerTurn, variant).toBe(true);
+			expect(sent[0]?.content.startsWith(ALERT_PREFIX), variant).toBe(true);
+			// No fallback marker exists any more, and no steer is invented for a
+			// live worker either.
+			expect(sent[0]?.content, variant).not.toContain("[dp2-narrow-fallback]");
+			expect(fs.existsSync(path.join(taskDir, DP2_STEER_FILE)), variant).toBe(false);
+		}
 	});
 
-	it("run.json running with a live pid => the steer is still written", async () => {
-		const projectDir = mkProject();
-		const { agenticdocRoot, taskDir } = makeTask(projectDir);
-		await queueRunning(agenticdocRoot, taskDir);
-		writeRunJson(taskDir, "running", { pid: process.pid });
-		writeDecideConfig(projectDir);
-		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
-
-		const runner = fakeRunner({ answer: "narrow" });
-		const sent = await runTicks(projectDir, runner.run);
-
-		expect(sent).toHaveLength(1);
-		expect(sent[0]?.triggerTurn).toBeUndefined();
-		expect(sent[0]?.content).toContain("[mw] dp2 已自动收窄");
-		const steer = fs.readFileSync(path.join(taskDir, DP2_STEER_FILE), "utf8");
-		expect(steer).toContain(DP2_CHECKPOINT_ID);
-		expect(steer).not.toContain(DP2_CONSUMED_MARKER);
-		// T-04d: a live worker means the narrow really executed -> acted trace.
-		expect(fs.readFileSync(path.join(taskDir, "trace.log"), "utf8")).toContain(
-			`[DECISION] dp2 acted=1 decision_id=${DP2_CHECKPOINT_ID}:${TASK}#ckpt1 trigger=${TASK}#ckpt1`,
-		);
-	});
-
-	it("dp2 disabled stays byte-identical even when the run is settled (probe never reached)", async () => {
-		const projectDir = mkProject();
-		const { agenticdocRoot, taskDir } = makeTask(projectDir);
-		await queueRunning(agenticdocRoot, taskDir);
-		writeRunJson(taskDir, "done");
-		const baseline = await runTicks(projectDir, fakeRunner({ answer: "narrow" }).run);
-
-		writeDecideConfig(projectDir);
-		writePoints(projectDir, { tier: "P2", enabled: false, mode: "auto" });
-		const runner = fakeRunner({ answer: "narrow" });
-		const sent = await runTicks(projectDir, runner.run);
-
-		expect(runner.calls).toHaveLength(0);
-		expect(sent[0]?.triggerTurn).toBe(true);
-		expect(sent[0]?.content).toBe(baseline[0]?.content);
-		expect(sent[0]?.content).not.toContain("[dp2-narrow-fallback]");
-		expect(fs.existsSync(path.join(taskDir, DP2_STEER_FILE))).toBe(false);
-	});
-
-	it("probeDp2TaskLiveness: terminal / live / dead-pid / unknown", () => {
-		const projectDir = mkProject();
-		const { taskDir } = makeTask(projectDir);
-		expect(probeDp2TaskLiveness(taskDir, "running")).toBe("running"); // no run.json: the ledger row decides
-
-		writeRunJson(taskDir, "done");
-		expect(probeDp2TaskLiveness(taskDir, "running")).toBe("settled");
-
-		writeRunJson(taskDir, "running", { pid: process.pid });
-		expect(probeDp2TaskLiveness(taskDir, "done")).toBe("running");
-
-		// an active record whose pid is gone is a stale record, not a live worker
-		writeRunJson(taskDir, "running", { pid: 2_147_483_647 });
-		expect(probeDp2TaskLiveness(taskDir, "running")).toBe("settled");
-
-		fs.writeFileSync(path.join(taskDir, "run.json"), "not json\n", "utf8");
-		expect(probeDp2TaskLiveness(taskDir, "weird-status")).toBe("unknown");
-	});
-});
-
-// ���� AC-016: per-dp policy knobs (min_confidence / max_questions / timeout_s)
-
-describe("dp2 per-dp policy knobs (AC-016)", () => {
-	it("a per-dp min_confidence above the child confidence keeps the human alert", async () => {
+	it("per-dp min_confidence / timeout_s rows do not gate anything held by the loop", async () => {
 		const projectDir = mkProject();
 		const { agenticdocRoot, taskDir } = makeTask(projectDir, {
 			checkpoints: [checkpointLine(600, 4, 1), checkpointLine(1200, 9, 2), checkpointLine(1800, 12, 3)],
 		});
 		await queueRunning(agenticdocRoot, taskDir);
 		writeDecideConfig(projectDir);
-		// The child answers `narrow` at 0.8: the built-in gate (0.7) would act,
-		// this row (0.95) must not. Python applies the same threshold before it
-		// can report `auto`, so the TS mirror stays on the human alert.
-		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto", min_confidence: 0.95 });
-		const runner = fakeRunner({ answer: "narrow", confidence: 0.8 });
-		const sent = await runTicks(projectDir, runner.run);
-
-		expect(runner.calls).toHaveLength(1);
+		// These values used to drive the retired child budget/gate. They are still
+		// legal config (the PM's own ask_decision reads them), so the loop must stay
+		// neutral: one alert, no steer, no error.
+		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto", min_confidence: 0.95, timeout_s: 45 });
+		const sent = await runTicks(projectDir);
 		expect(sent).toHaveLength(1);
-		expect(sent[0]?.content.startsWith(ALERT_PREFIX)).toBe(true);
 		expect(sent[0]?.triggerTurn).toBe(true);
 		expect(fs.existsSync(path.join(taskDir, DP2_STEER_FILE))).toBe(false);
-		const trace = fs.readFileSync(path.join(taskDir, "trace.log"), "utf8");
-		expect(trace).not.toContain("[DECISION] dp2 acted=1");
-	});
-
-	it("the same answer acts under the built-in 0.7 gate", async () => {
-		const projectDir = mkProject();
-		const { agenticdocRoot, taskDir } = makeTask(projectDir, {
-			checkpoints: [checkpointLine(600, 4, 1), checkpointLine(1200, 9, 2), checkpointLine(1800, 12, 3)],
-		});
-		await queueRunning(agenticdocRoot, taskDir);
-		writeDecideConfig(projectDir);
-		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto" });
-		const runner = fakeRunner({ answer: "narrow", confidence: 0.8 });
-		const sent = await runTicks(projectDir, runner.run);
-
-		expect(runner.calls).toHaveLength(1);
-		expect(sent).toHaveLength(1);
-		expect(sent[0]?.triggerTurn).toBeUndefined();
-		expect(fs.readFileSync(path.join(taskDir, DP2_STEER_FILE), "utf8")).toContain("[dp2-narrow-request]");
-	});
-
-	it("a per-dp timeout_s drives the child budget (300s cap respected)", async () => {
-		const projectDir = mkProject();
-		const { agenticdocRoot, taskDir } = makeTask(projectDir, {
-			checkpoints: [checkpointLine(600, 4, 1), checkpointLine(1200, 9, 2), checkpointLine(1800, 12, 3)],
-		});
-		await queueRunning(agenticdocRoot, taskDir);
-		writeDecideConfig(projectDir);
-		writePoints(projectDir, { tier: "P2", enabled: true, mode: "auto", timeout_s: 45 });
-		const runner = fakeRunner({ answer: "escalate" });
-		await runTicks(projectDir, runner.run);
-
-		expect(runner.calls[0]?.timeoutMs).toBe(45_000);
 	});
 });

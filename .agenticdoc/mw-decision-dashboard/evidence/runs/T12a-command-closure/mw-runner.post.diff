@@ -1,0 +1,17 @@
+diff --git a/packages/coding-agent/src/extensions/agent-team-loop/shared/mw-runner.ts b/packages/coding-agent/src/extensions/agent-team-loop/shared/mw-runner.ts
+index afb440b39..2fcc7f994 100644
+--- a/packages/coding-agent/src/extensions/agent-team-loop/shared/mw-runner.ts
++++ b/packages/coding-agent/src/extensions/agent-team-loop/shared/mw-runner.ts
+@@ -572,7 +572,11 @@ export function modelMw(projectDir: string, args: string[]): MwCliResult {
+ /** `mw.py decide <args...>` — decision archive / dp authority / sign-off. The
+  * window face only forwards (`/mw decide sign` adds the `--human-confirmed`
+  * exemption after its own confirm dialog); Python stays the single source of
+- * parsing, validation, verdicts and rendering. */
++ * parsing, validation, verdicts and rendering. The argv tail is verbatim: the
++ * T12a read-only faces (`dp list`, `dp show <id>`, `dp export`) and the bare
++ * `monitor` arrive here exactly as `decideForwardArgs` built them, and
++ * `--project=<control root>` is appended once so the dp table, the archive tail
++ * and the monitor identity resolve against this window's project. */
+ export function decideMw(projectDir: string, args: string[]): MwCliResult {
+ 	return runMwCli("decide", projectDir, args);
+ }

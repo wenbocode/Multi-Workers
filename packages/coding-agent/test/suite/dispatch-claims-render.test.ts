@@ -229,7 +229,7 @@ describe("claims-derived read scope (T-02 requirement 2)", () => {
 
 		const taskMd = fs.readFileSync(path.join(taskDirOf(fx.root, "c-three"), "task.md"), "utf8");
 		const sha = cardDigest(fx.cardAbsPath);
-		// Σ(manual?2:1) = 1 + 2 + 1 = 4 -> fileCap 4; byteCap = 65536 × 3.
+		// D-014: fileCap = min(callCap 30, perClaim 6 × n 3) = 18; byteCap = 65536 × 3.
 		expect(prologueOf(taskMd)).toEqual([
 			"type: coding",
 			"read_scope:",
@@ -239,7 +239,7 @@ describe("claims-derived read scope (T-02 requirement 2)", () => {
 			// review unit can read exactly the files it must falsify (`src/app.ts:1`
 			// dedupes onto the bare `src/app.ts` entry).
 			"  - src/app.ts",
-			"l2_read_file_cap: 4",
+			"l2_read_file_cap: 18",
 			"l2_read_byte_cap: 196608",
 			`card_path: tasks/${CARD_NAME}`,
 			`card_sha256: ${sha}`,
@@ -248,7 +248,7 @@ describe("claims-derived read scope (T-02 requirement 2)", () => {
 		]);
 	});
 
-	it("one claim yields fileCap 1 / byteCap 65536 (caps are cardinal, not constant)", () => {
+	it("one claim yields fileCap 6 / byteCap 65536 (caps are cardinal, not constant)", () => {
 		const fx = setupDispatch([ROW_GREP]);
 		const gate = readDispatchCard({
 			cardPath: fx.cardAbsPath,
@@ -258,7 +258,7 @@ describe("claims-derived read scope (T-02 requirement 2)", () => {
 		});
 		expect(gate.ok).toBe(true);
 		expect(gate.claims.map((claim) => claim.id)).toEqual(["C-01"]);
-		expect(gate.caps).toEqual({ fileCap: 1, byteCap: 65536 });
+		expect(gate.caps).toEqual({ fileCap: 6, byteCap: 65536 });
 		expect(gate.warnings).toEqual([]);
 	});
 
@@ -347,7 +347,7 @@ describe("advisory claims receipt (design §5 G1)", () => {
 	it("appends the [claims] line only when the card declares claims", async () => {
 		const fx = setupDispatch([ROW_GREP, ROW_MANUAL, ROW_STRUCT]);
 		const withClaims = await dispatch(fx, { task_key: "c-receipt", card_path: fx.cardRelPath, description: "work" });
-		expect(withClaims).toContain("[claims] advisory claims=3 caps=4/196608 warnings=[none]");
+		expect(withClaims).toContain("[claims] advisory claims=3 caps=18/196608 warnings=[none]");
 
 		const bare = setupDispatch([]);
 		const withoutClaims = await dispatch(bare, {
@@ -379,8 +379,20 @@ describe("advisory claims receipt (design §5 G1)", () => {
 			claims: [],
 			caps: null,
 			warnings: [],
+			claimsDeclared: false,
 		};
 		expect(claimsReceiptLine(gate)).toBe("");
+	});
+
+	it("a declared claims block that parses to nothing shouts instead of staying silent (T-07)", async () => {
+		// `C-A1` is not a claim id (`C-<2+ digits>`), so every row is unparsable.
+		// Before this guard the receipt said nothing, no read_scope was rendered and
+		// the review ran unbudgeted — the gate looked green while doing nothing.
+		const fx = setupDispatch(["| C-A1 | grep | s | f | src/app.ts | grep: x | 2 |"]);
+		const message = await dispatch(fx, { task_key: "c-unparsed", card_path: fx.cardRelPath, description: "work" });
+		expect(message).toContain("Dispatched worker 'c-unparsed'");
+		expect(message).toContain("claims=0(unparsed)");
+		expect(message).toContain(":unparsable");
 	});
 });
 
@@ -468,13 +480,13 @@ describe("/worker command path (T-02 requirement 3)", () => {
 		};
 		await handler(`pi --type coding --card _scratch/tasks/${CARD_NAME} work`, ctx);
 		const receipt = notifications.join("\n");
-		expect(receipt).toContain("[claims] advisory claims=2 caps=3/131072");
+		expect(receipt).toContain("[claims] advisory claims=2 caps=12/131072");
 		const [taskKey] = store.readAll().map((row) => row.taskKey);
 		expect(taskKey).toBeDefined();
 		const taskMd = fs.readFileSync(path.join(root, "_scratch", "workers", taskKey ?? "", "task.md"), "utf8");
 		expect(taskMd).toContain(
 			"read_scope:\n  - .agenticdoc/_scratch\n  - .agenticdoc/goal.md\n  - src/app.ts\n" +
-				"l2_read_file_cap: 3\nl2_read_byte_cap: 131072\n",
+				"l2_read_file_cap: 12\nl2_read_byte_cap: 131072\n",
 		);
 	});
 });

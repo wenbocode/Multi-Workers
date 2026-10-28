@@ -1,0 +1,188 @@
+{
+  "policy_file": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_policy.py",
+  "fixture_authority_in_memory_not_production": true,
+  "rows": [
+    {
+      "name": "pending-control",
+      "surface": "pending-review",
+      "changed_input": [
+        "key:allowed"
+      ],
+      "expected_allowed": true,
+      "allowed": true,
+      "scope": [
+        "key:allowed"
+      ],
+      "reasons": [],
+      "questions": [],
+      "verdict_ok": true
+    },
+    {
+      "name": "pending-outside-policy",
+      "surface": "pending-review",
+      "changed_input": [
+        "key:outside"
+      ],
+      "expected_allowed": false,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "review-scope-uncovered (scope): policy does not grant: key:outside"
+      ],
+      "questions": [],
+      "verdict_ok": true
+    },
+    {
+      "name": "pending-missing-scope",
+      "surface": "pending-review",
+      "changed_input": null,
+      "expected_allowed": false,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "required-scope-missing (required_scope): an explicit non-empty scope is required; an empty requirement is not a grant"
+      ],
+      "questions": [],
+      "verdict_ok": true
+    },
+    {
+      "name": "halted-control",
+      "surface": "halted-recovery",
+      "changed_input": null,
+      "expected_allowed": true,
+      "allowed": true,
+      "scope": [
+        "recovery:halted"
+      ],
+      "reasons": [],
+      "questions": [],
+      "verdict_ok": true
+    },
+    {
+      "name": "halted-unverified-guard",
+      "surface": "halted-recovery",
+      "changed_input": "self-reported-clear",
+      "expected_allowed": false,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "guard-clearance-unverified (hard_guard_cleared): guard clearance needs a machine-verified result, not a self-report"
+      ],
+      "questions": [],
+      "verdict_ok": true
+    },
+    {
+      "name": "halted-unknown-origin",
+      "surface": "halted-recovery",
+      "changed_input": "halt_origin removed",
+      "expected_allowed": false,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "halt-origin-unknown (halt_origin): None is not a recorded halt origin (technical, user-stop, revoked); an unknown stop stays in force"
+      ],
+      "questions": [
+        "which recorded halt origin applies (technical stop, user stop or revocation), and who recorded it?"
+      ],
+      "verdict_ok": true
+    },
+    {
+      "name": "halted-unrelated-authority",
+      "surface": "halted-recovery",
+      "changed_input": "other-ref",
+      "expected_allowed": false,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "recovery-authority-unrelated (note.authority_ref): the request authorization is neither the policy recovery authorization nor an explicitly recorded replacement of it"
+      ],
+      "questions": [],
+      "verdict_ok": true
+    },
+    {
+      "name": "halted-revoked-policy-ref-bypass",
+      "surface": "halted-recovery",
+      "changed_input": "rule-ref revoked + other-ref",
+      "expected_allowed": false,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "authority-revoked (rule-ref): authorization revoked",
+        "recovery-authority-unrelated (note.authority_ref): the request authorization is neither the policy recovery authorization nor an explicitly recorded replacement of it"
+      ],
+      "questions": [],
+      "verdict_ok": true
+    },
+    {
+      "name": "halted-h11-fresh-human-lift",
+      "surface": "halted-recovery",
+      "changed_input": "human-lift (recovery:user-stop)",
+      "expected_allowed": true,
+      "allowed": true,
+      "scope": [
+        "recovery:halted"
+      ],
+      "reasons": [],
+      "questions": [],
+      "verdict_ok": true
+    },
+    {
+      "name": "breaker-control",
+      "surface": "breaker-recovery",
+      "changed_input": null,
+      "expected_allowed": true,
+      "allowed": true,
+      "scope": [
+        "recovery:breaker"
+      ],
+      "reasons": [],
+      "questions": [],
+      "verdict_ok": true
+    },
+    {
+      "name": "breaker-unrelated-preauthorization",
+      "surface": "breaker-recovery",
+      "changed_input": "other-ref",
+      "expected_allowed": false,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "recovery-authority-unrelated (preauthorization_ref): the preauthorization is neither the policy recovery authorization nor an explicitly recorded replacement of it"
+      ],
+      "questions": [],
+      "verdict_ok": true
+    },
+    {
+      "name": "breaker-unknown-disable",
+      "surface": "breaker-recovery",
+      "changed_input": "user_disabled removed",
+      "expected_allowed": false,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "breaker-disable-unknown (user_disabled): None is not a recorded user state; the brake stays engaged"
+      ],
+      "questions": [
+        "which recorded user state (automation enabled / disabled by the user) applies before this recovery?"
+      ],
+      "verdict_ok": true
+    },
+    {
+      "name": "breaker-revoked-policy-ref-bypass",
+      "surface": "breaker-recovery",
+      "changed_input": "rule-ref revoked + other-ref",
+      "expected_allowed": false,
+      "allowed": false,
+      "scope": [],
+      "reasons": [
+        "authority-revoked (rule-ref): authorization revoked",
+        "recovery-authority-unrelated (preauthorization_ref): the preauthorization is neither the policy recovery authorization nor an explicitly recorded replacement of it"
+      ],
+      "questions": [],
+      "verdict_ok": true
+    }
+  ],
+  "failed_expectations": [],
+  "failclosed_bypasses": 0,
+  "legal_controls_granted": 4
+}

@@ -1,0 +1,72 @@
+<svg viewBox="0 0 680 660" width="680" height="660" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>MW、Autopilot、AgenticTask 的依赖关系与共同目标</title>
+<desc>共同目标：Agent 团队少人值守，把项目可靠推进到可验收的完成；AgenticTask 贡献做对，MW 贡献做多，Autopilot 贡献做久。Autopilot 依赖 MW 执行并直接依赖 AgenticTask 的 advance_phase，MW 依赖 AgenticTask 的流程语义；三层共用 .agenticdoc 文件即状态底座。</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+<style>
+text{font-family:"Microsoft YaHei","Segoe UI",sans-serif}
+.th{font-size:14px;font-weight:500}
+.tt{font-size:12px;font-weight:500}
+.ts{font-size:12px;font-weight:400}
+</style>
+</defs>
+<rect x="0" y="0" width="680" height="660" fill="#FFFFFF"/>
+
+<rect x="40" y="40" width="600" height="100" rx="12" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text class="tt" x="60" y="62" fill="#854F0B">共同目标</text>
+<text class="th" x="60" y="86" fill="#412402">Agent 团队少人值守，把项目可靠推进到可验收的完成</text>
+<rect x="60" y="104" width="176" height="24" rx="12" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text class="ts" x="148" y="116" text-anchor="middle" dominant-baseline="central" fill="#085041">做对 · 可追溯、有证据</text>
+<rect x="252" y="104" width="176" height="24" rx="12" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text class="ts" x="340" y="116" text-anchor="middle" dominant-baseline="central" fill="#3C3489">做多 · 并行、隔离</text>
+<rect x="444" y="104" width="176" height="24" rx="12" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text class="ts" x="532" y="116" text-anchor="middle" dominant-baseline="central" fill="#0C447C">做久 · 持续推进、少人盯</text>
+
+<rect x="60" y="172" width="360" height="80" rx="10" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text class="th" x="80" y="196" fill="#0C447C">Autopilot · 编排层</text>
+<text class="ts" x="80" y="218" fill="#185FA5">按 roadmap 依赖前沿，自动推进多个 key</text>
+<text class="ts" x="80" y="238" fill="#378ADD">可选：关闭即退回人工派发</text>
+<rect x="326" y="183" width="82" height="20" rx="10" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/>
+<text class="ts" x="367" y="193" text-anchor="middle" dominant-baseline="central" fill="#0C447C">贡献：做久</text>
+
+<line x1="240" y1="252" x2="240" y2="313" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text class="tt" x="252" y="276" fill="#444441">依赖：MW 的派发与执行</text>
+<text class="ts" x="252" y="294" fill="#5F5E5A">conductor 运行在 mw serve 内</text>
+
+<rect x="60" y="316" width="360" height="80" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text class="th" x="80" y="340" fill="#3C3489">MW · 协作层</text>
+<text class="ts" x="80" y="362" fill="#534AB7">PM 派发任务卡，独立 Worker 进程并行执行</text>
+<text class="ts" x="80" y="382" fill="#7F77DD">可单独用：PM 手工认领 key 并派发</text>
+<rect x="326" y="327" width="82" height="20" rx="10" fill="#FFFFFF" stroke="#534AB7" stroke-width="0.5"/>
+<text class="ts" x="367" y="337" text-anchor="middle" dominant-baseline="central" fill="#3C3489">贡献：做多</text>
+
+<line x1="240" y1="396" x2="240" y2="457" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text class="tt" x="252" y="420" fill="#444441">依赖：AgenticTask 的流程语义</text>
+<text class="ts" x="252" y="438" fill="#5F5E5A">key · phase · 目录约定 · 实现门禁</text>
+
+<rect x="60" y="460" width="360" height="80" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text class="th" x="80" y="484" fill="#085041">AgenticTask · 流程层</text>
+<text class="ts" x="80" y="506" fill="#0F6E56">单个 key 走 spec → design → plan → tasks → evidence</text>
+<text class="ts" x="80" y="526" fill="#1D9E75">可单独用：单 Agent 也按 key 工作</text>
+<rect x="326" y="471" width="82" height="20" rx="10" fill="#FFFFFF" stroke="#0F6E56" stroke-width="0.5"/>
+<text class="ts" x="367" y="481" text-anchor="middle" dominant-baseline="central" fill="#085041">贡献：做对</text>
+
+<path d="M420 212 H468 V500 H423" fill="none" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text class="tt" x="480" y="340" fill="#444441">直接依赖 AgenticTask</text>
+<text class="ts" x="480" y="360" fill="#5F5E5A">advance_phase 唯一推进通道</text>
+<text class="ts" x="480" y="380" fill="#5F5E5A">缺框架则 conductor 拒绝启动</text>
+
+<path d="M60 212 H48 V568" fill="none" stroke="#888780" stroke-width="1" stroke-dasharray="4 3"/>
+<line x1="48" y1="356" x2="60" y2="356" stroke="#888780" stroke-width="1" stroke-dasharray="4 3"/>
+<line x1="48" y1="500" x2="60" y2="500" stroke="#888780" stroke-width="1" stroke-dasharray="4 3"/>
+
+<rect x="40" y="568" width="600" height="40" rx="10" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text class="ts" x="340" y="588" text-anchor="middle" dominant-baseline="central" fill="#2C2C2A">共同底座：.agenticdoc/ 文件即状态 —— 三层只通过文件 + 文件锁交换状态</text>
+
+<line x1="60" y1="634" x2="96" y2="634" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text class="ts" x="104" y="634" dominant-baseline="central" fill="#5F5E5A">A → B：A 依赖 B</text>
+<line x1="260" y1="634" x2="296" y2="634" stroke="#888780" stroke-width="1" stroke-dasharray="4 3"/>
+<text class="ts" x="304" y="634" dominant-baseline="central" fill="#5F5E5A">读写共同底座</text>
+</svg>

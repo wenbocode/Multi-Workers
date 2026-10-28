@@ -1,0 +1,38 @@
+### cwd: /h/git/Multi-Workers
+### repo .mw monitor state files (expect none):
+### LISTENING sockets on ports 43170..43269 (expect none):
+### TIME_WAIT sockets on those ports (leftovers of other workers' T10\ntests; this slice opens no socket and asserts no monitor state):
+count=179
+### packaged registry sha256 (test asserts it is byte-identical before/after dp export):
+7d075e01ff5f6ac366e769b8fdbb37a0839ea6a56e906965c728f1d6391a531b *packages/multi-workers/decide_registry.json
+### files changed by this worker (allowed faces only):
+ M packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
+ M packages/coding-agent/src/extensions/agent-team-loop/shared/mw-runner.ts
+?? .agenticdoc/mw-decision-dashboard/evidence/runs/T12a-baseline/
+?? .agenticdoc/mw-decision-dashboard/evidence/runs/T12a-command-closure/
+?? packages/coding-agent/test/suite/decision-dashboard-command.test.ts
+### evidence file list:
+check-biome-changed.txt
+check-biome-repo.txt
+check-browser-smoke.txt
+check-install-lock.txt
+check-pinned-deps.txt
+check-shrinkwrap.txt
+check-source-sha256.txt
+check-source-sha256-after.txt
+check-tsgo.txt
+check-ts-imports.txt
+green-vitest.txt
+green-vitest-1.txt
+green-vitest-final.txt
+green-vitest-final2.txt
+isolation-check.txt
+mw-runner.post.diff
+neighbour-decide-command.txt
+neighbour-decide-command-final.txt
+neighbour-decide-command-final2.txt
+preexisting-diff-compare.txt
+red-vitest.txt
+ui-bridge.post.diff
+ui-bridge.post-U3.diff
+### done

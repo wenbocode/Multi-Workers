@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "task_key": "dpc-t10-r2-product-repair",
+  "run_id": "dpc-t10-r2-product-repair@2026-10-28T06:51:39.278Z",
+  "owner_key": "mw-dp-consolidation",
+  "kind": "coding",
+  "status": "running",
+  "started_at": "2026-10-28T06:51:39.278Z",
+  "artifacts": [],
+  "pid": 20580,
+  "last_heartbeat_at": "2026-10-28T06:52:09.289Z"
+}

@@ -1,0 +1,78 @@
+FF.                                                                      [100%]
+================================== FAILURES ===================================
+____________ test_record_key_is_validated_before_any_path_is_built ____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18358/test_record_key_is_validated_b0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002C419744FC0>
+
+    def test_record_key_is_validated_before_any_path_is_built(tmp_path, monkeypatch):
+        root = _root(tmp_path)
+        victim = root / "victim" / "evidence" / "review"
+        victim.mkdir(parents=True)
+        (victim / "sign-final.md").write_text(
+            f"conclusion: continue\nkey: victim\nsigned_via: cli\nclaim: {SECRET}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        decision_id = _add_decision(root, key="../victim", trigger="t1")
+        # An empty key is "not recorded" (nothing to join), not a traversal attempt.
+        empty_key = _add_decision(root, key="", trigger="t2")
+        reads = _read_spy(monkeypatch)
+    
+        snapshot = _snapshot(root, redact=REDACTOR)
+        record = _by_decision(snapshot)[decision_id]
+    
+        assert SECRET not in _all_payloads(snapshot)
+        assert str(victim / "sign-final.md") not in reads
+        assert record.key is None, "a traversal-shaped key is not a key"
+        assert _by_decision(snapshot)[empty_key].key is None
+        assert record.stages["signoff"].state == "not-recorded"
+>       assert snapshot.stats.invalid_keys == 1, "only the traversal-shaped key is invalid"
+E       AssertionError: only the traversal-shaped key is invalid
+E       assert 0 == 1
+E        +  where 0 = HistoryStats(archive_rows=2, archive_damaged=0, chain_breaks=0, seq_breaks=0, wire_events=0, lifecycle_events=0, wire_...cords=0, misplaced_test_rows=0, gates_recorded=0, gates_keyless=0, gates_unreadable=0, invalid_keys=0, blocked_reads=0).invalid_keys
+E        +    where HistoryStats(archive_rows=2, archive_damaged=0, chain_breaks=0, seq_breaks=0, wire_events=0, lifecycle_events=0, wire_...cords=0, misplaced_test_rows=0, gates_recorded=0, gates_keyless=0, gates_unreadable=0, invalid_keys=0, blocked_reads=0) = HistorySnapshot(control_root=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18358/test_...nings=('structural-fields-invalid: 2 structural carrier field(s) failed validation and are reported as not recorded',)).stats
+
+test_decision_history.py:1305: AssertionError
+___________ test_out_of_root_signoff_symlink_is_refused_before_read ___________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18358/test_out_of_root_signoff_symli0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002C419744180>
+
+    def test_out_of_root_signoff_symlink_is_refused_before_read(tmp_path, monkeypatch):
+        root = _root(tmp_path)
+        decision_id = _add_decision(root, key="mw-alpha", trigger="t1")
+        outside = tmp_path / "outside-sign-final.md"
+        outside.write_text(
+            f"conclusion: continue\nkey: mw-alpha\nsigned_via: cli\nclaim: {SECRET}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        link = decide_signoff.signoff_path(root, "mw-alpha")
+        link.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            link.symlink_to(outside)
+        except (OSError, NotImplementedError) as exc:  # pragma: no cover - platform
+            pytest.skip(f"symlink unavailable: {type(exc).__name__}")
+        reads = _read_spy(monkeypatch)
+    
+        snapshot = _snapshot(root, redact=REDACTOR)
+        record = _by_decision(snapshot)[decision_id]
+    
+        assert str(outside) not in reads, "an out-of-root link must not be read"
+        assert SECRET not in _all_payloads(snapshot)
+>       assert record.signoff is None
+E       AssertionError: assert {'claim': '<redacted>', 'conclusion': 'continue', 'counted_rows': None, 'decide_fallback': None, ...} is None
+E        +  where {'claim': '<redacted>', 'conclusion': 'continue', 'counted_rows': None, 'decide_fallback': None, ...} = HistoryRecord(opaque_id='h-50d1e04d32d04af9c186', identity='decision|dp1-dispatch-type:t1', record_kind='decision', sc...ds=0, fields=('signoff.claim',), basis=('injected known-secret redactor (decision.credential_redactor) before clip',))).signoff
+
+test_decision_history.py:1331: AssertionError
+============================== warnings summary ===============================
+C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\cacheprovider.py:475
+  C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\cacheprovider.py:475: PytestCacheWarning: could not create cache path H:\git\Multi-Workers\.agenticdoc\mw-decision-dashboard\evidence\runs\T07b-history-fixes\mutant-p1-2-key-as-path\.pytest_cache\v\cache\nodeids: [WinError 5] ¾Ü¾ø·ÃÎÊ¡£: 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-decision-dashboard\\evidence\\runs\\T07b-history-fixes\\mutant-p1-2-key-as-path\\pytest-cache-files-2phh2ee0' -> 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-decision-dashboard\\evidence\\runs\\T07b-history-fixes\\mutant-p1-2-key-as-path\\.pytest_cache'
+    config.cache.set("cache/nodeids", sorted(self.cached_nodeids))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED test_decision_history.py::test_record_key_is_validated_before_any_path_is_built
+FAILED test_decision_history.py::test_out_of_root_signoff_symlink_is_refused_before_read
+2 failed, 1 passed, 1 warning in 0.28s

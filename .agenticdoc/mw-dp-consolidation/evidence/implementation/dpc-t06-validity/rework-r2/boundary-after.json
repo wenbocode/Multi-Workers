@@ -1,0 +1,238 @@
+{
+  "observed_at": "2026-10-26T15:55:59.134616+00:00",
+  "module_file": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_validity.py",
+  "module_sha256": "cf01bbe2aa15b1794cd5868c49897f7b4616e8f17ab11dbbb92cc6b145ef5d51",
+  "before_record": "t06-pm-handoff-20261026/supplement.json (read-only, not re-executed)",
+  "boundary_checks": [
+    {
+      "name": "signoff-continue",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "not_a_required_signoff",
+            "field": "choice",
+            "detail": "continue"
+          }
+        ],
+        "writes_signoff": false,
+        "widens_scope": false
+      },
+      "expected": "not valid as required successful signoff",
+      "boundary_satisfied": true
+    },
+    {
+      "name": "signoff-user-confirm",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "not_a_required_signoff",
+            "field": "choice",
+            "detail": "user-confirm"
+          }
+        ],
+        "writes_signoff": false,
+        "widens_scope": false
+      },
+      "expected": "not valid as required successful signoff",
+      "boundary_satisfied": true
+    },
+    {
+      "name": "signoff-wrong-key",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "signoff_key_mismatch",
+            "field": "key",
+            "detail": "other-key"
+          }
+        ],
+        "writes_signoff": false,
+        "widens_scope": false
+      },
+      "expected": "not valid as bound signoff reference",
+      "boundary_satisfied": true
+    },
+    {
+      "name": "signoff-missing-ref",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "missing_signoff_reference",
+            "field": "signoff_ref",
+            "detail": ""
+          }
+        ],
+        "writes_signoff": false,
+        "widens_scope": false
+      },
+      "expected": "not valid as bound signoff reference",
+      "boundary_satisfied": true
+    },
+    {
+      "name": "evidence-contract-change",
+      "actual": {
+        "status": "stale",
+        "reasons": [
+          {
+            "code": "contract_version_changed",
+            "field": "contract_version",
+            "detail": "v2"
+          }
+        ],
+        "stale_dependencies": [],
+        "unaffected_changes": [],
+        "reusable": false
+      },
+      "expected": "not reusable without current-contract applicability proof",
+      "boundary_satisfied": true
+    },
+    {
+      "name": "claim-mixed-traversal",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "parent_traversal",
+            "field": "files",
+            "detail": "../outside.py"
+          },
+          {
+            "code": "invalid_claim_request",
+            "field": "files",
+            "detail": "requested write face is not a legal path set"
+          }
+        ],
+        "conflicts": [],
+        "conflicting_owners": [],
+        "takeover": false,
+        "lock_mode": "exclusive",
+        "decision_grants_claim": false,
+        "dispatched": false
+      },
+      "expected": "invalid requested path blocks the full requested write face",
+      "boundary_satisfied": true
+    },
+    {
+      "name": "claim-other-task-same-owner",
+      "actual": {
+        "status": "conflict",
+        "reasons": [
+          {
+            "code": "own_claim_on_other_task",
+            "field": "files",
+            "detail": "safe.py"
+          }
+        ],
+        "conflicts": [
+          "safe.py"
+        ],
+        "conflicting_owners": [
+          "worker-1"
+        ],
+        "takeover": false,
+        "lock_mode": "exclusive",
+        "decision_grants_claim": false,
+        "dispatched": false
+      },
+      "expected": "task-specific overlapping active claim is not clear",
+      "boundary_satisfied": true
+    },
+    {
+      "name": "effect-unrecognized",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "effect_state_unrecognised",
+            "field": "effect",
+            "detail": "'unrecorded'"
+          }
+        ],
+        "actions": [],
+        "duplicate_actions": [],
+        "blocked": [
+          "act"
+        ]
+      },
+      "expected": "unknown stored effect status does not permit blind retry",
+      "boundary_satisfied": true
+    },
+    {
+      "name": "effect-missing",
+      "actual": {
+        "status": "blocked",
+        "reasons": [
+          {
+            "code": "effect_state_unrecognised",
+            "field": "effect",
+            "detail": "None"
+          }
+        ],
+        "actions": [],
+        "duplicate_actions": [],
+        "blocked": [
+          "act"
+        ]
+      },
+      "expected": "unknown stored effect status does not permit blind retry",
+      "boundary_satisfied": true
+    }
+  ],
+  "boundary_failures": 0,
+  "positive_controls": [
+    {
+      "name": "signoff-finalize-valid",
+      "passed": true,
+      "detail": "status=valid reasons=()"
+    },
+    {
+      "name": "evidence-same-contract-reusable",
+      "passed": true,
+      "detail": "status=applies reusable=True"
+    },
+    {
+      "name": "evidence-byte-only-reusable",
+      "passed": true,
+      "detail": "same semantics, different byte hash"
+    },
+    {
+      "name": "claim-same-task-reentry-clear",
+      "passed": true,
+      "detail": "status=clear"
+    },
+    {
+      "name": "effect-no-record-proceed",
+      "passed": true,
+      "detail": "status=proceed"
+    },
+    {
+      "name": "effect-failed-retry-proceed",
+      "passed": true,
+      "detail": "status=proceed"
+    },
+    {
+      "name": "effect-applied-deduped",
+      "passed": true,
+      "detail": "status=already-applied duplicate=('act',)"
+    },
+    {
+      "name": "effect-unknown-blocked",
+      "passed": true,
+      "detail": "status=blocked"
+    },
+    {
+      "name": "effect-in-progress-blocked",
+      "passed": true,
+      "detail": "status=blocked"
+    }
+  ],
+  "positive_control_failures": 0,
+  "pyc_count": 14,
+  "pyc_hashes_equal_pm_record": true,
+  "fixture_references_not_real_authority_or_artifact_proof": true,
+  "no_cli_network_provider_or_live_object": true
+}

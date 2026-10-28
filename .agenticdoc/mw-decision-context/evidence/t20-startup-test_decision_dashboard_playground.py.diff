@@ -1,0 +1,43 @@
+--- t20-startup-baseline/test_decision_dashboard_playground.py
++++ test_decision_dashboard_playground.py
+@@ -2,9 +2,9 @@
+ 
+ One joint HTTP + DOM suite for the delivered DP-test flow:
+ 
+-* the monitor's *default* dependency wiring lazily creates exactly one
+-  ``DecisionPlayground`` per control root (no import-time work, no credential
+-  discovery, no provider created by opening the page or reading history);
++* the monitor's *default* command startup freezes one response-redactor
++  snapshot; ``DecisionPlayground`` stays lazy per control root (no import-time
++  discovery, no credential reload or provider creation from history reads);
+ * ``/api/dps`` exposes all 25 registered DPs with their typed required/optional
+   contracts, the book budget and the observe-only contract;
+ * scaffold and validate make zero HTTP requests to the model endpoint; validate
+@@ -44,6 +44,7 @@
+ import json
+ import os
+ import pathlib
++import socket
+ import subprocess
+ import threading
+ 
+@@ -419,12 +420,16 @@
+     fixture = _FixtureServer().start()
+     try:
+         project = _make_project(tmp_path, base_url=fixture.url)
+-        instance = decision_monitor.ensure_instance(project)
++        with socket.socket() as port_source:
++            port_source.bind((HOST, 0))
++            port = port_source.getsockname()[1]
++        instance = decision_monitor.ensure_instance(project, port_range=(port, port))
+         try:
+             assert instance.deps.playground is None
+             assert instance.deps.playground_factory is not None
+-            assert instance.deps.redactor is None
+-            assert instance.deps.redactor_factory is not None
++            assert instance.deps.redactor is not None
++            assert instance.deps.redactor_factory is None
++            assert len(_discoveries()) == 1, "one startup snapshot, before any GET"
+             token = _page_token(instance)
+             status, payload = _get(instance, "/api/dps", token)
+             assert status == 200

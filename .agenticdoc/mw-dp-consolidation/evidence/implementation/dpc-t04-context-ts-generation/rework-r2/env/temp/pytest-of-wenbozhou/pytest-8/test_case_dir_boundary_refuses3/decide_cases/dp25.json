@@ -1,0 +1,58 @@
+{
+  "book": {
+    "decision_point": "dp25-signoff-conclusion",
+    "notes": {
+      "evidence": {
+        "actual_completion": "packages/multi-workers/scripts/build_decide_cases.py:178",
+        "delivery_goal": "packages/multi-workers/scripts/build_decide_cases.py:174",
+        "unfinished_impact": "packages/multi-workers/scripts/build_decide_cases.py:193",
+        "verification_evidence.unverified": "packages/multi-workers/scripts/build_decide_cases.py:187",
+        "verification_evidence.verified": "packages/multi-workers/scripts/build_decide_cases.py:183"
+      }
+    },
+    "schema_version": 2,
+    "state": {
+      "actual_completion": "已完成五列表、四状态渲染、DAG 与日志弹窗、离线 case 选择与本地校验；测试记录保持独立 scope=test，观察提交未执行任何业务动作。",
+      "decision_point": "dp25-signoff-conclusion",
+      "delivery_goal": "AC-011~016 在工作台可用：四状态主表、十节点 DAG、旧记录无 DAG、重试精确关联。",
+      "questions_version": "q-134a64cd",
+      "schema_version": 2,
+      "unfinished_impact": [
+        "facets 下拉与 workbench 正文依赖 T06 投影；未接线前只显示未记录。",
+        "真实浏览器与真实 Jev 验收未执行，不得据此声称整条链路已验。"
+      ],
+      "verification_evidence": {
+        "unverified": [
+          "真实浏览器窗口可见性",
+          "真实 Jev 选择质量",
+          "编辑正文经真实 loopback 发送的断言（待 T01 契约）"
+        ],
+        "verified": [
+          "test_decision_context_workbench.py 的四状态与 DAG DOM 用例",
+          "离线 case 生成器漂移守卫（生成物逐字节一致）"
+        ]
+      }
+    }
+  },
+  "case_version": 1,
+  "dp": "dp25-signoff-conclusion",
+  "note": "合成 case：按交付目标、实际完成、已验与未验、未完成影响四段整理，用于观察 dp25 的收尾判断；不以任务数代替证据。",
+  "questions": {
+    "q-conclusion": {
+      "choices": [
+        "finalize",
+        "continue",
+        "user-confirm"
+      ],
+      "id": "q-conclusion",
+      "instructions": "按交付目标、实际完成与验证证据判断：这次交付可以收尾，还是需要继续完成，或交用户确认？不以任务数量或完成声明代替证据。",
+      "labels": {
+        "continue": "继续完成：交 PM 推进未完成的缺口",
+        "finalize": "可以收尾：按交付目标与验收条件直接签收",
+        "user-confirm": "交用户确认：由 PM 提出具体待确认项"
+      },
+      "type": "choice"
+    }
+  },
+  "title": "AC-011~016 工作台收尾签收判断"
+}

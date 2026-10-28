@@ -1,0 +1,344 @@
+--- before-r2/packages/multi-workers/decision_points.py
++++ after-r2/packages/multi-workers/decision_points.py
+@@ -4251,7 +4251,26 @@
+         issues.append(("preparation", f"unknown preparation keys {unknown}"))
+     prepared_at = preparation.get("prepared_at")
+     if not isinstance(prepared_at, str) or not prepared_at.strip():
+-        issues.append(("prepared_at", "must be a non-empty ISO timestamp"))
++        issues.append(
++            ("prepared_at", "must be a non-empty ISO-8601 timestamp with an explicit offset")
++        )
++    else:
++        # Same timestamp contract as the package's task-state observations:
++        # ISO-8601, parsed with ``fromisoformat`` and carrying an explicit offset.
++        try:
++            parsed = datetime.datetime.fromisoformat(
++                prepared_at[:-1] + "+00:00" if prepared_at.endswith("Z") else prepared_at
++            )
++        except ValueError:
++            issues.append(("prepared_at", "is not an ISO-8601 timestamp"))
++        else:
++            if parsed.tzinfo is None or "T" not in prepared_at:
++                issues.append(
++                    (
++                        "prepared_at",
++                        "must be an ISO-8601 timestamp with an explicit offset (Z or +hh:mm)",
++                    )
++                )
+     issues.extend(basis_catalog_issues(dp_id, preparation.get("basis_catalog"), material))
+     if basis_id is not None:
+         issues.extend(
+@@ -4275,12 +4294,15 @@
+ 
+     Order follows the runtime contract: a retired/unknown id raises first (no
+     model call), then the real role, then the complete material, then the
+-    prepared basis, then the answer. Nothing here executes, releases or signs.
++    prepared basis, then the answer. The role is the request's eligibility input
++    (design.md:241 ``bound_actor``), so an omitted/unknown/cross-role value is
++    refused exactly like a wrong one; a self-reported role is still not evidence
++    of authorization. Nothing here executes, releases or signs, and the gate
++    does not demand the model's same-call choice/basis before that call happens.
+     """
+     require_active_dp(dp_id)
+     issues: list[tuple[str, str]] = []
+-    if actor_role is not None:
+-        issues.extend(role_issues(dp_id, actor_role))
++    issues.extend(role_issues(dp_id, actor_role))
+     issues.extend(entry_material_issues(dp_id, material))
+     issues.extend(
+         preparation_issues(dp_id, preparation, material, choice=choice, basis_id=basis_id)
+--- before-r2/packages/multi-workers/test_decide_registry_contract.py
++++ after-r2/packages/multi-workers/test_decide_registry_contract.py
+@@ -11,16 +11,18 @@
+    a legal JSON type and a non-empty description;
+ 3. every exported point carries its protocol identity (``kind`` /
+    ``role_scope`` / ``candidate_source`` / ``candidate_bounds`` /
+-   ``target_entries``) plus the four wiring keys, and no point claims a call site
+-   it does not have (all eight are unwired until T04/T11 land);
++   ``target_entries``) plus the four wiring keys, and a wiring claim is backed
++   by the call site it cites (the eight entries are unwired until T04/T11 land);
+ 4. the snapshot has no parallel top-level ``wiring`` section and
+    ``schema == 4``;
+ 5. every point has a non-empty question set whose frozen enum comes from the one
+    Python table (``ENTRY_CHOICES`` / ``ROUTE_TARGETS``);
+-6. the cross-layer debt is explicit: ``triage-client.ts`` keeps exactly its four
+-   legacy rows for ids that are *not* active, and the generated TS registry is
+-   still the pre-T03 artifact, whose regeneration is T04's write. A one-sided
+-   rename must turn red here, and no test claims the generated parity T04 owes.
++6. the cross-layer debt is explicit and stage-aware: ``triage-client.ts`` keeps
++   the documented legacy rows for retired ids only (plus, after T04, rows of the
++   active entries), and the generated TS registry is asserted to be *either* the
++   frozen pre-T03 artifact *or* the eight-entry projection T04 regenerates. A
++   one-sided rename must turn red here, and no test claims the field-level
++   parity T04 owes.
+ 
+ Hermetic: read-only, no network, no ``.mw`` writes.
+ """
+@@ -327,11 +329,31 @@
+         assert point["adopted_at"] is None, f"{dp_point.id}: an unwired dp must not claim a call site"
+ 
+ 
+-def test_all_eight_entries_are_unwired_until_the_caller_cards_land() -> None:
+-    """T03 is protocol only: no TS/CLI call site is claimed for the new entries."""
++def test_wiring_claims_are_backed_by_the_call_site_they_cite() -> None:
++    """T03 is protocol only, but the invariant is not "always unwired".
++
++    T04/T11 own the wiring: forcing all eight to stay ``wired: false`` here would
++    make every later caller card edit this test outside its own write face. The
++    real contract is that a claim is backed: an unwired entry must not claim a
++    trigger/adoption location, and a wired entry must cite a repo file that really
++    names the entry (so a wired flag is never a placeholder).
++    """
+     points = _points()
+     assert [point["id"] for point in points] == list(TARGET_EIGHT)
+-    assert all(point["wired"] is False for point in points)
++    for point in points:
++        if not point["wired"]:
++            assert point["trigger"] is None, point["id"]
++            assert point["adopted_at"] is None, point["id"]
++            continue
++        relative, line = _split_location(point["trigger"])
++        target = (REPO_ROOT / relative).resolve()
++        assert target.is_file(), f"{point['id']}: missing wired file {relative}"
++        text = target.read_text(encoding="utf-8", errors="replace")
++        assert point["id"] in text, (
++            f"{point['id']}: wiring cites {relative}:{line} but that file never "
++            "names the entry"
++        )
++        assert isinstance(point["adopted_at"], str) and point["adopted_at"].strip()
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -429,35 +451,107 @@
+     return universal, by_dp
+ 
+ 
+-def test_legacy_ts_required_rows_are_unchanged_debt() -> None:
++def _generated_ts_entry_ids() -> tuple[str, ...]:
++    """Ids declared as top-level keys of ``DECIDE_REGISTRY`` (one tab deep)."""
++    text = GENERATED_TS.read_text(encoding="utf-8")
++    return tuple(re.findall(r'^\t"([^"]+)": \{', text, re.M))
++
++
++def _generated_ts_stage() -> str:
++    """Which registry generation the checked-in TS module represents.
++
++    ``pre-t04``: the frozen pre-T03 artifact (the 25 retired ids).
++    ``post-t04``: the eight-entry projection T04 regenerates.
++    Anything else (a partial/one-sided rename) is a hard failure. The stage is
++    derived from the artifact, never hand-flipped, so the card that regenerates
++    the module does not have to edit this test to unblock itself.
++    """
++    ids = _generated_ts_entry_ids()
++    assert len(ids) == len(set(ids)), f"duplicate entry ids in the generated TS: {ids}"
++    if set(ids) == set(dpts.RETIRED_DP_IDS):
++        return "pre-t04"
++    assert set(ids) == set(TARGET_EIGHT), (
++        "the generated TS registry is neither the frozen pre-T03 artifact nor the "
++        f"eight-entry projection: {sorted(ids)}"
++    )
++    return "post-t04"
++
++
++def test_ts_required_rows_follow_the_registry_stage() -> None:
++    """The required_if matrix may only move together with the registry stage.
++
++    Retired ids keep exactly the four documented legacy rows (read-only history);
++    unknown ids never appear; and an *active* entry may only own a row once the
++    generated TS was regenerated for the eight entries (post-T04). Before that,
++    such a row means the pair was edited one-sidedly by hand.
++    """
+     _universal, by_dp = _ts_required_fields()
+-    assert by_dp == LEGACY_TS_ROWS, (
+-        "the legacy required_if matrix changed; only retired ids may keep a row: "
+-        f"{sorted(set(by_dp) - set(LEGACY_TS_ROWS))}"
++    stage = _generated_ts_stage()
++    known = set(dpts.ACTIVE_DP_IDS) | set(dpts.RETIRED_DP_IDS)
++    assert set(by_dp) <= known, (
++        f"unknown ids in REQUIRED_FIELDS_BY_DP: {sorted(set(by_dp) - known)}"
+     )
+-    for entry_id in dpts.ACTIVE_DP_IDS:
+-        assert entry_id not in by_dp, f"{entry_id}: an active entry grew a legacy TS row"
+-
+-
+-def test_generated_ts_regeneration_belongs_to_t04() -> None:
+-    """The byte-locked generated registry is still the pre-T03 artifact.
+-
+-    T04 owns ``gen_decide_registry_ts.py`` + ``decide-registry.generated.ts``;
+-    T03 must not hand-edit or pre-generate it. This assertion is a debt marker:
+-    it fails as soon as someone silently renames one side without the other, and
+-    it will be replaced by the real parity check in T04.
++    retired_rows = {key: row for key, row in by_dp.items() if dpts.is_retired_dp(key)}
++    assert retired_rows == LEGACY_TS_ROWS, (
++        "the documented legacy rows of retired ids changed; only those retired ids "
++        f"may keep a row: {sorted(set(retired_rows) - set(LEGACY_TS_ROWS))}"
++    )
++    for entry_id, fields in by_dp.items():
++        assert fields and all(isinstance(name, str) and name.strip() for name in fields), (
++            f"{entry_id}: empty or non-string required field name"
++        )
++    active_rows = sorted(set(by_dp) & set(dpts.ACTIVE_DP_IDS))
++    if stage == "pre-t04":
++        assert active_rows == [], (
++            "an active entry grew a legacy TS row before T04 regenerated the pair: "
++            f"{active_rows}"
++        )
++
++
++def test_universal_required_fields_stay_the_frozen_identity_block() -> None:
++    universal, _by_dp = _ts_required_fields()
++    assert universal == [
++        "schema_version",
++        "decision_point",
++        "key",
++        "phase",
++        "task_type",
++        "risk",
++        "risk_source",
++        "authority_tier",
++        "questions_version",
++    ]
++
++
++def test_generated_ts_registry_is_the_frozen_legacy_or_the_t04_projection() -> None:
++    """A real, evolvable contract on the generated TS peer.
++
++    T04 owns ``gen_decide_registry_ts.py`` + ``decide-registry.generated.ts``; T03
++    must not hand-edit or pre-generate them. This test therefore accepts exactly
++    two stages and rejects a one-sided rename:
++
++    * pre-T04: the module is the frozen old artifact, declaring exactly the 25
++      retired ids (no active id, no mix);
++    * post-T04: it declares exactly the eight active entries, each with its
++      ``requiredStateFields`` block.
++
++    The header/interface shape is pinned in both stages. Field-level parity
++    between the TS module and the Python snapshot remains T04's own check and is
++    deliberately not claimed here.
+     """
+     text = GENERATED_TS.read_text(encoding="utf-8")
+-    assert '"dp1-dispatch-type": {' in text, (
+-        "the generated TS changed unexpectedly; regeneration belongs to T04"
+-    )
+-    for entry_id in dpts.ACTIVE_DP_IDS:
+-        assert f'"{entry_id}": {{' not in text, (
+-            f"{entry_id}: generated TS was updated outside T04"
+-        )
+-
+-
+-def test_no_python_only_dp_reappears_in_the_legacy_matrix() -> None:
+-    _universal, by_dp = _ts_required_fields()
+-    for entry_id in ("dp-sign-key", "dp-w-type", "dp-pm-steer", "dp-w-check-task"):
+-        assert entry_id not in by_dp
++    stage = _generated_ts_stage()
++    assert text.startswith(
++        "// @generated by packages/multi-workers/scripts/gen_decide_registry_ts.py "
++    ), "the generated header was replaced"
++    assert "export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {" in text
++    assert "export interface DecideRegistryEntry {" in text
++    assert "\n\t\trequiredStateFields: [\n" in text
++    ids = _generated_ts_entry_ids()
++    if stage == "pre-t04":
++        assert sorted(ids) == sorted(record.id for record in dpts.RETIRED_DP_REGISTRY)
++        assert '"dp1-dispatch-type": {' in text, (
++            "the frozen pre-T03 artifact no longer carries its first entry"
++        )
++    else:
++        assert ids == TARGET_EIGHT
+--- before-r2/packages/multi-workers/test_dp_consolidation_registry.py
++++ after-r2/packages/multi-workers/test_dp_consolidation_registry.py
+@@ -651,6 +651,94 @@
+ 
+ 
+ @pytest.mark.parametrize("entry_id", dpts.ACTIVE_DP_IDS)
++def test_prepared_request_refuses_a_missing_or_non_eligible_role(entry_id: str) -> None:
++    """The prepared request needs a real role; omission is never an exemption.
++
++    Role is the request's eligibility input (bound actor), not a self-report:
++    an absent, empty, unknown or cross-role value is refused for every entry,
++    while the legal per-entry role keeps passing (previous test).
++    """
++    material = _material(entry_id)
++    preparation = _preparation(entry_id, material)
++    choice = dpts.resolve_entry_choices(entry_id, material)[0]
++    wrong = "worker" if dpts.ENTRY_ROLES[entry_id] == "pm" else "pm"
++    for role in (None, "", "   ", "agent", "human", "system", wrong):
++        issues = dpts.prepared_request_issues(
++            entry_id,
++            material,
++            preparation,
++            actor_role=role,
++            choice=choice,
++            basis_id="b-primary",
++        )
++        assert [path for path, _detail in issues] == ["actor_role"], (entry_id, role, issues)
++        assert issues[0][1].strip(), (entry_id, role)
++    # Omitting the parameter entirely is the same absence, not a silent skip.
++    issues = dpts.prepared_request_issues(
++        entry_id, material, preparation, choice=choice, basis_id="b-primary"
++    )
++    assert [path for path, _detail in issues] == ["actor_role"], (entry_id, issues)
++
++
++@pytest.mark.parametrize("entry_id", dpts.ACTIVE_DP_IDS)
++def test_preparation_does_not_demand_the_answer_before_the_model_call(entry_id: str) -> None:
++    """Pre-call preparation is complete without a choice/basis answer.
++
++    The role/material/preparation gate runs before the model answers; requiring
++    the answer here would invert the protocol (the fix for a missing role must
++    not turn into a demand for the model's same-call choice and basis id).
++    """
++    material = _material(entry_id)
++    preparation = _preparation(entry_id, material)
++    issues = dpts.prepared_request_issues(
++        entry_id, material, preparation, actor_role=dpts.ENTRY_ROLES[entry_id]
++    )
++    assert issues == (), (entry_id, issues)
++
++
++@pytest.mark.parametrize("entry_id", dpts.ACTIVE_DP_IDS)
++def test_preparation_refuses_a_prepared_at_outside_the_iso_contract(entry_id: str) -> None:
++    """``prepared_at`` is the pre-submission time, so it must be a real ISO stamp.
++
++    Same contract as the package's task-state observations: an ISO-8601 timestamp
++    that carries an explicit offset (``Z``/``+hh:mm``). A non-string, a blank
++    value, free text, a bare date or an offset-less local time is refused; a
++    legal UTC/offset stamp keeps the preparation complete.
++    """
++    material = _material(entry_id)
++    preparation = _preparation(entry_id, material)
++    assert dpts.preparation_issues(entry_id, preparation, material) == ()
++    for bad in (
++        "not-an-ISO-timestamp",
++        "",
++        "   ",
++        17,
++        True,
++        None,
++        ["2026-10-26T00:00:00Z"],
++        "2026-10-26",
++        "2026-10-26T00:00:00",
++        "2026-10-26 00:00:00Z",
++        "2026-13-26T00:00:00Z",
++    ):
++        broken = dict(preparation, prepared_at=bad)
++        issues = dpts.preparation_issues(entry_id, broken, material)
++        assert [path for path, _detail in issues] == ["prepared_at"], (entry_id, bad, issues)
++    for legal in (
++        "2026-10-26T00:00:00Z",
++        "2026-10-26T00:00:00+00:00",
++        "2026-10-26T08:00:00+08:00",
++        "2026-10-26T00:00:00.123456Z",
++    ):
++        good = dict(preparation, prepared_at=legal)
++        assert dpts.preparation_issues(entry_id, good, material) == (), (entry_id, legal)
++    missing = dict(preparation)
++    missing.pop("prepared_at")
++    issues = dpts.preparation_issues(entry_id, missing, material)
++    assert [path for path, _detail in issues] == ["prepared_at"], (entry_id, issues)
++
++
++@pytest.mark.parametrize("entry_id", dpts.ACTIVE_DP_IDS)
+ def test_every_entry_fails_closed_without_a_default(entry_id: str) -> None:
+     material = _material(entry_id)
+     preparation = _preparation(entry_id, material)

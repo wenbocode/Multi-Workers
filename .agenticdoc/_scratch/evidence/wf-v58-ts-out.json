@@ -1,0 +1,31 @@
+{
+ "rows": [
+  {
+   "case": "V58 state limit pair plus a provable conflict",
+   "a_kind": "declared",
+   "b_kind": "declared",
+   "overlap": {
+    "sample": "src/x.ts",
+    "rule": "src/x.ts",
+    "other": "src/x.ts",
+    "reason": "write-face-overlap"
+   }
+  },
+  {
+   "case": "V59 deferral order: unsupported syntax encountered first",
+   "a_kind": "declared",
+   "b_kind": "declared",
+   "overlap": {
+    "unsupported": "unsupported-syntax"
+   }
+  },
+  {
+   "case": "V60 deferral order: state limit encountered first",
+   "a_kind": "declared",
+   "b_kind": "declared",
+   "overlap": {
+    "unsupported": "glob-product-state-limit"
+   }
+  }
+ ]
+}

@@ -1,0 +1,243 @@
+diff --git a/.agenticdoc/mw-decision-dashboard/evidence/runs/T05p-redactor-contract/baseline/decision.py b/packages/multi-workers/decision.py
+index a1194f9d0..4573633ec 100644
+--- a/.agenticdoc/mw-decision-dashboard/evidence/runs/T05p-redactor-contract/baseline/decision.py
++++ b/packages/multi-workers/decision.py
+@@ -693,9 +693,13 @@ class CredentialSnapshot:
+     discovery_error: str | None = field(default=None, compare=False)
+     #: T05n: the complete known-set values frozen when this unit started - the
+     #: cfg ``api_key`` legs, the ambient env heuristic values and the resolved
+-    #: timi key. ``None`` only for a snapshot that was constructed directly (no
+-    #: :func:`credential_snapshot` origin); such an object cannot have frozen
+-    #: anything, so the legacy live superset is used instead of pretending.
++    #: timi key. T05o: this set can still *grow* once, when the **first** face of
++    #: the unit reads a foreign config (its explicit values are folded in, see
++    #: :meth:`frozen_foreign_values`); after that read it never changes, so every
++    #: later face (gate, capture, transport) holds the same values. ``None`` only
++    #: for a snapshot constructed directly (no :func:`credential_snapshot`
++    #: origin): it froze nothing, and the known-set factories refuse it (T05p)
++    #: instead of inventing a legacy live set it never owned.
+     _known: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
+     #: The config object this snapshot was resolved from (identity only). A
+     #: *different* caller config still contributes its own explicit values (the
+@@ -952,7 +956,9 @@ def known_credential_values(
+     A snapshot that is not a :class:`CredentialSnapshot` has no frozen contract
+     to prove: this raises ``TypeError`` (a value-free API error) instead of
+     silently returning the ambient set and letting a caller treat it as the
+-    unit's authority.
++    unit's authority. T05p: the same holds for a directly constructed snapshot
++    whose ``frozen_known_values()`` is ``None`` - it froze nothing, so falling
++    back to the legacy live set would hand out an authority it never had.
+     """
+     secrets: list[str] = [value for value in extra_secrets if isinstance(value, str)]
+     if snapshot is not None:
+@@ -964,21 +970,17 @@ def known_credential_values(
+             )
+         frozen_base = snapshot.frozen_known_values()
+         if frozen_base is None:
+-            # A directly constructed snapshot (not resolved by
+-            # ``credential_snapshot``) froze nothing; keep the legacy live
+-            # superset instead of pretending a smaller, unknowable set.
+-            secrets.extend(_credential_values())
+-            if cfg is not None:
+-                secrets.extend(_cfg_api_key_values(cfg))
+-            if isinstance(snapshot.api_key, str):
+-                secrets.append(snapshot.api_key)
+-        else:
+-            secrets.extend(frozen_base)
+-            # A foreign config object still supplies its own explicit values:
+-            # the union can only grow, never replace. T05o: that contribution is
+-            # frozen on first read, so the gate and capture faces of one unit
+-            # cannot disagree when the object mutates in between.
+-            secrets.extend(snapshot.frozen_foreign_values(cfg))
++            raise TypeError(
++                "known_credential_values requires a snapshot resolved by "
++                "decision.credential_snapshot(); a directly constructed "
++                "CredentialSnapshot froze no known set and cannot be proven safe"
++            )
++        secrets.extend(frozen_base)
++        # A foreign config object still supplies its own explicit values:
++        # the union can only grow, never replace. T05o: that contribution is
++        # frozen on first read, so the gate and capture faces of one unit
++        # cannot disagree when the object mutates in between.
++        secrets.extend(snapshot.frozen_foreign_values(cfg))
+         # T05i/T05l: the legacy timi leg the snapshot already froze is part of
+         # this unit's known set. ``frozen_superset`` never resolves, so this
+         # cannot open a second discovery and cannot re-read cfg/env.
+@@ -1031,6 +1033,12 @@ def credential_redactor(
+     :class:`CredentialSnapshot` (a duck with no frozen contract) does the same
+     instead of being treated as "no known set" and then used to capture text.
+ 
++    T05p: a directly constructed ``CredentialSnapshot`` (``frozen_known_values()
++    is None``) froze no known set either, so this also returns ``None``: the
++    capture stays on with a safe omit instead of a live set the snapshot never
++    owned. Callers that need the values themselves get the fixed ``TypeError``
++    from :func:`known_credential_values`.
++
+     Discovery lives in :func:`known_credential_values`; this wrapper only adds
+     the wire module's exact matcher, so the values themselves stay one set.
+     """
+@@ -1040,7 +1048,7 @@ def credential_redactor(
+     if snapshot is not None:
+         if not isinstance(snapshot, CredentialSnapshot):
+             return None
+-        if snapshot.discovery_error:
++        if snapshot.discovery_error or snapshot.frozen_known_values() is None:
+             return None
+     values = known_credential_values(
+         cfg, extra_secrets=extra_secrets, env=env, auth_path=auth_path, snapshot=snapshot
+@@ -1124,11 +1132,15 @@ def known_secret_redactor(
+     T05n: a snapshot object without the frozen :class:`CredentialSnapshot`
+     contract (a duck) has no known set to prove, so the gate also fails closed
+     instead of silently degrading to the ambient env heuristic.
++
++    T05p: the same applies to a directly constructed snapshot that froze nothing
++    (``frozen_known_values() is None``). The gate factory always returns a
++    ``KnownSecretRedactor`` - a ``None`` return must never read as "allow".
+     """
+     if snapshot is not None:
+         if not isinstance(snapshot, CredentialSnapshot):
+             return KnownSecretRedactor(fail_closed=True)
+-        if snapshot.discovery_error:
++        if snapshot.discovery_error or snapshot.frozen_known_values() is None:
+             return KnownSecretRedactor(fail_closed=True)
+     return KnownSecretRedactor(
+         known_credential_values(
+@@ -1160,6 +1172,27 @@ def secret_hit(text: str, redactor: object | None = None) -> bool:
+     return getattr(result, "text", text) != text
+ 
+ 
++def _redactor_covers(redactor: object, value: str) -> bool:
++    """True only when ``redactor`` provably removes ``value`` (T05j/T05p).
++
++    A filter that raises is unusable, so it never proves coverage; a filter
++    without the ``hits`` counter is judged by whether the text changed. This is
++    the client-side counterpart of the points seam's own coverage check, so a
++    caller-owned production capture filter is verified the same way on both
++    paths.
++    """
++    if not value:
++        return True
++    try:
++        result = redactor.redact(value)  # type: ignore[attr-defined]
++    except Exception:  # noqa: BLE001 - an unusable filter never proves coverage
++        return False
++    hits = getattr(result, "hits", None)
++    if isinstance(hits, int):
++        return hits > 0
++    return getattr(result, "text", value) != value
++
++
+ _SAFE_PATH_SEGMENT_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+ 
+ 
+@@ -1605,7 +1638,9 @@ class DecisionClient:
+         # redactor is never replaced, and a snapshot that already covered the
+         # timi chain is not read twice. T05n: the frozen set itself was taken at
+         # snapshot creation, so this path consumes it without re-reading cfg/env.
+-        self._ensure_wire_redactor(snapshot)
++        # T05p: a caller-owned production filter that misses part of that set is
++        # refused here - before capture, attempt row or POST.
++        caller_scope_gap = self._ensure_wire_redactor(snapshot)
+         discovery_error = snapshot.discovery_error
+         if discovery_error:
+             # Fail closed (T05l/T05m): the known-secret discovery raised, so this
+@@ -1622,6 +1657,20 @@ class DecisionClient:
+                 transport,
+                 confidence_source,
+             )
++        if caller_scope_gap:
++            # Fail closed (T05p): the value-free detail says which contract was
++            # broken, never which value. Zero capture, zero POST.
++            return self._emit(
++                dp,
++                start,
++                False,
++                REASON_ENTRY_UNAVAILABLE,
++                0,
++                None,
++                caller_scope_gap,
++                transport,
++                confidence_source,
++            )
+ 
+         backend = self._resolve_backend()
+         if backend is None:
+@@ -1940,7 +1989,7 @@ class DecisionClient:
+         self._append_evidence(dp, response)
+         return response
+ 
+-    def _ensure_wire_redactor(self, snapshot: CredentialSnapshot) -> None:
++    def _ensure_wire_redactor(self, snapshot: CredentialSnapshot) -> str | None:
+         """Fill (or refresh) this call's capture redactor from the credential set.
+ 
+         The transport is the component that knows the real Authorization value,
+@@ -1964,24 +2013,64 @@ class DecisionClient:
+         T05n: the cfg/env part of the set was already frozen when the snapshot
+         was created, so the redactor built here consumes that tuple - removing an
+         env value between the snapshot and this call cannot shrink the filter.
++
++        T05p: a caller-owned production filter is *verified*, never replaced.
++        The points seam already refuses an unprovable caller filter; without the
++        same check here a client-only call (no gate ran first) captured the
++        legacy timi leg raw. The return value is the value-free refusal detail
++        when that filter misses part of this unit's complete known set, else
++        ``None``.
+         """
+         scope = self._active_scope
+         if scope is None:
+-            return
++            return None
+         if getattr(scope, "scope_kind", "production") != "production":
+-            return
++            return None
+         if not isinstance(snapshot, CredentialSnapshot):
+-            return
++            return None
+         current = getattr(scope, "redact", None)
+         if current is not None and current is not self._injected_redactor:
+-            return
++            return self._caller_redactor_gap(snapshot, current)
+         snapshot.known_superset()
+         if snapshot.discovery_error:
+-            return
++            return None
+         redactor = credential_redactor(self.cfg, snapshot=snapshot)
+         if redactor is not None:
+             scope.redact = redactor
+             self._injected_redactor = redactor
++        return None
++
++    def _caller_redactor_gap(
++        self, snapshot: CredentialSnapshot, redactor: object
++    ) -> str | None:
++        """Why a caller-owned capture filter cannot prove this call safe (T05p).
++
++        Coverage is checked against the **complete** frozen known set of the unit
++        (cfg/extras, the sent ``Authorization`` and the legacy timi leg), not only
++        the value being sent: sending A never exempts captured B material. The
++        caller's filter is left in place; the call is refused instead, and the
++        detail names only a count - never a value or an exception message.
++        """
++        if snapshot.frozen_known_values() is None:
++            # The entry refuses a None-base snapshot before capture; nothing to
++            # verify against (and known_credential_values would reject it).
++            return None
++        snapshot.known_superset()
++        if snapshot.discovery_error:
++            # ``_decide`` already turns this into the fail-closed refusal.
++            return None
++        values = known_credential_values(self.cfg, snapshot=snapshot)
++        if not values:
++            return None
++        missing = sum(1 for value in values if not _redactor_covers(redactor, value))
++        if not missing:
++            return None
++        return (
++            "refusing an unprovable capture: the caller-owned capture redactor does "
++            f"not cover {missing} of the {len(values)} known-secret values of this "
++            "call (the sent credential and the capture filter would diverge); "
++            "rebuild it from the same decision.credential_snapshot() the client uses"
++        )
+ 
+     def _record_call_end(self, response: Mapping, attempts: int) -> None:
+         """Append the client's ``call-end`` row and expose its capture status.

@@ -1,0 +1,30 @@
+T10b dependency snapshot and the one transient failure (evidence honesty)
+
+The T07b (decision_history) worker was editing its owner files while this card ran. This worker did
+not modify decision_history.py / test_decision_history.py; it only read them and re-ran the joint
+contract test in test_decision_monitor.py.
+
+Observed timeline (local time, file mtimes and measured sha256):
+- 13:44 baseline acceptance (before any T10b edit):
+    decision_history.py sha256 eb345e77... 2414 lines -> 116 passed, 1 skipped, exit 0
+- 13:50:43 / 13:51:12  T07b files rewritten (mtimes observed by this worker)
+- ~13:52 first T10b acceptance run:
+    decision_history.py sha256 328cede2... 2563 lines
+    test_decision_history.py sha256 87505478... 1949 lines
+    -> 1 failed, 135 passed, 1 skipped, exit 1
+    failure: test_decision_history.py::test_structural_known_secret_is_omitted_from_output
+             "Right contains one more item: '<basis withheld: known secret>'"
+- same test alone: 1 passed. test_decision_history.py alone: 44 passed.
+  test_decision_monitor.py + test_decision_history.py: 96 passed, 1 skipped.
+- the exact acceptance command rerun twice: 136 passed, 1 skipped, exit 0 both times
+  (green-pytest-acceptance.txt was overwritten by the later final run; see below).
+- final T10b acceptance (after the last monitor edit), T07b files changed again:
+    decision_history.py sha256 86a2a36d... 2565 lines
+    test_decision_history.py sha256 2b705b30... 1971 lines
+    -> 137 passed, 1 skipped, exit 0 (green-pytest-acceptance.txt)
+    repeat -> 137 passed, 1 skipped, exit 0 (green-pytest-acceptance-repeat.txt)
+
+Conclusion for the report: the single failure is in the T07b-owned test file, it is not reproducible
+on isolated or paired reruns, and it did not involve a T10b file. The T10b monitor suite was green in
+every run (52 passed, 1 skipped; green-pytest-monitor.txt). Because T07b was still in flight, the
+joint history evidence is a snapshot at the hashes above, not a claim that T07b is final.

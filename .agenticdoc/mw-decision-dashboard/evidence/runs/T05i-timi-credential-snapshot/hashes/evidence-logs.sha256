@@ -1,0 +1,8 @@
+33e17376b85bbb03ca84596a36e78e9a72c333b44b1cc5a67dde6768d525c003  662  logs/adjacent-backends-observation-cli.log
+5d68c9212b06c97891d21fda30d631d2c3533ffc6775eb115a307feafc442b6b  643  logs/adjacent2-wirestore-cli.log
+9660d937e4e2dea94373e1334f41486019193bb488ab87fb56fbaeb91fcb70e0  6445  logs/biome-readonly.log
+23da690d8b1fe9cdeeff8a25ae00dc3f1799ebd9e7cb0a3b46168b735904b339  765  logs/check-substeps.log
+37f27b6e8186b9fdf9defd7ad7a42eb449f5b82248441cc450323ad7186aa620  805  logs/green-acceptance.log
+4cde470601a0906deec9b20f2724c6811ba12d8029a9bcda088fd7092cf1b544  1115  logs/measure-baseline.json
+c4dee2a0d52909c72766d564279206d7c8fcf429160fe0730f699b9e258d7fe0  1108  logs/measure-final.json
+0a5634cb98ec07729d5918804cb6ccbd3bbd1f42a6930035fd409e9b2f16a1a5  25980  logs/red-new-tests-on-baseline.log

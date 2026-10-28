@@ -1,0 +1,28 @@
+T10b artifact sizes and hashes (measured in packages/multi-workers)
+
+Method: python -c "[...] len(bytes.decode('utf-8').splitlines()) ... hashlib.sha256(bytes).hexdigest()"; the same file also reports
+b.count(b"\n"), which equals splitlines() here (the files end with exactly one newline).
+
+Baseline (before any T10b edit, 2026-10-22 ~13:44 local):
+  decision_monitor.py       lines 2089   sha256 7ace1474cdbc66389a8850d6e0a368cebff57f719fc7aa45372fa96a4db16ca8
+  test_decision_monitor.py  lines 1432   sha256 717fdd95fd0b9a9286c142ad9eebab596fdac5cfa26745bf415eebb3ac1e0ebf
+  decision_history.py       lines 2414   sha256 eb345e77816123e6b1723693fef907842d6a4f6354f63980795b041a6070ecca
+  decision_points.py        lines 4504   sha256 019d47a41bfca7108efd379ca21689a82312961600b4dbcea925b3b13f4e0421
+  decision_book.py          lines 1242   sha256 66cd4721ae12f4fbea89f6124b37378b62c1a7a0f918c11db285a6290fe94599
+
+After T10b (this worker's final green):
+  decision_monitor.py       lines 2535   sha256 2c2afb0ebcb8e3642ff6f19b891595d3bdaa5a7f45a5e99055f1487d5aa937c5
+  test_decision_monitor.py  lines 1865   sha256 6a0411a19b400773ac37c992daef1851bbe238e50ed1650a19b7c4e3935fb687
+  test count: 53 collected (52 passed + 1 skipped; the skip is the POSIX 0600 mode test on Windows)
+
+Dependency snapshot at the final green acceptance run (T07b in flight, read-only to this worker):
+  decision_history.py       lines 2565   sha256 86a2a36db1514f0d7f49ded7151c9ab0e917c1e78236e7a3ca95e68b3c769e3f
+  test_decision_history.py  lines 1971   sha256 2b705b30fe4e14d92204e64ce383540f93431b082277e159534d743d6ea661b9
+  decision_points.py        lines 4504   sha256 019d47a41bfca7108efd379ca21689a82312961600b4dbcea925b3b13f4e0421
+  decision_book.py          lines 1242   sha256 66cd4721ae12f4fbea89f6124b37378b62c1a7a0f918c11db285a6290fe94599
+  test_decision_roots_locks.py lines 504 sha256 ee43a282171ab1eaf1a12110b8057ced991191cd578335dcd029fbbf90c54258
+
+Note on the original T10 report numbers: it cited 1830 / 1267; the review cited 2090 / 1433. The
+measured baseline at T10b start is 2089 / 1432 by both splitlines() and the newline count, i.e. the
+review figure is an off-by-one counting convention, not a different file. The correction file records
+both, and the original T10 report is not overwritten.

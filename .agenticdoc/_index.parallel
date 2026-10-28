@@ -1,7 +1,4 @@
 # Index Parallel
-
-| Key | Status | Phase | ClaimId | Deps | Desc | Updated |
-|-----|--------|-------|---------|------|------|---------|
 | agent-team-loop | idle | EXECUTE | 20260808-174558-3176 | — | Agent Team Loop: multi-CLI worker orchestration (pi/codex/claude) via AgenticTask PM + timi-proxy routing | 2026-09-07T12:05:36.859Z |
 | timi-gpt-pi-routing | idle | DONE | 20260814-151438-9272 | agent-team-loop | Fix Pi Timi GPT Responses routing and Multi-Workers launcher integration | 2026-09-07T12:05:36.859Z |
 | mw-dispatch-reliability | idle | EXECUTE | 20260828-160111-8496 | — | Fix multi-worker dispatch availability (per-task credential failure isolation, stale entry cleanup) and build debug/test system (mw doctor, L0/L1/L2 tests) | 2026-09-07T12:05:36.859Z |
@@ -67,5 +64,12 @@
 | mw-goal-gate-write-intent | idle | — | WENBOZHOU-PC4:43712 | agent-team-loop | goal.md 门禁改按写意图判定（读放行）+ 门禁模板进仓库 + 安装钩子 + 回归向量测试 | 2026-10-19 17:38 |
 | mw-decision-substitution | idle | DONE | WENBOZHOU-PC4:53592 | — | — | 2026-10-21 23:41 |
 | mw-usage-monitor | idle | DONE | WENBOZHOU-PC4:43712 | agent-team-loop | 本机级 usage 监控：mw 派发 worker 与 PM 窗口的 token 分布（模型/任务类型/key/项目）+ 墙钟，mw stats CLI 与 /mw stats 窗口简报 | 2026-10-22 00:22 |
-| claim-driven-review | idle | EXECUTE | WENBOZHOU-PC4:69520 |  |  | 2026-10-21T09:44:20.260Z |
-| mw-signoff-per-key | active | SPEC | WENBOZHOU-PC4:53592 |  |  | 2026-10-21T16:21:29.043Z |
+| claim-driven-review | idle | DONE | WENBOZHOU-PC4:69520 |  |  | 2026-10-22 20:18 |
+| mw-signoff-per-key | idle | DONE | WENBOZHOU-PC4:53592 |  |  | 2026-10-22T02:35:52.916Z |
+| mw-decision-dashboard | idle | EXECUTE | WENBOZHOU-PC4:43052 |  |  | 2026-10-22T11:28:53.806Z |
+| claim-driven-review-orchestration | idle | DONE | WENBOZHOU-PC4:69520 |  |  | 2026-10-22 21:24 |
+| mw-signoff-decide-only | idle | DONE | WENBOZHOU-PC4:82604 |  |  | 2026-10-22 20:47 |
+| mw-decision-context | idle | EXECUTE | WENBOZHOU-PC4:15444 |  |  | 2026-10-24T14:46:14.718Z |
+| mw-monitor-auto-restart | idle | EXECUTE | WENBOZHOU-PC4:15444 |  |  | 2026-10-24T01:32:53.133Z |
+| mw-dp-consolidation | active | EXECUTE | WENBOZHOU-PC4:15444 | mw-decision-context | Eight-DP-consolidation-and-joint-gate-redesign | 2026-10-28T07:05:02.240Z |
+| t22-redactor-fix | idle | SPEC | WENBOZHOU-PC4:55580 |  |  | 2026-10-25T07:30:43.579Z |

@@ -1,0 +1,160 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T13:56:39.566664+00:00",
+  "case_checks": [
+    {
+      "dp": "dp-w-type",
+      "offline_book_issues": 0,
+      "generator_byte_parity": true,
+      "supported_choices": [
+        "coding",
+        "research",
+        "review",
+        "vision"
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "future_at_PM_observation": false,
+      "timestamp_claims_to_represent_actual_synthesis_in_generator_doc": true
+    },
+    {
+      "dp": "dp-pm-steer",
+      "offline_book_issues": 0,
+      "generator_byte_parity": true,
+      "supported_choices": [
+        "narrow",
+        "split",
+        "direct-exec",
+        "escalate"
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "future_at_PM_observation": false,
+      "timestamp_claims_to_represent_actual_synthesis_in_generator_doc": true
+    },
+    {
+      "dp": "dp-w-check-task",
+      "offline_book_issues": 0,
+      "generator_byte_parity": true,
+      "supported_choices": [
+        "continue",
+        "terminate",
+        "investigate"
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "future_at_PM_observation": false,
+      "timestamp_claims_to_represent_actual_synthesis_in_generator_doc": true
+    },
+    {
+      "dp": "dp-QG",
+      "offline_book_issues": 0,
+      "generator_byte_parity": true,
+      "supported_choices": [
+        "pass",
+        "fix"
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "future_at_PM_observation": false,
+      "timestamp_claims_to_represent_actual_synthesis_in_generator_doc": true
+    },
+    {
+      "dp": "dp-gate-approve",
+      "offline_book_issues": 0,
+      "generator_byte_parity": true,
+      "supported_choices": [
+        "approve",
+        "steer",
+        "need_fix",
+        "reject"
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "future_at_PM_observation": false,
+      "timestamp_claims_to_represent_actual_synthesis_in_generator_doc": true
+    },
+    {
+      "dp": "dp-sign-key",
+      "offline_book_issues": 0,
+      "generator_byte_parity": true,
+      "supported_choices": [
+        "finalize",
+        "continue",
+        "user-confirm"
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "future_at_PM_observation": false,
+      "timestamp_claims_to_represent_actual_synthesis_in_generator_doc": true
+    },
+    {
+      "dp": "dp-auto",
+      "offline_book_issues": 0,
+      "generator_byte_parity": true,
+      "supported_choices": [
+        "wire-facets-now",
+        "split-projection-task",
+        "escalate-to-human"
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "future_at_PM_observation": false,
+      "timestamp_claims_to_represent_actual_synthesis_in_generator_doc": true
+    },
+    {
+      "dp": "dp-route",
+      "offline_book_issues": 0,
+      "generator_byte_parity": true,
+      "supported_choices": [
+        "dp-w-type",
+        "dp-pm-steer",
+        "dp-w-check-task",
+        "dp-QG",
+        "dp-gate-approve",
+        "dp-sign-key",
+        "dp-auto"
+      ],
+      "prepared_at": "2026-10-27T13:45:28+00:00",
+      "future_at_PM_observation": false,
+      "timestamp_claims_to_represent_actual_synthesis_in_generator_doc": true
+    }
+  ],
+  "native_scaffold_positive_controls": [
+    {
+      "dp": "dp-w-type",
+      "native_scaffold_schema_issues": 0
+    },
+    {
+      "dp": "dp-pm-steer",
+      "native_scaffold_schema_issues": 0
+    },
+    {
+      "dp": "dp-w-check-task",
+      "native_scaffold_schema_issues": 0
+    },
+    {
+      "dp": "dp-QG",
+      "native_scaffold_schema_issues": 0
+    },
+    {
+      "dp": "dp-gate-approve",
+      "native_scaffold_schema_issues": 0
+    },
+    {
+      "dp": "dp-sign-key",
+      "native_scaffold_schema_issues": 0
+    },
+    {
+      "dp": "dp-auto",
+      "native_scaffold_schema_issues": 0
+    },
+    {
+      "dp": "dp-route",
+      "native_scaffold_schema_issues": 0
+    }
+  ],
+  "template_failures": [],
+  "future_prepared_at_cases": [],
+  "case_source_read": {
+    "generator": "full 902 lines read by PM",
+    "template": "full 61 lines read by PM",
+    "workbench_test": "not read to EOF this turn; assigned suite deferred until full read and T10 terminal"
+  },
+  "original_assigned_suite_not_run": true,
+  "network": "denied",
+  "product_writes": false
+}

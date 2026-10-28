@@ -1,0 +1,67 @@
+--- packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
++++ packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts.formatted
+@@ -2,4 +2,5 @@
+ import { captureDecisionTaskState, copyTaskState, type TaskStateSnapshot } from "./decision-task-state.ts";
+ export { captureDecisionTaskState };
++
+ import * as os from "node:os";
+ import * as path from "node:path";
+@@ -359,5 +360,10 @@
+  * spelling and a producer never carries a second one. */
+ export function dp1DecisionMeta(plan: Dp1DispatchPlan): DecisionEnvelopeMeta {
+-	return newDecisionMeta({ key: plan.key ?? "", taskKey: plan.taskKey ?? null, initiatorRole: "pm", taskBefore: plan.taskBefore });
++	return newDecisionMeta({
++		key: plan.key ?? "",
++		taskKey: plan.taskKey ?? null,
++		initiatorRole: "pm",
++		taskBefore: plan.taskBefore,
++	});
+ }
+ 
+@@ -418,5 +424,6 @@
+ 	};
+ 	if (fact.reason !== undefined) envelope.reason = fact.reason;
+-	if (stage !== "consumed" && triage.meta.task_key !== null && fact.taskAfter !== undefined) envelope.task_after = copyTaskState(fact.taskAfter);
++	if (stage !== "consumed" && triage.meta.task_key !== null && fact.taskAfter !== undefined)
++		envelope.task_after = copyTaskState(fact.taskAfter);
+ 	if (stage === "consumed") {
+ 		// "Received" is only a fact when the service really answered.
+@@ -516,5 +523,13 @@
+ 		),
+ 	);
+-	results.push(await writeDp1Lifecycle(projectDir, triage, "settled", { outcome: "ok", taskAfter: input.taskAfter }, lifecycleRun));
++	results.push(
++		await writeDp1Lifecycle(
++			projectDir,
++			triage,
++			"settled",
++			{ outcome: "ok", taskAfter: input.taskAfter },
++			lifecycleRun,
++		),
++	);
+ 	return results;
+ }
+@@ -3329,5 +3344,10 @@
+ 				// T03: owning key + the REAL reserved task id + the judged card's
+ 				// envelope bodies are the dp1 material/association facts.
+-				dp1: { key: ownerKey, taskKey: task_key, sections: cardGate.sections, taskBefore: captureDecisionTaskState(workerStore, ownerKey, task_key) },
++				dp1: {
++					key: ownerKey,
++					taskKey: task_key,
++					sections: cardGate.sections,
++					taskBefore: captureDecisionTaskState(workerStore, ownerKey, task_key),
++				},
+ 			});
+ 			if (!modelPlan.ok) {
+@@ -3892,5 +3912,10 @@
+ 				triageRun,
+ 				// T03: same material/association facts as dispatch_worker.
+-				dp1: { key: ownerKey, taskKey, sections: cardGate.sections, taskBefore: captureDecisionTaskState(workerStore, ownerKey, taskKey) },
++				dp1: {
++					key: ownerKey,
++					taskKey,
++					sections: cardGate.sections,
++					taskBefore: captureDecisionTaskState(workerStore, ownerKey, taskKey),
++				},
+ 			});
+ 			if (!modelPlan.ok) {

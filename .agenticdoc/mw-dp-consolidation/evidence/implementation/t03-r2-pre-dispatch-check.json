@@ -1,0 +1,39 @@
+{
+  "observed_at": "2026-10-26T03:30:20.091405+00:00",
+  "source_card_sha256": "083b206d9ec9ae9dab4a582c4b01f3187aba29936e0687b41f9856d645796a60",
+  "card_path": ".agenticdoc\\mw-dp-consolidation\\tasks\\isolated\\T03-protocol-r2.md",
+  "card_sha256": "4e6d63b51dbe420aedf7d7b807eb180477ab54abfefd894e5042691988fdf756",
+  "products": [
+    {
+      "path": ".agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_points.py",
+      "sha256": "a3fb1fe8f3a9caea2a6a4acc660298ca6d2cb9921418c152025c401279089047",
+      "bytes": 304640,
+      "crlf": 7080,
+      "bare_lf": 0
+    },
+    {
+      "path": ".agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decide_registry.json",
+      "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "bytes": 29869,
+      "crlf": 0,
+      "bare_lf": 894
+    },
+    {
+      "path": ".agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_decide_registry_contract.py",
+      "sha256": "4c6aedadca32dd26316a5d18407dc1e7889a62b986b6e6860f973d908878c1d0",
+      "bytes": 19527,
+      "crlf": 0,
+      "bare_lf": 463
+    },
+    {
+      "path": ".agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_dp_consolidation_registry.py",
+      "sha256": "af20145ead7a031a9ec5ca5ffd4227a725ef2f3615111fda9423f3f2d80b5a97",
+      "bytes": 31311,
+      "crlf": 0,
+      "bare_lf": 727
+    }
+  ],
+  "product_writes": false,
+  "product_tests_run": false,
+  "semantic_handoff_verified": false
+}

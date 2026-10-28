@@ -1,0 +1,19 @@
+# T11b API surface (monitor routes touched / used)
+
+| method | route | role | behaviour after T11b |
+| --- | --- | --- | --- |
+| GET | `/api/dps` | page | unchanged registry + `budget.max_state_bytes` and `observe_only:true` added for the DP tab |
+| POST | `/api/test/scaffold` | page | unchanged provider call; provider now available via the default lazy wiring |
+| POST | `/api/test/validate` | page | unchanged; reports `context_sent:false` + `context_slots` |
+| POST | `/api/test/submit` | page | unchanged provider call; a provider `busy` result is now HTTP **409** (`ok:false`, `error.code=busy`, `data` = provider payload with `zero_call=true`) |
+| GET | `/api/test/submissions/<id>` | page | unchanged; payload now carries this submission's persisted answer/projection and its `attempts` (stored request/response captures + marks) |
+| GET | `/api/test/history` | page | unchanged; records carry answer/projection and `attempts` with capture bodies replaced by `output_omitted:true` |
+| GET | `/api/health` | control | `playground.state=wired` when a provider is injected **or** a factory is configured |
+
+Envelope: success `{ok:true,data,capture_status}`, refusal
+`{ok:false,data,error:{code,message,issues},capture_status}`. HTTP 200 is the
+transport envelope only; the DP tab renders `data.state` / `record_status` and
+never treats 200 as success.
+
+No new route, no second writer: the DP tab never writes production files and the
+wire/evidence ledger remains the single writer it always was.

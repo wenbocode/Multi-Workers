@@ -1,0 +1,57 @@
+{
+  "observed_at": "2026-10-28T06:47:55.455343+00:00",
+  "label": "t10-r2-red-20261028T065500Z",
+  "argv": [
+    "--fixture-root",
+    "C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-pm-verify-20261027/pm-verification",
+    "--label",
+    "t10-r2-red-20261028T065500Z",
+    "--focus"
+  ],
+  "cwd": "H:\\git\\Multi-Workers",
+  "python": "3.14.3 (tags/v3.14.3:323c59a, Feb  3 2026, 16:04:56) [MSC v.1944 64 bit (AMD64)]",
+  "executable": "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+  "dont_write_bytecode": true,
+  "fixture_root": "C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\dpc-t10-pm-verify-20261027\\pm-verification",
+  "fixture_root_created": true,
+  "label_dir": "C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\dpc-t10-pm-verify-20261027\\pm-verification\\t10-r2-red-20261028T065500Z",
+  "evidence_run": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\pm-controlled\\runs\\t10-r2-red-20261028T065500Z",
+  "env_keys": [
+    "COMSPEC",
+    "DPC10_GUARD_FILE",
+    "DPC10_GUARD_RUN",
+    "HOME",
+    "PATH",
+    "PATHEXT",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONIOENCODING",
+    "PYTHONPATH",
+    "PYTHONPYCACHEPREFIX",
+    "PYTHONUTF8",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "WINDIR"
+  ],
+  "env_policy": "whitelist only; nothing inherited from the parent environment",
+  "scripts": {
+    "run_pm_tests.py": {
+      "sha256": "5b019aec41bdf7017b56698d339402827f0890556e50a0b9d7116794fd203cbc",
+      "bytes": 33108
+    },
+    "sitecustomize.py": {
+      "sha256": "d2a15fad32af1b755f0164a16d3cfb3543ef8fd5169f13eacbc8971e0809ea5a",
+      "bytes": 8302
+    },
+    "guard_preflight.py": {
+      "sha256": "6c4da5e7030e3697c39a20180bbec017f22a02151bd325316c7826912cf9633b",
+      "bytes": 4722
+    },
+    "probe_imports.py": {
+      "sha256": "cac791a30affbd04746df9e0e4a18c20492020ac5f656aad30042cd710c26ee6",
+      "bytes": 2922
+    }
+  }
+}

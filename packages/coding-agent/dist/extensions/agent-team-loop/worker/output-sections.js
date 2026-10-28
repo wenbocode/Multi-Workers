@@ -382,10 +382,13 @@ const VERDICT_FINDINGS = {
 function verdictToken(cell) {
     return stripVerdictTicks(cell).replace(/\s+/g, "").toLowerCase();
 }
-/** Evidence ref separators (`;`, RQ-3 §5.1) and the `-` empty marker. */
+/** Evidence ref separators (`;` and the full-width `；` — a real review emitted
+ * `a.py:1-4；b.ts:7` on the first live e2e and the ASCII-only split read the whole
+ * cell as one nonexistent path, costing two false gaps, P-048) and the `-` empty
+ * marker. */
 function splitEvidenceRefs(cell) {
     return stripVerdictTicks(cell)
-        .split(";")
+        .split(/[;；]/)
         .map((ref) => ref.trim())
         .filter((ref) => ref !== "" && ref !== "-");
 }

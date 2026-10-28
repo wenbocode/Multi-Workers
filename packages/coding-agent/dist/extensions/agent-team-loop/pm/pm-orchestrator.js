@@ -7,8 +7,6 @@ import { stopMonitor } from "../autopilot/monitor.js";
 import { readConfig, readGateReminders } from "../autopilot/status-model.js";
 import { registerRagTools } from "../rag/tools.js";
 import { AckStore } from "../shared/ack-store.js";
-import { resolveDecidePolicy } from "../shared/decide-policy.js";
-import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.js";
 import { ENVELOPE_SECTION_LABELS, ENVELOPE_SECTIONS, inspectEnvelope, isKnownDispatchType, typeExtrasMissing, } from "../shared/dispatch-card.js";
 import { registerMainWindowModel } from "../shared/dispatch-models.js";
 import { formatHeartbeatAge, readTaskProgress } from "../shared/heartbeat.js";
@@ -20,14 +18,13 @@ import { dispatchDocGaps, readPhaseDocs } from "../shared/phase-docs.js";
 import { syncPmStateClaimId } from "../shared/pm-state-claim.js";
 import { registerPmStateGuard } from "../shared/pm-state-guard.js";
 import { registerRunDetachedTool } from "../shared/run-detached.js";
-import { evaluateRunIdentity, parseSupersedes, RUN_FILE_NAME, readRunState, runStateKind, } from "../shared/run-store.js";
+import { evaluateRunIdentity, parseSupersedes, RUN_FILE_NAME, readRunState, } from "../shared/run-store.js";
 import { readTaskHeaderScalar, readTaskType } from "../shared/task-frontmatter.js";
 import { WorkerStore, workerOwnerKey } from "../shared/worker-store.js";
 import { isGoalEstablished, readGoal } from "./goal-reader.js";
 import { StateManager } from "./state-manager.js";
 import { dispatchTask } from "./task-dispatcher.js";
-import { readDecidePolicy, runDecideMw } from "./triage-client.js";
-import { applyWatchWidget, assertStateMatchesRegistry, claimState, claimSyncWarningText, deliverPmAlert, deliverWorkerResult, displaySummary, makeScopedDocGateNotifier, ownerKeyOf, readOutputBody, readSpawnFailure, registerAdvancePhaseTool, registerMwCommands, registerMwTools, registerPmKeyCommands, registerPmSaveCommand, registerSwitchKeyTool, registerWatchCommand, registerWorkerCommands, registerWorkerTools, renderWatchLines, setWatchWidget, takeOverKey, WATCH_ENTRY_TYPE, windowClaimId, } from "./ui-bridge.js";
+import { applyWatchWidget, claimState, claimSyncWarningText, deliverPmAlert, deliverWorkerResult, displaySummary, makeScopedDocGateNotifier, ownerKeyOf, readOutputBody, readSpawnFailure, registerAdvancePhaseTool, registerMwCommands, registerMwTools, registerPmKeyCommands, registerPmSaveCommand, registerSwitchKeyTool, registerWatchCommand, registerWorkerCommands, registerWorkerTools, renderWatchLines, setWatchWidget, takeOverKey, WATCH_ENTRY_TYPE, windowClaimId, } from "./ui-bridge.js";
 /**
  * Terminal-readback watermark semantics (AC-011 / AC-012 / AC-013):
  *
@@ -1460,28 +1457,19 @@ export function recordDroppedGateReminder(pi, seen, reminder, reason, error) {
         ...(error === undefined ? {} : { error }),
     });
 }
-// ── dp2 checkpoint narrowing (mw-decision-substitution T-07; design D-011) ──
+// ── dp2 checkpoint request (PM-initiated only; mw-decision-context T03) ──────
 //
-// The divergence escalation below wakes the PM (triggerTurn) at the first
-// mid/high convergence checkpoint of a running worker. dp2 lets a service
-// answer substitute for that wake — but ONLY with the one action that is
-// reversible, machine-decidable, local and free: narrowing the remaining scope
-// (D-011). `split` (kill + re-dispatch, a new task-ledger entry) and
-// `direct-exec` (PM takes over, bypassing the worker's process/write-face
-// isolation) change the goal or widen the authorization surface, so they stay
-// human decisions and take the UNCHANGED escalation path.
+// dp2's registry question and labels stay untouched, but the MACHINE never asks
+// dp2 and never acts on an answer. The checkpoint loop below only wakes the PM
+// (the generic watchdog alert); deciding to narrow / split / take over / ask a
+// human is the PM's own decision, taken through the受管 decision tool (T04)
+// within the PM's existing authority. `split`, `direct-exec` and `escalate`
+// change goals or widen authority, so they were never machine actions; the old
+// `narrow` shortcut (a `steer-dp2.md` written by the poll loop) is removed with
+// the automatic call.
 //
-// Three closed states must stay behaviourally identical to pre-dp2 (design
-// D-007 / AC-015):
-//   - `.mw/decide.json` missing or `enabled != true` → complete bypass: no
-//     spawn, no write (the only I/O is that one config probe);
-//   - `.mw/decide-points.json` row `enabled=false` / unusable row → same bypass
-//     for dp2 only (the table is the single authority, machines never write it);
-//   - `mode=suggest` → Python still records the answer, but this hook NEVER acts
-//     on it; the alert still wakes the PM (AC-015).
-//
-// Every degraded answer (unavailable / missing `checkpoint_action` / an unknown
-// value) is fail-closed onto the original alert. There is no default action.
+// {@link decideDp2Checkpoint} remains the request/normalisation seam a PM-
+// initiated dp2 call can use; it has no caller in the machine loop.
 /** Decision-point id (registry authority: packages/multi-workers/decision_points.py). */
 export const DP2_CHECKPOINT_ID = "dp2-checkpoint-split";
 /** Registry question id whose value carries the dp2 answer. */
@@ -1491,14 +1479,13 @@ export const DP2_CHECKPOINT_QUESTION = "checkpoint_action";
  * coordination file-driven and the PM the single writer). */
 export const DP2_STEER_FILE = "steer-dp2.md";
 /** Attribution marker of the narrowed-scope steer (the worker injects it as a
- * followUp; kept here so the request file and its consumer cannot drift). */
+ * followUp; kept here so the PM-written request file and its consumer cannot
+ * drift). The machine no longer writes a steer itself (T03). */
 export const DP2_NARROW_MARKER = "[mw dp2-narrow]";
-/** Machine header line of the request file (first line of `steer-dp2.md`).
- * Exported so the worker-side consumer strips exactly what this side wrote. */
+/** Machine header line of a PM-written steer request (`steer-dp2.md`). Kept as
+ * the consumer-side contract (`worker-mode` strips exactly this line); the
+ * machine loop no longer writes the file itself (T03). */
 export const DP2_STEER_REQUEST_HEADER = "[dp2-narrow-request]";
-/** Appended to the PM alert when dp2 answered `narrow` but the worker can no
- * longer act on a steer (T-07b fallback, DS-4: never fail open). */
-export const DP2_NARROW_FALLBACK_LINE = "[dp2-narrow-fallback] task not running; escalated instead";
 /** dp2 question set in the canonical form Python hashes: `json.dumps(list(
  * questions), ensure_ascii=False, sort_keys=True, separators=(",", ":"))`
  * (decision_points.py::_questions_version). */
@@ -1587,393 +1574,16 @@ function recordOf(value) {
         ? value
         : undefined;
 }
-/** Code-point-safe UTF-8 clamp, mirroring the Python field budgets. */
-function clampUtf8(text, maxBytes) {
-    if (Buffer.byteLength(text, "utf8") <= maxBytes)
-        return text;
-    let out = "";
-    let used = 0;
-    for (const char of text) {
-        const size = Buffer.byteLength(char, "utf8");
-        if (used + size > maxBytes)
-            break;
-        out += char;
-        used += size;
-    }
-    return out;
-}
-/** Build the dp2 structured state (spec §5.4 / D-019: L0/L1 only, ≤2000B).
- * Required fields come from `decision_points.REQUIRED_STATE_FIELDS["dp2-…"]`:
- * universal 9 + `progress.elapsed_minutes/budget_minutes/phases_done/
- * phases_total/artifact_present`; the remaining counters and the trend are
- * optional L1. */
-export function buildDp2CheckpointState(input) {
-    const phases = splitPhaseProgress(input.checkpoint.phases);
-    const progress = {
-        elapsed_minutes: Math.max(0, Math.round(input.checkpoint.elapsedS / 60)),
-        budget_minutes: Math.max(1, Math.round(input.budgetMin)),
-        phases_done: phases.done,
-        phases_total: phases.total,
-        // Writeless roles carry the landing suffix; a write role proves its artifact
-        // by having written at all (old lines have no `artifact=` field).
-        artifact_present: input.checkpoint.artifactPresent ?? input.checkpoint.writes > 0,
-        writes: input.checkpoint.writes,
-        uniq_targets: input.checkpoint.uniqTargets,
-        repeat_top: input.checkpoint.repeatTop,
-        trend: input.trend.map((point) => ({
-            elapsed_minutes: point.elapsedMin,
-            reads: point.reads,
-            writes: point.writes,
-        })),
-    };
-    if (input.checkpoint.lastLandingS !== undefined) {
-        progress.last_land_age_min = Math.round(input.checkpoint.lastLandingS / 60);
-    }
-    const contextSlots = DECIDE_REGISTRY[DP2_CHECKPOINT_ID]?.contextSlots ?? [];
-    const context = {};
-    if (contextSlots.includes("change_summary")) {
-        // The summary is prose the model reads, not a decision field: one line,
-        // capped at the slot's 600 chars, derived only from machine fields.
-        const lastLand = typeof progress.last_land_age_min === "number" ? ` last_land_age=${progress.last_land_age_min}m` : "";
-        context.change_summary = clampUtf8(`checkpoint elapsed=${progress.elapsed_minutes}m/${progress.budget_minutes}m ` +
-            `phases=${progress.phases_done}/${progress.phases_total} writes=${progress.writes} ` +
-            `artifact_present=${progress.artifact_present}${lastLand}`, 600);
-    }
-    if (contextSlots.includes("artifact_status") && (input.artifacts?.length ?? 0) > 0) {
-        context.artifact_status = (input.artifacts ?? []).slice(0, 24).map((entry) => ({
-            path: clampUtf8(entry.path, 200),
-            exists: entry.exists === true,
-            bytes: Math.max(0, Math.round(entry.bytes)),
-        }));
-    }
-    const state = {
-        // T-08 (requirement 0 / T-04b residual 1): the registry state builder and
-        // `triage-client.ts::validateStructuredState` are pinned to
-        // `schema_version: 2`; the dp2 checkpoint state must carry the same version
-        // or the future structured-input validator would reject dp2's own input.
-        schema_version: 2,
-        decision_point: DP2_CHECKPOINT_ID,
-        key: clampUtf8(input.ownerKey, 48),
-        phase: clampUtf8(input.phase, 16),
-        task_type: input.taskType,
-        risk: input.checkpoint.risk,
-        risk_source: "machine",
-        authority_tier: "P2",
-        questions_version: DECIDE_REGISTRY[DP2_CHECKPOINT_ID]?.questionsVersion ?? DP2_QUESTIONS_VERSION,
-        progress,
-    };
-    if (Object.keys(context).length > 0)
-        state.context = context;
-    // W6: fail loud at the producer when the registry and this builder drift
-    // (`task_key` used to ride here; it is not a dp2 field, so it is gone).
-    assertStateMatchesRegistry(DP2_CHECKPOINT_ID, state);
-    return state;
-}
-/** `context.artifact_status` (W6): expected task outputs first, then whatever
- * else sits in the task dir, each fs-stated. Missing expected files are rows too
- * (`exists: false`) — that absence is exactly what the model should see.
- * Never throws (an unreadable dir yields no rows) and never exceeds 24 rows. */
-function readDp2ArtifactStatus(taskDir) {
-    const expected = ["task.md", "output.md", "report.md", "trace.log", "worker.log"];
-    const seen = new Set();
-    const rows = [];
-    const add = (rel) => {
-        if (rel === "" || seen.has(rel) || rows.length >= 24)
-            return;
-        seen.add(rel);
-        const absolute = path.join(taskDir, rel);
-        try {
-            const stat = fs.statSync(absolute);
-            if (!stat.isFile())
-                return;
-            rows.push({ path: rel, exists: true, bytes: stat.size });
-        }
-        catch {
-            rows.push({ path: rel, exists: false, bytes: 0 });
-        }
-    };
-    for (const rel of expected)
-        add(rel);
-    let entries = [];
-    try {
-        entries = fs.readdirSync(taskDir).sort();
-    }
-    catch {
-        entries = [];
-    }
-    for (const rel of entries)
-        add(rel);
-    return rows;
-}
-function splitPhaseProgress(phases) {
-    const match = /^(\d+)\/(\d+)$/.exec(phases.trim());
-    if (!match)
-        return { done: 0, total: 0 };
-    return { done: Number(match[1]), total: Number(match[2]) };
-}
-/** The dp2 state's `task_type` is the dp1 3-value taxonomy; a role outside it
- * (vision / rag_chat / default) is reported as `coding` — the field is required
- * and dp2's question is about progress, not role. */
-function dp2TaskType(headerType) {
-    return headerType === "research" || headerType === "review" ? headerType : "coding";
-}
-/** Wall budget mirror of `worker-mode.resolveBudgetMs` (that module imports this
- * one, so it cannot be imported back here): task.md `timeout:` minutes >
- * PI_WORKER_TIMEOUT_MS > 60m default. */
-function dp2BudgetMin(timeoutHeader, env) {
-    const header = Number(timeoutHeader);
-    if (timeoutHeader !== undefined && Number.isFinite(header) && header > 0)
-        return header;
-    const envMs = Number(env.PI_WORKER_TIMEOUT_MS);
-    if (Number.isFinite(envMs) && envMs > 0)
-        return Math.round(envMs / 60_000);
-    return 60;
-}
-/** task.md header view dp2 needs: `phase:`, `type:` and `timeout:`. Undefined
- * when task.md is unreadable (the caller then keeps its original alert). */
-export function readDp2TaskHeader(taskDir, env = process.env) {
-    let content;
-    try {
-        content = fs.readFileSync(path.join(taskDir, "task.md"), "utf8");
-    }
-    catch {
-        return undefined;
-    }
-    const phase = readTaskHeaderScalar(content, "phase") ?? "";
-    return {
-        phase: phase === "" ? "unknown" : phase,
-        taskType: dp2TaskType(readTaskType(content).type),
-        budgetMin: dp2BudgetMin(readTaskHeaderScalar(content, "timeout"), env),
-    };
-}
-function parseDecisionPayload(stdout) {
-    const trimmed = stdout.trim();
-    const attempts = [trimmed];
-    const lastLine = trimmed.split("\n").at(-1);
-    if (lastLine !== undefined && lastLine !== trimmed)
-        attempts.push(lastLine.trim());
-    for (const text of attempts) {
-        if (!text)
-            continue;
-        try {
-            const parsed = recordOf(JSON.parse(text));
-            if (parsed)
-                return parsed;
-        }
-        catch {
-            // try the next candidate
-        }
-    }
-    return undefined;
-}
-/** Ask dp2 for one checkpoint. NEVER throws and NEVER acts — it only decides
- * whether a `narrow` answer may replace the PM alert. `undefined` means the
- * feature is off for this project (design D-007 complete bypass: no spawn, no
- * write). */
-export function decideDp2Checkpoint(input) {
-    const policy = readDecidePolicy(input.projectDir);
-    if (!policy.enabled)
-        return undefined;
-    // AC-016: the effective per-dp policy (row > decide.json > built-in) drives
-    // the child budget and the confidence gate below. Resolution never throws.
-    const effective = resolveDecidePolicy(DP2_CHECKPOINT_ID, input.projectDir);
-    // Zero-spawn short-circuit ONLY (D-036): `readDp2Authorization` is a mirror of
-    // the Python row parser, so its verdict is a cost saving, never an
-    // authorization. `decision_points.decide_for` decides; a divergence resolves
-    // to Python. That is also why the decision's `mode`/`acted` below are taken
-    // from the child payload and not from this read.
-    const authorization = readDp2Authorization(input.projectDir);
-    if (!authorization.enabled)
-        return undefined;
-    const trend = readCheckpointTrend(input.taskDir);
-    const triggerId = `${input.taskKey}#ckpt${trend.total}`;
-    const base = {
-        decisionId: `${DP2_CHECKPOINT_ID}:${triggerId}`,
-        triggerId,
-        action: "none",
-        available: false,
-        acted: false,
-        budgetMin: 0,
-        elapsedMin: Math.max(0, Math.round(input.checkpoint.elapsedS / 60)),
-    };
-    const header = readDp2TaskHeader(input.taskDir, input.env ?? process.env);
-    if (!header)
-        return { ...base, reason: "input-incomplete" };
-    base.budgetMin = header.budgetMin;
-    const state = buildDp2CheckpointState({
-        ownerKey: input.ownerKey,
-        taskKey: input.taskKey,
-        phase: header.phase,
-        taskType: header.taskType,
-        budgetMin: header.budgetMin,
-        checkpoint: input.checkpoint,
-        trend: trend.points,
-        artifacts: readDp2ArtifactStatus(input.taskDir),
-    });
-    const run = input.run ?? runDecideMw;
-    let raw;
-    try {
-        raw = run({
-            projectDir: input.projectDir,
-            dp: DP2_CHECKPOINT_ID,
-            timeoutMs: Math.round(effective.timeoutS * 1000),
-            // Structured envelope only: the registry is the question authority
-            // (D-027), so no `questions` map rides along.
-            input: JSON.stringify({ state }),
-        });
-    }
-    catch {
-        return { ...base, reason: "upstream-error" };
-    }
-    if (raw.timedOut)
-        return { ...base, reason: "timeout" };
-    if (raw.error !== undefined || raw.status !== 0)
-        return { ...base, reason: "upstream-error" };
-    const payload = parseDecisionPayload(raw.stdout);
-    if (!payload)
-        return { ...base, reason: "bad-response" };
-    if (payload.available !== true) {
-        const reason = typeof payload.reason === "string" && payload.reason !== "" ? payload.reason : "unavailable";
-        return { ...base, reason };
-    }
-    const answer = recordOf(recordOf(payload.answers)?.[DP2_CHECKPOINT_QUESTION]);
-    const value = typeof answer?.value === "string" ? answer.value.trim() : "";
-    const confidence = typeof answer?.confidence === "number" && Number.isFinite(answer.confidence) ? answer.confidence : null;
-    // D-036: the effective mode is the child's verdict. An absent/unknown value
-    // stays undefined, which fails closed (`acted=false`) instead of guessing.
-    const mode = payload.mode === "auto" || payload.mode === "suggest" ? payload.mode : undefined;
-    const decision = { ...base, available: true, confidence };
-    if (mode !== undefined)
-        decision.mode = mode;
-    if (typeof payload.confidence_source === "string" && payload.confidence_source !== "") {
-        decision.confidenceSource = payload.confidence_source;
-    }
-    if (value !== "")
-        decision.answer = value;
-    // Closed mapping: an unknown / missing value stays `none` (fail-closed onto
-    // the human alert) — there is deliberately no default action branch.
-    if (value === "narrow")
-        decision.action = "narrow";
-    else if (value === "split")
-        decision.action = "split";
-    else if (value === "direct-exec" || value === "direct")
-        decision.action = "direct";
-    else if (value === "escalate")
-        decision.action = "escalate";
-    // D-011/D-041: `narrow` is the ONLY action the machine may execute, and only
-    // in the mode Python reports (`payload.mode`, not the local mirror). `suggest`
-    // records the answer (Python already appended its evidence row) and still
-    // wakes the PM (AC-015). AC-016: the confidence gate is the effective
-    // per-dp `min_confidence` (Python applies the same threshold before it can
-    // report `auto`); a payload without a usable confidence keeps the pre-AC-016
-    // verdict and is never invented into one.
-    const confident = confidence === null || confidence >= effective.minConfidence;
-    decision.acted = mode === "auto" && decision.action === "narrow" && confident;
-    return decision;
-}
-/** Write `<taskDir>/steer-dp2.md` (design §5.3). The PM process is the single
- * writer; the worker consumes the file at its next checkpoint tick and renames
- * it away. Returns false when the request could not be written — the caller
- * must then fall back to the human alert: a narrow that never reaches the
- * worker is not an acted decision. */
-export function writeDp2SteerRequest(input) {
-    const target = path.join(input.taskDir, DP2_STEER_FILE);
-    const remainingMin = Math.max(0, input.decision.budgetMin - input.decision.elapsedMin);
-    const content = [
-        `${DP2_STEER_REQUEST_HEADER} decision_id=${input.decision.decisionId} dp=${DP2_CHECKPOINT_ID}` +
-            ` risk=${input.risk} elapsed_minutes=${input.decision.elapsedMin}` +
-            ` budget_minutes=${input.decision.budgetMin} remaining_min=${remainingMin}`,
-        `${DP2_NARROW_MARKER} dp2 已自动判定收窄本任务（decision_id=${input.decision.decisionId}）：` +
-            `停止展开新工作，只保留能直接收敛的路径，优先保证已完成部分可交付；不新增文件、不改验收目标。` +
-            `预算剩余约 ${remainingMin}m。`,
-        "",
-    ].join("\n");
-    // Atomic request: a half-written steer must never be consumed by the worker.
-    const tmp = `${target}.tmp`;
-    try {
-        fs.writeFileSync(tmp, content, "utf8");
-        fs.renameSync(tmp, target);
-        return true;
-    }
-    catch {
-        try {
-            fs.rmSync(tmp, { force: true });
-        }
-        catch {
-            // Best-effort cleanup only — the false return already selects the alert path.
-        }
-        return false;
-    }
-}
-/** One `[DECISION] dp2 acted=1 decision_id=… trigger=…` correlation line in the
- * task's own trace (T-04d, design D-041 row 5).
- *
- * Written ONLY after the narrow actually executed — i.e. after
- * {@link writeDp2SteerRequest} returned true and the human alert was skipped. A
- * fallback to the alert (task not running / unwritable steer), `suggest` mode
- * and a disabled dp2 never write it: an un-executed decision may not claim
- * `acted=1`. Best-effort — a trace failure must never undo a written steer.
- */
-export function appendDp2ActedTrace(taskDir, decision) {
-    try {
-        fs.appendFileSync(path.join(taskDir, "trace.log"), `[DECISION] dp2 acted=1 decision_id=${decision.decisionId} trigger=${decision.triggerId}\n`, "utf8");
-    }
-    catch {
-        // Diagnostic only: the steer file is the decision's contract.
-    }
-}
-function pidAlive(pid) {
-    try {
-        process.kill(pid, 0);
-        return true;
-    }
-    catch (err) {
-        // EPERM: the process exists but is not ours — still alive. ESRCH: gone.
-        return err.code === "EPERM";
-    }
-}
-/** Is the worker this alert is about still able to consume a `steer-dp2.md`?
- *
- * The queue row is this loop's own view and is not evidence enough — it can lag
- * a run that already finished (the row is written by the launcher, the terminal
- * state by the worker itself, AC-022). So the worker's own product is consulted
- * first: `run.json` status, plus pid liveness for an `active` record (a worker
- * killed without a terminal write would otherwise look alive forever). Only
- * when the product gives no information does the ledger row decide.
- *
- * `unknown` (unreadable/unparsable record, no ledger evidence) is passed to the
- * caller as "not verified live" — the caller falls back to the human alert,
- * i.e. the fail-closed direction DS-4 requires. */
-export function probeDp2TaskLiveness(taskDir, ledgerStatus) {
-    try {
-        const state = readRunState(taskDir);
-        if (state !== undefined) {
-            const kind = runStateKind(state);
-            if (kind === "terminal")
-                return "settled";
-            if (kind === "active") {
-                const pid = state.pid;
-                if (typeof pid === "number" && Number.isInteger(pid) && pid > 0)
-                    return pidAlive(pid) ? "running" : "settled";
-                return "running";
-            }
-        }
-    }
-    catch {
-        // A probe that throws is not evidence of a live run: fail closed below.
-        return "unknown";
-    }
-    if (ledgerStatus === "running" || ledgerStatus === "pending")
-        return "running";
-    if (ledgerStatus === "done" ||
-        ledgerStatus === "failed" ||
-        ledgerStatus === "needs-clarification" ||
-        ledgerStatus === "lost") {
-        return "settled";
-    }
-    return "unknown";
-}
-export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, ui, pollIntervalMs = POLL_INTERVAL_MS, dp2Hooks) {
+/** RETIRED (2026-10-23 user revision, mw-decision-context T08): the automatic
+ * dp2 seam that lived here (`buildDp2CheckpointState`, `decideDp2Checkpoint`,
+ * the artifact/header helpers and the steer/narrow fallback) is gone. dp2 is a
+ * PM-INITIATED decision only: the checkpoint loop wakes the PM and the PM asks
+ * through the managed `ask_decision` tool with its own business material. No
+ * machine path re-introduces a local answer, a local confidence gate or a
+ * machine-written steer. The worker-side consume contract (`DP2_STEER_FILE`,
+ * `DP2_NARROW_MARKER`, `DP2_STEER_REQUEST_HEADER`) stays, because a PM may
+ * still hand-write that request file. */
+export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, ui, pollIntervalMs = POLL_INTERVAL_MS) {
     // Baseline snapshot: rows already terminal when this window opens are
     // history — never replay their summaries. Only transitions observed while
     // this session is open are notified, at most once each.
@@ -2019,9 +1629,8 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
                 reminderWatermark = r.seq;
     }
     let reminderHistoryRead = false;
-    // dp2 hook scope (T-07): `.mw/` lives at the control workspace root, one level
-    // above the agenticdoc root in every layout (dual-root included).
-    const dp2ProjectDir = dp2Hooks?.projectDir ?? path.dirname(agenticdocRoot);
+    // dp2 is PM-initiated only (T03 / design D-003): this loop has no decision
+    // hook and no project-dir seam for one.
     return setInterval(() => {
         try {
             const entries = workerStore.readAll();
@@ -2079,48 +1688,11 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
                     continue;
                 escalated.add(entry.taskKey);
                 const taskDir = path.dirname(entry.taskPath);
-                // dp2 (T-07 / design D-011): a machine answer may replace this wake with
-                // the ONE reversible action, `narrow`. `escalated.add` above already booked
-                // the once-per-task bound, so BOTH branches stay at one wake/steer per task
-                // per PM session (design §5.4 invariant 3). Closed states (no
-                // `.mw/decide.json`, dp2 disabled, suggest mode) return undefined and fall
-                // through to the byte-identical alert below.
-                const dp2 = decideDp2Checkpoint({
-                    projectDir: dp2ProjectDir,
-                    ownerKey,
-                    taskKey: entry.taskKey,
-                    taskDir,
-                    checkpoint: ck,
-                    run: dp2Hooks?.run,
-                });
-                let dp2Fallback = false;
-                if (dp2?.acted) {
-                    // T-07b (DS-4 fallback): a `narrow` may only replace the human wake when
-                    // the worker can still consume `steer-dp2.md`. A settled/terminal run (or a
-                    // probe that yields no live evidence) gets the UNCHANGED alert plus an
-                    // explicit fallback line instead — writing a steer nobody reads would be
-                    // the exact fail-open DS-4 forbids.
-                    const liveness = probeDp2TaskLiveness(taskDir, entry.status);
-                    if (liveness !== "running") {
-                        dp2Fallback = true;
-                    }
-                    else if (writeDp2SteerRequest({ taskDir, decision: dp2, risk: ck.risk })) {
-                        // T-04d: the narrow really executed (steer landed, alert skipped) —
-                        // record the acted decision in the task trace before reporting it.
-                        appendDp2ActedTrace(taskDir, dp2);
-                        // No triggerTurn: the decision already happened, the worker picks the steer
-                        // up at its next checkpoint tick, and the PM must not spend an agent turn
-                        // on it (design §5.3 / AC-004). The transcript still records it.
-                        displaySummary(pi, `[mw] dp2 已自动收窄 ${entry.taskKey}（decision_id=${dp2.decisionId}，risk=${ck.risk}）；` +
-                            `worker 将在下一个检查点 tick 注入收窄 steer。如需改判：手动处置或 mw decide dp off ${DP2_CHECKPOINT_ID}。`);
-                        continue;
-                    }
-                    // A failed steer write keeps the pre-dp2 alert byte-identical (the worker may
-                    // still be alive; the file was simply unwritable) — only "not running"
-                    // carries the fallback line.
-                }
-                // split / direct-exec / escalate / mode=suggest / every degraded path: the
-                // pre-dp2 alert below stays byte-identical and still triggers a turn.
+                // T03 / design D-003: dp2 is PM-INITIATED only. The checkpoint loop
+                // deliberately asks no decision and executes no answer: the machine may
+                // not narrow, split, take over or authorize anything on its own. The
+                // generic watchdog wake below is the preserved behaviour; the PM's dp2
+                // tool call (T04, `ask_decision`) is the only trigger.
                 // Cross-key alerts carry the owner key right after the worker name
                 // (D-102) so the PM can tell an off-watch task from a watched-key one;
                 // the watched-key label keeps the byte-exact `'name' ` form (AC-004).
@@ -2128,8 +1700,7 @@ export function startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agent
                 deliverPmAlert(pi, `[mw] 发散风险：worker ${workerLabel}检查点 risk=${ck.risk}` +
                     `（elapsed ${Math.round(ck.elapsedS / 60)}m，reads=${ck.reads} writes=${ck.writes}，phases=${ck.phases}，` +
                     `重复读 top=${ck.repeatTop}）。机器判据仅供参考——请结合本 key 最全上下文判断：继续等待 / steer 收窄范围 / 终止并分拆重派 / PM 直执。` +
-                    `证据：${path.join(taskDir, "trace.log")}（[CHECKPOINT] 行）与 ${path.join(taskDir, "progress.md")}（自评行；无写工具角色另含框架机器行）。` +
-                    (dp2Fallback ? `\n${DP2_NARROW_FALLBACK_LINE}` : ""));
+                    `证据：${path.join(taskDir, "trace.log")}（[CHECKPOINT] 行）与 ${path.join(taskDir, "progress.md")}（自评行；无写工具角色另含框架机器行）。`);
             }
             for (const entry of entries) {
                 if (notified.has(entry.taskKey) || !isTerminal(entry.status))
@@ -2372,9 +1943,7 @@ export function pmActivate(pi) {
         return { systemPrompt: base === "" ? PARALLEL_PROTOCOL : `${base}\n\n${PARALLEL_PROTOCOL}` };
     });
     // Start worker status poll loop (setInterval is safe; displaySummary inside fires later)
-    const pollHandle = startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, ui, POLL_INTERVAL_MS, {
-        projectDir,
-    });
+    const pollHandle = startWorkerPollLoop(pi, workerStore, ackStore, indexStore, agenticdocRoot, watch, ui, POLL_INTERVAL_MS);
     // Session teardown stops the loop (review m3): a fresh runtime re-runs
     // pmActivate and starts a new one, so this only removes the zombie that
     // would keep ticking against a disposed context after /reload or session

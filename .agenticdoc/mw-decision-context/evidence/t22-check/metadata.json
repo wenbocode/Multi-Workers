@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "cmd.exe",
+    "/d",
+    "/c",
+    "npm run check"
+  ],
+  "cwd": "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\dc-t22-check-tm5m_1rt\\repo",
+  "utc_start": "2026-10-24T09:27:33.175187+00:00",
+  "utc_end": "2026-10-24T09:27:34.654508+00:00",
+  "exit": 1,
+  "copied_files": 11916,
+  "formatter_changes": [
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-task-state.ts",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts",
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts",
+    "packages/coding-agent/test/suite/decision-task-state.test.ts"
+  ],
+  "original_changed_during_check": [],
+  "scope": "full npm run check, copied working tree; no formatter result applied to source"
+}

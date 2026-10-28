@@ -1,0 +1,7 @@
+# command: C:\Program Files\nodejs\npm.CMD run check:pinned-deps
+# exit: 0
+
+
+> pi-monorepo@0.0.3 check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+

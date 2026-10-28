@@ -1,0 +1,30 @@
+{
+  "observed_at": "2026-10-28T06:52:10.791124+00:00",
+  "source": "agent-report",
+  "card_sha256": "b7e04eaafc9dcdebf563564fabc74511f2c987834d2a9a889d8e18232e5d28e3",
+  "faces": [
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_wire.py",
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_lifecycle.py",
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_task_state.py",
+    ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/product-repair/**"
+  ],
+  "seed_label": "tasks/T10-r2-product-repair.md",
+  "actual_card": "tasks/isolated/T10-r2-product-repair.md",
+  "run": {
+    "schema": 1,
+    "task_key": "dpc-t10-r2-product-repair",
+    "run_id": "dpc-t10-r2-product-repair@2026-10-28T06:51:39.278Z",
+    "owner_key": "mw-dp-consolidation",
+    "kind": "coding",
+    "status": "running",
+    "started_at": "2026-10-28T06:51:39.278Z",
+    "artifacts": [],
+    "pid": 20580,
+    "last_heartbeat_at": "2026-10-28T06:52:09.289Z"
+  },
+  "completed": null,
+  "remaining": null,
+  "blockers": null,
+  "task_count": 36,
+  "stage_count": 7
+}

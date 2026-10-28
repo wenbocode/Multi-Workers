@@ -1,0 +1,49 @@
+{
+  "kind": "human-design-approval-document-check-only",
+  "observed_at": "2026-10-26T03:33:39+08:00",
+  "review_input_hashes_match": true,
+  "spec_locked_bytes_equal": true,
+  "vc_contract_text_equal": true,
+  "ac_vc_mapping_text_equal": true,
+  "all_mermaid_blocks_equal": true,
+  "per_ac_evidence_contract_text_equal": true,
+  "listed_product_framework_paths_equal": true,
+  "listed_path_count": 86,
+  "ac_count": 53,
+  "vc_count": 53,
+  "mapping_rows": 53,
+  "missing_acs": 0,
+  "unbound_vcs": 0,
+  "mermaid_blocks": 12,
+  "product_tests_run": false,
+  "files": {
+    "design.md": {
+      "sha256": "06e3c510e093df7599b3b7aa1391e3240b4cdf24aea88cbd3a4fdeb180408135"
+    },
+    "evidence-requirement.md": {
+      "sha256": "0558b0c839504df81e141679f621c1c71790e97ef02c70ad19636bd55f0ae00f"
+    },
+    "design-write-scope.md": {
+      "sha256": "c7c1bde606d9141b6f8fa1d85f5ca73b91a7a44e086c48687e055f17a80221a4"
+    }
+  },
+  "commands": [
+    {
+      "argv": [
+        "python",
+        ".agents/skills/agentic-task/scripts/check_mermaid.py",
+        ".agenticdoc/mw-dp-consolidation/design.md"
+      ],
+      "rc": 0
+    },
+    {
+      "argv": [
+        "python",
+        ".agents/skills/agentic-task/scripts/audit_phase.py",
+        "mw-dp-consolidation"
+      ],
+      "rc": 0
+    }
+  ],
+  "observed_phase": "DESIGN"
+}

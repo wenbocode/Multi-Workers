@@ -1,0 +1,147 @@
+{
+  "observed_at": "2026-10-26T12:04:12.042701+00:00",
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_context.py",
+      "sha256": "c6f5783c69bdf1931d7ca199541827ab70b879f25fbc876f9b0df48e26fb2d70",
+      "bytes": 13784,
+      "crlf": 323,
+      "bare_lf": 0,
+      "live_baseline_matches": true,
+      "samefile_live": false
+    },
+    {
+      "path": "packages/multi-workers/scripts/gen_decide_registry_ts.py",
+      "sha256": "e454cefd2328da48c9beb67d6385cf61d83b6bed24f8fc52e0bd5505237124c6",
+      "bytes": 21280,
+      "crlf": 0,
+      "bare_lf": 505,
+      "live_baseline_matches": true,
+      "samefile_live": false
+    },
+    {
+      "path": "packages/multi-workers/decide_registry.json",
+      "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "bytes": 29869,
+      "crlf": 0,
+      "bare_lf": 894,
+      "live_baseline_matches": true,
+      "samefile_live": false
+    },
+    {
+      "path": "packages/multi-workers/test_decide_registry_ts_lock.py",
+      "sha256": "26eb0493164bd4ae28c6d1c86b770eaa7d09e4aad90c715009c9262e704c26a2",
+      "bytes": 34713,
+      "crlf": 0,
+      "bare_lf": 862,
+      "live_baseline_matches": true,
+      "samefile_live": false
+    },
+    {
+      "path": "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts",
+      "sha256": "8c316042da5bb61419deb3d3bd9897893c7b227fa21959807220f7ac12337b8f",
+      "bytes": 20629,
+      "crlf": 0,
+      "bare_lf": 695,
+      "live_baseline_matches": true,
+      "samefile_live": false
+    }
+  ],
+  "mirror_before": 1864,
+  "mirror_after": 1864,
+  "changed": [
+    "packages/multi-workers/test_decide_registry_ts_lock.py"
+  ],
+  "original_t04_evidence_files": 112,
+  "original_evidence_unchanged": true,
+  "worker_before_after_bytes_match": true,
+  "worker_full_diff_matches": true,
+  "diff_hunks": 3,
+  "diff_added_lines": 279,
+  "diff_removed_lines": 16,
+  "original_test_definitions_preserved": true,
+  "added_test_function_names": [
+    "test_artifact_byte_guard_refuses_ts_and_json_drift",
+    "test_boundary_refuses_a_command_that_deletes_a_legacy_case",
+    "test_boundary_refuses_a_command_that_rewrites_a_legacy_case",
+    "test_boundary_refuses_a_command_that_writes_active_cases",
+    "test_case_dir_boundary_accepts_legacy_and_active_cases_together",
+    "test_case_dir_boundary_refuses_a_changed_case_set",
+    "test_case_dir_boundary_refuses_a_deleted_legacy_case",
+    "test_case_dir_snapshot_requires_every_legacy_file"
+  ],
+  "stdout_exact_bytes": false,
+  "stdout_eol_equivalent": true,
+  "commands": [
+    {
+      "label": "pm-green",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t04-r2-pm-handoff-20261026\\probe.py",
+        "tests"
+      ],
+      "started_at": "2026-10-26T12:04:09.758594+00:00",
+      "ended_at": "2026-10-26T12:04:11.202370+00:00",
+      "rc": 0
+    },
+    {
+      "label": "pm-probe",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t04-r2-pm-handoff-20261026\\probe.py",
+        "probe"
+      ],
+      "started_at": "2026-10-26T12:04:11.202400+00:00",
+      "ended_at": "2026-10-26T12:04:11.472598+00:00",
+      "rc": 0
+    },
+    {
+      "label": "pm-generator-check",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\scripts\\gen_decide_registry_ts.py",
+        "--check"
+      ],
+      "started_at": "2026-10-26T12:04:11.472613+00:00",
+      "ended_at": "2026-10-26T12:04:11.642722+00:00",
+      "rc": 0
+    },
+    {
+      "label": "pm-generator-stdout",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\scripts\\gen_decide_registry_ts.py",
+        "--stdout"
+      ],
+      "started_at": "2026-10-26T12:04:11.642738+00:00",
+      "ended_at": "2026-10-26T12:04:11.816156+00:00",
+      "rc": 0
+    }
+  ],
+  "minimal_environment_keys": [
+    "COMSPEC",
+    "HOME",
+    "PATH",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONIOENCODING",
+    "PYTHONPATH",
+    "PYTHONUTF8",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "WINDIR"
+  ],
+  "mirror_unchanged_by_pm_verification": true,
+  "current_pyc_absent": true,
+  "worker_reported_transient_pyc_violation": true,
+  "manual_writer_absence_proven": false,
+  "whole_live_tree_clean_proven": false,
+  "ts_compile_verified": false,
+  "product_writes_by_pm": false
+}

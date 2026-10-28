@@ -1,0 +1,11 @@
+{
+  "rc": 0,
+  "summary": {
+    "last_line": "14 passed in 0.50s",
+    "counts": {
+      "passed": 14
+    },
+    "failed_node_ids": []
+  },
+  "stderr_chars": 0
+}

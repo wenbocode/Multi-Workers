@@ -1,0 +1,178 @@
+{
+  "utc": "2026-10-23T08:54:42.657359+00:00",
+  "snapshot_checks": [
+    {
+      "label": "before",
+      "path": "packages/multi-workers/decide_cases/dp1.json",
+      "sha256": "e1d8e95973934215b1dba1b9cd3062a95f7f03cc44cdcb32367f3ae9fa86cc84",
+      "bytes": 1201
+    },
+    {
+      "label": "before",
+      "path": "packages/multi-workers/decide_cases/dp2.json",
+      "sha256": "dca4a16e48487b686bc7d03aa54ce80c817bba24684e0f5ba13854acf4f418a3",
+      "bytes": 2135
+    },
+    {
+      "label": "before",
+      "path": "packages/multi-workers/decide_cases/dp25.json",
+      "sha256": "660c6801680cd5bd4d83fa5e9d4020c2386c0a0805363f5d6f2d9911a3b48c33",
+      "bytes": 2033
+    },
+    {
+      "label": "before",
+      "path": "packages/multi-workers/decide_cases/dp3.json",
+      "sha256": "ecae7a037a173540ac4170990c4905174e7182c62e53f85750c3102ebcdaa802",
+      "bytes": 2084
+    },
+    {
+      "label": "before",
+      "path": "packages/multi-workers/decision_history.py",
+      "sha256": "acb7ca9624aa326de18ab67e3505c79c12647be6b8a9c678540661338a60e4f5",
+      "bytes": 161714
+    },
+    {
+      "label": "before",
+      "path": "packages/multi-workers/decision_monitor.py",
+      "sha256": "5c6b6420162a4ef3fc9eb9e2cb0d79af3f59d78a95e696c1efbbd8353d2bfbb7",
+      "bytes": 114376
+    },
+    {
+      "label": "before",
+      "path": "packages/multi-workers/decision_playground.py",
+      "sha256": "e8f5859e2313030d983c63cce62c131276d37c382285c4c9e7e9145911f704ac",
+      "bytes": 70805
+    },
+    {
+      "label": "before",
+      "path": "packages/multi-workers/decision_points.py",
+      "sha256": "ae6914154686e7b360075020a0266dc86d040b376f8729330c03411867e2d9a4",
+      "bytes": 232829
+    },
+    {
+      "label": "before",
+      "path": "packages/multi-workers/scripts/build_decide_cases.py",
+      "sha256": "681a8b5c0f3dcbe3caa294bb9f3b47e820988f72c35278d3cb9513de40fd99a7",
+      "bytes": 18966
+    },
+    {
+      "label": "before",
+      "path": "packages/multi-workers/test_decision_context_contract.py",
+      "sha256": "4cdfd351ddf8f9f925dd53d918050a6e540e1903b19d7aa4e5976c1efd320746",
+      "bytes": 32496
+    },
+    {
+      "label": "before",
+      "path": "packages/multi-workers/test_decision_context_history.py",
+      "sha256": "203f388d18cc3f2fc18766b3ba9a938aa88e46472c2e4a81fa789802dd02da05",
+      "bytes": 47666
+    },
+    {
+      "label": "before",
+      "path": "packages/multi-workers/test_decision_dashboard_playground.py",
+      "sha256": "f0e1d89d7a6439555f6d121e46081dd074e0abd8444f0ec51d95a30015d93b16",
+      "bytes": 70648
+    },
+    {
+      "label": "before",
+      "path": "packages/multi-workers/test_decision_monitor.py",
+      "sha256": "0efe65dfbf413efdd66f2dd9fe82574b04bc0fdea58555b7a3c21023c4101d62",
+      "bytes": 76018
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/decide_cases/dp1.json",
+      "sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "bytes": 1645
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/decide_cases/dp2.json",
+      "sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "bytes": 2689
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/decide_cases/dp25.json",
+      "sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "bytes": 2682
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/decide_cases/dp3.json",
+      "sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "bytes": 2320
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/decision_history.py",
+      "sha256": "06ff6dce259ca05299f50248e024da05436873c62f225727bd59e30802834091",
+      "bytes": 172063
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/decision_monitor.py",
+      "sha256": "915288303e7200ce2467f2acb14c868fedcc72d9fd9b2dd3c1740b88454f9f48",
+      "bytes": 117336
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/decision_playground.py",
+      "sha256": "1a409f1af8a9f0057ddcbc4412faefd8a414e150c26fcbccc3d14f72d1e71007",
+      "bytes": 79464
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/decision_points.py",
+      "sha256": "c53ce3f4e438bef40b80d3db4eaab70ecdf3acae57e01cd0092e26f80db7b28c",
+      "bytes": 247387
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/scripts/build_decide_cases.py",
+      "sha256": "60910516ccce4caac181f8fc20fb98432809ad2817e6141b3f2ae1a90f7117ed",
+      "bytes": 20556
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/test_decision_context_contract.py",
+      "sha256": "ea6429088c285382736f634a3233b7c94659c2a381e60b0ad9380a0157b8e7cf",
+      "bytes": 35858
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/test_decision_context_history.py",
+      "sha256": "a06b9381a92d5f9a3246df5a3b3d796e47eb725d2cb73228f5d21d798f93cd52",
+      "bytes": 50621
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/test_decision_context_readable_backend.py",
+      "sha256": "4a4625f05c9caa485eb00d1f37b2f228a9c54eb87f37e7376b9c6efe005e912a",
+      "bytes": 40422
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/test_decision_dashboard_playground.py",
+      "sha256": "b08ac67e57f1f2f437e59db51867fc5e45cec9bdd170538784172e263237d7ff",
+      "bytes": 73348
+    },
+    {
+      "label": "after",
+      "path": "packages/multi-workers/test_decision_monitor.py",
+      "sha256": "7c901c31dc8e71040c256123f1bdf3d4e07a0cc0d05ce27fd8f14278cb12988c",
+      "bytes": 79452
+    }
+  ],
+  "generator_exact_cases": [
+    "dp1.json",
+    "dp2.json",
+    "dp3.json",
+    "dp25.json"
+  ],
+  "recorded_generator_commands": [
+    "[TOOL] 2026-10-23T08:28:35.231Z bash cd packages/multi-workers; python -X utf8 scripts/build_decide_cases.py",
+    "[TOOL] 2026-10-23T08:28:45.576Z bash cd packages/multi-workers; python -X utf8 scripts/build_decide_cases.py"
+  ],
+  "scope": "independent compensating evidence; no rewrite of original trace/status; generator rendered in memory, no source writes"
+}

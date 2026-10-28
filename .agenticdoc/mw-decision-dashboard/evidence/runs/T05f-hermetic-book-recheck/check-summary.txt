@@ -1,0 +1,9 @@
+# T05f root read-only check sub-steps (no --write, no build)
+
+check-biome-readonly               EXIT=1  (5314 bytes saved)
+check-pinned-deps                  EXIT=0  (77 bytes saved)
+check-ts-imports                   EXIT=0  (84 bytes saved)
+check-shrinkwrap                   EXIT=0  (156 bytes saved)
+check-install-lock-coding-agent    EXIT=0  (166 bytes saved)
+check-tsgo-noemit                  EXIT=0  (0 bytes saved)
+check-browser-smoke                EXIT=0  (0 bytes saved)

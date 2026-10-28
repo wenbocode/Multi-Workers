@@ -1,0 +1,25 @@
+### argv: node ../../node_modules/vitest/dist/cli.js --run test/suite/decide-command.test.ts
+### cwd: /h/git/Multi-Workers/packages/coding-agent
+### iso_home: /tmp/tmp.QePjr4hB5w  USERPROFILE=C:\Users\WENBOZ~1\AppData\Local\Temp\tmp.QePjr4hB5w\home PI_CODING_AGENT_DIR=C:\Users\WENBOZ~1\AppData\Local\Temp\tmp.QePjr4hB5w\agent
+### unset: MW_PY TIMI_API_KEY TAI_PAT_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY
+### node: v24.19.0
+
+ RUN  v4.1.9 H:/git/Multi-Workers/packages/coding-agent
+
+[VERIFY] FIX-Q parse: empty={"action":"show"} show={"action":"show"} full={"action":"sign","conclusion":"continue","reason":"dp3 held up","allowEmpty":true,"key":"k"} usage_missing=usage usage_invalid=usage usage_unknown=usage conclusions=continue|narrow|revoke
+[VERIFY] FIX-Q hasUI: runner_calls=0 level=warning
+[VERIFY] FIX-Q show: argv=["sign","--key","k","--json"] sha12=0123456789ab writes=0 verdict_lines=3
+[VERIFY] FIX-Q sign-refused: confirms=0 write_calls=0 level=error
+[VERIFY] FIX-Q cancel: confirms=1 write_calls=0 last=cancelled, nothing written
+[VERIFY] FIX-Q write: argv=["sign","--key","k","--conclusion","continue","--human-confirmed"] level=info path_echoed=true
+[VERIFY] FIX-Q write-variant: argv=["sign","--key","k","--conclusion","continue","--human-confirmed","--reason","dp3 held up","--allow-empty"]
+[VERIFY] FIX-Q no-key: runner_calls=0 level=warning
+[VERIFY] FIX-Q dispatch: routed=true usage_has_decide=true usage_export=true
+············
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+   Start at  18:46:16
+   Duration  851ms (transform 470ms, setup 0ms, import 707ms, tests 8ms, environment 0ms)
+
+### exit=0

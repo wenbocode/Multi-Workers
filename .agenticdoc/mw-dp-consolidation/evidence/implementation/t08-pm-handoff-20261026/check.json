@@ -1,0 +1,131 @@
+{
+  "observed_start": "2026-10-26T12:43:45.717597+00:00",
+  "observed_at": "2026-10-26T12:43:47.324716+00:00",
+  "commands": [
+    {
+      "label": "pm-green",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t08-pm-handoff-20261026\\bootstrap.py",
+        "tests"
+      ],
+      "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+      "rc": 0
+    },
+    {
+      "label": "pm-literal",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "-m",
+        "pytest",
+        "-p",
+        "no:cacheprovider",
+        "-q",
+        "test_dp_consolidation_materials.py"
+      ],
+      "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+      "rc": 0
+    },
+    {
+      "label": "pm-probe",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t08-pm-handoff-20261026\\bootstrap.py",
+        "probes"
+      ],
+      "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+      "rc": 0
+    }
+  ],
+  "files": [
+    {
+      "path": "packages/multi-workers/decision.py",
+      "sha256": "89500080e9f59c80e98b757a3a2b547b1db06985edc04a7489d068cb5f80a5e5",
+      "bytes": 116092,
+      "crlf": 0,
+      "bare_lf": 2683,
+      "old_bytes": 99249,
+      "old_sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+      "live_sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0"
+    },
+    {
+      "path": "packages/multi-workers/decision_backends.py",
+      "sha256": "a13a8597bba7abe796022148bd50d02b26fc6a85e1d7d3b1af9f5129f0a3e22b",
+      "bytes": 48970,
+      "crlf": 0,
+      "bare_lf": 1216,
+      "old_bytes": 44577,
+      "old_sha256": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60",
+      "live_sha256": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60"
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_materials.py",
+      "sha256": "2ab2d758350eb0a3b714512e9a70d81e14c645459f94cc8c850b98a4638454f8",
+      "bytes": 36376,
+      "crlf": 0,
+      "bare_lf": 977,
+      "old_bytes": 0,
+      "old_sha256": null,
+      "live_sha256": null
+    }
+  ],
+  "baseline_files": 1864,
+  "before_files": 1883,
+  "after_files": 1883,
+  "verification_net_changes": [],
+  "live_exact_paths_unchanged": {
+    "packages/multi-workers/decision.py": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+    "packages/multi-workers/decision_backends.py": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60",
+    "packages/multi-workers/test_dp_consolidation_materials.py": null
+  },
+  "full_live_or_historical_no_write_audit": false,
+  "drift_from_frontier": [
+    "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc",
+    "packages/multi-workers/decision.py",
+    "packages/multi-workers/decision_backends.py",
+    "packages/multi-workers/decision_policy.py",
+    "packages/multi-workers/decision_validity.py",
+    "packages/multi-workers/test_dp_consolidation_concurrency.py",
+    "packages/multi-workers/test_dp_consolidation_materials.py",
+    "packages/multi-workers/test_dp_consolidation_recovery.py"
+  ],
+  "out_of_face_drift": [
+    "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc"
+  ],
+  "out_of_face_bytes_saved": true,
+  "exclusive_pyc_process_authorship_verified": false,
+  "pm_diff_bytes": 63954,
+  "pm_diff_sha256": "6f727690ca2f4be4aba3d07801ff53d648af6d9959108c338b53f7eca90ec454",
+  "semantic_handoff_verified": false,
+  "literal_command_network_hook": false,
+  "bootstrap_network_hook": true
+}

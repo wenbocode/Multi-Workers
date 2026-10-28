@@ -1,0 +1,138 @@
+{
+  "project": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t09-books\\fixture\\probe-project",
+  "imports": {
+    "decision_book": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_book.py",
+    "decision": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision.py",
+    "decision_points": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_points.py"
+  },
+  "VC-002": {
+    "rejected_old_ids": 25,
+    "retired_book_refusals": 25,
+    "model_calls": 0,
+    "business_actions": 0,
+    "valid_decisions": 0
+  },
+  "VC-004": {
+    "legal_entries_accepted": 8,
+    "legal_same_call_requests": 8,
+    "baseline_contract_violations": 0
+  },
+  "VC-043": {
+    "failed_entries": 8,
+    "illegal_refusals": [
+      {
+        "dp": "dp-w-type",
+        "prepared": false,
+        "issues": [
+          "material.task_goal"
+        ]
+      },
+      {
+        "dp": "dp-pm-steer",
+        "prepared": false,
+        "issues": [
+          "material.task_goal"
+        ]
+      },
+      {
+        "dp": "dp-w-check-task",
+        "prepared": false,
+        "issues": [
+          "material.task_goal"
+        ]
+      },
+      {
+        "dp": "dp-QG",
+        "prepared": false,
+        "issues": [
+          "material.review_requirements"
+        ]
+      },
+      {
+        "dp": "dp-gate-approve",
+        "prepared": false,
+        "issues": [
+          "material.gate_background"
+        ]
+      },
+      {
+        "dp": "dp-sign-key",
+        "prepared": false,
+        "issues": [
+          "material.delivery_goal"
+        ]
+      },
+      {
+        "dp": "dp-auto",
+        "prepared": false,
+        "issues": [
+          "material.question"
+        ]
+      },
+      {
+        "dp": "dp-route",
+        "prepared": false,
+        "issues": [
+          "material.decision_actor"
+        ]
+      }
+    ],
+    "failure_actions": 0,
+    "fabricated_approvals": 0
+  },
+  "VC-040": {
+    "routed_targets": 7,
+    "targets": [
+      "dp-w-type",
+      "dp-pm-steer",
+      "dp-w-check-task",
+      "dp-QG",
+      "dp-gate-approve",
+      "dp-sign-key",
+      "dp-auto"
+    ],
+    "route_releases": 0,
+    "route_actions": 0,
+    "route_book_issues": 0
+  },
+  "VC-042": {
+    "prepared_candidate_ids": [
+      "act-now",
+      "hold-for-user"
+    ],
+    "five_candidate_book_issues": 0,
+    "bounds": {
+      "min": 2,
+      "max": null,
+      "id_scheme": "free"
+    },
+    "invented_candidates": 0,
+    "invalid_basis_refs": 0,
+    "unauthorized_or_substituted_actions": 0
+  },
+  "VC-051": {
+    "empty_arrays_accepted": true,
+    "null_refusals": [
+      {
+        "path": "verification_evidence.verified",
+        "refused": true
+      },
+      {
+        "path": "verification_evidence.unverified",
+        "refused": true
+      },
+      {
+        "path": "unfinished_impact",
+        "refused": true
+      }
+    ],
+    "invalid_sign_arrays_accepted": 0,
+    "agent_report_grants": 0,
+    "secret_or_history_violations": 0
+  },
+  "legacy": {
+    "state_book_refused": true,
+    "questions_book_refused": true,
+    "book_schema_version": 3
+  }
+}

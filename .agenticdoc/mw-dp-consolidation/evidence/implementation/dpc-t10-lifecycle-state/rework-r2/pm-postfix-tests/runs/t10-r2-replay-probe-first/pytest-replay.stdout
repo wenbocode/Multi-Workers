@@ -1,0 +1,65 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+_ test_an_earlier_recorded_executed_event_can_replay_after_a_later_settlement _
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-pm-verify-20261027/pm-verification/t10-r2-replay-probe-first/pytest-basetemp/test_an_earlier_recorded_execu0')
+
+    def test_an_earlier_recorded_executed_event_can_replay_after_a_later_settlement(tmp_path):
+        before = dict(status='running', observed_at='2026-10-27T08:00:00+00:00', source='agent-report', completed=None, remaining=[], blockers=None)
+        earlier = dict(before, observed_at='2026-10-27T09:00:00+00:00')
+        later = dict(before, observed_at='2026-10-27T10:00:00+00:00')
+        meta = lifecycle.DecisionMeta.create('pm-replay-fixture', task_key='synthetic-task', initiator_role='pm', logical_id='pm-r2-replay-fixture', task_before=before)
+        store = lifecycle.LifecycleStore.test(tmp_path / 'synthetic-ledger', project_id='synthetic-project', redact=wire.SubstringRedactor(['synthetic-known-secret-value']))
+        decision_id = 'dp-pm-steer:' + meta.logical_id
+        assert lifecycle.record_start(store, meta, decision_id=decision_id).recorded
+        args = dict(decision_id=decision_id, action='record', result='synthetic recorded fact; no real action', task_after=earlier, event_id='pm-r2-replay-executed')
+        first = lifecycle.record_executed(store, meta, **args)
+        assert first.status == 'written'
+        assert lifecycle.record_settled(store, meta, decision_id=decision_id, outcome='ok', task_after=later, event_id='pm-r2-replay-settled').recorded
+        saved = store.sink.read_bytes()
+>       again = lifecycle.record_executed(store, meta, **args)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+..\..\..\evidence\implementation\dpc-t10-lifecycle-state\rework-r2\pm-postfix-tests\test_replay_probe.py:21: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision_lifecycle.py:1215: in record_executed
+    return record_lifecycle(
+decision_lifecycle.py:1070: in record_lifecycle
+    _recorded_after_floor(store, meta, task_after)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-pm-verify-20261027/pm-verification/t10-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+meta = DecisionMeta(key='pm-replay-fixture', logical_id='pm-r2-replay-fixture', initiator_role='pm', task_key='synthetic-task...rved_at': '2026-10-27T08:00:00+00:00', 'source': 'agent-report', 'completed': None, 'remaining': [], 'blockers': None})
+task_after = {'blockers': None, 'completed': None, 'observed_at': '2026-10-27T09:00:00+00:00', 'remaining': [], ...}
+
+    def _recorded_after_floor(
+        store: "LifecycleStore", meta: "DecisionMeta", task_after: dict[str, object]
+    ) -> None:
+        """Refuse a new after observation that precedes one already recorded.
+    
+        ``executed``/``settled`` follow the same non-decreasing rule the task
+        terminal already enforces: the creation fact's before is the floor, and so is
+        every earlier ``task_after`` of the same logical record. The association is
+        proven by :func:`_ledger_facts`, so another task's after snapshot is never
+        borrowed and an unrecorded (``None``) axis is never guessed. The caller runs
+        this before the write and again inside the append lock, where the rows can no
+        longer change between the check and the append.
+        """
+        start, events = _ledger_facts(store, meta)
+        try:
+            stored_before = decision_task_state.validate_task_state(start.get("task_before"))
+            decision_task_state.validate_observation_order(stored_before, task_after)
+            for row in events:
+                if row.get("logical_id") != meta.logical_id:
+                    continue
+                prior = decision_task_state.validate_task_state(row.get("task_after"))
+                if prior is not None:
+                    decision_task_state.validate_observation_order(prior, task_after)
+        except decision_task_state.TaskStateInputError as exc:
+>           raise LifecycleInputError(str(exc)) from None
+E           decision_lifecycle.LifecycleInputError: task after observation precedes task before observation
+
+decision_lifecycle.py:440: LifecycleInputError
+=========================== short test summary info ===========================
+FAILED ..\..\..\evidence\implementation\dpc-t10-lifecycle-state\rework-r2\pm-postfix-tests\test_replay_probe.py::test_an_earlier_recorded_executed_event_can_replay_after_a_later_settlement
+1 failed in 0.34s

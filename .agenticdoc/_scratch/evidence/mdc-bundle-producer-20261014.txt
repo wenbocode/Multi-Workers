@@ -1,0 +1,382 @@
+32 refs (excluding node_modules, dist, .agenticdoc)
+
+packages/coding-agent/test/extensions/agent-team-loop-protected-config.test.ts:55:		expect(isProtectedConfigPath(AGENT_DIR, path.join(AGENT_DIR, "extensions", "agent-team-loop.js"))).toBe(false);
+packages/coding-agent/test/extensions/agent-team-loop.test.ts:980:			touch("dist/agent-team-loop.js", T + 100_000);
+packages/coding-agent/test/suite/mwds-t23-cutover-recheck.test.ts:288:		const repoBundle = path.join(REPO_ROOT, "packages", "multi-workers", "dist", "extensions", "agent-team-loop.js");
+packages/coding-agent/test/suite/mwgal-t13-drift.test.ts:64:			touch(path.join(dir, "dist", "agent-team-loop.js"), T + 100_000);
+packages/multi-workers/UPDATE.md:12:  扩展 bundle（~/.pi/agent/extensions/agent-team-loop.js，全局）
+packages/multi-workers/UPDATE.md:36:| A1 | MW 扩展 bundle | `~/.pi/agent/extensions/agent-team-loop.js` | mtime 对比 `packages/coding-agent/src/extensions/agent-team-loop/` 最新源 mtime；或 `/mw doctor` 报「扩展 bundle: 源码较新，建议 /mw build 重建」 | `/mw build`（任意 pi 窗口，等价 `mw build --install`）→ **重启 pi 窗口** |
+packages/multi-workers/build-extension.sh:3:# Output: dist/extensions/agent-team-loop.js (relative to packages/multi-workers/)
+packages/multi-workers/mw.py:4626:_BUNDLE_REL = pathlib.Path("dist") / "extensions" / "agent-team-loop.js"
+packages/multi-workers/mw.py:4715:    agent-team-loop.js`); tests pass a temporary path so the real artifact is
+packages/multi-workers/mw.py:4823:    ext_dst = _global_ext_dir() / "agent-team-loop.js"
+packages/multi-workers/mw.py:5009:    global_bundle = _global_ext_dir() / "agent-team-loop.js"
+packages/multi-workers/mw.py:5010:    bundle_dst = project_dir / ".pi" / "extensions" / "agent-team-loop.js"
+packages/multi-workers/mw.py:5077:    ext_dst = ext_dir / "agent-team-loop.js"
+packages/multi-workers/mw_common.py:2713:    bundle = global_ext_dir() / "agent-team-loop.js"
+packages/multi-workers/mw_common.py:2767:    ``agent-team-loop.js``; ② the global/installed bundle
+packages/multi-workers/mw_common.py:2768:    ``<PI_CODING_AGENT_DIR|~/.pi/agent>/extensions/agent-team-loop.js``.
+packages/multi-workers/mw_common.py:2775:        / "agent-team-loop.js",
+packages/multi-workers/mw_common.py:2776:        global_ext_dir() / "agent-team-loop.js",
+packages/multi-workers/mw_common.py:5073:    "packages", "multi-workers", "dist", "extensions", "agent-team-loop.js",
+packages/multi-workers/smoke_test.sh:49:    _assert "[ -f '$HOME/.pi/agent/extensions/agent-team-loop.js' ]" "VC-028: Extension bundle installed (global)"
+packages/multi-workers/smoke_test.sh:51:    _assert "[ -f '$TEST_DIR/.pi/extensions/agent-team-loop.js' ]" "VC-028: Extension bundle installed (project-local)"
+packages/multi-workers/test_doctor_activation.py:7:``<PI_CODING_AGENT_DIR|~/.pi/agent>/extensions/agent-team-loop.js``) are probed
+packages/multi-workers/test_doctor_activation.py:367:        / "agent-team-loop.js",
+packages/multi-workers/test_doctor_activation.py:384:        tmp_path / "pi-agent" / "extensions" / "agent-team-loop.js", body
+packages/multi-workers/test_doctor_autopilot.py:398:_BUNDLE_REL = ("packages", "multi-workers", "dist", "extensions", "agent-team-loop.js")
+packages/multi-workers/test_mw_build.py:29:    bundle = tmp_path / "agent-team-loop.js"
+packages/multi-workers/test_mw_build.py:53:    assert (tmp_path / "ext" / "agent-team-loop.js").exists()
+packages/multi-workers/test_mw_build.py:64:    assert not (tmp_path / "ext" / "agent-team-loop.js").exists()
+packages/multi-workers/test_mwds_t25_version_semantics.py:251:        out = tmp_path / "agent-team-loop.js"
+packages/multi-workers/test_mwds_t25_version_semantics.py:269:        repo_bundle = pathlib.Path(mw.__file__).resolve().parent / "dist" / "extensions" / "agent-team-loop.js"
+packages/multi-workers/test_protected_config.py:61:            str(DEFAULT_AGENT_DIR / "extensions" / "agent-team-loop.js")
+packages/multi-workers/test_update_env.py:258:              / "agent-team-loop.js")
+
+=== scripts/ and *.py mentioning 'bundle' or copy of the extension ===
+scripts\check-browser-smoke.mjs:46: bundle: true,
+scripts\check-browser-smoke.mjs:56: bundle: true,
+scripts\check-browser-smoke.mjs:73: throw new Error(`Agent selective-provider bundle unexpectedly includes ${includedInput}`);
+scripts\check-browser-smoke.mjs:89: `Agent selective-provider bundle catalogs: expected only anthropic.json, found ${catalogInputs.join(", ") || "none"}`,
+scripts\check-browser-smoke.mjs:106: `Agent selective-provider bundle SDKs: expected only @anthropic-ai/sdk, found ${includedAiSdkPackages.join(", ") || "none"}`,
+scripts\publish-model-catalog.mjs:246: const bundle = validateBundle(inputDir);
+scripts\publish-model-catalog.mjs:250: revision: bundle.revision,
+scripts\publish-model-catalog.mjs:252: providerCount: bundle.providerCount,
+scripts\publish-model-catalog.mjs:253: modelCount: bundle.modelCount,
+scripts\publish-model-catalog.mjs:271: if (currentIndex?.defaultRevision === bundle.revision && currentEntry?.revision === bundle.revision) {
+scripts\publish-model-catalog.mjs:272: console.log(`Model catalog ${bundle.revision} is already current; no objects uploaded.`);
+scripts\publish-model-catalog.mjs:276: const revisionPrefix = `${CATALOG_PREFIX}/revisions/${bundle.revision}`;
+scripts\publish-model-catalog.mjs:277: uploadJson(options.bucket, options.endpoint, bundle.modelsPath, `${revisionPrefix}/models.json`, IMMUTABLE_CACHE_CONTROL);
+scripts\publish-model-catalog.mjs:281: bundle.providerIndexPath,
+scripts\publish-model-catalog.mjs:285: for (const providerId of bundle.providerIds) {
+scripts\publish-model-catalog.mjs:289: join(bundle.providersDir, `${providerId}.json`),
+scripts\publish-model-catalog.mjs:299: console.log(`Published ${bundle.revision} to s3://${options.bucket}/${revisionPrefix}`);
+packages\multi-workers\launcher.py:17: bundle) applies unconditionally; evidence-less rows fail as presumed dead
+packages\multi-workers\launcher.py:1003: own version source renders it (C-31, the bundled extension cannot resolve
+packages\multi-workers\launcher.py:1088: "task.md — normally the installed agent-team-loop bundle / the "
+packages\multi-workers\launcher.py:1460: line, or a lone output.md from an old bundle) applies unconditionally
+packages\multi-workers\mw.py:9: init   — install Extension bundle + AgenticTask framework into project
+packages\multi-workers\mw.py:588: """One-shot full-chain diagnostic (service/proxy/orphan/log/queue/credentials/bundle).
+packages\multi-workers\mw.py:4626: _BUNDLE_REL = pathlib.Path("dist") / "extensions" / "agent-team-loop.js"
+packages\multi-workers\mw.py:4629: def _bundle_path() -> pathlib.Path:
+packages\multi-workers\mw.py:4633: def _check_bundle() -> bool:
+packages\multi-workers\mw.py:4634: return _bundle_path().exists()
+packages\multi-workers\mw.py:4651: # `define` (C-31): a bundled module cannot resolve that package.json at runtime,
+packages\multi-workers\mw.py:4654: # literal into the emitted bundle.
+packages\multi-workers\mw.py:4664: bundle: true,
+packages\multi-workers\mw.py:4687: # The version source the injected bundle literal and the service baseline share
+packages\multi-workers\mw.py:4697: """Version literal injected into the extension bundle, or "" when unreadable.
+packages\multi-workers\mw.py:4710: def _build_bundle(out: pathlib.Path | None = None) -> tuple[bool, str]:
+packages\multi-workers\mw.py:4711: """Compile the agent-team-loop extension bundle with esbuild and self-check
+packages\multi-workers\mw.py:4714: `out` defaults to the tracked bundle path (`<mw>/dist/extensions/
+packages\multi-workers\mw.py:4715: agent-team-loop.js`); tests pass a temporary path so the real artifact is
+packages\multi-workers\mw.py:4725: out = _bundle_path()
+packages\multi-workers\mw.py:4754: compiled into dist goes stale behind the freshly installed global bundle
+packages\multi-workers\mw.py:4755: (mostly benign - the global bundle wins activation - but it drifts
+packages\multi-workers\mw.py:4779: lookup fails when the bundle is loaded from the global install dir)."""
+packages\multi-workers\mw.py:4808: def _deploy_bundle(no_dist: bool) -> int:
+packages\multi-workers\mw.py:4809: """Install the freshly built bundle globally: bundle copy + .mw-py-path
+packages\multi-workers\mw.py:4814: bundle is left untouched (fail-closed) instead of pairing a fresh global
+packages\multi-workers\mw.py:4823: ext_dst = _global_ext_dir() / "agent-team-loop.js"
+packages\multi-workers\mw.py:4825: shutil.copy2(str(_bundle_path()), str(ext_dst))
+packages\multi-workers\mw.py:4902: ok, msg = _build_bundle()
+packages\multi-workers\mw.py:4907: print(f"[mw build] bundle: {_bundle_path()}")
+packages\multi-workers\mw.py:4909: rc = _deploy_bundle(no_dist=args.no_dist)
+packages\multi-workers\mw.py:4911: print("[mw build] Restart open pi windows to load the new bundle and dist.")
+packages\multi-workers\mw.py:4934: installer bundled with the framework source (single source of truth). This
+packages\multi-workers\mw.py:4958: # AC-036: bundle must exist before creating any directories
+packages\multi-workers\mw.py:4959: if not _check_bundle():
+packages\multi-workers\mw.py:4961: f"[mw init] Error: Extension bundle not found at {_bundle_path()}\n"
+packages\multi-workers\mw.py:5003: # AC-036: install Extension bundle — GLOBAL WINS.
+packages\multi-workers\mw.py:5009: global_bundle = _global_ext_dir() / "agent-team-loop.js"
+packages\multi-workers\mw.py:5010: bundle_dst = project_dir / ".pi" / "extensions" / "agent-team-loop.js"
+packages\multi-workers\mw.py:5011: if global_bundle.exists():
+packages\multi-workers\mw.py:5012: if bundle_dst.exists():
+packages\multi-workers\mw.py:5013: bundle_dst.unlink()
+packages\multi-workers\mw.py:5014: print(f"[mw init] Removed redundant project-local extension (global install active): {bundle_dst}")
+packages\multi-workers\mw.py:5016: print(f"[mw init] Using global extension install: {global_bundle}")
+packages\multi-workers\mw.py:5018: shutil.copy2(str(_bundle_path()), str(bundle_dst))
+packages\multi-workers\mw.py:5019: print(f"[mw init] Extension installed: {bundle_dst}")
+packages\multi-workers\mw.py:5029: # Framework failure is a WARNING, not fatal: the bundle + mw service must still
+packages\multi-workers\mw.py:5049: (1) cache the framework source, (2) install the extension bundle GLOBALLY so
+packages\multi-workers\mw.py:5052: # window refreshes and deploys the bundle in one shot.
+packages\multi-workers\mw.py:5054: ok, msg = _build_bundle()
+packages\multi-workers\mw.py:5060: if not _check_bundle():
+packages\multi-workers\mw.py:5062: f"[mw setup] Error: Extension bundle not found at {_bundle_path()}\n"
+packages\multi-workers\mw.py:5077: ext_dst = ext_dir / "agent-team-loop.js"
+packages\multi-workers\mw.py:5078: shutil.copy2(str(_bundle_path()), str(ext_dst))
+packages\multi-workers\mw.py:5232: 5. mw setup --build: extension bundle + global extension install +
+packages\multi-workers\mw.py:5373: # 5. machine setup: bundle + global extension + framework source cache
+packages\multi-workers\mw.py:5374: step(5, "mw setup --build (extension bundle, global install, framework cache)")
+packages\multi-workers\mw.py:6141: # A1 extension bundle (same comparison as doctor's bundle section)
+packages\multi-workers\mw.py:6142: b = mw_common._doctor_bundle()
+packages\multi-workers\mw.py:6144: add("bundle", "machine", "warn", f"全局扩展 bundle 缺失: {b.get('note', '')}",
+packages\multi-workers\mw.py:6147: add("bundle", "machine", "info",
+packages\multi-workers\mw.py:6148: f"bundle {b.get('global_bundle_mtime', '?')}（源不可比: {b.get('note', '')}）")
+packages\multi-workers\mw.py:6150: add("bundle", "machine", "stale",
+packages\multi-workers\mw.py:6151: f"全局 bundle {b['global_bundle_mtime']} 早于源码 {b['source_newest_mtime']}",
+packages\multi-workers\mw.py:6152: "重建+全局重装 bundle，随后重启 pi 窗口", auto=True)
+packages\multi-workers\mw.py:6154: add("bundle", "machine", "ok",
+packages\multi-workers\mw.py:6155: f"bundle {b['global_bundle_mtime']} ≥ 源码最新 {b['source_newest_mtime']}")
+packages\multi-workers\mw.py:6157: # A1b repo bundle content (AC-009(b)/(c)): the tracked repo bundle's
+packages\multi-workers\mw.py:6159: # The A1/A2 mtime anchors cannot see a content-stale bundle at all.
+packages\multi-workers\mw.py:6160: rb = mw_common.repo_bundle_anchor()
+packages\multi-workers\mw.py:6163: add("repo-bundle", "machine", "info", f"无法判定: {rb_detail}",
+packages\multi-workers\mw.py:6166: add("repo-bundle", "machine", "stale", rb_detail,
+packages\multi-workers\mw.py:6167: "mw build（重建 repo bundle → 全局重装 → 重建 coding-agent dist），随后重启 pi 窗口",
+packages\multi-workers\mw.py:6170: add("repo-bundle", "machine", "ok", rb_detail)
+packages\multi-workers\mw.py:6345: bundle/dist rebuild → cache pull → framework reinstall → serve restart.
+packages\multi-workers\mw.py:6356: # S1: bundle + pi dist. Rebuild BEFORE deploying (AC-009(c)): copying a
+packages\multi-workers\mw.py:6357: # stale repo bundle to the global dir only refreshes its mtime, so the
+packages\multi-workers\mw.py:6359: if any(stale(cid) for cid in ("repo-bundle", "bundle", "pi-dist", "pi-dist-content")):
+packages\multi-workers\mw.py:6360: ok, msg = _build_bundle()
+packages\multi-workers\mw.py:6362: manual.append(f"bundle 重建失败: {msg} — 未部署（避免 fail-open）")
+packages\multi-workers\mw.py:6364: rc = _deploy_bundle(no_dist=False)
+packages\multi-workers\mw.py:6366: applied.append("bundle+dist 重建并全局重装")
+packages\multi-workers\mw.py:6367: manual.append("重启 pi 窗口以加载新 bundle/dist")
+packages\multi-workers\mw.py:6508: help="Full-chain diagnostic: service, proxy ports, logs, queue, credentials, bundle",
+packages\multi-workers\mw.py:6724: help="Rebuild the extension bundle (bash-free) before installing")
+packages\multi-workers\mw.py:6747: help="Rebuild the extension bundle with esbuild (bash-free, cwd-independent)")
+packages\multi-workers\mw.py:6749: help="Also install the freshly built bundle into the global extensions dir")
+packages\multi-workers\mw.py:6759: help="Incremental self-check over the update anchors (UPDATE.md): bundle/dist/serve/"
+packages\multi-workers\mw_common.py:2349: Report-only (suggestions): expired bundle, orphan proxy."""
+packages\multi-workers\mw_common.py:2458: or None when the file/line is absent (old bundle, just started)."""
+packages\multi-workers\mw_common.py:2475: no-heartbeat (running but no [HEARTBEAT] lines — old bundle or fresh
+packages\multi-workers\mw_common.py:2712: def _doctor_bundle() -> dict:
+packages\multi-workers\mw_common.py:2713: bundle = global_ext_dir() / "agent-team-loop.js"
+packages\multi-workers\mw_common.py:2714: if not bundle.exists():
+packages\multi-workers\mw_common.py:2715: return {"available": False, "note": f"global bundle not found: {bundle}"}
+packages\multi-workers\mw_common.py:2719: "global_bundle_mtime": datetime.datetime.fromtimestamp(bundle.stat().st_mtime).isoformat(),
+packages\multi-workers\mw_common.py:2724: bundle_mtime = bundle.stat().st_mtime
+packages\multi-workers\mw_common.py:2728: "global_bundle_mtime": datetime.datetime.fromtimestamp(bundle_mtime).isoformat(),
+packages\multi-workers\mw_common.py:2731: "stale": newest > bundle_mtime,
+packages\multi-workers\mw_common.py:2737: #: from its bundled decision code, so its presence in a bundle is evidence the
+packages\multi-workers\mw_common.py:2738: #: capability (not just its prescription text) was bundled:
+packages\multi-workers\mw_common.py:2745: #:     measured 2 hits per bundle. D-18: the single `reparse-point` marker stayed
+packages\multi-workers\mw_common.py:2758: #: fixture, report a "missing global bundle" that is not a deployment defect).
+packages\multi-workers\mw_common.py:2762: def _activation_bundle_paths(project_dir: pathlib.Path) -> list[pathlib.Path] | None:
+packages\multi-workers\mw_common.py:2767: ``agent-team-loop.js``; ② the global/installed bundle
+packages\multi-workers\mw_common.py:2768: ``<PI_CODING_AGENT_DIR|~/.pi/agent>/extensions/agent-team-loop.js``.
+packages\multi-workers\mw_common.py:2775: / "agent-team-loop.js",
+packages\multi-workers\mw_common.py:2776: global_ext_dir() / "agent-team-loop.js",
+packages\multi-workers\mw_common.py:2781: """Which deployment copy a bundle path is (D-18 C9 wording fix).
+packages\multi-workers\mw_common.py:2787: under the pi agent dir is the bundle pi actually loads (a finding there
+packages\multi-workers\mw_common.py:2800: def _activation_scan(bundle_paths) -> dict:
+packages\multi-workers\mw_common.py:2801: """AC-016: does each bundle carry *every* G1/G6 capability marker?
+packages\multi-workers\mw_common.py:2805: bundle that dropped the `user_bash` hook is a finding even though the
+packages\multi-workers\mw_common.py:2816: for raw in bundle_paths:
+packages\multi-workers\mw_common.py:2861: paths = _activation_bundle_paths(project_dir)
+packages\multi-workers\mw_common.py:3836: if report["bundle"].get("stale"):
+packages\multi-workers\mw_common.py:3838: "extension bundle older than source - run '/mw build' or 'mw.py build --install'"
+packages\multi-workers\mw_common.py:3926: # bundle without the G1 capability marker means the guard exists in source
+packages\multi-workers\mw_common.py:3929: # (`_activation_bundle_paths`); a minimal report without the key stays
+packages\multi-workers\mw_common.py:3941: detail = "bundle file missing"
+packages\multi-workers\mw_common.py:3954: # loads; only the installed copy is the runtime bundle.
+packages\multi-workers\mw_common.py:3962: "this is the installed bundle pi actually loads, so it means "
+packages\multi-workers\mw_common.py:4049: worker_liveness, credentials, bundle (+ fix when fix=True), summary.
+packages\multi-workers\mw_common.py:4066: report["bundle"] = _doctor_bundle()
+packages\multi-workers\mw_common.py:4086: # AC-016 (T-W13/D-15): activation self-check for the two deployed bundles.
+packages\multi-workers\mw_common.py:4243: # AC-016 (T-W13/D-15): activation rows; emitted only for bundles without the
+packages\multi-workers\mw_common.py:4251: # the runtime bundle pi loads).
+packages\multi-workers\mw_common.py:4294: bundle = report["bundle"]
+packages\multi-workers\mw_common.py:4295: if bundle.get("available"):
+packages\multi-workers\mw_common.py:4296: if bundle.get("source_available"):
+packages\multi-workers\mw_common.py:4298: f"bundle: global mtime {bundle['global_bundle_mtime']}, "
+packages\multi-workers\mw_common.py:4299: f"source newest {bundle['source_newest_mtime']}, stale={bundle['stale']}"
+packages\multi-workers\mw_common.py:4302: lines.append(f"bundle: global mtime {bundle['global_bundle_mtime']} ({bundle.get('note')})")
+packages\multi-workers\mw_common.py:4304: lines.append(f"bundle: {bundle.get('note')}")
+packages\multi-workers\mw_common.py:5073: "packages", "multi-workers", "dist", "extensions", "agent-team-loop.js",
+packages\multi-workers\mw_common.py:5101: def repo_bundle_anchor() -> dict:
+packages\multi-workers\mw_common.py:5102: """A1b repo-bundle-vs-source content anchor (AC-009(b), D-009).
+packages\multi-workers\mw_common.py:5104: The tracked repo bundle's GATE_KINDS set must equal the status-model.ts
+packages\multi-workers\mw_common.py:5110: bundle = root.joinpath(*_REPO_BUNDLE_REL)
+packages\multi-workers\mw_common.py:5111: if not source.is_file() or not bundle.is_file():
+packages\multi-workers\mw_common.py:5112: return {"stale": None, "detail": "repo bundle or status-model source missing"}
+packages\multi-workers\mw_common.py:5115: bundle_text = bundle.read_text(encoding="utf-8")
+packages\multi-workers\mw_common.py:5117: return {"stale": None, "detail": f"cannot read repo bundle/source: {exc}"}
+packages\multi-workers\mw_common.py:5120: bundle_kinds = _gate_kinds_from_text(bundle_text)
+packages\multi-workers\mw_common.py:5122: missing = sorted(source_kinds - bundle_kinds)
+packages\multi-workers\mw_common.py:5123: extra = sorted(bundle_kinds - source_kinds)
+packages\multi-workers\mw_common.py:5128: missing_guards = [marker for marker in _GATE_GUARD_MARKERS if marker not in bundle_text]
+packages\multi-workers\mw_common.py:5132: return {"stale": True, "detail": "repo bundle vs source: " + "; ".join(problems)}
+packages\multi-workers\mw_common.py:5136: f"repo bundle matches source (kind {len(source_kinds)} entries, "
+packages\multi-workers\test_autopilot_e2e.py:1514: bundle = _xkey_evidence_item(root, request_id, "bundle.json")
+packages\multi-workers\test_autopilot_e2e.py:1515: items = bundle["items"]
+packages\multi-workers\test_autopilot_e2e.py:1516: assert bundle["closed"] is True and bundle["missing"] == []
+packages\multi-workers\test_autopilot_e2e.py:1634: bundle = _xkey_evidence_item(root, request_id, "bundle.json")
+packages\multi-workers\test_autopilot_e2e.py:1635: items = bundle["items"]
+packages\multi-workers\test_autopilot_e2e.py:1636: assert bundle["closed"] is True
+packages\multi-workers\test_autopilot_xkey_cwd.py:346: assert (xkey.evidence_dir(str(control), request_id) / "bundle.json").is_file()
+packages\multi-workers\test_autopilot_xkey_registration.py:33: # VC-006 -> test_vc006_evidence_bundle_requires_five_items
+packages\multi-workers\test_autopilot_xkey_registration.py:599: # ── VC-006: evidence bundle requires all five items ──────────────────────────
+packages\multi-workers\test_autopilot_xkey_registration.py:602: # freezes the SIGNATURE of ``evidence_bundle_write`` but not the bundle field
+packages\multi-workers\test_autopilot_xkey_registration.py:605: # would make the complete bundle incomplete and surface as a red case.
+packages\multi-workers\test_autopilot_xkey_registration.py:623: def _full_bundle(root: pathlib.Path) -> dict:
+packages\multi-workers\test_autopilot_xkey_registration.py:673: def _bundle_closed(root: pathlib.Path, request_id: str, bundle: dict) -> bool:
+packages\multi-workers\test_autopilot_xkey_registration.py:675: returned = xkey.evidence_bundle_write(str(root), request_id, dict(bundle))
+packages\multi-workers\test_autopilot_xkey_registration.py:677: return False  # fail-closed: incomplete bundle must never read as closed
+packages\multi-workers\test_autopilot_xkey_registration.py:688: def test_vc006_evidence_bundle_requires_five_items(tmp_path: pathlib.Path) -> None:
+packages\multi-workers\test_autopilot_xkey_registration.py:691: assert _bundle_closed(root, "XKEY-2026-09-26-01", _full_bundle(root)) is True
+packages\multi-workers\test_autopilot_xkey_registration.py:694: bundle = _full_bundle(root)
+packages\multi-workers\test_autopilot_xkey_registration.py:696: bundle.pop(key, None)
+packages\multi-workers\test_autopilot_xkey_registration.py:698: assert _bundle_closed(root, request_id, bundle) is False, f"missing {label} must not close"
+packages\multi-workers\test_doctor_activation.py:5: not deployed to the runtime pi loads: the two bundles the runtime can pick up
+packages\multi-workers\test_doctor_activation.py:6: (`packages/multi-workers/dist/extensions/agent-team-loop.js` and
+packages\multi-workers\test_doctor_activation.py:7: ``<PI_CODING_AGENT_DIR|~/.pi/agent>/extensions/agent-team-loop.js``) are probed
+packages\multi-workers\test_doctor_activation.py:18: Every fixture lives under `%TEMP%` (`tmp_path`); the bundle paths are injected
+packages\multi-workers\test_doctor_activation.py:20: is a project with marker-carrying fixture bundles: zero new issues, zero new
+packages\multi-workers\test_doctor_activation.py:61: def _bundle(path: pathlib.Path, text: str) -> pathlib.Path:
+packages\multi-workers\test_doctor_activation.py:83: """Point the doctor at fixture bundles (bypasses the checkout scope gate)."""
+packages\multi-workers\test_doctor_activation.py:85: mw_common, "_activation_bundle_paths", lambda project_dir: list(paths)
+packages\multi-workers\test_doctor_activation.py:94: a = _bundle(tmp_path / "dist.js", _markers_text(*MARKERS))
+packages\multi-workers\test_doctor_activation.py:95: b = _bundle(tmp_path / "global.js", "".join(f"// {m}\n" for m in MARKERS))
+packages\multi-workers\test_doctor_activation.py:106: present = _bundle(tmp_path / "dist.js", _markers_text(*MARKERS))
+packages\multi-workers\test_doctor_activation.py:107: absent = _bundle(tmp_path / "global.js", _markers_text(MARKERS[0]))
+packages\multi-workers\test_doctor_activation.py:132: # A directory where the bundle should be -> IsADirectoryError (OSError).
+packages\multi-workers\test_doctor_activation.py:161: absent = _bundle(tmp_path / "global.js", "var basis = 'resolved';\n")
+packages\multi-workers\test_doctor_activation.py:180: def test_missing_bundle_file_is_an_issue_with_fix(
+packages\multi-workers\test_doctor_activation.py:191: assert "bundle file missing" in issues[0]
+packages\multi-workers\test_doctor_activation.py:196: def test_unreadable_bundle_is_reported_verbatim(
+packages\multi-workers\test_doctor_activation.py:224: # regardless of the real machine's bundle state.
+packages\multi-workers\test_doctor_activation.py:225: assert mw_common._activation_bundle_paths(project) is None
+packages\multi-workers\test_doctor_activation.py:232: def test_two_marked_bundles_are_silent_and_rc_unchanged(
+packages\multi-workers\test_doctor_activation.py:238: _bundle(tmp_path / "dist.js", _markers_text(*MARKERS)),
+packages\multi-workers\test_doctor_activation.py:239: _bundle(tmp_path / "global.js", _markers_text(*MARKERS)),
+packages\multi-workers\test_doctor_activation.py:256: _inject(monkeypatch, _bundle(tmp_path / "global.js", "var basis = 'resolved';\n"))
+packages\multi-workers\test_doctor_activation.py:265: _bundle(tmp_path / "global.js", _markers_text(*MARKERS))
+packages\multi-workers\test_doctor_activation.py:280: bundle = _bundle(tmp_path / "global.js", _markers_text("reparse-point"))
+packages\multi-workers\test_doctor_activation.py:281: _inject(monkeypatch, bundle)
+packages\multi-workers\test_doctor_activation.py:286: assert str(bundle) in issues[0]
+packages\multi-workers\test_doctor_activation.py:293: assert f"activation: MARKER-ABSENT 'user_bash' {bundle} - run '{FIX}'" in text
+packages\multi-workers\test_doctor_activation.py:301: bundle = _bundle(tmp_path / "global.js", _markers_text("user_bash"))
+packages\multi-workers\test_doctor_activation.py:302: _inject(monkeypatch, bundle)
+packages\multi-workers\test_doctor_activation.py:307: assert str(bundle) in issues[0]
+packages\multi-workers\test_doctor_activation.py:312: assert f"activation: MARKER-ABSENT 'reparse-point' {bundle} - run '{FIX}'" in text
+packages\multi-workers\test_doctor_activation.py:320: bundle = _bundle(tmp_path / "global.js", "var basis = 'resolved';\n")
+packages\multi-workers\test_doctor_activation.py:321: _inject(monkeypatch, bundle)
+packages\multi-workers\test_doctor_activation.py:331: assert f"activation: MARKER-ABSENT '{marker}' {bundle} - run '{FIX}'" in text
+packages\multi-workers\test_doctor_activation.py:339: bundle = _bundle(tmp_path / "global.js", _markers_text(*MARKERS))
+packages\multi-workers\test_doctor_activation.py:340: _inject(monkeypatch, bundle)
+packages\multi-workers\test_doctor_activation.py:365: dist = _bundle(
+packages\multi-workers\test_doctor_activation.py:367: / "agent-team-loop.js",
+packages\multi-workers\test_doctor_activation.py:383: installed = _bundle(
+packages\multi-workers\test_doctor_activation.py:384: tmp_path / "pi-agent" / "extensions" / "agent-team-loop.js", body
+packages\multi-workers\test_doctor_activation.py:390: assert "installed bundle pi actually loads" in issues[0]
+packages\multi-workers\test_doctor_autopilot.py:16: The dist content anchors (AC-009(b), VC-009 half): repo_bundle_anchor compares
+packages\multi-workers\test_doctor_autopilot.py:392: # ── dist content anchors (repo_bundle_anchor / sourcemap_drift) ──────────────
+packages\multi-workers\test_doctor_autopilot.py:398: _BUNDLE_REL = ("packages", "multi-workers", "dist", "extensions", "agent-team-loop.js")
+packages\multi-workers\test_doctor_autopilot.py:404: bundle_kinds: list[str],
+packages\multi-workers\test_doctor_autopilot.py:406: bundle_extra: str = "",
+packages\multi-workers\test_doctor_autopilot.py:417: bundle = root.joinpath(*_BUNDLE_REL)
+packages\multi-workers\test_doctor_autopilot.py:418: bundle.parent.mkdir(parents=True)
+packages\multi-workers\test_doctor_autopilot.py:421: + "".join(f'  "{k}",\n' for k in bundle_kinds)
+packages\multi-workers\test_doctor_autopilot.py:429: text += bundle_extra
+packages\multi-workers\test_doctor_autopilot.py:430: bundle.write_text(text, encoding="utf-8")
+packages\multi-workers\test_doctor_autopilot.py:434: def test_repo_bundle_anchor_stale_on_stale_fixture(
+packages\multi-workers\test_doctor_autopilot.py:437: root = _fake_repo(tmp_path, source_kinds=["a", "b"], bundle_kinds=["a"])
+packages\multi-workers\test_doctor_autopilot.py:439: result = mw_common.repo_bundle_anchor()
+packages\multi-workers\test_doctor_autopilot.py:444: def test_repo_bundle_anchor_ok_on_fresh_fixture(
+packages\multi-workers\test_doctor_autopilot.py:447: root = _fake_repo(tmp_path, source_kinds=["a", "b"], bundle_kinds=["b", "a"])
+packages\multi-workers\test_doctor_autopilot.py:449: result = mw_common.repo_bundle_anchor()
+packages\multi-workers\test_doctor_autopilot.py:454: def test_repo_bundle_anchor_path_comment_only_is_stale(
+packages\multi-workers\test_doctor_autopilot.py:462: bundle_kinds=["xkey-authorize"],
+packages\multi-workers\test_doctor_autopilot.py:464: bundle_extra=(
+packages\multi-workers\test_doctor_autopilot.py:471: result = mw_common.repo_bundle_anchor()
+packages\multi-workers\test_doctor_autopilot.py:478: def test_repo_bundle_anchor_unavailable_when_files_missing(
+packages\multi-workers\test_doctor_autopilot.py:482: assert mw_common.repo_bundle_anchor()["stale"] is None
+packages\multi-workers\test_doctor_autopilot.py:485: def test_repo_bundle_anchor_real_checkout_is_fresh() -> None:
+packages\multi-workers\test_doctor_autopilot.py:486: result = mw_common.repo_bundle_anchor()
+packages\multi-workers\test_doctor_autopilot.py:552: "[VERIFY] VC-009 anchors: repo_bundle_anchor stale-fixture stale=true, "
+packages\multi-workers\test_launcher.py:795: # Old bundle: completed (output.md exists) but no [END] marker.
+packages\multi-workers\test_launcher.py:797: (d / "output.md").write_text("# Result\nold bundle, no trace END\n", encoding="utf-8")
+packages\multi-workers\test_mw_bootstrap.py:144: "bundle": {},
+packages\multi-workers\test_mw_bootstrap.py:243: "bundle": {},
+packages\multi-workers\test_mw_bootstrap.py:391: "bundle": {},
+packages\multi-workers\test_mw_bootstrap.py:419: "bundle": {},
+packages\multi-workers\test_mw_build.py:28: """Point the bundle/install plumbing at a tmp dir; record dist rebuilds."""
+packages\multi-workers\test_mw_build.py:29: bundle = tmp_path / "agent-team-loop.js"
+packages\multi-workers\test_mw_build.py:30: bundle.write_text("export default function activate() {}\n", encoding="utf-8")
+packages\multi-workers\test_mw_build.py:31: monkeypatch.setattr(mw, "_build_bundle", lambda: (True, "built ok"))
+packages\multi-workers\test_mw_build.py:32: monkeypatch.setattr(mw, "_bundle_path", lambda: bundle)
+packages\multi-workers\test_mw_build.py:53: assert (tmp_path / "ext" / "agent-team-loop.js").exists()
+packages\multi-workers\test_mw_build.py:60: rebuild leaves the old global bundle in place (no partial deploy)."""
+packages\multi-workers\test_mw_build.py:64: assert not (tmp_path / "ext" / "agent-team-loop.js").exists()
+packages\multi-workers\test_mw_build.py:75: monkeypatch.setattr(mw, "_build_bundle", lambda: (True, "built ok"))
+packages\multi-workers\test_mw_build.py:76: monkeypatch.setattr(mw, "_bundle_path", lambda: tmp_path / "b.js")
+packages\multi-workers\test_mw_build.py:109: monkeypatch.setattr(mw, "_build_bundle", lambda: built.append(1) or (True, "ok"))
+packages\multi-workers\test_mw_build.py:110: monkeypatch.setattr(mw, "_deploy_bundle", lambda no_dist: deployed.append(1) or 0)
+packages\multi-workers\test_mw_target.py:7: dist bundle mtimes are untouched (no rebuild on mode switch).
+packages\multi-workers\test_mw_target.py:138: coding-agent dist bundle mtimes are unchanged (no rebuild on switch)."""
+packages\multi-workers\test_mwds_t25_version_semantics.py:3: ``mw-dispatch-card-gate`` wave 16, C-31: the bundled TS producer rendered
+packages\multi-workers\test_mwds_t25_version_semantics.py:4: ``envelope_producer: agent-team-loop-pm@0.0.0`` because a bundle cannot resolve
+packages\multi-workers\test_mwds_t25_version_semantics.py:17: 3. the build injects the real version into the extension bundle
+packages\multi-workers\test_mwds_t25_version_semantics.py:18: (``mw._build_bundle(out=<tmp>)`` — the tracked dist artifact is never
+packages\multi-workers\test_mwds_t25_version_semantics.py:244: def test_built_bundle_carries_the_version_literal(self, tmp_path: pathlib.Path) -> None:
+packages\multi-workers\test_mwds_t25_version_semantics.py:248: pytest.skip("node unavailable — cannot build the extension bundle here")
+packages\multi-workers\test_mwds_t25_version_semantics.py:251: out = tmp_path / "agent-team-loop.js"
+packages\multi-workers\test_mwds_t25_version_semantics.py:252: ok, message = mw._build_bundle(out=out)
+packages\multi-workers\test_mwds_t25_version_semantics.py:259: f"[T-25 evidence] bundle version({version})_hits={version_hits} "
+packages\multi-workers\test_mwds_t25_version_semantics.py:262: assert version_hits >= 1, "the emitted bundle must carry the injected version"
+packages\multi-workers\test_mwds_t25_version_semantics.py:267: def test_real_repo_bundle_before_after_counts(self) -> None:
+packages\multi-workers\test_mwds_t25_version_semantics.py:268: """Report-only: the pre-cutover repo bundle is the C-31 baseline."""
+packages\multi-workers\test_mwds_t25_version_semantics.py:269: repo_bundle = pathlib.Path(mw.__file__).resolve().parent / "dist" / "extensions" / "agent-team-loop.js"
+packages\multi-workers\test_mwds_t25_version_semantics.py:270: if not repo_bundle.is_file():
+packages\multi-workers\test_mwds_t25_version_semantics.py:271: pytest.skip("repo bundle absent")
+packages\multi-workers\test_mwds_t25_version_semantics.py:272: text = repo_bundle.read_text(encoding="utf-8", errors="replace")
+packages\multi-workers\test_mwds_t25_version_semantics.py:275: f"[T-25 evidence] repo bundle (pre-cutover artifact) "
+packages\multi-workers\test_protected_config.py:61: str(DEFAULT_AGENT_DIR / "extensions" / "agent-team-loop.js")
+packages\multi-workers\test_protected_config.py:78: mw_common.assert_not_protected_agent_config("~/.pi/agent/extensions/bundle.js", action="write")
+packages\multi-workers\test_serve_doctor.py:439: "queue", "credentials", "bundle", "pi_shell", "summary",
+packages\multi-workers\test_serve_doctor.py:537: # No real proxy/bundle was touched by fix (suggestions only).
+packages\multi-workers\test_tree_watch_doctor.py:66: "bundle": {},
+packages\multi-workers\test_update_env.py:200: repo_root: pathlib.Path, bundle_stale: bool):
+packages\multi-workers\test_update_env.py:208: monkeypatch.setattr(mw_common, "_doctor_bundle", lambda: {
+packages\multi-workers\test_update_env.py:209: "available": True, "source_available": True, "stale": bundle_stale,
+packages\multi-workers\test_update_env.py:210: "global_bundle_mtime": "2026-09-21T10:00:00", "source_newest_mtime": "2026-09-21T11:00:00",
+packages\multi-workers\test_update_env.py:214: def _world(tmp_path, monkeypatch, *, bundle_stale=False, dist_stale=False):
+packages\multi-workers\test_update_env.py:235: repo_root=repo_root, bundle_stale=bundle_stale)
+packages\multi-workers\test_update_env.py:239: def _write_repo_bundle_fixture(
+packages\multi-workers\test_update_env.py:243: bundle_kinds: tuple[str, ...] | None = None,
+packages\multi-workers\test_update_env.py:246: """A1b fixture: the status-model.ts source plus the tracked repo bundle.
+packages\multi-workers\test_update_env.py:256: kinds = source_kinds if bundle_kinds is None else bundle_kinds
+packages\multi-workers\test_update_env.py:257: bundle = (repo_root / "packages" / "multi-workers" / "dist" / "extensions"
+packages\multi-workers\test_update_env.py:258: / "agent-team-loop.js")
+packages\multi-workers\test_update_env.py:259: bundle.parent.mkdir(parents=True, exist_ok=True)
+packages\multi-workers\test_update_env.py:269: bundle.write_text("\n".join(lines) + "\n", encoding="utf-8")
+packages\multi-workers\test_update_env.py:291: assert by_id["bundle"]["status"] == "ok"
+packages\multi-workers\test_update_env.py:301: def test_repo_bundle_content_anchor_fresh_and_stale(self, tmp_path, monkeypatch):
+packages\multi-workers\test_update_env.py:304: _write_repo_bundle_fixture(repo_root)
+packages\multi-workers\test_update_env.py:306: assert by_id["repo-bundle"]["status"] == "ok"
+packages\multi-workers\test_update_env.py:307: # bundle lost a kind and both guard behaviour markers → stale, auto
+packages\multi-workers\test_update_env.py:308: _write_repo_bundle_fixture(repo_root, bundle_kinds=("stage-confirm",), guards=False)
+packages\multi-workers\test_update_env.py:311: check = by_id["repo-bundle"]
+packages\multi-workers\test_update_env.py:317: def test_repo_bundle_anchor_ignores_path_comment_only(self, tmp_path, monkeypatch):
+packages\multi-workers\test_update_env.py:321: _write_repo_bundle_fixture(tmp_path / "repo-root", guards=False)
+packages\multi-workers\test_update_env.py:323: check = by_id["repo-bundle"]
+packages\multi-workers\test_update_env.py:327: def test_repo_bundle_anchor_unjudgeable_is_not_ok(self, tmp_path, monkeypatch):
+packages\multi-workers\test_update_env.py:330: assert by_id["repo-bundle"]["status"] == "info"
+packages\multi-workers\test_update_env.py:331: assert by_id["repo-bundle"]["status"] != "ok"
+packages\multi-workers\test_update_env.py:375: project, source = _world(tmp_path, monkeypatch, bundle_stale=True, dist_stale=True)
+packages\multi-workers\test_update_env.py:387: assert by_id["bundle"]["status"] == "stale" and by_id["bundle"]["auto"] is True
+packages\multi-workers\test_update_env.py:404: repo_root=repo_root, bundle_stale=False)
+packages\multi-workers\test_update_env.py:431: repo_root=repo_root, bundle_stale=False)
+packages\multi-workers\test_update_env.py:445: for cid in ("repo-bundle", "bundle", "pi-dist", "pi-dist-content", "tmp-cache",
+packages\multi-workers\test_update_env.py:452: monkeypatch.setattr(mw, "_build_bundle", lambda: calls.append("build") or (True, "built"))
+packages\multi-workers\test_update_env.py:453: monkeypatch.setattr(mw, "_deploy_bundle", lambda no_dist: calls.append("deploy") or 0)
+packages\multi-workers\test_update_env.py:460: "bundle", "tmp-cache", "skill-clone", "serve"))
+packages\multi-workers\test_update_env.py:469: monkeypatch.setattr(mw, "_build_bundle", lambda: calls.append("build") or (False, "boom"))
+packages\multi-workers\test_update_env.py:470: monkeypatch.setattr(mw, "_deploy_bundle", lambda no_dist: calls.append("deploy") or 0)
+packages\multi-workers\test_update_env.py:471: applied, manual = mw._apply_update_env(tmp_path, self._report("bundle"))
+packages\multi-workers\test_update_env.py:477: monkeypatch.setattr(mw, "_build_bundle", lambda: (True, "built"))
+packages\multi-workers\test_update_env.py:478: monkeypatch.setattr(mw, "_deploy_bundle", lambda no_dist: 1)
+packages\multi-workers\test_update_env.py:479: applied, manual = mw._apply_update_env(tmp_path, self._report("bundle"))
+packages\multi-workers\test_update_env.py:483: def test_s1_repo_bundle_stale_triggers_rebuild(self, tmp_path, monkeypatch):
+packages\multi-workers\test_update_env.py:484: # A1b alone (global bundle/dist mtimes ok) must still rebuild + deploy.
+packages\multi-workers\test_update_env.py:486: monkeypatch.setattr(mw, "_build_bundle", lambda: calls.append("build") or (True, "built"))
+packages\multi-workers\test_update_env.py:487: monkeypatch.setattr(mw, "_deploy_bundle", lambda no_dist: calls.append("deploy") or 0)
+packages\multi-workers\test_update_env.py:488: applied, manual = mw._apply_update_env(tmp_path, self._report("repo-bundle"))
+packages\multi-workers\test_update_env.py:490: assert applied == ["bundle+dist 重建并全局重装"]
+packages\multi-workers\test_update_env.py:494: monkeypatch.setattr(mw, "_build_bundle", lambda: calls.append("build") or (True, "built"))
+packages\multi-workers\test_update_env.py:495: monkeypatch.setattr(mw, "_deploy_bundle", lambda no_dist: calls.append("deploy") or 0)
+packages\multi-workers\test_update_env.py:520: project, _ = _world(tmp_path, monkeypatch, bundle_stale=True)
+packages\multi-workers\test_update_env.py:525: assert "bundle" in out

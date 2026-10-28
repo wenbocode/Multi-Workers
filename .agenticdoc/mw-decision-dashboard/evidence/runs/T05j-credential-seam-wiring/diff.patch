@@ -1,0 +1,495 @@
+diff --git a/.agenticdoc/mw-decision-dashboard/evidence/runs/T05j-credential-seam-wiring/baseline/mw.py b/packages/multi-workers/mw.py
+index 35ddc8e3f..f4ff8c473 100644
+--- a/.agenticdoc/mw-decision-dashboard/evidence/runs/T05j-credential-seam-wiring/baseline/mw.py
++++ b/packages/multi-workers/mw.py
+@@ -929,6 +929,12 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+     # value must come from this same read (T05e review N2); a new command reads
+     # again, so a rotation is never half-applied inside one decision.
+     cfg = _decide_config_snapshot(project_dir)
++    # T05j: one credential snapshot for this command, taken *before* the book
++    # gate. The gate's known set, the capture redactor of the decision and the
++    # client that sends the Authorization value are all built from this object,
++    # so a rotation cannot produce gate=A / capture=A / Authorization=B inside
++    # one command. The next command resolves a fresh one (T05i granularity).
++    credential_snapshot = decision.credential_snapshot(cfg)
+     book_source = getattr(args, "book", None)
+     book_meta = None
+     book_state_obj: dict | None = None
+@@ -940,7 +946,11 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+             )
+             return 2
+         book_state_obj, book_meta, err = _book_gate(
+-            book_source, project_dir, flag="mw decide run", cfg=cfg
++            book_source,
++            project_dir,
++            flag="mw decide run",
++            cfg=cfg,
++            credential_snapshot=credential_snapshot,
+         )
+         if err:
+             return 2
+@@ -965,7 +975,9 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+     if err:
+         print(f"[mw decide run] {err}", file=sys.stderr)
+         return 2
+-    client = decision.DecisionClient(cfg, project_root=project_dir)
++    client = decision.DecisionClient(
++        cfg, project_root=project_dir, credential_snapshot=credential_snapshot
++    )
+     if payload.get("questions"):
+         # Legacy path (frozen bytes): payload state + caller questions, no
+         # registry dp, no authorization row.
+@@ -1523,21 +1535,27 @@ def _decide_config_snapshot(
+     return cfg
+ 
+ 
+-def _book_secret_redactor(cfg: object = None):
+-    """The known-secret set of *this* command for the book gate (T05e F1/T05g).
++def _book_secret_redactor(cfg: object = None, credential_snapshot: object = None):
++    """The known-secret set of *this* command for the book gate (T05e F1/T05g/T05j).
+ 
+     ``cfg`` is the caller's single :class:`decision.DecisionConfig` snapshot
+     (:func:`_decide_config_snapshot`) - the same object the transport client is
+     built on, so the gate set and the sent Authorization value cannot come from
+-    two different config reads. Discovery stays in
+-    ``decision.known_secret_redactor`` (``cfg.api_key`` /
+-    ``cfg.extras["api_key"]``, the resolved timi credential and the env
+-    heuristics) and does not require the optional wire module (a disabled
++    two different config reads. ``credential_snapshot`` is the command's single
++    :func:`decision.credential_snapshot` object (T05j): it pins the timi leg, so
++    the gate cannot resolve a second, later value while the client sends the
++    first one. Discovery stays in
++    :func:`decision_points.command_known_secret_redactor` (``cfg.api_key`` /
++    ``cfg.extras["api_key"]``, the pinned timi credential, the legacy timi leg
++    and the env heuristics) - the same set this decision's own gates and capture
++    redactor use - and does not require the optional wire module (a disabled
+     capture must not downgrade the gate). ``cfg=None`` keeps the env/Bearer/
+     ``sk-`` layers instead of skipping the gate. Values stay in memory; nothing
+     is logged.
+     """
+-    return decision.known_secret_redactor(cfg)
++    return decision_points.command_known_secret_redactor(
++        cfg, snapshot=credential_snapshot
++    )
+ 
+ 
+ def _book_gate(
+@@ -1547,6 +1565,7 @@ def _book_gate(
+     flag: str,
+     dp: str | None = None,
+     cfg: decision.DecisionConfig | None = None,
++    credential_snapshot: object = None,
+ ) -> tuple[dict | None, dict | None, str | None]:
+     """鍏堥獙鍚庡彂锛氳杞?+ `check_book` + 缁勫彂閫佺敤鐨?state銆? 
+@@ -1554,6 +1573,8 @@ def _book_gate(
+     蹇呴』绔嬪嵆 exit 2 鈥斺€?妫€鏌ュけ璐ョ粷涓嶈惤鍒?`DecisionClient`锛堥浂 HTTP/闆?spawn锛夈€?     瀵嗛挜闂ㄧ敤**褰撴椤圭洰閰嶇疆鐨勫疄闄?known 闆嗗悎**锛圱05e F1锛夛紝涓嶅彧鐪?env 鍚彂寮忥紱
+     ``cfg`` 鏄皟鐢ㄦ柟閫愬懡浠よ鍙栫殑鍞竴蹇収锛圱05g锛夛紝闂ㄤ笌鍙戦€佸洜姝や笉浼氭潵鑷袱娆¤銆?+    ``credential_snapshot`` 鏄悓涓€鍛戒护鍞竴鐨勫嚟璇佸揩鐓э紙T05j锛夛紝闂ㄩ泦鍚堥噷鐨?timi
++    鍑瘉涓庡鎴风褰撴 Authorization 鏄悓涓€涓喕缁撳€笺€?     """
+     try:
+         book = decision_book.load_book(source)
+@@ -1563,7 +1584,7 @@ def _book_gate(
+     issues = decision_book.check_book(
+         book,
+         project_dir=project_dir,
+-        redactor=_book_secret_redactor(cfg),
++        redactor=_book_secret_redactor(cfg, credential_snapshot),
+     )
+     if dp is not None and book.get("decision_point") != dp:
+         issues.insert(
+@@ -1661,10 +1682,13 @@ def _decide_book_check(args: argparse.Namespace, project_dir: pathlib.Path) -> i
+     # One snapshot for the command; ``check`` never constructs a client, so the
+     # gate's known set is the only consumer of the config read here (T05g).
+     cfg = _decide_config_snapshot(project_dir)
++    # T05j: the gate resolves the credential exactly once, from the same pinned
++    # snapshot the send path would use (no second discovery for the same book).
++    credential_snapshot = decision.credential_snapshot(cfg)
+     report = decision_book.check_book_file(
+         source,
+         project_dir=project_dir,
+-        redactor=_book_secret_redactor(cfg),
++        redactor=_book_secret_redactor(cfg, credential_snapshot),
+     )
+     if getattr(args, "json", False):
+         print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
+@@ -1703,6 +1727,9 @@ def _decide_ask(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+         return 2
+     # T05g: the same single snapshot feeds the book gate and the client below.
+     cfg = _decide_config_snapshot(project_dir)
++    # T05j: and the same single credential snapshot feeds the gate, the capture
++    # redactor of this decision and the client's Authorization value.
++    credential_snapshot = decision.credential_snapshot(cfg)
+     book_source = getattr(args, "book", None)
+     book_meta = None
+     if book_source:
+@@ -1713,7 +1740,11 @@ def _decide_ask(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+             )
+             return 2
+         state, book_meta, err = _book_gate(
+-            book_source, project_dir, flag="mw decide ask", cfg=cfg
++            book_source,
++            project_dir,
++            flag="mw decide ask",
++            cfg=cfg,
++            credential_snapshot=credential_snapshot,
+         )
+         if err:
+             return 2
+@@ -1734,7 +1765,9 @@ def _decide_ask(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+     model = str(getattr(args, "model", None) or "").strip()
+     if model:
+         cfg.model = model
+-    client = _AskDecisionClient(cfg, project_root=project_dir)
++    client = _AskDecisionClient(
++        cfg, project_root=project_dir, credential_snapshot=credential_snapshot
++    )
+     try:
+         response = client.decide(state, questions, dp=_ASK_DP)
+     except decision.DecisionInputError as exc:
+diff --git a/.agenticdoc/mw-decision-dashboard/evidence/runs/T05j-credential-seam-wiring/baseline/decision_points.py b/packages/multi-workers/decision_points.py
+index 4acd5331e..d5be25b71 100644
+--- a/.agenticdoc/mw-decision-dashboard/evidence/runs/T05j-credential-seam-wiring/baseline/decision_points.py
++++ b/packages/multi-workers/decision_points.py
+@@ -45,6 +45,7 @@ the monitor: it never claims an act, let alone a successful one.
+ 
+ from __future__ import annotations
+ 
++import contextlib
+ import copy
+ import datetime
+ import hashlib
+@@ -3318,6 +3319,50 @@ class Observation:
+     actor_id: str = "user-explicit"
+ 
+ 
++def known_secret_superset(
++    snapshot: decision.CredentialSnapshot | None,
++) -> tuple[str, ...]:
++    """The timi leg the pre-T05j discovery still adds to this call's known set.
++
++    :func:`decision.credential_snapshot` freezes the value the transport sends.
++    When it came from the explicit ``cfg`` leg (``cfg.api_key`` /
++    ``cfg.extras["api_key"]``), the timi chain was deliberately not consulted,
++    while the book gate and the capture redactor always included it (T05e).
++    Keeping that leg makes the known set a *superset* of the frozen value and of
++    the legacy discovery - it never becomes smaller, so nothing that used to be
++    refused or redacted turns acceptable or storable because of T05j. When the
++    snapshot already came from that chain (``env`` / ``auth-json``) the frozen
++    value *is* the resolution, so nothing is resolved a second time.
++    """
++    if snapshot is None:
++        return ()
++    if getattr(snapshot, "source", "none") in ("env", "auth-json"):
++        return ()
++    try:
++        import decision_backends
++
++        value = decision_backends.resolve_timi_api_key()
++    except Exception:  # noqa: BLE001 - a missing credential never breaks the gate
++        return ()
++    return (value,) if isinstance(value, str) and value.strip() else ()
++
++
++def command_known_secret_redactor(
++    cfg: object = None, *, snapshot: decision.CredentialSnapshot | None = None
++) -> decision.KnownSecretRedactor:
++    """The known-secret set of one command/decision (T05j seam).
++
++    Same discovery as ``decision.known_secret_redactor`` (cfg values, the env
++    heuristics, Bearer/``sk-``), plus this call's frozen credential and the
++    legacy timi leg from :func:`known_secret_superset`. Shared by the CLI book
++    gate (``mw.py``) and the decision gates below, so one command cannot end up
++    with two different definitions of "this member is a secret".
++    """
++    return decision.known_secret_redactor(
++        cfg, extra_secrets=known_secret_superset(snapshot), snapshot=snapshot
++    )
++
++
+ def _wire_api() -> Any | None:
+     """The side ledger module, or ``None`` when it is missing/broken.
+ 
+@@ -4207,6 +4252,119 @@ def _observation_book_issues(
+     return tuple(issues)
+ 
+ 
++def _redactor_covers(redactor: object, value: str) -> bool:
++    """True when ``redactor`` provably removes ``value`` from captured text.
++
++    A redactor that raises is *not* coverage: an unusable filter never proves a
++    credential safe. Both ``decision`` redactors expose ``hits``; a matcher
++    without that counter is judged by whether the text changed.
++    """
++    if not value:
++        return True
++    try:
++        result = redactor.redact(value)  # type: ignore[attr-defined]
++    except Exception:  # noqa: BLE001 - an unusable redactor cannot prove safety
++        return False
++    hits = getattr(result, "hits", None)
++    if isinstance(hits, int):
++        return hits > 0
++    return getattr(result, "text", value) != value
++
++
++def _caller_owned_scope(capture: _DecisionCapture, client: object | None) -> Any | None:
++    """The scope this decision did **not** build itself (caller-owned ledger)."""
++    observation = capture.observation
++    if observation is not None:
++        return observation.scope
++    return getattr(client, "_wire_scope", None) if client is not None else None
++
++
++def _caller_scope_coverage_issue(
++    scope: object | None, snapshot: decision.CredentialSnapshot | None
++) -> str | None:
++    """Why a caller-owned capture redactor cannot be called safe for this call.
++
++    T05j. A caller-owned scope keeps its redactor (the transport never replaces
++    it, by contract); this decision only *verifies* that the filter covers the
++    credential the transport is about to send. ``redact=None`` is fine: a test
++    ledger without a redactor stores metadata only (fail-closed by design) and
++    a production ledger gets one injected from this decision's snapshot. Any
++    other filter that misses the actual value is an unprovable capture: the
++    caller must rebuild it from the snapshot instead of letting one decision
++    send a value its ledger would store raw.
++
++    The message names no value: only the fact and the remedy.
++    """
++    if scope is None or snapshot is None:
++        return None
++    secret = getattr(snapshot, "api_key", None)
++    if not isinstance(secret, str) or not secret:
++        return None
++    redactor = getattr(scope, "redact", None)
++    if redactor is None:
++        return None
++    if _redactor_covers(redactor, secret):
++        return None
++    return (
++        "refusing an unprovable capture: the caller-owned capture redactor does "
++        "not cover this decision's actual credential (client and capture would "
++        "diverge); rebuild the redactor from the same "
++        "decision.credential_snapshot() the gate and the client use"
++    )
++
++
++def _decision_credential_snapshot(
++    cfg: decision.DecisionConfig, client: decision.DecisionClient | None
++) -> decision.CredentialSnapshot:
++    """The one credential snapshot of this decision (T05j).
++
++    A client that already pinned one (the CLI resolves it once per command,
++    before the book gate) *is* the authority: the decision reuses that exact
++    object instead of resolving a second, later value. Without a pin the
++    credential is resolved here - after the per-DP budget clone and before any
++    known-set gate, the capture scope or the client - and exactly once.
++    """
++    pinned = (
++        getattr(client, "_pinned_credential_snapshot", None) if client is not None else None
++    )
++    if pinned is not None:
++        return pinned
++    return decision.credential_snapshot(cfg)
++
++
++@contextlib.contextmanager
++def _bound_credential_snapshot(
++    client: decision.DecisionClient | None, snapshot: decision.CredentialSnapshot | None
++):
++    """Bind this decision's snapshot to a caller-owned client for one call.
++
++    An unpinned caller client would resolve its own credential at call time and
++    could send a value the gate and the capture set never saw. The pin is set
++    for the transport call only and restored in ``finally``; a client the caller
++    already pinned is left untouched (it supplied the snapshot), so one decision
++    can never rewrite the credential of the next one.
++    """
++    if client is None or snapshot is None:
++        yield
++        return
++    if getattr(client, "_pinned_credential_snapshot", None) is not None:
++        yield
++        return
++    try:
++        client._pinned_credential_snapshot = snapshot
++    except AttributeError as exc:  # pragma: no cover - a foreign client object
++        raise decision.DecisionInputError(
++            "refusing an unprovable transport: this decision cannot bind its "
++            "credential snapshot to the caller-owned client, so the sent "
++            "Authorization could differ from the gate/capture set; construct "
++            "the client with credential_snapshot=decision.credential_snapshot(cfg)"
++        ) from exc
++    try:
++        yield
++    finally:
++        client._pinned_credential_snapshot = None
++
++
+ def _capture_scope(
+     capture: _DecisionCapture,
+     *,
+@@ -4216,6 +4374,7 @@ def _capture_scope(
+     dp_point: DecisionPoint,
+     decision_id: str,
+     trigger: Trigger,
++    snapshot: decision.CredentialSnapshot | None = None,
+ ) -> tuple[Any | None, str]:
+     """``(scope, channel)`` for this decision; a *fresh* production scope per call.
+ 
+@@ -4224,6 +4383,12 @@ def _capture_scope(
+     a reused redactor). A caller-provided client scope wins - it is the already
+     explicit, already isolated ledger of that client - so no second scope can
+     split one call across two files.
++
++    ``snapshot`` (T05j) is this decision's single credential object: the
++    production redactor is built from it, so the captured text and the sent
++    ``Authorization`` cannot diverge and no second resolution happens here. A
++    caller-owned scope keeps its own redactor; the caller's filter was verified
++    against this snapshot before this function ran.
+     """
+     observation = capture.observation
+     if observation is not None:
+@@ -4236,7 +4401,13 @@ def _capture_scope(
+     if wire is None:
+         return None, "module-unavailable"
+     try:
+-        redactor = decision.credential_redactor(cfg) if cfg is not None else None
++        redactor = (
++            decision.credential_redactor(
++                cfg, extra_secrets=known_secret_superset(snapshot), snapshot=snapshot
++            )
++            if cfg is not None
++            else None
++        )
+         scope = wire.production_scope(
+             project,
+             origin="decide",
+@@ -4416,23 +4587,26 @@ def _decide_for(
+         mode=mode,
+         transport_configured=transport_configured,
+     )
+-    scope, channel = _capture_scope(
+-        capture,
+-        project=project,
+-        cfg=cfg,
+-        client=client,
+-        dp_point=dp_point,
+-        decision_id=decision_id,
+-        trigger=trigger_obj,
+-    )
+-    capture.attach(
+-        scope,
+-        channel,
+-        dp_id=dp_point.id,
+-        decision_id=decision_id,
+-        questions_version=dp_point.questions_version,
+-    )
+     if not transport_configured:
++        # Nothing is sent and no known-set gate runs here (no book gate, no
++        # transport call), so this refusal keeps the pre-T05j capture facts: the
++        # scope is built from this cfg, without a credential snapshot pin.
++        scope, channel = _capture_scope(
++            capture,
++            project=project,
++            cfg=cfg,
++            client=client,
++            dp_point=dp_point,
++            decision_id=decision_id,
++            trigger=trigger_obj,
++        )
++        capture.attach(
++            scope,
++            channel,
++            dp_id=dp_point.id,
++            decision_id=decision_id,
++            questions_version=dp_point.questions_version,
++        )
+         detail = (cfg.config_error if cfg is not None else None) or (
+             "decision transport disabled (.mw/decide.json missing or enabled=false)"
+         )
+@@ -4452,6 +4626,31 @@ def _decide_for(
+     policy = resolve_policy(dp_point.id, view.row(dp_point.id), cfg)
+     cfg = _apply_per_dp_budget(cfg, policy)
+ 
++    # Step 4c 鈥?the one credential snapshot of this decision (T05j). Taken after
++    # the per-DP budget clone (the object the transport sits on) and before any
++    # known-set gate, the capture scope and the client: the gate set, the
++    # captured text and the sent Authorization are one frozen value, and the
++    # next decision resolves a fresh one. A caller-pinned snapshot (the CLI's
++    # per-command object) wins here instead of being resolved a second time.
++    snapshot = _decision_credential_snapshot(cfg, client)
++    scope, channel = _capture_scope(
++        capture,
++        project=project,
++        cfg=cfg,
++        client=client,
++        dp_point=dp_point,
++        decision_id=decision_id,
++        trigger=trigger_obj,
++        snapshot=snapshot,
++    )
++    capture.attach(
++        scope,
++        channel,
++        dp_id=dp_point.id,
++        decision_id=decision_id,
++        questions_version=dp_point.questions_version,
++    )
++
+     # Step 5 鈥?structured state + required fields (missing => never sent).
+     try:
+         built = dp_point.build_state(trigger_obj)
+@@ -4514,7 +4713,7 @@ def _decide_for(
+                 dp_point.id,
+                 state,
+                 allow_context=True,
+-                redactor=decision.known_secret_redactor(cfg),
++                redactor=command_known_secret_redactor(cfg, snapshot=snapshot),
+             )
+         contract_issues += unknown_keys
+     if contract_issues:
+@@ -4574,7 +4773,7 @@ def _decide_for(
+             dp_point=dp_point,
+             sent_state=state,
+             project=project,
+-            redactor=decision.known_secret_redactor(cfg),
++            redactor=command_known_secret_redactor(cfg, snapshot=snapshot),
+         )
+         if book_issues:
+             capture.material_refused = True
+@@ -4591,16 +4790,28 @@ def _decide_for(
+             )
+ 
+     # Step 7 鈥?one transport call; `decision.DecisionClient` never raises here.
++    # A caller-owned capture ledger must be able to prove this call's actual
++    # credential safe *before* the transport runs: a filter that misses it would
++    # store the sent value raw. Material that was already refused never reaches
++    # here, so this never displaces a business refusal.
++    coverage_issue = _caller_scope_coverage_issue(_caller_owned_scope(capture, client), snapshot)
++    if coverage_issue is not None:
++        raise decision.DecisionInputError(coverage_issue)
+     if client is None:
+-        client = decision.DecisionClient(cfg=cfg, backend=backend, project_root=project)
++        client = decision.DecisionClient(
++            cfg=cfg, backend=backend, project_root=project, credential_snapshot=snapshot
++        )
+     wire = _wire_api()
+-    if wire is not None and capture.scope is not None:
+-        # The client binds its own ``call``; this only hands it this decision's
+-        # scope, so attempt/call rows and the decision-end row share one ledger.
+-        with wire.scope_context(capture.scope):
++    # A caller-owned client is bound to this decision's snapshot for exactly one
++    # call (T05j): it must send the value the gate and the capture set saw.
++    with _bound_credential_snapshot(client, snapshot):
++        if wire is not None and capture.scope is not None:
++            # The client binds its own ``call``; this only hands it this decision's
++            # scope, so attempt/call rows and the decision-end row share one ledger.
++            with wire.scope_context(capture.scope):
++                response = client.decide(state, questions, dp=dp_point.id)
++        else:
+             response = client.decide(state, questions, dp=dp_point.id)
+-    else:
+-        response = client.decide(state, questions, dp=dp_point.id)
+     capture.record_call(client)
+     if not response.get("available"):
+         transport_reason = response.get("reason") or decision.REASON_UPSTREAM_ERROR

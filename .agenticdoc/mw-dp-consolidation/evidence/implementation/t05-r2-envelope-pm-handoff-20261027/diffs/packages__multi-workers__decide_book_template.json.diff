@@ -1,0 +1,360 @@
+--- before/packages/multi-workers/decide_book_template.json
++++ after/packages/multi-workers/decide_book_template.json
+@@ -1,61 +1,306 @@
+ {
+   "books": {
+-    "dp3-worker-clarify": {
+-      "schema_version": 2,
+-      "decision_point": "dp3-worker-clarify",
+-      "state": {
+-        "schema_version": 2,
+-        "decision_point": "dp3-worker-clarify",
+-        "question": "<string: The clarifying question verbatim, written before any answer.>",
++    "dp-QG": {
++      "context": {
++        "error_excerpt": ""
++      },
++      "decision_point": "dp-QG",
++      "material": {
++        "review_evidence": [],
++        "review_findings": "<string: What the review found, including the concrete gap for a fix verdict.>",
++        "review_requirements": "<string: The quality/acceptance requirements this review is measured against.>",
++        "uncovered_scope": "<string: What this review did not cover; an explicit none is a real statement.>"
++      },
++      "notes": {
++        "evidence": {
++          "review_evidence": "<待填: path:line 或命令原文>",
++          "review_findings": "<待填: path:line 或命令原文>",
++          "review_requirements": "<待填: path:line 或命令原文>",
++          "uncovered_scope": "<待填: path:line 或命令原文>"
++        }
++      },
++      "preparation": {
++        "basis_catalog": [
++          {
++            "applies_to": [
++              "<待填: 适用的选择 ID>"
++            ],
++            "id": "<待填: 依据 ID>",
++            "material_refs": [
++              "<待填: 本依据引用的真实材料事实>"
++            ],
++            "text": "<待填: 本依据引用的真实材料事实>"
++          }
++        ],
++        "prepared_at": "<待填: ISO-8601 含时区>"
++      },
++      "schema_version": 3
++    },
++    "dp-auto": {
++      "context": {
++        "error_excerpt": ""
++      },
++      "decision_point": "dp-auto",
++      "material": {
+         "background": {
++          "constraints": "<string: The authorization/budget/role constraints that bound every candidate.>",
++          "current_state": "<string: What is actually known so far; unknowns are marked unknown, never invented.>",
+           "task_goal": "<string: Task goal the question is asked against.>",
+-          "current_state": "<string: What is actually known so far; unknowns are marked unknown, never invented.>",
+-          "decision_reason": "<string: Why this question needs a decision now.>",
+-          "constraints_impact": "<string: Constraints and the impact of each candidate handling.>"
++          "tried": "<string: What has already been tried for this live problem, factually.>",
++          "unknowns": "<string: The facts still unknown; never filled in by inference.>"
+         },
+         "handling_options": [],
+-        "questions_version": "q-21d2d577"
+-      },
+-      "context": {},
+-      "notes": {
+-        "evidence": {
+-          "question": "<待填: path:line 或命令原文>",
++        "question": "<string: The pending question verbatim (what exactly needs a decision), written before any answer.>"
++      },
++      "notes": {
++        "evidence": {
++          "background.constraints": "<待填: path:line 或命令原文>",
++          "background.current_state": "<待填: path:line 或命令原文>",
+           "background.task_goal": "<待填: path:line 或命令原文>",
+-          "background.current_state": "<待填: path:line 或命令原文>",
+-          "background.decision_reason": "<待填: path:line 或命令原文>",
+-          "background.constraints_impact": "<待填: path:line 或命令原文>",
+-          "handling_options": "<待填: path:line 或命令原文>"
+-        }
+-      }
+-    },
+-    "dp6-qg-verdict": {
+-      "schema_version": 2,
+-      "decision_point": "dp6-qg-verdict",
+-      "state": {
+-        "schema_version": 2,
+-        "decision_point": "dp6-qg-verdict",
+-        "questions_version": "q-16b4bb5c",
+-        "qg": {
+-          "checks_total": -1,
+-          "checks_failed": [],
+-          "blocking": [],
+-          "scope": "<string: Which surface the verdict covers: impl (code) or spec (locked requirements).>"
+-        }
+-      },
+-      "context": {
+-        "error_excerpt": ""
+-      },
+-      "notes": {
+-        "evidence": {
+-          "schema_version": "<待填: path:line 或命令原文>",
+-          "decision_point": "<待填: path:line 或命令原文>",
+-          "questions_version": "<待填: path:line 或命令原文>",
+-          "qg.checks_total": "<待填: path:line 或命令原文>",
+-          "qg.checks_failed": "<待填: path:line 或命令原文>",
+-          "qg.blocking": "<待填: path:line 或命令原文>",
+-          "qg.scope": "<待填: path:line 或命令原文>"
+-        }
+-      }
++          "background.tried": "<待填: path:line 或命令原文>",
++          "background.unknowns": "<待填: path:line 或命令原文>",
++          "handling_options": "<待填: path:line 或命令原文>",
++          "question": "<待填: path:line 或命令原文>"
++        }
++      },
++      "preparation": {
++        "basis_catalog": [
++          {
++            "applies_to": [
++              "<待填: 适用的选择 ID>"
++            ],
++            "id": "<待填: 依据 ID>",
++            "material_refs": [
++              "<待填: 本依据引用的真实材料事实>"
++            ],
++            "text": "<待填: 本依据引用的真实材料事实>"
++          }
++        ],
++        "prepared_at": "<待填: ISO-8601 含时区>"
++      },
++      "schema_version": 3
++    },
++    "dp-gate-approve": {
++      "context": {},
++      "decision_point": "dp-gate-approve",
++      "material": {
++        "condition_evidence": [],
++        "current_state": "<string: The current real state of the gate facts, with unknowns marked unknown.>",
++        "gate_background": "<string: The concrete gate matter and why it is being sent for a decision now.>",
++        "pm_note": {
++          "basis": {
++            "authority": "<string: The existing authorization the note relies on; this note never creates one.>",
++            "budget": "<string: The remaining budget/limit the note relies on (no new budget is granted here).>",
++            "evidence": "<string: The evidence the note relies on, with references.>",
++            "goal": "<string: The goal/acceptance basis the note relies on.>"
++          },
++          "planned_action": "<string: The limited action the PM would take after an approve (never implied by the choice alone).>",
++          "subject": "<string: The PM's pre-submission note: what exactly is being approved.>"
++        }
++      },
++      "notes": {
++        "evidence": {
++          "condition_evidence": "<待填: path:line 或命令原文>",
++          "current_state": "<待填: path:line 或命令原文>",
++          "gate_background": "<待填: path:line 或命令原文>",
++          "pm_note.basis.authority": "<待填: path:line 或命令原文>",
++          "pm_note.basis.budget": "<待填: path:line 或命令原文>",
++          "pm_note.basis.evidence": "<待填: path:line 或命令原文>",
++          "pm_note.basis.goal": "<待填: path:line 或命令原文>",
++          "pm_note.planned_action": "<待填: path:line 或命令原文>",
++          "pm_note.subject": "<待填: path:line 或命令原文>"
++        }
++      },
++      "preparation": {
++        "basis_catalog": [
++          {
++            "applies_to": [
++              "<待填: 适用的选择 ID>"
++            ],
++            "id": "<待填: 依据 ID>",
++            "material_refs": [
++              "<待填: 本依据引用的真实材料事实>"
++            ],
++            "text": "<待填: 本依据引用的真实材料事实>"
++          }
++        ],
++        "prepared_at": "<待填: ISO-8601 含时区>"
++      },
++      "schema_version": 3
++    },
++    "dp-pm-steer": {
++      "context": {},
++      "decision_point": "dp-pm-steer",
++      "material": {
++        "pm_decision_background": "<string: Why the PM needs a checkpoint decision now, plus the constraints that shape it.>",
++        "task_deliverables": "<string: Task deliverables exactly as handed to the task (原文).>",
++        "task_goal": "<string: Task goal exactly as handed to the task (原文), no summary.>",
++        "task_requirements": "<string: Task requirements exactly as handed to the task (原文).>"
++      },
++      "notes": {
++        "evidence": {
++          "pm_decision_background": "<待填: path:line 或命令原文>",
++          "task_deliverables": "<待填: path:line 或命令原文>",
++          "task_goal": "<待填: path:line 或命令原文>",
++          "task_requirements": "<待填: path:line 或命令原文>"
++        }
++      },
++      "preparation": {
++        "basis_catalog": [
++          {
++            "applies_to": [
++              "<待填: 适用的选择 ID>"
++            ],
++            "id": "<待填: 依据 ID>",
++            "material_refs": [
++              "<待填: 本依据引用的真实材料事实>"
++            ],
++            "text": "<待填: 本依据引用的真实材料事实>"
++          }
++        ],
++        "prepared_at": "<待填: ISO-8601 含时区>"
++      },
++      "schema_version": 3
++    },
++    "dp-route": {
++      "context": {},
++      "decision_point": "dp-route",
++      "material": {
++        "decision_actor": "<string: The real business subject whose decision is needed (not a self-reported role claim).>",
++        "decision_object": "<string: The concrete object/artefact the pending question is about.>",
++        "question": "<string: The pending question verbatim (what exactly needs a decision), written before any answer.>"
++      },
++      "notes": {
++        "evidence": {
++          "decision_actor": "<待填: path:line 或命令原文>",
++          "decision_object": "<待填: path:line 或命令原文>",
++          "question": "<待填: path:line 或命令原文>"
++        }
++      },
++      "preparation": {
++        "basis_catalog": [
++          {
++            "applies_to": [
++              "<待填: 适用的选择 ID>"
++            ],
++            "id": "<待填: 依据 ID>",
++            "material_refs": [
++              "<待填: 本依据引用的真实材料事实>"
++            ],
++            "text": "<待填: 本依据引用的真实材料事实>"
++          }
++        ],
++        "prepared_at": "<待填: ISO-8601 含时区>"
++      },
++      "schema_version": 3
++    },
++    "dp-sign-key": {
++      "context": {},
++      "decision_point": "dp-sign-key",
++      "material": {
++        "actual_completion": "<string: What was actually completed against the delivery goal.>",
++        "delivery_goal": "<string: Delivery goal including the user's acceptance conditions.>",
++        "unfinished_impact": [],
++        "verification_evidence": {
++          "unverified": [],
++          "verified": []
++        }
++      },
++      "notes": {
++        "evidence": {
++          "actual_completion": "<待填: path:line 或命令原文>",
++          "delivery_goal": "<待填: path:line 或命令原文>",
++          "unfinished_impact": "<待填: path:line 或命令原文>",
++          "verification_evidence.unverified": "<待填: path:line 或命令原文>",
++          "verification_evidence.verified": "<待填: path:line 或命令原文>"
++        }
++      },
++      "preparation": {
++        "basis_catalog": [
++          {
++            "applies_to": [
++              "<待填: 适用的选择 ID>"
++            ],
++            "id": "<待填: 依据 ID>",
++            "material_refs": [
++              "<待填: 本依据引用的真实材料事实>"
++            ],
++            "text": "<待填: 本依据引用的真实材料事实>"
++          }
++        ],
++        "prepared_at": "<待填: ISO-8601 含时区>"
++      },
++      "schema_version": 3
++    },
++    "dp-w-check-task": {
++      "context": {},
++      "decision_point": "dp-w-check-task",
++      "material": {
++        "blockers": "<string: What blocks completion inside the boundary, or an explicit none.>",
++        "completed": "<string: What is actually finished so far, with evidence references; saying none is a real statement.>",
++        "constraints": "<string: Constraints, remaining budget and authorization that bound this judgement.>",
++        "reachability_facts": "<string: What is actually known about whether this task can be completed inside its authorization/budget.>",
++        "remaining": "<string: What is still unfinished for this task.>",
++        "task_goal": "<string: Task goal exactly as handed to the task (原文), no summary.>"
++      },
++      "notes": {
++        "evidence": {
++          "blockers": "<待填: path:line 或命令原文>",
++          "completed": "<待填: path:line 或命令原文>",
++          "constraints": "<待填: path:line 或命令原文>",
++          "reachability_facts": "<待填: path:line 或命令原文>",
++          "remaining": "<待填: path:line 或命令原文>",
++          "task_goal": "<待填: path:line 或命令原文>"
++        }
++      },
++      "preparation": {
++        "basis_catalog": [
++          {
++            "applies_to": [
++              "<待填: 适用的选择 ID>"
++            ],
++            "id": "<待填: 依据 ID>",
++            "material_refs": [
++              "<待填: 本依据引用的真实材料事实>"
++            ],
++            "text": "<待填: 本依据引用的真实材料事实>"
++          }
++        ],
++        "prepared_at": "<待填: ISO-8601 含时区>"
++      },
++      "schema_version": 3
++    },
++    "dp-w-type": {
++      "context": {},
++      "decision_point": "dp-w-type",
++      "material": {
++        "task_deliverables": "<string: Task deliverables exactly as handed to the task (原文).>",
++        "task_goal": "<string: Task goal exactly as handed to the task (原文), no summary.>",
++        "task_requirements": "<string: Task requirements exactly as handed to the task (原文).>"
++      },
++      "notes": {
++        "evidence": {
++          "task_deliverables": "<待填: path:line 或命令原文>",
++          "task_goal": "<待填: path:line 或命令原文>",
++          "task_requirements": "<待填: path:line 或命令原文>"
++        }
++      },
++      "preparation": {
++        "basis_catalog": [
++          {
++            "applies_to": [
++              "<待填: 适用的选择 ID>"
++            ],
++            "id": "<待填: 依据 ID>",
++            "material_refs": [
++              "<待填: 本依据引用的真实材料事实>"
++            ],
++            "text": "<待填: 本依据引用的真实材料事实>"
++          }
++        ],
++        "prepared_at": "<待填: ISO-8601 含时区>"
++      },
++      "schema_version": 3
+     }
+   }
+ }

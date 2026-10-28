@@ -34,13 +34,15 @@ import { formatDispatchAlarm } from "../../src/extensions/agent-team-loop/pm/pm-
 import {
 	type DecideRunner,
 	type DecideRunRequest,
-	DP1_QUESTIONS,
+	DP1_ID,
 	formatTriageReceipt,
+	newDecisionMeta,
 	type RawDecideRun,
-	triageDispatch,
+	triageDispatchEnvelope,
 } from "../../src/extensions/agent-team-loop/pm/triage-client.ts";
 import {
 	appendTriageReceipt,
+	computeDispatchTriage,
 	emitDispatchTriage,
 	planDispatchFrontmatter,
 	registerWorkerCommands,
@@ -302,6 +304,28 @@ async function setupFixture(stub: Stub): Promise<ToolFixture> {
 	};
 }
 
+/** One material envelope (the dp1 producer's real payload) for client-level
+ * assertions; the identity rides on `meta`, the material on the registry keys. */
+function materialEnvelope(
+	root: string,
+	stub: Stub,
+	material: Record<string, unknown> = {
+		task_goal: "goal",
+		task_requirements: "requirements",
+		task_deliverables: "deliverables",
+	},
+	maxBytes?: number,
+) {
+	return triageDispatchEnvelope({
+		projectDir: root,
+		dpId: DP1_ID,
+		material,
+		meta: newDecisionMeta({ key: "k", taskKey: "w-material", initiatorRole: "pm" }),
+		run: stub.run,
+		...(maxBytes === undefined ? {} : { maxBytes }),
+	});
+}
+
 function taskMdOf(root: string, taskKey: string): string {
 	return fs.readFileSync(path.join(root, "k", "workers", taskKey, "task.md"), "utf8");
 }
@@ -398,10 +422,27 @@ describe("DP-1 receipt echo (T-03 requirement 3)", () => {
 		const stub = stubRunner(okRun({ type: "coding", risk: "high", source: "api" }));
 		const root = mkdtemp("atl-triage-api-");
 		writeDecideJson(root, { enabled: true });
-		const plan = planDispatchFrontmatter({ ...basePlan(root), triageRun: stub.run });
-		if (!plan.ok) throw new Error(plan.message);
-		expect(plan.triage?.receipt).toContain("置信度来源=api（可作为判据）");
-		expect(plan.triage?.receipt).not.toContain("不用于门控");
+		// The producer's real material path (dp1's three registry fields).
+		const triage = computeDispatchTriage({
+			projectDir: root,
+			dispatchedType: "coding",
+			run: stub.run,
+			dp1: {
+				key: "k",
+				taskKey: "w-api",
+				taskType: "coding",
+				sections: {
+					context: "目标 .agenticdoc/goal.md:1",
+					requirements: "AC-001",
+					deliverables: "report.md",
+					extras: [],
+				},
+			},
+		});
+		if (triage === null) throw new Error("expected a dp1 triage");
+		expect(triage.statePath).toBe("material");
+		expect(triage.receipt).toContain("置信度来源=api（可作为判据）");
+		expect(triage.receipt).not.toContain("不用于门控");
 	});
 
 	it("appendTriageReceipt is identity when there is no advice", () => {
@@ -505,12 +546,8 @@ describe("DP-1 fail-soft (T-03 requirements 1/4)", () => {
 			expect(new WorkerStore(fx.root).readAll().map((row) => row.taskKey)).toEqual(["w-fail"]);
 			expect(readLedger(fx.root)).toEqual([]);
 			expect(fx.messages).toEqual([]);
-			// Client-level normalisation carries the expected reason.
-			const result = triageDispatch({
-				projectDir: fx.root,
-				state: "s",
-				run: stubRunner(failure.raw).run,
-			});
+			// Client-level normalisation carries the expected reason (material path).
+			const result = materialEnvelope(fx.root, stubRunner(failure.raw));
 			expect(result.available).toBe(false);
 			expect(result.reason).toBe(failure.reason);
 		});
@@ -535,24 +572,39 @@ describe("DP-1 fail-soft (T-03 requirements 1/4)", () => {
 		const throwing: DecideRunner = () => {
 			throw new Error("kaboom");
 		};
-		const result = triageDispatch({ projectDir: root, state: "s", run: throwing });
+		const result = materialEnvelope(root, { run: throwing, calls: [] });
 		expect(result.available).toBe(false);
 		expect(result.reason).toBe("upstream-error");
 	});
 
-	it("state is bounded and questions are the DP-1 choice set", () => {
+	it("forwards the material verbatim with no questions map, and refuses an over-budget one", () => {
 		const root = mkdtemp("atl-triage-state-");
 		writeDecideJson(root, { enabled: true });
 		const stub = stubRunner(okRun());
-		triageDispatch({ projectDir: root, state: "x".repeat(100_000), run: stub.run });
+		const material = {
+			task_goal: "goal",
+			task_requirements: `requirements ${"x".repeat(500)}`,
+			task_deliverables: "deliverables",
+		};
+		materialEnvelope(root, stub, material);
 		expect(stub.calls).toHaveLength(1);
 		const payload = JSON.parse(stub.calls[0]?.input ?? "{}") as {
-			state: string;
-			questions: Record<string, unknown>;
+			material: Record<string, unknown>;
+			meta: Record<string, unknown>;
 		};
-		expect(Buffer.byteLength(payload.state, "utf8")).toBeLessThanOrEqual(16_000);
-		expect(payload.questions).toEqual(DP1_QUESTIONS);
+		// The original text is never truncated and the registry owns the questions.
+		expect(payload.material).toEqual(material);
+		expect(payload).not.toHaveProperty("questions");
+		expect(payload.meta.task_key).toBe("w-material");
 		expect(stub.calls[0]?.projectDir).toBe(root);
+
+		// An explicitly published budget is a REFUSAL, never a truncation.
+		const budgetStub = stubRunner(okRun());
+		const refused = materialEnvelope(root, budgetStub, material, 40);
+		expect(refused.available).toBe(false);
+		expect(refused.reason).toBe("input-oversize");
+		expect(refused.escalate_to_human).toBe(true);
+		expect(budgetStub.calls).toHaveLength(0);
 	});
 
 	it("formatTriageReceipt is empty for an unavailable result", () => {

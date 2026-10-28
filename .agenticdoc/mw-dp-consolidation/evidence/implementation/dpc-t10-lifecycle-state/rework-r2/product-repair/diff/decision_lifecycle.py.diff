@@ -1,0 +1,304 @@
+diff --git a/before-bytes/decision_lifecycle.py b/after-bytes/decision_lifecycle.py
+index 8374b2e..443b15b 100644
+--- a/before-bytes/decision_lifecycle.py
++++ b/after-bytes/decision_lifecycle.py
+@@ -63,6 +63,10 @@ facts carry the rest of one round, each in its own kind and with a deterministic
+   as a refusal and never as an approval, replay signal or execution permission.
+   The basis is re-checked through :mod:`decision_points` and the catalogue
+   digest is recorded, so "the basis came from this PM preparation" is verifiable.
++  The dynamic entry's answer space is the PM-prepared candidate set: a missing or
++  illegal set fails closed instead of legalising an invented choice. The row's
++  idempotency key is derived from the recorded fact, so an identical repeat is a
++  duplicate while a different choice is recorded as its own row.
+ * ``note`` - the PM's pre-submission note with its own ``prepared_at``. Only a
+   PM-initiated record may carry it, and it never shares a row with the model's
+   selected basis (AC-007 keeps the two sources separate).
+@@ -73,7 +77,9 @@ facts carry the rest of one round, each in its own kind and with a deterministic
+ 
+ Both the note and the request may echo the creation fact's before snapshot, but
+ only by exact equality: a later "before" (the current state) is refused as a
+-backfill. ``None`` and ``[]`` stay distinct in every snapshot that is stored.
++backfill, and the comparison runs on the recorded (redacted) representation so a
++known-secret-bearing snapshot can be repeated without storing the secret.
++``None`` and ``[]`` stay distinct in every snapshot that is stored.
+ 
+ Safety
+ ------
+@@ -376,14 +382,20 @@ def _ledger_facts(
+ 
+ 
+ def _check_before(
+-    start: Mapping[str, object], task_before: dict[str, object] | None
++    store: "LifecycleStore",
++    start: Mapping[str, object],
++    task_before: dict[str, object] | None,
+ ) -> dict[str, object] | None:
+     """A later fact may repeat the recorded before, never replace it.
+ 
+     The creation fact was written *before* the transport call, so its snapshot is
+-    the only legal before. Passing a different snapshot (typically the current
+-    state read later) is a backfill and is refused; passing none keeps "not
+-    recorded" honest instead of inventing a value.
++    the only legal before. The comparison runs on the *recorded representation*:
++    a snapshot containing a known secret was stored redacted, so the caller's
++    raw snapshot is projected through the same injected redactor before it is
++    compared (an exact re-statement of the recorded fact). That neither backfills
++    a later state nor accepts an arbitrary masked value - only the recorded form
++    of the exact same axes. Passing none keeps "not recorded" honest instead of
++    inventing a value; ``None`` and ``[]`` stay distinct.
+     """
+     try:
+         given = decision_task_state.validate_task_state(task_before)
+@@ -392,7 +404,8 @@ def _check_before(
+         raise LifecycleInputError(str(exc)) from None
+     if given is None:
+         return None
+-    if stored is None or not decision_task_state.same_snapshot(stored, given):
++    recorded = decision_wire.recorded_task_state(store._scope(), given)
++    if stored is None or recorded is None or not decision_task_state.same_snapshot(stored, recorded):
+         _refuse(
+             "task_before",
+             "must repeat the creation fact's recorded before snapshot; a later before cannot be backfilled",
+@@ -400,6 +413,33 @@ def _check_before(
+     return given
+ 
+ 
++def _recorded_after_floor(
++    store: "LifecycleStore", meta: "DecisionMeta", task_after: dict[str, object]
++) -> None:
++    """Refuse a new after observation that precedes one already recorded.
++
++    ``executed``/``settled`` follow the same non-decreasing rule the task
++    terminal already enforces: the creation fact's before is the floor, and so is
++    every earlier ``task_after`` of the same logical record. The association is
++    proven by :func:`_ledger_facts`, so another task's after snapshot is never
++    borrowed and an unrecorded (``None``) axis is never guessed. The caller runs
++    this before the write and again inside the append lock, where the rows can no
++    longer change between the check and the append.
++    """
++    start, events = _ledger_facts(store, meta)
++    try:
++        stored_before = decision_task_state.validate_task_state(start.get("task_before"))
++        decision_task_state.validate_observation_order(stored_before, task_after)
++        for row in events:
++            if row.get("logical_id") != meta.logical_id:
++                continue
++            prior = decision_task_state.validate_task_state(row.get("task_after"))
++            if prior is not None:
++                decision_task_state.validate_observation_order(prior, task_after)
++    except decision_task_state.TaskStateInputError as exc:
++        raise LifecycleInputError(str(exc)) from None
++
++
+ def _check_parent_ref(
+     parent_ref: str | None,
+     decision_id: str,
+@@ -873,10 +913,18 @@ def _append(
+     scope: decision_wire.WireScope,
+     event: Mapping[str, object],
+     decision_id: str | None,
++    guard: Callable[[], None] | None = None,
+ ) -> LifecycleResult:
+     event_id = _event_id_of(event)
+     try:
+-        append = decision_wire.append_event(scope, event, dedupe_event_id=True)
++        append = decision_wire.append_event(
++            scope, event, dedupe_event_id=True, guard=guard
++        )
++    except LifecycleInputError:
++        # A lock-scoped precondition refusal is the caller's input error, not a
++        # capture failure: nothing was written, so no failure sidecar may claim
++        # a write was attempted.
++        raise
+     except Exception:  # noqa: BLE001 - the managed store reports, never raises
+         error_class = "unexpected"
+         recorded = _write_failure_fact(
+@@ -1016,17 +1064,10 @@ def record_lifecycle(
+     try:
+         task_after = decision_task_state.validate_task_state(task_after)
+         decision_task_state.validate_observation_order(meta.task_before, task_after)
+-        if task_after is not None:
+-            prior = read_lifecycle(store)
+-            if any((prior.stats.bad_json, prior.stats.bad_utf8, prior.stats.unknown_schema, prior.stats.oversized_line, prior.stats.incomplete_tail)):
+-                _refuse("task_after", "creation association is not provable")
+-            starts = [row for row in prior.events if row.get("kind") == "record-start" and row.get("logical_id") == meta.logical_id]
+-            if len(starts) != 1 or starts[0].get("key") != meta.key or starts[0].get("task_key") != meta.task_key:
+-                _refuse("task_after", "requires the same task's creation fact")
+-            saved_before = decision_task_state.validate_task_state(starts[0].get("task_before"))
+-            decision_task_state.validate_observation_order(saved_before, task_after)
+     except decision_task_state.TaskStateInputError as exc:
+         raise LifecycleInputError(str(exc)) from None
++    if task_after is not None:
++        _recorded_after_floor(store, meta, task_after)
+     actor = _check_actor(actor)
+     decision_id = _check_decision_id("decision_id", decision_id)
+     if dp is not None:
+@@ -1125,6 +1166,7 @@ def record_lifecycle(
+         scope=scope,
+         event=event,
+         decision_id=decision_id,
++        guard=None if task_after is None else lambda: _recorded_after_floor(store, meta, task_after),
+     )
+ 
+ 
+@@ -1276,7 +1318,7 @@ def record_note(
+     text = _bounded_text(store, "pm_note", pm_note, decision_wire.NOTE_TEXT_BYTES)
+     actor = _check_actor(actor)
+     start, events = _ledger_facts(store, meta)
+-    before = _check_before(start, task_before)
++    before = _check_before(store, start, task_before)
+     parent_ref = _check_parent_ref(parent_ref, decision_id, meta, events)
+     if event_id is not None:
+         event_id = _check_token("event_id", event_id)
+@@ -1312,6 +1354,49 @@ def record_note(
+     )
+ 
+ 
++def _canonical_json(value: object) -> str:
++    """One canonical serialisation (stable key order, no NaN, UTF-8 text)."""
++    return json.dumps(
++        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
++    )
++
++
++def _dynamic_entry_answer_issues(
++    dp_id: str, material: Mapping[str, object] | None, choice: object
++) -> tuple[tuple[str, str], ...]:
++    """The prepared answer space of the one dynamic entry (single source).
++
++    Only ``dp-auto`` has a PM-prepared candidate set; a fixed/route entry keeps
++    its frozen enum and is neither widened nor narrowed here. Both checks come
++    from :mod:`decision_points` (``entry_choice_issues`` resolves the legal ids,
++    ``entry_material_issues`` owns the candidate-set contract): a missing or
++    illegal set fails closed instead of legalising an invented choice, and an
++    empty legal set is never "nothing to check".
++    """
++    if decision_points.require_active_dp(dp_id).kind != "dynamic-candidates":
++        return ()
++    return decision_points.entry_choice_issues(dp_id, choice, material) + decision_points.entry_material_issues(
++        dp_id, material
++    )
++
++
++def _refuse_entry_issues(
++    store: "LifecycleStore", issues: tuple[tuple[str, str], ...]
++) -> None:
++    """Raise the first entry-contract issue, never echoing unproven text.
++
++    An issue's detail can name caller-chosen keys (candidate ids/labels are
++    prepared input), so it passes the injected redactor exactly like the
++    preparation authority's messages do.
++    """
++    if not issues:
++        return
++    name, rule = issues[0]
++    if store.redact is not None and store.redact.redact(rule).hits:
++        rule = "does not satisfy the entry's prepared answer contract; the value is withheld"
++    _refuse(name, rule)
++
++
+ def record_request(
+     store: LifecycleStore,
+     meta: DecisionMeta,
+@@ -1357,6 +1442,12 @@ def record_request(
+         basis_text = _bounded_text(
+             store, "basis_text", fields["basis_text"], decision_wire.BASIS_TEXT_BYTES
+         )
++        _refuse_entry_issues(
++            store,
++            _dynamic_entry_answer_issues(
++                str(fields["dp"]), material, fields["choice"]
++            ),
++        )
+     elif preparation is not None:
+         # A refused request can still cite the preparation it attempted; only
+         # the stamp is provable without the material, and no basis is adopted.
+@@ -1366,14 +1457,35 @@ def record_request(
+             _refuse("prepared_at", "must be the preparation's recorded prepared_at")
+     actor = _check_actor(actor)
+     start, events = _ledger_facts(store, meta)
+-    before = _check_before(start, task_before)
++    before = _check_before(store, start, task_before)
+     parent_ref = _check_parent_ref(parent_ref, decision_id, meta, events)
+     if event_id is not None:
+         event_id = _check_token("event_id", event_id)
+-    else:
+-        event_id = _stable_event_id(
+-            "rq", meta.logical_id, str(fields["dp"]), parent_ref or "-"
+-        )
++    scope = store._scope(
++        decision_id=decision_id,
++        dp=str(fields["dp"]),
++        key=meta.key,
++        task_key=meta.task_key,
++        actor=actor,
++    )
++    payload: dict[str, object] = {
++        "logical_id": meta.logical_id,
++        "dp": str(fields["dp"]),
++        "available": bool(fields["available"]),
++        "replayed": bool(fields["replayed"]),
++        "choice": fields["choice"] if isinstance(fields["choice"], str) else None,
++        "basis_id": fields["basis_id"] if isinstance(fields["basis_id"], str) else None,
++        "basis_text": basis_text,
++        "basis_source": fields["basis_source"] if isinstance(fields["basis_source"], str) else None,
++        "prepared_at": str(fields["prepared_at"]),
++        "basis_catalog_sha256": basis_catalog_sha256,
++        "business_decisions": int(fields["business_decisions"]),
++        "transport_attempts": int(fields["transport_attempts"]),
++        "attempts": int(fields["attempts"]),
++        "reason": fields["reason"] if isinstance(fields["reason"], str) else None,
++        "parent_ref": parent_ref,
++        "task_before": before,
++    }
+     for field, value in (
+         ("key", meta.key),
+         ("task_key", meta.task_key),
+@@ -1387,33 +1499,20 @@ def record_request(
+     ):
+         _guard_secret(store, field, value)
+ 
+-    scope = store._scope(
+-        decision_id=decision_id,
+-        dp=str(fields["dp"]),
+-        key=meta.key,
+-        task_key=meta.task_key,
+-        actor=actor,
+-    )
+-    event = decision_wire.request_event(
+-        scope,
+-        logical_id=meta.logical_id,
+-        dp=str(fields["dp"]),
+-        available=bool(fields["available"]),
+-        replayed=bool(fields["replayed"]),
+-        choice=fields["choice"] if isinstance(fields["choice"], str) else None,
+-        basis_id=fields["basis_id"] if isinstance(fields["basis_id"], str) else None,
+-        basis_text=basis_text,
+-        basis_source=fields["basis_source"] if isinstance(fields["basis_source"], str) else None,
+-        prepared_at=str(fields["prepared_at"]),
+-        basis_catalog_sha256=basis_catalog_sha256,
+-        business_decisions=int(fields["business_decisions"]),
+-        transport_attempts=int(fields["transport_attempts"]),
+-        attempts=int(fields["attempts"]),
+-        reason=fields["reason"] if isinstance(fields["reason"], str) else None,
+-        parent_ref=parent_ref,
+-        task_before=before,
+-        event_id=event_id,
+-    )
++    event = decision_wire.request_event(scope, event_id=event_id, **payload)
++    if event_id is None:
++        # Content-addressed idempotency key over the *recorded* row (every
++        # association and payload field, after validation/redaction; the write
++        # clock and the placeholder uuid are the only fields left out). The same
++        # fact keeps one id and stays a duplicate - byte for byte, zero rows -
++        # while any different fact (choice, basis, actor, decision id, before
++        # snapshot, ...) gets its own id instead of being swallowed by the
++        # first. The duplicate scan itself stays inside the append lock.
++        recorded = {
++            key: value for key, value in event.items() if key not in ("event_id", "ts")
++        }
++        event_id = _stable_event_id("rq", _canonical_json(recorded))
++        event["event_id"] = event_id
+     return _append(
+         store, meta, stage="request", scope=scope, event=event, decision_id=decision_id
+     )

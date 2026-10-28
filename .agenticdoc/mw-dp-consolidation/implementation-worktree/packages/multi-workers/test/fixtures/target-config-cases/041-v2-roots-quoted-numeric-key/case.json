@@ -1,0 +1,14 @@
+{
+  "description": "a quoted \"123\" roots key is a string on both sides and stays legal (FIX-5: quoted keys must not be rejected)",
+  "env": {},
+  "expect": {
+    "mode": "partition",
+    "source": "target-yml",
+    "game_root_null": true,
+    "parent_root_rel": "../p",
+    "partition_root_rel": "./q",
+    "roots": {
+      "123": "../a"
+    }
+  }
+}

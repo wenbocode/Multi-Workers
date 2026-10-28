@@ -1,0 +1,15 @@
+import hashlib,json,sys
+from datetime import datetime,timezone
+from pathlib import Path
+assert sys.dont_write_bytecode
+HERE=Path(__file__).resolve().parent;KEY=HERE.parents[2];WT=KEY/'implementation-worktree';ROOT=KEY.parents[1];PM=KEY/'evidence/implementation/t05-r2-envelope-pm-handoff-20261027'
+assert not (HERE/'check.json').exists()
+def sha(data):return hashlib.sha256(data).hexdigest()
+def save(name,value):(HERE/name).write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
+inventory={p.relative_to(WT).as_posix():sha(p.read_bytes()) for p in WT.rglob('*') if p.is_file()};assert inventory==json.loads((PM/'mirror-before.json').read_text(encoding='utf-8'));save('mirror-current.json',inventory)
+dispatches=[]
+for logical,task,slug in [('T05','dpc-t05-handoff-audit','t05'),('T10','dpc-t10-handoff-audit','t10')]:
+    card=KEY/f'tasks/isolated/{logical}-handoff-audit.md';seed=KEY/f'workers/{task}/task.md';runfile=KEY/f'workers/{task}/run.json';card_bytes=card.read_bytes();text=seed.read_text(encoding='utf-8');run=json.loads(runfile.read_text(encoding='utf-8'));face=f'.agenticdoc/mw-dp-consolidation/evidence/implementation/{slug}-handoff-audit-20261027.md';assert 'type: research\n' in text and 'images: no\n' in text;assert f'card_sha256: {sha(card_bytes)}\n' in text;assert f'write_face: {face}\n' in text;assert run['owner_key']=='mw-dp-consolidation' and run['kind']=='research' and run['status'] in ('running','pending');assert f'- {face}\n' in card_bytes.decode('utf-8');assert all(f'## {heading}' in text for heading in ['上下文','要求','交付格式','唯一证据文件','写入允许面','写入禁止面']);(HERE/f'{task}.actual-task.md').write_bytes(seed.read_bytes());(HERE/f'{task}.actual-run.json').write_bytes(runfile.read_bytes());dispatches.append({'logical_id':logical,'task_key':task,'run_id':run['run_id'],'status':run['status'],'pid':run.get('pid'),'started_at':run['started_at'],'actual_card':card.relative_to(KEY).as_posix(),'card_sha256':sha(card_bytes),'recorded_card_path_label':f'tasks/{logical}-handoff-audit.md','seed_exact_single_evidence_face':face,'dispatch_type':'research','model':'dispatch.yml role default; no override','product_progress':None,'source':'agent-report','completed':None,'remaining':None,'blockers':None})
+dag=KEY/'implementation-isolated-dag.json';(HERE/'dag-before.json').write_bytes(dag.read_bytes());assert len(json.loads(dag.read_text(encoding='utf-8'))['tasks'])==36
+state=KEY/'pm-state.md';(HERE/'pm-state-before-metadata-sync.md').write_bytes(state.read_bytes())
+result={'source':'agent-report','observed_at':datetime.now(timezone.utc).isoformat(),'dispatches':dispatches,'two_research_evidence_faces_disjoint':True,'no_product_writer_dispatched':True,'mirror_1891_unchanged_since_PM_repair_probe':True,'current_pyc_14_unchanged_prior_drift_retained':True,'original_DAG_tasks':36,'full_T05_T10_handoffs':False,'S2_closed':False,'OS_fixture_authorization_not_inferred_or_used':True,'triage_suggestion':'advisory review/conf0.80; actual type research unchanged; not a dispatch refusal','phase':'EXECUTE'};save('check.json',result);print(json.dumps(result,ensure_ascii=False,indent=2))

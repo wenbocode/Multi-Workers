@@ -1,0 +1,14 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-28T04:08:50.181449+00:00",
+  "original_36_tasks_7_stages_all_contracts_preserved": true,
+  "only_T05_T10_metadata_changed": true,
+  "all_other_34_task_objects_byte_semantically_equal": true,
+  "historical_T05_running_observation_preserved_as_previous": true,
+  "T05_R2_done_exit0_acked_two_roots_locally_verified": true,
+  "T05_T10_full_handoffs_false": true,
+  "PM_product_writes": [],
+  "mirror_1891_current_pyc_14_unchanged": true,
+  "structure_audit_rc": 0,
+  "structure_audit_not_product_L2_QG_or_write_history_acceptance": true
+}

@@ -1,0 +1,23 @@
+{
+  "baseline": ".agenticdoc/mw-dp-consolidation/evidence/implementation/isolation-baseline-20261026/approved-file-baselines.json",
+  "identical": 56,
+  "changed": [
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_registry.json",
+      "baseline": "0a5e16d64ab83b9f84a6a6776cef55b16d87349010b24bb1b40da4207d1283ae",
+      "current": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_points.py",
+      "baseline": "a92bbdc2f12e6559c6e40bd571336655d190d84aa73268bbff4ee0dc8bdf1243",
+      "current": "a3fb1fe8f3a9caea2a6a4acc660298ca6d2cb9921418c152025c401279089047"
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decide_registry_contract.py",
+      "baseline": "7564cfdcb2ad261beda987299c27008f57bc3561eb3348e841aeb676106b61cb",
+      "current": "4c6aedadca32dd26316a5d18407dc1e7889a62b986b6e6860f973d908878c1d0"
+    }
+  ],
+  "missing": [],
+  "changed_is_t03_write_face": true
+}

@@ -1,0 +1,15 @@
+﻿diff --git a/H:/git/Multi-Workers/.agenticdoc/mw-decision-dashboard/evidence/runs/T05b-retry-observation-fixes/baseline-test_decision_observation.py b/packages/multi-workers/test_decision_observation.py
+index 51c26001e..17f90a755 100644
+--- a/H:/git/Multi-Workers/.agenticdoc/mw-decision-dashboard/evidence/runs/T05b-retry-observation-fixes/baseline-test_decision_observation.py
++++ b/packages/multi-workers/test_decision_observation.py
+@@ -1251,7 +1251,9 @@ def test_observation_refuses_illegal_material_with_zero_send(
+     assert outcome.escalated_reason == "input-incomplete"
+     assert expected_path is not None and expected_path in outcome.detail, outcome.detail
+     assert backend.calls == [], "illegal observation material reached the transport"
+-    assert outcome.observation["bypassed"] is True
++    # The dp is authorized here (`_enable_all`), so nothing was bypassed: this
++    # refusal is the typed gate, not the per-DP gate.
++    assert outcome.observation["bypassed"] is False
+     ends = _of_kind(decision_wire.test_wire_sink(test_root), "decision-end")
+     assert len(ends) == 1 and ends[0]["status"] == "escalated"
+     assert decision_wire.summarize(_events(decision_wire.test_wire_sink(test_root))).attempts == 0

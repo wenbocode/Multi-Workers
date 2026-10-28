@@ -1,0 +1,28 @@
+﻿{
+    "label":  "green-3-final",
+    "cwd":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+    "argv":  [
+                 "-B",
+                 "-m",
+                 "pytest",
+                 "-p",
+                 "no:cacheprovider",
+                 "-q",
+                 "--basetemp",
+                 "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t08-transport\\rework-r2\\fixture\\basetemp",
+                 "test_dp_consolidation_materials.py"
+             ],
+    "started_utc":  "2026-10-26T15:56:12.5608770Z",
+    "finished_utc":  "2026-10-26T15:56:13.2033107Z",
+    "rc":  0,
+    "env":  {
+                "PYTHONDONTWRITEBYTECODE":  "1",
+                "PYTHONUTF8":  "1",
+                "PYTHONIOENCODING":  "utf-8",
+                "PYTHONNOUSERSITE":  "1",
+                "HOME":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t08-transport\\rework-r2\\fixture\\home",
+                "USERPROFILE":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t08-transport\\rework-r2\\fixture\\home",
+                "TEMP":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t08-transport\\rework-r2\\fixture\\temp",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD":  "1"
+            }
+}

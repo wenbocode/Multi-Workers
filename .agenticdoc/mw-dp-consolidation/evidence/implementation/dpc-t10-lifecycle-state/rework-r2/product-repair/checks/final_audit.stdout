@@ -1,0 +1,29 @@
+﻿{
+  "checks": {
+    "after_bytes_equal_worktree::decision_wire.py": true,
+    "after_bytes_equal_worktree::decision_lifecycle.py": true,
+    "after_bytes_equal_worktree::decision_task_state.py": true,
+    "test_unchanged::test_decision_context_lifecycle.py": true,
+    "test_unchanged::test_decision_task_state.py": true,
+    "live_untouched::decision_wire.py": true,
+    "live_untouched::decision_lifecycle.py": true,
+    "live_untouched::decision_task_state.py": true,
+    "live_untouched::test_decision_context_lifecycle.py": true,
+    "live_untouched::test_decision_task_state.py": true,
+    "pyc_count_is_14": true,
+    "report_equals_output": true,
+    "report_has_five_sections_in_order": true,
+    "report_has_change_table_header": true,
+    "report_has_no_absolute_path": true
+  },
+  "observed": {
+    "after_sha256": {
+      "decision_wire.py": "429201ace7028968ae18cfbcc33dbf5aa0d2fa11b8f5d2dd7604cae0dec4e7dc",
+      "decision_lifecycle.py": "73d0ae2efda3879668b3cf84d11f32809c6d00f76da13c3b8d065f87d4c87bb5",
+      "decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d"
+    },
+    "pyc_count": 14
+  },
+  "problems": [],
+  "ok": true
+}

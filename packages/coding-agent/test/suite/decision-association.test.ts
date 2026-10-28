@@ -16,7 +16,7 @@
  *    because the fold takes the LAST settle it is appended after the `ok` row.
  * 5. **No guessing** — a task without a `decision:` head line writes no row at
  *    all (spec §6.2's un-associable classes).
- * 6. `buildDp2CheckpointState` emits `schema_version: 2` (T-04b residual 1).
+ * 6. dp2's automatic checkpoint seam is RETIRED (PM-initiated only, 2026-10-23).
  *
  * Fixtures are plain files plus an injected append seam: no provider APIs, no
  * keys, no `decide_archive.py` child in the unit tests.
@@ -29,11 +29,10 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
+import * as pmOrchestrator from "../../src/extensions/agent-team-loop/pm/pm-orchestrator.ts";
 import {
-	buildDp2CheckpointState,
 	type DecisionSettleAppender,
 	type DecisionSettleRow,
-	DP2_QUESTIONS_VERSION,
 	mapTerminalToSettle,
 	planDecisionSettle,
 	readDecisionSettles,
@@ -46,14 +45,10 @@ import type {
 	RawDecideRun,
 	TriageResult,
 } from "../../src/extensions/agent-team-loop/pm/triage-client.ts";
-import {
-	buildTriageState,
-	canonicalStateBytes,
-	DP1_QUESTIONS,
-	DP1_QUESTIONS_VERSION,
-} from "../../src/extensions/agent-team-loop/pm/triage-client.ts";
+import { canonicalStateBytes } from "../../src/extensions/agent-team-loop/pm/triage-client.ts";
 import {
 	actedDecisionOf,
+	type CardSections,
 	type DispatchDecision,
 	type DispatchTriage,
 	mergeDecisionHeader,
@@ -226,7 +221,7 @@ describe("decision: head line (acted-gated)", () => {
 			dispatchedType: "coding",
 			disagreement: false,
 			receipt: "",
-			statePath: "legacy",
+			statePath: "material",
 			stateTrace: "",
 		});
 		expect(actedDecisionOf(null)).toBeUndefined();
@@ -570,33 +565,71 @@ describe("recordDecisionSettle", () => {
 
 // ── 5. dp2 structured-state version (requirement 0) ─────────────────────────
 
-describe("buildDp2CheckpointState", () => {
-	it("emits schema_version: 2 (same version the registry builder and validator use)", () => {
-		const state = buildDp2CheckpointState({
-			ownerKey: OWNER,
-			taskKey: "t08-dp2",
-			phase: "TASKS",
-			taskType: "coding",
-			budgetMin: 40,
-			checkpoint: {
-				ts: "2026-10-20T00:10:00.000Z",
-				elapsedS: 600,
-				reads: 12,
-				writes: 3,
-				phases: "2/4",
-				uniqTargets: 5,
-				repeatTop: 2,
-				risk: "mid",
-				artifactPresent: true,
-			},
-			trend: [{ elapsedMin: 10, reads: 12, writes: 3 }],
-		});
-		expect(state.schema_version).toBe(2);
-		expect(state.questions_version).toBe(DP2_QUESTIONS_VERSION);
+// ── fixtures of the material path (T-03 dp1 envelope) ───────────────────────
+
+const DP1_FACTS: { key: string; taskKey: string; sections: CardSections } = {
+	key: "mw-ds-t08",
+	taskKey: "t08-material",
+	sections: {
+		context: "triage fixture。种子锚点 .agenticdoc/goal.md；判据入口 pm/ui-bridge.ts:1257。",
+		requirements: "AC-001 成立。",
+		deliverables: "report.md。",
+		extras: [],
+	},
+};
+
+const DP1_DESCRIPTION = "wire the dp1 material envelope (T-08) into the dispatch path";
+
+interface MaterialCall {
+	dp: string;
+	envelope: {
+		material: Record<string, string>;
+		meta: Record<string, unknown>;
+		questions?: unknown;
+	};
+}
+
+/** A `mw decide run --stdin` double for the versioned envelope: it records the
+ * `{material, meta}` payload and answers with the authority keys Python returns. */
+function materialChild(extra: Record<string, unknown>): { run: DecideRunner; calls: MaterialCall[] } {
+	const calls: MaterialCall[] = [];
+	const run: DecideRunner = (request: DecideRunRequest) => {
+		calls.push({ dp: request.dp, envelope: JSON.parse(request.input) as MaterialCall["envelope"] });
+		return {
+			status: 0,
+			timedOut: false,
+			stderr: "",
+			stdout: JSON.stringify({
+				available: true,
+				confidence_source: "api",
+				latency_ms: 9,
+				answers: { triage_type: { value: "coding", confidence: 0.8 } },
+				...extra,
+			}),
+		};
+	};
+	return { run, calls };
+}
+
+// ── 6. dp2's automatic checkpoint seam is RETIRED (user revision 2026-10-23) ─
+
+describe("dp2 automatic checkpoint seam (retired)", () => {
+	it("no machine-side build/decide seam remains; the PM-initiated tool is the entry", () => {
+		const pm = pmOrchestrator as unknown as Record<string, unknown>;
+		// The dead seam must not be resurrected as a second, local authority.
+		expect(pm).not.toHaveProperty("buildDp2CheckpointState");
+		expect(pm).not.toHaveProperty("decideDp2Checkpoint");
+		expect(pm).not.toHaveProperty("Dp2CheckpointStateInput");
+		// The worker-side consume contract of a PM-written request file stays.
+		expect(pm.DP2_STEER_FILE).toBe("steer-dp2.md");
+		expect(pm.DP2_NARROW_MARKER).toBe("[mw dp2-narrow]");
+		expect(pm.DP2_STEER_REQUEST_HEADER).toBe("[dp2-narrow-request]");
+		// The registry question set is still pinned (the PM points at it).
+		expect(pm.DP2_QUESTIONS_VERSION).toMatch(/^q-[0-9a-f]{8}$/);
 	});
 });
 
-// ── 6. dp1 dispatch adoption (T-04c / D-041) ────────────────────────────────
+// ── 6b. dp1 dispatch adoption (T-04c / D-041) ───────────────────────────────
 
 function enableTriage(projectDir: string): void {
 	fs.mkdirSync(path.join(projectDir, ".mw"), { recursive: true });
@@ -628,7 +661,7 @@ function planFor(
 	extra: {
 		description?: string;
 		taskType?: string;
-		dp1?: { key?: string; writeFace?: string[] | null; allowForeignWrite?: boolean };
+		dp1?: { key?: string; taskKey?: string | null; sections?: CardSections };
 	} = {},
 ) {
 	const run: DecideRunner = typeof raw === "function" ? raw : () => raw;
@@ -647,6 +680,11 @@ function planFor(
 	});
 	if (!plan.ok) throw new Error(plan.message);
 	return plan;
+}
+
+/** Stable text hash (the byte-equality proof uses it, not just the strings). */
+function sha256(text: string): string {
+	return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
 function writePlanTask(
@@ -670,6 +708,7 @@ describe("dp1 dispatch adoption (T-04c / D-041)", () => {
 		const plan = planFor(
 			projectDir,
 			triageRun({ decision_id: "dp1-dispatch-type:ds-t04c-auto", mode: "auto", acted: false }),
+			{ dp1: DP1_FACTS },
 		);
 
 		// Python's `acted=false` (intent=answer) does not mean "not adopted": the
@@ -688,284 +727,141 @@ describe("dp1 dispatch adoption (T-04c / D-041)", () => {
 		const { projectDir, agenticdocRoot } = mkProject();
 		enableTriage(projectDir);
 		// AC-014: the dispatch never rewrites its `type:` from the advice, so the
-		// advice named `coding` while `research` went out. T-04c adoption means
+		// advice named `research` while `coding` went out. T-04c adoption means
 		// "the dispatcher took this type", so a disagreement is not adoption (it
-		// must not enter the agreement-rate numerator) and stays un-correlated,
-		// exactly like `suggest`.
+		// stays observable in the triage result / ledger row).
 		const plan = planFor(
 			projectDir,
-			triageRun({ decision_id: "dp1-dispatch-type:ds-t04c-disagree", mode: "auto", acted: false }),
-			{ taskType: "research" },
+			triageRun({
+				decision_id: "dp1-dispatch-type:ds-t04c-dis",
+				mode: "auto",
+				acted: true,
+				answers: { triage_type: { value: "research", confidence: 0.8 } },
+			}),
+			{ dp1: DP1_FACTS },
 		);
-		expect(plan.triage?.result.triage_type).toBe("coding");
-		expect(plan.triage?.dispatchedType).toBe("research");
 		expect(plan.triage?.disagreement).toBe(true);
-		// The answer and its decision_id stay observable (the ledger/report channel)...
-		expect(plan.triage?.result.decision_id).toBe("dp1-dispatch-type:ds-t04c-disagree");
-		// ...but nothing is consumed.
+		expect(plan.triage?.result.decision_id).toBe("dp1-dispatch-type:ds-t04c-dis");
 		expect(plan.triage?.decision).toBeUndefined();
-
-		const content = writePlanTask(agenticdocRoot, "t04c-disagree", plan, plan.triage?.decision);
-		expect(content).not.toMatch(/^decision:/m);
-		expect(content).toBe(`${plan.frontmatter}\nbody\n`);
-
-		// Byte-identical to the triage-off baseline, like the `suggest` case.
-		const baselineProject = mkProject();
-		const baselinePlan = planFor(baselineProject.projectDir, triageRun({}), { taskType: "research" });
-		expect(content).toBe(`${baselinePlan.frontmatter}\nbody\n`);
+		const content = writePlanTask(agenticdocRoot, "t04c-dis", plan, plan.triage?.decision);
+		expect(content).toBe(`${plan.frontmatter.replace(/\r?\n$/, "")}\n\nbody\n`);
 	});
 
 	it("suggest mode leaves task.md byte-identical to the closed baseline", () => {
-		const suggestProject = mkProject();
-		enableTriage(suggestProject.projectDir);
-		const suggestPlan = planFor(
-			suggestProject.projectDir,
-			triageRun({
-				decision_id: "dp1-dispatch-type:ds-t04c-suggest",
-				mode: "suggest",
-				acted: false,
-				escalated_reason: "suggest-only",
-			}),
+		const { projectDir, agenticdocRoot } = mkProject();
+		enableTriage(projectDir);
+		const plan = planFor(
+			projectDir,
+			triageRun({ decision_id: "dp1-dispatch-type:ds-t04c-suggest", mode: "suggest", acted: false }),
+			{ dp1: DP1_FACTS },
 		);
-		expect(suggestPlan.triage?.result.mode).toBe("suggest");
-		expect(suggestPlan.triage?.decision).toBeUndefined();
-
-		const baselineProject = mkProject(); // no .mw/decide.json: triage is off
-		const baselinePlan = planFor(baselineProject.projectDir, triageRun({}));
-		expect(baselinePlan.triage).toBeNull();
-
-		// The advice never rewrites the frontmatter bytes...
-		expect(suggestPlan.frontmatter).toBe(baselinePlan.frontmatter);
-		// ...and the whole task.md stays byte-identical, not merely free of the
-		// `decision:` substring (an absolute comparison, not a negative assertion).
-		const suggestBytes = writePlanTask(
-			suggestProject.agenticdocRoot,
-			"t04c-suggest",
-			suggestPlan,
-			suggestPlan.triage?.decision,
-		);
-		const baselineBytes = writePlanTask(baselineProject.agenticdocRoot, "t04c-baseline", baselinePlan, undefined);
-		expect(suggestBytes).toBe(baselineBytes);
-		expect(suggestBytes).toBe(`${suggestPlan.frontmatter}\nbody\n`);
+		expect(plan.triage?.decision).toBeUndefined();
+		const content = writePlanTask(agenticdocRoot, "t04c-suggest", plan, plan.triage?.decision);
+		expect(content).toBe(`${plan.frontmatter.replace(/\r?\n$/, "")}\n\nbody\n`);
 	});
 
 	it("an unavailable result and an auto answer without triage_type stay un-correlated", () => {
-		const { projectDir, agenticdocRoot } = mkProject();
+		const { projectDir } = mkProject();
 		enableTriage(projectDir);
-		const unavailable: RawDecideRun = {
-			status: 0,
-			timedOut: false,
-			stderr: "",
-			stdout: JSON.stringify({
-				available: false,
-				reason: "timeout",
-				decision_id: "dp1-dispatch-type:ds-t04c-unavail",
-				mode: "auto",
-				acted: false,
-			}),
-		};
-		const unavailablePlan = planFor(projectDir, unavailable);
-		expect(unavailablePlan.triage?.result.available).toBe(false);
-		expect(unavailablePlan.triage?.decision).toBeUndefined();
-
-		const riskOnly: RawDecideRun = {
-			status: 0,
-			timedOut: false,
-			stderr: "",
-			stdout: JSON.stringify({
-				available: true,
-				confidence_source: "api",
-				latency_ms: 5,
-				answers: { triage_risk: { value: "mid", confidence: 0.6 } },
-				decision_id: "dp1-dispatch-type:ds-t04c-risk-only",
-				mode: "auto",
-				acted: false,
-			}),
-		};
-		const riskPlan = planFor(projectDir, riskOnly);
-		expect(riskPlan.triage?.result.available).toBe(true);
-		expect(riskPlan.triage?.decision).toBeUndefined();
-
-		const bytes = writePlanTask(agenticdocRoot, "t04c-unavail", unavailablePlan, unavailablePlan.triage?.decision);
-		expect(bytes).toBe(`${unavailablePlan.frontmatter}\nbody\n`);
+		const unavailable = planFor(
+			projectDir,
+			{ status: 0, timedOut: false, stderr: "", stdout: JSON.stringify({ available: false, reason: "timeout" }) },
+			{ dp1: DP1_FACTS },
+		);
+		expect(unavailable.triage?.decision).toBeUndefined();
+		const typedless = planFor(
+			projectDir,
+			triageRun({ decision_id: "dp1-dispatch-type:ds-t04c-empty", mode: "auto", acted: false, answers: {} }),
+			{ dp1: DP1_FACTS },
+		);
+		expect(typedless.triage?.decision).toBeUndefined();
 	});
 });
 
-// ── 7. dp1 structured state on the production path (T-04d) ──────────────────
-//
-// T-04c could only prove the association with an injected structured response:
-// the dispatch still sent the LEGACY string state, so `mw.py` took its
-// `questions` branch and the real response never carried `decision_id` /
-// `mode` / `acted`. These tests drive the real path with a child double that
-// behaves like `mw.py` (shape-dependent response) and assert on the payload the
-// runner actually received.
+// ── 6c. dp1 material envelope (T-03/T-08, the replaced T-04d state) ─────────
 
-const DP1_FACTS = {
-	key: "mw-ds-t04d",
-	writeFace: ["packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts", "packages/multi-workers/mw.py"],
-};
-
-const DP1_DESCRIPTION = "wire the dp1 structured state (T-04d) into the dispatch path";
-
-interface ChildCall {
-	dp: string;
-	envelope: { state?: unknown; questions?: unknown };
-}
-
-/** A `mw decide run` double that mirrors `mw.py`'s two branches (T-04d):
- * `questions` present => legacy `DecisionClient` response with NO authority
- * keys; structured state => `decide_for(intent="answer")` response WITH them. */
-function shapeAwareChild(): { run: DecideRunner; calls: ChildCall[] } {
-	const calls: ChildCall[] = [];
-	const run: DecideRunner = (request: DecideRunRequest) => {
-		const envelope = JSON.parse(request.input) as { state?: unknown; questions?: unknown };
-		calls.push({ dp: request.dp, envelope });
-		const answers = {
-			triage_type: { value: "coding", confidence: 0.8 },
-			triage_risk: { value: "mid", confidence: 0.6 },
-		};
-		const payload =
-			envelope.questions === undefined
-				? {
-						available: true,
-						transport: "llm-transitional",
-						model: "glm-5.3-flashx",
-						confidence_source: "api",
-						attempts: 1,
-						latency_ms: 9,
-						answers,
-						reason: null,
-						decision_id: `dp1-dispatch-type:${String((envelope.state as { key?: string }).key)}`,
-						mode: "auto",
-						// `intent="answer"`: Python executed no action itself.
-						acted: false,
-						escalated_reason: null,
-						state_digest: "0123456789abcdef",
-					}
-				: {
-						// mw.py:927-939 legacy branch: no decision_id / mode / acted.
-						available: true,
-						transport: "llm-transitional",
-						model: "glm-5.3-flashx",
-						confidence_source: "model-self-report",
-						attempts: 1,
-						latency_ms: 12,
-						answers,
-						reason: null,
-					};
-		return { status: 0, stdout: JSON.stringify(payload), stderr: "", timedOut: false };
-	};
-	return { run, calls };
-}
-
-function sha256(text: string): string {
-	return createHash("sha256").update(text, "utf8").digest("hex");
-}
-
-describe("dp1 structured state (T-04d)", () => {
-	it("sends the registry required set and the decision: line becomes reachable", () => {
+describe("dp1 material envelope", () => {
+	it("sends the card's three bodies verbatim and the decision: line becomes reachable", () => {
 		const { projectDir, agenticdocRoot } = mkProject();
 		enableTriage(projectDir);
-		const child = shapeAwareChild();
+		const child = materialChild({ decision_id: "dp1-dispatch-type:mw-ds-t08", mode: "auto", acted: false });
 		const plan = planFor(projectDir, child.run, { description: DP1_DESCRIPTION, dp1: DP1_FACTS });
 
-		// ── the production payload really is structured ──────────────────────
+		// ── the production payload really is the material envelope ───────────
 		expect(child.calls).toHaveLength(1);
-		const call = child.calls[0] as ChildCall;
+		const call = child.calls[0] as MaterialCall;
 		expect(call.dp).toBe("dp1-dispatch-type");
+		expect(Object.keys(call.envelope).sort()).toEqual(["material", "meta"]);
 		expect(call.envelope.questions).toBeUndefined();
-		const state = call.envelope.state as Record<string, unknown>;
-		expect(typeof state).toBe("object");
-		expect(state.schema_version).toBe(2);
-		expect(state.decision_point).toBe(call.dp);
-		expect(state.key).toBe(DP1_FACTS.key);
-		expect(state.phase).toBe("TASKS");
-		expect(state.task_type).toBe("coding");
-		expect(state.requested_type).toBe("coding");
-		expect(state.risk_source).toBe("pm-label");
-		expect(state.risk).toBe("mid");
-		expect(state.authority_tier).toBe("P2");
-		expect(state.questions_version).toBe(DP1_QUESTIONS_VERSION);
-		expect(state.questions_version).toBe("q-09d3aad3");
-		expect(state.task_summary).toBe(DP1_DESCRIPTION);
-		expect(state.scope).toEqual({
-			write_scope: ["packages/coding-agent/src", "packages/multi-workers"],
-			file_extensions: ["py", "ts"],
+		expect(call.envelope.material).toEqual({
+			task_goal: DP1_FACTS.sections.context,
+			task_requirements: DP1_FACTS.sections.requirements,
+			task_deliverables: DP1_FACTS.sections.deliverables,
 		});
-		// Every required path the Python registry asks for is present.
-		for (const field of [
-			"schema_version",
-			"decision_point",
-			"key",
-			"phase",
-			"task_type",
-			"requested_type",
-			"risk",
-			"risk_source",
-			"authority_tier",
-			"task_summary",
-			"questions_version",
-		]) {
-			expect(state[field], field).toBeDefined();
+		expect(call.envelope.meta).toMatchObject({
+			record_version: 2,
+			key: DP1_FACTS.key,
+			task_key: "t08-material",
+			initiator_role: "pm",
+			retry_of: null,
+		});
+		// Identity never rides in the model material.
+		for (const key of ["key", "task_key", "logical_id", "initiator_role", "schema_version"]) {
+			expect(call.envelope.material, key).not.toHaveProperty(key);
 		}
-		const scope = state.scope as Record<string, unknown>;
-		expect(scope.write_scope).toBeDefined();
-		expect(scope.file_extensions).toBeDefined();
-		// Canonical budget (D019): the structured state is <= 2000B.
-		expect(canonicalStateBytes(state)).toBeLessThanOrEqual(2000);
+		// The budget is the transport's (Python) call: nothing is truncated here.
+		expect(canonicalStateBytes(call.envelope.material)).toBeGreaterThan(0);
 
 		// ── the response's authority keys are consumed ───────────────────────
-		expect(plan.triage?.statePath).toBe("structured");
-		expect(plan.triage?.stateTrace).toMatch(/^\[DECISION\] dp1 state=structured bytes=\d+$/);
-		expect(plan.triage?.result.decision_id).toBe("dp1-dispatch-type:mw-ds-t04d");
+		expect(plan.triage?.statePath).toBe("material");
+		expect(plan.triage?.stateTrace).toMatch(/^\[DECISION\] dp1 state=material bytes=\d+$/);
+		expect(plan.triage?.result.decision_id).toBe("dp1-dispatch-type:mw-ds-t08");
 		expect(plan.triage?.result.mode).toBe("auto");
 		expect(plan.triage?.result.acted).toBe(false);
-		expect(plan.triage?.decision).toEqual({ decisionId: "dp1-dispatch-type:mw-ds-t04d", acted: true });
+		expect(plan.triage?.decision).toEqual({ decisionId: "dp1-dispatch-type:mw-ds-t08", acted: true });
 
 		// ── task.md carries the correlation line the trace records ──────────
 		const content = writePlanTask(
 			agenticdocRoot,
-			"t04d-structured",
+			"t08-material",
 			plan,
 			plan.triage?.decision,
 			plan.triage?.stateTrace,
 		);
 		expect(content).toBe(
-			`${plan.frontmatter.replace(/\r?\n$/, "")}\ndecision: dp1-dispatch-type:mw-ds-t04d\n\nbody\n`,
+			`${plan.frontmatter.replace(/\r?\n$/, "")}\ndecision: dp1-dispatch-type:mw-ds-t08\n\nbody\n`,
 		);
-		const trace = fs.readFileSync(
-			path.join(agenticdocRoot, OWNER, "workers", "t04d-structured", "trace.log"),
-			"utf8",
-		);
-		expect(trace).toContain("[DECISION] dp1 state=structured");
-		expect(trace).not.toContain("state=legacy");
-		console.log(`[VERIFY] dp1 structured: ${String(plan.triage?.stateTrace)} decision=dp1-dispatch-type:mw-ds-t04d`);
+		const trace = fs.readFileSync(path.join(agenticdocRoot, OWNER, "workers", "t08-material", "trace.log"), "utf8");
+		expect(trace).toContain("[DECISION] dp1 state=material");
+		expect(trace).not.toContain("state=skipped");
 	});
 
-	it("falls back to the frozen legacy bytes when the required set cannot be built", () => {
+	it("skips with zero spawn (byte-identical task.md) when no material can be built", () => {
 		const cases: Array<{
 			name: string;
-			dp1: { key?: string; writeFace?: string[] | null; allowForeignWrite?: boolean };
+			dp1: { key?: string; taskKey?: string | null; sections?: CardSections };
 			taskType?: string;
 		}> = [
-			// The card's write face is prose, so `scope.write_scope` /
-			// `scope.file_extensions`
-			// cannot be derived (a required field is missing, never defaulted).
-			{
-				name: "prose write face",
-				dp1: { key: DP1_FACTS.key, writeFace: ["仅本任务目录下的 task.md、output.md 与 report.md。"] },
-			},
-			// No owner key => the registry's required `key` is blank.
-			{ name: "no owner key", dp1: { writeFace: DP1_FACTS.writeFace } },
-			// A role outside the dp1 taxonomy (vision / rag-research) has no enum
-			// value: report missing instead of guessing `coding`.
+			// A role outside the dp1 taxonomy has no enum value: report missing
+			// instead of guessing `coding`.
 			{ name: "out-of-taxonomy type", dp1: DP1_FACTS, taskType: "vision" },
+			// No owner key => the local envelope's required `key` is blank.
+			{ name: "no owner key", dp1: { ...DP1_FACTS, key: "" } },
+			// Empty card bodies: a required material field is absent, never faked.
+			{
+				name: "missing material",
+				dp1: {
+					key: DP1_FACTS.key,
+					taskKey: "t08-skip",
+					sections: { context: "", requirements: "", deliverables: "", extras: [] },
+				},
+			},
 		];
 
 		for (const testCase of cases) {
 			const { projectDir, agenticdocRoot } = mkProject();
 			enableTriage(projectDir);
-			const child = shapeAwareChild();
+			const child = materialChild({ decision_id: "dp1-dispatch-type:never", mode: "auto", acted: false });
 
 			const baseline = mkProject(); // triage off: the byte baseline
 			const baselineRun: DecideRunner = () => {
@@ -984,67 +880,53 @@ describe("dp1 structured state (T-04d)", () => {
 				dp1: testCase.dp1,
 			});
 
-			// ── legacy shape really went on the wire ─────────────────────────
-			expect(child.calls, testCase.name).toHaveLength(1);
-			const call = child.calls[0] as ChildCall;
-			expect(typeof call.envelope.state, testCase.name).toBe("string");
-			expect(call.envelope.questions, testCase.name).toEqual(DP1_QUESTIONS);
-			// ...byte-identical to the pre-T-04 `buildTriageState` output.
-			expect(call.envelope.state, testCase.name).toBe(
-				buildTriageState({
-					description: DP1_DESCRIPTION,
-					taskType: testCase.taskType ?? "coding",
-					cli: "pi",
-					phase: "TASKS",
-				}),
-			);
-
-			expect(plan.triage?.statePath, testCase.name).toBe("legacy");
-			expect(plan.triage?.stateTrace, testCase.name).toBe("[DECISION] dp1 state=legacy reason=missing");
-			// The legacy response carries no authority keys, so nothing is adopted.
+			// Zero spawn: a skip never asks the service.
+			expect(child.calls, testCase.name).toHaveLength(0);
+			expect(plan.triage?.statePath, testCase.name).toBe("skipped");
+			expect(plan.triage?.stateTrace, testCase.name).toMatch(/^\[DECISION\] dp1 state=skipped reason=/);
+			// The skipped response carries no authority keys, so nothing is adopted.
 			expect(plan.triage?.decision, testCase.name).toBeUndefined();
 
 			const slug = testCase.name.replace(/\s+/g, "-");
 			const bytes = writePlanTask(
 				agenticdocRoot,
-				`t04d-legacy-${slug}`,
+				`t08-skip-${slug}`,
 				plan,
 				plan.triage?.decision,
 				plan.triage?.stateTrace,
 			);
-			const baselineBytes = writePlanTask(baseline.agenticdocRoot, `t04d-baseline-${slug}`, baselinePlan, undefined);
+			const baselineBytes = writePlanTask(baseline.agenticdocRoot, `t08-baseline-${slug}`, baselinePlan, undefined);
 			// Byte-identical task.md AND identical sha (not just "no decision line").
 			expect(bytes, testCase.name).toBe(baselineBytes);
 			expect(sha256(bytes), testCase.name).toBe(sha256(baselineBytes));
 
 			const trace = fs.readFileSync(
-				path.join(agenticdocRoot, OWNER, "workers", `t04d-legacy-${slug}`, "trace.log"),
+				path.join(agenticdocRoot, OWNER, "workers", `t08-skip-${slug}`, "trace.log"),
 				"utf8",
 			);
-			expect(trace, testCase.name).toContain("[DECISION] dp1 state=legacy reason=missing");
-			expect(trace, testCase.name).not.toContain("state=structured");
+			expect(trace, testCase.name).toContain("[DECISION] dp1 state=skipped reason=");
+			expect(trace, testCase.name).not.toContain("state=material");
 		}
 	});
 
-	it("a description with an absolute path never leaks it into task_summary", () => {
+	it("never leaks the free-text description into the material", () => {
 		const { projectDir } = mkProject();
 		enableTriage(projectDir);
-		const child = shapeAwareChild();
+		const child = materialChild({ decision_id: "dp1-dispatch-type:leak", mode: "auto", acted: false });
 		planFor(projectDir, child.run, {
 			description: "fix H:\\git\\Multi-Workers\\packages\\multi-workers\\mw.py failing test",
 			dp1: DP1_FACTS,
 		});
-		const state = (child.calls[0] as ChildCall).envelope.state as Record<string, unknown>;
-		expect(state.task_summary).toContain("<path>");
-		expect(state.task_summary).not.toContain("H:");
+		const wire = JSON.stringify((child.calls[0] as MaterialCall).envelope);
+		expect(wire).not.toContain("H:");
+		expect(wire).not.toContain("failing test");
 	});
 
-	it("the dispatch_worker ENTRY sends the structured state (production wiring)", async () => {
+	it("the dispatch_worker ENTRY sends the material (production wiring)", async () => {
 		// The plan-level tests above prove the payload shape; this drives the real
 		// `dispatch_worker` tool so the entry's own wiring (owner key + the card's
-		// `## 写入允许面` + the child seam) is proven too — a plan-only test would
-		// pass even if the entry never passed those facts.
-		const root = mkdtemp(`mwds-t04d-entry-`);
+		// bodies + the child seam) is proven too.
+		const root = mkdtemp(`mwds-t08-entry-`);
 		const agenticdocRoot = path.join(root, ".agenticdoc");
 		const projectDir = root;
 		enableTriage(projectDir);
@@ -1067,11 +949,10 @@ describe("dp1 structured state (T-04d)", () => {
 			updated: new Date().toISOString(),
 		});
 
-		// A compliant card whose write face names real repo paths (backticked, the
-		// form `cardWriteFaceEntries` reads) — this is what makes dp1 structured.
+		// A compliant card with the three judged bodies.
 		const cardDir = path.join(keyDir, "tasks");
 		fs.mkdirSync(cardDir, { recursive: true });
-		const cardPath = path.join(cardDir, "T-04d-fixture.md");
+		const cardPath = path.join(cardDir, "T-08-fixture.md");
 		fs.writeFileSync(
 			cardPath,
 			[
@@ -1120,7 +1001,7 @@ describe("dp1 structured state (T-04d)", () => {
 			sendUserMessage: () => undefined,
 			appendEntry: () => undefined,
 		} as unknown as ExtensionAPI;
-		const child = shapeAwareChild();
+		const child = materialChild({ decision_id: "dp1-dispatch-type:k", mode: "auto", acted: false });
 		registerWorkerTools(
 			pi,
 			new WorkerStore(agenticdocRoot),
@@ -1135,7 +1016,7 @@ describe("dp1 structured state (T-04d)", () => {
 		if (!dispatchWorker) throw new Error("dispatch_worker not registered");
 		await dispatchWorker.execute(
 			"id",
-			{ task_key: "t04d-entry", card_path: cardPath, description: DP1_DESCRIPTION, type: "coding" },
+			{ task_key: "t08-entry", card_path: cardPath, description: DP1_DESCRIPTION, type: "coding" },
 			undefined,
 			undefined,
 			{} as unknown as ExtensionContext,
@@ -1143,31 +1024,28 @@ describe("dp1 structured state (T-04d)", () => {
 
 		// The payload the child really received.
 		expect(child.calls).toHaveLength(1);
-		const envelope = (child.calls[0] as ChildCall).envelope;
+		const envelope = (child.calls[0] as MaterialCall).envelope;
 		expect(envelope.questions).toBeUndefined();
-		const state = envelope.state as Record<string, unknown>;
-		expect(state.key).toBe(key);
-		expect(state.phase).toBe("EXECUTE");
-		expect(state.task_type).toBe("coding");
-		expect(state.authority_tier).toBe("P2");
-		expect((state.scope as Record<string, unknown>).file_extensions).toEqual(["py", "ts"]);
+		expect(Object.keys(envelope.material).sort()).toEqual(["task_deliverables", "task_goal", "task_requirements"]);
+		expect(String(envelope.material.task_goal)).toContain("triage fixture");
+		expect(envelope.meta).toMatchObject({ key, task_key: "t08-entry", initiator_role: "pm" });
 		// The task.md correlation line + the trace line both landed.
-		const taskDir = path.join(agenticdocRoot, key, "workers", "t04d-entry");
+		const taskDir = path.join(agenticdocRoot, key, "workers", "t08-entry");
 		expect(fs.readFileSync(path.join(taskDir, "task.md"), "utf8")).toContain("decision: dp1-dispatch-type:k");
-		expect(fs.readFileSync(path.join(taskDir, "trace.log"), "utf8")).toContain("dp1 state=structured");
+		expect(fs.readFileSync(path.join(taskDir, "trace.log"), "utf8")).toContain("dp1 state=material");
 		console.log(
-			`[VERIFY] dispatch_worker entry: state.decision_point=${String(state.decision_point)} key=${String(state.key)} ext=ts,py`,
+			`[VERIFY] dispatch_worker entry: material.task_goal_bytes=${Buffer.byteLength(String(envelope.material.task_goal), "utf8")} key=${key}`,
 		);
 	});
 
-	it("the TS dp1 question set + version mirror the Python registry", () => {
-		const registryPath = fileURLToPath(new URL("../../../multi-workers/decision_points.py", import.meta.url));
-		const source = fs.readFileSync(registryPath, "utf8");
-		const block = /dp_id="dp1-dispatch-type"([\s\S]*?)executor=/.exec(source)?.[1] ?? "";
-		for (const [id, spec] of Object.entries(DP1_QUESTIONS)) {
-			expect(block).toContain(`"id": "${id}"`);
-			for (const choice of spec.choices) expect(block).toContain(`"${choice}"`);
-		}
-		expect(DP1_QUESTIONS_VERSION).toBe("q-09d3aad3");
+	it("the dp1 question set mirrors the Python registry (the registry is the authority)", () => {
+		const registryPath = fileURLToPath(new URL("../../../multi-workers/decide_registry.json", import.meta.url));
+		const registry = JSON.parse(fs.readFileSync(registryPath, "utf8")) as {
+			points: Array<{ id: string; questions: Array<{ id: string; choices?: string[] }> }>;
+		};
+		const dp1 = registry.points.find((point) => point.id === "dp1-dispatch-type");
+		if (!dp1) throw new Error("dp1 not in the registry");
+		expect(dp1.questions).toHaveLength(1);
+		expect(dp1.questions[0]).toMatchObject({ id: "triage_type", choices: ["coding", "research", "review"] });
 	});
 });

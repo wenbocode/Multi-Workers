@@ -1,0 +1,103 @@
+=== test_autopilot_readcap_injection.py (1082 lines): the failing test + context ===
+855: 
+856: 
+857: # ── VC-012 / AC-012 (reverse 3: L3 verdict still `below`) ────────────────────
+858: 
+859: L3_TASK_KEY = "ap-k1-l3-a1"
+860: 
+861: 
+862: def _write_l3_output(root: pathlib.Path, text: str) -> None:
+863:     out_dir = pathlib.Path(root) / ".agenticdoc" / "k1" / "workers" / L3_TASK_KEY
+864:     out_dir.mkdir(parents=True, exist_ok=True)
+865:     (out_dir / "output.md").write_text(text, encoding="utf-8", newline="\n")
+866: 
+867: 
+868: def test_vc012_l3_criteria_still_below(tmp_path: pathlib.Path) -> None:
+869:     root = make_project(
+870:         tmp_path, {"l2_read_file_cap": DERIVED_FILE_CAP, "l2_read_byte_cap": DERIVED_BYTE_CAP}
+871:     )
+872:     content = render_caps(root, task_type="reviewer")
+873:     assert f"l2_read_file_cap: {DERIVED_FILE_CAP}" in content
+874: 
+875:     qg_pass = "## Quality Gate Report\n| VC | Verdict |\n| VC-001 | PASS |\n"
+876:     qg_fail = "## Quality Gate Report\n| VC | Verdict |\n| VC-001 | FAIL |\n"
+877:     achieved = "## Achieved\nDone.\n"
+878:     # (a) missing `## Achieved` -> below
+879:     _write_l3_output(root, qg_pass)
+880:     missing_section = conductor._parse_l3_output(root, "k1", 1)
+881:     # (b) a FAIL row in the QG section -> below
+882:     _write_l3_output(root, qg_pass + qg_fail.replace("## Quality Gate Report\n", "") + achieved)
+883:     fail_row = conductor._parse_l3_output(root, "k1", 1)
+884:     # (c) control: both sections, no FAIL row -> meets (not vacuous)
+885:     _write_l3_output(root, qg_pass + achieved)
+886:     healthy = conductor._parse_l3_output(root, "k1", 1)
+887:     assert missing_section == "below", missing_section
+888:     assert fail_row == "below", fail_row
+889:     assert healthy == "meets", healthy
+890:     _verify(
+891:         "VC-012",
+892:         missing_section=missing_section,
+893:         fail_row=fail_row,
+894:         ok=true_str(missing_section == "below" and fail_row == "below" and healthy == "meets"),
+895:     )
+896: 
+897: 
+898: # ── support invariants (AC-007/008 left-end binding, AC-003/011 defaults) ────
+899: 
+900: def test_baseline_left_end_bound() -> None:
+901:     """The frozen pre-fix renderer equals the git HEAD blob (sha256) — the
+902:     byte-identical comparisons above are anchored to the real left end."""
+903:     if not HEAD_DISPATCH.is_file():
+904:         pytest.skip("frozen baseline copy not reachable (portable fallback in use)")
+905:     frozen = hashlib.sha256(HEAD_DISPATCH.read_bytes()).hexdigest()
+906:     git_blob = hashlib.sha256(_git("show", f"HEAD:{DISPATCH_RELATIVE}")).hexdigest()
+907:     assert frozen == git_blob
+908:     head = _head_module()
+909:     assert "read_file_cap" not in inspect.signature(head.render_task_md).parameters
+910:     assert dispatch_mod._read_scope_caps.__doc__ is not None
+911: 
+912: 
+913: def test_render_task_md_signature_shape() -> None:
+914:     head = _head_module()
+915:     worktree_params = list(inspect.signature(dispatch_mod.render_task_md).parameters)
+916:     head_params = list(inspect.signature(head.render_task_md).parameters)
+917:     extra = [name for name in worktree_params if name not in head_params]
+918:     removed = [name for name in head_params if name not in worktree_params]
+919:     by_name = inspect.signature(dispatch_mod.render_task_md).parameters
+920:     # `images` is this card's param (mw-vision-role T-08). `worker_timeout_min`
+921:     # is a concurrent key's working-tree addition (mw-autopilot-slot-capacity)
+922:     # that this frozen-copy comparison also sees: an exact list is red in one
+923:     # commit order or the other (verified on a clean checkout of 7a864c1c7, where
+924:     # only the three params below were present), so pin the known ordered prefix
+925:     # and reject anything outside the known set.
+926:     _KNOWN_EXTRA = ["read_file_cap", "read_byte_cap", "images", "worker_timeout_min", "card"]
+927:     assert extra[:3] == ["read_file_cap", "read_byte_cap", "images"], extra
+928:     assert set(extra) <= set(_KNOWN_EXTRA), extra
+929:     assert removed == [], removed
+930:     assert all(by_name[name].default is None for name in extra)
+
+=== git diff of that file (M-03's change) ===
+diff --git a/packages/multi-workers/test_autopilot_readcap_injection.py b/packages/multi-workers/test_autopilot_readcap_injection.py
+index bc90873bc..abaafecec 100644
+--- a/packages/multi-workers/test_autopilot_readcap_injection.py
++++ b/packages/multi-workers/test_autopilot_readcap_injection.py
+@@ -1010,11 +1010,18 @@ def test_vc009_images_zero_byte_and_position() -> None:
+ #                               and its docstring records the rebaseline. Only
+ #                               that one line moved; no assertion was relaxed
+ #                               or removed.
++# Re-frozen again 2026-10-14 during mw-dynamic-concurrency M-03:
++#   test_autopilot_config.py    20 -> 21 config keys (max_workers_per_key)
++#                               and max_parallel_keys floor 2 -> 1 / default
++#                               2 -> 8, so the count/order lock had to move
++#                               with the schema. Only counts and the new-key
++#                               membership moved; no assertion was relaxed or
++#                               removed.
+ # The assertion is byte-exact and unchanged in strength; only its recorded left
+ # end moved off the pre-change git HEAD.
+ _GOLDEN_REGRESSION_SHA256 = {
+     "test_autopilot_config.py":
+-        "27b222b9d166325b536a27c01f106b9304d360ecfab451bbe8082324fd973f40",
++        "ce52c20e53b043aa2c5e8b625b4f3bfb7d39b9abcd4a4b06649f8d380612e521",
+     "test_autopilot_dispatch.py":
+         "a084ed658e43a4374055e5ba6008dd36b4d9762bc79bfbfece90cf3234a009c6",
+ }

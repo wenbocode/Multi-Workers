@@ -1,0 +1,125 @@
+{
+  "observed_at": "2026-10-26T06:19:11.907150+00:00",
+  "imports": {
+    "test_decide_registry_contract": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_decide_registry_contract.py",
+    "test_dp_consolidation_registry": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_dp_consolidation_registry.py",
+    "decision_points": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_points.py",
+    "decision": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision.py",
+    "mw": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\mw.py"
+  },
+  "core_validator_entries": [
+    "dp-w-type",
+    "dp-pm-steer",
+    "dp-w-check-task",
+    "dp-QG",
+    "dp-gate-approve",
+    "dp-sign-key",
+    "dp-auto",
+    "dp-route"
+  ],
+  "real_stage": "pre-t04",
+  "synthetic_only": true,
+  "product_generation": false,
+  "outcomes": [
+    {
+      "label": "active-only-no-old-id-or-constant",
+      "outcome": "accepted",
+      "parsed_ids": [
+        "dp-QG",
+        "dp-auto",
+        "dp-gate-approve",
+        "dp-pm-steer",
+        "dp-route",
+        "dp-sign-key",
+        "dp-w-check-task",
+        "dp-w-type"
+      ]
+    },
+    {
+      "label": "post-t04-legacy-transition",
+      "outcome": "accepted",
+      "parsed_ids": [
+        "dp13-commit-release",
+        "dp4-failure-handling",
+        "dp5-test-triage",
+        "dp6-qg-verdict"
+      ]
+    },
+    {
+      "label": "post-t04-partial-legacy",
+      "outcome": "accepted",
+      "parsed_ids": [
+        "dp4-failure-handling"
+      ]
+    },
+    {
+      "label": "pre-t04-real-legacy",
+      "outcome": "accepted",
+      "parsed_ids": [
+        "dp13-commit-release",
+        "dp4-failure-handling",
+        "dp5-test-triage",
+        "dp6-qg-verdict"
+      ]
+    },
+    {
+      "label": "new-name-constant-key",
+      "outcome": "accepted",
+      "parsed_ids": [
+        "dp-QG",
+        "dp-auto",
+        "dp-gate-approve",
+        "dp-pm-steer",
+        "dp-route",
+        "dp-sign-key",
+        "dp-w-check-task",
+        "dp-w-type"
+      ]
+    },
+    {
+      "label": "duplicate-row",
+      "outcome": "rejected",
+      "message": "duplicate id in REQUIRED_FIELDS_BY_DP: dp-w-type"
+    },
+    {
+      "label": "unknown-id",
+      "outcome": "rejected",
+      "message": "unknown ids in REQUIRED_FIELDS_BY_DP: ['dp99-unknown']"
+    },
+    {
+      "label": "invalid-field-type",
+      "outcome": "rejected",
+      "message": "required-field entries must be double-quoted strings, got '4'"
+    },
+    {
+      "label": "empty-field-list",
+      "outcome": "rejected",
+      "message": "dp-w-type: empty or non-string required field name"
+    },
+    {
+      "label": "empty-matrix",
+      "outcome": "rejected",
+      "message": "the required_if matrix was not parsed: no row found"
+    },
+    {
+      "label": "truncated",
+      "outcome": "rejected",
+      "message": "REQUIRED_FIELDS_BY_DP table is truncated (no '\n};' terminator)"
+    },
+    {
+      "label": "retired-row-content-drift",
+      "outcome": "rejected",
+      "message": "the documented legacy rows of retired ids changed: {'dp4-failure-handling': (['failure.kind'], ['not.the.frozen.field'])}"
+    },
+    {
+      "label": "pre-t04-active-row",
+      "outcome": "rejected",
+      "message": "an active entry grew a legacy TS row before T04 regenerated the pair: ['dp-w-type']"
+    },
+    {
+      "label": "mixed-generated-ids",
+      "outcome": "rejected",
+      "message": "the generated TS registry is neither the frozen pre-T03 artifact nor the eight-entry projection: ['dp-QG', 'dp-auto', 'dp-gate-approve', 'dp-pm-steer', 'dp-route', 'dp-sign-key', 'dp-w-check-task', 'dp-w-type', 'dp4-failure-handling']"
+    }
+  ]
+}

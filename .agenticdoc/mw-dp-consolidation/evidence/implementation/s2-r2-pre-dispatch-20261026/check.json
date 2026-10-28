@@ -1,0 +1,138 @@
+{
+  "observed_at": "2026-10-26T15:51:07.093076+00:00",
+  "mirror_files": 1883,
+  "unchanged_from_pm_t08_inventory": true,
+  "product_paths_disjoint": true,
+  "product_paths": [
+    "packages/multi-workers/decision_validity.py",
+    "packages/multi-workers/test_dp_consolidation_concurrency.py",
+    "packages/multi-workers/decision_policy.py",
+    "packages/multi-workers/test_dp_consolidation_recovery.py",
+    "packages/multi-workers/decision.py",
+    "packages/multi-workers/decision_backends.py",
+    "packages/multi-workers/test_dp_consolidation_materials.py"
+  ],
+  "attempts": [
+    {
+      "logical_id": "T06",
+      "task_key": "dpc-t06-validity-r2",
+      "card": ".agenticdoc/mw-dp-consolidation/tasks/isolated/T06-validity-r2.md",
+      "card_sha256": "15a90e5a43ab0483ede76d7450670ae1d28d2b02e0dceaee500d01a954598546",
+      "original_card_sha256": "1a81029454f59cf2e69c32643f30735efa0827c482f382ca8879c02ef37df15c",
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_validity.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_concurrency.py"
+      ],
+      "evidence_write_face": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t06-validity/rework-r2/**",
+      "before_files": [
+        {
+          "path": "packages/multi-workers/decision_validity.py",
+          "sha256": "64b9b9e1060aab955a4d0428385e2d450ae94826d1a548088c65f5874c049eb1",
+          "bytes": 54353,
+          "crlf": 0,
+          "bare_lf": 1652,
+          "live_exists": false,
+          "live_sha256": null
+        },
+        {
+          "path": "packages/multi-workers/test_dp_consolidation_concurrency.py",
+          "sha256": "c9dc013110de702f733b5ec292c1d62ccdaa93d7ffb4fa7ffcec9101c2a97349",
+          "bytes": 49049,
+          "crlf": 0,
+          "bare_lf": 1297,
+          "live_exists": false,
+          "live_sha256": null
+        }
+      ],
+      "original_evidence_files": 20,
+      "status": "not-queued",
+      "semantic_handoff_verified": false
+    },
+    {
+      "logical_id": "T07",
+      "task_key": "dpc-t07-policy-r2",
+      "card": ".agenticdoc/mw-dp-consolidation/tasks/isolated/T07-policy-r2.md",
+      "card_sha256": "e85638f6428eef98844a3a322e0da74c2bead2c91525bb4a61259c8d301d39f3",
+      "original_card_sha256": "88bee76800c724909e277485117335cf91d93e989ccc6d9fb09d4e9d99adeb5d",
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_policy.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_recovery.py"
+      ],
+      "evidence_write_face": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t07-policy/rework-r2/**",
+      "before_files": [
+        {
+          "path": "packages/multi-workers/decision_policy.py",
+          "sha256": "f4c44456316b8c60c7934a209de389ef6366aa864f026f9ba5fba40569dde6bb",
+          "bytes": 60498,
+          "crlf": 0,
+          "bare_lf": 1785,
+          "live_exists": false,
+          "live_sha256": null
+        },
+        {
+          "path": "packages/multi-workers/test_dp_consolidation_recovery.py",
+          "sha256": "434412b3ea60e60807ea23b52cdc474e892457a0a1747ecf7cb6bf809380a974",
+          "bytes": 53478,
+          "crlf": 0,
+          "bare_lf": 1520,
+          "live_exists": false,
+          "live_sha256": null
+        }
+      ],
+      "original_evidence_files": 818,
+      "status": "not-queued",
+      "semantic_handoff_verified": false
+    },
+    {
+      "logical_id": "T08",
+      "task_key": "dpc-t08-transport-r2",
+      "card": ".agenticdoc/mw-dp-consolidation/tasks/isolated/T08-transport-r2.md",
+      "card_sha256": "7c29606c7fbdaffef573e3016f333dd21d2ec93a5852e33a3315401bc372ac59",
+      "original_card_sha256": "07a719095a33f60666fef960ec89034ff96f81066bf7bea599f303178290b1e8",
+      "product_write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_backends.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_materials.py"
+      ],
+      "evidence_write_face": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/**",
+      "before_files": [
+        {
+          "path": "packages/multi-workers/decision.py",
+          "sha256": "89500080e9f59c80e98b757a3a2b547b1db06985edc04a7489d068cb5f80a5e5",
+          "bytes": 116092,
+          "crlf": 0,
+          "bare_lf": 2683,
+          "live_exists": true,
+          "live_sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0"
+        },
+        {
+          "path": "packages/multi-workers/decision_backends.py",
+          "sha256": "a13a8597bba7abe796022148bd50d02b26fc6a85e1d7d3b1af9f5129f0a3e22b",
+          "bytes": 48970,
+          "crlf": 0,
+          "bare_lf": 1216,
+          "live_exists": true,
+          "live_sha256": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60"
+        },
+        {
+          "path": "packages/multi-workers/test_dp_consolidation_materials.py",
+          "sha256": "2ab2d758350eb0a3b714512e9a70d81e14c645459f94cc8c850b98a4638454f8",
+          "bytes": 36376,
+          "crlf": 0,
+          "bare_lf": 977,
+          "live_exists": false,
+          "live_sha256": null
+        }
+      ],
+      "original_evidence_files": 125,
+      "status": "not-queued",
+      "semantic_handoff_verified": false
+    }
+  ],
+  "original_logical_task_count": 36,
+  "new_logical_tasks": 0,
+  "cleanup_authorized": false,
+  "dispatch_done": false,
+  "product_tests_run": false,
+  "approval_file": "evidence/implementation/s2-r2-approval-20261026.md"
+}

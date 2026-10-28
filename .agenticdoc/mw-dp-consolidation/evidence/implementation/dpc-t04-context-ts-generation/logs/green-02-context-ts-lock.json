@@ -1,0 +1,36 @@
+{
+  "label": "green-02-context-ts-lock",
+  "argv": [
+    "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "-q",
+    "test_decide_registry_ts_lock.py"
+  ],
+  "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+  "started": "2026-10-26T06:30:00.858899+00:00",
+  "finished": "2026-10-26T06:30:01.811391+00:00",
+  "rc": 1,
+  "stdout_tail": [
+    "...................F...............                                      [100%]",
+    "================================== FAILURES ===================================",
+    "_____ test_every_generated_entry_references_the_one_preparation_contract ______",
+    "",
+    "    def test_every_generated_entry_references_the_one_preparation_contract() -> None:",
+    "        text = _generated_text()",
+    "        for dp_id in dpts.ACTIVE_DP_IDS:",
+    "            start = text.index(f'\\t\"{dp_id}\": {{')",
+    "            block = text[start : text.index(\"\\n\\t},\", start)]",
+    ">           assert \"\\t\\tpreparation: DECIDE_REGISTRY_PREPARATION,\\n\" in block, dp_id",
+    "E           AssertionError: dp-w-type",
+    "E           assert '\\t\\tpreparation: DECIDE_REGISTRY_PREPARATION,\\n' in '\\t\"dp-w-type\": {\\n\\t\\tquestionsVersion: \"q-b06e79ab\",\\n\\t\\tkind: \"fixed\",\\n\\t\\troleScope: \"pm\",\\n\\t\\trequiredStateFie...ments\", \"task_deliverables\", \"images_required\"],\\n\\t\\tcontextSlots: [],\\n\\t\\tpreparation: DECIDE_REGISTRY_PREPARATION,'",
+    "",
+    "test_decide_registry_ts_lock.py:466: AssertionError",
+    "=========================== short test summary info ===========================",
+    "FAILED test_decide_registry_ts_lock.py::test_every_generated_entry_references_the_one_preparation_contract",
+    "1 failed, 34 passed in 0.73s"
+  ],
+  "stderr_tail": []
+}

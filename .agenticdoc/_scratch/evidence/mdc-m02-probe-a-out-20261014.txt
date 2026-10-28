@@ -1,0 +1,82 @@
+probe root: C:\Users\WENBOZ~1\AppData\Local\Temp\m02_probe_pos1y7_e
+
+==============================================================================
+A. per-key identity: started = min(max_workers_per_key, |task frontier|)
+==============================================================================
+cap=4 frontier=3 (3 dep-free, disjoint faces)        tick=ok  started_rows=3 expected=min(4,3)=3 OK
+    rows=['ap-k1-T-1', 'ap-k1-T-2', 'ap-k1-T-3']
+cap=1 frontier=3 (cap is the kill switch)            tick=ok  started_rows=1 expected=min(1,3)=1 OK
+    rows=['ap-k1-T-1']
+cap=4 frontier=1 (chain T-2 deps T-1)                tick=ok  started_rows=1 expected=min(4,1)=1 OK
+    rows=['ap-k1-T-1']
+cap=2 frontier=5 (cap truncates)                     tick=ok  started_rows=2 expected=min(2,5)=2 OK
+    rows=['ap-k1-T-1', 'ap-k1-T-2']
+
+==============================================================================
+A2. |frontier| = 0 (all tasks terminal) -> started = 0
+==============================================================================
+cap=1: tick=ok rows_before=3 rows_after=3 new_rows=0 advance_calls=[('k1', 'verify')] expected=min(1,0)=0
+cap=4: tick=ok rows_before=3 rows_after=3 new_rows=0 advance_calls=[('k1', 'verify')] expected=min(4,0)=0
+
+==============================================================================
+B. key-layer identity (AC-001): started_keys = min(max_parallel_keys, |key frontier|)
+==============================================================================
+max_parallel_keys=2 eligible=3: tick=ok started_keys=['k1', 'k2'] expected=min(2,3)=2 OK
+max_parallel_keys=1 eligible=3: tick=ok started_keys=['k1'] expected=min(1,3)=1 OK
+max_parallel_keys=8 eligible=3: tick=ok started_keys=['k1', 'k2', 'k3'] expected=min(8,3)=3 OK
+
+==============================================================================
+C. V-problem -> whole-key serial fallback + audit dedup
+==============================================================================
+tick1=ok rows=['ap-k1-T-1']
+tick1 audit_events=1 :: ['task graph unusable for k1: deps-dangling:T-2@3:T-99-missing; falling back to serial (plan order)']
+tick2=ok rows=['ap-k1-T-1', 'ap-k1-T-2']  (T-2 dispatched after T-1, no permanent lock)
+tick2 cumulative audit_events=1  (dedup proof: still one)
+tick3=ok advance_calls=[('k1', 'verify')]
+raw timeline config events:
+    k1 | task graph unusable for k1: deps-dangling:T-2@3:T-99-missing; falling back to serial (plan order)
+
+==============================================================================
+C2. missing write face -> serial-only (write-face gate), no stall
+==============================================================================
+tick=ok started=['ap-k1-T-1']
+key_status=running
+write-face events=['ap-k1-T-1: write_face undeclared; 0 same-owner worker(s) in flight']
+
+==============================================================================
+C3. overlapping declared faces -> second refused (overlap pairs = 0)
+==============================================================================
+tick=ok started=['ap-k1-T-1']
+key_status=running
+    write-face-overlap | ap-k1-T-2: overlap with ap-k1-T-1 at src/shared/deep (src/shared/deep/** vs src/shared/**)
+
+==============================================================================
+D. AC-010 roadmap validation in-tick + dedup
+==============================================================================
+tick1=ok roadmap_validation_events=1
+tick2=ok roadmap_validation_events=1  (same problem written once)
+     - | roadmap validation: stage 1 key 'k1': dependency 'kX' not found
+
+==============================================================================
+E. AC-006 kill switch: both layers at 1 -> serial, no serve restart (config re-read per tick)
+==============================================================================
+bounds 8/4: started_keys=['k1', 'k2'] k1_rows=3
+bounds 1/1: started_keys=['k1'] all_rows=1
+config value read fresh each tick (same process, no restart): both <=1 = OK
+
+==============================================================================
+F. AC-013 advance wall-clock (real advance_phase.py subprocess) + event data
+==============================================================================
+sample 0: exit=1 ms=0 stderr=[advance] AgenticTask framework not installed: no scripts/detect_root.py under t
+sample 1: exit=1 ms=0 stderr=[advance] AgenticTask framework not installed: no scripts/detect_root.py under t
+sample 2: exit=1 ms=0 stderr=[advance] AgenticTask framework not installed: no scripts/detect_root.py under t
+real advance samples(ms)=[0, 0, 0] median=0
+single idle conductor tick ms=4
+window_share = sum_advance_ms / (sum_advance_ms + n*idle_tick_ms) = 0/(0+12) = 0.000000
+ratio advance_ms / idle_tick_ms (median) = 0.00x
+advance event detail='execute->verify exit=0' data={'ms': 0}
+detail byte-shape unchanged (frozen regex ^(\S+) exit=(\d+)(?: class=(\S+))?$ keeps matching)
+
+[stderr]
+[conductor] task graph unusable for k1: deps-dangling:T-2@3:T-99-missing; falling back to serial (plan order)
+[conductor] roadmap validation: stage 1 key 'k1': dependency 'kX' not found

@@ -177,7 +177,7 @@ gondolin → 真实目录（非链接），2026-10-09 20:39:04
 
 ### 2.4 删除过程的其它旁证
 
-- 同会话 12:32:37.458Z thinking（**自述**，非执行证据）: «`git worktree remove` failed because the junction (node_modules) inside the worktree...» —— 执行者当时把失败理解为「junction 导致的删除失败」，**没有意识到删除已经部分穿透到真树**。
+- 同会话 **12:32:28.112Z** thinking（**自述**，非执行证据；`[QG-E7]` 更正：v2 原记 12:32:37.458Z，该时刻实为另一段「Cleaned up…」）: «`git worktree remove` failed because the junction (node_modules) inside the worktree...» —— 执行者当时把失败理解为「junction 导致的删除失败」，**没有意识到删除已经部分穿透到真树**。
 - 12:32:49.062Z 另一会话 thinking（`...1dab...` L187）: «`packages/coding-agent` now contains only `node_modules`! The `src` directory is GONE.» ⇒ 与 §1.3 的 ENOENT 独立互证。
 - `.agenticdoc/mw-vision-role/evidence/reviews/qg-review-mw-vision-role-20260926.md` 于 12:32:06.533Z 落盘（24592 B）、12:32:18.452Z 起被 `read` 复核 —— 这条 `read`（L142 的另一半）在 12:32:24.249Z 之前的批次内成功，说明**报告文件本身无损**（它不在被删路径上）。
 
@@ -277,13 +277,13 @@ echo "deleted_after=$after"
 ### 4.3 附注（不属于 AC-007，但 PM 需要）
 
 - 项目自己今天的记录已独立收敛到同一结论：`.agenticdoc/mw-widget-terminal-lifecycle/tasks/T-01-ack-store.md:56`（轮次 3，`2026-10-10T03:03:50Z`）写「复验发现 HEAD 版本埋点回退为 `console.log`（round 2 修正未提交）；重新以 `process.stdout.write` + `verify()` 助手替换」。
-- **PM 前置前提之一不成立 → 必须标为未坐实**：mini-spec / spec §1.2 称「`shared/mw-runner.ts` 原有 1 行 diff 现已消失」。本次**找不到该 diff 存在过的任何一手记录**，且现有证据**倾向反证**：
+- **PM 前置前提之一不成立 → 标为未坐实（`[QG-E10]` 改写）**：mini-spec / spec §1.2 称「`shared/mw-runner.ts` 原有 1 行 diff 现已消失」。**事后确有一手观测**：`01a11fac:323`（12:40:27.142Z，恢复完成 12:38:18 之后约 2 分钟）实测 `git diff --stat HEAD -- …agent-team-loop` = 「`mw-runner.ts | 2 +-`」（1 file changed, 1+/1-），且 `01a11fac:330`（12:40:55.264Z）记录该 diff 已消失（"the 1-line diff I saw earlier disappeared"）——这正是 spec §1.2「1 行 diff 消失」的观测来源。v2 原写「找不到该 diff 存在过的任何一手记录，且现有证据倾向反证」**过强，已撤回**（该消失发生在恢复完成**之后**，不能归因于本次事故的恢复动作）。**事故前（12:17–12:32）窗口内确无观测**，故「未坐实」结论本身仍然成立：
   - [VERIFY] `git rev-parse HEAD:packages/coding-agent/src/extensions/agent-team-loop/shared/mw-runner.ts` = `ea3079016b32288cb8e1700dc49435d42f34fd0c`
   - [VERIFY] `git hash-object` 工作树同路径 = **同一个** `ea3079016b32288cb8e1700dc49435d42f34fd0c`
   - [VERIFY] `git diff --stat HEAD -- <该文件>` = **0 行**
   - 同会话在 **12:15:15.411Z** 实测的 worktree blob 也正是 `ea3079016b`（`git hash-object`；`...12-04-08-087Z_01a1208c-9b17-...` L41/L42）⇒ 至少在 12:15:15 与今天，该文件都与 HEAD 逐字节一致。
   - 唯一看起来像「diff」的记录是同一会话 12:16:38 的 `git diff 75298ee4e -- .../shared/mw-runner.ts`（L45/L46），它打出 `index fdd1f5e99..ea3079016 100644` 的 hunk —— 但那是**与旧提交 `75298ee4e` 比较**，**不是工作树 diff**。
-  - ⇒ **「mw-runner.ts 有 1 行未提交 diff 且被丢弃」= 未坐实**（12:17–12:32 之间是否短暂存在过 diff，日志里没有任何观测）。AC-006 的「未提交改动被丢弃」这一约束由 ack test 一手坐实，**不需要**依赖 mw-runner.ts。
+  - ⇒ **「mw-runner.ts 有 1 行未提交 diff 且被丢弃」= 未坐实**（12:17–12:32 之间是否短暂存在过 diff，无一手观测；事故后 12:40:27–12:40:55 的 1 行 diff 出现又消失属另一时段，见上）。AC-006 的「未提交改动被丢弃」这一约束由 ack test 一手坐实，**不需要**依赖 mw-runner.ts。
 
 ---
 
@@ -306,8 +306,8 @@ echo "deleted_after=$after"
 1. **删除段中间步骤的自行复现**：本次**未自行执行** `git worktree remove` 做最小复现（硬规则禁止执行该命令）。「junction 对 git 呈现为普通目录」「readdir 顺序里 `pi-tui` 最后」两条中间环节依赖兄弟 worker `inc1-junction-forensics` 的 `%TEMP%` 复现（**交叉引用，非本次实测**）。
 2. **触发 `unlink` EINVAL 的具体被占用文件/进程**：未坐实（真树当时哪个句柄造成 EINVAL，无法从只读证据反推）。
 3. **`packages/tui` 为何只删 156/236、`src`/`test` 完好**：只有「中止发生在 `pi-tui` 子树内」这一形态学结论 + 推断；**具体中止点与顺序未坐实**。
-4. **`mw-runner.ts` 的「1 行 diff 被丢弃」**：**未坐实**，且现有证据倾向反证（§4.3）。
-5. **20:38:58–20:40:26 的 npm reify 由谁触发**：未坐实。本次 12:20–12:46 窗口扫描中**未发现**任何已执行的 `npm install` / `npm ci`；IN-1 报告把它归为 PM 会话执行，本报告未独立复核该归属。
+4. **`mw-runner.ts` 的「1 行 diff 被丢弃」**：**未坐实**（事故前 12:17–12:32 窗口无观测；`[QG-E10]` 更正——撤回「倾向反证」，恢复完成后 12:40:27Z 确曾观测到 1 行 diff、12:40:55Z 消失，见 §4.3）。
+5. **20:38:58–20:40:26 的 npm reify 由谁触发**：本报告原先标「未坐实」的此项**已由独立 QG 一手闭环（`[QG-E6]`）**，本文件 PM 亦已复核：PM 会话 `01a0d325` 在 **12:38:58.496Z** 的 toolCall 执行 `npm install --ignore-scripts`（L2926），toolResult 在 **12:39:10.147Z** 显示 8 条 `pi-*` junction 重建完成、`gondolin` 齐全、lockfile/shrinkwrap 零改动（L2927）；该会话自述亦承认「These 20:41 logs are MY `npm install --ignore-scripts`」（L2943）。
 6. **恢复段是否存在第二个执行者**：本报告只找到一处恢复执行（`restore.sh`）。若在 12:38:18–12:40:56 之间还有别的恢复动作，本次未发现证据。
 7. **`3531 − 3456 = 75` 的构成**：只有算术关系与「12:38:26 实测 `total modified: 74`」的旁证，未逐条清点。
 8. **事故当下的 20:3x 是否存在 ref 级动作被 reflog 之外的机制抹掉**：未坐实；本报告只能给出 `reflog` 无条目、`refs/stash` 不存在、`git fsck` rc=0 三条。

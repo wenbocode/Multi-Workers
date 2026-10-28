@@ -1,0 +1,68 @@
+# decision_book.py: secret-scan region after the P0 fix
+_SECRET_DETAIL = "credential-looking text; redact before sending"
+
+#: 安全路径段：短标识符才原样使用；其他键（含 credential-looking 键）折叠为
+#: ``<key>``，拒绝 detail/path 因此不回显恶意键文本或 secret 值。
+_SAFE_PATH_SEGMENT_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _secret_scan_segment(key: object) -> str:
+    """A dotted path segment that never echoes an arbitrary key text."""
+    text = key if isinstance(key, str) else str(key)
+    if _SAFE_PATH_SEGMENT_RE.fullmatch(text) and decision._redact(text) == text:
+        return text
+    return "<key>"
+
+
+def _iter_secret_texts(value: object, path: str):
+    """递归 ``(path, text)``：每个字符串叶子**与每个对象键**。
+
+    ``Mapping`` / ``list`` / ``tuple`` 都下探（覆盖嵌套对象、数组的数组、
+    数组内的对象键）。与 :func:`_flatten` 分离：后者继续把数组当叶子，
+    服务于 typed/closed 门（T05c 语义不变）。
+    """
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            segment = _secret_scan_segment(key)
+            child_path = f"{path}.{segment}" if path else segment
+            if isinstance(key, str) and key:
+                yield child_path, key
+            yield from _iter_secret_texts(child, child_path)
+    elif isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            yield from _iter_secret_texts(child, f"{path}[{index}]")
+    elif isinstance(value, str) and value:
+        yield path, value
+
+
+def _check_secrets(book: Mapping[str, Any], state: Mapping[str, Any]) -> list[Issue]:
+    """复用 ``decision._redact`` 的检测面：脱敏会改动 == 命中凭据（AC-019）。
+
+    遍历用 :func:`_iter_secret_texts`（递归 dict/list 的字符串值与对象键），
+    与 :func:`_flatten` 的「数组整体作叶子」规则**分离**：typed/closed 门保持
+    T05c 语义，密钥门下探数组元素——dp25 的 ``escalated_reasons`` /
+    ``engine_violations`` 与 dp3 ``local_candidates`` 项内的 key 都是真实发送体。
+    识别面只复用既有三类（env ``*_API_KEY``/``*_TOKEN``/``*_KEY``/``*_SECRET``/
+    ``*_PASSWORD`` 的已知值、``Bearer``、``sk-``），不声称覆盖未知 secret。
+    """
+    issues: list[Issue] = []
+    seen: set[str] = set()
+    for path, text in _iter_secret_texts(state, "state"):
+        if path in seen or not text:
+            continue
+        if decision._redact(text) != text:
+            seen.add(path)
+            issues.append(Issue("book-secret", path, _SECRET_DETAIL))
+    context = book.get("context") if isinstance(book.get("context"), Mapping) else {}
+    for slot, content in context.items():
+        for text in _context_strings(content):
+            if text and decision._redact(text) != text:
+                issues.append(
+                    Issue(
+                        "book-secret",
+                        f"context.{_secret_scan_segment(slot)}",
+                        _SECRET_DETAIL,
+                    )
+                )
+                break
+    return issues

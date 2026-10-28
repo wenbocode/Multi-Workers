@@ -1,0 +1,125 @@
+--- before/test_decision_task_state.py
++++ after/test_decision_task_state.py
+@@ -10,12 +10,19 @@
+ import decision
+ import decision_history as history
+ import decision_lifecycle as lifecycle
++import decision_task_state as task_state
+ import decision_wire as wire
+ import mw
+ import test_decision_context_readable_backend as backend
+ import test_decision_context_readable_ui as ui
+ 
+ _isolated_environment = ui._isolated_environment
++
++#: The archive/decision fixture must name an *active* entry: the retired ids
++#: (``dp1-...`` etc.) are refused before any replay/transport by the protocol
++#: migration (T03), and using one here would turn a fixture detail into a false
++#: product failure. Assertions below are unchanged.
++DP = "dp-gate-approve"
+ 
+ 
+ def state(status="running", *, source="agent-report", completed=None, remaining=None, blockers=None):
+@@ -34,7 +41,7 @@
+     root=backend._root(tmp_path)
+     store=backend._store(root)
+     meta=_meta(before)
+-    decision_id=backend._append_archive(root,dp=backend.DP1,trigger_id="t22",authority="advisory",escalated_reason=None,confidence=0.94)
++    decision_id=backend._append_archive(root,dp=DP,trigger_id="t22",authority="advisory",escalated_reason=None,confidence=0.94)
+     assert lifecycle.record_start(store,meta,decision_id=decision_id).recorded
+     assert lifecycle.record_consumed(store,meta,decision_id=decision_id,answer="research").recorded
+     assert lifecycle.record_executed(store,meta,decision_id=decision_id,action="record",result="answer-returned").recorded
+@@ -84,7 +91,7 @@
+ def test_consumed_cannot_record_an_after_state(tmp_path):
+     root=backend._root(tmp_path)
+     with pytest.raises(lifecycle.LifecycleInputError):
+-        lifecycle.record_lifecycle(backend._store(root),_meta(),stage="consumed",decision_id=backend.DP1+":task-state",answer="research",task_after=state())
++        lifecycle.record_lifecycle(backend._store(root),_meta(),stage="consumed",decision_id=DP+":task-state",answer="research",task_after=state())
+ 
+ 
+ def test_write_and_read_redaction_cover_snapshot_lists_and_keys(tmp_path):
+@@ -123,7 +130,7 @@
+         return SimpleNamespace(decision_id=dp+":"+meta.logical_id,status="escalated",answer=None,detail="synthetic unavailable")
+     monkeypatch.setattr(mw.decision_points,"decide_for",fake_decide)
+     monkeypatch.setattr(mw,"_decide_run_payload",lambda outcome:{"available":False})
+-    assert mw._decide_run_versioned(SimpleNamespace(dp_id=backend.DP1,json=True),root)==0
++    assert mw._decide_run_versioned(SimpleNamespace(dp_id=DP,json=True),root)==0
+     assert calls==[material]
+     capsys.readouterr()
+ 
+@@ -132,21 +139,21 @@
+     root=backend._root(tmp_path);store=backend._store(root);meta=_meta(state())
+     after=state();after["observed_at"]="2026-10-23T08:00:00Z"
+     with pytest.raises(lifecycle.LifecycleInputError):
+-        lifecycle.record_settled(store,meta,decision_id=backend.DP1+":out-of-order",outcome="ok",task_after=after)
++        lifecycle.record_settled(store,meta,decision_id=DP+":out-of-order",outcome="ok",task_after=after)
+     assert not store.sink.exists()
+ 
+ 
+ def test_after_requires_the_same_tasks_creation_fact(tmp_path):
+     root=backend._root(tmp_path);store=backend._store(root);meta=_meta()
+     with pytest.raises(lifecycle.LifecycleInputError):
+-        lifecycle.record_settled(store,meta,decision_id=backend.DP1+":orphan",outcome="ok",task_after=state())
++        lifecycle.record_settled(store,meta,decision_id=DP+":orphan",outcome="ok",task_after=state())
+     assert not store.sink.exists()
+-    lifecycle.record_start(store,meta,decision_id=backend.DP1+":bound")
++    lifecycle.record_start(store,meta,decision_id=DP+":bound")
+     raw=meta.as_meta();raw["task_key"]="other-task"
+     foreign=lifecycle.DecisionMeta.from_envelope({"meta":raw})
+     original=store.sink.read_bytes()
+     with pytest.raises(lifecycle.LifecycleInputError):
+-        lifecycle.record_settled(store,foreign,decision_id=backend.DP1+":bound",outcome="ok",task_after=state("done"))
++        lifecycle.record_settled(store,foreign,decision_id=DP+":bound",outcome="ok",task_after=state("done"))
+     assert store.sink.read_bytes()==original
+ 
+ 
+@@ -165,7 +172,7 @@
+ 
+ def test_duplicate_after_write_does_not_replace_first_snapshot(tmp_path):
+     root=backend._root(tmp_path);store=backend._store(root);meta=_meta(state())
+-    decision_id=backend.DP1+":snapshot-dedupe"
++    decision_id=DP+":snapshot-dedupe"
+     lifecycle.record_start(store,meta,decision_id=decision_id)
+     one=lifecycle.record_settled(store,meta,decision_id=decision_id,outcome="ok",event_id="t22-same",task_after=state("pending"))
+     raw=wire.production_lifecycle_sink(root).read_bytes()
+@@ -201,7 +208,7 @@
+     before=state("not-queued",source="worker-registry",completed=["reviewed task card"],remaining=["dispatch worker"],blockers=[])
+     after=state("pending",source="dispatch-result",completed=[],remaining=["worker start"],blockers=[])
+     meta=_meta(before)
+-    decision_id=backend.DP1+":production"
++    decision_id=DP+":production"
+     assert lifecycle.record_start(store,meta,decision_id=decision_id).recorded
+     assert lifecycle.record_executed(store,meta,decision_id=decision_id,action="direct-exec",result="worker queued").recorded
+     assert lifecycle.record_settled(store,meta,decision_id=decision_id,outcome="ok",task_after=after).recorded
+@@ -241,3 +248,31 @@
+     raw["key"]="t22-redactor-fix"
+     assert lifecycle.DecisionMeta.from_envelope({"meta":raw}).task_key is not None
+ 
++
++# ── T10: snapshot equality and the agent-report boundary ──────────────────
++
++
++def test_snapshot_equality_keeps_null_and_empty_distinct_and_order_sensitive():
++    empty_lists=state(completed=[],remaining=None,blockers=[])
++    assert task_state.same_snapshot(empty_lists,state(completed=[],remaining=None,blockers=[]))
++    # an observed "none" is not an unrecorded axis
++    assert not task_state.same_snapshot(empty_lists,state(completed=None,remaining=None,blockers=[]))
++    assert not task_state.same_snapshot(state(completed=["x","y"]),state(completed=["y","x"]))
++    assert task_state.same_snapshot(None,None)
++    assert not task_state.same_snapshot(empty_lists,None)
++    assert not task_state.same_snapshot(None,empty_lists)
++
++
++def test_an_agent_report_snapshot_never_creates_the_action_or_terminal_fact(tmp_path):
++    root=backend._root(tmp_path);store=backend._store(root);meta=_meta(state("done"))
++    decision_id=DP+":agent-report-grant"
++    assert lifecycle.record_start(store,meta,decision_id=decision_id).recorded
++    with pytest.raises(lifecycle.LifecycleInputError) as error:
++        lifecycle.record_executed(store,meta,decision_id=decision_id,dp=DP,action=None,task_after=state("done"))
++    assert "action" in str(error.value)
++    assert lifecycle.record_settled(store,meta,decision_id=decision_id,dp=DP,outcome="ok",task_after=state("done")).recorded
++    rows=lifecycle.read_lifecycle(store).events
++    # the snapshot (source=agent-report) did not gain an action or a task terminal
++    assert not any(row.get("kind")=="terminal" for row in rows)
++    assert not any(row.get("lifecycle")=="executed" for row in rows)
++

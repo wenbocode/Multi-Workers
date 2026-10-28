@@ -1,0 +1,25 @@
+import os
+import pathlib
+import re
+import subprocess
+import tempfile
+
+repo = pathlib.Path('H:/git/Multi-Workers')
+script = pathlib.Path('C:/Users/wenbozhou/AppData/Local/Temp/dpc-dp3-boundary-20261024.mjs')
+evidence = repo / '.agenticdoc/mw-dp-consolidation/evidence/dp3-boundary-diagnostic-20261024.log'
+if evidence.exists():
+    raise SystemExit('Refusing to overwrite existing evidence')
+with tempfile.TemporaryDirectory(prefix='dpc-dp3-private-') as private:
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(('PI_', 'MW_'))
+           and not re.search(r'TOKEN|SECRET|PASSWORD|CREDENTIAL|PROXY|API_KEY|ENDPOINT|BASE_URL|AUTH', k, re.I)}
+    env.update(HOME=private, USERPROFILE=private, APPDATA=private, LOCALAPPDATA=private,
+               PI_CODING_AGENT_DIR=str(pathlib.Path(private) / '.pi/agent'))
+    result = subprocess.run(['node', '--experimental-strip-types', str(script)],
+                            cwd=private, env=env, capture_output=True, timeout=60)
+    evidence.write_bytes(b'rc=' + str(result.returncode).encode() + b'\nSTDOUT\n'
+                         + result.stdout + b'\nSTDERR\n' + result.stderr)
+    print(result.stdout.decode('utf-8', errors='replace'))
+    print(result.stderr.decode('utf-8', errors='replace'))
+    print(f'rc={result.returncode}; evidence={evidence.relative_to(repo)}')
+    raise SystemExit(result.returncode)

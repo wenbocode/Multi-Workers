@@ -1,0 +1,37 @@
+{
+  "observed_at": "2026-10-27T09:10:29.178978+00:00",
+  "source": "agent-report",
+  "tasks_preserved": 36,
+  "all_stage_dependency_AC_VC_faces_commands_preserved": true,
+  "only_T09_metadata_changed": true,
+  "original_run_status_exit_and_ack": "done/exit0/acked",
+  "original_worker_evidence_unchanged": true,
+  "R2_actual_run": {
+    "schema": 1,
+    "task_key": "dpc-t09-books-r2",
+    "run_id": "dpc-t09-books-r2@2026-10-27T09:07:42.696Z",
+    "owner_key": "mw-dp-consolidation",
+    "kind": "coding",
+    "status": "running",
+    "started_at": "2026-10-27T09:07:42.696Z",
+    "artifacts": [],
+    "pid": 22708,
+    "last_heartbeat_at": "2026-10-27T09:10:12.745Z"
+  },
+  "R2_progress": {
+    "completed": null,
+    "remaining": null,
+    "blockers": null
+  },
+  "card_sha256": "f34bf2252bef66d990cc2c5b97a2c57402015eedcbc5ae6dd497ade2d46bf9bc",
+  "card_body_face_verified": true,
+  "T05_T10_not_queued": true,
+  "mirror_files": 1883,
+  "R2_net_changed_paths_at_observation": [],
+  "pyc_unchanged": true,
+  "relevant_live_unchanged": true,
+  "phase": "EXECUTE",
+  "audit_rc": 0,
+  "semantic_handoff_verified": false,
+  "all_L2_QG_signoff_complete": false
+}

@@ -1,0 +1,868 @@
+--- before/packages/multi-workers/test_decision_context_workbench.py
++++ after/packages/multi-workers/test_decision_context_workbench.py
+@@ -1,14 +1,20 @@
+ """test_decision_context_workbench.py - T07: offline cases, case route, workbench UI.
+ 
+-Scope of this file (card ``T07-workbench-cases``; write face of the T07 worker):
+-
+-* the four complete synthetic decision books are produced *offline* by
+-  ``scripts/build_decide_cases.py`` (no model, no credential, no network) and
+-  ship as ``decide_cases/dp{1,2,3,25}.json`` with the design §2 field names;
+-  the case shell (``title``/``note``) never leaks into the model state;
++Scope of this file (card ``T07-workbench-cases`` plus the T05 eight-case
++linkage):
++
++* the eight complete synthetic decision books of the active entries are produced
++  *offline* by ``scripts/build_decide_cases.py`` (no model, no credential, no
++  network) and ship as ``decide_cases/dp-w-type.json``, ``dp-pm-steer.json``,
++  ``dp-w-check-task.json``, ``dp-QG.json``, ``dp-gate-approve.json``,
++  ``dp-sign-key.json``, ``dp-auto.json`` and ``dp-route.json`` under the design
++  §2 layered schema-3 contract (``material`` + ``preparation`` + local
++  ``meta``); the case shell (``title``/``note``) never leaks into the model
++  state, and the four pre-consolidation cases stay byte-identical read-only
++  history;
+ * ``GET /api/test/cases`` is a page-role, read-only route over a *fixed* table
+-  of four ids (no caller-chosen path, no directory scan, no traversal, no
+-  symlink escape), and serving it makes zero model and zero credential calls;
++  of ids (no caller-chosen path, no directory scan, no traversal, no symlink
++  escape), and serving it makes zero model and zero credential calls;
+ * ``/api/history`` forwards the T06 ``workbench``/``facets`` projection
+   verbatim (it is not re-derived here) and never invents a projection for a
+   record that has none;
+@@ -16,7 +22,7 @@
+   single-decision DAG dialog for ``record_version == 2`` records, a log-only
+   dialog for legacy records (no DAG entry, no guessed joins), the four closed
+   processing states, the key/DP dropdowns from facets, the offline case
+-  selector with an offline local check, and preserves the 25-DP
++  selector with an offline local check, and preserves the DP
+   edit/validate/observe/retry playground with its isolated test records.
+ 
+ The DOM run uses the same self-contained Node shim pattern as
+@@ -26,9 +32,12 @@
+ browser / real Jev acceptance stays a separate, unauthorized layer.
+ 
+ Deliberately *not* asserted here (dependency split, reported to the PM):
+-the four cases cannot pass the registry-typed ``check_book`` gate until T01
+-publishes the new dp1/dp2/dp3/dp25 contract, and the real edit -> loopback HTTP
+-body assertion needs T01/T05. This file only locks what T07 can prove alone.
++the retired four cases cannot pass the registry-typed ``check_book`` gate any
++more, and the monitor's fixed case table still names them until the monitor
++owner migrates its route to the eight entries. The eight-entry case files are
++proven below against the production book gate with the in-copy repository root;
++the real edit -> loopback HTTP body assertion for the new entries waits for
++that route migration.
+ """
+ 
+ from __future__ import annotations
+@@ -64,29 +73,80 @@
+ GENERATOR_PATH = ASSET_DIR / "scripts" / "build_decide_cases.py"
+ CASES_DIR = ASSET_DIR / "decide_cases"
+ 
++#: The eight active entries and the case file the offline generator ships.
+ CASE_FILES = {
++    "dp-w-type": "dp-w-type.json",
++    "dp-pm-steer": "dp-pm-steer.json",
++    "dp-w-check-task": "dp-w-check-task.json",
++    "dp-QG": "dp-QG.json",
++    "dp-gate-approve": "dp-gate-approve.json",
++    "dp-sign-key": "dp-sign-key.json",
++    "dp-auto": "dp-auto.json",
++    "dp-route": "dp-route.json",
++}
++
++#: The four pre-consolidation cases: byte-locked read-only history. The monitor's
++#: fixed case table still names them, so the route/loader/DOM assertions below
++#: keep exercising that (unchanged) legacy surface; migrating the route to the
++#: eight entries belongs to the monitor owner, not to this card.
++LEGACY_CASE_FILES = {
+     "dp1-dispatch-type": "dp1.json",
+     "dp2-checkpoint-split": "dp2.json",
+     "dp3-worker-clarify": "dp3.json",
+     "dp25-signoff-conclusion": "dp25.json",
+ }
+ 
+-#: design §2 / plan business fields (the only model-state vocabulary of T07).
++#: SHA256 of the four legacy case files: this card never generates or edits them.
++LEGACY_CASE_SHA256 = {
++    "dp1.json": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
++    "dp2.json": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
++    "dp3.json": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
++    "dp25.json": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
++}
++
++#: design §2 business fields (the only model-state vocabulary of T07).
+ DESIGN_STATE_FIELDS = {
+-    "dp1-dispatch-type": ("task_goal", "task_requirements", "task_deliverables"),
+-    "dp2-checkpoint-split": (
++    "dp-w-type": (
++        "task_goal",
++        "task_requirements",
++        "task_deliverables",
++        "images_required",
++    ),
++    "dp-pm-steer": (
+         "task_goal",
+         "task_requirements",
+         "task_deliverables",
+         "pm_decision_background",
++        "worker_execution",
+     ),
+-    "dp3-worker-clarify": ("question", "background", "handling_options"),
+-    "dp25-signoff-conclusion": (
++    "dp-w-check-task": (
++        "task_goal",
++        "reachability_facts",
++        "completed",
++        "remaining",
++        "blockers",
++        "constraints",
++    ),
++    "dp-QG": (
++        "review_requirements",
++        "review_evidence",
++        "review_findings",
++        "uncovered_scope",
++    ),
++    "dp-gate-approve": (
++        "gate_background",
++        "current_state",
++        "condition_evidence",
++        "pm_note",
++    ),
++    "dp-sign-key": (
+         "delivery_goal",
+         "actual_completion",
+         "verification_evidence",
+         "unfinished_impact",
+     ),
++    "dp-auto": ("question", "background", "handling_options"),
++    "dp-route": ("decision_actor", "decision_object", "question"),
+ }
+ 
+ PLACEHOLDER_MARKERS = (
+@@ -104,7 +164,7 @@
+     "\u2026",
+ )
+ 
+-#: The registry's own dp2 question vocabulary, kept verbatim by design D003.
++#: The registry's own dp-pm-steer question vocabulary, kept verbatim (D003).
+ DP2_CHOICES = ["narrow", "split", "direct-exec", "escalate"]
+ 
+ #: The T06 projection is the authority for the workbench vocabulary: the UI
+@@ -186,63 +246,151 @@
+             assert marker not in text, f"{path} still contains the placeholder marker {marker!r}"
+ 
+ 
+-def _assert_case_materials(dp: str, state: dict) -> None:
++def _lookup_material(material, dotted):
++    """Value at a dotted material path, or ``_MISSING`` when it is absent."""
++    current = material
++    for part in dotted.split("."):
++        if not isinstance(current, dict) or part not in current:
++            return _MISSING
++        current = current[part]
++    return current
++
++
++_MISSING = object()
++
++
++def _material_anchor(value):
++    """First real prose leaf of a material value (candidate ids are keys, not text)."""
++    if isinstance(value, str):
++        return value
++    if isinstance(value, dict):
++        for key, item in value.items():
++            if key == "id":
++                continue
++            anchor = _material_anchor(item)
++            if anchor:
++                return anchor
++        return ""
++    if isinstance(value, (list, tuple)):
++        for item in value:
++            anchor = _material_anchor(item)
++            if anchor:
++                return anchor
++        return ""
++    return ""
++
++
++def _assert_case_materials(dp: str, material: dict) -> None:
++    """The design §2 business facts of one entry, checked per entry."""
+     for field in DESIGN_STATE_FIELDS[dp]:
+-        assert field in state, f"{dp}: design §2 field {field!r} is missing"
+-        value = state[field]
++        assert field in material, f"{dp}: design §2 field {field!r} is missing"
++        value = material[field]
+         assert value not in (None, "", [], {}), f"{dp}.{field} must carry real material"
+-    if dp == "dp1-dispatch-type":
+-        for field in DESIGN_STATE_FIELDS[dp]:
+-            assert isinstance(state[field], str), f"dp1.{field} is a verbatim string"
+-    if dp == "dp2-checkpoint-split":
+-        background = state["pm_decision_background"]
++    if dp == "dp-w-type":
++        for field in ("task_goal", "task_requirements", "task_deliverables"):
++            assert isinstance(material[field], str), f"{dp}.{field} is a verbatim string"
++        # ``false`` is a real fact, and it is never an image-capability proof.
++        assert material["images_required"] is False
++    if dp == "dp-pm-steer":
++        background = material["pm_decision_background"]
+         assert isinstance(background, str) and len(background) > 40
+-        # dp2 keeps the registry questions: a case never rewrites them and never
++        # The case keeps the registry questions: it never rewrites them and never
+         # introduces a "continue" label (design D003 / §4.3).
+         for forbidden in ("questions", "choices", "labels", "instructions", "checkpoint_action"):
+-            assert forbidden not in state, f"dp2 case state must not redefine {forbidden!r}"
+-        assert "continue" not in json.dumps(state, ensure_ascii=False)
+-        worker_execution = state.get("worker_execution")
+-        if worker_execution is not None:
+-            # The registry is the authority for the shape (T01 picked a verbatim
+-            # string); the design allows typed-or-string, so accept both but
+-            # never an empty container.
+-            assert isinstance(worker_execution, (str, dict))
+-            assert worker_execution not in ("", {}, [])
+-            if isinstance(worker_execution, str):
+-                assert "时间预算" in worker_execution
+-    if dp == "dp3-worker-clarify":
+-        background = state["background"]
+-        assert isinstance(background, dict)
++            assert forbidden not in material, f"dp-pm-steer material must not redefine {forbidden!r}"
++        assert "continue" not in json.dumps(material, ensure_ascii=False)
++        worker_execution = material["worker_execution"]
++        assert isinstance(worker_execution, str) and worker_execution
++        assert "时间预算" in worker_execution
++    if dp == "dp-w-check-task":
++        investigation = material["investigation"]
++        assert set(investigation) == {
++            "unknown",
++            "evidence_source",
++            "budget",
++            "stop_condition",
++        }
++        # fire-and-forget: the worker judgement never waits for a PM reply.
++        assert "等待" not in json.dumps(material, ensure_ascii=False)
++    if dp == "dp-QG":
++        assert isinstance(material["review_evidence"], list) and material["review_evidence"]
++        # reopen needs the substantive basis problem; this material carries none,
++        # so the case can only exercise pass/fix (the branch gate below proves it).
++        assert "basis_issue" not in material
++    if dp == "dp-gate-approve":
++        note = material["pm_note"]
++        assert set(note) == {"subject", "planned_action", "basis"}
++        assert set(note["basis"]) == {"goal", "evidence", "budget", "authority"}
++        assert isinstance(material["condition_evidence"], list) and material["condition_evidence"]
++    if dp == "dp-sign-key":
++        evidence = material["verification_evidence"]
++        assert isinstance(evidence, dict) and set(evidence) == {"verified", "unverified"}
++        assert isinstance(evidence["verified"], list) and evidence["verified"]
++        assert isinstance(evidence["unverified"], list) and evidence["unverified"]
++        assert isinstance(material["unfinished_impact"], list) and material["unfinished_impact"]
++    if dp == "dp-auto":
++        background = material["background"]
+         assert set(background) == {
+             "task_goal",
+             "current_state",
+-            "decision_reason",
+-            "constraints_impact",
++            "tried",
++            "unknowns",
++            "constraints",
+         }
+-        options = state["handling_options"]
+-        assert isinstance(options, list) and len(options) >= 2, "dp3 needs >= 2 candidates"
++        options = material["handling_options"]
++        assert isinstance(options, list) and len(options) >= 2, "dp-auto needs >= 2 candidates"
+         ids = []
+         labels = []
+         for option in options:
+-            assert set(option) == {"id", "label", "description"}
+-            assert option["id"] and option["label"] and option["description"]
++            assert set(option) == {
++                "id",
++                "label",
++                "description",
++                "consequence",
++                "risk",
++                "conditions",
++            }
++            assert all(option[name].strip() for name in option)
+             ids.append(option["id"])
+             labels.append(option["label"])
+-        assert len(set(ids)) == len(ids), "dp3 candidate ids must be distinguishable"
+-        assert len(set(labels)) == len(labels), "dp3 candidate labels must be distinguishable"
+-    if dp == "dp25-signoff-conclusion":
+-        evidence = state["verification_evidence"]
+-        assert isinstance(evidence, dict) and set(evidence) == {"verified", "unverified"}
+-        assert isinstance(evidence["verified"], list) and isinstance(evidence["unverified"], list)
+-        assert evidence["verified"], "dp25 must record at least one verified item"
+-        assert evidence["unverified"], "dp25 must state the unverified items explicitly"
+-        assert "AC-" in state["delivery_goal"], "dp25 delivery_goal carries the acceptance ids"
+-
+-
+-def test_four_offline_cases_are_complete_and_contract_shaped():
++        assert len(set(ids)) == len(ids), "dp-auto candidate ids must be distinguishable"
++        assert len(set(labels)) == len(labels), "dp-auto candidate labels must be distinct"
++        assert all(len(label) <= 80 for label in labels)
++        # Free ids: the legacy contiguous cN scheme is history, not this contract.
++        assert ids != [f"c{index}" for index in range(1, len(ids) + 1)]
++        assert all(not re.fullmatch(r"c\d", candidate) for candidate in ids)
++    if dp == "dp-route":
++        assert set(material) == {"decision_actor", "decision_object", "question"}
++
++
++def _assert_evidence_points_at_the_material(dp: str, material: dict, book: dict) -> None:
++    """Every required material path has a ``path:line`` row inside the copy.
++
++    The recorded line must really carry the material text, so the provenance is
++    not a decorative reference: this test re-reads the generator source.
++    """
++    evidence = book["notes"]["evidence"]
++    required = decision_book.required_state_paths(dp)
++    optional = decision_book.optional_state_paths(dp)
++    assert set(required) <= set(evidence), f"{dp}: required evidence rows are missing"
++    assert set(evidence) <= set(required) | set(optional), f"{dp}: stray evidence rows"
++    generator_rel = "packages/multi-workers/scripts/build_decide_cases.py"
++    lines = GENERATOR_PATH.read_text(encoding="utf-8").splitlines()
++    for path, reference in evidence.items():
++        assert reference.startswith(generator_rel + ":"), (dp, path, reference)
++        line_number = int(reference.rsplit(":", 1)[1])
++        assert 1 <= line_number <= len(lines), reference
++        anchor = _material_anchor(_lookup_material(material, path))
++        assert anchor, f"{dp}.{path} has no text anchor"
++        assert anchor[:8] in lines[line_number - 1], (
++            f"{dp}.{path} evidence points at a line that does not carry the material"
++        )
++
++
++def test_eight_offline_cases_are_complete_schema3_and_contract_shaped():
+     module = _generator_module()
+-    assert set(CASE_FILES) == set(module.CASE_IDS), "the generator owns exactly four case ids"
++    assert set(CASE_FILES) == set(module.CASE_IDS), "the generator owns exactly eight case ids"
++    assert not set(module.CASE_IDS) & set(LEGACY_CASE_FILES), "no legacy id is generated"
+     cases = module.build_cases()
+     assert set(cases) == set(CASE_FILES)
+ 
+@@ -260,51 +408,57 @@
+ 
+         book = shell["book"]
+         assert set(book) <= set(decision_book.BOOK_TOP_LEVEL_KEYS)
+-        assert book["schema_version"] == decision_book.BOOK_SCHEMA_VERSION
++        assert book["schema_version"] == decision_book.BOOK_SCHEMA_VERSION == 3
+         assert book["decision_point"] == dp
+-        state = book["state"]
+-        assert isinstance(state, dict)
+-        _assert_case_materials(dp, state)
+-        _assert_no_placeholders(state, dp)
++        assert "state" not in book, "a schema-3 book never carries the legacy state shape"
++        material = book["material"]
++        preparation = book["preparation"]
++        meta = book["meta"]
++        assert isinstance(material, dict) and isinstance(preparation, dict)
++        _assert_case_materials(dp, material)
++        _assert_no_placeholders(material, dp)
++        _assert_no_placeholders(preparation, dp + ".preparation")
++
++        # Local identity: exact closed key set and the entry's real initiator role.
++        assert set(meta) == set(decision_book.META_KEYS)
++        assert all(isinstance(value, str) and value.strip() for value in meta.values())
++        assert not decision_points.role_issues(dp, meta["actor_role"]), dp
+ 
+         # Complete: every string leaf is real prose, not a skeleton value
+-        # (short candidate ids are keys, not material, so they are exempt).
+-        for path, text in _iter_texts(state, dp):
++        # (candidate ids are keys, not material, so they are exempt).
++        for path, text in _iter_texts(material, dp):
+             if path.endswith(".id"):
+                 assert text.strip(), f"{path} must carry a candidate id"
+                 continue
+             assert len(text.strip()) >= 8, f"{path} looks like a stub ({text!r})"
+ 
+-        # The title/note shell never enters the model state or the book.
++        # The title/note shell never enters the book.
+         serialised = json.dumps(book, ensure_ascii=False)
+         assert shell["title"] not in serialised
+         assert shell["note"] not in serialised
+ 
+-        # The existing no-truncation budget gate applies to the sent state.
+-        encoded = decision._encode_state(state)
++        # The existing no-truncation budget gate applies to the send payload.
++        payload = {
++            "material": decision_points.model_state_for(dp, material),
++            "preparation": preparation,
++        }
++        encoded = decision._encode_state(payload)
+         assert len(encoded) <= decision_points.MAX_STATE_BYTES, (
+-            f"{dp}: state is {len(encoded)} bytes, the existing budget is "
++            f"{dp}: send payload is {len(encoded)} bytes, the existing budget is "
+             f"{decision_points.MAX_STATE_BYTES}; shorten the material instead of truncating"
+         )
+ 
+-        # Evidence is named for every registry-declared state path (synthetic
+-        # provenance is a real, resolvable 'path:line' - never a scaffold
+-        # placeholder). Container fields are declared as leaf paths by the
+-        # registry, so the check follows the registry authority, not my guess.
+-        evidence = book.get("notes", {}).get("evidence", {})
+-        required_paths = decision_book.required_state_paths(dp)
+-        for path in required_paths:
+-            assert path in evidence, f"{dp}: notes.evidence.{path} is missing"
+-            _assert_no_placeholders(evidence[path], f"{dp}.notes.evidence.{path}")
+-        assert not decision_book.is_placeholder(evidence[required_paths[0]])
++        _assert_evidence_points_at_the_material(dp, material, book)
+         for field in DESIGN_STATE_FIELDS[dp]:
+             assert any(
+-                path == field or path.startswith(field + ".") for path in evidence
+-            ), f"{dp}: design §2 field {field!r} has no evidence entry"
+-
+-
+-def test_dp2_case_keeps_the_registry_question_vocabulary():
+-    point = decision_points.get_decision_point("dp2-checkpoint-split")
++                path == field or path.startswith(field + ".") for path in book["notes"]["evidence"]
++            ) or field in {"images_required"}, (
++                f"{dp}: design §2 field {field!r} has no evidence entry"
++            )
++
++
++def test_dp_pm_steer_case_keeps_the_registry_question_vocabulary():
++    point = decision_points.get_decision_point("dp-pm-steer")
+     questions = point.questions
+     assert [question["id"] for question in questions] == ["checkpoint_action"]
+     choices = list(questions[0]["choices"])
+@@ -312,23 +466,276 @@
+     assert "continue" not in choices
+     assert set(questions[0]["labels"]) == set(DP2_CHOICES)
+     assert "继续" in questions[0]["instructions"]
+-
+-
+-def test_four_cases_pass_the_offline_registry_typed_check():
+-    """Offline ``check_book`` (no credential, no model) accepts 4/4 cases.
+-
+-    This is the typed gate the observation path uses, run against the shipped
+-    case bytes with no credential snapshot (``redactor=None`` only has the
+-    heuristic scan). The real HTTP body/edit assertion still needs T01/T05 and
+-    remains a separate integration step.
++    # The case material keeps the original goal/requirements instead of narrowing
++    # them for the checkpoint decision.
++    material = _generator_module().build_case("dp-pm-steer")["book"]["material"]
++    assert material["task_goal"].startswith("给 mw decide monitor 增加旧记录只读筛选")
++    assert "不改其余入口的既有契约" in material["task_requirements"]
++
++
++def test_eight_cases_pass_the_offline_registry_typed_check():
++    """Offline ``check_book`` (no credential, no model) accepts 8/8 cases.
++
++    The gate runs with the *implementation copy* as its repository root, so the
++    ``path:line`` evidence resolves inside the copy and never against the live
++    tree. The real HTTP body/edit assertion still needs the monitor route
++    migration and remains a separate integration step.
+     """
+     module = _generator_module()
+     failures = {}
+     for dp, case in module.build_cases().items():
+-        issues = decision_book.check_book(case["book"], project_dir=ASSET_DIR)
++        issues = decision_book.check_book(case["book"], repo_root=REPO_ROOT)
+         if issues:
+             failures[dp] = [(issue.code, issue.path, issue.detail) for issue in issues]
+     assert failures == {}, failures
++
++
++def test_case_evidence_is_really_checked_and_resolves_inside_the_copy(tmp_path):
++    """The evidence gate is not vacuous: a wrong root really refuses the book."""
++    module = _generator_module()
++    cases = module.build_cases()
++    for dp, case in cases.items():
++        evidence = case["book"]["notes"]["evidence"]
++        for reference in evidence.values():
++            relative, _, line = reference.rpartition(":")
++            resolved = (REPO_ROOT / relative).resolve()
++            assert resolved.is_file(), reference
++            assert REPO_ROOT in resolved.parents
++            assert resolved == GENERATOR_PATH.resolve()
++            int(line)
++
++    empty_repo = tmp_path / "empty-repo"
++    empty_repo.mkdir()
++    issues = decision_book.check_book(
++        cases["dp-sign-key"]["book"], repo_root=empty_repo
++    )
++    paths = {issue.path for issue in issues}
++    assert "notes.evidence.delivery_goal" in paths, issues
++    assert any(issue.code == "book-evidence" for issue in issues)
++
++
++def test_each_case_prepares_a_real_basis_for_every_supported_choice():
++    """Every choice the material supports has exactly one prepared reason (D012A).
++
++    The model selects one of these items in the same call; the catalog is a
++    preparation input, so a failure reason, a probability or the PM note can
++    never impersonate it.
++    """
++    module = _generator_module()
++    for dp, case in module.build_cases().items():
++        book = case["book"]
++        material = book["material"]
++        preparation = book["preparation"]
++        meta = book["meta"]
++        assert set(preparation) == {"basis_catalog", "prepared_at"}
++        assert preparation["prepared_at"].endswith("+00:00")
++
++        legal = decision_points.resolve_entry_choices(dp, material)
++        assert legal, dp
++        supported = [
++            choice
++            for choice in legal
++            if not decision_points.entry_choice_issues(dp, choice, material)
++        ]
++        covered = {
++            choice for item in preparation["basis_catalog"] for choice in item["applies_to"]
++        }
++        assert covered == set(supported), dp
++        for item in preparation["basis_catalog"]:
++            assert set(item) == {"id", "text", "material_refs", "applies_to"}
++            assert item["material_refs"], dp
++            for choice in item["applies_to"]:
++                issues = decision_points.prepared_request_issues(
++                    dp,
++                    material,
++                    preparation,
++                    actor_role=meta["actor_role"],
++                    choice=choice,
++                    basis_id=item["id"],
++                )
++                assert issues == (), (dp, choice, issues)
++
++
++def test_dp_w_type_case_keeps_four_candidates_and_the_image_gate():
++    module = _generator_module()
++    case = module.build_case("dp-w-type")
++    material = case["book"]["material"]
++    point = decision_points.get_decision_point("dp-w-type")
++    assert list(point.questions[0]["choices"]) == ["coding", "research", "review", "vision"]
++    # The case states a real fact ("no image reading"); that is never a proof of
++    # image capability, so a vision dispatch stays refused by the hard gate.
++    assert material["images_required"] is False
++    assert decision_points.vision_dispatch_issues(material, "coding", "proven") == ()
++    vision = decision_points.vision_dispatch_issues(material, "vision", "proven")
++    assert ("vision", "requires images_required=true on the real dispatch material") in vision
++
++
++def test_dp_w_check_task_case_keeps_three_branches_and_needs_no_pm_wait():
++    module = _generator_module()
++    book = module.build_case("dp-w-check-task")["book"]
++    material = dict(book["material"])
++    point = decision_points.get_decision_point("dp-w-check-task")
++    assert list(point.questions[0]["choices"]) == ["continue", "terminate", "investigate"]
++
++    without_plan = dict(material)
++    without_plan.pop("investigation")
++    issues = decision_points.entry_choice_issues("dp-w-check-task", "investigate", without_plan)
++    assert ("investigation.unknown", "required by the investigate branch (bounded evidence plan)") in issues
++    for choice in ("continue", "terminate", "investigate"):
++        assert decision_points.entry_choice_issues("dp-w-check-task", choice, material) == ()
++    # fire-and-forget: no field asks the worker to block on a PM answer.
++    assert "等待" not in json.dumps(material, ensure_ascii=False)
++
++
++def test_dp_sigkey_qg_and_gate_entries_refuse_their_own_missing_branch_material():
++    """Branch-conditional material is required, never defaulted (AC-043)."""
++    module = _generator_module()
++    qg = dict(module.build_case("dp-QG")["book"]["material"])
++    reopen = decision_points.entry_choice_issues("dp-QG", "reopen", qg)
++    assert ("basis_issue", "required by reopen: name the substantive basis problem") in reopen
++
++    with_issue = dict(qg)
++    with_issue["basis_issue"] = "验收要求与设计正文冲突，需要重新确认口径。"
++    assert decision_points.entry_choice_issues("dp-QG", "reopen", with_issue) == ()
++    pass_with_issue = decision_points.entry_choice_issues("dp-QG", "pass", with_issue)
++    assert ("basis_issue", "pass cannot be combined with an unresolved basis problem") in pass_with_issue
++    assert decision_points.entry_choice_issues("dp-QG", "pass", qg) == ()
++
++    gate = dict(module.build_case("dp-gate-approve")["book"]["material"])
++    no_authority = json.loads(json.dumps(gate, ensure_ascii=False))
++    no_authority["pm_note"]["basis"].pop("authority")
++    gate_issues = decision_points.entry_material_issues("dp-gate-approve", no_authority)
++    assert ("pm_note.basis.authority", "must be a non-empty string") in gate_issues
++    # No default gate answer: a missing selection is refused, not approve.
++    assert decision_points.entry_choice_issues("dp-gate-approve", None, gate) == (
++        ("choice", "missing selection: no default candidate is applied"),
++    )
++
++
++def test_dp_sign_key_case_keeps_the_four_parts_and_three_arrays():
++    module = _generator_module()
++    book = module.build_case("dp-sign-key")["book"]
++    material = dict(book["material"])
++    assert set(material) == {
++        "delivery_goal",
++        "actual_completion",
++        "verification_evidence",
++        "unfinished_impact",
++    }
++    for choice in ("finalize", "continue", "user-confirm"):
++        assert decision_points.entry_choice_issues("dp-sign-key", choice, material) == ()
++
++    # AC-051: [] is the real "none"; null/missing can never be upgraded to it.
++    empty = json.loads(json.dumps(material, ensure_ascii=False))
++    empty["verification_evidence"]["verified"] = []
++    empty["verification_evidence"]["unverified"] = []
++    empty["unfinished_impact"] = []
++    assert decision_points.sign_key_material_issues(empty) == ()
++
++    nulled = json.loads(json.dumps(material, ensure_ascii=False))
++    nulled["verification_evidence"]["verified"] = None
++    paths = {path for path, _detail in decision_points.sign_key_material_issues(nulled)}
++    assert "verification_evidence.verified" in paths
++
++    missing = json.loads(json.dumps(material, ensure_ascii=False))
++    missing.pop("unfinished_impact")
++    paths = {path for path, _detail in decision_points.sign_key_material_issues(missing)}
++    assert "unfinished_impact" in paths
++
++
++def test_dp_auto_case_uses_free_form_pm_candidates_and_invents_nothing():
++    module = _generator_module()
++    case = module.build_case("dp-auto")
++    book = case["book"]
++    material = book["material"]
++    candidates = material["handling_options"]
++    prepared = [candidate["id"] for candidate in candidates]
++
++    # The registry-derived enum *is* the prepared set (no second candidate copy).
++    assert decision_points.resolve_entry_choices("dp-auto", material) == tuple(prepared)
++    assert "dynamic_choices" not in json.dumps(material, ensure_ascii=False)
++    assert case["questions"] == decision_points.questions_map("dp-auto")
++
++    for candidate in prepared:
++        issues = decision_points.prepared_request_issues(
++            "dp-auto",
++            material,
++            book["preparation"],
++            actor_role=book["meta"]["actor_role"],
++            choice=candidate,
++            basis_id=next(
++                item["id"]
++                for item in book["preparation"]["basis_catalog"]
++                if candidate in item["applies_to"]
++            ),
++        )
++        assert issues == (), (candidate, issues)
++
++    invented = decision_points.entry_choice_issues("dp-auto", "c1", material)
++    assert ("choice", "must be one of the 3 legal ids of dp-auto; invented or retired ids are refused") in invented
++
++    single = json.loads(json.dumps(material, ensure_ascii=False))
++    single["handling_options"] = single["handling_options"][:1]
++    assert decision_points.entry_choice_issues("dp-auto", prepared[0], single)
++
++
++def test_dp_route_case_routes_to_the_other_seven_entries_without_authorising():
++    module = _generator_module()
++    book = module.build_case("dp-route")["book"]
++    material = book["material"]
++    point = decision_points.get_decision_point("dp-route")
++    targets = list(point.questions[0]["choices"])
++    assert targets == [
++        "dp-w-type",
++        "dp-pm-steer",
++        "dp-w-check-task",
++        "dp-QG",
++        "dp-gate-approve",
++        "dp-sign-key",
++        "dp-auto",
++    ]
++    assert "dp-route" not in targets
++    assert decision_points.resolve_entry_choices("dp-route", material) == tuple(targets)
++
++    for target in targets:
++        basis = next(
++            item["id"] for item in book["preparation"]["basis_catalog"] if target in item["applies_to"]
++        )
++        issues = decision_points.prepared_request_issues(
++            "dp-route",
++            material,
++            book["preparation"],
++            actor_role=book["meta"]["actor_role"],
++            choice=target,
++            basis_id=basis,
++        )
++        assert issues == (), (target, issues)
++
++    # Routing to itself is refused, and the material is only the routing fact:
++    # it carries no business conclusion, no release and no action field.
++    assert decision_points.entry_choice_issues("dp-route", "dp-route", material) == (
++        ("choice", "must be one of the 7 legal ids of dp-route; invented or retired ids are refused"),
++        ("choice", "dp-route may not route to itself"),
++    )
++    assert set(material) == {"decision_actor", "decision_object", "question"}
++
++
++def test_generator_refuses_retired_ids_and_never_writes_legacy_cases(tmp_path, monkeypatch):
++    module = _generator_module()
++    assert set(module.LEGACY_CASE_IDS) == set(LEGACY_CASE_FILES)
++    assert "dp1.json" not in set(module.CASE_IDS.values())
++    for legacy_dp in LEGACY_CASE_FILES:
++        with pytest.raises(SystemExit):
++            module.build_case(legacy_dp)
++
++    out = tmp_path / "cases"
++    monkeypatch.setitem(module.CASE_IDS, "dp1-dispatch-type", "dp1.json")
++    with pytest.raises(SystemExit) as excinfo:
++        module.build_case("dp1-dispatch-type")
++    assert "retired" in str(excinfo.value)
++    with pytest.raises(SystemExit):
++        module.write_cases(out)
++    assert not (out / "dp1.json").exists(), "a legacy case file is never written"
+ 
+ 
+ def test_shipped_cases_match_the_offline_generator(tmp_path):
+@@ -336,6 +743,7 @@
+     out = tmp_path / "cases"
+     written = module.write_cases(out)
+     assert sorted(path.name for path in written) == sorted(CASE_FILES.values())
++    assert not set(path.name for path in out.glob("*.json")) & set(LEGACY_CASE_FILES.values())
+     for dp, name in CASE_FILES.items():
+         shipped = CASES_DIR / name
+         assert shipped.is_file(), f"missing shipped case {shipped}"
+@@ -344,7 +752,78 @@
+             f"{name} drifted from the offline generator; regenerate with "
+             "'python scripts/build_decide_cases.py' (offline, no model, no credential)"
+         )
+-        json.loads(shipped.read_text(encoding="utf-8"))
++        assert json.loads(shipped.read_text(encoding="utf-8"))["dp"] == dp
++
++
++def test_each_entry_refuses_missing_material_without_defaulting():
++    """All eight entries block on missing/wrong material and on a wrong basis.
++
++    The case layer proves the failure side of AC-043 without a live service:
++    a missing required fact, a wrong type and a basis that does not apply are
++    each refused, and a missing selection is never defaulted to the first
++    candidate or to approve.
++    """
++    module = _generator_module()
++    for dp in CASE_FILES:
++        case = module.build_case(dp)
++        material = json.loads(json.dumps(case["book"]["material"], ensure_ascii=False))
++        required = decision_book.required_state_paths(dp)
++        first = required[0]
++        parts = first.split(".")
++        holder = material
++        for part in parts[:-1]:
++            holder = holder[part]
++        holder.pop(parts[-1])
++        issues = decision_points.entry_material_issues(dp, material)
++        assert (first, "missing or blank (input-incomplete)") in issues, (dp, issues)
++        assert decision_points.entry_choice_issues(dp, None, material) == (
++            ("choice", "missing selection: no default candidate is applied"),
++        ), dp
++
++        wrong_type = json.loads(json.dumps(case["book"]["material"], ensure_ascii=False))
++        holder = wrong_type
++        for part in parts[:-1]:
++            holder = holder[part]
++        holder[parts[-1]] = 5
++        type_issues = dict(decision_points.entry_material_issues(dp, wrong_type))
++        assert type_issues.get(first) == "expected string, got int", (dp, type_issues)
++
++        preparation = case["book"]["preparation"]
++        item = preparation["basis_catalog"][0]
++        legal = decision_points.resolve_entry_choices(dp, case["book"]["material"])
++        other = [choice for choice in legal if choice not in item["applies_to"]]
++        if other:
++            selection = decision_points.basis_selection_issues(
++                item["id"], preparation["basis_catalog"], other[0]
++            )
++            assert ("basis_id", "does not apply to the selected choice") in selection, dp
++
++
++def test_legacy_cases_stay_byte_identical_read_only_history():
++    # The 25 retired ids are refused at this face too: no generation, no alias.
++    retired_ids = [entry["id"] for entry in decision_points.registry_snapshot()["retired"]]
++    assert len(retired_ids) == 25
++    module = _generator_module()
++    for retired_id in retired_ids:
++        assert retired_id not in module.CASE_IDS
++        with pytest.raises(SystemExit):
++            module.build_case(retired_id)
++
++    for name, sha256 in LEGACY_CASE_SHA256.items():
++        shipped = CASES_DIR / name
++        assert shipped.is_file(), f"missing legacy case {shipped}"
++        assert hashlib.sha256(shipped.read_bytes()).hexdigest() == sha256, (
++            f"{name} is read-only history and must never change; the eight-case "
++            "generator writes only the eight active entries"
++        )
++        # The legacy book is refused by the schema-3 gate before any material is
++        # parsed: the old ``state`` shape and the retired id are both hard stops.
++        book = json.loads(shipped.read_text(encoding="utf-8"))["book"]
++        issues = decision_book.check_book(book, repo_root=REPO_ROOT)
++        assert issues, name
++        assert any(issue.code == "book-schema" for issue in issues), name
++        detail = " ".join(issue.detail for issue in issues)
++        assert "retired" in detail or "legacy book contract" in detail, name
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -380,12 +859,12 @@
+         status, _headers, payload, raw = _get(instance, "/api/test/cases", token=token)
+         assert status == 200, payload
+         cases = payload["data"]["cases"]
+-        assert [case["dp"] for case in cases] == list(CASE_FILES)
++        assert [case["dp"] for case in cases] == list(LEGACY_CASE_FILES)
+         assert payload["data"]["case_version"] == 1
+         assert payload["data"]["source"] == "offline"
+         for case in cases:
+             assert set(case) == {"dp", "title", "note", "book", "questions", "sha256", "bytes"}
+-            shipped = json.loads((CASES_DIR / CASE_FILES[case["dp"]]).read_text(encoding="utf-8"))
++            shipped = json.loads((CASES_DIR / LEGACY_CASE_FILES[case["dp"]]).read_text(encoding="utf-8"))
+             assert case["book"] == shipped["book"]
+             assert case["questions"] == shipped["questions"]
+             assert case["title"] == shipped["title"]
+@@ -528,7 +1007,7 @@
+         status, _headers, listing, _raw = _get(instance, "/api/test/cases", token=token)
+         assert status == 200, listing
+         cases = {case["dp"]: case for case in listing["data"]["cases"]}
+-        assert set(cases) == set(CASE_FILES)
++        assert set(cases) == set(LEGACY_CASE_FILES)
+ 
+         for dp, (field, edited_value) in EDITS.items():
+             case = json.loads(json.dumps(cases[dp], ensure_ascii=False))
+@@ -563,7 +1042,7 @@
+             assert data["state_digest"] != decision_book.state_digest(
+                 decision_points.get_decision_point(dp).build_state(
+                     decision_points.Trigger.from_mapping(
+-                        dict(json.loads((CASES_DIR / CASE_FILES[dp]).read_text(encoding="utf-8"))["book"]["state"])
++                        dict(json.loads((CASES_DIR / LEGACY_CASE_FILES[dp]).read_text(encoding="utf-8"))["book"]["state"])
+                     )
+                 )
+             ), "the edited field must change the reviewed digest"
+@@ -572,9 +1051,9 @@
+ 
+ 
+ def test_case_loader_refuses_unknown_ids_traversal_and_symlinks(tmp_path):
+-    assert set(decision_monitor.CASE_IDS) == set(CASE_FILES)
++    assert set(decision_monitor.CASE_IDS) == set(LEGACY_CASE_FILES)
+     assert pathlib.Path(decision_monitor.DECIDE_CASES_DIR).resolve() == CASES_DIR.resolve()
+-    for dp, name in CASE_FILES.items():
++    for dp, name in LEGACY_CASE_FILES.items():
+         assert decision_monitor.CASE_IDS[dp] == name
+ 
+     for bad in ("dp4-failure-handling", "", "../dp1-dispatch-type", "dp1-dispatch-type/../../x", SECRET):
+@@ -714,7 +1193,7 @@
+         # facets: the whole snapshot universe, forwarded from the T06 object.
+         assert set(data["facets"]) == {"keys", "dps"}
+         assert set(data["facets"]["keys"]) == {"mw-alpha", "mw-beta", "mw-gamma", "mw-delta"}
+-        assert set(data["facets"]["dps"]) == set(CASE_FILES)
++        assert set(data["facets"]["dps"]) == set(LEGACY_CASE_FILES)
+ 
+         workbench_keys = {
+             "record_version",
+@@ -1634,7 +2113,7 @@
+     assert any(call["url"] == "/api/dps" for call in loaded["fetchCalls"])
+ 
+     cases = _snapshot(result, "cases")
+-    assert [option["value"] for option in cases["caseOptions"]] == ["", *CASE_FILES]
++    assert [option["value"] for option in cases["caseOptions"]] == ["", *LEGACY_CASE_FILES]
+     assert "4" in (cases["caseStatus"] or "")
+ 
+     opened = _snapshot(result, "opened")

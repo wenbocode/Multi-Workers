@@ -1,0 +1,119 @@
+{
+  "observed_at": "2026-10-28T07:22:46.392704+00:00",
+  "source": "agent-report",
+  "role": "coding",
+  "stage": "C-verification-preparation",
+  "note": "Digest/bytes/lines manifest for every file this stage delivered. The manifest excludes itself (a file cannot contain its own digest); its own digest is reported in the final worker reply. No product, test, predecessor artifact or OS path outside this stage's face is listed because none was written.",
+  "counts": {
+    "delivered_files": 13,
+    "own_scripts": 6,
+    "check_logs": 6,
+    "reports": 2
+  },
+  "files": [
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/run_pm_tests.py",
+      "role": "stage-C PM runner (not executed by this worker)",
+      "bytes": 55026,
+      "lines": 1352,
+      "crlf": 0,
+      "sha256": "2e6db8d2a0382f47f2b9aa4b9eb5d40556ed3a1848ba81e46a16cb0fe949adc9"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/sitecustomize.py",
+      "role": "child-side guard (sentinel with child label/ppid, egress + subprocess refusal, fail-closed exit 86)",
+      "bytes": 8902,
+      "lines": 262,
+      "crlf": 0,
+      "sha256": "34a7fb04db4506250211f63870e4c54b7cb769547ac11bfe99cf306a4f90e94d"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/guard_preflight.py",
+      "role": "in-child guard self-control (DNS/TCP/UDP/HTTP, non-python, -B/-S/-I/-E/env/shell)",
+      "bytes": 6255,
+      "lines": 173,
+      "crlf": 0,
+      "sha256": "6515a78ea8bef8e76ecef815c7087f91231dd7a100e892a86638d73b79ec9bb2"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/probe_imports.py",
+      "role": "import-provenance probe (isolated tree, -B, inside_packages_dir)",
+      "bytes": 3483,
+      "lines": 104,
+      "crlf": 0,
+      "sha256": "f2ff1a7bf5f5b7f48f124cd1812d79c5101acc002b64c2c9656dd655179665cb"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/test_t10_r2_boundaries.py",
+      "role": "independent boundary suite (12 functions / 16 items on Windows)",
+      "bytes": 33533,
+      "lines": 856,
+      "crlf": 0,
+      "sha256": "5abd812bf5f496ae37b91888f7cb9dc90f31b0290eefd2a1f454bf30bd90f771"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/static_verify.py",
+      "role": "pure AST/text verifier (no product/test import)",
+      "bytes": 25622,
+      "lines": 649,
+      "crlf": 0,
+      "sha256": "2241916b1f35fbc24557f780d8bc6425d0cdb218598cc0e1a1a3b82c64f978e1"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/checks/static_verify.result.json",
+      "role": "machine verifier result (ok=true, 67 checks, problems=[])",
+      "bytes": 19704,
+      "lines": 619,
+      "crlf": 0,
+      "sha256": "e2768ebd7cf9f82255a017901dd4f3308d02af814ebc14c35eb9dc3a54af84b2"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/checks/read-audit.json",
+      "role": "per-file bytes/LF/logical lines/sha256/read-range record",
+      "bytes": 9241,
+      "lines": 234,
+      "crlf": 0,
+      "sha256": "1d39e24b43c6a20d032391a947befc14de998ff7d8901887a3bf4a6ae9c93dc0"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/checks/static_verify.stdout",
+      "role": "verifier stdout, verbatim",
+      "bytes": 385,
+      "lines": 13,
+      "crlf": 0,
+      "sha256": "1b8156eec7b1df96a53795bbd7666d51d88cd30882f9a7e8b7b20e16103c8a64"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/checks/static_verify.stderr",
+      "role": "verifier stderr, empty",
+      "bytes": 0,
+      "lines": 0,
+      "crlf": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/checks/static_verify.rc",
+      "role": "verifier exit code 0",
+      "bytes": 2,
+      "lines": 1,
+      "crlf": 0,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/report.md",
+      "role": "stage report (five sections)",
+      "bytes": 28027,
+      "lines": 374,
+      "crlf": 0,
+      "sha256": "54ae24453390220db39a92caf4672881df0dfd73c19d5c61de04c0591753628d"
+    },
+    {
+      "file": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/verification-preparation/output.md",
+      "role": "byte-identical delivery copy of report.md",
+      "bytes": 28027,
+      "lines": 374,
+      "crlf": 0,
+      "sha256": "54ae24453390220db39a92caf4672881df0dfd73c19d5c61de04c0591753628d"
+    }
+  ]
+}

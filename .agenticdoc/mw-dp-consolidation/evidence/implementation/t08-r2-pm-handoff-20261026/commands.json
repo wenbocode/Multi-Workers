@@ -1,0 +1,36 @@
+[
+  {
+    "label": "pm-bootstrap",
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-B",
+      "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t08-r2-pm-handoff-20261026\\bootstrap.py",
+      "tests"
+    ],
+    "rc": 0
+  },
+  {
+    "label": "pm-literal",
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-B",
+      "-m",
+      "pytest",
+      "-p",
+      "no:cacheprovider",
+      "-q",
+      "test_dp_consolidation_materials.py"
+    ],
+    "rc": 0
+  },
+  {
+    "label": "pm-probe",
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-B",
+      "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t08-r2-pm-handoff-20261026\\bootstrap.py",
+      "probes"
+    ],
+    "rc": 0
+  }
+]

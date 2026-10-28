@@ -1,0 +1,59 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T13:42:54.377717+00:00",
+  "new_task": "dpc-t05-eight-cases-r2-envelope",
+  "new_run_id": "dpc-t05-eight-cases-r2-envelope@2026-10-27T13:40:49.191Z",
+  "new_pid": 93992,
+  "actual_status": "running",
+  "new_card_sha256": "49ebb4b47c610493632647c386e0c7f3feee1805924a83736a321584dd52394d",
+  "new_seed_header_all_12_exact_entries": true,
+  "seed_card_label_omits_isolated_preserved_not_repaired": true,
+  "seed_full_body_and_7_envelope_sections_verified": true,
+  "original_terminals_T05_T10_bad_R2_done_exit0_acked": true,
+  "bad_R2_blocked_not_successful_business_handoff": true,
+  "dag_only_T05_T10_local_metadata_changed": true,
+  "logical_tasks": 36,
+  "stages": 7,
+  "all_original_contract_fields_preserved": true,
+  "original_evidence_and_histories": {
+    "original-T05-evidence": {
+      "original_file_count": 450,
+      "all_original_bytes_preserved": true,
+      "new_files": []
+    },
+    "original-T05-worker-history": {
+      "original_file_count": 5,
+      "all_original_bytes_preserved": true,
+      "new_files": []
+    },
+    "blocked-R2-worker-history": {
+      "original_file_count": 6,
+      "all_original_bytes_preserved": true,
+      "new_files": []
+    },
+    "T10-worker-history": {
+      "original_file_count": 5,
+      "all_original_bytes_preserved": true,
+      "new_files": []
+    },
+    "T10-evidence": {
+      "original_file_count": 79,
+      "all_original_bytes_preserved": true,
+      "new_files": []
+    },
+    "PM-original-handoff": {
+      "original_file_count": 32,
+      "all_original_bytes_preserved": true,
+      "new_files": []
+    }
+  },
+  "mirror_file_count": 1891,
+  "current_vs_pre_changes": [],
+  "outside_new_T05_product_face": [],
+  "T10_5_products_preserved": true,
+  "pyc_14_this_round_unchanged_prior_1_drift_not_erased": true,
+  "S2_closed": false,
+  "T10_independent_semantic_handoff": false,
+  "T05_independent_semantic_handoff": false,
+  "no_overall_L2_QG_signoff_or_deployment_claim": true
+}

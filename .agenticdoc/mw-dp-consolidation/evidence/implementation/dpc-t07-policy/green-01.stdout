@@ -1,0 +1,85 @@
+......F..............F......F..                                          [100%]
+================================== FAILURES ===================================
+___________ test_revoked_and_out_of_scope_authority_blocks_release ____________
+
+    def test_revoked_and_out_of_scope_authority_blocks_release():
+        project = _new_project("revoked")
+        load = _load(project, _policy_doc())
+    
+        writer = FixtureAuthorityWriter(project)
+        revoked, issues = writer.grant("grant-dpc-t07", ["key:dpc-t07"], revoked=True)
+        assert issues == ()
+        verdict = policy_mod.evaluate_gate(
+            load,
+            choice="approve",
+            hard_checks={"claim": True},
+            automation_enabled=True,
+            required_scope=("key:dpc-t07",),
+            authority_source=_source([revoked]),
+            trusted_writers=TRUSTED_WRITERS,
+        )
+        assert not verdict.allowed
+        assert "authority-revoked" in _codes(verdict.reasons)
+    
+        narrow = _grants(project, **{"grant-narrow": ["key:dpc-other"]})
+        scoped = policy_mod.evaluate_gate(
+            load,
+            choice="approve",
+            hard_checks={"claim": True},
+            automation_enabled=True,
+            required_scope=("key:dpc-t07",),
+            authority_source=narrow,
+            trusted_writers=TRUSTED_WRITERS,
+        )
+        assert not scoped.allowed
+>       assert "authority-scope-uncovered" in _codes(scoped.reasons)
+E       AssertionError: assert 'authority-scope-uncovered' in ('authority-unresolved',)
+E        +  where ('authority-unresolved',) = _codes((PolicyIssue(code='authority-unresolved', field='grant-dpc-t07', detail='no record was produced by a controlled writer'),))
+E        +    where (PolicyIssue(code='authority-unresolved', field='grant-dpc-t07', detail='no record was produced by a controlled writer'),) = GateVerdict(allowed=False, release_scope=(), follow_up=None, project_closed=False, reasons=(PolicyIssue(code='authority-unresolved', field='grant-dpc-t07', detail='no record was produced by a controlled writer'),)).reasons
+
+test_dp_consolidation_recovery.py:455: AssertionError
+______ test_user_stop_and_hard_guard_cannot_be_lifted_by_a_technical_fix ______
+
+    def test_user_stop_and_hard_guard_cannot_be_lifted_by_a_technical_fix():
+        project = _new_project("userstop")
+        load = _load(project, _policy_doc())
+        source = _full_grants(project)
+    
+        user_stop = policy_mod.evaluate_halted_recovery(
+            load,
+            request=dict(HALTED_OK, halt_origin="user-stop"),
+            usage={"round": 1},
+            authority_source=source,
+            trusted_writers=TRUSTED_WRITERS,
+        )
+        assert not user_stop.allowed
+>       assert "user-stop-requires-explicit-authorization" in _codes(user_stop.reasons)
+E       AssertionError: assert 'user-stop-requires-explicit-authorization' in ('authority-scope-uncovered',)
+E        +  where ('authority-scope-uncovered',) = _codes((PolicyIssue(code='authority-scope-uncovered', field='grant-recovery', detail='not covered: recovery:user-stop'),))
+E        +    where (PolicyIssue(code='authority-scope-uncovered', field='grant-recovery', detail='not covered: recovery:user-stop'),) = RecoveryVerdict(allowed=False, scope=(), observation_conditions=(), stop_conditions=(), preserved_facts=('worker wrote...ons=(PolicyIssue(code='authority-scope-uncovered', field='grant-recovery', detail='not covered: recovery:user-stop'),)).reasons
+
+test_dp_consolidation_recovery.py:1115: AssertionError
+_________ test_module_is_pure_and_imports_no_cli_conductor_or_config __________
+
+    def test_module_is_pure_and_imports_no_cli_conductor_or_config():
+        source = (PACKAGE_ROOT / "decision_policy.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.split(".")[0])
+>       assert imported <= {"json", "pathlib", "dataclasses", "collections", "typing"}, imported
+E       AssertionError: {'__future__', 'collections', 'dataclasses', 'json', 'pathlib'}
+E       assert {'__future__'...n', 'pathlib'} <= {'collections...ib', 'typing'}
+E         
+E         Extra items in the left set:
+E         '__future__'
+
+test_dp_consolidation_recovery.py:1443: AssertionError
+=========================== short test summary info ===========================
+FAILED test_dp_consolidation_recovery.py::test_revoked_and_out_of_scope_authority_blocks_release
+FAILED test_dp_consolidation_recovery.py::test_user_stop_and_hard_guard_cannot_be_lifted_by_a_technical_fix
+FAILED test_dp_consolidation_recovery.py::test_module_is_pure_and_imports_no_cli_conductor_or_config
+3 failed, 28 passed in 0.27s

@@ -1,0 +1,11 @@
+# label: adjacent-wide-final
+# cwd: packages/multi-workers
+# HOME/USERPROFILE: C:\Users\WENBOZ~1\AppData\Local\Temp\t05f-home-f14wyypr
+# command: C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\python.exe -m pytest test_decision_points.py test_decision_wire_transport.py test_decision_context.py test_decide.py test_decide_cli.py test_decide_dp_cli.py -q
+# exit: 0
+........................................................................ [ 24%]
+........................................................................ [ 48%]
+........................................................................ [ 73%]
+........................................................................ [ 97%]
+.......                                                                  [100%]
+295 passed in 25.25s

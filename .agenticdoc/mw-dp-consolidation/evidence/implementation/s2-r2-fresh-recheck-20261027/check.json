@@ -1,0 +1,44 @@
+{
+  "observed_at": "2026-10-27T03:51:08.699315+00:00",
+  "source": "agent-report",
+  "commands": [
+    {
+      "task": "T06",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "-m",
+        "pytest",
+        "-p",
+        "no:cacheprovider",
+        "-q",
+        "test_dp_consolidation_concurrency.py"
+      ],
+      "rc": 0,
+      "expected_passed": 73
+    },
+    {
+      "task": "T07",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "-m",
+        "pytest",
+        "-p",
+        "no:cacheprovider",
+        "-q",
+        "test_dp_consolidation_recovery.py"
+      ],
+      "rc": 0,
+      "expected_passed": 35
+    }
+  ],
+  "mirror_files": 1883,
+  "verification_net_changes": [],
+  "product_hashes": {
+    "packages/multi-workers/decision_policy.py": "77a9282fb8e7cbcd5ec6ffcea8cf2ded73e16f87a06a7808f6ef6d14e06c259c",
+    "packages/multi-workers/decision_validity.py": "cf01bbe2aa15b1794cd5868c49897f7b4616e8f17ab11dbbb92cc6b145ef5d51",
+    "packages/multi-workers/test_dp_consolidation_concurrency.py": "7e9dcb2bc407d724e6f56ab9ae2001d62d4ac5e4e3fc85d335a8844936a6db1b",
+    "packages/multi-workers/test_dp_consolidation_recovery.py": "3947d05db48887ac15df9a7ab5cfe58492e1e017497d0c9d603c5dde4cd94761"
+  }
+}

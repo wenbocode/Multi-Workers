@@ -1,0 +1,22 @@
+﻿Checked 0 files in 5ms. No fixes applied.
+node.exe : check 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+所在位置 行:1 字符: 1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (check 鈹佲攣鈹佲攣鈹佲攣...鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+  脳 No files were processed in the specified paths.
+  
+  i Check your biome.json or biome.jsonc to ensure the paths are not ignored by the configuration.
+  
+  i These paths were provided but ignored:
+  
+  - packages/multi-workers/decision_wire.py
+  - packages/multi-workers/mw_common.py
+  - packages/multi-workers/test_decision_wire_store.py
+  - packages/multi-workers/test_decision_roots_locks.py
+  
+

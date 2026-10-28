@@ -1,0 +1,10 @@
+{
+  "before_test_functions": 28,
+  "after_test_functions": 30,
+  "original_28_AST_source_locations_exact": true,
+  "file_old_bytes_exact_prefix": true,
+  "added_test_functions": [
+    "test_case_prepared_at_is_a_recorded_past_instant_with_explicit_zone",
+    "test_shipped_book_template_is_the_native_eight_entry_scaffold"
+  ]
+}

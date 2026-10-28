@@ -1,0 +1,4 @@
+python
+-X
+utf8
+.agenticdoc/mw-decision-context/evidence/pm-stable-verify.py

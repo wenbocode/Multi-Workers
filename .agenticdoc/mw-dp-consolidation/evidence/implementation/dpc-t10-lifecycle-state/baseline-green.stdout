@@ -1,0 +1,252 @@
+..............................................................FF........ [ 85%]
+FFF..F......                                                             [100%]
+================================== FAILURES ===================================
+____________ test_real_start_and_settled_snapshots_survive_history ____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/baseline-green/pytest-basetemp/test_real_start_and_settled_sn0')
+
+    def test_real_start_and_settled_snapshots_survive_history(tmp_path):
+        before=state("not-queued",source="worker-registry")
+        after=state("pending",source="worker-registry",completed=[],remaining=["worker start"],blockers=[])
+>       root,record=_record(tmp_path,before=before,after=after)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_task_state.py:59: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+test_decision_task_state.py:37: in _record
+    decision_id=backend._append_archive(root,dp=backend.DP1,trigger_id="t22",authority="advisory",escalated_reason=None,confidence=0.94)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test_decision_context_readable_backend.py:274: in _append_archive
+    questions_version=dpts.get_decision_point(dp).questions_version,
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decision_points.py:1384: in get_decision_point
+    return require_active_dp(dp_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+dp_id = 'dp1-dispatch-type'
+
+    def require_active_dp(dp_id: str) -> DecisionPoint:
+        """Resolve one active entry; a retired id is refused with its own contract.
+    
+        This is the first check of every request entry point: it runs before any
+        replay lookup, backend resolution, credential snapshot, archive row or
+        executor, so a retired id cannot produce a model call, a business action or
+        a new valid decision. The refusal names the disposition only and never maps
+        the old id to its successor, because that mapping would be an alias.
+        """
+        record = _RETIRED_BY_ID.get(dp_id) if isinstance(dp_id, str) else None
+        if record is not None:
+>           raise decision.DecisionInputError(
+                f"retired decision point id {dp_id!r} ({record.disposition}): "
+                "not callable; old ids are read-only history, not aliases"
+            )
+E           decision.DecisionInputError: retired decision point id 'dp1-dispatch-type' (migrated): not callable; old ids are read-only history, not aliases
+
+decision_points.py:1367: DecisionInputError
+_____________ test_no_snapshot_is_not_inferred_from_ok_or_rework ______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/baseline-green/pytest-basetemp/test_no_snapshot_is_not_inferr0')
+
+    def test_no_snapshot_is_not_inferred_from_ok_or_rework(tmp_path):
+>       _,record=_record(tmp_path,outcome="rework")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_task_state.py:68: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+test_decision_task_state.py:37: in _record
+    decision_id=backend._append_archive(root,dp=backend.DP1,trigger_id="t22",authority="advisory",escalated_reason=None,confidence=0.94)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test_decision_context_readable_backend.py:274: in _append_archive
+    questions_version=dpts.get_decision_point(dp).questions_version,
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decision_points.py:1384: in get_decision_point
+    return require_active_dp(dp_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+dp_id = 'dp1-dispatch-type'
+
+    def require_active_dp(dp_id: str) -> DecisionPoint:
+        """Resolve one active entry; a retired id is refused with its own contract.
+    
+        This is the first check of every request entry point: it runs before any
+        replay lookup, backend resolution, credential snapshot, archive row or
+        executor, so a retired id cannot produce a model call, a business action or
+        a new valid decision. The refusal names the disposition only and never maps
+        the old id to its successor, because that mapping would be an alias.
+        """
+        record = _RETIRED_BY_ID.get(dp_id) if isinstance(dp_id, str) else None
+        if record is not None:
+>           raise decision.DecisionInputError(
+                f"retired decision point id {dp_id!r} ({record.disposition}): "
+                "not callable; old ids are read-only history, not aliases"
+            )
+E           decision.DecisionInputError: retired decision point id 'dp1-dispatch-type' (migrated): not callable; old ids are read-only history, not aliases
+
+decision_points.py:1367: DecisionInputError
+_________ test_write_and_read_redaction_cover_snapshot_lists_and_keys _________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/baseline-green/pytest-basetemp/test_write_and_read_redaction_0')
+
+    def test_write_and_read_redaction_cover_snapshot_lists_and_keys(tmp_path):
+        before=state(completed=[backend.SECRET+" t22-private-progress"],remaining=[],blockers=[])
+>       root,record=_record(tmp_path,before=before,after=state("unknown"))
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_task_state.py:92: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+test_decision_task_state.py:37: in _record
+    decision_id=backend._append_archive(root,dp=backend.DP1,trigger_id="t22",authority="advisory",escalated_reason=None,confidence=0.94)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test_decision_context_readable_backend.py:274: in _append_archive
+    questions_version=dpts.get_decision_point(dp).questions_version,
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decision_points.py:1384: in get_decision_point
+    return require_active_dp(dp_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+dp_id = 'dp1-dispatch-type'
+
+    def require_active_dp(dp_id: str) -> DecisionPoint:
+        """Resolve one active entry; a retired id is refused with its own contract.
+    
+        This is the first check of every request entry point: it runs before any
+        replay lookup, backend resolution, credential snapshot, archive row or
+        executor, so a retired id cannot produce a model call, a business action or
+        a new valid decision. The refusal names the disposition only and never maps
+        the old id to its successor, because that mapping would be an alias.
+        """
+        record = _RETIRED_BY_ID.get(dp_id) if isinstance(dp_id, str) else None
+        if record is not None:
+>           raise decision.DecisionInputError(
+                f"retired decision point id {dp_id!r} ({record.disposition}): "
+                "not callable; old ids are read-only history, not aliases"
+            )
+E           decision.DecisionInputError: retired decision point id 'dp1-dispatch-type' (migrated): not callable; old ids are read-only history, not aliases
+
+decision_points.py:1367: DecisionInputError
+____________ test_reader_without_redactor_withholds_snapshot_prose ____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/baseline-green/pytest-basetemp/test_reader_without_redactor_w0')
+
+    def test_reader_without_redactor_withholds_snapshot_prose(tmp_path):
+>       root,record=_record(tmp_path,before=state(completed=["private step"]),after=state())
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_task_state.py:102: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+test_decision_task_state.py:37: in _record
+    decision_id=backend._append_archive(root,dp=backend.DP1,trigger_id="t22",authority="advisory",escalated_reason=None,confidence=0.94)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test_decision_context_readable_backend.py:274: in _append_archive
+    questions_version=dpts.get_decision_point(dp).questions_version,
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decision_points.py:1384: in get_decision_point
+    return require_active_dp(dp_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+dp_id = 'dp1-dispatch-type'
+
+    def require_active_dp(dp_id: str) -> DecisionPoint:
+        """Resolve one active entry; a retired id is refused with its own contract.
+    
+        This is the first check of every request entry point: it runs before any
+        replay lookup, backend resolution, credential snapshot, archive row or
+        executor, so a retired id cannot produce a model call, a business action or
+        a new valid decision. The refusal names the disposition only and never maps
+        the old id to its successor, because that mapping would be an alias.
+        """
+        record = _RETIRED_BY_ID.get(dp_id) if isinstance(dp_id, str) else None
+        if record is not None:
+>           raise decision.DecisionInputError(
+                f"retired decision point id {dp_id!r} ({record.disposition}): "
+                "not callable; old ids are read-only history, not aliases"
+            )
+E           decision.DecisionInputError: retired decision point id 'dp1-dispatch-type' (migrated): not callable; old ids are read-only history, not aliases
+
+decision_points.py:1367: DecisionInputError
+_ test_real_cli_freezes_before_locally_and_passes_only_material_to_decision_boundary _
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/baseline-green/pytest-basetemp/test_real_cli_freezes_before_l0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000272689C0100>
+capsys = <_pytest.capture.CaptureFixture object at 0x0000027266E05E80>
+
+    def test_real_cli_freezes_before_locally_and_passes_only_material_to_decision_boundary(tmp_path, monkeypatch, capsys):
+        root=backend._root(tmp_path);store=backend._store(root);meta=_meta(state(completed=[backend.SECRET+" synthetic progress"]))
+        material={"task_goal":"synthetic", "task_requirements":"synthetic", "task_deliverables":"synthetic"}
+        monkeypatch.setattr(mw.sys,"stdin",io.StringIO(json.dumps(meta.as_envelope(material))))
+        monkeypatch.setattr(mw,"_decide_config_snapshot",lambda root:object())
+        monkeypatch.setattr(mw.decision,"credential_snapshot",lambda cfg:None)
+        monkeypatch.setattr(mw,"_decide_lifecycle_store",lambda *args:store)
+        monkeypatch.setattr(mw.decision,"DecisionClient",lambda *args,**kwargs:object())
+        calls=[]
+        def fake_decide(dp,trigger,project_dir,**kwargs):
+            calls.append(trigger.data)
+            rows=lifecycle.read_lifecycle(store).events
+            assert rows[0]["task_before"]["status"]=="running"
+            assert backend.SECRET.encode() not in store.sink.read_bytes()
+            return SimpleNamespace(decision_id=dp+":"+meta.logical_id,status="escalated",answer=None,detail="synthetic unavailable")
+        monkeypatch.setattr(mw.decision_points,"decide_for",fake_decide)
+        monkeypatch.setattr(mw,"_decide_run_payload",lambda outcome:{"available":False})
+>       assert mw._decide_run_versioned(SimpleNamespace(dp_id=backend.DP1,json=True),root)==0
+E       AssertionError: assert 2 == 0
+E        +  where 2 = <function _decide_run_versioned at 0x0000027268168BF0>(namespace(dp_id='dp1-dispatch-type', json=True), WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/baseline-green/pytest-basetemp/test_real_cli_freezes_before_l0/proj'))
+E        +    where <function _decide_run_versioned at 0x0000027268168BF0> = mw._decide_run_versioned
+E        +    and   namespace(dp_id='dp1-dispatch-type', json=True) = SimpleNamespace(dp_id='dp1-dispatch-type', json=True)
+E        +      where 'dp1-dispatch-type' = backend.DP1
+
+test_decision_task_state.py:126: AssertionError
+---------------------------- Captured stderr call -----------------------------
+[mw decide run] retired decision point id 'dp1-dispatch-type' (migrated): not callable; old ids are read-only history, not aliases
+_________ test_reader_does_not_attribute_another_tasks_after_snapshot _________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/baseline-green/pytest-basetemp/test_reader_does_not_attribute0')
+
+    def test_reader_does_not_attribute_another_tasks_after_snapshot(tmp_path):
+>       root,record=_record(tmp_path,before=state("running"),after=state("done"))
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+test_decision_task_state.py:154: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+test_decision_task_state.py:37: in _record
+    decision_id=backend._append_archive(root,dp=backend.DP1,trigger_id="t22",authority="advisory",escalated_reason=None,confidence=0.94)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test_decision_context_readable_backend.py:274: in _append_archive
+    questions_version=dpts.get_decision_point(dp).questions_version,
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decision_points.py:1384: in get_decision_point
+    return require_active_dp(dp_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+dp_id = 'dp1-dispatch-type'
+
+    def require_active_dp(dp_id: str) -> DecisionPoint:
+        """Resolve one active entry; a retired id is refused with its own contract.
+    
+        This is the first check of every request entry point: it runs before any
+        replay lookup, backend resolution, credential snapshot, archive row or
+        executor, so a retired id cannot produce a model call, a business action or
+        a new valid decision. The refusal names the disposition only and never maps
+        the old id to its successor, because that mapping would be an alias.
+        """
+        record = _RETIRED_BY_ID.get(dp_id) if isinstance(dp_id, str) else None
+        if record is not None:
+>           raise decision.DecisionInputError(
+                f"retired decision point id {dp_id!r} ({record.disposition}): "
+                "not callable; old ids are read-only history, not aliases"
+            )
+E           decision.DecisionInputError: retired decision point id 'dp1-dispatch-type' (migrated): not callable; old ids are read-only history, not aliases
+
+decision_points.py:1367: DecisionInputError
+=========================== short test summary info ===========================
+FAILED test_decision_task_state.py::test_real_start_and_settled_snapshots_survive_history
+FAILED test_decision_task_state.py::test_no_snapshot_is_not_inferred_from_ok_or_rework
+FAILED test_decision_task_state.py::test_write_and_read_redaction_cover_snapshot_lists_and_keys
+FAILED test_decision_task_state.py::test_reader_without_redactor_withholds_snapshot_prose
+FAILED test_decision_task_state.py::test_real_cli_freezes_before_locally_and_passes_only_material_to_decision_boundary
+FAILED test_decision_task_state.py::test_reader_does_not_attribute_another_tasks_after_snapshot
+6 failed, 78 passed in 4.09s

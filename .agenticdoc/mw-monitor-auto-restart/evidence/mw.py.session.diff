@@ -1,0 +1,28 @@
+--- frozen/mw.py
++++ current/mw.py
+@@ -5574,7 +5574,7 @@
+         return _start_monitor_child(child_root, info)
+ 
+     instance = decision_monitor.ensure_instance(
+-        root, starter=starter, health_wait_s=_MONITOR_HEALTH_WAIT_S
++        root, starter=starter, health_wait_s=_MONITOR_HEALTH_WAIT_S, replace_incompatible=True
+     )
+     reused = isinstance(instance, decision_monitor.AttachedInstance)
+     identity = instance._require_identity() if hasattr(instance, "_require_identity") else instance.identity
+@@ -5591,6 +5591,7 @@
+             },
+         },
+         "recovery": getattr(instance, "recovery", None),
++        "replacement": getattr(instance, "replacement", None),
+         "no_open": bool(getattr(args, "no_open", False)),
+         "window": None,
+     }
+@@ -5621,7 +5622,7 @@
+     if args.json:
+         print(json.dumps({"ok": True, "action": "open", **payload}, ensure_ascii=False))
+     else:
+-        mode = "reused" if reused else "started"
++        mode = "reused" if reused else "replaced" if payload["replacement"] else "started"
+         print(
+             f"[mw decide monitor] instance {payload['instance']['url']} "
+             f"(pid {identity.pid}, {mode})"

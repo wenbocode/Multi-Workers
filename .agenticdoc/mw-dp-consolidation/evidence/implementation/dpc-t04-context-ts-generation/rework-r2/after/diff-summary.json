@@ -1,0 +1,22 @@
+{
+  "pm_before_path": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t04-r2-pre-dispatch-20261026\\before-bytes\\packages\\multi-workers\\test_decide_registry_ts_lock.py",
+  "pm_before_exists": true,
+  "pm_before_sha256": "9603a817d725f6bf16c4ab0e9b554ab2ca1d756c4fb66f5bd3cc4f6c828e635b",
+  "own_before_sha256": "9603a817d725f6bf16c4ab0e9b554ab2ca1d756c4fb66f5bd3cc4f6c828e635b",
+  "same_bytes": true,
+  "before_sha256": "9603a817d725f6bf16c4ab0e9b554ab2ca1d756c4fb66f5bd3cc4f6c828e635b",
+  "after_sha256": "26eb0493164bd4ae28c6d1c86b770eaa7d09e4aad90c715009c9262e704c26a2",
+  "before_bytes": 22960,
+  "after_bytes": 34713,
+  "before_eol": {
+    "crlf": 0,
+    "bare_lf": 599
+  },
+  "after_eol": {
+    "crlf": 0,
+    "bare_lf": 862
+  },
+  "diff_lines_added": 279,
+  "diff_lines_removed": 16,
+  "diff_hunks": 3
+}

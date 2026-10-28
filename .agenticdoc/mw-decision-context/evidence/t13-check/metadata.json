@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "cmd.exe",
+    "/d",
+    "/c",
+    "npm run check"
+  ],
+  "cwd": "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\dc-t13-check-opyviio6\\repo",
+  "utc_start": "2026-10-23T12:10:55.228178+00:00",
+  "utc_end": "2026-10-23T12:10:56.716354+00:00",
+  "exit": 1,
+  "copied_files": 11693,
+  "formatter_changes": [],
+  "original_changed_during_check": [],
+  "scope": "full npm run check, copied working tree; no formatter result applied to source"
+}

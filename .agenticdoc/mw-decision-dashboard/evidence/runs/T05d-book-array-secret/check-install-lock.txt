@@ -1,0 +1,13 @@
+# cmd: npm.cmd run check:install-lock:coding-agent
+# cwd: .
+# started: 2026-10-22T06:50:33Z
+# elapsed_s: 0.3
+
+
+> pi-monorepo@0.0.3 check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+
+EXIT_check-install-lock=0

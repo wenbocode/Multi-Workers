@@ -1,0 +1,46 @@
+lines=255
+32: {project-root}/.agenticdoc/{key}/evidence-requirement.md → 每个 AC/VC 的充分性判定标准
+33: {project-root}/.agenticdoc/{key}/evidence/baseline/    → PASS 基线
+34: {project-root}/.agenticdoc/{key}/evidence/runs/        → 实际运行证据
+44: | AC→VC 映射覆盖 100% | 提示补 VC 映射 |
+45: | evidence-requirement.md 存在 | 提示先完成 system-design Step 6 |
+46: | ac_fingerprint 一致 | 提示 AC 已变更，重跑 system-design Step 6 |
+47: | evidence/baseline/ 非空 | 报告 ⚠️，提示先执行 L2 验证建立基线 |
+50: **ac_fingerprint 校验**：
+53: EVREQ="${AGENTICDOC}/evidence-requirement.md"
+57: RECORDED_FP=$(grep -oE 'ac_fingerprint[^a-f0-9]+([a-f0-9]{12})' "$EVREQ" | grep -oE '[a-f0-9]{12}' | head -1)
+60: echo "❌ ac_fingerprint 失配"
+98: 1. 查 evidence-requirement.md 中该 Q 对应的充分性判定标准
+99: 2. 在 evidence/runs/ 中 grep 对应 [VERIFY]/[FLOW] 条目
+100: 3. 对比 baseline，判断 PASS/FAIL/MISSING
+110: | ❌ 无证据 | evidence/runs/ 中找不到对应日志 | 未通过 |
+141: | Q-AC-001 | 用户登录成功获得 token | ✅ 充分 | runs/run-20260508.txt L34 | — |
+
+=== headings ===
+9: # Workflow: Quality Gate
+16: ## 触发条件
+24: ## 工作流步骤
+26: ### Step 1 — 加载基准文档
+38: #### 前置门禁（任一不满足即报告 ❌ 并中止）
+67: ### Step 2 — 提炼问题清单
+93: ### Step 3 — 证据链核查
+114: ### Step 4 — 二次印证
+127: ### Step 5 — 输出质检报告
+132: # Quality Gate Report: {key}
+137: ## 问题清单与核查结果
+145: ## 汇总
+154: ## 未通过问题行动计划
+160: ## 二次印证结论
+167: ## 质检门禁通过标准
+177: ## migrator 集成
+181: ### Step M1 — 检测 migrator 配置
+184: # 检查配置文件是否存在
+191: ### Step M2 — 执行全量验证
+199: ### Step M3 — 读取验证结果
+215: ### Step M4 — 在会话中展示结果
+219: ## migrator validate --all 结果
+231: ### Step M5 — 写入 Evidence Ledger
+236: # 读取 active key
+240: # 追加 Evidence（通过 Bash 写入，绕过 guard_pm_state.py 的 Edit/Write 拦截）
+246: ### Step M6 — 质检门禁判定
+251: ### AC 覆盖

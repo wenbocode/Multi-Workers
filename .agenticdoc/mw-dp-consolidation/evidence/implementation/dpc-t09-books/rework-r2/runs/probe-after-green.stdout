@@ -1,0 +1,29 @@
+{
+  "label": "after-green",
+  "passed": 21,
+  "failed": 0,
+  "base_17_passed": 17,
+  "base_17_failed": 0,
+  "network": "denied"
+}
+PASS legal-full-book-positive: (PreparedRequest(decision_point='dp-w-type', material={'task_goal': 'Validate book stdin refusals with full layered requests', 'task_requirements': 'Illegal JSON shapes produce issues, never filesystem lookup or escaped 
+PASS stdin-shape-NoneType: (None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON null, which is not a request (stdin is never a file path, an array of books or a scalar)'),))
+PASS stdin-shape-empty-array: (None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON array, which is not a request (stdin is never a file path, an array of books or a scalar)'),))
+PASS stdin-shape-array-with-book: (None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON array, which is not a request (stdin is never a file path, an array of books or a scalar)'),))
+PASS stdin-shape-bool: (None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON boolean, which is not a request (stdin is never a file path, an array of books or a scalar)'),))
+PASS stdin-shape-int: (None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON integer, which is not a request (stdin is never a file path, an array of books or a scalar)'),))
+PASS stdin-shape-float: (None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON number, which is not a request (stdin is never a file path, an array of books or a scalar)'),))
+PASS stdin-string-is-not-file-authority: (None, (Issue(code='book-schema', path='book', detail='stdin carries exactly one book object; got a JSON string, which is not a request (stdin is never a file path, an array of books or a scalar)'),))
+PASS stdin-bundle-refusal-control: (None, (Issue(code='book-schema', path='book', detail="stdin carries exactly one request; a 'books' bundle is a file format, not a request"),))
+PASS stdin-bad-json-refusal-control: (None, (Issue(code='book-schema', path='<stdin>', detail='not valid JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)'),))
+PASS invalid-file-report-as-dict-safe: {'path': 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t09-books\\rework-r2\\fixture\\probe-project\\legacy.json', 'sha256': '1478c8629ec9dce2981bf89e3633c3877821fb19d97118e3c94
+PASS schema-secret-refusal-unknown-top-key: [Issue(code='book-schema', path='book', detail="unknown top-level keys ['<key>']")]
+PASS schema-secret-refusal-unknown-notes-key: [Issue(code='book-schema', path='notes', detail="unknown notes keys ['<key>']; ['evidence'] is the only notes face of the book contract")]
+PASS schema-secret-refusal-bad-version: [Issue(code='book-schema', path='schema_version', detail='must be 3, got <redacted>')]
+PASS schema-secret-refusal-unknown-dp: [Issue(code='book-schema', path='decision_point', detail='unknown decision point id <redacted>; the eight active entries are the only book targets')]
+PASS schema-type-bool: [Issue(code='book-schema', path='schema_version', detail='must be 3, got True')]
+PASS schema-type-float: [Issue(code='book-schema', path='schema_version', detail='must be 3, got 3.0')]
+PASS extra-nested-schema-shapes-no-echo: [{'layer': 'notes-not-object', 'codes': ['book-schema'], 'echoes_secret': False, 'first_path': 'notes'}, {'layer': 'material-not-object', 'codes': ['book-schema'], 'echoes_secret': False, 'first_path': 'material'}, {'lay
+PASS extra-unknown-dp-still-specific: ["book-schema decision_point: unknown decision point id 'dp-not-a-real-entry'; the eight active entries are the only book targets"]
+PASS extra-mixed-bundle-independent: {'ok': False, 'flags': {'sign': True, 'bad': False}}
+PASS extra-version-controls: [{'value': '3', 'refused': False}, {'value': '3.0', 'refused': True}, {'value': "'3'", 'refused': True}, {'value': 'True', 'refused': True}]

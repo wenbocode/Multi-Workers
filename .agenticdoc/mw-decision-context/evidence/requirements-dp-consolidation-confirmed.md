@@ -1,0 +1,8 @@
+# Confirmed next requirement — eight-DP consolidation
+
+User confirmed retained set: dp1-dispatch-type, dp2-checkpoint-split, dp3-worker-clarify, dp25-signoff-conclusion, dp15-autopilot-gate, dp7-gate-failure, dp6-qg-verdict, dp20-stage-close.
+Remove runtime capability of every other DP, including registry, producers/tool entrypoints, configuration, prompts and tests; do not merely hide UI. Preserve existing historical decisions read-only and honestly marked retired where needed, never delete or rewrite their evidence/history.
+Keep current business design of dp1/dp2/dp3/dp25. Jointly redesign dp15/dp7/dp6/dp20: responsibilities, trigger conditions, material, questions/options, verdict-to-action authorization, unavailable/failure behavior; avoid overlap, repeated model calls/approval, especially dp2 and dp25. Current suggested responsibility labels are proposals, not a locked final design.
+Proposed separate key mw-dp-consolidation; not created/claimed or advanced by this note. Requirements/design approval before runtime deletions/migrations. Framework/core impacts require identifying exact allowed surface, not implied wholesale permission. No source deletion/config changes/provider calls or historical migration performed here.
+User sequencing: record requirement first; simplify Test6 successful-response HTTP200 logs now under current mw-decision-context; consolidation design deferred. Existing dropdown-selected case prefill defect and monitor-auto-restart remain separate pending work.
+Goal anchor .agenticdoc/goal.md. This note records user confirmation, not implementation/acceptance.

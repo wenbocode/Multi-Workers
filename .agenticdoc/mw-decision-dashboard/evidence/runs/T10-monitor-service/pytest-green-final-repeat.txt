@@ -1,0 +1,71 @@
+﻿.....s.............FFF................                                   [100%]
+================================== FAILURES ===================================
+_____ test_history_requires_a_redactor_and_never_exposes_unredacted_text ______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18237/test_history_requires_a_redact0')
+
+    def test_history_requires_a_redactor_and_never_exposes_unredacted_text(tmp_path):
+        unredacted_root = _root(tmp_path, "unredacted")
+        _seed_history(unredacted_root)
+        with _running(unredacted_root) as instance:
+            page_token = _page_token(instance)
+            status, _headers, payload, _raw = _http(
+                instance.port, "GET", "/api/history", token=page_token
+            )
+            assert status == 503
+            assert _envelope_error(payload)["code"] == "history-redactor-unavailable"
+    
+        redacted_root = _root(tmp_path, "redacted")
+        _seed_history(redacted_root)
+        with _running(redacted_root, deps=decision_monitor.MonitorDeps(redactor=REDACTOR)) as instance:
+            page_token = _page_token(instance)
+            status, _headers, payload, raw = _http(
+                instance.port, "GET", "/api/history", token=page_token
+            )
+>           assert status == 200
+E           assert 503 == 200
+
+test_decision_monitor.py:795: AssertionError
+_____ test_history_filters_and_per_row_capture_status_with_worst_envelope _____
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18237/test_history_filters_and_per_r0')
+
+    def test_history_filters_and_per_row_capture_status_with_worst_envelope(tmp_path):
+        root = _root(tmp_path)
+        _seed_history(root)
+        with _running(root, deps=decision_monitor.MonitorDeps(redactor=REDACTOR)) as instance:
+            page_token = _page_token(instance)
+            status, _headers, payload, _raw = _http(
+                instance.port, "GET", "/api/history?key=mw-alpha", token=page_token
+            )
+>           assert status == 200
+E           assert 503 == 200
+
+test_decision_monitor.py:819: AssertionError
+____________________ test_history_detail_is_opaque_id_only ____________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18237/test_history_detail_is_opaque_0')
+
+    def test_history_detail_is_opaque_id_only(tmp_path):
+        root = _root(tmp_path)
+        ids = _seed_history(root)
+        with _running(root, deps=decision_monitor.MonitorDeps(redactor=REDACTOR)) as instance:
+            page_token = _page_token(instance)
+            for path in (
+                f"/api/history/{ids['mw-alpha']}",
+                "/api/history/h-../../etc/passwd",
+                "/api/history/h-0000000000000000000",
+            ):
+                status, _headers, payload, _raw = _http(
+                    instance.port, "GET", path, token=page_token
+                )
+>               assert status == 404, path
+E               AssertionError: /api/history/dp1-dispatch-type:t-fail
+E               assert 503 == 404
+
+test_decision_monitor.py:870: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_monitor.py::test_history_requires_a_redactor_and_never_exposes_unredacted_text
+FAILED test_decision_monitor.py::test_history_filters_and_per_row_capture_status_with_worst_envelope
+FAILED test_decision_monitor.py::test_history_detail_is_opaque_id_only - Asse...
+3 failed, 34 passed, 1 skipped in 4.75s

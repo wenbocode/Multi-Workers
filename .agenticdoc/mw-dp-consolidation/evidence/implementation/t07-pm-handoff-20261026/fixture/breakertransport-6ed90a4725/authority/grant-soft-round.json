@@ -1,0 +1,10 @@
+{
+  "authority_ref": "grant-soft-round",
+  "kind": "user-grant",
+  "scope": [
+    "extension:soft-round"
+  ],
+  "writer": "pm-controlled-authority-writer",
+  "revoked": false,
+  "recorded_at": "2026-10-26T00:00:00+00:00"
+}

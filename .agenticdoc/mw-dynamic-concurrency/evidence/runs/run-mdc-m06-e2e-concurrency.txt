@@ -1,0 +1,7 @@
+source: .agenticdoc/mw-dynamic-concurrency/workers/mdc-m06-e2e-concurrency/output.md
+extracted: 4 [VERIFY]/[FLOW] lines
+
+[VERIFY] M-06-e2e-concurrency: file=packages/multi-workers/test_mdc_e2e.py tests=5 passed=5 failed=0 vc105_pairs=0 vc105_judgements=10 vc106_direct="grants=1 refusals=1 rows=1 dispatch_events=1" vc106_conductor="grants=1 refusals=1 rows=1 dispatch_events=1 stalled_events=0" vc109_samples_ms=[554,232,553] vc109_window_share=0.993323 vc109_ratio=184.33x ac002_topup_ticks=2 ac002_idle_slot_ticks=6 ac002_boundary_extra_ticks=0 full_suite="6 failed, 2222 passed, 10 deselected" new_failures=0
+- §1 VC-105 原始 `[VERIFY]`：实起行集、每行写面 `allow_entries`、判定次数 10、`collision_pairs=0`、
+python -m pytest -q -s test_mdc_e2e.py   # 捕获全部 [VERIFY] 原始样本
+交付：`test_mdc_e2e.py`、`.agenticdoc/mw-dynamic-concurrency/evidence/M-06-e2e.md`（唯一证据，含全部原始 tail + 退出码）、`workers/mdc-m06-e2e-concurrency/output.md`（五段契约 + `[VERIFY]`）。未改任何生产文件/既有测试，未跑 `npm run check`，无 git 写操作。 Tools used: bash, edit, grep, read, write (74 calls).

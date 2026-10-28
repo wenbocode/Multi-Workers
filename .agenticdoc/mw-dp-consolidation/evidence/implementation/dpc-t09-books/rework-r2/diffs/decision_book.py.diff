@@ -1,0 +1,367 @@
+--- a/packages/multi-workers/decision_book.py
++++ b/packages/multi-workers/decision_book.py
+@@ -138,6 +138,58 @@
+ _SAFE_PATH_SEGMENT_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+ 
+ 
++def _safe_detail_text(value: object, redactor: object | None = None) -> str:
++    """``repr`` of a caller-supplied value that never echoes known-secret text.
++
++    The detail stays concrete (the real value is what makes a refusal
++    actionable); only material the injected redactor knows collapses to
++    ``<redacted>``, the value-side twin of :func:`decision.safe_path_text`.
++    """
++    text = value if isinstance(value, str) else str(value)
++    if text and decision.secret_hit(text, redactor):
++        return "<redacted>"
++    return repr(value)
++
++
++def _safe_key_names(
++    keys: Iterable[object], redactor: object | None = None
++) -> list[str]:
++    """Sorted display names for caller-supplied keys (secret/odd keys → ``<key>``)."""
++    return sorted({decision.safe_path_text(key, redactor) for key in keys})
++
++
++def _json_type_name(value: object) -> str:
++    """JSON type name of a parsed value (the type, never the value itself)."""
++    if value is None:
++        return "null"
++    if isinstance(value, bool):
++        return "boolean"
++    if isinstance(value, int):
++        return "integer"
++    if isinstance(value, float):
++        return "number"
++    if isinstance(value, str):
++        return "string"
++    if isinstance(value, (list, tuple)):
++        return "array"
++    if isinstance(value, Mapping):
++        return "object"
++    return type(value).__name__
++
++
++def _is_schema_version(value: object) -> bool:
++    """True only for the real JSON integer ``3``.
++
++    ``3.0``, ``True`` and ``"3"`` are different JSON values, not the schema
++    version: a float/boolean/string must be refused instead of matching ``==``.
++    """
++    return (
++        isinstance(value, int)
++        and not isinstance(value, bool)
++        and value == BOOK_SCHEMA_VERSION
++    )
++
++
+ class BookError(ValueError):
+     """装载期失败（JSON 不可解析 / 顶层键非法 / 退役 ID / 版本不符）。
+ 
+@@ -232,7 +284,7 @@
+ # ---------------------------------------------------------------------------
+ 
+ 
+-def _require_active(dp_id: object) -> str:
++def _require_active(dp_id: object, redactor: object | None = None) -> str:
+     """Resolve one active entry; a retired/unknown id becomes a ``BookError``.
+ 
+     ``decision_points.require_active_dp`` is the one authority: the refusal names
+@@ -248,8 +300,8 @@
+         raise BookError(
+             "book-schema",
+             "decision_point",
+-            f"unknown decision point id {dp_id!r}; the eight active entries are the "
+-            "only book targets",
++            f"unknown decision point id {_safe_detail_text(dp_id, redactor)}; the "
++            "eight active entries are the only book targets",
+         ) from exc
+     return str(dp_id)
+ 
+@@ -438,7 +490,7 @@
+ # ---------------------------------------------------------------------------
+ 
+ 
+-def load_book(path: pathlib.Path | str) -> dict:
++def load_book(path: pathlib.Path | str, *, redactor: object | None = None) -> dict:
+     """装载一本决策本（单本）：JSON 可解析 + 顶层形状/身份合法。
+ 
+     失败抛 :class:`BookError`（``code=book-schema``）。装载只回答「这是不是一本
+@@ -446,18 +498,20 @@
+     """
+     source = pathlib.Path(path)
+     data = _read_json(source)
+-    issues = _schema_issues(data)
++    issues = _schema_issues(data, redactor=redactor)
+     if issues:
+         first = issues[0]
+         raise BookError(first.code, first.path, first.detail)
+     return dict(data)  # type: ignore[arg-type]
+ 
+ 
+-def load_books(path: pathlib.Path | str) -> list[tuple[str | None, dict]]:
++def load_books(
++    path: pathlib.Path | str, *, redactor: object | None = None
++) -> list[tuple[str | None, dict]]:
+     """装载一个文件里的一本或多本（示例/Smoke 用的 ``{"books": {...}}`` 或数组）。"""
+     source = pathlib.Path(path)
+     data = _read_json(source)
+-    return _split_bundle(data, str(source))
++    return _split_bundle(data, str(source), redactor=redactor)
+ 
+ 
+ def _read_json(source: pathlib.Path) -> object:
+@@ -471,7 +525,7 @@
+         raise BookError("book-schema", str(source), f"not valid JSON: {exc}") from exc
+ 
+ 
+-def _schema_issues(data: object) -> list[Issue]:
++def _schema_issues(data: object, redactor: object | None = None) -> list[Issue]:
+     """Top-level shape + identity: the one gate both ``load`` and ``check`` use.
+ 
+     A retired id is refused here, before material/preparation/replay: the refusal
+@@ -510,18 +564,25 @@
+                 "substitute for the active gate)",
+             )
+         )
+-    unknown = sorted(
++    unknown = (
+         set(data) - set(BOOK_TOP_LEVEL_KEYS) - set(LEGACY_TOP_LEVEL_KEYS) - {"questions"}
+     )
+     if unknown:
+-        issues.append(Issue("book-schema", "book", f"unknown top-level keys {unknown}"))
++        issues.append(
++            Issue(
++                "book-schema",
++                "book",
++                f"unknown top-level keys {_safe_key_names(unknown, redactor)}",
++            )
++        )
+     version = data.get("schema_version")
+-    if isinstance(version, bool) or version != BOOK_SCHEMA_VERSION:
++    if not _is_schema_version(version):
+         issues.append(
+             Issue(
+                 "book-schema",
+                 "schema_version",
+-                f"must be {BOOK_SCHEMA_VERSION}, got {version!r}",
++                f"must be {BOOK_SCHEMA_VERSION}, got "
++                f"{_safe_detail_text(version, redactor)}",
+             )
+         )
+     dp_id = data.get("decision_point")
+@@ -536,7 +597,8 @@
+             Issue(
+                 "book-schema",
+                 "decision_point",
+-                f"retired decision point id {dp_id!r} ({disposition}): not callable; "
++                f"retired decision point id {_safe_detail_text(dp_id, redactor)} "
++                f"({disposition}): not callable; "
+                 "old ids are read-only history, not aliases",
+             )
+         )
+@@ -548,8 +610,8 @@
+                 Issue(
+                     "book-schema",
+                     "decision_point",
+-                    f"unknown decision point id {dp_id!r}; the eight active entries "
+-                    "are the only book targets",
++                    f"unknown decision point id {_safe_detail_text(dp_id, redactor)}; "
++                    "the eight active entries are the only book targets",
+                 )
+             )
+     for key in ("material", "preparation"):
+@@ -567,14 +629,14 @@
+         if not isinstance(notes, Mapping):
+             issues.append(Issue("book-schema", "notes", "must be a JSON object"))
+         else:
+-            unknown_notes = sorted(set(notes) - set(NOTES_KEYS))
++            unknown_notes = set(notes) - set(NOTES_KEYS)
+             if unknown_notes:
+                 issues.append(
+                     Issue(
+                         "book-schema",
+                         "notes",
+-                        f"unknown notes keys {unknown_notes}; {list(NOTES_KEYS)} is the "
+-                        "only notes face of the book contract",
++                        f"unknown notes keys {_safe_key_names(unknown_notes, redactor)}; "
++                        f"{list(NOTES_KEYS)} is the only notes face of the book contract",
+                     )
+                 )
+             if "evidence" in notes and not isinstance(notes["evidence"], Mapping):
+@@ -584,30 +646,34 @@
+     return issues
+ 
+ 
+-def _split_bundle(data: object, label: str) -> list[tuple[str | None, dict]]:
++def _split_bundle(
++    data: object, label: str, redactor: object | None = None
++) -> list[tuple[str | None, dict]]:
+     if isinstance(data, list):
+         return [
+-            (f"books[{index}]", _load_shape(item, f"{label}[{index}]"))
++            (f"books[{index}]", _load_shape(item, f"{label}[{index}]", redactor=redactor))
+             for index, item in enumerate(data)
+         ]
+     if isinstance(data, Mapping) and "books" in data and set(data) == {"books"}:
+         inner = data["books"]
+         if isinstance(inner, Mapping):
+             return [
+-                (str(name), _load_shape(item, f"{label}:{name}"))
++                (str(name), _load_shape(item, f"{label}:{name}", redactor=redactor))
+                 for name, item in inner.items()
+             ]
+         if isinstance(inner, list):
+             return [
+-                (f"books[{index}]", _load_shape(item, f"{label}[{index}]"))
++                (f"books[{index}]", _load_shape(item, f"{label}[{index}]", redactor=redactor))
+                 for index, item in enumerate(inner)
+             ]
+         raise BookError("book-schema", label, "'books' must be an object or an array of books")
+-    return [(None, _load_shape(data, label))]
+-
+-
+-def _load_shape(item: object, label: str) -> dict:
+-    issues = _schema_issues(item)
++    return [(None, _load_shape(data, label, redactor=redactor))]
++
++
++def _load_shape(
++    item: object, label: str, redactor: object | None = None
++) -> dict:
++    issues = _schema_issues(item, redactor=redactor)
+     if issues:
+         first = issues[0]
+         raise BookError(first.code, first.path, first.detail)
+@@ -689,7 +755,7 @@
+     第 3 步一见缺陷就返回（第 4 步不再评判）：依据的 ``material_refs`` 无法对一个
+     含缺陷的材料成立，hard 判定必须是第一个真实缺陷，不能伪造第二个。
+     """
+-    schema = _schema_issues(book)
++    schema = _schema_issues(book, redactor=redactor)
+     if schema:
+         return schema
+     dp_id = str(book["decision_point"])
+@@ -705,7 +771,7 @@
+     if material_issues:
+         return issues
+     issues.extend(_check_preparation(book, dp_id, material))
+-    issues.extend(_check_placeholders(book, dp_id, material, preparation))
++    issues.extend(_check_placeholders(book, dp_id, material, preparation, redactor=redactor))
+     issues.extend(_check_context(book, dp_id, redactor=redactor))
+     issues.extend(
+         _check_evidence(
+@@ -869,6 +935,8 @@
+     dp_id: str,
+     material: Mapping[str, Any],
+     preparation: Mapping[str, Any],
++    *,
++    redactor: object | None = None,
+ ) -> list[Issue]:
+     """骨架占位符：必填业务字段 + 依据目录/时间戳。
+ 
+@@ -904,7 +972,8 @@
+                 Issue(
+                     "book-placeholder",
+                     f"material.{path}",
+-                    f"unreplaced placeholder {value!r}; fill it from real evidence",
++                    f"unreplaced placeholder {_safe_detail_text(value, redactor)}; "
++                    "fill it from real evidence",
+                 )
+             )
+             continue
+@@ -1086,7 +1155,7 @@
+                 )
+             )
+             continue
+-        problem = _evidence_problem(reference, root)
++        problem = _evidence_problem(reference, root, redactor=redactor)
+         if problem is not None:
+             issues.append(Issue("book-evidence", entry_path, problem))
+     return issues
+@@ -1105,7 +1174,9 @@
+     return base
+ 
+ 
+-def _evidence_problem(reference: str, root: pathlib.Path) -> str | None:
++def _evidence_problem(
++    reference: str, root: pathlib.Path, redactor: object | None = None
++) -> str | None:
+     """``path:line`` 可解析？命令原文直接接受。返回失败说明（``None`` == 通过）。"""
+     text = reference.strip()
+     lowered = text.lower()
+@@ -1116,23 +1187,24 @@
+     if match is None:
+         return "expected 'path:line' or a command (cmd: ...)"
+     raw_path = match.group("path").strip()
++    display = _safe_detail_text(raw_path, redactor)
+     line = int(match.group("line"))
+     candidate = pathlib.Path(raw_path)
+     resolved = (candidate if candidate.is_absolute() else (root / candidate)).resolve()
+     try:
+         resolved.relative_to(root)
+     except ValueError:
+-        return f"path {raw_path!r} is outside the repository {root}"
++        return f"path {display} is outside the repository {root}"
+     if not resolved.is_file():
+-        return f"file {raw_path!r} does not exist"
++        return f"file {display} does not exist"
+     try:
+         line_count = len(resolved.read_text(encoding="utf-8", errors="replace").splitlines())
+     except OSError as exc:
+-        return f"cannot read {raw_path!r}: {exc}"
++        return f"cannot read {display}: {exc}"
+     if line < 1 or line > max(line_count, 1):
+-        return f"line {line} > {line_count} lines of {raw_path!r}"
++        return f"line {line} > {line_count} lines of {display}"
+     if line_count == 0:
+-        return f"line {line} points into an empty file {raw_path!r}"
++        return f"line {line} points into an empty file {display}"
+     return None
+ 
+ 
+@@ -1362,7 +1434,7 @@
+     else:
+         path = pathlib.Path(source)
+         try:
+-            book = load_book(path)
++            book = load_book(path, redactor=redactor)
+         except BookError as exc:
+             return None, (exc.issue,)
+         book_path = str(path)
+@@ -1427,6 +1499,16 @@
+                 "book",
+                 "stdin carries exactly one request; a 'books' bundle is a file "
+                 "format, not a request",
++            ),
++        )
++    if not isinstance(data, Mapping):
++        return None, (
++            Issue(
++                "book-schema",
++                "book",
++                "stdin carries exactly one book object; got a JSON "
++                f"{_json_type_name(data)}, which is not a request (stdin is never "
++                "a file path, an array of books or a scalar)",
+             ),
+         )
+     return prepare_request(
+@@ -1513,10 +1595,15 @@
+     source = pathlib.Path(path)
+     report = BookReport(path=str(source), sha256=book_sha256(source))
+     try:
+-        books = load_books(source)
++        books = load_books(source, redactor=redactor)
+     except BookError as exc:
+         report.books.append(
+-            {"label": None, "decision_point": None, "issues": [exc.issue]}
++            {
++                "label": None,
++                "decision_point": None,
++                "ok": False,
++                "issues": [exc.issue],
++            }
+         )
+         return report
+     for label, book in books:

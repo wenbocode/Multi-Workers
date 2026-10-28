@@ -1,0 +1,28 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+________ test_keyless_gate_is_counted_and_gate_only_key_stays_visible _________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18362/test_keyless_gate_is_counted_a0')
+
+    def test_keyless_gate_is_counted_and_gate_only_key_stays_visible(tmp_path):
+        root = _root(tmp_path)
+        decision_id = _add_decision(root, key="mw-alpha", trigger="t1")
+        _add_gate(root, gate_id="gate-0001", key="mw-alpha")
+        # stage-level gate: no key at all -> attribution unknown, never guessed
+        directory = root / ".agenticdoc" / "_autopilot" / "gates"
+        keyless = gates.create(directory, "stage-confirm", "continue stage?", key=None, stage=2)
+        assert keyless.name == "gate-0002.md"
+        _add_gate(root, gate_id="gate-0003", key="mw-gate-only")
+    
+        snapshot = _snapshot(root, redact=REDACTOR)
+    
+        assert snapshot.stats.gates_recorded == 3
+>       assert snapshot.stats.gates_keyless == 1
+E       AssertionError: assert 0 == 1
+E        +  where 0 = HistoryStats(archive_rows=1, archive_damaged=0, chain_breaks=0, seq_breaks=0, wire_events=0, lifecycle_events=0, wire_...cords=0, misplaced_test_rows=0, gates_recorded=3, gates_keyless=0, gates_unreadable=0, invalid_keys=0, blocked_reads=0).gates_keyless
+E        +    where HistoryStats(archive_rows=1, archive_damaged=0, chain_breaks=0, seq_breaks=0, wire_events=0, lifecycle_events=0, wire_...cords=0, misplaced_test_rows=0, gates_recorded=3, gates_keyless=0, gates_unreadable=0, invalid_keys=0, blocked_reads=0) = HistorySnapshot(control_root=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18362/test_...aced_test_rows=0, gates_recorded=3, gates_keyless=0, gates_unreadable=0, invalid_keys=0, blocked_reads=0), warnings=()).stats
+
+test_decision_history.py:1561: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_history.py::test_keyless_gate_is_counted_and_gate_only_key_stays_visible
+1 failed in 0.23s

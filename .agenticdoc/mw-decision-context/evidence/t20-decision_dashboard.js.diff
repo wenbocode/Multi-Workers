@@ -1,0 +1,102 @@
+--- t20-baseline/decision_dashboard.js
++++ decision_dashboard.js
+@@ -885,6 +885,8 @@
+ 
+   function policyDispositionLabel(disposition) {
+     if (disposition === "adopted") return "已采纳（adopted）";
++    if (disposition === "suggested") return "模型建议（不代表已采纳或执行）";
++    if (disposition === "not-evaluated") return "未记录策略判定（不推断是否已采纳）";
+     if (disposition === "not-adopted" || disposition === "rejected") return "未采纳（" + disposition + "）";
+     if (disposition === "escalated" || disposition === "human" || disposition === "human-review") {
+       return "转人工兜底（" + disposition + "）";
+@@ -940,7 +942,10 @@
+           ? String(policy.min_confidence)
+           : "未记录（本记录未持久化本次生效阈值，不按当前配置补造）"
+       ));
+-      if (!isMissing(policy.reason)) holder.appendChild(line("判定依据", String(policy.reason)));
++      if (!isMissing(policy.reason)) holder.appendChild(line("判定原因", String(policy.reason)));
++      if (Array.isArray(policy.basis) && policy.basis.length) {
++        holder.appendChild(line("判定依据", policy.basis.join("; ")));
++      }
+     } else {
+       holder.appendChild(line("策略判定：未记录", "本记录未持久化本次阈值/处置，不按当前配置推断"));
+       holder.appendChild(line("API confidence", isMissing(apiConfidence) ? NOT_RECORDED : String(apiConfidence)));
+@@ -991,13 +996,23 @@
+ 
+   // -- receipt / action / errors (shared by the node detail and the log) -----
+ 
++  function renderAnswerSourceAudit(holder, value) {
++    if (isMissing(value) || value === "") return;
++    const audit = el("details", {class: "answer-source-audit"});
++    audit.appendChild(el("summary", {text: "答案来源审计（按需查看）"}));
++    audit.appendChild(line("answer_source", String(value)));
++    holder.appendChild(audit);
++  }
++
+   function renderReceiptFacts(holder, detail) {
+     const consumed = detail.consumed && typeof detail.consumed === "object" ? detail.consumed : null;
+     if (consumed) {
++      holder.appendChild(line("接收说明", "已记录接收；接收不代表采纳或处理完成"));
+       holder.appendChild(line("接收时间", missing(consumed.ts)));
+       holder.appendChild(line("收到的答案", formatFree(consumed.answer)));
+-      holder.appendChild(line("answer_source", missing(consumed.answer_source)));
+-      holder.appendChild(line("actor_kind", missing(consumed.actor_kind)));
++      if (!isMissing(consumed.reason)) holder.appendChild(line("接收说明（原记录）", formatFree(consumed.reason)));
++      if (!isMissing(consumed.actor_kind)) holder.appendChild(line("接收角色", String(consumed.actor_kind)));
++      renderAnswerSourceAudit(holder, consumed.answer_source);
+     } else {
+       holder.appendChild(line("接收签收", "未记录（没有收到/签收的事实）"));
+     }
+@@ -1016,18 +1031,29 @@
+     if (!executed.length) {
+       holder.appendChild(line("已执行行动", "未记录"));
+     }
++    const actionLabels = {
++      "type-read": "读取任务类型", "pm-handoff": "交由 PM 处理", clarify: "提出澄清问题",
++      narrow: "收窄执行范围", split: "拆分任务", "direct-exec": "直接执行",
++      escalate: "上抛人工判断", continue: "继续推进", "user-confirm": "请求用户确认", record: "记录结果",
++    };
+     executed.forEach(function (row) {
+       holder.appendChild(line(
+         "已执行行动（" + missing(row.action) + "）",
+-        formatFree(row.result) + " · 时间：" + missing(row.ts) + " · answer_source：" + missing(row.answer_source)
++        (actionLabels[row.action] || missing(row.action)) + " · 记录结果：" + formatFree(row.result) + " · 时间：" + missing(row.ts)
+       ));
++      if (!isMissing(row.reason)) holder.appendChild(line("行动说明（原记录）", formatFree(row.reason)));
++      renderAnswerSourceAudit(holder, row.answer_source);
+     });
+     const settled = detail.settled && typeof detail.settled === "object" ? detail.settled : null;
++    const outcomeLabels = {
++      ok: "本轮处理完成，不代表整个任务已交付", pending: "本轮仍待处理",
++      rework: "本轮需要返工", rollback: "本轮处理结果为回退", inconclusive: "本轮没有确定结论",
++    };
+     holder.appendChild(line(
+       "处理结果",
+       settled
+-        ? missing(settled.outcome) + " · 原因：" + formatFree(settled.reason) + " · 时间：" + missing(settled.ts)
+-        : "未记录"
++        ? (outcomeLabels[settled.outcome] || missing(settled.outcome)) + "（" + missing(settled.outcome) + "） · 原因：" + formatFree(settled.reason) + " · 时间：" + missing(settled.ts)
++        : "未记录（不能推断行动未发生）"
+     ));
+   }
+ 
+@@ -1521,7 +1547,6 @@
+         model: [
+           ["transport", "传输"],
+           ["model", "模型"],
+-          ["answer_source", "answer_source"],
+           ["confidence_source", "confidence_source"],
+           ["confidence", "API confidence"],
+         ],
+@@ -1539,8 +1564,9 @@
+         });
+       }
+       holder.appendChild(definitionList(rows));
+-    }
+-    const basis = Array.isArray(source.basis) ? source.basis : [];
++      if (source.id === "model") renderAnswerSourceAudit(holder, detail.answer_source);
++    }
++    const basis = Array.isArray(detail.basis) ? detail.basis : Array.isArray(source.basis) ? source.basis : [];
+     holder.appendChild(el("p", {
+       class: "basis",
+       text: "依据：" + (basis.length ? basis.join("; ") : NOT_RECORDED),

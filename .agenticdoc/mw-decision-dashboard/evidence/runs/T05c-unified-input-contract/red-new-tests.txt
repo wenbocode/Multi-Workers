@@ -1,0 +1,661 @@
+FFFFFFFFFFFFFF...FFFFFFFFF.FFF..F..                                      [100%]
+================================== FAILURES ===================================
+____________ test_dp25_producer_facts_are_declared_optional_fields ____________
+
+    def test_dp25_producer_facts_are_declared_optional_fields() -> None:
+>       assert dpts.OPTIONAL_STATE_FIELDS[DP25] == DP25_OPTIONAL
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'dp25-signoff-conclusion'
+
+test_decision_input_contract_migration.py:293: KeyError
+__________ test_unknown_key_check_has_no_string_allowance_parameter ___________
+
+    def test_unknown_key_check_has_no_string_allowance_parameter() -> None:
+        """``allow_paths`` was the seam-only widening; the declaration replaces it."""
+        parameters = inspect.signature(dpts.state_unknown_key_issues).parameters
+>       assert "allow_paths" not in parameters
+E       assert 'allow_paths' not in mappingproxy(OrderedDict({'dp_id': <Parameter "dp_id: 'str'">, 'state': <Parameter "state: 'Mapping'">, 'allow_context': <Parameter "allow_context: 'bool' = False">, 'allow_paths': <Parameter "allow_paths: 'Iterable[str]' = ()">}))
+
+test_decision_input_contract_migration.py:310: AssertionError
+____ test_real_signoff_state_passes_the_shared_gates_without_an_exemption _____
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_real_signoff_state_passes0')
+
+    def test_real_signoff_state_passes_the_shared_gates_without_an_exemption(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        _, state = real_signoff_state(tmp_path)
+        # The real values are the producer's, not a fixture guess.
+        assert state["rows_escalated"] == 1
+        assert state["escalated_reasons"] == ["p0"]
+        assert state["engine_violations"] == ["other/m2/unknown"]
+        assert dpts.state_field_issues(DP25, state) == ()
+>       assert dpts.state_unknown_key_issues(DP25, state, allow_context=True) == ()
+E       AssertionError: assert (('rows_escal...ed key set)')) == ()
+E         
+E         Left contains 3 more items, first extra item: ('rows_escalated', 'not in required_state_fields (closed key set)')
+E         Use -v to get more diff
+
+test_decision_input_contract_migration.py:322: AssertionError
+______________ test_real_signoff_state_is_a_legal_decision_book _______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_real_signoff_state_is_a_l0')
+
+    def test_real_signoff_state_is_a_legal_decision_book(tmp_path: pathlib.Path) -> None:
+        project, state = real_signoff_state(tmp_path)
+>       assert books.check_book(_book(DP25, state), project_dir=project) == []
+E       AssertionError: assert [Issue(code='...ed key set)')] == []
+E         
+E         Left contains 3 more items, first extra item: Issue(code='book-state', path='state.rows_escalated', detail='not in required_state_fields (closed key set)')
+E         Use -v to get more diff
+
+test_decision_input_contract_migration.py:327: AssertionError
+______ test_real_signoff_state_is_accepted_as_observation_book_material _______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_real_signoff_state_is_acc0')
+
+    def test_real_signoff_state_is_accepted_as_observation_book_material(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        project, state = real_signoff_state(tmp_path)
+        root = tmp_path / "run"
+        scope = _scope(root)
+        backend = decision.FakeBackend([_ok(_dp25_answers())])
+    
+        outcome = dpts.decide_for(
+            DP25,
+            state,
+            project,
+            client=_client(backend, scope),
+            archive=False,
+            intent="answer",
+            observation=dpts.Observation(scope=scope, book=_book(DP25, state), submission_id=SUB),
+        )
+    
+>       assert outcome.status == "suggested", outcome.detail
+E       AssertionError: dp25-signoff-conclusion:k-t05c: observation book refused (book.state.rows_escalated: book-state: not in required_state_fields (closed key set); book.state.escalated_reasons: book-state: not in requir…
+E       assert 'escalated' == 'suggested'
+E         
+E         - suggested
+E         + escalated
+
+test_decision_input_contract_migration.py:348: AssertionError
+_ test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[rows_escalated--1] _
+
+path = 'rows_escalated', value = -1
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_real_dp25_state_refuses_a0')
+
+    @pytest.mark.parametrize(
+        ("path", "value"),
+        [
+            ("rows_escalated", -1),
+            ("rows_escalated", "3"),
+            ("rows_escalated", True),
+            ("escalated_reasons", "p0"),
+            ("escalated_reasons", [1]),
+            ("escalated_reasons", [f"reason_{index}" for index in range(33)]),
+            ("escalated_reasons", ["x" * 129]),
+            ("engine_violations", {"a": 1}),
+            ("engine_violations", [None]),
+        ],
+    )
+    def test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send(
+        path: str, value: object, tmp_path: pathlib.Path
+    ) -> None:
+        project, state = real_signoff_state(tmp_path)
+        state[path] = value
+        issues = dpts.state_field_issues(DP25, state)
+>       assert issues, (path, value)
+E       AssertionError: ('rows_escalated', -1)
+E       assert ()
+
+test_decision_input_contract_migration.py:378: AssertionError
+_ test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[rows_escalated-3] _
+
+path = 'rows_escalated', value = '3'
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_real_dp25_state_refuses_a1')
+
+    @pytest.mark.parametrize(
+        ("path", "value"),
+        [
+            ("rows_escalated", -1),
+            ("rows_escalated", "3"),
+            ("rows_escalated", True),
+            ("escalated_reasons", "p0"),
+            ("escalated_reasons", [1]),
+            ("escalated_reasons", [f"reason_{index}" for index in range(33)]),
+            ("escalated_reasons", ["x" * 129]),
+            ("engine_violations", {"a": 1}),
+            ("engine_violations", [None]),
+        ],
+    )
+    def test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send(
+        path: str, value: object, tmp_path: pathlib.Path
+    ) -> None:
+        project, state = real_signoff_state(tmp_path)
+        state[path] = value
+        issues = dpts.state_field_issues(DP25, state)
+>       assert issues, (path, value)
+E       AssertionError: ('rows_escalated', '3')
+E       assert ()
+
+test_decision_input_contract_migration.py:378: AssertionError
+_ test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[rows_escalated-True] _
+
+path = 'rows_escalated', value = True
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_real_dp25_state_refuses_a2')
+
+    @pytest.mark.parametrize(
+        ("path", "value"),
+        [
+            ("rows_escalated", -1),
+            ("rows_escalated", "3"),
+            ("rows_escalated", True),
+            ("escalated_reasons", "p0"),
+            ("escalated_reasons", [1]),
+            ("escalated_reasons", [f"reason_{index}" for index in range(33)]),
+            ("escalated_reasons", ["x" * 129]),
+            ("engine_violations", {"a": 1}),
+            ("engine_violations", [None]),
+        ],
+    )
+    def test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send(
+        path: str, value: object, tmp_path: pathlib.Path
+    ) -> None:
+        project, state = real_signoff_state(tmp_path)
+        state[path] = value
+        issues = dpts.state_field_issues(DP25, state)
+>       assert issues, (path, value)
+E       AssertionError: ('rows_escalated', True)
+E       assert ()
+
+test_decision_input_contract_migration.py:378: AssertionError
+_ test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[escalated_reasons-p0] _
+
+path = 'escalated_reasons', value = 'p0'
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_real_dp25_state_refuses_a3')
+
+    @pytest.mark.parametrize(
+        ("path", "value"),
+        [
+            ("rows_escalated", -1),
+            ("rows_escalated", "3"),
+            ("rows_escalated", True),
+            ("escalated_reasons", "p0"),
+            ("escalated_reasons", [1]),
+            ("escalated_reasons", [f"reason_{index}" for index in range(33)]),
+            ("escalated_reasons", ["x" * 129]),
+            ("engine_violations", {"a": 1}),
+            ("engine_violations", [None]),
+        ],
+    )
+    def test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send(
+        path: str, value: object, tmp_path: pathlib.Path
+    ) -> None:
+        project, state = real_signoff_state(tmp_path)
+        state[path] = value
+        issues = dpts.state_field_issues(DP25, state)
+>       assert issues, (path, value)
+E       AssertionError: ('escalated_reasons', 'p0')
+E       assert ()
+
+test_decision_input_contract_migration.py:378: AssertionError
+_ test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[escalated_reasons-value4] _
+
+path = 'escalated_reasons', value = [1]
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_real_dp25_state_refuses_a4')
+
+    @pytest.mark.parametrize(
+        ("path", "value"),
+        [
+            ("rows_escalated", -1),
+            ("rows_escalated", "3"),
+            ("rows_escalated", True),
+            ("escalated_reasons", "p0"),
+            ("escalated_reasons", [1]),
+            ("escalated_reasons", [f"reason_{index}" for index in range(33)]),
+            ("escalated_reasons", ["x" * 129]),
+            ("engine_violations", {"a": 1}),
+            ("engine_violations", [None]),
+        ],
+    )
+    def test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send(
+        path: str, value: object, tmp_path: pathlib.Path
+    ) -> None:
+        project, state = real_signoff_state(tmp_path)
+        state[path] = value
+        issues = dpts.state_field_issues(DP25, state)
+>       assert issues, (path, value)
+E       AssertionError: ('escalated_reasons', [1])
+E       assert ()
+
+test_decision_input_contract_migration.py:378: AssertionError
+_ test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[escalated_reasons-value5] _
+
+path = 'escalated_reasons'
+value = ['reason_0', 'reason_1', 'reason_2', 'reason_3', 'reason_4', 'reason_5', ...]
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_real_dp25_state_refuses_a5')
+
+    @pytest.mark.parametrize(
+        ("path", "value"),
+        [
+            ("rows_escalated", -1),
+            ("rows_escalated", "3"),
+            ("rows_escalated", True),
+            ("escalated_reasons", "p0"),
+            ("escalated_reasons", [1]),
+            ("escalated_reasons", [f"reason_{index}" for index in range(33)]),
+            ("escalated_reasons", ["x" * 129]),
+            ("engine_violations", {"a": 1}),
+            ("engine_violations", [None]),
+        ],
+    )
+    def test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send(
+        path: str, value: object, tmp_path: pathlib.Path
+    ) -> None:
+        project, state = real_signoff_state(tmp_path)
+        state[path] = value
+        issues = dpts.state_field_issues(DP25, state)
+>       assert issues, (path, value)
+E       AssertionError: ('escalated_reasons', ['reason_0', 'reason_1', 'reason_2', 'reason_3', 'reason_4', 'reason_5', ...])
+E       assert ()
+
+test_decision_input_contract_migration.py:378: AssertionError
+_ test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[escalated_reasons-value6] _
+
+path = 'escalated_reasons'
+value = ['xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx']
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_real_dp25_state_refuses_a6')
+
+    @pytest.mark.parametrize(
+        ("path", "value"),
+        [
+            ("rows_escalated", -1),
+            ("rows_escalated", "3"),
+            ("rows_escalated", True),
+            ("escalated_reasons", "p0"),
+            ("escalated_reasons", [1]),
+            ("escalated_reasons", [f"reason_{index}" for index in range(33)]),
+            ("escalated_reasons", ["x" * 129]),
+            ("engine_violations", {"a": 1}),
+            ("engine_violations", [None]),
+        ],
+    )
+    def test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send(
+        path: str, value: object, tmp_path: pathlib.Path
+    ) -> None:
+        project, state = real_signoff_state(tmp_path)
+        state[path] = value
+        issues = dpts.state_field_issues(DP25, state)
+>       assert issues, (path, value)
+E       AssertionError: ('escalated_reasons', ['xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'])
+E       assert ()
+
+test_decision_input_contract_migration.py:378: AssertionError
+_ test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[engine_violations-value7] _
+
+path = 'engine_violations', value = {'a': 1}
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_real_dp25_state_refuses_a7')
+
+    @pytest.mark.parametrize(
+        ("path", "value"),
+        [
+            ("rows_escalated", -1),
+            ("rows_escalated", "3"),
+            ("rows_escalated", True),
+            ("escalated_reasons", "p0"),
+            ("escalated_reasons", [1]),
+            ("escalated_reasons", [f"reason_{index}" for index in range(33)]),
+            ("escalated_reasons", ["x" * 129]),
+            ("engine_violations", {"a": 1}),
+            ("engine_violations", [None]),
+        ],
+    )
+    def test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send(
+        path: str, value: object, tmp_path: pathlib.Path
+    ) -> None:
+        project, state = real_signoff_state(tmp_path)
+        state[path] = value
+        issues = dpts.state_field_issues(DP25, state)
+>       assert issues, (path, value)
+E       AssertionError: ('engine_violations', {'a': 1})
+E       assert ()
+
+test_decision_input_contract_migration.py:378: AssertionError
+_ test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[engine_violations-value8] _
+
+path = 'engine_violations', value = [None]
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_real_dp25_state_refuses_a8')
+
+    @pytest.mark.parametrize(
+        ("path", "value"),
+        [
+            ("rows_escalated", -1),
+            ("rows_escalated", "3"),
+            ("rows_escalated", True),
+            ("escalated_reasons", "p0"),
+            ("escalated_reasons", [1]),
+            ("escalated_reasons", [f"reason_{index}" for index in range(33)]),
+            ("escalated_reasons", ["x" * 129]),
+            ("engine_violations", {"a": 1}),
+            ("engine_violations", [None]),
+        ],
+    )
+    def test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send(
+        path: str, value: object, tmp_path: pathlib.Path
+    ) -> None:
+        project, state = real_signoff_state(tmp_path)
+        state[path] = value
+        issues = dpts.state_field_issues(DP25, state)
+>       assert issues, (path, value)
+E       AssertionError: ('engine_violations', [None])
+E       assert ()
+
+test_decision_input_contract_migration.py:378: AssertionError
+_______ test_oversize_refusal_keeps_the_truncated_candidate_on_purpose ________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_oversize_refusal_keeps_th0')
+
+    def test_oversize_refusal_keeps_the_truncated_candidate_on_purpose(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        """Deliberate difference from a typed refusal: the state is *legal*.
+    
+        An oversize state is complete and legal, it just cannot be sent whole, so
+        the post-truncation candidate is snapshotted (a human can see what *would*
+        have been sent). A typed/undeclared-key refusal is illegal material and is
+        never stored. The two must not be described by one blanket rule.
+        """
+        project = _project(tmp_path)
+        root = tmp_path / "run"
+        scope = _scope(root)
+        backend = decision.FakeBackend([_ok({})])
+        state = _dp5_state()
+        state["test"] = {
+            "failed_cases": [f"case_{index}-" + "x" * 200 for index in range(80)],
+            "baseline_cases": ["case_b"],
+            "changed_paths": ["x"],
+            "repro_consistent": True,
+        }
+    
+        outcome = dpts.decide_for(
+            DP5,
+            state,
+            project,
+            client=_client(backend, scope),
+            archive=False,
+            intent="answer",
+            observation=dpts.Observation(scope=scope, submission_id=SUB),
+        )
+    
+>       assert outcome.escalated_reason == "input-oversize", outcome.detail
+E       AssertionError: dp5-test-triage:20261022T062839Z: illegal state (test.failed_cases: 80 items > max_items 32; test.failed_cases[0]: 207 B > 128 B; test.failed_cases[1]: 207 B > 128 B; test.failed_cases[2]: 207 B > 12…
+E       assert 'input-incomplete' == 'input-oversize'
+E         
+E         - input-oversize
+E         + input-incomplete
+
+test_decision_input_contract_migration.py:519: AssertionError
+______ test_state_identity_issues_compares_with_the_registry_and_schema _______
+
+    def test_state_identity_issues_compares_with_the_registry_and_schema() -> None:
+>       assert dpts.STATE_SCHEMA_VERSION == 2
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'STATE_SCHEMA_VERSION'
+
+test_decision_input_contract_migration.py:534: AttributeError
+___ test_seam_refuses_a_wrong_identity_value_with_zero_send[schema_version] ___
+
+field = 'schema_version'
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_seam_refuses_a_wrong_iden0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B0048B9CD0>
+
+    @pytest.mark.parametrize("field", IDENTITY)
+    def test_seam_refuses_a_wrong_identity_value_with_zero_send(
+        field: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = _project(tmp_path)
+        root = tmp_path / "run"
+        scope = _scope(root)
+        backend = decision.FakeBackend([_ok({"failure_action": {"value": "retry"}})])
+        state = _dp4_state()
+        state[field] = {"schema_version": 1, "decision_point": DP5, "questions_version": "q-deadbeef"}[
+            field
+        ]
+        dp_point = dpts.get_decision_point(DP4)
+        monkeypatch.setitem(
+            dpts._REGISTRY_BY_ID, DP4, dataclasses.replace(dp_point, build_state=lambda trigger: dict(state))
+        )
+    
+        outcome = dpts.decide_for(
+            DP4,
+            {"key": "k"},
+            project,
+            client=_client(backend, scope),
+            archive=False,
+            intent="answer",
+            observation=dpts.Observation(scope=scope, submission_id=SUB),
+        )
+    
+>       assert outcome.escalated_reason == "input-incomplete", outcome.detail
+E       AssertionError: dp4-failure-handling:k: answer only (mode=auto), nothing acted on
+E       assert None == 'input-incomplete'
+E        +  where None = DecisionOutcome(dp='dp4-failure-handling', status='suggested', escalated_reason=None, answer={'failure_action': {'valu...lse, 'would_action_label': None, 'executor_invoked': False, 'action_outcome': 'unknown', 'observe_only_bypass': False}).escalated_reason
+
+test_decision_input_contract_migration.py:587: AssertionError
+___ test_seam_refuses_a_wrong_identity_value_with_zero_send[decision_point] ___
+
+field = 'decision_point'
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_seam_refuses_a_wrong_iden1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B004969E50>
+
+    @pytest.mark.parametrize("field", IDENTITY)
+    def test_seam_refuses_a_wrong_identity_value_with_zero_send(
+        field: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = _project(tmp_path)
+        root = tmp_path / "run"
+        scope = _scope(root)
+        backend = decision.FakeBackend([_ok({"failure_action": {"value": "retry"}})])
+        state = _dp4_state()
+        state[field] = {"schema_version": 1, "decision_point": DP5, "questions_version": "q-deadbeef"}[
+            field
+        ]
+        dp_point = dpts.get_decision_point(DP4)
+        monkeypatch.setitem(
+            dpts._REGISTRY_BY_ID, DP4, dataclasses.replace(dp_point, build_state=lambda trigger: dict(state))
+        )
+    
+        outcome = dpts.decide_for(
+            DP4,
+            {"key": "k"},
+            project,
+            client=_client(backend, scope),
+            archive=False,
+            intent="answer",
+            observation=dpts.Observation(scope=scope, submission_id=SUB),
+        )
+    
+>       assert outcome.escalated_reason == "input-incomplete", outcome.detail
+E       AssertionError: dp4-failure-handling:k: answer only (mode=auto), nothing acted on
+E       assert None == 'input-incomplete'
+E        +  where None = DecisionOutcome(dp='dp4-failure-handling', status='suggested', escalated_reason=None, answer={'failure_action': {'valu...lse, 'would_action_label': None, 'executor_invoked': False, 'action_outcome': 'unknown', 'observe_only_bypass': False}).escalated_reason
+
+test_decision_input_contract_migration.py:587: AssertionError
+_ test_seam_refuses_a_wrong_identity_value_with_zero_send[questions_version] __
+
+field = 'questions_version'
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_seam_refuses_a_wrong_iden2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B00474E430>
+
+    @pytest.mark.parametrize("field", IDENTITY)
+    def test_seam_refuses_a_wrong_identity_value_with_zero_send(
+        field: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = _project(tmp_path)
+        root = tmp_path / "run"
+        scope = _scope(root)
+        backend = decision.FakeBackend([_ok({"failure_action": {"value": "retry"}})])
+        state = _dp4_state()
+        state[field] = {"schema_version": 1, "decision_point": DP5, "questions_version": "q-deadbeef"}[
+            field
+        ]
+        dp_point = dpts.get_decision_point(DP4)
+        monkeypatch.setitem(
+            dpts._REGISTRY_BY_ID, DP4, dataclasses.replace(dp_point, build_state=lambda trigger: dict(state))
+        )
+    
+        outcome = dpts.decide_for(
+            DP4,
+            {"key": "k"},
+            project,
+            client=_client(backend, scope),
+            archive=False,
+            intent="answer",
+            observation=dpts.Observation(scope=scope, submission_id=SUB),
+        )
+    
+>       assert outcome.escalated_reason == "input-incomplete", outcome.detail
+E       AssertionError: dp4-failure-handling:k: answer only (mode=auto), nothing acted on
+E       assert None == 'input-incomplete'
+E        +  where None = DecisionOutcome(dp='dp4-failure-handling', status='suggested', escalated_reason=None, answer={'failure_action': {'valu...lse, 'would_action_label': None, 'executor_invoked': False, 'action_outcome': 'unknown', 'observe_only_bypass': False}).escalated_reason
+
+test_decision_input_contract_migration.py:587: AssertionError
+________ test_dp25_state_without_identity_values_still_passes_the_gate ________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_dp25_state_without_identi0')
+
+    def test_dp25_state_without_identity_values_still_passes_the_gate(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        """dp25's required set is business-only: a missing identity keeps builder defaults."""
+        project, state = real_signoff_state(tmp_path)
+        for field in IDENTITY:
+            state.pop(field)
+>       assert dpts.state_identity_issues(DP25, state) == ()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'state_identity_issues'. Did you mean: 'state_field_issues'?
+
+test_decision_input_contract_migration.py:602: AttributeError
+______________ test_book_and_seam_use_the_same_identity_verdict _______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18499/test_book_and_seam_use_the_sam0')
+
+    def test_book_and_seam_use_the_same_identity_verdict(tmp_path: pathlib.Path) -> None:
+        project = _project(tmp_path)
+        state = _dp4_state()
+        state["schema_version"] = 1
+        state["questions_version"] = "q-deadbeef"
+        book_issues = [
+            (issue.path, issue.detail)
+            for issue in books.check_book(_book(DP4, state), project_dir=project)
+            if issue.path.removeprefix("state.") in IDENTITY
+        ]
+        shared = [
+>           (f"state.{path}", detail) for path, detail in dpts.state_identity_issues(DP4, state)
+                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        ]
+E       AttributeError: module 'decision_points' has no attribute 'state_identity_issues'. Did you mean: 'state_field_issues'?
+
+test_decision_input_contract_migration.py:626: AttributeError
+_______ test_state_field_issues_stays_one_defect_one_code_for_identity ________
+
+    def test_state_field_issues_stays_one_defect_one_code_for_identity() -> None:
+        """Identity is checked once per call, not twice through two checkers."""
+        state = _dp4_state()
+        state["questions_version"] = "q-deadbeef"
+        fields = [path for path, _ in dpts.state_field_issues(DP4, state)]
+>       identity = [path for path, _ in dpts.state_identity_issues(DP4, state)]
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'state_identity_issues'. Did you mean: 'state_field_issues'?
+
+test_decision_input_contract_migration.py:636: AttributeError
+________ test_enum_refusal_detail_does_not_echo_a_secret_or_free_text _________
+
+    def test_enum_refusal_detail_does_not_echo_a_secret_or_free_text() -> None:
+        for bad in (TEST_SECRET, "customer password hunter2 should not be echoed at all"):
+            state = _dp4_state()
+            state["failure"] = {**state["failure"], "kind": bad}
+            issues = dpts.state_field_issues(DP4, state)
+            assert len(issues) == 1
+            path, detail = issues[0]
+            assert path == "failure.kind"
+            assert "must be one of" in detail
+            assert "transient" in detail, "the allowed set stays in the detail (a closed set)"
+>           assert bad not in detail, "the offending free-text value must never be echoed"
+E           AssertionError: the offending free-text value must never be echoed
+E           assert 'sk-t05c-mig...456789abcdef' not in "must be one...56789abcdef'"
+E             
+E             'sk-t05c-migration-0123456789abcdef' is contained here:
+E               n'], got 'sk-t05c-migration-0123456789abcdef'
+
+test_decision_input_contract_migration.py:656: AssertionError
+__________ test_register_book_validator_rejects_an_illegal_validator __________
+
+    def test_register_book_validator_rejects_an_illegal_validator() -> None:
+        registered = dpts.BOOK_VALIDATOR
+        assert registered is not None, "importing decision_book registers the validator"
+        for illegal in (None, 7, "books", object()):
+>           with pytest.raises((TypeError, ValueError)):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE any of (<class 'TypeError'>, <class 'ValueError'>)
+
+test_decision_input_contract_migration.py:686: Failed
+____ test_register_book_validator_is_repeatable_for_the_same_registration _____
+
+    def test_register_book_validator_is_repeatable_for_the_same_registration() -> None:
+        registered = dpts.BOOK_VALIDATOR
+>       assert registered is not None
+E       assert None is not None
+
+test_decision_input_contract_migration.py:693: AssertionError
+_________ test_register_book_validator_refuses_an_arbitrary_override __________
+
+    def test_register_book_validator_refuses_an_arbitrary_override() -> None:
+        registered = dpts.BOOK_VALIDATOR
+>       assert registered is not None
+E       assert None is not None
+
+test_decision_input_contract_migration.py:700: AssertionError
+______________ test_exports_carry_the_dp25_optional_declaration _______________
+
+    def test_exports_carry_the_dp25_optional_declaration() -> None:
+        doc = json.loads((PACKAGE_DIR / "decide_registry.json").read_text(encoding="utf-8"))
+        by_id = {point["id"]: point for point in doc["points"]}
+        exported = [field["name"] for field in by_id[DP25]["optional_state_fields"]]
+>       assert exported == list(DP25_OPTIONAL)
+E       AssertionError: assert [] == ['rows_escala...e_violations']
+E         
+E         Right contains 3 more items, first extra item: 'rows_escalated'
+E         Use -v to get more diff
+
+test_decision_input_contract_migration.py:842: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_input_contract_migration.py::test_dp25_producer_facts_are_declared_optional_fields
+FAILED test_decision_input_contract_migration.py::test_unknown_key_check_has_no_string_allowance_parameter
+FAILED test_decision_input_contract_migration.py::test_real_signoff_state_passes_the_shared_gates_without_an_exemption
+FAILED test_decision_input_contract_migration.py::test_real_signoff_state_is_a_legal_decision_book
+FAILED test_decision_input_contract_migration.py::test_real_signoff_state_is_accepted_as_observation_book_material
+FAILED test_decision_input_contract_migration.py::test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[rows_escalated--1]
+FAILED test_decision_input_contract_migration.py::test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[rows_escalated-3]
+FAILED test_decision_input_contract_migration.py::test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[rows_escalated-True]
+FAILED test_decision_input_contract_migration.py::test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[escalated_reasons-p0]
+FAILED test_decision_input_contract_migration.py::test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[escalated_reasons-value4]
+FAILED test_decision_input_contract_migration.py::test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[escalated_reasons-value5]
+FAILED test_decision_input_contract_migration.py::test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[escalated_reasons-value6]
+FAILED test_decision_input_contract_migration.py::test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[engine_violations-value7]
+FAILED test_decision_input_contract_migration.py::test_real_dp25_state_refuses_an_illegal_optional_value_with_zero_send[engine_violations-value8]
+FAILED test_decision_input_contract_migration.py::test_oversize_refusal_keeps_the_truncated_candidate_on_purpose
+FAILED test_decision_input_contract_migration.py::test_state_identity_issues_compares_with_the_registry_and_schema
+FAILED test_decision_input_contract_migration.py::test_seam_refuses_a_wrong_identity_value_with_zero_send[schema_version]
+FAILED test_decision_input_contract_migration.py::test_seam_refuses_a_wrong_identity_value_with_zero_send[decision_point]
+FAILED test_decision_input_contract_migration.py::test_seam_refuses_a_wrong_identity_value_with_zero_send[questions_version]
+FAILED test_decision_input_contract_migration.py::test_dp25_state_without_identity_values_still_passes_the_gate
+FAILED test_decision_input_contract_migration.py::test_book_and_seam_use_the_same_identity_verdict
+FAILED test_decision_input_contract_migration.py::test_state_field_issues_stays_one_defect_one_code_for_identity
+FAILED test_decision_input_contract_migration.py::test_enum_refusal_detail_does_not_echo_a_secret_or_free_text
+FAILED test_decision_input_contract_migration.py::test_register_book_validator_rejects_an_illegal_validator
+FAILED test_decision_input_contract_migration.py::test_register_book_validator_is_repeatable_for_the_same_registration
+FAILED test_decision_input_contract_migration.py::test_register_book_validator_refuses_an_arbitrary_override
+FAILED test_decision_input_contract_migration.py::test_exports_carry_the_dp25_optional_declaration
+27 failed, 8 passed in 0.75s

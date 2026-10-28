@@ -1,0 +1,122 @@
+[
+  {
+    "name": "default-no-env-no-config",
+    "env": {},
+    "config": null,
+    "expect": { "mode": "off", "source": "default", "invalid": null }
+  },
+  {
+    "name": "env-on",
+    "env": { "MW_REVIEW_SPLIT": "on" },
+    "config": null,
+    "expect": { "mode": "on", "source": "env", "invalid": null }
+  },
+  {
+    "name": "env-uppercase-plan",
+    "env": { "MW_REVIEW_SPLIT": "PLAN" },
+    "config": null,
+    "expect": { "mode": "plan", "source": "env", "invalid": null }
+  },
+  {
+    "name": "env-padded-off",
+    "env": { "MW_REVIEW_SPLIT": " Off " },
+    "config": null,
+    "expect": { "mode": "off", "source": "env", "invalid": null }
+  },
+  {
+    "name": "env-illegal-no-config",
+    "env": { "MW_REVIEW_SPLIT": "sideways" },
+    "config": null,
+    "expect": { "mode": "off", "source": "default", "invalid": "sideways" }
+  },
+  {
+    "name": "env-empty-string-is-as-if-unset",
+    "env": { "MW_REVIEW_SPLIT": "" },
+    "config": null,
+    "expect": { "mode": "off", "source": "default", "invalid": "" }
+  },
+  {
+    "name": "config-plan",
+    "env": {},
+    "config": { "v": 1, "mode": "plan", "updated": "2026-10-22T00:00:00Z" },
+    "expect": { "mode": "plan", "source": "config", "invalid": null }
+  },
+  {
+    "name": "config-uppercase-mode",
+    "env": {},
+    "config": { "v": 1, "mode": "ON" },
+    "expect": { "mode": "on", "source": "config", "invalid": null }
+  },
+  {
+    "name": "env-on-overrides-config-plan",
+    "env": { "MW_REVIEW_SPLIT": "on" },
+    "config": { "v": 1, "mode": "plan" },
+    "expect": { "mode": "on", "source": "env", "invalid": null }
+  },
+  {
+    "name": "env-off-overrides-config-on",
+    "env": { "MW_REVIEW_SPLIT": "off" },
+    "config": { "v": 1, "mode": "on" },
+    "expect": { "mode": "off", "source": "env", "invalid": null }
+  },
+  {
+    "name": "env-illegal-config-plan-still-applies",
+    "env": { "MW_REVIEW_SPLIT": "true" },
+    "config": { "v": 1, "mode": "plan" },
+    "expect": { "mode": "plan", "source": "config", "invalid": "true" }
+  },
+  {
+    "name": "env-illegal-config-broken-env-reason-wins",
+    "env": { "MW_REVIEW_SPLIT": "true" },
+    "config": "{ broken json",
+    "expect": { "mode": "off", "source": "default", "invalid": "true" }
+  },
+  {
+    "name": "config-broken-json",
+    "env": {},
+    "config": "{ broken json",
+    "expect": { "mode": "off", "source": "default", "invalid": "config-invalid-json" }
+  },
+  {
+    "name": "config-array-shape",
+    "env": {},
+    "config": [],
+    "expect": { "mode": "off", "source": "default", "invalid": "config-invalid-shape" }
+  },
+  {
+    "name": "config-v2-unsupported",
+    "env": {},
+    "config": { "v": 2, "mode": "plan" },
+    "expect": { "mode": "off", "source": "default", "invalid": "config-invalid-v:2" }
+  },
+  {
+    "name": "config-v-missing",
+    "env": {},
+    "config": { "mode": "plan" },
+    "expect": { "mode": "off", "source": "default", "invalid": "config-invalid-v:undefined" }
+  },
+  {
+    "name": "config-v-string-is-not-a-version",
+    "env": {},
+    "config": { "v": "1", "mode": "plan" },
+    "expect": { "mode": "off", "source": "default", "invalid": "config-invalid-v:\"1\"" }
+  },
+  {
+    "name": "config-mode-illegal",
+    "env": {},
+    "config": { "v": 1, "mode": "fast" },
+    "expect": { "mode": "off", "source": "default", "invalid": "config-invalid-mode:\"fast\"" }
+  },
+  {
+    "name": "config-mode-null",
+    "env": {},
+    "config": { "v": 1, "mode": null },
+    "expect": { "mode": "off", "source": "default", "invalid": "config-invalid-mode:null" }
+  },
+  {
+    "name": "config-mode-missing",
+    "env": {},
+    "config": { "v": 1 },
+    "expect": { "mode": "off", "source": "default", "invalid": "config-invalid-mode:undefined" }
+  }
+]

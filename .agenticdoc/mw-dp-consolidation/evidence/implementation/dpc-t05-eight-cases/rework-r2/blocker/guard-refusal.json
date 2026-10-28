@@ -1,0 +1,16 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T13:36:00+00:00",
+  "reported_by": "worker dpc-t05-eight-cases-r2 (this session's own tool result)",
+  "attempt": {
+    "tool": "edit",
+    "purpose": "add the two root-cause regression tests to test_decision_context_workbench.py (the card's requirement 5: red first, then the fixed products)",
+    "target": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_workbench.py"
+  },
+  "refusal_verbatim": "write-scope: blocked edit to H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_decision_context_workbench.py: outside the task's declared write_face [rule=write-scope]; allowed: H:\\git\\Multi-Workers",
+  "rule": "write-scope",
+  "detail": "outside-declared-write-face",
+  "bytes_written": 0,
+  "product_state_after_refusal": "blocker/unmodified.json (27 product/input rows unchanged, 1891-file copy inventory unchanged, 14 pyc unchanged)",
+  "note": "The refusal is the shipped guard's own verdict (worker-mode.ts::checkBashWriteScopeTarget, rule=write-scope, detail=outside-declared-write-face). It is not a policy opinion of this report."
+}

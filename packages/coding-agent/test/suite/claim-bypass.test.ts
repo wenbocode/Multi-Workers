@@ -178,8 +178,10 @@ function makeFixture(opts: {
 	product?: string;
 	/** Project-root-relative fixture files (numbered 20-line bodies). */
 	projectFiles?: string[];
-	/** Project-root-relative files whose mtime is forced older than task.md. */
-	staleFiles?: string[];
+	/** `read_scope:` entries written into task.md. Required for the D-014
+	 * read-target criteria: without a scope the worker installs no read-scope
+	 * interceptor, so no call can be "allowed". */
+	readScope?: string[];
 }): Fixture {
 	const projectRoot = mkdtemp("mw-claim-bypass-");
 	const trueRoot = path.join(projectRoot, ".agenticdoc");
@@ -189,10 +191,15 @@ function makeFixture(opts: {
 	const taskDir = path.join(keyDir, "workers", task);
 	fs.mkdirSync(taskDir, { recursive: true });
 
-	// task.md first: everything the fixture writes AFTER it is "produced by this
-	// run" (fresh), which is what the ⑥ carried-from clock compares against.
-	const head = `type: ${opts.type ?? "research"}\n`;
-	const taskMd = `${head}\nwork\n\n${opts.claims ?? ""}`;
+	// task.md carries the worker's whole input: `type:` (role), the optional
+	// claims-derived `read_scope:` and the claims block. Nothing here depends on
+	// mtimes any more: D-014 replaced the carried-from clock with the set of
+	// targets the run was ALLOWED to read.
+	const head = [`type: ${opts.type ?? "research"}`];
+	if (opts.readScope !== undefined && opts.readScope.length > 0) {
+		head.push("read_scope:", ...opts.readScope.map((entry) => `  - ${entry}`));
+	}
+	const taskMd = `${head.join("\n")}\n\nwork\n\n${opts.claims ?? ""}`;
 	fs.writeFileSync(path.join(taskDir, "task.md"), taskMd, "utf8");
 
 	// Project-root fixtures: the evidence grammar resolves refs against cwd
@@ -206,14 +213,6 @@ function makeFixture(opts: {
 
 	if (opts.product !== undefined) fs.writeFileSync(path.join(taskDir, "report.md"), opts.product, "utf8");
 
-	// A carried-from fixture needs citations that predate the run's task book.
-	const taskMtimeMs = fs.statSync(path.join(taskDir, "task.md")).mtimeMs;
-	for (const rel of opts.staleFiles ?? []) {
-		const abs = path.join(projectRoot, rel);
-		const when = new Date(taskMtimeMs - 60_000);
-		fs.utimesSync(abs, when, when);
-	}
-
 	return { projectRoot, trueRoot, keyDir, taskDir, taskKey: `${key}/workers/${task}` };
 }
 
@@ -222,9 +221,16 @@ interface SentMessage {
 	deliverAs?: string;
 }
 
+interface GateVerdict {
+	block?: boolean;
+	reason?: string;
+}
+
 interface FakeWorker {
 	pi: ExtensionAPI;
 	emit: (name: string, payload?: unknown) => void;
+	/** Fire the `tool_call` gate and return its verdict (undefined = allowed). */
+	toolCall: (toolName: string, input: Record<string, unknown>) => GateVerdict | undefined;
 	sent: SentMessage[];
 }
 
@@ -249,7 +255,27 @@ function fakeWorkerPi(): FakeWorker {
 		emit: (name: string, payload?: unknown) => {
 			for (const cb of handlers.get(name) ?? []) cb(payload);
 		},
+		toolCall: (toolName: string, input: Record<string, unknown>) => {
+			for (const cb of handlers.get("tool_call") ?? []) {
+				const result = cb({ toolName, input });
+				if (result !== undefined) return result as GateVerdict;
+			}
+			return undefined;
+		},
 	};
+}
+
+/** One read-class call as the runtime sees it: the `tool_call` gate (which
+ * decides allow/block) plus the `tool_execution_start` accounting event the
+ * trace and the raw `readCount` consume. Returns the gate's verdict. */
+function readCall(worker: FakeWorker, relPath: string): GateVerdict | undefined {
+	const verdict = worker.toolCall("read", { path: relPath });
+	worker.emit("tool_execution_start", {
+		toolCallId: `tc-${relPath}`,
+		toolName: "read",
+		args: { path: relPath },
+	});
+	return verdict;
 }
 
 async function startWorker(fx: Fixture): Promise<FakeWorker> {
@@ -421,8 +447,12 @@ describe("AC-008 ②-B-2: too many unverified claims is not a PASS", () => {
 				verdictRow({ id: "C-04", verdict: "unverified", finding: "无法判定", reason: "no-access" }),
 				verdictRow({ id: "C-05", verdict: "unverified", finding: "无法判定", reason: "no-access" }),
 			]),
+			// D-014: a closed row must cite a file this run READ, so the fixture
+			// opens a scope and performs the allowed read.
+			readScope: ["src"],
 		});
 		const worker = await startWorker(fx);
+		expect(readCall(worker, "src/a.ts")).toBeUndefined();
 		settle(worker, "done");
 
 		const run = readRun(fx);
@@ -433,7 +463,7 @@ describe("AC-008 ②-B-2: too many unverified claims is not a PASS", () => {
 });
 
 describe("AC-008 ③-B-6: Σ取数 upper bounds", () => {
-	it("Σ取数 above min(Σ预算, fileCap) => gap (unit)", () => {
+	it("Σ取数 above min(callCap, perClaim × n) => gap (unit)", () => {
 		const claims = [claimOf("C-01", { budget: 1 }), claimOf("C-02", { budget: 1 })];
 		const table = parseVerdictTable(
 			verdictTable([
@@ -448,18 +478,19 @@ describe("AC-008 ③-B-6: Σ取数 upper bounds", () => {
 			traceReads: 10,
 			projectDir: process.cwd(),
 		});
+		// D-014: fileCap = min(30, 6 × 2) = 12 (the Σ预算 planning weight of 2 no
+		// longer prices the fetch budget), and the table reports 2 fetches.
 		console.log(`[VERIFY] AC-008-3a cap gaps=${JSON.stringify(gaps)}`);
-		// Σ预算 = 2 => fileCap = 2, and the table reports 2 fetches... push it over:
 		expect(gaps).toEqual([]);
 		const over = parseVerdictTable(
 			verdictTable([
-				verdictRow({ id: "C-01", verdict: "closed", finding: "成立", evidence: "src/a.ts:3", fetches: "2" }),
-				verdictRow({ id: "C-02", verdict: "closed", finding: "成立", evidence: "src/a.ts:4", fetches: "1" }),
+				verdictRow({ id: "C-01", verdict: "closed", finding: "成立", evidence: "src/a.ts:3", fetches: "7" }),
+				verdictRow({ id: "C-02", verdict: "closed", finding: "成立", evidence: "src/a.ts:4", fetches: "6" }),
 			]),
 		);
 		expect(
-			claimSettlementGaps({ claims, table: over, role: "research", traceReads: 10, projectDir: process.cwd() }),
-		).toEqual(["claims:fetches:3>2"]);
+			claimSettlementGaps({ claims, table: over, role: "research", traceReads: 99, projectDir: process.cwd() }),
+		).toEqual(["claims:fetches:13>12"]);
 	});
 
 	it("Σ取数 above the trace's own read-class tool_call count => exit 2", async () => {
@@ -524,25 +555,30 @@ describe("AC-008 ④-B10: struct rows and two-way id equality", () => {
 });
 
 describe("AC-008 ⑥-B-7: a re-used previous-round verdict needs carried-from", () => {
-	it("a closed row citing only pre-run artifacts => exit 2", async () => {
+	it("a closed row citing a file this run never read => exit 2", async () => {
 		const fx = makeFixture({
 			claims: claimsBlock([claimRow({ id: "C-01" })]),
 			product: researchProduct([
 				verdictRow({ id: "C-01", verdict: "closed", finding: "成立", evidence: "evidence/claims/qg.md:2" }),
 			]),
 			projectFiles: ["src/a.ts", "evidence/claims/qg.md"],
-			staleFiles: ["evidence/claims/qg.md"],
+			// The run DOES read (src/a.ts, allowed) but never the cited file: the
+			// verdict cannot be this run's own reading, whatever the file's age.
+			readScope: ["src"],
 		});
 		const worker = await startWorker(fx);
+		expect(readCall(worker, "src/a.ts")).toBeUndefined();
 		settleToTerminal(worker);
 
 		const run = readRun(fx);
-		console.log(`[VERIFY] AC-008-6 exit=${run.exit} carried-from`);
+		console.log(`[VERIFY] AC-008-6 unread exit=${run.exit} steer=${worker.sent[0]?.text ?? "-"}`);
 		expect(run.exit).toBe(2);
 		expect(worker.sent[0]?.text).toContain("claim:C-01:carried-from");
+		// The read itself was allowed — the gap is the UNREAD citation, not a block.
+		expect(readTrace(fx)).not.toContain("[READ_SCOPE]");
 	});
 
-	it("the same row WITH `carried-from:` passes (the only legal reuse channel)", () => {
+	it("a cited file this run DID read is no gap, and `carried-from:` is the only legal reuse", () => {
 		const fx = makeFixture({ projectFiles: ["src/a.ts", "evidence/claims/qg.md"] });
 		const withMarker = parseVerdictTable(
 			verdictTable([
@@ -565,20 +601,29 @@ describe("AC-008 ⑥-B-7: a re-used previous-round verdict needs carried-from", 
 				}),
 			]),
 		);
-		// A clock far in the future makes every citation "stale"; only the
-		// explicit marker may rescue it.
 		const base = {
 			claims: [claimOf("C-01")],
 			role: "research",
 			traceReads: 99,
-			taskMtimeMs: Date.now() + 3_600_000,
 			projectDir: fx.projectRoot,
 		};
-		console.log(
-			`[VERIFY] AC-008-6 marker gaps=${JSON.stringify(claimSettlementGaps({ ...base, table: withoutMarker }))}`,
+		// Read another file: the citation is still untouched by this run.
+		expect(claimSettlementGaps({ ...base, table: withoutMarker, readTargets: ["src/a.ts"] })).toEqual([
+			"claim:C-01:carried-from",
+		]);
+		// Read the cited file: the verdict is this run's own reading.
+		expect(claimSettlementGaps({ ...base, table: withoutMarker, readTargets: ["evidence/claims/qg.md"] })).toEqual(
+			[],
 		);
-		expect(claimSettlementGaps({ ...base, table: withoutMarker })).toEqual(["claim:C-01:carried-from"]);
-		expect(claimSettlementGaps({ ...base, table: withMarker })).toEqual([]);
+		// Read nothing at all, but the explicit marker is present: legal reuse.
+		console.log(
+			`[VERIFY] AC-008-6 marker gaps=${JSON.stringify(
+				claimSettlementGaps({ ...base, table: withMarker, readTargets: [] }),
+			)}`,
+		);
+		expect(claimSettlementGaps({ ...base, table: withMarker, readTargets: [] })).toEqual([]);
+		// No readTargets => ⑥ is skipped (the pure function stays testable).
+		expect(claimSettlementGaps({ ...base, table: withoutMarker })).toEqual([]);
 	});
 });
 
@@ -591,8 +636,11 @@ describe("[CLAIMS] trace row (design D-004)", () => {
 			product: researchProduct([
 				verdictRow({ id: "C-01", verdict: "closed", finding: "成立", evidence: "src/a.ts:3" }),
 			]),
+			// D-014: the row cites src/a.ts, so the run must have read it.
+			readScope: ["src"],
 		});
 		const worker = await startWorker(fx);
+		readCall(worker, "src/a.ts");
 		settle(worker, "done");
 
 		const run = readRun(fx);
@@ -603,7 +651,8 @@ describe("[CLAIMS] trace row (design D-004)", () => {
 		expect(rows).toHaveLength(1);
 		const row = rows[0] ?? "";
 		expect(row).toMatch(CLAIMS_LINE_RE);
-		expect(row).toMatch(/ claims=1 closed=1 partial=0 unverified=0 fetches=0$/);
+		// One allowed read call => fetches=1 (D-014: allowed calls only).
+		expect(row).toMatch(/ claims=1 closed=1 partial=0 unverified=0 fetches=1$/);
 		// The independent-line rule: `[END]` is untouched (both sides anchor it).
 		const end = trace.split(/\r?\n/).find((line) => line.startsWith("[END]")) ?? "";
 		expect(end).not.toContain("claims=");
@@ -647,6 +696,46 @@ describe("[CLAIMS] trace row (design D-004)", () => {
 	});
 });
 
+// ── 3b. `fetches` counts allowed read calls only (D-014) ─────────────────────
+
+describe("D-014: `fetches` counts allowed read calls only", () => {
+	it("read-scope blocked calls stay out of [CLAIMS] fetches and run.json", async () => {
+		const fx = makeFixture({
+			claims: claimsBlock([claimRow({ id: "C-01" })]),
+			product: researchProduct([
+				verdictRow({ id: "C-01", verdict: "closed", finding: "成立", evidence: "src/a.ts:3", fetches: "1" }),
+			]),
+			projectFiles: ["src/a.ts", "outside/b.ts"],
+			readScope: ["src"],
+		});
+		const worker = await startWorker(fx);
+		// Three read-class calls as the runtime sees them (tool_execution_start
+		// fires before the gate, T-07 trace): 1 allowed, 2 blocked by the scope.
+		expect(readCall(worker, "src/a.ts")).toBeUndefined();
+		const blocked = [readCall(worker, "outside/b.ts"), readCall(worker, "outside/b.ts")];
+		expect(blocked.map((verdict) => verdict?.block)).toEqual([true, true]);
+		console.log(`[VERIFY] AC-008-fetches blocked=${JSON.stringify(blocked.map((v) => v?.reason))}`);
+		settle(worker, "done");
+
+		const run = readRun(fx);
+		const trace = readTrace(fx);
+		// `readCount` (checkpoint / repeat-read) saw all three starts ...
+		const rawReads = trace.split(/\r?\n/).filter((line) => line.endsWith("tool_call read")).length;
+		const rejections = trace.match(/\[READ_SCOPE\]/g) ?? [];
+		// ... but only the allowed one is a fetch: the blocked pair never read bytes.
+		const row = claimsLines(trace)[0] ?? "";
+		console.log(
+			`[VERIFY] AC-008-fetches raw=${rawReads} blocked=${rejections.length} row=${row} run=${JSON.stringify(run.claims)}`,
+		);
+		expect(rawReads).toBe(3);
+		expect(rejections).toHaveLength(2);
+		expect(row).toMatch(/ claims=1 closed=1 partial=0 unverified=0 fetches=1$/);
+		expect(run.claims).toMatchObject({ total: 1, closed: 1, fetches: 1 });
+		// One allowed fetch, one closed claim, its citation read: no gap at all.
+		expect(run.exit).toBe(0);
+	});
+});
+
 // ── 4. run.json `claims` subobject ─────────────────────────────────────────
 
 describe("run.json claims subobject (design §3.4, T-05 readback)", () => {
@@ -677,8 +766,11 @@ describe("run.json claims subobject (design §3.4, T-05 readback)", () => {
 			product: researchProduct([
 				verdictRow({ id: "C-01", verdict: "partial", finding: "部分成立", evidence: "src/a.ts:3" }),
 			]),
+			// D-014: the partial row cites src/a.ts, so the run must have read it.
+			readScope: ["src"],
 		});
 		const worker = await startWorker(fx);
+		readCall(worker, "src/a.ts");
 		settle(worker, "done");
 
 		const run = readRun(fx);
@@ -691,7 +783,7 @@ describe("run.json claims subobject (design §3.4, T-05 readback)", () => {
 			"total",
 			"unverified",
 		]);
-		expect(run.claims).toEqual({ total: 1, closed: 0, partial: 1, unverified: 0, fetches: 0, tokens: null });
+		expect(run.claims).toEqual({ total: 1, closed: 0, partial: 1, unverified: 0, fetches: 1, tokens: null });
 	});
 
 	it("read back: run.json and the [CLAIMS] row carry the same counters", async () => {

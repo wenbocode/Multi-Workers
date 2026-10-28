@@ -1,0 +1,60 @@
+{
+  "decision_points.py": [
+    {
+      "id": "T03",
+      "task_key": "dpc-t03-protocol",
+      "card": "tasks/isolated/T03-protocol.md",
+      "stage": 1,
+      "authorized_product_paths": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_points.py"
+      ]
+    }
+  ],
+  "decision_context.py": [
+    {
+      "id": "T04",
+      "task_key": "dpc-t04-context-ts-generation",
+      "card": "tasks/isolated/T04-context-ts-generation.md",
+      "stage": 1,
+      "authorized_product_paths": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_context.py"
+      ]
+    }
+  ],
+  "decision_playground.py": [
+    {
+      "id": "T28",
+      "task_key": "dpc-t28-observation-server",
+      "card": "tasks/isolated/T28-observation-server.md",
+      "stage": 5,
+      "authorized_product_paths": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_playground.py"
+      ]
+    }
+  ],
+  "decision_monitor.py": [
+    {
+      "id": "T28",
+      "task_key": "dpc-t28-observation-server",
+      "card": "tasks/isolated/T28-observation-server.md",
+      "stage": 5,
+      "authorized_product_paths": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_monitor.py"
+      ]
+    }
+  ],
+  "decision_dashboard.js": [
+    {
+      "id": "T29",
+      "task_key": "dpc-t29-web-components",
+      "card": "tasks/isolated/T29-web-components.md",
+      "stage": 5,
+      "authorized_product_paths": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_dashboard.js"
+      ]
+    }
+  ],
+  "test_decision_book.py": [],
+  "test_decision_book_known_secrets.py": [],
+  "test_decision_cli_config_snapshot.py": []
+}

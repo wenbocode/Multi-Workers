@@ -1,0 +1,13 @@
+[
+  {
+    "argv": [
+      "node",
+      "../../node_modules/vitest/dist/cli.js",
+      "--run",
+      "test/suite/decision-task-state.test.ts"
+    ],
+    "exit": 1,
+    "utc_start": "2026-10-24T09:18:25.116257+00:00",
+    "utc_end": "2026-10-24T09:18:29.152561+00:00"
+  }
+]

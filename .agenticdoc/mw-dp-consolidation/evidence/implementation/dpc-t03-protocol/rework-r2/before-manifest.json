@@ -1,0 +1,63 @@
+{
+  "stage": "before-r2",
+  "root": "implementation-worktree",
+  "pm_handoff_check": "evidence/implementation/t03-pm-handoff-20261026/check.json",
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_points.py",
+      "sha256": "a3fb1fe8f3a9caea2a6a4acc660298ca6d2cb9921418c152025c401279089047",
+      "bytes": 304640,
+      "crlf": 7080,
+      "bare_lf": 0,
+      "lines": 7080,
+      "exists": true,
+      "pm_handoff_sha256": "a3fb1fe8f3a9caea2a6a4acc660298ca6d2cb9921418c152025c401279089047",
+      "matches_pm_handoff": true,
+      "matches_t03_after_bytes": true,
+      "main_tree_sha256": "a92bbdc2f12e6559c6e40bd571336655d190d84aa73268bbff4ee0dc8bdf1243",
+      "dirty_vs_main_tree": true
+    },
+    {
+      "path": "packages/multi-workers/decide_registry.json",
+      "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "bytes": 29869,
+      "crlf": 0,
+      "bare_lf": 894,
+      "lines": 894,
+      "exists": true,
+      "pm_handoff_sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "matches_pm_handoff": true,
+      "matches_t03_after_bytes": true,
+      "main_tree_sha256": "0a5e16d64ab83b9f84a6a6776cef55b16d87349010b24bb1b40da4207d1283ae",
+      "dirty_vs_main_tree": true
+    },
+    {
+      "path": "packages/multi-workers/test_decide_registry_contract.py",
+      "sha256": "4c6aedadca32dd26316a5d18407dc1e7889a62b986b6e6860f973d908878c1d0",
+      "bytes": 19527,
+      "crlf": 0,
+      "bare_lf": 463,
+      "lines": 463,
+      "exists": true,
+      "pm_handoff_sha256": "4c6aedadca32dd26316a5d18407dc1e7889a62b986b6e6860f973d908878c1d0",
+      "matches_pm_handoff": true,
+      "matches_t03_after_bytes": true,
+      "main_tree_sha256": "7564cfdcb2ad261beda987299c27008f57bc3561eb3348e841aeb676106b61cb",
+      "dirty_vs_main_tree": true
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_registry.py",
+      "sha256": "af20145ead7a031a9ec5ca5ffd4227a725ef2f3615111fda9423f3f2d80b5a97",
+      "bytes": 31311,
+      "crlf": 0,
+      "bare_lf": 727,
+      "lines": 727,
+      "exists": true,
+      "pm_handoff_sha256": "af20145ead7a031a9ec5ca5ffd4227a725ef2f3615111fda9423f3f2d80b5a97",
+      "matches_pm_handoff": true,
+      "matches_t03_after_bytes": true,
+      "main_tree_sha256": null,
+      "dirty_vs_main_tree": true
+    }
+  ]
+}

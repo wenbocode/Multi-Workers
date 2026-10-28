@@ -1,0 +1,61 @@
+{
+  "books": {
+    "dp3-worker-clarify": {
+      "schema_version": 2,
+      "decision_point": "dp3-worker-clarify",
+      "state": {
+        "schema_version": 2,
+        "decision_point": "dp3-worker-clarify",
+        "question": "<string: The clarifying question verbatim, written before any answer.>",
+        "background": {
+          "task_goal": "<string: Task goal the question is asked against.>",
+          "current_state": "<string: What is actually known so far; unknowns are marked unknown, never invented.>",
+          "decision_reason": "<string: Why this question needs a decision now.>",
+          "constraints_impact": "<string: Constraints and the impact of each candidate handling.>"
+        },
+        "handling_options": [],
+        "questions_version": "q-21d2d577"
+      },
+      "context": {},
+      "notes": {
+        "evidence": {
+          "question": "<待填: path:line 或命令原文>",
+          "background.task_goal": "<待填: path:line 或命令原文>",
+          "background.current_state": "<待填: path:line 或命令原文>",
+          "background.decision_reason": "<待填: path:line 或命令原文>",
+          "background.constraints_impact": "<待填: path:line 或命令原文>",
+          "handling_options": "<待填: path:line 或命令原文>"
+        }
+      }
+    },
+    "dp6-qg-verdict": {
+      "schema_version": 2,
+      "decision_point": "dp6-qg-verdict",
+      "state": {
+        "schema_version": 2,
+        "decision_point": "dp6-qg-verdict",
+        "questions_version": "q-16b4bb5c",
+        "qg": {
+          "checks_total": -1,
+          "checks_failed": [],
+          "blocking": [],
+          "scope": "<string: Which surface the verdict covers: impl (code) or spec (locked requirements).>"
+        }
+      },
+      "context": {
+        "error_excerpt": ""
+      },
+      "notes": {
+        "evidence": {
+          "schema_version": "<待填: path:line 或命令原文>",
+          "decision_point": "<待填: path:line 或命令原文>",
+          "questions_version": "<待填: path:line 或命令原文>",
+          "qg.checks_total": "<待填: path:line 或命令原文>",
+          "qg.checks_failed": "<待填: path:line 或命令原文>",
+          "qg.blocking": "<待填: path:line 或命令原文>",
+          "qg.scope": "<待填: path:line 或命令原文>"
+        }
+      }
+    }
+  }
+}

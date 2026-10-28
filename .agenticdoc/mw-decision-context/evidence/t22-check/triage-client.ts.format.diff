@@ -1,0 +1,21 @@
+--- packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts
++++ packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts.formatted
+@@ -58,9 +58,9 @@
+ import { spawnSync } from "node:child_process";
+ import { randomUUID } from "node:crypto";
+-import { copyTaskState, isTaskStateSnapshot, type TaskStateSnapshot } from "./decision-task-state.ts";
+ import * as fs from "node:fs";
+ import * as path from "node:path";
+ import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.ts";
+ import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.ts";
++import { copyTaskState, isTaskStateSnapshot, type TaskStateSnapshot } from "./decision-task-state.ts";
+ 
+ /** Hard client-side wall-clock budget for one `mw decide run` child (D-006). */
+@@ -891,5 +891,6 @@
+ 		problems.push("retry_of");
+ 	}
+-	if (meta.task_before !== undefined && (meta.task_key === null || !isTaskStateSnapshot(meta.task_before))) problems.push("task_before");
++	if (meta.task_before !== undefined && (meta.task_key === null || !isTaskStateSnapshot(meta.task_before)))
++		problems.push("task_before");
+ 	return problems;
+ }

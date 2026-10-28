@@ -1,0 +1,165 @@
+--- packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts.t22-before
++++ packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
+@@ -86,6 +86,7 @@
+ export { classifyWriteTargetShape, type WriteTargetShape } from "../shared/write-surface.ts";
+ 
+ import { isShellRole, isWritelessRole } from "../worker/worker-mode.ts";
++import { captureDecisionTaskState, copyTaskState, type TaskStateSnapshot } from "./decision-task-state.ts";
+ import { type DecisionLifecycleEnvelope, type LifecycleRunner, writeDecisionLifecycle } from "./decision-tool.ts";
+ import { formatDispatchAlarm, recordDispatchAlarm } from "./pm-orchestrator.ts";
+ import { planReviewSplitGate } from "./review-split-gate.ts";
+@@ -106,6 +107,8 @@
+ 	type TriageResult,
+ 	triageDispatchEnvelope,
+ } from "./triage-client.ts";
++
++export { captureDecisionTaskState };
+ 
+ /** Owner key for a worker task — this window's own claim first, the shared
+  * active pointer second. Explicit key wins (deliberate choice — no warning).
+@@ -316,10 +319,11 @@
+ 	taskType?: string;
+ 	/** Card seed sections; absent means the producer has no original material. */
+ 	sections?: CardSections;
++	taskBefore?: TaskStateSnapshot;
+ }
+ 
+ /** Call-site facts only the dispatch entry knows. */
+-export type Dp1DispatchFacts = Pick<Dp1DispatchPlan, "key" | "taskKey" | "sections">;
++export type Dp1DispatchFacts = Pick<Dp1DispatchPlan, "key" | "taskKey" | "sections" | "taskBefore">;
+ 
+ const DP1_TYPE_CHOICES: readonly string[] = ["coding", "research", "review"];
+ 
+@@ -355,7 +359,12 @@
+  * is T02's lowercase `pm` — the writer's closed vocabulary has a single
+  * spelling and a producer never carries a second one. */
+ export function dp1DecisionMeta(plan: Dp1DispatchPlan): DecisionEnvelopeMeta {
+-	return newDecisionMeta({ key: plan.key ?? "", taskKey: plan.taskKey ?? null, initiatorRole: "pm" });
++	return newDecisionMeta({
++		key: plan.key ?? "",
++		taskKey: plan.taskKey ?? null,
++		initiatorRole: "pm",
++		taskBefore: plan.taskBefore,
++	});
+ }
+ 
+ /** One stage of the consumer's lifecycle feedback for a dp1 decision.
+@@ -378,6 +387,7 @@
+ 	/** `settled`: the CLOSED T02 outcome of this round. */
+ 	outcome?: string;
+ 	reason?: string;
++	taskAfter?: TaskStateSnapshot;
+ }
+ 
+ /**
+@@ -413,6 +423,8 @@
+ 		event_id: `dp1:${logicalId}:${stage}`,
+ 	};
+ 	if (fact.reason !== undefined) envelope.reason = fact.reason;
++	if (stage !== "consumed" && triage.meta.task_key !== null && fact.taskAfter !== undefined)
++		envelope.task_after = copyTaskState(fact.taskAfter);
+ 	if (stage === "consumed") {
+ 		// "Received" is only a fact when the service really answered.
+ 		if (!triage.result.available) return undefined;
+@@ -477,6 +489,7 @@
+ 	taskKey: string;
+ 	dispatchedType: string;
+ 	refused: boolean;
++	taskAfter?: TaskStateSnapshot;
+ }): Promise<Array<{ stage: Dp1ConsumerStage; status: "written" | "duplicate" | "failed" }>> {
+ 	const { projectDir, triage, lifecycleRun, taskKey, dispatchedType, refused } = input;
+ 	const results: Array<{ stage: Dp1ConsumerStage; status: "written" | "duplicate" | "failed" }> = [];
+@@ -493,7 +506,7 @@
+ 				projectDir,
+ 				triage,
+ 				"settled",
+-				{ outcome: "rework", reason: "dispatch-refused" },
++				{ outcome: "rework", reason: "dispatch-refused", taskAfter: input.taskAfter },
+ 				lifecycleRun,
+ 			),
+ 		);
+@@ -509,7 +522,15 @@
+ 			lifecycleRun,
+ 		),
+ 	);
+-	results.push(await writeDp1Lifecycle(projectDir, triage, "settled", { outcome: "ok" }, lifecycleRun));
++	results.push(
++		await writeDp1Lifecycle(
++			projectDir,
++			triage,
++			"settled",
++			{ outcome: "ok", taskAfter: input.taskAfter },
++			lifecycleRun,
++		),
++	);
+ 	return results;
+ }
+ 
+@@ -1855,6 +1876,7 @@
+ 		dp1: {
+ 			key: input.dp1?.key,
+ 			taskKey: input.dp1?.taskKey,
++			taskBefore: input.dp1?.taskBefore,
+ 			taskType: input.taskType,
+ 			sections: input.dp1?.sections,
+ 		},
+@@ -3321,7 +3343,12 @@
+ 				triageRun,
+ 				// T03: owning key + the REAL reserved task id + the judged card's
+ 				// envelope bodies are the dp1 material/association facts.
+-				dp1: { key: ownerKey, taskKey: task_key, sections: cardGate.sections },
++				dp1: {
++					key: ownerKey,
++					taskKey: task_key,
++					sections: cardGate.sections,
++					taskBefore: captureDecisionTaskState(workerStore, ownerKey, task_key),
++				},
+ 			});
+ 			if (!modelPlan.ok) {
+ 				return { content: [{ type: "text", text: modelPlan.message }], details: undefined };
+@@ -3372,6 +3399,7 @@
+ 						taskKey: task_key,
+ 						dispatchedType: typeField,
+ 						refused: true,
++						taskAfter: captureDecisionTaskState(workerStore, ownerKey, task_key),
+ 					}),
+ 				);
+ 				return {
+@@ -3402,6 +3430,7 @@
+ 					taskKey: task_key,
+ 					dispatchedType: typeField,
+ 					refused: false,
++					taskAfter: captureDecisionTaskState(workerStore, ownerKey, task_key),
+ 				}),
+ 			);
+ 
+@@ -3882,7 +3911,12 @@
+ 				registry: ctx.modelRegistry,
+ 				triageRun,
+ 				// T03: same material/association facts as dispatch_worker.
+-				dp1: { key: ownerKey, taskKey, sections: cardGate.sections },
++				dp1: {
++					key: ownerKey,
++					taskKey,
++					sections: cardGate.sections,
++					taskBefore: captureDecisionTaskState(workerStore, ownerKey, taskKey),
++				},
+ 			});
+ 			if (!modelPlan.ok) {
+ 				ctx.ui.notify(modelPlan.message, "warning");
+@@ -3930,6 +3964,7 @@
+ 						taskKey,
+ 						dispatchedType: typeField,
+ 						refused: true,
++						taskAfter: captureDecisionTaskState(workerStore, ownerKey, taskKey),
+ 					}),
+ 				);
+ 				ctx.ui.notify(
+@@ -3947,6 +3982,7 @@
+ 					taskKey,
+ 					dispatchedType: typeField,
+ 					refused: false,
++					taskAfter: captureDecisionTaskState(workerStore, ownerKey, taskKey),
+ 				}),
+ 			);
+ 			ctx.ui.notify(

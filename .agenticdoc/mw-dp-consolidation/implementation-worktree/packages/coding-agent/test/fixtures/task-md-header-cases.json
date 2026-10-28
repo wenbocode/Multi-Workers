@@ -1,0 +1,277 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "unfenced-single",
+      "content_b64": "dHlwZTogY29kaW5nCgp3b3JrCg==",
+      "expected": {
+        "type": "coding",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [],
+        "registered": true,
+        "escalates": false
+      }
+    },
+    {
+      "id": "unfenced-multi-header",
+      "content_b64": "dHlwZTogcmV2aWV3CnBoYXNlOiBTUEVDCm1vZGVsOiB4Cgp3b3JrCg==",
+      "expected": {
+        "type": "review",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [],
+        "registered": true,
+        "escalates": false
+      }
+    },
+    {
+      "id": "fenced",
+      "content_b64": "LS0tCnR5cGU6IHJlc2VhcmNoCm9yaWdpbjogY29uZHVjdG9yCi0tLQoKd29yawo=",
+      "expected": {
+        "type": "research",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": true,
+        "truncated": false,
+        "body_type_lines": [],
+        "registered": true,
+        "escalates": false
+      }
+    },
+    {
+      "id": "fenced-unclosed",
+      "content_b64": "LS0tCnR5cGU6IGNvZGluZwoKd29yawo=",
+      "expected": {
+        "type": "coding",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [],
+        "registered": true,
+        "escalates": false
+      }
+    },
+    {
+      "id": "type-not-first",
+      "content_b64": "b3JpZ2luOiBjb25kdWN0b3IKdHlwZTogdmVyaWZpZXIKcmVhZF9zY29wZToKICAtIGEKCndvcmsK",
+      "expected": {
+        "type": "verifier",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [],
+        "registered": true,
+        "escalates": false
+      }
+    },
+    {
+      "id": "dup-type-in-header",
+      "content_b64": "dHlwZTogY29kaW5nCnBoYXNlOiBTUEVDCnR5cGU6IHJldmlldwoKd29yawo=",
+      "expected": {
+        "type": "coding",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [],
+        "registered": true,
+        "escalates": false
+      }
+    },
+    {
+      "id": "body-equal",
+      "content_b64": "dHlwZTogY29kaW5nCm1vZGVsOiB4Cgp0eXBlOiBjb2RpbmcK",
+      "expected": {
+        "type": "coding",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [
+          [
+            4,
+            "coding"
+          ]
+        ],
+        "registered": true,
+        "escalates": false
+      }
+    },
+    {
+      "id": "body-narrow",
+      "content_b64": "dHlwZTogY29kaW5nCgp3b3JrCgp0eXBlOiByZXZpZXcK",
+      "expected": {
+        "type": "coding",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [
+          [
+            5,
+            "review"
+          ]
+        ],
+        "registered": true,
+        "escalates": false
+      }
+    },
+    {
+      "id": "body-escalate",
+      "content_b64": "dHlwZTogcmV2aWV3Cgp3b3JrCgp0eXBlOiBjb2RpbmcK",
+      "expected": {
+        "type": "review",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [
+          [
+            5,
+            "coding"
+          ]
+        ],
+        "registered": true,
+        "escalates": true
+      }
+    },
+    {
+      "id": "body-escalate-unknown",
+      "content_b64": "dHlwZTogdmVyaWZpZXIKCndvcmsKCnR5cGU6IHdoYXRldmVyCg==",
+      "expected": {
+        "type": "verifier",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [
+          [
+            5,
+            "whatever"
+          ]
+        ],
+        "registered": true,
+        "escalates": true
+      }
+    },
+    {
+      "id": "missing-type",
+      "content_b64": "IyB0aXRsZQoKd29yawo=",
+      "expected": {
+        "type": null,
+        "source": "missing",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [],
+        "registered": false,
+        "escalates": false
+      }
+    },
+    {
+      "id": "illegal-type",
+      "content_b64": "dHlwZTogbXlzdGVyeS10eXBlCgp3b3JrCg==",
+      "expected": {
+        "type": "mystery-type",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [],
+        "registered": false,
+        "escalates": false
+      }
+    },
+    {
+      "id": "near-miss-type-space",
+      "content_b64": "dHlwZSA6IGNvZGluZwoKd29yawo=",
+      "expected": {
+        "type": null,
+        "source": "missing",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [],
+        "registered": false,
+        "escalates": false
+      }
+    },
+    {
+      "id": "bom",
+      "content_b64": "77u/dHlwZTogdmlzaW9uCgp3b3JrCg==",
+      "expected": {
+        "type": "vision",
+        "source": "header",
+        "bom_stripped": true,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [],
+        "registered": true,
+        "escalates": false
+      }
+    },
+    {
+      "id": "crlf",
+      "content_b64": "dHlwZTogcmVwYWlyDQoNCndvcmsNCg==",
+      "expected": {
+        "type": "repair",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [],
+        "registered": true,
+        "escalates": false
+      }
+    },
+    {
+      "id": "block-list-no-blank",
+      "content_b64": "dHlwZTogdmVyaWZpZXINCnJlYWRfc2NvcGU6DQogIC0gYQ0KICAtIGINCg==",
+      "expected": {
+        "type": "verifier",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": true,
+        "body_type_lines": [],
+        "registered": true,
+        "escalates": false
+      }
+    },
+    {
+      "id": "prose-no-blank",
+      "content_b64": "dHlwZTogY29kaW5nCndvcmsgd2l0aG91dCBibGFuayBsaW5lCg==",
+      "expected": {
+        "type": "coding",
+        "source": "header",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": true,
+        "body_type_lines": [],
+        "registered": true,
+        "escalates": false
+      }
+    },
+    {
+      "id": "empty",
+      "content_b64": "",
+      "expected": {
+        "type": null,
+        "source": "missing",
+        "bom_stripped": false,
+        "fenced": false,
+        "truncated": false,
+        "body_type_lines": [],
+        "registered": false,
+        "escalates": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+wrote H:\git\Multi-Workers\packages\multi-workers\decide_registry.json (25 points, 3 wired)
+wrote packages\coding-agent\src\extensions\agent-team-loop\shared\decide-registry.generated.ts (33933 chars)

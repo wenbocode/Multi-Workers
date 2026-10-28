@@ -1,0 +1,584 @@
+{
+  "stage": "before",
+  "observed_at_utc": "2026-10-26T04:33:09.555166+00:00",
+  "worktree": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree",
+  "package": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+  "main_root": "H:\\git\\Multi-Workers",
+  "main_head": "7a530ecb7cb86dac329dbc259459657b2e1608ea",
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_points.py",
+      "exists": true,
+      "bytes": 305745,
+      "sha256": "78e72e03cfe3b03f0349d95113c1947713b91c4a143bbaaada404f08db7443e6",
+      "crlf": 7102,
+      "bare_lf": 0,
+      "lines": 7102,
+      "last_byte": 10,
+      "mtime_ns": 1792985752249325900,
+      "main_tree": {
+        "exists": true,
+        "bytes": 247920,
+        "sha256": "a92bbdc2f12e6559c6e40bd571336655d190d84aa73268bbff4ee0dc8bdf1243",
+        "crlf": 5769,
+        "bare_lf": 0,
+        "lines": 5769,
+        "last_byte": 10,
+        "mtime_ns": 1792749804576324100
+      }
+    },
+    {
+      "path": "packages/multi-workers/decide_registry.json",
+      "exists": true,
+      "bytes": 29869,
+      "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "crlf": 0,
+      "bare_lf": 894,
+      "lines": 894,
+      "last_byte": 10,
+      "mtime_ns": 1792982772341723000,
+      "main_tree": {
+        "exists": true,
+        "bytes": 56194,
+        "sha256": "0a5e16d64ab83b9f84a6a6776cef55b16d87349010b24bb1b40da4207d1283ae",
+        "crlf": 0,
+        "bare_lf": 1771,
+        "lines": 1771,
+        "last_byte": 10,
+        "mtime_ns": 1792686801886425200
+      }
+    },
+    {
+      "path": "packages/multi-workers/test_decide_registry_contract.py",
+      "exists": true,
+      "bytes": 23724,
+      "sha256": "67b74a47e22b3d500fa0799a3b1a33c439a69ae8d2bc8c6971a2afeba965f32c",
+      "crlf": 0,
+      "bare_lf": 557,
+      "lines": 557,
+      "last_byte": 10,
+      "mtime_ns": 1792985717102882200,
+      "main_tree": {
+        "exists": true,
+        "bytes": 19538,
+        "sha256": "7564cfdcb2ad261beda987299c27008f57bc3561eb3348e841aeb676106b61cb",
+        "crlf": 0,
+        "bare_lf": 435,
+        "lines": 435,
+        "last_byte": 10,
+        "mtime_ns": 1792728766702022700
+      }
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_registry.py",
+      "exists": true,
+      "bytes": 35149,
+      "sha256": "f7bf030231558c258921bb286593bb89bb58b85f37ea4548b2e6c2eb4ce75d2f",
+      "crlf": 0,
+      "bare_lf": 815,
+      "lines": 815,
+      "last_byte": 10,
+      "mtime_ns": 1792985761322438500,
+      "main_tree": {
+        "exists": false
+      }
+    }
+  ],
+  "handoff_rows": 13,
+  "handoff": {
+    "packages/multi-workers/decision_points.py": {
+      "r2_before_sha256": "a3fb1fe8f3a9caea2a6a4acc660298ca6d2cb9921418c152025c401279089047",
+      "r2_after_sha256": "78e72e03cfe3b03f0349d95113c1947713b91c4a143bbaaada404f08db7443e6",
+      "current_sha256": "78e72e03cfe3b03f0349d95113c1947713b91c4a143bbaaada404f08db7443e6",
+      "current_matches_r2_after": true
+    },
+    "packages/multi-workers/decide_registry.json": {
+      "r2_before_sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "r2_after_sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "current_sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "current_matches_r2_after": true
+    },
+    "packages/multi-workers/decision_context.py": {
+      "r2_before_sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+      "r2_after_sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+      "current_sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+      "current_matches_r2_after": true
+    },
+    "packages/multi-workers/decision_book.py": {
+      "r2_before_sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+      "r2_after_sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+      "current_sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+      "current_matches_r2_after": true
+    },
+    "packages/multi-workers/decision.py": {
+      "r2_before_sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+      "r2_after_sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+      "current_sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+      "current_matches_r2_after": true
+    },
+    "packages/multi-workers/mw.py": {
+      "r2_before_sha256": "35fa4689101c69f6172c1565d99a834a25a3ade5dd3e151c924a8410b9b48757",
+      "r2_after_sha256": "35fa4689101c69f6172c1565d99a834a25a3ade5dd3e151c924a8410b9b48757",
+      "current_sha256": "35fa4689101c69f6172c1565d99a834a25a3ade5dd3e151c924a8410b9b48757",
+      "current_matches_r2_after": true
+    },
+    "packages/multi-workers/scripts/gen_decide_registry_ts.py": {
+      "r2_before_sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+      "r2_after_sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+      "current_sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+      "current_matches_r2_after": true
+    },
+    "packages/multi-workers/decide_cases/dp1.json": {
+      "r2_before_sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "r2_after_sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "current_sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "current_matches_r2_after": true
+    },
+    "packages/multi-workers/decide_cases/dp2.json": {
+      "r2_before_sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "r2_after_sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "current_sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "current_matches_r2_after": true
+    },
+    "packages/multi-workers/decide_cases/dp3.json": {
+      "r2_before_sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "r2_after_sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "current_sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "current_matches_r2_after": true
+    },
+    "packages/multi-workers/decide_cases/dp25.json": {
+      "r2_before_sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "r2_after_sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "current_sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "current_matches_r2_after": true
+    },
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts": {
+      "r2_before_sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+      "r2_after_sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+      "current_sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+      "current_matches_r2_after": true
+    },
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts": {
+      "r2_before_sha256": "70551a67c82bd463ee040267758d2d3a2d19ae3387d9329b9a6817581c651d58",
+      "r2_after_sha256": "70551a67c82bd463ee040267758d2d3a2d19ae3387d9329b9a6817581c651d58",
+      "current_sha256": "70551a67c82bd463ee040267758d2d3a2d19ae3387d9329b9a6817581c651d58",
+      "current_matches_r2_after": true
+    }
+  },
+  "protected_extra": {
+    "packages/multi-workers/scripts/gen_decide_registry_ts.py": {
+      "exists": true,
+      "bytes": 11684,
+      "sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+      "crlf": 0,
+      "bare_lf": 285,
+      "lines": 285,
+      "last_byte": 10,
+      "mtime_ns": 1792981746378891000
+    },
+    "packages/multi-workers/mw.py": {
+      "exists": true,
+      "bytes": 569942,
+      "sha256": "35fa4689101c69f6172c1565d99a834a25a3ade5dd3e151c924a8410b9b48757",
+      "crlf": 13043,
+      "bare_lf": 0,
+      "lines": 13043,
+      "last_byte": 10,
+      "mtime_ns": 1792981746371736000
+    },
+    "packages/multi-workers/decision.py": {
+      "exists": true,
+      "bytes": 99249,
+      "sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+      "crlf": 0,
+      "bare_lf": 2298,
+      "lines": 2298,
+      "last_byte": 10,
+      "mtime_ns": 1792981746345334800
+    },
+    "packages/multi-workers/decision_context.py": {
+      "exists": true,
+      "bytes": 11949,
+      "sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+      "crlf": 288,
+      "bare_lf": 0,
+      "lines": 288,
+      "last_byte": 10,
+      "mtime_ns": 1792981746346878800
+    },
+    "packages/multi-workers/decision_book.py": {
+      "exists": true,
+      "bytes": 54796,
+      "sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+      "crlf": 0,
+      "bare_lf": 1338,
+      "lines": 1338,
+      "last_byte": 10,
+      "mtime_ns": 1792981746346362800
+    },
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts": {
+      "exists": true,
+      "bytes": 48631,
+      "sha256": "70551a67c82bd463ee040267758d2d3a2d19ae3387d9329b9a6817581c651d58",
+      "crlf": 0,
+      "bare_lf": 1128,
+      "lines": 1128,
+      "last_byte": 10,
+      "mtime_ns": 1792981745508054400
+    },
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts": {
+      "exists": true,
+      "bytes": 30264,
+      "sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+      "crlf": 0,
+      "bare_lf": 930,
+      "lines": 930,
+      "last_byte": 10,
+      "mtime_ns": 1792981745538841500
+    }
+  },
+  "evidence_boundary": {
+    "original-t03": {
+      "files": 56,
+      "sha256": {
+        "evidence/implementation/dpc-t03-protocol/after-bytes/decide_registry.json": {
+          "bytes": 29869,
+          "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604"
+        },
+        "evidence/implementation/dpc-t03-protocol/after-bytes/decision_points.py": {
+          "bytes": 304640,
+          "sha256": "a3fb1fe8f3a9caea2a6a4acc660298ca6d2cb9921418c152025c401279089047"
+        },
+        "evidence/implementation/dpc-t03-protocol/after-bytes/test_decide_registry_contract.py": {
+          "bytes": 19527,
+          "sha256": "4c6aedadca32dd26316a5d18407dc1e7889a62b986b6e6860f973d908878c1d0"
+        },
+        "evidence/implementation/dpc-t03-protocol/after-bytes/test_dp_consolidation_registry.py": {
+          "bytes": 31311,
+          "sha256": "af20145ead7a031a9ec5ca5ffd4227a725ef2f3615111fda9423f3f2d80b5a97"
+        },
+        "evidence/implementation/dpc-t03-protocol/after-manifest.json": {
+          "bytes": 1206,
+          "sha256": "9b09b5fbca59fa09b463dbe1295549e28beaad9c39eec85149570ca420495fa4"
+        },
+        "evidence/implementation/dpc-t03-protocol/before-bytes/decide_registry.json": {
+          "bytes": 56194,
+          "sha256": "0a5e16d64ab83b9f84a6a6776cef55b16d87349010b24bb1b40da4207d1283ae"
+        },
+        "evidence/implementation/dpc-t03-protocol/before-bytes/decision_points.py": {
+          "bytes": 247920,
+          "sha256": "a92bbdc2f12e6559c6e40bd571336655d190d84aa73268bbff4ee0dc8bdf1243"
+        },
+        "evidence/implementation/dpc-t03-protocol/before-bytes/test_decide_registry_contract.py": {
+          "bytes": 19538,
+          "sha256": "7564cfdcb2ad261beda987299c27008f57bc3561eb3348e841aeb676106b61cb"
+        },
+        "evidence/implementation/dpc-t03-protocol/before-manifest.json": {
+          "bytes": 1041,
+          "sha256": "a92efd26610bd320ee639917e8c3fb57db1dba5ba8a50d155de444e4607d49a2"
+        },
+        "evidence/implementation/dpc-t03-protocol/capture_manifest.py": {
+          "bytes": 2234,
+          "sha256": "757ba5ba02cb16a5cb9fba2d43ff015732e74101e2033e042c4b246082eef0bc"
+        },
+        "evidence/implementation/dpc-t03-protocol/green-01-tests-after-impl.log": {
+          "bytes": 2729,
+          "sha256": "e62944cc4b1e8146bf24730f2fa4f09834cbd27b48a5bbf57a723f5f61dbfe62"
+        },
+        "evidence/implementation/dpc-t03-protocol/green-02-tests-after-followup.log": {
+          "bytes": 1019,
+          "sha256": "dde0c6bb5970f0b463566b4bdf9c1b2188b49b95e37214db23377aa8ee7ae361"
+        },
+        "evidence/implementation/dpc-t03-protocol/green-03-final.log": {
+          "bytes": 1004,
+          "sha256": "cde24673a2f179a89cf8037f2a0122a2234f9ac43891a25df384fc64593d6850"
+        },
+        "evidence/implementation/dpc-t03-protocol/green-04-acceptance-final.log": {
+          "bytes": 1015,
+          "sha256": "fc5e3c146c837bf03bb1f638cf736a5873b9a1f5b59505eb7414958777894fe8"
+        },
+        "evidence/implementation/dpc-t03-protocol/handoff-inventory.json": {
+          "bytes": 3784,
+          "sha256": "9a8dbd9821ac00376b8d9be92605a7b835e2ab3acecee02bbac04e5562f963e8"
+        },
+        "evidence/implementation/dpc-t03-protocol/import-smoke.json": {
+          "bytes": 249,
+          "sha256": "36d6192b16f53ab2f3a3562094bf01cba20300078d3bfb10af37a5639ecd71bf"
+        },
+        "evidence/implementation/dpc-t03-protocol/patch_decision_points.py": {
+          "bytes": 93504,
+          "sha256": "57c1a429031f805a563a1d7c69e7937b9613f33262ea13773fd4ef950e88644a"
+        },
+        "evidence/implementation/dpc-t03-protocol/patch_followup.py": {
+          "bytes": 2041,
+          "sha256": "3b79eb1bfcf8e0e9578073ff02b513b32aa3c8af9fd119e8f0d8c744c783461f"
+        },
+        "evidence/implementation/dpc-t03-protocol/red-01-tests-before-impl.log": {
+          "bytes": 1511,
+          "sha256": "5dc24d682d705ee7a09e3743386c3d99bfecf066c546bf75baa707d33b3adba4"
+        },
+        "evidence/implementation/dpc-t03-protocol/red-02-contract-before-impl.log": {
+          "bytes": 66284,
+          "sha256": "15975be6b496833e527c3948e35081bd70afb97ac4225c4fe4ae4268ec18bbb8"
+        },
+        "evidence/implementation/dpc-t03-protocol/report.md": {
+          "bytes": 19838,
+          "sha256": "a3924062658c94026c42132b5a2b3e95b730ac357b852e79f77a4d69ecadd25d"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/after-bytes/decide_registry.json": {
+          "bytes": 29869,
+          "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/after-bytes/decision_points.py": {
+          "bytes": 305745,
+          "sha256": "78e72e03cfe3b03f0349d95113c1947713b91c4a143bbaaada404f08db7443e6"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/after-bytes/test_decide_registry_contract.py": {
+          "bytes": 23724,
+          "sha256": "67b74a47e22b3d500fa0799a3b1a33c439a69ae8d2bc8c6971a2afeba965f32c"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/after-bytes/test_dp_consolidation_registry.py": {
+          "bytes": 35149,
+          "sha256": "f7bf030231558c258921bb286593bb89bb58b85f37ea4548b2e6c2eb4ce75d2f"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/after-manifest.json": {
+          "bytes": 1900,
+          "sha256": "3f74dd8ad0f3d4634275d59a7c7c1d50657f17fe1935474e6a551a58b57c594a"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/before-bytes/decide_registry.json": {
+          "bytes": 29869,
+          "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/before-bytes/decision_points.py": {
+          "bytes": 304640,
+          "sha256": "a3fb1fe8f3a9caea2a6a4acc660298ca6d2cb9921418c152025c401279089047"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/before-bytes/test_decide_registry_contract.py": {
+          "bytes": 19527,
+          "sha256": "4c6aedadca32dd26316a5d18407dc1e7889a62b986b6e6860f973d908878c1d0"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/before-bytes/test_dp_consolidation_registry.py": {
+          "bytes": 31311,
+          "sha256": "af20145ead7a031a9ec5ca5ffd4227a725ef2f3615111fda9423f3f2d80b5a97"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/before-dirty-vs-main-tree.diff": {
+          "bytes": 202289,
+          "sha256": "7941aebdf21bef00dd9e62a38e98acc22d30ed503af9956824a98da7ab53544d"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/before-manifest.json": {
+          "bytes": 2416,
+          "sha256": "4c7f31f89abb802bc6ed231ac6120257a68d182629431dcb34a32335c690706c"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/capture_after.py": {
+          "bytes": 7242,
+          "sha256": "8271dfc824dc4325bf208687e35866e3118d903a58b729d2855dbbf5c5f946a8"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/capture_before.py": {
+          "bytes": 3804,
+          "sha256": "f1845051533bfa93e42f20b6858a7449fdebe2c4be429f461fd852364de94163"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/fixture/eight-entry.synthetic.ts": {
+          "bytes": 2114,
+          "sha256": "1c869424d379f0d07270416aefbff60dfc2df0986a12dc1b3b0e0835dfab1460"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/fixture/mixed-rename.synthetic.ts": {
+          "bytes": 6212,
+          "sha256": "604c9d4200c79fa984a0af3e7b0368aed1ad960e1c5705487247a098ab2ebc13"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/green-01-tests-after-impl.log": {
+          "bytes": 14464,
+          "sha256": "aee2af3c44f439830dcfc662f88c65c2ef248951a672da4871d766195e0f880a"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/green-02-tests-after-impl.log": {
+          "bytes": 1126,
+          "sha256": "8bfb755c78c41d2fe93be772953a92f5ecedd1ea498f071bf6a4b75310a5b2d9"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/green-03-acceptance.log": {
+          "bytes": 1120,
+          "sha256": "55bdfaa07524ed1fd75fba081763bafac949c94707b00c4223c57499723d7ea5"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/inspect_ts.py": {
+          "bytes": 1299,
+          "sha256": "19d59a30d6a93365cf7b872b6cb394c5b679cb6e6143074c14b239fd7a1eb5de"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/probe-stage.json": {
+          "bytes": 2406,
+          "sha256": "ca6b0b0f7651fe0514ac24ff89ba4a56d5312c083d46ef04ad2d5eaeedb711f0"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/probe_stage.py": {
+          "bytes": 6475,
+          "sha256": "9fa80f8ade224a38cc4a2f800400196b5a893a22cedb427aff7bda5255049e1e"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/r2-changes.diff": {
+          "bytes": 16673,
+          "sha256": "a1dd0bc5b41ee5f9708f00286a16566f32f659d358f597940d0ac3f7b08de37d"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/red-01-tests-before-impl.log": {
+          "bytes": 31277,
+          "sha256": "195238d39bc8792eb537ebc2394a925ff8286baddffd91ec2cf9d1187b133b69"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/red-02-tests-before-impl.log": {
+          "bytes": 29280,
+          "sha256": "3a3b0ec9d438d700fab7be99e57520e00e042a7d56c89091f5c68b84c9d496f0"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/report.md": {
+          "bytes": 14990,
+          "sha256": "ccc70d67cf055f11c2ca4a6ce089e29d58fb7b60cf57ad4483bca7fabfba462e"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/run_pytest.py": {
+          "bytes": 3014,
+          "sha256": "9ca8e62ecb550c69d803a3263d5f90cc453af8a15a2ac71a3b953cd847cd7009"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/write-scope-check.json": {
+          "bytes": 4702,
+          "sha256": "4e2a2368d4e379a774b714a132a43b1eb438f84ad99db92c50ebcd0d97f33871"
+        },
+        "evidence/implementation/dpc-t03-protocol/run_pytest.py": {
+          "bytes": 3069,
+          "sha256": "493b1385956f6b3346e8e434eac79aab82f22d6dd37187ba0c66ad6a0b20523f"
+        },
+        "evidence/implementation/dpc-t03-protocol/t03-changes.diff": {
+          "bytes": 232709,
+          "sha256": "c696a95e0f46eb4ce2677b631526b3db3d742db0da10a29ded2d64d670523b42"
+        },
+        "evidence/implementation/dpc-t03-protocol/untouched-files-check.json": {
+          "bytes": 1158,
+          "sha256": "760e43a922d7d9df46c5754698b04d6fe6b248403b52faf0b1811aad15644fb2"
+        },
+        "evidence/implementation/dpc-t03-protocol/verify_untouched.py": {
+          "bytes": 2466,
+          "sha256": "0e0b865062308d02e8bc2e7eda5bd7c4c90d0ca46d36fac175c20c636753eb16"
+        },
+        "evidence/implementation/dpc-t03-protocol/write-scope-check.json": {
+          "bytes": 1591,
+          "sha256": "4941b0e9e8cdf121ac4cc9195f1e21b93f2684137117288e7ff4e45f516c0b5a"
+        },
+        "evidence/implementation/dpc-t03-protocol/write_diffs.py": {
+          "bytes": 4578,
+          "sha256": "0104de2dc52b73c50aee21e308de69b51e10d603316d2fd7730e065f263f7807"
+        },
+        "evidence/implementation/dpc-t03-protocol/write_registry_snapshot.py": {
+          "bytes": 1852,
+          "sha256": "bb9582e39ce88791bc33abbfe35b37cae518235fbb7dc339162fc25a8e792d29"
+        },
+        "evidence/implementation/dpc-t03-protocol/write_scope_check.py": {
+          "bytes": 2667,
+          "sha256": "ee65d771d807268cbb8d7e22d3b14feec9c052e7954c3e38a84c0f62f3fe425c"
+        }
+      }
+    },
+    "rework-r2": {
+      "files": 27,
+      "sha256": {
+        "evidence/implementation/dpc-t03-protocol/rework-r2/after-bytes/decide_registry.json": {
+          "bytes": 29869,
+          "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/after-bytes/decision_points.py": {
+          "bytes": 305745,
+          "sha256": "78e72e03cfe3b03f0349d95113c1947713b91c4a143bbaaada404f08db7443e6"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/after-bytes/test_decide_registry_contract.py": {
+          "bytes": 23724,
+          "sha256": "67b74a47e22b3d500fa0799a3b1a33c439a69ae8d2bc8c6971a2afeba965f32c"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/after-bytes/test_dp_consolidation_registry.py": {
+          "bytes": 35149,
+          "sha256": "f7bf030231558c258921bb286593bb89bb58b85f37ea4548b2e6c2eb4ce75d2f"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/after-manifest.json": {
+          "bytes": 1900,
+          "sha256": "3f74dd8ad0f3d4634275d59a7c7c1d50657f17fe1935474e6a551a58b57c594a"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/before-bytes/decide_registry.json": {
+          "bytes": 29869,
+          "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/before-bytes/decision_points.py": {
+          "bytes": 304640,
+          "sha256": "a3fb1fe8f3a9caea2a6a4acc660298ca6d2cb9921418c152025c401279089047"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/before-bytes/test_decide_registry_contract.py": {
+          "bytes": 19527,
+          "sha256": "4c6aedadca32dd26316a5d18407dc1e7889a62b986b6e6860f973d908878c1d0"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/before-bytes/test_dp_consolidation_registry.py": {
+          "bytes": 31311,
+          "sha256": "af20145ead7a031a9ec5ca5ffd4227a725ef2f3615111fda9423f3f2d80b5a97"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/before-dirty-vs-main-tree.diff": {
+          "bytes": 202289,
+          "sha256": "7941aebdf21bef00dd9e62a38e98acc22d30ed503af9956824a98da7ab53544d"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/before-manifest.json": {
+          "bytes": 2416,
+          "sha256": "4c7f31f89abb802bc6ed231ac6120257a68d182629431dcb34a32335c690706c"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/capture_after.py": {
+          "bytes": 7242,
+          "sha256": "8271dfc824dc4325bf208687e35866e3118d903a58b729d2855dbbf5c5f946a8"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/capture_before.py": {
+          "bytes": 3804,
+          "sha256": "f1845051533bfa93e42f20b6858a7449fdebe2c4be429f461fd852364de94163"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/fixture/eight-entry.synthetic.ts": {
+          "bytes": 2114,
+          "sha256": "1c869424d379f0d07270416aefbff60dfc2df0986a12dc1b3b0e0835dfab1460"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/fixture/mixed-rename.synthetic.ts": {
+          "bytes": 6212,
+          "sha256": "604c9d4200c79fa984a0af3e7b0368aed1ad960e1c5705487247a098ab2ebc13"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/green-01-tests-after-impl.log": {
+          "bytes": 14464,
+          "sha256": "aee2af3c44f439830dcfc662f88c65c2ef248951a672da4871d766195e0f880a"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/green-02-tests-after-impl.log": {
+          "bytes": 1126,
+          "sha256": "8bfb755c78c41d2fe93be772953a92f5ecedd1ea498f071bf6a4b75310a5b2d9"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/green-03-acceptance.log": {
+          "bytes": 1120,
+          "sha256": "55bdfaa07524ed1fd75fba081763bafac949c94707b00c4223c57499723d7ea5"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/inspect_ts.py": {
+          "bytes": 1299,
+          "sha256": "19d59a30d6a93365cf7b872b6cb394c5b679cb6e6143074c14b239fd7a1eb5de"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/probe-stage.json": {
+          "bytes": 2406,
+          "sha256": "ca6b0b0f7651fe0514ac24ff89ba4a56d5312c083d46ef04ad2d5eaeedb711f0"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/probe_stage.py": {
+          "bytes": 6475,
+          "sha256": "9fa80f8ade224a38cc4a2f800400196b5a893a22cedb427aff7bda5255049e1e"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/r2-changes.diff": {
+          "bytes": 16673,
+          "sha256": "a1dd0bc5b41ee5f9708f00286a16566f32f659d358f597940d0ac3f7b08de37d"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/red-01-tests-before-impl.log": {
+          "bytes": 31277,
+          "sha256": "195238d39bc8792eb537ebc2394a925ff8286baddffd91ec2cf9d1187b133b69"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/red-02-tests-before-impl.log": {
+          "bytes": 29280,
+          "sha256": "3a3b0ec9d438d700fab7be99e57520e00e042a7d56c89091f5c68b84c9d496f0"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/report.md": {
+          "bytes": 14990,
+          "sha256": "ccc70d67cf055f11c2ca4a6ce089e29d58fb7b60cf57ad4483bca7fabfba462e"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/run_pytest.py": {
+          "bytes": 3014,
+          "sha256": "9ca8e62ecb550c69d803a3263d5f90cc453af8a15a2ac71a3b953cd847cd7009"
+        },
+        "evidence/implementation/dpc-t03-protocol/rework-r2/write-scope-check.json": {
+          "bytes": 4702,
+          "sha256": "4e2a2368d4e379a774b714a132a43b1eb438f84ad99db92c50ebcd0d97f33871"
+        }
+      }
+    }
+  }
+}

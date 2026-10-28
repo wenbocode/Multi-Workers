@@ -1,0 +1,78 @@
+===== references/workflow-system-design.md (343 lines) =====
+290: **输出文件**：`{project-root}/.agenticdoc/{key}/evidence-requirement.md`
+291: 
+292: ```markdown
+293: # Evidence Requirement: {key}
+294: 
+295: ## 锁定指纹
+296: 
+297: | 字段 | 值 |
+298: |------|-----|
+299: | spec_path | `.agenticdoc/{key}/spec.md` |
+300: | spec_locked_at | {ISO-8601} |
+301: | ac_fingerprint | `{12-char sha1}` |
+302: | ac_ids | AC-001, AC-002, ...（完整列表）|
+303: | vc_ids | VC-001, VC-002, ... |
+304: | generated_at | {ISO-8601} |
+305: 
+306: ## AC-001: {AC 描述}
+307: | 证据来源 | 证据类型 | 期望内容 | 充分性判定 |
+308: |---------|---------|---------|----------|
+309: | [VERIFY] VC-001 | 预设节点输出 | {期望值} | 单次 PASS |
+310: | [FLOW] Step1→Step3 | 预设节点输出 | {完整序列} | 完整序列 |
+311: 
+312: ## 质检门禁使用说明
+313: 本文件由 /quality-gate 读取，对每个 AC/VC 逐条核查证据充分性。
+  ---
+===== core/workflows/system-design.md (343 lines) =====
+290: **输出文件**：`{project-root}/.agenticdoc/{key}/evidence-requirement.md`
+291: 
+292: ```markdown
+293: # Evidence Requirement: {key}
+294: 
+295: ## 锁定指纹
+296: 
+297: | 字段 | 值 |
+298: |------|-----|
+299: | spec_path | `.agenticdoc/{key}/spec.md` |
+300: | spec_locked_at | {ISO-8601} |
+301: | ac_fingerprint | `{12-char sha1}` |
+302: | ac_ids | AC-001, AC-002, ...（完整列表）|
+303: | vc_ids | VC-001, VC-002, ... |
+304: | generated_at | {ISO-8601} |
+305: 
+306: ## AC-001: {AC 描述}
+307: | 证据来源 | 证据类型 | 期望内容 | 充分性判定 |
+308: |---------|---------|---------|----------|
+309: | [VERIFY] VC-001 | 预设节点输出 | {期望值} | 单次 PASS |
+310: | [FLOW] Step1→Step3 | 预设节点输出 | {完整序列} | 完整序列 |
+311: 
+312: ## 质检门禁使用说明
+313: 本文件由 /quality-gate 读取，对每个 AC/VC 逐条核查证据充分性。
+  ---
+===== claude/skills/workflow-system-design/SKILL.md (343 lines) =====
+290: **输出文件**：`{project-root}/.agenticdoc/{key}/evidence-requirement.md`
+291: 
+292: ```markdown
+293: # Evidence Requirement: {key}
+294: 
+295: ## 锁定指纹
+296: 
+297: | 字段 | 值 |
+298: |------|-----|
+299: | spec_path | `.agenticdoc/{key}/spec.md` |
+300: | spec_locked_at | {ISO-8601} |
+301: | ac_fingerprint | `{12-char sha1}` |
+302: | ac_ids | AC-001, AC-002, ...（完整列表）|
+303: | vc_ids | VC-001, VC-002, ... |
+304: | generated_at | {ISO-8601} |
+305: 
+306: ## AC-001: {AC 描述}
+307: | 证据来源 | 证据类型 | 期望内容 | 充分性判定 |
+308: |---------|---------|---------|----------|
+309: | [VERIFY] VC-001 | 预设节点输出 | {期望值} | 单次 PASS |
+310: | [FLOW] Step1→Step3 | 预设节点输出 | {完整序列} | 完整序列 |
+311: 
+312: ## 质检门禁使用说明
+313: 本文件由 /quality-gate 读取，对每个 AC/VC 逐条核查证据充分性。
+  ---

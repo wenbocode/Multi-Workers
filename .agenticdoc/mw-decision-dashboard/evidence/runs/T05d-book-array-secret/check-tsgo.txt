@@ -1,0 +1,8 @@
+# cmd: node node_modules/@typescript/native-preview/bin/tsgo.js --noEmit
+# cwd: .
+# started: 2026-10-22T06:50:36Z
+# elapsed_s: 1.7
+
+
+
+EXIT_check-tsgo=0

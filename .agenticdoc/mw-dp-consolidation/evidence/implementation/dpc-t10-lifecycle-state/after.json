@@ -1,0 +1,327 @@
+{
+  "source": "agent-report",
+  "files": {
+    "decision_wire.py": {
+      "before": {
+        "exists": true,
+        "bytes": 73650,
+        "sha256": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+        "lf": 2077,
+        "crlf": 0,
+        "eol": "lf",
+        "ends_with_lf": true
+      },
+      "after": {
+        "exists": true,
+        "bytes": 79832,
+        "sha256": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+        "lf": 2264,
+        "crlf": 0,
+        "eol": "lf",
+        "ends_with_lf": true
+      },
+      "diff_hunks": 5,
+      "diff_bytes": 7458
+    },
+    "decision_lifecycle.py": {
+      "before": {
+        "exists": true,
+        "bytes": 34814,
+        "sha256": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+        "lf": 951,
+        "crlf": 0,
+        "eol": "lf",
+        "ends_with_lf": true
+      },
+      "after": {
+        "exists": true,
+        "bytes": 60811,
+        "sha256": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+        "lf": 1548,
+        "crlf": 0,
+        "eol": "lf",
+        "ends_with_lf": true
+      },
+      "diff_hunks": 5,
+      "diff_bytes": 27896
+    },
+    "decision_task_state.py": {
+      "before": {
+        "exists": true,
+        "bytes": 2452,
+        "sha256": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9",
+        "lf": 48,
+        "crlf": 0,
+        "eol": "lf",
+        "ends_with_lf": true
+      },
+      "after": {
+        "exists": true,
+        "bytes": 3871,
+        "sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+        "lf": 82,
+        "crlf": 0,
+        "eol": "lf",
+        "ends_with_lf": true
+      },
+      "diff_hunks": 2,
+      "diff_bytes": 2493
+    },
+    "test_decision_context_lifecycle.py": {
+      "before": {
+        "exists": true,
+        "bytes": 26028,
+        "sha256": "106f17198a9de3552d2dc3e43aeb1c67474a6e4cb9c597811e792640d87a24f8",
+        "lf": 715,
+        "crlf": 0,
+        "eol": "lf",
+        "ends_with_lf": true
+      },
+      "after": {
+        "exists": true,
+        "bytes": 50338,
+        "sha256": "bdedfd4301fab76929beb0156f429f973fcb6404382b8893d2cbecbfaa711d1a",
+        "lf": 1401,
+        "crlf": 0,
+        "eol": "lf",
+        "ends_with_lf": true
+      },
+      "diff_hunks": 2,
+      "diff_bytes": 25434
+    },
+    "test_decision_task_state.py": {
+      "before": {
+        "exists": true,
+        "bytes": 13537,
+        "sha256": "c3de3c0456269aa3c8d1e0dfaf3f2098d9c9c657f6673ce93dc8cd5e7e54aff5",
+        "lf": 243,
+        "crlf": 0,
+        "eol": "lf",
+        "ends_with_lf": true
+      },
+      "after": {
+        "exists": true,
+        "bytes": 15480,
+        "sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f",
+        "lf": 278,
+        "crlf": 0,
+        "eol": "lf",
+        "ends_with_lf": true
+      },
+      "diff_hunks": 8,
+      "diff_bytes": 7223
+    }
+  },
+  "mirror": {
+    "inventory_entries": 1883,
+    "worktree_changed": [
+      "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+      "packages/multi-workers/decision_lifecycle.py",
+      "packages/multi-workers/decision_task_state.py",
+      "packages/multi-workers/decision_wire.py",
+      "packages/multi-workers/scripts/build_decide_cases.py",
+      "packages/multi-workers/test_decision_context_lifecycle.py",
+      "packages/multi-workers/test_decision_context_workbench.py",
+      "packages/multi-workers/test_decision_task_state.py"
+    ],
+    "worktree_missing": [],
+    "worktree_file_count": 1891,
+    "worktree_files_not_in_inventory": [
+      "packages/multi-workers/decide_cases/dp-QG.json",
+      "packages/multi-workers/decide_cases/dp-auto.json",
+      "packages/multi-workers/decide_cases/dp-gate-approve.json",
+      "packages/multi-workers/decide_cases/dp-pm-steer.json",
+      "packages/multi-workers/decide_cases/dp-route.json",
+      "packages/multi-workers/decide_cases/dp-sign-key.json",
+      "packages/multi-workers/decide_cases/dp-w-check-task.json",
+      "packages/multi-workers/decide_cases/dp-w-type.json"
+    ],
+    "live_product_files_unchanged_since_baseline": {
+      "decision_wire.py": true,
+      "decision_lifecycle.py": true,
+      "decision_task_state.py": true,
+      "test_decision_context_lifecycle.py": true,
+      "test_decision_task_state.py": true
+    }
+  },
+  "ast": {
+    "test_decision_context_lifecycle.py": {
+      "before_functions": 37,
+      "after_functions": 64,
+      "missing_original_functions": [],
+      "changed_original_functions": [],
+      "added_functions": [
+        "_decision_id",
+        "_material",
+        "_preparation",
+        "_result",
+        "_row",
+        "_started",
+        "_state",
+        "test_a_before_cannot_be_added_after_the_creation_fact",
+        "test_a_business_decision_records_the_selected_pm_basis_and_its_digest",
+        "test_a_later_before_is_refused_while_the_creation_snapshot_can_be_repeated",
+        "test_a_non_pm_record_cannot_write_a_pm_note",
+        "test_a_replayed_result_is_a_record_without_a_new_business_decision",
+        "test_a_retired_entry_id_cannot_be_recorded_as_a_request",
+        "test_a_successor_request_links_a_recorded_parent_and_is_written_once",
+        "test_a_taskless_decision_cannot_claim_a_task_terminal",
+        "test_a_transport_success_without_a_business_decision_is_not_an_approval",
+        "test_an_over_long_note_is_refused_not_truncated",
+        "test_an_unrecorded_or_cross_key_parent_ref_is_refused",
+        "test_note_and_request_rows_take_the_known_secret_boundary",
+        "test_null_and_empty_progress_axes_stay_distinct_in_the_new_facts",
+        "test_request_refuses_a_split_that_is_not_a_real_prepared_outcome",
+        "test_terminal_refuses_an_undeclared_value_or_a_missing_reason",
+        "test_terminal_requires_its_own_real_observation_and_never_follows_from_settled",
+        "test_the_new_facts_are_read_by_the_current_history_reader",
+        "test_the_pm_note_is_stored_separately_from_the_model_basis",
+        "test_the_prepared_at_must_be_the_preparation_time_not_the_write_clock",
+        "test_the_selected_basis_must_come_from_the_submitted_preparation"
+      ]
+    },
+    "test_decision_task_state.py": {
+      "before_functions": 22,
+      "after_functions": 24,
+      "missing_original_functions": [],
+      "changed_original_functions": [
+        "_record",
+        "test_consumed_cannot_record_an_after_state",
+        "test_real_cli_freezes_before_locally_and_passes_only_material_to_decision_boundary",
+        "test_after_observation_cannot_precede_before_observation",
+        "test_after_requires_the_same_tasks_creation_fact",
+        "test_duplicate_after_write_does_not_replace_first_snapshot",
+        "test_production_filter_writes_the_six_field_snapshot_unchanged"
+      ],
+      "added_functions": [
+        "test_an_agent_report_snapshot_never_creates_the_action_or_terminal_fact",
+        "test_snapshot_equality_keeps_null_and_empty_distinct_and_order_sensitive"
+      ]
+    }
+  },
+  "pyc": {
+    "protected_paths": 14,
+    "protected_present": 14,
+    "protected_missing": [],
+    "protected_unchanged": [
+      "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+      "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+      "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+      "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+      "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+      "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+      "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+      "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+      "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+      "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+      "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+      "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+      "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc"
+    ],
+    "protected_changed": [
+      "packages/multi-workers/__pycache__/decision.cpython-314.pyc"
+    ],
+    "worktree_pyc_count": 14,
+    "worktree_pyc": [
+      {
+        "path": "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+        "sha256": "b95f933d321d7cba48808279d4a9823d4c8719fe26ee26013d705439d7bcb280",
+        "bytes": 122033,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+        "sha256": "2649c554ab1103a7c48d040de1dde3ec018ed8364ab1f7ff8e9541e46f35fe57",
+        "bytes": 62804,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+        "sha256": "b29c8808488cf5c2c2ed47317e98f8bf6966c76871d01b6f5a9aaa470ad1d8e5",
+        "bytes": 16678,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+        "sha256": "c57ee653f2bd8cede3eb535955dbfb50343d2182c4de6f882caf903677df43e8",
+        "bytes": 288156,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+        "sha256": "4b1cc3224b96398931b28919fe7e99d59af246ff1df9f578974412425ea91ab1",
+        "bytes": 4188,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+        "sha256": "e9b984aa744f93adac5919d43c7286f2df67fd713d4daa0ff06a4567b9a4cbb9",
+        "bytes": 96718,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+        "sha256": "8e7c1fdef55dae94f7fcd1e62bd580a605f2874073aef8e705d5fa10879babb0",
+        "bytes": 330072,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+        "sha256": "1ab0437409a85f933637ad619d30b1ee6e6de990fee3d7955c3787c2326d05de",
+        "bytes": 220,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+        "sha256": "e54a6e4004576a45d3a48769c3538cc3ecd35e3ddf28929eda15a34356cc1c5b",
+        "bytes": 15663,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+        "sha256": "595357ff2cbac84f30f6b3f27132f449d7bc058155fc0ae5807742326e70f08e",
+        "bytes": 23500,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+        "sha256": "7f5936ad7d8a14b298dab8bbaf62b01536501305fba0932554c819aa9df0faa1",
+        "bytes": 12728,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+        "sha256": "3909b8a4fbfe71376a29a2eddabe123576bcefd5ee2b13423e9f20b9eb839a9c",
+        "bytes": 39408,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+        "sha256": "d0bfdbdeae20ca110ba310e4fc778ad97d5f929e3522595eb2dc1e38814a3eb8",
+        "bytes": 40708,
+        "in_protected_set": true
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc",
+        "sha256": "3c515fe1736c61061fc8d6bc8b1ec2cd1ab27a98b3c3c097d3a09fcb3cb32739",
+        "bytes": 26461,
+        "in_protected_set": true
+      }
+    ],
+    "note": "the protected 14 pyc live in the worktree mirror (7 top-level + 7 autopilot); every worker python run uses -B + PYTHONDONTWRITEBYTECODE=1 + PYTHONPYCACHEPREFIX, so no pyc is written"
+  },
+  "imports": {
+    "rc": 0,
+    "stderr": "",
+    "sys_path0": "",
+    "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+    "modules": {
+      "decision_wire": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_wire.py",
+      "decision_lifecycle": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_lifecycle.py",
+      "decision_task_state": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_task_state.py",
+      "decision_history": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_history.py",
+      "decision_book": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_book.py"
+    },
+    "all_inside_worktree": true
+  }
+}

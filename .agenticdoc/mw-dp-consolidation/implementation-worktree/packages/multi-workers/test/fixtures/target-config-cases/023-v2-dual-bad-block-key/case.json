@@ -1,0 +1,11 @@
+{
+  "description": "dual block whitelist: parent/partition/roots are rejected (AC-003e)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "dual",
+      "roots"
+    ]
+  }
+}

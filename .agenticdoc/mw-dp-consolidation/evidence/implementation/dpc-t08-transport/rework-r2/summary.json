@@ -1,0 +1,72 @@
+{
+  "task": "dpc-t08-transport-r2",
+  "observed_at_utc": "2026-10-26T15:57:00Z",
+  "assigned_suite": "test_dp_consolidation_materials.py",
+  "runner": "scripts/run_pytest.ps1",
+  "argv": [
+    "-B",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "-q",
+    "--basetemp",
+    "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/fixture/basetemp",
+    "test_dp_consolidation_materials.py"
+  ],
+  "cwd": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+  "env": {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONUTF8": "1",
+    "PYTHONIOENCODING": "utf-8",
+    "PYTHONNOUSERSITE": "1",
+    "HOME": "<evidence>/fixture/home",
+    "USERPROFILE": "<evidence>/fixture/home",
+    "TEMP": "<evidence>/fixture/temp",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "dropped": ["TIMI_API_KEY", "TIMI_BASE_URL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "PI_WORKER_TASK", "PI_WORKER_IDLE_MS", "PI_WORKER_TIMEOUT_MS", "PI_AGENTIC_KEY", "PYTHONPATH", "PYTHONSTARTUP", "PYTEST_ADDOPTS", "PYTEST_PLUGINS"]
+  },
+  "runs": [
+    {"label": "baseline-before", "rc": 0, "summary": "73 passed", "selection": "full assigned suite"},
+    {"label": "red-1-new-tests", "rc": 1, "summary": "9 failed, 53 passed, 48 deselected", "selection": "-k new tests", "note": "stdout captured as UTF-16LE by PS 5.1 redirection; superseded by red-2"},
+    {"label": "red-2-new-tests", "rc": 1, "summary": "9 failed, 53 passed, 48 deselected", "selection": "-k new tests", "note": "same outcome, UTF-8 capture"},
+    {"label": "green-1-new-tests", "rc": 0, "summary": "62 passed, 48 deselected", "selection": "-k new tests"},
+    {"label": "green-2-full-assigned", "rc": 0, "summary": "110 passed", "selection": "full assigned suite"},
+    {"label": "green-3-final", "rc": 0, "summary": "110 passed", "selection": "full assigned suite"}
+  ],
+  "red_items": [
+    {
+      "item": "max_questions ceiling escaped as an exception",
+      "test": "test_question_ceiling_is_a_prepared_refusal_not_an_exception (test line 985)",
+      "red_observation": "decision.DecisionInputError: questions has 2 entries > max_questions=1 (decision.py:2309 pre-fix), 0 HTTP",
+      "green_assertions": "test lines 1009-1018 (reason budget-exhausted, zero attempts/HTTP, detail names max_questions=1)"
+    },
+    {
+      "item": "replay lookup result truthified instead of validated",
+      "test": "test_non_bool_replay_lookup_result_fails_closed (test line 1055, 8 illegal values)",
+      "red_observation": "assert True is False at test:1086 for all 8 values (null/0/[]/{} -> available=true + 1 POST + business_decisions=1; \"unknown\"/\"true\"/1 -> replayed=true)",
+      "green_assertions": "test lines 1083-1095 (available false, replayed false, entry-unavailable, zero attempts/HTTP, detail names bool)"
+    }
+  ],
+  "guard_items": [
+    {"test": "test_question_ceiling_control_still_accepts_a_legal_pair", "note": "green before and after; ceiling not widened, default still 8"},
+    {"test": "test_bool_replay_lookup_controls_still_prove_hit_and_miss", "note": "green before and after; True=hit/0 POST, False=miss/1 POST"},
+    {"test": "test_retired_id_is_refused_before_replay_credential_and_backend (25 ids)", "note": "green before and after; ordering guard, not a red"},
+    {"test": "test_transport_record_and_business_refusal_stay_separate_layers", "note": "green before and after; records the transport/business layering fact"}
+  ],
+  "before": {
+    "decision.py": {"bytes": 116092, "lf": 2683, "crlf": 0, "sha256": "89500080e9f59c80e98b757a3a2b547b1db06985edc04a7489d068cb5f80a5e5"},
+    "decision_backends.py": {"bytes": 48970, "lf": 1216, "crlf": 0, "sha256": "a13a8597bba7abe796022148bd50d02b26fc6a85e1d7d3b1af9f5129f0a3e22b"},
+    "test_dp_consolidation_materials.py": {"bytes": 36376, "lf": 977, "crlf": 0, "sha256": "2ab2d758350eb0a3b714512e9a70d81e14c645459f94cc8c850b98a4638454f8"}
+  },
+  "after": {
+    "decision.py": {"bytes": 119248, "lf": 2740, "crlf": 0, "sha256": "ef9c2c68eee18bb93ad716c76c7b146279ac5f111c9f626c68a01d1c35ed691e"},
+    "decision_backends.py": {"bytes": 48970, "lf": 1216, "crlf": 0, "sha256": "a13a8597bba7abe796022148bd50d02b26fc6a85e1d7d3b1af9f5129f0a3e22b"},
+    "test_dp_consolidation_materials.py": {"bytes": 47252, "lf": 1267, "crlf": 0, "sha256": "b404fc0a9e94b35a198051ed43a8f755d6a61ab5c36b2d43919695cab6b45a1b"}
+  },
+  "incremental_diff": {
+    "decision.py.r2.diff": "+62/-5, confined to DecisionClient.request_prepared and its docstring",
+    "decision_backends.py.r2.diff": "0 bytes (file untouched)",
+    "test_dp_consolidation_materials.py.r2.diff": "+290/-0 (pure append, no existing test edited or deleted)"
+  }
+}

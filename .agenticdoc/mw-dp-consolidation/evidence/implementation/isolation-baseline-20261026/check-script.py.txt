@@ -1,0 +1,120 @@
+from __future__ import annotations
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+from datetime import datetime
+
+ROOT = Path('H:/git/Multi-Workers').resolve()
+KEY = ROOT / '.agenticdoc/mw-dp-consolidation'
+EV = KEY / 'evidence/implementation/isolation-baseline-20261026'
+COPY_REL = '.agenticdoc/mw-dp-consolidation/implementation-worktree'
+COPY = ROOT / COPY_REL
+
+def sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+old = json.loads((EV / 'source-dag.json').read_bytes())
+new = json.loads((KEY / 'implementation-isolated-dag.json').read_bytes())
+setup = json.loads((EV / 'setup-check.json').read_bytes())
+assert not new['live_cutover_authorized'] and not new['actual_runtime_identity_verified']
+assert sha((KEY / 'implementation-dag.json').read_bytes()) == new['source_manifest_sha256']
+assert new['stages'] == old['stages'] and len(new['tasks']) == 36
+assert new['s0_disposition']['source_only_frontier'] == ['T03']
+assert (COPY / '.agenticdoc/ISOLATED-NOT-LIVE.md').is_file()
+assert list((COPY / '.agenticdoc').iterdir()) == [COPY / '.agenticdoc/ISOLATED-NOT-LIVE.md']
+assert not (COPY / 'node_modules').exists()
+assert not (COPY / '.mw').exists() and not (COPY / 'packages/multi-workers/.mw').exists()
+for name, expected in setup['original_contract_hashes'].items():
+    assert sha((KEY / name).read_bytes()) == expected, name
+
+# Never emit possible sensitive metadata values, only a refusal flag.
+for path in [COPY / '.npmrc']:
+    data = path.read_bytes().lower()
+    assert not re.search(rb'(?:_authtoken|_auth|_password|password|token)\s*=', data), 'credential-bearing metadata: blocked'
+
+old_by = {task['id']: task for task in old['tasks']}
+all_ac: set[str] = set()
+all_vc: set[str] = set()
+for task in new['tasks']:
+    original = old_by[task['id']]
+    for field in ('deps', 'stage', 'type', 'execution', 'ac_refs', 'vc_refs', 'goal', 'requirements'):
+        assert task[field] == original[field], (task['id'], field)
+    all_ac.update(task['ac_refs'])
+    all_vc.update(task['vc_refs'])
+    if task['id'] in {'T01', 'T02'}:
+        assert task == original
+        continue
+    assert task['source_product_write_face'] == original['product_write_face']
+    assert task['product_write_face'] == [COPY_REL + '/' + path for path in original['product_write_face']]
+    raw = (KEY / task['card']).read_bytes()
+    text = raw.decode('utf-8').replace('\r\n', '\n')
+    source = (KEY / task['source_card']).read_bytes()
+    assert sha(source) == task['source_card_sha256']
+    assert source == (EV / 'source-cards' / Path(task['source_card']).name).read_bytes()
+    head, body = text.split('\n---\n', 1)
+    marker = body.index('\n# ')
+    restored = head + '\n---\n' + body[marker:]
+    for path in sorted(task['product_write_face'], key=len, reverse=True):
+        restored = restored.replace(path, path.removeprefix(COPY_REL + '/'))
+    for command, source_command in zip(task['commands'], original['commands'], strict=True):
+        assert command['source_cwd'] == source_command['cwd']
+        assert {k: v for k, v in command.items() if k not in {'cwd', 'source_cwd'}} == {k: v for k, v in source_command.items() if k != 'cwd'}
+        expected_cwd = COPY_REL + ('/' + source_command['cwd'] if source_command['cwd'] != '.' else '')
+        assert command['cwd'] == expected_cwd
+        restored = restored.replace('cwd=' + expected_cwd + '；', 'cwd=' + source_command['cwd'] + '；')
+    restored = restored.replace('implementation-isolated-dag.json', 'implementation-dag.json')
+    assert restored == source.decode('utf-8').replace('\r\n', '\n'), ('nonphysical card change', task['id'])
+    front = head.split('write_face:\n', 1)[1].split('ac_refs:', 1)[0]
+    front_paths = [line.strip()[2:] for line in front.splitlines() if line.strip().startswith('- ')]
+    evidence_face = task['evidence'] + '/**' if task['type'] == 'coding' else task['evidence']
+    assert set(front_paths) == set(task['product_write_face']) | {evidence_face}, (task['id'], front_paths, task['evidence'])
+    sections = ['## 上下文', '## 要求', '## 写入允许面', '## 写入禁止面', '## 交付格式']
+    if task['type'] == 'coding':
+        sections.extend(['## 验收命令', '## 改动历史'])
+    elif task['type'] == 'review':
+        sections.extend(['## 审计目标', '## 未覆盖面声明'])
+    for section in sections:
+        assert section in text, (task['id'], section)
+    assert '.agenticdoc/goal.md:5' in text
+    assert re.search(r'(?:spec|design)\.md:\d+', text)
+    for path in task['product_write_face']:
+        destination = ROOT / path
+        assert destination.resolve().is_relative_to(COPY), path
+
+assert all_ac == {f'AC-{number:03d}' for number in range(1, 54)}
+assert all_vc == {f'VC-{number:03d}' for number in range(1, 54)}
+for row in json.loads((EV / 'source-inventory.json').read_bytes()):
+    source = ROOT / row['path']
+    mirror = COPY / row['path']
+    assert sha(mirror.read_bytes()) == row['sha256'], row['path']
+    assert not os.path.samefile(source, mirror), row['path']
+    assert not mirror.is_symlink()
+    assert not (getattr(mirror.lstat(), 'st_file_attributes', 0) & 0x400)
+    if not row['mutable']:
+        assert not (mirror.stat().st_mode & stat.S_IWRITE), ('readonly mirror', row['path'])
+for row in json.loads((EV / 'approved-file-baselines.json').read_bytes()):
+    path = ROOT / row['source_path']
+    assert path.exists() == row['existed']
+    if row['existed']:
+        assert sha(path.read_bytes()) == row['sha256'], ('original drift', row['source_path'])
+assert (EV / 'git-status.before.txt').read_bytes() == (EV / 'git-status.after.txt').read_bytes()
+assert (EV / 'framework-status.before.txt').read_bytes() == (EV / 'framework-status.after.txt').read_bytes()
+
+# Resolve the existing generator's fixed layout, without importing production code.
+generator = COPY / 'packages/multi-workers/scripts/gen_decide_registry_ts.py'
+repo_from_generator = generator.resolve().parent.parent.parent.parent
+assert repo_from_generator == COPY
+assert repo_from_generator / 'packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts' == COPY / 'packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts'
+result = {'observed_at': datetime.now().astimezone().isoformat(), 'mapped_cards': 34,
+          'task_dependencies_and_business_body_equal': True, 'ac_count': 53, 'vc_count': 53,
+          'approved_original_paths_unchanged': 85, 'copy_links': 0,
+          'generator_layout_root_is_copy': True, 't03_eligible_source_only': True,
+          'other_stage_semantic_acceptance': False, 'product_tests_run': False,
+          'dependency_equivalence_verified': False, 'product_acceptance': False}
+output = EV / 'pre-dispatch-check.json'
+assert not output.exists()
+output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+print(json.dumps(result, ensure_ascii=False, indent=2))

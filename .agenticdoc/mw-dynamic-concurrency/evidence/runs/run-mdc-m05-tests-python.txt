@@ -1,0 +1,6 @@
+source: .agenticdoc/mw-dynamic-concurrency/workers/mdc-m05-tests-python/output.md
+extracted: 3 [VERIFY]/[FLOW] lines
+
+[VERIFY] M-05-tests-python: file=packages/multi-workers/test_mdc_concurrency.py tests=10 passed=10 failed=0 vc101=4 vc102=1 vc103=1 vc104=4 full_suite="7 failed, 2215 passed, 10 deselected" new_failures=0
+  exit 0）；`-q -s -v` 的全部 `[VERIFY]` 实测行；全量 `python -m pytest -q`
+- `.agenticdoc/mw-dynamic-concurrency/workers/mdc-m05-tests-python/output.md`（五段契约 + `[VERIFY]` 行）

@@ -1,0 +1,11 @@
+--- before/packages/multi-workers/decide_cases/dp-route.json
++++ after/packages/multi-workers/decide_cases/dp-route.json
+@@ -93,7 +93,7 @@
+           "text": "问题需要从 PM 已准备的现场候选里选一项，应由动态行动入口判断。"
+         }
+       ],
+-      "prepared_at": "2026-10-27T20:56:00+00:00"
++      "prepared_at": "2026-10-27T13:45:28+00:00"
+     },
+     "schema_version": 3
+   },

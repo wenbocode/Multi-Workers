@@ -1,0 +1,120 @@
+packages\coding-agent\test\suite\mwoc-matrix-t07.test.ts:120:6 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    118 │ 		opts.cardPath === undefined
+    119 │ 			? ""
+  > 120 │ 			: `card_path: ${opts.cardPath}\n` + (opts.cardSha === undefined ? "" : `card_sha256: ${opts.cardSha}\n`);
+        │ 			  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    121 │ 	fs.writeFileSync(path.join(taskDir, "task.md"), `${head}${card}\nwork\n`, "utf8");
+    122 │ 	if (opts.report !== undefined) fs.writeFileSync(path.join(taskDir, "report.md"), opts.report, "utf8");
+  
+  i Unsafe fix: Use a template literal.
+  
+    118 118 │   		opts.cardPath === undefined
+    119 119 │   			? ""
+    120     │ - → → → :·`card_path:·${opts.cardPath}\n`·+·(opts.cardSha·===·undefined·?·""·:·`card_sha256:·${opts.cardSha}\n`);
+        120 │ + → → → :·`card_path:·${opts.cardPath}\n${opts.cardSha·===·undefined·?·""·:·`card_sha256:·${opts.cardSha}\n`}`;
+    121 121 │   	fs.writeFileSync(path.join(taskDir, "task.md"), `${head}${card}\nwork\n`, "utf8");
+    122 122 │   	if (opts.report !== undefined) fs.writeFileSync(path.join(taskDir, "report.md"), opts.report, "utf8");
+  
+
+packages\coding-agent\test\suite\mwoc-w2-contract-judgment.test.ts:130:6 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    128 │ 		opts.cardPath === undefined
+    129 │ 			? ""
+  > 130 │ 			: `card_path: ${opts.cardPath}\n` + (opts.cardSha === undefined ? "" : `card_sha256: ${opts.cardSha}\n`);
+        │ 			  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    131 │ 	fs.writeFileSync(path.join(taskDir, "task.md"), `${head}${card}\nwork\n`, "utf8");
+    132 │ 	if (opts.report !== undefined) fs.writeFileSync(path.join(taskDir, "report.md"), opts.report, "utf8");
+  
+  i Unsafe fix: Use a template literal.
+  
+    128 128 │   		opts.cardPath === undefined
+    129 129 │   			? ""
+    130     │ - → → → :·`card_path:·${opts.cardPath}\n`·+·(opts.cardSha·===·undefined·?·""·:·`card_sha256:·${opts.cardSha}\n`);
+        130 │ + → → → :·`card_path:·${opts.cardPath}\n${opts.cardSha·===·undefined·?·""·:·`card_sha256:·${opts.cardSha}\n`}`;
+    131 131 │   	fs.writeFileSync(path.join(taskDir, "task.md"), `${head}${card}\nwork\n`, "utf8");
+    132 132 │   	if (opts.report !== undefined) fs.writeFileSync(path.join(taskDir, "report.md"), opts.report, "utf8");
+  
+
+packages\coding-agent\test\suite\mwoc-matrix-t07.test.ts:45:2 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+    43 │ import {
+    44 │ 	agentProductText,
+  > 45 │ 	appendMechanicalContextSources,
+       │ 	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    46 │ 	hasReportProduct,
+    47 │ 	judgedProductFile,
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+     43  43 │   import {
+     44  44 │   	agentProductText,
+     45     │ - → appendMechanicalContextSources,
+     46  45 │   	hasReportProduct,
+     47  46 │   	judgedProductFile,
+  
+
+packages\coding-agent\test\suite\mwoc-matrix-t07.test.ts:606:4 lint/complexity/useOptionalChain  FIXABLE  ━━━━━━━━━━
+
+  ! Change to an optional chain.
+  
+    604 │ 		const nonWrite = pick(111);
+    605 │ 		if (
+  > 606 │ 			write1 !== undefined &&
+        │ 			^^^^^^^^^^^^^^^^^^^^^^^
+  > 607 │ 			write1.includes("--glob") &&
+        │ 			^^^^^^^^^^^^^^^^^^^^^^^^^
+    608 │ 			write1.includes("[System.IO.File]::WriteAllText") &&
+    609 │ 			write2 !== undefined &&
+  
+  i Unsafe fix: Change to an optional chain.
+  
+    604 604 │   		const nonWrite = pick(111);
+    605 605 │   		if (
+    606     │ - → → → write1·!==·undefined·&&
+    607     │ - → → → write1.includes("--glob")·&&
+        606 │ + → → → write1?.includes("--glob")·&&
+    608 607 │   			write1.includes("[System.IO.File]::WriteAllText") &&
+    609 608 │   			write2 !== undefined &&
+  
+
+packages\coding-agent\test\suite\mwoc-w3-ledger-extractor.test.ts:216:3 lint/complexity/useOptionalChain  FIXABLE  ━━━━━━━━━━
+
+  ! Change to an optional chain.
+  
+    214 │ 	const nonWrite = pick(111);
+    215 │ 	if (
+  > 216 │ 		write1 !== undefined &&
+        │ 		^^^^^^^^^^^^^^^^^^^^^^^
+  > 217 │ 		write1.includes("--glob") &&
+        │ 		^^^^^^^^^^^^^^^^^^^^^^^^^
+    218 │ 		write1.includes("[System.IO.File]::WriteAllText") &&
+    219 │ 		write2 !== undefined &&
+  
+  i Unsafe fix: Change to an optional chain.
+  
+    214 214 │   	const nonWrite = pick(111);
+    215 215 │   	if (
+    216     │ - → → write1·!==·undefined·&&
+    217     │ - → → write1.includes("--glob")·&&
+        216 │ + → → write1?.includes("--glob")·&&
+    218 217 │   		write1.includes("[System.IO.File]::WriteAllText") &&
+    219 218 │   		write2 !== undefined &&
+  
+
+Checked 1194 files in 651ms. No fixes applied.
+Found 3 warnings.
+Found 2 infos.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some warnings were emitted while running checks.
+  
+

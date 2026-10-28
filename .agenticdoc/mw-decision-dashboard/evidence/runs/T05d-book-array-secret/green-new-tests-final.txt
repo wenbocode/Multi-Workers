@@ -1,0 +1,10 @@
+# cmd: python -m pytest test_decision_input_contract_migration.py -k real_dp25_arrays_are_scanned or array_scan_reuses or nested_objects_and_arrays or legal_array_item_key or legal_arrays_and_long or secret_scan_is_separate -q
+# cwd: packages/multi-workers
+# started: 2026-10-22T06:51:20Z
+# elapsed_s: 0.9
+
+.........                                                                [100%]
+9 passed, 36 deselected in 0.18s
+
+
+EXIT_green-new-tests-final=0

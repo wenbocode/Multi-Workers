@@ -1,0 +1,55 @@
+[VERIFY] VC-008: unauthorized_releases=0 unauthorized_effects=0 missing_failure_reasons=0
+..[VERIFY] VC-008: unauthorized_releases=0 unauthorized_effects=0 missing_failure_reasons=0
+.....[VERIFY] VC-008: unauthorized_releases=0 unauthorized_effects=0 missing_failure_reasons=0
+.[VERIFY] VC-008: unauthorized_releases=0 unauthorized_effects=0 missing_failure_reasons=0
+..[VERIFY] VC-021: hard_budget_overruns=0 self_granted_limits=0 reset_usage=0
+.[VERIFY] VC-021: hard_budget_overruns=0 self_granted_limits=0 reset_usage=0
+...[VERIFY] VC-020: unbounded_extensions=0 unsupported_extensions=0
+.[VERIFY] VC-020: unbounded_extensions=0 unsupported_extensions=0
+.[VERIFY] VC-022: event_only_resumes=0 unsupported_resumes=0 mandatory_human_waits=0
+.[VERIFY] VC-022: event_only_resumes=0 unsupported_resumes=0 mandatory_human_waits=0
+.[VERIFY] VC-034: erased_stop_facts=0 reset_usage=0 unsupported_resumes=0
+.[VERIFY] VC-034: erased_stop_facts=0 reset_usage=0 unsupported_resumes=0
+.[VERIFY] VC-034: erased_stop_facts=0 reset_usage=0 unsupported_resumes=0
+.[VERIFY] VC-035: unauthorized_user_stop_unlocks=0 hard_guard_bypasses=0 false_resumes=0
+.[VERIFY] VC-036: breaker_self_approvals=0 unauthorized_recoveries=0 transport_bypasses=0
+.[VERIFY] VC-036: breaker_self_approvals=0 unauthorized_recoveries=0 transport_bypasses=0
+.[VERIFY] VC-036: breaker_self_approvals=0 unauthorized_recoveries=0 transport_bypasses=0
+.[VERIFY] VC-036: breaker_self_approvals=0 unauthorized_recoveries=0 transport_bypasses=0
+.[VERIFY] VC-037: unauthorized_unlocks=0 erased_breaker_history=0 reject_project_closures=0 observed_retrip=0
+.[VERIFY] VC-037: unauthorized_unlocks=0 erased_breaker_history=0 reject_project_closures=0 observed_retrip=1
+....
+=================================== PASSES ====================================
+=========================== short test summary info ===========================
+PASSED test_dp_consolidation_recovery.py::test_policy_absent_yields_zero_permissions
+PASSED test_dp_consolidation_recovery.py::test_illegal_policy_json_is_fail_closed
+PASSED test_dp_consolidation_recovery.py::test_self_reported_authority_fields_are_not_authority
+PASSED test_dp_consolidation_recovery.py::test_hard_limit_needs_explicit_unit_source_and_not_a_config_knob
+PASSED test_dp_consolidation_recovery.py::test_recovery_rule_missing_conditions_blocks_only_recovery
+PASSED test_dp_consolidation_recovery.py::test_authority_ref_must_resolve_to_a_trusted_controlled_writer
+PASSED test_dp_consolidation_recovery.py::test_revoked_and_out_of_scope_authority_blocks_release
+PASSED test_dp_consolidation_recovery.py::test_gate_missing_or_failed_conditions_never_release
+PASSED test_dp_consolidation_recovery.py::test_steer_and_need_fix_do_not_release
+PASSED test_dp_consolidation_recovery.py::test_spend_blocks_unknown_unit_and_unknown_usage
+PASSED test_dp_consolidation_recovery.py::test_spend_accumulates_and_never_resets_usage
+PASSED test_dp_consolidation_recovery.py::test_limit_increase_requires_concrete_human_authorization
+PASSED test_dp_consolidation_recovery.py::test_soft_extension_needs_policy_authorization
+PASSED test_dp_consolidation_recovery.py::test_soft_extension_needs_a_complete_pm_note
+PASSED test_dp_consolidation_recovery.py::test_hard_balance_alone_cannot_extend_rounds
+PASSED test_dp_consolidation_recovery.py::test_soft_extension_is_limited_to_the_explicit_delta
+PASSED test_dp_consolidation_recovery.py::test_pending_review_event_only_triggers_evaluation
+PASSED test_dp_consolidation_recovery.py::test_pending_review_resume_needs_valid_goal_clearance_evidence_and_budget
+PASSED test_dp_consolidation_recovery.py::test_halted_recovery_requires_a_complete_note
+PASSED test_dp_consolidation_recovery.py::test_halted_recovery_requires_approve_and_valid_authority
+PASSED test_dp_consolidation_recovery.py::test_halted_recovery_preserves_stop_facts_and_usage
+PASSED test_dp_consolidation_recovery.py::test_user_stop_and_hard_guard_cannot_be_lifted_by_a_technical_fix
+PASSED test_dp_consolidation_recovery.py::test_breaker_recovery_rejects_the_tripped_chain_and_bypass_channels
+PASSED test_dp_consolidation_recovery.py::test_breaker_recovery_requires_evidence_and_machine_checks
+PASSED test_dp_consolidation_recovery.py::test_breaker_recovery_transport_unavailable_keeps_brake
+PASSED test_dp_consolidation_recovery.py::test_breaker_recovery_positive_is_limited_and_keeps_history
+PASSED test_dp_consolidation_recovery.py::test_user_disabled_keeps_brake_with_a_concrete_question_and_no_closure
+PASSED test_dp_consolidation_recovery.py::test_observed_retrip_engages_the_brake_again
+PASSED test_dp_consolidation_recovery.py::test_module_is_pure_and_imports_no_cli_conductor_or_config
+PASSED test_dp_consolidation_recovery.py::test_frozen_config_keys_are_not_an_authority_source
+PASSED test_dp_consolidation_recovery.py::test_policy_reads_are_read_only_and_side_effect_free
+31 passed in 0.18s

@@ -1,0 +1,16 @@
+cwd=H:\git\Multi-Workers\packages\multi-workers
+cmd=python -m pytest test_decision_history.py test_decide_archive.py test_decide_signoff.py test_decision_wire_store.py -q (via this check)
+pytest_exit=0
+237 passed in 2.21s
+before .agenticdoc/_autopilot/decisions-wire.jsonl a83932ba448f98c731a720863d0f55f3d1da1d493cd17e1cb5d0af62df008f35
+after  .agenticdoc/_autopilot/decisions-wire.jsonl a83932ba448f98c731a720863d0f55f3d1da1d493cd17e1cb5d0af62df008f35
+before .agenticdoc/_autopilot/decisions.jsonl c2931e07eb76def2547a3c0869eccc9099f319f982b63b7c6fd2fa063245232d
+after  .agenticdoc/_autopilot/decisions.jsonl c2931e07eb76def2547a3c0869eccc9099f319f982b63b7c6fd2fa063245232d
+before .agenticdoc/mw-decision-substitution/evidence/review/sign-final.md 83813f1776fb77bc0c3064ab404c94d3a539664e32f756d0e4699c833ae1b131
+after  .agenticdoc/mw-decision-substitution/evidence/review/sign-final.md 83813f1776fb77bc0c3064ab404c94d3a539664e32f756d0e4699c833ae1b131
+before .agenticdoc/mw-signoff-per-key/evidence/review/sign-final.md 30e47a2a5eaa84a01fde28383545d10709f7fbde337c0d96dbab00ce4ce55358
+after  .agenticdoc/mw-signoff-per-key/evidence/review/sign-final.md 30e47a2a5eaa84a01fde28383545d10709f7fbde337c0d96dbab00ce4ce55358
+before .agenticdoc/mw-usage-monitor/evidence/review/sign-final.md cc807824eab089724c28980df634805bd45f6b6ff0ee2ca61cdbd10a86db40e6
+after  .agenticdoc/mw-usage-monitor/evidence/review/sign-final.md cc807824eab089724c28980df634805bd45f6b6ff0ee2ca61cdbd10a86db40e6
+carriers=5
+unchanged=True

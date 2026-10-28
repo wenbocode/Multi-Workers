@@ -1,0 +1,9 @@
+﻿root read-only check sub-steps (2026-10-22, no --write):
+biome check --error-on-warnings .            EXIT=1  -> 4 pre-existing/foreign warnings in packages/coding-agent/test/suite/mwoc-*.test.ts; 'No fixes applied'
+npm run check:pinned-deps                    EXIT=0
+npm run check:ts-imports                     EXIT=0
+npm run check:shrinkwrap                     EXIT=0
+npm run check:install-lock:coding-agent      EXIT=0
+npm run check:browser-smoke                  EXIT=0  (node script, no real browser window)
+tsgo --noEmit                                EXIT=0
+npm run check (full, with biome --write)     NOT RUN: --write would touch files outside this card's write face; splitting is not equivalent

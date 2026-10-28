@@ -1,0 +1,52 @@
+[
+  {
+    "index": 1,
+    "title": "图 1：入口在哪 —— 8 个决策入口",
+    "slug": "flow-01",
+    "mmd": "01-flow-01.mmd",
+    "png": "01-flow-01.png",
+    "kind": "flow",
+    "start": 719,
+    "end": 1485
+  },
+  {
+    "index": 2,
+    "title": "图 2：prepare —— 决策本里装什么",
+    "slug": "prepare",
+    "mmd": "02-prepare.mmd",
+    "png": "02-prepare.png",
+    "kind": "flow",
+    "start": 1783,
+    "end": 2330
+  },
+  {
+    "index": 3,
+    "title": "图 3：decide —— 四道机械检查",
+    "slug": "decide",
+    "mmd": "03-decide.mmd",
+    "png": "03-decide.png",
+    "kind": "flow",
+    "start": 2527,
+    "end": 3151
+  },
+  {
+    "index": 4,
+    "title": "图 4：apply —— 答案、效果、结果三条轴",
+    "slug": "apply",
+    "mmd": "04-apply.mmd",
+    "png": "04-apply.png",
+    "kind": "flow",
+    "start": 3286,
+    "end": 3865
+  },
+  {
+    "index": 5,
+    "title": "图 5：人在哪里",
+    "slug": "flow-05",
+    "mmd": "05-flow-05.mmd",
+    "png": "05-flow-05.png",
+    "kind": "flow",
+    "start": 4061,
+    "end": 4426
+  }
+]

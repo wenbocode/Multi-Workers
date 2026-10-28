@@ -1,0 +1,40 @@
+{
+  "products": {
+    "packages/multi-workers/decision_policy.py": {
+      "before_bytes": 60498,
+      "before_sha256": "f4c44456316b8c60c7934a209de389ef6366aa864f026f9ba5fba40569dde6bb",
+      "after_bytes": 68600,
+      "after_sha256": "77a9282fb8e7cbcd5ec6ffcea8cf2ded73e16f87a06a7808f6ef6d14e06c259c",
+      "after_crlf": 0,
+      "after_bare_lf": 1989,
+      "added_lines": 243,
+      "removed_lines": 39
+    },
+    "packages/multi-workers/test_dp_consolidation_recovery.py": {
+      "before_bytes": 53478,
+      "before_sha256": "434412b3ea60e60807ea23b52cdc474e892457a0a1747ecf7cb6bf809380a974",
+      "after_bytes": 68653,
+      "after_sha256": "3947d05db48887ac15df9a7ab5cfe58492e1e017497d0c9d603c5dde4cd94761",
+      "after_crlf": 0,
+      "after_bare_lf": 1910,
+      "added_lines": 399,
+      "removed_lines": 9
+    }
+  },
+  "increment_diff_bytes": 34857,
+  "increment_diff_sha256": "358431b0246f653d717714a7d4a7a375ae4ca0d7fe0e7f0cd21f51d4d4b6931e",
+  "inventory_changed": [
+    "packages/multi-workers/decision.py",
+    "packages/multi-workers/decision_policy.py",
+    "packages/multi-workers/decision_validity.py",
+    "packages/multi-workers/test_dp_consolidation_concurrency.py",
+    "packages/multi-workers/test_dp_consolidation_materials.py",
+    "packages/multi-workers/test_dp_consolidation_recovery.py"
+  ],
+  "inventory_added": [],
+  "inventory_removed": [],
+  "inventory_only_products_changed": false,
+  "pyc_before_count": 14,
+  "pyc_after_count": 14,
+  "pyc_byte_identical": true
+}

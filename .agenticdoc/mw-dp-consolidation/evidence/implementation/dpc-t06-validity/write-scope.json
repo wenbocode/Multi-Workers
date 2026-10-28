@@ -1,0 +1,286 @@
+{
+  "before_file_count": 1864,
+  "after_file_count": 1883,
+  "own_files": [
+    {
+      "path": "packages/multi-workers/decision_validity.py",
+      "exists": true,
+      "bytes": 54353,
+      "sha256": "64b9b9e1060aab955a4d0428385e2d450ae94826d1a548088c65f5874c049eb1",
+      "crlf": 0,
+      "bare_lf": 1652,
+      "final_newline": true,
+      "lines": 1652,
+      "first_sha256_16": "90bbef3029f4dac7"
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_concurrency.py",
+      "exists": true,
+      "bytes": 49049,
+      "sha256": "c9dc013110de702f733b5ec292c1d62ccdaa93d7ffb4fa7ffcec9101c2a97349",
+      "crlf": 0,
+      "bare_lf": 1297,
+      "final_newline": true,
+      "lines": 1297,
+      "first_sha256_16": "6611022f5f57ec7a"
+    }
+  ],
+  "changes": {
+    "added": [
+      {
+        "path": "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc",
+        "class": "concurrent_bytecode",
+        "tasks": []
+      },
+      {
+        "path": "packages/multi-workers/decision_policy.py",
+        "class": "other_task",
+        "tasks": [
+          "T07"
+        ]
+      },
+      {
+        "path": "packages/multi-workers/decision_validity.py",
+        "class": "own",
+        "tasks": [
+          "T06"
+        ]
+      },
+      {
+        "path": "packages/multi-workers/test_dp_consolidation_concurrency.py",
+        "class": "own",
+        "tasks": [
+          "T06"
+        ]
+      },
+      {
+        "path": "packages/multi-workers/test_dp_consolidation_materials.py",
+        "class": "other_task",
+        "tasks": [
+          "T08",
+          "T31"
+        ]
+      },
+      {
+        "path": "packages/multi-workers/test_dp_consolidation_recovery.py",
+        "class": "other_task",
+        "tasks": [
+          "T07",
+          "T21",
+          "T31"
+        ]
+      }
+    ],
+    "modified": [
+      {
+        "path": "packages/multi-workers/decision.py",
+        "class": "other_task",
+        "tasks": [
+          "T08"
+        ]
+      },
+      {
+        "path": "packages/multi-workers/decision_backends.py",
+        "class": "other_task",
+        "tasks": [
+          "T08"
+        ]
+      }
+    ],
+    "removed": []
+  },
+  "unexpected": [],
+  "own_changes": [
+    {
+      "path": "packages/multi-workers/decision_validity.py",
+      "class": "own",
+      "tasks": [
+        "T06"
+      ]
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_concurrency.py",
+      "class": "own",
+      "tasks": [
+        "T06"
+      ]
+    }
+  ],
+  "other_task_changes": [
+    {
+      "path": "packages/multi-workers/decision_policy.py",
+      "class": "other_task",
+      "tasks": [
+        "T07"
+      ]
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_materials.py",
+      "class": "other_task",
+      "tasks": [
+        "T08",
+        "T31"
+      ]
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_recovery.py",
+      "class": "other_task",
+      "tasks": [
+        "T07",
+        "T21",
+        "T31"
+      ]
+    },
+    {
+      "path": "packages/multi-workers/decision.py",
+      "class": "other_task",
+      "tasks": [
+        "T08"
+      ]
+    },
+    {
+      "path": "packages/multi-workers/decision_backends.py",
+      "class": "other_task",
+      "tasks": [
+        "T08"
+      ]
+    }
+  ],
+  "concurrent_bytecode": [
+    {
+      "path": "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc",
+      "class": "concurrent_bytecode",
+      "tasks": []
+    }
+  ]
+}

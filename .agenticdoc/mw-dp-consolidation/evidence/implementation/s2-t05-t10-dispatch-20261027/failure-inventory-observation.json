@@ -1,0 +1,13 @@
+{
+  "changes": [
+    {
+      "path": "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+      "before": "e4b51f5b85198575ba723fca7f85e48a0962da44b2820f4f53f4ebea3de80677",
+      "after": "b95f933d321d7cba48808279d4a9823d4c8719fe26ee26013d705439d7bcb280",
+      "allowed": false
+    }
+  ],
+  "mirror_count": 1883,
+  "original_dag_before_preserved_in": "dag-before-record.json",
+  "manifest_write_completed_before_failure": true
+}

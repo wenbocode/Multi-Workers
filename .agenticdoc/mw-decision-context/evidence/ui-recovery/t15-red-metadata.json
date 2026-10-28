@@ -1,0 +1,17 @@
+[
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "H:\\git\\Multi-Workers\\packages\\multi-workers\\test_decision_context_readable_ui.py::test_failed_validation_items_are_red_and_offer_correct_editor_guidance"
+    ],
+    "cwd": "H:\\git\\Multi-Workers",
+    "utc_start": "2026-10-23T12:30:40.366782+00:00",
+    "utc_end": "2026-10-23T12:30:43.116670+00:00",
+    "exit": 1
+  }
+]

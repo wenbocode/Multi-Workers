@@ -1,0 +1,54 @@
+46: from autopilot import timeline as _ap_timeline
+438:                 # warns (stderr -> mw.log + timeline `config`); it never restarts
+562:     # Conductor row (D-101): PID, alive, last tick watermark (timeline tail).
+617:     report["rag"] = _doctor_rag(project_dir)
+2364: def _doctor_rag(project_dir: pathlib.Path) -> dict:
+3932:     writer, so `answered_by`/`answered_at`/the timeline audit is preserved."""
+3937:         _ap_timeline.Timeline(_ap_timeline.timeline_path(project_dir)),
+5703:     timeline `config`, rate-limited by `(code_dir, meta_commit, head_commit,
+5720:         # Both channels carry the identical `detail` (the timeline is the
+5723:         _ap_timeline.Timeline(_ap_timeline.timeline_path(project_dir)).append(
+6309:     _add_serve_args(sub.add_parser("serve", help="Run in foreground"))
+6310:     _add_serve_args(sub.add_parser("start", help="Run in background"))
+6313:         p = sub.add_parser(name)
+6316:     doctor_p = sub.add_parser(
+6334:     target_p = sub.add_parser(
+6339:     target_set_p = target_sub.add_parser("set", help="Write bootstrap fields; mode becomes dual")
+6354:         p = target_sub.add_parser(action, help=help_text)
+6357:     partition_p = sub.add_parser(
+6362:     partition_set_p = partition_sub.add_parser(
+6381:         p = partition_sub.add_parser(action, help=help_text)
+6384:     model_p = sub.add_parser(
+6389:     model_set_p = model_sub.add_parser("set", help="Set a role default (e.g. mw model set review timi/glm-5.3-air)")
+6397:     model_clear_p = model_sub.add_parser("clear", help="Remove one role (or 'all')")
+6401:     model_show_p = model_sub.add_parser("show", help="Print the configured roles and the effective resolution")
+6404:     autopilot_p = sub.add_parser(
+6409:     gates_p = autopilot_sub.add_parser(
+6418:     answer_p = autopilot_sub.add_parser(
+6439:     contract_guard_p = autopilot_sub.add_parser(
+6452:     contract_freeze_p = autopilot_sub.add_parser(
+6470:     verify_p = autopilot_sub.add_parser(
+6474:     verify_set_p = verify_sub.add_parser(
+6486:     verify_show_p = verify_sub.add_parser(
+6493:     verify_clear_p = verify_sub.add_parser(
+6498:     init_p = sub.add_parser("init", help="Initialize project and install Extension + framework")
+6508:     pull_p = sub.add_parser("pull-agentictask",
+6518:     push_p = sub.add_parser("push-agentictask",
+6525:     setup_p = sub.add_parser("setup",
+6536:     bootstrap_p = sub.add_parser(
+6556:     build_p = sub.add_parser("build",
+6567:     update_env_p = sub.add_parser(
+6581:     worktree_p = sub.add_parser(
+6588:     wt_add_p = worktree_sub.add_parser(
+6604:     wt_rm_p = worktree_sub.add_parser(
+6614:     wt_list_p = worktree_sub.add_parser(
+6620:     toolchain_p = sub.add_parser(
+6627:     tc_run_p = toolchain_sub.add_parser(
+6647:     tc_targets_p = toolchain_sub.add_parser(
+6650:     tc_hash_p = toolchain_sub.add_parser(
+6654:     rag_p = sub.add_parser(
+6660:     rag_init_p = rag_sub.add_parser(
+6688:     rag_list_p = rag_sub.add_parser(
+6692:     rag_probe_p = rag_sub.add_parser(
+6697:     rag_sync_p = rag_sub.add_parser(
+6700:     rag_audit_p = rag_sub.add_parser(

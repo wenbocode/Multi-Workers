@@ -1,0 +1,9 @@
+# label: green-ambient-auth-access
+# cwd: packages/multi-workers
+# HOME/USERPROFILE: <ambient (never read)>
+# command: C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\python.exe -m pytest -p probe_red test_decision_observation.py test_decide_run_authority.py -q
+# exit: 0
+........................................................................ [ 52%]
+.................................................................        [100%]probe_red: ambient auth hits=0 bytes_read=0
+
+137 passed in 0.83s

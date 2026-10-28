@@ -1,0 +1,204 @@
+diff --git a/.agenticdoc/mw-decision-dashboard/evidence/runs/T05q-coverage-convergence/baseline/decision.py b/packages/multi-workers/decision.py
+index 4573633ec..34b77f631 100644
+--- a/.agenticdoc/mw-decision-dashboard/evidence/runs/T05q-coverage-convergence/baseline/decision.py
++++ b/packages/multi-workers/decision.py
+@@ -1169,31 +1169,153 @@ def secret_hit(text: str, redactor: object | None = None) -> bool:
+     hits = getattr(result, "hits", None)
+     if isinstance(hits, int):
+         return hits > 0
+     return getattr(result, "text", text) != text
+ 
+ 
+-def _redactor_covers(redactor: object, value: str) -> bool:
+-    """True only when ``redactor`` provably removes ``value`` (T05j/T05p).
++#: A caller-owned capture filter is accepted as covering a value only when no
++#: fragment of it of this many characters survives the probes. It is the same
++#: floor the known-set discovery uses to decide that a value is material at all
++#: (``_MIN_SECRET_LEN``), so a 1-3 character remnant is not a second, stricter
++#: secret definition and legitimate placeholders cannot false-refuse coverage.
++_COVER_RESIDUAL_LEN = _MIN_SECRET_LEN
++
++#: Marker characters for the coverage probe. Only the ones absent from the value
++#: are used, so the markers themselves can never supply a fragment of it (the
++#: probe then measures the filter, not the fixture).
++_COVER_MARKER_POOL = "\u00a7\u00b6\u00ab\u00bb\u2020\u2021\u00a1\u00bf\u00a4\u00a5"
++
++
++def _cover_markers(value: str) -> tuple[str, str, str] | None:
++    """Three distinct marker characters that do not occur in ``value``."""
++    pool = [char for char in _COVER_MARKER_POOL if char not in value]
++    if len(pool) < 3:
++        pool.extend(
++            chr(code)
++            for code in range(0xE000, 0xE010)
++            if chr(code) not in value and chr(code) not in pool
++        )
++    if len(pool) < 3:  # pragma: no cover - a value cannot exhaust this pool
++        return None
++    return pool[0], pool[1], pool[2]
++
++
++def _cover_residual_len(text: str, value: str) -> int:
++    """Longest fragment of ``value`` still visible in ``text`` (capped at the floor)."""
++    if not text or not value:
++        return 0
++    for size in range(min(_COVER_RESIDUAL_LEN, len(value)), 0, -1):
++        for start in range(0, len(value) - size + 1):
++            if value[start : start + size] in text:
++                return size
++    return 0
++
++
++def _capture_filter_contract_issue(redactor: object) -> str | None:
++    """Why ``redactor`` is not usable as a complete capture filter (T05q).
++
++    The capture boundary calls ``redact`` and ``scrub_tail_prefix`` on the scope's
++    filter. A caller-owned filter missing either would either store raw text or
++    make ``WireScope.capture`` raise ``AttributeError`` - which the transport
++    swallows, so the call reports success while the ledger silently stores *zero*
++    rows (T05p F-2). The refusal is value-free and names the remedy; a filter that
++    never worked is not a lost feature, and nothing about a working one changes.
++    """
++    if not callable(getattr(redactor, "redact", None)):
++        return (
++            "the caller-owned capture redactor has no callable redact(); a filter "
++            "that cannot redact cannot prove captured text safe"
++        )
++    if not callable(getattr(redactor, "scrub_tail_prefix", None)):
++        return (
++            "the caller-owned capture redactor does not implement scrub_tail_prefix(); "
++            "the capture boundary cannot remove a secret prefix left by a cut, so the "
++            "ledger would store a credential tail or silently capture nothing - rebuild "
++            "it as a wire-compatible redactor (decision.credential_redactor() or "
++            "decision_wire.SubstringRedactor)"
++        )
++    return None
++
+ 
+-    A filter that raises is unusable, so it never proves coverage; a filter
+-    without the ``hits`` counter is judged by whether the text changed. This is
+-    the client-side counterpart of the points seam's own coverage check, so a
+-    caller-owned production capture filter is verified the same way on both
+-    paths.
++def _redactor_covers(redactor: object, value: str) -> bool:
++    """True only when ``redactor`` provably removes ``value`` (T05j/T05p/T05q).
++
++    A caller-owned capture filter is *verified*, never replaced, so the check has
++    to answer the only question that matters: would the captured text still carry
++    this value (or a usable part of it)? ``hits > 0`` (T05p) and "the text
++    changed" answered nothing of the sort - a filter that reports a hit while
++    leaving the value, that only prepends a marker, that replaces ``value[:8]``
++    and leaves the tail, or that changes the text cosmetically all passed, and the
++    ledger stored the value or its tail
++    (``workers/dd-review-redactor-contract/report.md`` F-1).
++
++    The judgement used here is a boundary probe over a synthetic text, in three
++    parts:
++
++    1. **complete scrub**: ``redact`` is applied to a text that embeds ``value``
++       *twice*, between marker characters that do not occur in ``value`` (so the
++       markers cannot contribute a fragment of it). Both occurrences have to go -
++       a single replacement (``count=1``) is not coverage;
++    2. **tail scrub**: ``scrub_tail_prefix`` is applied to texts that end in a
++       strict prefix of ``value`` at two lengths; the capture boundary calls
++       exactly this, so a filter that leaves a cut-off secret on disk is not
++       coverage either;
++    3. **protocol**: both callables must exist (see
++       :func:`_capture_filter_contract_issue`).
++
++    Coverage is accepted only when no fragment of ``value`` of
++    ``_COVER_RESIDUAL_LEN`` (= the module's own ``_MIN_SECRET_LEN`` materiality
++    floor) characters survives any of those probes. This deliberately goes past
++    "the full value is absent": a partial replacement leaves a tail that the
++    plain containment test cannot see.
++
++    A filter that raises is unusable, so it never proves coverage. A stateful or
++    actively adversarial filter can still behave differently on the captured
++    text; the probe closes the honest-bug classes above and that limit is stated
++    in the card report (a hard guarantee needs the wire boundary itself).
+     """
+     if not value:
+         return True
++    if _capture_filter_contract_issue(redactor) is not None:
++        return False
++    markers = _cover_markers(value)
++    if markers is None:  # pragma: no cover - the pool has 10+ free codepoints
++        return False
++    opener, middle, closer = markers
++    probe = f"{opener}{value}{middle}{value}{closer}"
+     try:
+-        result = redactor.redact(value)  # type: ignore[attr-defined]
++        result = redactor.redact(probe)  # type: ignore[attr-defined]
+     except Exception:  # noqa: BLE001 - an unusable filter never proves coverage
+         return False
+-    hits = getattr(result, "hits", None)
+-    if isinstance(hits, int):
+-        return hits > 0
+-    return getattr(result, "text", value) != value
++    text = getattr(result, "text", None)
++    if not isinstance(text, str):
++        return False
++    if _cover_residual_len(text, value) >= _COVER_RESIDUAL_LEN:
++        return False
++    # A strict prefix of the value at two lengths (whole minus one, and half):
++    # the boundary scrub has to drop it, not just report a flag.
++    tail_sizes = {
++        size
++        for size in (len(value) - 1, max(_COVER_RESIDUAL_LEN, len(value) // 2))
++        if 0 < size < len(value)
++    }
++    for size in sorted(tail_sizes):
++        try:
++            scrubbed = redactor.scrub_tail_prefix(  # type: ignore[attr-defined]
++                f"{opener}{value[:size]}"
++            )
++        except Exception:  # noqa: BLE001 - an unusable filter never proves coverage
++            return False
++        if not isinstance(scrubbed, tuple) or len(scrubbed) != 2:
++            return False
++        tail_text, _scrubbed_flag = scrubbed
++        if not isinstance(tail_text, str):
++            return False
++        if _cover_residual_len(tail_text, value) >= _COVER_RESIDUAL_LEN:
++            return False
++    return True
+ 
+ 
+ _SAFE_PATH_SEGMENT_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+ 
+ 
+ def safe_path_text(path: object, redactor: object | None = None) -> str:
+@@ -2017,12 +2139,15 @@ class DecisionClient:
+         T05p: a caller-owned production filter is *verified*, never replaced.
+         The points seam already refuses an unprovable caller filter; without the
+         same check here a client-only call (no gate ran first) captured the
+         legacy timi leg raw. The return value is the value-free refusal detail
+         when that filter misses part of this unit's complete known set, else
+         ``None``.
++
++        T05q: "verified" is the boundary probe of :func:`_redactor_covers`
++        (complete value, long tail, protocol), not ``hits > 0``.
+         """
+         scope = self._active_scope
+         if scope is None:
+             return None
+         if getattr(scope, "scope_kind", "production") != "production":
+             return None
+@@ -2056,12 +2181,17 @@ class DecisionClient:
+             # verify against (and known_credential_values would reject it).
+             return None
+         snapshot.known_superset()
+         if snapshot.discovery_error:
+             # ``_decide`` already turns this into the fail-closed refusal.
+             return None
++        contract_issue = _capture_filter_contract_issue(redactor)
++        if contract_issue is not None:
++            # T05q F-2: surface the broken protocol as a refusal instead of a
++            # silent zero-row capture. The caller's filter is left in place.
++            return f"refusing an unprovable capture: {contract_issue}"
+         values = known_credential_values(self.cfg, snapshot=snapshot)
+         if not values:
+             return None
+         missing = sum(1 for value in values if not _redactor_covers(redactor, value))
+         if not missing:
+             return None

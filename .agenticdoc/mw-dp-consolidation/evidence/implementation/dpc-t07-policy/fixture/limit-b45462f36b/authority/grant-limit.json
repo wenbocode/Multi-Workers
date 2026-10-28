@@ -1,0 +1,10 @@
+{
+  "authority_ref": "grant-limit",
+  "kind": "user-grant",
+  "scope": [
+    "budget:increase"
+  ],
+  "writer": "pm-controlled-authority-writer",
+  "revoked": false,
+  "recorded_at": "2026-10-26T00:00:00+00:00"
+}

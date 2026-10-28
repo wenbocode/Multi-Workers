@@ -1,0 +1,12 @@
+{
+  "decision_dashboard.js": {
+    "sha256": "d373bece3958fcd7dd55f1d3f5295a303cff7bfa4918cc104778344b58c90d73",
+    "bytes": 140992,
+    "crlf": 0
+  },
+  "decision_history.py": {
+    "sha256": "06ff6dce259ca05299f50248e024da05436873c62f225727bd59e30802834091",
+    "bytes": 172063,
+    "crlf": 0
+  }
+}

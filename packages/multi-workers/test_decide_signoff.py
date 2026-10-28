@@ -505,171 +505,90 @@ def test_write_signoff_creates_parent_dirs(tmp_path: pathlib.Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cli_preview_writes_nothing(tmp_path: pathlib.Path, capsys) -> None:
-    """jev unavailable: exit 0, one line, zero writes (spec AC-005)."""
-    project = _project(tmp_path)
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
-    out = capsys.readouterr().out
-    assert "decision model unavailable" in out
-    assert "sign-off not required" in out
-    assert not _sign_file(project).exists()
-    assert not _archive(project).exists()
+NEW_MATERIAL_KEYS = (
+    "delivery_goal",
+    "actual_completion",
+    "verification_evidence",
+    "unfinished_impact",
+)
 
 
-def test_cli_continue_n_zero_exits_2_and_writes_nothing(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
+def _assert_legacy_refusal(
+    completed: int, capsys, project: pathlib.Path
 ) -> None:
-    project = _project(tmp_path)
-    _write_config(project)
-    _backend(monkeypatch, conclusion="continue")
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 2
+    """The one contract of a legacy (no ``--stdin``) invocation: refuse, write 0."""
+    assert completed == 2
     err = capsys.readouterr().err
-    assert "N=0" in err
-    assert "narrow/revoke" in err
+    assert "--stdin" in err
+    for part in NEW_MATERIAL_KEYS:
+        assert part in err, err
     assert "nothing was written" in err
     assert not _sign_file(project).exists()
-    # dp25 archived its own advice row, but no sign-off ever happened.
     rows = [row for _lineno, row in decide_archive.iter_rows(_archive(project))]
     assert not any(row.get("kind") == "authority-change" for row in rows)
 
 
-def test_cli_allow_empty_records_the_flag(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = _project(tmp_path)
-    _write_config(project)
-    _backend(monkeypatch, conclusion="continue")
-    assert mw.cmd_decide(_sign_args(project, key=KEY, allow_empty=True)) == 0
-    text = _sign_file(project).read_text(encoding="utf-8")
-    assert "allow_empty: true" in text.splitlines()
-    assert "counted_rows: 0" in text.splitlines()
-
-
-def test_cli_narrow_with_n_zero_passes(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = _project(tmp_path)
-    _write_config(project)
-    _backend(monkeypatch, conclusion="narrow")
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
-    text = _sign_file(project).read_text(encoding="utf-8")
-    assert "conclusion: narrow" in text.splitlines()
-    assert "signed_via: auto-decide" in text.splitlines()
-
-
-def test_cli_continue_writes_sign_file_and_authority_row(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = _project(tmp_path)
-    _write_config(project)
-    _append(project, trigger="t1")
-    _backend(monkeypatch, conclusion="continue")
-    assert mw.cmd_decide(_sign_args(project, key=KEY, reason="dp3 held up")) == 0
-    text = _sign_file(project).read_text(encoding="utf-8")
-    assert "conclusion: continue" in text.splitlines()
-    assert "counted_rows: 1" in text.splitlines()
-    assert "reason: dp3 held up" in text.splitlines()
-    rows = [row for _lineno, row in decide_archive.iter_rows(_archive(project))]
-    audit = rows[-1]
-    assert audit["kind"] == "authority-change"
-    assert audit["by"] == "signoff:continue"
-    assert audit["change"] == "signoff"
-    assert audit["conclusion"] == "continue"
-    assert audit["key"] == KEY
-    assert audit["dp"] == "dp3-worker-clarify"
-    assert audit["note"] == "signed_via=auto-decide"
-    assert audit["prev_sha"] == decide_archive._row_sha(rows[-2])
-
-
-def test_cli_mixed_engine_continue_exits_2(
+def test_cli_legacy_count_face_is_refused_with_zero_writes(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     project = _project(tmp_path)
     _write_config(project)
-    _append(project, trigger="t1")
-    _append(project, trigger="t2", transport="llm-transitional")
-    _backend(monkeypatch, conclusion="continue")
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 2
-    err = capsys.readouterr().err
-    assert "engine mismatch" in err
-    assert "seq 2" in err
-    assert not _sign_file(project).exists()
+    _append(project)
+    backend = _backend(monkeypatch, conclusion="continue")
+    _assert_legacy_refusal(mw.cmd_decide(_sign_args(project, key=KEY)), capsys, project)
+    assert backend.calls == [], "the refusal happens before any model call"
 
 
-def test_cli_json_key_set(
+def test_cli_legacy_dry_run_is_refused_too(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     project = _project(tmp_path)
     _write_config(project)
-    _append(project, trigger="t1")
-    _backend(monkeypatch, conclusion="continue")
-    assert mw.cmd_decide(_sign_args(project, key=KEY, json=True)) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert set(payload) == {
-        "conclusion",
-        "signed_via",
-        "ok",
-        "problems",
-        "facts",
-        "path",
-        "verdicts",
-    }
-    assert payload["ok"] is True
-    assert payload["conclusion"] == "continue"
-    assert payload["signed_via"] == "auto-decide"
-    assert pathlib.Path(payload["path"]) == _sign_file(project)
-    assert set(payload["facts"]) >= {
-        "counted_rows",
-        "n_available",
-        "n_acted",
-        "n_escalated",
-        "engines",
-        "sha256",
-        "chain_ok",
-        "rows",
-    }
+    backend = _backend(monkeypatch, conclusion="continue")
+    _assert_legacy_refusal(
+        mw.cmd_decide(_sign_args(project, key=KEY, dry_run=True)), capsys, project
+    )
+    assert backend.calls == []
 
 
-def test_cli_json_on_failure_keeps_the_key_set(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
+def test_cli_json_refusal_keeps_a_stable_key_set(
+    tmp_path: pathlib.Path, capsys
 ) -> None:
     project = _project(tmp_path)
     _write_config(project)
-    _backend(monkeypatch, conclusion="continue")
     assert mw.cmd_decide(_sign_args(project, key=KEY, json=True)) == 2
-    payload = json.loads(capsys.readouterr().out)
-    assert set(payload) == {"conclusion", "ok", "problems", "facts", "path", "verdicts"}
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert set(payload) == {"conclusion", "ok", "problems", "facts", "path"}
+    assert payload["conclusion"] is None
     assert payload["ok"] is False
+    assert payload["facts"] is None
     assert payload["path"] is None
-    assert payload["problems"]
-    assert "signed_via" not in payload
-
-
-def test_cli_dry_run_writes_nothing(tmp_path: pathlib.Path, capsys) -> None:
-    project = _project(tmp_path)
-    _append(project, trigger="t1")
-    code = mw.cmd_decide(_sign_args(project, key=KEY, dry_run=True))
-    assert code == 0
-    out = capsys.readouterr().out
-    assert "dry-run" in out
-    assert "nothing is written" in out
-    assert "counted_rows=1" in out
+    assert any("--stdin" in problem for problem in payload["problems"])
     assert not _sign_file(project).exists()
-    rows = [row for _lineno, row in decide_archive.iter_rows(_archive(project))]
-    assert len(rows) == 1
-    assert all(row.get("kind") == "decide" for row in rows)
 
 
 def test_cli_infers_the_key_from_a_key_dir_project(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: pathlib.Path, capsys
 ) -> None:
     project = _project(tmp_path)
     _write_config(project)
-    _backend(monkeypatch, conclusion="revoke")
-    key_dir = project / ".agenticdoc" / KEY
-    assert mw.cmd_decide(_sign_args(key_dir)) == 0
-    assert _sign_file(project).is_file()
-    assert "conclusion: revoke" in _sign_file(project).read_text(encoding="utf-8").splitlines()
+    # `--project .agenticdoc/<key>` still resolves the key from the path, and the
+    # migrated contract refuses the legacy face (never a silent count sign).
+    args = _sign_args(project / ".agenticdoc" / KEY, key=None)
+    assert mw.cmd_decide(args) == 2
+    err = capsys.readouterr().err
+    assert KEY in err or "--stdin" in err
+    assert not _sign_file(project).exists()
+
+
+def test_module_verdicts_still_gate_the_framework_face(tmp_path: pathlib.Path) -> None:
+    """`decide_signoff.verdict` stays the gate's content check (unchanged)."""
+    project = _project(tmp_path)
+    facts = decide_signoff.collect(project / ".agenticdoc" / KEY, KEY)
+    assert decide_signoff.verdict(facts, "continue")[0] is False
+    assert decide_signoff.verdict(facts, "narrow") == (True, [])
+    assert decide_signoff.verdict(facts, "revoke") == (True, [])
 
 
 def test_cli_refuses_to_guess_the_key(tmp_path: pathlib.Path, capsys) -> None:
@@ -834,47 +753,3 @@ def test_signed_via_line_leaves_the_gate_and_dp_apply_parse_untouched(
 # ---------------------------------------------------------------------------
 # `--dry-run --json`: the zero-write pre-judge (AC-003)
 # ---------------------------------------------------------------------------
-
-
-def test_cli_preview_json_carries_every_conclusion_verdict(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
-) -> None:
-    project = _project(tmp_path)
-    archive = _archive(project)
-    before = [row for _lineno, row in decide_archive.iter_rows(archive)]
-
-    # No backend registered at all: the pre-judge still answers with verdicts.
-    assert mw.cmd_decide(_sign_args(project, key=KEY, dry_run=True, json=True)) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["path"] is None
-    assert set(payload["verdicts"]) == set(decide_signoff.CONCLUSIONS)
-    assert payload["verdicts"]["continue"]["ok"] is False
-    assert any("N=0" in problem for problem in payload["verdicts"]["continue"]["problems"])
-    assert payload["verdicts"]["narrow"] == {"ok": True, "problems": []}
-    assert payload["verdicts"]["revoke"] == {"ok": True, "problems": []}
-    after = [row for _lineno, row in decide_archive.iter_rows(archive)]
-    assert len(after) == len(before) == 0
-
-    # Even with a backend registered the pre-judge never calls it (zero model
-    # calls) and never appends an archive row.
-    backend = _backend(monkeypatch, conclusion="continue")
-    assert mw.cmd_decide(_sign_args(project, key=KEY, dry_run=True, json=True)) == 0
-    capsys.readouterr()
-    assert backend.calls == []
-    assert len([row for _lineno, row in decide_archive.iter_rows(archive)]) == 0
-    assert not _sign_file(project).exists()
-
-
-def test_cli_preview_json_honours_allow_empty_for_continue(
-    tmp_path: pathlib.Path, capsys
-) -> None:
-    project = _project(tmp_path)
-    assert (
-        mw.cmd_decide(
-            _sign_args(project, key=KEY, dry_run=True, json=True, allow_empty=True)
-        )
-        == 0
-    )
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["verdicts"]["continue"] == {"ok": True, "problems": []}
-    assert not _sign_file(project).exists()

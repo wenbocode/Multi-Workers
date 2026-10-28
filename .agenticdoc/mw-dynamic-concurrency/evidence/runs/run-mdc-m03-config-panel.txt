@@ -1,0 +1,6 @@
+source: .agenticdoc/mw-dynamic-concurrency/workers/mdc-m03-config-panel/output.md
+extracted: 3 [VERIFY]/[FLOW] lines
+
+[VERIFY] P4: corpus_sha256=f5b60e…13e9c1 cases=77
+[VERIFY] P5: key_order_match=true defaults_match=true keys=21 … int=15
+[VERIFY] P1: crosslang_verdict_match=77/77 ; P6: effective_view_21=true fields_covered=21

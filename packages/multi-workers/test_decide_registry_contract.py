@@ -17,9 +17,11 @@ This module locks the replacement contract:
    ``wiring_note``, and a ``wired=true`` location resolves to a real file line;
 4. the snapshot has no top-level ``wiring`` section and ``schema == 2``;
 5. every point has a non-empty question set with unique ids and legal types;
-6. the TS required-field matrix (``pm/triage-client.ts``) agrees with Python's
-   :data:`decision_points.REQUIRED_STATE_FIELDS` dp by dp — the field names are
-   a cross-layer contract, so a one-sided rename must turn red here.
+6. the TS required-field contract agrees with Python — the four business-material
+   dps are compared literally against the GENERATED TS registry
+   (``decide-registry.generated.ts``) and must have no legacy row in
+   ``pm/triage-client.ts``; only the four structured legacy rows remain as
+   explicit debt. A one-sided rename must turn red here.
 
 Hermetic: read-only, no network, no ``.mw`` writes; the probe uses
 ``decision.FakeBackend`` and a project-less ``DecisionConfig`` (no evidence file).
@@ -53,13 +55,44 @@ TRIAGE_CLIENT = (
     / "pm"
     / "triage-client.ts"
 )
+GENERATED_TS = (
+    REPO_ROOT
+    / "packages"
+    / "coding-agent"
+    / "src"
+    / "extensions"
+    / "agent-team-loop"
+    / "shared"
+    / "decide-registry.generated.ts"
+)
 
 #: JSON-native types a ``required_state_fields`` entry may declare.
 VALID_FIELD_TYPES = frozenset({"object", "string", "integer", "number", "boolean", "array"})
 #: dps whose state has no TS producer (W9: dp25 is built by `mw decide sign`
-#: from `decide_signoff.collect()` facts), so the cross-layer parity check above
+#: from the PM's four-part material), so the cross-layer parity check above
 #: skips them by design instead of demanding a `triage-client.ts` row nobody owns.
 PYTHON_ONLY_DP_IDS = frozenset({"dp25-signoff-conclusion"})
+#: The four dps whose required fields are the T01 business-material contract.
+#: Their authority is `decide_registry.json` -> `decide-registry.generated.ts`;
+#: the legacy structured-state matrix in `triage-client.ts` must NOT carry a row
+#: for them (it composes `UNIVERSAL_REQUIRED_FIELDS` with the row, which would
+#: force business material to carry audit keys such as `phase`/`risk`).
+MATERIAL_DP_IDS = (
+    "dp1-dispatch-type",
+    "dp2-checkpoint-split",
+    "dp3-worker-clarify",
+    "dp25-signoff-conclusion",
+)
+#: ``triage-client.ts`` rows that remain on the pre-T01 structured vocabulary.
+#: They are explicit legacy debt for the 21 structured dps that did not move to
+#: the material contract; dp4's row must stay a subset of the registry. No
+#: frozen copy of a material dp survives here - those are compared for real.
+LEGACY_TS_ROWS: dict[str, list[str]] = {
+    "dp4-failure-handling": ["failure.kind"],
+    "dp5-test-triage": ["failure.kind", "failure.test_name", "failure.baseline_known"],
+    "dp6-qg-verdict": ["closure"],
+    "dp13-commit-release": ["closure"],
+}
 #: The four per-point wiring keys (no legacy ``note`` alias may survive).
 WIRING_KEYS = ("wired", "trigger", "adopted_at", "wiring_note")
 
@@ -143,28 +176,73 @@ def test_state_field_descriptions_cover_every_required_path() -> None:
 
 def test_state_field_descriptions_have_a_legal_type_and_text() -> None:
     required = {path for paths in dpts.REQUIRED_STATE_FIELDS.values() for path in paths}
+    allowed_keys = {"type", "description"} | set(dpts.STATE_FIELD_CONSTRAINT_KEYS)
     for path in sorted(required):
         spec = dpts.STATE_FIELD_DESCRIPTIONS[path]
-        assert set(spec) == {"type", "description"}, f"{path}: unexpected keys {sorted(spec)}"
+        assert {"type", "description"} <= set(spec) <= allowed_keys, (
+            f"{path}: unexpected keys {sorted(set(spec) - allowed_keys)}"
+        )
         assert spec["type"] in VALID_FIELD_TYPES, f"{path}: {spec['type']!r}"
         assert isinstance(spec["description"], str) and spec["description"].strip(), (
             f"{path}: empty description"
         )
+        # T04: a declared constraint must be well-formed, never a stray value.
+        if "enum" in spec:
+            options = spec["enum"]
+            assert spec["type"] == "string" and options, path
+            assert all(isinstance(option, str) and option for option in options), path
+            assert len(set(options)) == len(options), f"{path}: duplicate enum values"
+        if "max_items" in spec:
+            assert spec["type"] == "array", path
+            assert isinstance(spec["max_items"], int) and spec["max_items"] > 0, path
+        if "item_type" in spec:
+            assert spec["type"] == "array" and spec["item_type"] in VALID_FIELD_TYPES, path
+        for key in ("max_bytes", "item_max_bytes"):
+            if key in spec:
+                assert isinstance(spec[key], int) and spec[key] > 0, f"{path}: bad {key}"
+        if "signed" in spec:
+            assert spec["type"] == "integer" and spec["signed"] is True, path
+        if "min_value" in spec:
+            assert spec["type"] == "integer", f"{path}: min_value on {spec['type']}"
+            assert isinstance(spec["min_value"], int), f"{path}: min_value must be an integer"
 
 
 def test_exported_required_state_fields_render_the_semantics_table() -> None:
     for point in _points():
-        expected = [
+        expected = []
+        for path in dpts.REQUIRED_STATE_FIELDS.get(point["id"], ()):
+            spec = dpts.STATE_FIELD_DESCRIPTIONS[path]
+            field = {
+                "name": path,
+                "type": spec["type"],
+                "description": spec["description"],
+            }
+            for key in dpts.STATE_FIELD_CONSTRAINT_KEYS:
+                if key not in spec:
+                    continue
+                # The export is JSON-shaped: an enum tuple becomes an array.
+                field[key] = list(spec[key]) if key == "enum" else spec[key]
+            expected.append(field)
+        assert point["required_state_fields"] == expected, (
+            f"{point['id']}: required_state_fields drifted from the semantics table"
+        )
+        assert point["optional_state_fields"] == [
             {
                 "name": path,
                 "type": dpts.STATE_FIELD_DESCRIPTIONS[path]["type"],
                 "description": dpts.STATE_FIELD_DESCRIPTIONS[path]["description"],
+                **({
+                    key: (
+                        list(dpts.STATE_FIELD_DESCRIPTIONS[path][key])
+                        if key == "enum"
+                        else dpts.STATE_FIELD_DESCRIPTIONS[path][key]
+                    )
+                    for key in dpts.STATE_FIELD_CONSTRAINT_KEYS
+                    if key in dpts.STATE_FIELD_DESCRIPTIONS[path]
+                }),
             }
-            for path in dpts.REQUIRED_STATE_FIELDS.get(point["id"], ())
-        ]
-        assert point["required_state_fields"] == expected, (
-            f"{point['id']}: required_state_fields drifted from the semantics table"
-        )
+            for path in dpts.OPTIONAL_STATE_FIELDS.get(point["id"], ())
+        ], f"{point['id']}: optional_state_fields drifted"
 
 
 # ---------------------------------------------------------------------------
@@ -210,9 +288,20 @@ def test_snapshot_has_no_top_level_wiring_section() -> None:
     assert set(doc) == {"schema", "generated_from", "question_types", "points"}
 
 
-def test_snapshot_schema_is_two() -> None:
-    assert dpts.SNAPSHOT_SCHEMA == 2
-    assert _export_doc()["schema"] == 2
+def test_snapshot_schema_is_three() -> None:
+    assert dpts.SNAPSHOT_SCHEMA == 3
+    assert _export_doc()["schema"] == 3
+    # Schema 3 = the typed business contract: optional fields + declared
+    # constraints ride every point, not just the required path names.
+    for point in _export_doc()["points"]:
+        assert "optional_state_fields" in point, point["id"]
+        for field in point["required_state_fields"] + point["optional_state_fields"]:
+            assert set(field) <= {
+                "name",
+                "type",
+                "description",
+                *dpts.STATE_FIELD_CONSTRAINT_KEYS,
+            }, f"{point['id']}/{field['name']}: unknown export key"
 
 
 # ---------------------------------------------------------------------------
@@ -265,37 +354,82 @@ def _ts_required_fields() -> tuple[list[str], dict[str, list[str]]]:
     for key, inner in re.findall(r'(\[DP1_ID\]|"[^"]+")\s*:\s*\[([^\]]*)\]', body, re.S):
         dp_id = dp1_id if key == "[DP1_ID]" else key.strip('"')
         by_dp[dp_id] = re.findall(r'"([^"]+)"', inner)
-    assert {"dp1-dispatch-type", "dp2-checkpoint-split", "dp3-worker-clarify"} <= set(by_dp), (
+    assert {"dp4-failure-handling"} <= set(by_dp), (
         f"the required_if matrix was not parsed: {sorted(by_dp)}"
     )
     return universal, by_dp
 
 
+def _ts_generated_required_names(dp_id: str) -> list[str]:
+    """`requiredStateFields[].name` of one dp in the GENERATED TS registry.
+
+    That file is the contract the TS producers actually compile against, so the
+    comparison is against the artefact, not against a Python-side string.
+    """
+    text = GENERATED_TS.read_text(encoding="utf-8")
+    marker = f'"{dp_id}": {{'
+    start = text.index(marker)
+    block_start = text.index("requiredStateFields: [", start)
+    open_index = text.index("[", block_start)
+    depth = 0
+    close_index = -1
+    for index in range(open_index, len(text)):
+        char = text[index]
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                close_index = index
+                break
+    assert close_index > open_index, f"{dp_id}: unterminated requiredStateFields block"
+    return re.findall(r'name: "([^"]+)"', text[open_index : close_index + 1])
+
+
 def test_python_and_ts_required_fields_agree_per_dp() -> None:
+    """Cross-layer lock: the registry-owned material contract, compared for real.
+
+    The four business-material dps are the T01 contract. Their fields live in
+    `decide_registry.json`, are exported to `decide-registry.generated.ts`, and
+    are what the TS material validators consume. The legacy `required_if`
+    matrix in `triage-client.ts` must therefore carry NO row for them (a kept
+    row would demand the audit keys `phase`/`risk`/... alongside business
+    material), and this test compares the generated fields with Python
+    literally instead of freezing a stale row.
+
+    dp4/dp5/dp6/dp13 remain explicit legacy debt: dp4 may only narrow the
+    registry set, and a Python-only dp must not grow a TS producer row.
+    """
     universal, by_dp = _ts_required_fields()
-    for dp_id, paths in dpts.REQUIRED_STATE_FIELDS.items():
-        if dp_id in PYTHON_ONLY_DP_IDS:
-            # dp25's state is assembled in `decide_signoff.signoff_state()` and its
-            # only caller is `mw decide sign` (Python), so there is no TS producer
-            # to keep in parity; every other dp must stay mapped.
-            assert dp_id not in by_dp, f"{dp_id}: TS grew a row for a Python-only dp"
-            continue
-        assert dp_id in by_dp, f"{dp_id}: no TS required_if row"
-        ts_fields = set(universal) | set(by_dp[dp_id])
-        python_fields = set(paths)
-        missing = sorted(python_fields - ts_fields)
-        extra = sorted(ts_fields - python_fields)
-        assert missing == [], f"{dp_id}: TS is missing {missing}"
-        assert extra == [], f"{dp_id}: TS requires fields Python does not: {extra}"
-        # The composition premise: every universal field really is required by
-        # this dp on the Python side too, so the union is not papering over a gap.
-        assert set(universal) <= python_fields, (
-            f"{dp_id}: universal fields outside the Python required set: "
-            f"{sorted(set(universal) - python_fields)}"
+    assert by_dp == LEGACY_TS_ROWS, (
+        "the legacy required_if matrix changed; the business-material dps must "
+        f"not carry a row: {sorted(set(by_dp) - set(LEGACY_TS_ROWS))}"
+    )
+    for dp_id in MATERIAL_DP_IDS:
+        expected = list(dpts.REQUIRED_STATE_FIELDS[dp_id])
+        assert expected, f"{dp_id}: registry contract vanished"
+        assert _ts_generated_required_names(dp_id) == expected, (
+            f"{dp_id}: generated TS requiredStateFields drifted from the registry"
         )
+        assert dp_id not in by_dp, f"{dp_id}: a retired legacy row survived in triage-client.ts"
+    assert set(LEGACY_TS_ROWS["dp4-failure-handling"]) <= set(
+        dpts.REQUIRED_STATE_FIELDS["dp4-failure-handling"]
+    ), "dp4: TS now requires a field the registry does not declare"
+    for dp_id in PYTHON_ONLY_DP_IDS:
+        assert dp_id not in by_dp, f"{dp_id}: TS grew a row for a Python-only dp"
+    del universal
 
 
-def test_ts_dp3_requires_local_candidates() -> None:
-    """W3's concrete gap: the dynamic-choice enum is fed by local_candidates."""
+def test_ts_dp3_dynamic_candidates_come_from_the_registry() -> None:
+    """W3's concrete gap, on the new contract.
+
+    The dynamic-choice enum is fed by `handling_options`; the retired TS row
+    named `local_candidates`. The row is gone and the generated registry owns
+    the field, so no local copy can drift from the question protocol.
+    """
     _universal, by_dp = _ts_required_fields()
-    assert "local_candidates" in by_dp["dp3-worker-clarify"]
+    assert "dp3-worker-clarify" not in by_dp
+    names = _ts_generated_required_names("dp3-worker-clarify")
+    assert "handling_options" in names
+    assert "handling_options" in dpts.REQUIRED_STATE_FIELDS["dp3-worker-clarify"]
+    assert "local_candidates" not in names

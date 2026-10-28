@@ -1,0 +1,9 @@
+import hashlib,json,os,subprocess,sys
+from datetime import datetime,timezone
+from pathlib import Path
+assert sys.dont_write_bytecode
+HERE=Path(__file__).resolve().parent;KEY=HERE.parents[2];ROOT=KEY.parents[1];assert not (HERE/'audit.json').exists();env={k:os.environ[k] for k in ('PATH','SYSTEMROOT','WINDIR','COMSPEC','PATHEXT','SYSTEMDRIVE') if k in os.environ};env.update({'PYTHONDONTWRITEBYTECODE':'1','PYTHONUTF8':'1','PYTHONIOENCODING':'utf-8','PYTHONNOUSERSITE':'1'})
+for k in ('HOME','USERPROFILE','TEMP','TMP','TMPDIR','APPDATA','LOCALAPPDATA'):
+    p=HERE/'audit-fixture'/k.lower();p.mkdir(parents=True,exist_ok=True);env[k]=str(p)
+script=ROOT/'.agents/skills/agentic-task/scripts/audit_phase.py';argv=[sys.executable,'-B',str(script),'mw-dp-consolidation'];run=subprocess.run(argv,cwd=ROOT,env=env,capture_output=True);(HERE/'audit.stdout').write_bytes(run.stdout);(HERE/'audit.stderr').write_bytes(run.stderr);print(run.stdout.decode('utf-8'));print(run.stderr.decode('utf-8'));assert run.returncode==0;state=(KEY/'pm-state.md').read_bytes();assert b'- Phase: EXECUTE' in state
+result={'source':'agent-report','observed_at':datetime.now(timezone.utc).isoformat(),'argv':argv,'rc':run.returncode,'phase':'EXECUTE','claim_id_recorded_in_state':'WENBOZHOU-PC4:15444','pm_state_sha256':hashlib.sha256(state).hexdigest(),'PI_variable_names_only':sorted(k for k in os.environ if k.startswith('PI_')),'safe_PI_runtime':{k:os.environ.get(k) for k in ('PI_MODEL','PI_PROVIDER','PI_SESSION_ID','PI_AGENT_ROLE','PI_TASK_KEY')},'workflow_structure_audit_not_product_write_scope_L2_QG_or_signoff':True,'T05_R2_worker_semantic_handoff':False,'T10_independent_semantic_handoff':False,'pyc_external_sink_and_log_history_debts_not_cleared':True};(HERE/'audit.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n');print(json.dumps(result,ensure_ascii=False,indent=2))

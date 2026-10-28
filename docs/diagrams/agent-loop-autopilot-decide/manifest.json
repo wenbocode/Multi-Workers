@@ -1,0 +1,52 @@
+[
+  {
+    "index": 1,
+    "title": "第一层：Agent Loop —— 一个「LLM ↔ 工具」的纯内循环",
+    "slug": "agent-loop-llm",
+    "mmd": "01-agent-loop-llm.mmd",
+    "png": "01-agent-loop-llm.png",
+    "kind": "flow",
+    "start": 1454,
+    "end": 1983
+  },
+  {
+    "index": 2,
+    "title": "第二层：Autopilot —— 跨 key 的编排外循环",
+    "slug": "autopilot-key",
+    "mmd": "02-autopilot-key.mmd",
+    "png": "02-autopilot-key.png",
+    "kind": "flow",
+    "start": 2560,
+    "end": 2993
+  },
+  {
+    "index": 3,
+    "title": "从 25 个编号到 8 个职责",
+    "slug": "flow-03",
+    "mmd": "03-flow-03.mmd",
+    "png": "03-flow-03.png",
+    "kind": "flow",
+    "start": 3719,
+    "end": 4331
+  },
+  {
+    "index": 4,
+    "title": "gate 四选项：只有 approve 放行",
+    "slug": "gate-approve",
+    "mmd": "04-gate-approve.mmd",
+    "png": "04-gate-approve.png",
+    "kind": "flow",
+    "start": 5355,
+    "end": 5889
+  },
+  {
+    "index": 5,
+    "title": "三层如何咬合：一次「不等人」的推进",
+    "slug": "sequence-05",
+    "mmd": "05-sequence-05.mmd",
+    "png": "05-sequence-05.png",
+    "kind": "sequence",
+    "start": 6490,
+    "end": 6928
+  }
+]

@@ -1,0 +1,25 @@
+{
+  "description": "v2 partition: roots + relative paths anchored at the control root; {parent}/{partition}/{root} render",
+  "env": {},
+  "expect": {
+    "mode": "partition",
+    "source": "target-yml",
+    "game_root_null": true,
+    "parent_root_rel": "../parentproj",
+    "partition_root_rel": ".",
+    "roots": {
+      "sdk": "sdk",
+      "build-tools": "../shared-tools"
+    },
+    "vcs": "git",
+    "deny_globs": [
+      "**/Binaries/**"
+    ],
+    "docs": [
+      "docs/notes.md"
+    ]
+  },
+  "render": {
+    "build": "make -P {parent_root} -W {partition_root} --sdk {sdk} --bt {build-tools}"
+  }
+}

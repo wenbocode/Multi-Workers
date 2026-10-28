@@ -1,0 +1,24 @@
+{
+  "observed_at": "2026-10-26T20:16:26+0800",
+  "changed_files": [
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_policy.py",
+      "status": "added (did not exist before this worker)",
+      "bytes": 60498,
+      "sha256": "f4c44456316b8c60c7934a209de389ef6366aa864f026f9ba5fba40569dde6bb",
+      "eol": "lf",
+      "trailing_newline": true,
+      "lines": 1785
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_recovery.py",
+      "status": "added (did not exist before this worker)",
+      "bytes": 53478,
+      "sha256": "434412b3ea60e60807ea23b52cdc474e892457a0a1747ecf7cb6bf809380a974",
+      "eol": "lf",
+      "trailing_newline": true,
+      "lines": 1520
+    }
+  ],
+  "note": "both files are new; the origin mirror is untouched (the copy tree is untracked in the origin repo, so file bytes above are the record)"
+}

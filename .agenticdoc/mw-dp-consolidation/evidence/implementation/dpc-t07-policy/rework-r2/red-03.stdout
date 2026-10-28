@@ -1,0 +1,116 @@
+........................F..........                                      [100%]
+================================== FAILURES ===================================
+_______ test_halted_recovery_unknown_guard_and_halt_origin_stay_blocked _______
+
+    def test_halted_recovery_unknown_guard_and_halt_origin_stay_blocked():
+        project = _new_project("haltguard")
+        load = _load(project, _policy_doc())
+        source = _full_grants(project)
+        writer = FixtureAuthorityWriter(project)
+    
+        def verdict(request: dict, authority=None):
+            return policy_mod.evaluate_halted_recovery(
+                load,
+                request=request,
+                usage={"round": 1},
+                authority_source=source if authority is None else authority,
+                trusted_writers=TRUSTED_WRITERS,
+            )
+    
+        # an active guard cleared only by a self-reported string is still active
+        self_reported = verdict(
+            dict(HALTED_OK, hard_guard_active=True, hard_guard_cleared=["self-reported-clear"])
+        )
+        assert self_reported.allowed is False
+        assert "guard-clearance-unverified" in _codes(self_reported.reasons)
+        assert self_reported.scope == ()
+    
+        non_bool_verdict = verdict(
+            dict(
+                HALTED_OK,
+                hard_guard_active=True,
+                hard_guard_cleared=["cargo check passed"],
+                hard_guard_cleared_verified="yes",
+            )
+        )
+        assert non_bool_verdict.allowed is False
+        assert "guard-clearance-unverified" in _codes(non_bool_verdict.reasons)
+    
+        # a machine-verified clearance still resumes (the guard is not blindly fatal)
+        verified = verdict(
+            dict(
+                HALTED_OK,
+                hard_guard_active=True,
+                hard_guard_cleared=["cargo check exit 0"],
+                hard_guard_cleared_verified=True,
+            )
+        )
+        assert verified.allowed is True
+        assert verified.scope == ("recovery:halted",)
+    
+        missing_guard = json.loads(json.dumps(HALTED_OK))
+        del missing_guard["hard_guard_active"]
+        unknown_guard = verdict(missing_guard)
+        assert unknown_guard.allowed is False
+        assert "hard-guard-unknown" in _codes(unknown_guard.reasons)
+        assert unknown_guard.scope == ()
+        assert "hard-guard-unknown" in _codes(
+            verdict(dict(HALTED_OK, hard_guard_active="unknown")).reasons
+        )
+    
+        # an unknown stop origin is never assumed to be a plain technical stop
+        missing_origin = json.loads(json.dumps(HALTED_OK))
+        del missing_origin["halt_origin"]
+        unknown_origin = verdict(missing_origin)
+        assert unknown_origin.allowed is False
+        assert "halt-origin-unknown" in _codes(unknown_origin.reasons)
+        assert unknown_origin.scope == ()
+    
+        # a revocation needs an explicit *human* lift, not a controlled-config record
+        config_lift, config_issues = writer.grant(
+            "grant-config-lift",
+            ["recovery:user-stop", "recovery:halted"],
+            kind="controlled-config",
+        )
+        assert config_issues == ()
+        config_source = dict(source)
+        config_source.update(_source([config_lift]))
+        revoked_origin = verdict(
+            dict(HALTED_OK, halt_origin="revoked"), authority=config_source
+        )
+        assert revoked_origin.allowed is False
+        assert "user-stop-requires-explicit-authorization" in _codes(revoked_origin.reasons)
+        assert revoked_origin.scope == ()
+    
+        # a real new human authorization restores the stop and keeps the stop facts
+        human_lift, human_issues = writer.grant(
+            "grant-human-lift", ["recovery:user-stop", "recovery:halted"]
+        )
+        assert human_issues == ()
+        human_source = dict(source)
+        human_source.update(_source([human_lift]))
+        lifted_request = json.loads(json.dumps(HALTED_OK))
+        lifted_request["halt_origin"] = "user-stop"
+        lifted_request["note"]["authority_ref"] = "grant-human-lift"
+        lifted = verdict(lifted_request, authority=human_source)
+        assert lifted.allowed is True
+        assert lifted.scope == ("recovery:halted",)
+        assert HALTED_OK["note"]["stop_reason"] in " | ".join(lifted.preserved_facts)
+    
+        # the policy rule reference itself stays verified: a revoked rule cannot be
+        # restored by a human lift that does not say what it replaces
+        revoked_rule, revoked_rule_issues = writer.grant(
+            "grant-recovery", ["recovery:halted", "recovery:breaker"], revoked=True
+        )
+        assert revoked_rule_issues == ()
+        revoked_source = dict(human_source)
+        revoked_source.update(_source([revoked_rule]))
+        silent_lift = verdict(lifted_request, authority=revoked_source)
+>       assert silent_lift.allowed is False
+E       AssertionError: assert True is False
+E        +  where True = RecoveryVerdict(allowed=True, scope=('recovery:halted',), observation_conditions=('same-failure-reappears',), stop_con...ce shows the hang is gone', 'stage-2:v7'), usage_after=(('round', 1),), questions=(), project_closed=False, reasons=()).allowed
+
+test_dp_consolidation_recovery.py:1409: AssertionError
+=========================== short test summary info ===========================
+FAILED test_dp_consolidation_recovery.py::test_halted_recovery_unknown_guard_and_halt_origin_stay_blocked
+1 failed, 34 passed in 0.28s

@@ -1,0 +1,104 @@
+{
+  "r2_start": "2026-10-26T03:33:00+00:00",
+  "handoff": {
+    "packages/multi-workers/decision_points.py": {
+      "before_sha256": "a3fb1fe8f3a9caea2a6a4acc660298ca6d2cb9921418c152025c401279089047",
+      "after_sha256": "78e72e03cfe3b03f0349d95113c1947713b91c4a143bbaaada404f08db7443e6",
+      "changed": true,
+      "expected_changed": true
+    },
+    "packages/multi-workers/decide_registry.json": {
+      "before_sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "after_sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "changed": false,
+      "expected_changed": false
+    },
+    "packages/multi-workers/decision_context.py": {
+      "before_sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+      "after_sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+      "changed": false,
+      "expected_changed": false
+    },
+    "packages/multi-workers/decision_book.py": {
+      "before_sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+      "after_sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+      "changed": false,
+      "expected_changed": false
+    },
+    "packages/multi-workers/decision.py": {
+      "before_sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+      "after_sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+      "changed": false,
+      "expected_changed": false
+    },
+    "packages/multi-workers/mw.py": {
+      "before_sha256": "35fa4689101c69f6172c1565d99a834a25a3ade5dd3e151c924a8410b9b48757",
+      "after_sha256": "35fa4689101c69f6172c1565d99a834a25a3ade5dd3e151c924a8410b9b48757",
+      "changed": false,
+      "expected_changed": false
+    },
+    "packages/multi-workers/scripts/gen_decide_registry_ts.py": {
+      "before_sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+      "after_sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+      "changed": false,
+      "expected_changed": false
+    },
+    "packages/multi-workers/decide_cases/dp1.json": {
+      "before_sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "after_sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "changed": false,
+      "expected_changed": false
+    },
+    "packages/multi-workers/decide_cases/dp2.json": {
+      "before_sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "after_sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "changed": false,
+      "expected_changed": false
+    },
+    "packages/multi-workers/decide_cases/dp3.json": {
+      "before_sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "after_sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "changed": false,
+      "expected_changed": false
+    },
+    "packages/multi-workers/decide_cases/dp25.json": {
+      "before_sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "after_sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "changed": false,
+      "expected_changed": false
+    },
+    "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts": {
+      "before_sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+      "after_sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+      "changed": false,
+      "expected_changed": false
+    },
+    "packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts": {
+      "before_sha256": "70551a67c82bd463ee040267758d2d3a2d19ae3387d9329b9a6817581c651d58",
+      "after_sha256": "70551a67c82bd463ee040267758d2d3a2d19ae3387d9329b9a6817581c651d58",
+      "changed": false,
+      "expected_changed": false
+    }
+  },
+  "write_scope": {
+    "touched": [
+      "packages/multi-workers/decision_points.py",
+      "packages/multi-workers/test_decide_registry_contract.py",
+      "packages/multi-workers/test_dp_consolidation_registry.py"
+    ],
+    "expected": [
+      "packages/multi-workers/decision_points.py",
+      "packages/multi-workers/test_decide_registry_contract.py",
+      "packages/multi-workers/test_dp_consolidation_registry.py"
+    ],
+    "unexpected": [],
+    "missing": [],
+    "ok": true
+  },
+  "handoff_ok": true,
+  "original_t03_evidence": {
+    "files": 29,
+    "touched_after_r2_start": [],
+    "ok": true
+  }
+}

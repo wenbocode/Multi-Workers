@@ -1,0 +1,252 @@
+from pathlib import Path
+import hashlib
+import json
+import re
+from datetime import datetime
+
+root = Path('H:/git/Multi-Workers')
+key = root / '.agenticdoc/mw-dp-consolidation'
+P = 'packages/multi-workers/'
+T = 'packages/coding-agent/src/extensions/agent-team-loop/'
+U = 'packages/coding-agent/test/suite/'
+F = '.agents/skills/agentic-task/scripts/'
+spec = (key / 'spec.md').read_text(encoding='utf-8')
+design = (key / 'design.md').read_text(encoding='utf-8')
+scope = (key / 'design-write-scope.md').read_text(encoding='utf-8')
+assert hashlib.sha256((key / 'spec.md').read_bytes()).hexdigest() == 'cfe737d29aed2d0c4e79d8b02107f754f254a225bb21ea8d900eaa5ba289d006'
+assert 'approved-for-plan' in design
+ac = dict(re.findall(r'^\| (AC-\d{3}) \| (.*?) \|$', spec, re.M))
+vc = {m.group(1): m.group(0).rstrip() for m in re.finditer(r'^(VC-\d{3}): .*?\n       Layer: .*?\n       Output: .*?\n       Source: AC-\d{3}\n', design, re.M)}
+allowed_block = scope.split('## 2.', 1)[1].split('## 6.', 1)[0]
+allowed = set(re.findall(r'(?:packages/|\.agents/skills/agentic-task/)[A-Za-z0-9_.\-/]+', allowed_block))
+tasks = []
+def add(n, slug, stage, role, deps, refs, files, goal, req, extra_tests=(), direct=False):
+    paths = [P + f for f in files.get('py', [])] + [T + f for f in files.get('ts', [])] + [U + f for f in files.get('test_ts', [])] + [F + f for f in files.get('framework', [])]
+    task_key = f'dpc-t{n:02}-{slug}'
+    evidence = f'.agenticdoc/mw-dp-consolidation/evidence/implementation/{task_key}'
+    if role in ('research', 'review'):
+        evidence += '.md'
+    tests = [p for p in paths if '/test_' in p or '/test/suite/' in p] + list(extra_tests)
+    commands = []
+    py_tests = [p[len(P):] for p in tests if p.startswith(P)]
+    ts_tests = [p[len('packages/coding-agent/'):] for p in tests if p.startswith(U)]
+    frame_tests = [p for p in tests if p.startswith(F)]
+    if py_tests:
+        commands.append({'cwd': 'packages/multi-workers', 'argv': ['python', '-m', 'pytest', '-p', 'no:cacheprovider', '-q'] + py_tests})
+    if ts_tests:
+        commands.append({'cwd': 'packages/coding-agent', 'argv': ['node', '../../node_modules/vitest/dist/cli.js', '--run'] + ts_tests})
+    if frame_tests:
+        commands.append({'cwd': '.', 'argv': ['python', '-m', 'pytest', '-p', 'no:cacheprovider', '-q'] + frame_tests})
+    tasks.append({'id': f'T{n:02}', 'task_key': task_key, 'card': f'tasks/T{n:02}-{slug}.md', 'stage': stage,
+                  'type': role, 'execution': 'pm-direct' if direct else 'worker', 'deps': [f'T{i:02}' for i in deps],
+                  'ac_refs': [f'AC-{i:03}' for i in refs], 'vc_refs': [f'VC-{i:03}' for i in refs],
+                  'product_write_face': paths, 'evidence': evidence, 'commands': commands,
+                  'goal': goal, 'requirements': req, 'status': 'not-queued', 'code_status': '未开始' if role == 'coding' and not direct else '不适用', 'verification_status': '未验证'})
+
+add(1,'python-preflight',0,'research',[],[1,2,3,27,38,39,52],{},
+    '实施前核对Python生产调用/生成入口、已批准文件现有diff和未列迁移面，输出明确可开始或具体阻塞。',
+    '25分钟静态取证；复用RQ18/19/21/22，不重新设计。rg盘点Python生产源码/配置模板/测试引用并分类active/history/security/regression；重点mw.py的replay/legacy/export和registry。采用主文件需分段读到EOF或明确未读范围，不能宣称全仓审计；不读活config/gate/ledger/凭证，不运行CLI/产品测试/服务/provider。列现有dirty文件基线hash/相关diff、生成副作用路径、pytest插件/conftest隔离风险。未列需要修改的文件给exact path/原因/最小补面；不可把设计批准扩成任意目录授权。')
+add(2,'ts-framework-preflight',0,'research',[],[3,14,27,36,37,38,39,44,52],{},
+    '实施前核对TS/框架原diff、真实PM/Worker与human/H12入口身份边界、单writer及未列迁移面。',
+    '25分钟静态取证；复用RQ15/16/20和既有源码证据，不读其他key活状态/图片/凭证。盘点TS旧ID调用/提示/工具枚举和框架签收validator。真实身份只能来自可证进程/受控生产入口，page token、自报role、TTY或布尔origin不单独证明human/H12资格；明确当前机制可证部分与缺口，缺口阻塞相应编码而非删功能或自建授权。框架只有scripts/advance_phase.py及test_advance_phase.py可改，其既有diff必须保存/协调；mirrors/安装/重启只读不碰。主要采用源码读EOF或明确范围，不把报告EOF当独立全仓审计。')
+add(3,'protocol',1,'coding',[1,2],[1,2,3,4,5,7,12,40,41,42,43,44,46,51,53],{'py':['decision_points.py','decide_registry.json','test_decide_registry_contract.py','test_dp_consolidation_registry.py']},
+    '八活动ID/独立退役目录、材料/角色/选择/依据投影单源成立，25旧ID在replay之前明确拒绝。',
+    '只改注册/描述/纯validator及对应生成快照，不建执行权限。固化八入口和技术选择ID，auto不套旧2..5/cN，route静态七目标。D012辅助依据与sign四部材料独立，[]不转null。先红测各旧ID/非法角色/八合法合同及四选择基线，再实现；生成快照走已核离线单源writer，仅授权本卡输出，保留只读历史解释。若字段/新接口需改变已确认职责或传输预算，报告而非偷改契约。')
+add(4,'context-ts-generation',1,'coding',[3],[1,3,4,14,40,41,43,51],{'py':['decision_context.py','scripts/gen_decide_registry_ts.py','decide_registry.json','test_decide_registry_ts_lock.py'],'ts':['shared/decide-registry.generated.ts']},
+    'Python描述生成TS八入口合同/角色/白名单/字段约束，核心材料不进入可裁剪context。',
+    '只有本卡生成器写generated.ts；从T03保存的hash接管decide_registry.json，按同源更新。保留empty_is_value、真实上下文来源和可选裁剪说明。执行生成器后--check，字节锁测试；不能另建TS手写菜单或为了lint删声明。纯生成命令不得写其他输出或四旧case。')
+add(5,'eight-cases',2,'coding',[4,9],[1,2,3,4,13,40,42,43,51],{'py':['scripts/build_decide_cases.py','decide_book_template.json','test_decision_context_workbench.py'] + ['decide_cases/'+x+'.json' for x in ['dp-w-type','dp-pm-steer','dp-w-check-task','dp-QG','dp-gate-approve','dp-sign-key','dp-auto','dp-route']]},
+    '八个完整隔离case从单源产生，四旧case原字节只读保留且不再出现在可提交菜单。',
+    '生成真实可验证合成材料/note/basis及独立provenance；模型问题原文来自registry。修改原workbench断言仅为新八入口衔接，原既有失败fixture/原因保留，不能顺手修独立UI债。生成只写八目标文件，旧dp1/2/3/25不得再生成或修改。漂移验证在临时目录用生产generator，不能运行生产观察submit。')
+add(6,'validity',2,'coding',[4],[11,19,25,27,28,29,39,52],{'py':['decision_validity.py','test_dp_consolidation_concurrency.py']},
+    '实现只读事项/实质依赖/授权及证据适用性核验，不以全字节hash变动强制重复审批。',
+    '结构化依赖语义等价、受影响变更、撤权、claim/版本冲突、自然语言unknown均有负例；纯函数不import CLI/conductor或写grant。T20/T31后续接管同一测试文件须依赖及hash交接；本卡先测纯判断，不冒充实际并发对账已验证。')
+add(7,'policy',2,'coding',[4],[8,20,21,22,34,35,36,37],{'py':['decision_policy.py','test_dp_consolidation_recovery.py']},
+    '只读policy校验真实授权引用/范围/单位/累计预算及恢复条件，缺失或非法fail-closed。',
+    '不修改冻结config21键/默认值，不创建活policy或新grant，不把round_budget/worker_timeout当项目硬授权。模拟授权只在隔离fixture有真实受控writer来源；自报origin/TTY/token等不充分。缺原因消除/观察/停止条件保持阻塞，不设新预算数值。T21在本卡后接管恢复测试。')
+add(8,'transport',2,'coding',[4],[2,4,7,12,14,40,42,43,51],{'py':['decision.py','decision_backends.py','test_dp_consolidation_materials.py']},
+    '原timi通道同次业务choice与basis选择校验成立，失败无默认执行，完整材料不截断。',
+    '固定POST /v1/decisions、jev-latest、bare Authorization，保留原重试/预算/box拒绝；不猜自由reason字段、不换provider、无第二补理由调用。fake HTTP覆盖缺回答/错basis/引用不存在/不适用/超界、25ID及replay零请求；记录attempt与业务决定分别计数。禁止真实endpoint/凭证。')
+add(9,'books',2,'coding',[8],[2,4,7,12,14,40,42,43,51],{'py':['decision_book.py','test_decision_context_contract.py']},
+    'book及stdin准备器采用八入口完整合同，material/meta/preparation分层，非法状态先拒绝。',
+    '保持签收四部及三数组，basis独立完整必需，固定/动态验证引用单源。原独立26AC不抹除，旧合同输入仅历史/拒绝回归用途，不恢复旧调用。不能新增legacy questions逃避active gate；CLI及观察实链由后继任务验证。')
+add(10,'lifecycle-state',2,'coding',[9],[4,12,14,49,50,51,52],{'py':['decision_wire.py','decision_lifecycle.py','decision_task_state.py','test_decision_context_lifecycle.py','test_decision_task_state.py']},
+    '真实request/action/settled/terminal与前后快照关联，独立保存PM note与模型选择依据。',
+    '只沿用原账本/安全过滤，不回填before/null或制造时间/ID。prepare/basis来源与父后继引用可核；未执行、失败、settled不是done。先用fake生产writer对空值/秘密/生命周期不同节点验证，旧历史逐字节不改。')
+add(11,'ts-tool',3,'coding',[10],[1,2,4,5,7,12,14,40,41,42,43,51,53],{'ts':['pm/decision-tool.ts','pm/triage-client.ts','shared/decide-policy.ts'],'test_ts':['dp-consolidation-materials.test.ts','decision-context-agent-materials.test.ts']},
+    'PM/Worker工具schema消费生成八合同，真实bound actor与辅助材料分层，退役hook不代造请求。',
+    '保留真实meta/window上下文和同次sign行为，非法旧ID/replay先拒绝；不把外部L0 note冒充PM business note。原exit2无自备材料只能提示自主准备或真实失败；harness+faux，不真实provider；不顺手处理原formatter差异。')
+add(12,'pm-followup',3,'coding',[10],[11,12,27,41,45,49,50,52],{'ts':['pm/decision-followup.ts'],'test_ts':['dp-consolidation-pm-followup.test.ts']},
+    '已准备PM意图恢复/去重和真实后继请求可核，不新建决策账本或同步等待Worker。',
+    '父决定、材料/依据版本、真实PM身份、pending/running/未知结果逐项核；未发起/失败/有回答/实际执行分开。窗口失联不可凭文件代造Worker判断；崩溃未知停止对账，不承诺无事务exactly-once。')
+add(13,'pm-orchestration',3,'coding',[11,12],[4,9,11,12,17,27,41,42,45,49,50],{'ts':['pm/pm-orchestrator.ts'],'test_ts':['decision-context-pm-producers.test.ts']},
+    'PM真实准备note/basis、四编排选择与steer/need_fix后继调用接线，不降低目标或夺claim。',
+    '保留任务原文/真实worker执行/在途协调，direct-exec用当前窗口上下文，escalate给具体权限风险问题。路由只选入口；临时复合事项拆清，固定节点不强制route。不得通知即执行、失败改成功。')
+add(14,'vision-dispatch',3,'coding',[11],[4,12,27,44,45],{'ts':['pm/task-dispatcher.ts'],'test_ts':['dp-consolidation-vision.test.ts']},
+    '四任务类型选择与真实有效image capability门接线；未知/不支持不启动且不退coding。',
+    '测试用faux能力与派发writer，不读真实图片，不调用vision provider。不删其他框架task类型、不改model/provider/默认预算；必要依赖的外部API类型读node_modules不猜。')
+add(15,'worker-reachability',3,'coding',[11],[4,12,41,46,47,50,51],{'py':['mw_common.py'],'ts':['worker/worker-mode.ts','autopilot/status-model.ts'],'test_ts':['dp-consolidation-worker.test.ts']},
+    'Worker自主continue/terminate/investigate三分支、真实结论/有界补证消费成立。',
+    '沿用终态闭集加真实原因，continue不即刻终态，terminate结束本次不是取消key/缩验收；补证先给来源/权限/剩余预算/结束判据，不重置watchdog。自动hook不代材料，无PM同步等待或默认送人。')
+add(16,'ts-task-state',3,'coding',[10,11],[14,50,51],{'ts':['pm/decision-task-state.ts'],'test_ts':['decision-task-state.test.ts']},
+    'TS任务前后快照与Python事实链保持真实关联和null/[]区分。',
+    '不回填历史/时间/身份、不把agent-report当权限，签收数组不混；旧独立测试原失败保留。不可顺手选择此前formatter retain/revert，必要影响具体报告。')
+add(17,'gate-contract',3,'coding',[6,7,8],[7,8,11,12,49,50,52],{'py':['autopilot/gates.py','test_dp_consolidation_gate_effects.py'],'ts':['autopilot/gate-writer.ts']},
+    'gate transport/business/effect三轴writer/parser与事项引用跨语言一致，answered不是released。',
+    '保留既有O_CREAT|O_EXCL锁/原子写与旧记录只读解释，不接回旧approved/rejected执行路径。只改合同/serializer及测试；T18/T19/T26接管同一测试文件必须严格依赖。')
+add(18,'gate-effects',3,'coding',[17],[7,8,10,11,12,20,21,23,24,27,35,49,50,52],{'py':['autopilot/gate_effects.py','test_dp_consolidation_gate_effects.py']},
+    '四分支受限effects/CAS/真实失败出口成立，approve重核当前条件，reject不默认关停/返工。',
+    '先检查角色/授权/预算/claim/实质版本，再提交note限定效果；steer/need_fix仅真实PM意图未放行；遗留收尾需已有明确权限。崩溃未知inspect真实对象，不盲重放；测试均隔离生产writer。')
+add(19,'conductor-h01-h05',4,'coding',[18,13],[7,8,10,11,15,16,17,18,19,20,21,22,23,48,49,52],{'py':['autopilot/conductor.py','test_dp_consolidation_gate_effects.py']},
+    'H01启动/H02关闭/H03停滞/H04软追加/H05复核条件接入原conductor且不自批解锁。',
+    '同事项一个owner；真实补证不是权限授予，软追加不提高硬量，reject不默认rework/halted。只在测试temp stage运行，不调用活tick/改真实gate/brake/roadmap；H12恢复handler不得注册到普通熔断链。')
+add(20,'xkey-contract',4,'coding',[18],[24,25,26,27,28,29,52],{'py':['autopilot/xkey.py','autopilot/contract_guard.py','test_dp_consolidation_concurrency.py'],'ts':['shared/xkey-gate-guard.ts']},
+    'H06指定goal采用/H07受限跨key/H08具体冻结条目变更复核与实质重验。',
+    '不写真实goal/spec/他key；隔离fixtures真实claim/排序锁验证。任何回答不自动刷新baseline；reopen不是改AC授权，权限不能从目录包含关系推导；历史原要求/失败/批准不改。')
+add(21,'recovery-handler',4,'coding',[18],[8,21,30,31,34,35,36,37,52],{'py':['autopilot/decision_recovery.py','test_dp_consolidation_recovery.py']},
+    'H11/H12独立受控handler验证真实来源/预授权/原因消除/观察再熔断，普通链自调用明确拒绝。',
+    '先吸收T02资格缺口结论；无法在已批面证明真实来源则对应任务blocked，不能造布尔授权/人类身份。handler不改policy/权限/预算，失效/撤权/不可用保持停止，无新通道。入口实链须和T24/T26验证，纯handler测试不代入口证明。')
+add(22,'signoff-validator',4,'coding',[6,10],[4,5,6,10,13,38,39,50,51,53],{'py':['decision_signoff_result.py','decide_archive.py','decide_signoff.py','test_decide_archive.py','test_decide_signoff.py','test_dp_consolidation_signoff.py']},
+    '当前valid且finalize与对应证据成立，key签收和authority-change typed消费严格隔离。',
+    '保留原适用范围和三数组；continue/user-confirm无签收，旧词表/缺logical_id不走成功legacy。finalize不加入promote/demote词表；不删除helper/回写旧签收，不把QG文件或文件存在代完成。')
+add(23,'cli-request-replay',4,'coding',[9],[1,2,3,4,12,40,41,42,43,51],{'py':['mw.py','test_dp_consolidation_cli.py']},
+    '所有生产CLI/book/stdin/replay先活动身份/合同校验，25旧ID明确拒绝而非复用历史成功。',
+    '只接请求/准备/错误路径，不执行活decide/gate/签收；测试fake subprocess/HTTP与临时home/project。分类legacy入口，不能靠改标签藏额外业务路径；T24之后接管同一大文件和测试。')
+add(24,'cli-human-sign',4,'coding',[23,22,21],[2,3,4,8,12,14,36,37,38,39,41,49,51],{'py':['mw.py','test_dp_consolidation_cli.py']},
+    'CLI human-only保留隔离、同次sign writer/只读validator接口及typed apply明确拒绝串接成立。',
+    'human/恢复来源不能从--role/token/TTY自报推导；T02未证明的资格缺口必须实链解决或具体阻塞，不删除ask/legacy显示或dead helper。sign单次判断/写入失败分清；不把观察回答当生产动作；公开只读validator typed接口供T25。')
+add(25,'framework-sign-gate',4,'coding',[24],[8,10,38,39,52],{'framework':['advance_phase.py','test_advance_phase.py']},
+    '只在原必需范围用只读validator识别当前valid且finalize及对应证据，不豁免其他phase硬门。',
+    '保存/吸收独立clone既有diff，先确认与原作者写面无冲突；仅两个特批文件，不碰任何mirror/install/commit/push。测试临时key，不拿本活key执行done/sign或改门来让当前任务通过。')
+add(26,'autopilot-recovery-closure',4,'coding',[19,20,21,25],[9,10,11,15,18,21,30,31,32,33,34,35,36,37,38,39,48,49,52],{'py':['autopilot/dispatch.py','autopilot/advance.py','autopilot/closure.py','test_dp_consolidation_gate_effects.py']},
+    'H09/H10有界恢复/重规划、H11/H12受控入口及H13签收/阶段关闭实际接线保留旧失败与累计量。',
+    '新stage仍独立H01，关闭须整体验收及非阻断遗留披露，不清标记/次数造成功；原phase硬失败先auto处置且复验后才推进。普通auto链不能自发恢复请求，实链负例必须覆盖；拒绝不默认关闭。')
+add(27,'history-projection',5,'coding',[10,15,18,22],[7,13,14,49,50,51],{'py':['decision_history.py','test_decision_history_feedback.py','test_dp_consolidation_history.py']},
+    '八入口note/模型依据/后继/request/action/settled真实只读投影，退役原记录不回填。',
+    '读取原历史缺项显示未记录，安全过滤请求/记录/DOM边界分别证明；观察scope不得出现fakeexecutor。保留十节点独立债及原历史bytes，不能从最新配置猜旧事实。')
+add(28,'observation-server',5,'coding',[27,5,24],[1,2,3,7,12,13,14,40,42,43,49,51],{'py':['decision_monitor.py','decision_playground.py','test_decision_monitor.py','test_decision_dashboard_playground.py']},
+    '观察八合同/退役只读目录及隔离WireScope提交成立，观察成功无业务executor。',
+    '生成快照字节锁与/api/dps动态projection分开；page/control token不授业务角色，legacy/disabled不绕退役。测试路由temp scope，零生产gate/签收副作用；不顺带monitor重启或独立dropdown修复。')
+add(29,'web-components',5,'coding',[27], [7,12,13,14,49,50,51],{'py':['decision_dashboard.js','decision_dashboard.html','decision_dashboard.css']},
+    '八生成合同表单与独立note/依据/后继/执行/结算语义组件和安全DOM成立。',
+    '与T28只读接口契约交接后可并行，不读图片/不用真实浏览器或provider。无第二ui.options菜单，先确认faux DOM负例再改实现；原页面样式/下拉缺陷不额外重设计。T30/T31补跨语言链。',extra_tests=[P+'test_decision_dashboard_assets.py'])
+add(30,'window-console',5,'coding',[28,29],[4,7,12,13,14,27,44,49,50,51],{'ts':['pm/ui-bridge.ts','autopilot/console.ts'],'test_ts':['dp-consolidation-projection.test.ts']},
+    '窗口/console消费八合同与真实状态，未知能力/依据/动作不伪报成功。',
+    'faux provider/DOM验窗口tool结果及观察对象不同来源，不假扮会话或实际动作；未知能力不正向猜补，不顺手旧formatter处置。console不得增改活policy/权限/预算。')
+add(31,'integration-evidence',6,'coding',[26,30],[i for i in range(1,54)],{'py':['test_dp_consolidation_registry.py','test_dp_consolidation_materials.py','test_dp_consolidation_gate_effects.py','test_dp_consolidation_recovery.py','test_dp_consolidation_cli.py','test_dp_consolidation_signoff.py','test_dp_consolidation_history.py','test_dp_consolidation_concurrency.py'],'test_ts':['dp-consolidation-materials.test.ts','dp-consolidation-pm-followup.test.ts','dp-consolidation-worker.test.ts','dp-consolidation-vision.test.ts','dp-consolidation-projection.test.ts']},
+    '逐VC真实producer→writer→consumer→projection L2证据完整，并发/崩溃/秘密/旧ID/角色负例有实测断言。',
+    '各前序测试文件已结束writer并hash交接；本卡只补集成测试/证据，发现产品缺陷回原writer任务，不越面修源码。不能fixture手写gate/ledger/PASS或以done/observe_only/全grep代验收。原Windows89基线和所有旧失败保留分类，无真实provider；每VC输出与逐case原始记录同时充分。')
+add(32,'protected-check',6,'coding',[31],list(range(1,54)),{},
+    'PM串行执行等字节保护副本中的完整npm run check与生成锁，输出真实完整结果及旧债/新回归分类。',
+    'pm-direct-only，不派worker写真实工作树。冻结本keywriters，构造隔离工作树等字节源/config/scripts清单；既有node_modules只读复用，workspace链接/源码解析等价性须可证，不安装/生成build或写real dist。npm run check含biome --write --error-on-warnings，保留完整输出，失败后链未运行项明确列出。不得把旧失败吞掉或声称check通过；必要格式修复只回原writer且不替他人处理旧formatter，非授权补面具体上抛。',direct=True)
+add(33,'review-protocol',6,'review',[32],[1,2,3,4,5,6,7,12,14,38,39,40,41,42,43,51,53],{},
+    '独立只读审计八协议/传输/CLI/signoff/human边界及对应原始L2证据。',
+    '审计目标：T03/T04/T05/T08/T09/T10/T11/T22/T23/T24/T25及其diff/日志；主采用文件EOF，不以worker自称PASS替审核。逐问题给severity/path:line/AC/实测证据或未验影响；不执行命令/模型/签收、不改产品、只写唯一审计证据。')
+add(34,'review-effects',6,'review',[32],[7,8,9,10,11,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,48,49,50,52],{},
+    '独立只读审计H01～H13/真实授权/恢复隔离/锁/预算/对账及效果证据。',
+    '审计目标：T06/T07/T17～T21/T26及集成证据；source actor资格与受限writer负例不能仅token/自报origin。事项版本与原字节不同，reject与legacy closure不同；指出不能证明的入口/故障窗口，不能用纸面图/纯validator替实际效果。无命令/外部模型/活状态写。')
+add(35,'review-ts-ui',6,'review',[32],[4,7,12,13,14,27,41,44,45,46,47,49,50,51],{},
+    '独立只读审计PM/Worker/vision/窗口观察历史的资格、真实终态与来源安全。',
+    '审计目标：T11～T16/T27～T30及原始TS/DOM日志；原26AC/monitor8AC债不结清。源码审计采用EOF或明确缺口，任何need-image任务资格不能unknown猜补；不读取其他key图片、不运行命令/浏览器/provider，只写唯一证据。')
+add(36,'formal-qg',6,'review',[33,34,35],list(range(1,54)),{},
+    'PM正式QG核对53AC/VC与独立审核证据，明确可签收或具体缺口，不自动完成/关闭stage。',
+    'pm-direct-only，逐AC充分性审查；产品check非零、核心L2缺失、human/H12入口未证或角色风险未消除不得pass。只有当前合法dp-QG可正式判断，缓存进程不识别新入口则具体阻塞，不回用旧dp6/25/换通道/自动重启或新增预算。最终签收必须合法dp-sign-key同次valid且finalize及对应文件/证据；其执行另依原权限/框架门，不由本计划伪签或二次模型批准。',direct=True)
+
+# Explicit stage barriers: no later stage uses a partly migrated contract.
+for task in tasks:
+    if task['stage']:
+        prior = [t['id'] for t in tasks if t['stage'] == task['stage'] - 1]
+        task['deps'] = sorted(set(task['deps'] + prior))
+    assert set(task['product_write_face']) <= allowed, (task['id'], set(task['product_write_face']) - allowed)
+ids = {t['id'] for t in tasks}
+assert len(ids) == len(tasks) == 36
+by_id = {t['id']: t for t in tasks}
+def ancestors(tid, visiting=None):
+    visiting = set() if visiting is None else visiting
+    assert tid not in visiting, 'cycle at ' + tid
+    result = set()
+    for dep in by_id[tid]['deps']:
+        assert dep in ids
+        result.add(dep)
+        result.update(ancestors(dep, visiting | {tid}))
+    return result
+anc = {tid: ancestors(tid) for tid in ids}
+for i, a in enumerate(tasks):
+    for b in tasks[i+1:]:
+        overlap = set(a['product_write_face']) & set(b['product_write_face'])
+        assert not overlap or a['id'] in anc[b['id']] or b['id'] in anc[a['id']], (a['id'],b['id'],overlap)
+assert set(ac) == {ref for t in tasks if t['type']=='coding' for ref in t['ac_refs']}
+# A directly executable command for every coding task's written test file.
+for task in tasks:
+    tests = [p for p in task['product_write_face'] if '/test_' in p or '/test/suite/' in p]
+    flattened = ' '.join(' '.join(c['argv']) for c in task['commands'])
+    assert all(Path(p).name in flattened for p in tests), task['id']
+
+stages = [
+    ('S0','范围/基线/资格核对','两只读证据齐备；未列面和身份/框架冲突具体解决；没有默许权限。'),
+    ('S1','八入口协议单源','T03/T04合同/快照/TS锁通过；不调用正在运行的旧缓存入口。'),
+    ('S2','纯有效性/政策/传输/材料及case','只读规则与完整依据、book/真实关联及八case验证；四旧case字节不变。'),
+    ('S3','并行producer及gate基础','TS/PM/Worker/vision与三轴/受限effects验证；共享测试按DAG串行。'),
+    ('S4','场景消费者/CLI/signoff/隔离恢复','H01～H13实链与框架接口验证；human/H12资格未证则阻塞。'),
+    ('S5','历史/观察/窗口投影','只读安全投影/八表单，observe_only零生产副作用；旧债不改。'),
+    ('S6','集成/check/独立审计/QG','所有规定L2和完整check证据充分，三个独立审计吸收；QG/签收各有真实合法决定。'),
+]
+now = datetime.now().astimezone().isoformat(timespec='seconds')
+common = '''固定八名dp-w-type/dp-pm-steer/dp-w-check-task/dp-QG/dp-gate-approve/dp-sign-key/dp-auto/dp-route；25旧编号拒绝、原历史只读。模型理由为同次选择PM预备依据，失败reason/概率/note不冒充理由。保留原角色/claim/O_CREAT|O_EXCL锁/凭证/硬预算/进程隔离；route不授权，选择/请求/动作/结算/完成分开。禁止pi核心、冻结config/活policy/gate/brake/ledger/权限/预算/签收/goal/spec/其他key/四旧case、依赖lock/dist/mirror/install/服务重启/commit/push。不删human ask/legacy显示/dead helper；未列面具体报告后另批。只在隔离fixture走生产writer，不真实provider。编码前完整读取本卡文件到实际EOF、保存bytes/SHA256/EOL/既有diff并确认单writer；只做获批差异，先红测再绿测。修改TS使用erasable语法/顶层imports、不滥用any，读node_modules类型。不得手改Phase或原worker run/output。超原预算实际检查点收口，不重置watchdog/私设timeout/grant。'''
+
+outputs = {}
+for task in tasks:
+    refs = '\n'.join(f'- {r}: {ac[r]}\n\n{vc["VC-"+r[3:]]}\n' for r in task['ac_refs'])
+    writes = task['product_write_face'] + [task['evidence'] + ('/**' if task['type']=='coding' else '')]
+    top = '---\ntype: '+task['type']+'\nwrite_face:\n'+''.join('  - '+p+'\n' for p in writes)
+    top += 'ac_refs: ['+', '.join(task['ac_refs'])+']\nvc_refs: ['+', '.join(task['vc_refs'])+']\n'
+    top += 'deps: ['+', '.join(task['deps'])+']\nexecution: '+task['execution']+'\n---\n'
+    lines = [top, '# '+task['id']+' — '+task['goal'], '\n## 状态\n代码状态：'+task['code_status']+'；验证状态：未验证；task状态：not-queued；没有执行证据。',
+             '\n## 上下文\n项目目标`.agenticdoc/goal.md:5`；锁定`.agenticdoc/mw-dp-consolidation/spec.md:128`；已批模块/接口`.agenticdoc/mw-dp-consolidation/design.md:201`。确认见evidence/design-approval-20261026.md；plan.md及implementation-dag.json给依赖/单writer。已有RQ1～22为历史证据，不回填或冒充当前源码审计。',
+             '\n## 要求\n'+task['requirements']+'\n\n'+common,
+             '\n## 写入允许面\n'+ '\n'.join('- '+p for p in writes),
+             '\n## 写入禁止面\n除允许面外所有写入；common所列禁止面绝不因相对路径或fixture名称获权。既有同文件diff必须保留/协调，不全文件格式化或覆盖其他session。框架仅两特批文件，其他mirror当前已有diff不归本任务。',
+             '\n## AC摘录及VC合同\n'+refs]
+    if task['type']=='research':
+        lines.append('\n## 唯一证据文件\n'+task['evidence']+'\n只写此证据，baseline/hash/diff/未覆盖表置同文件，不建第二报告。')
+    if task['type']=='review':
+        lines.append('\n## 审计目标\n'+task['requirements']+'\n\n## 未覆盖面声明\n明确逐文件/入口/日志未读未验证范围及影响；未知写未知，不把done/acked/机械PASS当产品验收。只读审计不执行bash/CLI/provider，唯一证据文件：'+task['evidence'])
+    if task['type']=='coding':
+        cmd_lines = ['- cwd='+c['cwd']+'；`'+' '.join(c['argv'])+'`' for c in task['commands']]
+        if task['id']=='T32':
+            cmd_lines = ['- 等字节、依赖路径等价已证的隔离repo根：`npm run check`（完整输出；禁止并行真实tree formatter）。', '- packages/multi-workers：`python scripts/gen_decide_registry_ts.py --check`，及T03/T04生成快照字节锁；无安装/真实provider。']
+        else:
+            cmd_lines += ['- 每次改测试文件先红测/绿测，全部stdout/stderr/rc留证；Python隔离home/project/env并禁pycache/pytest自动插件和cache写，TS harness+faux。', '- 生成器/额外测试仅对应本卡：T03离线registry snapshot writer、T04 `python scripts/gen_decide_registry_ts.py`及`--check`、T05 `python scripts/build_decide_cases.py --out <本卡隔离目录>`；不要其他任务提前生成/覆盖。', '- 全项目`npm run check`由T32串行保护检查，不在worker并行跑写入式formatter。']
+        lines.append('\n## 验收命令\n'+'\n'.join(cmd_lines))
+        lines.append('\n## 改动历史\n- 初始：计划生成，无源码/测试改动，无通过声明。执行时逐次追加实际before/after/hash/红绿命令/rc/原失败/残留和后继writer交接，不伪写过去状态。')
+    lines.append('\n## 交付格式\n唯一证据/最终回复均有独立`## 结论`、`## 证据`、`## 残留与未验证`、`## 上下文来源`。给完整及key-relative证据路径、实际changed-files/命令/rc/原始断言定位、未验证范围；research/review用worker_file只写唯一证据并read回读。coding原始日志限本卡evidence目录，不写活对象或第二决策账本。blocked/failed与真实done分开；不得凭self-report补before、PASS或任务完成。PM吸收终态后ack，semantic未通过不因acked清债。')
+    outputs[task['card']] = '\n'.join(lines)+'\n'
+
+plan = ['# Plan: mw-dp-consolidation', '\n> 状态：可执行计划；依据已批准联合设计/写面及用户“Plan 生成完开始执行计划”。本轮计划/任务卡是编排产物，不是已实现/测试/QG/签收。执行必须先通过TASKS/EXECUTE工具门禁。',
+        '\n## 1. 锚点与交付边界\nSPEC/53AC SHA256=cfe737d29aed2d0c4e79d8b02107f754f254a225bb21ea8d900eaa5ba289d006；design.md/evidence-requirement.md/design-write-scope.md确认见evidence/design-approval-20261026.md。八名/六迁移/19退出/25旧ID拒绝，D012A及human-only保留、框架两文件特批不变。goal文件驱动/锁/进程凭证隔离及不改pi核心继承。现存26AC/monitor8AC/formatter/dropdown/dp3等旧债独立，不因本计划完成。',
+        '\n## 2. 并行性与调度\n拆分前分析见evidence/plan-parallel-analysis-20261026.md。implementation-dag.json是本计划可核依赖/写面manifest，不是新调度服务/决策ledger；实际队列只用现有dispatch_worker及文件锁。每stage入口须前stage出口实证成立，stage屏障已展开为deps；同stage frontier立即补派，没依赖的文件并行，不对同文件双writer。两research首批可并行；后续按完整dependency/writer检查，回读实际证据后ack与补派。\n\n单task预计30～60分钟工作粒度（research静态25分钟）；不是新grant/超时设定，预算尾段真实checkpoint收口，超界需合法处理。粒度或已批准写面不足时具体上抛，不能模型自行重写目标/任务/权限。',
+        '\n## 3. 七个stage（stage不是autopilot活stage文件）',
+        '| Stage | 单一交付 | 出口条件 |\n|---|---|---|']
+for sid,name,exit_condition in stages:
+    plan.append(f'| {sid} | {name} | {exit_condition} |')
+plan += ['\n## 4. 任务与依赖\n每卡含ac_refs/vc_refs、原AC正文及VC四行、目标/要求/允许/禁止/验收/历史/交付；全部初始not-queued，当前无产品通过。', '| Task / Card | Stage/type | deps | 目标 |\n|---|---|---|---|']
+for t in tasks:
+    plan.append('| '+t['id']+' / `'+t['card']+'` | S'+str(t['stage'])+'/'+t['type']+('/PM-direct' if t['execution']=='pm-direct' else '')+' | '+(','.join(t['deps']) or '无')+' | '+t['goal']+' |')
+plan += ['\n## 5. 单writer/交接规则\n唯一owner来自卡product_write_face，均为批准清单子集，不授目录通配。共用文件仅在有序依赖结束后接管；before/after bytes/SHA256/EOL/原diff和合同版本必须留证，接收者读完整最新源再edit。代码状态/验证状态分别更新，not-queued/pending/running/done由真实服务状态对照，不手改原worker终态。测试文件也算共享文件，T31要接管前序全部测试writer。新增需修改未列文件、目录/模板/提示词/类型依赖必须先报exact path/影响/最小补面，审批前停止对应任务。',
+         '\n## 6. 测试/证据执行顺序\n先每task红测→最小实现→绿测；新增/修改测试逐文件具体运行，Python hermetic HOME/project/env/fake backend、禁自动插件/cache/pycache写，TS harness+faux provider。T31提供53VC producer→writer→consumer→projection实链及逐case原始记录；所有值按fixture范围实测，attempt/业务决定/动作/完成分开，NULL与[]保真。Coded writer不能fixture手写gate/ledger/PASS。\n\nT32 PM串行保护副本中完整npm run check，版本/源码/config/scripts/依赖链接等价须核，全部stdout/stderr和rc保存；Biome --write --error-on-warnings真实失败后后链未跑明确标记。不安装/降依赖/build/npm test/full vitest，不把非零旧check吞掉；必要修复回原卡/另批，不替其他session处置旧formatter。当前代码副本检查≠实际已部署，安装/内存身份仍未验。',
+         '\n## 7. AC/VC覆盖与验收责任\n所有AC-001～053由同号VC保持原断言。编码/集成卡引用全部53个AC/VC，逐case/原记录与Output同时满足才充分；T31不单凭计数/worker done/observe_only/全grep通过，T33～T35只读分域独立审计。T36 PM按evidence-requirement.md逐AC正式QG，必要证据/check/入口资格缺口不通过。签收仍原适用范围内合法dp-sign-key同次finalize及对应证据，QG和phase/stage关闭分开，不能伪签或二次批准。',
+         '\n## 8. 失败、现有变更及运行身份\n源代码现仍旧25入口；计划/机械门不能称已迁移。首批T01/T02具体核对现有dirty/未列caller/身份边界/框架mirrors，不能复用报告EOF冒充独立全源审核。框架两脚本及mirrors已有原diff，未协调独占不得写；不覆盖或归为本轮修改。\n\n任何失败按实际证据debug/合法决策流程处理；服务或模型不可用保持阻塞，正常派发可能消费既有隐式dp1，不做额外真实决策探针。现PID仅服务在运行证据，不证明其加载新源码；运行缓存不识别新八名则具体申请必要reload/部署，不回用旧编号/暗自重启/切换provider或绕刹车。human-only/H12实际来源未证时任务blocked，不能以新kind/token/TTY/自报role冒充。旧失败/次数/要求/批准/worker状态原字节保留。',
+         '\n## 9. 明确禁止与下一动作\n'+common+'\n\n计划和卡机械检查通过后仅由advance_phase进入TASKS→EXECUTE，先一次派T01/T02 research并吸收/ack；未满足stage出口不派编码。PM仍常驻，原RQ15/16退出状态不改、不结案其他key，不写活autopilot stage/roadmap。']
+outputs['plan.md'] = '\n'.join(plan)+'\n'
+manifest = {'key':'mw-dp-consolidation','generated_at':now,'source':'approved design + PM plan','stages':[{'id':sid,'goal':name,'exit':exit_condition} for sid,name,exit_condition in stages], 'tasks':tasks}
+outputs['implementation-dag.json'] = json.dumps(manifest,ensure_ascii=False,indent=2)+'\n'
+for rel in outputs:
+    assert not (key / rel).exists(), 'refuse overwrite '+rel
+for rel,content in outputs.items():
+    path = key / rel
+    path.parent.mkdir(parents=True,exist_ok=True)
+    path.write_text(content,encoding='utf-8',newline='\n')
+    assert path.read_text(encoding='utf-8') == content
+check = {'check':'plan-card-documents-only','generated_at':now,'stages':7,'tasks':36,'acyclic':True,'unordered_product_write_overlaps':0,'product_write_faces_within_approved':True,'ac_coverage':len({r for t in tasks if t['type']=='coding' for r in t['ac_refs']}),'vc_coverage':len({r for t in tasks if t['type']=='coding' for r in t['vc_refs']}),'all_written_test_files_have_commands':True,'cards_readback_equal':True,'product_tests_run':False,'workers_dispatched':False}
+(key/'evidence/plan-card-build-check-20261026.json').write_text(json.dumps(check,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
+print(json.dumps(check,ensure_ascii=False,indent=2))

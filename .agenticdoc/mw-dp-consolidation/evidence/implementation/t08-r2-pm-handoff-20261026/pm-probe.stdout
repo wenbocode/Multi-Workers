@@ -1,0 +1,1456 @@
+PM bound modules: H:\git\Multi-Workers\.agenticdoc\mw-dp-consolidation\implementation-worktree\packages\multi-workers\decision.py H:\git\Multi-Workers\.agenticdoc\mw-dp-consolidation\implementation-worktree\packages\multi-workers\decision_backends.py H:\git\Multi-Workers\.agenticdoc\mw-dp-consolidation\implementation-worktree\packages\multi-workers\decision_points.py
+{
+  "observed_only": true,
+  "no_business_effects_or_production_authority": true,
+  "modules": {
+    "decision": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision.py",
+    "decision_backends": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_backends.py",
+    "decision_points": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_points.py"
+  },
+  "legal_choices": [
+    "coding",
+    "research",
+    "review",
+    "vision"
+  ],
+  "results": [
+    {
+      "name": "valid-pair-control",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp-w-type",
+        "available": true,
+        "replayed": false,
+        "choice": "coding",
+        "basis_id": "basis-control",
+        "basis_text": "fixture prepared reason",
+        "basis_source": "pm-prepared",
+        "prepared_at": "2026-10-26T12:00:00+00:00",
+        "reason": null,
+        "issues": [],
+        "detail": "",
+        "answers": {
+          "triage_type": {
+            "value": "coding",
+            "confidence": 0.9
+          },
+          "basis_id": {
+            "value": "basis-control",
+            "confidence": 0.9
+          }
+        },
+        "attempts": 1,
+        "transport_attempts": 1,
+        "business_decisions": 1,
+        "transport": "timi-decisions",
+        "model": "jev-latest",
+        "confidence_source": "api",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [
+        {
+          "url": "http://api.timiai.woa.com/ai_api_manage/llmproxy/v1/decisions",
+          "model": "jev-latest",
+          "question_ids": [
+            "triage_type",
+            "basis_id"
+          ]
+        }
+      ],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [
+        {
+          "ts": "2026-10-27T03:49:46+00:00",
+          "dp": "dp-w-type",
+          "transport": "timi-decisions",
+          "model": "jev-latest",
+          "attempts": 1,
+          "latency_ms": 0,
+          "available": true,
+          "reason": null,
+          "answers": {
+            "triage_type": {
+              "value": "coding",
+              "confidence": 0.9
+            },
+            "basis_id": {
+              "value": "basis-control",
+              "confidence": 0.9
+            }
+          },
+          "confidence": 0.9,
+          "confidence_source": "api"
+        }
+      ],
+      "ceiling_after": 8
+    },
+    {
+      "name": "inapplicable-basis",
+      "basis": "basis-other",
+      "max_questions": null,
+      "result": {
+        "dp": "dp-w-type",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "bad-response",
+        "issues": [
+          {
+            "field": "basis_id",
+            "issue": "does not apply to the selected choice"
+          }
+        ],
+        "detail": "the answered choice/basis does not satisfy the entry contract; no default selection applied, no second call made",
+        "answers": {
+          "triage_type": {
+            "value": "coding",
+            "confidence": 0.9
+          },
+          "basis_id": {
+            "value": "basis-other",
+            "confidence": 0.9
+          }
+        },
+        "attempts": 1,
+        "transport_attempts": 1,
+        "business_decisions": 0,
+        "transport": "timi-decisions",
+        "model": "jev-latest",
+        "confidence_source": "api",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [
+        {
+          "url": "http://api.timiai.woa.com/ai_api_manage/llmproxy/v1/decisions",
+          "model": "jev-latest",
+          "question_ids": [
+            "triage_type",
+            "basis_id"
+          ]
+        }
+      ],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [
+        {
+          "ts": "2026-10-27T03:49:46+00:00",
+          "dp": "dp-w-type",
+          "transport": "timi-decisions",
+          "model": "jev-latest",
+          "attempts": 1,
+          "latency_ms": 0,
+          "available": true,
+          "reason": null,
+          "answers": {
+            "triage_type": {
+              "value": "coding",
+              "confidence": 0.9
+            },
+            "basis_id": {
+              "value": "basis-other",
+              "confidence": 0.9
+            }
+          },
+          "confidence": 0.9,
+          "confidence_source": "api"
+        }
+      ],
+      "ceiling_after": 8
+    },
+    {
+      "name": "question-limit-one",
+      "basis": "basis-control",
+      "max_questions": 1,
+      "result": {
+        "dp": "dp-w-type",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "budget-exhausted",
+        "issues": [],
+        "detail": "dp-w-type needs 2 questions in one prepared request (business + basis_id) but max_questions=1; no request sent, the ceiling is not raised and the question set is not truncated",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 1
+    },
+    {
+      "name": "replay-true-control",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp-w-type",
+        "available": true,
+        "replayed": true,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": null,
+        "issues": [],
+        "detail": "logical_id 'fixture-logical-id' already has a recorded decision; no request sent",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [
+        {
+          "dp": "dp-w-type",
+          "logical_id": "fixture-logical-id",
+          "returned": true
+        }
+      ],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "replay-unknown-string",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp-w-type",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "replay lookup returned str, not a bool; only an explicit True (hit) or False (miss) proves the novelty of this request - refusing to send",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [
+        {
+          "dp": "dp-w-type",
+          "logical_id": "fixture-logical-id",
+          "returned": "unknown"
+        }
+      ],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "replay-null",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp-w-type",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "replay lookup returned NoneType, not a bool; only an explicit True (hit) or False (miss) proves the novelty of this request - refusing to send",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [
+        {
+          "dp": "dp-w-type",
+          "logical_id": "fixture-logical-id",
+          "returned": null
+        }
+      ],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "nonbool-0",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp-w-type",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "replay lookup returned str, not a bool; only an explicit True (hit) or False (miss) proves the novelty of this request - refusing to send",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [
+        {
+          "dp": "dp-w-type",
+          "logical_id": "fixture-logical-id",
+          "returned": "true"
+        }
+      ],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "nonbool-1",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp-w-type",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "replay lookup returned str, not a bool; only an explicit True (hit) or False (miss) proves the novelty of this request - refusing to send",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [
+        {
+          "dp": "dp-w-type",
+          "logical_id": "fixture-logical-id",
+          "returned": "false"
+        }
+      ],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "nonbool-2",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp-w-type",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "replay lookup returned int, not a bool; only an explicit True (hit) or False (miss) proves the novelty of this request - refusing to send",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [
+        {
+          "dp": "dp-w-type",
+          "logical_id": "fixture-logical-id",
+          "returned": 1
+        }
+      ],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "nonbool-3",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp-w-type",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "replay lookup returned int, not a bool; only an explicit True (hit) or False (miss) proves the novelty of this request - refusing to send",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [
+        {
+          "dp": "dp-w-type",
+          "logical_id": "fixture-logical-id",
+          "returned": 0
+        }
+      ],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "nonbool-4",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp-w-type",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "replay lookup returned list, not a bool; only an explicit True (hit) or False (miss) proves the novelty of this request - refusing to send",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [
+        {
+          "dp": "dp-w-type",
+          "logical_id": "fixture-logical-id",
+          "returned": []
+        }
+      ],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "nonbool-5",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp-w-type",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "replay lookup returned dict, not a bool; only an explicit True (hit) or False (miss) proves the novelty of this request - refusing to send",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [
+        {
+          "dp": "dp-w-type",
+          "logical_id": "fixture-logical-id",
+          "returned": {}
+        }
+      ],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "replay-false-control",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp-w-type",
+        "available": true,
+        "replayed": false,
+        "choice": "coding",
+        "basis_id": "basis-control",
+        "basis_text": "fixture prepared reason",
+        "basis_source": "pm-prepared",
+        "prepared_at": "2026-10-26T12:00:00+00:00",
+        "reason": null,
+        "issues": [],
+        "detail": "",
+        "answers": {
+          "triage_type": {
+            "value": "coding",
+            "confidence": 0.9
+          },
+          "basis_id": {
+            "value": "basis-control",
+            "confidence": 0.9
+          }
+        },
+        "attempts": 1,
+        "transport_attempts": 1,
+        "business_decisions": 1,
+        "transport": "timi-decisions",
+        "model": "jev-latest",
+        "confidence_source": "api",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [
+        {
+          "url": "http://api.timiai.woa.com/ai_api_manage/llmproxy/v1/decisions",
+          "model": "jev-latest",
+          "question_ids": [
+            "triage_type",
+            "basis_id"
+          ]
+        }
+      ],
+      "replay_lookups": [
+        {
+          "dp": "dp-w-type",
+          "logical_id": "fixture-logical-id",
+          "returned": false
+        }
+      ],
+      "fixture_transport_evidence": [
+        {
+          "ts": "2026-10-27T03:49:46+00:00",
+          "dp": "dp-w-type",
+          "transport": "timi-decisions",
+          "model": "jev-latest",
+          "attempts": 1,
+          "latency_ms": 0,
+          "available": true,
+          "reason": null,
+          "answers": {
+            "triage_type": {
+              "value": "coding",
+              "confidence": 0.9
+            },
+            "basis_id": {
+              "value": "basis-control",
+              "confidence": 0.9
+            }
+          },
+          "confidence": 0.9,
+          "confidence_source": "api"
+        }
+      ],
+      "ceiling_after": 8
+    },
+    {
+      "name": "ceiling-two-control",
+      "basis": "basis-control",
+      "max_questions": 2,
+      "result": {
+        "dp": "dp-w-type",
+        "available": true,
+        "replayed": false,
+        "choice": "coding",
+        "basis_id": "basis-control",
+        "basis_text": "fixture prepared reason",
+        "basis_source": "pm-prepared",
+        "prepared_at": "2026-10-26T12:00:00+00:00",
+        "reason": null,
+        "issues": [],
+        "detail": "",
+        "answers": {
+          "triage_type": {
+            "value": "coding",
+            "confidence": 0.9
+          },
+          "basis_id": {
+            "value": "basis-control",
+            "confidence": 0.9
+          }
+        },
+        "attempts": 1,
+        "transport_attempts": 1,
+        "business_decisions": 1,
+        "transport": "timi-decisions",
+        "model": "jev-latest",
+        "confidence_source": "api",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [
+        {
+          "url": "http://api.timiai.woa.com/ai_api_manage/llmproxy/v1/decisions",
+          "model": "jev-latest",
+          "question_ids": [
+            "triage_type",
+            "basis_id"
+          ]
+        }
+      ],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [
+        {
+          "ts": "2026-10-27T03:49:46+00:00",
+          "dp": "dp-w-type",
+          "transport": "timi-decisions",
+          "model": "jev-latest",
+          "attempts": 1,
+          "latency_ms": 0,
+          "available": true,
+          "reason": null,
+          "answers": {
+            "triage_type": {
+              "value": "coding",
+              "confidence": 0.9
+            },
+            "basis_id": {
+              "value": "basis-control",
+              "confidence": 0.9
+            }
+          },
+          "confidence": 0.9,
+          "confidence_source": "api"
+        }
+      ],
+      "ceiling_after": 2
+    },
+    {
+      "name": "retired-1",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp1-dispatch-type",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp1-dispatch-type' (migrated): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-2",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp2-checkpoint-split",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp2-checkpoint-split' (migrated): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-3",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp3-worker-clarify",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp3-worker-clarify' (migrated): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-4",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp4-failure-handling",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp4-failure-handling' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-5",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp5-test-triage",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp5-test-triage' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-6",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp6-qg-verdict",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp6-qg-verdict' (migrated): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-7",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp7-gate-failure",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp7-gate-failure' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-8",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp8-scope-change",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp8-scope-change' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-9",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp9-model-select",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp9-model-select' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-10",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp10-dependency",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp10-dependency' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-11",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp11-credential",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp11-credential' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-12",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp12-destructive",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp12-destructive' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-13",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp13-commit-release",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp13-commit-release' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-14",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp14-rule-conflict",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp14-rule-conflict' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-15",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp15-autopilot-gate",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp15-autopilot-gate' (migrated): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-16",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp16-goal",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp16-goal' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-17",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp17-spec-lock",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp17-spec-lock' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-18",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp18-claim",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp18-claim' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-19",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp19-foreign-write",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp19-foreign-write' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-20",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp20-stage-close",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp20-stage-close' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-21",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp21-refine",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp21-refine' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-22",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp22-debug-plan",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp22-debug-plan' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-23",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp23-snapshot",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp23-snapshot' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-24",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp24-pi-trust",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp24-pi-trust' (retired): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    },
+    {
+      "name": "retired-25",
+      "basis": "basis-control",
+      "max_questions": null,
+      "result": {
+        "dp": "dp25-signoff-conclusion",
+        "available": false,
+        "replayed": false,
+        "choice": null,
+        "basis_id": null,
+        "basis_text": null,
+        "basis_source": null,
+        "prepared_at": null,
+        "reason": "entry-unavailable",
+        "issues": [],
+        "detail": "retired decision point id 'dp25-signoff-conclusion' (migrated): not callable; old ids are read-only history, not aliases",
+        "answers": null,
+        "attempts": 0,
+        "transport_attempts": 0,
+        "business_decisions": 0,
+        "transport": null,
+        "model": null,
+        "confidence_source": "unknown",
+        "latency_ms": 0
+      },
+      "exception": null,
+      "http_calls": [],
+      "replay_lookups": [],
+      "fixture_transport_evidence": [],
+      "ceiling_after": 8
+    }
+  ]
+}

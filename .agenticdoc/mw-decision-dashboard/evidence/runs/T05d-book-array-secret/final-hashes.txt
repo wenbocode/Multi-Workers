@@ -1,0 +1,4 @@
+# captured 2026-10-22T06:51:30Z
+# pre-fix baseline hashes in baseline-hashes.txt
+packages/multi-workers/decision_book.py	sha256=e2140aad87ef4303d1650fd3c7dbcdb061bce648d9f92553bbe2608af54aec04	blob=d40d84653ded0542ca752733426240f33e5f5c5f	size=51543
+packages/multi-workers/test_decision_input_contract_migration.py	sha256=24a2b7f48fad3bd53a3874016970278df3953e9530dd706941b540a2db97398d	blob=dec23f2a8f2438123ef7e28d0cb6377ec9eaa89d	size=43104

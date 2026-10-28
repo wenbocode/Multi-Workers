@@ -1,0 +1,11 @@
+sha256 / bytes / path (final delivered content, 2026-10-22T11:42Z)
+
+e499ea24f3b0a293ee36c8263a1a40fdab44d5672b447a8991c28c71e21650be 105028 packages/multi-workers/decision_monitor.py
+e0bb1849ad444f5df65d1ad43bd690fad565eb01bdee994d1115068632c6f807   6687 packages/multi-workers/decision_dashboard.html
+6c9428ca305e9f11af1b7d051f0094452665bd845ebe6f780b3e551f389a58ba  76953 packages/multi-workers/decision_dashboard.js
+02e609de3d437ac666176cb83a7778fd1be11555a13c83b99afc475028fd8c2c   4583 packages/multi-workers/decision_dashboard.css
+e8f5859e2313030d983c63cce62c131276d37c382285c4c9e7e9145911f704ac  70805 packages/multi-workers/decision_playground.py
+c32c2911a3f4d71d905355a8420547103573677854c2c095016f8a992812bab6  70613 packages/multi-workers/test_decision_dashboard_playground.py
+
+Test-only baseline emulation (not shipped):
+red_plugin.py, pre-t11b-dashboard.html (this directory), used by red-matrix.log.

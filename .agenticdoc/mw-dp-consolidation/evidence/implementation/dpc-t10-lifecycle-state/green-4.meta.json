@@ -1,0 +1,42 @@
+{
+  "label": "green-4",
+  "target": "worktree",
+  "argv": [
+    "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+    "-B",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "-q",
+    "--basetemp",
+    "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\dpc-t10-lifecycle-state\\green-4\\pytest-basetemp",
+    "test_decision_context_lifecycle.py",
+    "test_decision_task_state.py"
+  ],
+  "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+  "cwd_is_worktree": true,
+  "cwd_is_live_repo": false,
+  "python": "3.14.3 (tags/v3.14.3:323c59a, Feb  3 2026, 16:04:56) [MSC v.1944 64 bit (AMD64)]",
+  "executable": "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+  "env_keys": [
+    "HOME",
+    "PATH",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONIOENCODING",
+    "PYTHONPYCACHEPREFIX",
+    "PYTHONUTF8",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "WINDIR",
+    "XDG_CACHE_HOME"
+  ],
+  "rc": 0,
+  "home": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\fixture\\home",
+  "temp_root": "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\dpc-t10-lifecycle-state\\green-4",
+  "basetemp": "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\dpc-t10-lifecycle-state\\green-4\\pytest-basetemp",
+  "tmp_outside_agenticdoc": true
+}

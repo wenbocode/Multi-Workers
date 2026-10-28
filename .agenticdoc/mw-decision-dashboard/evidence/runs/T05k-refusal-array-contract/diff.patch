@@ -1,0 +1,42 @@
+--- a/packages/multi-workers/decision_points.py
++++ b/packages/multi-workers/decision_points.py
+@@ -1575,6 +1575,14 @@
+             # real value of this field, not an unreplaced scaffold placeholder
+             # (T05h). Field-level and book-only; no other field declares it.
+             "empty_is_value": True,
++            # The same unified array boundary every new array declares (design
++            # §4.5, T05k N5): sorted registry P0 dp ids, 10 today, longest 19 B,
++            # so 32 items / string / 128 B is headroom, not a producer limit.
++            # No enum: the element space is dp ids, not a closed set invented
++            # here.
++            "max_items": STATE_ARRAY_MAX_ITEMS,
++            "item_type": "string",
++            "item_max_bytes": STATE_ARRAY_ITEM_MAX_BYTES,
+         },
+         # dp25 optional L1 facts (T05c): the rest of the *real*
+         # ``decide_signoff.signoff_state`` escalation vocabulary. Declared here
+@@ -3510,9 +3518,10 @@
+     preview: Mapping | None = None
+     call_id: str | None = None
+     snapshot_ref: str | None = None
+-    #: Set when the caller's material was refused as illegal (typed contract,
+-    #: closed key set or observation book). Refused material is never stored as
+-    #: a snapshot: only the refusal facts belong in the ledger (T05b F1/F2).
++    #: Set when the caller's material was refused as illegal (a missing/blank
++    #: required field, the typed contract, the closed key set or the observation
++    #: book). Refused material is never stored as a snapshot: only the refusal
++    #: facts belong in the ledger (T05b F1/F2, T05k N1).
+     material_refused: bool = False
+ 
+     def attach(
+@@ -4675,6 +4684,10 @@
+     state = dict(built)
+     missing = _missing_required(state, dp_point.id)
+     if missing:
++        # A missing/null/blank required field is illegal material exactly like a
++        # typed refusal (step 5b): it is never sent and never stored as a
++        # snapshot, while the decision-end row keeps the refusal fact (T05k N1).
++        capture.material_refused = True
+         capture.remember_state(state, questions=None, state_digest=None)
+         # Field names only: values may be L2 material (spec §5.4).
+         return _outcome(

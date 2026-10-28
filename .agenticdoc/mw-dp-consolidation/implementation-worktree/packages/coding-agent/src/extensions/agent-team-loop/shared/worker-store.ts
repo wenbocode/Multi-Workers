@@ -1,0 +1,254 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { acquireLock } from "./file-lock.ts";
+
+export type WorkerStatus = "pending" | "running" | "done" | "failed" | "needs-clarification" | "lost";
+
+/** Queue-row provenance (D-019/AC-021): `conductor` rows were dispatched by
+ * the autopilot conductor, `manual` rows by a PM/TS dispatch. Row membership
+ * is decided by this cell plus `taskPath` — never by the `ap-` task-key
+ * prefix, which is a false signal on its own (6 measured rows). */
+export type WorkerOrigin = "conductor" | "manual";
+
+export interface WorkerEntry {
+	taskKey: string;
+	status: WorkerStatus;
+	cli: string;
+	provider: string;
+	taskPath: string;
+	dispatchedAt: string;
+	updatedAt: string;
+	/** Optional model id passed to the worker CLI (--model/-m). Empty = launcher default. */
+	model: string;
+	/** Originating writer; absent on legacy rows (pre-column) and normalised to
+	 * `manual` by {@link workerOrigin}. */
+	origin?: WorkerOrigin;
+}
+
+/** Column count range: 7 legacy (no model) | 8 (no origin) | 9 current. The
+ * order is locked to the Python writer (mw_common.parse_workers_file /
+ * serialize_entry): task_key | status | cli | provider | task_path |
+ * dispatched_at | updated_at | model | origin. */
+const WORKER_COLS_MIN = 7;
+const WORKER_COLS_MAX = 9;
+
+/** `.agenticdoc/<key>/workers/<task>/task.md` — the queue-row path contract
+ * (conductor dispatch.py `task_dir`). Mirrors mw_common._WORKER_PATH_KEY_RE. */
+const WORKER_PATH_KEY_RE = /(?:^|[\\/])\.agenticdoc[\\/]([^\\/]+)[\\/]workers[\\/]/;
+
+/** Normalise an `origin` cell: only the literal `conductor` is a conductor
+ * dispatch; a missing/empty/unknown cell fails closed to `manual` so the
+ * `ap-` prefix can never resurrect the old false signal (VC-028). */
+export function normalizeWorkerOrigin(raw: string | undefined): WorkerOrigin {
+	return (raw ?? "").trim().toLowerCase() === "conductor" ? "conductor" : "manual";
+}
+
+/** Provenance of a row, with legacy rows (no column) read as `manual`. */
+export function workerOrigin(entry: WorkerEntry): WorkerOrigin {
+	return entry.origin ?? "manual";
+}
+
+/** Owner project key of a row: the key its `taskPath` is filed under ("" when
+ * the path is not under a `.agenticdoc/<key>/workers/` directory). Independent
+ * of `origin` — a manual row still groups under its key; it just never holds a
+ * conductor slot (VC-028 `fallback=path`).
+ *
+ * Anchored exactly like `mw_common.worker_path_key`, so the Python reader and
+ * the TS writer agree on the owner key of every row. */
+export function workerOwnerKey(entry: WorkerEntry): string {
+	return WORKER_PATH_KEY_RE.exec(entry.taskPath)?.[1] ?? "";
+}
+
+/** Unified owner predicate (D-019): does this row hold `key`'s autopilot slot?
+ * `origin` decides first — manual/legacy rows own no slot — and a conductor
+ * row owns the key its `taskPath` anchors under. */
+export function workerBelongsToKey(entry: WorkerEntry, key: string): boolean {
+	return workerOrigin(entry) === "conductor" && workerOwnerKey(entry) === key;
+}
+
+/** `mw-queue:vN` version header (AC-023). Optional by design: a queue without
+ * a header reads as v1, and an existing header-less file is never rewritten to
+ * add one (P-018). Both readers skip `#` lines (`mw_common.parse_workers_file`
+ * does the same), so the header never changes row parsing. */
+const QUEUE_HEADER_RE = /^#\s*mw-queue:v(\d+)\s*$/;
+const QUEUE_HEADER_V2 = "# mw-queue:v2";
+
+/** Why a raw queue line could not be read as a row. `cols` = the cell count fell
+ * outside the 7..9 window; `task-key` = the first cell is empty. */
+export type WorkerLineFailure = "cols" | "task-key";
+
+export interface UnparsableWorkerLine {
+	/** 0-based line index inside the queue file (headers and blanks included). */
+	index: number;
+	line: string;
+	reason: WorkerLineFailure;
+}
+
+export interface WorkerQueue {
+	rows: WorkerEntry[];
+	/** Non-empty, non-comment lines that are not readable rows. They are reported
+	 * here instead of being dropped (AC-023), and the writer re-inserts them
+	 * verbatim — an unreadable row can never turn into a silent deletion. */
+	unparsable: UnparsableWorkerLine[];
+	/** `mw-queue:vN` header value; 1 when the queue carries no header. */
+	version: number;
+}
+
+/** Reads the version header of one raw line, or `undefined` for anything else. */
+export function parseQueueHeader(line: string): number | undefined {
+	const match = QUEUE_HEADER_RE.exec(line.trim());
+	return match ? Number(match[1]) : undefined;
+}
+
+type WorkerLineParse = { ok: true; entry: WorkerEntry } | { ok: false; reason: WorkerLineFailure };
+
+function parseWorkerLine(line: string): WorkerLineParse {
+	const parts = line.split("|");
+	// Tolerate legacy 7-column rows (no model), 8-column rows (no origin) and
+	// the current 9-column layout (origin last).
+	if (parts.length < WORKER_COLS_MIN || parts.length > WORKER_COLS_MAX) return { ok: false, reason: "cols" };
+	const [taskKey, status, cli, provider, taskPath, dispatchedAt, updatedAt, model, origin] = parts.map((s) =>
+		s.trim(),
+	);
+	if (!taskKey || taskKey.startsWith("#")) return { ok: false, reason: "task-key" };
+	return {
+		ok: true,
+		entry: {
+			taskKey: taskKey ?? "",
+			status: (status ?? "pending") as WorkerStatus,
+			cli: cli ?? "",
+			provider: provider ?? "",
+			taskPath: taskPath ?? "",
+			dispatchedAt: dispatchedAt ?? "",
+			updatedAt: updatedAt ?? "",
+			model: model ?? "",
+			origin: origin === undefined || origin === "" ? undefined : normalizeWorkerOrigin(origin),
+		},
+	};
+}
+
+function serializeWorkerLine(entry: WorkerEntry): string {
+	// The origin column is always emitted (legacy rows normalise to `manual`):
+	// this store is the PM/manual writer, so its rows must never be read back
+	// as an unattributed legacy row.
+	return [
+		entry.taskKey,
+		entry.status,
+		entry.cli,
+		entry.provider,
+		entry.taskPath,
+		entry.dispatchedAt,
+		entry.updatedAt,
+		entry.model ?? "",
+		workerOrigin(entry),
+	].join(" | ");
+}
+
+export class WorkerStore {
+	private readonly filePath: string;
+	private readonly lockPath: string;
+
+	constructor(agenticdocRoot: string) {
+		this.filePath = path.join(agenticdocRoot, "_workers.parallel");
+		this.lockPath = path.join(agenticdocRoot, "..", ".mw", "workers.lock");
+	}
+
+	/** The queue file this store reads and writes. Exposed so a caller that must
+	 * stay inside the store's own critical section (the PM dispatcher derives the
+	 * write-face base from the `.agenticdoc` root) anchors on the SAME path
+	 * instead of re-deriving — and possibly drifting from — this construction
+	 * (D-114). */
+	get queuePath(): string {
+		return this.filePath;
+	}
+
+	/** The store's exclusive queue lock (`<agenticdocRoot>/../.mw/workers.lock`).
+	 * A caller that already holds it must use {@link upsertWithinLock}, never
+	 * {@link upsert} (a nested `acquireLock` backs off and then raises). */
+	get lockFilePath(): string {
+		return this.lockPath;
+	}
+
+	/** Raw queue lines with the trailing newline dropped; `[]` when the file is
+	 * absent or empty. Keeping the lines verbatim is what lets
+	 * {@link upsertWithinLock} rewrite one row without touching any other byte
+	 * of the file (AC-023). */
+	private readRawLines(): string[] {
+		if (!fs.existsSync(this.filePath)) return [];
+		const lines = fs.readFileSync(this.filePath, "utf8").split("\n");
+		if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+		return lines;
+	}
+
+	/** The full queue read: rows, unreadable lines (counted, never dropped) and
+	 * the declared layout version. Blank lines and `#` comments are neither. */
+	readQueue(): WorkerQueue {
+		const rows: WorkerEntry[] = [];
+		const unparsable: UnparsableWorkerLine[] = [];
+		let version = 1;
+		for (const [index, line] of this.readRawLines().entries()) {
+			if (line.trim() === "") continue;
+			if (line.trimStart().startsWith("#")) {
+				const header = parseQueueHeader(line);
+				if (header !== undefined && index === 0) version = header;
+				continue;
+			}
+			const parsed = parseWorkerLine(line);
+			if (parsed.ok) rows.push(parsed.entry);
+			else unparsable.push({ index, line, reason: parsed.reason });
+		}
+		return { rows, unparsable, version };
+	}
+
+	readAll(): WorkerEntry[] {
+		return this.readQueue().rows;
+	}
+
+	async upsert(entry: WorkerEntry): Promise<void> {
+		const release = await acquireLock(this.lockPath);
+		try {
+			this.upsertWithinLock(entry);
+		} finally {
+			release();
+		}
+	}
+
+	/** Lock-free upsert: the single implementation of the queue write — row
+	 * format, replace-by-task-key, `# mw-queue:v2` on a brand-new queue, and
+	 * tmp+rename. {@link upsert} is "take the lock, call this, release".
+	 *
+	 * PRECONDITION: the caller already holds {@link lockFilePath}
+	 * (`.mw/workers.lock`). This method does NOT acquire the lock and does NOT
+	 * release it. Calling it without the lock is a data race; calling
+	 * {@link upsert} while holding the lock deadlocks (nested `acquireLock`
+	 * backs off and then raises, RQ-D3). */
+	upsertWithinLock(entry: WorkerEntry): void {
+		const raw = this.readRawLines();
+		const replacement = serializeWorkerLine(entry);
+		const idx = raw.findIndex((line) => {
+			if (line.trim() === "" || line.trimStart().startsWith("#")) return false;
+			const parsed = parseWorkerLine(line);
+			return parsed.ok && parsed.entry.taskKey === entry.taskKey;
+		});
+		let lines: string[];
+		if (idx >= 0) {
+			// In-place row replacement; every other line (including unreadable
+			// rows and comments) stays byte-identical.
+			lines = raw.map((line, i) => (i === idx ? replacement : line));
+		} else if (raw.length === 0) {
+			// Brand-new queue: stamp the current layout version.
+			lines = [QUEUE_HEADER_V2, replacement];
+		} else {
+			// Existing file: append, and never add a header retroactively (P-018).
+			lines = [...raw, replacement];
+		}
+		const content = `${lines.join("\n")}\n`;
+		const tmpPath = `${this.filePath}.tmp`;
+		fs.writeFileSync(tmpPath, content, "utf8");
+		fs.renameSync(tmpPath, this.filePath);
+	}
+
+	findByKey(taskKey: string): WorkerEntry | undefined {
+		return this.readAll().find((e) => e.taskKey === taskKey);
+	}
+}

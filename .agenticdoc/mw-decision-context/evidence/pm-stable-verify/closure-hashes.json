@@ -1,0 +1,42 @@
+[
+  {
+    "path": "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts",
+    "matches": true
+  },
+  {
+    "path": "packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts",
+    "matches": true
+  },
+  {
+    "path": "packages/coding-agent/test/suite/decision-context-integration.test.ts",
+    "matches": true
+  },
+  {
+    "path": "packages/coding-agent/test/suite/decision-context-agent-materials.test.ts",
+    "matches": true
+  },
+  {
+    "path": "packages/coding-agent/test/suite/decision-tool.test.ts",
+    "matches": true
+  },
+  {
+    "path": "packages/coding-agent/test/suite/triage-client-state.test.ts",
+    "matches": true
+  },
+  {
+    "path": "packages/multi-workers/test_decide_registry_contract.py",
+    "matches": true
+  },
+  {
+    "path": "packages/multi-workers/test_decision_dp25_empty_value.py",
+    "matches": true
+  },
+  {
+    "path": "packages/multi-workers/test_decision_required_refusal.py",
+    "matches": true
+  },
+  {
+    "path": "packages/multi-workers/test_decision_observation.py",
+    "matches": true
+  }
+]

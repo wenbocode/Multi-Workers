@@ -1,0 +1,246 @@
+{
+  "synthetic_only": true,
+  "product_generation": false,
+  "imports": {
+    "test_decide_registry_contract": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_decide_registry_contract.py",
+    "decision_points": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_points.py"
+  },
+  "real_peer": {
+    "stage": "pre-t04",
+    "universal": [
+      "schema_version",
+      "decision_point",
+      "key",
+      "phase",
+      "task_type",
+      "risk",
+      "risk_source",
+      "authority_tier",
+      "questions_version"
+    ],
+    "retired_rows": {
+      "dp4-failure-handling": [
+        "failure.kind"
+      ],
+      "dp5-test-triage": [
+        "failure.kind",
+        "failure.test_name",
+        "failure.baseline_known"
+      ],
+      "dp6-qg-verdict": [
+        "closure"
+      ],
+      "dp13-commit-release": [
+        "closure"
+      ]
+    },
+    "active_rows": []
+  },
+  "post_t04_active_only_real_parser": {
+    "outcome": "accepted",
+    "value": [
+      [
+        "schema_version",
+        "decision_point",
+        "key",
+        "phase",
+        "task_type",
+        "risk",
+        "risk_source",
+        "authority_tier",
+        "questions_version"
+      ],
+      {
+        "dp-w-type": [
+          "task_goal",
+          "task_requirements",
+          "task_deliverables"
+        ],
+        "dp-pm-steer": [
+          "task_goal",
+          "task_requirements",
+          "task_deliverables",
+          "pm_decision_background"
+        ],
+        "dp-w-check-task": [
+          "task_goal",
+          "reachability_facts",
+          "completed",
+          "remaining",
+          "blockers",
+          "constraints"
+        ],
+        "dp-QG": [
+          "review_requirements",
+          "review_evidence",
+          "review_findings",
+          "uncovered_scope"
+        ],
+        "dp-gate-approve": [
+          "gate_background",
+          "current_state",
+          "condition_evidence",
+          "pm_note.subject",
+          "pm_note.planned_action",
+          "pm_note.basis.goal",
+          "pm_note.basis.evidence",
+          "pm_note.basis.budget",
+          "pm_note.basis.authority"
+        ],
+        "dp-sign-key": [
+          "delivery_goal",
+          "actual_completion",
+          "verification_evidence.verified",
+          "verification_evidence.unverified",
+          "unfinished_impact"
+        ],
+        "dp-auto": [
+          "question",
+          "background.task_goal",
+          "background.current_state",
+          "background.tried",
+          "background.unknowns",
+          "background.constraints",
+          "handling_options"
+        ],
+        "dp-route": [
+          "decision_actor",
+          "decision_object",
+          "question"
+        ]
+      }
+    ]
+  },
+  "post_t04_active_only_stage_test": {
+    "outcome": "accepted",
+    "value": null
+  },
+  "post_t04_partial_legacy_stage_test": {
+    "outcome": "accepted",
+    "value": null
+  },
+  "post_t04_full_legacy_stage_test": {
+    "outcome": "accepted",
+    "value": null
+  },
+  "pre_t04_active_row_stage_test": {
+    "outcome": "rejected",
+    "detail": "an active entry grew a legacy TS row before T04 regenerated the pair: ['dp-w-type']"
+  },
+  "no_dp1_id_new_name_constant_parser": {
+    "outcome": "accepted",
+    "value": [
+      [
+        "schema_version",
+        "decision_point",
+        "key",
+        "phase",
+        "task_type",
+        "risk",
+        "risk_source",
+        "authority_tier",
+        "questions_version"
+      ],
+      {
+        "dp-w-type": [
+          "task_goal",
+          "task_requirements",
+          "task_deliverables"
+        ],
+        "dp-pm-steer": [
+          "task_goal",
+          "task_requirements",
+          "task_deliverables",
+          "pm_decision_background"
+        ],
+        "dp-w-check-task": [
+          "task_goal",
+          "reachability_facts",
+          "completed",
+          "remaining",
+          "blockers",
+          "constraints"
+        ],
+        "dp-QG": [
+          "review_requirements",
+          "review_evidence",
+          "review_findings",
+          "uncovered_scope"
+        ],
+        "dp-gate-approve": [
+          "gate_background",
+          "current_state",
+          "condition_evidence",
+          "pm_note.subject",
+          "pm_note.planned_action",
+          "pm_note.basis.goal",
+          "pm_note.basis.evidence",
+          "pm_note.basis.budget",
+          "pm_note.basis.authority"
+        ],
+        "dp-auto": [
+          "question",
+          "background.task_goal",
+          "background.current_state",
+          "background.tried",
+          "background.unknowns",
+          "background.constraints",
+          "handling_options"
+        ],
+        "dp-route": [
+          "decision_actor",
+          "decision_object",
+          "question"
+        ],
+        "dp-sign-key": [
+          "delivery_goal",
+          "actual_completion",
+          "verification_evidence.verified",
+          "verification_evidence.unverified",
+          "unfinished_impact"
+        ]
+      }
+    ]
+  },
+  "parser_unknown_id_structurally_parsed": {
+    "outcome": "accepted",
+    "value": [
+      [
+        "schema_version",
+        "decision_point",
+        "key",
+        "phase",
+        "task_type",
+        "risk",
+        "risk_source",
+        "authority_tier",
+        "questions_version"
+      ],
+      {
+        "dp99-unknown": [
+          "task_goal"
+        ]
+      }
+    ]
+  },
+  "unknown_id_stage_test": {
+    "outcome": "rejected",
+    "detail": "unknown ids in REQUIRED_FIELDS_BY_DP: ['dp99-unknown']"
+  },
+  "malformed_empty_matrix": {
+    "outcome": "rejected",
+    "detail": "the required_if matrix was not parsed: no row found"
+  },
+  "malformed_duplicate_key": {
+    "outcome": "rejected",
+    "detail": "duplicate id in REQUIRED_FIELDS_BY_DP: dp-w-type"
+  },
+  "malformed_unquoted_key": {
+    "outcome": "rejected",
+    "detail": "unparsed REQUIRED_FIELDS_BY_DP key: 'dp-w-type: [\"task_goal\"]'"
+  },
+  "malformed_non_string_field": {
+    "outcome": "rejected",
+    "detail": "required-field entries must be double-quoted strings, got '4'"
+  }
+}

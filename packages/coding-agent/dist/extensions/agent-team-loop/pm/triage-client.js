@@ -4,14 +4,20 @@
  * D-004/D-005/D-006/D-007 + D-019/D-021).
  *
  * Contract:
- * - Input is `(dpId, state)`: `dpId` selects the decision point and `state` is
- *   a **structured object** whose field table is frozen by D6 Q1.1 (L0
- *   enums/counters, L1 capped summaries). L2 content (credentials / user
- *   quotes / absolute paths / code) has **no place in the signature** — it is
- *   excluded by construction, not washed afterwards (D-019). The legacy
- *   free-form string state stays byte-compatible (`spec.md:162` compat clause)
- *   for callers that still send `buildTriageState` output; it is bounded to
- *   16KB exactly as before.
+ * - Input is `(dpId, material, meta)` for the four-DP business contract
+ *   (mw-decision-context T03): `material` carries ONLY the registry's
+ *   `modelStateFields` for that dp (the single allowlist projection), `meta`
+ *   carries the local envelope (`record_version`, `logical_id`, `key`,
+ *   `task_key`, `initiator_role`, `retry_of`) and NEVER reaches the model.
+ *   The stdin payload is exactly `{material, meta}`.
+ * - The older **structured state** entry (`{state}`, D6 Q1.1) is still accepted
+ *   by {@link triageDispatch} for callers that do not build the envelope yet;
+ *   it validates L0 enums/counters/L1 summaries and caps the state at 2000B.
+ *   The free-form dp1 string state and its `triage_risk` question map are gone
+ *   (spec §1.7: a replaced contract is not kept as a compatibility branch).
+ *   L2 content (credentials / user quotes / absolute paths / code) has **no
+ *   place in either signature** — it is excluded by construction, not washed
+ *   afterwards (D-019).
  * - Canonical serialisation = recursive key sort + compact separators, measured
  *   in UTF-8 bytes (D6 Q1.1/Q2.2). > {@link MAX_STRUCTURED_STATE_BYTES}
  *   triggers the two-stage truncation: drop optional L1 → halve required L1 →
@@ -49,19 +55,16 @@
  *   self-report that is NOT usable for gating.
  */
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.js";
 import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.js";
+import { copyTaskState, isTaskStateSnapshot } from "./decision-task-state.js";
 /** Hard client-side wall-clock budget for one `mw decide run` child (D-006). */
 export const DEFAULT_TRIAGE_TIMEOUT_MS = 20_000;
 /** Client-side canonical budget for a structured state (spec §5.4 / D6 Q1). */
 export const MAX_STRUCTURED_STATE_BYTES = 2_000;
-/** Largest free-form `state` string forwarded on the legacy path (design
- * D-004 `max_state_bytes`; kept below the Python default so a long task body
- * does not trip the server budget check). Structured states use
- * {@link MAX_STRUCTURED_STATE_BYTES} instead. */
-export const MAX_TRIAGE_STATE_BYTES = 16_000;
 /** Decision point id for the pre-dispatch triage (D-006). The Python registry
  * owns the id set and the question set; this module only holds ids — and they
  * are the **registry ids verbatim** (`decision_points.DP_REGISTRY`), never short
@@ -74,31 +77,28 @@ export const TRIAGE_REASON_INPUT_INCOMPLETE = "input-incomplete";
 export const TRIAGE_REASON_INPUT_OVERSIZE = "input-oversize";
 export const CONFIDENCE_SOURCE_API = "api";
 export const CONFIDENCE_SOURCE_MODEL_SELF_REPORT = "model-self-report";
-/** Legacy DP-1 question set (D-006 wire shape).
+/** Record version of the local decision envelope (mw-decision-context §4.1).
+ * Lives in the immutable creation fact, never in a wire-capture absence probe. */
+export const DECISION_RECORD_VERSION = 2;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const INITIATOR_ROLES = ["pm", "coding", "research", "review", "unknown"];
+/** Build the local envelope metadata for one NEW decision.
  *
- * `spec.md:162` keeps the `isinstance(state, str)` branch byte-compatible, and
- * `mw.py:718` still requires a non-empty `questions` map in that request, so the
- * legacy path must keep forwarding exactly these choices. The **structured**
- * path does not use it: the question set is authoritative in the Python
- * decision registry (design §2.1). Delete this constant together with the
- * legacy branch once Python fills `questions` from the registry. */
-export const DP1_QUESTIONS = {
-    triage_type: { type: "choice", choices: ["coding", "research", "review"] },
-    triage_risk: { type: "choice", choices: ["low", "mid", "high"] },
-};
-/** `questions_version` for dp1 = `q-<sha256(canonical questions)[:8]>`, exactly
- * `decision_points._questions_version()` for the registry's dp1 question set
- * (`q-09d3aad3` today). Derived from {@link DP1_QUESTIONS} instead of hardcoded
- * so the two cannot drift; the canonical form is Python's
- * `json.dumps(list(questions), ensure_ascii=False, sort_keys=True,
- * separators=(",", ":"))` — the same mirror `pm-orchestrator.ts` uses for dp2.
- *
- * A structured dp1 state must carry this value or `decide_for` refuses it as
- * `input-incomplete` (registry `REQUIRED_STATE_FIELDS`). */
-export const DP1_QUESTIONS_VERSION = `q-${createHash("sha256")
-    .update(JSON.stringify(Object.entries(DP1_QUESTIONS).map(([id, spec]) => ({ choices: spec.choices, id, type: spec.type }))), "utf8")
-    .digest("hex")
-    .slice(0, 8)}`;
+ * `logical_id` is minted here (one UUID per decision, independent of the task
+ * id) so a caller cannot reuse a previous decision's id by accident. `retry_of`
+ * is explicit: a retry mints a new id and points at the previous one; a first
+ * attempt keeps `null`. A missing task stays `null` instead of being guessed. */
+export function newDecisionMeta(input) {
+    return {
+        record_version: DECISION_RECORD_VERSION,
+        logical_id: randomUUID(),
+        key: input.key.trim(),
+        task_key: input.taskKey === undefined || input.taskKey === null ? null : input.taskKey.trim(),
+        initiator_role: input.initiatorRole ?? "unknown",
+        retry_of: input.retryOf ?? null,
+        ...(input.taskBefore === undefined ? {} : { task_before: copyTaskState(input.taskBefore) }),
+    };
+}
 const DISABLED_POLICY = {
     enabled: false,
     dp1Enabled: true,
@@ -147,7 +147,13 @@ export const runDecideMw = (request) => {
     const mwPy = findMwPy();
     if (!mwPy)
         return { status: null, stdout: "", stderr: "", error: "mw.py not found", timedOut: false };
-    const args = ["-X", "utf8", mwPy, "decide", "run", `--project=${request.projectDir}`, "--dp", request.dp, "--json"];
+    const args = ["-X", "utf8", mwPy, "decide", "run", `--project=${request.projectDir}`, "--dp", request.dp];
+    // The versioned envelope only rides the CLI's `--stdin` path (`_decide_run`
+    // dispatches to `_decide_run_versioned` there); the legacy `{state}` request
+    // keeps the implicit stdin read so its bytes are unchanged.
+    if (request.viaStdin === true)
+        args.push("--stdin");
+    args.push("--json");
     try {
         const result = spawnSync(PYTHON_EXE, args, {
             input: request.input,
@@ -248,23 +254,22 @@ const UNIVERSAL_REQUIRED_FIELDS = [
     "authority_tier",
     "questions_version",
 ];
-/** `required_if` matrix (D6 Q5.1): each dp only carries its own block.
+/** `required_if` matrix (D6 Q5.1): each structured dp only carries its own block.
  *
  * Keys are **canonical ids from `packages/multi-workers/decision_points.py`
  * `DP_REGISTRY`** — the registry owns the id set, so a short form (`dp1`,
  * `dp3-clarify`) would never match a real dpId and `?? []` would silently drop
  * the whole dp-specific requirement. Exported only so the cross-layer drift
- * lock can assert every key against the live registry. */
+ * lock can assert every key against the live registry.
+ *
+ * The four business-material dps (dp1/dp2/dp3/dp25) deliberately have NO row:
+ * their required fields are the generated registry contract
+ * (`DECIDE_REGISTRY.requiredStateFields`) consumed by the material validators.
+ * A row here would be composed with {@link UNIVERSAL_REQUIRED_FIELDS} (the
+ * audit keys `phase`/`risk`/...), forcing business material to carry them —
+ * exactly the retired pre-T01 compatibility branch (spec §1.7). dp4/dp5/dp6/
+ * dp13 remain explicit legacy debt for the structured path. */
 export const REQUIRED_FIELDS_BY_DP = {
-    [DP1_ID]: ["requested_type", "task_summary", "scope.write_scope", "scope.file_extensions"],
-    "dp2-checkpoint-split": [
-        "progress.elapsed_minutes",
-        "progress.budget_minutes",
-        "progress.phases_done",
-        "progress.phases_total",
-        "progress.artifact_present",
-    ],
-    "dp3-worker-clarify": ["task_summary", "ambiguity.kind", "ambiguity.question", "local_candidates"],
     "dp4-failure-handling": ["failure.kind"],
     "dp5-test-triage": ["failure.kind", "failure.test_name", "failure.baseline_known"],
     "dp6-qg-verdict": ["closure"],
@@ -639,28 +644,6 @@ export function prepareStructuredState(dpId, state, maxBytes = MAX_STRUCTURED_ST
         dropped: truncation.dropped,
     };
 }
-// ── Legacy string state (byte-compatible, spec §5.4 compat clause) ──────────
-/** Build the DP-1 `state` string from the dispatch-time inputs (D-006 legacy
- * path; the structured path uses a caller-built object instead). */
-export function buildTriageState(input) {
-    const lines = [`requested_type: ${input.taskType}`, `cli: ${input.cli}`];
-    if (input.phase)
-        lines.push(`owner_phase: ${input.phase}`);
-    lines.push("", "task:", input.description);
-    return lines.join("\n");
-}
-/** Bound the legacy `state` payload so a long task body cannot trip the Python
- * `max_state_bytes` budget (fail-soft: the advice is skipped, not the
- * dispatch). Byte-accurate because the Python side measures UTF-8 bytes. */
-export function boundTriageState(state, maxBytes = MAX_TRIAGE_STATE_BYTES) {
-    if (Buffer.byteLength(state, "utf8") <= maxBytes)
-        return state;
-    let text = state;
-    while (Buffer.byteLength(text, "utf8") > maxBytes - 16 && text.length > 0) {
-        text = text.slice(0, Math.floor(text.length * 0.9));
-    }
-    return `${text}\n[state truncated]`;
-}
 function parseJsonPayload(stdout) {
     const trimmed = stdout.trim();
     const attempts = [trimmed];
@@ -721,6 +704,126 @@ function applyAuthorityKeys(target, payload) {
     if (typeof escalatedReason === "string")
         target.escalated_reason = escalatedReason;
 }
+// ── Four-DP business material on the local envelope (T03) ──────────────────
+/** Field names of a meta whose value/type would be refused. Names only (L0),
+ * never values. */
+export function validateDecisionMeta(meta) {
+    const problems = [];
+    if (meta.record_version !== DECISION_RECORD_VERSION)
+        problems.push("record_version");
+    if (typeof meta.logical_id !== "string" || !UUID_PATTERN.test(meta.logical_id))
+        problems.push("logical_id");
+    if (typeof meta.key !== "string" || meta.key.trim() === "")
+        problems.push("key");
+    if (meta.task_key !== null && (typeof meta.task_key !== "string" || meta.task_key.trim() === "")) {
+        problems.push("task_key");
+    }
+    if (!INITIATOR_ROLES.includes(meta.initiator_role))
+        problems.push("initiator_role");
+    if (meta.retry_of !== null && (typeof meta.retry_of !== "string" || !UUID_PATTERN.test(meta.retry_of))) {
+        problems.push("retry_of");
+    }
+    if (meta.task_before !== undefined && (meta.task_key === null || !isTaskStateSnapshot(meta.task_before)))
+        problems.push("task_before");
+    return problems;
+}
+/** Validate → canonicalise → bound the business material, in that order.
+ *
+ * The allowlist is the registry's `modelStateFields` for the dp: any extra key
+ * (identity / audit / a second question) is a refusal, never forwarded. A
+ * missing / blank required field is `input-incomplete`; material over an
+ * explicitly configured budget is `input-oversize`. Both are ZERO-spawn
+ * refusals: necessary material is never silently truncated (design §2).
+ *
+ * `maxBytes = 0` means the legacy 2000B client constant does NOT gate the
+ * material: the design's rule is to check against the ACTUAL transport budget,
+ * which lives in Python (`max_state_bytes` defaults to 0 = off; the token gates
+ * apply there), and no new client ceiling may be invented before the four-case
+ * measurement. Shape validation still happens here, so a malformed material is
+ * refused before any spawn. */
+export function prepareDecisionEnvelope(dpId, material, meta, maxBytes = 0) {
+    const entry = DECIDE_REGISTRY[dpId];
+    if (entry === undefined)
+        return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: ["dp"] };
+    const metaProblems = validateDecisionMeta(meta);
+    if (metaProblems.length > 0) {
+        return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: metaProblems.map((name) => `meta.${name}`) };
+    }
+    if (material === null || typeof material !== "object" || Array.isArray(material)) {
+        return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: ["material"] };
+    }
+    const allowed = new Set(entry.modelStateFields);
+    const problems = [];
+    for (const key of Object.keys(material)) {
+        if (!allowed.has(key))
+            problems.push(`unexpected:${key}`);
+    }
+    for (const field of entry.requiredStateFields) {
+        const value = material[field.name];
+        if (field.type === "string" && (typeof value !== "string" || value.trim() === ""))
+            problems.push(field.name);
+        else if (value === undefined || value === null)
+            problems.push(field.name);
+    }
+    if (problems.length > 0) {
+        return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: problems };
+    }
+    let bytes;
+    try {
+        bytes = canonicalStateBytes(material);
+    }
+    catch {
+        return { ok: false, reason: TRIAGE_REASON_INPUT_INCOMPLETE, missing: ["material:serializable"] };
+    }
+    if (maxBytes > 0 && bytes > maxBytes) {
+        return { ok: false, reason: TRIAGE_REASON_INPUT_OVERSIZE, missing: [] };
+    }
+    return {
+        ok: true,
+        envelope: { material: canonicalize(material), meta },
+        bytes,
+    };
+}
+/** Project one `mw decide run --json` payload onto {@link TriageResult}.
+ *
+ * Shared by both client entries so the four-DP envelope and the older
+ * structured-state path cannot decode the child's answer differently. */
+function projectDecisionPayload(payload, started, droppedFields) {
+    const latency = typeof payload.latency_ms === "number" ? payload.latency_ms : Date.now() - started;
+    const digest = digestOf(payload);
+    if (payload.available !== true) {
+        const reason = typeof payload.reason === "string" && payload.reason !== "" ? payload.reason : "upstream-error";
+        const result = unavailable(reason, latency, digest);
+        // An escalated row still carries its own `decision_id` / `mode` /
+        // `escalated_reason` (D-041 row 2): the caller may correlate it, it just
+        // may not claim it acted.
+        applyAuthorityKeys(result, payload);
+        return result;
+    }
+    const answers = asRecord(payload.answers);
+    const type = answerOf(answers, "triage_type");
+    const risk = answerOf(answers, "triage_risk");
+    if (!type?.value && !risk?.value)
+        return unavailable("bad-response", latency, digest);
+    const result = {
+        available: true,
+        triage_type: type?.value,
+        triage_risk: risk?.value,
+        confidences: { triage_type: type?.confidence ?? null, triage_risk: risk?.confidence ?? null },
+        confidence_source: typeof payload.confidence_source === "string" && payload.confidence_source !== ""
+            ? payload.confidence_source
+            : "unknown",
+        latency_ms: latency,
+    };
+    if (digest !== undefined)
+        result.state_digest = digest;
+    if (droppedFields.length > 0)
+        result.dropped_fields = droppedFields;
+    // T-04c: the authority keys ride through unchanged so the dispatch side can
+    // correlate the task it just wrote (D-036/D-041).
+    applyAuthorityKeys(result, payload);
+    return result;
+}
 // ── The one client entry point ───────────────────────────────────────────────
 /** Run one decision point. Never throws; a non-enabled policy is a `disabled`
  * no-op that performs no spawn. */
@@ -731,30 +834,19 @@ export function triageDispatch(input) {
         if (!policy.enabled || !policy.dp1Enabled)
             return unavailable("disabled");
         const dpId = input.dpId ?? input.dp ?? DP1_ID;
-        let envelope;
-        let droppedFields = [];
-        if (typeof input.state === "string") {
-            // Legacy path — frozen bytes (spec §5.4 compat clause): bounded text
-            // plus the frozen question map, exactly as before T-04.
-            envelope = { state: boundTriageState(input.state), questions: DP1_QUESTIONS };
-        }
-        else {
-            // Structured path — validate/refuse before any spawn, then bound.
-            const prepared = prepareStructuredState(dpId, input.state);
-            if (!prepared.ok)
-                return refused(prepared.reason, prepared.missing, prepared.dropped);
-            droppedFields = prepared.dropped;
-            // Question-set authority is the Python registry (design §2.1), so the
-            // envelope carries the state only.
-            envelope = { state: prepared.state };
-        }
+        // Structured path — validate/refuse before any spawn, then bound.
+        const prepared = prepareStructuredState(dpId, input.state);
+        if (!prepared.ok)
+            return refused(prepared.reason, prepared.missing, prepared.dropped);
+        // Question-set authority is the Python registry (design §2.1), so the
+        // envelope carries the state only.
         const run = input.run ?? runDecideMw;
         const request = {
             projectDir: input.projectDir,
             dp: dpId,
             timeoutMs: input.timeoutMs ?? policy.timeoutMs,
             // Single egress point: pure serialisation, no redaction, no hashing.
-            input: JSON.stringify(envelope),
+            input: JSON.stringify({ state: prepared.state }),
         };
         let raw;
         try {
@@ -772,43 +864,53 @@ export function triageDispatch(input) {
         const payload = parseJsonPayload(raw.stdout);
         if (!payload)
             return unavailable("bad-response", Date.now() - started);
-        const latency = typeof payload.latency_ms === "number" ? payload.latency_ms : Date.now() - started;
-        const digest = digestOf(payload);
-        if (payload.available !== true) {
-            const reason = typeof payload.reason === "string" && payload.reason !== "" ? payload.reason : "upstream-error";
-            const result = unavailable(reason, latency, digest);
-            // An escalated row still carries its own `decision_id` / `mode` /
-            // `escalated_reason` (D-041 row 2): the caller may correlate it, it just
-            // may not claim it acted.
-            applyAuthorityKeys(result, payload);
-            return result;
-        }
-        const answers = asRecord(payload.answers);
-        const type = answerOf(answers, "triage_type");
-        const risk = answerOf(answers, "triage_risk");
-        if (!type?.value && !risk?.value)
-            return unavailable("bad-response", latency, digest);
-        const result = {
-            available: true,
-            triage_type: type?.value,
-            triage_risk: risk?.value,
-            confidences: { triage_type: type?.confidence ?? null, triage_risk: risk?.confidence ?? null },
-            confidence_source: typeof payload.confidence_source === "string" && payload.confidence_source !== ""
-                ? payload.confidence_source
-                : "unknown",
-            latency_ms: latency,
-        };
-        if (digest !== undefined)
-            result.state_digest = digest;
-        if (droppedFields.length > 0)
-            result.dropped_fields = droppedFields;
-        // T-04c: the authority keys ride through unchanged so the dispatch side can
-        // correlate the task it just wrote (D-036/D-041).
-        applyAuthorityKeys(result, payload);
-        return result;
+        return projectDecisionPayload(payload, started, prepared.dropped);
     }
     catch {
         // Structural fail-soft: a bug in this client must never break a dispatch.
+        return unavailable("upstream-error", Date.now() - started);
+    }
+}
+/** Run one decision point with the four-DP business material on the local
+ * envelope (`{material, meta}` piped to the SAME `mw decide run` stdin
+ * wrapper). Never throws; a non-enabled policy performs no spawn. */
+export function triageDispatchEnvelope(input) {
+    const started = Date.now();
+    try {
+        const policy = input.policy ?? readDecidePolicy(input.projectDir);
+        if (!policy.enabled)
+            return unavailable("disabled");
+        const prepared = prepareDecisionEnvelope(input.dpId, input.material, input.meta, input.maxBytes);
+        if (!prepared.ok)
+            return refused(prepared.reason, prepared.missing, []);
+        const run = input.run ?? runDecideMw;
+        const request = {
+            projectDir: input.projectDir,
+            dp: input.dpId,
+            timeoutMs: input.timeoutMs ?? policy.timeoutMs,
+            // Single egress point: the whole local envelope, pure serialisation.
+            input: JSON.stringify(prepared.envelope),
+            viaStdin: true,
+        };
+        let raw;
+        try {
+            raw = run(request);
+        }
+        catch {
+            return unavailable("upstream-error", Date.now() - started);
+        }
+        if (raw.timedOut)
+            return unavailable("timeout", Date.now() - started);
+        if (raw.error !== undefined)
+            return unavailable("upstream-error", Date.now() - started);
+        if (raw.status !== 0)
+            return unavailable("upstream-error", Date.now() - started);
+        const payload = parseJsonPayload(raw.stdout);
+        if (!payload)
+            return unavailable("bad-response", Date.now() - started);
+        return projectDecisionPayload(payload, started, []);
+    }
+    catch {
         return unavailable("upstream-error", Date.now() - started);
     }
 }

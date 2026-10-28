@@ -1,0 +1,30 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+___________________ test_refresh_authority_change_is_system ___________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18365/test_refresh_authority_change_0')
+
+    def test_refresh_authority_change_is_system(tmp_path):
+        root = _root(tmp_path)
+        decision_id = _add_decision(root, key="mw-refresh")
+        decide_archive.append_authority_change(
+            _archive_path(root),
+            dp="dp1-dispatch-type",
+            key="mw-refresh",
+            by="refresh",
+            change="config refresh",
+        )
+    
+        record = _by_decision(_snapshot(root))[decision_id]
+    
+        assert record.stages["authority_change"].state == "recorded"
+>       assert record.stages["authority_change"].actor == "system"
+E       AssertionError: assert 'human' == 'system'
+E         
+E         - system
+E         + human
+
+test_decision_history.py:1620: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_history.py::test_refresh_authority_change_is_system - As...
+1 failed in 0.25s

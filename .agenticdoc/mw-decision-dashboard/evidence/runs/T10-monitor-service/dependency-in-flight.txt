@@ -1,0 +1,10 @@
+﻿== dependency in flight: decision_history.py changed by another session while T10 was being verified ==
+checked_at: 2026-10-22T13:23:59.8954734+08:00
+decision_history.py LastWriteTime: 2026-10-22T13:23:54.5914467+08:00 size=81967
+== direct call reproduces the library-internal inconsistency (not a monitor bug) ==
+TypeError: _fold_calls() missing 1 required positional argument: 'sanitizer' (decision_history.py:1612 vs def _fold_calls(... sanitizer) at :1016)
+== decision_history's own suite at that moment ==
+FAILED test_decision_history.py::test_detail_view_exposes_explicit_links_and_missing_markers
+23 failed in 1.31s
+== monitor response for the same fixture ==
+HTTP 503 history-unavailable ('the history fold failed (TypeError)') - fail-closed, no fake data, no production write

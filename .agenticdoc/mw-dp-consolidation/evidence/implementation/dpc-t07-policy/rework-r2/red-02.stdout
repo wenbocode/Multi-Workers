@@ -1,0 +1,128 @@
+..................F....FF.....F....                                      [100%]
+================================== FAILURES ===================================
+____________ test_pending_review_requires_policy_and_request_scope ____________
+
+    def test_pending_review_requires_policy_and_request_scope():
+        project = _new_project("pendingscope")
+        # the policy grants only key:dpc-t07 while its authority covers both keys, so
+        # only the policy's own scope can keep the outside request closed
+        load = _load(
+            project, _policy_doc(scope=["key:dpc-t07"], authority_ref="grant-wide")
+        )
+        wide, wide_issues = FixtureAuthorityWriter(project).grant(
+            "grant-wide", ["key:dpc-t07", "key:outside"]
+        )
+        assert wide_issues == ()
+        source = _full_grants(project)
+        source.update(_source([wide]))
+        base = {
+            "pending_review": True,
+            "goal_effective": True,
+            "blocker_cleared": True,
+            "evidence": ["fresh integration run"],
+            "choice": "approve",
+            "budget_unit": "round",
+            "budget_amount": 1,
+        }
+    
+        outside = policy_mod.evaluate_pending_review(
+            load,
+            trigger={"kind": "new-evidence"},
+            state=dict(base, required_scope=["key:outside"]),
+            usage={"round": 0},
+            authority_source=source,
+            trusted_writers=TRUSTED_WRITERS,
+        )
+>       assert outside.allowed is False
+E       assert True is False
+E        +  where True = PendingReviewVerdict(allowed=True, resume_scope=(), requires_human=False, reasons=()).allowed
+
+test_dp_consolidation_recovery.py:1008: AssertionError
+__ test_halted_recovery_verifies_the_policy_rule_authority_and_supersession ___
+
+    def test_halted_recovery_verifies_the_policy_rule_authority_and_supersession():
+        project = _new_project("haltrule")
+        load = _load(project, _policy_doc())
+        writer = FixtureAuthorityWriter(project)
+        unrelated, unrelated_issues = writer.grant("grant-unrelated", ["recovery:halted"])
+        revoked_rule, revoked_issues = writer.grant(
+            "grant-recovery", ["recovery:halted", "recovery:breaker"], revoked=True
+        )
+        assert unrelated_issues == () and revoked_issues == ()
+    
+        def request_with(ref: str) -> dict:
+            request = json.loads(json.dumps(HALTED_OK))
+            request["note"]["authority_ref"] = ref
+            return request
+    
+        # a revoked policy recovery reference is not bypassed by pointing the note
+        # at another (even scope-identical) record
+        bypass = policy_mod.evaluate_halted_recovery(
+            load,
+            request=request_with("grant-unrelated"),
+            usage={"round": 1},
+            authority_source=_source([unrelated, revoked_rule]),
+            trusted_writers=TRUSTED_WRITERS,
+        )
+>       assert bypass.allowed is False
+E       AssertionError: assert True is False
+E        +  where True = RecoveryVerdict(allowed=True, scope=('recovery:halted',), observation_conditions=('same-failure-reappears',), stop_con...ce shows the hang is gone', 'stage-2:v7'), usage_after=(('round', 1),), questions=(), project_closed=False, reasons=()).allowed
+
+test_dp_consolidation_recovery.py:1260: AssertionError
+_______ test_halted_recovery_unknown_guard_and_halt_origin_stay_blocked _______
+
+    def test_halted_recovery_unknown_guard_and_halt_origin_stay_blocked():
+        project = _new_project("haltguard")
+        load = _load(project, _policy_doc())
+        source = _full_grants(project)
+        writer = FixtureAuthorityWriter(project)
+    
+        def verdict(request: dict, authority=None):
+            return policy_mod.evaluate_halted_recovery(
+                load,
+                request=request,
+                usage={"round": 1},
+                authority_source=source if authority is None else authority,
+                trusted_writers=TRUSTED_WRITERS,
+            )
+    
+        # an active guard cleared only by a self-reported string is still active
+        self_reported = verdict(
+            dict(HALTED_OK, hard_guard_active=True, hard_guard_cleared=["self-reported-clear"])
+        )
+>       assert self_reported.allowed is False
+E       AssertionError: assert True is False
+E        +  where True = RecoveryVerdict(allowed=True, scope=('recovery:halted',), observation_conditions=('same-failure-reappears',), stop_con...ce shows the hang is gone', 'stage-2:v7'), usage_after=(('round', 1),), questions=(), project_closed=False, reasons=()).allowed
+
+test_dp_consolidation_recovery.py:1324: AssertionError
+_ test_breaker_recovery_verifies_the_policy_rule_authority_and_disable_state __
+
+    def test_breaker_recovery_verifies_the_policy_rule_authority_and_disable_state():
+        project = _new_project("breakerrule")
+        load = _load(project, _policy_doc())
+        writer = FixtureAuthorityWriter(project)
+        revoked_rule, revoked_issues = writer.grant(
+            "grant-recovery", ["recovery:breaker"], revoked=True
+        )
+        other, other_issues = writer.grant("grant-other-preauth", ["recovery:breaker"])
+        assert revoked_issues == () and other_issues == ()
+    
+        # revoked policy recovery reference + another preauthorization: still engaged
+        bypass = policy_mod.evaluate_breaker_recovery(
+            load,
+            request=dict(BREAKER_OK, preauthorization_ref="grant-other-preauth"),
+            authority_source=_source([revoked_rule, other]),
+            trusted_writers=TRUSTED_WRITERS,
+            controlled_channels=CONTROLLED_CHANNELS,
+        )
+>       assert bypass.allowed is False
+E       AssertionError: assert True is False
+E        +  where True = RecoveryVerdict(allowed=True, scope=('recovery:breaker',), observation_conditions=('same-failure-reappears',), stop_co...in:auto-pass', 'preauthorization:grant-other-preauth'), usage_after=(), questions=(), project_closed=False, reasons=()).allowed
+
+test_dp_consolidation_recovery.py:1661: AssertionError
+=========================== short test summary info ===========================
+FAILED test_dp_consolidation_recovery.py::test_pending_review_requires_policy_and_request_scope
+FAILED test_dp_consolidation_recovery.py::test_halted_recovery_verifies_the_policy_rule_authority_and_supersession
+FAILED test_dp_consolidation_recovery.py::test_halted_recovery_unknown_guard_and_halt_origin_stay_blocked
+FAILED test_dp_consolidation_recovery.py::test_breaker_recovery_verifies_the_policy_rule_authority_and_disable_state
+4 failed, 31 passed in 0.31s

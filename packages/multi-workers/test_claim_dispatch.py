@@ -338,7 +338,8 @@ def test_claims_child_rows_follow_the_parent_type() -> None:
 
 def test_caps_follow_the_card(tmp_path: pathlib.Path) -> None:
     root = _make_project(tmp_path / "project")
-    # 3 claims, one of them manual -> 2 + 1 + 1 = 4 files; 3 x 65536 bytes.
+    # 3 claims -> min(callCap 30, perClaim 6 x 3) = 18 files; 3 x 65536 bytes
+    # (D-014: the dispatch budget is 6 fetches per claim, not Σ预算's weight).
     _write_card(
         root,
         "T-10",
@@ -347,7 +348,7 @@ def test_caps_follow_the_card(tmp_path: pathlib.Path) -> None:
             write_face=f".agenticdoc/{OWNER}/workers/ap-{OWNER}-T-10/**",
         ),
     )
-    # 1 manual claim -> 2 files; 1 x 65536 bytes.
+    # 1 claim -> min(callCap 30, 6 x 1) = 6 files; 1 x 65536 bytes.
     _write_card(
         root,
         "T-11",
@@ -363,17 +364,17 @@ def test_caps_follow_the_card(tmp_path: pathlib.Path) -> None:
     assert narrow.ok and narrow.row_verified, narrow.reason
     wide_text = wide.task_md.read_text(encoding="utf-8")
     narrow_text = narrow.task_md.read_text(encoding="utf-8")
-    assert "l2_read_file_cap: 4" in wide_text
+    assert "l2_read_file_cap: 18" in wide_text
     assert "l2_read_byte_cap: 196608" in wide_text
-    assert "l2_read_file_cap: 2" in narrow_text
+    assert "l2_read_file_cap: 6" in narrow_text
     assert "l2_read_byte_cap: 65536" in narrow_text
     # Same project, same pipeline: the caps follow the card, never the
     # previous dispatch (the pre-T-03 order priced the previous card).
-    assert "l2_read_file_cap: 4" not in narrow_text
+    assert "l2_read_file_cap: 18" not in narrow_text
 
-    # Direct derivation: manual counts double, both bounds clamp.
+    # Direct derivation: perClaim per claim, both bounds clamp.
     claims = [{"type": "grep"}, {"type": "manual"}]
-    assert dispatch_mod.claim_budget_caps(claims) == (3, 131072)
+    assert dispatch_mod.claim_budget_caps(claims) == (12, 131072)
     assert dispatch_mod.claim_budget_caps(None) == (0, 0)
     assert dispatch_mod.claim_budget_caps([]) == (0, 0)
     flood = [{"type": "grep"}] * 60
@@ -383,8 +384,8 @@ def test_caps_follow_the_card(tmp_path: pathlib.Path) -> None:
     )
     _verify(
         "caps",
-        wide=(4, 196608),
-        narrow=(2, 65536),
+        wide=(18, 196608),
+        narrow=(6, 65536),
         clamp=dispatch_mod.claim_budget_caps(flood),
         ok="True",
     )

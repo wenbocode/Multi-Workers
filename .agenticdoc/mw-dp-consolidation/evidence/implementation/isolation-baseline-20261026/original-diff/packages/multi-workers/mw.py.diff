@@ -1,0 +1,2698 @@
+diff --git a/packages/multi-workers/mw.py b/packages/multi-workers/mw.py
+index fdd0bc6be..c991f77d5 100644
+--- a/packages/multi-workers/mw.py
++++ b/packages/multi-workers/mw.py
+@@ -30,7 +30,9 @@ import shutil
+ import signal
+ import subprocess
+ import sys
++import threading
+ import time
++import urllib.parse
+ import urllib.request
+ import webbrowser
+ 
+@@ -42,7 +44,11 @@ import decide_signoff
+ import decision_book
+ import decision
+ import decision_backends
++import decision_lifecycle
++import decision_monitor
+ import decision_points
++import decision_signoff_result
++import decision_wire
+ import mw_common
+ import rag_templates
+ import usage
+@@ -55,6 +61,7 @@ from autopilot import dispatch as dispatch_module
+ from autopilot import config as _ap_config
+ from autopilot import conductor as _ap_conductor
+ from autopilot import contract_guard
++from autopilot import review_split as _review_split_module
+ from autopilot import roadmap as _ap_roadmap
+ from autopilot import timeline as _ap_timeline
+ 
+@@ -908,6 +915,383 @@ def _decide_run_payload(outcome: decision_points.DecisionOutcome) -> dict:
+     }
+ 
+ 
++def _decide_control_root(project_dir: pathlib.Path) -> pathlib.Path:
++    """The control root that owns ``.mw/decide.json`` and ``.agenticdoc``."""
++    path = pathlib.Path(project_dir)
++    if path.name == ".agenticdoc":
++        agenticdoc = path
++    elif path.parent.name == ".agenticdoc":
++        agenticdoc = path.parent
++    else:
++        agenticdoc = path / ".agenticdoc"
++    return agenticdoc.parent
++
++
++def _decide_read_envelope_json(args: argparse.Namespace) -> tuple[dict | None, str | None]:
++    """Read a JSON object from ``--request-file`` or stdin (no argv state)."""
++    source = getattr(args, "request_file", None)
++    if source:
++        try:
++            text = pathlib.Path(source).read_text(encoding="utf-8")
++        except OSError as exc:
++            return None, f"cannot read request file: {exc}"
++    else:
++        try:
++            text = sys.stdin.read()
++        except Exception as exc:  # noqa: BLE001 - CLI boundary, never traceback
++            return None, f"cannot read request from stdin: {exc}"
++    try:
++        payload = json.loads(text)
++    except ValueError:
++        return None, "request is not valid JSON"
++    if not isinstance(payload, dict):
++        return None, "request must be a JSON object"
++    return payload, None
++
++
++def _decide_meta_from_payload(raw: object) -> tuple[object | None, str | None]:
++    """Validate the local meta of one versioned record (no defaulting to PM).
++
++    A known role is case-normalised (``PM`` -> ``pm``); anything else becomes
++    ``unknown`` instead of inventing ``pm``. An empty ``task_key`` is an explicit
++    null (a PM decision without a task), never an inferred link.
++    """
++    if not isinstance(raw, dict):
++        return None, "envelope.meta must be a JSON object"
++    unknown = [name for name in raw if name not in decision_lifecycle.META_ALLOWED_KEYS]
++    if unknown:
++        return None, f"envelope.meta carries {len(unknown)} unknown key(s)"
++    role = raw.get("initiator_role", "unknown")
++    if not isinstance(role, str):
++        return None, "envelope.meta initiator_role is not valid"
++    normalised = role.strip().lower()
++    if normalised not in decision_lifecycle.INITIATOR_ROLES:
++        normalised = "unknown"
++    meta = dict(raw)
++    meta["initiator_role"] = normalised
++    if meta.get("task_key") in (None, ""):
++        meta["task_key"] = None
++    if meta.get("retry_of") in (None, ""):
++        meta["retry_of"] = None
++    try:
++        return (
++            decision_lifecycle.DecisionMeta.from_envelope({"meta": meta}),
++            None,
++        )
++    except decision_lifecycle.LifecycleInputError as exc:
++        return None, f"envelope.meta is not valid: {exc}"
++
++
++def _decide_envelope(
++    payload: dict,
++) -> tuple[dict | None, object | None, str | None]:
++    """Read ``{material, meta}`` exactly; unknown envelope keys are refused."""
++    unknown = [name for name in payload if name not in ("material", "meta")]
++    if unknown:
++        return None, None, f"envelope carries {len(unknown)} unknown key(s)"
++    if "material" not in payload or "meta" not in payload:
++        return None, None, "envelope requires both 'material' and 'meta'"
++    material = payload["material"]
++    if not isinstance(material, dict):
++        return None, None, "envelope.material must be a JSON object"
++    meta, err = _decide_meta_from_payload(payload["meta"])
++    if err:
++        return None, None, err
++    return dict(material), meta, None
++
++
++def _decide_lifecycle_store(
++    control_root: pathlib.Path,
++    cfg: decision.DecisionConfig | None,
++    credential_snapshot: object,
++) -> decision_lifecycle.LifecycleStore:
++    """The one managed lifecycle store for this command (no bare append).
++
++    The filter must be a *capture* filter: the ledger sanitizer calls ``redact``
++    and ``scrub_tail_prefix`` on it, so the gate-shaped
++    ``known_secret_redactor`` (no boundary scrub) makes every record carrying a
++    nested snapshot raise inside the transport - which the transport swallows,
++    so the call reports success while the ledger stores zero rows. Inject the
++    wire-compatible wrapper instead, and refuse loudly when it cannot be built:
++    an unproven filter must never degrade into an unredacted ledger.
++    """
++    redactor = decision.credential_redactor(cfg, snapshot=credential_snapshot)
++    if redactor is None:
++        raise decision_lifecycle.LifecycleInputError(
++            "the capture filter is unavailable (decision_wire or the credential "
++            "snapshot could not be read); refusing to write an unproven lifecycle ledger"
++        )
++    return decision_lifecycle.LifecycleStore.production(
++        control_root, redact=redactor
++    )
++
++
++def _decide_lifecycle_facts(
++    store: decision_lifecycle.LifecycleStore, logical_id: str
++) -> dict:
++    """Existing lifecycle facts of one ``logical_id`` (never matched by key)."""
++    read = decision_lifecycle.read_lifecycle(store)
++    start = None
++    linked: list[dict] = []
++    for event in read.events:
++        if event.get("logical_id") != logical_id:
++            continue
++        if event.get("kind") == "record-start":
++            start = event
++        elif event.get("kind") == "lifecycle" and isinstance(
++            event.get("decision_id"), str
++        ):
++            linked.append(event)
++    return {"start": start, "linked": linked, "stats": read.stats}
++
++
++def _decide_event_id(logical_id: str, stage: str) -> str:
++    """Deterministic feedback event id: a repeat is a duplicate, never a new fact."""
++    digest = hashlib.sha256(f"{logical_id}|{stage}".encode("utf-8")).hexdigest()
++    return f"{stage}-{digest[:32]}"
++
++
++def _decide_feedback_fields(results: list) -> dict:
++    """Aggregate ``LifecycleResult`` values into the feedback_status contract."""
++    attempted = [result for result in results if result is not None]
++    recorded = [result for result in attempted if getattr(result, "recorded", False)]
++    failed = [result for result in attempted if not getattr(result, "recorded", False)]
++    if not attempted:
++        status = "not-recorded"
++    elif failed and recorded:
++        status = "partial"
++    elif failed:
++        status = "failed"
++    else:
++        status = "recorded"
++    first = failed[0] if failed else None
++    return {
++        "feedback_status": status,
++        "feedback_error_class": getattr(first, "error_class", None),
++        "feedback_error_recorded": getattr(first, "error_recorded", None),
++        "feedback_stages": [
++            {
++                "stage": getattr(result, "stage", None),
++                "status": getattr(result, "status", None),
++                "event_id": getattr(result, "event_id", None),
++            }
++            for result in attempted
++        ],
++    }
++
++
++def _decide_replayed_payload(dp: str, logical_id: str, linked: list) -> dict:
++    """The honest response for an already-started logical id (no model call)."""
++    result = {
++        "available": bool(linked),
++        "transport": "none",
++        "model": None,
++        "confidence_source": decision.CONFIDENCE_SOURCE_UNKNOWN,
++        "attempts": 0,
++        "latency_ms": 0,
++        "answers": None,
++        "reason": None if linked else "duplicate-logical-id",
++        "decision_id": linked[-1].get("decision_id") if linked else None,
++        "mode": None,
++        "acted": False,
++        "escalated_reason": None if linked else "duplicate-logical-id",
++        "state_digest": None,
++        "logical_id": logical_id,
++        "dp": dp,
++        "replayed": True,
++        "record_start": "duplicate",
++    }
++    result.update(_decide_feedback_fields([]))
++    return result
++
++
++def _decide_run_versioned(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
++    """`mw decide run <dp> --stdin`: one exact versioned decision.
++
++    The creation fact (``record-start``) is written *before* the transport call;
++    the returned ``decision_id`` is associated with the same ``logical_id`` by
++    the feedback row. A repeated ``logical_id`` is never sent again, and meta is
++    never part of the model state (the envelope keeps it local).
++    """
++    as_json = bool(getattr(args, "json", False))
++    positional = getattr(args, "dp_id", None)
++    labelled = getattr(args, "dp", None)
++    if positional and labelled and positional != labelled:
++        print(
++            "[mw decide run] positional dp disagrees with --dp; refusing the ambiguity",
++            file=sys.stderr,
++        )
++        return 2
++    dp = positional or labelled
++    if not dp:
++        print("[mw decide run] --stdin requires a decision point id", file=sys.stderr)
++        return 2
++    if getattr(args, "request_file", None):
++        print(
++            "[mw decide run] --stdin and --request-file are mutually exclusive",
++            file=sys.stderr,
++        )
++        return 2
++    payload, err = _decide_read_envelope_json(args)
++    if err:
++        print(f"[mw decide run] {err}", file=sys.stderr)
++        return 2
++    assert payload is not None
++    material, meta, err = _decide_envelope(payload)
++    if err:
++        print(f"[mw decide run] {err}", file=sys.stderr)
++        return 2
++    assert material is not None and meta is not None
++
++    cfg = _decide_config_snapshot(project_dir)
++    credential_snapshot = decision.credential_snapshot(cfg)
++    control_root = _decide_control_root(project_dir)
++    try:
++        store = _decide_lifecycle_store(control_root, cfg, credential_snapshot)
++        existing = _decide_lifecycle_facts(store, meta.logical_id)
++    except (decision_lifecycle.LifecycleInputError, OSError) as exc:
++        print(
++            f"[mw decide run] lifecycle ledger is not readable: {exc}",
++            file=sys.stderr,
++        )
++        return 2
++    if existing["start"] is not None:
++        # Same logical id: either the decision was already processed (return the
++        # association, never a new answer) or it was started but has no result
++        # (a new judgment needs a new logical id + retry_of, never a silent
++        # resend).
++        _decide_print(
++            _decide_replayed_payload(dp, meta.logical_id, existing["linked"]),
++            as_json,
++        )
++        return 0
++
++    # The decision id is ``<dp>:<logical_id>`` (the same form ``decide_for``
++    # builds from the trigger). Resolve the registry id *before* the creation
++    # fact so an unknown dp cannot leave a start row behind, and pass the real
++    # id into the fact: a disabled/failed decision is then already associated.
++    try:
++        point = decision_points.get_decision_point(dp)
++    except decision.DecisionInputError as exc:
++        print(f"[mw decide run] {exc}", file=sys.stderr)
++        return 2
++    decision_id = f"{point.id}:{meta.logical_id}"
++
++    try:
++        start = decision_lifecycle.record_start(store, meta, decision_id=decision_id)
++    except decision_lifecycle.LifecycleInputError as exc:
++        print(
++            f"[mw decide run] the creation fact was refused: {exc}",
++            file=sys.stderr,
++        )
++        return 2
++    if start.duplicate:
++        # A concurrent command won the logical id. Re-read its facts; never send
++        # a second model call for the same logical id.
++        try:
++            facts = _decide_lifecycle_facts(store, meta.logical_id)
++            linked = facts["linked"]
++        except OSError:
++            linked = []
++        _decide_print(_decide_replayed_payload(dp, meta.logical_id, linked), as_json)
++        return 0
++    if not start.recorded:
++        result = {
++            "available": False,
++            "transport": "none",
++            "model": None,
++            "confidence_source": decision.CONFIDENCE_SOURCE_UNKNOWN,
++            "attempts": 0,
++            "latency_ms": 0,
++            "answers": None,
++            "reason": "record-start-failed",
++            "decision_id": None,
++            "mode": None,
++            "acted": False,
++            "escalated_reason": "record-start-failed",
++            "state_digest": None,
++            "logical_id": meta.logical_id,
++            "dp": dp,
++            "replayed": False,
++            "record_start": start.status,
++            "recorded": False,
++            "error_class": start.error_class,
++            "error_recorded": start.error_recorded,
++        }
++        result.update(_decide_feedback_fields([]))
++        _decide_print(result, as_json)
++        return 2
++
++    client = decision.DecisionClient(
++        cfg, project_root=project_dir, credential_snapshot=credential_snapshot
++    )
++    trigger = decision_points.Trigger.from_mapping(
++        material,
++        trigger_id=meta.logical_id,
++        key=meta.key,
++        task_key=meta.task_key,
++    )
++    try:
++        outcome = decision_points.decide_for(
++            dp, trigger, project_dir, client=client, intent="answer"
++        )
++    except decision.DecisionInputError as exc:
++        print(f"[mw decide run] {exc}", file=sys.stderr)
++        return 2
++    result = _decide_run_payload(outcome)
++    result["logical_id"] = meta.logical_id
++    result["dp"] = dp
++    result["replayed"] = False
++    result["record_start"] = start.status
++    result["detail"] = outcome.detail
++    feedback: list = []
++    if outcome.decision_id != decision_id:
++        # ``decide_for`` reported a different id than the one the creation fact
++        # carries. Never rewrite the fact (it is immutable) and never guess: one
++        # explicit association row carries the real id so the reader can join
++        # both by a recorded value.
++        print(
++            "[mw decide run] the decision id differs from the creation fact "
++            f"({outcome.decision_id!r} != {decision_id!r}); writing an explicit "
++            "association bridge",
++            file=sys.stderr,
++        )
++        if isinstance(outcome.decision_id, str) and outcome.decision_id:
++            feedback.append(
++                decision_lifecycle.record_executed(
++                    store,
++                    meta,
++                    decision_id=outcome.decision_id,
++                    dp=point.id,
++                    action="record",
++                    result="association-bridge",
++                    event_id=_decide_event_id(meta.logical_id, "bridge"),
++                )
++            )
++    if outcome.status in ("acted", "suggested") and outcome.answer:
++        feedback.append(
++            decision_lifecycle.record_executed(
++                store,
++                meta,
++                decision_id=outcome.decision_id,
++                dp=dp,
++                action="record",
++                result="answer-returned",
++                event_id=_decide_event_id(meta.logical_id, "record"),
++            )
++        )
++    result.update(_decide_feedback_fields(feedback))
++    _decide_print(result, as_json)
++    return 0
++
++
++def _decide_print(payload: dict, as_json: bool) -> None:
++    if as_json:
++        print(json.dumps(payload, ensure_ascii=False))
++    else:
++        print(json.dumps(payload, ensure_ascii=False, indent=2))
++
++
+ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+     """`mw decide run`: one decision through the single authority.
+ 
+@@ -924,6 +1308,19 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+     """
+     payload: dict | None = None
+     err: str | None = None
++    if getattr(args, "stdin", False):
++        return _decide_run_versioned(args, project_dir)
++    # T05g: one config snapshot for the whole command. The book gate's
++    # known-secret set and the client that resolves and sends the Authorization
++    # value must come from this same read (T05e review N2); a new command reads
++    # again, so a rotation is never half-applied inside one decision.
++    cfg = _decide_config_snapshot(project_dir)
++    # T05j: one credential snapshot for this command, taken *before* the book
++    # gate. The gate's known set, the capture redactor of the decision and the
++    # client that sends the Authorization value are all built from this object,
++    # so a rotation cannot produce gate=A / capture=A / Authorization=B inside
++    # one command. The next command resolves a fresh one (T05i granularity).
++    credential_snapshot = decision.credential_snapshot(cfg)
+     book_source = getattr(args, "book", None)
+     book_meta = None
+     book_state_obj: dict | None = None
+@@ -935,7 +1332,11 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+             )
+             return 2
+         book_state_obj, book_meta, err = _book_gate(
+-            book_source, project_dir, flag="mw decide run"
++            book_source,
++            project_dir,
++            flag="mw decide run",
++            cfg=cfg,
++            credential_snapshot=credential_snapshot,
+         )
+         if err:
+             return 2
+@@ -960,8 +1361,9 @@ def _decide_run(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+     if err:
+         print(f"[mw decide run] {err}", file=sys.stderr)
+         return 2
+-    cfg, _cfg_err = decision.DecisionConfig.from_project(project_dir)
+-    client = decision.DecisionClient(cfg, project_root=project_dir)
++    client = decision.DecisionClient(
++        cfg, project_root=project_dir, credential_snapshot=credential_snapshot
++    )
+     if payload.get("questions"):
+         # Legacy path (frozen bytes): payload state + caller questions, no
+         # registry dp, no authorization row.
+@@ -1496,20 +1898,80 @@ def _book_print_issues(issues, *, flag: str, source: object) -> None:
+         _book_eprint(f"  FAIL {issue.format()}")
+ 
+ 
++def _decide_config_snapshot(
++    project_dir: pathlib.Path,
++) -> decision.DecisionConfig | None:
++    """Read ``.mw/decide.json`` exactly once for this command (T05g).
++
++    The book gate's known-secret set and the client that resolves the
++    Authorization value must come from one config read: two independent reads
++    open a rotation window where a value rotated in between them is sent while
++    the gate set still holds the old one (T05e review N2). Every command reads
++    once, so the next command picks the rotation up.
++
++    Fail-soft, like the gate it serves: a raising read yields ``None`` so the
++    gate keeps the env/``Bearer``/``sk-`` layers (a broken config never skips
++    the gate) and the caller falls back to an unconfigured transport, which
++    sends nothing.
++    """
++    try:
++        cfg, _error = decision.DecisionConfig.from_project(project_dir)
++    except Exception:  # noqa: BLE001 - the gate must still run on a broken config
++        return None
++    return cfg
++
++
++def _book_secret_redactor(cfg: object = None, credential_snapshot: object = None):
++    """The known-secret set of *this* command for the book gate (T05e F1/T05g/T05j).
++
++    ``cfg`` is the caller's single :class:`decision.DecisionConfig` snapshot
++    (:func:`_decide_config_snapshot`) - the same object the transport client is
++    built on, so the gate set and the sent Authorization value cannot come from
++    two different config reads. ``credential_snapshot`` is the command's single
++    :func:`decision.credential_snapshot` object (T05j): it pins the timi leg, so
++    the gate cannot resolve a second, later value while the client sends the
++    first one. Discovery stays in
++    :func:`decision_points.command_known_secret_redactor` (``cfg.api_key`` /
++    ``cfg.extras["api_key"]``, the pinned timi credential, the legacy timi leg
++    and the env heuristics) - the same set this decision's own gates and capture
++    redactor use - and does not require the optional wire module (a disabled
++    capture must not downgrade the gate). ``cfg=None`` keeps the env/Bearer/
++    ``sk-`` layers instead of skipping the gate. Values stay in memory; nothing
++    is logged.
++    """
++    return decision_points.command_known_secret_redactor(
++        cfg, snapshot=credential_snapshot
++    )
++
++
+ def _book_gate(
+-    source: str, project_dir: pathlib.Path, *, flag: str, dp: str | None = None
++    source: str,
++    project_dir: pathlib.Path,
++    *,
++    flag: str,
++    dp: str | None = None,
++    cfg: decision.DecisionConfig | None = None,
++    credential_snapshot: object = None,
+ ) -> tuple[dict | None, dict | None, str | None]:
+     """先验后发：装载 + `check_book` + 组发送用的 state。
+ 
+     返回 ``(state, meta, error)``；``error`` 非空时 ``state`` 为 ``None``，调用方
+     必须立即 exit 2 —— 检查失败绝不落到 `DecisionClient`（零 HTTP/零 spawn）。
++    密钥门用**当次项目配置的实际 known 集合**（T05e F1），不只看 env 启发式；
++    ``cfg`` 是调用方逐命令读取的唯一快照（T05g），门与发送因此不会来自两次读。
++    ``credential_snapshot`` 是同一命令唯一的凭证快照（T05j），门集合里的 timi
++    凭证与客户端当次 Authorization 是同一个冻结值。
+     """
+     try:
+         book = decision_book.load_book(source)
+     except decision_book.BookError as exc:
+         _book_print_issues([exc.issue], flag=flag, source=source)
+         return None, None, exc.issue.format()
+-    issues = decision_book.check_book(book, project_dir=project_dir)
++    issues = decision_book.check_book(
++        book,
++        project_dir=project_dir,
++        redactor=_book_secret_redactor(cfg, credential_snapshot),
++    )
+     if dp is not None and book.get("decision_point") != dp:
+         issues.insert(
+             0,
+@@ -1603,7 +2065,17 @@ def _decide_book_new(args: argparse.Namespace, project_dir: pathlib.Path) -> int
+ def _decide_book_check(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+     """`mw decide book check <file> [--json]`：只报告不修，失败 exit 2。"""
+     source = getattr(args, "file", None)
+-    report = decision_book.check_book_file(source, project_dir=project_dir)
++    # One snapshot for the command; ``check`` never constructs a client, so the
++    # gate's known set is the only consumer of the config read here (T05g).
++    cfg = _decide_config_snapshot(project_dir)
++    # T05j: the gate resolves the credential exactly once, from the same pinned
++    # snapshot the send path would use (no second discovery for the same book).
++    credential_snapshot = decision.credential_snapshot(cfg)
++    report = decision_book.check_book_file(
++        source,
++        project_dir=project_dir,
++        redactor=_book_secret_redactor(cfg, credential_snapshot),
++    )
+     if getattr(args, "json", False):
+         print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
+     else:
+@@ -1639,6 +2111,11 @@ def _decide_ask(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+     if err:
+         print(f"[mw decide ask] {err}", file=sys.stderr)
+         return 2
++    # T05g: the same single snapshot feeds the book gate and the client below.
++    cfg = _decide_config_snapshot(project_dir)
++    # T05j: and the same single credential snapshot feeds the gate, the capture
++    # redactor of this decision and the client's Authorization value.
++    credential_snapshot = decision.credential_snapshot(cfg)
+     book_source = getattr(args, "book", None)
+     book_meta = None
+     if book_source:
+@@ -1648,7 +2125,13 @@ def _decide_ask(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+                 file=sys.stderr,
+             )
+             return 2
+-        state, book_meta, err = _book_gate(book_source, project_dir, flag="mw decide ask")
++        state, book_meta, err = _book_gate(
++            book_source,
++            project_dir,
++            flag="mw decide ask",
++            cfg=cfg,
++            credential_snapshot=credential_snapshot,
++        )
+         if err:
+             return 2
+     else:
+@@ -1656,7 +2139,10 @@ def _decide_ask(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+         if err:
+             print(f"[mw decide ask] {err}", file=sys.stderr)
+             return 2
+-    cfg, _cfg_err = decision.DecisionConfig.from_project(project_dir)
++    if cfg is None:
++        # A config read that raised: the gate above already ran on the
++        # env/Bearer/``sk-`` layers; the fallback stays disabled, so zero send.
++        cfg = decision.DecisionConfig(project_root=project_dir)
+     if cfg.unconfigured:
+         # Typing the command is the human's opt-in; `.mw/decide.json` with
+         # enabled=false (or a broken file) is the operator's written decision
+@@ -1665,7 +2151,9 @@ def _decide_ask(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+     model = str(getattr(args, "model", None) or "").strip()
+     if model:
+         cfg.model = model
+-    client = _AskDecisionClient(cfg, project_root=project_dir)
++    client = _AskDecisionClient(
++        cfg, project_root=project_dir, credential_snapshot=credential_snapshot
++    )
+     try:
+         response = client.decide(state, questions, dp=_ASK_DP)
+     except decision.DecisionInputError as exc:
+@@ -2545,11 +3033,129 @@ _DP_VERIFY_STATE_VALUES: dict[str, object] = {
+     "progress.artifact_present": True,
+     "ambiguity.kind": "scope",
+     "local_candidates": [{"id": "c1", "label": "candidate one"}],
+-    # dp25-signoff-conclusion: the sign-off facts, not a real decision.
+-    "rows_total": 1,
+-    "rows_available": 1,
+-    "chain_ok": True,
+-    "p0_open": [],
++    # dp4-failure-handling: contract probe facts (minimal legal value per declared path).
++    "failure.kind": "transient",
++    "failure.attempt": 1,
++    "failure.limit": 3,
++    "failure.artifact_present": False,
++    # dp5-test-triage: contract probe facts (minimal legal value per declared path).
++    "test.failed_cases": [],
++    "test.baseline_cases": [],
++    "test.changed_paths": [],
++    "test.repro_consistent": False,
++    # dp6-qg-verdict: contract probe facts (minimal legal value per declared path).
++    "qg.checks_total": 3,
++    "qg.checks_failed": ["test_example"],
++    "qg.blocking": [],
++    "qg.scope": "impl",
++    # dp7-gate-failure: contract probe facts (minimal legal value per declared path).
++    "gate.name": "probe",
++    "gate.missing_items": [],
++    "gate.verdict_age_hours": 0,
++    "gate.has_config_error": False,
++    # dp8-scope-change: contract probe facts (minimal legal value per declared path).
++    "scope.requested_paths": [],
++    "scope.cross_key_conflicts": [],
++    "scope.requirement_delta": "probe",
++    # dp9-model-select: contract probe facts (minimal legal value per declared path).
++    "model.requested": "probe",
++    "model.available": [],
++    "model.transport_status": "ok",
++    # dp10-dependency: contract probe facts (minimal legal value per declared path).
++    "dependency.name": "probe",
++    "dependency.current": "probe",
++    "dependency.target": "probe",
++    "dependency.breaking": False,
++    "dependency.reviewed": False,
++    # dp11-credential: contract probe facts (minimal legal value per declared path).
++    "credential.provider": "probe",
++    "credential.kind": "probe",
++    "credential.scope": "probe",
++    "credential.exposed_to": [],
++    # dp12-destructive: contract probe facts (minimal legal value per declared path).
++    "action.command": "probe",
++    "action.targets": [],
++    "action.reversible": False,
++    "action.backup_available": False,
++    # dp13-commit-release: contract probe facts (minimal legal value per declared path).
++    "release.version_current": "probe",
++    "release.version_next": "probe",
++    "release.staged_paths": [],
++    "release.changelog_ready": False,
++    "release.ci_green": False,
++    # dp14-rule-conflict: contract probe facts (minimal legal value per declared path).
++    "conflict.user_instruction": "probe",
++    "conflict.rule_ref": "probe",
++    "conflict.rule_strength": "hard",
++    "conflict.irreversible": False,
++    # dp15-autopilot-gate: contract probe facts (minimal legal value per declared path).
++    "gate.kind": "stage-confirm",
++    "gate.pending_items": [],
++    "gate.age_minutes": 0,
++    "gate.evidence_refs": [],
++    # dp16-goal: contract probe facts (minimal legal value per declared path).
++    "goal.current_digest": "probe",
++    "goal.proposed_delta": "probe",
++    "goal.alignment": "aligned",
++    # dp17-spec-lock: contract probe facts (minimal legal value per declared path).
++    "spec.ac_ids": ["AC-001"],
++    "spec.ac_changed": ["AC-001"],
++    "spec.open_questions": [],
++    # dp18-claim: contract probe facts (minimal legal value per declared path).
++    "claim.key": "probe",
++    "claim.owner": "probe",
++    "claim.heartbeat_age_min": 0,
++    "claim.owner_active": False,
++    # dp19-foreign-write: contract probe facts (minimal legal value per declared path).
++    "write.target_path": "probe",
++    "write.cross_key_owner": "probe",
++    "write.write_scope": [],
++    "write.foreign_paths": [],
++    "write.allow_foreign_write": False,
++    # dp20-stage-close: contract probe facts (minimal legal value per declared path).
++    "stage.id": "probe",
++    "stage.tasks_done": 1,
++    "stage.tasks_total": 2,
++    "stage.open_blockers": [],
++    "stage.evidence_refs": [],
++    # dp21-refine: contract probe facts (minimal legal value per declared path).
++    "refine.clause": "probe",
++    "refine.impact_paths": [],
++    "refine.reversible": False,
++    # dp22-debug-plan: contract probe facts (minimal legal value per declared path).
++    "debug.signal": "probe",
++    "debug.last_green_ref": "probe",
++    "debug.repro_available": False,
++    "debug.change_scope": [],
++    # dp23-snapshot: contract probe facts (minimal legal value per declared path).
++    "snapshot.size_bytes": 0,
++    "snapshot.delta_bytes": -1,
++    "snapshot.sections_changed": [],
++    # dp24-pi-trust: contract probe facts (minimal legal value per declared path).
++    "project.path": "probe",
++    "project.trust_state": "untrusted",
++    "project.origin": "user",
++    "project.pending_changes": False,
++    # dp3-worker-clarify: the clarify material (question + background + candidates).
++    "question": "which registry file holds the authoritative decision point table?",
++    "background.task_goal": "probe the worker's clarifying decision",
++    "background.current_state": "probe: the current state is unknown",
++    "background.decision_reason": "probe: the decision blocks the next step",
++    "background.constraints_impact": "probe: each candidate has a different impact",
++    "handling_options": [
++        {"id": "c1", "label": "probe option one", "description": "probe description"}
++    ],
++    # dp1-dispatch-type / dp2-checkpoint-split: the complete task material.
++    "task_goal": "probe goal (the task's own goal, verbatim)",
++    "task_requirements": "probe requirements (the task's own requirements, verbatim)",
++    "task_deliverables": "probe deliverables (the task's own deliverables, verbatim)",
++    "pm_decision_background": "probe: why the PM needs this checkpoint now",
++    # dp25-signoff-conclusion: the four-part sign-off material, not archive counts.
++    "delivery_goal": "probe delivery goal",
++    "actual_completion": "probe actual completion",
++    "verification_evidence.verified": [],
++    "verification_evidence.unverified": [],
++    "unfinished_impact": [],
+ }
+ 
+ 
+@@ -3526,7 +4132,7 @@ def _decide_sign_key(
+     directly under ``.agenticdoc`` (so `--project .agenticdoc/<key>` needs no
+     extra flag). Anything else refuses instead of guessing a key.
+     """
+-    key = getattr(args, "key", None)
++    key = getattr(args, "key_pos", None) or getattr(args, "key", None)
+     if key:
+         return decide_signoff.key_dir(project_dir, key), key, None
+     if project_dir.parent.name == ".agenticdoc":
+@@ -3732,206 +4338,783 @@ def _decide_sign_preview(
+     return 0
+ 
+ 
+-def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+-    """`mw decide sign`: the decision model signs, or nothing is required.
++_DECIDE_LIFECYCLE_KEYS = frozenset(
++    {
++        "meta",
++        "decision_id",
++        "dp",
++        "stage",
++        "action",
++        "outcome",
++        "reason",
++        "answer",
++        "result",
++        "evidence_path",
++        "evidence_sha256",
++        "event_id",
++        "task_after",
++    }
++)
+ 
+-    One path only (spec §2 / design §3.1-3.2):
+ 
+-    1. ``--auto`` / ``--disable`` persist ``signoff`` in ``.mw/decide.json`` and
+-       exit 0 (``--dry-run`` prints only). They never sign: there is no
+-       conclusion parameter to carry into the sign step any more.
+-    2. ``signoff=disable`` -> nothing is written, exit 0 (the ``done`` gate also
+-       stops requiring the file, D-071).
+-    3. ``--dry-run`` is the read-only pre-judge: facts plus every conclusion's
+-       ``{ok, problems}`` verdict, zero writes (no decision-model call, no
+-       archive row, no sign-off file).
+-    4. otherwise ``dp25-signoff-conclusion`` (jev) supplies
+-       ``continue|narrow|revoke`` and the file records ``signed_via: auto-decide``.
+-    5. jev unavailable -> exit 0, no file, one line
+-       ``decision model unavailable (<reason>); sign-off not required``.
+-
+-    The verdict runs before the write: any problem prints on stderr, exits 2 and
+-    writes nothing (``continue`` with N=0 additionally needs ``--allow-empty``).
++def _decide_lifecycle(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
++    """`mw decide lifecycle --stdin`: the single feedback write face (T02).
++
++    The command records exactly the requested stage. ``consumed`` is a receipt
++    only: nothing is executed, completed or signed by this command, and no
++    stage is inferred from another. Unknown fields/values are refused before
++    any write and never echoed (they may be known secrets).
+     """
+-    key_dir_path, key, err = _decide_sign_key(args, project_dir)
++    as_json = bool(getattr(args, "json", False))
++    payload, err = _decide_read_envelope_json(args)
+     if err:
+-        print(f"[mw decide sign] {err}", file=sys.stderr)
++        print(f"[mw decide lifecycle] {err}", file=sys.stderr)
+         return 2
+-    # `.mw/decide.json` and `.mw/decide-points.json` live at the control root,
+-    # i.e. two levels above the key dir — `--project` may be either one.
+-    control_dir = key_dir_path.parent.parent
+-    reason = getattr(args, "reason", None)
+-    allow_empty = bool(getattr(args, "allow_empty", False))
+-    dry_run = bool(getattr(args, "dry_run", False))
+-    as_json = bool(getattr(args, "json", False))
+-
+-    mode_flag, mode_err = _decide_sign_mode(args)
+-    if mode_err:
+-        print(f"[mw decide sign] {mode_err}", file=sys.stderr)
++    assert payload is not None
++    unknown = [name for name in payload if name not in _DECIDE_LIFECYCLE_KEYS]
++    if unknown:
++        _decide_print(
++            {
++                "status": "refused",
++                "recorded": False,
++                "error_class": "input",
++                "error_recorded": None,
++                "error": f"request carries {len(unknown)} unknown field(s)",
++            },
++            as_json,
++        )
+         return 2
+-    if mode_flag is not None:
+-        return _decide_sign_persist_mode(
+-            control_dir, mode_flag, dry_run=dry_run, as_json=as_json
++    missing = [
++        name for name in ("meta", "decision_id", "dp", "stage") if name not in payload
++    ]
++    if missing:
++        _decide_print(
++            {
++                "status": "refused",
++                "recorded": False,
++                "error_class": "input",
++                "error_recorded": None,
++                "error": f"request is missing {', '.join(missing)}",
++            },
++            as_json,
+         )
+-
+-    cfg, _cfg_err = decision.DecisionConfig.from_project(control_dir)
+-    if cfg.signoff_error:
+-        # Design D-065 / AC-023: a typo does not disable the dps, but the sign
+-        # command refuses instead of silently picking a mode.
+-        print(f"[mw decide sign] .mw/decide.json: {cfg.signoff_error}", file=sys.stderr)
+-        print("[mw decide sign] nothing was written", file=sys.stderr)
++        return 2
++    meta, err = _decide_meta_from_payload(payload["meta"])
++    if err:
++        _decide_print(
++            {
++                "status": "refused",
++                "recorded": False,
++                "error_class": "input",
++                "error_recorded": None,
++                "error": err,
++            },
++            as_json,
++        )
++        return 2
++    stage = payload["stage"]
++    if stage not in decision_lifecycle.STAGES:
++        _decide_print(
++            {
++                "status": "refused",
++                "recorded": False,
++                "error_class": "input",
++                "error_recorded": None,
++                "error": f"stage is not one of {decision_lifecycle.STAGES}",
++            },
++            as_json,
++        )
++        return 2
++    decision_id = payload["decision_id"]
++    dp = payload["dp"]
++    if payload.get("task_after") is not None and (stage not in ("executed", "settled") or meta.task_key is None):
++        _decide_print({"status": "refused", "recorded": False, "error_class": "input", "error": "task_after requires an associated task and executed/settled stage"}, as_json)
+         return 2
+ 
+-    facts = decide_signoff.collect(key_dir_path, key)
+-    sign_path = decide_signoff.signoff_path(key_dir_path, key)
+-
+-    if cfg.signoff == decision.SIGNOFF_DISABLE:
+-        print(
+-            "signoff disabled (.mw/decide.json signoff=disable); nothing to sign, "
+-            f"{sign_path} is not required"
++    cfg = _decide_config_snapshot(project_dir)
++    credential_snapshot = decision.credential_snapshot(cfg)
++    control_root = _decide_control_root(project_dir)
++    try:
++        store = _decide_lifecycle_store(control_root, cfg, credential_snapshot)
++        common = dict(
++            decision_id=decision_id,
++            dp=dp,
++            reason=payload.get("reason"),
++            event_id=payload.get("event_id"),
+         )
+-        return _decide_sign_preview(facts, key, allow_empty, as_json)
++        try:
++            if stage == "consumed":
++                result = decision_lifecycle.record_consumed(
++                    store,
++                    meta,
++                    answer=payload.get("answer"),
++                    **common,
++                )
++            elif stage == "executed":
++                result = decision_lifecycle.record_executed(
++                    store,
++                    meta,
++                    action=payload.get("action"),
++                    result=payload.get("result"),
++                    task_after=payload.get("task_after"),
++                    **common,
++                )
++            elif stage == "settled":
++                result = decision_lifecycle.record_settled(
++                    store,
++                    meta,
++                    outcome=payload.get("outcome"),
++                    task_after=payload.get("task_after"),
++                    **common,
++                )
++            else:
++                result = decision_lifecycle.record_signoff(
++                    store,
++                    meta,
++                    evidence_path=payload.get("evidence_path"),
++                    evidence_sha256=payload.get("evidence_sha256"),
++                    snapshot_sha256=payload.get("snapshot_sha256"),
++                    **common,
++                )
++        except decision_lifecycle.LifecycleInputError as exc:
++            _decide_print(
++                {
++                    "stage": stage if stage in decision_lifecycle.STAGES else None,
++                    "status": "refused",
++                    "recorded": False,
++                    "error_class": "input",
++                    "error_recorded": None,
++                    "error": str(exc),
++                    "duplicate": False,
++                },
++                as_json,
++            )
++            return 2
++    except (decision_lifecycle.LifecycleInputError, OSError) as exc:
++        # A refused filter or an unusable sink is a *feedback* failure the caller
++        # must see, never an unhandled traceback (the receipt stage returns this
++        # JSON and the tool reports recorded=false).
++        _decide_print(
++            {
++                "stage": stage,
++                "status": "refused"
++                if isinstance(exc, decision_lifecycle.LifecycleInputError)
++                else "failed",
++                "recorded": False,
++                "error_class": "input"
++                if isinstance(exc, decision_lifecycle.LifecycleInputError)
++                else "io",
++                "error_recorded": None,
++                "error": type(exc).__name__,
++            },
++            as_json,
++        )
++        return 1
++    _decide_print(
++        {
++            "stage": result.stage,
++            "status": result.status,
++            "recorded": result.recorded,
++            "error_class": result.error_class,
++            "error_recorded": result.error_recorded,
++            "event_id": result.event_id,
++            "duplicate": result.duplicate,
++            "logical_id": meta.logical_id,
++            "decision_id": decision_id,
++            "line_bytes": result.line_bytes,
++        },
++        as_json,
++    )
++    return 0 if result.recorded else 1
+ 
+-    if dry_run:
+-        # AC-003: the pre-judge is read-only in the strict sense — no
+-        # `dp25` call (it would append its own archive row), no sign-off file.
+-        return _decide_sign_preview(
+-            facts,
+-            key,
+-            allow_empty,
++
++def _decide_sign_finalize(
++    args: argparse.Namespace,
++    project_dir: pathlib.Path,
++    key_dir_path: pathlib.Path,
++    key: str,
++) -> int:
++    """`mw decide sign <key> --stdin`: PM material -> one dp25 finalize judgment.
++
++    Pre-call gates preserved: config/typed material/global transport/budget
++    (inside ``decide_for``), archive chain, and the sign-off write face. The
++    model is called at most once per ``logical_id``; the result record is the
++    retry face, the valid sign-off file is the success authority, and feedback
++    is reported separately (``feedback_status``).
++    """
++    as_json = bool(getattr(args, "json", False))
++    control_dir = key_dir_path.parent.parent
++    cfg, _cfg_error = decision.DecisionConfig.from_project(control_dir)
++    if cfg.signoff_error:
++        return _decide_sign_refusal(
+             as_json,
+-            note=(
+-                "dry-run: facts and every conclusion's verdict only; "
+-                "nothing is written"
+-            ),
++            [f".mw/decide.json: {cfg.signoff_error}"],
++            logical_id=None,
++        )
++    if cfg.signoff == decision.SIGNOFF_DISABLE:
++        _decide_print(
++            {
++                "conclusion": None,
++                "signoff_status": "disabled",
++                "feedback_status": "not-recorded",
++                "signoff_path": None,
++                "second_approval": 0,
++            },
++            as_json,
++        )
++        return 0
++    credential_snapshot = decision.credential_snapshot(cfg)
++    redactor = decision.known_secret_redactor(cfg, snapshot=credential_snapshot)
++    facts = decide_signoff.collect(key_dir_path, key)
++    problems: list[str] = []
++    if not facts.chain_ok:
++        problems.append(
++            "archive hash chain is broken; refusing to sign an unverifiable history"
+         )
++    target = decision_signoff_result.signoff_path(key_dir_path)
++    try:
++        decision_signoff_result.assert_safe_target(key_dir_path, target)
++    except decision_signoff_result.SignoffResultError as exc:
++        problems.append(f"sign-off path is unsafe: {exc}")
++    if problems:
++        return _decide_sign_refusal(as_json, problems, logical_id=None)
+ 
+-    conclusion, decide_detail = decide_signoff.auto_conclusion(
+-        control_dir, key, facts=facts
+-    )
+-    if conclusion is None:
+-        unavailable = (
+-            f"decision model unavailable ({decide_detail}); sign-off not required"
++    try:
++        store = _decide_lifecycle_store(
++            _decide_control_root(project_dir), cfg, credential_snapshot
+         )
+-        if as_json:
+-            print(
+-                json.dumps(
+-                    {
+-                        "conclusion": None,
+-                        "ok": None,
+-                        "problems": [],
+-                        "note": unavailable,
+-                        "facts": facts.as_dict(),
+-                        "path": None,
+-                        "verdicts": _decide_sign_verdicts(facts, allow_empty),
+-                    },
+-                    ensure_ascii=False,
+-                    indent=2,
++    except (decision_lifecycle.LifecycleInputError, OSError) as exc:
++        return _decide_sign_refusal(
++            as_json, [f"the lifecycle ledger is not usable: {exc}"], logical_id=None
++        )
++    retry_id = getattr(args, "retry_write", None)
++    if not retry_id and not getattr(args, "stdin", False):
++        return _decide_sign_refusal(
++            as_json, ["the versioned sign path requires --stdin"], logical_id=None
++        )
++
++    meta = None
++    material: dict | None = None
++    record = None
++    record_status = "existing"
++    if retry_id:
++        try:
++            record = decision_signoff_result.read_result(key_dir_path, retry_id)
++        except decision_signoff_result.SignoffResultError as exc:
++            return _decide_sign_refusal(
++                as_json,
++                [f"the persisted result is not usable: {exc}"],
++                logical_id=retry_id,
++            )
++        if record is None:
++            return _decide_sign_refusal(
++                as_json,
++                ["no persisted result for this logical_id; issue a new judgment"],
++                logical_id=retry_id,
++            )
++        if getattr(args, "stdin", False):
++            payload, err = _decide_read_envelope_json(args)
++            if err:
++                return _decide_sign_refusal(
++                    as_json, [err], logical_id=retry_id
+                 )
++            assert payload is not None
++            material, meta, err = _decide_envelope(payload)
++            if err:
++                return _decide_sign_refusal(
++                    as_json, [err], logical_id=retry_id
++                )
++            assert material is not None and meta is not None
++            if meta.logical_id != retry_id:
++                return _decide_sign_refusal(
++                    as_json,
++                    ["--retry-write does not match the envelope logical_id"],
++                    logical_id=retry_id,
++                )
++        if record.key != key:
++            return _decide_sign_refusal(
++                as_json,
++                ["the persisted result belongs to a different key"],
++                logical_id=record.logical_id,
+             )
+-        else:
+-            print(unavailable)
+-        return 0
++        if record.rows_sha256 != facts.sha256:
++            return _decide_sign_refusal(
++                as_json,
++                ["archive evidence changed since the recorded conclusion; issue a new judgment"],
++                logical_id=record.logical_id,
++            )
++        if material is not None:
++            digest, evidence = decision_signoff_result.digest_material(material)
++            if digest != record.material_sha256 or evidence != record.evidence_sha256:
++                return _decide_sign_refusal(
++                    as_json,
++                    ["material/evidence changed since the recorded conclusion; issue a new judgment"],
++                    logical_id=record.logical_id,
++                )
++        try:
++            meta = decision_lifecycle.DecisionMeta(
++                key=record.key,
++                logical_id=record.logical_id,
++                initiator_role=record.initiator_role
++                if record.initiator_role in decision_lifecycle.INITIATOR_ROLES
++                else "unknown",
++                task_key=record.task_key,
++                retry_of=record.retry_of,
++            )
++        except decision_lifecycle.LifecycleInputError as exc:
++            return _decide_sign_refusal(
++                as_json,
++                [f"the persisted result meta is not usable: {exc}"],
++                logical_id=record.logical_id,
++            )
++    else:
++        payload, err = _decide_read_envelope_json(args)
++        if err:
++            return _decide_sign_refusal(as_json, [err], logical_id=None)
++        assert payload is not None
++        material, meta, err = _decide_envelope(payload)
++        if err:
++            return _decide_sign_refusal(as_json, [err], logical_id=None)
++        assert material is not None and meta is not None
++        if meta.key != key:
++            return _decide_sign_refusal(
++                as_json,
++                ["envelope.meta.key does not match the command key"],
++                logical_id=meta.logical_id,
++            )
++        try:
++            record = decision_signoff_result.read_result(key_dir_path, meta.logical_id)
++        except decision_signoff_result.SignoffResultError as exc:
++            return _decide_sign_refusal(
++                as_json,
++                [f"the persisted result is not usable: {exc}"],
++                logical_id=meta.logical_id,
++            )
++        if record is not None:
++            digest, evidence = decision_signoff_result.digest_material(material)
++            if digest != record.material_sha256 or evidence != record.evidence_sha256:
++                return _decide_sign_refusal(
++                    as_json,
++                    ["material/evidence changed since the recorded conclusion; issue a new judgment"],
++                    logical_id=meta.logical_id,
++                )
++            if record.rows_sha256 != facts.sha256:
++                return _decide_sign_refusal(
++                    as_json,
++                    ["archive evidence changed since the recorded conclusion; issue a new judgment"],
++                    logical_id=meta.logical_id,
++                )
++            return _decide_sign_finish(
++                args,
++                key_dir_path,
++                key,
++                meta,
++                record,
++                facts,
++                store,
++                facts_claim=_decide_sign_claim(key_dir_path),
++                model_called=False,
++                record_status="existing",
++            )
++        # No result: a started-but-unrecorded logical id has no trustworthy
++        # conclusion. Never re-call the model for it; a new judgment is new id.
++        existing = _decide_lifecycle_facts(store, meta.logical_id)
++        if existing["start"] is not None:
++            return _decide_sign_refusal(
++                as_json,
++                [
++                    "this logical_id was started but has no recoverable result; "
++                    "issue a new logical_id with retry_of"
++                ],
++                logical_id=meta.logical_id,
++            )
++        # Validate the typed material before the creation fact: a malformed
++        # envelope must not leave a start fact that looks like a real attempt.
++        try:
++            point = decision_points.get_decision_point(decision_signoff_result.DP_ID)
++        except decision.DecisionInputError as exc:
++            return _decide_sign_refusal(
++                as_json, [str(exc)], logical_id=meta.logical_id
++            )
++        if point.id != decision_signoff_result.DP_ID:
++            return _decide_sign_refusal(
++                as_json, ["the dp25 point is not registered"], logical_id=meta.logical_id
++            )
++        try:
++            start = decision_lifecycle.record_start(
++                store, meta, decision_id=f"{point.id}:{meta.logical_id}"
++            )
++        except decision_lifecycle.LifecycleInputError as exc:
++            return _decide_sign_refusal(
++                as_json,
++                [f"the creation fact was refused: {exc}"],
++                logical_id=meta.logical_id,
++            )
++        if start.duplicate:
++            return _decide_sign_refusal(
++                as_json,
++                [
++                    "this logical_id was started concurrently; issue a new "
++                    "logical_id with retry_of instead of re-sending the model"
++                ],
++                logical_id=meta.logical_id,
++            )
++        if not start.recorded:
++            return _decide_sign_refusal(
++                as_json,
++                ["the creation fact could not be recorded; zero model call"],
++                logical_id=meta.logical_id,
++            )
++        client = decision.DecisionClient(
++            cfg, project_root=control_dir, credential_snapshot=credential_snapshot
++        )
++        trigger = decision_points.Trigger.from_mapping(
++            material,
++            trigger_id=meta.logical_id,
++            key=meta.key,
++            task_key=meta.task_key,
++        )
++        try:
++            outcome = decision_points.decide_for(
++                point.id, trigger, control_dir, client=client, intent="answer"
++            )
++        except decision.DecisionInputError as exc:
++            return _decide_sign_refusal(
++                as_json, [str(exc)], logical_id=meta.logical_id
++            )
++        if outcome.status not in ("acted", "suggested") or not outcome.answer:
++            reason = outcome.escalated_reason or outcome.status
++            detail = (outcome.detail or "").strip()
++            problems = [f"dp25 did not produce a conclusion ({reason})"]
++            if detail:
++                problems.append(detail.splitlines()[0][:240])
++            return _decide_sign_refusal(
++                as_json, problems, logical_id=meta.logical_id
++            )
++        item = dict(outcome.answer).get("q-conclusion")
++        conclusion = item.get("value") if isinstance(item, dict) else item
++        if conclusion not in decision_signoff_result.CONCLUSIONS:
++            return _decide_sign_refusal(
++                as_json,
++                ["dp25 answer is not in the finalize|continue|user-confirm set"],
++                logical_id=meta.logical_id,
++            )
++        response = dict(outcome.response or {})
++        transport = response.get("transport") or "none"
++        model = response.get("model")
++        confidence_source = (
++            outcome.confidence_source
++            or response.get("confidence_source")
++            or decision.CONFIDENCE_SOURCE_UNKNOWN
++        )
++        if transport == "none" or not model:
++            return _decide_sign_refusal(
++                as_json,
++                ["the conclusion has no verifiable transport/model provenance"],
++                logical_id=meta.logical_id,
++            )
++        record = decision_signoff_result.build_result(
++            key_dir_path,
++            key=key,
++            logical_id=meta.logical_id,
++            decision_id=outcome.decision_id,
++            conclusion=str(conclusion),
++            material=material,
++            facts=facts,
++            transport=str(transport),
++            model=str(model),
++            confidence_source=str(confidence_source),
++            task_key=meta.task_key,
++            initiator_role=meta.initiator_role,
++            retry_of=meta.retry_of,
++            snapshot_material=material,
++        )
++        record_status = "written"
++        try:
++            decision_signoff_result.write_result(
++                key_dir_path, record, redact=redactor
++            )
++        except (decision_signoff_result.SignoffResultError, OSError) as exc:
++            # The file remains the success authority and carries the same
++            # snapshot, so a logging/retry-face failure is reported separately
++            # and never turned into a false sign-off success or failure.
++            record_status = f"failed:{type(exc).__name__}"
++    assert record is not None and meta is not None
++    return _decide_sign_finish(
++        args,
++        key_dir_path,
++        key,
++        meta,
++        record,
++        facts,
++        store,
++        facts_claim=_decide_sign_claim(key_dir_path),
++        model_called=retry_id is None,
++        record_status=record_status,
++    )
+ 
+-    # The dp25 call appended its own decide row: re-read so the chain view the
+-    # signature describes is the post-decision one (its rows are counted
+-    # nowhere, see decide_signoff.collect).
+-    facts = decide_signoff.collect(key_dir_path, key)
+-    ok, problems = decide_signoff.verdict(
+-        facts, conclusion, allow_empty=allow_empty and conclusion == "continue"
++
++def _decide_sign_payload_base(record, facts, key: str) -> dict:
++    return {
++        "dp": record.dp,
++        "key": key,
++        "logical_id": record.logical_id,
++        "decision_id": record.decision_id,
++        "conclusion": record.conclusion,
++        "signoff_path": None,
++        "material_sha256": record.material_sha256,
++        "evidence_sha256": record.evidence_sha256,
++        "archive_sha256": record.rows_sha256,
++        "snapshot_sha256": record.snapshot_sha256,
++        "counted_rows": len(facts.rows),
++        "second_approval": 0,
++        "problems": [],
++        "write_error_class": None,
++    }
++
++
++def _decide_sign_refusal(
++    as_json: bool, problems: list[str], *, logical_id: str | None
++) -> int:
++    for problem in problems:
++        print(f"[mw decide sign] {problem}", file=sys.stderr)
++    _decide_print(
++        {
++            "dp": decision_signoff_result.DP_ID,
++            "logical_id": logical_id,
++            "conclusion": None,
++            "signoff_status": "failed",
++            "feedback_status": "not-recorded",
++            "signoff_path": None,
++            "second_approval": 0,
++            "problems": list(problems),
++        },
++        as_json,
+     )
+-    if not ok:
+-        for problem in problems:
+-            print(f"[mw decide sign] {problem}", file=sys.stderr)
+-        print("[mw decide sign] nothing was written", file=sys.stderr)
+-        if as_json:
+-            print(
+-                json.dumps(
+-                    {
+-                        "conclusion": conclusion,
+-                        "ok": False,
+-                        "problems": problems,
+-                        "facts": facts.as_dict(),
+-                        "path": None,
+-                        "verdicts": _decide_sign_verdicts(facts, allow_empty),
+-                    },
+-                    ensure_ascii=False,
+-                    indent=2,
++    return 2
++
++
++def _decide_sign_finish(
++    args: argparse.Namespace,
++    key_dir_path: pathlib.Path,
++    key: str,
++    meta: object,
++    record: object,
++    facts: object,
++    store: object,
++    *,
++    facts_claim: str,
++    model_called: bool,
++    record_status: str,
++) -> int:
++    """Apply one recorded dp25 conclusion (file for finalize, handoff otherwise)."""
++    as_json = bool(getattr(args, "json", False))
++    payload = _decide_sign_payload_base(record, facts, key)
++    payload["record_status"] = record_status
++    payload["model_called"] = model_called
++    feedback: list = []
++
++    def _feedback(stage: str, thunk) -> None:
++        try:
++            feedback.append(thunk())
++        except (decision_lifecycle.LifecycleInputError, OSError):
++            feedback.append(
++                decision_lifecycle.LifecycleResult(
++                    stage=stage, status="failed", error_class="input"
+                 )
+             )
+-        return 2
+ 
+-    claim = _decide_sign_claim(key_dir_path)
+-    text = decide_signoff.render(
+-        facts,
+-        conclusion,
+-        reason,
+-        key,
+-        claim,
+-        allow_empty=allow_empty and conclusion == "continue",
+-        signed_via="auto-decide",
++    if record.conclusion == "finalize":
++        path = decision_signoff_result.signoff_path(key_dir_path)
++        validation = decision_signoff_result.validate_signoff(
++            key_dir_path,
++            key,
++            expected_logical_id=record.logical_id,
++            expected_snapshot=record.snapshot_sha256,
++        )
++        if validation.valid:
++            signoff_status = "existing"
++            file_hash = validation.file_sha256
++            written = path
++        else:
++            if path.exists() and validation.logical_id == record.logical_id:
++                payload["problems"] = [
++                    "the existing sign-off file for this logical_id does not match "
++                    "its snapshot; refusing to overwrite it"
++                ]
++                payload["signoff_status"] = "invalid-existing"
++                payload["feedback_status"] = "not-recorded"
++                _decide_print(payload, as_json)
++                return 2
++            try:
++                text = decide_signoff.render(
++                    facts,
++                    record.conclusion,
++                    getattr(args, "reason", None),
++                    key,
++                    facts_claim,
++                    result=record,
++                )
++                written = decide_signoff.write_signoff(key_dir_path, key, text)
++            except (
++                decide_signoff.SignoffError,
++                decision_signoff_result.SignoffResultError,
++                OSError,
++            ) as exc:
++                payload["signoff_status"] = "failed"
++                payload["write_error_class"] = type(exc).__name__
++                payload["feedback_status"] = "not-recorded"
++                _decide_print(payload, as_json)
++                return 2
++            file_hash = hashlib.sha256(written.read_bytes()).hexdigest()
++            signoff_status = "written"
++        payload["signoff_status"] = signoff_status
++        payload["signoff_path"] = str(written)
++        _feedback(
++            "consumed",
++            lambda: decision_lifecycle.record_consumed(
++                store,
++                meta,
++                decision_id=record.decision_id,
++                dp=record.dp,
++                answer=record.conclusion,
++                answer_source=record.confidence_source,
++                event_id=_decide_event_id(record.logical_id, "consumed"),
++            ),
++        )
++        _feedback(
++            "signoff",
++            lambda: decision_lifecycle.record_signoff(
++                store,
++                meta,
++                decision_id=record.decision_id,
++                dp=record.dp,
++                evidence_path="evidence/review/sign-final.md",
++                evidence_sha256=str(file_hash),
++                snapshot_sha256=record.snapshot_sha256,
++                reason=getattr(args, "reason", None),
++                event_id=_decide_event_id(record.logical_id, "signoff"),
++            ),
++        )
++        payload.update(_decide_feedback_fields(feedback))
++        payload["signoff_file_bytes"] = written.stat().st_size
++        _decide_print(payload, as_json)
++        return 0
++
++    # continue / user-confirm: zero sign-off writes, explicit PM handoff.
++    payload["signoff_status"] = "not-required"
++    payload["handoff"] = {
++        "owner": "pm",
++        "kind": record.conclusion,
++        "signoff_writes": 0,
++        "instruction": (
++            "advance the concrete unfinished items listed in unfinished_impact"
++            if record.conclusion == "continue"
++            else "ask the user to confirm the unverified evidence and unfinished impact"
++        ),
++    }
++    _feedback(
++        "executed",
++        lambda: decision_lifecycle.record_executed(
++            store,
++            meta,
++            decision_id=record.decision_id,
++            dp=record.dp,
++            action=record.conclusion,
++            result="pm-handoff",
++            event_id=_decide_event_id(record.logical_id, "handoff"),
++        ),
+     )
++    payload.update(_decide_feedback_fields(feedback))
++    _decide_print(payload, as_json)
++    return 0
+ 
+-    try:
+-        written = decide_signoff.write_signoff(key_dir_path, key, text)
+-    except (decide_signoff.SignoffError, OSError) as exc:
+-        print(f"[mw decide sign] cannot write {sign_path}: {exc}", file=sys.stderr)
++
++def _decide_sign(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
++    """`mw decide sign`: sign the PM's dp25 material, or persist the mode.
++
++    One path only (approved design §4.4):
++
++    1. ``--auto`` / ``--disable`` persist ``signoff`` in ``.mw/decide.json`` and
++       exit 0 (``--dry-run`` prints only). They never sign.
++    2. ``signoff=disable`` -> nothing is written, exit 0 (the ``done`` gate also
++       stops requiring the file, D-071).
++    3. ``<key> --stdin`` (and ``--retry-write``) sign the PM's four-part dp25
++       material: ``delivery_goal`` / ``actual_completion`` /
++       ``verification_evidence.verified`` + ``.unverified`` /
++       ``unfinished_impact``. ``finalize`` writes the valid sign-off file.
++    4. Any other (legacy, count-based, no-material) invocation is refused
++       explicitly with exit 2 and zero writes: the old ``continue|narrow|revoke``
++       count face is not part of the approved contract, so the main entry must
++       not run it silently or pretend it still works.
++    """
++    key_dir_path, key, err = _decide_sign_key(args, project_dir)
++    if err:
++        print(f"[mw decide sign] {err}", file=sys.stderr)
+         return 2
++    if getattr(args, "stdin", False) or getattr(args, "retry_write", None):
++        # Card T05: the PM-material dp25 path (the only signing path).
++        return _decide_sign_finalize(args, project_dir, key_dir_path, key)
++    # `.mw/decide.json` and `.mw/decide-points.json` live at the control root,
++    # i.e. two levels above the key dir — `--project` may be either one.
++    control_dir = key_dir_path.parent.parent
++    as_json = bool(getattr(args, "json", False))
+ 
+-    archive = decide_signoff.archive_path(key_dir_path)
+-    anchor_dp = _decide_sign_anchor_dp(control_dir, facts)
+-    ts = _dp_now()
+-    # `decide_archive._CHANGE_BY` is a frozen vocabulary (human / signoff:<conclusion>
+-    # / refresh), so the automatic face rides the `note` column instead of
+-    # inventing `signoff:auto-*`; `config_sha_after` is 16 hex by contract (the
+-    # pre-existing call passed the full digest, which fails whenever the table
+-    # exists — exactly the case the automatic path runs in).
+-    config_sha = _dp_table_sha(_dp_table_path(control_dir))
+-    try:
+-        decide_archive.append_authority_change(
+-            archive,
+-            dp=anchor_dp,
+-            key=key,
+-            by=f"signoff:{conclusion}",
+-            change="signoff",
+-            trigger_id=f"signoff@{key}@{ts}",
+-            conclusion=conclusion,
+-            config_sha_after=config_sha[:16] if config_sha else None,
+-            note="signed_via=auto-decide",
++    mode_flag, mode_err = _decide_sign_mode(args)
++    if mode_err:
++        print(f"[mw decide sign] {mode_err}", file=sys.stderr)
++        return 2
++    if mode_flag is not None:
++        return _decide_sign_persist_mode(
++            control_dir,
++            mode_flag,
++            dry_run=bool(getattr(args, "dry_run", False)),
++            as_json=as_json,
+         )
+-    except (decide_archive.DecisionArchiveError, OSError) as exc:
++
++    cfg, _cfg_err = decision.DecisionConfig.from_project(control_dir)
++    if cfg.signoff_error:
++        # Design D-065 / AC-023: a typo does not disable the dps, but the sign
++        # command refuses instead of silently picking a mode.
++        print(f"[mw decide sign] .mw/decide.json: {cfg.signoff_error}", file=sys.stderr)
++        print("[mw decide sign] nothing was written", file=sys.stderr)
++        return 2
++    if cfg.signoff == decision.SIGNOFF_DISABLE:
++        sign_path = decide_signoff.signoff_path(key_dir_path, key)
+         print(
+-            f"[mw decide sign] sign file written ({written}) but the "
+-            f"authority-change row failed: {exc}",
+-            file=sys.stderr,
++            "signoff disabled (.mw/decide.json signoff=disable); nothing to sign, "
++            f"{sign_path} is not required"
+         )
+-        return 2
++        return 0
+ 
++    # Explicit refusal instead of a silent legacy run: the count-based
++    # continue|narrow|revoke face was replaced by the PM's dp25 material.
++    problems = [
++        "this command no longer signs the legacy archive counts: dp25 now signs "
++        "the PM's four-part material (delivery_goal, actual_completion, "
++        "verification_evidence.verified, verification_evidence.unverified, "
++        "unfinished_impact)",
++        "pass it as {material, meta} on stdin: mw decide sign <key> --project . "
++        "--stdin < envelope.json",
++        "nothing was written",
++    ]
++    for problem in problems:
++        print(f"[mw decide sign] {problem}", file=sys.stderr)
+     if as_json:
+         print(
+             json.dumps(
+                 {
+-                    "conclusion": conclusion,
+-                    "signed_via": "auto-decide",
+-                    "ok": True,
+-                    "problems": [],
+-                    "facts": facts.as_dict(),
+-                    "path": str(written),
+-                    "verdicts": _decide_sign_verdicts(facts, allow_empty),
++                    "conclusion": None,
++                    "ok": False,
++                    "problems": problems[:2],
++                    "facts": None,
++                    "path": None,
+                 },
+                 ensure_ascii=False,
+                 indent=2,
+             )
+         )
+-        return 0
+-    for line in _decide_sign_summary(facts, key, conclusion, allow_empty):
+-        print(line)
+-    if decide_detail:
+-        print(f"  decide: {decide_detail}")
+-    print("signed_via: auto-decide")
+-    print(f"wrote {written}")
+-    print(f"authority-change: dp={anchor_dp} by=signoff:{conclusion} -> {archive}")
+-    return 0
++    return 2
+ 
+ 
+ def _decide_dp(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
+@@ -3995,6 +5178,8 @@ def cmd_decide(args: argparse.Namespace) -> int:
+     action = getattr(args, "decide_action", None)
+     if action == "run":
+         return _decide_run(args, project_dir)
++    if action == "lifecycle":
++        return _decide_lifecycle(args, project_dir)
+     if action == "probe":
+         return _decide_probe(args, project_dir)
+     if action == "show":
+@@ -4011,10 +5196,664 @@ def cmd_decide(args: argparse.Namespace) -> int:
+         return _decide_sign(args, project_dir)
+     if action == "dp":
+         return _decide_dp(args, project_dir)
++    if action == "monitor":
++        return _decide_monitor(args, project_dir)
+     print(f"[mw decide] unknown action {action!r}", file=sys.stderr)
+     return 2
+ 
+ 
++# ── Subcommand: decide monitor (mw-decision-dashboard T08a / design D-001) ──
++#
++# `decision_monitor` (T10) owns the service, identity, token protocol, port
++# range and window argv; this file only wires the CLI face:
++#
++#   mw decide monitor          ensure one project-local instance, mint a fresh
++#                              single-use boot code, ask Chromium for an app window
++#   mw decide monitor status   read-only health/identity view (never starts)
++#   mw decide monitor stop     authenticated shutdown of that instance (never kills)
++#
++# The user-facing command cannot serve in its own process (it must exit), so the
++# instance runs in a detached child through the hidden `_decide_monitor_starter`
++# entry. The child gets an explicit argv/cwd (`_monitor_starter_argv`), a hidden
++# console on win32 and `start_new_session` on POSIX.
++
++_MONITOR_STARTER_ENTRY = "_decide_monitor_starter"
++_MONITOR_BROWSER_ENV = "MW_MONITOR_BROWSER"
++_MONITOR_PROFILE_ENV = "MW_MONITOR_BROWSER_PROFILE"
++_MONITOR_ACTIONS = ("open", "status", "stop")
++_MONITOR_PUBLISH_TIMEOUT_S = 10.0
++_MONITOR_HEALTH_WAIT_S = 5.0
++_MONITOR_REDACTED = "<redacted>"
++
++
++def _monitor_starter_argv(control_root: pathlib.Path | str) -> list[str]:
++    """The exact hidden-child argv (also the evidence for CI/report logs)."""
++    return [
++        sys.executable,
++        str(pathlib.Path(__file__).resolve()),
++        _MONITOR_STARTER_ENTRY,
++        "--project",
++        str(control_root),
++    ]
++
++
++def _monitor_starter_cwd(control_root: pathlib.Path | str) -> pathlib.Path:
++    """The child's cwd: the resolved control root, never an inherited cwd."""
++    return pathlib.Path(control_root)
++
++
++class _SpawnedMonitorInstance:
++    """CLI-side view of the monitor this command started in a detached child.
++
++    It carries the small part of the ``MonitorInstance``/``AttachedInstance``
++    surface that :func:`decision_monitor.ensure_instance` needs after the
++    starter returns: ``port``, ``identity``, ``control_token`` and the health
++    identity accessor. ``new_window_url`` reuses the authenticated attach path
++    (the child holds the boot codes in its own process, never in this one).
++    """
++
++    def __init__(
++        self,
++        control_root: pathlib.Path,
++        proc: subprocess.Popen,
++        identity: decision_monitor.InstanceIdentity,
++        control_token: str,
++    ) -> None:
++        self.control_root = pathlib.Path(control_root)
++        self.proc = proc
++        self.identity = identity
++        self.control_token = control_token
++        self.recovery: dict[str, object] | None = None
++
++    @property
++    def port(self) -> int:
++        return self.identity.port
++
++    def _require_identity(self) -> decision_monitor.InstanceIdentity:
++        return self.identity
++
++    def new_window_url(self) -> str:
++        attached = decision_monitor.AttachedInstance(
++            control_root=self.control_root,
++            identity=self.identity,
++            control_token=self.control_token,
++        )
++        return attached.new_window_url()
++
++
++def _monitor_public_url(port: int) -> str:
++    """The dashboard URL without the single-use boot fragment."""
++    return f"http://{decision_monitor.HOST}:{int(port)}/"
++
++
++def _monitor_error_fields(exc: BaseException) -> dict[str, object]:
++    if isinstance(exc, decision_monitor.MonitorError):
++        return {
++            "kind": exc.kind,
++            "message": exc.message,
++            "details": dict(exc.details),
++            "guide": list(exc.guide),
++        }
++    if isinstance(exc, mw_common.ControlRootError):
++        return {
++            "kind": exc.kind,
++            "message": str(exc),
++            "details": {},
++            "guide": [
++                "pass --project <control root> (a directory with .agenticdoc or target.yml)",
++                "the monitor never falls back to cwd, a guessed root or a parent workspace",
++            ],
++        }
++    return {"kind": "error", "message": str(exc), "details": {}, "guide": []}
++
++
++def _monitor_report_error(args: argparse.Namespace, action: str, exc: BaseException) -> int:
++    fields = _monitor_error_fields(exc)
++    if getattr(args, "json", False):
++        print(
++            json.dumps(
++                {"ok": False, "action": action, "error": fields}, ensure_ascii=False
++            )
++        )
++    else:
++        print(
++            f"[mw decide monitor] ERROR ({fields['kind']}): {fields['message']}",
++            file=sys.stderr,
++        )
++        for line in fields["guide"]:  # type: ignore[union-attr]
++            print(f"[mw decide monitor]   - {line}", file=sys.stderr)
++    return 2 if isinstance(exc, mw_common.ControlRootError) else 1
++
++
++def _monitor_read_recorded(
++    root: pathlib.Path,
++) -> tuple[decision_monitor.InstanceIdentity, str]:
++    """Read + validate the recorded instance without starting or recovering it."""
++    state, problem = decision_monitor.read_state(root)
++    if problem is not None:
++        raise decision_monitor.MonitorError(
++            "instance-unknown",
++            problem,
++            details={"problem": problem},
++            guide=decision_monitor.recovery_guide(root),
++        )
++    if state is None:
++        raise decision_monitor.MonitorError(
++            "no-instance",
++            f"no monitor instance is recorded for {root}",
++            details={"state_path": str(decision_monitor.state_path(root))},
++            guide=[
++                "start it with 'mw decide monitor'",
++                "status/stop never start a service by themselves",
++            ],
++        )
++    identity = decision_monitor.identity_from_state(state, control_root=root)
++    expected = decision_wire.project_id_for(root)
++    if identity.project_id != expected:
++        raise decision_monitor.MonitorError(
++            "incompatible-instance",
++            (
++                f"{decision_monitor.state_path(root)} belongs to project "
++                f"{identity.project_id}, not to this control root ({expected})"
++            ),
++            details={
++                "expected_project_id": expected,
++                "recorded_project_id": identity.project_id,
++            },
++            guide=decision_monitor.recovery_guide(root),
++        )
++    token = decision_monitor.read_secret(root)
++    if token is None:
++        raise decision_monitor.MonitorError(
++            "instance-unknown",
++            (
++                f"{decision_monitor.secret_path(root)} is missing or empty, so the "
++                "recorded instance cannot be authenticated"
++            ),
++            details={"state": state},
++            guide=decision_monitor.recovery_guide(root),
++        )
++    return identity, token
++
++
++def _monitor_identity_payload(
++    identity: decision_monitor.InstanceIdentity,
++) -> dict[str, object]:
++    return {
++        "project_id": identity.project_id,
++        "instance_id": identity.instance_id,
++        "pid": identity.pid,
++        "pid_start_ms": identity.pid_start_ms,
++        "port": identity.port,
++        "protocol_version": identity.protocol_version,
++        "code_fingerprint": identity.code_fingerprint,
++        "url": _monitor_public_url(identity.port),
++        "compatible": (
++            identity.protocol_version == decision_monitor.PROTOCOL_VERSION
++            and identity.code_fingerprint == decision_monitor.code_fingerprint()
++        ),
++    }
++
++
++def _monitor_redact_window(
++    result: Mapping[str, object], boot_code: str
++) -> dict[str, object]:
++    """Never echo the boot code (window URL/argv) into stdout, JSON or logs."""
++
++    def scrub(value: object) -> object:
++        if not isinstance(value, str) or not boot_code:
++            return value
++        return value.replace(boot_code, _MONITOR_REDACTED)
++
++    payload = dict(result)
++    url = payload.get("url")
++    if isinstance(url, str):
++        if boot_code:
++            split = urllib.parse.urlsplit(url)
++            url = urllib.parse.urlunsplit(
++                (split.scheme, split.netloc, split.path, split.query, "")
++            )
++        payload["url"] = url.replace(boot_code, _MONITOR_REDACTED) if boot_code else url
++    payload["argv"] = [scrub(item) for item in (payload.get("argv") or [])]
++    return payload
++
++
++def _monitor_boot_code(url: str, port: int) -> str:
++    """Extract the single-use boot code from the instance's own window URL."""
++    split = urllib.parse.urlsplit(url)
++    if (
++        split.scheme != "http"
++        or split.hostname != decision_monitor.HOST
++        or split.port != int(port)
++        or not split.fragment.startswith("boot=")
++    ):
++        raise decision_monitor.MonitorError(
++            "window-unavailable",
++            "the instance did not return a loopback window URL with a boot code",
++            guide=["rerun 'mw decide monitor' to mint a fresh window code"],
++        )
++    code = split.fragment[len("boot=") :]
++    if not code:
++        raise decision_monitor.MonitorError(
++            "window-unavailable",
++            "the instance returned an empty boot code",
++            guide=["rerun 'mw decide monitor' to mint a fresh window code"],
++        )
++    return code
++
++
++def _monitor_profile_dir(control_root: pathlib.Path) -> pathlib.Path:
++    """Project-isolated Chromium profile (never the user's own browser profile)."""
++    override = (os.environ.get(_MONITOR_PROFILE_ENV) or "").strip()
++    if override:
++        path = pathlib.Path(override).expanduser()
++    else:
++        local = (os.environ.get("LOCALAPPDATA") or "").strip()
++        base = (
++            pathlib.Path(local) / "mw" / "monitor-profile"
++            if local
++            else pathlib.Path.home() / ".cache" / "mw" / "monitor-profile"
++        )
++        digest = hashlib.sha256(str(control_root).encode("utf-8")).hexdigest()[:16]
++        path = base / digest
++    try:
++        path.mkdir(parents=True, exist_ok=True)
++    except OSError:
++        # The spawn reports the real failure; a missing profile dir is not a
++        # reason to lose the already healthy monitor instance.
++        pass
++    return path
++
++
++def _monitor_browser_executable() -> str | None:
++    """Explicit override first, then the module's Chromium probe (never a guess)."""
++    override = (os.environ.get(_MONITOR_BROWSER_ENV) or "").strip()
++    if override:
++        return override
++    return decision_monitor.detect_browser()
++
++
++def _monitor_child_log(root: pathlib.Path) -> pathlib.Path:
++    return root / ".mw" / "decide-monitor.log"
++
++
++def _terminate_monitor_child(proc: object) -> None:
++    """Kill only the child this command just spawned (never a recorded stranger)."""
++    poll = getattr(proc, "poll", None)
++    if callable(poll) and poll() is not None:
++        return
++    kill = getattr(proc, "kill", None)
++    if callable(kill):
++        try:
++            kill()
++        except OSError:
++            pass
++    wait = getattr(proc, "wait", None)
++    if callable(wait):
++        try:
++            wait(timeout=5)
++        except Exception:  # noqa: BLE001 - best-effort cleanup of our own child
++            pass
++
++
++def _wait_monitor_publication(
++    root: pathlib.Path,
++    proc: subprocess.Popen,
++    log_path: pathlib.Path,
++    *,
++    timeout_s: float = _MONITOR_PUBLISH_TIMEOUT_S,
++) -> tuple[decision_monitor.InstanceIdentity, str]:
++    """Wait for the detached child to publish its identity + control token.
++
++    The parent holds the start lock for this whole wait, so a reader can never
++    observe a half-started instance. Only the child we spawned may publish here.
++    """
++    deadline = time.monotonic() + timeout_s
++    last = "the child did not publish an instance state"
++    while True:
++        if proc.poll() is not None:
++            raise decision_monitor.MonitorError(
++                "starter-failed",
++                (
++                    f"the monitor starter exited with code {proc.returncode} before "
++                    f"publishing state (see {log_path})"
++                ),
++                details={"exit_code": proc.returncode, "log": str(log_path)},
++                guide=[f"read {log_path} for the starter error", "rerun 'mw decide monitor'"],
++            )
++        state, problem = decision_monitor.read_state(root)
++        if problem is not None:
++            last = problem
++        elif state is not None:
++            identity = decision_monitor.identity_from_state(state, control_root=root)
++            if identity.pid != proc.pid:
++                raise decision_monitor.MonitorError(
++                    "instance-unknown",
++                    (
++                        "the state published during startup names a different process "
++                        f"(PID {identity.pid}, starter PID {proc.pid}); refusing to adopt it"
++                    ),
++                    details={"state": state, "starter_pid": proc.pid},
++                    guide=decision_monitor.recovery_guide(root),
++                )
++            token = decision_monitor.read_secret(root)
++            if token is not None:
++                return identity, token
++            last = "the child published an identity without a control token"
++        remaining = deadline - time.monotonic()
++        if remaining <= 0:
++            raise decision_monitor.MonitorError(
++                "starter-failed",
++                (
++                    f"the monitor starter did not publish within {timeout_s:.0f}s "
++                    f"({last}); the child was stopped (see {log_path})"
++                ),
++                details={"last": last, "log": str(log_path), "starter_pid": proc.pid},
++                guide=[f"read {log_path} for the starter error", "rerun 'mw decide monitor'"],
++            )
++        time.sleep(min(0.05, remaining))
++
++
++def _start_monitor_child(control_root: pathlib.Path, info: dict[str, object]) -> object:
++    """``ensure_instance`` starter: spawn the hidden child and await publication."""
++    root = pathlib.Path(control_root)
++    argv = _monitor_starter_argv(root)
++    cwd = _monitor_starter_cwd(root)
++    log_path = _monitor_child_log(root)
++    log_path.parent.mkdir(parents=True, exist_ok=True)
++    info.clear()
++    info.update({"argv": list(argv), "cwd": str(cwd), "log": str(log_path)})
++    kwargs: dict[str, object] = {
++        "cwd": str(cwd),
++        "close_fds": True,
++        "stdin": subprocess.DEVNULL,
++    }
++    if sys.platform == "win32":
++        # Hidden console, own process group: the monitor outlives this CLI and
++        # never pops a window (design M1/M3, same contract as `mw start`).
++        kwargs["creationflags"] = (
++            subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
++        )
++    else:
++        kwargs["start_new_session"] = True
++    with log_path.open("ab") as log_handle:
++        proc = subprocess.Popen(  # noqa: S603
++            argv, stdout=log_handle, stderr=log_handle, **kwargs  # type: ignore[arg-type]
++        )
++    info["pid"] = proc.pid
++    try:
++        identity, token = _wait_monitor_publication(root, proc, log_path)
++    except BaseException:
++        _terminate_monitor_child(proc)
++        raise
++    return _SpawnedMonitorInstance(root, proc, identity, token)
++
++
++def _monitor_open(args: argparse.Namespace, root: pathlib.Path) -> int:
++    info: dict[str, object] = {}
++
++    def starter(
++        child_root: pathlib.Path,
++        _deps: decision_monitor.MonitorDeps,
++        _port_range: tuple[int, int],
++        _clock: object,
++    ) -> object:
++        return _start_monitor_child(child_root, info)
++
++    instance = decision_monitor.ensure_instance(
++        root, starter=starter, health_wait_s=_MONITOR_HEALTH_WAIT_S, replace_incompatible=True
++    )
++    reused = isinstance(instance, decision_monitor.AttachedInstance)
++    identity = instance._require_identity() if hasattr(instance, "_require_identity") else instance.identity
++    payload: dict[str, object] = {
++        "instance": {
++            **_monitor_identity_payload(identity),
++            "reused": reused,
++            "starter": None
++            if reused
++            else {
++                "argv": list(info.get("argv") or []),
++                "cwd": info.get("cwd"),
++                "log": info.get("log"),
++            },
++        },
++        "recovery": getattr(instance, "recovery", None),
++        "replacement": getattr(instance, "replacement", None),
++        "no_open": bool(getattr(args, "no_open", False)),
++        "window": None,
++    }
++    window: dict[str, object] | None = None
++    if not getattr(args, "no_open", False):
++        try:
++            boot_code = _monitor_boot_code(instance.new_window_url(), identity.port)
++        except decision_monitor.MonitorError as exc:
++            window = {
++                "spawned": False,
++                "visibility": "not-opened",
++                "mode": None,
++                "url": None,
++                "argv": [],
++                "reason": exc.message,
++                "guide": list(exc.guide),
++            }
++        else:
++            window = decision_monitor.launch_app_window(
++                executable=_monitor_browser_executable(),
++                port=identity.port,
++                boot_code=boot_code,
++                profile_dir=_monitor_profile_dir(root),
++            )
++            window = _monitor_redact_window(window, boot_code)
++        payload["window"] = window
++
++    if args.json:
++        print(json.dumps({"ok": True, "action": "open", **payload}, ensure_ascii=False))
++    else:
++        mode = "reused" if reused else "replaced" if payload["replacement"] else "started"
++        print(
++            f"[mw decide monitor] instance {payload['instance']['url']} "
++            f"(pid {identity.pid}, {mode})"
++        )
++        starter_info = payload["instance"].get("starter")  # type: ignore[union-attr]
++        if starter_info:
++            print(f"[mw decide monitor] starter: {' '.join(starter_info['argv'])}")
++            print(f"[mw decide monitor] cwd: {starter_info['cwd']}")
++        if getattr(args, "no_open", False):
++            print("[mw decide monitor] window: not opened (--no-open)")
++        elif window is not None and window.get("spawned"):
++            print("[mw decide monitor] window: spawned (visibility not verified)")
++        elif window is not None:
++            print(
++                f"[mw decide monitor] window: NOT opened: {window.get('reason')}",
++                file=sys.stderr,
++            )
++            for line in window.get("guide") or []:
++                print(f"[mw decide monitor]   - {line}", file=sys.stderr)
++        print("[mw decide monitor] stop it with 'mw decide monitor stop'")
++    return 0
++
++
++def _monitor_status(args: argparse.Namespace, root: pathlib.Path) -> int:
++    identity, token = _monitor_read_recorded(root)
++    data = decision_monitor.health(identity.port, token)
++    if data is None:
++        raise decision_monitor.MonitorError(
++            "instance-unresponsive",
++            (
++                f"PID {identity.pid} is recorded as the monitor for {root}, but its "
++                f"loopback port {identity.port} did not answer an authenticated health check"
++            ),
++            details={"state": identity.as_dict()},
++            guide=decision_monitor.recovery_guide(root),
++        )
++    if not decision_monitor.identity_matches(data, identity):
++        raise decision_monitor.MonitorError(
++            "instance-unresponsive",
++            (
++                f"port {identity.port} answered, but not with the recorded identity "
++                f"(instance {identity.instance_id}); state and secret were left in place"
++            ),
++            details={"state": identity.as_dict()},
++            guide=decision_monitor.recovery_guide(root),
++        )
++    instance_payload = _monitor_identity_payload(identity)
++    instance_payload.update(
++        {
++            "healthy": True,
++            "pid_start_ms": data.get("pid_start_ms"),
++            "capture": data.get("capture"),
++            "playground": data.get("playground"),
++            "transport": data.get("transport"),
++        }
++    )
++    if args.json:
++        print(
++            json.dumps(
++                {
++                    "ok": True,
++                    "action": "status",
++                    "instance": instance_payload,
++                    "state_path": str(decision_monitor.state_path(root)),
++                },
++                ensure_ascii=False,
++            )
++        )
++    else:
++        print(
++            f"[mw decide monitor] healthy {instance_payload['url']} "
++            f"(pid {identity.pid}, instance {identity.instance_id})"
++        )
++        if not instance_payload["compatible"]:
++            print(
++                "[mw decide monitor] warning: the running monitor was built from a "
++                "different protocol/code fingerprint; stop it before using this build",
++                file=sys.stderr,
++            )
++        print(f"[mw decide monitor] stop it with 'mw decide monitor stop'")
++    return 0
++
++
++def _monitor_stop(args: argparse.Namespace, root: pathlib.Path) -> int:
++    identity, token = _monitor_read_recorded(root)
++    attached = decision_monitor.AttachedInstance(
++        control_root=root, identity=identity, control_token=token
++    )
++    result = attached.stop()
++    if not isinstance(result, dict) or result.get("stopped") is not True:
++        detail = result.get("detail") if isinstance(result, dict) else None
++        raise decision_monitor.MonitorError(
++            "stop-failed",
++            str(detail or "the instance did not confirm the stop"),
++            details=result if isinstance(result, dict) else {},
++            guide=decision_monitor.recovery_guide(root),
++        )
++    retained = result.get("state") == "retained"
++    guide = decision_monitor.recovery_guide(root) if retained else []
++    payload = {
++        "ok": True,
++        "action": "stop",
++        "instance": _monitor_identity_payload(identity),
++        "stop": result,
++        "guide": guide,
++    }
++    if args.json:
++        print(json.dumps(payload, ensure_ascii=False))
++    else:
++        print(
++            f"[mw decide monitor] stopped {_monitor_public_url(identity.port)} "
++            f"(pid {identity.pid}, instance {identity.instance_id})"
++        )
++        if retained:
++            print(
++                "[mw decide monitor] the state file still names this instance; "
++                "no file was deleted:",
++                file=sys.stderr,
++            )
++            for line in guide:
++                print(f"[mw decide monitor]   - {line}", file=sys.stderr)
++    return 0
++
++
++def _decide_monitor(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
++    """`mw decide monitor [status|stop]` (design D-001; T10/T12a reuse).
++
++    Root resolution is fail-closed before any action: an unsupported path never
++    starts a service and never falls back to cwd. status/stop only read the
++    recorded instance; only the bare/open action may create one.
++    """
++    action = getattr(args, "monitor_action", None) or "open"
++    try:
++        root, _source = mw_common.resolve_control_root(project_dir, require_control=True)
++        root = pathlib.Path(root)
++        if action == "open":
++            return _monitor_open(args, root)
++        if action == "status":
++            return _monitor_status(args, root)
++        if action == "stop":
++            return _monitor_stop(args, root)
++        raise decision_monitor.MonitorError(
++            "bad-action",
++            f"unknown monitor action {action!r}",
++            guide=[f"known actions: {', '.join(_MONITOR_ACTIONS)}"],
++        )
++    except (decision_monitor.MonitorError, mw_common.ControlRootError) as exc:
++        return _monitor_report_error(args, action, exc)
++
++
++def _join_monitor_stop_threads(timeout_s: float = 10.0) -> None:
++    """Let the module's post-response shutdown thread finish before exit.
++
++    ``decision_monitor`` answers ``/api/shutdown`` first and removes its own
++    state/secret from a daemon thread (``request_shutdown``); ``serve()`` then
++    returns on the main thread as soon as ``stop()`` flips its flag. Without
++    this join the interpreter can exit in between and leave a residue. The CLI
++    waits here instead of deleting anything itself (the monitor module owns the
++    files).
++    """
++    deadline = time.monotonic() + max(timeout_s, 0.0)
++    for thread in threading.enumerate():
++        if (
++            thread.name != "decide-monitor-stop"
++            or thread is threading.current_thread()
++            or not thread.is_alive()
++        ):
++            continue
++        remaining = deadline - time.monotonic()
++        if remaining <= 0:
++            return
++        thread.join(timeout=remaining)
++
++
++def _monitor_starter_entry(argv: list[str]) -> int:
++    """Hidden detached-child entry: run the blocking monitor service.
++
++    Never registered as an argparse subcommand (it stays out of `--help`). The
++    CLI spawns ``python mw.py _decide_monitor_starter --project <root>`` with an
++    explicit cwd; the child publishes its own identity + control token and then
++    blocks in :func:`decision_monitor.serve`. It prints no token.
++    """
++    parser = argparse.ArgumentParser(prog="mw _decide_monitor_starter", add_help=False)
++    parser.add_argument("--project", required=True)
++    parsed = parser.parse_args(argv)
++    try:
++        root, _source = mw_common.resolve_control_root(
++            pathlib.Path(parsed.project), require_control=True
++        )
++        code = decision_monitor.serve(root)
++        _join_monitor_stop_threads()
++        return code
++    except (decision_monitor.MonitorError, mw_common.ControlRootError) as exc:
++        print(f"[mw decide monitor starter] {exc}", file=sys.stderr)
++        return 1
++    except Exception as exc:  # noqa: BLE001 - the log is the parent's only diagnosis
++        print(
++            f"[mw decide monitor starter] {type(exc).__name__}: {exc}",
++            file=sys.stderr,
++        )
++        return 1
++
++
++
+ # ── Subcommand: target (dual-workspace config, mw-dual-workspace D-011) ──────
+ 
+ def _yml_scalar(value: str) -> str:
+@@ -10177,6 +12016,112 @@ def _publish_stats_html(
+     return target
+ 
+ 
++# -- Subcommand: review-split (claim-driven-review-orchestration T-02, design 2.2)
++
++#: Valid switch values. The authority is `autopilot/review_split.py` (imported
++#: by the conductor too, which never loads this CLI module); these are aliases
++#: so the help text, `set` and the resolver can never drift apart.
++_REVIEW_SPLIT_MODES: tuple[str, ...] = _review_split_module.REVIEW_SPLIT_MODES
++_REVIEW_SPLIT_DEFAULT = _review_split_module.REVIEW_SPLIT_DEFAULT
++_REVIEW_SPLIT_ENV = _review_split_module.REVIEW_SPLIT_ENV
++
++
++def _review_split_config_path(project_dir: pathlib.Path) -> pathlib.Path:
++    return _review_split_module.review_split_config_path(project_dir)
++
++
++def _review_split_normalize(value: object) -> str | None:
++    """Case-insensitive mode coercion; None for anything unknown (never raises)."""
++    return _review_split_module.as_review_split_mode(value)
++
++
++def _review_split_resolve(project_dir: pathlib.Path) -> dict:
++    """CLI view of the effective switch — thin wrapper over the shared module.
++
++    Keeps the historical CLI payload (`mode` / `source` / `config_path` /
++    `invalid_env`, the T-02 contract) and adds `invalid`, the module's full
++    rejection reason: an illegal env value is echoed raw (the same text as
++    `invalid_env`), while a corrupt / ill-shaped / ill-versioned config file
++    now surfaces as `config-invalid-json` & co. instead of staying silent.
++    """
++    state = _review_split_module.resolve_review_split(project_dir)
++    raw_env = os.environ.get(_REVIEW_SPLIT_ENV)
++    invalid_env = (
++        raw_env
++        if raw_env is not None and _review_split_normalize(raw_env) is None
++        else None
++    )
++    return {
++        "mode": state["mode"],
++        "source": state["source"],
++        "config_path": state["config_path"],
++        "invalid_env": invalid_env,
++        "invalid": state["invalid"],
++        # `on` is a legal value with no implementation behind it (M3 cancelled
++        # with the M1 verdict). Reporting it keeps a stale config file from
++        # looking like an active feature.
++        "wired": _review_split_module.is_review_split_wired(state["mode"]),
++    }
++
++
++def _review_split_set(args: argparse.Namespace, project_dir: pathlib.Path) -> int:
++    """Persist the switch (P-003 shape: temp file + os.replace) — thin wrapper.
++
++    The module validates BEFORE anything touches the filesystem, so an invalid
++    value is a pure exit-2 no-op — not even the `.mw/` directory appears.
++    """
++    try:
++        written = _review_split_module.set_review_split(project_dir, args.mode)
++    except ValueError as exc:
++        # The module's message carries the reason (illegal value vs. legal but
++        # unwired `on` tier); a fixed "invalid mode" text would hide the latter.
++        print(f"mw review-split: {exc}", file=sys.stderr)
++        return 2
++    except OSError as exc:
++        print(
++            f"mw review-split: cannot write {_review_split_config_path(project_dir)}: {exc}",
++            file=sys.stderr,
++        )
++        return 1
++    print(f"review-split: mode={written['mode']} wrote {written['config_path']}")
++    return 0
++
++
++def cmd_review_split(args: argparse.Namespace) -> int:
++    """`mw review-split status|set` (design 2.2 / AC-S1b).
++
++    `status` is strictly read-only (no directory creation, no report files) and
++    always exits 0: it reports the effective value, its origin and the config
++    path. `set` is the only writer and refuses unknown values with exit 2.
++    """
++    project_dir = pathlib.Path(args.project).resolve()
++    action = getattr(args, "review_split_action", None)
++    if action == "status":
++        state = _review_split_resolve(project_dir)
++        if args.as_json:
++            print(json.dumps(state, ensure_ascii=False))
++            return 0
++        line = (
++            f"review-split: mode={state['mode']} source={state['source']} "
++            f"config={state['config_path']}"
++        )
++        if state["invalid_env"] is not None:
++            line += f" invalid_env={state['invalid_env']}"
++        # `invalid` is the shared module's rejection reason. When it is just
++        # the env text already printed as `invalid_env`, don't repeat it; the
++        # config diagnostics (`config-invalid-json`, ...) only show up here.
++        if state["invalid"] and state["invalid"] != state["invalid_env"]:
++            line += f" invalid={state['invalid']}"
++        if not state["wired"]:
++            line += " wired=no"
++        print(line)
++        return 0
++    if action == "set":
++        return _review_split_set(args, project_dir)
++    print(f"[mw review-split] unknown action {action!r}", file=sys.stderr)
++    return 2
++
++
+ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+     parser = argparse.ArgumentParser(description="Multi-Workers service manager")
+     sub = parser.add_subparsers(dest="subcommand", required=True)
+@@ -10434,6 +12379,31 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+     )
+     verify_clear_p.add_argument("--project", required=True, help="Project directory")
+ 
++    review_split_p = sub.add_parser(
++        "review-split",
++        help="Review claim-splitting switch: print the effective mode or persist it "
++             "(env MW_REVIEW_SPLIT > .mw/review-split.json > off)",
++    )
++    review_split_sub = review_split_p.add_subparsers(
++        dest="review_split_action", required=True
++    )
++    review_split_status_p = review_split_sub.add_parser(
++        "status", help="Print the effective mode + source (pure read: never writes)"
++    )
++    review_split_status_p.add_argument("--project", default=".", metavar="DIR",
++                                       help="Project directory (default: current)")
++    review_split_status_p.add_argument("--json", action="store_true", dest="as_json",
++                                       help="Emit {mode,source,config_path,invalid_env,invalid}")
++    review_split_set_p = review_split_sub.add_parser(
++        "set", help="Persist a mode atomically (temp file + os.replace)"
++    )
++    review_split_set_p.add_argument("--project", default=".", metavar="DIR",
++                                    help="Project directory (default: current)")
++    review_split_set_p.add_argument(
++        "mode", metavar="MODE",
++        help=f"{' | '.join(_REVIEW_SPLIT_MODES)} (case-insensitive)",
++    )
++
+     init_p = sub.add_parser("init", help="Initialize project and install Extension + framework")
+     init_p.add_argument("--project", required=True)
+     init_p.add_argument("--no-framework", action="store_true",
+@@ -10665,6 +12635,45 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+                               help="Read state + decision_point from a decision book; the book is "
+                                    "checked first and any failure refuses to send (zero HTTP)")
+     decide_run_p.add_argument("--json", action="store_true", help="Emit compact machine-readable JSON")
++    decide_run_p.add_argument(
++        "dp_id",
++        nargs="?",
++        default=None,
++        metavar="DP-ID",
++        help="Registered decision point id (positional form of --dp)",
++    )
++    decide_run_p.add_argument(
++        "--stdin",
++        action="store_true",
++        help="Read the local {material, meta} envelope from stdin (versioned record: "
++        "record-start, logical_id/decision_id association, no duplicate send)",
++    )
++    decide_lifecycle_p = decide_sub.add_parser(
++        "lifecycle",
++        help="Record one consumed/executed/settled/signoff feedback fact (JSON on stdin)",
++        description=(
++            "Read {meta, decision_id, dp, stage, action?, outcome?, reason?, answer?, "
++            "result?, evidence_path?, evidence_sha256?, event_id?} on stdin and call the "
++            "single T02 lifecycle writer. Unknown fields/values are refused without "
++            "echoing values. A received choice is only consumed; this command never "
++            "executes or completes the decision."
++        ),
++        epilog=(
++            "example:\n"
++            "  echo '{\"meta\":{...},\"decision_id\":\"dp3-worker-clarify:<id>\","
++            "\"dp\":\"dp3-worker-clarify\",\"stage\":\"consumed\"}' | "
++            "mw decide lifecycle --project . --stdin --json\n"
++        ),
++        formatter_class=argparse.RawDescriptionHelpFormatter,
++    )
++    decide_lifecycle_p.add_argument("--project", required=True, help="Project directory")
++    decide_lifecycle_p.add_argument(
++        "--request-file", default=None, metavar="FILE", help="JSON request file (default: stdin)"
++    )
++    decide_lifecycle_p.add_argument(
++        "--stdin", action="store_true", help="Read the request from stdin"
++    )
++    decide_lifecycle_p.add_argument("--json", action="store_true", help="Accepted (output is JSON)")
+     decide_probe_p = decide_sub.add_parser(
+         "probe", help="Probe candidate transports/endpoint shapes (diagnostic, never fails)"
+     )
+@@ -10784,25 +12793,37 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+         "sign",
+         help="Sign off this key: print the decision summary, then write evidence/review/sign-final.md",
+         description=(
+-            "Summarise the key's decision-archive rows (engine triple, per-dp counts, "
+-            "escalated reasons, rows_sha256), ask dp25-signoff-conclusion for "
+-            "continue|narrow|revoke and write <key>/evidence/review/sign-final.md "
+-            "(signed_via: auto-decide) plus one authority-change row. The decision "
+-            "model is the only authority: no caller-supplied conclusion exists, and "
+-            "when it is unavailable nothing is written and no sign-off is required "
+-            "(exit 0). signoff=disable never signs and the done gate stops requiring "
+-            "the file; --auto / --disable only persist that mode. --dry-run is a "
+-            "zero-write pre-judge: facts plus every conclusion's {ok, problems}."
++            "Two faces. Legacy (no --stdin): summarise the key's decision-archive "
++            "rows and ask dp25 for continue|narrow|revoke. Versioned "
++            "(`<key> --stdin`): read the PM's dp25 {material, meta} envelope "
++            "(delivery_goal / actual_completion / verification_evidence / "
++            "unfinished_impact), snapshot it with the archive hash, and ask dp25 "
++            "for finalize|continue|user-confirm. finalize writes the valid "
++            "<key>/evidence/review/sign-final.md atomically (fsync + replace, "
++            "logical_id + snapshot, no second approval); continue/user-confirm "
++            "hand off to PM with zero sign-off writes. The decision model is the "
++            "only authority; signoff=disable never signs; --dry-run is a zero-write "
++            "pre-judge; --retry-write only retries the file write of a persisted "
++            "logical_id (zero new model calls)."
+         ),
+         epilog=(
+             "examples:\n"
+-            "  mw decide sign --project .agenticdoc/<key>            # the decision model decides\n"
++            "  mw decide sign <key> --project . --stdin --json < envelope.json\n"
++            "  mw decide sign <key> --project . --retry-write <logical-id> --json\n"
++            "  mw decide sign --project .agenticdoc/<key>            # legacy archive face\n"
+             "  mw decide sign --project .agenticdoc/<key> --dry-run --json  # verdicts only, no write\n"
+             "  mw decide sign --project . --disable                  # opt out of signing\n"
+         ),
+         formatter_class=argparse.RawDescriptionHelpFormatter,
+     )
+     decide_sign_p.add_argument("--project", default=".", help="Project directory (default: %(default)s)")
++    decide_sign_p.add_argument(
++        "key_pos",
++        nargs="?",
++        default=None,
++        metavar="KEY",
++        help="AgenticTask key (positional form of --key)",
++    )
+     decide_sign_p.add_argument("--key", default=None,
+                                help="AgenticTask key (default: the project dir name when it sits under .agenticdoc)")
+     decide_sign_p.add_argument("--auto", action="store_true",
+@@ -10819,7 +12840,24 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+                                help="Zero-write pre-judge: facts + verdicts (every conclusion's "
+                                     "{ok, problems}), no decision-model call and no sign-off file")
+     decide_sign_p.add_argument("--json", action="store_true",
+-                               help="Emit {conclusion, ok, problems, verdicts, facts, path}")
++                               help="Emit JSON: legacy {conclusion, ok, problems, verdicts, facts, path}; "
++                                    "versioned {logical_id, decision_id, conclusion, signoff_status, "
++                                    "feedback_status, signoff_path, snapshot_sha256, handoff}")
++    decide_sign_p.add_argument(
++        "--stdin",
++        action="store_true",
++        help="Read the PM's dp25 {material, meta} envelope from stdin: finalize writes "
++        "the valid sign-off file directly (no second approval), continue/user-confirm "
++        "hand off to PM with zero sign-off writes",
++    )
++    decide_sign_p.add_argument(
++        "--retry-write",
++        dest="retry_write",
++        default=None,
++        metavar="LOGICAL-ID",
++        help="Retry only the sign-off file write of a persisted logical_id (zero new "
++        "model calls; the material/evidence snapshot must be unchanged)",
++    )
+ 
+     decide_dp_p = decide_sub.add_parser(
+         "dp",
+@@ -10895,6 +12933,35 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+     _dp_project(dp_apply_p)
+     dp_apply_p.add_argument("sign_file", metavar="SIGN-FILE", help="Sign-off markdown file")
+ 
++    decide_monitor_p = decide_sub.add_parser(
++        "monitor",
++        help="Open the local decision dashboard app window; `monitor status|stop` manage that instance",
++        description=(
++            "Ensure one project-local monitor instance (127.0.0.1, port 43170..43269), "
++            "mint a single-use boot code and open a Chromium `--app=` window. `status` is a "
++            "read-only authenticated health view; `stop` is the authenticated shutdown of "
++            "that instance only. status/stop never start a service and fail non-zero when "
++            "no instance is recorded or the control root is unknown."
++        ),
++    )
++    decide_monitor_p.add_argument(
++        "monitor_action",
++        nargs="?",
++        default="open",
++        choices=_MONITOR_ACTIONS,
++        help="open (default: ensure + window) | status (read-only) | stop (authenticated shutdown)",
++    )
++    decide_monitor_p.add_argument("--project", default=".", help="Project directory (default: %(default)s)")
++    decide_monitor_p.add_argument(
++        "--no-open",
++        action="store_true",
++        dest="no_open",
++        help="Ensure the monitor but do not launch a browser window (prints the URL)",
++    )
++    decide_monitor_p.add_argument(
++        "--json", action="store_true", help="Emit one machine-readable JSON object"
++    )
++
+     dispatch_p = sub.add_parser(
+         "dispatch",
+         help="Conductor dispatch helpers: `check` validates a decision-worker card offline "
+@@ -10942,6 +13009,10 @@ if __name__ == "__main__":
+         # subcommand (stays out of --help); console_run's CLI spawns it as
+         # `python mw.py _run_supervisor --run-dir D ... -- <cmd...>`.
+         sys.exit(console_run.run_supervisor_entry(sys.argv[2:]))
++    if len(sys.argv) > 1 and sys.argv[1] == "_decide_monitor_starter":
++        # Internal monitor starter (T08a). Never in --help; `mw decide monitor`
++        # spawns it detached so the service outlives the user's command.
++        sys.exit(_monitor_starter_entry(sys.argv[2:]))
+     args = _parse_args()
+     dispatch = {
+         "serve": cmd_serve,
+@@ -10949,6 +13020,7 @@ if __name__ == "__main__":
+         "stop": cmd_stop,
+         "status": cmd_status,
+         "stats": cmd_stats,
++        "review-split": cmd_review_split,
+         "doctor": cmd_doctor,
+         "decide": cmd_decide,
+         "dispatch": cmd_dispatch,

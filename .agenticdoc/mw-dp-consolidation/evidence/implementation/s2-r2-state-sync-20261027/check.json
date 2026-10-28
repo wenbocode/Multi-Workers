@@ -1,0 +1,31 @@
+{
+  "observed_at": "2026-10-27T03:55:13.073726+00:00",
+  "source": "agent-report",
+  "logical_tasks": 36,
+  "stages": 7,
+  "changed_metadata_tasks": [
+    "T06",
+    "T07",
+    "T08"
+  ],
+  "all_dependencies_scope_ac_vc_commands_preserved": true,
+  "original_runs_preserved": true,
+  "r2_actual_statuses": {
+    "T06": "done",
+    "T07": "done",
+    "T08": "needs-clarification"
+  },
+  "semantic_handoffs": {
+    "T06": true,
+    "T07": true,
+    "T08": false
+  },
+  "successors_not_queued": true,
+  "mirror_files": 1883,
+  "mirror_net_changes": [],
+  "phase": "EXECUTE",
+  "state_before_sha256": "eb941f49d75c9ad92fbd912a158bd7c1eca5a930ee921e71532d279f899bc78b",
+  "state_after_sha256": "644d5fa057c014615ca8703644c1099d63fb79dfc4ab70799dd1eeecb762f775",
+  "dag_before_sha256": "a40b0ed65eec360e484520080b447acce27c51dc5f8a85f7153614fdadddad9c",
+  "dag_after_sha256": "e132db9a58a705a84c13a5ee2fec478af1bd73daea33b3a0993e174e91253d95"
+}

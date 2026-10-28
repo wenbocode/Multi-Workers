@@ -1,0 +1,370 @@
+diff --git a/packages/multi-workers/decision_backends.py b/packages/multi-workers/decision_backends.py
+index 2b749c44f..da3880ffb 100644
+--- a/packages/multi-workers/decision_backends.py
++++ b/packages/multi-workers/decision_backends.py
+@@ -38,12 +38,14 @@ never modify the client. Retry/fallback rules honoured here:
+ 
+ from __future__ import annotations
+ 
++import http.client
+ import json
+ import os
+ import pathlib
+ import socket
+ import time
+ import urllib.error
++import urllib.parse
+ import urllib.request
+ from collections.abc import Mapping
+ from dataclasses import dataclass, field
+@@ -56,7 +58,13 @@ from typing import Protocol
+ # path (standalone import tolerance).
+ _DECISION_IMPORT_ERROR = ""
+ try:  # pragma: no cover - exercised by whichever import path is available
+-    from decision import BackendOutcome, DecisionBackend, DecisionConfig
++    from decision import (
++        BackendOutcome,
++        CredentialSnapshot,
++        DecisionBackend,
++        DecisionConfig,
++        current_credential_snapshot,
++    )
+ 
+     DECISION_TYPES_LOCAL = False
+ except ImportError as _decision_import_error:  # pragma: no cover - standalone import
+@@ -69,6 +77,16 @@ except ImportError as _decision_import_error:  # pragma: no cover - standalone i
+ 
+         def decide(self, state: object, questions: dict, cfg: "DecisionConfig") -> "BackendOutcome": ...
+ 
++    @dataclass
++    class CredentialSnapshot:  # type: ignore[no-redef]
++        """Standalone tolerance mirror of ``decision.CredentialSnapshot``."""
++
++        api_key: str | None = field(default=None, repr=False)
++        source: str = "none"
++
++    def current_credential_snapshot() -> "CredentialSnapshot | None":  # noqa: D401
++        return None
++
+     @dataclass
+     class BackendOutcome:  # type: ignore[no-redef]
+         available: bool
+@@ -99,6 +117,13 @@ except ImportError as _decision_import_error:  # pragma: no cover - standalone i
+ # decision_backends -> decision_points -> decision.
+ import decision_points as _dpts  # noqa: E402
+ 
++# The side ledger is optional for the transport: capture must never break a
++# decision, so a missing/broken ``decision_wire`` degrades to zero capture.
++try:  # pragma: no cover - exercised by whichever import path is available
++    import decision_wire as _wire
++except Exception:  # pragma: no cover - standalone import tolerance
++    _wire = None
++
+ 
+ # ── Constants ───────────────────────────────────────────────────────────────
+ 
+@@ -171,6 +196,10 @@ def resolve_timi_api_key(env: dict | None = None, auth_path: pathlib.Path | None
+ 
+     Mirrors the mw credential source chain (mw_common._DEFAULT_CONFIG timi
+     entry). Returns None when absent; never logs the value.
++
++    This is the *discovery* step. A decision call must not call it per attempt:
++    ``decision.credential_snapshot`` resolves once per logical call and the
++    backend reads that frozen value (T05i).
+     """
+     env = os.environ if env is None else env
+     value = env.get("TIMI_API_KEY")
+@@ -191,6 +220,28 @@ def resolve_timi_api_key(env: dict | None = None, auth_path: pathlib.Path | None
+     return cur.strip() if isinstance(cur, str) and cur.strip() else None
+ 
+ 
++def _authorization_key(cfg: object) -> str | None:
++    """The key one decision request must carry (T05i).
++
++    A logical call binds one frozen :class:`CredentialSnapshot` (set by
++    ``DecisionClient``), and every attempt reads exactly that value - no second
++    resolution can rotate the ``Authorization`` mid-call. The snapshot already
++    encodes the pre-existing precedence (explicit ``cfg.api_key`` /
++    ``cfg.extras["api_key"]`` first, then env ``TIMI_API_KEY``, then
++    ``auth.json``).
++
++    Without a binding (``probe_matrix``, standalone backend use) the previous
++    live order is kept verbatim, so probe/diagnostic semantics do not change.
++    """
++    snapshot: "CredentialSnapshot | None" = current_credential_snapshot()
++    if snapshot is not None:
++        key = getattr(snapshot, "api_key", None)
++        # Precedence and truthiness stay exactly the pre-T05i ``or`` semantics:
++        # the snapshot never rewrites the value, it only freezes it.
++        return key if isinstance(key, str) and key else None
++    return _cfg_get(cfg, "api_key") or resolve_timi_api_key()
++
++
+ def credential_status(cfg: object = None, env: dict | None = None) -> dict:
+     """Boolean-only credential presence (safe to print/log).
+ 
+@@ -243,36 +294,213 @@ def _header(headers: object, name: str) -> str | None:
+     return value if isinstance(value, str) else None
+ 
+ 
++def _url_path(url: str) -> str:
++    """Path only: userinfo and query strings never enter the ledger."""
++    try:
++        return urllib.parse.urlsplit(url).path or "/"
++    except ValueError:
++        return "/"
++
++
++def _describe_exception(exc: BaseException) -> str:
++    text = str(exc).strip()
++    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
++
++
++def _usage_from_body(body: str) -> dict | None:
++    """The documented ``usage`` block, or ``None`` (usage is never estimated)."""
++    parsed = _try_json(body)
++    if not isinstance(parsed, dict):
++        return None
++    usage = parsed.get("usage")
++    if isinstance(usage, dict) and usage:
++        return dict(usage)
++    return None
++
++
++@dataclass
++class _AttemptCapture:
++    """Pending attempt-start bookkeeping; no scope+call means zero writes."""
++
++    scope: object | None = None
++    call: object | None = None
++    index: int | None = None
++    started: float = 0.0
++    finished: bool = False
++
++
++def _begin_attempt(
++    url: str, headers: dict, data: bytes, payload: dict, timeout_s: float
++) -> _AttemptCapture:
++    """Record attempt-start from the *actual* serialized request bytes.
++
++    The four-parameter ``_http_post`` contract is frozen: the logical call (and
++    therefore ``call_id``/``attempt_index``) comes from the caller's bound
++    context. No binding (the diagnostic probe) means no ledger row at all.
++    """
++    started = time.monotonic()
++    if _wire is None:
++        return _AttemptCapture(started=started)
++    scope = _wire.current_scope()
++    call = _wire.current_call()
++    if scope is None or call is None:
++        return _AttemptCapture(started=started)
++    try:
++        index = call.next_attempt()
++        _wire.record_attempt_start(
++            scope,
++            call,
++            request=data,
++            url_path=_url_path(url),
++            method="POST",
++            model=payload.get("model"),
++            timeout_s=timeout_s,
++            header_names=list(headers),
++            attempt_index=index,
++        )
++    except Exception:  # noqa: BLE001 - capture must never break the transport
++        return _AttemptCapture(started=started)
++    return _AttemptCapture(scope=scope, call=call, index=index, started=started)
++
++
++def _end_attempt(
++    attempt: _AttemptCapture,
++    *,
++    response: bytes | None = None,
++    http_status: int | None = None,
++    content_type: str | None = None,
++    retry_after: float | None = None,
++    error_class: str | None = None,
++    error_detail: str | None = None,
++    usage: dict | None = None,
++) -> None:
++    """Record attempt-end exactly once per POST (guarded by ``finished``)."""
++    if _wire is None or attempt.finished:
++        return
++    attempt.finished = True
++    if attempt.scope is None or attempt.call is None or attempt.index is None:
++        return
++    latency_ms = max(0, int(round((time.monotonic() - attempt.started) * 1000)))
++    detail = None
++    if error_detail:
++        try:
++            detail = attempt.scope.scrub_text(error_detail)  # type: ignore[attr-defined]
++        except Exception:  # noqa: BLE001 - a scrub failure must not break the call
++            detail = None
++    try:
++        _wire.record_attempt_end(
++            attempt.scope,
++            attempt.call,
++            response=response,
++            latency_ms=latency_ms,
++            http_status=http_status,
++            content_type=content_type,
++            retry_after_s=retry_after,
++            error_class=error_class,
++            error_detail=detail,
++            usage=usage,
++            usage_source="response-body" if usage is not None else None,
++            attempt_index=attempt.index,
++        )
++    except Exception:  # noqa: BLE001 - capture must never break the transport
++        return
++
++
+ def _http_post(url: str, headers: dict, payload: dict, timeout_s: float) -> HttpResponse:
+-    """One non-streaming POST. Tests monkeypatch this function."""
++    """One non-streaming POST; tests monkeypatch this function.
++
++    Capture happens at this real boundary: the request from the exact ``data``
++    bytes sent, the response from the bytes read *before* the documented
++    ``errors="replace"`` decode. A failed read is marked ``response-read`` and
++    is never recorded as a genuine empty body; the parsed ``HttpResponse``
++    contract (and therefore the decision result) is unchanged.
++    """
+     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
++    attempt = _begin_attempt(url, headers, data, payload, timeout_s)
+     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+     try:
+         with urllib.request.urlopen(request, timeout=timeout_s) as response:
++            status = int(getattr(response, "status", 0))
++            content_type = _header(response.headers, "Content-Type") or ""
++            retry_after_raw = _header(response.headers, "retry-after")
++            try:
++                raw = response.read()
++            except (OSError, http.client.HTTPException) as exc:
++                _end_attempt(
++                    attempt,
++                    http_status=status,
++                    content_type=content_type,
++                    retry_after=_retry_after_value(retry_after_raw),
++                    error_class="response-read",
++                    error_detail=_describe_exception(exc),
++                )
++                raise
++            body = _decode_bytes(raw)
++            _end_attempt(
++                attempt,
++                response=raw,
++                http_status=status,
++                content_type=content_type,
++                retry_after=_retry_after_value(retry_after_raw),
++                usage=_usage_from_body(body),
++            )
+             return HttpResponse(
+-                int(getattr(response, "status", 0)),
+-                _header(response.headers, "Content-Type") or "",
+-                _decode_bytes(response.read()),
+-                {"retry-after": _header(response.headers, "retry-after") or ""},
++                status,
++                content_type,
++                body,
++                {"retry-after": retry_after_raw or ""},
+             )
+     except urllib.error.HTTPError as exc:
++        status = int(exc.code)
++        content_type = _header(exc.headers, "Content-Type") or ""
++        retry_after_raw = _header(exc.headers, "retry-after")
+         try:
+-            body = _decode_bytes(exc.read())
+-        except OSError:
++            raw = exc.read()
++        except (OSError, http.client.HTTPException) as read_exc:
++            # A read failure is not an empty body: record why, keep the old
++            # fail-soft parsing behaviour (body="") unchanged.
++            _end_attempt(
++                attempt,
++                http_status=status,
++                content_type=content_type,
++                retry_after=_retry_after_value(retry_after_raw),
++                error_class="response-read",
++                error_detail=_describe_exception(read_exc),
++            )
+             body = ""
++        else:
++            body = _decode_bytes(raw)
++            _end_attempt(
++                attempt,
++                response=raw,
++                http_status=status,
++                content_type=content_type,
++                retry_after=_retry_after_value(retry_after_raw),
++                usage=_usage_from_body(body),
++            )
+         return HttpResponse(
+-            int(exc.code),
+-            _header(exc.headers, "Content-Type") or "",
++            status,
++            content_type,
+             body,
+-            {"retry-after": _header(exc.headers, "retry-after") or ""},
++            {"retry-after": retry_after_raw or ""},
+         )
+     except (socket.timeout, TimeoutError) as exc:
++        _end_attempt(attempt, error_class="timeout", error_detail=_describe_exception(exc))
+         raise TransportTimeout(str(exc)) from None
+     except urllib.error.URLError as exc:
+         if isinstance(exc.reason, (socket.timeout, TimeoutError)):
++            _end_attempt(
++                attempt, error_class="timeout", error_detail=_describe_exception(exc.reason)
++            )
+             raise TransportTimeout(str(exc.reason)) from None
++        _end_attempt(
++            attempt, error_class="connection-error", error_detail=_describe_exception(exc.reason)
++        )
+         raise TransportConnectionError(str(exc.reason)) from None
+     except OSError as exc:
++        _end_attempt(
++            attempt, error_class="connection-error", error_detail=_describe_exception(exc)
++        )
+         raise TransportConnectionError(str(exc)) from None
+ 
+ 
+@@ -351,9 +579,8 @@ def _status_detail(resp: HttpResponse) -> str:
+     return f"HTTP {resp.status} content-type={kind} body={resp.body}"
+ 
+ 
+-def _retry_after_s(resp: HttpResponse) -> float | None:
+-    """Parse a ``retry-after`` seconds header; ``None`` when absent/invalid."""
+-    raw = (resp.headers or {}).get("retry-after")
++def _retry_after_value(raw: object) -> float | None:
++    """Parse a raw ``retry-after`` header value; ``None`` when absent/invalid."""
+     if not isinstance(raw, str) or not raw.strip():
+         return None
+     try:
+@@ -363,6 +590,11 @@ def _retry_after_s(resp: HttpResponse) -> float | None:
+     return seconds if seconds >= 0 else None
+ 
+ 
++def _retry_after_s(resp: HttpResponse) -> float | None:
++    """Parse the response ``retry-after`` seconds; ``None`` when absent/invalid."""
++    return _retry_after_value((resp.headers or {}).get("retry-after"))
++
++
+ def _sleep(seconds: float) -> None:
+     """Retry wait, injectable so tests never sleep for real."""
+     if seconds > 0:
+@@ -788,7 +1020,7 @@ class TimiDecisionsBackend:
+             # path can never issue a request.
+             return _outcome(start, False, REASON_INPUT_INCOMPLETE, False, None, dynamic_problem)
+         dynamic = _dynamic_labels(questions, state)
+-        key = _cfg_get(cfg, "api_key") or resolve_timi_api_key()
++        key = _authorization_key(cfg)
+         if not key:
+             return _outcome(
+                 start,
+@@ -885,6 +1117,7 @@ __all__ = [
+     "TransportConnectionError",
+     "TransportTimeout",
+     "credential_status",
++    "current_credential_snapshot",
+     "probe_matrix",
+     "resolve_timi_api_key",
+ ]

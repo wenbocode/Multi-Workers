@@ -1,0 +1,15 @@
+graph TD
+    T["传输轴<br/>pending · answered · failed"]
+    BZ["业务轴<br/>approve · steer · need_fix · reject"]
+    EF["效果轴<br/>not-started · in-progress · applied<br/>blocked · failed · unknown"]
+
+    T -->|"answered 不等于放行"| BZ
+    BZ -->|"approve 后执行前锁内重核"| EF
+    BZ -->|"steer 或 need_fix"| FU["PM 组织后续请求<br/>本事项不放行"]
+    EF -->|"崩溃或未知"| CK["对账实际对象<br/>不盲目重试"]
+
+    style T fill:#E6F1FB,stroke:#185FA5
+    style BZ fill:#E1F5EE,stroke:#0F6E56
+    style EF fill:#E1F5EE,stroke:#0F6E56
+    style FU fill:#F1EFE8,stroke:#888780
+    style CK fill:#FAEEDA,stroke:#854F0B

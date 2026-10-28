@@ -1,0 +1,13 @@
+{
+  "source": "agent-report",
+  "recorded_at_utc": "2026-10-27T13:45:28+00:00",
+  "reading": "datetime.datetime.now(datetime.timezone.utc), truncated to the second",
+  "explicit_zone": "+00:00 (UTC)",
+  "clock_source": "worker host system clock, read once at this attempt's preparation step",
+  "meaning": "authoring instant of the eight synthetic decide_cases shipped by scripts/build_decide_cases.py in the T05-R2-envelope attempt",
+  "not_evidence_of": "a real decision being prepared, a granted authorization, or a historical preparation event; the cases are synthetic fixtures",
+  "frozen_into": "packages/multi-workers/scripts/build_decide_cases.py::CASE_PREPARED_AT",
+  "wall_clock_per_run": false,
+  "backfilled_from_run_start": false,
+  "python": "3.14.3 (tags/v3.14.3:323c59a, Feb  3 2026, 16:04:56) [MSC v.1944 64 bit (AMD64)]"
+}

@@ -1,0 +1,225 @@
+--- before/decision_wire.py
++++ after/decision_wire.py
+@@ -79,6 +79,25 @@
+   is looked up *inside the append lock* and a hit writes nothing
+   (``status="duplicate"``). Deduplication is by ``event_id`` only, never by
+   ``(decision_id, kind word)``: two real actions stay two rows.
++
++Additive T10 extension (request / PM note / task terminal, design §4.6 AC-050):
++
++* ``request`` - the one real prepared request: transport facts (``available``,
++  ``attempts``/``transport_attempts``, ``replayed``) and the single business
++  decision (``choice`` + selected ``basis_id``/``basis_text``/``basis_source`` +
++  ``basis_catalog_sha256`` of the schema-3 ``preparation`` layer) live in the
++  same row but never stand in for each other. A transport success with
++  ``business_decisions=0`` is an honest request fact, not an approval.
++* ``note`` - the PM's pre-submission note (``pm_note`` + ``prepared_at`` +
++  ``note_source``). Its own kind, so the note and the model's selected basis
++  keep independent sources (AC-007: "PM note与模型理由分别保存").
++* ``terminal`` - this task's real terminal observation (``terminal`` closed
++  vocabulary + real ``reason`` + the ``task_after`` snapshot). It is not
++  ``settled``, not an executed action and not "done" for the key.
++
++These three kinds are additive: the lifecycle feedback words stay the four
++pinned ones, and the history reader accepts them as schema-v1 kinds instead of
++counting an unknown kind.
+ """
+ from __future__ import annotations
+ 
+@@ -252,6 +271,43 @@
+     ),
+     "record-start": ("logical_id", "record_version", "initiator_role", "retry_of", "task_before"),
+     "book-snapshot": ("book_ref", "book", "file_sha256", "book_sha256", "book_version"),
++    # -- T10: request / PM note / task terminal facts (separate from the four
++    # -- pinned lifecycle feedback words; each has its own source and none of
++    # -- them can stand in for "executed" or "done").
++    "request": (
++        "logical_id",
++        "dp",
++        "available",
++        "replayed",
++        "choice",
++        "basis_id",
++        "basis_text",
++        "basis_source",
++        "prepared_at",
++        "basis_catalog_sha256",
++        "business_decisions",
++        "transport_attempts",
++        "attempts",
++        "reason",
++        "parent_ref",
++        "task_before",
++    ),
++    "note": (
++        "logical_id",
++        "pm_note",
++        "prepared_at",
++        "note_source",
++        "parent_ref",
++        "task_before",
++    ),
++    "terminal": (
++        "logical_id",
++        "terminal",
++        "reason",
++        "evidence",
++        "parent_ref",
++        "task_after",
++    ),
+ }
+ EVENT_KINDS = frozenset(_KIND_FIELDS)
+ 
+@@ -902,7 +958,16 @@
+     "lifecycle-error": ("detail",),
+     "record-start": ("task_before",),
+     "book-snapshot": (),
++    "request": ("basis_text", "reason"),
++    "note": ("pm_note",),
++    "terminal": ("reason", "evidence"),
+ }
++
++#: A PM note and a selected basis item are the two halves of one round's
++#: provenance (design D012A). Both are stored whole or refused - a clipped note
++#: or a truncated reason would look like a complete one ("不截断理由").
++NOTE_TEXT_BYTES = 16 * 1024
++BASIS_TEXT_BYTES = 4 * 1024
+ 
+ _FREE_TEXT_LIMITS: dict[str, int] = {
+     "url_path": URL_PATH_LIMIT,
+@@ -914,6 +979,8 @@
+     "escalated_reason": REASON_LIMIT,
+     "transport": MODEL_LIMIT,
+     "detail": ERROR_DETAIL_LIMIT,
++    "pm_note": NOTE_TEXT_BYTES,
++    "basis_text": BASIS_TEXT_BYTES,
+ }
+ 
+ 
+@@ -1514,6 +1581,126 @@
+     )
+ 
+ 
++def request_event(
++    scope: WireScope,
++    *,
++    logical_id: str,
++    dp: str,
++    available: bool,
++    replayed: bool,
++    choice: str | None,
++    basis_id: str | None,
++    basis_text: str | None,
++    basis_source: str | None,
++    prepared_at: str,
++    basis_catalog_sha256: str | None,
++    business_decisions: int,
++    transport_attempts: int,
++    attempts: int,
++    reason: str | None,
++    parent_ref: str | None = None,
++    task_before: dict[str, object] | None = None,
++    event_id: str | None = None,
++) -> dict[str, object]:
++    """One real prepared request (T10): transport facts and business decision apart.
++
++    ``available``/``transport_attempts`` describe the wire; ``choice``/
++    ``basis_*`` describe the single valid business decision and stay null when
++    ``business_decisions`` is 0. ``prepared_at`` is the PM preparation's own
++    time, never the write time. Validation lives in the lifecycle writer, which
++    is the only production caller.
++    """
++    return build_event(
++        scope,
++        "request",
++        event_id=event_id,
++        fields={
++            "logical_id": logical_id,
++            "dp": dp,
++            "available": available,
++            "replayed": replayed,
++            "choice": choice,
++            "basis_id": basis_id,
++            "basis_text": basis_text,
++            "basis_source": basis_source,
++            "prepared_at": prepared_at,
++            "basis_catalog_sha256": basis_catalog_sha256,
++            "business_decisions": business_decisions,
++            "transport_attempts": transport_attempts,
++            "attempts": attempts,
++            "reason": reason,
++            "parent_ref": parent_ref,
++            "task_before": task_before,
++        },
++    )
++
++
++def note_event(
++    scope: WireScope,
++    *,
++    logical_id: str,
++    pm_note: str,
++    prepared_at: str,
++    note_source: str,
++    parent_ref: str | None = None,
++    task_before: dict[str, object] | None = None,
++    event_id: str | None = None,
++) -> dict[str, object]:
++    """The PM's pre-submission note as its own fact (T10, spec AC-007).
++
++    It never shares a row with the model's selected basis: a note is the PM's
++    declared intent (matter/action/goal evidence/budget basis/end condition),
++    the basis is the PM-prepared catalogue item the model picked. Neither is
++    inferred from the other, and a failure reason never becomes either.
++    """
++    return build_event(
++        scope,
++        "note",
++        event_id=event_id,
++        fields={
++            "logical_id": logical_id,
++            "pm_note": pm_note,
++            "prepared_at": prepared_at,
++            "note_source": note_source,
++            "parent_ref": parent_ref,
++            "task_before": task_before,
++        },
++    )
++
++
++def terminal_event(
++    scope: WireScope,
++    *,
++    logical_id: str,
++    terminal: str,
++    reason: str,
++    task_after: dict[str, object] | None,
++    evidence: str | None = None,
++    parent_ref: str | None = None,
++    event_id: str | None = None,
++) -> dict[str, object]:
++    """This task's real terminal observation (T10), never a settlement shortcut.
++
++    ``settled``/``consumed`` are decision-round facts; the task terminal is its
++    own fact with its own reason and the real post observation. It does not
++    close a key, phase, claim or sign-off, and no reader may derive it from
++    ``settled``.
++    """
++    return build_event(
++        scope,
++        "terminal",
++        event_id=event_id,
++        fields={
++            "logical_id": logical_id,
++            "terminal": terminal,
++            "reason": reason,
++            "evidence": evidence,
++            "parent_ref": parent_ref,
++            "task_after": task_after,
++        },
++    )
++
++
+ # -- serialization and line budget -----------------------------------------
+ 
+ def _encode_row(row: Mapping[str, object]) -> bytes:

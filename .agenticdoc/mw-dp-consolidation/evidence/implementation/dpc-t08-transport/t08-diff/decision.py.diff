@@ -1,0 +1,467 @@
+--- before/decision.py
++++ after/decision.py
+@@ -47,6 +47,7 @@
+ from __future__ import annotations
+ 
+ import contextlib
++import copy
+ import datetime
+ import json
+ import os
+@@ -79,9 +80,11 @@
+     "QuestionSpec",
+     "QuestionType",
+     "ScoreSpec",
++    "BASIS_QUESTION_ID",
+     "REASON_BAD_RESPONSE",
+     "REASON_BUDGET_EXHAUSTED",
+     "REASON_CODES",
++    "REASON_INPUT_INCOMPLETE",
+     "REASON_DISABLED",
+     "REASON_ENTRY_UNAVAILABLE",
+     "REASON_RATE_LIMITED",
+@@ -137,6 +140,20 @@
+ # BackendOutcome block in the task card omits it because backends only judge a
+ # single request. It is therefore accepted from backends but never invented.
+ REASON_BUDGET_EXHAUSTED = "budget-exhausted"
++# A *request* whose own input is incomplete (missing/illegal material, role or
++# prepared basis) is refused before any POST. The value is not new to this
++# transport family: ``decision_backends.REASON_INPUT_INCOMPLETE`` already
++# classifies the legacy dynamic-enum defect with it and ``mw``/the archive carry
++# it as an escalated reason, so the prepared gate reuses that same frozen word
++# instead of inventing a second one.
++REASON_INPUT_INCOMPLETE = "input-incomplete"
++
++#: The prepared basis question id of one same-call request (design D012A): the
++#: entry keeps its own business question id, and this second ``choice`` question
++#: asks which PM-prepared basis item supports the answered choice. It is one
++#: request, not a second call: the answer pair is decoded together and a missing
++#: or mismatched basis refuses the decision instead of asking again.
++BASIS_QUESTION_ID = "basis_id"
+ 
+ REASON_CODES = frozenset(
+     {
+@@ -150,6 +167,38 @@
+         REASON_BOX_REQUIRES_IMAGE,
+         REASON_BUDGET_EXHAUSTED,
+     }
++)
++
++#: Reason vocabulary of one prepared-request result (``request_prepared``). It
++#: is the frozen transport set plus the input gate's own word; the generic
++#: ``decide`` response contract (:data:`REASON_CODES`) is deliberately left
++#: untouched so no consumer of the old dict sees a new value.
++_PREPARED_REASONS = REASON_CODES | frozenset({REASON_INPUT_INCOMPLETE})
++
++#: Frozen keys of one prepared-request result (``request_prepared``). The
++#: transport facts stay separate from the business decision: a replayed or
++#: refused request reports ``business_decisions=0`` even when real POSTs (and
++#: therefore ``transport_attempts``/``attempts``) happened.
++_PREPARED_RESULT_FIELDS = (
++    "dp",
++    "available",
++    "replayed",
++    "choice",
++    "basis_id",
++    "basis_text",
++    "basis_source",
++    "prepared_at",
++    "reason",
++    "issues",
++    "detail",
++    "answers",
++    "attempts",
++    "transport_attempts",
++    "business_decisions",
++    "transport",
++    "model",
++    "confidence_source",
++    "latency_ms",
+ )
+ 
+ #: Frozen question vocabulary (FIX-R: the constants are typed at the source so
+@@ -1336,6 +1385,42 @@
+         else "<key>"
+         for segment in text.split(".")
+     )
++
++
++# ---------------------------------------------------------------------------
++# Protocol module (single source: ``decision_points``) — lazy, optional.
++# ---------------------------------------------------------------------------
++
++#: The protocol module is imported lazily because ``decision_points`` imports
++#: this module (and raises :class:`DecisionInputError` through it); a module-level
++#: import would be circular. A missing/broken protocol module means no prepared
++#: request can be validated, which the transport reports as ``entry-unavailable``
++#: instead of sending unvalidated material.
++_PROTOCOL_MODULE = None
++_PROTOCOL_LOADED = False
++_PROTOCOL_IMPORT_ERROR = ""
++
++
++def _protocol_module():
++    """Lazily import the eight-entry protocol module once; ``None`` when absent."""
++    global _PROTOCOL_MODULE, _PROTOCOL_LOADED, _PROTOCOL_IMPORT_ERROR
++    if not _PROTOCOL_LOADED:
++        _PROTOCOL_LOADED = True
++        try:
++            import decision_points
++        except Exception as exc:  # noqa: BLE001 - reported as a refusal, never raised
++            _PROTOCOL_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
++        else:
++            _PROTOCOL_MODULE = decision_points
++    return _PROTOCOL_MODULE
++
++
++def _prepared_catalog(preparation: object) -> list:
++    """The prepared basis catalog of one already-validated preparation block."""
++    if not isinstance(preparation, Mapping):
++        return []
++    catalog = preparation.get("basis_catalog")
++    return list(catalog) if isinstance(catalog, list) else []
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -1636,6 +1721,18 @@
+         self._pinned_credential_snapshot = credential_snapshot
+         self.last_credential_source: str | None = None
+         self._injected_redactor: object | None = None
++        #: The scrubbed detail of the last ``_emit`` (a prepared request exposes
++        #: the concrete refusal reason; the frozen ``decide`` dict has no detail
++        #: key, so it is kept as an attribute instead of changing that contract).
++        self.last_detail: str = ""
++        #: The backend of the last resolved call, so a prepared request can read
++        #: the real POST count (``last_transport_attempts``) without the wire
++        #: module being enabled.
++        self._last_backend: DecisionBackend | None = None
++        #: Real POSTs of the last logical call, summed over its backend attempts
++        #: (``None`` = no backend reported a count; the client's attempt count is
++        #: then the only measurable transport count).
++        self._transport_attempts_total: int | None = None
+ 
+     # -- public API ---------------------------------------------------------
+ 
+@@ -1673,6 +1770,287 @@
+         with context:
+             return self._decide(state, questions, dp=dp)
+ 
++    # -- prepared same-call request (T08 / design D012A) --------------------
++
++    def request_prepared(
++        self,
++        dp: str,
++        material: object,
++        preparation: object,
++        *,
++        actor_role: object = None,
++        logical_id: str | None = None,
++        replay_check: Callable[[str, str], bool] | None = None,
++    ) -> dict:
++        """One same-call business choice plus PM-prepared basis selection.
++
++        Unlike :meth:`decide` (the generic transport face), this composes the
++        eight-entry protocol and the transport in the order the design fixes:
++
++        1. the **active identity** is resolved first, so a retired or unknown id
++           never reaches the replay lookup, the backend, the credential snapshot
++           or a POST (the refusal names the retired disposition, never an alias);
++        2. an optional caller-owned **replay lookup** runs before the model: when
++           it reports an existing decision for ``logical_id`` the request is
++           answered with ``replayed=True`` and zero POSTs (the transport never
++           owns a second ledger, so the store stays in the lifecycle layer);
++        3. the pure protocol gate validates role -> complete material -> prepared
++           basis (a prepared catalog item must reference a real material fact and
++           name a legal choice) before anything is sent;
++        4. the one request carries the entry's own business question **and** the
++           prepared basis question (``BASIS_QUESTION_ID``), so the model's choice
++           and its traceable reason are decided together - no second call asks
++           for a reason, and no free-form ``reason``/``rationale`` field is read;
++        5. the answered pair is decoded against the submitted contract (choice
++           enum, ``applies_to`` of the selected basis item, branch-level material
++           rules). Any mismatch is a blocking ``bad-response``: the business
++           decision count stays 0 and no default/first candidate is applied.
++
++        The complete projected material and the complete basis catalog are sent
++        as-is: the existing size gates refuse an over-budget request instead of
++        truncating the core evidence the decision depends on.
++
++        Counting is deliberately two-axis: ``attempts`` (client backend calls),
++        ``transport_attempts`` (real POSTs, retry-after retries included) and
++        ``business_decisions`` (1 only for one valid answered pair).
++
++        Returns the frozen :data:`_PREPARED_RESULT_FIELDS` mapping; this method
++        does not raise (a broken protocol module is an ``entry-unavailable``
++        refusal, not an exception).
++        """
++        start = self._clock()
++        protocol = _protocol_module()
++        if protocol is None:
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=REASON_ENTRY_UNAVAILABLE,
++                detail=(
++                    "decision protocol module unavailable"
++                    f" ({_PROTOCOL_IMPORT_ERROR or 'import failed'}); no request sent"
++                ),
++            )
++        # 1. Active identity first (retired ids are history, never aliases).
++        try:
++            protocol.require_active_dp(dp)
++        except DecisionInputError as exc:
++            return self._prepared(
++                start, dp=dp, reason=REASON_ENTRY_UNAVAILABLE, detail=str(exc)
++            )
++        # 2. Caller-owned replay lookup: a hit never spends a model call.
++        if logical_id and replay_check is not None:
++            try:
++                already_decided = bool(replay_check(dp, logical_id))
++            except Exception as exc:  # noqa: BLE001 - a broken lookup proves nothing
++                return self._prepared(
++                    start,
++                    dp=dp,
++                    reason=REASON_ENTRY_UNAVAILABLE,
++                    detail=(
++                        f"replay lookup failed ({type(exc).__name__}); refusing to send "
++                        "without a provable novelty check"
++                    ),
++                )
++            if already_decided:
++                return self._prepared(
++                    start,
++                    dp=dp,
++                    available=True,
++                    replayed=True,
++                    detail=(
++                        f"logical_id {logical_id!r} already has a recorded decision; "
++                        "no request sent"
++                    ),
++                )
++        # 3. Role -> complete material -> complete prepared basis (zero POST).
++        issues = tuple(
++            protocol.prepared_request_issues(
++                dp, material, preparation, actor_role=actor_role
++            )
++        )
++        if issues:
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=REASON_INPUT_INCOMPLETE,
++                issues=issues,
++                detail=f"{len(issues)} blocking material/preparation issue(s); no request sent",
++            )
++        # 4. The one question set: entry question + prepared basis question.
++        try:
++            import decision_backends  # type: ignore[import-not-found]  # sibling
++
++            questions = decision_backends.build_prepared_questions(
++                dp, material, preparation
++            )
++        except Exception as exc:  # noqa: BLE001 - rendering failure stays a refusal
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=REASON_ENTRY_UNAVAILABLE,
++                detail=(
++                    f"prepared question rendering failed ({type(exc).__name__}); "
++                    "no request sent"
++                ),
++            )
++        business_qids = [qid for qid in questions if qid != BASIS_QUESTION_ID]
++        if len(business_qids) != 1:  # pragma: no cover - registry contract holds
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=REASON_ENTRY_UNAVAILABLE,
++                detail=(
++                    f"{dp} declares {len(business_qids)} business questions; "
++                    "a prepared request needs exactly one"
++                ),
++            )
++        business_qid = business_qids[0]
++        catalog = _prepared_catalog(preparation)
++        state = {
++            "material": protocol.model_state_for(dp, material),
++            "preparation": {
++                "basis_catalog": copy.deepcopy(catalog),
++                "prepared_at": preparation["prepared_at"],  # type: ignore[index]
++            },
++        }
++        # 5. Exactly one transport call (the client owns retries/budget only).
++        response = self.decide(state, questions, dp=dp)
++        attempts = int(response.get("attempts") or 0)
++        transport_attempts = self._transport_attempts(attempts)
++        shared = {
++            "attempts": attempts,
++            "transport_attempts": transport_attempts,
++            "transport": response.get("transport"),
++            "model": response.get("model"),
++            "confidence_source": response.get("confidence_source")
++            or CONFIDENCE_SOURCE_UNKNOWN,
++            "latency_ms": response.get("latency_ms"),
++        }
++        if not response.get("available"):
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=response.get("reason"),
++                detail=self.last_detail
++                or f"transport unavailable: {response.get('reason')}",
++                **shared,
++            )
++        answers = response.get("answers") or {}
++        choice = (answers.get(business_qid) or {}).get("value")
++        basis_id = (answers.get(BASIS_QUESTION_ID) or {}).get("value")
++        answer_issues = tuple(
++            protocol.entry_choice_issues(dp, choice, material)
++        ) + tuple(protocol.basis_selection_issues(basis_id, catalog, choice))
++        if answer_issues:
++            return self._prepared(
++                start,
++                dp=dp,
++                reason=REASON_BAD_RESPONSE,
++                issues=answer_issues,
++                detail=(
++                    "the answered choice/basis does not satisfy the entry contract; "
++                    "no default selection applied, no second call made"
++                ),
++                answers=answers,
++                **shared,
++            )
++        selected = next(
++            (
++                item
++                for item in catalog
++                if isinstance(item, Mapping) and item.get("id") == basis_id
++            ),
++            None,
++        )
++        return self._prepared(
++            start,
++            dp=dp,
++            available=True,
++            choice=str(choice),
++            basis_id=str(basis_id),
++            basis_text=str(selected.get("text")) if isinstance(selected, Mapping) else None,
++            basis_source=str(getattr(protocol, "BASIS_SOURCE", "pm-prepared")),
++            prepared_at=str(preparation["prepared_at"]),  # type: ignore[index]
++            answers=answers,
++            business_decisions=1,
++            **shared,
++        )
++
++    def _transport_attempts(self, attempts: int) -> int:
++        """Real POSTs of the last call, from the backend when it reports them.
++
++        ``attempts`` is the client's backend-call count. The timi backend also
++        counts the POSTs it issues itself (a ``retry-after`` retry adds a POST
++        without a second client attempt), and the client sums that counter over
++        its own retries, so the reported number stays the real POST count. A
++        caller-injected backend has no second layer, and its ``attempts`` is the
++        only measurable transport count.
++        """
++        if self._transport_attempts_total is not None:
++            return self._transport_attempts_total
++        return attempts
++
++    def _prepared(
++        self,
++        start: float,
++        *,
++        dp: str,
++        available: bool = False,
++        replayed: bool = False,
++        choice: str | None = None,
++        basis_id: str | None = None,
++        basis_text: str | None = None,
++        basis_source: str | None = None,
++        prepared_at: str | None = None,
++        reason: str | None = None,
++        issues: Sequence[tuple[str, str]] = (),
++        detail: object = "",
++        answers: Mapping | None = None,
++        attempts: int = 0,
++        transport_attempts: int = 0,
++        business_decisions: int = 0,
++        transport: str | None = None,
++        model: str | None = None,
++        confidence_source: str = CONFIDENCE_SOURCE_UNKNOWN,
++        latency_ms: int | None = None,
++    ) -> dict:
++        """Build one frozen :data:`_PREPARED_RESULT_FIELDS` mapping (never raises)."""
++        if reason is not None and reason not in _PREPARED_REASONS:
++            reason = REASON_UPSTREAM_ERROR
++        if available:
++            reason = None
++        latency = latency_ms
++        if latency is None:
++            latency = max(0, int(round((self._clock() - start) * 1000)))
++        result: dict[str, Any] = dict.fromkeys(_PREPARED_RESULT_FIELDS)
++        result.update(
++            {
++                "dp": dp,
++                "available": bool(available),
++                "replayed": bool(replayed),
++                "choice": choice,
++                "basis_id": basis_id,
++                "basis_text": basis_text,
++                "basis_source": basis_source,
++                "prepared_at": prepared_at,
++                "reason": reason,
++                "issues": [
++                    {"field": safe_path_text(path), "issue": _redact(str(text))}
++                    for path, text in issues
++                ],
++                "detail": _scrub_detail(detail),
++                "answers": dict(answers) if isinstance(answers, Mapping) else None,
++                "attempts": int(attempts),
++                "transport_attempts": int(transport_attempts),
++                "business_decisions": int(business_decisions),
++                "transport": _redact(str(transport)) if transport else None,
++                "model": _redact(str(model)) if model else None,
++                "confidence_source": confidence_source,
++                "latency_ms": int(latency),
++            }
++        )
++        return result
++
+     def _decide(
+         self,
+         state: DecisionState,
+@@ -1684,6 +2062,8 @@
+         start = self._clock()
+         transport = self._backend_name()
+         confidence_source = self._backend_confidence_source()
++        self._last_backend = None
++        self._transport_attempts_total = None
+ 
+         if not cfg.is_configured:
+             if cfg.config_error:
+@@ -1810,6 +2190,7 @@
+ 
+         transport = self._backend_name(backend)
+         confidence_source = self._backend_confidence_source(backend)
++        self._last_backend = backend
+         deadline = start + float(cfg.timeout_s)
+         attempts = 0
+         last_reason: str | None = None
+@@ -1834,6 +2215,9 @@
+             attempts += 1
+             with use_credential_snapshot(snapshot):
+                 outcome = self._call_backend(backend, state, questions, cfg)
++            reported = getattr(backend, "last_transport_attempts", None)
++            if isinstance(reported, int) and not isinstance(reported, bool) and reported >= 0:
++                self._transport_attempts_total = (self._transport_attempts_total or 0) + reported
+             if outcome.available:
+                 answers = self._normalize_answers(outcome.answers, questions)
+                 if answers is None:
+@@ -2093,6 +2477,7 @@
+         backend: DecisionBackend | None = None,
+     ) -> dict:
+         latency_ms = max(0, int(round((self._clock() - start) * 1000)))
++        self.last_detail = _scrub_detail(detail)
+         if available:
+             reason = None
+         elif reason not in REASON_CODES:

@@ -1,0 +1,22 @@
+{
+  "label": "red-prefix",
+  "argv": [
+    "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+    "-B",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "-q",
+    "test_decision_context_lifecycle.py",
+    "test_decision_task_state.py"
+  ],
+  "cwd": "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\dpc-t10-lifecycle-state\\red-prefix\\pkg",
+  "restored_head_product_bytes": {
+    "decision_wire.py": "076fd3dee161a038fcc3597815863609d34b181da3f9f7646a8f0ee3dd911579",
+    "decision_lifecycle.py": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+    "decision_task_state.py": "e82fc6b94f120d1d4ee561b6160d969b5ef36a86b6e3a0e8a3774c59a37e35e9"
+  },
+  "rc": 1,
+  "note": "pre-change product modules + post-change tests: expected RED"
+}

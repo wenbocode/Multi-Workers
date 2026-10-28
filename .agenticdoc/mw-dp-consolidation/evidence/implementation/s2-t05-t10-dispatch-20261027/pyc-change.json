@@ -1,0 +1,15 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T13:01:01.288749+00:00",
+  "drift": {
+    "path": "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+    "before": "e4b51f5b85198575ba723fca7f85e48a0962da44b2820f4f53f4ebea3de80677",
+    "after": "b95f933d321d7cba48808279d4a9823d4c8719fe26ee26013d705439d7bcb280",
+    "authorized_product": false
+  },
+  "original_before_byte_copy_found": null,
+  "original_before_sha_preserved": "e4b51f5b85198575ba723fca7f85e48a0962da44b2820f4f53f4ebea3de80677",
+  "deleted_or_restored": false,
+  "only_this_one_of_original14_changed": true,
+  "exclusive_author_and_transient_history_not_proved": true
+}

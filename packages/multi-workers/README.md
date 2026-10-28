@@ -500,10 +500,12 @@ python mw.py autopilot verify clear --project <dir>
   结束标记缺失时容错到下一个 H2 或文件尾，fence 内的示例表不参与解析，表头别名与列序任意、
   全角 `：｜` 与全角数字归一，`C-01.3` 子行只能挂在 `struct` 父行下；不可解析的行进 `errors`，永不抛异常。
 - caps 推导（`claim_budget_caps`，两字段各自独立）：
-  - `l2_read_file_cap = min(30, Σ(类型 == manual ? 2 : 1))` —— manual 记双倍，它买的是 PM 注意力而不是 worker 取数；
+  - `l2_read_file_cap = min(30, 6 × n)` —— 每条 claim 买 6 次读/搜调用（6 × n 封顶 30）；`Σ预算` 是门禁的计划权重，
+    不参与取数预算（manual 记双倍只影响 `Σ预算 ≤ 40` 与 manual 溢出判定）；
   - `l2_read_byte_cap = min(393216, 65536 × n)`，`n` = claims 条数；
-  - 预算两常数只在 `CLAIM_BUDGET` 里定义一次（与 TS 同名同值）；`CLAIM_TYPES` / `UNVERIFIED_REASONS` /
-    `CLAIM_GATE_DEFAULT` / `CLAIM_BUDGET`（五键）全部由 `test_claim_parity.py` 逐字逐序锁住。
+  - 预算两常数只在 `CLAIM_PER_CLAIM` / `CLAIM_CALL_CAP` 定义一次，`CLAIM_BUDGET`（与 TS 同名同值）直接复用它们；
+    `CLAIM_TYPES` / `UNVERIFIED_REASONS` / `CLAIM_GATE_DEFAULT` / `CLAIM_BUDGET`（五键）全部由 `test_claim_parity.py`
+    逐字逐序锁住。
 - 优先级：项目层 `.agenticdoc/_autopilot/config.json` **显式写的** `l2_read_file_cap` / `l2_read_byte_cap`
   逐字段胜出，只有缺的字段才用卡推导值。
 - 无 claims 的卡、以及 conductor 合成卡（没有卡文件）的路径：不写 `read_scope`、不写 cap 行，

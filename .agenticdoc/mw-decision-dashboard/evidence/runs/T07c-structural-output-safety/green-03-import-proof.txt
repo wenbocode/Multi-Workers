@@ -1,0 +1,5 @@
+test module      : H:\git\Multi-Workers\packages\multi-workers\test_decision_history.py
+history module   : H:\git\Multi-Workers\packages\multi-workers\decision_history.py
+has _scrub_output: True
+has structural_withheld: True
+has record.redactor: True

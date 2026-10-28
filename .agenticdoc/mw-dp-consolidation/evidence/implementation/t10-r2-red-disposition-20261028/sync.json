@@ -1,0 +1,10 @@
+{
+  "observed_at": "2026-10-28T06:53:49.571811+00:00",
+  "source": "agent-report",
+  "only_T10_metadata_changed": true,
+  "other_35_equal": true,
+  "task_count": 36,
+  "stage_count": 7,
+  "stage_b_status": "running",
+  "semantic_handoff": false
+}

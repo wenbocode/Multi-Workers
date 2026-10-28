@@ -1,0 +1,144 @@
+..................................F..........FF..............FFF.F...... [ 98%]
+.                                                                        [100%]
+================================== FAILURES ===================================
+___________ test_evidence_under_a_changed_contract_is_not_reusable ____________
+
+    def test_evidence_under_a_changed_contract_is_not_reusable() -> None:
+        """A recorded reason may not leave the verdict at applies/reusable.
+    
+        A contract change makes the affected evidence unusable until the current
+        contract is really matched again; it does not turn every byte change of an
+        evidence item into a new review (the controls below still reuse).
+        """
+    
+        old = make_matter(contract="dp-contract-v1")
+        evidence = evidence_for(old, ("write-face", "evidence"))
+        current = make_matter(contract="dp-contract-v2")
+        applicability = dv.assess_evidence(evidence, current)
+>       assert applicability.status != "applies"
+E       AssertionError: assert 'applies' != 'applies'
+E        +  where 'applies' = EvidenceApplicability(status='applies', reasons=(VerdictReason(code='contract_version_changed', field='contract_version', detail='dp-contract-v2'),), stale_dependencies=(), unaffected_changes=(), reusable=True).status
+
+test_dp_consolidation_concurrency.py:681: AssertionError
+______________ test_invalid_path_blocks_the_whole_claim_request _______________
+
+    def test_invalid_path_blocks_the_whole_claim_request() -> None:
+        """One unusable path fails the complete requested write face closed."""
+    
+        mixed = dv.ClaimRequest(
+            actor="worker-window-2",
+            task_key="my-key",
+            files=("packages/multi-workers/safe.py", "../outside.py"),
+        )
+        verdict = dv.assess_claim([], mixed)
+>       assert verdict.status == "blocked"
+E       AssertionError: assert 'clear' == 'blocked'
+E         
+E         - blocked
+E         + clear
+
+test_dp_consolidation_concurrency.py:913: AssertionError
+____________ test_same_owner_other_task_active_claim_is_not_clear _____________
+
+    def test_same_owner_other_task_active_claim_is_not_clear() -> None:
+        """A claim is bound to its task: the same window on another task blocks."""
+    
+        claims = [
+            dv.Claim(
+                owner="worker-window-2",
+                task_key="other-task",
+                files=("packages/multi-workers/shared.py",),
+            )
+        ]
+        request = dv.ClaimRequest(
+            actor="worker-window-2",
+            task_key="my-key",
+            files=("packages/multi-workers/shared.py",),
+        )
+        verdict = dv.assess_claim(claims, request)
+>       assert verdict.status != "clear"
+E       AssertionError: assert 'clear' != 'clear'
+E        +  where 'clear' = ClaimVerdict(status='clear', reasons=(), conflicts=(), conflicting_owners=(), takeover=False, lock_mode='exclusive', decision_grants_claim=False, dispatched=False).status
+
+test_dp_consolidation_concurrency.py:960: AssertionError
+____________ test_required_signoff_accepts_only_the_finalize_word _____________
+
+    def test_required_signoff_accepts_only_the_finalize_word() -> None:
+        """continue/user-confirm stay legal menu words but are not a signoff."""
+    
+        matter = make_matter(kind="key-signoff")
+        required_signoff_passes = 0
+        for choice in ("continue", "user-confirm"):
+            verdict = dv.assess_signoff(
+                signoff(choice=choice), matter, required_scope=("key-1",)
+            )
+>           assert verdict.status != "valid", choice
+E           AssertionError: continue
+E           assert 'valid' != 'valid'
+E            +  where 'valid' = SignoffVerdict(status='valid', reasons=(), writes_signoff=False, widens_scope=False).status
+
+test_dp_consolidation_concurrency.py:1293: AssertionError
+_______________ test_signoff_must_be_bound_to_the_required_key ________________
+
+    def test_signoff_must_be_bound_to_the_required_key() -> None:
+        matter = make_matter(kind="key-signoff")
+        wrong_key = dv.assess_signoff(
+            signoff(key="other-key"), matter, required_scope=("key-1",)
+        )
+>       assert wrong_key.status == "blocked"
+E       AssertionError: assert 'valid' == 'blocked'
+E         
+E         - blocked
+E         + valid
+
+test_dp_consolidation_concurrency.py:1309: AssertionError
+___________ test_signoff_reference_must_be_non_empty_and_traceable ____________
+
+    def test_signoff_reference_must_be_non_empty_and_traceable() -> None:
+        matter = make_matter(kind="key-signoff")
+        for reference in (None, "", "   "):
+            verdict = dv.assess_signoff(
+                signoff(signoff_ref=reference), matter, required_scope=("key-1",)
+            )
+>           assert verdict.status == "blocked", reference
+E           AssertionError: None
+E           assert 'valid' == 'blocked'
+E             
+E             - blocked
+E             + valid
+
+test_dp_consolidation_concurrency.py:1331: AssertionError
+___________ test_unrecognised_or_missing_effect_status_blocks_retry ___________
+
+    def test_unrecognised_or_missing_effect_status_blocks_retry() -> None:
+        """A matched record with an unusable status is not "never executed"."""
+    
+        matter = make_matter()
+        blind_retries = 0
+        for status in ("unrecorded", "", None):
+            effect = dv.EffectRecord(
+                effect_id="eff-1",
+                decision_id="dec-1",
+                matter_key=matter.matter_key,
+                substantive_version=matter.substantive_version,
+                actions=("start-stage",),
+                status=status,
+            )
+            plan = dv.plan_actions([effect], matter=matter, actions=("start-stage",))
+>           assert plan.status == "blocked", status
+E           AssertionError: unrecorded
+E           assert 'proceed' == 'blocked'
+E             
+E             - blocked
+E             + proceed
+
+test_dp_consolidation_concurrency.py:1381: AssertionError
+=========================== short test summary info ===========================
+FAILED test_dp_consolidation_concurrency.py::test_evidence_under_a_changed_contract_is_not_reusable
+FAILED test_dp_consolidation_concurrency.py::test_invalid_path_blocks_the_whole_claim_request
+FAILED test_dp_consolidation_concurrency.py::test_same_owner_other_task_active_claim_is_not_clear
+FAILED test_dp_consolidation_concurrency.py::test_required_signoff_accepts_only_the_finalize_word
+FAILED test_dp_consolidation_concurrency.py::test_signoff_must_be_bound_to_the_required_key
+FAILED test_dp_consolidation_concurrency.py::test_signoff_reference_must_be_non_empty_and_traceable
+FAILED test_dp_consolidation_concurrency.py::test_unrecognised_or_missing_effect_status_blocks_retry
+7 failed, 66 passed in 0.25s

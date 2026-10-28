@@ -1,0 +1,15 @@
+{
+  "description": "v2 active single: mode blocks parked (invalid-if-parsed content must not raise)",
+  "env": {},
+  "expect": {
+    "mode": "single",
+    "source": "target-yml",
+    "game_root_equals_control": true,
+    "engine_root_null": true,
+    "parent_root_null": true,
+    "roots_null": true,
+    "vcs": null,
+    "deny_globs": [],
+    "docs": []
+  }
+}

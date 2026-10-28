@@ -1,0 +1,65 @@
+=== MDC spec AC lines ===
+| AC-001 | 在 roadmap 的 `depends_on` 可解析时，conductor 每 tick 计算的前沿集合 = {key | deps 全部终态 且 该 key 非终态}，且实起 key 数 = `min(配置上界, |前沿|)`（对 ≥3 组构造语料复算恒等） |
+| AC-002 | 在 key 内任务依赖与写面可解析时，conductor 对单 key 的实起 worker 数 = `min(per-key 上界, |可并行任务前沿|)`，且不与在飞 worker 写面重叠（重叠对 = 0） |
+| AC-003 | 在依赖数据或写面数据缺失/不可解析时，该层回退到串行（实起 = 1）并写审计行；不得默认放大 |
+| AC-008 | 任务级依赖载体：任务卡头一行 `deps:`（`-`/空 = 无；逗号分隔任务 id，语法与 roadmap `depends_on` 同构），由**新增的独立解析器**读取（**不能复用 `card_audit._header_value`**：卡首行是 H1，`_HEADER_RE` 在 `card_audit.py:160-162` 直接 break，实测 5/5 真实卡返回空串）+ 卡头区域规则（H1 / 空行 / `## 元信息` / `- k: v`，遇正文即止）；**无 `deps:` 行 = 无依赖 = 立刻可派**（实测 317/434 张卡无依赖行）；派发 task.md 头回显该字段（插点 `dispatch.py:837` 之后、`phase:` 之前，不移动两侧已冻结行索引断言）；`card_sha256` 哈希卡文件 ⇒ **先写卡再派发*
+| AC-009 | 任务级依赖图校验：悬空 id / 自依赖 / 环 / 跨 key 引用被检测；任一问题 → **整 key 串行回退**且写 timeline 事件，不得静默永锁。**id→卡文件 stem 的 join 必须用「数字核心」规则**（实测 146 个真实 dep token：stem 精确命中 0、既有 `_plan_task_file_stems` 命中 0、数字核心唯一命中 125），并对同核心多卡（如 `T-01-file-lock` 与 `T-01-task-protocol`，实测 10 例）给出歧义判据，否则真实存在的 `deps: T-1` 会全部假红 |
+| AC-010 | key 层依赖图的语义校验在 conductor tick 内被执行（今日只有 CLI/doctor）；悬空/环/前向 stage 被发现时写 timeline 审计事件，不改 key 的 fail-closed 不派发行为 |
+| AC-011 | **派发判定与队列写入在同一临界区**："该 key/卡是否已在飞"的复查必须在 `.mw/workers.lock` 内完成（check → append 之间无窗口），且同一 `task_key` 不可能被两个进程各 append 一次（用可观测的并发测试或双进程对拍证伪，不得只依赖 `upsert_worker_row` 的覆盖语义） |
+| AC-012 | **在飞口径单源**：`_is_in_flight` / `_row_belongs_to` 的意义只由一处导出谓词定义，并同时服务于派发闸（`conductor.py:698-704/742/1770/2365/2556`）、gate facts（`:6986-6992`）、stage 关闭（`:1288-1292`）、提醒抑制（`:3001-3004`）/defer（`:7986-7990`）与面板 `slotsUsed`（`monitor.ts:917-932`）；口径改变不得让任一点静默滞后（含 `pending` 算不算在飞、`manual` 行算不算槽位两个子问题） |
+| AC-013 | **`advance.advance()` 不得成为并发瓶颈**：per-key 并发 N > 1 时，任一 worker 的一次 advance（同步 `subprocess.run`，`advance.py:181-188`，超时 120s）不得阻塞同 tick 内其它 key/卡的派发判定；或给出实测量化（N 倍 tick 延迟可接受）作为等价证据 |
+| AC-004 | 配置语义：`max_parallel_keys` 作为 key 层**上界**（默认值、floor、取值域两侧镜像一致）；新增 per-key 上界键（名称/默认/取值域两侧镜像一致），且既有 materialized config 文件不因此变为非法 |
+| AC-005 | 呈现：autopilot monitor 同时显示"配置上界"与"本 tick effective 并发"两个量，且二者口径在同一快照内可复算一致 |
+| AC-006 | 回退：把上界配置改为 1 时，key 层与 per-key 层均回到串行（实起 ≤1），无需重启 serve |
+| AC-007 | 两语言配置镜像：TS `status-model.ts` 与 Python `config.py` 对新增/变更键的默认值、取值域、校验行为逐字段一致（parity 语料） |
+
+=== counting-lock files: lines with 20 / key-count assertions ===
+--- packages/multi-workers/test_autopilot_config.py (510) ---
+50:         ({"max_parallel_keys": 1}, "max_parallel_keys"),
+51:         ({"max_parallel_keys": "2"}, "max_parallel_keys"),
+113:     # Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode),
+115:     # dispatch_max_per_scan, queue_alarm_delta), 17 -> 20 in T-02 (G1/G2:
+117:     assert len(cfg.DEFAULT_CONFIG) == 20
+140:     the keys it carries. The complete 20-key view has its own sources
+150:     # The complete 20-key view has its own sources.
+151:     # Count changed 13 -> 14 (slot-capacity T-03), 14 -> 17 (mw-gate-verdict-hardening T-18),
+152:     # 17 -> 20 (T-02 G1/G2 keys).
+153:     assert len(cfg.default_config()) == 20
+154:     assert len(ec.load_effective(tmp_path).values) == 20
+155:     _verify("VC-016", partial_keys=len(loaded), default_keys=len(cfg.default_config()),
+188:     assert len(eff.values) == 20
+--- packages/multi-workers/test_mwgal_t12_stage_close_auto.py (796) ---
+128:     (key_dir / "evidence" / "quality-gate-report-2026-10-13.md").write_text(
+145:     project: pathlib.Path, rule_id: str, *, nights: int = 5, count: int = 20
+147:     """>=5 nights + >=20 shadow decisions + one falsifier for `rule_id`
+656:     """AC-011 / T-12 req. 8: the 20-key config schema, the frozen 40-name gate
+659:         "enabled", "paused", "poll_interval_sec", "max_parallel_keys",
+679:         config_keys=len(expected_config_keys),
+--- packages/multi-workers/test_mwgal_t15_reattest_confirm.py (745) ---
+133:     (key_dir / "evidence" / "quality-gate-report-2026-10-13.md").write_text(
+150:     project: pathlib.Path, rule_id: str, *, nights: int = 5, count: int = 20
+152:     """>=5 nights + >=20 shadow decisions + one falsifier for `rule_id`
+437:         "night": "2026-10-13",
+717:     """VC-9 (AC-008/AC-011 req. 7): the 20-key config schema, the frozen 40-name
+721:         "enabled", "paused", "poll_interval_sec", "max_parallel_keys",
+741:         config_keys=len(expected_config_keys),
+--- packages/coding-agent/test/suite/autopilot-console.test.ts (1393) ---
+150: 				max_parallel_keys: 2,
+394: 			expect(s.config).toEqual({ enabled: true, poll_interval_sec: 4, round_budget: 2, max_parallel_keys: 2 });
+425: 			expect(text).toContain(`max_parallel_keys=${s.config.max_parallel_keys}`);
+451: 					config: { enabled: true, poll_interval_sec: 4, round_budget: 2, max_parallel_keys: 2 },
+485: 			expect(s.config).toEqual({ enabled: false, poll_interval_sec: 4, round_budget: 2, max_parallel_keys: 2 });
+826: 			const tooLow = saveConfig(root, { ...DEFAULT_CONFIG, max_parallel_keys: 1 });
+908: 	it("AC-006/AC-012: the 20-key mirror registers the G5/G6 + G1/G2 keys last and exports the registries", () => {
+909: 		// Count changed 13 -> 14 (slot-capacity T-03), 14 -> 17 (mw-gate-verdict-hardening T-18),
+910: 		// 17 -> 20 (T-02: l3_abort_retry_limit / gate_reminder_after_min / gate_reminder_max).
+911: 		expect(Object.keys(DEFAULT_CONFIG)).toHaveLength(20);
+935: 		// frozen 20-key DEFAULT_CONFIG (config.py :61-65), so the registry and the
+936: 		// schema differ by exactly this one key — the 20-key assertion above stays.
+943: 			"max_parallel_keys",
+989: 			expect(DEFAULT_CONFIG_LOCK_OPTS).toEqual({ retries: 6, baseDelayMs: 20 });
+1251: 			// Count changed 13 -> 14 in mw-autopilot-slot-capacity (T-03 added auto_gate_mode).
+1256: 				max_parallel_keys: 2,
+1274: 			// Count changed 13 -> 14 (slot-capacity T-03), 14 -> 17 (mw-gate-verdict-hardening T-18),
+1275: 			// 17 -> 20 (T-02: l3_abort_retry_limit / gate_reminder_after_min / gate_reminder_max).
+1276: 			expect(Object.keys(enabled)).toHaveLength(20);

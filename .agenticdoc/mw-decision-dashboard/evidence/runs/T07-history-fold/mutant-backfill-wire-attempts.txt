@@ -1,0 +1,28 @@
+.......F...............                                                  [100%]
+================================== FAILURES ===================================
+________________ test_missing_wire_attempts_is_not_backfilled _________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18203/test_missing_wire_attempts_is_0')
+
+    def test_missing_wire_attempts_is_not_backfilled(tmp_path):
+        root = _root(tmp_path)
+        decision_id = _add_decision(root)
+        scope = _scope(root, decision_id=decision_id)
+        call = wire.new_call()
+        event = wire.call_end_event(scope, call, attempts=1, latency_ms=3, available=True)
+        del event["wire_attempts"]
+        wire.append_event(scope, event)
+    
+        record = _by_decision(_snapshot(root))[decision_id]
+    
+        assert record.call_counts.logical_calls == 1
+        assert record.call_counts.actual_http_attempts == 0
+>       assert record.call_counts.unrecorded_wire_attempts == 1
+E       AssertionError: assert 0 == 1
+E        +  where 0 = CallCounts(recorded=True, logical_calls=1, actual_http_attempts=0, zero_call=1, unrecorded_wire_attempts=0, basis=('ledger call rows (logical=call-end, attempts=attempt-start)',)).unrecorded_wire_attempts
+E        +    where CallCounts(recorded=True, logical_calls=1, actual_http_attempts=0, zero_call=1, unrecorded_wire_attempts=0, basis=('ledger call rows (logical=call-end, attempts=attempt-start)',)) = HistoryRecord(opaque_id='h-9bc7ea8012d916733116', identity='decision|dp1-dispatch-type:t1', record_kind='decision', sc...dopted', 'authority_change', 'book', 'consumed', 'executed', 'human_answer', 'human_override', 'responded', 'signoff')).call_counts
+
+test_decision_history.py:549: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_history.py::test_missing_wire_attempts_is_not_backfilled
+1 failed, 22 passed in 0.38s

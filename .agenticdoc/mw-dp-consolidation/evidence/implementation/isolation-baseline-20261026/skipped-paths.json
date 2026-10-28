@@ -1,0 +1,290 @@
+[
+  {
+    "path": "packages/agent/dist",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/agent/node_modules",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/ai/dist",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/ai/node_modules",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/client/dist",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/client/node_modules",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/coding-agent/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/coding-agent/.mw",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/coding-agent/dist",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/coding-agent/node_modules",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/coding-agent/Python",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/coding-agent/test/fixtures/before-compaction.jsonl",
+    "reason": "runtime-credential-name-or-link-file"
+  },
+  {
+    "path": "packages/coding-agent/test/fixtures/large-session.jsonl",
+    "reason": "runtime-credential-name-or-link-file"
+  },
+  {
+    "path": "packages/evals/node_modules",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/.mw",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/.pytest_cache",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/.tmp",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/dist",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/__pycache__",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/providers.json",
+    "reason": "runtime-credential-name-or-link-file"
+  },
+  {
+    "path": "packages/multi-workers/autopilot/__pycache__",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/mw_console_guard/__pycache__",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/scripts/__pycache__",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/__pycache__",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/002-single-sections/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/003-dual-engine-render/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/004-dual-missing-engine/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/005-uproject-unique/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/006-uproject-ambiguous/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/007-uproject-zero/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/008-mode-single-game/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/009-dual-no-game/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/010-env-game-override/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/012-invalid-yaml/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/013-engine-no-game/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/014-full-schema/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/015-v2-partition-roots/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/016-v2-single-parked/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/017-v2-dual-block/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/018-v2-mixed-format/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/019-v2-bad-active/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/020-v2-missing-block/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/021-v2-partition-missing-field/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/022-v2-partition-bad-block-key/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/023-v2-dual-bad-block-key/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/024-v2-roots-reserved-key/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/025-v2-root-relation-equal/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/026-v2-top-whitelist/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/027-v2-partition-env-override/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/028-v2-partition-env-blank/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/032-v1-partition-env-cross/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/033-v2-dual-env-game/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/034-v2-partition-render-missing/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/035-v2-dual-cross-env/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/036-v2-root-relation-nested/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/037-v2-roots-bad-chars/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/038-v2-roots-empty-key/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/039-v2-dual-missing-block/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/040-v2-roots-nonstring-key/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/041-v2-roots-quoted-numeric-key/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/042-non-mapping-top-level/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/043-v2-roots-nested-mapping-value/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/multi-workers/test/fixtures/target-config-cases/044-v2-roots-list-value/.agenticdoc",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/protocol/dist",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/protocol/node_modules",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/server/dist",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/server/node_modules",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/session-backends/sqlite-node/dist",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/session-backends/sqlite-node/node_modules",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": "packages/tui/dist",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": ".agents/skills/agentic-task/scripts/.pytest_cache",
+    "reason": "runtime-or-link-directory"
+  },
+  {
+    "path": ".agents/skills/agentic-task/scripts/__pycache__",
+    "reason": "runtime-or-link-directory"
+  }
+]

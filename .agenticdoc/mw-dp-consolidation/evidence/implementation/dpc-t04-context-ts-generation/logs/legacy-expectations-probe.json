@@ -1,0 +1,88 @@
+[
+  {
+    "label": "test_decision_context.py::test_slot_names_match_the_card_whitelist[dp4]",
+    "legacy_expected": [
+      "error_excerpt"
+    ],
+    "actual_after_t04": [],
+    "same": false
+  },
+  {
+    "label": "test_decision_context.py::test_validate_context_accepts_a_well_formed_block[dp4]",
+    "legacy_expected": [],
+    "actual_after_t04": [
+      "context.error_excerpt: not a slot of dp4-failure-handling"
+    ],
+    "same": false
+  },
+  {
+    "label": "test_decision_context.py::test_validate_context_accepts_a_well_formed_block[dp6]",
+    "legacy_expected": [],
+    "actual_after_t04": [
+      "context.error_excerpt: not a slot of dp6-qg-verdict"
+    ],
+    "same": false
+  },
+  {
+    "label": "test_decision_context.py::test_slot_names_match_the_card_whitelist[dp1]",
+    "legacy_expected": [],
+    "actual_after_t04": [],
+    "same": true
+  },
+  {
+    "label": "test_decision_context.py::test_validate_context_flags_a_slot_the_dp_may_not_emit",
+    "legacy_expected": [
+      "context.task_excerpt: not a slot of dp3-worker-clarify"
+    ],
+    "actual_after_t04": [
+      "context.task_excerpt: not a slot of dp3-worker-clarify"
+    ],
+    "same": true
+  },
+  {
+    "label": "test_decision_context_contract.py::test_generated_ts_is_fresh_and_carries_the_model_table[dp1-dispatch-type]",
+    "legacy_expected": "entry anchor '\\t\"dp1-dispatch-type\": {' present",
+    "actual_after_t04": "present=False",
+    "same": false
+  },
+  {
+    "label": "test_decision_context_contract.py::test_generated_ts_is_fresh_and_carries_the_model_table[dp2-checkpoint-split]",
+    "legacy_expected": "entry anchor '\\t\"dp2-checkpoint-split\": {' present",
+    "actual_after_t04": "present=False",
+    "same": false
+  },
+  {
+    "label": "test_decision_context_contract.py::test_generated_ts_is_fresh_and_carries_the_model_table[dp3-worker-clarify]",
+    "legacy_expected": "entry anchor '\\t\"dp3-worker-clarify\": {' present",
+    "actual_after_t04": "present=False",
+    "same": false
+  },
+  {
+    "label": "test_decision_context_contract.py::test_generated_ts_is_fresh_and_carries_the_model_table[dp25-signoff-conclusion]",
+    "legacy_expected": "entry anchor '\\t\"dp25-signoff-conclusion\": {' present",
+    "actual_after_t04": "present=False",
+    "same": false
+  },
+  {
+    "label": "active entries / retired records / slot producers",
+    "legacy_expected": "pre-T04 25 numbered dps",
+    "actual_after_t04": {
+      "active": [
+        "dp-w-type",
+        "dp-pm-steer",
+        "dp-w-check-task",
+        "dp-QG",
+        "dp-gate-approve",
+        "dp-sign-key",
+        "dp-auto",
+        "dp-route"
+      ],
+      "retired": 25,
+      "slot_producers": [
+        "dp-QG",
+        "dp-auto"
+      ]
+    },
+    "same": false
+  }
+]

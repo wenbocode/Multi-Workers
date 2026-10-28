@@ -1,0 +1,11 @@
+{
+  "decision_points": "ok",
+  "decision": "ok",
+  "decision_context": "ok",
+  "decision_book": "ok",
+  "decide_signoff": "ok",
+  "decide_archive": "ok",
+  "decision_history": "ok",
+  "decision_wire": "ok",
+  "decision_lifecycle": "ok"
+}

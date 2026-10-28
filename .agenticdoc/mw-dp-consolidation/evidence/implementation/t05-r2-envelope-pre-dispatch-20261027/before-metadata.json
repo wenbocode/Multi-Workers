@@ -1,0 +1,79 @@
+[
+  {
+    "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/scripts/build_decide_cases.py",
+    "bytes": 39431,
+    "sha256": "7987113fb597f9c8f5d6b48085292cf1a4f8c150839b2fc12efe5d4d4f6ffa70",
+    "lf": 901,
+    "crlf": 0
+  },
+  {
+    "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_book_template.json",
+    "bytes": 2367,
+    "sha256": "755253b61429271b4eb1fc5cb22cc2fb4e77a7fce07e7a67aa111dd896640df2",
+    "lf": 61,
+    "crlf": 0
+  },
+  {
+    "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_workbench.py",
+    "bytes": 95205,
+    "sha256": "0320702d37146bd856b28e2b102fee2245c67fed15c64349fe0f637c2877dc1b",
+    "lf": 2274,
+    "crlf": 0
+  },
+  {
+    "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-type.json",
+    "bytes": 3079,
+    "sha256": "dfb7ffc915a2c1de248629ec1d0a832c84b5d8a2920abc76427fdef60e6ddbf0",
+    "lf": 94,
+    "crlf": 0
+  },
+  {
+    "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-pm-steer.json",
+    "bytes": 4089,
+    "sha256": "814e7abf4172aba7c6828ab4e117f568ede18c5acf90d342640dc2235c744d10",
+    "lf": 99,
+    "crlf": 0
+  },
+  {
+    "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-w-check-task.json",
+    "bytes": 4622,
+    "sha256": "1908330e314b3da038c3a0e745504b30885e4717be91ef349c58383fdf3cad9c",
+    "lf": 100,
+    "crlf": 0
+  },
+  {
+    "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-QG.json",
+    "bytes": 2991,
+    "sha256": "43afee46e192b19a08be5a17260d2a088fa9789594066dca730fdc999273d953",
+    "lf": 78,
+    "crlf": 0
+  },
+  {
+    "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-gate-approve.json",
+    "bytes": 4750,
+    "sha256": "69e7970144ed7eb2cfd685e035f66872028172d4f594c3cda387b43ce6975ebd",
+    "lf": 114,
+    "crlf": 0
+  },
+  {
+    "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-sign-key.json",
+    "bytes": 3825,
+    "sha256": "f089deabae264503f096406cf42cd909bddbeab23b80dc13eea194ceaf81e408",
+    "lf": 100,
+    "crlf": 0
+  },
+  {
+    "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-auto.json",
+    "bytes": 4747,
+    "sha256": "3b8f1f267ebf50bb88b015efb53c5f7783e07e2763d3a157109060f8d36890a9",
+    "lf": 110,
+    "crlf": 0
+  },
+  {
+    "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decide_cases/dp-route.json",
+    "bytes": 3994,
+    "sha256": "6f267c83a2dd704a17b48583d8a2c2380a6cdfdec2534797ab206424a49510d5",
+    "lf": 129,
+    "crlf": 0
+  }
+]

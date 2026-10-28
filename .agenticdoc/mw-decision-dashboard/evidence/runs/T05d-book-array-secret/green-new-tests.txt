@@ -1,0 +1,18 @@
+# cmd: python -m pytest test_decision_input_contract_migration.py -k real_dp25_arrays_are_scanned or array_scan_reuses or nested_objects_and_arrays or legal_array_item_key or legal_arrays_and_long or secret_scan_is_separate --tb=short -rf
+# cwd: packages/multi-workers
+# started: 2026-10-22T06:49:57Z
+# elapsed_s: 0.8
+
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0
+rootdir: H:\git\Multi-Workers\packages\multi-workers
+configfile: pytest.ini
+plugins: anyio-4.12.1, Faker-40.13.0, respx-0.23.1
+collected 45 items / 36 deselected / 9 selected
+
+test_decision_input_contract_migration.py .........                      [100%]
+
+====================== 9 passed, 36 deselected in 0.18s =======================
+
+
+EXIT_green-new-tests=0

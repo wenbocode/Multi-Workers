@@ -98,7 +98,7 @@ $t="$env:TEMP\qg-head"; if(Test-Path $t){ cmd /c rmdir "$t\node_modules" 2>&1 | 
 | cwd slug / cwd | `--H--git-Multi-Workers--` / `H:\git\Multi-Workers` | session 头 `"cwd"` 字段 |
 | session id | `01a1208f-e335-767d-a127-bf295f75a861`（起于 `2026-10-09T12:07:43.157Z`） | session 头 |
 | worker / 卡片 | worker `mvr-t16-quality-gate-review`（`type: research`）· 卡片 `T-16-quality-gate-review` | `.agenticdoc/mw-vision-role/workers/mvr-t16-quality-gate-review/{task.md,progress.md,trace.log}` |
-| key / 窗口 | key **`mw-vision-role`** · `Claim-Id: WENBOZHOU-PC4:8152` | `.agenticdoc/mw-vision-role/pm-state.md` |
+| key / 窗口 | key **`mw-vision-role`** · `Claim-Id: WENBOZHOU-PC4:8152` | `.agenticdoc/_index.parallel:46`（`[QG-E8]` 更正：v2 原引 `.agenticdoc/mw-vision-role/pm-state.md`，该文件现无 Claim-Id 行，值 WENBOZHOU-PC4:8152 本身真实） |
 | 执行进程账本（旁证） | `trace.log`：`[START] 2026-10-09T12:07:43.239Z task=mvr-t16-quality-gate-review`；`[TOOL] 2026-10-09T12:32:18.454Z bash cd H:/git/Multi-Workers; git worktree remove --force "$env:TEMP\qg-head" ...`；`[END] 2026-10-09T12:32:43.510Z exit=0 elapsed=1500s tools=88` | 同一 trace.log（本轮 grep 命中；行号随该文件被后续运行追加而漂移，故不引行号） |
 | worker 自述 | `progress.md` 的 `## T-16 re-run (2026-10-09 wall clock; HEAD 10446aefb)` 段：「detached HEAD worktree in `$TEMP` (now removed)」 | 同上目录 |
 
@@ -107,7 +107,7 @@ $t="$env:TEMP\qg-head"; if(Test-Path $t){ cmd /c rmdir "$t\node_modules" 2>&1 | 
 **[未坐实]**
 1. **10-09 的派发行已不存在**：`.agenticdoc/_workers.parallel` 当前 `mvr-t16-quality-gate-review` 行是 **2026-10-10 的重派**（`... | done | pi | timi | ... | 2026-10-10T02:50:05.627Z | 2026-10-10T03:20:41+00:00`），10-09 行已被覆盖，无法从该文件复核首轮报告引用的「12:01:47.837Z 派发 / 12:32:45Z 完成」。
 2. **触发本次重派的具体 PM 窗口/命令**：12:00-12:08Z 的已执行 toolCall 中找不到 `dispatch_worker` / `mw dispatch` 记录（重派由 mw launcher 消费队列完成）。首轮报告同判 [未坐实]。
-3. **进程 pid**：首轮报告给出 `pid=159560`；本轮的 trace.log 中 10-09 `[START]` 行**不含 pid**，无法复核，记为 [未坐实]。
+3. ~~**进程 pid**~~ **已坐实（`[QG-E9]` 更正）**：`mvr-t16/trace.log`（`.agenticdoc/mw-vision-role/workers/mvr-t16-quality-gate-review/trace.log`）按 LF 拆行后 **:229 = `[START] pid=159560`**、:230 = `[START] 2026-10-09T12:07:43.239Z task=mvr-t16-quality-gate-review` ⇒ 首轮报告的 `pid=159560` **正确**；本轮 v2 的「无法复核」系读行不完整（该文件含 13 个孤立 `CR`，`Get-Content` 拆行偏移）导致的过度保守，**非事实错误**。
 
 ## AC-003：机制 —— 工具对 junction 的语义（穿透 vs 不穿透）+ 最小复现
 
@@ -262,7 +262,7 @@ pkgC=c4.txt,c5.txt,c6.txt            <- 最后一条链接的目标只删了一�
 1. 触发 12:01:47Z/10-09 重派 `mvr-t16` 的具体 PM 窗口/命令（10-09 的 `_workers.parallel` 行已被 10-10 重派覆盖）。
 2. 真树 `packages\tui` 内造成 EINVAL 的具体被占用文件/进程。
 3. `.tmp/t13-worktree` 路径（spec 提及，2026-10-09 全量 toolCall 检索未命中）。
-4. 10-09 worker 进程 pid（首轮报 `159560`，本轮 trace.log 10-09 `[START]` 行不含 pid）。
+4. ~~10-09 worker 进程 pid~~ **已坐实**：`mvr-t16/trace.log:229` = `[START] pid=159560`（见 §AC-002 [未坐实] #3 的 `[QG-E9]` 更正）。
 5. `%TEMP%\mwvg-t5-probe\node_modules` junction 的清理者（本轮确认已不存在，但未找到清理命令）。
 6. 首轮 `[VERIFY] nm_entries_before_@earendil-works=11` 的逐条 mtime（已被 10-10 11:21 的 npm 运行改写；集合口径仍成立）。
 7. `packages/coding-agent` 目录 mtime = 20:32:24 的自采数据（首轮引用 worker 实测，本轮未复算）。

@@ -1,0 +1,414 @@
+﻿.........................F.FFFFFFFF...........................           [100%]
+================================== FAILURES ===================================
+________ test_question_ceiling_is_a_prepared_refusal_not_an_exception _________
+
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/fixture/basetemp/test_question_ceiling_is_a_pre0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FB1B607070>
+http = <function http.<locals>.install at 0x000001FB1B774BF0>
+
+    def test_question_ceiling_is_a_prepared_refusal_not_an_exception(
+        tmp_path: pathlib.Path, monkeypatch, http
+    ) -> None:
+        """A legal pair under ``max_questions=1`` must not escape as an exception.
+    
+        The same-call request needs two questions (the entry's business question and
+        the prepared basis). The generic ``decide`` face raises ``DecisionInputError``
+        above ``max_questions``; a prepared request has to report that as a visible
+        refusal with zero HTTP and zero business decisions instead of letting the
+        exception escape - and the configured ceiling must stay what it was, never be
+        raised or loosened to make the pair fit.
+        """
+        dp_id = "dp-w-type"
+        material = _material(dp_id)
+        preparation = _preparation(dp_id, material)
+        fake = http(_ok_responder(dp_id, material))
+        client = _make_client(tmp_path, monkeypatch, max_questions=1)
+    
+        # No ``pytest.raises`` here: escaping with DecisionInputError is the defect.
+>       result = client.request_prepared(
+            dp_id, material, preparation, actor_role=dpts.ENTRY_ROLES[dp_id]
+        )
+
+test_dp_consolidation_materials.py:1004: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+decision.py:1917: in request_prepared
+    response = self.decide(state, questions, dp=dp)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+decision.py:1758: in decide
+    self._validate_input(state, questions)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <decision.DecisionClient object at 0x000001FB1B764670>
+state = {'material': {'images_required': False, 'task_deliverables': 'registry + snapshot + tests', 'task_goal': 'ship the pro...ask_goal'], 'text': 'PM-prepared alternative reason for another choice'}], 'prepared_at': '2026-10-26T12:00:00+00:00'}}
+questions = {'basis_id': {'choices': ['b-primary', 'b-secondary'], 'id': 'basis_id', 'instructions': '从 PM 已准备的依据中选择最符合所选业务结论的一项；这...{'coding': '需要写代码或改代码或跑命令', 'research': '只做检索取证不改代码', 'review': '审计别人已完成的产出', 'vision': '需要读取图片，且有效模型必须已证明图像能力'}, ...}}
+
+    def _validate_input(self, state: object, questions: object) -> None:
+        cfg = self.cfg
+        if state is None:
+            raise DecisionInputError("state must not be None")
+        if not isinstance(questions, Mapping):
+            raise DecisionInputError("questions must be an object mapping question id -> spec")
+        if not questions:
+            raise DecisionInputError("questions must not be empty")
+        if len(questions) > cfg.max_questions:
+>           raise DecisionInputError(
+                f"questions has {len(questions)} entries > max_questions={cfg.max_questions}"
+            )
+E           decision.DecisionInputError: questions has 2 entries > max_questions=1
+
+decision.py:2309: DecisionInputError
+____________ test_non_bool_replay_lookup_result_fails_closed[None] ____________
+
+lookup = None
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/fixture/basetemp/test_non_bool_replay_lookup_re0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FB1B6887C0>
+http = <function http.<locals>.install at 0x000001FB1B775F30>
+
+    @pytest.mark.parametrize("lookup", [None, "unknown", "true", "false", 1, 0, [], {}])
+    def test_non_bool_replay_lookup_result_fails_closed(
+        lookup: object, tmp_path: pathlib.Path, monkeypatch, http
+    ) -> None:
+        """``null``/unknown/other shapes prove neither a hit nor a miss.
+    
+        Truthifying the result fabricated a replay hit for ``"unknown"`` and a
+        novelty claim (one real POST, one business decision) for ``null``; neither is
+        a proven lookup result, so the request fails closed with zero HTTP and zero
+        business decisions.
+        """
+        dp_id = "dp-w-type"
+        material = _material(dp_id)
+        preparation = _preparation(dp_id, material)
+        fake = http(_ok_responder(dp_id, material))
+        client = _make_client(tmp_path, monkeypatch)
+        seen: list[tuple[str, str]] = []
+    
+        def replay_illegal(request_dp: str, logical_id: str) -> object:
+            seen.append((request_dp, logical_id))
+            return lookup
+    
+        result = client.request_prepared(
+            dp_id,
+            material,
+            preparation,
+            actor_role=dpts.ENTRY_ROLES[dp_id],
+            logical_id="t08-illegal-replay",
+            replay_check=replay_illegal,
+        )
+    
+        assert seen == [(dp_id, "t08-illegal-replay")]  # the lookup really ran
+>       assert result["available"] is False
+E       assert True is False
+
+test_dp_consolidation_materials.py:1086: AssertionError
+__________ test_non_bool_replay_lookup_result_fails_closed[unknown] ___________
+
+lookup = 'unknown'
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/fixture/basetemp/test_non_bool_replay_lookup_re1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FB1B4A8590>
+http = <function http.<locals>.install at 0x000001FB1B776560>
+
+    @pytest.mark.parametrize("lookup", [None, "unknown", "true", "false", 1, 0, [], {}])
+    def test_non_bool_replay_lookup_result_fails_closed(
+        lookup: object, tmp_path: pathlib.Path, monkeypatch, http
+    ) -> None:
+        """``null``/unknown/other shapes prove neither a hit nor a miss.
+    
+        Truthifying the result fabricated a replay hit for ``"unknown"`` and a
+        novelty claim (one real POST, one business decision) for ``null``; neither is
+        a proven lookup result, so the request fails closed with zero HTTP and zero
+        business decisions.
+        """
+        dp_id = "dp-w-type"
+        material = _material(dp_id)
+        preparation = _preparation(dp_id, material)
+        fake = http(_ok_responder(dp_id, material))
+        client = _make_client(tmp_path, monkeypatch)
+        seen: list[tuple[str, str]] = []
+    
+        def replay_illegal(request_dp: str, logical_id: str) -> object:
+            seen.append((request_dp, logical_id))
+            return lookup
+    
+        result = client.request_prepared(
+            dp_id,
+            material,
+            preparation,
+            actor_role=dpts.ENTRY_ROLES[dp_id],
+            logical_id="t08-illegal-replay",
+            replay_check=replay_illegal,
+        )
+    
+        assert seen == [(dp_id, "t08-illegal-replay")]  # the lookup really ran
+>       assert result["available"] is False
+E       assert True is False
+
+test_dp_consolidation_materials.py:1086: AssertionError
+____________ test_non_bool_replay_lookup_result_fails_closed[true] ____________
+
+lookup = 'true'
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/fixture/basetemp/test_non_bool_replay_lookup_re2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FB1B4A86E0>
+http = <function http.<locals>.install at 0x000001FB1B777060>
+
+    @pytest.mark.parametrize("lookup", [None, "unknown", "true", "false", 1, 0, [], {}])
+    def test_non_bool_replay_lookup_result_fails_closed(
+        lookup: object, tmp_path: pathlib.Path, monkeypatch, http
+    ) -> None:
+        """``null``/unknown/other shapes prove neither a hit nor a miss.
+    
+        Truthifying the result fabricated a replay hit for ``"unknown"`` and a
+        novelty claim (one real POST, one business decision) for ``null``; neither is
+        a proven lookup result, so the request fails closed with zero HTTP and zero
+        business decisions.
+        """
+        dp_id = "dp-w-type"
+        material = _material(dp_id)
+        preparation = _preparation(dp_id, material)
+        fake = http(_ok_responder(dp_id, material))
+        client = _make_client(tmp_path, monkeypatch)
+        seen: list[tuple[str, str]] = []
+    
+        def replay_illegal(request_dp: str, logical_id: str) -> object:
+            seen.append((request_dp, logical_id))
+            return lookup
+    
+        result = client.request_prepared(
+            dp_id,
+            material,
+            preparation,
+            actor_role=dpts.ENTRY_ROLES[dp_id],
+            logical_id="t08-illegal-replay",
+            replay_check=replay_illegal,
+        )
+    
+        assert seen == [(dp_id, "t08-illegal-replay")]  # the lookup really ran
+>       assert result["available"] is False
+E       assert True is False
+
+test_dp_consolidation_materials.py:1086: AssertionError
+___________ test_non_bool_replay_lookup_result_fails_closed[false] ____________
+
+lookup = 'false'
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/fixture/basetemp/test_non_bool_replay_lookup_re3')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FB1B4A8910>
+http = <function http.<locals>.install at 0x000001FB1B777740>
+
+    @pytest.mark.parametrize("lookup", [None, "unknown", "true", "false", 1, 0, [], {}])
+    def test_non_bool_replay_lookup_result_fails_closed(
+        lookup: object, tmp_path: pathlib.Path, monkeypatch, http
+    ) -> None:
+        """``null``/unknown/other shapes prove neither a hit nor a miss.
+    
+        Truthifying the result fabricated a replay hit for ``"unknown"`` and a
+        novelty claim (one real POST, one business decision) for ``null``; neither is
+        a proven lookup result, so the request fails closed with zero HTTP and zero
+        business decisions.
+        """
+        dp_id = "dp-w-type"
+        material = _material(dp_id)
+        preparation = _preparation(dp_id, material)
+        fake = http(_ok_responder(dp_id, material))
+        client = _make_client(tmp_path, monkeypatch)
+        seen: list[tuple[str, str]] = []
+    
+        def replay_illegal(request_dp: str, logical_id: str) -> object:
+            seen.append((request_dp, logical_id))
+            return lookup
+    
+        result = client.request_prepared(
+            dp_id,
+            material,
+            preparation,
+            actor_role=dpts.ENTRY_ROLES[dp_id],
+            logical_id="t08-illegal-replay",
+            replay_check=replay_illegal,
+        )
+    
+        assert seen == [(dp_id, "t08-illegal-replay")]  # the lookup really ran
+>       assert result["available"] is False
+E       assert True is False
+
+test_dp_consolidation_materials.py:1086: AssertionError
+_____________ test_non_bool_replay_lookup_result_fails_closed[1] ______________
+
+lookup = 1
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/fixture/basetemp/test_non_bool_replay_lookup_re4')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FB1B4A8D00>
+http = <function http.<locals>.install at 0x000001FB1B5AC0F0>
+
+    @pytest.mark.parametrize("lookup", [None, "unknown", "true", "false", 1, 0, [], {}])
+    def test_non_bool_replay_lookup_result_fails_closed(
+        lookup: object, tmp_path: pathlib.Path, monkeypatch, http
+    ) -> None:
+        """``null``/unknown/other shapes prove neither a hit nor a miss.
+    
+        Truthifying the result fabricated a replay hit for ``"unknown"`` and a
+        novelty claim (one real POST, one business decision) for ``null``; neither is
+        a proven lookup result, so the request fails closed with zero HTTP and zero
+        business decisions.
+        """
+        dp_id = "dp-w-type"
+        material = _material(dp_id)
+        preparation = _preparation(dp_id, material)
+        fake = http(_ok_responder(dp_id, material))
+        client = _make_client(tmp_path, monkeypatch)
+        seen: list[tuple[str, str]] = []
+    
+        def replay_illegal(request_dp: str, logical_id: str) -> object:
+            seen.append((request_dp, logical_id))
+            return lookup
+    
+        result = client.request_prepared(
+            dp_id,
+            material,
+            preparation,
+            actor_role=dpts.ENTRY_ROLES[dp_id],
+            logical_id="t08-illegal-replay",
+            replay_check=replay_illegal,
+        )
+    
+        assert seen == [(dp_id, "t08-illegal-replay")]  # the lookup really ran
+>       assert result["available"] is False
+E       assert True is False
+
+test_dp_consolidation_materials.py:1086: AssertionError
+_____________ test_non_bool_replay_lookup_result_fails_closed[0] ______________
+
+lookup = 0
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/fixture/basetemp/test_non_bool_replay_lookup_re5')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FB1B4A9160>
+http = <function http.<locals>.install at 0x000001FB1B777A00>
+
+    @pytest.mark.parametrize("lookup", [None, "unknown", "true", "false", 1, 0, [], {}])
+    def test_non_bool_replay_lookup_result_fails_closed(
+        lookup: object, tmp_path: pathlib.Path, monkeypatch, http
+    ) -> None:
+        """``null``/unknown/other shapes prove neither a hit nor a miss.
+    
+        Truthifying the result fabricated a replay hit for ``"unknown"`` and a
+        novelty claim (one real POST, one business decision) for ``null``; neither is
+        a proven lookup result, so the request fails closed with zero HTTP and zero
+        business decisions.
+        """
+        dp_id = "dp-w-type"
+        material = _material(dp_id)
+        preparation = _preparation(dp_id, material)
+        fake = http(_ok_responder(dp_id, material))
+        client = _make_client(tmp_path, monkeypatch)
+        seen: list[tuple[str, str]] = []
+    
+        def replay_illegal(request_dp: str, logical_id: str) -> object:
+            seen.append((request_dp, logical_id))
+            return lookup
+    
+        result = client.request_prepared(
+            dp_id,
+            material,
+            preparation,
+            actor_role=dpts.ENTRY_ROLES[dp_id],
+            logical_id="t08-illegal-replay",
+            replay_check=replay_illegal,
+        )
+    
+        assert seen == [(dp_id, "t08-illegal-replay")]  # the lookup really ran
+>       assert result["available"] is False
+E       assert True is False
+
+test_dp_consolidation_materials.py:1086: AssertionError
+__________ test_non_bool_replay_lookup_result_fails_closed[lookup6] ___________
+
+lookup = []
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/fixture/basetemp/test_non_bool_replay_lookup_re6')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FB1B4A95C0>
+http = <function http.<locals>.install at 0x000001FB1B777320>
+
+    @pytest.mark.parametrize("lookup", [None, "unknown", "true", "false", 1, 0, [], {}])
+    def test_non_bool_replay_lookup_result_fails_closed(
+        lookup: object, tmp_path: pathlib.Path, monkeypatch, http
+    ) -> None:
+        """``null``/unknown/other shapes prove neither a hit nor a miss.
+    
+        Truthifying the result fabricated a replay hit for ``"unknown"`` and a
+        novelty claim (one real POST, one business decision) for ``null``; neither is
+        a proven lookup result, so the request fails closed with zero HTTP and zero
+        business decisions.
+        """
+        dp_id = "dp-w-type"
+        material = _material(dp_id)
+        preparation = _preparation(dp_id, material)
+        fake = http(_ok_responder(dp_id, material))
+        client = _make_client(tmp_path, monkeypatch)
+        seen: list[tuple[str, str]] = []
+    
+        def replay_illegal(request_dp: str, logical_id: str) -> object:
+            seen.append((request_dp, logical_id))
+            return lookup
+    
+        result = client.request_prepared(
+            dp_id,
+            material,
+            preparation,
+            actor_role=dpts.ENTRY_ROLES[dp_id],
+            logical_id="t08-illegal-replay",
+            replay_check=replay_illegal,
+        )
+    
+        assert seen == [(dp_id, "t08-illegal-replay")]  # the lookup really ran
+>       assert result["available"] is False
+E       assert True is False
+
+test_dp_consolidation_materials.py:1086: AssertionError
+__________ test_non_bool_replay_lookup_result_fails_closed[lookup7] ___________
+
+lookup = {}
+tmp_path = WindowsPath('H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/fixture/basetemp/test_non_bool_replay_lookup_re7')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FB1B604A60>
+http = <function http.<locals>.install at 0x000001FB1B775A60>
+
+    @pytest.mark.parametrize("lookup", [None, "unknown", "true", "false", 1, 0, [], {}])
+    def test_non_bool_replay_lookup_result_fails_closed(
+        lookup: object, tmp_path: pathlib.Path, monkeypatch, http
+    ) -> None:
+        """``null``/unknown/other shapes prove neither a hit nor a miss.
+    
+        Truthifying the result fabricated a replay hit for ``"unknown"`` and a
+        novelty claim (one real POST, one business decision) for ``null``; neither is
+        a proven lookup result, so the request fails closed with zero HTTP and zero
+        business decisions.
+        """
+        dp_id = "dp-w-type"
+        material = _material(dp_id)
+        preparation = _preparation(dp_id, material)
+        fake = http(_ok_responder(dp_id, material))
+        client = _make_client(tmp_path, monkeypatch)
+        seen: list[tuple[str, str]] = []
+    
+        def replay_illegal(request_dp: str, logical_id: str) -> object:
+            seen.append((request_dp, logical_id))
+            return lookup
+    
+        result = client.request_prepared(
+            dp_id,
+            material,
+            preparation,
+            actor_role=dpts.ENTRY_ROLES[dp_id],
+            logical_id="t08-illegal-replay",
+            replay_check=replay_illegal,
+        )
+    
+        assert seen == [(dp_id, "t08-illegal-replay")]  # the lookup really ran
+>       assert result["available"] is False
+E       assert True is False
+
+test_dp_consolidation_materials.py:1086: AssertionError
+=========================== short test summary info ===========================
+FAILED test_dp_consolidation_materials.py::test_question_ceiling_is_a_prepared_refusal_not_an_exception
+FAILED test_dp_consolidation_materials.py::test_non_bool_replay_lookup_result_fails_closed[None]
+FAILED test_dp_consolidation_materials.py::test_non_bool_replay_lookup_result_fails_closed[unknown]
+FAILED test_dp_consolidation_materials.py::test_non_bool_replay_lookup_result_fails_closed[true]
+FAILED test_dp_consolidation_materials.py::test_non_bool_replay_lookup_result_fails_closed[false]
+FAILED test_dp_consolidation_materials.py::test_non_bool_replay_lookup_result_fails_closed[1]
+FAILED test_dp_consolidation_materials.py::test_non_bool_replay_lookup_result_fails_closed[0]
+FAILED test_dp_consolidation_materials.py::test_non_bool_replay_lookup_result_fails_closed[lookup6]
+FAILED test_dp_consolidation_materials.py::test_non_bool_replay_lookup_result_fails_closed[lookup7]
+9 failed, 53 passed, 48 deselected in 0.41s

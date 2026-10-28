@@ -1,0 +1,5 @@
+all declared disjoint (T1 src/a, T2 src/b, T3 src/c): started=3 rows=['ap-k1-T-1', 'ap-k1-T-2', 'ap-k1-T-3']
+all undeclared: started=1 rows=['ap-k1-T-1']
+     ap-k1-T-1: write_face undeclared; 0 same-owner worker(s) in flight
+mixed: T1 undeclared first, T2 declared: started=1 rows=['ap-k1-T-2']
+mixed: T1 declared first, T2 undeclared: started=1 rows=['ap-k1-T-1']

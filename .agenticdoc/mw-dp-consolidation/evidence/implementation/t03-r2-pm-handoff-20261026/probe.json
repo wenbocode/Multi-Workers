@@ -1,0 +1,178 @@
+{
+  "imports": {
+    "test_decide_registry_contract": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_decide_registry_contract.py",
+    "test_dp_consolidation_registry": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\test_dp_consolidation_registry.py",
+    "decision_points": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_points.py",
+    "mw": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\mw.py"
+  },
+  "synthetic_only": true,
+  "product_generation": false,
+  "roles": [
+    {
+      "dp": "dp-w-type",
+      "absent": [
+        [
+          "actor_role",
+          "must be one of ['pm', 'worker']; an unknown or self-reported role neither grants nor substitutes authorization"
+        ]
+      ],
+      "legal_without_answer": []
+    },
+    {
+      "dp": "dp-pm-steer",
+      "absent": [
+        [
+          "actor_role",
+          "must be one of ['pm', 'worker']; an unknown or self-reported role neither grants nor substitutes authorization"
+        ]
+      ],
+      "legal_without_answer": []
+    },
+    {
+      "dp": "dp-w-check-task",
+      "absent": [
+        [
+          "actor_role",
+          "must be one of ['pm', 'worker']; an unknown or self-reported role neither grants nor substitutes authorization"
+        ]
+      ],
+      "legal_without_answer": []
+    },
+    {
+      "dp": "dp-QG",
+      "absent": [
+        [
+          "actor_role",
+          "must be one of ['pm', 'worker']; an unknown or self-reported role neither grants nor substitutes authorization"
+        ]
+      ],
+      "legal_without_answer": []
+    },
+    {
+      "dp": "dp-gate-approve",
+      "absent": [
+        [
+          "actor_role",
+          "must be one of ['pm', 'worker']; an unknown or self-reported role neither grants nor substitutes authorization"
+        ]
+      ],
+      "legal_without_answer": []
+    },
+    {
+      "dp": "dp-sign-key",
+      "absent": [
+        [
+          "actor_role",
+          "must be one of ['pm', 'worker']; an unknown or self-reported role neither grants nor substitutes authorization"
+        ]
+      ],
+      "legal_without_answer": []
+    },
+    {
+      "dp": "dp-auto",
+      "absent": [
+        [
+          "actor_role",
+          "must be one of ['pm', 'worker']; an unknown or self-reported role neither grants nor substitutes authorization"
+        ]
+      ],
+      "legal_without_answer": []
+    },
+    {
+      "dp": "dp-route",
+      "absent": [
+        [
+          "actor_role",
+          "must be one of ['pm', 'worker']; an unknown or self-reported role neither grants nor substitutes authorization"
+        ]
+      ],
+      "legal_without_answer": []
+    }
+  ],
+  "times": [
+    {
+      "dp": "dp-w-type",
+      "invalid": [
+        [
+          "prepared_at",
+          "is not an ISO-8601 timestamp"
+        ]
+      ]
+    },
+    {
+      "dp": "dp-pm-steer",
+      "invalid": [
+        [
+          "prepared_at",
+          "is not an ISO-8601 timestamp"
+        ]
+      ]
+    },
+    {
+      "dp": "dp-w-check-task",
+      "invalid": [
+        [
+          "prepared_at",
+          "is not an ISO-8601 timestamp"
+        ]
+      ]
+    },
+    {
+      "dp": "dp-QG",
+      "invalid": [
+        [
+          "prepared_at",
+          "is not an ISO-8601 timestamp"
+        ]
+      ]
+    },
+    {
+      "dp": "dp-gate-approve",
+      "invalid": [
+        [
+          "prepared_at",
+          "is not an ISO-8601 timestamp"
+        ]
+      ]
+    },
+    {
+      "dp": "dp-sign-key",
+      "invalid": [
+        [
+          "prepared_at",
+          "is not an ISO-8601 timestamp"
+        ]
+      ]
+    },
+    {
+      "dp": "dp-auto",
+      "invalid": [
+        [
+          "prepared_at",
+          "is not an ISO-8601 timestamp"
+        ]
+      ]
+    },
+    {
+      "dp": "dp-route",
+      "invalid": [
+        [
+          "prepared_at",
+          "is not an ISO-8601 timestamp"
+        ]
+      ]
+    }
+  ],
+  "eight_entry_shape": {
+    "outcome": "accepted"
+  },
+  "post_t04_active_only_matrix": {
+    "outcome": "rejected",
+    "detail": "the documented legacy rows of retired ids changed; only those retired ids may keep a row: []"
+  },
+  "active_only_real_parser": {
+    "outcome": "rejected",
+    "detail": "the required_if matrix was not parsed: ['dp-QG', 'dp-auto', 'dp-gate-approve', 'dp-pm-steer', 'dp-route', 'dp-sign-key', 'dp-w-check-task', 'dp-w-type']"
+  },
+  "real_stage": "pre-t04"
+}

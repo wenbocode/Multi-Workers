@@ -1,0 +1,13 @@
+{
+  "description": "exactly one *.uproject under game root resolves",
+  "env": {},
+  "expect": {
+    "mode": "dual",
+    "source": "target-yml",
+    "game_root_rel": "game",
+    "engine_root_null": true
+  },
+  "render": {
+    "b": "x {uproject}"
+  }
+}

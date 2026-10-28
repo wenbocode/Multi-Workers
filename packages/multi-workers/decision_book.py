@@ -49,7 +49,7 @@ BOOK_TOP_LEVEL_KEYS: tuple[str, ...] = (
 )
 
 #: 通用 state 身份字段：``decision_points._state_builder`` 对每个 dp 都会写这三个，
-#: 因此即使注册表没把它们列进 ``required_state_fields``（dp4..dp24），它们也合法。
+#: 因此即使注册表没把它们列进 ``required_state_fields``（dp25），它们也合法。
 STRUCTURAL_STATE_FIELDS: tuple[str, ...] = (
     "schema_version",
     "decision_point",
@@ -228,6 +228,19 @@ def required_fields(dp_id: str) -> list[dict]:
 def required_state_paths(dp_id: str) -> tuple[str, ...]:
     """该 dp 必填的 state 路径（点号形式，顺序 == 注册表顺序）。"""
     return tuple(field["name"] for field in required_fields(dp_id))
+
+
+def optional_fields(dp_id: str) -> list[dict]:
+    """该 dp 的 ``optional_state_fields``（同一套字段形状，可空）。"""
+    point = registry_points().get(dp_id)
+    if point is None:
+        raise BookError("book-schema", "decision_point", f"unknown decision point {dp_id!r}")
+    return list(point.get("optional_state_fields") or ())
+
+
+def optional_state_paths(dp_id: str) -> tuple[str, ...]:
+    """该 dp 可选的 state 路径（闭集的一部分：合法但不必填、不需证据）。"""
+    return tuple(field["name"] for field in optional_fields(dp_id))
 
 
 def context_slots(dp_id: str) -> tuple[str, ...]:
@@ -502,11 +515,14 @@ def book_sha256(path: pathlib.Path | str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def is_placeholder(value: object, kind: str | None = None) -> bool:
+def is_placeholder(value: object, kind: str | None = None, *, signed: bool = False) -> bool:
     """占位符判定（AC-019）：``<...>``、TBD/TODO/xxx、空串、负数、空数组/对象。
 
     布尔 ``false`` **不算**占位符：``progress.artifact_present=false`` 是真实取值，
-    把它判成占位符会把合法决策本拦在外面。
+    把它判成占位符会把合法决策本拦在外面。声明为 ``signed`` 的 integer
+    （dp23 ``snapshot.delta_bytes``）**任何负数都是真实取值**（新规模减旧规模），
+    因此骨架的 ``-1`` 在那里不再计为占位符；dp23 骨架仍因 ``size_bytes`` /
+    ``sections_changed`` / 证据未填而被拒。
     """
     if isinstance(value, str):
         text = value.strip()
@@ -518,15 +534,12 @@ def is_placeholder(value: object, kind: str | None = None) -> bool:
     if isinstance(value, bool):
         return False
     if isinstance(value, (int, float)):
-        return value < 0
+        return False if signed else value < 0
     if isinstance(value, (list, dict)):
         return not value
     if value is None:
         return True
     return False
-
-
-_TYPE_LABELS = ("string", "integer", "number", "boolean", "array", "object")
 
 
 def type_matches(value: object, kind: str) -> bool:
@@ -552,38 +565,84 @@ def check_book(
     project_dir: pathlib.Path | str | None = None,
     repo_root: pathlib.Path | str | None = None,
     limits: Mapping[str, int] | None = None,
+    redactor: object | None = None,
 ) -> list[Issue]:
     """验收一本决策本，返回失败列表（空 == 全过）。只报告，不修改入参。
 
     ``project_dir`` 用于解析预算闸（``.mw/decide.json`` 的 ``max_*``）；
     ``repo_root`` 是证据里相对路径的锚点（缺省取 ``project_dir`` 或当前目录的
     仓库根），``limits`` 允许调用方直接给闸值（测试/CI 用）。
+
+    ``redactor`` 是**当次实际已知凭证集合**（``decision.known_secret_redactor(cfg)``：
+    ``cfg.api_key`` / ``cfg.extras["api_key"]``、实际 Authorization、timi 凭证、
+    env 规则 + Bearer/``sk-``）。生产入口（``mw decide ... --book``、observation
+    seam）必须显式传入；省略时只剩 env/Bearer/``sk-`` 启发式，结果**不声称**
+    完整 known 覆盖（T06 的参数义务）。值仅内存，不落盘、不回显。
     """
     issues: list[Issue] = []
-    issues.extend(_check_schema(book))
+    issues.extend(_check_schema(book, redactor=redactor))
     if any(issue.code == "book-schema" for issue in issues):
         return issues
     dp_id = str(book["decision_point"])
     state = dict(book.get("state") or {})
     required = required_state_paths(dp_id)
-    allowed = set(required) | set(STRUCTURAL_STATE_FIELDS)
 
     flat = _flatten(state)
-    issues.extend(_check_state_closed(dp_id, flat, allowed, required))
-    issues.extend(_check_state_types(dp_id, flat, required))
+    issues.extend(_check_state_closed(dp_id, state, flat, required, redactor=redactor))
+    issues.extend(_check_state_types(dp_id, state))
     issues.extend(_check_placeholders(dp_id, flat, required))
-    issues.extend(_check_context(book, dp_id))
-    issues.extend(_check_evidence(book, dp_id, required, project_dir=project_dir, repo_root=repo_root))
+    issues.extend(_check_context(book, dp_id, redactor=redactor))
+    issues.extend(
+        _check_evidence(
+            book,
+            dp_id,
+            required,
+            project_dir=project_dir,
+            repo_root=repo_root,
+            redactor=redactor,
+        )
+    )
     issues.extend(_check_budget(book, dp_id, project_dir=project_dir, limits=limits))
-    issues.extend(_check_secrets(book, flat))
+    issues.extend(_check_secrets(book, redactor=redactor))
     return issues
 
 
-def _check_schema(book: Mapping[str, Any]) -> list[Issue]:
+def observation_book_issues(
+    book: Mapping[str, Any],
+    project_dir: pathlib.Path | str | None = None,
+    *,
+    redactor: object | None = None,
+) -> tuple[tuple[str, str], ...]:
+    """``(path, detail)`` for a book the observation seam must refuse (T05b F2).
+
+    ``decision_points.decide_for`` cannot import this module (``decision_book``
+    imports it), so it reaches this function through
+    :func:`decision_points.register_book_validator`. The verdict is
+    :func:`check_book`'s: one authority for the book contract, so an observation
+    can never accept a book that ``mw decide book check`` refuses (schema, closed
+    state, placeholders, evidence, budget, secrets).
+
+    ``redactor`` is the seam's actual known-secret set for *this* call (F1);
+    the registered validator signature is ``(book, project_dir, *, redactor)``.
+    """
+    if not isinstance(book, Mapping):
+        return (("book", f"must be a JSON object, got {type(book).__name__}"),)
+    return tuple(
+        (issue.path, f"{issue.code}: {issue.detail}")
+        for issue in check_book(book, project_dir=project_dir, redactor=redactor)
+    )
+
+
+def _check_schema(book: Mapping[str, Any], *, redactor: object | None = None) -> list[Issue]:
     if not isinstance(book, Mapping):
         return [Issue("book-schema", "book", f"must be a JSON object, got {type(book).__name__}")]
     issues: list[Issue] = []
-    unknown = sorted(set(book) - set(BOOK_TOP_LEVEL_KEYS))
+    unknown = sorted(
+        {
+            _secret_scan_segment(key, redactor)
+            for key in set(book) - set(BOOK_TOP_LEVEL_KEYS)
+        }
+    )
     if unknown:
         issues.append(Issue("book-schema", "book", f"unknown top-level keys {unknown}"))
     version = book.get("schema_version")
@@ -613,90 +672,52 @@ def _check_schema(book: Mapping[str, Any]) -> list[Issue]:
 
 
 def _check_state_closed(
-    dp_id: str, flat: Mapping[str, Any], allowed: set[str], required: Iterable[str]
+    dp_id: str,
+    state: Mapping[str, Any],
+    flat: Mapping[str, Any],
+    required: Iterable[str],
+    *,
+    redactor: object | None = None,
 ) -> list[Issue]:
-    """封闭键集合：缺必填 + 多出注册表没有的键，两个方向都报（AC-021/D-059）。"""
+    """封闭键集合：缺必填 + 多出注册表没有的键，两个方向都报（AC-021/D-059）。
+
+    未知键判定不在本模块再实现一套：``decision_points.state_unknown_key_issues``
+    是唯一判定器（observation seam T05b F1 复用同一面），本函数只额外负责书侧的
+    缺必填。三个身份值的等值与类型由同一纯检查
+    ``decision_points.state_identity_issues`` 负责（T05c N2：书与 seam 不各造一套
+    版本权威），在 :func:`_check_state_types` 里调用。
+    """
     issues: list[Issue] = []
-    required_set = set(required)
     for path in required:
         if path not in flat:
             issues.append(
                 Issue("book-state", f"state.{path}", f"missing required field of {dp_id}")
             )
-    for path in flat:
-        if path in allowed:
-            continue
-        parent_of_required = any(item.startswith(path + ".") for item in required_set)
-        if parent_of_required:
-            issues.append(
-                Issue(
-                    "book-state",
-                    f"state.{path}",
-                    f"must be an object holding {sorted(item for item in required_set if item.startswith(path + '.'))}",
-                )
-            )
-        else:
-            issues.append(
-                Issue("book-state", f"state.{path}", "not in required_state_fields (closed key set)")
-            )
-    if flat.get("schema_version") not in (None, BOOK_SCHEMA_VERSION):
-        issues.append(
-            Issue(
-                "book-state",
-                "state.schema_version",
-                f"must be {BOOK_SCHEMA_VERSION}, got {flat.get('schema_version')!r}",
-            )
-        )
-    dp_value = flat.get("decision_point")
-    if dp_value is not None and dp_value != dp_id:
-        issues.append(
-            Issue(
-                "book-state",
-                "state.decision_point",
-                f"must equal the book's decision_point {dp_id!r}, got {dp_value!r}",
-            )
-        )
-    questions_version = flat.get("questions_version")
-    expected_version = str((registry_points().get(dp_id) or {}).get("questions_version") or "")
-    if questions_version is not None and expected_version and questions_version != expected_version:
-        issues.append(
-            Issue(
-                "book-state",
-                "state.questions_version",
-                f"must equal the registry value {expected_version!r}, got {questions_version!r}",
-            )
-        )
+    for path, detail in decision_points.state_unknown_key_issues(
+        dp_id, state, redactor=redactor
+    ):
+        issues.append(Issue("book-state", f"state.{path}", detail))
     return issues
 
 
 def _check_state_types(
-    dp_id: str, flat: Mapping[str, Any], required: Iterable[str]
+    dp_id: str, state: Mapping[str, Any]
 ) -> list[Issue]:
-    issues: list[Issue] = []
-    for path in required:
-        if path not in flat:
-            continue
-        kind = field_type(dp_id, path)
-        if kind is None or kind not in _TYPE_LABELS:
-            continue
-        if not type_matches(flat[path], kind):
-            issues.append(
-                Issue(
-                    "book-state",
-                    f"state.{path}",
-                    f"expected {kind}, got {type(flat[path]).__name__}",
-                )
-            )
-    for path, kind in (
-        ("schema_version", "integer"),
-        ("decision_point", "string"),
-        ("questions_version", "string"),
-    ):
-        value = flat.get(path)
-        if value is not None and path not in required and not type_matches(value, kind):
-            issues.append(
-                Issue("book-state", f"state.{path}", f"expected {kind}, got {type(value).__name__}")
-            )
+    """类型/枚举/max_items/元素长度/跨字段/身份：全部委托注册表（单一判定器）。
+
+    ``decision_points.state_field_issues`` 只判断已声明且已出现的业务路径；缺必填
+    由 :func:`_check_state_closed` 报，未知键也由它报。三个身份值的类型 + 等值走
+    ``decision_points.state_identity_issues``（非 book 路径在 step5b 调同一个
+    函数），所以这里不保留第二份 schema/questions_version 比对逻辑。
+    """
+    issues = [
+        Issue("book-state", f"state.{path}", detail)
+        for path, detail in decision_points.state_field_issues(dp_id, state)
+    ]
+    issues.extend(
+        Issue("book-state", f"state.{path}", detail)
+        for path, detail in decision_points.state_identity_issues(dp_id, state)
+    )
     return issues
 
 
@@ -709,9 +730,28 @@ def _check_placeholders(
             continue
         kind = field_type(dp_id, path)
         value = flat[path]
+        if value is None:
+            # AC-019: ``null`` on a required path is an unreplaced value whatever
+            # the declared type (the typed check skips ``None`` by design, so the
+            # placeholder scan is the gate that must not let it through).
+            issues.append(
+                Issue(
+                    "book-placeholder",
+                    f"state.{path}",
+                    "required value is null; fill it from real evidence",
+                )
+            )
+            continue
         if kind is not None and not type_matches(value, kind):
             continue  # 类型错由 book-state 报告，避免一条错误两种码
-        if is_placeholder(value, kind):
+        spec = decision_points.STATE_FIELD_DESCRIPTIONS.get(path) or {}
+        empty_is_value = spec.get("empty_is_value") is True
+        if empty_is_value and isinstance(value, (list, dict)) and not value:
+            # 注册表声明该字段的「空容器就是真实取值」（dp25 ``p0_open: []`` =
+            # 「当前没有未关闭 P0」）。只豁免这一条 AC-019 规则：缺失由 closed-key 报，
+            # null 就在上面拒绝，类型错由 book-state 报，元素里的占位文本在下面扫。
+            continue
+        if is_placeholder(value, kind, signed=bool(spec.get("signed"))):
             issues.append(
                 Issue(
                     "book-placeholder",
@@ -719,6 +759,9 @@ def _check_placeholders(
                     f"unreplaced placeholder {value!r}; fill it from real evidence",
                 )
             )
+            continue
+        if empty_is_value and isinstance(value, list):
+            issues.extend(_placeholder_element_issues(path, value))
     dp_value = flat.get("decision_point")
     if dp_value is not None and is_placeholder(dp_value):
         issues.append(
@@ -732,7 +775,30 @@ def _check_placeholders(
     return issues
 
 
-def _check_context(book: Mapping[str, Any], dp_id: str) -> list[Issue]:
+def _placeholder_element_issues(path: str, values: Iterable[object]) -> list[Issue]:
+    """占位文本元素（仅限声明 ``empty_is_value`` 的数组字段）。
+
+    该字段的「空」是真实取值，所以它的内容也必须真实：骨架留下的 ``<...>`` /
+    TBD 元素不能跟着 flag 一起变成可发送材料。正常字段的数组元素规则不变
+    （仍由 typed 契约的 ``item_type`` / ``item_max_bytes`` 管）。
+    """
+    issues: list[Issue] = []
+    for index, item in enumerate(values):
+        if not is_placeholder(item):
+            continue
+        issues.append(
+            Issue(
+                "book-placeholder",
+                f"state.{path}[{index}]",
+                "unreplaced placeholder element; fill it with a real value",
+            )
+        )
+    return issues
+
+
+def _check_context(
+    book: Mapping[str, Any], dp_id: str, *, redactor: object | None = None
+) -> list[Issue]:
     """上下文槽位：未知槽位 / 已用槽位无来源 / 超长 / 总预算。
 
     槽位形状与 ``decision_context`` 一致（值是内容本身）；来源由
@@ -758,7 +824,7 @@ def _check_context(book: Mapping[str, Any], dp_id: str) -> list[Issue]:
     issues: list[Issue] = []
     used: list[str] = []
     for slot, content in context.items():
-        path = f"context.{slot}"
+        path = f"context.{_secret_scan_segment(slot, redactor)}"
         if slot not in allowed:
             issues.append(
                 Issue(
@@ -852,6 +918,7 @@ def _check_evidence(
     *,
     project_dir: pathlib.Path | str | None,
     repo_root: pathlib.Path | str | None,
+    redactor: object | None = None,
 ) -> list[Issue]:
     notes = book.get("notes") if isinstance(book.get("notes"), Mapping) else {}
     evidence = notes.get("evidence") if isinstance(notes.get("evidence"), Mapping) else {}
@@ -863,12 +930,14 @@ def _check_evidence(
             issues.append(
                 Issue("book-evidence", f"notes.evidence.{path}", "missing evidence for a required field")
             )
+    # 可选字段的证据可给可不给（design §4.5），但给了就必须指向真实材料。
+    allowed_field_keys = required_set | set(optional_state_paths(dp_id))
     allowed_context_keys = {
         context_evidence_key(slot) for slot in context_slots(dp_id)
     }
     for path, reference in evidence.items():
-        entry_path = f"notes.evidence.{path}"
-        if path not in required_set and path not in allowed_context_keys:
+        entry_path = f"notes.evidence.{decision.safe_path_text(path, redactor)}"
+        if path not in allowed_field_keys and path not in allowed_context_keys:
             issues.append(
                 Issue(
                     "book-evidence",
@@ -1016,47 +1085,80 @@ def _check_budget(
     return issues
 
 
-def _check_secrets(book: Mapping[str, Any], flat: Mapping[str, Any]) -> list[Issue]:
-    """复用 ``decision._redact`` 的检测面：脱敏会改动 == 命中凭据（AC-019）。"""
+_SECRET_DETAIL = "credential-looking text; redact before sending"
+
+#: 安全路径段：短标识符才原样使用；其他键（含 credential-looking 键）折叠为
+#: ``<key>``，拒绝 detail/path 因此不回显恶意键文本或 secret 值。
+_SAFE_PATH_SEGMENT_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _secret_scan_segment(key: object, redactor: object | None = None) -> str:
+    """A dotted path segment that never echoes an arbitrary key text."""
+    text = key if isinstance(key, str) else str(key)
+    if _SAFE_PATH_SEGMENT_RE.fullmatch(text) and not decision.secret_hit(text, redactor):
+        return text
+    return "<key>"
+
+
+def _iter_secret_texts(value: object, path: str, redactor: object | None = None):
+    """递归 ``(path, text)``：每个字符串叶子**与每个对象键**。
+
+    ``Mapping`` / ``list`` / ``tuple`` 都下探（覆盖嵌套对象、数组的数组、
+    数组内的对象键）。与 :func:`_flatten` 分离：后者继续把数组当叶子，
+    服务于 typed/closed 门（T05c 语义不变）。键路径用调用方的实际 known
+    集合脱敏（``_secret_scan_segment``），恶意键不进入诊断。
+    """
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            segment = _secret_scan_segment(key, redactor)
+            child_path = f"{path}.{segment}" if path else segment
+            if isinstance(key, str) and key:
+                yield child_path, key
+            yield from _iter_secret_texts(child, child_path, redactor)
+    elif isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            yield from _iter_secret_texts(child, f"{path}[{index}]", redactor)
+    elif isinstance(value, str) and value:
+        yield path, value
+
+
+def _check_secrets(
+    book: Mapping[str, Any], *, redactor: object | None = None
+) -> list[Issue]:
+    """Reject a book whose **actual send surface** carries a known secret (AC-019).
+
+    The scan face is :func:`book_state` — the exact object ``mw decide ... --book``
+    and the observation seam send — not a second projection of the book: a
+    context item's undeclared key is sent, so it must be scanned too (review F2).
+    :func:`_iter_secret_texts` walks every string value *and* every object key,
+    including nested objects, arrays and arrays of arrays; the typed/closed
+    ``_flatten`` gate keeps treating arrays as leaves (T05c semantics untouched).
+
+    ``redactor`` is the call's actual known-secret set
+    (:func:`decision.known_secret_redactor`). ``None`` only applies the existing
+    env/Bearer/``sk-`` heuristic and does not claim the configured values.
+    Diagnostics keep the book's own ``context.<slot>`` prefix while scanning the
+    merged ``state.context`` subtree (:func:`_book_secret_path`).
+    """
     issues: list[Issue] = []
-    for path, value in flat.items():
-        if not isinstance(value, str) or not value:
+    seen: set[str] = set()
+    for path, text in _iter_secret_texts(book_state(book), "state", redactor):
+        if path in seen or not text:
             continue
-        if decision._redact(value) != value:
-            issues.append(
-                Issue("book-secret", f"state.{path}", "credential-looking text; redact before sending")
-            )
-    context = book.get("context") if isinstance(book.get("context"), Mapping) else {}
-    for slot, content in context.items():
-        for text in _context_strings(content):
-            if text and decision._redact(text) != text:
-                issues.append(
-                    Issue(
-                        "book-secret",
-                        f"context.{slot}",
-                        "credential-looking text; redact before sending",
-                    )
-                )
-                break
+        if decision.secret_hit(text, redactor):
+            seen.add(path)
+            issues.append(Issue("book-secret", _book_secret_path(path), _SECRET_DETAIL))
     return issues
 
 
-def _context_strings(content: object) -> list[str]:
-    """槽位值里的所有可能外发字符串（文本/条目字段），用于密钥扫描。"""
-    out: list[str] = []
-    if isinstance(content, str):
-        out.append(content)
-    elif isinstance(content, (list, tuple)):
-        for item in content:
-            if isinstance(item, str):
-                out.append(item)
-            elif isinstance(item, Mapping):
-                out.extend(
-                    str(item[key])
-                    for key in ("text", "label", "source", "path")
-                    if isinstance(item.get(key), str)
-                )
-    return out
+def _book_secret_path(path: str) -> str:
+    """Keep the book's own diagnostics for the merged ``state.context`` subtree."""
+    prefix = "state.context"
+    if path == prefix:
+        return "context"
+    if path.startswith(prefix + "."):
+        return "context." + path[len(prefix) + 1 :]
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -1168,8 +1270,13 @@ def check_book_file(
     project_dir: pathlib.Path | str | None = None,
     repo_root: pathlib.Path | str | None = None,
     limits: Mapping[str, int] | None = None,
+    redactor: object | None = None,
 ) -> BookReport:
-    """装载 + 验收一个文件（支持 ``{"books": {...}}`` 多本示例）。"""
+    """装载 + 验收一个文件（支持 ``{"books": {...}}`` 多本示例）。
+
+    ``redactor`` 语义与 :func:`check_book` 相同：生产调用点传入当次实际已知
+    凭证集合，离线调用可省略但不得声称完整 known 校验。
+    """
     source = pathlib.Path(path)
     report = BookReport(path=str(source), sha256=book_sha256(source))
     try:
@@ -1181,7 +1288,11 @@ def check_book_file(
         return report
     for label, book in books:
         issues = check_book(
-            book, project_dir=project_dir, repo_root=repo_root, limits=limits
+            book,
+            project_dir=project_dir,
+            repo_root=repo_root,
+            limits=limits,
+            redactor=redactor,
         )
         report.books.append(
             {
@@ -1221,3 +1332,7 @@ def _flatten(value: object, prefix: str = "") -> dict[str, Any]:
             out.update(_flatten(child, child_prefix))
         return out
     return {prefix: value}
+
+
+# Register the book contract as the observation seam's (T05b F2) validator.
+decision_points.register_book_validator(observation_book_issues)

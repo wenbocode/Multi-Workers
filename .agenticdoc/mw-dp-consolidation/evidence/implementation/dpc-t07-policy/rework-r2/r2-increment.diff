@@ -1,0 +1,886 @@
+--- a/packages/multi-workers/decision_policy.py
++++ b/packages/multi-workers/decision_policy.py
+@@ -34,18 +34,28 @@
+   stop criterion) and is granted only for the explicit delta. Remaining hard
+   budget is not an authorization;
+ * a pending-review event only triggers evaluation - it never auto-resumes and
+-  never becomes an automatic human requirement;
++  never becomes an automatic human requirement. The resume needs an explicit,
++  non-empty requested scope that the policy itself covers: a missing or
++  uncovered request never resumes with an empty scope;
+ * a halted-stage resume needs a complete note (stop reason, elimination
+   evidence, stage version, affected keys, target plan, authorization, residual
+   budget, stop criterion), a valid approval and the policy's own observation
+   and stop conditions; the stop facts and the consumed budget are carried
+-  forward verbatim. A user stop/revocation or an active hard guard is never
+-  lifted by a technical repair or by a DP choice;
++  forward verbatim. The policy rule's own ``recovery.authority_ref`` is
++  resolved as well: a note may reference a different authorization only when
++  the controlled writer recorded it as an explicit replacement
++  (``supersedes``), so a revoked rule reference is never bypassed by pointing
++  the note elsewhere. A user stop/revocation or a hard guard is never lifted
++  by a technical repair, by a DP choice, by an unknown guard/origin state or
++  by an unverified self-reported clearance; only an explicit human
++  authorization covering ``recovery:user-stop`` lifts a recorded stop;
+ * an H12 breaker recovery needs an isolated controlled channel (not the
+   tripped chain, not a page token), an available primary transport, a valid
+-  preauthorization, reviewable reason-elimination evidence and passing machine
+-  checks. Otherwise the brake stays engaged, the breaker history is preserved,
+-  a concrete authorization/information question is returned and ``reject``
++  preauthorization (the rule's own reference, or a writer-recorded explicit
++  replacement of it), reviewable reason-elimination evidence and passing
++  machine checks. A missing/unknown user-disable or origin state is not read
++  as "enabled": the brake stays engaged, the breaker history is preserved, a
++  concrete authorization/information question is returned and ``reject``
+   never closes the project. Observing the stop condition again re-trips the
+   brake.
+ 
+@@ -218,6 +228,10 @@
+     writer: str
+     revoked: bool = False
+     recorded_at: str = ""
++    #: References this record explicitly replaces/restores. Recorded by the same
++    #: controlled writer as the rest of the record, never self-asserted by the
++    #: request that consumes it.
++    supersedes: tuple[str, ...] = ()
+ 
+ 
+ @dataclass(frozen=True)
+@@ -336,6 +350,29 @@
+ 
+ def _covered_scope(granted: Sequence[str], requested: Iterable[str]) -> tuple[str, ...]:
+     return tuple(token for token in requested if _scope_covers(granted, token))
++
++
++#: Halt origins this judge recognises. An unknown origin is *not* a plain
++#: technical stop: it keeps the stage halted and asks for the recorded origin.
++HALT_ORIGINS = ("technical", "user-stop", "revoked")
++
++#: Origins whose lift needs an explicit *human* authorization, not a technical
++#: repair and not a DP choice.
++_HUMAN_HALT_ORIGINS = frozenset({"user-stop", "revoked"})
++
++
++def _required_scope(
++    value: object, field: str
++) -> tuple[tuple[str, ...], PolicyIssue | None]:
++    """Explicit, non-empty scope: an empty requirement never passes vacuously."""
++    scope = _str_tuple(value)
++    if not scope:
++        return (), PolicyIssue(
++            "required-scope-missing",
++            field,
++            "an explicit non-empty scope is required; an empty requirement is not a grant",
++        )
++    return scope, None
+ 
+ 
+ def _usage_map(usage: object) -> Mapping[str, object] | None:
+@@ -717,6 +754,14 @@
+     if not isinstance(revoked, bool):
+         issues.append(PolicyIssue("authority-field-invalid", "revoked", "true/false"))
+         revoked = True
++    supersedes = _str_tuple(payload.get("supersedes", ()))
++    if supersedes is None:
++        issues.append(
++            PolicyIssue(
++                "authority-field-invalid", "supersedes", "list of authority references"
++            )
++        )
++        supersedes = ()
+     recorded_at = payload.get("recorded_at", "")
+     if not isinstance(recorded_at, str):
+         recorded_at = ""
+@@ -730,6 +775,7 @@
+             writer=str(writer),
+             revoked=revoked,
+             recorded_at=recorded_at,
++            supersedes=supersedes,
+         ),
+         (),
+     )
+@@ -1227,7 +1273,11 @@
+         )
+     if not load.usable:
+         reasons.extend(load.issues)
+-    required_scope = _str_tuple(state_map.get("required_scope")) or ()
++    required_scope, scope_issue = _required_scope(
++        state_map.get("required_scope"), "required_scope"
++    )
++    if scope_issue is not None:
++        reasons.append(scope_issue)
+     if not _nonempty_str(state_map.get("choice")):
+         reasons.append(
+             PolicyIssue(
+@@ -1280,6 +1330,17 @@
+     if load.usable:
+         policy = load.policy
+         assert policy is not None
++        uncovered = [
++            token for token in required_scope if not _scope_covers(policy.scope, token)
++        ]
++        if uncovered:
++            reasons.append(
++                PolicyIssue(
++                    "review-scope-uncovered",
++                    "scope",
++                    "policy does not grant: " + ", ".join(uncovered),
++                )
++            )
+         resolution = _resolve_authority(
+             policy.authority_ref, authority_source, required_scope, trusted_writers
+         )
+@@ -1288,9 +1349,22 @@
+         return PendingReviewVerdict(False, (), False, tuple(reasons))
+     policy = load.policy
+     assert policy is not None
+-    return PendingReviewVerdict(
+-        True, _covered_scope(policy.scope, required_scope), False
+-    )
++    resume_scope = _covered_scope(policy.scope, required_scope)
++    if not resume_scope:
++        # fail closed: an allowed resume always carries a concrete scope
++        return PendingReviewVerdict(
++            False,
++            (),
++            False,
++            (
++                PolicyIssue(
++                    "resume-scope-empty",
++                    "required_scope",
++                    "an empty resume scope is never granted",
++                ),
++            ),
++        )
++    return PendingReviewVerdict(True, resume_scope, False)
+ 
+ 
+ # ── recovery ─────────────────────────────────────────────────────────────────
+@@ -1398,7 +1472,11 @@
+             )
+ 
+     halt_origin = str(request_map.get("halt_origin") or "")
+-    required_scope = _str_tuple(request_map.get("required_scope")) or ()
++    required_scope, scope_issue = _required_scope(
++        request_map.get("required_scope"), "required_scope"
++    )
++    if scope_issue is not None:
++        reasons.append(scope_issue)
+     uncovered = [token for token in required_scope if not _scope_covers(rule.scope, token)]
+     if uncovered:
+         reasons.append(
+@@ -1410,15 +1488,60 @@
+         )
+ 
+     questions: list[str] = []
++    if halt_origin not in HALT_ORIGINS:
++        reasons.append(
++            PolicyIssue(
++                "halt-origin-unknown",
++                "halt_origin",
++                f"{request_map.get('halt_origin')!r} is not a recorded halt origin "
++                f"({', '.join(HALT_ORIGINS)}); an unknown stop stays in force",
++            )
++        )
++        questions.append(
++            "which recorded halt origin applies (technical stop, user stop or "
++            "revocation), and who recorded it?"
++        )
++
+     authority_ref = note_map.get("authority_ref")
+-    if halt_origin in ("user-stop", "revoked"):
+-        resolution = _resolve_authority(
+-            authority_ref,
++    request_ref = str(authority_ref).strip() if _nonempty_str(authority_ref) else ""
++    human_lift = halt_origin in _HUMAN_HALT_ORIGINS
++    request_required = (
++        ("recovery:user-stop", *required_scope)
++        if human_lift
++        else ("recovery:halted", *required_scope)
++    )
++    resolution = _resolve_authority(
++        authority_ref, authority_source, request_required, trusted_writers
++    )
++    reasons.extend(resolution.issues)
++    replaces_rule = (
++        resolution.record is not None
++        and rule.authority_ref in resolution.record.supersedes
++    )
++    if replaces_rule:
++        # the original link survives as a preserved fact, never erased
++        preserved.append(f"superseded-authority:{rule.authority_ref}")
++    elif request_ref != rule.authority_ref:
++        # the policy rule's own authorization is verified too: another reference
++        # must be a writer-recorded explicit replacement, never a free alias
++        rule_resolution = _resolve_authority(
++            rule.authority_ref,
+             authority_source,
+-            ("recovery:user-stop", *required_scope),
++            ("recovery:halted", *required_scope),
+             trusted_writers,
+         )
+-        reasons.extend(resolution.issues)
++        reasons.extend(rule_resolution.issues)
++        if not human_lift:
++            reasons.append(
++                PolicyIssue(
++                    "recovery-authority-unrelated",
++                    "note.authority_ref",
++                    "the request authorization is neither the policy recovery "
++                    "authorization nor an explicitly recorded replacement of it",
++                )
++            )
++    if human_lift:
++        # a user stop/revocation is lifted only by an explicit human authorization
+         if (
+             resolution.record is None
+             or resolution.record.kind not in HUMAN_AUTHORITY_KINDS
+@@ -1434,13 +1557,21 @@
+                 "which explicit human authorization (authority_ref + scope "
+                 "recovery:user-stop) lifts the recorded user stop/revocation?"
+             )
+-    else:
+-        resolution = _resolve_authority(
+-            authority_ref, authority_source, required_scope, trusted_writers
+-        )
+-        reasons.extend(resolution.issues)
+-
+-    if request_map.get("hard_guard_active") is True:
++
++    raw_guard = request_map.get("hard_guard_active")
++    if not isinstance(raw_guard, bool):
++        reasons.append(
++            PolicyIssue(
++                "hard-guard-unknown",
++                "hard_guard_active",
++                f"{raw_guard!r} is not a verified guard state; the stop stays in force",
++            )
++        )
++        questions.append(
++            "which machine hard check reports the guard state (active/cleared) "
++            "before any resume?"
++        )
++    elif raw_guard is True:
+         raw_cleared = request_map.get("hard_guard_cleared")
+         cleared = _str_tuple(raw_cleared)
+         if not raw_cleared:
+@@ -1455,20 +1586,13 @@
+                 "which machine hard check cleared the active guard, with the "
+                 "command and result that shows it is gone?"
+             )
+-        elif not cleared:
++        elif not cleared or request_map.get("hard_guard_cleared_verified") is not True:
++            # a clearance string is a claim; only a machine-verified result counts
+             reasons.append(
+                 PolicyIssue(
+                     "guard-clearance-unverified",
+                     "hard_guard_cleared",
+-                    "guard clearance evidence is not verifiable",
+-                )
+-            )
+-        elif request_map.get("hard_guard_cleared_verified", True) is not True:
+-            reasons.append(
+-                PolicyIssue(
+-                    "guard-clearance-unverified",
+-                    "hard_guard_cleared",
+-                    "guard clearance evidence is not verifiable",
++                    "guard clearance needs a machine-verified result, not a self-report",
+                 )
+             )
+ 
+@@ -1530,9 +1654,23 @@
+             reasons, questions=questions, preserved_facts=preserved, usage=usage
+         )
+ 
++    granted_scope = _covered_scope(rule.scope, required_scope)
++    if not granted_scope:
++        return _recovery_blocked(
++            (
++                PolicyIssue(
++                    "resume-scope-empty",
++                    "required_scope",
++                    "an empty resume scope is never granted",
++                ),
++            ),
++            questions=questions,
++            preserved_facts=preserved,
++            usage=usage,
++        )
+     return RecoveryVerdict(
+         True,
+-        _covered_scope(rule.scope, required_scope),
++        granted_scope,
+         rule.observation_conditions,
+         rule.stop_conditions,
+         tuple(preserved),
+@@ -1565,7 +1703,22 @@
+     reasons: list[PolicyIssue] = []
+     questions: list[str] = []
+ 
+-    if request_map.get("user_disabled") is True:
++    raw_disabled = request_map.get("user_disabled")
++    if not isinstance(raw_disabled, bool):
++        # an unknown state is not "automation enabled"
++        reasons.append(
++            PolicyIssue(
++                "breaker-disable-unknown",
++                "user_disabled",
++                f"{raw_disabled!r} is not a recorded user state; "
++                "the brake stays engaged",
++            )
++        )
++        questions.append(
++            "which recorded user state (automation enabled / disabled by the user) "
++            "applies before this recovery?"
++        )
++    elif raw_disabled is True:
+         reasons.append(
+             PolicyIssue(
+                 "user-disabled",
+@@ -1605,7 +1758,15 @@
+                 f"{channel!r} is not a caller-declared isolated recovery channel",
+             )
+         )
+-    if origin in NON_AUTHORITATIVE_ORIGINS:
++    if not origin:
++        reasons.append(
++            PolicyIssue(
++                "breaker-origin-unknown",
++                "origin",
++                "no recorded recovery origin; the brake stays engaged",
++            )
++        )
++    elif origin in NON_AUTHORITATIVE_ORIGINS:
+         reasons.append(
+             PolicyIssue(
+                 "breaker-origin-not-authoritative",
+@@ -1688,7 +1849,11 @@
+             )
+         )
+ 
+-    required_scope = _str_tuple(request_map.get("required_scope")) or ()
++    required_scope, scope_issue = _required_scope(
++        request_map.get("required_scope"), "required_scope"
++    )
++    if scope_issue is not None:
++        reasons.append(scope_issue)
+     if rule is not None:
+         uncovered = [
+             token for token in required_scope if not _scope_covers(rule.scope, token)
+@@ -1701,13 +1866,39 @@
+                     "not covered: " + ", ".join(uncovered),
+                 )
+             )
++        preauth_ref = request_map.get("preauthorization_ref")
++        preauth = str(preauth_ref).strip() if _nonempty_str(preauth_ref) else ""
+         resolution = _resolve_authority(
+-            request_map.get("preauthorization_ref"),
++            preauth_ref,
+             authority_source,
+             ("recovery:breaker", *required_scope),
+             trusted_writers,
+         )
+         reasons.extend(resolution.issues)
++        if preauth != rule.authority_ref:
++            # the policy rule's own preauthorization is verified too: another
++            # reference must be a writer-recorded explicit replacement
++            if (
++                resolution.record is not None
++                and rule.authority_ref in resolution.record.supersedes
++            ):
++                preserved.append(f"superseded-authority:{rule.authority_ref}")
++            else:
++                rule_resolution = _resolve_authority(
++                    rule.authority_ref,
++                    authority_source,
++                    ("recovery:breaker", *required_scope),
++                    trusted_writers,
++                )
++                reasons.extend(rule_resolution.issues)
++                reasons.append(
++                    PolicyIssue(
++                        "recovery-authority-unrelated",
++                        "preauthorization_ref",
++                        "the preauthorization is neither the policy recovery "
++                        "authorization nor an explicitly recorded replacement of it",
++                    )
++                )
+         if (
+             resolution.record is not None
+             and resolution.record.writer
+@@ -1725,9 +1916,22 @@
+         return _recovery_blocked(
+             reasons, questions=questions, preserved_facts=preserved
+         )
++    granted_scope = _covered_scope(rule.scope, required_scope)
++    if not granted_scope:
++        return _recovery_blocked(
++            (
++                PolicyIssue(
++                    "resume-scope-empty",
++                    "required_scope",
++                    "an empty resume scope is never granted",
++                ),
++            ),
++            questions=questions,
++            preserved_facts=preserved,
++        )
+     return RecoveryVerdict(
+         True,
+-        _covered_scope(rule.scope, required_scope),
++        granted_scope,
+         rule.observation_conditions,
+         rule.stop_conditions,
+         tuple(preserved),
+--- a/packages/multi-workers/test_dp_consolidation_recovery.py
++++ b/packages/multi-workers/test_dp_consolidation_recovery.py
+@@ -98,6 +98,7 @@
+         kind: str = "user-grant",
+         revoked: bool = False,
+         recorded_at: str = "2026-10-26T00:00:00+00:00",
++        supersedes=None,
+     ):
+         payload = {
+             "authority_ref": authority_ref,
+@@ -106,6 +107,7 @@
+             "writer": self.writer_id,
+             "revoked": revoked,
+             "recorded_at": recorded_at,
++            "supersedes": list(supersedes or ()),
+         }
+         path = self.root / f"{authority_ref}.json"
+         tmp = path.with_suffix(".json.tmp")
+@@ -177,15 +179,25 @@
+ 
+ 
+ def _full_grants(project: pathlib.Path) -> dict:
+-    return _grants(
+-        project,
+-        **{
+-            "grant-dpc-t07": ["key:dpc-t07", "action:gate-approve"],
+-            "grant-soft-round": ["extension:soft-round"],
+-            "grant-recovery": ["recovery:halted", "recovery:breaker"],
+-            "grant-breaker": ["recovery:breaker"],
+-        },
+-    )
++    """The fixture's controlled writer records the whole legal surface.
++
++    ``grant-breaker`` is a *replacement* of the policy's recovery
++    authorization, so it carries the explicit ``supersedes`` relation the
++    controlled writer records; nothing here is self-asserted by a request.
++    """
++    writer = FixtureAuthorityWriter(project)
++    records = []
++    specs = {
++        "grant-dpc-t07": (["key:dpc-t07", "action:gate-approve"], ()),
++        "grant-soft-round": (["extension:soft-round"], ()),
++        "grant-recovery": (["recovery:halted", "recovery:breaker"], ()),
++        "grant-breaker": (["recovery:breaker"], ("grant-recovery",)),
++    }
++    for ref, (scopes, supersedes) in specs.items():
++        record, issues = writer.grant(ref, scopes, supersedes=supersedes)
++        assert issues == (), [issue.code for issue in issues]
++        records.append(record)
++    return _source(records)
+ 
+ 
+ NOTE_OK = {
+@@ -962,6 +974,72 @@
+     )
+ 
+ 
++def test_pending_review_requires_policy_and_request_scope():
++    project = _new_project("pendingscope")
++    # the policy grants only key:dpc-t07 while its authority covers both keys, so
++    # only the policy's own scope can keep the outside request closed
++    load = _load(
++        project, _policy_doc(scope=["key:dpc-t07"], authority_ref="grant-wide")
++    )
++    wide, wide_issues = FixtureAuthorityWriter(project).grant(
++        "grant-wide", ["key:dpc-t07", "key:outside"]
++    )
++    assert wide_issues == ()
++    source = _full_grants(project)
++    source.update(_source([wide]))
++    base = {
++        "pending_review": True,
++        "goal_effective": True,
++        "blocker_cleared": True,
++        "evidence": ["fresh integration run"],
++        "choice": "approve",
++        "budget_unit": "round",
++        "budget_amount": 1,
++    }
++
++    outside = policy_mod.evaluate_pending_review(
++        load,
++        trigger={"kind": "new-evidence"},
++        state=dict(base, required_scope=["key:outside"]),
++        usage={"round": 0},
++        authority_source=source,
++        trusted_writers=TRUSTED_WRITERS,
++    )
++    assert outside.allowed is False
++    assert "review-scope-uncovered" in _codes(outside.reasons)
++    assert outside.resume_scope == ()  # an uncovered request never resumes
++
++    missing = policy_mod.evaluate_pending_review(
++        load,
++        trigger={"kind": "dependency-delivery"},
++        state=dict(base),
++        usage={"round": 0},
++        authority_source=source,
++        trusted_writers=TRUSTED_WRITERS,
++    )
++    assert missing.allowed is False
++    assert "required-scope-missing" in _codes(missing.reasons)
++    assert missing.resume_scope == ()  # a missing requirement is not a free pass
++
++    positive = policy_mod.evaluate_pending_review(
++        load,
++        trigger={"kind": "new-evidence"},
++        state=dict(base, required_scope=["key:dpc-t07"]),
++        usage={"round": 0},
++        authority_source=source,
++        trusted_writers=TRUSTED_WRITERS,
++    )
++    assert positive.allowed is True
++    assert positive.resume_scope == ("key:dpc-t07",)
++    assert positive.requires_human is False
++    _verify(
++        "VC-022",
++        event_only_resumes=0,
++        unsupported_resumes=sum(int(v.allowed) for v in (outside, missing)),
++        mandatory_human_waits=int(any(v.requires_human for v in (outside, missing))),
++    )
++
++
+ # ── AC-034 / AC-035: halted stage recovery ─────────────────────────────────
+ 
+ 
+@@ -1155,6 +1233,224 @@
+     )
+ 
+ 
++def test_halted_recovery_verifies_the_policy_rule_authority_and_supersession():
++    project = _new_project("haltrule")
++    load = _load(project, _policy_doc())
++    writer = FixtureAuthorityWriter(project)
++    unrelated, unrelated_issues = writer.grant("grant-unrelated", ["recovery:halted"])
++    revoked_rule, revoked_issues = writer.grant(
++        "grant-recovery", ["recovery:halted", "recovery:breaker"], revoked=True
++    )
++    assert unrelated_issues == () and revoked_issues == ()
++
++    def request_with(ref: str) -> dict:
++        request = json.loads(json.dumps(HALTED_OK))
++        request["note"]["authority_ref"] = ref
++        return request
++
++    # a revoked policy recovery reference is not bypassed by pointing the note
++    # at another (even scope-identical) record
++    bypass = policy_mod.evaluate_halted_recovery(
++        load,
++        request=request_with("grant-unrelated"),
++        usage={"round": 1},
++        authority_source=_source([unrelated, revoked_rule]),
++        trusted_writers=TRUSTED_WRITERS,
++    )
++    assert bypass.allowed is False
++    assert "recovery-authority-unrelated" in _codes(bypass.reasons)
++    assert "authority-revoked" in _codes(bypass.reasons)
++    assert bypass.scope == ()
++
++    # valid rule reference + an unrelated valid grant is still not a resume
++    source = _full_grants(project)
++    other, other_issues = writer.grant("grant-other-recovery", ["recovery:halted"])
++    assert other_issues == ()
++    source.update(_source([other]))
++    unrelated_ok = policy_mod.evaluate_halted_recovery(
++        load,
++        request=request_with("grant-other-recovery"),
++        usage={"round": 1},
++        authority_source=source,
++        trusted_writers=TRUSTED_WRITERS,
++    )
++    assert unrelated_ok.allowed is False
++    assert "recovery-authority-unrelated" in _codes(unrelated_ok.reasons)
++    assert unrelated_ok.scope == ()
++
++    # an explicit, writer-recorded replacement is a legal new authorization
++    replacement, replacement_issues = writer.grant(
++        "grant-recovery-r2", ["recovery:halted"], supersedes=["grant-recovery"]
++    )
++    assert replacement_issues == ()
++    source.update(_source([replacement]))
++    resumed = policy_mod.evaluate_halted_recovery(
++        load,
++        request=request_with("grant-recovery-r2"),
++        usage={"round": 1},
++        authority_source=source,
++        trusted_writers=TRUSTED_WRITERS,
++    )
++    assert resumed.allowed is True
++    assert resumed.scope == ("recovery:halted",)
++    assert "superseded-authority:grant-recovery" in resumed.preserved_facts
++    _verify(
++        "VC-034",
++        erased_stop_facts=int(not resumed.preserved_facts),
++        reset_usage=int(dict(resumed.usage_after) != {"round": 1}),
++        unsupported_resumes=sum(int(v.allowed) for v in (bypass, unrelated_ok)),
++    )
++
++
++def test_halted_recovery_unknown_guard_and_halt_origin_stay_blocked():
++    project = _new_project("haltguard")
++    load = _load(project, _policy_doc())
++    source = _full_grants(project)
++    writer = FixtureAuthorityWriter(project)
++
++    def verdict(request: dict, authority=None):
++        return policy_mod.evaluate_halted_recovery(
++            load,
++            request=request,
++            usage={"round": 1},
++            authority_source=source if authority is None else authority,
++            trusted_writers=TRUSTED_WRITERS,
++        )
++
++    # an active guard cleared only by a self-reported string is still active
++    self_reported = verdict(
++        dict(HALTED_OK, hard_guard_active=True, hard_guard_cleared=["self-reported-clear"])
++    )
++    assert self_reported.allowed is False
++    assert "guard-clearance-unverified" in _codes(self_reported.reasons)
++    assert self_reported.scope == ()
++
++    non_bool_verdict = verdict(
++        dict(
++            HALTED_OK,
++            hard_guard_active=True,
++            hard_guard_cleared=["cargo check passed"],
++            hard_guard_cleared_verified="yes",
++        )
++    )
++    assert non_bool_verdict.allowed is False
++    assert "guard-clearance-unverified" in _codes(non_bool_verdict.reasons)
++
++    # a machine-verified clearance still resumes (the guard is not blindly fatal)
++    verified = verdict(
++        dict(
++            HALTED_OK,
++            hard_guard_active=True,
++            hard_guard_cleared=["cargo check exit 0"],
++            hard_guard_cleared_verified=True,
++        )
++    )
++    assert verified.allowed is True
++    assert verified.scope == ("recovery:halted",)
++
++    missing_guard = json.loads(json.dumps(HALTED_OK))
++    del missing_guard["hard_guard_active"]
++    unknown_guard = verdict(missing_guard)
++    assert unknown_guard.allowed is False
++    assert "hard-guard-unknown" in _codes(unknown_guard.reasons)
++    assert unknown_guard.scope == ()
++    assert "hard-guard-unknown" in _codes(
++        verdict(dict(HALTED_OK, hard_guard_active="unknown")).reasons
++    )
++
++    # an unknown stop origin is never assumed to be a plain technical stop
++    missing_origin = json.loads(json.dumps(HALTED_OK))
++    del missing_origin["halt_origin"]
++    unknown_origin = verdict(missing_origin)
++    assert unknown_origin.allowed is False
++    assert "halt-origin-unknown" in _codes(unknown_origin.reasons)
++    assert unknown_origin.scope == ()
++
++    # a revocation needs an explicit *human* lift, not a controlled-config record
++    config_lift, config_issues = writer.grant(
++        "grant-config-lift",
++        ["recovery:user-stop", "recovery:halted"],
++        kind="controlled-config",
++    )
++    assert config_issues == ()
++    config_source = dict(source)
++    config_source.update(_source([config_lift]))
++    revoked_origin = verdict(
++        dict(HALTED_OK, halt_origin="revoked"), authority=config_source
++    )
++    assert revoked_origin.allowed is False
++    assert "user-stop-requires-explicit-authorization" in _codes(revoked_origin.reasons)
++    assert revoked_origin.scope == ()
++
++    # a real new human authorization restores the stop and keeps the stop facts
++    human_lift, human_issues = writer.grant(
++        "grant-human-lift", ["recovery:user-stop", "recovery:halted"]
++    )
++    assert human_issues == ()
++    human_source = dict(source)
++    human_source.update(_source([human_lift]))
++    lifted_request = json.loads(json.dumps(HALTED_OK))
++    lifted_request["halt_origin"] = "user-stop"
++    lifted_request["note"]["authority_ref"] = "grant-human-lift"
++    lifted = verdict(lifted_request, authority=human_source)
++    assert lifted.allowed is True
++    assert lifted.scope == ("recovery:halted",)
++    assert HALTED_OK["note"]["stop_reason"] in " | ".join(lifted.preserved_facts)
++
++    # the policy rule reference itself stays verified: a revoked rule cannot be
++    # restored by a human lift that does not say what it replaces
++    revoked_rule, revoked_rule_issues = writer.grant(
++        "grant-recovery", ["recovery:halted", "recovery:breaker"], revoked=True
++    )
++    assert revoked_rule_issues == ()
++    revoked_source = dict(human_source)
++    revoked_source.update(_source([revoked_rule]))
++    silent_lift = verdict(lifted_request, authority=revoked_source)
++    assert silent_lift.allowed is False
++    assert "authority-revoked" in _codes(silent_lift.reasons)
++    assert silent_lift.scope == ()
++
++    restoring, restoring_issues = writer.grant(
++        "grant-human-restore",
++        ["recovery:user-stop", "recovery:halted"],
++        supersedes=["grant-recovery"],
++    )
++    assert restoring_issues == ()
++    restoring_source = dict(revoked_source)
++    restoring_source.update(_source([restoring]))
++    restored_request = json.loads(json.dumps(lifted_request))
++    restored_request["note"]["authority_ref"] = "grant-human-restore"
++    restored = verdict(restored_request, authority=restoring_source)
++    assert restored.allowed is True
++    assert restored.scope == ("recovery:halted",)
++    assert "superseded-authority:grant-recovery" in restored.preserved_facts
++    _verify(
++        "VC-035",
++        unauthorized_user_stop_unlocks=sum(
++            int(v.allowed)
++            for v in (
++                self_reported,
++                non_bool_verdict,
++                unknown_guard,
++                unknown_origin,
++                revoked_origin,
++                silent_lift,
++            )
++        ),
++        hard_guard_bypasses=int(self_reported.allowed or non_bool_verdict.allowed),
++        false_resumes=sum(
++            int(bool(v.scope))
++            for v in (
++                self_reported,
++                unknown_guard,
++                unknown_origin,
++                revoked_origin,
++                silent_lift,
++            )
++        ),
++    )
++
++
+ # ── AC-036 / AC-037: H12 breaker recovery ──────────────────────────────────
+ 
+ 
+@@ -1383,6 +1679,100 @@
+         erased_breaker_history=sum(int(not v.preserved_facts) for v in (disabled, reject)),
+         reject_project_closures=int(reject.project_closed),
+         observed_retrip=0,
++    )
++
++
++def test_breaker_recovery_verifies_the_policy_rule_authority_and_disable_state():
++    project = _new_project("breakerrule")
++    load = _load(project, _policy_doc())
++    writer = FixtureAuthorityWriter(project)
++    revoked_rule, revoked_issues = writer.grant(
++        "grant-recovery", ["recovery:breaker"], revoked=True
++    )
++    other, other_issues = writer.grant("grant-other-preauth", ["recovery:breaker"])
++    assert revoked_issues == () and other_issues == ()
++
++    # revoked policy recovery reference + another preauthorization: still engaged
++    bypass = policy_mod.evaluate_breaker_recovery(
++        load,
++        request=dict(BREAKER_OK, preauthorization_ref="grant-other-preauth"),
++        authority_source=_source([revoked_rule, other]),
++        trusted_writers=TRUSTED_WRITERS,
++        controlled_channels=CONTROLLED_CHANNELS,
++    )
++    assert bypass.allowed is False
++    assert "recovery-authority-unrelated" in _codes(bypass.reasons)
++    assert "authority-revoked" in _codes(bypass.reasons)
++    assert bypass.scope == ()
++
++    source = _full_grants(project)
++    source.update(_source([other]))
++    unrelated = policy_mod.evaluate_breaker_recovery(
++        load,
++        request=dict(BREAKER_OK, preauthorization_ref="grant-other-preauth"),
++        authority_source=source,
++        trusted_writers=TRUSTED_WRITERS,
++        controlled_channels=CONTROLLED_CHANNELS,
++    )
++    assert unrelated.allowed is False
++    assert "recovery-authority-unrelated" in _codes(unrelated.reasons)
++    assert unrelated.scope == ()
++
++    # a missing or non-boolean user state is unknown, not "enabled"
++    unknown_disable = json.loads(json.dumps(BREAKER_OK))
++    del unknown_disable["user_disabled"]
++    missing_disable = policy_mod.evaluate_breaker_recovery(
++        load,
++        request=unknown_disable,
++        authority_source=source,
++        trusted_writers=TRUSTED_WRITERS,
++        controlled_channels=CONTROLLED_CHANNELS,
++    )
++    assert missing_disable.allowed is False
++    assert "breaker-disable-unknown" in _codes(missing_disable.reasons)
++    assert missing_disable.scope == ()
++    assert missing_disable.questions
++
++    non_bool_disable = policy_mod.evaluate_breaker_recovery(
++        load,
++        request=dict(BREAKER_OK, user_disabled="unknown"),
++        authority_source=source,
++        trusted_writers=TRUSTED_WRITERS,
++        controlled_channels=CONTROLLED_CHANNELS,
++    )
++    assert non_bool_disable.allowed is False
++    assert "breaker-disable-unknown" in _codes(non_bool_disable.reasons)
++
++    # the legal disable stays a hard block, and the legal replacement resumes
++    disabled = policy_mod.evaluate_breaker_recovery(
++        load,
++        request=dict(BREAKER_OK, user_disabled=True),
++        authority_source=source,
++        trusted_writers=TRUSTED_WRITERS,
++        controlled_channels=CONTROLLED_CHANNELS,
++    )
++    assert disabled.allowed is False
++    assert "user-disabled" in _codes(disabled.reasons)
++
++    resumed = policy_mod.evaluate_breaker_recovery(
++        load,
++        request=BREAKER_OK,
++        authority_source=source,
++        trusted_writers=TRUSTED_WRITERS,
++        controlled_channels=CONTROLLED_CHANNELS,
++    )
++    assert resumed.allowed is True
++    assert resumed.scope == ("recovery:breaker",)
++    assert "superseded-authority:grant-recovery" in resumed.preserved_facts
++    _verify(
++        "VC-036",
++        breaker_self_approvals=0,
++        unauthorized_recoveries=sum(
++            int(v.allowed) for v in (bypass, unrelated, missing_disable, non_bool_disable, disabled)
++        ),
++        transport_bypasses=sum(
++            int(bool(v.scope)) for v in (bypass, unrelated, missing_disable, non_bool_disable)
++        ),
+     )
+ 
+ 

@@ -1,0 +1,1 @@
+{"schema_version": 2, "decision_point": "dp-w-type", "state": {"task_goal": "Validate book stdin refusals with full layered requests", "task_requirements": "Illegal JSON shapes produce issues, never filesystem lookup or escaped exception", "task_deliverables": "Book gate boundary red-green evidence", "images_required": false}}

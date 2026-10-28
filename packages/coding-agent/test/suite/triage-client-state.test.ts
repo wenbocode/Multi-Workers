@@ -23,6 +23,11 @@
  *    is asserted against the live `decision_points.DP_REGISTRY` (a short or
  *    stale id would never match a real dpId and `?? []` would silently drop the
  *    dp-specific requirement, so this fails rather than skips without Python).
+ *    The four business-material dps (dp1/dp2/dp3/dp25) deliberately have NO
+ *    legacy row: their required fields are the generated registry contract
+ *    (`DECIDE_REGISTRY.requiredStateFields`), which the material path consumes.
+ *    A row for them would force business material to carry the legacy audit
+ *    keys (the retired pre-T01 compatibility branch, spec §1.7).
  *
  * The decision child is stubbed at the `DecideRunner` seam: no real provider
  * call, no network, no `mw decide run`.
@@ -35,16 +40,13 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-	boundTriageState,
 	canonicalStateBytes,
 	canonicalStateJson,
 	DEFAULT_TRIAGE_TIMEOUT_MS,
 	type DecideRunner,
 	type DecideRunRequest,
 	DP1_ID,
-	DP1_QUESTIONS,
 	MAX_STRUCTURED_STATE_BYTES,
-	MAX_TRIAGE_STATE_BYTES,
 	prepareStructuredState,
 	type RawDecideRun,
 	REQUIRED_FIELDS_BY_DP,
@@ -55,6 +57,7 @@ import {
 	truncateStructuredState,
 	validateStructuredState,
 } from "../../src/extensions/agent-team-loop/pm/triage-client.ts";
+import { DECIDE_REGISTRY } from "../../src/extensions/agent-team-loop/shared/decide-registry.generated.ts";
 import { PYTHON_EXE } from "../../src/extensions/agent-team-loop/shared/mw-runner.ts";
 
 const tempDirs: string[] = [];
@@ -114,7 +117,10 @@ function envelopeOf(call: DecideRunRequest | undefined): Record<string, unknown>
 	return JSON.parse(call?.input ?? "{}") as Record<string, unknown>;
 }
 
-/** A dp1 state that passes every required-field / cap check (D6 Q5.1). */
+/** A dp1 state that passes every universal-field / optional-cap check.
+ *
+ * dp1's business contract (task_goal/task_requirements/task_deliverables) is a
+ * material contract; this structured state exercises the legacy 21-dp path. */
 function dp1State(overrides: TriageState = {}): TriageState {
 	return {
 		schema_version: 2,
@@ -228,7 +234,7 @@ describe("input-incomplete refuses with ZERO spawn (requirement 2)", () => {
 			expectMissing: "risk",
 		},
 		{
-			name: "missing dp-specific field (task_summary)",
+			name: "blank optional L1 summary (task_summary)",
 			state: dp1State({ task_summary: "" }),
 			expectMissing: "task_summary",
 		},
@@ -250,26 +256,20 @@ describe("input-incomplete refuses with ZERO spawn (requirement 2)", () => {
 		},
 		{
 			name: "float where the schema is int-only (digest drift)",
-			dpId: "dp2-checkpoint-split",
+			dpId: "dp4-failure-handling",
 			state: {
 				schema_version: 2,
-				decision_point: "dp2-checkpoint-split",
+				decision_point: "dp4-failure-handling",
 				key: "mw-decision-substitution",
 				phase: "EXECUTE",
 				task_type: "coding",
 				risk: "mid",
 				risk_source: "machine",
 				authority_tier: "P2",
-				questions_version: "dp2@1",
-				progress: {
-					elapsed_minutes: 1.5,
-					budget_minutes: 40,
-					phases_done: 2,
-					phases_total: 5,
-					artifact_present: false,
-				},
+				questions_version: "dp4@1",
+				failure: { kind: "exit-nonzero", exit: 1.5 },
 			},
-			expectMissing: "progress.elapsed_minutes",
+			expectMissing: "failure.exit",
 		},
 		{
 			name: "over-cap required L1 (task_summary > 600B)",
@@ -446,32 +446,38 @@ describe("state_digest is a Python passthrough (requirement 4 / D-004)", () => {
 	});
 });
 
-// ── 5. legacy string state stays byte-compatible ────────────────────────────
+// ── 5. the removed free-form string state is refused, never forwarded ──────
 
-describe("legacy string state (compat clause, spec §5.4)", () => {
-	it("keeps the frozen 16KB bound plus the DP-1 question map", () => {
+describe("free-form string state (the removed legacy path, spec §1.7)", () => {
+	it("refuses a 100KB string with zero spawn instead of truncating it", () => {
 		const root = projectWithDecideJson();
 		const stub = stubRunner(okRun());
-		const long = "x".repeat(100_000);
-		const result = triageDispatch({ projectDir: root, state: long, run: stub.run });
+		// A JS caller can still pass prose; it is never a structured state and the
+		// replaced path must not forward or truncate it.
+		const result = triageDispatch({
+			projectDir: root,
+			state: "x".repeat(100_000) as unknown as TriageState,
+			run: stub.run,
+		});
 
-		expect(result.available).toBe(true);
-		const envelope = envelopeOf(stub.calls[0]);
-		expect(envelope.state).toBe(boundTriageState(long));
-		expect(Buffer.byteLength(envelope.state as string, "utf8")).toBeLessThanOrEqual(MAX_TRIAGE_STATE_BYTES);
-		expect(envelope.questions).toEqual(DP1_QUESTIONS);
-		expect(stub.calls[0]?.dp).toBe(DP1_ID);
-		// no structured validation on the legacy path: it is not a dp1 state object
-		expect(result.reason).toBeUndefined();
+		expect(result.available).toBe(false);
+		expect(result.reason).toBe("input-incomplete");
+		expect(result.missing_fields).toEqual(["state"]);
+		expect(result.escalate_to_human).toBe(true);
+		expect(stub.calls).toHaveLength(0);
 	});
 
-	it("forwards a short string state unchanged", () => {
+	it("refuses a short string state too: a state is an object, never prose", () => {
 		const root = projectWithDecideJson();
 		const stub = stubRunner(okRun());
-		triageDispatch({ projectDir: root, state: "requested_type: coding", run: stub.run });
-		const envelope = envelopeOf(stub.calls[0]);
-		expect(envelope.state).toBe("requested_type: coding");
-		expect(envelope.questions).toEqual(DP1_QUESTIONS);
+		const result = triageDispatch({
+			projectDir: root,
+			state: "requested_type: coding" as unknown as TriageState,
+			run: stub.run,
+		});
+		expect(result.available).toBe(false);
+		expect(result.missing_fields).toEqual(["state"]);
+		expect(stub.calls).toHaveLength(0);
 	});
 });
 
@@ -487,15 +493,17 @@ const PY_DP_REGISTRY_IDS = [
 	"print(json.dumps([p.id for p in d.DP_REGISTRY]))",
 ].join("\n");
 
-/** The 7 dp-specific rows the `required_if` matrix carries today (registry ids). */
-const DP_SPECIFIC_ROWS = [
+/** The dp-specific rows the `required_if` matrix still carries (registry ids):
+ * dp4/dp5/dp6/dp13 are explicit legacy debt. The four business-material dps
+ * (dp1/dp2/dp3/dp25) are enforced by the generated registry contract instead. */
+const DP_SPECIFIC_ROWS = ["dp4-failure-handling", "dp5-test-triage", "dp6-qg-verdict", "dp13-commit-release"];
+
+/** The four dps whose contract moved to the generated material registry. */
+const MATERIAL_CONTRACT_DP_IDS = [
 	"dp1-dispatch-type",
 	"dp2-checkpoint-split",
 	"dp3-worker-clarify",
-	"dp4-failure-handling",
-	"dp5-test-triage",
-	"dp6-qg-verdict",
-	"dp13-commit-release",
+	"dp25-signoff-conclusion",
 ];
 
 /** Live registry ids. Fail-closed: this lock is a cross-layer contract, so a
@@ -573,6 +581,30 @@ describe("dp ids match the Python registry (cross-layer drift lock)", () => {
 			);
 			expect(missing.length, `${dpId} must have a dp-specific required field`).toBeGreaterThan(0);
 		}
+	});
+
+	it("retires the pre-T01 rows for the four business-material dps", () => {
+		for (const dpId of MATERIAL_CONTRACT_DP_IDS) {
+			// The legacy structured validator composes UNIVERSAL_REQUIRED_FIELDS
+			// (key/phase/risk/...) with this table, so keeping a row would force
+			// BUSINESS material to carry audit keys.
+			expect(REQUIRED_FIELDS_BY_DP, dpId).not.toHaveProperty(dpId);
+			expect(DECIDE_REGISTRY[dpId]?.requiredStateFields.length, dpId).toBeGreaterThan(0);
+		}
+		// dp1 keeps its generated business contract even without a legacy row.
+		expect(DECIDE_REGISTRY[DP1_ID]?.requiredStateFields.map((field) => field.name)).toEqual([
+			"task_goal",
+			"task_requirements",
+			"task_deliverables",
+		]);
+	});
+
+	it("dp3's dynamic candidates are required by the material contract, not local_candidates", () => {
+		const names = DECIDE_REGISTRY["dp3-worker-clarify"]?.requiredStateFields.map((field) => field.name) ?? [];
+		expect(names).toContain("handling_options");
+		expect(names).not.toContain("local_candidates");
+		// The retired row is gone; the dynamic choice is fed by the registry contract.
+		expect(REQUIRED_FIELDS_BY_DP).not.toHaveProperty("dp3-worker-clarify");
 	});
 });
 

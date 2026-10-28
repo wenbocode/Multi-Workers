@@ -1,0 +1,8 @@
+﻿producer p0_open: [] rows_total: 1
+real no-P0 book  -> exit 0
+  stdout: { "path": "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\t05h-cli-vrmu3sil\\book-dp25-no-p0.json", "sha256": "bfe8f57cb8ba34057e3bbc2744cdd7b5f2bb97397947ebb165fb5b3b912855c9", "ok": true, "books": [ { "label": null, "decision_point": "dp25-signoff-conclusion", "ok": true, "issues": [] } ], "issues": [] }
+  stderr: 
+dp25 scaffold    -> exit 2
+  p0_open issue: ['book-placeholder:notes.evidence.p0_open']
+  first issues: ['book-placeholder:notes.evidence.chain_ok', 'book-placeholder:notes.evidence.key', 'book-placeholder:notes.evidence.p0_open', 'book-placeholder:notes.evidence.rows_available', 'book-placeholder:notes.evidence.rows_total', 'book-placeholder:state.key']
+  home used: C:\Users\WENBOZ~1\AppData\Local\Temp\t05h-cli-vrmu3sil

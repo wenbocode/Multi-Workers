@@ -1,0 +1,76 @@
+{
+  "started_at": "2026-10-27T03:49:42.444042+00:00",
+  "observed_at": "2026-10-27T03:49:47.027931+00:00",
+  "products": [
+    {
+      "path": "packages/multi-workers/decision.py",
+      "before_sha256": "89500080e9f59c80e98b757a3a2b547b1db06985edc04a7489d068cb5f80a5e5",
+      "after_sha256": "ef9c2c68eee18bb93ad716c76c7b146279ac5f111c9f626c68a01d1c35ed691e",
+      "bytes": 119248,
+      "lf": 2740,
+      "crlf": 0,
+      "pm_diff_sha256": "b99525b6447f6eb345da5ba88f06570db06b44ad0b35ea06d86d286cd6a30a34"
+    },
+    {
+      "path": "packages/multi-workers/decision_backends.py",
+      "before_sha256": "a13a8597bba7abe796022148bd50d02b26fc6a85e1d7d3b1af9f5129f0a3e22b",
+      "after_sha256": "a13a8597bba7abe796022148bd50d02b26fc6a85e1d7d3b1af9f5129f0a3e22b",
+      "bytes": 48970,
+      "lf": 1216,
+      "crlf": 0,
+      "pm_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_materials.py",
+      "before_sha256": "2ab2d758350eb0a3b714512e9a70d81e14c645459f94cc8c850b98a4638454f8",
+      "after_sha256": "b404fc0a9e94b35a198051ed43a8f755d6a61ab5c36b2d43919695cab6b45a1b",
+      "bytes": 47252,
+      "lf": 1267,
+      "crlf": 0,
+      "pm_diff_sha256": "94a59765a10bddad783e5cae8596cea0b442ca4795fde0c355ad9d8cb934bb16"
+    }
+  ],
+  "assigned_passed": 110,
+  "assigned_rc": [
+    0,
+    0
+  ],
+  "independently_asserted_fixture_count": 39,
+  "old_test_functions_ast_preserved": 23,
+  "new_test_functions": [
+    "test_bool_replay_lookup_controls_still_prove_hit_and_miss",
+    "test_non_bool_replay_lookup_result_fails_closed",
+    "test_question_ceiling_control_still_accepts_a_legal_pair",
+    "test_question_ceiling_is_a_prepared_refusal_not_an_exception",
+    "test_retired_id_is_refused_before_replay_credential_and_backend",
+    "test_transport_record_and_business_refusal_stay_separate_layers"
+  ],
+  "frozen_constants_ast_unchanged": true,
+  "backend_bytes_unchanged": true,
+  "only_changed_client_method": "request_prepared",
+  "mirror_files": 1883,
+  "verification_net_changes": [],
+  "frontier_allowed_net_changes": [
+    "packages/multi-workers/decision.py",
+    "packages/multi-workers/decision_policy.py",
+    "packages/multi-workers/decision_validity.py",
+    "packages/multi-workers/test_dp_consolidation_concurrency.py",
+    "packages/multi-workers/test_dp_consolidation_materials.py",
+    "packages/multi-workers/test_dp_consolidation_recovery.py"
+  ],
+  "original_worker_evidence_preserved": 125,
+  "r2_evidence_files_unchanged": 73,
+  "pyc_preserved": 14,
+  "relevant_live_paths_unchanged": {
+    "packages/multi-workers/decision.py": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+    "packages/multi-workers/decision_backends.py": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60",
+    "packages/multi-workers/test_dp_consolidation_materials.py": null
+  },
+  "local_rework_boundary_verified": true,
+  "semantic_handoff_verified": false,
+  "worker_actual_status": "needs-clarification",
+  "worker_actual_exit_code": 2,
+  "runtime_ledger_recovery_resolved": false,
+  "full_live_transient_or_exclusive_authorship_audit": false,
+  "full_l2_qg_signoff_stage_close": false
+}

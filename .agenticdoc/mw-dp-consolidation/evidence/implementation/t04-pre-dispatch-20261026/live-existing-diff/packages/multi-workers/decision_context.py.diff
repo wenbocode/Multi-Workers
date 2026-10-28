@@ -1,0 +1,59 @@
+diff --git a/packages/multi-workers/decision_context.py b/packages/multi-workers/decision_context.py
+index 4a87d03b9..0f865087e 100644
+--- a/packages/multi-workers/decision_context.py
++++ b/packages/multi-workers/decision_context.py
+@@ -1,7 +1,8 @@
+ """Engineered environment context for a decide-model call (D-052..D-054).
+ 
+ The state a producer sends carries the *decision fields* (typed, required,
+-budgeted at 2000 B). ``context`` rides alongside them: free-form, optional
++budgeted to ``decision_points.MAX_STATE_BYTES``). ``context`` rides alongside
++them: free-form, optional
+ environment material the model needs to reason about the task but which is not
+ itself a decision field (dispatch-card excerpts, checkpoint summaries, artifact
+ status, candidate snippets).
+@@ -38,7 +39,7 @@ CONTEXT_KEY = "context"
+ 
+ #: Slot budget in canonical UTF-8 bytes (D-053). :func:`fit_context` defaults to
+ #: it; ``decision_points._fit_state`` passes the *remaining* headroom inside the
+-#: 2000 B state budget instead, so the context is always counted there.
++#: single state budget instead, so the context is always counted there.
+ CONTEXT_MAX_BYTES = 4000
+ 
+ #: Bytes the enclosing ``"context":`` key adds to the canonical state; the
+@@ -70,7 +71,7 @@ CONTEXT_SLOTS: Mapping[str, Mapping[str, Any]] = MappingProxyType(
+             {
+                 "type": "string",
+                 "max_chars": 1200,
+-                "producers": ("dp1-dispatch-type",),
++                "producers": (),
+                 "description": "Excerpt of the dispatch card ## 上下文 / ## 要求 sections.",
+             }
+         ),
+@@ -78,7 +79,7 @@ CONTEXT_SLOTS: Mapping[str, Mapping[str, Any]] = MappingProxyType(
+             {
+                 "type": "string",
+                 "max_chars": 800,
+-                "producers": ("dp2-checkpoint-split", "dp3-worker-clarify"),
++                "producers": (),
+                 "description": "One-line summary of what changed since the last checkpoint.",
+             }
+         ),
+@@ -88,7 +89,7 @@ CONTEXT_SLOTS: Mapping[str, Mapping[str, Any]] = MappingProxyType(
+                 "max_items": 5,
+                 "item_max_chars": 200,
+                 "item_required": ("text", "source"),
+-                "producers": ("dp3-worker-clarify",),
++                "producers": (),
+                 "description": "Verbatim hit line (first 200 chars) + <path>:<line> source.",
+             }
+         ),
+@@ -98,7 +99,7 @@ CONTEXT_SLOTS: Mapping[str, Mapping[str, Any]] = MappingProxyType(
+                 "max_items": 24,
+                 "item_max_chars": 200,
+                 "item_required": ("path",),
+-                "producers": ("dp2-checkpoint-split",),
++                "producers": (),
+                 "description": "Planned/observed artifacts: {path, exists, bytes}.",
+             }
+         ),

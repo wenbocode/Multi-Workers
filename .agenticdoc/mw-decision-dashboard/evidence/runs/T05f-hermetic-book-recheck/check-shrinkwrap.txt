@@ -1,0 +1,8 @@
+# command: C:\Program Files\nodejs\npm.CMD run check:shrinkwrap
+# exit: 0
+
+
+> pi-monorepo@0.0.3 check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.

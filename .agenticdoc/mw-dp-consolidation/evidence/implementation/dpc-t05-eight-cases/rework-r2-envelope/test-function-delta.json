@@ -1,0 +1,517 @@
+{
+  "before_count": 28,
+  "after_count": 30,
+  "removed": [],
+  "added": [
+    "test_case_prepared_at_is_a_recorded_past_instant_with_explicit_zone",
+    "test_shipped_book_template_is_the_native_eight_entry_scaffold"
+  ],
+  "original_28_all_ast_and_source_identical": true,
+  "original_28_all_locations_identical": true,
+  "delta": [
+    {
+      "name": "test_eight_offline_cases_are_complete_schema3_and_contract_shaped",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        390,
+        390
+      ],
+      "end_lineno": [
+        457,
+        457
+      ],
+      "asserts": [
+        23,
+        23
+      ]
+    },
+    {
+      "name": "test_dp_pm_steer_case_keeps_the_registry_question_vocabulary",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        460,
+        460
+      ],
+      "end_lineno": [
+        473,
+        473
+      ],
+      "asserts": [
+        7,
+        7
+      ]
+    },
+    {
+      "name": "test_eight_cases_pass_the_offline_registry_typed_check",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        476,
+        476
+      ],
+      "end_lineno": [
+        490,
+        490
+      ],
+      "asserts": [
+        1,
+        1
+      ]
+    },
+    {
+      "name": "test_case_evidence_is_really_checked_and_resolves_inside_the_copy",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        493,
+        493
+      ],
+      "end_lineno": [
+        514,
+        514
+      ],
+      "asserts": [
+        5,
+        5
+      ]
+    },
+    {
+      "name": "test_each_case_prepares_a_real_basis_for_every_supported_choice",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        517,
+        517
+      ],
+      "end_lineno": [
+        556,
+        556
+      ],
+      "asserts": [
+        7,
+        7
+      ]
+    },
+    {
+      "name": "test_dp_w_type_case_keeps_four_candidates_and_the_image_gate",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        559,
+        559
+      ],
+      "end_lineno": [
+        570,
+        570
+      ],
+      "asserts": [
+        4,
+        4
+      ]
+    },
+    {
+      "name": "test_dp_w_check_task_case_keeps_three_branches_and_needs_no_pm_wait",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        573,
+        573
+      ],
+      "end_lineno": [
+        587,
+        587
+      ],
+      "asserts": [
+        4,
+        4
+      ]
+    },
+    {
+      "name": "test_dp_sigkey_qg_and_gate_entries_refuse_their_own_missing_branch_material",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        590,
+        590
+      ],
+      "end_lineno": [
+        612,
+        612
+      ],
+      "asserts": [
+        6,
+        6
+      ]
+    },
+    {
+      "name": "test_dp_sign_key_case_keeps_the_four_parts_and_three_arrays",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        615,
+        615
+      ],
+      "end_lineno": [
+        643,
+        643
+      ],
+      "asserts": [
+        5,
+        5
+      ]
+    },
+    {
+      "name": "test_dp_auto_case_uses_free_form_pm_candidates_and_invents_nothing",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        646,
+        646
+      ],
+      "end_lineno": [
+        679,
+        679
+      ],
+      "asserts": [
+        6,
+        6
+      ]
+    },
+    {
+      "name": "test_dp_route_case_routes_to_the_other_seven_entries_without_authorising",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        682,
+        682
+      ],
+      "end_lineno": [
+        720,
+        720
+      ],
+      "asserts": [
+        6,
+        6
+      ]
+    },
+    {
+      "name": "test_generator_refuses_retired_ids_and_never_writes_legacy_cases",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        723,
+        723
+      ],
+      "end_lineno": [
+        738,
+        738
+      ],
+      "asserts": [
+        4,
+        4
+      ]
+    },
+    {
+      "name": "test_shipped_cases_match_the_offline_generator",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        741,
+        741
+      ],
+      "end_lineno": [
+        755,
+        755
+      ],
+      "asserts": [
+        5,
+        5
+      ]
+    },
+    {
+      "name": "test_each_entry_refuses_missing_material_without_defaulting",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        758,
+        758
+      ],
+      "end_lineno": [
+        799,
+        799
+      ],
+      "asserts": [
+        4,
+        4
+      ]
+    },
+    {
+      "name": "test_legacy_cases_stay_byte_identical_read_only_history",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        802,
+        802
+      ],
+      "end_lineno": [
+        826,
+        826
+      ],
+      "asserts": [
+        7,
+        7
+      ]
+    },
+    {
+      "name": "test_case_route_is_page_authenticated_and_serves_only_fixed_ids",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        842,
+        842
+      ],
+      "end_lineno": [
+        911,
+        911
+      ],
+      "asserts": [
+        23,
+        23
+      ]
+    },
+    {
+      "name": "test_case_route_makes_zero_credential_and_model_calls",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        914,
+        914
+      ],
+      "end_lineno": [
+        943,
+        943
+      ],
+      "asserts": [
+        3,
+        3
+      ]
+    },
+    {
+      "name": "test_edited_cases_reach_the_real_loopback_typed_validate",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        987,
+        987
+      ],
+      "end_lineno": [
+        1050,
+        1050
+      ],
+      "asserts": [
+        15,
+        15
+      ]
+    },
+    {
+      "name": "test_case_loader_refuses_unknown_ids_traversal_and_symlinks",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        1053,
+        1053
+      ],
+      "end_lineno": [
+        1092,
+        1092
+      ],
+      "asserts": [
+        9,
+        9
+      ]
+    },
+    {
+      "name": "test_history_forwards_the_real_workbench_and_facets",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        1183,
+        1183
+      ],
+      "end_lineno": [
+        1265,
+        1265
+      ],
+      "asserts": [
+        26,
+        26
+      ]
+    },
+    {
+      "name": "test_dom_workbench_table_has_five_columns_four_states_and_facet_dropdowns",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        1914,
+        1914
+      ],
+      "end_lineno": [
+        1968,
+        1968
+      ],
+      "asserts": [
+        19,
+        19
+      ]
+    },
+    {
+      "name": "test_dom_legacy_payload_without_facets_never_fabricates_the_universe",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        1971,
+        1971
+      ],
+      "end_lineno": [
+        1985,
+        1985
+      ],
+      "asserts": [
+        3,
+        3
+      ]
+    },
+    {
+      "name": "test_dom_v2_record_opens_ten_node_dag_and_legacy_record_stays_log_only",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        1993,
+        1993
+      ],
+      "end_lineno": [
+        2059,
+        2059
+      ],
+      "asserts": [
+        29,
+        29
+      ]
+    },
+    {
+      "name": "test_dom_incomplete_dag_projection_is_reported_not_filled",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        2062,
+        2062
+      ],
+      "end_lineno": [
+        2084,
+        2084
+      ],
+      "asserts": [
+        3,
+        3
+      ]
+    },
+    {
+      "name": "test_dom_offline_case_loads_and_local_validate_makes_no_network_write",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        2092,
+        2092
+      ],
+      "end_lineno": [
+        2131,
+        2131
+      ],
+      "asserts": [
+        12,
+        12
+      ]
+    },
+    {
+      "name": "test_dom_local_validate_refuses_placeholders_and_incomplete_material",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        2134,
+        2134
+      ],
+      "end_lineno": [
+        2161,
+        2161
+      ],
+      "asserts": [
+        3,
+        3
+      ]
+    },
+    {
+      "name": "test_dom_playground_submit_stays_observe_only_and_retry_points_at_the_previous_id",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        2169,
+        2169
+      ],
+      "end_lineno": [
+        2230,
+        2230
+      ],
+      "asserts": [
+        13,
+        13
+      ]
+    },
+    {
+      "name": "test_shipped_assets_keep_csp_textcontent_and_token_discipline",
+      "present": true,
+      "ast_unchanged": true,
+      "source_unchanged": true,
+      "lineno": [
+        2238,
+        2238
+      ],
+      "end_lineno": [
+        2274,
+        2274
+      ],
+      "asserts": [
+        12,
+        12
+      ]
+    }
+  ]
+}

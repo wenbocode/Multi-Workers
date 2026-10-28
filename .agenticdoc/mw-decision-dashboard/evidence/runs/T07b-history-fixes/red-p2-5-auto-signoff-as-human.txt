@@ -1,0 +1,44 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+_______________ test_auto_signoff_is_system_not_a_human_answer ________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18363/test_auto_signoff_is_system_no0')
+
+    def test_auto_signoff_is_system_not_a_human_answer(tmp_path):
+        root = _root(tmp_path)
+        escalated = _add_decision(
+            root,
+            key="mw-auto",
+            trigger="a1",
+            available=False,
+            authority="human",
+            escalated_reason="p0",
+            answer=None,
+        )
+        _add_signoff(root, "mw-auto", signed_via="auto-decide", claim="auto claim")
+        model_backed = _add_decision(root, key="mw-model", trigger="m1")
+        _add_signoff(root, "mw-model", signed_via="auto-llm", claim="auto llm claim")
+    
+        snapshot = _snapshot(root, redact=REDACTOR)
+        records = _by_decision(snapshot)
+    
+>       assert records[escalated].source.value == "system"
+E       AssertionError: assert 'human' == 'system'
+E         
+E         - system
+E         + human
+
+test_decision_history.py:1597: AssertionError
+============================== warnings summary ===============================
+C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\cacheprovider.py:475
+  C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\cacheprovider.py:475: PytestCacheWarning: could not create cache path H:\git\Multi-Workers\.agenticdoc\mw-decision-dashboard\evidence\runs\T07b-history-fixes\mutant-p2-5-auto-signoff-as-human\.pytest_cache\v\cache\nodeids: [WinError 5] ¾Ü¾ø·ÃÎÊ¡£: 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-decision-dashboard\\evidence\\runs\\T07b-history-fixes\\mutant-p2-5-auto-signoff-as-human\\pytest-cache-files-qgtty0pt' -> 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-decision-dashboard\\evidence\\runs\\T07b-history-fixes\\mutant-p2-5-auto-signoff-as-human\\.pytest_cache'
+    config.cache.set("cache/nodeids", sorted(self.cached_nodeids))
+
+C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\cacheprovider.py:429
+  C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\cacheprovider.py:429: PytestCacheWarning: could not create cache path H:\git\Multi-Workers\.agenticdoc\mw-decision-dashboard\evidence\runs\T07b-history-fixes\mutant-p2-5-auto-signoff-as-human\.pytest_cache\v\cache\lastfailed: [WinError 5] ¾Ü¾ø·ÃÎÊ¡£: 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-decision-dashboard\\evidence\\runs\\T07b-history-fixes\\mutant-p2-5-auto-signoff-as-human\\pytest-cache-files-wsed0cay' -> 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-decision-dashboard\\evidence\\runs\\T07b-history-fixes\\mutant-p2-5-auto-signoff-as-human\\.pytest_cache'
+    config.cache.set("cache/lastfailed", self.lastfailed)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED test_decision_history.py::test_auto_signoff_is_system_not_a_human_answer
+1 failed, 2 warnings in 0.23s

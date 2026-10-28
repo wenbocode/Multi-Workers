@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
-import { registerAskDecisionTool } from "./pm/decision-tool.ts";
+import { initiatorRoleFromWorkerTask, registerAskDecisionTool } from "./pm/decision-tool.ts";
 import { pmActivate } from "./pm/pm-orchestrator.ts";
 import { registerImplementationGate } from "./shared/implementation-gate.ts";
 import { registerProtectedConfigGuard } from "./shared/protected-config.ts";
@@ -81,15 +81,25 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 
 	if (process.env.PI_WORKER_TASK) {
 		await workerModeActivate(pi);
-		// `ask_decision` (mw-decision-substitution T-05, design D-017/Q1 §1.3):
-		// registered ONLY in the worker branch — PM decision points live at the
-		// dispatch/checkpoint call sites, not behind an LLM tool. Registered
-		// AFTER workerModeActivate so this module's `before_agent_start` handler
-		// runs after the role's active-set recomputation and can append the tool
-		// for every role without editing TOOL_ALLOWLISTS (T-17 parity lock).
-		registerAskDecisionTool(pi);
+		// `ask_decision` + `decision_receipt` (mw-decision-substitution T-05, design
+		// D-017/Q1 §1.3; mw-decision-context T04): ONE shared material entry for
+		// both asking roles. Registered AFTER workerModeActivate so this module's
+		// `before_agent_start` handler runs after the role's active-set
+		// recomputation and can append the tools for every role without editing
+		// TOOL_ALLOWLISTS (T-17 parity lock). The initiator role is the worker's
+		// own card type — a worker can never claim to be the PM and therefore can
+		// never reach dp2/dp25 (AC-006/AC-010).
+		registerAskDecisionTool(pi, {
+			initiatorRole: initiatorRoleFromWorkerTask(process.env.PI_WORKER_TASK),
+		});
 	} else {
 		pmActivate(pi);
+		// PM branch: the SAME entry, with the structural `pm` role. The PM is the
+		// only initiator of dp2 (主动 checkpoint) and of the dp25 sign-off material
+		// (design D003/§4.4); a worker window is refused with zero spawn. The PM
+		// passes its own `key` (and a `task_key` only when the decision is about a
+		// real task) — this call site never guesses either.
+		registerAskDecisionTool(pi, { initiatorRole: "pm" });
 	}
 }
 

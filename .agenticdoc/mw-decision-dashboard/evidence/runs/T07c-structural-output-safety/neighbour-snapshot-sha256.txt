@@ -1,0 +1,21 @@
+T07c neighbour snapshot (read-only; T10b owns these files, not modified here)
+================================================================================
+Snapshot A (worker start, 2026-10-22 ~13:50 local)
+  decision_monitor.py       5650ED6016139C0381A5573A77E487BD6BB6D7D755F1C4FA6280601941C41F83
+  test_decision_monitor.py  56A618DA1003AEC8040418F67305C156A3A03139E13B9EF65967D7D684918E9B
+  mtimes: decision_monitor.py 13:49:17, test_decision_monitor.py 13:49:55
+  pytest test_decision_monitor.py -q -> 52 passed, 1 skipped (exit 0)
+
+Snapshot B (after the T07c implementation, final read-only rerun)
+  decision_monitor.py       2C2AFB0EBCB8E3642FF6F19B891595D3BDAA5A7F45A5E99055F1487D5AA937C5
+  test_decision_monitor.py  56A618DA1003AEC8040418F67305C156A3A03139E13B9EF65967D7D684918E9B
+  pytest test_decision_monitor.py -q -> 52 passed, 1 skipped (exit 0)
+
+The monitor hash moved between A and B: T10b is editing decision_monitor.py in
+parallel. Both runs are recorded (neighbour-monitor-readonly.txt is the B run).
+This worker did not edit, stage or revert any monitor file; T07c only touched
+packages/multi-workers/decision_history.py and test_decision_history.py.
+
+T07c files (final)
+  decision_history.py       86A2A36DB1514F0D7F49DED7151C9AB0E917C1E78236E7A3CA95E68B3C769E3F
+  test_decision_history.py  0D9CFE8A2199C549894E5C40D11CC7F484E015B267B4F25164896C7DB464CD4E

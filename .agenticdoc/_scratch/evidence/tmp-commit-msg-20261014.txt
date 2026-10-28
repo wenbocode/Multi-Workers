@@ -1,0 +1,32 @@
+feat(coding-agent): write-face guard + dependency-frontier dynamic concurrency
+
+AgenticTask keys: mw-write-face-guard (DONE 15:04) and mw-dynamic-concurrency
+(DONE 18:24, deps mw-write-face-guard). Both quality gates passed (23/23 and
+22 questions -> 19 ok / 3 warned / 0 failed).
+
+Write-face guard (WFG):
+- Python + TS write-face operator with a shared corpus (77 cases) and parity
+  checks; glob-intersection semantics frozen by the corpus fingerprint.
+- Dispatch refuses an overlapping writer inside the already-held lock, before
+  any side effect; refusal class is wait-not-stall, not a stalled task.
+- Runtime guard anchors agent write/edit/bash targets to the declared face.
+
+Dynamic concurrency (MDC):
+- autopilot/task_graph.py: per-key task DAG + key-layer dependency frontier.
+- conductor drives concurrency from the frontier; max_workers_per_key and
+  max_parallel_keys become upper bounds instead of a static cap.
+- Identity-level duplicate-dispatch refusal (same task_key still in flight),
+  plus advance timing instrumentation on the existing advance event.
+- Concurrency panel exposes slotsEffective/frontierSize; config panel shows
+  the new bounds.
+
+Widget order:
+- Extension widgets render in an explicit order (autopilot monitor above the
+  mw watch widget): in-place replacement in setExtensionWidget plus an
+  order option, threaded through core/extensions/types.ts, interactive mode
+  and rpc-types.
+
+dist: rebuilt with `mw build --install` (bundle sha 1D5184B8...) so the
+installed runtime carries the above. The dist tree also contains derived
+artifacts of modules whose sources are still uncommitted in other windows
+(the entry imports them), so dist must be rebuilt once those land.

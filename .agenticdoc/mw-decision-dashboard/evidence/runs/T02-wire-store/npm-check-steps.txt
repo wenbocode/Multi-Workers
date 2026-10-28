@@ -1,0 +1,50 @@
+﻿T02 npm run check steps (repo root H:/git/Multi-Workers); full stdout+stderr, no tail
+
+=== npx biome check --error-on-warnings . (read-only variant of check step 1; full log in biome-readonly-check.txt) ===
+exit=1 (3 warnings / 2 infos, all committed packages/coding-agent/test/suite/mwoc-*.test.ts)
+
+=== npm run check:pinned-deps ===
+
+> pi-monorepo@0.0.3 check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+exit=0
+
+=== npm run check:ts-imports ===
+
+> pi-monorepo@0.0.3 check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+exit=0
+
+=== npm run check:shrinkwrap ===
+
+> pi-monorepo@0.0.3 check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+exit=0
+
+=== npm run check:install-lock:coding-agent ===
+
+> pi-monorepo@0.0.3 check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+exit=0
+
+=== npx tsgo --noEmit ===
+
+exit=0
+
+=== npm run check:browser-smoke ===
+
+> pi-monorepo@0.0.3 check:browser-smoke
+> node scripts/check-browser-smoke.mjs
+
+
+exit=0

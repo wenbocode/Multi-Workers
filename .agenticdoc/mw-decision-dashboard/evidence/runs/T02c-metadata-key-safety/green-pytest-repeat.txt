@@ -1,0 +1,8 @@
+﻿cwd=H:\git\Multi-Workers\packages\multi-workers
+cmd=python -m pytest test_decision_wire_store.py test_decision_wire_transport.py -q
+(final post-fix repeat; flake check for the real-socket transport tests)
+
+........................................................................ [ 63%]
+.........................................                                [100%]
+113 passed in 13.00s
+exit=0

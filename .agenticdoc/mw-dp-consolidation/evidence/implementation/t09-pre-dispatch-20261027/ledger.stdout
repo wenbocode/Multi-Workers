@@ -1,0 +1,78 @@
+{
+  "observed_at": "2026-10-27T08:43:48.415Z",
+  "source": "PM read-only local parser probe; not in-memory deployed version proof",
+  "report_sha256": "5d7bec306bee9a0a940a93e2c53b95bf7d450b334982e93028e7a79829ce1ae4",
+  "parser_sha256": "faef61d148274e9ae7c14f30956768d392212d79d0f1a4332ed05889688a7943",
+  "original": {
+    "declared": [
+      "packages/multi-workers",
+      "decision.py",
+      "test_dp_consolidation_materials.py",
+      "report.md"
+    ],
+    "recorded": [
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/diff/decision.py.vs-live.diff",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/diff/decision_backends.py.vs-live.diff",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/scripts/run_pytest.ps1",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_materials.py",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision.py",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/diff/decision.py.r2.diff",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/summary.json",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/report.md"
+    ],
+    "extra": [
+      "packages/multi-workers"
+    ],
+    "infra": [],
+    "unresolvable": [],
+    "unjudgeable": false
+  },
+  "evidence_report_ledger": {
+    "declared": [
+      "packages/multi-workers/decision.py",
+      "packages/multi-workers/test_dp_consolidation_materials.py"
+    ],
+    "recorded": [
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/diff/decision.py.vs-live.diff",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/diff/decision_backends.py.vs-live.diff",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/scripts/run_pytest.ps1",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_materials.py",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision.py",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/diff/decision.py.r2.diff",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/summary.json",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/report.md"
+    ],
+    "extra": [],
+    "infra": [],
+    "unresolvable": [],
+    "unjudgeable": false
+  },
+  "synthetic_header_only": {
+    "declared": [
+      "decision.py",
+      "test_dp_consolidation_materials.py",
+      "report.md"
+    ],
+    "recorded": [
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/diff/decision.py.vs-live.diff",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/diff/decision_backends.py.vs-live.diff",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/scripts/run_pytest.ps1",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_materials.py",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision.py",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/diff/decision.py.r2.diff",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/summary.json",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/rework-r2/report.md"
+    ],
+    "extra": [],
+    "infra": [],
+    "unresolvable": [],
+    "unjudgeable": false
+  },
+  "directory_exists": true,
+  "run_record_not_changed": true,
+  "report_not_changed": true,
+  "unresolved_write_events_preserved": [
+    "[WRITE_UNRESOLVED] pattern=new-item -Path target=$ev",
+    "[WRITE_UNRESOLVED] pattern=redirect target=$t"
+  ]
+}

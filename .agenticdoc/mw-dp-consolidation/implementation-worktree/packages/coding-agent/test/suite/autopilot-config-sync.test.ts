@@ -1,0 +1,221 @@
+/**
+ * Autopilot config corpus integrity (P4) + new-key mirror (P5) —
+ * mw-autopilot-verify-cli T-07, design D-013, AC-006 / VC-006.
+ *
+ * P4 freezes the shared corpus the parity suite consumes: one sha256 + one case
+ * count + a category-coverage assertion over the D1-D6 historical divergences.
+ * Without it either side could quietly shrink the corpus until the parity suite
+ * goes green (P-016: no hollow cases).
+ *
+ * P5 spawns the real Python module and compares the registry tables and the
+ * 21-key defaults byte-for-byte (key set, key ORDER, default values, JSON types,
+ * integer ranges, and closed-set enums) against the TS mirror in `status-model.ts`.
+ * It also classifies the OPTIONAL keys — registered in a type registry but
+ * deliberately left out of DEFAULT_CONFIG (`envelope_fallback`): the count is
+ * 22 registrations over the 21-key schema, never a mismatch.
+ *
+ * Fail-closed: a missing interpreter or a failing subprocess throws with stderr.
+ */
+
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import * as fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import {
+	BOOL_FIELDS,
+	DEFAULT_CONFIG,
+	ENUM_FIELDS,
+	INT_RANGES,
+	LIST_FIELDS,
+	OPTIONAL_CONFIG_KEYS,
+	STR_FIELDS,
+} from "../../src/extensions/agent-team-loop/autopilot/status-model.ts";
+import { resolveRagPython } from "../../src/extensions/agent-team-loop/rag/cli-bridge.ts";
+
+const CORPUS_FILE = fileURLToPath(
+	new URL("../../../multi-workers/test/fixtures/autopilot-config-corpus.json", import.meta.url),
+);
+const MULTI_WORKERS_DIR = fileURLToPath(new URL("../../../multi-workers/", import.meta.url));
+
+/** Frozen by T-07; any edit to the corpus must be a deliberate re-freeze. */
+const FROZEN_CORPUS_SHA256 = "f5b60e81cd690930cc9afb4ef1ccdee6bd8d517e6d40521a3f1b84e65a13e9c1";
+const FROZEN_CORPUS_COUNT = 77;
+
+interface CorpusCase {
+	id: string;
+	categories: string[];
+	payload_text: string;
+	expected: { verdict: "accept" | "reject"; error_fields: string[] };
+}
+interface Corpus {
+	schema: string;
+	cases: CorpusCase[];
+}
+
+const CORPUS = JSON.parse(fs.readFileSync(CORPUS_FILE, "utf8")) as Corpus;
+const PAYLOADS = CORPUS.cases.map((testCase) => testCase.payload_text);
+const IDS = new Set(CORPUS.cases.map((testCase) => testCase.id));
+
+/** Python registry dump for P5. */
+const PY_REGISTRY_DUMP = [
+	"import json, sys",
+	"sys.path.insert(0, sys.argv[1])",
+	"from autopilot import config",
+	"print('P5_JSON_BEGIN')",
+	"print(json.dumps({",
+	"    'keys': list(config.DEFAULT_CONFIG.keys()),",
+	"    'defaults': config.DEFAULT_CONFIG,",
+	"    'bool_fields': list(config._BOOL_FIELDS),",
+	"    'list_fields': list(config._LIST_FIELDS),",
+	"    'string_fields': list(config._STRING_FIELDS),",
+	"    'enum_fields': {k: list(v) for k, v in config._ENUM_FIELDS.items()},",
+	"    'int_ranges': {k: list(v) for k, v in config._INT_RANGES.items()},",
+	"}, ensure_ascii=False))",
+	"print('P5_JSON_END')",
+].join("\n");
+
+interface PyRegistryDump {
+	keys: string[];
+	defaults: Record<string, unknown>;
+	bool_fields: string[];
+	list_fields: string[];
+	string_fields: string[];
+	enum_fields: Record<string, string[]>;
+	int_ranges: Record<string, (number | null)[]>;
+}
+
+function pythonRegistryDump(): PyRegistryDump {
+	const result = spawnSync(resolveRagPython(), ["-c", PY_REGISTRY_DUMP, MULTI_WORKERS_DIR], {
+		encoding: "utf8",
+		timeout: 30_000,
+		env: process.env,
+	});
+	const stdout = result.stdout ?? "";
+	const stderr = result.stderr ?? "";
+	const begin = stdout.indexOf("P5_JSON_BEGIN");
+	const end = stdout.indexOf("P5_JSON_END");
+	if (result.status !== 0 || begin < 0 || end < 0) {
+		throw new Error(`python registry dump failed (status=${String(result.status)}): ${stdout}\n${stderr}`);
+	}
+	return JSON.parse(stdout.slice(begin + "P5_JSON_BEGIN".length, end).trim()) as PyRegistryDump;
+}
+
+describe("autopilot config corpus integrity (P4)", () => {
+	it("freezes the shared corpus sha256, case count and D1-D6 coverage", () => {
+		const digest = createHash("sha256").update(fs.readFileSync(CORPUS_FILE)).digest("hex");
+		expect(digest, "corpus sha256 drifted; re-freeze deliberately").toBe(FROZEN_CORPUS_SHA256);
+		expect(CORPUS.cases.length).toBe(FROZEN_CORPUS_COUNT);
+		expect(CORPUS.schema).toBe("mw-autopilot-config-corpus/v1");
+
+		// D1-D6 historical divergence classes must all be represented.
+		const categories = new Set<string>();
+		for (const testCase of CORPUS.cases) for (const category of testCase.categories) categories.add(category);
+		for (const category of ["D1", "D2", "D3", "D4", "D5", "D6"]) {
+			expect(categories.has(category), `corpus must cover ${category}`).toBe(true);
+		}
+
+		// Concrete payloads the contract names explicitly.
+		const has = (text: string): boolean => PAYLOADS.some((payload) => payload.includes(text));
+		expect(has("4.0"), "4.0 payload").toBe(true);
+		expect(has("4.00"), "4.00 payload").toBe(true);
+		expect(has("1e2"), "1e2 payload").toBe(true);
+		expect(has("-0.0"), "-0.0 payload").toBe(true);
+		expect(has("4.5"), "4.5 payload").toBe(true);
+		expect(has('"4"'), '"4" string payload').toBe(true);
+		expect(has('""'), "empty-string payload").toBe(true);
+		expect(has("9007199254740992"), "2**53 payload").toBe(true);
+		expect(has("9007199254740991"), "2**53-1 payload").toBe(true);
+		// Non-ASCII payload (raw UTF-8, not \uXXXX only).
+		expect(
+			PAYLOADS.some((payload) => /[\u0080-\u{10ffff}]/u.test(payload)),
+			"non-ASCII payload",
+		).toBe(true);
+		// Structural classes: unknown key, partial file, bool-as-int.
+		expect(IDS.has("unknown-key")).toBe(true);
+		expect(IDS.has("int-from-bool")).toBe(true);
+		expect(IDS.has("partial-single")).toBe(true);
+		const partials = CORPUS.cases.filter((testCase) => {
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(testCase.payload_text);
+			} catch {
+				return false;
+			}
+			if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
+			const count = Object.keys(parsed).length;
+			return count >= 1 && count < Object.keys(DEFAULT_CONFIG).length;
+		});
+		expect(partials.length).toBeGreaterThan(0);
+
+		process.stdout.write(
+			`[VERIFY] P4: corpus_sha256=${digest} cases=${CORPUS.cases.length} categories=${[...categories].sort().join(",")}\n`,
+		);
+	});
+});
+
+describe("autopilot config new-key mirror (P5)", () => {
+	it("matches the Python registries byte-for-byte: order, defaults, types, ranges", () => {
+		const py = pythonRegistryDump();
+
+		// Key set + order + default values + JSON types.
+		expect(Object.keys(DEFAULT_CONFIG)).toEqual(py.keys);
+		expect(JSON.stringify(DEFAULT_CONFIG)).toBe(JSON.stringify(py.defaults));
+
+		// The four type registries, order-exact.
+		expect([...BOOL_FIELDS]).toEqual(py.bool_fields);
+		expect([...LIST_FIELDS]).toEqual(py.list_fields);
+		expect([...STR_FIELDS]).toEqual(py.string_fields);
+		expect(JSON.stringify(ENUM_FIELDS)).toBe(JSON.stringify(py.enum_fields));
+		expect(JSON.stringify(INT_RANGES)).toBe(JSON.stringify(py.int_ranges));
+
+		// The registries classify every one of the 21 DEFAULT_CONFIG keys exactly
+		// once, plus any registered-but-OPTIONAL key. Python registers
+		// `envelope_fallback` in `_BOOL_FIELDS` while deliberately keeping it out
+		// of DEFAULT_CONFIG (config.py :61-65/:113/:151), so the registration
+		// count is 22 while the frozen schema stays 21: 22 = 21 defaults + 1
+		// optional bool. The optional category is asserted explicitly so a future
+		// key that is registered on one side only cannot slip through.
+		const registered = [
+			...py.bool_fields,
+			...py.list_fields,
+			...py.string_fields,
+			...Object.keys(py.enum_fields),
+			...Object.keys(py.int_ranges),
+		];
+		const optionalPy = py.bool_fields.filter((field) => !py.keys.includes(field));
+		const optionalRegistered = [...new Set(registered.filter((field) => !py.keys.includes(field)))].sort();
+		expect(optionalRegistered, "optional keys must be registered BOOL_FIELDS").toEqual([...optionalPy].sort());
+		expect([...OPTIONAL_CONFIG_KEYS].sort(), "TS optional registry vs Python").toEqual([...optionalPy].sort());
+		expect(registered.length).toBe(py.keys.length + optionalRegistered.length);
+		expect([...registered].sort()).toEqual([...py.keys, ...optionalRegistered].sort());
+		// No key or optional field may be classified twice, and every default
+		// key must be classified.
+		const seen = new Set<string>();
+		for (const field of registered) {
+			expect(seen.has(field), `${field}: registered more than once`).toBe(false);
+			seen.add(field);
+		}
+		for (const key of py.keys) expect(seen.has(key), `${key}: unclassified`).toBe(true);
+		// The optional keys are exactly the ones outside the frozen schema.
+		for (const field of OPTIONAL_CONFIG_KEYS) {
+			expect(py.keys, `${field}: optional key must stay out of DEFAULT_CONFIG`).not.toContain(field);
+			expect(py.bool_fields, `${field}: optional key must be a registered bool`).toContain(field);
+		}
+
+		// Guards against the null-widening shortcut: the TS ranges must be
+		// tuples of numbers / null, never stringified bounds.
+		for (const [field, range] of Object.entries(INT_RANGES)) {
+			expect(Array.isArray(range), `${field}: range must be a tuple`).toBe(true);
+			expect(range.length, `${field}: range arity`).toBe(2);
+			expect(typeof range[0], `${field}: lower bound`).toBe("number");
+		}
+
+		process.stdout.write(
+			`[VERIFY] P5: key_order_match=true defaults_match=true ` +
+				`keys=${py.keys.length} bool=${py.bool_fields.length} list=${py.list_fields.length} ` +
+				`str=${py.string_fields.length} enum=${Object.keys(py.enum_fields).length} ` +
+				`int=${Object.keys(py.int_ranges).length} optional=${optionalRegistered.join(",")}\n`,
+		);
+	});
+});

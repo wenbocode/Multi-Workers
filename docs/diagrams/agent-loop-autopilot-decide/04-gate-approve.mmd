@@ -1,0 +1,13 @@
+graph LR
+    G["dp-gate-approve<br/>具体事项 + PM 预拟 note"] -->|"approve"| E["锁内重核条件<br/>只执行 note 限定动作"]
+    G -->|"steer"| S["PM 发起 dp-pm-steer<br/>本 gate 不放行"]
+    G -->|"need_fix"| A["PM 发起 dp-auto<br/>本 gate 不放行"]
+    G -->|"reject"| R["拒绝本方案<br/>不默认关闭或返工"]
+    G -->|"不可用或非法"| X["对应动作阻塞"]
+
+    classDef ok fill:#E1F5EE,stroke:#0F6E56,color:#085041
+    classDef mid fill:#E6F1FB,stroke:#185FA5,color:#0C447C
+    classDef stop fill:#FAEEDA,stroke:#854F0B,color:#633806
+    class E ok
+    class S,A mid
+    class R,X stop

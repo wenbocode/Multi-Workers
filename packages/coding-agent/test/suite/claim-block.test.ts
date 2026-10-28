@@ -11,8 +11,8 @@
  *      item shapes T-02 concatenates into its refusal text, plus the
  *      `enforce` grey switch (D-006): structural gaps always, soft findings
  *      only when enforcing.
- *   3. `claimBudgetCaps` — `min(30, Σ(manual ? 2 : 1))` and
- *      `min(393216, 65536 × n)` (design §4, AC-003).
+ *   3. `claimBudgetCaps` — `min(30, perClaim × n)` (= 6 calls per claim) and
+ *      `min(393216, 65536 × n)` (design §4, D-014).
  *
  * Fixtures are inline literals plus a temporary project dir (only `statSync`
  * is exercised); no corpus counts and no real project files are frozen.
@@ -350,8 +350,14 @@ describe("claimsGaps: the pending `cmd: TBD(...)` channel", () => {
 
 // ── ⑧ 预算求和与两个上限 ────────────────────────────────────────────────────
 
-describe("claimBudgetCaps: derived read budget (design §4)", () => {
-	it("counts a manual claim twice toward the file cap", () => {
+describe("claimBudgetCaps: derived read budget (design §4, D-014)", () => {
+	it("prices one claim at perClaim 6 calls / 65,536 B", () => {
+		// The fetch cap is perClaim × n, not the Σ预算 planning weight: a single
+		// grep claim buys 6 read/search calls (T-07 e2e: Σ预算 gave it 1).
+		expect(claimBudgetCaps([claimOf("C-01", "grep")])).toEqual({ fileCap: 6, byteCap: 65_536 });
+	});
+
+	it("scales with the claim count: 5 claims => 30 / 327,680", () => {
 		const claims = [
 			claimOf("C-01", "grep"),
 			claimOf("C-02", "struct"),
@@ -359,10 +365,23 @@ describe("claimBudgetCaps: derived read budget (design §4)", () => {
 			claimOf("C-04", "manual"),
 			claimOf("C-05", "manual"),
 		];
-		expect(claimBudgetCaps(claims)).toEqual({ fileCap: 7, byteCap: 327_680 });
+		// 5 × 6 = 30 = callCap; 5 × 65,536 = 327,680. The two manual claims no
+		// longer change the file cap (that is the Σ预算 gate's job).
+		expect(claimBudgetCaps(claims)).toEqual({ fileCap: 30, byteCap: 327_680 });
+		console.log(
+			`[VERIFY] claimBudgetCaps one=${JSON.stringify(claimBudgetCaps([claims[0] as Claim]))} ` +
+				`five=${JSON.stringify(claimBudgetCaps(claims))}`,
+		);
 	});
 
-	it("clamps at callCap 30 and byteCapMax 393,216", () => {
+	it("clamps at callCap 30 and byteCapMax 393,216 (8 claims)", () => {
+		const eight = Array.from({ length: 8 }, (_, index) => claimOf(`C-${index + 1}`, "grep"));
+		// 8 × 6 = 48 -> clamp 30; 8 × 65,536 = 524,288 -> clamp 393,216.
+		expect(claimBudgetCaps(eight)).toEqual({ fileCap: 30, byteCap: 393_216 });
+		console.log(`[VERIFY] claimBudgetCaps eight=${JSON.stringify(claimBudgetCaps(eight))}`);
+	});
+
+	it("clamps a flood at both ceilings and returns 0/0 for no claims", () => {
 		const claims = Array.from({ length: 40 }, (_, index) => claimOf(`C-${index + 1}`, "grep"));
 		expect(claimBudgetCaps(claims)).toEqual({ fileCap: 30, byteCap: 393_216 });
 		expect(claimBudgetCaps([])).toEqual({ fileCap: 0, byteCap: 0 });

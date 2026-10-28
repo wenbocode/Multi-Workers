@@ -1,0 +1,8 @@
+﻿checked_at: 2026-10-22T13:31:06.8959150+08:00
+== repo .mw decide-monitor files (expect none; every test fixture is a tmp control root) ==
+(none)
+== git status for the two allowed files ==
+?? packages/multi-workers/decision_monitor.py
+?? packages/multi-workers/test_decision_monitor.py
+== LISTENING sockets in 43170..43269 (expect none; TIME_WAIT pairs are normal post-test residue) ==
+(none)

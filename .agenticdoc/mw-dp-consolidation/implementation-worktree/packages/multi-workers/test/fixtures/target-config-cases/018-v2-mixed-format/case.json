@@ -1,0 +1,12 @@
+{
+  "description": "v2 + v1 top-level fields: mixed format fails closed (rule row 1)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "mixed",
+      "v2",
+      "v1"
+    ]
+  }
+}

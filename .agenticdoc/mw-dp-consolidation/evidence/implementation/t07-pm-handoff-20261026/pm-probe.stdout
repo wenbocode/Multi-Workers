@@ -1,0 +1,101 @@
+{
+  "policy_file": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers\\decision_policy.py",
+  "fixture_authority_in_memory_not_production": true,
+  "results": [
+    {
+      "name": "pending-control",
+      "changed_input": [
+        "key:allowed"
+      ],
+      "allowed": true,
+      "scope": [
+        "key:allowed"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "pending-outside-policy",
+      "changed_input": [
+        "key:outside"
+      ],
+      "allowed": true,
+      "scope": [],
+      "reasons": []
+    },
+    {
+      "name": "pending-missing-scope",
+      "changed_input": null,
+      "allowed": true,
+      "scope": [],
+      "reasons": []
+    },
+    {
+      "name": "halted-control",
+      "changed_input": null,
+      "allowed": true,
+      "scope": [
+        "recovery:halted"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "halted-unverified-guard",
+      "changed_input": {
+        "hard_guard_active": true,
+        "hard_guard_cleared": [
+          "self-reported-clear"
+        ]
+      },
+      "allowed": true,
+      "scope": [
+        "recovery:halted"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "halted-unknown-origin",
+      "changed_input": {},
+      "allowed": true,
+      "scope": [
+        "recovery:halted"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "halted-unrelated-authority",
+      "changed_input": {},
+      "allowed": true,
+      "scope": [
+        "recovery:halted"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "breaker-control",
+      "changed_input": null,
+      "allowed": true,
+      "scope": [
+        "recovery:breaker"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "breaker-unrelated-preauthorization",
+      "changed_input": "other-ref",
+      "allowed": true,
+      "scope": [
+        "recovery:breaker"
+      ],
+      "reasons": []
+    },
+    {
+      "name": "breaker-unknown-disable",
+      "changed_input": null,
+      "allowed": true,
+      "scope": [
+        "recovery:breaker"
+      ],
+      "reasons": []
+    }
+  ]
+}

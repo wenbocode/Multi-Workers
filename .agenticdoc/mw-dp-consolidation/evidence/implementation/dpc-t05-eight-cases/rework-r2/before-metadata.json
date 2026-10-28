@@ -1,0 +1,233 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T13:32:27.439260+00:00",
+  "label": "before",
+  "copy_root": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree",
+  "products": [
+    {
+      "path": "packages/multi-workers/scripts/build_decide_cases.py",
+      "exists": true,
+      "bytes": 39431,
+      "sha256": "7987113fb597f9c8f5d6b48085292cf1a4f8c150839b2fc12efe5d4d4f6ffa70",
+      "lf": 901,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_book_template.json",
+      "exists": true,
+      "bytes": 2367,
+      "sha256": "755253b61429271b4eb1fc5cb22cc2fb4e77a7fce07e7a67aa111dd896640df2",
+      "lf": 61,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/test_decision_context_workbench.py",
+      "exists": true,
+      "bytes": 95205,
+      "sha256": "0320702d37146bd856b28e2b102fee2245c67fed15c64349fe0f637c2877dc1b",
+      "lf": 2274,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-w-type.json",
+      "exists": true,
+      "bytes": 3079,
+      "sha256": "dfb7ffc915a2c1de248629ec1d0a832c84b5d8a2920abc76427fdef60e6ddbf0",
+      "lf": 94,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-pm-steer.json",
+      "exists": true,
+      "bytes": 4089,
+      "sha256": "814e7abf4172aba7c6828ab4e117f568ede18c5acf90d342640dc2235c744d10",
+      "lf": 99,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-w-check-task.json",
+      "exists": true,
+      "bytes": 4622,
+      "sha256": "1908330e314b3da038c3a0e745504b30885e4717be91ef349c58383fdf3cad9c",
+      "lf": 100,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-QG.json",
+      "exists": true,
+      "bytes": 2991,
+      "sha256": "43afee46e192b19a08be5a17260d2a088fa9789594066dca730fdc999273d953",
+      "lf": 78,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-gate-approve.json",
+      "exists": true,
+      "bytes": 4750,
+      "sha256": "69e7970144ed7eb2cfd685e035f66872028172d4f594c3cda387b43ce6975ebd",
+      "lf": 114,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-sign-key.json",
+      "exists": true,
+      "bytes": 3825,
+      "sha256": "f089deabae264503f096406cf42cd909bddbeab23b80dc13eea194ceaf81e408",
+      "lf": 100,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-auto.json",
+      "exists": true,
+      "bytes": 4747,
+      "sha256": "3b8f1f267ebf50bb88b015efb53c5f7783e07e2763d3a157109060f8d36890a9",
+      "lf": 110,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp-route.json",
+      "exists": true,
+      "bytes": 3994,
+      "sha256": "6f267c83a2dd704a17b48583d8a2c2380a6cdfdec2534797ab206424a49510d5",
+      "lf": 129,
+      "crlf": 0
+    }
+  ],
+  "legacy": [
+    {
+      "path": "packages/multi-workers/decide_cases/dp1.json",
+      "exists": true,
+      "bytes": 1645,
+      "sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "lf": 42,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp2.json",
+      "exists": true,
+      "bytes": 2689,
+      "sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "lf": 48,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp3.json",
+      "exists": true,
+      "bytes": 2320,
+      "sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "lf": 52,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_cases/dp25.json",
+      "exists": true,
+      "bytes": 2682,
+      "sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "lf": 58,
+      "crlf": 0
+    }
+  ],
+  "t10_products": [
+    {
+      "path": "packages/multi-workers/decision_wire.py",
+      "exists": true,
+      "bytes": 79832,
+      "sha256": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+      "lf": 2264,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decision_lifecycle.py",
+      "exists": true,
+      "bytes": 60811,
+      "sha256": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+      "lf": 1548,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decision_task_state.py",
+      "exists": true,
+      "bytes": 3871,
+      "sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+      "lf": 82,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/test_decision_context_lifecycle.py",
+      "exists": true,
+      "bytes": 50338,
+      "sha256": "bdedfd4301fab76929beb0156f429f973fcb6404382b8893d2cbecbfaa711d1a",
+      "lf": 1401,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/test_decision_task_state.py",
+      "exists": true,
+      "bytes": 15480,
+      "sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f",
+      "lf": 278,
+      "crlf": 0
+    }
+  ],
+  "shared_inputs": [
+    {
+      "path": "packages/multi-workers/decision_book.py",
+      "exists": true,
+      "bytes": 62612,
+      "sha256": "07c08bf4aff069c2f99d606d7e6a73859873bb5b6ddd9a7c7b1f7b09375f071f",
+      "lf": 1646,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decision_points.py",
+      "exists": true,
+      "bytes": 305745,
+      "sha256": "78e72e03cfe3b03f0349d95113c1947713b91c4a143bbaaada404f08db7443e6",
+      "lf": 0,
+      "crlf": 7102
+    },
+    {
+      "path": "packages/multi-workers/decision_context.py",
+      "exists": true,
+      "bytes": 13784,
+      "sha256": "c6f5783c69bdf1931d7ca199541827ab70b879f25fbc876f9b0df48e26fb2d70",
+      "lf": 0,
+      "crlf": 323
+    },
+    {
+      "path": "packages/multi-workers/decision_history.py",
+      "exists": true,
+      "bytes": 174025,
+      "sha256": "0041e9c818a66074e9a0416e6dc3a4d79da9431cdd6328c884a25e5ea4ece162",
+      "lf": 4210,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decision_monitor.py",
+      "exists": true,
+      "bytes": 124534,
+      "sha256": "60f2de703ecc43d0c16d9fa197b36f69212985e728579ab0756e048e167fd046",
+      "lf": 3102,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decision_playground.py",
+      "exists": true,
+      "bytes": 79464,
+      "sha256": "1a409f1af8a9f0057ddcbc4412faefd8a414e150c26fcbccc3d14f72d1e71007",
+      "lf": 1916,
+      "crlf": 0
+    },
+    {
+      "path": "packages/multi-workers/decide_registry.json",
+      "exists": true,
+      "bytes": 29869,
+      "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "lf": 894,
+      "crlf": 0
+    }
+  ],
+  "test_function_count": 28,
+  "inventory_file_count": 1891,
+  "pyc_file_count": 14
+}

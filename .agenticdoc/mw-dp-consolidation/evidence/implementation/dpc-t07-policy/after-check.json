@@ -1,0 +1,99 @@
+{
+  "observed_at": "2026-10-26T20:15:34+0800",
+  "mine": [
+    {
+      "file": "decision_policy.py",
+      "exists": true,
+      "bytes": 60498,
+      "sha256": "f4c44456316b8c60c7934a209de389ef6366aa864f026f9ba5fba40569dde6bb",
+      "eol": "lf",
+      "trailing_newline": true,
+      "ends_at_eof": "    return ObservationVerdict(False, \"released\", True)",
+      "lines": 1785
+    },
+    {
+      "file": "test_dp_consolidation_recovery.py",
+      "exists": true,
+      "bytes": 53478,
+      "sha256": "434412b3ea60e60807ea23b52cdc474e892457a0a1747ecf7cb6bf809380a974",
+      "eol": "lf",
+      "trailing_newline": true,
+      "ends_at_eof": "    assert before_files == after_files",
+      "lines": 1520
+    }
+  ],
+  "peer_faces_not_authored_here": [
+    {
+      "file": "decision_validity.py",
+      "exists": true,
+      "bytes": 53979,
+      "sha256": "317866a92f213e908249be05394b3e77b283944bf67906250a759fcc6db4272b",
+      "eol": "lf",
+      "trailing_newline": true,
+      "ends_at_eof": "    return replace(decision, revoked=True)",
+      "lines": 1644
+    },
+    {
+      "file": "test_dp_consolidation_concurrency.py",
+      "exists": true,
+      "bytes": 48562,
+      "sha256": "8cd54969df3639bf5988bced3eb8d80070e233389aae98c666fae2f78fe527d2",
+      "eol": "lf",
+      "trailing_newline": true,
+      "ends_at_eof": "    assert unordered.status == \"equivalent\"",
+      "lines": 1286
+    },
+    {
+      "file": "decision.py",
+      "exists": true,
+      "bytes": 115186,
+      "sha256": "7969eda3ffbfead6ca78f853d45fffa6faa8b8d73bfcc2e2a5c6bf0d7da8f709",
+      "eol": "lf",
+      "trailing_newline": true,
+      "ends_at_eof": "        return self._evidence_file()",
+      "lines": 2670
+    },
+    {
+      "file": "decision_backends.py",
+      "exists": true,
+      "bytes": 48970,
+      "sha256": "a13a8597bba7abe796022148bd50d02b26fc6a85e1d7d3b1af9f5129f0a3e22b",
+      "eol": "lf",
+      "trailing_newline": true,
+      "ends_at_eof": "]",
+      "lines": 1216
+    },
+    {
+      "file": "test_dp_consolidation_materials.py",
+      "exists": true,
+      "bytes": 31759,
+      "sha256": "558d3958afea1cc5a51bcdbc2280743ebb6fc3c5c36c53dcbe753ff42b901901",
+      "eol": "lf",
+      "trailing_newline": true,
+      "ends_at_eof": "    assert len(failed.calls) == 2",
+      "lines": 868
+    }
+  ],
+  "import_binding_probe": {
+    "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-B",
+      "-c",
+      "import json,decision_policy as m; print(json.dumps({'file': m.__file__, 'version': m.POLICY_SCHEMA_VERSION, 'frozen_units': sorted(m.FROZEN_CONFIG_UNITS)}))"
+    ],
+    "rc": 0,
+    "stdout": "{\"file\": \"H:\\\\git\\\\Multi-Workers\\\\.agenticdoc\\\\mw-dp-consolidation\\\\implementation-worktree\\\\packages\\\\multi-workers\\\\decision_policy.py\", \"version\": 1, \"frozen_units\": [\"round_budget\", \"worker_timeout_min\"]}",
+    "stderr": ""
+  },
+  "pycache_dirs_in_worktree": [],
+  "pytest_cache_dirs_in_worktree": [],
+  "git_status_scope": {
+    "cmd": "git status --porcelain -- H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree",
+    "rc": 0,
+    "stdout_head": [
+      "?? .agenticdoc/mw-dp-consolidation/implementation-worktree/"
+    ],
+    "note": "the whole worktree copy is untracked in the origin repo; exact-file bytes above are the authoritative before/after record"
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "observed_at": "2026-10-26T11:50:34.180079+00:00",
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_context.py",
+      "sha256": "c6f5783c69bdf1931d7ca199541827ab70b879f25fbc876f9b0df48e26fb2d70",
+      "bytes": 13784,
+      "crlf": 323,
+      "bare_lf": 0,
+      "live_sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+      "samefile_live": false,
+      "writable": false
+    },
+    {
+      "path": "packages/multi-workers/scripts/gen_decide_registry_ts.py",
+      "sha256": "e454cefd2328da48c9beb67d6385cf61d83b6bed24f8fc52e0bd5505237124c6",
+      "bytes": 21280,
+      "crlf": 0,
+      "bare_lf": 505,
+      "live_sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+      "samefile_live": false,
+      "writable": false
+    },
+    {
+      "path": "packages/multi-workers/decide_registry.json",
+      "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "bytes": 29869,
+      "crlf": 0,
+      "bare_lf": 894,
+      "live_sha256": "0a5e16d64ab83b9f84a6a6776cef55b16d87349010b24bb1b40da4207d1283ae",
+      "samefile_live": false,
+      "writable": false
+    },
+    {
+      "path": "packages/multi-workers/test_decide_registry_ts_lock.py",
+      "sha256": "9603a817d725f6bf16c4ab0e9b554ab2ca1d756c4fb66f5bd3cc4f6c828e635b",
+      "bytes": 22960,
+      "crlf": 0,
+      "bare_lf": 599,
+      "live_sha256": "dc6332f140f06ce9d0ca494245c1500f2f2ee14ce584c3dcf4ad821872b2a92e",
+      "samefile_live": false,
+      "writable": true
+    },
+    {
+      "path": "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts",
+      "sha256": "8c316042da5bb61419deb3d3bd9897893c7b227fa21959807220f7ac12337b8f",
+      "bytes": 20629,
+      "crlf": 0,
+      "bare_lf": 695,
+      "live_sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+      "samefile_live": false,
+      "writable": false
+    }
+  ],
+  "mirror_files": 1864,
+  "card_sha256": "80d2d2ec0b62515f36e041bb394dc4cbf16a0fec3b825e1a3a16de7992960064",
+  "original_card_sha256": "99c0fb85c70193313d734adc044e647c18c47976c72575ab77f35d1a85412200",
+  "original_t04_evidence_files": 112,
+  "write_face_verified": true,
+  "product_tests_run": false,
+  "product_writes": false,
+  "manual_writer_absence_proven": false,
+  "live_tree_clean_proven": false
+}

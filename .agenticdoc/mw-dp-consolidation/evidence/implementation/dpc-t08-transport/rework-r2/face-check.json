@@ -1,0 +1,51 @@
+﻿{
+    "observed_at_utc":  "2026-10-26T15:56:24.1188039Z",
+    "package_dir":  "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+    "my_write_face":  [
+                          {
+                              "name":  "decision.py",
+                              "bytes":  119248,
+                              "sha256":  "ef9c2c68eee18bb93ad716c76c7b146279ac5f111c9f626c68a01d1c35ed691e",
+                              "mtime_utc":  "2026-10-26T15:55:38.9957685Z"
+                          },
+                          {
+                              "name":  "decision_backends.py",
+                              "bytes":  48970,
+                              "sha256":  "a13a8597bba7abe796022148bd50d02b26fc6a85e1d7d3b1af9f5129f0a3e22b",
+                              "mtime_utc":  "2026-10-26T12:15:28.0345945Z"
+                          },
+                          {
+                              "name":  "test_dp_consolidation_materials.py",
+                              "bytes":  47252,
+                              "sha256":  "b404fc0a9e94b35a198051ed43a8f755d6a61ab5c36b2d43919695cab6b45a1b",
+                              "mtime_utc":  "2026-10-26T15:55:02.7549501Z"
+                          }
+                      ],
+    "peer_files_observed_only":  [
+                                     {
+                                         "name":  "decision_validity.py",
+                                         "bytes":  58410,
+                                         "sha256":  "cf01bbe2aa15b1794cd5868c49897f7b4616e8f17ab11dbbb92cc6b145ef5d51",
+                                         "mtime_utc":  "2026-10-26T15:54:59.3792193Z"
+                                     },
+                                     {
+                                         "name":  "decision_policy.py",
+                                         "bytes":  68530,
+                                         "sha256":  "ac719fb1ba6879c9174b3d03870c35159da466e2e294390634e105e30b604a0a",
+                                         "mtime_utc":  "2026-10-26T15:56:14.0511839Z"
+                                     },
+                                     {
+                                         "name":  "test_dp_consolidation_concurrency.py",
+                                         "bytes":  57243,
+                                         "sha256":  "7e9dcb2bc407d724e6f56ab9ae2001d62d4ac5e4e3fc85d335a8844936a6db1b",
+                                         "mtime_utc":  "2026-10-26T15:54:26.4155047Z"
+                                     },
+                                     {
+                                         "name":  "test_dp_consolidation_recovery.py",
+                                         "bytes":  67121,
+                                         "sha256":  "f2130cf6ccccb4dd1a6bb2b5ec5e1b70dea352cebd63ce0e1658121d6b643453",
+                                         "mtime_utc":  "2026-10-26T15:55:41.5663819Z"
+                                     }
+                                 ],
+    "note":  "peer files belong to dpc-t06-validity-r2 / dpc-t07-policy-r2 (disjoint write faces); a net hash here cannot prove exclusive authorship, only that this worker wrote only its own three files"
+}

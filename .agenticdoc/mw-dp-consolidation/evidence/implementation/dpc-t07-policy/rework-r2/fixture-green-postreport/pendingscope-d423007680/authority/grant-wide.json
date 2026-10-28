@@ -1,0 +1,12 @@
+{
+  "authority_ref": "grant-wide",
+  "kind": "user-grant",
+  "scope": [
+    "key:dpc-t07",
+    "key:outside"
+  ],
+  "writer": "pm-controlled-authority-writer",
+  "revoked": false,
+  "recorded_at": "2026-10-26T00:00:00+00:00",
+  "supersedes": []
+}

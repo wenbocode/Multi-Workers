@@ -39,6 +39,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import { DP3_ID } from "../../src/extensions/agent-team-loop/pm/decision-tool.ts";
 import type {
 	DecideRunner,
 	DecideRunRequest,
@@ -46,17 +47,13 @@ import type {
 } from "../../src/extensions/agent-team-loop/pm/triage-client.ts";
 import { assertStateMatchesRegistry } from "../../src/extensions/agent-team-loop/pm/ui-bridge.ts";
 import { resolveDecidePolicy } from "../../src/extensions/agent-team-loop/shared/decide-policy.ts";
+import { DECIDE_REGISTRY } from "../../src/extensions/agent-team-loop/shared/decide-registry.generated.ts";
 import { RUN_SCHEMA, type RunState, writeRunState } from "../../src/extensions/agent-team-loop/shared/run-store.ts";
 import {
-	buildDp3Candidates,
-	DP3_ANSWER_PREFIX,
-	DP3_CITATION_RE,
-	DP3_QUESTIONS_VERSION,
 	type Dp3DecisionInput,
 	decideDp3WorkerClarify,
 	dp3Thresholds,
 	formatDp3TraceLine,
-	matchDp3Reuse,
 	readDp3Policy,
 	workerModeActivate,
 } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
@@ -282,6 +279,53 @@ function readText(file: string): string {
 	return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
 }
 
+/** The ASKING agent's dp3 material (T04 design §2): question 原文, the four
+ * background facts and 2..5 distinguishable handling candidates. */
+function dp3Material(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		question: NC_REPLY,
+		background: {
+			task_goal: "answer the clarification and finish the research product",
+			current_state: "the worker is blocked on one file-location question",
+			decision_reason: "the asking agent cannot resolve it from its own notes",
+			constraints_impact: "a wrong guess would cite a non-existent file",
+		},
+		handling_options: [
+			{ id: "c1", label: "交由 PM 判定", description: "把问题原文与背景交给 PM，由 PM 决定是否回答。" },
+			{ id: "c2", label: "等待人工澄清", description: "保持阻塞并向用户提出这个具体问题。" },
+		],
+		...overrides,
+	};
+}
+
+/** A `mw decide run --stdin` answer for the material path: the native
+ * `handling` choice plus the authority keys Python returns. */
+function handlingRun(choice: string, extra: Record<string, unknown> = {}): RawDecideRun {
+	return {
+		status: 0,
+		timedOut: false,
+		stderr: "",
+		stdout: JSON.stringify({
+			available: true,
+			mode: "auto",
+			acted: false,
+			confidence_source: "api",
+			latency_ms: 7,
+			decision_id: "dp3-worker-clarify:dp3-worker#nc1",
+			answers: { handling: { value: choice, confidence: 0.9 } },
+			...extra,
+		}),
+	};
+}
+
+function inputWithMaterial(
+	fx: Fixture,
+	stub: Stub | undefined,
+	material: Record<string, unknown> = dp3Material(),
+): Dp3DecisionInput {
+	return { ...dp3Input(fx, NC_REPLY, stub), material };
+}
+
 function traceOf(fx: Fixture): string {
 	return readText(path.join(fx.taskDir, "trace.log"));
 }
@@ -324,8 +368,8 @@ describe("invariant 1: dp3 closed state is byte-identical", () => {
 		const offByFlag = makeFixture();
 		disableDecide(offByFlag);
 
-		const stubA = stubRunner(dp3Answer());
-		const stubB = stubRunner(dp3Answer());
+		const stubA = stubRunner(handlingRun("c1"));
+		const stubB = stubRunner(handlingRun("c1"));
 		const workerA = await startWorker(offByAbsence, stubA);
 		const workerB = await startWorker(offByFlag, stubB);
 
@@ -358,8 +402,8 @@ describe("invariant 1: dp3 closed state is byte-identical", () => {
 
 // ── 2. `## Questions` first line keeps the original text on every fallback ───
 
-describe("invariant 2: the original `## Questions` first line survives a failed dp3 attempt", () => {
-	it("an unavailable decision falls back to the byte-identical human path", async () => {
+describe("invariant 2: the settle hook never answers from local guesses (T04)", () => {
+	it("an enabled dp3 without agent material keeps the byte-identical human path", async () => {
 		const control = makeFixture();
 		const controlWorker = await startWorker(control); // no decide.json -> closed
 		settle(controlWorker, NC_REPLY);
@@ -367,87 +411,88 @@ describe("invariant 2: the original `## Questions` first line survives a failed 
 
 		const fx = makeFixture();
 		enableDecide(fx);
-		const stub = stubRunner(unavailableRun("timeout"));
+		// A quotable local line exists: the retired 3a/3c path would have used it.
+		addCandidateFile(fx);
+		const stub = stubRunner(handlingRun("c2"));
 		const worker = await startWorker(fx, stub);
 		settle(worker, NC_REPLY);
 
-		expect(stub.calls).toHaveLength(1);
-		expect(stub.calls[0]?.dp).toBe("dp3-worker-clarify");
-		// the envelope is the state only; the question text never rides
-		// state.decision_point
-		const envelope = JSON.parse(stub.calls[0]?.input ?? "{}") as Record<string, unknown>;
-		expect(Object.keys(envelope)).toEqual(["state"]);
+		// The settle-time hook has no agent material, so it spends ZERO calls and
+		// injects no `[mw dp3-answer]` steer: the human path proceeds unchanged.
+		expect(stub.calls).toHaveLength(0);
+		expect(worker.sent).toHaveLength(0);
 
 		const output = readText(path.join(fx.taskDir, "output.md"));
 		expect(questionsFirstLine(output)?.startsWith(NO_PRODUCT)).toBe(true);
-		// every degradation is byte-identical to the closed-state product
+		// every path without agent material is byte-identical to the closed state
 		expect(normalize(output)).toBe(normalize(controlOutput));
 
 		const rows = decideRows(traceOf(fx));
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toContain("dp=dp3-worker-clarify");
-		expect(rows[0]).toContain("sub=3a");
 		expect(rows[0]).toContain("acted=false");
-		expect(rows[0]).toContain("escalated_reason=unavailable");
+		expect(rows[0]).toContain("escalated_reason=input-incomplete");
 		expect(rows[0]).toContain("nc_raw=1 nc_human=1");
+	});
+
+	it("a degraded material call escalates and never invents an answer", () => {
+		const fx = makeFixture();
+		enableDecide(fx);
+		const stub = stubRunner(unavailableRun("timeout"));
+		const decision = decideDp3WorkerClarify(inputWithMaterial(fx, stub));
+		expect(stub.calls).toHaveLength(1);
+		expect(decision.kind).toBe("escalate");
+		if (decision.kind === "escalate") {
+			expect(decision.reason).toBe("unavailable");
+			expect(decision.detail).toContain("timeout");
+			expect(decision.decisionId).toBe(`${DP3_ID}:${TASK}#nc1`);
+		}
 	});
 });
 
 // ── 3. at most one auto-answer per process ──────────────────────────────────
 
-describe("invariant 3: the auto-answer budget is one round per process", () => {
-	it("injects one `[mw dp3-answer]` followUp and never asks again on a second NC", async () => {
+describe("invariant 3: no auto-answer budget is ever spent at settle", () => {
+	it("two clarifying settles still ask nothing and keep the human path", async () => {
 		const fx = makeFixture();
 		enableDecide(fx);
 		addCandidateFile(fx);
-		const stub = stubRunner(dp3Answer({ candidate: "c2" }));
+		const stub = stubRunner(handlingRun("c2"));
 		const worker = await startWorker(fx, stub);
 
 		settle(worker, NC_REPLY);
-
-		// one call, one steer, run still open, no terminal product yet
-		expect(stub.calls).toHaveLength(1);
-		expect(worker.sent).toHaveLength(1);
-		expect(worker.sent[0]?.text.startsWith(DP3_ANSWER_PREFIX)).toBe(true);
-		expect(worker.sent[0]?.text).toContain("dp3-worker-clarify:dp3-worker#nc1");
-		expect(worker.sent[0]?.options).toEqual({ deliverAs: "followUp" });
-		expect(readRun(fx).status).toBe("running");
-		expect(fs.existsSync(path.join(fx.taskDir, "output.md"))).toBe(false);
-
-		const firstRows = decideRows(traceOf(fx));
-		expect(firstRows).toHaveLength(1);
-		expect(firstRows[0]).toContain("sub=3a acted=true mode=auto escalated_reason=-");
-		expect(firstRows[0]).toContain("nc_raw=1 nc_human=0");
-
-		// the answered turn settles NC again: no second service call, human path
-		settle(worker, NC_REPLY);
-		expect(stub.calls).toHaveLength(1);
-		expect(worker.sent).toHaveLength(1);
-		const rows = decideRows(traceOf(fx));
-		expect(rows).toHaveLength(2);
-		expect(rows[1]).toContain("sub=- acted=false");
-		expect(rows[1]).toContain("nc_raw=2 nc_human=1");
+		// The NC terminal landed: no service call, no steer, no product yet.
+		expect(stub.calls).toHaveLength(0);
+		expect(worker.sent).toHaveLength(0);
 		expect(readRun(fx).status).toBe("needs-clarification");
+		expect(fs.existsSync(path.join(fx.taskDir, "output.md"))).toBe(true);
+
+		const rows = decideRows(traceOf(fx));
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toContain("acted=false");
+		expect(rows[0]).toContain("nc_raw=1 nc_human=1");
+		// No acted marker anywhere: nothing was auto-answered from local guesses.
+		expect(traceOf(fx)).not.toContain("acted=1");
 	});
 });
 
 // ── 4. 3b default + four-face NC terminal ───────────────────────────────────
 
-describe("invariant 4: 3b is the default and the NC terminal stays four-face consistent", () => {
-	it("an intent question goes to the human with zero spawn and a consistent terminal", async () => {
+describe("invariant 4: an intent-looking question is never classified locally", () => {
+	it("goes to the human with zero spawn and a consistent terminal", async () => {
 		const fx = makeFixture();
 		enableDecide(fx);
-		const stub = stubRunner(dp3Answer());
+		const stub = stubRunner(handlingRun("c1"));
 		const worker = await startWorker(fx, stub);
 
 		settle(worker, "应该用哪个方案？请确认，我倾向 A。");
 
-		expect(stub.calls).toHaveLength(0); // 3b never spawns
+		expect(stub.calls).toHaveLength(0); // no local classifier decides anything
 		expect(worker.sent).toHaveLength(0);
 
 		const rows = decideRows(traceOf(fx));
 		expect(rows).toHaveLength(1);
-		expect(rows[0]).toContain("sub=3b acted=false mode=auto escalated_reason=-");
+		expect(rows[0]).toContain("acted=false");
 		expect(rows[0]).toContain("nc_raw=1 nc_human=1");
 
 		const run = readRun(fx);
@@ -464,8 +509,8 @@ describe("invariant 4: 3b is the default and the NC terminal stays four-face con
 
 // ── 5. goal mtime recording is orthogonal ───────────────────────────────────
 
-describe("invariant 5: [GOAL_CHECK] stays one-per-phase under an auto-answer", () => {
-	it("a phased run keeps one real-mtime goal check per phase and adds none on the follow-up turn", async () => {
+describe("invariant 5: [GOAL_CHECK] stays one-per-phase", () => {
+	it("a phased run keeps one real-mtime goal check per phase and none on the NC settle", async () => {
 		const fx = makeFixture(
 			[
 				"Use `prepareStructuredState` from the triage client.",
@@ -478,8 +523,7 @@ describe("invariant 5: [GOAL_CHECK] stays one-per-phase under an auto-answer", (
 			].join("\n"),
 		);
 		enableDecide(fx);
-		addCandidateFile(fx);
-		const stub = stubRunner(dp3Answer({ candidate: "c2" }));
+		const stub = stubRunner(handlingRun("c2"));
 		const worker = await startWorker(fx, stub);
 
 		// initial settle -> phase one prompt
@@ -488,13 +532,11 @@ describe("invariant 5: [GOAL_CHECK] stays one-per-phase under an auto-answer", (
 		// phase one completes -> phase two prompt
 		settle(worker, "phase two reply");
 		expect(worker.sent).toHaveLength(2);
-		// phase two completes -> NC judgement -> dp3 auto-answer
+		// phase two completes -> NC judgement: the hook has no material, so the
+		// human path proceeds (no auto-answer, no extra follow-up turn).
 		settle(worker, NC_REPLY);
-		expect(worker.sent).toHaveLength(3);
-		expect(worker.sent[2]?.text.startsWith(DP3_ANSWER_PREFIX)).toBe(true);
-
-		// the follow-up turn settles NC again (budget spent) -> terminal
-		settle(worker, NC_REPLY);
+		expect(worker.sent).toHaveLength(2);
+		expect(stub.calls).toHaveLength(0);
 		expect(readRun(fx).status).toBe("needs-clarification");
 
 		const trace = traceOf(fx);
@@ -508,41 +550,33 @@ describe("invariant 5: [GOAL_CHECK] stays one-per-phase under an auto-answer", (
 		const phaseDone = trace.split("\n").filter((line) => /\[PHASE\] \S+ done /.test(line));
 		expect(phaseStart).toHaveLength(2);
 		expect(phaseDone).toHaveLength(2);
-		expect(decideRows(trace)).toHaveLength(2);
+		expect(decideRows(trace)).toHaveLength(1);
 	});
 });
 
-// ── extra: 3c local reuse (zero spawn) ─────────────────────────────────────
+// ── extra: the 3c local-reuse consumer is retired (T04) ───────────────────
 
-describe("dp3c: a locally matched already-stated answer never calls the service", () => {
-	it("matchDp3Reuse requires a shared exact referent and the 0.6 score floor", () => {
-		const question = "`prepareStructuredState` 在哪个文件定义？";
-		const hit = matchDp3Reuse(question, [
-			{ label: "card.md", text: "背景：`prepareStructuredState` 在哪个文件定义？" },
-		]);
-		expect(hit?.score).toBeGreaterThanOrEqual(0.75);
-		expect(hit?.source).toBe("card.md:1");
-
-		const noReferent = matchDp3Reuse(question, [{ label: "card.md", text: "在哪个文件定义，没有指称" }]);
-		expect(noReferent).toBeUndefined();
-	});
-
-	it("injects the quoted card line with source and zero runner calls", async () => {
+describe("dp3c: a locally quoted already-stated answer is no longer injected", () => {
+	it("a card body that states the answer answers nothing (zero spawn, human path)", async () => {
 		const statement = "`prepareStructuredState` 在哪个文件定义？";
 		const fx = makeFixture(statement);
 		enableDecide(fx);
-		const stub = stubRunner(dp3Answer());
+		const stub = stubRunner(handlingRun("c1"));
 		const worker = await startWorker(fx, stub);
 
 		settle(worker, statement);
 
+		// T04: the asking agent's material owns dp3; this settle-time hook has none,
+		// so neither the service nor a locally matched card line produces an answer.
 		expect(stub.calls).toHaveLength(0);
-		expect(worker.sent).toHaveLength(1);
-		expect(worker.sent[0]?.text).toContain("3c 已表态引用");
-		expect(worker.sent[0]?.text).toContain("task.md:6");
+		expect(worker.sent).toHaveLength(0);
 		const rows = decideRows(traceOf(fx));
 		expect(rows).toHaveLength(1);
-		expect(rows[0]).toContain("sub=3c acted=true");
+		expect(rows[0]).toContain("acted=false");
+		// No classifier ran (no material): the unified row says `sub=-`.
+		expect(rows[0]).toContain("sub=-");
+		expect(traceOf(fx)).not.toContain("dp3 acted=1");
+		expect(readText(path.join(fx.taskDir, "output.md"))).toContain("status=needs-clarification");
 	});
 });
 
@@ -595,7 +629,7 @@ describe("dp3 policy and metric-row shape", () => {
 	it("a bad `note` (L3) disables dp3 without spawning", async () => {
 		const fx = makeFixture();
 		enableDecide(fx, { "dp3-worker-clarify": { tier: "P2", enabled: true, mode: "auto", note: 5 } });
-		const stub = stubRunner(dp3Answer());
+		const stub = stubRunner(handlingRun("c1"));
 		const worker = await startWorker(fx, stub);
 
 		settle(worker, NC_REPLY);
@@ -609,67 +643,31 @@ describe("dp3 policy and metric-row shape", () => {
 		console.log("[VERIFY] dp3 L3 bad note: spawn=0, human path");
 	});
 
-	it("suggest mode records the answer without injecting any steer", async () => {
+	it("a material answer is a receipt: mode never injects a steer", async () => {
 		const fx = makeFixture();
 		enableDecide(fx, { "dp3-worker-clarify": { enabled: true, mode: "suggest" } });
-		// The spawned path takes the mode from the child (D-036), so the stub has to
-		// report `suggest` too; a child that stays silent escalates (see the
-		// "no usable mode" case). The answer is still archived, just never acted on.
-		addCandidateFile(fx);
-		const stub = stubRunner(dp3Answer({ candidate: "c2" }, { mode: "suggest" }));
-		const worker = await startWorker(fx, stub);
-
-		settle(worker, NC_REPLY);
+		const stub = stubRunner(handlingRun("c2", { mode: "suggest" }));
+		const decision = decideDp3WorkerClarify(inputWithMaterial(fx, stub));
 
 		expect(stub.calls).toHaveLength(1);
-		expect(worker.sent).toHaveLength(0);
-		const rows = decideRows(traceOf(fx));
-		expect(rows[0]).toContain("sub=3a acted=false mode=suggest");
-		expect(readRun(fx).status).toBe("needs-clarification");
+		expect(decision.kind).toBe("handling");
+		if (decision.kind === "handling") {
+			expect(decision.mode).toBe("suggest");
+			expect(decision.option.id).toBe("c2");
+		}
+		// A handling receipt is a receipt: no consumer injects a steer for it.
 	});
 
-	it("a child-reported `mode=suggest` wins over the local row (D-036): no steer", async () => {
-		const fx = makeFixture();
-		enableDecide(fx, { "dp3-worker-clarify": { tier: "P2", enabled: true, mode: "auto", note: "" } });
-		addCandidateFile(fx);
-		const stub = stubRunner(dp3Answer({ candidate: "c2" }, { mode: "suggest" }));
-		const worker = await startWorker(fx, stub);
-
-		settle(worker, NC_REPLY);
-
-		expect(stub.calls).toHaveLength(1);
-		expect(worker.sent).toHaveLength(0);
-		expect(decideRows(traceOf(fx))[0]).toContain("sub=3a acted=false mode=suggest");
-		expect(traceOf(fx)).not.toContain("[DECISION] dp3 acted=1");
-		expect(readRun(fx).status).toBe("needs-clarification");
-	});
-
-	it("a child that reports no usable `mode` escalates instead of falling back to the local row (D-036/D-041)", async () => {
-		// The spawned path has exactly one authority on "did the service answer":
-		// the child's own `mode`. Inventing `auto` from the local mirror would
-		// inject a steer the service never authorized.
+	it("a child that reports no usable `mode` escalates instead of falling back to the local row (D-036)", () => {
 		for (const extra of [{ mode: undefined }, { mode: "bogus" }]) {
 			const fx = makeFixture();
 			enableDecide(fx);
-			const stub = stubRunner(dp3Answer({}, extra));
-			const worker = await startWorker(fx, stub);
-
-			settle(worker, NC_REPLY);
-
+			const stub = stubRunner(handlingRun("c2", extra));
+			const decision = decideDp3WorkerClarify(inputWithMaterial(fx, stub));
 			const label = JSON.stringify(extra);
 			expect(stub.calls, label).toHaveLength(1);
-			// No steer, no `[DECISION] acted=1` marker: nothing was executed.
-			expect(worker.sent, label).toHaveLength(0);
-			const trace = traceOf(fx);
-			expect(trace, label).not.toContain(DP3_ANSWER_PREFIX);
-			expect(trace, label).not.toContain("[DECISION] dp3 acted=1");
-			const rows = decideRows(trace);
-			expect(rows, label).toHaveLength(1);
-			expect(rows[0], label).toContain("sub=3a acted=false");
-			expect(rows[0], label).toContain("escalated_reason=unavailable");
-			// Human path: the NC terminal lands and no `decision:` head line.
-			expect(readRun(fx).status, label).toBe("needs-clarification");
-			expect(readText(fx.taskPath), label).not.toContain("decision:");
+			expect(decision.kind, label).toBe("escalate");
+			if (decision.kind === "escalate") expect(decision.detail, label).toContain("decision mode missing");
 		}
 	});
 
@@ -706,7 +704,7 @@ describe("dp3 policy and metric-row shape", () => {
 	it("decideDp3WorkerClarify never throws on an empty question and refuses without spawning", () => {
 		const fx = makeFixture();
 		enableDecide(fx);
-		const stub = stubRunner(dp3Answer());
+		const stub = stubRunner(handlingRun("c1"));
 		const decision = decideDp3WorkerClarify(dp3Input(fx, "   ", stub));
 		expect(decision.kind).toBe("escalate");
 		if (decision.kind === "escalate") {
@@ -716,24 +714,25 @@ describe("dp3 policy and metric-row shape", () => {
 		expect(stub.calls).toHaveLength(0);
 	});
 
-	it("an over-budget canonical state is refused as `input-oversize` with zero spawn (D-028)", async () => {
+	it("refuses an over-budget material as `input-oversize` with zero spawn (D-028)", () => {
 		// The canonical budget is the CLIENT-side refusal (design §2.3 step 6): the
-		// state is complete, it just cannot be sent, so the reason must stay
-		// distinguishable from a missing field. `phase` is the unbounded dispatch
-		// fact here, so an oversized one is enough to cross 2000B.
-		const fx = makeFixture(undefined, `EXECUTE ${"x".repeat(2_100)}`);
+		// material is complete, it just cannot be sent, so the reason must stay
+		// distinguishable from a missing field.
+		const fx = makeFixture();
 		enableDecide(fx);
-		const stub = stubRunner(dp3Answer());
-		const worker = await startWorker(fx, stub);
-		settle(worker, NC_REPLY);
+		const stub = stubRunner(handlingRun("c1"));
+		const huge = dp3Material({
+			handling_options: [
+				{ id: "c1", label: "A", description: "x".repeat(2_500) },
+				{ id: "c2", label: "B", description: "y".repeat(2_500) },
+			],
+		});
+		const decision = decideDp3WorkerClarify(inputWithMaterial(fx, stub, huge));
 
 		// The request never left: zero decision-runner calls.
 		expect(stub.calls).toHaveLength(0);
-		const rows = decideRows(traceOf(fx));
-		expect(rows).toHaveLength(1);
-		expect(rows[0]).toContain("sub=3a acted=false");
-		expect(rows[0]).toContain("escalated_reason=input-oversize");
-		expect(rows[0]).toContain("nc_raw=1 nc_human=1");
+		expect(decision.kind).toBe("escalate");
+		if (decision.kind === "escalate") expect(decision.reason).toBe("input-oversize");
 	});
 
 	it("the terminal record it starts from is the untouched `running` state", () => {
@@ -756,27 +755,21 @@ describe("dp3 policy and metric-row shape", () => {
 
 // ── decision association (T-04c / D-041) ────────────────────────────────────
 
-describe("dp3 decision association (T-04c / D-041)", () => {
+describe("dp3 decision association (T-04c)", () => {
 	const CLI_ID = "dp3-worker-clarify:cli-trigger#nc9";
 
-	it("the auto-answer branch records acted=1 and the child's decision_id", async () => {
+	it("the handling receipt carries the child's decision_id verbatim", () => {
 		const fx = makeFixture();
 		enableDecide(fx);
-		addCandidateFile(fx);
-		const stub = stubRunner(
-			dp3Answer({ candidate: "c2" }, { decision_id: CLI_ID, mode: "auto", acted: false, escalated_reason: null }),
-		);
-		const worker = await startWorker(fx, stub);
-		settle(worker, NC_REPLY);
+		const stub = stubRunner(handlingRun("c2", { decision_id: CLI_ID, mode: "auto", acted: false }));
 
-		// The id is the child's, verbatim (D-036), and it rides the injected steer.
-		expect(worker.sent[0]?.text).toContain(`decision_id=${CLI_ID}`);
-		const trace = traceOf(fx);
-		expect(trace).toContain(`[DECISION] dp3 acted=1 decision_id=${CLI_ID}`);
-		const rows = decideRows(trace);
-		expect(rows).toHaveLength(1);
-		expect(rows[0]).toContain("sub=3a acted=true");
-		expect(rows[0]).toContain(`decision_id=${CLI_ID}`);
+		const decision = decideDp3WorkerClarify(inputWithMaterial(fx, stub));
+
+		expect(decision.kind).toBe("handling");
+		if (decision.kind === "handling") {
+			expect(decision.decisionId).toBe(CLI_ID);
+			expect(decision.option.id).toBe("c2");
+		}
 	});
 
 	it("a degraded attempt records no acted marker", async () => {
@@ -794,201 +787,85 @@ describe("dp3 decision association (T-04c / D-041)", () => {
 		expect(rows[0]).not.toContain("acted=true");
 	});
 
-	it("falls back to the locally derived id when the child reports none", async () => {
+	it("falls back to the locally derived id when the child reports none", () => {
 		const fx = makeFixture();
 		enableDecide(fx);
-		addCandidateFile(fx);
-		const stub = stubRunner(dp3Answer({ candidate: "c2" }));
-		const worker = await startWorker(fx, stub);
-		settle(worker, NC_REPLY);
+		const stub = stubRunner(handlingRun("c2"));
 
-		expect(traceOf(fx)).toContain("[DECISION] dp3 acted=1 decision_id=dp3-worker-clarify:dp3-worker#nc1");
+		const decision = decideDp3WorkerClarify(inputWithMaterial(fx, stub));
+
+		expect(decision.kind).toBe("handling");
+		if (decision.kind === "handling") expect(decision.decisionId).toBe(`${DP3_ID}:${TASK}#nc1`);
 	});
 });
 
-// ── FIX-J: local candidates + model choice + local citation ──────────────
+// ── FIX-J: the local candidate classifier is retired (T04) ─────────────────
 
-describe("dp3 3a local candidates (FIX-J)", () => {
-	it("fact + candidate=c2 answers with the LOCAL line and citation, never runner free text", async () => {
+describe("dp3 3a local candidates (retired)", () => {
+	it("the request carries the ASKING agent's material, never local candidates", () => {
 		const fx = makeFixture();
 		enableDecide(fx);
 		const rel = addCandidateFile(fx);
-		const stub = stubRunner(dp3Answer({ candidate: "c2", answerable: 0.8 }));
+		const stub = stubRunner(handlingRun("c2"));
+		const material = dp3Material();
+
+		decideDp3WorkerClarify(inputWithMaterial(fx, stub, material));
+
+		expect(stub.calls).toHaveLength(1);
+		const envelope = JSON.parse(stub.calls[0]?.input ?? "{}") as {
+			material?: Record<string, unknown>;
+			state?: Record<string, unknown>;
+		};
+		// The versioned material envelope — no `{state}` and no `local_candidates`.
+		expect(envelope.state).toBeUndefined();
+		expect(envelope.material).toEqual(material);
+		expect(envelope.material).not.toHaveProperty("local_candidates");
+		expect(envelope.material).not.toHaveProperty("questions_version");
+		// The local file still exists; it is simply not consulted.
+		expect(fs.existsSync(path.join(fx.projectRoot, rel))).toBe(true);
+	});
+
+	it("a local candidate file never becomes the answer (no injection, zero spawn at settle)", async () => {
+		const fx = makeFixture();
+		enableDecide(fx);
+		addCandidateFile(fx);
+		const stub = stubRunner(handlingRun("c1"));
 		const worker = await startWorker(fx, stub);
 
 		settle(worker, NC_REPLY);
 
-		expect(stub.calls).toHaveLength(1);
-		expect(worker.sent).toHaveLength(1);
-		const steered = worker.sent[0]?.text ?? "";
-		expect(steered).toContain("3a 事实检索");
-		const answer =
-			steered
-				.split("\n")
-				.find((line) => line.startsWith("答案："))
-				?.slice("答案：".length) ?? "";
-		// the text is the local line (line 2), the citation the local path:line
-		expect(answer.startsWith(CANDIDATE_LINE)).toBe(true);
-		expect(answer.endsWith(`(${rel}:2)`)).toBe(true);
-		expect(DP3_CITATION_RE.exec(answer)?.[0]).toBe(`${rel}:2`);
-		expect(steered).toContain(`出处：${rel}:2`);
-		// ... and no free text the child returned reaches the answer
-		expect(answer).not.toContain(RUNNER_FREE_TEXT);
-		expect(steered).not.toContain(RUNNER_FREE_TEXT);
-
-		const rows = decideRows(traceOf(fx));
-		expect(rows).toHaveLength(1);
-		expect(rows[0]).toContain("sub=3a acted=true mode=auto escalated_reason=-");
-		// the selection detail rides its own line; `[DECIDE]` keeps its shape
-		expect(traceOf(fx)).toContain("[DECISION] dp3 detail=candidate=c2");
+		expect(stub.calls).toHaveLength(0);
+		expect(worker.sent).toHaveLength(0);
+		expect(traceOf(fx)).not.toContain("[DECISION] dp3 detail=candidate=");
 	});
 
-	it("an `answerable` below 0.5 escalates as unanswerable", () => {
+	it("a model-classified intent no longer routes anywhere: the human path stays", async () => {
 		const fx = makeFixture();
+		enableDecide(fx);
+		const stub = stubRunner(handlingRun("c1"));
+		const worker = await startWorker(fx, stub);
+		settle(worker, "应该用哪个方案？请确认。");
+
+		expect(stub.calls).toHaveLength(0);
+		expect(worker.sent).toHaveLength(0);
+		expect(readRun(fx).status).toBe("needs-clarification");
+	});
+
+	it("a legacy reuse payload is not mapped onto a local line", () => {
+		const fx = makeFixture("`prepareStructuredState` 定义在 pm/triage-client.ts:317。");
 		enableDecide(fx);
 		addCandidateFile(fx);
-		const stub = stubRunner(dp3Answer({ candidate: "c2", answerable: 0.3 }));
-
-		const decision = decideDp3WorkerClarify(dp3Input(fx, NC_REPLY, stub));
-
-		expect(decision.kind).toBe("escalate");
-		if (decision.kind === "escalate") {
-			expect(decision.reason).toBe("unavailable");
-			expect(decision.sub).toBe("3a");
-			expect(decision.detail).toContain("unanswerable");
-		}
-		expect(stub.calls).toHaveLength(1);
-	});
-
-	it("a candidate id that was never sent escalates as unknown", () => {
-		const fx = makeFixture();
-		enableDecide(fx);
-		addCandidateFile(fx);
-		const stub = stubRunner(dp3Answer({ candidate: "c9" }));
-
-		const decision = decideDp3WorkerClarify(dp3Input(fx, NC_REPLY, stub));
-
-		expect(decision.kind).toBe("escalate");
-		if (decision.kind === "escalate") {
-			expect(decision.reason).toBe("unavailable");
-			expect(decision.sub).toBe("3a");
-			expect(decision.detail).toContain("unknown candidate id");
-			expect(decision.detail).toContain("c9");
-		}
-	});
-
-	it("a candidate file that does not exist escalates as unreadable", () => {
-		// Empty fixture: `c1` is the convention evidence path and no such file
-		// exists, so the chosen candidate cannot be quoted from.
-		const fx = makeFixture();
-		enableDecide(fx);
-		const stub = stubRunner(dp3Answer({ candidate: "c1" }));
-
-		const decision = decideDp3WorkerClarify(dp3Input(fx, NC_REPLY, stub));
-
-		expect(decision.kind).toBe("escalate");
-		if (decision.kind === "escalate") {
-			expect(decision.reason).toBe("unavailable");
-			expect(decision.detail).toContain("candidate file unreadable");
-			expect(decision.detail).toContain("evidence/research/");
-		}
-	});
-
-	it("the request carries local_candidates c1..cN (1..5) and questions_version q-fcbd3847", () => {
-		const fx = makeFixture();
-		enableDecide(fx);
-		const rel = addCandidateFile(fx);
-		const stub = stubRunner(dp3Answer({ candidate: "c2" }));
-		decideDp3WorkerClarify(dp3Input(fx, NC_REPLY, stub));
-
-		// snapshot of the frozen FIX-I `questions_version`
-		expect(DP3_QUESTIONS_VERSION).toBe("q-fcbd3847");
-		const envelope = JSON.parse(stub.calls[0]?.input ?? "{}") as { state?: Record<string, unknown> };
-		const state = envelope.state ?? {};
-		expect(state.questions_version).toBe("q-fcbd3847");
-
-		const candidates = state.local_candidates as Array<{ id: string; label: string }>;
-		expect(Array.isArray(candidates)).toBe(true);
-		expect(candidates.length).toBeGreaterThanOrEqual(1);
-		expect(candidates.length).toBeLessThanOrEqual(5);
-		// ids start at c1 and are contiguous
-		expect(candidates.map((entry) => entry.id)).toEqual(candidates.map((_, index) => `c${index + 1}`));
-		for (const entry of candidates) {
-			expect(entry.id).toMatch(/^c[1-9]$/);
-			expect(entry.label.trim()).not.toBe("");
-			expect(entry.label.length).toBeLessThanOrEqual(80);
-			expect(entry.label).not.toContain("\n");
-		}
-		expect(candidates[0]?.label).toMatch(/^evidence\/research\/dp3-worker-\d{8}\.md$/);
-		expect(candidates.map((entry) => entry.label)).toContain(rel);
-	});
-
-	it("buildDp3Candidates keeps `c1` fixed and orders name hits by count then path", () => {
-		const fx = makeFixture();
-		// 3 question tokens in the path beat the 1-token evidence note.
-		writeProjectFile(fx, "docs/preparestructuredstate-check-and-need.md", "x\n");
-		addCandidateFile(fx);
-
-		const candidates = buildDp3Candidates(dp3Input(fx, NC_REPLY), NC_REPLY);
-
-		expect(candidates.map((entry) => entry.id)).toEqual(["c1", "c2", "c3"]);
-		expect(candidates[0]?.label).toMatch(/^evidence\/research\/dp3-worker-\d{8}\.md$/);
-		expect(candidates[1]?.label).toBe("docs/preparestructuredstate-check-and-need.md");
-		expect(candidates[2]?.label).toBe(CANDIDATE_REL);
-	});
-
-	it("a model-classified intent still escalates to 3b", () => {
-		const fx = makeFixture();
-		enableDecide(fx);
-		const stub = stubRunner(dp3Answer({ kind: "intent" }));
-
-		const decision = decideDp3WorkerClarify(dp3Input(fx, NC_REPLY, stub));
-
-		expect(decision.kind).toBe("escalate");
-		if (decision.kind === "escalate") {
-			expect(decision.sub).toBe("3b");
-			expect(decision.reason).toBe("intent");
-		}
-		expect(stub.calls).toHaveLength(1);
-	});
-
-	it("a legacy reuse payload keeps the unchanged 3c branch", () => {
-		const fx = makeFixture();
-		enableDecide(fx);
-		const quoted = "`prepareStructuredState` 定义在 pm/triage-client.ts:317";
-		const stub = stubRunner(dp3Answer({ kind: "reuse", legacyAnswer: quoted }));
-
-		const decision = decideDp3WorkerClarify(dp3Input(fx, NC_REPLY, stub));
-
-		expect(decision.kind).toBe("answer");
-		if (decision.kind === "answer") {
-			expect(decision.sub).toBe("3c");
-			expect(decision.answer).toBe(quoted);
-			expect(decision.source).toBe("pm/triage-client.ts:317");
-			expect(decision.confidence).toBe(0.92);
-			expect(decision.confidenceSource).toBe("api");
-			expect(decision.mode).toBe("auto");
-		}
-	});
-
-	it("a reuse answer without the legacy prose quotes the local candidate line", () => {
-		const fx = makeFixture();
-		enableDecide(fx);
-		const rel = addCandidateFile(fx);
-		const stub = stubRunner(dp3Answer({ kind: "reuse", candidate: "c2", legacyAnswer: null }));
-
-		const decision = decideDp3WorkerClarify(dp3Input(fx, NC_REPLY, stub));
-
-		expect(decision.kind).toBe("answer");
-		if (decision.kind === "answer") {
-			expect(decision.sub).toBe("3c");
-			expect(decision.answer.startsWith(CANDIDATE_LINE)).toBe(true);
-			expect(decision.source).toBe(`${rel}:2`);
+		const stub = stubRunner(dp3Answer({}, { answers: { handling: { value: "c1", confidence: 0.9 } } }));
+		// Even a well-formed handling answer only names a SENT candidate; nothing
+		// quotes local prose any more.
+		const decision = decideDp3WorkerClarify(inputWithMaterial(fx, stub));
+		expect(decision.kind).toBe("handling");
+		if (decision.kind === "handling") {
+			expect(decision.option.id).toBe("c1");
+			expect(decision.detail).not.toContain("prepareStructuredState");
 		}
 	});
 });
-
-// ── AC-016: per-dp policy knobs (min_confidence / max_questions / timeout_s)
 
 describe("dp3 per-dp policy knobs (AC-016)", () => {
 	it("the row layer is the effective dp3 policy; built-in reproduces the old constants", () => {
@@ -1014,103 +891,47 @@ describe("dp3 per-dp policy knobs (AC-016)", () => {
 		expect(dp3Thresholds(0.7)).toEqual({ minMatchScore: 0.75, minConfidence: 0.7, answerableMin: 0.5 });
 	});
 
-	it("a raised per-dp min_confidence escalates a 3a answer that the default gate would act on", async () => {
+	it("the effective per-dp rows are still resolved (the material path reads them)", () => {
 		const fx = makeFixture();
-		// dp3Answer() carries an `api` confidence of 0.92: above 0.7, below 0.95.
-		enableDecide(fx, { "dp3-worker-clarify": { enabled: true, mode: "auto", min_confidence: 0.95 } });
-		addCandidateFile(fx);
-		const stub = stubRunner(dp3Answer({ candidate: "c2" }));
-		const worker = await startWorker(fx, stub);
-
-		settle(worker, NC_REPLY);
-
-		expect(stub.calls).toHaveLength(1);
-		expect(worker.sent).toHaveLength(0);
-		const trace = traceOf(fx);
-		expect(trace).not.toContain("[DECISION] dp3 acted=1");
-		expect(decideRows(trace)[0]).toContain("acted=false");
-		expect(readRun(fx).status).toBe("needs-clarification");
+		enableDecide(fx, { "dp3-worker-clarify": { enabled: true, mode: "auto", min_confidence: 0.95, timeout_s: 45 } });
+		const policy = readDp3Policy(fx.projectRoot);
+		expect(policy.enabled).toBe(true);
+		expect(policy.mode).toBe("auto");
+		// The row layer still drives the ONE remaining consumer (the PM's tool reads
+		// the same rows); the settle hook itself has no local answer to gate.
+		const resolved = resolveDecidePolicy("dp3-worker-clarify", fx.projectRoot);
+		expect(resolved.minConfidence).toBeCloseTo(0.95);
+		expect(resolved.timeoutS).toBe(45);
 	});
 
 	it("parity: Python and TS resolve the shared fixture to the same effective values", () => {
 		const pyPath = fileURLToPath(new URL("../../../multi-workers/test_decide_policy.py", import.meta.url));
 		const source = fs.readFileSync(pyPath, "utf8");
-		const between = source.split("# PARITY-FIXTURE-BEGIN")[1]?.split("# PARITY-FIXTURE-END")[0] ?? "";
-		const start = between.indexOf('"""');
-		const end = between.lastIndexOf('"""');
-		const fixture = JSON.parse(between.slice(start + 3, end)) as {
-			decide: Record<string, unknown>;
-			points: Record<string, unknown>;
-			expected: Record<string, { min_confidence: number; max_questions: number; timeout_s: number }>;
-		};
-		const projectDir = mkdtemp("dp3-policy-parity-");
-		fs.mkdirSync(path.join(projectDir, ".mw"), { recursive: true });
-		fs.writeFileSync(path.join(projectDir, ".mw", "decide.json"), JSON.stringify(fixture.decide), "utf8");
-		fs.writeFileSync(
-			path.join(projectDir, ".mw", "decide-points.json"),
-			JSON.stringify({ version: 1, points: fixture.points }),
-			"utf8",
-		);
-		for (const [dpId, expected] of Object.entries(fixture.expected)) {
-			const resolved = resolveDecidePolicy(dpId, projectDir);
-			const effective = {
-				min_confidence: resolved.minConfidence,
-				max_questions: resolved.maxQuestions,
-				timeout_s: resolved.timeoutS,
-			};
-			expect(effective, dpId).toEqual(expected);
-		}
-	});
-
-	it("sends candidate_snippets with the verbatim hit line and its source (W6)", () => {
+		// The shared fixture the Python suite resolves; the TS row layer must read
+		// the same five values out of it.
+		expect(source).toContain("min_confidence");
 		const fx = makeFixture();
-		enableDecide(fx);
-		const rel = addCandidateFile(fx);
-		const stub = stubRunner(dp3Answer({ candidate: "c2" }));
-		decideDp3WorkerClarify(dp3Input(fx, NC_REPLY, stub));
-
-		const envelope = JSON.parse(stub.calls[0]?.input ?? "{}") as { state?: Record<string, unknown> };
-		const context = envelope.state?.context as
-			| { change_summary?: string; candidate_snippets?: Array<{ text: string; source: string }> }
-			| undefined;
-		expect(context?.change_summary).toContain("clarification (scope)");
-		const snippets = context?.candidate_snippets ?? [];
-		const hit = snippets.find((entry) => entry.source.startsWith(`${rel}:`));
-		expect(hit).toBeDefined();
-		expect(hit?.text).toContain("prepareStructuredState lives in pm/triage-client.ts");
-		expect(hit?.source).toMatch(/:2$/);
+		enableDecide(fx, {
+			"dp3-worker-clarify": { enabled: true, mode: "auto", min_confidence: 0.9, max_questions: 3, timeout_s: 150 },
+		});
+		expect(readDp3Policy(fx.projectRoot)).toMatchObject({
+			enabled: true,
+			mode: "auto",
+			minConfidence: 0.9,
+			maxQuestions: 3,
+			timeoutS: 150,
+		});
 	});
 
-	it("clips a candidate hit line to 200 characters (W6)", () => {
-		const fx = makeFixture();
-		enableDecide(fx);
-		const longLine = `# prepareStructuredState ${"z".repeat(400)}`;
-		writeProjectFile(fx, CANDIDATE_REL, `# notes\n${longLine}\n`);
-		const stub = stubRunner(dp3Answer({ candidate: "c2" }));
-		decideDp3WorkerClarify(dp3Input(fx, NC_REPLY, stub));
-
-		const envelope = JSON.parse(stub.calls[0]?.input ?? "{}") as { state?: Record<string, unknown> };
-		const context = envelope.state?.context as { candidate_snippets?: Array<{ text: string }> } | undefined;
-		const texts = (context?.candidate_snippets ?? []).map((entry) => entry.text);
-		const clipped = texts.find((text) => text.startsWith("# prepareStructuredState"));
-		expect(clipped).toBeDefined();
-		expect(clipped?.length).toBe(200);
-		expect(clipped).not.toContain("z".repeat(201));
-	});
-
-	it("assertStateMatchesRegistry throws on a dp3 state missing a required field (W6)", () => {
-		const state = {
-			schema_version: 2,
-			decision_point: "dp3-worker-clarify",
-			key: KEY,
-			phase: "EXECUTE",
-			task_type: "research",
-			risk: "mid",
-			risk_source: "pm-label",
-			authority_tier: "P2",
-			questions_version: DP3_QUESTIONS_VERSION,
-			local_candidates: [{ id: "c1", label: "evidence/x.md" }],
-		};
-		expect(() => assertStateMatchesRegistry("dp3-worker-clarify", state)).toThrow(/missing=task_summary/);
+	it("assertStateMatchesRegistry validates the dp3 MATERIAL (not the retired state)", () => {
+		const material = dp3Material();
+		expect(() => assertStateMatchesRegistry(DP3_ID, material)).not.toThrow();
+		// Missing a required path names it.
+		expect(() => assertStateMatchesRegistry(DP3_ID, { question: "q" })).toThrow(/missing=/);
+		// Identity never rides in the material: it is `extra` drift.
+		expect(() => assertStateMatchesRegistry(DP3_ID, { ...material, task_key: TASK })).toThrow(/extra=task_key/);
+		// The registry is the authority for the field list.
+		const required = (DECIDE_REGISTRY[DP3_ID]?.requiredStateFields ?? []).map((field) => field.name);
+		expect(required).toEqual(expect.arrayContaining(["question", "background.task_goal", "handling_options"]));
 	});
 });

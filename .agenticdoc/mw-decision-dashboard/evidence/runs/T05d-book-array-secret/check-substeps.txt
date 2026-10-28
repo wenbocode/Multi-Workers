@@ -1,0 +1,24 @@
+# read-only check substeps (NOT `npm run check`; the write-mode biome pass and
+# browser-smoke were deliberately skipped -- see report).
+== check-pinned-deps ==
+node scripts/check-pinned-deps.mjs
+EXIT_check-pinned-deps=0
+== check-ts-imports ==
+node scripts/check-ts-relative-imports.mjs
+EXIT_check-ts-imports=0
+== check-shrinkwrap ==
+node scripts/generate-coding-agent-shrinkwrap.mjs --check
+EXIT_check-shrinkwrap=0
+== check-install-lock ==
+node scripts/generate-coding-agent-install-lock.mjs --check
+EXIT_check-install-lock=0
+== check-tsgo ==
+tsgo --noEmit
+EXIT_check-tsgo=0
+== biome (read-only, whole repo) ==
+node node_modules/@biomejs/biome/bin/biome check --error-on-warnings .
+log: check-biome-readonly.txt
+EXIT_check-biome-readonly=1  (5 pre-existing findings in packages/coding-agent/test/suite/mwoc-*.test.ts,
+  files outside this card's write face; no Python file is linted by biome)
+== browser-smoke ==
+NOT RUN (card forbids browser); full `npm run check` is therefore NOT equivalent and NOT run

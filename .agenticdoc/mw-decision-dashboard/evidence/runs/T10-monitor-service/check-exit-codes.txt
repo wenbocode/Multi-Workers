@@ -1,0 +1,9 @@
+﻿check sub-step exit codes (repo root, read-only biome instead of biome --write):
+biome check --error-on-warnings .            -> 1 (3 warnings + 2 infos, all in other sessions packages/coding-agent/test/suite/mwoc-*.test.ts; no --write applied)
+npm run check:pinned-deps                   -> 0
+npm run check:ts-imports                    -> 0
+npm run check:shrinkwrap                    -> 0
+npm run check:install-lock:coding-agent     -> 0
+npx tsgo --noEmit                           -> 0 (no output on success; check-tsgo.txt is empty by design)
+npm run check:browser-smoke                 -> 0
+note: the full npm run check (with biome --write) is left to T15 per the T02b/T03/T07 precedent, because biome --write would rewrite other sessions uncommitted mwoc test files.

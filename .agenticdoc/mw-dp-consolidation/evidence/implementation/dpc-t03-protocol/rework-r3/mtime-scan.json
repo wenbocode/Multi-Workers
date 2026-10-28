@@ -1,0 +1,13 @@
+{
+  "start_utc": "2026-10-26T04:33:09.555166+00:00",
+  "observed_at_utc": "2026-10-26T04:36:42.007844+00:00",
+  "caveat": "mtime scan only; not proof of exclusive authorship or of a clean tree",
+  "files": [
+    {
+      "path": "packages/multi-workers/test_decide_registry_contract.py",
+      "mtime_ns": 1792989395623882400,
+      "mtime_utc": "2026-10-26T04:36:35.623882+00:00",
+      "bytes": 39079
+    }
+  ]
+}

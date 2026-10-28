@@ -1,0 +1,190 @@
+﻿# T06 read-only check sub-steps
+# repo root: H:\git\Multi-Workers
+# note: full 'npm run check' was NOT run (it invokes 'biome check --write'); these steps are not equivalent to it.
+
+=== biome check (read-only, no --write) ===
+CMD: npx biome check .
+packages\coding-agent\test\suite\mwoc-matrix-t07.test.ts:120:6 lint/style/useTemplate  FIXABLE  鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+
+  i Template literals are preferred over string concatenation.
+  
+    118 鈹?		opts.cardPath === undefined
+    119 鈹?			? ""
+  > 120 鈹?			: `card_path: ${opts.cardPath}\n` + (opts.cardSha === undefined ? "" : `card_sha256: ${opts.cardSha}\n`);
+        鈹?			  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    121 鈹?	fs.writeFileSync(path.join(taskDir, "task.md"), `${head}${card}\nwork\n`, "utf8");
+    122 鈹?	if (opts.report !== undefined) fs.writeFileSync(path.join(taskDir, "report.md"), opts.report, "utf8");
+  
+  i Unsafe fix: Use a template literal.
+  
+    118 118 鈹?  		opts.cardPath === undefined
+    119 119 鈹?  			? ""
+    120     鈹?- 鈫?鈫?鈫?:路`card_path:路${opts.cardPath}\n`路+路(opts.cardSha路===路undefined路?路""路:路`card_sha256:路${opts.cardSha}\n`);
+        120 鈹?+ 鈫?鈫?鈫?:路`card_path:路${opts.cardPath}\n${opts.cardSha路===路undefined路?路""路:路`card_sha256:路${opts.cardSha}\n`}`;
+    121 121 鈹?  	fs.writeFileSync(path.join(taskDir, "task.md"), `${head}${card}\nwork\n`, "utf8");
+    122 122 鈹?  	if (opts.report !== undefined) fs.writeFileSync(path.join(taskDir, "report.md"), opts.report, "utf8");
+  
+
+packages\coding-agent\test\suite\mwoc-w2-contract-judgment.test.ts:130:6 lint/style/useTemplate  FIXABLE  鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+
+  i Template literals are preferred over string concatenation.
+  
+    128 鈹?		opts.cardPath === undefined
+    129 鈹?			? ""
+  > 130 鈹?			: `card_path: ${opts.cardPath}\n` + (opts.cardSha === undefined ? "" : `card_sha256: ${opts.cardSha}\n`);
+        鈹?			  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    131 鈹?	fs.writeFileSync(path.join(taskDir, "task.md"), `${head}${card}\nwork\n`, "utf8");
+    132 鈹?	if (opts.report !== undefined) fs.writeFileSync(path.join(taskDir, "report.md"), opts.report, "utf8");
+  
+  i Unsafe fix: Use a template literal.
+  
+    128 128 鈹?  		opts.cardPath === undefined
+    129 129 鈹?  			? ""
+    130     鈹?- 鈫?鈫?鈫?:路`card_path:路${opts.cardPath}\n`路+路(opts.cardSha路===路undefined路?路""路:路`card_sha256:路${opts.cardSha}\n`);
+        130 鈹?+ 鈫?鈫?鈫?:路`card_path:路${opts.cardPath}\n${opts.cardSha路===路undefined路?路""路:路`card_sha256:路${opts.cardSha}\n`}`;
+    131 131 鈹?  	fs.writeFileSync(path.join(taskDir, "task.md"), `${head}${card}\nwork\n`, "utf8");
+    132 132 鈹?  	if (opts.report !== undefined) fs.writeFileSync(path.join(taskDir, "report.md"), opts.report, "utf8");
+  
+
+packages\coding-agent\test\suite\mwoc-matrix-t07.test.ts:45:2 lint/correctness/noUnusedImports  FIXABLE  鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+
+  ! Several of these imports are unused.
+  
+    43 鈹?import {
+    44 鈹?	agentProductText,
+  > 45 鈹?	appendMechanicalContextSources,
+       鈹?	^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    46 鈹?	hasReportProduct,
+    47 鈹?	judgedProductFile,
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+     43  43 鈹?  import {
+     44  44 鈹?  	agentProductText,
+     45     鈹?- 鈫?appendMechanicalContextSources,
+     46  45 鈹?  	hasReportProduct,
+     47  46 鈹?  	judgedProductFile,
+  
+
+packages\coding-agent\test\suite\mwoc-matrix-t07.test.ts:606:4 lint/complexity/useOptionalChain  FIXABLE  鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+
+  ! Change to an optional chain.
+  
+    604 鈹?		const nonWrite = pick(111);
+    605 鈹?		if (
+  > 606 鈹?			write1 !== undefined &&
+        鈹?			^^^^^^^^^^^^^^^^^^^^^^^
+  > 607 鈹?			write1.includes("--glob") &&
+        鈹?			^^^^^^^^^^^^^^^^^^^^^^^^^
+    608 鈹?			write1.includes("[System.IO.File]::WriteAllText") &&
+    609 鈹?			write2 !== undefined &&
+  
+  i Unsafe fix: Change to an optional chain.
+  
+    604 604 鈹?  		const nonWrite = pick(111);
+    605 605 鈹?  		if (
+    606     鈹?- 鈫?鈫?鈫?write1路!==路undefined路&&
+    607     鈹?- 鈫?鈫?鈫?write1.includes("--glob")路&&
+        606 鈹?+ 鈫?鈫?鈫?write1?.includes("--glob")路&&
+    608 607 鈹?  			write1.includes("[System.IO.File]::WriteAllText") &&
+    609 608 鈹?  			write2 !== undefined &&
+  
+
+packages\coding-agent\test\suite\mwoc-w3-ledger-extractor.test.ts:216:3 lint/complexity/useOptionalChain  FIXABLE  鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+
+  ! Change to an optional chain.
+  
+    214 鈹?	const nonWrite = pick(111);
+    215 鈹?	if (
+  > 216 鈹?		write1 !== undefined &&
+        鈹?		^^^^^^^^^^^^^^^^^^^^^^^
+  > 217 鈹?		write1.includes("--glob") &&
+        鈹?		^^^^^^^^^^^^^^^^^^^^^^^^^
+    218 鈹?		write1.includes("[System.IO.File]::WriteAllText") &&
+    219 鈹?		write2 !== undefined &&
+  
+  i Unsafe fix: Change to an optional chain.
+  
+    214 214 鈹?  	const nonWrite = pick(111);
+    215 215 鈹?  	if (
+    216     鈹?- 鈫?鈫?write1路!==路undefined路&&
+    217     鈹?- 鈫?鈫?write1.includes("--glob")路&&
+        216 鈹?+ 鈫?鈫?write1?.includes("--glob")路&&
+    218 217 鈹?  		write1.includes("[System.IO.File]::WriteAllText") &&
+    219 218 鈹?  		write2 !== undefined &&
+  
+
+Checked 1195 files in 921ms. No fixes applied.
+Found 3 warnings.
+Found 2 infos.
+
+EXIT: 0
+
+=== npm run check:pinned-deps ===
+CMD: npm run check:pinned-deps
+
+> pi-monorepo@0.0.3 check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+EXIT: 0
+
+=== npm run check:ts-imports ===
+CMD: npm run check:ts-imports
+
+> pi-monorepo@0.0.3 check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+EXIT: 0
+
+=== npm run check:shrinkwrap ===
+CMD: npm run check:shrinkwrap
+
+> pi-monorepo@0.0.3 check:shrinkwrap
+> node scripts/generate-coding-agent-shrinkwrap.mjs --check
+
+packages/coding-agent/npm-shrinkwrap.json is up to date.
+
+EXIT: 0
+
+=== npm run check:install-lock:coding-agent ===
+CMD: npm run check:install-lock:coding-agent
+
+> pi-monorepo@0.0.3 check:install-lock:coding-agent
+> node scripts/generate-coding-agent-install-lock.mjs --check
+
+packages/coding-agent/install-lock is up to date.
+
+EXIT: 0
+
+=== tsgo --noEmit ===
+CMD: npx tsgo --noEmit
+
+EXIT: 0
+
+=== npm run check:browser-smoke ===
+CMD: npm run check:browser-smoke
+
+> pi-monorepo@0.0.3 check:browser-smoke
+> node scripts/check-browser-smoke.mjs
+
+
+EXIT: 0
+
+# files changed by this task (hashes):
+packages/multi-workers/decision_playground.py sha256=29bed5ee2bfb99350a2cf3de71fffc403e6b91fd3d22b8a5bbdf4b90c1c57367 bytes=51268
+packages/multi-workers/test_decision_playground.py sha256=18ca6883bad0a588f7c6d63b2bd726a16c616ed7786896abe20f414f009b84d0 bytes=39002
+
+# git status (own paths only):
+?? .agenticdoc/mw-decision-dashboard/evidence/runs/T06-playground/
+?? packages/multi-workers/decision_playground.py
+?? packages/multi-workers/test_decision_playground.py
+# git status (shared dependency files, must show only pre-existing other-session diffs):
+ M packages/multi-workers/decision.py
+ M packages/multi-workers/decision_book.py
+ M packages/multi-workers/decision_points.py
+?? packages/multi-workers/decision_monitor.py
+?? packages/multi-workers/decision_wire.py

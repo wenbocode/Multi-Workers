@@ -1,0 +1,894 @@
+{
+  "schema": 5,
+  "generated_from": "decision_points.DP_REGISTRY",
+  "question_types": [
+    "box",
+    "choice",
+    "noul",
+    "score"
+  ],
+  "preparation": {
+    "keys": [
+      "basis_catalog",
+      "prepared_at"
+    ],
+    "basis_item_keys": [
+      "id",
+      "text",
+      "material_refs",
+      "applies_to"
+    ],
+    "basis_source": "pm-prepared",
+    "independent_of": "material"
+  },
+  "points": [
+    {
+      "id": "dp-w-type",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "Worker 派发类型（coding/research/review/vision）",
+      "kind": "fixed",
+      "role_scope": "pm",
+      "candidate_source": "static-enum",
+      "candidate_bounds": null,
+      "target_entries": [],
+      "questions_version": "q-b06e79ab",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "unwired",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "task_goal",
+          "type": "string",
+          "description": "Task goal exactly as handed to the task (原文), no summary."
+        },
+        {
+          "name": "task_requirements",
+          "type": "string",
+          "description": "Task requirements exactly as handed to the task (原文)."
+        },
+        {
+          "name": "task_deliverables",
+          "type": "string",
+          "description": "Task deliverables exactly as handed to the task (原文)."
+        }
+      ],
+      "optional_state_fields": [
+        {
+          "name": "images_required",
+          "type": "boolean",
+          "description": "Whether the dispatched task needs to read images; true means vision only, false/absent is never an image-capability proof."
+        }
+      ],
+      "model_state_fields": [
+        "task_goal",
+        "task_requirements",
+        "task_deliverables",
+        "images_required"
+      ],
+      "questions": [
+        {
+          "id": "triage_type",
+          "type": "choice",
+          "instructions": "这个任务应该派给哪一类 worker？",
+          "choices": [
+            "coding",
+            "research",
+            "review",
+            "vision"
+          ],
+          "labels": {
+            "coding": "需要写代码或改代码或跑命令",
+            "research": "只做检索取证不改代码",
+            "review": "审计别人已完成的产出",
+            "vision": "需要读取图片，且有效模型必须已证明图像能力"
+          }
+        }
+      ]
+    },
+    {
+      "id": "dp-pm-steer",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "PM 任务编排（narrow/split/direct-exec/escalate，不降目标）",
+      "kind": "fixed",
+      "role_scope": "pm",
+      "candidate_source": "static-enum",
+      "candidate_bounds": null,
+      "target_entries": [],
+      "questions_version": "q-ba8e970f",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "unwired",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "task_goal",
+          "type": "string",
+          "description": "Task goal exactly as handed to the task (原文), no summary."
+        },
+        {
+          "name": "task_requirements",
+          "type": "string",
+          "description": "Task requirements exactly as handed to the task (原文)."
+        },
+        {
+          "name": "task_deliverables",
+          "type": "string",
+          "description": "Task deliverables exactly as handed to the task (原文)."
+        },
+        {
+          "name": "pm_decision_background",
+          "type": "string",
+          "description": "Why the PM needs a checkpoint decision now, plus the constraints that shape it."
+        }
+      ],
+      "optional_state_fields": [
+        {
+          "name": "worker_execution",
+          "type": "string",
+          "description": "Optional real worker execution (done/remaining/blocked/attempted and time budget); omit when there is no worker, never invent it."
+        }
+      ],
+      "model_state_fields": [
+        "task_goal",
+        "task_requirements",
+        "task_deliverables",
+        "pm_decision_background",
+        "worker_execution"
+      ],
+      "questions": [
+        {
+          "id": "checkpoint_action",
+          "type": "choice",
+          "instructions": "以当前进度，这一步该继续、拆小、直接执行还是上抛人？",
+          "choices": [
+            "narrow",
+            "split",
+            "direct-exec",
+            "escalate"
+          ],
+          "labels": {
+            "narrow": "收窄到剩余预算内能完成的一小块",
+            "split": "拆成多个任务重派",
+            "direct-exec": "PM 自己直接做完",
+            "escalate": "风险高到必须问人"
+          }
+        }
+      ]
+    },
+    {
+      "id": "dp-w-check-task",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "Worker 本次任务可达性（continue/terminate/investigate，fire-and-forget）",
+      "kind": "fixed",
+      "role_scope": "worker",
+      "candidate_source": "static-enum",
+      "candidate_bounds": null,
+      "target_entries": [],
+      "questions_version": "q-10671804",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "unwired",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "task_goal",
+          "type": "string",
+          "description": "Task goal exactly as handed to the task (原文), no summary."
+        },
+        {
+          "name": "reachability_facts",
+          "type": "string",
+          "description": "What is actually known about whether this task can be completed inside its authorization/budget."
+        },
+        {
+          "name": "completed",
+          "type": "string",
+          "description": "What is actually finished so far, with evidence references; saying none is a real statement."
+        },
+        {
+          "name": "remaining",
+          "type": "string",
+          "description": "What is still unfinished for this task."
+        },
+        {
+          "name": "blockers",
+          "type": "string",
+          "description": "What blocks completion inside the boundary, or an explicit none."
+        },
+        {
+          "name": "constraints",
+          "type": "string",
+          "description": "Constraints, remaining budget and authorization that bound this judgement."
+        }
+      ],
+      "optional_state_fields": [
+        {
+          "name": "investigation.unknown",
+          "type": "string",
+          "description": "The one concrete unknown the bounded evidence step would resolve (investigate branch only).",
+          "max_bytes": 512
+        },
+        {
+          "name": "investigation.evidence_source",
+          "type": "string",
+          "description": "A source that can actually be consulted inside the existing authorization.",
+          "max_bytes": 512
+        },
+        {
+          "name": "investigation.budget",
+          "type": "string",
+          "description": "The real remaining budget the evidence step may use (never a reset or a new grant).",
+          "max_bytes": 512
+        },
+        {
+          "name": "investigation.stop_condition",
+          "type": "string",
+          "description": "The concrete criterion that ends the evidence step; no open-ended investigation.",
+          "max_bytes": 512
+        }
+      ],
+      "model_state_fields": [
+        "task_goal",
+        "reachability_facts",
+        "completed",
+        "remaining",
+        "blockers",
+        "constraints",
+        "investigation.unknown",
+        "investigation.evidence_source",
+        "investigation.budget",
+        "investigation.stop_condition"
+      ],
+      "questions": [
+        {
+          "id": "reachability",
+          "type": "choice",
+          "instructions": "当前任务条件是否足以继续？条件不足时写出真实结论并结束本次执行；可在边界内补证时先做有界补证。",
+          "choices": [
+            "continue",
+            "terminate",
+            "investigate"
+          ],
+          "labels": {
+            "continue": "条件充足：继续任务",
+            "terminate": "条件不足：写出完成/未完成/阻断及证据，结束本次执行（不是取消目标或 key）",
+            "investigate": "继续任务并为具体未知做有界补证（须给来源、预算与结束判据）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "dp-QG",
+      "tier": "P1",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "正式质量审核（pass/fix/reopen，附可复核依据与未覆盖面）",
+      "kind": "fixed",
+      "role_scope": "pm",
+      "candidate_source": "static-enum",
+      "candidate_bounds": null,
+      "target_entries": [],
+      "questions_version": "q-16b4bb5c",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "unwired",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "review_requirements",
+          "type": "string",
+          "description": "The quality/acceptance requirements this review is measured against."
+        },
+        {
+          "name": "review_evidence",
+          "type": "array",
+          "description": "Evidence references the review actually examined (<path>:<line> or command); [] when none.",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128,
+          "empty_is_value": true
+        },
+        {
+          "name": "review_findings",
+          "type": "string",
+          "description": "What the review found, including the concrete gap for a fix verdict."
+        },
+        {
+          "name": "uncovered_scope",
+          "type": "string",
+          "description": "What this review did not cover; an explicit none is a real statement."
+        }
+      ],
+      "optional_state_fields": [
+        {
+          "name": "basis_issue",
+          "type": "string",
+          "description": "The substantive requirement/design/acceptance problem that forces reopen; must be absent for pass.",
+          "max_bytes": 512
+        }
+      ],
+      "model_state_fields": [
+        "review_requirements",
+        "review_evidence",
+        "review_findings",
+        "uncovered_scope",
+        "basis_issue"
+      ],
+      "questions": [
+        {
+          "id": "qg_verdict",
+          "type": "choice",
+          "instructions": "按正式质量审核要求给出结论，并说清可复核依据、具体缺口或依据问题及未覆盖面。",
+          "choices": [
+            "pass",
+            "fix",
+            "reopen"
+          ],
+          "labels": {
+            "pass": "满足明确质量/验收要求，必要证据充分且无未解决阻断",
+            "fix": "要求/依据明确，但产物或证据有具体整改缺口",
+            "reopen": "要求、设计或验收依据本身有实质问题，需重新讨论确认"
+          }
+        }
+      ]
+    },
+    {
+      "id": "dp-gate-approve",
+      "tier": "P0",
+      "default_enabled": false,
+      "default_mode": "auto",
+      "description": "具体 gate 审批（approve/steer/need_fix/reject，PM note 与理由分列）",
+      "kind": "fixed",
+      "role_scope": "pm",
+      "candidate_source": "static-enum",
+      "candidate_bounds": null,
+      "target_entries": [],
+      "questions_version": "q-f5de87ef",
+      "p0_consequences": "自动越过 gate 会让未获授权的 stage/goal/预算/契约变更落地，且该效果不可在一次决策内撤回",
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "unwired",
+      "executor": "none",
+      "required_state_fields": [
+        {
+          "name": "gate_background",
+          "type": "string",
+          "description": "The concrete gate matter and why it is being sent for a decision now."
+        },
+        {
+          "name": "current_state",
+          "type": "string",
+          "description": "The current real state of the gate facts, with unknowns marked unknown."
+        },
+        {
+          "name": "condition_evidence",
+          "type": "array",
+          "description": "Evidence references for the gate conditions that are claimed to hold; [] when none.",
+          "max_items": 32,
+          "item_type": "string",
+          "item_max_bytes": 128,
+          "empty_is_value": true
+        },
+        {
+          "name": "pm_note.subject",
+          "type": "string",
+          "description": "The PM's pre-submission note: what exactly is being approved.",
+          "max_bytes": 512
+        },
+        {
+          "name": "pm_note.planned_action",
+          "type": "string",
+          "description": "The limited action the PM would take after an approve (never implied by the choice alone).",
+          "max_bytes": 512
+        },
+        {
+          "name": "pm_note.basis.goal",
+          "type": "string",
+          "description": "The goal/acceptance basis the note relies on.",
+          "max_bytes": 512
+        },
+        {
+          "name": "pm_note.basis.evidence",
+          "type": "string",
+          "description": "The evidence the note relies on, with references.",
+          "max_bytes": 512
+        },
+        {
+          "name": "pm_note.basis.budget",
+          "type": "string",
+          "description": "The remaining budget/limit the note relies on (no new budget is granted here).",
+          "max_bytes": 512
+        },
+        {
+          "name": "pm_note.basis.authority",
+          "type": "string",
+          "description": "The existing authorization the note relies on; this note never creates one.",
+          "max_bytes": 512
+        }
+      ],
+      "optional_state_fields": [],
+      "model_state_fields": [
+        "gate_background",
+        "current_state",
+        "condition_evidence",
+        "pm_note.subject",
+        "pm_note.planned_action",
+        "pm_note.basis.goal",
+        "pm_note.basis.evidence",
+        "pm_note.basis.budget",
+        "pm_note.basis.authority"
+      ],
+      "questions": [
+        {
+          "id": "gate_decision",
+          "type": "choice",
+          "instructions": "按 PM 送审前的 note 与当前条件判断：批准本 gate、交 PM 编排、补具体缺口，还是拒绝本次方案。",
+          "choices": [
+            "approve",
+            "steer",
+            "need_fix",
+            "reject"
+          ],
+          "labels": {
+            "approve": "满足本 gate 条件，按 note 中的受限动作继续或收尾",
+            "steer": "任务组织/主线/拆分/执行主体需调整，交 PM 发起 dp-pm-steer",
+            "need_fix": "推进方式基本明确但有具体技术/材料缺口，交 PM 发起 dp-auto",
+            "reject": "拒绝本次推进方案；只有 note 另有明确获授权遗留方案才按其收尾"
+          }
+        }
+      ]
+    },
+    {
+      "id": "dp-sign-key",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "任意 key 收尾的签收结论（四部材料 + 三数组，按 key 计算）",
+      "kind": "fixed",
+      "role_scope": "pm",
+      "candidate_source": "static-enum",
+      "candidate_bounds": null,
+      "target_entries": [],
+      "questions_version": "q-134a64cd",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "unwired",
+      "executor": "wired",
+      "required_state_fields": [
+        {
+          "name": "delivery_goal",
+          "type": "string",
+          "description": "Delivery goal including the user's acceptance conditions."
+        },
+        {
+          "name": "actual_completion",
+          "type": "string",
+          "description": "What was actually completed against the delivery goal."
+        },
+        {
+          "name": "verification_evidence.verified",
+          "type": "array",
+          "description": "Verification evidence that was actually verified; [] when there is none.",
+          "item_type": "string",
+          "empty_is_value": true
+        },
+        {
+          "name": "verification_evidence.unverified",
+          "type": "array",
+          "description": "Evidence that is not verified (or was not run); [] means a verified none, never a missing fact.",
+          "item_type": "string",
+          "empty_is_value": true
+        },
+        {
+          "name": "unfinished_impact",
+          "type": "array",
+          "description": "Unfinished items and their impact; [] means nothing is unfinished, never a missing fact.",
+          "item_type": "string",
+          "empty_is_value": true
+        }
+      ],
+      "optional_state_fields": [],
+      "model_state_fields": [
+        "delivery_goal",
+        "actual_completion",
+        "verification_evidence.verified",
+        "verification_evidence.unverified",
+        "unfinished_impact"
+      ],
+      "questions": [
+        {
+          "id": "q-conclusion",
+          "type": "choice",
+          "instructions": "按交付目标、实际完成与验证证据判断：这次交付可以收尾，还是需要继续完成，或交用户确认？不以任务数量或完成声明代替证据。",
+          "choices": [
+            "finalize",
+            "continue",
+            "user-confirm"
+          ],
+          "labels": {
+            "finalize": "可以收尾：按交付目标与验收条件直接签收",
+            "continue": "继续完成：交 PM 推进未完成的缺口",
+            "user-confirm": "交用户确认：由 PM 提出具体待确认项"
+          }
+        }
+      ]
+    },
+    {
+      "id": "dp-auto",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "PM 现场动态行动选择（候选由 PM 准备，仅从候选集合选择）",
+      "kind": "dynamic-candidates",
+      "role_scope": "pm",
+      "candidate_source": "pm-supplied:handling_options",
+      "candidate_bounds": {
+        "min": 2,
+        "max": null,
+        "id_scheme": "free"
+      },
+      "target_entries": [],
+      "questions_version": "q-21d2d577",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "unwired",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "question",
+          "type": "string",
+          "description": "The pending question verbatim (what exactly needs a decision), written before any answer."
+        },
+        {
+          "name": "background.task_goal",
+          "type": "string",
+          "description": "Task goal the question is asked against."
+        },
+        {
+          "name": "background.current_state",
+          "type": "string",
+          "description": "What is actually known so far; unknowns are marked unknown, never invented."
+        },
+        {
+          "name": "background.tried",
+          "type": "string",
+          "description": "What has already been tried for this live problem, factually."
+        },
+        {
+          "name": "background.unknowns",
+          "type": "string",
+          "description": "The facts still unknown; never filled in by inference."
+        },
+        {
+          "name": "background.constraints",
+          "type": "string",
+          "description": "The authorization/budget/role constraints that bound every candidate."
+        },
+        {
+          "name": "handling_options",
+          "type": "array",
+          "description": "PM-prepared, problem-specific action candidates [{id,label,description,consequence,risk,conditions}]; ids only need to be unique in this request (no legacy cN/2..5 bound).",
+          "max_items": 32,
+          "item_type": "object"
+        }
+      ],
+      "optional_state_fields": [],
+      "model_state_fields": [
+        "question",
+        "background.task_goal",
+        "background.current_state",
+        "background.tried",
+        "background.unknowns",
+        "background.constraints",
+        "handling_options"
+      ],
+      "questions": [
+        {
+          "id": "handling",
+          "type": "choice",
+          "instructions": "从 PM 已准备的候选处理方式中选出最合适的一项；不得提出未准备的方案，也不得以失败原因或概率代替依据。",
+          "dynamic_choices": "handling_options"
+        }
+      ]
+    },
+    {
+      "id": "dp-route",
+      "tier": "P2",
+      "default_enabled": true,
+      "default_mode": "auto",
+      "description": "独立业务入口路由（只选其余七个入口，不携带业务结论）",
+      "kind": "route-targets",
+      "role_scope": "pm",
+      "candidate_source": "entry-targets",
+      "candidate_bounds": null,
+      "target_entries": [
+        "dp-w-type",
+        "dp-pm-steer",
+        "dp-w-check-task",
+        "dp-QG",
+        "dp-gate-approve",
+        "dp-sign-key",
+        "dp-auto"
+      ],
+      "questions_version": "q-605c6874",
+      "p0_consequences": null,
+      "wired": false,
+      "trigger": null,
+      "adopted_at": null,
+      "wiring_note": "unwired",
+      "executor": "unwired",
+      "required_state_fields": [
+        {
+          "name": "decision_actor",
+          "type": "string",
+          "description": "The real business subject whose decision is needed (not a self-reported role claim).",
+          "max_bytes": 512
+        },
+        {
+          "name": "decision_object",
+          "type": "string",
+          "description": "The concrete object/artefact the pending question is about.",
+          "max_bytes": 512
+        },
+        {
+          "name": "question",
+          "type": "string",
+          "description": "The pending question verbatim (what exactly needs a decision), written before any answer."
+        }
+      ],
+      "optional_state_fields": [],
+      "model_state_fields": [
+        "decision_actor",
+        "decision_object",
+        "question"
+      ],
+      "questions": [
+        {
+          "id": "entry",
+          "type": "choice",
+          "instructions": "这个临时问题应进入哪一个决策入口？只选择入口；该入口的业务结论与动作仍需按它的合同另发一次决策。",
+          "choices": [
+            "dp-w-type",
+            "dp-pm-steer",
+            "dp-w-check-task",
+            "dp-QG",
+            "dp-gate-approve",
+            "dp-sign-key",
+            "dp-auto"
+          ],
+          "labels": {
+            "dp-w-type": "派发类型选择",
+            "dp-pm-steer": "PM 任务编排",
+            "dp-w-check-task": "Worker 本次任务可达性",
+            "dp-QG": "正式质量审核",
+            "dp-gate-approve": "具体 gate 审批",
+            "dp-sign-key": "key 交付签收",
+            "dp-auto": "PM 现场动态行动选择"
+          }
+        }
+      ]
+    }
+  ],
+  "retired": [
+    {
+      "id": "dp1-dispatch-type",
+      "tier": "P2",
+      "description": "派发 type/角色/范围",
+      "disposition": "migrated",
+      "migrated_to": "dp-w-type",
+      "note": "职责迁至 dp-w-type（含 vision 候选）；旧编号只读解释，不是可调用别名。"
+    },
+    {
+      "id": "dp2-checkpoint-split",
+      "tier": "P2",
+      "description": "checkpoint 拆/收/直执",
+      "disposition": "migrated",
+      "migrated_to": "dp-pm-steer",
+      "note": "职责迁至 dp-pm-steer；四项 ID 与不降目标语义保留。"
+    },
+    {
+      "id": "dp3-worker-clarify",
+      "tier": "P2",
+      "description": "worker 澄清（问题原文 + 四项背景 + 针对问题的处理候选）",
+      "disposition": "migrated",
+      "migrated_to": "dp-w-check-task",
+      "note": "职责迁至 dp-w-check-task；旧动态 2..5/cN 候选不迁移。"
+    },
+    {
+      "id": "dp4-failure-handling",
+      "tier": "P1",
+      "description": "失败处置",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；失败事实与处置规则仍由既有框架硬检查保留。"
+    },
+    {
+      "id": "dp5-test-triage",
+      "tier": "P2",
+      "description": "测试失败归类",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；测试基线/回归分类仍由既有测试流程与硬检查保留。"
+    },
+    {
+      "id": "dp6-qg-verdict",
+      "tier": "P1",
+      "description": "QG 结论处置",
+      "disposition": "migrated",
+      "migrated_to": "dp-QG",
+      "note": "职责迁至 dp-QG；pass/fix/reopen 为正式审核结论。"
+    },
+    {
+      "id": "dp7-gate-failure",
+      "tier": "P2",
+      "description": "相位门禁失败",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "相位门失败后的 PM 处置交 dp-auto（职责吸收，不是别名）；原门禁判据不重写。"
+    },
+    {
+      "id": "dp8-scope-change",
+      "tier": "P0",
+      "description": "变更范围",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；写面/范围硬检查与授权边界不因退役放宽。"
+    },
+    {
+      "id": "dp9-model-select",
+      "tier": "P2",
+      "description": "模型/降级选择",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；模型/降级仍由既有配置与能力检查约束。"
+    },
+    {
+      "id": "dp10-dependency",
+      "tier": "P1",
+      "description": "依赖升级",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；依赖变更仍走既有评审与 lockfile 规则。"
+    },
+    {
+      "id": "dp11-credential",
+      "tier": "P0",
+      "description": "凭据/权限",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；凭证隔离与权限硬检查不删、不放宽。"
+    },
+    {
+      "id": "dp12-destructive",
+      "tier": "P0",
+      "description": "破坏性操作",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；破坏性操作的人工确认与备份规则仍然生效。"
+    },
+    {
+      "id": "dp13-commit-release",
+      "tier": "P0",
+      "description": "提交(P1) / 发布+版本号(P0)",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；提交/发布仍按发布流程与人工授权执行。"
+    },
+    {
+      "id": "dp14-rule-conflict",
+      "tier": "P0",
+      "description": "用户指令 vs 规则",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；规则冲突仍须用户明确确认，不自动越权。"
+    },
+    {
+      "id": "dp15-autopilot-gate",
+      "tier": "P0",
+      "description": "6 类人工门",
+      "disposition": "migrated",
+      "migrated_to": "dp-gate-approve",
+      "note": "职责迁至 dp-gate-approve 四选项；PM note 与模型依据分别保存。"
+    },
+    {
+      "id": "dp16-goal",
+      "tier": "P0",
+      "description": "goal 确立/变更",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；goal 采用仍按 H06 授权规则，不由退役别名放行。"
+    },
+    {
+      "id": "dp17-spec-lock",
+      "tier": "P1",
+      "description": "spec/AC 锁定",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；AC/VC 冻结与受控变更规则不因退役消失。"
+    },
+    {
+      "id": "dp18-claim",
+      "tier": "P1",
+      "description": "key 抢占冲突",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；claim/独占写面检查仍是硬门。"
+    },
+    {
+      "id": "dp19-foreign-write",
+      "tier": "P0",
+      "description": "越面写预授权",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；越面写仍需明确授权与写面协调。"
+    },
+    {
+      "id": "dp20-stage-close",
+      "tier": "P0",
+      "description": "stage 闭环",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "阶段关闭 gate 审批由 dp-gate-approve 承接（职责吸收，不是别名）。"
+    },
+    {
+      "id": "dp21-refine",
+      "tier": "P2",
+      "description": "project-refine 升级",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；refine 流程如需裁决走现场准备的 dp-auto。"
+    },
+    {
+      "id": "dp22-debug-plan",
+      "tier": "P2",
+      "description": "debug 方案确认",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；debug 流程仍按既有系统性调试规则执行。"
+    },
+    {
+      "id": "dp23-snapshot",
+      "tier": "P2",
+      "description": "memory 快照",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；快照写入仍按既有记忆流程处理。"
+    },
+    {
+      "id": "dp24-pi-trust",
+      "tier": "P0",
+      "description": "pi core 交互",
+      "disposition": "retired",
+      "migrated_to": null,
+      "note": "独立 DP 职责退出；pi 信任边界与核心禁止面不变。"
+    },
+    {
+      "id": "dp25-signoff-conclusion",
+      "tier": "P2",
+      "description": "任意 key 收尾的签收结论（按 key 计算，替代人签）",
+      "disposition": "migrated",
+      "migrated_to": "dp-sign-key",
+      "note": "职责迁至 dp-sign-key；四部材料与三数组契约原样保留。"
+    }
+  ]
+}

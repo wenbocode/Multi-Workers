@@ -1,0 +1,14 @@
+{
+  "name": "guard-preflight",
+  "argv": [
+    "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+    "-B",
+    "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\pm-controlled\\guard_preflight.py"
+  ],
+  "cwd": "C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\dpc-t10-pm-verify-20261027\\pm-verification\\t10-r2-red-controls-20261028T064853Z\\project",
+  "rc": 0,
+  "started": "2026-10-28T06:48:53.934275+00:00",
+  "ended": "2026-10-28T06:48:54.232960+00:00",
+  "stdout_bytes": 1388,
+  "stderr_bytes": 0
+}

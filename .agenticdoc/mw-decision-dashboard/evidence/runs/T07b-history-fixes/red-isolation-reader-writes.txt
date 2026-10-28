@@ -1,0 +1,73 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+_______________ test_history_read_never_writes_or_creates_paths _______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18366/test_history_read_never_writes0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D9D3E5CFC0>
+
+    def test_history_read_never_writes_or_creates_paths(tmp_path, monkeypatch):
+        root = _root(tmp_path)
+        decision_id = _add_decision(root, key="mw-alpha")
+        _add_call(root, decision_id=decision_id)
+        _add_lifecycle(root, lifecycle="adopted", decision_id=decision_id, target=decision_id)
+        _add_gate(root, gate_id="gate-0001", key="mw-alpha")
+        test_root = tmp_path / "test"
+        test_root.mkdir()
+        _add_submission(root, test_root)
+    
+        def inventory() -> dict[str, str]:
+            found: dict[str, str] = {}
+            for path in sorted(root.rglob("*")):
+                if path.is_file():
+                    found[path.relative_to(root).as_posix()] = hashlib.sha256(
+                        path.read_bytes()
+                    ).hexdigest()
+            return found
+    
+        writes: list[str] = []
+        mkdirs: list[str] = []
+        original_open = pathlib.Path.open
+        original_mkdir = pathlib.Path.mkdir
+        watched = {root.resolve(), test_root.resolve()}
+    
+        def inside(path: pathlib.Path) -> bool:
+            try:
+                resolved = path.resolve()
+            except OSError:
+                return False
+            return any(resolved == item or item in resolved.parents for item in watched)
+    
+        def open_spy(self, mode="r", *args, **kwargs):
+            if any(flag in mode for flag in ("w", "a", "x", "+")) and inside(self):
+                writes.append(str(self))
+            return original_open(self, mode, *args, **kwargs)
+    
+        def mkdir_spy(self, *args, **kwargs):
+            if inside(self):
+                mkdirs.append(str(self))
+            return original_mkdir(self, *args, **kwargs)
+    
+        monkeypatch.setattr(pathlib.Path, "open", open_spy)
+        monkeypatch.setattr(pathlib.Path, "mkdir", mkdir_spy)
+        before = inventory()
+        snapshot = _snapshot(root, test_roots=[test_root])
+        second = _snapshot(root, test_roots=[test_root])
+        for record in snapshot.records:
+            record.as_dict(detail=True)
+        snapshot.page(limit=1)
+        snapshot.detail(snapshot.records[0].opaque_id)
+        after = inventory()
+    
+>       assert after == before, "a history read must not move any carrier byte"
+E       AssertionError: a history read must not move any carrier byte
+E       assert {'.agenticdoc...29d68eb', ...} == {'.agenticdoc...aa08d29d68eb'}
+E         
+E         Omitting 4 identical items, use -vv to show
+E         Left contains 1 more item:
+E         {'.agenticdoc/_autopilot/history-probe.txt': 'ba9c736f19e7f60b7f6764adb0b7908c0a2b394e09b6c09863528c7f2bc86095'}
+E         Use -v to get more diff
+
+test_decision_history.py:1433: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_history.py::test_history_read_never_writes_or_creates_paths
+1 failed in 0.26s

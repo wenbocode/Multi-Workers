@@ -1,0 +1,12 @@
+# cmd: npm.cmd run check:pinned-deps
+# cwd: .
+# started: 2026-10-22T06:50:28Z
+# elapsed_s: 0.5
+
+
+> pi-monorepo@0.0.3 check:pinned-deps
+> node scripts/check-pinned-deps.mjs
+
+
+
+EXIT_check-pinned-deps=0

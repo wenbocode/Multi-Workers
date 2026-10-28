@@ -1,0 +1,224 @@
+# 决策闭环设计：prepare → decide → apply
+
+> 面向不了解系统的读者：工作流遇到决策分支时，怎样把判断交给 decision model，又不让它越权。
+>
+> 依据最新收敛设计 `mw-dp-consolidation`（设计已批准，代码迁移进行中）。配套阅读：[三层循环](./agent-loop-autopilot-decide.md) · [三层机制图解](./mw-agentictask-autopilot-layered.md)
+
+## 一句话
+
+**工作流提出问题并执行动作，decide 只做机械校验和收发，decision model 只在给定选项里选择。** 三者分开，执行权始终在调用方。
+
+---
+
+## 图 0：闭环总览
+
+![00 决策闭环总览](diagrams/decision-loop/00-decision-loop.png)
+
+| 段 | 谁来做 | 产出 | 不做什么 |
+| --- | --- | --- | --- |
+| **prepare** | 调用方（PM 或 Worker），LLM + 程序 | 决策本：材料、选项、依据清单 | 不预设答案 |
+| **decide** | 程序，机械校验 | 合法选择，或阻塞原因 | 不执行任何业务动作 |
+| **apply** | 调用方，LLM + 程序 | 实际执行结果、新状态 | 不把「收到答案」当「已完成」 |
+
+---
+
+## 图 1：入口在哪 —— 8 个决策入口
+
+决策分支不是随处可问，而是落在 8 个按职责命名的入口上。固定节点直接调用，临时问题先经 `dp-route` 选入口：
+
+![01 图 1：入口在哪 —— 8 个决策入口](diagrams/decision-loop/01-flow-01.png)
+
+<details>
+<summary>mermaid 源码</summary>
+
+```mermaid
+graph TD
+    Q["遇到决策分支"] --> F{"是固定业务节点?"}
+    F -->|"是"| FIX["直接调用对应入口"]
+    F -->|"否"| SPLIT["PM 拆清主体 对象 问题"]
+    SPLIT --> RT["dp-route<br/>在七个入口中选一个"]
+    RT --> FIX
+    FIX --> E1["dp-w-type 派发类型"]
+    FIX --> E2["dp-pm-steer 任务编排"]
+    FIX --> E3["dp-w-check-task Worker 自查"]
+    FIX --> E4["dp-QG 质量审核"]
+    FIX --> E5["dp-gate-approve gate 审批"]
+    FIX --> E6["dp-sign-key key 签收"]
+    FIX --> E7["dp-auto 现场动态行动"]
+
+    style RT fill:#E1F5EE,stroke:#0F6E56
+    style E7 fill:#E1F5EE,stroke:#0F6E56
+    style E1 fill:#E6F1FB,stroke:#185FA5
+    style E2 fill:#E6F1FB,stroke:#185FA5
+    style E3 fill:#E6F1FB,stroke:#185FA5
+    style E4 fill:#E6F1FB,stroke:#185FA5
+    style E5 fill:#E6F1FB,stroke:#185FA5
+    style E6 fill:#E6F1FB,stroke:#185FA5
+```
+
+</details>
+
+| 规则 | 含义 |
+| --- | --- |
+| 固定入口选项固定 | 每个入口有自己的静态选项，如 gate 是 approve / steer / need_fix / reject |
+| dp-auto 选项现场准备 | PM 按具体问题准备候选，模型只能从中选，不能临时造方案 |
+| 路由不授权 | dp-route 只选入口，不改变谁能发起，也不代表业务结论 |
+| 旧编号全部拒绝 | dp1..dp25 只读历史，没有可调用别名 |
+
+---
+
+## 图 2：prepare —— 决策本里装什么
+
+决策本把「这一次凭什么问」固定下来。四类内容分层存放，互不混用：
+
+![02 图 2：prepare —— 决策本里装什么](diagrams/decision-loop/02-prepare.png)
+
+<details>
+<summary>mermaid 源码</summary>
+
+```mermaid
+graph LR
+    subgraph BOOK["决策本"]
+        M["业务材料<br/>目标 事实 约束 证据"]
+        O["选项<br/>固定枚举 或 现场候选"]
+        B["依据清单<br/>id 文本 材料引用 适用选项"]
+        N["PM 送审前 note<br/>事项 动作 依据"]
+    end
+    L["本地身份<br/>key task 角色 关联 id"]
+
+    M --> SEND["发给模型"]
+    O --> SEND
+    B --> SEND
+    N -.->|"单独保存"| KEEP["不进模型理由"]
+    L -.->|"只留本地"| KEEP
+
+    style M fill:#E1F5EE,stroke:#0F6E56
+    style O fill:#E1F5EE,stroke:#0F6E56
+    style B fill:#E1F5EE,stroke:#0F6E56
+    style N fill:#F1EFE8,stroke:#888780
+    style L fill:#F1EFE8,stroke:#888780
+```
+
+</details>
+
+- **本地身份不发给模型**：角色来自真实进程绑定，不能从材料字段自报。
+- **依据清单必须完整**：每条依据要有材料引用和适用选项；不完整就不发请求，不截断凑数。
+- **note 与理由分开**：PM 的送审说明和模型选出的理由来源不同，分别保存。
+
+---
+
+## 图 3：decide —— 四道机械检查
+
+decide 按固定顺序检查，任何一道不过都直接阻塞，不调用模型：
+
+![03 图 3：decide —— 四道机械检查](diagrams/decision-loop/03-decide.png)
+
+<details>
+<summary>mermaid 源码</summary>
+
+```mermaid
+graph TD
+    A["入口是否在<br/>8 个活动名中"] -->|"是"| B["发起者角色<br/>是否有资格"]
+    B -->|"是"| C["材料 选项 依据<br/>是否完整合法"]
+    C -->|"是"| D["授权与预算<br/>是否允许"]
+    D -->|"是"| S["派发给模型"]
+    S --> R{"回答是否<br/>合法选项 + 合法依据"}
+    R -->|"是"| OK["交给 apply"]
+    A -->|"否"| X["阻塞并留原因"]
+    B -->|"否"| X
+    C -->|"否"| X
+    D -->|"否"| X
+    R -->|"否"| X
+
+    style A fill:#E6F1FB,stroke:#185FA5
+    style B fill:#E6F1FB,stroke:#185FA5
+    style C fill:#E6F1FB,stroke:#185FA5
+    style D fill:#E6F1FB,stroke:#185FA5
+    style R fill:#E6F1FB,stroke:#185FA5
+    style OK fill:#E1F5EE,stroke:#0F6E56
+    style X fill:#FAEEDA,stroke:#854F0B
+```
+
+</details>
+
+失败不变成「默认选第一个」，也不换通道重试。服务不可用、材料非法、回答不匹配，都是阻塞，而不是业务选项。
+
+---
+
+## 图 4：apply —— 答案、效果、结果三条轴
+
+收到答案只是开始。gate 类事项把状态拆成三条独立的轴，任何一条都不能从另一条推断：
+
+![04 图 4：apply —— 答案、效果、结果三条轴](diagrams/decision-loop/04-apply.png)
+
+<details>
+<summary>mermaid 源码</summary>
+
+```mermaid
+graph TD
+    T["传输轴<br/>pending · answered · failed"]
+    BZ["业务轴<br/>approve · steer · need_fix · reject"]
+    EF["效果轴<br/>not-started · in-progress · applied<br/>blocked · failed · unknown"]
+
+    T -->|"answered 不等于放行"| BZ
+    BZ -->|"approve 后执行前锁内重核"| EF
+    BZ -->|"steer 或 need_fix"| FU["PM 组织后续请求<br/>本事项不放行"]
+    EF -->|"崩溃或未知"| CK["对账实际对象<br/>不盲目重试"]
+
+    style T fill:#E6F1FB,stroke:#185FA5
+    style BZ fill:#E1F5EE,stroke:#0F6E56
+    style EF fill:#E1F5EE,stroke:#0F6E56
+    style FU fill:#F1EFE8,stroke:#888780
+    style CK fill:#FAEEDA,stroke:#854F0B
+```
+
+</details>
+
+- **执行前重核**：目标、授权、证据有实质变化，旧批准失效；纯排版变化不触发重审。
+- **后续意图落文件**：PM 准备好的后续请求保存为文件，窗口重启后可以恢复，但不替代真实调用记录。
+- **签收只看 finalize**：key 签收只有 finalize 写签收文件；continue / user-confirm 只给出缺口或问题。
+
+---
+
+## 图 5：人在哪里
+
+![05 图 5：人在哪里](diagrams/decision-loop/05-flow-05.png)
+
+<details>
+<summary>mermaid 源码</summary>
+
+```mermaid
+graph LR
+    H["人"] -->|"写授权"| P["只读授权文件<br/>机器不能改"]
+    P --> D["decide 授权检查"]
+    BR["自动熔断"] -->|"被熔断链路"| NO["不能自批解锁"]
+    H -->|"受控恢复请求"| ISO["隔离恢复通道<br/>预授权 原因消除 机器检查"]
+    ISO --> D
+
+    style H fill:#F1EFE8,stroke:#888780
+    style P fill:#E6F1FB,stroke:#185FA5
+    style ISO fill:#E6F1FB,stroke:#185FA5
+    style NO fill:#FAEEDA,stroke:#854F0B
+```
+
+</details>
+
+机器可以在授权范围内自动推进，但不能给自己扩权。人工停止、撤权之后，必须有新的明确恢复授权。
+
+---
+
+## 解决了什么问题
+
+| 问题 | 设计手段 | 所在段 |
+| --- | --- | --- |
+| 不知道该问谁、旧入口误调用 | 8 个职责入口，旧编号全部拒绝 | 入口 |
+| 模型凭空猜背景 | 决策本固定材料与来源 | prepare |
+| 答案没法核对 | 只有选择题，依据必须引用材料 | prepare / decide |
+| 模型答案直接变成动作 | decide 不执行，apply 前重核 | decide / apply |
+| 失败被悄悄当成默认值 | 失败即阻塞，原因留痕 | decide |
+| 「已回答」被当成「已完成」 | 传输、业务、效果三轴分开 | apply |
+| 自动化给自己扩权 | 只读授权，熔断恢复隔离 | 全程 |
+
+---
+
+*本文基于 `mw-dp-consolidation` 已批准设计整理；字段与接口名为设计候选，实际实现以仓库当前版本为准。*

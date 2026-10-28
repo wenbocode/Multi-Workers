@@ -1,0 +1,43 @@
+--- packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts.t22-before
++++ packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts
+@@ -61,6 +61,7 @@
+ import * as path from "node:path";
+ import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.ts";
+ import { findMwPy, PYTHON_EXE } from "../shared/mw-runner.ts";
++import { copyTaskState, isTaskStateSnapshot, type TaskStateSnapshot } from "./decision-task-state.ts";
+ 
+ /** Hard client-side wall-clock budget for one `mw decide run` child (D-006). */
+ export const DEFAULT_TRIAGE_TIMEOUT_MS = 20_000;
+@@ -108,6 +109,7 @@
+ 	initiator_role: DecisionInitiatorRole;
+ 	/** Set only when this decision retries another (new id,指前次). */
+ 	retry_of: string | null;
++	task_before?: TaskStateSnapshot;
+ }
+ 
+ /** The stdin payload for `mw decide run <dp> --stdin` (four-DP contract). */
+@@ -137,6 +139,7 @@
+ 	taskKey?: string | null;
+ 	initiatorRole?: DecisionInitiatorRole;
+ 	retryOf?: string | null;
++	taskBefore?: TaskStateSnapshot;
+ }): DecisionEnvelopeMeta {
+ 	return {
+ 		record_version: DECISION_RECORD_VERSION,
+@@ -145,6 +148,7 @@
+ 		task_key: input.taskKey === undefined || input.taskKey === null ? null : input.taskKey.trim(),
+ 		initiator_role: input.initiatorRole ?? "unknown",
+ 		retry_of: input.retryOf ?? null,
++		...(input.taskBefore === undefined ? {} : { task_before: copyTaskState(input.taskBefore) }),
+ 	};
+ }
+ /** Effective `.mw/decide.json` policy relevant to the dispatch path. */
+@@ -886,6 +890,8 @@
+ 	if (meta.retry_of !== null && (typeof meta.retry_of !== "string" || !UUID_PATTERN.test(meta.retry_of))) {
+ 		problems.push("retry_of");
+ 	}
++	if (meta.task_before !== undefined && (meta.task_key === null || !isTaskStateSnapshot(meta.task_before)))
++		problems.push("task_before");
+ 	return problems;
+ }
+ 

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "authority_ref": "grant-dpc-t07",
+  "scope": [
+    "key:dpc-t07",
+    "action:gate-approve"
+  ],
+  "hard_limits": [
+    {
+      "unit": "worker_timeout_min",
+      "limit": 30,
+      "usage_source": "config"
+    }
+  ],
+  "soft_round_extension": {
+    "allowed": true,
+    "scope": [
+      "extension:soft-round"
+    ],
+    "authority_ref": "grant-soft-round"
+  },
+  "recovery": {
+    "allowed_origins": [
+      "pm-controlled"
+    ],
+    "scope": [
+      "recovery:halted",
+      "recovery:breaker"
+    ],
+    "authority_ref": "grant-recovery",
+    "observation_conditions": [
+      "same-failure-reappears"
+    ],
+    "stop_conditions": [
+      "recovery-reason-reappears"
+    ]
+  }
+}

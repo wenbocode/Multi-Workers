@@ -1,0 +1,36 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+______ test_dp_level_authority_change_reaches_every_decision_of_the_key _______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18364/test_dp_level_authority_change0')
+
+    def test_dp_level_authority_change_reaches_every_decision_of_the_key(tmp_path):
+        root = _root(tmp_path)
+        first = _add_decision(root, key="mw-both", trigger="b1", now="2026-10-22T10:00:00+00:00")
+        second = _add_decision(root, key="mw-both", trigger="b2", now="2026-10-22T10:01:00+00:00")
+        decide_archive.append_authority_change(
+            _archive_path(root),
+            dp="dp1-dispatch-type",
+            key="mw-both",
+            by="signoff:continue",
+            change="p0 confirmed",
+            conclusion="continue",
+        )
+    
+        snapshot = _snapshot(root, redact=REDACTOR)
+        records = _by_decision(snapshot)
+    
+        for decision_id in (first, second):
+            stage = records[decision_id].stages["authority_change"]
+>           assert stage.state == "recorded", decision_id
+E           AssertionError: dp1-dispatch-type:b1
+E           assert 'not-recorded' == 'recorded'
+E             
+E             - recorded
+E             + not-recorded
+E             ? ++++
+
+test_decision_history.py:1645: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_history.py::test_dp_level_authority_change_reaches_every_decision_of_the_key
+1 failed in 0.24s

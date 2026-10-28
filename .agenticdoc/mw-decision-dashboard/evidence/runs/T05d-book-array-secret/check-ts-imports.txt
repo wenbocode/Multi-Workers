@@ -1,0 +1,12 @@
+# cmd: npm.cmd run check:ts-imports
+# cwd: .
+# started: 2026-10-22T06:50:28Z
+# elapsed_s: 1.6
+
+
+> pi-monorepo@0.0.3 check:ts-imports
+> node scripts/check-ts-relative-imports.mjs
+
+
+
+EXIT_check-ts-imports=0

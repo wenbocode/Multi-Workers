@@ -1,0 +1,40 @@
+{
+  "freeze": {
+    "discoveries_for_first_unit": 1,
+    "frozen_leg_count": 1,
+    "set_unchanged_after_rotation": true,
+    "gate_covers_cfg_value": true,
+    "gate_covers_frozen_leg": true
+  },
+  "refresh": {
+    "discoveries_after_second_unit": 2,
+    "second_unit_covers_rotated": true,
+    "first_unit_still_covers_its_own": true
+  },
+  "bare_production_scope": {
+    "cold_available": true,
+    "cold_capture_stores_frozen_leg_raw": true,
+    "cold_rows": 3,
+    "warm_available": true,
+    "warm_capture_stores_frozen_leg_raw": false,
+    "warm_capture_stores_sent_value_raw": false
+  },
+  "caller_coverage": {
+    "known_values": 2,
+    "partial_coverage_refused": true,
+    "partial_message_names_no_value": true,
+    "full_coverage_accepted": true
+  },
+  "fail_closed": {
+    "snapshot_error": "credential discovery raised RuntimeError",
+    "decision_status": "escalated",
+    "decision_reason": "unavailable",
+    "decision_posts": 0,
+    "snapshot_rows": 0,
+    "attempt_rows": 0,
+    "detail_names_no_value": true,
+    "detail_hides_exception_message": true,
+    "client_reason": "entry-unavailable",
+    "client_attempts": 0
+  }
+}

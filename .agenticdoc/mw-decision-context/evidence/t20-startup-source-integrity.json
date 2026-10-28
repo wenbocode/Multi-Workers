@@ -1,0 +1,24 @@
+{
+  "decision_monitor.py": {
+    "baseline_sha256": "897161c88a2840c4c9a5a9628999359c391a029d5f59fce8c35573568b8f4c37",
+    "current_sha256": "60f2de703ecc43d0c16d9fa197b36f69212985e728579ab0756e048e167fd046",
+    "before_bytes": 123526,
+    "after_bytes": 124534,
+    "before_crlf": 0,
+    "after_crlf": 0,
+    "unchanged_outside_intro_deps_factory_start": true,
+    "http_body_rejection_region_byte_exact": true
+  },
+  "test_decision_dashboard_playground.py": {
+    "baseline_sha256": "9d9103ea4feecdd0747d0255d784738a18be9affa94ea9e1330ed713240c4e11",
+    "current_sha256": "a100ae6aaa30472b0c5952e56f026dc0319b407b194c088d8c56defd775504ad",
+    "before_bytes": 73984,
+    "after_bytes": 74244,
+    "before_crlf": 0,
+    "after_crlf": 0,
+    "unchanged_outside_intro_socket_import_default_path_test": true
+  },
+  "test_decision_monitor_history_redactor.py": {
+    "new_file_sha256": "d4f2213ab25256c23fbfc5d7ff03e32f5276ca9413d9eb9db2f898aea284e789"
+  }
+}

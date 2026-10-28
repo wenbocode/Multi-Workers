@@ -1,0 +1,326 @@
+diff --git "a/H:/git/Multi-Workers/.agenticdoc/mw-decision-dashboard/evidence/runs/T07c-structural-output-safety\\baseline\\test_decision_history.py.before" b/packages/multi-workers/test_decision_history.py
+index 730511d31..773e1b8b4 100644
+--- "a/H:/git/Multi-Workers/.agenticdoc/mw-decision-dashboard/evidence/runs/T07c-structural-output-safety\\baseline\\test_decision_history.py.before"
++++ b/packages/multi-workers/test_decision_history.py
+@@ -1651,3 +1651,321 @@ def test_dp_level_authority_change_reaches_every_decision_of_the_key(tmp_path):
+     ]
+     assert len(authority_records) == 1
+     assert authority_records[0].key == "mw-both"
++
++
++# ---------------------------------------------------------------------------
++# 21. output surface: a legal shape is not a known-secret exemption (T07c)
++# ---------------------------------------------------------------------------
++#
++# AC-005/design section 9 covers *every* string the reader emits, not only the fields
++# the schema calls free text. ``SECRET`` below is a legal token / key /
++# identity / decision-id shape, so every structural schema (``token``, ``key``,
++# ``identity``, ``decision_id``, ``relpath``) accepts it verbatim. A value that
++# the injected known-secret redactor recognises must still not be echoed: the
++# reader omits it (``None``/dropped key + ``redaction.structural_withheld`` +
++# the ``structural-secret-withheld`` flag) instead of emitting a placeholder
++# that a consumer could mistake for a real id. Internal joins, opaque ids and
++# the page filters keep using the *raw* value, so omission is output-only.
++
++
++def _by_identity(snapshot: history.HistorySnapshot) -> dict[str, history.HistoryRecord]:
++    return {record.identity: record for record in snapshot.records}
++
++
++def _structural_fixture(
++    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
++) -> tuple[pathlib.Path, str, str, str]:
++    """The credential in structural fields, nested keys, captures and labels.
++
++    The wire rows are written with a redactor that does *not* know the secret
++    (a read-side known-secret set is allowed to be wider than the write-side
++    one), so the stored capture text really holds it.
++    """
++    root = _root(tmp_path)
++    shaped = _add_decision(
++        root,
++        key=SECRET,
++        task_key=SECRET,
++        trigger="a1",
++        model=SECRET,
++        transport=SECRET,
++        answer={SECRET: {"value": "x", "confidence": 0.5}},
++        now="2026-10-22T10:00:00+00:00",
++    )
++    unreachable = f"dp2-checkpoint-split:{SECRET}"
++    # A legacy/foreign decide row: the writer refuses these shapes today, so the
++    # reader's *own* closed schema is exercised on its documented token/identity
++    # shapes (reason/escalated_reason are ``token``, policy is an echo mapping).
++    raw_row = {
++        "seq": 99,
++        "prev_sha": "0" * 16,
++        "kind": "decide",
++        "decision_id": unreachable,
++        "ts": "2026-10-22T10:01:00+00:00",
++        "dp": "dp2-checkpoint-split",
++        "key": "mw-reason",
++        "task_key": SECRET,
++        "state_digest": "0" * 16,
++        "questions_version": "q-1234abcd",
++        "available": False,
++        "reason": SECRET,
++        "answer": None,
++        "authority": "human",
++        "escalated_reason": SECRET,
++        "acted": False,
++        "actual_action": None,
++        "outcome": "pending",
++        "settled_by": None,
++        "evidence_ref": None,
++        "override_by": None,
++        "override_reason": None,
++        "ref_seq": None,
++        "by": None,
++        "change": None,
++        "conclusion": None,
++        "config_sha_after": None,
++        "evidence_line": None,
++        "mode": "auto",
++        "model": SECRET,
++        "transport": SECRET,
++        "attempts": 1,
++        "latency_ms": 4,
++        "confidence": None,
++        "confidence_source": None,
++        "cost_tokens": None,
++        "policy": {SECRET: 1, "safe_key": 2},
++        "note": None,
++    }
++    _append_raw(_archive_path(root), json.dumps(raw_row).encode("utf-8") + b"\n")
++    decide_archive.append_override(
++        _archive_path(root),
++        decision_id=shaped,
++        dp="dp1-dispatch-type",
++        key=SECRET,
++        override_by=f"human:{SECRET}",
++        override_reason=f"undo {SECRET}",
++    )
++    # human carriers under the credential-shaped key: the carrier path label
++    # itself carries the credential
++    _add_gate(root, gate_id="gate-0001", key=SECRET)
++    _add_signoff(root, SECRET, signed_via="cli", claim=f"claim {SECRET}", monkeypatch=monkeypatch)
++    # transport rows written by a redactor that does not know this value
++    foreign = wire.SubstringRedactor(("foreign-redactor-value",))
++    scope = _scope(root, decision_id=shaped, dp="dp1-dispatch-type", key=SECRET, redact=foreign)
++    call = wire.new_call()
++    wire.record_attempt_start(
++        scope,
++        call,
++        request=f'{{"state":"{SECRET}"}}'.encode(),
++        url_path=f"/v1/{SECRET}",
++        model=SECRET,
++    )
++    wire.record_attempt_end(
++        scope,
++        call,
++        response=f'{{"answers":{{"q-task":"{SECRET}"}}}}'.encode(),
++        latency_ms=5,
++        http_status=200,
++        content_type="application/json",
++        error_class=SECRET,
++        error_detail=f"boom {SECRET}",
++        usage={SECRET: 3, "input_tokens": 7},
++    )
++    wire.append_event(
++        scope,
++        wire.call_end_event(
++            scope,
++            call,
++            attempts=1,
++            latency_ms=9,
++            available=True,
++            reason=SECRET,
++            confidence_source=SECRET,
++            transport=SECRET,
++            model=SECRET,
++        ),
++    )
++    # a model-source record without human carriers: the derived provenance basis
++    # quotes transport/model, so it is the value-quoting basis channel
++    model_only = _add_decision(
++        root,
++        key="mw-model",
++        trigger="m1",
++        model=SECRET,
++        transport=SECRET,
++        now="2026-10-22T10:02:00+00:00",
++    )
++    return root, shaped, unreachable, model_only
++
++
++def test_structural_known_secret_is_omitted_from_output(tmp_path, monkeypatch):
++    root, shaped, unreachable, model_only = _structural_fixture(tmp_path, monkeypatch)
++
++    snapshot = _snapshot(root, redact=REDACTOR)
++
++    assert SECRET not in _all_payloads(snapshot), "no output string may echo the credential"
++    records = _by_identity(snapshot)
++    record = records["decision|" + shaped]
++    payload = record.as_dict(detail=True)
++    # structural fields with a legal shape are still not echoed
++    assert payload["key"] is None
++    assert payload["task_key"] is None
++    assert payload["model"]["value"] is None and payload["transport"]["value"] is None
++    assert payload["archive"]["model"] is None and payload["archive"]["transport"] is None
++    assert payload["archive"]["answer"] == {}, "a credential-shaped mapping key is dropped"
++    assert payload["archive_rows"][0]["override_by"] is None
++    # a basis quoting the value is replaced by a fixed mark, never the value
++    assert payload["source"]["value"] == "human"
++    assert payload["source"]["basis"] == ["archive.override", "signoff:signed_via=cli (declared)"]
++    assert payload["model"]["basis"] == ["archive.decide.model"]
++    model_payload = records["decision|" + model_only].as_dict(detail=True)
++    assert model_payload["source"]["value"] == "model"
++    assert model_payload["source"]["basis"] == ["<basis withheld: known secret>"]
++    assert model_payload["model"]["value"] is None
++    assert model_payload["transport"]["value"] is None
++    other_payload = records["decision|" + unreachable].as_dict(detail=True)
++    assert other_payload["decision_id"] is None, "a credential-shaped decision id is not a handle"
++    assert other_payload["dp"] == "dp2-checkpoint-split"
++    assert other_payload["task_key"] is None
++    assert other_payload["archive"]["reason"] is None
++    assert other_payload["archive"]["escalated_reason"] is None
++    assert other_payload["archive"]["policy"] == {"safe_key": 2}
++    assert other_payload["stages"]["suggested"]["detail"] is None
++    assert not any("escalated_reason=" in item for item in other_payload["source"]["basis"])
++    # honest marks: counted, labelled by field name only, flagged, explained
++    assert record.redaction.enabled is True
++    assert record.redaction.structural_withheld >= 4
++    assert "structural-secret-withheld" in record.flags
++    assert any("structural" in item for item in record.redaction.basis)
++    labels = " ".join(record.redaction.fields)
++    assert "archive.model" in labels and "archive.transport" in labels
++    assert SECRET not in labels
++    assert other_payload["redaction"]["structural_withheld"] >= 4
++
++
++def test_nested_capture_and_usage_copy_is_scrubbed(tmp_path, monkeypatch):
++    root, shaped, _unreachable, _model_only = _structural_fixture(tmp_path, monkeypatch)
++
++    snapshot = _snapshot(root, redact=REDACTOR)
++    record = _by_identity(snapshot)["decision|" + shaped]
++
++    assert SECRET not in _all_payloads(snapshot)
++    payload = record.as_dict(detail=True)
++    attempt = payload["calls"][0]["attempts"][0]
++    assert attempt["request"]["text"] is None, "a capture copy is output text too"
++    assert attempt["request"]["text_omitted"] is True
++    assert attempt["request"]["byte_exact"] is False, "an omitted copy is never byte-exact"
++    assert attempt["response"]["text"] is None
++    assert attempt["response"]["text_omitted"] is True
++    assert attempt["url_path"] is None
++    assert attempt["model"] is None
++    assert attempt["error_class"] is None
++    assert attempt["error_detail"] == "boom <redacted>", "free text keeps its placeholder"
++    assert attempt["usage"] == {"input_tokens": 7}, "a credential-shaped usage key is dropped"
++    call = payload["calls"][0]
++    assert call["reason"] is None and call["transport"] is None
++    assert call["model"] is None and call["confidence_source"] is None
++    # the counters themselves are still reported (only the key is not)
++    assert payload["usage"]["counters"] == {"input_tokens": 7}
++    # the fold itself is untouched: only the emitted copy was omitted
++    assert record.call_counts.logical_calls == 1
++    assert record.calls[0]["attempts"][0]["request"]["text"], "raw copies stay internal"
++
++
++def test_structural_omission_keeps_internal_joins_and_handles(tmp_path, monkeypatch):
++    root, shaped, _unreachable, _model_only = _structural_fixture(tmp_path, monkeypatch)
++
++    snapshot = _snapshot(root, redact=REDACTOR)
++    record = _by_identity(snapshot)["decision|" + shaped]
++    payload = record.as_dict(detail=True)
++
++    # internal joins ran on the raw value: the carriers were still read
++    assert record.signoff is not None, "the raw join happened"
++    assert record.key == SECRET, "internal fields are not rewritten"
++    assert payload["key"] is None
++    assert payload["signoff"]["key"] is None
++    assert payload["signoff"]["path"] is None, "a path label carrying the credential is omitted"
++    assert payload["signoff"]["conclusion"] == "continue"
++    assert [gate["id"] for gate in payload["gates"]] == ["gate-0001"]
++    assert payload["gates"][0]["key"] is None
++    assert payload["stages"]["signoff"]["state"] == "recorded"
++    assert payload["stages"]["human_override"]["state"] == "recorded"
++    # internal ids are not rewritten by the output policy
++    assert history.OPAQUE_ID_PATTERN.match(payload["opaque_id"])
++    assert payload["opaque_id"] == history.opaque_id_for(
++        record.project_id, record.scope, record.identity
++    )
++    assert snapshot.detail(record.opaque_id) is not None
++    # ...and the page filter still selects by the raw value
++    assert snapshot.page(key=SECRET).total == 1
++    assert snapshot.page(key=SECRET).records[0].opaque_id == record.opaque_id
++    # a placeholder is never a handle or a structural id
++    assert "<redacted>" not in str(payload["decision_id"])
++    assert "<redacted>" not in str(payload["opaque_id"])
++    assert snapshot.detail("<redacted>") is None
++
++
++def test_no_redactor_keeps_the_structural_contract(tmp_path, monkeypatch):
++    root, shaped, _unreachable, _model_only = _structural_fixture(tmp_path, monkeypatch)
++
++    snapshot = _snapshot(root)  # no injected known-secret set
++    record = _by_identity(snapshot)["decision|" + shaped]
++    other = _by_identity(snapshot)["decision|dp2-checkpoint-split:" + SECRET]
++
++    # the documented fail-closed mode: free text omitted, structural values keep
++    # their existing closed-shape contract (the reader never reads credentials
++    # itself, so it cannot know which values are secret)
++    assert record.redaction.enabled is False
++    assert record.redaction.structural_withheld == 0
++    assert "structural-secret-withheld" not in record.flags
++    assert record.key == SECRET
++    assert record.model.value == SECRET and record.transport.value == SECRET
++    assert other.decision_id == "dp2-checkpoint-split:" + SECRET
++    assert record.signoff["claim"] is None, "free text stays withheld"
++    payload = record.as_dict(detail=True)
++    assert payload["key"] == SECRET, "structural values keep their contract"
++    assert payload["redaction"]["structural_withheld"] == 0
++    assert "structural-secret-withheld" not in payload["flags"]
++    assert record.signoff["path"].endswith("evidence/review/sign-final.md")
++
++
++def test_secret_bearing_warning_is_not_echoed(tmp_path, monkeypatch):
++    root, _shaped, _unreachable, _model_only = _structural_fixture(tmp_path, monkeypatch)
++    # a sign-off file in another key dir that declares the credential as its key
++    stray = decide_signoff.signoff_path(root, "mw-alpha")
++    stray.parent.mkdir(parents=True, exist_ok=True)
++    stray.write_text(
++        f"conclusion: continue\nkey: {SECRET}\nsigned_via: cli\nclaim: x\n",
++        encoding="utf-8",
++        newline="\n",
++    )
++
++    snapshot = _snapshot(root, redact=REDACTOR)
++    joined = "\n".join(snapshot.warnings)
++
++    assert SECRET not in joined, "a warning never echoes the field value it reports"
++    assert "signoff" in joined, "the mismatch is still reported"
++    assert SECRET not in _all_payloads(snapshot)
++    assert any("signoff" in warning for warning in snapshot.warnings)
++
++
++def test_repeated_serialization_is_stable(tmp_path, monkeypatch):
++    root, shaped, _unreachable, _model_only = _structural_fixture(tmp_path, monkeypatch)
++
++    snapshot = _snapshot(root, redact=REDACTOR)
++    record = _by_identity(snapshot)["decision|" + shaped]
++    first = record.as_dict(detail=True)
++    second = record.as_dict(detail=True)
++    list_view = record.as_dict()
++
++    assert first == second, "the output policy must not accumulate across calls"
++    assert list_view == record.as_dict()
++    assert first["redaction"]["structural_withheld"] == record.redaction.structural_withheld
++    assert first["flags"] == second["flags"]
++    # a page render and a detail render agree on the same record
++    page_record = next(
++        item for item in snapshot.page(limit=50).records if item.opaque_id == record.opaque_id
++    )
++    assert page_record.as_dict()["redaction"]["structural_withheld"] == first["redaction"][
++        "structural_withheld"
++    ]

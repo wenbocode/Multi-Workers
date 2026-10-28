@@ -1,0 +1,126 @@
+{
+  "id": "T09",
+  "task_key": "dpc-t09-books",
+  "card": "tasks/isolated/T09-books.md",
+  "stage": 2,
+  "type": "coding",
+  "execution": "worker",
+  "deps": [
+    "T03",
+    "T04",
+    "T08"
+  ],
+  "ac_refs": [
+    "AC-002",
+    "AC-004",
+    "AC-007",
+    "AC-012",
+    "AC-014",
+    "AC-040",
+    "AC-042",
+    "AC-043",
+    "AC-051"
+  ],
+  "vc_refs": [
+    "VC-002",
+    "VC-004",
+    "VC-007",
+    "VC-012",
+    "VC-014",
+    "VC-040",
+    "VC-042",
+    "VC-043",
+    "VC-051"
+  ],
+  "product_write_face": [
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_book.py",
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_contract.py"
+  ],
+  "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books",
+  "commands": [
+    {
+      "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-p",
+        "no:cacheprovider",
+        "-q",
+        "test_decision_context_contract.py"
+      ],
+      "source_cwd": "packages/multi-workers"
+    }
+  ],
+  "goal": "book及stdin准备器采用八入口完整合同，material/meta/preparation分层，非法状态先拒绝。",
+  "requirements": "保持签收四部及三数组，basis独立完整必需，固定/动态验证引用单源。原独立26AC不抹除，旧合同输入仅历史/拒绝回归用途，不恢复旧调用。不能新增legacy questions逃避active gate；CLI及观察实链由后继任务验证。",
+  "status": "done",
+  "code_status": "原attempt完成；真实边界缺陷已派原面R2进行中",
+  "verification_status": "原PM109passed两次；独立17fixture13fail，四根因待R2修复复验",
+  "run_id": "dpc-t09-books@2026-10-27T08:45:30.551Z",
+  "started_at": "2026-10-27T08:45:30.551Z",
+  "ended_at": "2026-10-27T09:02:24.684Z",
+  "pid": 87640,
+  "exit": 0,
+  "acked": true,
+  "semantic_handoff_verified": false,
+  "original_attempt_semantic_handoff_verified": false,
+  "pm_absorption_evidence": "evidence/implementation/t09-pm-handoff-20261027/report.md",
+  "rework_attempt_r2": {
+    "task_key": "dpc-t09-books-r2",
+    "run_id": "dpc-t09-books-r2@2026-10-27T09:07:42.696Z",
+    "started_at": "2026-10-27T09:07:42.696Z",
+    "pid": 22708,
+    "status": "running",
+    "exit": null,
+    "ended_at": null,
+    "acked": false,
+    "card": "tasks/isolated/T09-books-r2.md",
+    "card_sha256": "f34bf2252bef66d990cc2c5b97a2c57402015eedcbc5ae6dd497ade2d46bf9bc",
+    "pre_dispatch_evidence": "evidence/implementation/t09-r2-pre-dispatch-20261027/check.json",
+    "write_face": [
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_book.py",
+      ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_contract.py",
+      ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t09-books/rework-r2/**"
+    ],
+    "semantic_handoff_verified": false
+  },
+  "dispatch_card_sha256": "b1c49e8a66ea44dc841bda5445cebc6e39a8fc69a9c133f6a975ebbfbc6d7b2b",
+  "dispatch_recorded_card_path_label": "tasks/T09-books.md",
+  "dispatch_write_face_verified": true,
+  "pre_dispatch_evidence": "evidence/implementation/t09-pre-dispatch-20261027/check.json",
+  "dispatch_evidence": "evidence/implementation/t09-dispatch-20261027.md",
+  "observation": {
+    "status": "done",
+    "observed_at": "2026-10-27T09:05:25.760274+00:00",
+    "source": "agent-report",
+    "previous_observation": {
+      "status": "running",
+      "observed_at": "2026-10-27T08:46:16.7832843Z",
+      "source": "agent-report",
+      "completed": null,
+      "remaining": null,
+      "blockers": null
+    },
+    "completed": [
+      "原终态吸收/acked",
+      "当前两after源码已全文读到EOF",
+      "PM两次109passed及范围字节/diff/history保护"
+    ],
+    "remaining": [
+      "原面R2关闭四根因/17边界fixture13fail",
+      "T05/T10后继尚未派发"
+    ],
+    "blockers": [
+      "stdin非对象抛TypeError/JSON字符串当文件加载",
+      "非法书报告as_dict缺ok KeyError",
+      "schema secret回显及float版本被接受"
+    ]
+  },
+  "source_product_write_face": [
+    "packages/multi-workers/decision_book.py",
+    "packages/multi-workers/test_decision_context_contract.py"
+  ],
+  "source_card": "tasks/T09-books.md",
+  "source_card_sha256": "30d0732782154d554d5e358f8b372f6377bb8c6eb5ad7d0fb743df8657e6c07e"
+}

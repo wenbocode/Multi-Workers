@@ -1,0 +1,14 @@
+{
+  "description": "no file + partition env and dual env both set: cross env (rule row 3)",
+  "env": {
+    "MW_PARTITION_PARENT": "../p",
+    "MW_TARGET_GAME": "./game"
+  },
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "MW_PARTITION_PARENT",
+      "MW_TARGET_GAME"
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+﻿T10 monitor-service: green runs vs the concurrent T07 dependency hash
+acceptance run   : decision_history.py sha256=CE294BF53FCA4B36C8A47C5102167280FAC665E6686C168656F3182C33D63DA2 -> test_decision_monitor.py 37 passed, 1 skipped (exit 0), twice
+post-change rerun: decision_history.py sha256=3CA7ACEBE66296C22750639B915EB801D6346FE2159C91E830FD4E6FDE9B904E -> test_decision_monitor.py 37 passed, 1 skipped (exit 0)
+note: decision_history.py is owned by the concurrent T07 history-safety session; it changed twice during verification and once was internally inconsistent (dependency-in-flight.txt). The monitor did not modify it; it integrated the new load_history(..., redact=) contract.

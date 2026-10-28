@@ -1,0 +1,4 @@
+STATE {"schema_version": 2, "decision_point": "dp25-signoff-conclusion", "questions_version": "q-cad37e2a", "key": "mw-decision-dashboard", "rows_total": 1, "rows_available": 1, "chain_ok": true, "p0_open": [], "rows_escalated": 1, "escalated_reasons": ["low-confidence"], "engine_violations": []}
+FIELD_ISSUES ()
+UNKNOWN ()
+BOOK_ISSUES [('book-placeholder', 'state.p0_open')]

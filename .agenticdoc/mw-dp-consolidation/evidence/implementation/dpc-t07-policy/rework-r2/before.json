@@ -1,0 +1,40 @@
+{
+  "stage": "before",
+  "worktree": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree",
+  "products": {
+    "packages/multi-workers/decision_policy.py": {
+      "relative": "packages/multi-workers/decision_policy.py",
+      "bytes": 60498,
+      "sha256": "f4c44456316b8c60c7934a209de389ef6366aa864f026f9ba5fba40569dde6bb",
+      "crlf": 0,
+      "bare_lf": 1785,
+      "ends_with_newline": true
+    },
+    "packages/multi-workers/test_dp_consolidation_recovery.py": {
+      "relative": "packages/multi-workers/test_dp_consolidation_recovery.py",
+      "bytes": 53478,
+      "sha256": "434412b3ea60e60807ea23b52cdc474e892457a0a1747ecf7cb6bf809380a974",
+      "crlf": 0,
+      "bare_lf": 1520,
+      "ends_with_newline": true
+    }
+  },
+  "pyc_files": [
+    "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc"
+  ],
+  "inventory_count": 1883,
+  "inventory_sha256": "a659ccaa7f498f23c2a3548230138b65311cd03a4d81c8cc6f55ff08e42b8f7d"
+}

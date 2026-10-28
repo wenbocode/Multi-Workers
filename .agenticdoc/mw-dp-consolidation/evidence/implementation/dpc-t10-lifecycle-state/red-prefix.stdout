@@ -1,0 +1,978 @@
+.............................................................FFFFFFFFFFF [ 62%]
+FFFFFFFFFFFFFFFFFFF.......................F.                             [100%]
+================================== FAILURES ===================================
+___ test_a_transport_success_without_a_business_decision_is_not_an_approval ___
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_a_transport_success_without_a_business_decision_is_not_an_approval(store):
+        meta = _started(store)
+        refused = _result(
+            choice=None,
+            basis_id=None,
+            basis_text=None,
+            basis_source=None,
+            business_decisions=0,
+            reason="bad-response",
+            attempts=1,
+            transport_attempts=2,
+        )
+>       result = lifecycle.record_request(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+            store,
+            meta,
+            decision_id=_decision_id(meta),
+            result=refused,
+            material=_material(),
+            preparation=_preparation(),
+        )
+E       AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:824: AttributeError
+____ test_a_business_decision_records_the_selected_pm_basis_and_its_digest ____
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_a_business_decision_records_the_selected_pm_basis_and_its_digest(store):
+        meta = _started(store)
+        preparation = _preparation()
+>       assert lifecycle.record_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+            store,
+            meta,
+            decision_id=_decision_id(meta),
+            result=_result(),
+            material=_material(),
+            preparation=preparation,
+        ).recorded
+E       AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:848: AttributeError
+_____ test_a_replayed_result_is_a_record_without_a_new_business_decision ______
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_a_replayed_result_is_a_record_without_a_new_business_decision(store):
+        meta = _started(store)
+        replay = _result(
+            choice=None,
+            basis_id=None,
+            basis_text=None,
+            basis_source=None,
+            business_decisions=0,
+            reason=None,
+            attempts=0,
+            transport_attempts=0,
+            replayed=True,
+        )
+>       assert lifecycle.record_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+            store,
+            meta,
+            decision_id=_decision_id(meta),
+            result=replay,
+            material=_material(),
+            preparation=_preparation(),
+        ).recorded
+E       AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:885: AttributeError
+_ test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over0-replayed] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+over = {'business_decisions': 1, 'replayed': True}, field = 'replayed'
+
+    @pytest.mark.parametrize(
+        "over,field",
+        [
+            ({"replayed": True, "business_decisions": 1}, "replayed"),
+            ({"available": False, "business_decisions": 1}, "available"),
+            ({"reason": "timeout", "business_decisions": 1}, "reason"),
+            ({"attempts": 0, "business_decisions": 1}, "attempts"),
+            ({"basis_source": "model", "business_decisions": 1}, "basis_source"),
+            (
+                {
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "business_decisions": 0,
+                    "reason": None,
+                },
+                "reason",
+            ),
+            (
+                {
+                    "replayed": True,
+                    "business_decisions": 0,
+                    "reason": "timeout",
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "attempts": 0,
+                    "transport_attempts": 0,
+                },
+                "reason",
+            ),
+        ],
+    )
+    def test_request_refuses_a_split_that_is_not_a_real_prepared_outcome(store, over, field):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(**over),
+                material=_material(),
+                preparation=_preparation(),
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:939: AttributeError
+_ test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over1-available] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+over = {'available': False, 'business_decisions': 1}, field = 'available'
+
+    @pytest.mark.parametrize(
+        "over,field",
+        [
+            ({"replayed": True, "business_decisions": 1}, "replayed"),
+            ({"available": False, "business_decisions": 1}, "available"),
+            ({"reason": "timeout", "business_decisions": 1}, "reason"),
+            ({"attempts": 0, "business_decisions": 1}, "attempts"),
+            ({"basis_source": "model", "business_decisions": 1}, "basis_source"),
+            (
+                {
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "business_decisions": 0,
+                    "reason": None,
+                },
+                "reason",
+            ),
+            (
+                {
+                    "replayed": True,
+                    "business_decisions": 0,
+                    "reason": "timeout",
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "attempts": 0,
+                    "transport_attempts": 0,
+                },
+                "reason",
+            ),
+        ],
+    )
+    def test_request_refuses_a_split_that_is_not_a_real_prepared_outcome(store, over, field):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(**over),
+                material=_material(),
+                preparation=_preparation(),
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:939: AttributeError
+_ test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over2-reason] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+over = {'business_decisions': 1, 'reason': 'timeout'}, field = 'reason'
+
+    @pytest.mark.parametrize(
+        "over,field",
+        [
+            ({"replayed": True, "business_decisions": 1}, "replayed"),
+            ({"available": False, "business_decisions": 1}, "available"),
+            ({"reason": "timeout", "business_decisions": 1}, "reason"),
+            ({"attempts": 0, "business_decisions": 1}, "attempts"),
+            ({"basis_source": "model", "business_decisions": 1}, "basis_source"),
+            (
+                {
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "business_decisions": 0,
+                    "reason": None,
+                },
+                "reason",
+            ),
+            (
+                {
+                    "replayed": True,
+                    "business_decisions": 0,
+                    "reason": "timeout",
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "attempts": 0,
+                    "transport_attempts": 0,
+                },
+                "reason",
+            ),
+        ],
+    )
+    def test_request_refuses_a_split_that_is_not_a_real_prepared_outcome(store, over, field):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(**over),
+                material=_material(),
+                preparation=_preparation(),
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:939: AttributeError
+_ test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over3-attempts] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+over = {'attempts': 0, 'business_decisions': 1}, field = 'attempts'
+
+    @pytest.mark.parametrize(
+        "over,field",
+        [
+            ({"replayed": True, "business_decisions": 1}, "replayed"),
+            ({"available": False, "business_decisions": 1}, "available"),
+            ({"reason": "timeout", "business_decisions": 1}, "reason"),
+            ({"attempts": 0, "business_decisions": 1}, "attempts"),
+            ({"basis_source": "model", "business_decisions": 1}, "basis_source"),
+            (
+                {
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "business_decisions": 0,
+                    "reason": None,
+                },
+                "reason",
+            ),
+            (
+                {
+                    "replayed": True,
+                    "business_decisions": 0,
+                    "reason": "timeout",
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "attempts": 0,
+                    "transport_attempts": 0,
+                },
+                "reason",
+            ),
+        ],
+    )
+    def test_request_refuses_a_split_that_is_not_a_real_prepared_outcome(store, over, field):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(**over),
+                material=_material(),
+                preparation=_preparation(),
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:939: AttributeError
+_ test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over4-basis_source] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+over = {'basis_source': 'model', 'business_decisions': 1}
+field = 'basis_source'
+
+    @pytest.mark.parametrize(
+        "over,field",
+        [
+            ({"replayed": True, "business_decisions": 1}, "replayed"),
+            ({"available": False, "business_decisions": 1}, "available"),
+            ({"reason": "timeout", "business_decisions": 1}, "reason"),
+            ({"attempts": 0, "business_decisions": 1}, "attempts"),
+            ({"basis_source": "model", "business_decisions": 1}, "basis_source"),
+            (
+                {
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "business_decisions": 0,
+                    "reason": None,
+                },
+                "reason",
+            ),
+            (
+                {
+                    "replayed": True,
+                    "business_decisions": 0,
+                    "reason": "timeout",
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "attempts": 0,
+                    "transport_attempts": 0,
+                },
+                "reason",
+            ),
+        ],
+    )
+    def test_request_refuses_a_split_that_is_not_a_real_prepared_outcome(store, over, field):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(**over),
+                material=_material(),
+                preparation=_preparation(),
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:939: AttributeError
+_ test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over5-reason] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+over = {'basis_id': None, 'basis_source': None, 'basis_text': None, 'business_decisions': 0, ...}
+field = 'reason'
+
+    @pytest.mark.parametrize(
+        "over,field",
+        [
+            ({"replayed": True, "business_decisions": 1}, "replayed"),
+            ({"available": False, "business_decisions": 1}, "available"),
+            ({"reason": "timeout", "business_decisions": 1}, "reason"),
+            ({"attempts": 0, "business_decisions": 1}, "attempts"),
+            ({"basis_source": "model", "business_decisions": 1}, "basis_source"),
+            (
+                {
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "business_decisions": 0,
+                    "reason": None,
+                },
+                "reason",
+            ),
+            (
+                {
+                    "replayed": True,
+                    "business_decisions": 0,
+                    "reason": "timeout",
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "attempts": 0,
+                    "transport_attempts": 0,
+                },
+                "reason",
+            ),
+        ],
+    )
+    def test_request_refuses_a_split_that_is_not_a_real_prepared_outcome(store, over, field):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(**over),
+                material=_material(),
+                preparation=_preparation(),
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:939: AttributeError
+_ test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over6-reason] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+over = {'attempts': 0, 'basis_id': None, 'basis_source': None, 'basis_text': None, ...}
+field = 'reason'
+
+    @pytest.mark.parametrize(
+        "over,field",
+        [
+            ({"replayed": True, "business_decisions": 1}, "replayed"),
+            ({"available": False, "business_decisions": 1}, "available"),
+            ({"reason": "timeout", "business_decisions": 1}, "reason"),
+            ({"attempts": 0, "business_decisions": 1}, "attempts"),
+            ({"basis_source": "model", "business_decisions": 1}, "basis_source"),
+            (
+                {
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "business_decisions": 0,
+                    "reason": None,
+                },
+                "reason",
+            ),
+            (
+                {
+                    "replayed": True,
+                    "business_decisions": 0,
+                    "reason": "timeout",
+                    "choice": None,
+                    "basis_id": None,
+                    "basis_text": None,
+                    "basis_source": None,
+                    "attempts": 0,
+                    "transport_attempts": 0,
+                },
+                "reason",
+            ),
+        ],
+    )
+    def test_request_refuses_a_split_that_is_not_a_real_prepared_outcome(store, over, field):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(**over),
+                material=_material(),
+                preparation=_preparation(),
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:939: AttributeError
+_ test_the_selected_basis_must_come_from_the_submitted_preparation[over0-True-True-basis_id] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+over = {'basis_id': 'b-missing'}, prepare = True, materialize = True
+field = 'basis_id'
+
+    @pytest.mark.parametrize(
+        "over,prepare,materialize,field",
+        [
+            ({"basis_id": "b-missing"}, True, True, "basis_id"),
+            ({"choice": "escalate"}, True, True, "basis_id"),
+            ({"basis_text": "the model said this was fine"}, True, True, "basis_text"),
+            ({}, False, True, "preparation"),
+            ({}, True, False, "material"),
+        ],
+    )
+    def test_the_selected_basis_must_come_from_the_submitted_preparation(
+        store, over, prepare, materialize, field
+    ):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(**over),
+                material=_material() if materialize else None,
+                preparation=_preparation() if prepare else None,
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:967: AttributeError
+_ test_the_selected_basis_must_come_from_the_submitted_preparation[over1-True-True-basis_id] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+over = {'choice': 'escalate'}, prepare = True, materialize = True
+field = 'basis_id'
+
+    @pytest.mark.parametrize(
+        "over,prepare,materialize,field",
+        [
+            ({"basis_id": "b-missing"}, True, True, "basis_id"),
+            ({"choice": "escalate"}, True, True, "basis_id"),
+            ({"basis_text": "the model said this was fine"}, True, True, "basis_text"),
+            ({}, False, True, "preparation"),
+            ({}, True, False, "material"),
+        ],
+    )
+    def test_the_selected_basis_must_come_from_the_submitted_preparation(
+        store, over, prepare, materialize, field
+    ):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(**over),
+                material=_material() if materialize else None,
+                preparation=_preparation() if prepare else None,
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:967: AttributeError
+_ test_the_selected_basis_must_come_from_the_submitted_preparation[over2-True-True-basis_text] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+over = {'basis_text': 'the model said this was fine'}, prepare = True
+materialize = True, field = 'basis_text'
+
+    @pytest.mark.parametrize(
+        "over,prepare,materialize,field",
+        [
+            ({"basis_id": "b-missing"}, True, True, "basis_id"),
+            ({"choice": "escalate"}, True, True, "basis_id"),
+            ({"basis_text": "the model said this was fine"}, True, True, "basis_text"),
+            ({}, False, True, "preparation"),
+            ({}, True, False, "material"),
+        ],
+    )
+    def test_the_selected_basis_must_come_from_the_submitted_preparation(
+        store, over, prepare, materialize, field
+    ):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(**over),
+                material=_material() if materialize else None,
+                preparation=_preparation() if prepare else None,
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:967: AttributeError
+_ test_the_selected_basis_must_come_from_the_submitted_preparation[over3-False-True-preparation] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+over = {}, prepare = False, materialize = True, field = 'preparation'
+
+    @pytest.mark.parametrize(
+        "over,prepare,materialize,field",
+        [
+            ({"basis_id": "b-missing"}, True, True, "basis_id"),
+            ({"choice": "escalate"}, True, True, "basis_id"),
+            ({"basis_text": "the model said this was fine"}, True, True, "basis_text"),
+            ({}, False, True, "preparation"),
+            ({}, True, False, "material"),
+        ],
+    )
+    def test_the_selected_basis_must_come_from_the_submitted_preparation(
+        store, over, prepare, materialize, field
+    ):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(**over),
+                material=_material() if materialize else None,
+                preparation=_preparation() if prepare else None,
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:967: AttributeError
+_ test_the_selected_basis_must_come_from_the_submitted_preparation[over4-True-False-material] _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+over = {}, prepare = True, materialize = False, field = 'material'
+
+    @pytest.mark.parametrize(
+        "over,prepare,materialize,field",
+        [
+            ({"basis_id": "b-missing"}, True, True, "basis_id"),
+            ({"choice": "escalate"}, True, True, "basis_id"),
+            ({"basis_text": "the model said this was fine"}, True, True, "basis_text"),
+            ({}, False, True, "preparation"),
+            ({}, True, False, "material"),
+        ],
+    )
+    def test_the_selected_basis_must_come_from_the_submitted_preparation(
+        store, over, prepare, materialize, field
+    ):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(**over),
+                material=_material() if materialize else None,
+                preparation=_preparation() if prepare else None,
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:967: AttributeError
+___________ test_a_retired_entry_id_cannot_be_recorded_as_a_request ___________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_a_retired_entry_id_cannot_be_recorded_as_a_request(store):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=f"dp1-dispatch-type:{meta.logical_id}",
+                result=_result(dp="dp1-dispatch-type"),
+                material=_material(),
+                preparation=_preparation(),
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:983: AttributeError
+____ test_the_prepared_at_must_be_the_preparation_time_not_the_write_clock ____
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_the_prepared_at_must_be_the_preparation_time_not_the_write_clock(store):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                result=_result(prepared_at="2026-10-27T09:99:00+00:00"),
+                material=_material(),
+                preparation=_preparation(),
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:999: AttributeError
+_________ test_the_pm_note_is_stored_separately_from_the_model_basis __________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_the_pm_note_is_stored_separately_from_the_model_basis(store):
+        meta = _started(store)
+        decision_id = _decision_id(meta)
+        note_text = "matter: split the file; action: narrow; end when both patches land"
+>       assert lifecycle.record_note(
+               ^^^^^^^^^^^^^^^^^^^^^
+            store,
+            meta,
+            decision_id=decision_id,
+            pm_note=note_text,
+            prepared_at=PREPARED_AT,
+        ).recorded
+E       AttributeError: module 'decision_lifecycle' has no attribute 'record_note'
+
+test_decision_context_lifecycle.py:1015: AttributeError
+_________________ test_a_non_pm_record_cannot_write_a_pm_note _________________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_a_non_pm_record_cannot_write_a_pm_note(store):
+        meta = _started(store, initiator_role="coding")
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_note(
+            ^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                pm_note="a worker must not speak for the PM",
+                prepared_at=PREPARED_AT,
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_note'
+
+test_decision_context_lifecycle.py:1046: AttributeError
+_ test_a_later_before_is_refused_while_the_creation_snapshot_can_be_repeated __
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_a_later_before_is_refused_while_the_creation_snapshot_can_be_repeated(store):
+        recorded_before = _state("not-queued", source="worker-registry", completed=[], remaining=None, blockers=[])
+        meta = _started(store, task_before=recorded_before)
+        decision_id = _decision_id(meta)
+>       assert lifecycle.record_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+            store,
+            meta,
+            decision_id=decision_id,
+            result=_result(),
+            material=_material(),
+            preparation=_preparation(),
+            task_before=recorded_before,
+        ).recorded
+E       AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:1061: AttributeError
+____________ test_a_before_cannot_be_added_after_the_creation_fact ____________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_a_before_cannot_be_added_after_the_creation_fact(store):
+        meta = _started(store)  # the creation fact recorded no before snapshot
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_note(
+            ^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                pm_note="note without a before",
+                prepared_at=PREPARED_AT,
+                task_before=_state(),
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_note'
+
+test_decision_context_lifecycle.py:1095: AttributeError
+_ test_terminal_requires_its_own_real_observation_and_never_follows_from_settled _
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_terminal_requires_its_own_real_observation_and_never_follows_from_settled(store):
+        before = _state("running", completed=[], remaining=["split the file"], blockers=None)
+        meta = _started(store, task_before=before)
+        decision_id = _decision_id(meta)
+>       assert lifecycle.record_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+            store, meta, decision_id=decision_id, result=_result(), material=_material(), preparation=_preparation()
+        ).recorded
+E       AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:1110: AttributeError
+________ test_terminal_refuses_an_undeclared_value_or_a_missing_reason ________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_terminal_refuses_an_undeclared_value_or_a_missing_reason(store):
+        meta = _started(store)
+        after = _state("done")
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_terminal(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^
+                store, meta, decision_id=_decision_id(meta), terminal="done", reason="x", task_after=after
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_terminal'
+
+test_decision_context_lifecycle.py:1167: AttributeError
+____________ test_a_taskless_decision_cannot_claim_a_task_terminal ____________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_a_taskless_decision_cannot_claim_a_task_terminal(store):
+        meta = _started(store, task_key=None)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_terminal(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                terminal="completed",
+                reason="nothing to terminate",
+                task_after=_state("done"),
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_terminal'
+
+test_decision_context_lifecycle.py:1182: AttributeError
+____ test_a_successor_request_links_a_recorded_parent_and_is_written_once _____
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_a_successor_request_links_a_recorded_parent_and_is_written_once(store):
+        parent = _started(store)
+        parent_id = f"dp-gate-approve:{parent.logical_id}"
+        assert lifecycle.record_settled(
+            store, parent, decision_id=parent_id, dp="dp-gate-approve", outcome="ok"
+        ).recorded
+    
+        child = _started(store)
+        child_id = _decision_id(child)
+>       first = lifecycle.record_request(
+                ^^^^^^^^^^^^^^^^^^^^^^^^
+            store,
+            child,
+            decision_id=child_id,
+            result=_result(),
+            material=_material(),
+            preparation=_preparation(),
+            parent_ref=parent_id,
+        )
+E       AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:1202: AttributeError
+____________ test_an_unrecorded_or_cross_key_parent_ref_is_refused ____________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_an_unrecorded_or_cross_key_parent_ref_is_refused(store):
+        child = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_request(
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+                store,
+                child,
+                decision_id=_decision_id(child),
+                result=_result(),
+                material=_material(),
+                preparation=_preparation(),
+                parent_ref="dp-gate-approve:not-recorded-anywhere",
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:1235: AttributeError
+__________ test_note_and_request_rows_take_the_known_secret_boundary __________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_note_and_request_rows_take_the_known_secret_boundary(store):
+        meta = _started(store)
+        decision_id = _decision_id(meta)
+>       assert lifecycle.record_note(
+               ^^^^^^^^^^^^^^^^^^^^^
+            store,
+            meta,
+            decision_id=decision_id,
+            pm_note="approve: caller pasted " + SECRET,
+            prepared_at=PREPARED_AT,
+        ).recorded
+E       AttributeError: module 'decision_lifecycle' has no attribute 'record_note'
+
+test_decision_context_lifecycle.py:1271: AttributeError
+_______________ test_an_over_long_note_is_refused_not_truncated _______________
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_an_over_long_note_is_refused_not_truncated(store):
+        meta = _started(store)
+        before = _raw(store)
+        with pytest.raises(lifecycle.LifecycleInputError) as caught:
+>           lifecycle.record_note(
+            ^^^^^^^^^^^^^^^^^^^^^
+                store,
+                meta,
+                decision_id=_decision_id(meta),
+                pm_note="x" * (wire.NOTE_TEXT_BYTES + 1),
+                prepared_at=PREPARED_AT,
+            )
+E           AttributeError: module 'decision_lifecycle' has no attribute 'record_note'
+
+test_decision_context_lifecycle.py:1311: AttributeError
+______ test_null_and_empty_progress_axes_stay_distinct_in_the_new_facts _______
+
+store = LifecycleStore(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-...e_cap=65536, segment_cap=24576, lock_budget_s=0.25, lock_retries=5, lock_base_delay=0.008, origin='decision-lifecycle')
+
+    def test_null_and_empty_progress_axes_stay_distinct_in_the_new_facts(store):
+        before = _state("not-queued", source="worker-registry", completed=[], remaining=None, blockers=[])
+        meta = _started(store, task_before=before)
+        decision_id = _decision_id(meta)
+>       assert lifecycle.record_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+            store,
+            meta,
+            decision_id=decision_id,
+            result=_result(),
+            material=_material(),
+            preparation=_preparation(),
+            task_before=before,
+        ).recorded
+E       AttributeError: module 'decision_lifecycle' has no attribute 'record_request'
+
+test_decision_context_lifecycle.py:1327: AttributeError
+__________ test_the_new_facts_are_read_by_the_current_history_reader __________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/dpc-t10-lifecycle-state/red-prefix/temp/pytest-of-unknown/pytest-4/test_the_new_facts_are_read_by0')
+redactor = SubstringRedactor(secrets=('Zq7Xw3Vb9Kp2Lm5Rt8Yc4Nd6Hf1Gj0SaWq3Er7Ty1Ui5Op9As4Df8', 'Sk-9Qz7Lm2Xr5Tb8Vc3Nd6Hf1Gj4Kp0Ws'), placeholder='<redacted>', min_prefix=1)
+
+    def test_the_new_facts_are_read_by_the_current_history_reader(tmp_path, redactor):
+        import decision_history
+    
+        control = tmp_path / "proj"
+        (control / ".agenticdoc").mkdir(parents=True)
+        store = lifecycle.LifecycleStore.production(control, redact=redactor, warn=lambda line: None)
+        before = _state("running", completed=[], remaining=["split"], blockers=None)
+        meta = _meta(task_before=before)
+        decision_id = _decision_id(meta)
+        assert lifecycle.record_start(store, meta, decision_id=decision_id).recorded
+>       assert lifecycle.record_note(
+               ^^^^^^^^^^^^^^^^^^^^^
+            store, meta, decision_id=decision_id, pm_note="prepared note", prepared_at=PREPARED_AT
+        ).recorded
+E       AttributeError: module 'decision_lifecycle' has no attribute 'record_note'
+
+test_decision_context_lifecycle.py:1364: AttributeError
+__ test_snapshot_equality_keeps_null_and_empty_distinct_and_order_sensitive ___
+
+    def test_snapshot_equality_keeps_null_and_empty_distinct_and_order_sensitive():
+        empty_lists=state(completed=[],remaining=None,blockers=[])
+>       assert task_state.same_snapshot(empty_lists,state(completed=[],remaining=None,blockers=[]))
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_task_state' has no attribute 'same_snapshot'
+
+test_decision_task_state.py:257: AttributeError
+=========================== short test summary info ===========================
+FAILED test_decision_context_lifecycle.py::test_a_transport_success_without_a_business_decision_is_not_an_approval
+FAILED test_decision_context_lifecycle.py::test_a_business_decision_records_the_selected_pm_basis_and_its_digest
+FAILED test_decision_context_lifecycle.py::test_a_replayed_result_is_a_record_without_a_new_business_decision
+FAILED test_decision_context_lifecycle.py::test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over0-replayed]
+FAILED test_decision_context_lifecycle.py::test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over1-available]
+FAILED test_decision_context_lifecycle.py::test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over2-reason]
+FAILED test_decision_context_lifecycle.py::test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over3-attempts]
+FAILED test_decision_context_lifecycle.py::test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over4-basis_source]
+FAILED test_decision_context_lifecycle.py::test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over5-reason]
+FAILED test_decision_context_lifecycle.py::test_request_refuses_a_split_that_is_not_a_real_prepared_outcome[over6-reason]
+FAILED test_decision_context_lifecycle.py::test_the_selected_basis_must_come_from_the_submitted_preparation[over0-True-True-basis_id]
+FAILED test_decision_context_lifecycle.py::test_the_selected_basis_must_come_from_the_submitted_preparation[over1-True-True-basis_id]
+FAILED test_decision_context_lifecycle.py::test_the_selected_basis_must_come_from_the_submitted_preparation[over2-True-True-basis_text]
+FAILED test_decision_context_lifecycle.py::test_the_selected_basis_must_come_from_the_submitted_preparation[over3-False-True-preparation]
+FAILED test_decision_context_lifecycle.py::test_the_selected_basis_must_come_from_the_submitted_preparation[over4-True-False-material]
+FAILED test_decision_context_lifecycle.py::test_a_retired_entry_id_cannot_be_recorded_as_a_request
+FAILED test_decision_context_lifecycle.py::test_the_prepared_at_must_be_the_preparation_time_not_the_write_clock
+FAILED test_decision_context_lifecycle.py::test_the_pm_note_is_stored_separately_from_the_model_basis
+FAILED test_decision_context_lifecycle.py::test_a_non_pm_record_cannot_write_a_pm_note
+FAILED test_decision_context_lifecycle.py::test_a_later_before_is_refused_while_the_creation_snapshot_can_be_repeated
+FAILED test_decision_context_lifecycle.py::test_a_before_cannot_be_added_after_the_creation_fact
+FAILED test_decision_context_lifecycle.py::test_terminal_requires_its_own_real_observation_and_never_follows_from_settled
+FAILED test_decision_context_lifecycle.py::test_terminal_refuses_an_undeclared_value_or_a_missing_reason
+FAILED test_decision_context_lifecycle.py::test_a_taskless_decision_cannot_claim_a_task_terminal
+FAILED test_decision_context_lifecycle.py::test_a_successor_request_links_a_recorded_parent_and_is_written_once
+FAILED test_decision_context_lifecycle.py::test_an_unrecorded_or_cross_key_parent_ref_is_refused
+FAILED test_decision_context_lifecycle.py::test_note_and_request_rows_take_the_known_secret_boundary
+FAILED test_decision_context_lifecycle.py::test_an_over_long_note_is_refused_not_truncated
+FAILED test_decision_context_lifecycle.py::test_null_and_empty_progress_axes_stay_distinct_in_the_new_facts
+FAILED test_decision_context_lifecycle.py::test_the_new_facts_are_read_by_the_current_history_reader
+FAILED test_decision_task_state.py::test_snapshot_equality_keeps_null_and_empty_distinct_and_order_sensitive
+31 failed, 85 passed in 3.91s

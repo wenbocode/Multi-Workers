@@ -1,0 +1,67 @@
+{
+  "observed_at": "2026-10-26T12:19:26.004832+00:00",
+  "copy_root": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+  "files": [
+    {
+      "exists": true,
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision.py",
+      "bytes": 116092,
+      "sha256": "89500080e9f59c80e98b757a3a2b547b1db06985edc04a7489d068cb5f80a5e5",
+      "crlf": 0,
+      "bare_lf": 2683,
+      "ends_with_newline": true,
+      "lines": 2683,
+      "before": {
+        "path": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/before-bytes/packages/multi-workers/decision.py",
+        "bytes": 99249,
+        "sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+        "crlf": 0,
+        "bare_lf": 2298,
+        "ends_with_newline": true,
+        "lines": 2298
+      },
+      "t08_diff_bytes": 19771,
+      "t08_diff_added": 385,
+      "t08_diff_removed": 0
+    },
+    {
+      "exists": true,
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_backends.py",
+      "bytes": 48970,
+      "sha256": "a13a8597bba7abe796022148bd50d02b26fc6a85e1d7d3b1af9f5129f0a3e22b",
+      "crlf": 0,
+      "bare_lf": 1216,
+      "ends_with_newline": true,
+      "lines": 1216,
+      "before": {
+        "path": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/before-bytes/packages/multi-workers/decision_backends.py",
+        "bytes": 44577,
+        "sha256": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60",
+        "crlf": 0,
+        "bare_lf": 1123,
+        "ends_with_newline": true,
+        "lines": 1123
+      },
+      "t08_diff_bytes": 6660,
+      "t08_diff_added": 93,
+      "t08_diff_removed": 0
+    },
+    {
+      "exists": true,
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_materials.py",
+      "bytes": 36376,
+      "sha256": "2ab2d758350eb0a3b714512e9a70d81e14c645459f94cc8c850b98a4638454f8",
+      "crlf": 0,
+      "bare_lf": 977,
+      "ends_with_newline": true,
+      "lines": 977,
+      "before": {
+        "exists": false
+      }
+    }
+  ],
+  "mirror_git_status": [
+    "M packages/multi-workers/decision.py",
+    " M packages/multi-workers/decision_backends.py"
+  ]
+}

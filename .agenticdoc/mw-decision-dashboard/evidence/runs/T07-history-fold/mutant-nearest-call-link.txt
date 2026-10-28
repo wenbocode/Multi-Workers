@@ -1,0 +1,35 @@
+........F..............                                                  [100%]
+================================== FAILURES ===================================
+________ test_unlinked_calls_are_not_attached_to_the_nearest_decision _________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18206/test_unlinked_calls_are_not_at0')
+
+    def test_unlinked_calls_are_not_attached_to_the_nearest_decision(tmp_path):
+        root = _root(tmp_path)
+        decision_id = _add_decision(root)
+        _add_call(root, decision_id=None, key=None, dp=None)
+    
+        snapshot = _snapshot(root)
+        record = _by_decision(snapshot)[decision_id]
+    
+        assert record.call_counts.recorded is False, "a call without a decision id is not linked"
+        assert record.call_counts.logical_calls is None
+>       assert snapshot.stats.unlinked_call_ids == 1
+E       AssertionError: assert 0 == 1
+E        +  where 0 = HistoryStats(archive_rows=1, archive_damaged=0, chain_breaks=0, seq_breaks=0, wire_events=3, lifecycle_events=0, wire_...0, foreign_rows=0, unlinked_call_ids=0, unlinked_events=0, production_records=2, test_records=0, misplaced_test_rows=0).unlinked_call_ids
+E        +    where HistoryStats(archive_rows=1, archive_damaged=0, chain_breaks=0, seq_breaks=0, wire_events=3, lifecycle_events=0, wire_...0, foreign_rows=0, unlinked_call_ids=0, unlinked_events=0, production_records=2, test_records=0, misplaced_test_rows=0) = HistorySnapshot(control_root=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18206/test_...s=0, unlinked_call_ids=0, unlinked_events=0, production_records=2, test_records=0, misplaced_test_rows=0), warnings=()).stats
+
+test_decision_history.py:569: AssertionError
+============================== warnings summary ===============================
+C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\cacheprovider.py:475
+  C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\cacheprovider.py:475: PytestCacheWarning: could not create cache path H:\git\Multi-Workers\.agenticdoc\mw-decision-dashboard\evidence\runs\T07-history-fold\mutant-nearest-call-link\.pytest_cache\v\cache\nodeids: [WinError 5] ¾Ü¾ø·ÃÎÊ¡£: 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-decision-dashboard\\evidence\\runs\\T07-history-fold\\mutant-nearest-call-link\\pytest-cache-files-ibtbo9sn' -> 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-decision-dashboard\\evidence\\runs\\T07-history-fold\\mutant-nearest-call-link\\.pytest_cache'
+    config.cache.set("cache/nodeids", sorted(self.cached_nodeids))
+
+C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\cacheprovider.py:429
+  C:\Users\wenbozhou\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\cacheprovider.py:429: PytestCacheWarning: could not create cache path H:\git\Multi-Workers\.agenticdoc\mw-decision-dashboard\evidence\runs\T07-history-fold\mutant-nearest-call-link\.pytest_cache\v\cache\lastfailed: [WinError 5] ¾Ü¾ø·ÃÎÊ¡£: 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-decision-dashboard\\evidence\\runs\\T07-history-fold\\mutant-nearest-call-link\\pytest-cache-files-ip0m991q' -> 'H:\\git\\Multi-Workers\\.agenticdoc\\mw-decision-dashboard\\evidence\\runs\\T07-history-fold\\mutant-nearest-call-link\\.pytest_cache'
+    config.cache.set("cache/lastfailed", self.lastfailed)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED test_decision_history.py::test_unlinked_calls_are_not_attached_to_the_nearest_decision
+1 failed, 22 passed, 2 warnings in 0.39s

@@ -1,0 +1,7 @@
+MDC baseline: frozen parity corpus (M-03 re-freeze)
+path: packages/multi-workers/test/fixtures/autopilot-config-corpus.json
+before M-03: 73 cases; after: 77 cases, 19388 bytes on disk,
+sha256 (LF-normalized) = f5b60e81cd690930cc9afb4ef1ccdee6bd8d517e6d40521a3f1b84e65a13e9c1  (PM recomputed)
+key rows: range-max-parallel-low reject -> accept; range-max-parallel-min accept;
+          partial-key-max_workers_per_key accept; range-max-parallel-below-floor reject (non-vacuous control)
+NOTE: whole-file sha is deliberately NOT asserted by the M-05 TS test (a re-freeze must not make it brittle).

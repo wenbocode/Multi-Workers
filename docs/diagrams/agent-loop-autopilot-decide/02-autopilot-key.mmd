@@ -1,0 +1,9 @@
+graph TD
+    TICK["conductor tick (每 4s)"] --> READ["读文件家族<br/>_index.parallel / _roadmap.md<br/>config.json / gates/** / timeline.jsonl"]
+    READ --> FRONT{"依赖前沿<br/>哪些 key 的前置已满足?"}
+    FRONT --> DISP["派发就绪的 key<br/>受 max_parallel_keys 上限约束"]
+    FRONT --> GATE["扫描 pending gate<br/>交 dp-gate-approve 判断"]
+    FRONT --> STALL["检测停滞 key<br/>同一边缘连续失败 → stalled"]
+    DISP --> TICK
+    GATE --> TICK
+    STALL --> TICK

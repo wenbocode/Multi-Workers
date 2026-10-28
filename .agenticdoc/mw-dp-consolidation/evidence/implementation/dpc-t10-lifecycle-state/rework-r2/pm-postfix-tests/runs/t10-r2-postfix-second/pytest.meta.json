@@ -1,0 +1,23 @@
+{
+  "name": "pytest",
+  "argv": [
+    "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+    "-B",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "-q",
+    "--basetemp",
+    "C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\dpc-t10-pm-verify-20261027\\pm-verification\\t10-r2-postfix-second\\pytest-basetemp",
+    "test_decision_context_lifecycle.py",
+    "test_decision_task_state.py"
+  ],
+  "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+  "rc": 0,
+  "pid": 108900,
+  "started": "2026-10-28T07:22:36.599180+00:00",
+  "ended": "2026-10-28T07:22:39.766554+00:00",
+  "stdout_bytes": 183,
+  "stderr_bytes": 0
+}

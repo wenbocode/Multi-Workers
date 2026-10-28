@@ -1,0 +1,36 @@
+{
+  "observed_at": "2026-10-26T12:48:21.918641+00:00",
+  "rc": 0,
+  "mirror_files": 1883,
+  "mirror_equals_t08_after_inventory": true,
+  "verification_net_product_changes": [],
+  "logical_tasks": 36,
+  "frontier_semantic_handoff_verified": false,
+  "all_frontier_done_acked": true,
+  "phase": "EXECUTE",
+  "reports": {
+    "t06-pm-handoff-20261026": {
+      "bytes": 5506,
+      "sha256": "da9f3be7dca25cfce4fa7f5f998bf667a604cc33d63b98393d1d987c5de6ea18",
+      "required_sections_present": true
+    },
+    "t08-pm-handoff-20261026": {
+      "bytes": 6348,
+      "sha256": "ba27001f8f013d3c932b2a817581cdf120211db319e47d5b31d0fb64d712fccd",
+      "required_sections_present": true
+    }
+  },
+  "live_exact_seven_paths": {
+    "packages/multi-workers/decision.py": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+    "packages/multi-workers/decision_backends.py": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60",
+    "packages/multi-workers/decision_validity.py": null,
+    "packages/multi-workers/decision_policy.py": null,
+    "packages/multi-workers/test_dp_consolidation_concurrency.py": null,
+    "packages/multi-workers/test_dp_consolidation_recovery.py": null,
+    "packages/multi-workers/test_dp_consolidation_materials.py": null
+  },
+  "full_live_or_historical_no_write_audit": false,
+  "existing_manifest_pending_verification_prose_not_rewritten": true,
+  "new_dispatch_or_rework_or_cleanup": false,
+  "decision_retry_or_receipt": false
+}

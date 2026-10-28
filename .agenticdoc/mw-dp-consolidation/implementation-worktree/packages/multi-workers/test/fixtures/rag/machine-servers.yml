@@ -1,0 +1,28 @@
+servers:
+  A:
+    transport: both
+    adapter: overcode-v1
+    path_roots_file: .mw/rag-roots.json
+    sources:
+      - docs
+      - code
+    capabilities:
+      graph: true
+      chat: true
+      rewrite: true
+    mcp:
+      url: http://127.0.0.1:9740/mcp
+      token_env: OVERCODE_MCP_TOKEN
+      timeout_ms: 180000
+    skill:
+      dir: skills/overcode
+      cli_entry: python overcode_cli.py
+      timeout_ms: 180000
+  B:
+    transport: mcp
+    capabilities:
+      graph: false
+      chat: false
+      rewrite: false
+    mcp:
+      url: http://127.0.0.1:9741/mcp

@@ -1,0 +1,20 @@
+H:\git\Multi-Workers\packages\multi-workers\dist\extensions\agent-team-loop.js
+  size=1172954 sha256=1D5184B8CDBDEC1ADD2118B206B969381A30CC0AF47453AC2D117CA88626065F
+    MDC frontier (frontierSize)        PRESENT
+    MDC key (max_workers_per_key)      PRESENT
+    MDC dedup (duplicate-dispatch)     ABSENT
+    WFG write-face (WRITE_FACE)        PRESENT
+    WFG parser (parseWriteFace)        PRESENT
+    widget order (widgetOrder)         ABSENT
+    MDC task graph (deps)              ABSENT
+C:\Users\wenbozhou\.pi\agent\extensions\agent-team-loop.js
+  size=1172954 sha256=1D5184B8CDBDEC1ADD2118B206B969381A30CC0AF47453AC2D117CA88626065F
+    MDC frontier (frontierSize)        PRESENT
+    MDC key (max_workers_per_key)      PRESENT
+    MDC dedup (duplicate-dispatch)     ABSENT
+    WFG write-face (WRITE_FACE)        PRESENT
+    WFG parser (parseWriteFace)        PRESENT
+    widget order (widgetOrder)         ABSENT
+    MDC task graph (deps)              ABSENT
+
+pinned EXPECTED_BUNDLE_SHA = 975D4066967E35CC7F23713827F5CA85809578B96A07D3283206931341F9978D

@@ -279,3 +279,58 @@ def test_mw_claim_gate_env_name_single_source() -> None:
         py_read=py_read,
         default=gate,
     )
+
+
+# ── the derived cap formula (D-014: perClaim × n, both sides同式) ─────────
+
+def _ts_function_body(src: str, name: str) -> str:
+    """Body of `export function NAME(...) { ... }` up to the first closing brace
+    at column 0 — enough to lock the two Math.min expressions it returns."""
+    match = re.search(rf"export\s+function\s+{name}\b[^{{]*\{{", src)
+    if match is None:
+        pytest.fail(f"TS function {name} not found in {TS_CARD.name} (fail-closed)")
+    tail = src[match.end() :]
+    end = tail.find("\n}\n")
+    if end < 0:
+        pytest.fail(f"TS function {name} body is unterminated (fail-closed)")
+    return tail[:end]
+
+
+def test_claim_budget_caps_formula_parity() -> None:
+    """The cap is `min(callCap, perClaim × n)` on both sides, not Σ预算.
+
+    T-07 measured the old `min(callCap, Σ预算)` shape starving a 5-claim card
+    after five calls (`5/5 calls already allowed`): Σ预算 is a *weight* (manual
+    counts double, gated at 40), never a fetch count. This locks the shape of
+    the TS function and the numbers Python actually emits; a one-sided edit turns
+    it red instead of silently re-pricing every dispatch.
+    """
+    card_src = _read(TS_CARD, "TS claims contract")
+    body = _ts_function_body(card_src, "claimBudgetCaps")
+    for needle in (
+        "CLAIM_BUDGET.callCap",
+        "CLAIM_BUDGET.perClaim * claims.length",
+        "CLAIM_BUDGET.byteCapMax",
+        "CLAIM_BUDGET.claimByteCap * claims.length",
+    ):
+        assert needle in body, f"claimBudgetCaps no longer derives {needle}"
+    assert "CLAIM_BUDGET_SUM_MAX" not in body, "Σ预算 (a weight) must not price the read cap"
+
+    ts_budget = _ts_int_object(card_src, "CLAIM_BUDGET")
+    assert ts_budget["perClaim"] > 1, "perClaim = 1 would collapse the formula back into Σ预算"
+    observed = []
+    for n, want in ((0, (0, 0)), (1, (6, 65536)), (5, (30, 327680)), (8, (30, 393216))):
+        claims = [{"type": "grep"}] * n
+        got = dispatch_mod.claim_budget_caps(claims)
+        derived = (
+            (0, 0)
+            if n == 0
+            else (
+                min(ts_budget["callCap"], ts_budget["perClaim"] * n),
+                min(ts_budget["byteCapMax"], ts_budget["claimByteCap"] * n),
+            )
+        )
+        assert got == want, f"n={n}: expected {want}, got {got}"
+        assert got == derived, f"n={n}: Python {got} != TS constants {derived}"
+        observed.append(f"{n}->{got[0]}/{got[1]}")
+    _verify("claimBudgetCaps", pairs=",".join(observed), formula="min(cap, perClaim*n)")

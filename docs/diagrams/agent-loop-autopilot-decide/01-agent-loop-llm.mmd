@@ -1,0 +1,12 @@
+graph TD
+    S["agentLoop(prompts)"] --> T0["turn_start"]
+    T0 --> P["注入 pending 消息<br/>(用户中途插话)"]
+    P --> LLM["streamAssistantResponse<br/>AgentMessage[] → Message[] → LLM"]
+    LLM --> C{"有 toolCall?"}
+    C -- 否 --> STOP{"shouldStopAfterTurn?<br/>或有 followUp?"}
+    C -- 是 --> EXEC["executeToolCalls<br/>parallel / sequential"]
+    EXEC --> BACK["结果 push 回 context"]
+    BACK --> NEXT["prepareNextTurn<br/>可换 model / thinkingLevel"]
+    NEXT --> T0
+    STOP -- 停 --> END["agent_end"]
+    STOP -- 有新消息 --> T0

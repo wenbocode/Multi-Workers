@@ -1,0 +1,27 @@
+{
+  "observed_at": "2026-10-28T07:30:15.927643+00:00",
+  "source": "agent-report",
+  "stage_d_run": {
+    "schema": 1,
+    "task_key": "dpc-t10-r2-replay-repair",
+    "run_id": "dpc-t10-r2-replay-repair@2026-10-28T07:29:44.606Z",
+    "owner_key": "mw-dp-consolidation",
+    "kind": "coding",
+    "status": "running",
+    "started_at": "2026-10-28T07:29:44.606Z",
+    "artifacts": [],
+    "pid": 104036,
+    "last_heartbeat_at": "2026-10-28T07:30:14.619Z"
+  },
+  "card_sha256": "512796236decacca0e6b773b6de68453736be22f00f2b975900b9732623bc608",
+  "four_faces": [
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_wire.py",
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_lifecycle.py",
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_task_state.py",
+    ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/replay-repair/**"
+  ],
+  "other35_equal": true,
+  "36_tasks_7_stages_unchanged": true,
+  "original_contracts_unchanged": true,
+  "semantic_handoff": false
+}

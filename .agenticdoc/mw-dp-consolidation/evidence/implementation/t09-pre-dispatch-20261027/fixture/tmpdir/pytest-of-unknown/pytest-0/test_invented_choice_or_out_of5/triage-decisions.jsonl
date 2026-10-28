@@ -1,0 +1,2 @@
+{"ts": "2026-10-27T08:43:47+00:00", "dp": "dp-sign-key", "transport": "timi-decisions", "model": "jev-latest", "attempts": 1, "latency_ms": 0, "available": false, "reason": "bad-response", "answers": null, "confidence": null, "confidence_source": "api"}
+{"ts": "2026-10-27T08:43:47+00:00", "dp": "dp-sign-key", "transport": "timi-decisions", "model": "jev-latest", "attempts": 1, "latency_ms": 0, "available": false, "reason": "bad-response", "answers": null, "confidence": null, "confidence_source": "api"}

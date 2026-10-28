@@ -1,0 +1,98 @@
+{
+  "baseline": {
+    "log": "logs/baseline-red/stdout.txt",
+    "passed": 1,
+    "failed": 16
+  },
+  "final": {
+    "log": "logs/green-08-full-final/stdout.txt",
+    "passed": 16,
+    "failed": 12
+  },
+  "fixed_by_this_change": [
+    "test_dp2_case_keeps_the_registry_question_vocabulary",
+    "test_four_cases_pass_the_offline_registry_typed_check",
+    "test_four_offline_cases_are_complete_and_contract_shaped",
+    "test_shipped_cases_match_the_offline_generator"
+  ],
+  "remaining_failures": [
+    "test_case_loader_refuses_unknown_ids_traversal_and_symlinks",
+    "test_case_route_is_page_authenticated_and_serves_only_fixed_ids",
+    "test_case_route_makes_zero_credential_and_model_calls",
+    "test_dom_incomplete_dag_projection_is_reported_not_filled",
+    "test_dom_legacy_payload_without_facets_never_fabricates_the_universe",
+    "test_dom_local_validate_refuses_placeholders_and_incomplete_material",
+    "test_dom_offline_case_loads_and_local_validate_makes_no_network_write",
+    "test_dom_playground_submit_stays_observe_only_and_retry_points_at_the_previous_id",
+    "test_dom_v2_record_opens_ten_node_dag_and_legacy_record_stays_log_only",
+    "test_dom_workbench_table_has_five_columns_four_states_and_facet_dropdowns",
+    "test_edited_cases_reach_the_real_loopback_typed_validate",
+    "test_history_forwards_the_real_workbench_and_facets"
+  ],
+  "remaining_with_identical_failure_reason": [
+    "test_case_loader_refuses_unknown_ids_traversal_and_symlinks",
+    "test_case_route_is_page_authenticated_and_serves_only_fixed_ids",
+    "test_case_route_makes_zero_credential_and_model_calls",
+    "test_dom_incomplete_dag_projection_is_reported_not_filled",
+    "test_dom_legacy_payload_without_facets_never_fabricates_the_universe",
+    "test_dom_local_validate_refuses_placeholders_and_incomplete_material",
+    "test_dom_offline_case_loads_and_local_validate_makes_no_network_write",
+    "test_dom_playground_submit_stays_observe_only_and_retry_points_at_the_previous_id",
+    "test_dom_v2_record_opens_ten_node_dag_and_legacy_record_stays_log_only",
+    "test_dom_workbench_table_has_five_columns_four_states_and_facet_dropdowns",
+    "test_edited_cases_reach_the_real_loopback_typed_validate",
+    "test_history_forwards_the_real_workbench_and_facets"
+  ],
+  "remaining_with_changed_reason": [],
+  "new_failures": [],
+  "remaining_reasons": {
+    "test_case_loader_refuses_unknown_ids_traversal_and_symlinks": [
+      "decision.DecisionInputError: retired decision point id 'dp1-dispatch-type' (migrated): not callable; old ids are read-only history, not aliases",
+      "decision_monitor.CaseError: case-invalid: the case names an unregistered decision point"
+    ],
+    "test_case_route_is_page_authenticated_and_serves_only_fixed_ids": [
+      "AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}",
+      "assert 503 == 200"
+    ],
+    "test_case_route_makes_zero_credential_and_model_calls": [
+      "AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}",
+      "assert 503 == 200"
+    ],
+    "test_dom_incomplete_dag_projection_is_reported_not_filled": [
+      "AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}",
+      "assert 503 == 200"
+    ],
+    "test_dom_legacy_payload_without_facets_never_fabricates_the_universe": [
+      "AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}",
+      "assert 503 == 200"
+    ],
+    "test_dom_local_validate_refuses_placeholders_and_incomplete_material": [
+      "AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}",
+      "assert 503 == 200"
+    ],
+    "test_dom_offline_case_loads_and_local_validate_makes_no_network_write": [
+      "AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}",
+      "assert 503 == 200"
+    ],
+    "test_dom_playground_submit_stays_observe_only_and_retry_points_at_the_previous_id": [
+      "AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}",
+      "assert 503 == 200"
+    ],
+    "test_dom_v2_record_opens_ten_node_dag_and_legacy_record_stays_log_only": [
+      "AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}",
+      "assert 503 == 200"
+    ],
+    "test_dom_workbench_table_has_five_columns_four_states_and_facet_dropdowns": [
+      "AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}",
+      "assert 503 == 200"
+    ],
+    "test_edited_cases_reach_the_real_loopback_typed_validate": [
+      "AssertionError: {'capture_status': None, 'data': None, 'error': {'code': 'case-invalid', 'issues': [], 'message': 'the case names an unregistered decision point'}, 'ok': False}",
+      "assert 503 == 200"
+    ],
+    "test_history_forwards_the_real_workbench_and_facets": [
+      "AssertionError: the registered question is projected",
+      "assert None"
+    ]
+  }
+}

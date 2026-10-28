@@ -1,0 +1,89 @@
+diff --git a/packages/multi-workers/decide_book_template.json b/packages/multi-workers/decide_book_template.json
+index 815ccf681..b244fedc7 100644
+--- a/packages/multi-workers/decide_book_template.json
++++ b/packages/multi-workers/decide_book_template.json
+@@ -6,39 +6,25 @@
+       "state": {
+         "schema_version": 2,
+         "decision_point": "dp3-worker-clarify",
+-        "key": "<string: AgenticTask key, e.g. mw-decision-substitution.>",
+-        "phase": "<string: Current AgenticTask phase, e.g. EXECUTE.>",
+-        "task_type": "<string: Task type of the work being decided: coding|review|research|rag-research|vision|verifier|reviewer|repair|phase-writer|roadmap-writer.>",
+-        "risk": "<string: Risk tier of the task: low|mid|high.>",
+-        "risk_source": "<string: Who assigned the risk: machine (auto-derived) | pm-label (labelled by the PM).>",
+-        "authority_tier": "<string: Decision authority tier: P0|P1|P2.>",
+-        "task_summary": "<string: One-line summary of the task being decided.>",
+-        "questions_version": "q-fcbd3847",
+-        "ambiguity": {
+-          "kind": "<string: Kind of the ambiguity: scope|fact|intent.>",
+-          "question": "<string: The clarifying question the worker could not answer.>"
++        "question": "<string: The clarifying question verbatim, written before any answer.>",
++        "background": {
++          "task_goal": "<string: Task goal the question is asked against.>",
++          "current_state": "<string: What is actually known so far; unknowns are marked unknown, never invented.>",
++          "decision_reason": "<string: Why this question needs a decision now.>",
++          "constraints_impact": "<string: Constraints and the impact of each candidate handling.>"
+         },
+-        "local_candidates": []
+-      },
+-      "context": {
+-        "change_summary": "",
+-        "candidate_snippets": []
++        "handling_options": [],
++        "questions_version": "q-21d2d577"
+       },
++      "context": {},
+       "notes": {
+         "evidence": {
+-          "schema_version": "<待填: path:line 或命令原文>",
+-          "decision_point": "<待填: path:line 或命令原文>",
+-          "key": "<待填: path:line 或命令原文>",
+-          "phase": "<待填: path:line 或命令原文>",
+-          "task_type": "<待填: path:line 或命令原文>",
+-          "risk": "<待填: path:line 或命令原文>",
+-          "risk_source": "<待填: path:line 或命令原文>",
+-          "authority_tier": "<待填: path:line 或命令原文>",
+-          "task_summary": "<待填: path:line 或命令原文>",
+-          "questions_version": "<待填: path:line 或命令原文>",
+-          "ambiguity.kind": "<待填: path:line 或命令原文>",
+-          "ambiguity.question": "<待填: path:line 或命令原文>",
+-          "local_candidates": "<待填: path:line 或命令原文>"
++          "question": "<待填: path:line 或命令原文>",
++          "background.task_goal": "<待填: path:line 或命令原文>",
++          "background.current_state": "<待填: path:line 或命令原文>",
++          "background.decision_reason": "<待填: path:line 或命令原文>",
++          "background.constraints_impact": "<待填: path:line 或命令原文>",
++          "handling_options": "<待填: path:line 或命令原文>"
+         }
+       }
+     },
+@@ -48,13 +34,27 @@
+       "state": {
+         "schema_version": 2,
+         "decision_point": "dp6-qg-verdict",
+-        "questions_version": "q-16b4bb5c"
++        "questions_version": "q-16b4bb5c",
++        "qg": {
++          "checks_total": -1,
++          "checks_failed": [],
++          "blocking": [],
++          "scope": "<string: Which surface the verdict covers: impl (code) or spec (locked requirements).>"
++        }
+       },
+       "context": {
+         "error_excerpt": ""
+       },
+       "notes": {
+-        "evidence": {}
++        "evidence": {
++          "schema_version": "<待填: path:line 或命令原文>",
++          "decision_point": "<待填: path:line 或命令原文>",
++          "questions_version": "<待填: path:line 或命令原文>",
++          "qg.checks_total": "<待填: path:line 或命令原文>",
++          "qg.checks_failed": "<待填: path:line 或命令原文>",
++          "qg.blocking": "<待填: path:line 或命令原文>",
++          "qg.scope": "<待填: path:line 或命令原文>"
++        }
+       }
+     }
+   }

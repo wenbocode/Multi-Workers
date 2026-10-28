@@ -1,0 +1,65 @@
+{
+  "started_at": "2026-10-27T08:43:46.603038+00:00",
+  "observed_at": "2026-10-27T08:43:48.692484+00:00",
+  "source": "agent-report",
+  "card": "tasks/isolated/T09-books.md",
+  "card_sha256": "b1c49e8a66ea44dc841bda5445cebc6e39a8fc69a9c133f6a975ebbfbc6d7b2b",
+  "logical_task": "T09",
+  "product_write_face": [
+    "packages/multi-workers/decision_book.py",
+    "packages/multi-workers/test_decision_context_contract.py"
+  ],
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_book.py",
+      "sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+      "bytes": 54796,
+      "lf": 1338,
+      "crlf": 0,
+      "live_sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+      "source_independent": true
+    },
+    {
+      "path": "packages/multi-workers/test_decision_context_contract.py",
+      "sha256": "ea6429088c285382736f634a3233b7c94659c2a381e60b0ad9380a0157b8e7cf",
+      "bytes": 35858,
+      "lf": 961,
+      "crlf": 0,
+      "live_sha256": "ea6429088c285382736f634a3233b7c94659c2a381e60b0ad9380a0157b8e7cf",
+      "source_independent": true
+    }
+  ],
+  "mirror_files": 1883,
+  "mirror_net_changes": [],
+  "t08_products_match_independent_verification": true,
+  "t08_fresh_assigned_passed": 110,
+  "t08_fresh_rc": 0,
+  "ledger_same_header_false_positive_reproduced": true,
+  "ledger_runtime_version_verified": false,
+  "original_runs_evidence_unchanged": true,
+  "pyc_preserved": 14,
+  "relevant_live_baselines_unchanged": true,
+  "whole_live_transient_or_exclusive_authorship_audit": false,
+  "remaining_t08_process_status": "needs-clarification/exit2 preserved",
+  "disposition": "evidence/implementation/t08-r2-pm-handoff-20261026/pm-disposition-20261027.md",
+  "commands": [
+    {
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t08-r2-pm-handoff-20261026\\bootstrap.py",
+        "tests"
+      ],
+      "rc": 0
+    },
+    {
+      "argv": [
+        "node",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t09-pre-dispatch-20261027\\ledger-probe.mjs"
+      ],
+      "rc": 0
+    }
+  ],
+  "dispatch_done": false,
+  "product_tests_for_T09_run": false
+}

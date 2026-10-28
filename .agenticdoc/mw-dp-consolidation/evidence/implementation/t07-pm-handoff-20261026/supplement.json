@@ -1,0 +1,44 @@
+{
+  "observed_at": "2026-10-26T12:22:33.637993+00:00",
+  "argv": [
+    "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+    "-B",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "-q",
+    "test_dp_consolidation_recovery.py"
+  ],
+  "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+  "rc": 0,
+  "pm_diff_bytes": 117458,
+  "pm_diff_sha256": "120b978c475d86145eaffe26f4bd94b1551ddb0d7c7d24a63e8f61f9c253b62f",
+  "worker_diff_exact_equal": true,
+  "literal_verification_mirror_changed": false,
+  "live_frontier_existing_counterparts": [
+    {
+      "path": "packages/multi-workers/decision.py",
+      "sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+      "same_as_frontier": true,
+      "samefile_mirror": false
+    },
+    {
+      "path": "packages/multi-workers/decision_backends.py",
+      "sha256": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60",
+      "same_as_frontier": true,
+      "samefile_mirror": false
+    }
+  ],
+  "revoked_policy_recovery_ref_bypassed": {
+    "required_ref": "rule-ref",
+    "request_ref": "other-ref",
+    "rule_ref_revoked": true,
+    "allowed": true,
+    "scope": [
+      "recovery:breaker"
+    ],
+    "reasons": []
+  },
+  "fixture_authority_not_production": true
+}

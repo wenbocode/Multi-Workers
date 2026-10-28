@@ -1,0 +1,156 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T13:44:31.553366+00:00",
+  "products_match_pre_dispatch": true,
+  "products": [
+    {
+      "rel": "scripts/build_decide_cases.py",
+      "bytes": 39431,
+      "sha256": "7987113fb597f9c8f5d6b48085292cf1a4f8c150839b2fc12efe5d4d4f6ffa70",
+      "matches_pre_dispatch": true,
+      "pre_dispatch_sha256": "7987113fb597f9c8f5d6b48085292cf1a4f8c150839b2fc12efe5d4d4f6ffa70"
+    },
+    {
+      "rel": "decide_book_template.json",
+      "bytes": 2367,
+      "sha256": "755253b61429271b4eb1fc5cb22cc2fb4e77a7fce07e7a67aa111dd896640df2",
+      "matches_pre_dispatch": true,
+      "pre_dispatch_sha256": "755253b61429271b4eb1fc5cb22cc2fb4e77a7fce07e7a67aa111dd896640df2"
+    },
+    {
+      "rel": "test_decision_context_workbench.py",
+      "bytes": 95205,
+      "sha256": "0320702d37146bd856b28e2b102fee2245c67fed15c64349fe0f637c2877dc1b",
+      "matches_pre_dispatch": true,
+      "pre_dispatch_sha256": "0320702d37146bd856b28e2b102fee2245c67fed15c64349fe0f637c2877dc1b"
+    },
+    {
+      "rel": "decide_cases/dp-w-type.json",
+      "bytes": 3079,
+      "sha256": "dfb7ffc915a2c1de248629ec1d0a832c84b5d8a2920abc76427fdef60e6ddbf0",
+      "matches_pre_dispatch": true,
+      "pre_dispatch_sha256": "dfb7ffc915a2c1de248629ec1d0a832c84b5d8a2920abc76427fdef60e6ddbf0"
+    },
+    {
+      "rel": "decide_cases/dp-pm-steer.json",
+      "bytes": 4089,
+      "sha256": "814e7abf4172aba7c6828ab4e117f568ede18c5acf90d342640dc2235c744d10",
+      "matches_pre_dispatch": true,
+      "pre_dispatch_sha256": "814e7abf4172aba7c6828ab4e117f568ede18c5acf90d342640dc2235c744d10"
+    },
+    {
+      "rel": "decide_cases/dp-w-check-task.json",
+      "bytes": 4622,
+      "sha256": "1908330e314b3da038c3a0e745504b30885e4717be91ef349c58383fdf3cad9c",
+      "matches_pre_dispatch": true,
+      "pre_dispatch_sha256": "1908330e314b3da038c3a0e745504b30885e4717be91ef349c58383fdf3cad9c"
+    },
+    {
+      "rel": "decide_cases/dp-QG.json",
+      "bytes": 2991,
+      "sha256": "43afee46e192b19a08be5a17260d2a088fa9789594066dca730fdc999273d953",
+      "matches_pre_dispatch": true,
+      "pre_dispatch_sha256": "43afee46e192b19a08be5a17260d2a088fa9789594066dca730fdc999273d953"
+    },
+    {
+      "rel": "decide_cases/dp-gate-approve.json",
+      "bytes": 4750,
+      "sha256": "69e7970144ed7eb2cfd685e035f66872028172d4f594c3cda387b43ce6975ebd",
+      "matches_pre_dispatch": true,
+      "pre_dispatch_sha256": "69e7970144ed7eb2cfd685e035f66872028172d4f594c3cda387b43ce6975ebd"
+    },
+    {
+      "rel": "decide_cases/dp-sign-key.json",
+      "bytes": 3825,
+      "sha256": "f089deabae264503f096406cf42cd909bddbeab23b80dc13eea194ceaf81e408",
+      "matches_pre_dispatch": true,
+      "pre_dispatch_sha256": "f089deabae264503f096406cf42cd909bddbeab23b80dc13eea194ceaf81e408"
+    },
+    {
+      "rel": "decide_cases/dp-auto.json",
+      "bytes": 4747,
+      "sha256": "3b8f1f267ebf50bb88b015efb53c5f7783e07e2763d3a157109060f8d36890a9",
+      "matches_pre_dispatch": true,
+      "pre_dispatch_sha256": "3b8f1f267ebf50bb88b015efb53c5f7783e07e2763d3a157109060f8d36890a9"
+    },
+    {
+      "rel": "decide_cases/dp-route.json",
+      "bytes": 3994,
+      "sha256": "6f267c83a2dd704a17b48583d8a2c2380a6cdfdec2534797ab206424a49510d5",
+      "matches_pre_dispatch": true,
+      "pre_dispatch_sha256": "6f267c83a2dd704a17b48583d8a2c2380a6cdfdec2534797ab206424a49510d5"
+    }
+  ],
+  "legacy_cases": {
+    "dp1.json": {
+      "sha256": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff",
+      "expected": "3131c02f4830b96994e3bea94efe1be8511fd7936f8c983cf579596218a6c9ff"
+    },
+    "dp2.json": {
+      "sha256": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea",
+      "expected": "a03e1a29540ba9636a0a37bf478598bb530c357fc65d54b5eaaf6326e16342ea"
+    },
+    "dp3.json": {
+      "sha256": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d",
+      "expected": "82ff47e50ab5f24cfd84c793c07e2d15484ea89c24a90c8595306c468f407f2d"
+    },
+    "dp25.json": {
+      "sha256": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd",
+      "expected": "bda25144a8c5cd73978603a3dc4c9b429d8d451485679d99ef46cfcc4c2cc7fd"
+    }
+  },
+  "legacy_cases_match": true,
+  "t10_protection_rows": [
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_lifecycle.py",
+      "sha256": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+      "expected": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+      "matches": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_task_state.py",
+      "sha256": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+      "expected": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+      "matches": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_wire.py",
+      "sha256": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+      "expected": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+      "matches": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_lifecycle.py",
+      "sha256": "bdedfd4301fab76929beb0156f429f973fcb6404382b8893d2cbecbfaa711d1a",
+      "expected": "bdedfd4301fab76929beb0156f429f973fcb6404382b8893d2cbecbfaa711d1a",
+      "matches": true
+    },
+    {
+      "path": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_task_state.py",
+      "sha256": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f",
+      "expected": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f",
+      "matches": true
+    }
+  ],
+  "t10_matches": true,
+  "inventory_root": "H:/git/Multi-Workers/.agenticdoc/mw-dp-consolidation/implementation-worktree",
+  "inventory_file_count": 1891,
+  "pyc_count": 14,
+  "pyc": [
+    "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc"
+  ],
+  "test_function_count": 28
+}

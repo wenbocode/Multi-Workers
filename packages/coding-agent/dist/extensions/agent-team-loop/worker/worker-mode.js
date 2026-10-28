@@ -1,9 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { killTrackedDetachedChildren } from "../../../utils/shell.js";
+import { buildDecisionToolMeta, resolveHandlingSelection, validateDecisionMaterial } from "../pm/decision-tool.js";
 import { DP2_NARROW_MARKER, DP2_STEER_FILE, DP2_STEER_REQUEST_HEADER, recordDispatchAlarm, } from "../pm/pm-orchestrator.js";
 import { canonicalStateBytes, readDecidePolicy, runDecideMw, } from "../pm/triage-client.js";
-import { assertStateMatchesRegistry, WRITE_SURFACE_MARKER, WRITE_SURFACE_MARKER_END } from "../pm/ui-bridge.js";
+import { WRITE_SURFACE_MARKER, WRITE_SURFACE_MARKER_END } from "../pm/ui-bridge.js";
 import { Breaker, Budget } from "../rag/budget.js";
 import { requiredFor } from "../rag/config.js";
 import { appendEvidence } from "../rag/evidence.js";
@@ -11,7 +12,6 @@ import { researchDocEvidence, scanCitations, validateResearchDoc } from "../rag/
 import { applyRagTools, RAG_CHAT_BUDGET_HEADER, RAG_TIME_BUDGET_HEADER, registerRagTools, } from "../rag/tools.js";
 import { appendUnresolvedWriteEvent, appendWriteFileEvent, parseWriteFileEvents, repoRelativePath, } from "../shared/change-ledger.js";
 import { resolveDecidePolicy } from "../shared/decide-policy.js";
-import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.js";
 import { findNonEmptyReport, hasDeliverableEvidence } from "../shared/deliverable-evidence.js";
 import { claimBudgetCaps, DISPATCH_TYPE_VOCABULARY, parseClaimsBlock } from "../shared/dispatch-card.js";
 import { roleForTaskType } from "../shared/dispatch-models.js";
@@ -729,11 +729,14 @@ export function claimGapIds(gaps) {
 /** Repo-relative `path:line` evidence refs of one verdict row's `证据` cell. This
  * is a deliberately narrow reader (the full grammar lives in `output-sections.ts`,
  * which is frozen for T-04b): only the `path[:line[-line]]` half is needed to ask
- * "was this citation produced by an EARLIER round?" — command refs and
- * unparsable refs are ignored, they are owned by the `:evidence` criterion. */
+ * "was this citation read in THIS round?" — command refs and unparsable refs are
+ * ignored, they are owned by the `:evidence` criterion. */
 function claimEvidencePaths(cell) {
     const paths = [];
-    for (const raw of cell.replace(/`/g, "").split(";")) {
+    // `；` too: the first live e2e joined two refs with the full-width semicolon
+    // and the ASCII-only split read them as one path that was never read
+    // (`claim:C-03:carried-from`, P-048).
+    for (const raw of cell.replace(/`/g, "").split(/[;；]/)) {
         const ref = raw
             .trim()
             .replace(/「[^」]*」\s*$/, "")
@@ -752,10 +755,22 @@ function claimEvidencePaths(cell) {
     }
     return paths;
 }
+/** Win32 compares paths case-insensitively (drive letters, junction casing),
+ * every other platform byte-exactly — the rule `read-scope.ts` applies. */
+const CLAIM_PATH_CASE_INSENSITIVE = process.platform === "win32";
+/** Canonical key of one repo path for the ⑥ read-target set: `read-scope`'s own
+ * normalization (lexical resolve + realpath, missing tail rejoined) and, on
+ * win32, a lower-cased comparison basis. The recorded allowed targets and the
+ * citations both go through this, so membership is platform-correct. */
+function claimPathKey(projectDir, p) {
+    const normalized = normalizeForCompare(projectDir, p);
+    return CLAIM_PATH_CASE_INSENSITIVE ? normalized.toLowerCase() : normalized;
+}
 /**
  * The three AC-008 settlement criteria that need inputs only the worker layer
- * holds (the role, the run clock, the trace read count) — `claimCoverage`'s
- * per-claim criteria stay in `worker/output-sections.ts` (frozen, T-04a):
+ * holds (the role, the allowed read targets, the allowed read-call count) —
+ * `claimCoverage`'s per-claim criteria stay in `worker/output-sections.ts`
+ * (frozen, T-04a):
  *
  *   ② `claims:unverified-ratio:<u>/<n>><limit>%`  too many un-settled claims
  *      (40%, or 60% for the review role) ⇒ the run must not read as PASS.
@@ -765,12 +780,14 @@ function claimEvidencePaths(cell) {
  *                                                (B-6: an upper bound — you
  *                                                cannot honestly report more
  *                                                fetches than you performed).
- *   ⑥ `claim:<id>:carried-from`                 a closed/partial row whose every
- *      cited file predates this run's task.md and carries no `carried-from:`:
- *      the previous round's verdict was copied without saying so.
+ *   ⑥ `claim:<id>:carried-from`                 a closed/partial row whose
+ *      cited files were never ALLOWED to be read by this run and that carries
+ *      no `carried-from:`: the previous round's verdict was copied without
+ *      saying so (D-014 — a file's mtime says nothing about who read it, the
+ *      T-07 e2e proved that 0% of its carried-from verdicts were real).
  *
- * Never throws. `claims.length === 0` (no contract) returns `[]`, and an unknown
- * `taskMtimeMs` skips ⑥ rather than guessing a clock.
+ * Never throws. `claims.length === 0` (no contract) returns `[]`, and an absent
+ * `readTargets` skips ⑥ rather than guessing what the run touched.
  */
 export function claimSettlementGaps(opts) {
     const gaps = [];
@@ -803,34 +820,24 @@ export function claimSettlementGaps(opts) {
         gaps.push(`claims:fetches:${fetchSum}>${fileCap}`);
     if (fetchSum > opts.traceReads)
         gaps.push(`claims:fetches:${fetchSum}>trace:${opts.traceReads}`);
-    // ⑥ carried-from: a re-used previous-round verdict must say so.
+    // ⑥ carried-from: a re-used previous-round verdict must say so. "Re-used" is
+    // observable as "the run never read the cited file" — a file's age is not.
     const projectDir = opts.projectDir ?? process.cwd();
-    if (opts.taskMtimeMs !== undefined) {
+    if (opts.readTargets !== undefined) {
+        const readKeys = new Set(opts.readTargets.map((target) => claimPathKey(projectDir, target)));
         for (const row of rows) {
             const verdict = claimVerdictToken(row.verdict);
             if (verdict !== "closed" && verdict !== "partial")
                 continue;
             if (CARRIED_FROM_RE.test(`${row.evidence} ${row.reason}`))
                 continue;
-            const files = claimEvidencePaths(row.evidence).map((file) => path.resolve(projectDir, file));
+            const files = claimEvidencePaths(row.evidence);
+            // No `path:line` citation at all: the `:evidence` criterion owns it.
             if (files.length === 0)
                 continue;
-            let staleOnly = true;
-            for (const file of files) {
-                try {
-                    if (!(fs.statSync(file).mtimeMs < opts.taskMtimeMs)) {
-                        staleOnly = false;
-                        break;
-                    }
-                }
-                catch {
-                    // Missing file: the `:evidence` criterion owns it, not this one.
-                    staleOnly = false;
-                    break;
-                }
-            }
-            if (staleOnly)
+            if (!files.some((file) => readKeys.has(claimPathKey(projectDir, file)))) {
                 gaps.push(`claim:${row.id}:carried-from`);
+            }
         }
     }
     return gaps;
@@ -2559,6 +2566,13 @@ export async function workerModeActivate(pi, options) {
     const readScopeConfig = applyParentRootUnion(readScopeConfigFromMeta(meta), parentRootFromTaskContent(taskContent));
     const readScopeState = { allowedCalls: 0, bytesRead: 0 };
     const readScopeRejections = [];
+    // D-014: what the scope actually let through. `allowedReads` is the honest
+    // `fetches` counter (a blocked call is not a fetch), `allowedReadTargets` is
+    // the ⑥ `carried-from` evidence (a citation this run never read is a copied
+    // verdict). The raw `readCount` below keeps its own meaning for the
+    // checkpoint / repeat-read detection / watchdog heuristics.
+    let allowedReads = 0;
+    const allowedReadTargets = new Set();
     function writeOutputGuarded(opts) {
         // The product write is this run's terminal moment, and the marker it carries
         // must state the outcome the same write records — so reflect it in memory
@@ -2849,6 +2863,8 @@ export async function workerModeActivate(pi, options) {
             if (verdict.allowed) {
                 readScopeState.allowedCalls++;
                 readScopeState.bytesRead += verdict.chargedBytes;
+                allowedReads++;
+                allowedReadTargets.add(normalizeForCompare(projectRoot, rawPath));
                 return undefined;
             }
             const rejection = {
@@ -3498,18 +3514,6 @@ export async function workerModeActivate(pi, options) {
         const tools = toolsUsed.size > 0 ? ` Tools used: ${[...toolsUsed].sort().join(", ")} (${toolCallCount} calls).` : "";
         return `${base}${tools}`;
     }
-    /** T-04b: mtime of this run's task.md — the clock the AC-008 ⑥
-     * `carried-from` check compares evidence citations against ("written before
-     * this task book existed" = a previous round's artifact). `undefined` when
-     * the file is unreadable: the check then skips rather than inventing a clock. */
-    function taskMtimeMs() {
-        try {
-            return fs.statSync(taskPath).mtimeMs;
-        }
-        catch {
-            return undefined;
-        }
-    }
     /** T-04b: the claim gaps this settle would report. Same criteria list
      * `readTerminalGaps` folds (`claimCoverage`) PLUS the three AC-008 checks that
      * need worker-only inputs; used by the pre-settle self-check, which must name
@@ -3525,8 +3529,8 @@ export async function workerModeActivate(pi, options) {
                 claims: meta.claims,
                 table,
                 role: roleForTaskType(meta.type),
-                traceReads: readCount,
-                taskMtimeMs: taskMtimeMs(),
+                traceReads: allowedReads,
+                readTargets: [...allowedReadTargets],
                 projectDir: process.cwd(),
             }),
         ];
@@ -3617,6 +3621,26 @@ export async function workerModeActivate(pi, options) {
                 // FIX-J §5: which local candidate was consumed and from where. The frozen
                 // `[DECIDE]` row keeps its key order, so the detail rides its own line.
                 appendTrace(meta.taskKey, meta.agenticdocRoot, `[DECISION] dp3 detail=${decision.detail}`);
+            }
+            if (decision.kind === "handling") {
+                // T04/AC-006: the native `handling` choice is a RECEIPT for the asking
+                // agent, never an executed action. No steer is injected and no business
+                // step (narrow/split/kill/授权) is taken from a model selection; the
+                // question goes back to the worker/human with the chosen option traced.
+                dp3HumanClarifications += 1;
+                appendTrace(meta.taskKey, meta.agenticdocRoot, formatDp3TraceLine({
+                    triggerId,
+                    sub: "3a",
+                    acted: false,
+                    mode: decision.mode,
+                    escalatedReason: "-",
+                    decisionId: decision.decisionId,
+                    ncRaw: dp3RawClarifications,
+                    ncHuman: dp3HumanClarifications,
+                }));
+                appendTrace(meta.taskKey, meta.agenticdocRoot, `[DECISION] dp3 handling=${decision.option.id} label=${decision.option.label ?? "-"} ` +
+                    `decision_id=${decision.decisionId} acted=0`);
+                return false;
             }
             if (decision.kind === "answer" && decision.mode === "auto") {
                 // D-041: adoption happens HERE, at the point that injects the steer.
@@ -3745,8 +3769,8 @@ export async function workerModeActivate(pi, options) {
                 claims: meta.claims,
                 table: claimsTable,
                 role: roleForTaskType(meta.type),
-                traceReads: readCount,
-                taskMtimeMs: taskMtimeMs(),
+                traceReads: allowedReads,
+                readTargets: [...allowedReadTargets],
                 projectDir: process.cwd(),
             });
             if (settlementGaps.length > 0) {
@@ -3847,7 +3871,7 @@ export async function workerModeActivate(pi, options) {
         // writes NEITHER (no line, no key: T-05 treats an absent key as "not
         // measured" and renders n/a instead of a fabricated zero).
         if (meta.claims !== undefined && claimsTable !== undefined) {
-            const counts = claimCounts(meta.claims, claimsTable, readCount);
+            const counts = claimCounts(meta.claims, claimsTable, allowedReads);
             runState.claims = counts;
             appendClaimsTraceLine(meta.taskKey, meta.agenticdocRoot, counts);
         }
@@ -3961,6 +3985,17 @@ export async function workerModeActivate(pi, options) {
         killTrackedDetachedChildren();
         process.exit(3);
     }
+    // Timers are process-lifetime by design, but a REPLACED session (`/new`,
+    // `/resume`, `/fork`, harness teardown) keeps the old worker's heartbeat and
+    // watchdog armed: they would keep writing [HEARTBEAT]/run.json into a task
+    // another window now owns, and a stale watchdog could call process.exit. The
+    // shutdown hook is the one teardown point that runs for every replacement, so
+    // it clears both intervals and kills detached children here (T08).
+    pi.on("session_shutdown", () => {
+        clearWatchdogTimers();
+        clearInterval(heartbeat);
+        killTrackedDetachedChildren();
+    });
     pi.on("agent_settled", () => {
         try {
             // AC-010②: this handler is the settle entry point; once finishSuccess has
@@ -4562,11 +4597,7 @@ export function matchDp3Reuse(question, sources, minMatchScore = DP3_MIN_MATCH_S
     }
     return best;
 }
-/** Intent / preference / approval wording — the hard 3b signal (design Q2.1). */
-const DP3_INTENT_RE = /应该|建议|更好|倾向于|偏好|优先|取舍|是否可以|要不要|请确认|需要你|由你|你决定|approve|prefer|should\b|trade-?off/i;
-/** Locator / definition / error-shape questions that a fact answer can settle. */
-const DP3_LOCATOR_RE = /在哪|哪里|哪个文件|什么文件|什么命令|怎么(?:运行|跑|执行|用|做)|如何(?:运行|跑|执行)|字段名|签名|定义|位置|报错|为什么|为何|where\b|which file|what file|how (?:do|to|can) i (?:run|use)|field name|signature|defined/i;
-/** A fact answer must cite `path:line` (design Q2.2 3a). */
+/** A fact answer must cite `path:line` (design Q2.2 3a; legacy 3c reuse path). */
 export const DP3_CITATION_RE = /[\w./-]+\.(?:ts|tsx|js|mjs|cjs|py|json|md|yml|yaml|toml|sh)\s*:\d+/i;
 function normalizeDp3Question(text) {
     return text.replace(/\s+/g, " ").trim();
@@ -4737,8 +4768,13 @@ function dp3CandidateLine(file, tokens) {
 }
 /** Resolve the model's `candidate` choice into a LOCALLY quoted answer (FIX-J
  * §4). Nothing the child wrote in free text reaches `answer`: the text is the
- * local line, the citation is the local `<path>:<line>`. */
-function resolveDp3CandidateAnswer(input, question, candidates, rawCandidate) {
+ * local line, the citation is the local `<path>:<line>`.
+ *
+ * Legacy path: T04 replaced the dp3 question set with the agent's own
+ * `handling_options`, so `decideDp3WorkerClarify` no longer calls this. It stays
+ * for the historical 3c reuse contract until T08 migrates the old assertions.
+ */
+export function resolveDp3CandidateAnswer(input, question, candidates, rawCandidate) {
     const chosenId = parseAnswerEntry(rawCandidate)?.value;
     const chosen = chosenId === undefined ? undefined : candidates.find((entry) => entry.id === chosenId);
     if (chosen === undefined)
@@ -4755,63 +4791,14 @@ function resolveDp3CandidateAnswer(input, question, candidates, rawCandidate) {
         detail: `candidate=${chosen.id} path=${rel} line=${hit.line} sent=${candidates.map((entry) => entry.id).join(",")}`,
     };
 }
-/** `answerable` is an `noul` probability (0..1) carried as a NUMBER in
- * `value`, unlike the string-valued entries {@link parseAnswerEntry} handles. */
-function parseDp3Probability(value) {
-    const entry = asPlainRecord(value);
-    if (!entry)
-        return undefined;
-    const raw = entry.value;
-    const numeric = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
-    return Number.isFinite(numeric) ? Math.min(1, Math.max(0, numeric)) : undefined;
-}
-function buildDp3State(input, question, candidates = buildDp3Candidates(input, question)) {
-    const excerpt = dp3TruncateUtf8(question, 600);
-    // FIX-J: the candidate list IS input data, not part of the question set —
-    // `questions_version` deliberately does not track it (FIX-I frozen contract).
-    const state = {
-        schema_version: 2,
-        decision_point: DP3_ID,
-        key: input.key,
-        phase: input.phase,
-        task_type: input.taskType,
-        risk: input.risk,
-        risk_source: input.riskSource,
-        authority_tier: "P2",
-        questions_version: DECIDE_REGISTRY[DP3_ID]?.questionsVersion ?? DP3_QUESTIONS_VERSION,
-        task_summary: excerpt,
-        // The ambiguity.kind enum is scope|missing-dep|rule-conflict (the contract
-        // has no `fact` member, so dp3a rides `scope`; the registry question
-        // `answer_kind` carries the real three-way verdict).
-        ambiguity: { kind: "scope", question: dp3TruncateUtf8(question, 300) },
-        local_candidates: candidates.map(({ id, label }) => ({ id, label })),
-    };
-    // W6 (D-052..D-054): the engineered context the model needs to answer without
-    // guessing — a one-line change summary plus the verbatim hit line of every
-    // candidate (first 200 chars + `<path>:<line>`, so a citation is checkable).
-    const contextSlots = DECIDE_REGISTRY[DP3_ID]?.contextSlots ?? [];
-    const context = {};
-    if (contextSlots.includes("change_summary")) {
-        context.change_summary = dp3TruncateUtf8(`clarification (scope): ${question}`, 600);
-    }
-    if (contextSlots.includes("candidate_snippets")) {
-        const tokens = dp3CandidateTokens(question);
-        const snippets = [];
-        for (const candidate of candidates) {
-            const hit = dp3CandidateLine(candidate.path, tokens);
-            if (hit === undefined)
-                continue;
-            const rel = dp3RelPath(input.projectDir, candidate.path);
-            snippets.push({ text: Array.from(hit.text).slice(0, 200).join(""), source: `${rel}:${hit.line}` });
-        }
-        if (snippets.length > 0)
-            context.candidate_snippets = snippets;
-    }
-    if (Object.keys(context).length > 0)
-        state.context = context;
-    // W6: the registry, not this builder, owns the field list; drift fails loud.
-    assertStateMatchesRegistry(DP3_ID, state);
-    return state;
+/** The registry state of ONE dp3 decision (T04): the asking agent's material
+ * verbatim — the four-dp contract has no `context` slot and no L1 identity on
+ * the wire (Python's `_state_builder` adds `schema_version`/
+ * `decision_point`/`questions_version`). The closed key set was already checked
+ * by {@link validateDecisionMaterial} against the generated registry, so there
+ * is nothing left to synthesise here. */
+function buildDp3State(material) {
+    return material;
 }
 function parseDecideStdout(stdout) {
     const trimmed = stdout.trim();
@@ -4866,87 +4853,54 @@ export function decideDp3WorkerClarify(input) {
         if (input.taskKey === "" || input.key === "" || input.phase === "") {
             return escalate("input-incomplete", undefined, "task context unavailable");
         }
-        const sources = readDp3ReuseSources({
-            projectDir: input.projectDir,
-            taskDir: input.taskDir,
-            taskPath: input.taskPath,
-            taskContent: input.taskContent,
-            trueRoot: input.trueRoot,
-            keyDir: input.keyDir,
-        });
-        // 3c first: the cheapest, most deterministic path (zero spawn).
-        // AC-016: the three dp3 thresholds follow the effective `min_confidence`
-        // (built-in 0.7 reproduces 0.75 / 0.7 / 0.5 exactly).
-        const thresholds = dp3Thresholds(input.policy.minConfidence);
-        const match = matchDp3Reuse(question, sources, thresholds.minMatchScore);
-        if (match !== undefined) {
-            if (match.score < thresholds.minMatchScore) {
-                return escalate("low-confidence", "3c", `reuse score ${match.score.toFixed(2)} < ${thresholds.minMatchScore}`);
-            }
-            return {
-                kind: "answer",
-                sub: "3c",
-                answer: match.quote,
-                source: match.source,
-                decisionId,
-                confidence: match.score,
-                confidenceSource: "local-match",
-                mode: input.policy.mode,
-            };
+        // T04 (design §2, AC-005/AC-006): dp3's question 原文, the four background
+        // facts and the 2..5 handling candidates come from the ASKING agent. This
+        // settle-time hook has none, so it never answers from local guesses, never
+        // reuses a stored answer and never classifies the question itself: the
+        // human path proceeds. `ask_decision` is the one dp3 producer.
+        if (input.material === undefined) {
+            return escalate("input-incomplete", undefined, "no agent-prepared dp3 material (ask_decision owns dp3)");
         }
-        // 3a gate: no intent wording, a resolvable in-repo referent and a locator
-        // question. Anything else is 3b (the default) and goes back to the human.
-        const intent = DP3_INTENT_RE.test(question);
-        const referents = dp3QuestionReferents(question);
-        const corpus = sources.map((source) => source.text).join("\n");
-        const resolvable = referents.filter((ref) => {
-            if (ref.includes("/") || ref.includes("\\")) {
-                return (fs.existsSync(path.join(input.projectDir, ref)) || fs.existsSync(path.resolve(input.projectDir, ref)));
-            }
-            return corpus.includes(ref);
-        });
-        if (intent || resolvable.length === 0 || !DP3_LOCATOR_RE.test(question)) {
-            const why = intent
-                ? "intent wording"
-                : resolvable.length === 0
-                    ? "no resolvable referent"
-                    : "not a locator question";
-            return escalate("intent", "3b", why);
+        const validated = validateDecisionMaterial(DP3_ID, input.material);
+        if (!validated.ok) {
+            return escalate("input-incomplete", undefined, `material: ${validated.issues.map((issue) => issue.field).join(",")}`);
         }
-        // One decision-service call (stdin JSON only; <=2000B canonical state).
-        // The candidate list is built ONCE: the ids sent in `local_candidates` are
-        // exactly the ids the answer is validated against below.
-        const candidates = buildDp3Candidates(input, question);
-        const state = buildDp3State(input, question, candidates);
+        const state = buildDp3State(validated.material);
         if (canonicalStateBytes(state) > DP3_MAX_STATE_BYTES) {
-            // D-028: an over-budget state is refused, never sent; the reason is the
-            // distinct `input-oversize` so it cannot be mistaken for a missing field.
-            return escalate("input-oversize", "3a", `canonical state > ${DP3_MAX_STATE_BYTES}B`);
+            // D-028: an over-budget state is refused, never truncated and sent.
+            return escalate("input-oversize", undefined, `canonical state > ${DP3_MAX_STATE_BYTES}B`);
         }
+        const meta = buildDecisionToolMeta({
+            key: input.key,
+            taskKey: input.taskKey,
+            initiatorRole: dp3TaskType(input.taskType),
+        });
         let raw;
         try {
             raw = (input.runner ?? runDecideMw)({
                 projectDir: input.projectDir,
                 dp: DP3_ID,
                 timeoutMs: input.timeoutMs ?? Math.round(input.policy.timeoutS * 1000),
-                input: JSON.stringify({ state }),
+                // The SAME `{material, meta}` envelope the shared tool sends: identity
+                // and association stay out of the model material.
+                input: JSON.stringify({ material: validated.material, meta }),
             });
         }
         catch {
-            return escalate("unavailable", "3a", "decision runner threw");
+            return escalate("unavailable", undefined, "decision runner threw");
         }
         if (raw.timedOut)
-            return escalate("unavailable", "3a", "decision call timed out");
+            return escalate("unavailable", undefined, "decision call timed out");
         if (raw.error !== undefined)
-            return escalate("unavailable", "3a", raw.error);
+            return escalate("unavailable", undefined, raw.error);
         if (raw.status !== 0)
-            return escalate("unavailable", "3a", `decision exit ${raw.status ?? "null"}`);
+            return escalate("unavailable", undefined, `decision exit ${raw.status ?? "null"}`);
         const payload = parseDecideStdout(raw.stdout);
         if (payload === undefined)
-            return escalate("unavailable", "3a", "non-JSON decision stdout");
+            return escalate("unavailable", undefined, "non-JSON decision stdout");
         if (payload.available !== true) {
             const reason = typeof payload.reason === "string" && payload.reason !== "" ? payload.reason : "upstream-error";
-            return escalate("unavailable", "3a", reason);
+            return escalate("unavailable", undefined, reason);
         }
         // The child is the authority for the id (D-036/D-041): adopt its
         // `decision_id` when it reported one, else keep the locally derived id.
@@ -4955,79 +4909,34 @@ export function decideDp3WorkerClarify(input) {
             decisionId = carriedDecisionId.trim();
         }
         const answers = asPlainRecord(payload.answers);
-        const kind = parseAnswerEntry(answers?.answer_kind);
-        // FIX-I removed `clarifying_answer` from the dp3 question set (the model may
-        // not write prose). It is only honoured on the legacy 3c `reuse` path, where
-        // the old behaviour is kept byte-identical for an old-shaped payload.
-        const legacyAnswer = parseAnswerEntry(answers?.clarifying_answer);
-        if (kind?.value === undefined) {
-            return escalate("unavailable", "3a", "decision answer shape is unusable");
+        // The native `handling` choice resolved back to the candidate the ASKING
+        // agent wrote. An answer that names no sent candidate is NOT mapped onto a
+        // nearby one (AC-006).
+        const selection = resolveHandlingSelection(answers, validated.material.handling_options);
+        if (selection === undefined) {
+            return escalate("unavailable", undefined, "decision answer is not one of the sent handling candidates");
+        }
+        // D-036/D-041: on the spawned path the child's own `mode` is the ONLY
+        // authority on whether the service considers the decision settled.
+        const childMode = payload.mode;
+        if (childMode !== "auto" && childMode !== "suggest") {
+            return escalate("unavailable", undefined, "decision mode missing");
         }
         const confidenceSource = typeof payload.confidence_source === "string" && payload.confidence_source !== ""
             ? payload.confidence_source
             : "unknown";
-        // FIX-J: `answerable` carries the noul probability; its `confidence` is the
-        // second choice of the confidence chain (the kind verdict is the first).
-        const answerableEntry = parseAnswerEntry(answers?.answerable);
-        const confidence = kind.confidence ?? answerableEntry?.confidence ?? null;
-        // D-036/D-041: on the spawned path the child's own `mode` is the ONLY
-        // authority on whether the service considers the decision settled. A child
-        // that reports none (or an unknown value) has not said it answered, so the
-        // consumer must not invent `auto` from the local mirror and inject a steer;
-        // it escalates instead. The zero-spawn 3c path above is the only place the
-        // local `policy.mode` is authoritative (there is no child to ask).
-        const childMode = payload.mode;
-        if (childMode !== "auto" && childMode !== "suggest") {
-            return escalate("unavailable", "3a", "decision mode missing");
-        }
-        // Spec §7.2: confidence only gates when the source is `api`.
-        if (confidenceSource === "api" && confidence !== null && confidence < input.policy.minConfidence) {
-            return escalate("low-confidence", "3a", `confidence ${confidence.toFixed(2)} < ${input.policy.minConfidence}`);
-        }
-        if (kind.value === "intent")
-            return escalate("intent", "3b", "model classified the question as intent");
-        if (kind.value === "reuse" && legacyAnswer?.value !== undefined) {
-            // Legacy 3c payloads keep the old behaviour verbatim: the quoted text is
-            // whatever the answer carried, the citation is its `path:line`.
-            return {
-                kind: "answer",
-                sub: "3c",
-                answer: legacyAnswer.value,
-                source: DP3_CITATION_RE.exec(legacyAnswer.value)?.[0],
-                decisionId,
-                confidence,
-                confidenceSource,
-                mode: childMode,
-            };
-        }
-        if (kind.value !== "fact" && kind.value !== "reuse") {
-            return escalate("unavailable", "3a", `unknown answer_kind ${kind.value}`);
-        }
-        // FIX-J: the model neither writes the answer nor its citation. It reports
-        // how answerable the question is and picks one of the candidates it was
-        // sent; the text and the `path:line` come from that LOCAL file.
-        const answerable = parseDp3Probability(answers?.answerable);
-        if (answerable === undefined) {
-            return escalate("unavailable", "3a", "decision answer shape is unusable");
-        }
-        if (answerable < thresholds.answerableMin) {
-            return escalate("unavailable", "3a", `model reports unanswerable (${answerable})`);
-        }
-        const picked = resolveDp3CandidateAnswer(input, question, candidates, answers?.candidate);
-        if (!picked.ok) {
-            // `reuse` still classifies as 3c; everything else is the 3a refusal.
-            return escalate("unavailable", kind.value === "reuse" ? "3c" : "3a", picked.detail);
-        }
+        const confidence = parseAnswerEntry(answers?.handling)?.confidence ?? null;
+        const sent = validated.material.handling_options
+            .map((option) => String(option.id))
+            .join(",");
         return {
-            kind: "answer",
-            sub: kind.value === "reuse" ? "3c" : "3a",
-            answer: picked.answer,
-            source: picked.source,
+            kind: "handling",
+            option: selection,
             decisionId,
+            mode: childMode,
             confidence,
             confidenceSource,
-            mode: childMode,
-            detail: picked.detail,
+            detail: `handling=${selection.id} label=${selection.label ?? "-"} sent=${sent}`,
         };
     }
     catch {

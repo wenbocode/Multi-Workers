@@ -1,0 +1,20 @@
+{
+  "note": "PM-authored probe for the deferred V58 (state-machine fallback must not abort the whole pair loop) plus two precedence measurements V59/V60. $HUGE is expanded by each side to 'x/'*300 + 'x'.",
+  "cases": [
+    {
+      "name": "V58 state limit pair plus a provable conflict",
+      "a": ["$HUGE", "src/x.ts"],
+      "b": ["$HUGE", "src/x.ts"]
+    },
+    {
+      "name": "V59 deferral order: unsupported syntax encountered first",
+      "a": ["src/[a-", "$HUGE"],
+      "b": ["$HUGE"]
+    },
+    {
+      "name": "V60 deferral order: state limit encountered first",
+      "a": ["$HUGE", "src/[a-"],
+      "b": ["$HUGE"]
+    }
+  ]
+}

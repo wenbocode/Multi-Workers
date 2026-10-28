@@ -1,0 +1,79 @@
+{
+  "ok": true,
+  "issues": [],
+  "started_before_utc": "2026-10-26T04:33:09.555166+00:00",
+  "observed_after_utc": "2026-10-26T04:36:41.589114+00:00",
+  "main_head": "7a530ecb7cb86dac329dbc259459657b2e1608ea",
+  "product": [
+    {
+      "path": "packages/multi-workers/decision_points.py",
+      "changed": false,
+      "before_sha256": "78e72e03cfe3b03f0349d95113c1947713b91c4a143bbaaada404f08db7443e6",
+      "after_sha256": "78e72e03cfe3b03f0349d95113c1947713b91c4a143bbaaada404f08db7443e6",
+      "before_bytes": 305745,
+      "after_bytes": 305745,
+      "eol": [
+        7102,
+        0,
+        7102,
+        0
+      ]
+    },
+    {
+      "path": "packages/multi-workers/decide_registry.json",
+      "changed": false,
+      "before_sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "after_sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "before_bytes": 29869,
+      "after_bytes": 29869,
+      "eol": [
+        0,
+        894,
+        0,
+        894
+      ]
+    },
+    {
+      "path": "packages/multi-workers/test_decide_registry_contract.py",
+      "changed": true,
+      "before_sha256": "67b74a47e22b3d500fa0799a3b1a33c439a69ae8d2bc8c6971a2afeba965f32c",
+      "after_sha256": "c0e35cf1961d1b7eb5abfacdd8c75c8fda201f4f96ee0a82f021b820fd69d719",
+      "before_bytes": 23724,
+      "after_bytes": 39079,
+      "eol": [
+        0,
+        557,
+        0,
+        964
+      ]
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_registry.py",
+      "changed": false,
+      "before_sha256": "f7bf030231558c258921bb286593bb89bb58b85f37ea4548b2e6c2eb4ce75d2f",
+      "after_sha256": "f7bf030231558c258921bb286593bb89bb58b85f37ea4548b2e6c2eb4ce75d2f",
+      "before_bytes": 35149,
+      "after_bytes": 35149,
+      "eol": [
+        0,
+        815,
+        0,
+        815
+      ]
+    }
+  ],
+  "handoff_rows": 13,
+  "handoff_rows_matching_r2_after": 13,
+  "handoff_rows_moved": [],
+  "handoff_rows_changed_in_r3": [],
+  "handoff_table_excludes": [
+    "packages/multi-workers/test_decide_registry_contract.py",
+    "packages/multi-workers/test_dp_consolidation_registry.py"
+  ],
+  "protected_extras_unchanged": true,
+  "evidence_boundary": {
+    "original-t03_files": 56,
+    "rework-r2_files": 27,
+    "unchanged": true
+  }
+}

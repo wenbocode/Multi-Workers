@@ -1,0 +1,2479 @@
+--- before/packages/multi-workers/decision_context.py
++++ after/packages/multi-workers/decision_context.py
+@@ -22,13 +22,21 @@
+   reading half of five fields is worse off than reading four complete ones.
+ * :func:`validate_context` reports problems as a list; it never raises (the same
+   fail-soft contract as the rest of the decide layer).
+-* :func:`redact_context` runs ``decision._redact`` over every string so a
+-  context hand-off can never leak a credential the state itself would redact.
++* The slot table is not a transport for business material. No slot name may
++  equal a declared state path (``required_state_fields`` /
++  ``optional_state_fields``) or a ``preparation`` key, so core evidence -- the
++  task text, the sign-key four-part material, the PM-prepared ``basis_catalog``
++  -- can never be sent as a slot and trimmed away while the request still looks
++  valid. :func:`trimmable_slot_conflicts` reports such a collision (the TS
++  generator refuses to render one), and ``preparation.*`` is never a slot.
++* Slot provenance names the eight post-consolidation entries
++  (``decision_points.ACTIVE_DP_IDS``): a retired id is history and never a
++  producer, so a slot whitelist cannot resurrect an old callable dp.
+ """
+ 
+ from __future__ import annotations
+ 
+-from collections.abc import Mapping
++from collections.abc import Iterable, Mapping
+ from types import MappingProxyType
+ from typing import Any
+ 
+@@ -50,6 +58,10 @@
+ #: Marker shape for a truncated value; ``N`` is the number of characters the cut
+ #: removed (never the number kept), so a reader can judge what it lost.
+ TRUNCATION_MARKER = "…truncated {removed} chars…"
++
++#: The PM-prepared basis lives under this state root (D-012A). It is a required,
++#: fully transported input, so nothing under it may become a cuttable slot.
++PREPARATION_ROOT = "preparation"
+ 
+ #: Frozen slot order: also the order ``contextSlots`` renders in the generated
+ #: TS registry, so the same registry always produces the same bytes.
+@@ -63,8 +75,11 @@
+ 
+ #: Slot table: ``type`` is the JSON-native kind, ``max_chars``/``max_items`` +
+ #: ``item_max_chars`` the caps, ``producers`` the dp ids allowed to emit it.
+-#: ``error_excerpt`` is produced by the failure-carrying dps (dp4/dp6/dp7) and
+-#: stays in the table so the cut order can name it.
++#: ``error_excerpt`` is produced by the two entries that carry a failure into a
++#: live decision: ``dp-QG`` (a fix/reopen verdict reads the failing gate/test
++#: output) and ``dp-auto``, which absorbed the retired dp4/dp7 handling. The old
++#: numbered ids are read-only history and never producers again.
++#: The slot stays in the table so the cut order can name it.
+ CONTEXT_SLOTS: Mapping[str, Mapping[str, Any]] = MappingProxyType(
+     {
+         "task_excerpt": MappingProxyType(
+@@ -107,7 +122,7 @@
+             {
+                 "type": "string",
+                 "max_chars": 1500,
+-                "producers": ("dp4-failure-handling", "dp6-qg-verdict", "dp7-gate-failure"),
++                "producers": ("dp-QG", "dp-auto"),
+                 "description": "Tail of the failing gate/test output (head 60% + tail 40%).",
+             }
+         ),
+@@ -136,6 +151,26 @@
+     return tuple(
+         name for name in SLOT_ORDER if dp_id in CONTEXT_SLOTS[name].get("producers", ())
+     )
++
++
++def trimmable_slot_conflicts(declared_paths: Iterable[str]) -> tuple[str, ...]:
++    """Slot names that collide with business material or preparation paths.
++
++    ``declared_paths`` is the union of every entry's required and optional state
++    paths (``decision_points.REQUIRED_STATE_FIELDS`` /
++    ``OPTIONAL_STATE_FIELDS``). A non-empty result means core evidence could be
++    sent as a *cuttable* context slot, so the generated TS registry must refuse
++    to render (T04 / D-012A: the basis is not context either).
++    """
++    declared = {str(path) for path in declared_paths}
++    conflicts = {
++        name
++        for name in SLOT_ORDER
++        if name in declared
++        or name == PREPARATION_ROOT
++        or name.startswith(PREPARATION_ROOT + ".")
++    }
++    return tuple(name for name in SLOT_ORDER if name in conflicts)
+ 
+ 
+ def _truncate_text(text: str, max_chars: int) -> str:
+
+--- before/packages/multi-workers/scripts/gen_decide_registry_ts.py
++++ after/packages/multi-workers/scripts/gen_decide_registry_ts.py
+@@ -2,12 +2,27 @@
+ """Generate ``packages/coding-agent/.../shared/decide-registry.generated.ts``.
+ 
+ The registry (``decision_points.registry_snapshot``) is the single authority for
+-which state fields a dp requires, which facts are optional, and how each field is
+-shaped (type / enum / ``max_items`` / element length / signedness).
+-``decision_context.CONTEXT_SLOTS`` is the authority for the ``context`` slots a
+-dp may emit. The TS producers may not keep a second hand-written copy, so this
+-script renders both into a checked-in module and
++which state fields an entry requires, which facts are optional, how each field is
++shaped (type / enum / ``max_items`` / element length / ``empty_is_value`` /
++signedness), which role may initiate the entry, and which retired ids are
++read-only history. ``decision_context.CONTEXT_SLOTS`` is the authority for the
++``context`` slots an entry may emit. The TS producers may not keep a second
++hand-written copy, so this script renders both into a checked-in module and
+ ``test_decide_registry_ts_lock.py`` fails on any byte drift.
++
++Generated shape (T04):
++
++* ``DECIDE_REGISTRY`` -- exactly the eight active entries, in registry order,
++  each with its questions version, ``kind``, ``roleScope`` (eligibility, never a
++  grant), the required/optional field contract, the model allowlist, the context
++  slots it may emit, and a reference to the one preparation contract;
++* ``DECIDE_REGISTRY_PREPARATION`` -- the PM-prepared basis layer (D-012A): keys,
++  basis item keys, source, independence from material, the one extra model field
++  (``preparation.basis_catalog``) and the fact that it is never trimmable
++  context;
++* ``DECIDE_REGISTRY_RETIRED`` -- the 25 retired ids as a read-only projection
++  (disposition / migration target / explanation), never entry-shaped keys, so it
++  cannot be read as an alias or a second menu.
+ 
+ Usage::
+ 
+@@ -15,14 +30,21 @@
+     python scripts/gen_decide_registry_ts.py --check    # exit 1 on drift
+     python scripts/gen_decide_registry_ts.py --stdout   # print, touch nothing
+ 
+-Deterministic by construction: points are sorted by id, fields keep the
+-``REQUIRED_STATE_FIELDS`` / ``OPTIONAL_STATE_FIELDS`` order, slots keep
+-``decision_context.SLOT_ORDER``, and the output is already in the repo
++Deterministic by construction: entries keep ``decision_points.DP_REGISTRY``
++order, fields keep the ``REQUIRED_STATE_FIELDS`` / ``OPTIONAL_STATE_FIELDS``
++order, slots keep ``decision_context.SLOT_ORDER``, retired records keep
++``RETIRED_DP_REGISTRY`` order, and the output is already in the repo
+ formatter's shape (``biome.json`` ``lineWidth``/``indentWidth``) so
+ ``npm run check`` cannot rewrite the generated file: a field object stays on one
+ line when it fits (120 columns, tab = 3), otherwise it is emitted expanded with
+ one property per line, and a value that still does not fit is broken after its
+ colon exactly like the formatter does.
++
++The script refuses to render a slot table that could trim core evidence: a slot
++whose name is a declared state path (business material) or a ``preparation``
++key would let ``decision_context.fit_context`` drop evidence while the request
++still validated, and a producer that is not an active entry would keep a
++retired id callable through the slot whitelist.
+ """
+ 
+ from __future__ import annotations
+@@ -31,6 +53,7 @@
+ import json
+ import pathlib
+ import sys
++from functools import lru_cache
+ 
+ _HERE = pathlib.Path(__file__).resolve().parent
+ _MW_ROOT = _HERE.parent
+@@ -51,6 +74,10 @@
+     "// Regenerate: cd packages/multi-workers && python scripts/gen_decide_registry_ts.py\n"
+     "// Drift lock: test_decide_registry_ts_lock.py fails when this file is stale.\n"
+ )
++
++#: The single basis field the model allowlist permits in addition to the
++#: business material (D-012A). It is a *preparation* field, never material.
++BASIS_STATE_FIELD = "preparation." + decision_points.PREPARATION_KEYS[0]
+ 
+ #: Fallbacks when the repo formatter config cannot be read (``biome.json``).
+ _DEFAULT_LINE_WIDTH = 120
+@@ -70,6 +97,7 @@
+     return json.dumps(text, ensure_ascii=False)
+ 
+ 
++@lru_cache(maxsize=1)
+ def _formatter_config() -> tuple[int, int]:
+     """``(lineWidth, indentWidth)`` from the repo's biome config.
+ 
+@@ -97,6 +125,72 @@
+ def _width(indent_level: int, text: str, *, indent_width: int) -> int:
+     """Printed column width of ``text`` at ``indent_level`` tabs (biome metric)."""
+     return indent_level * indent_width + len(text)
++
++
++def _fits(indent_level: int, text: str) -> bool:
++    line_width, indent_width = _formatter_config()
++    return _width(indent_level, text, indent_width=indent_width) <= line_width
++
++
++def _property_lines(name: str, rendered: str, indent_level: int) -> list[str]:
++    """One ``name: value,`` property, broken after the colon when too wide."""
++    prefix = "\t" * indent_level
++    single = f"{name}: {rendered},"
++    if _fits(indent_level, single):
++        return [prefix + single]
++    return [prefix + f"{name}:", "\t" * (indent_level + 1) + rendered + ","]
++
++
++# ---------------------------------------------------------------------------
++# Slot boundary guards: a cuttable slot may never carry core evidence
++# ---------------------------------------------------------------------------
++
++
++def _declared_material_paths(doc: dict) -> tuple[str, ...]:
++    """Every required/optional state path declared by the document's entries."""
++    paths: list[str] = []
++    for point in doc["points"]:
++        for key in ("required_state_fields", "optional_state_fields"):
++            for field_spec in point.get(key) or []:
++                paths.append(str(field_spec["name"]))
++    return tuple(paths)
++
++
++def assert_slot_boundary(doc: dict) -> None:
++    """Refuse to render a slot table that can trim core decision material.
++
++    Two invariants (T04):
++
++    * no slot name may be a declared business-material path or a
++      ``preparation`` key -- ``decision_context.fit_context`` cuts whole slots
++      under budget pressure, so such a slot would delete evidence while the
++      request still validated;
++    * every slot producer must be an entry this document declares -- otherwise a
++      retired id stays callable through the per-entry slot whitelist.
++    """
++    conflicts = decision_context.trimmable_slot_conflicts(_declared_material_paths(doc))
++    if conflicts:
++        raise ValueError(
++            "context slots collide with core decision material: " + ", ".join(conflicts)
++        )
++    active = {str(point["id"]) for point in doc["points"]}
++    stray = sorted(
++        {
++            str(producer)
++            for name in decision_context.SLOT_ORDER
++            for producer in decision_context.CONTEXT_SLOTS[name].get("producers", ())
++            if str(producer) not in active
++        }
++    )
++    if stray:
++        raise ValueError(
++            "context slot provenance names non-active entries: " + ", ".join(stray)
++        )
++
++
++# ---------------------------------------------------------------------------
++# Field / entry rendering
++# ---------------------------------------------------------------------------
+ 
+ 
+ def _field_properties(field_spec: dict) -> list[tuple[str, str]]:
+@@ -146,18 +240,17 @@
+ 
+ def _render_field(field_spec: dict, indent_level: int) -> list[str]:
+     """One field as formatter-stable TS lines (single line when it fits)."""
+-    line_width, indent_width = _formatter_config()
+     props = _field_properties(field_spec)
+     single = "{ " + ", ".join(f"{key}: {value}" for key, value in props) + " }"
+     prefix = "\t" * indent_level
+-    if _width(indent_level, single + ",", indent_width=indent_width) <= line_width:
++    if _fits(indent_level, single + ","):
+         return [prefix + single + ","]
+     lines = [prefix + "{"]
+     prop_indent = indent_level + 1
+     for key, value in props:
+         prop_prefix = "\t" * prop_indent
+         prop_line = f"{key}: {value},"
+-        if _width(prop_indent, prop_line, indent_width=indent_width) <= line_width:
++        if _fits(prop_indent, prop_line):
+             lines.append(prop_prefix + prop_line)
+             continue
+         # Too wide: the formatter breaks after the colon and indents the value.
+@@ -171,16 +264,123 @@
+     return lines
+ 
+ 
++def _render_field_list(ts_key: str, fields: list[dict]) -> list[str]:
++    if not fields:
++        return [f"\t\t{ts_key}: [],"]
++    lines = [f"\t\t{ts_key}: ["]
++    for field_spec in fields:
++        lines.extend(_render_field(field_spec, 3))
++    lines.append("\t\t],")
++    return lines
++
++
++def _render_model_fields(model_fields: list[str]) -> list[str]:
++    if not model_fields:
++        return []
++    rendered = ", ".join(_ts_string(str(name)) for name in model_fields)
++    single = f"modelStateFields: [{rendered}],"
++    if _fits(2, single):
++        return ["\t\t" + single]
++    lines = ["\t\tmodelStateFields: ["]
++    lines.extend("\t\t\t" + _ts_string(str(name)) + "," for name in model_fields)
++    lines.append("\t\t],")
++    return lines
++
++
++def _render_context_slots(dp_id: str) -> list[str]:
++    slots = decision_context.slot_names_for(dp_id)
++    if not slots:
++        return ["\t\tcontextSlots: [],"]
++    rendered = ", ".join(_ts_string(slot) for slot in slots)
++    line = f"contextSlots: [{rendered}],"
++    if _fits(2, line):
++        return ["\t\t" + line]
++    lines = ["\t\tcontextSlots: ["]
++    lines.extend("\t\t\t" + _ts_string(slot) + "," for slot in slots)
++    lines.append("\t\t],")
++    return lines
++
++
++def _render_entry(point: dict) -> list[str]:
++    dp_id = str(point["id"])
++    lines = [f"\t{_ts_string(dp_id)}: {{"]
++    lines.extend(_property_lines("questionsVersion", _ts_string(str(point["questions_version"])), 2))
++    lines.extend(_property_lines("kind", _ts_string(str(point["kind"])), 2))
++    lines.extend(_property_lines("roleScope", _ts_string(str(point["role_scope"])), 2))
++    lines.extend(_render_field_list("requiredStateFields", point.get("required_state_fields") or []))
++    lines.extend(
++        _render_field_list("optionalStateFields", point.get("optional_state_fields") or [])
++    )
++    lines.extend(_render_model_fields(point.get("model_state_fields") or []))
++    lines.extend(_render_context_slots(dp_id))
++    lines.extend(_property_lines("preparation", "DECIDE_REGISTRY_PREPARATION", 2))
++    lines.append("\t},")
++    return lines
++
++
++# ---------------------------------------------------------------------------
++# Preparation / retired rendering
++# ---------------------------------------------------------------------------
++
++
++def _render_preparation(section: dict) -> list[str]:
++    lines = ["export const DECIDE_REGISTRY_PREPARATION: DecideRegistryPreparation = {"]
++    keys = ", ".join(_ts_string(str(key)) for key in section["keys"])
++    item_keys = ", ".join(_ts_string(str(key)) for key in section["basis_item_keys"])
++    lines.extend(_property_lines("keys", f"[{keys}]", 1))
++    lines.extend(_property_lines("basisItemKeys", f"[{item_keys}]", 1))
++    lines.extend(_property_lines("basisSource", _ts_string(str(section["basis_source"])), 1))
++    lines.extend(_property_lines("independentOf", _ts_string(str(section["independent_of"])), 1))
++    lines.extend(_property_lines("basisStateField", _ts_string(BASIS_STATE_FIELD), 1))
++    lines.extend(_property_lines("contextTrimmable", "false", 1))
++    lines.append("};")
++    return lines
++
++
++def _render_retired(records: list[dict]) -> list[str]:
++    lines = [
++        "/**",
++        " * The retired ids, read-only: disposition, migration target and the",
++        " * explanation a reader (or a refusal) may quote. No required/model field",
++        " * contract, no entry-shaped key -- never an alias, never a second menu.",
++        " */",
++        "export const DECIDE_REGISTRY_RETIRED: DecideRegistryRetiredEntry[] = [",
++    ]
++    for record in records:
++        lines.append("\t{")
++        lines.extend(_property_lines("id", _ts_string(str(record["id"])), 2))
++        lines.extend(_property_lines("tier", _ts_string(str(record["tier"])), 2))
++        lines.extend(_property_lines("description", _ts_string(str(record["description"])), 2))
++        lines.extend(_property_lines("disposition", _ts_string(str(record["disposition"])), 2))
++        migrated_to = record.get("migrated_to")
++        rendered = "null" if migrated_to is None else _ts_string(str(migrated_to))
++        lines.extend(_property_lines("migratedTo", rendered, 2))
++        lines.extend(_property_lines("note", _ts_string(str(record["note"])), 2))
++        lines.append("\t},")
++    lines.append("];")
++    return lines
++
++
++# ---------------------------------------------------------------------------
++# Whole module
++# ---------------------------------------------------------------------------
++
++
+ def render(snapshot: dict | None = None) -> str:
+     """Render the module text for ``snapshot`` (default: live registry)."""
+     doc = decision_points.registry_snapshot() if snapshot is None else snapshot
+-    points = sorted(doc["points"], key=lambda point: str(point["id"]))
+-    kinds = " | ".join(_ts_string(kind) for kind in decision_points.STATE_FIELD_TYPES)
++    assert_slot_boundary(doc)
++    kinds = " | ".join(_ts_string(kind) for kind in decision_points.ENTRY_KINDS)
++    roles = " | ".join(_ts_string(role) for role in decision_points.ACTOR_ROLES)
++    field_kinds = " | ".join(_ts_string(kind) for kind in decision_points.STATE_FIELD_TYPES)
++    dispositions = " | ".join(
++        _ts_string(disposition) for disposition in decision_points.RETIRED_DISPOSITIONS
++    )
+     lines: list[str] = [
+         GENERATED_HEADER.rstrip("\n"),
+         "",
+         "/** JSON-native state field kinds the registry can declare. */",
+-        f"export type DecideRegistryFieldType = {kinds};",
++        f"export type DecideRegistryFieldType = {field_kinds};",
+         "",
+         "/**",
+         " * One declared dp state field. `type`/`description` are always present;",
+@@ -200,55 +400,75 @@
+         "\temptyIsValue?: boolean;",
+         "}",
+         "",
+-        "/** Required/optional dp state fields + model allowlist + context slots, generated from the Python registry. */",
++        "/** How an entry's answer enum is produced (`decision_points.ENTRY_KINDS`). */",
++        f"export type DecideRegistryEntryKind = {kinds};",
++        "",
++        "/** Role eligible to *initiate* an entry: eligibility only, never a grant. */",
++        f"export type DecideRegistryRoleScope = {roles};",
++        "",
++        "/**",
++        " * The PM-prepared basis layer (D-012A). Independent of the business",
++        " * material and never carried by the trimmable `context` block: a basis",
++        " * that could be cut away would leave an invalid request looking valid.",
++        " */",
++        "export interface DecideRegistryPreparation {",
++        "\t/** Exact keys of the local `preparation` block. */",
++        "\tkeys: string[];",
++        "\t/** Exact keys of one `basis_catalog` item. */",
++        "\tbasisItemKeys: string[];",
++        "\t/** Who prepares the catalog (a real PM window, never a self-reported role). */",
++        "\tbasisSource: string;",
++        "\t/** This layer is never derived from or merged into the business material. */",
++        "\tindependentOf: string;",
++        "\t/** The one basis field the model allowlist allows besides the material. */",
++        "\tbasisStateField: string;",
++        "\t/** Core evidence: never carried by the trimmable `context` block. */",
++        "\tcontextTrimmable: false;",
++        "}",
++        "",
++        (
++            "/** Required/optional dp state fields, role, model allowlist, context slots"
++            " and preparation layering, generated from the Python registry. */"
++        ),
+         "export interface DecideRegistryEntry {",
+         "\tquestionsVersion: string;",
++        "\tkind: DecideRegistryEntryKind;",
++        "\troleScope: DecideRegistryRoleScope;",
+         "\trequiredStateFields: DecideRegistryField[];",
+         "\toptionalStateFields: DecideRegistryField[];",
+-        "\t/** Exact business keys sent to the model; absent = no allowlist (legacy dp unchanged). */",
++        (
++            "\t/** Exact business keys sent to the model (every active entry declares"
++            " one; absent = no allowlist). */"
++        ),
+         "\tmodelStateFields?: string[];",
++        (
++            "\t/** The only trimmable block this entry may emit: `fit_context` may"
++            " cut whole slots, so core evidence is never a slot. */"
++        ),
+         "\tcontextSlots: string[];",
++        "\tpreparation: DecideRegistryPreparation;",
+         "}",
+         "",
+-        "export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {",
++        "/** One read-only retirement record (never entry-shaped, never callable). */",
++        "export interface DecideRegistryRetiredEntry {",
++        "\tid: string;",
++        "\ttier: string;",
++        "\tdescription: string;",
++        f"\tdisposition: {dispositions};",
++        "\tmigratedTo: string | null;",
++        "\tnote: string;",
++        "}",
++        "",
+     ]
+-    for point in points:
+-        dp_id = str(point["id"])
+-        lines.append(f"\t{_ts_string(dp_id)}: {{")
+-        lines.append(f"\t\tquestionsVersion: {_ts_string(str(point['questions_version']))},")
+-        for key in ("required_state_fields", "optional_state_fields"):
+-            fields = point.get(key) or []
+-            ts_key = (
+-                "requiredStateFields" if key == "required_state_fields" else "optionalStateFields"
+-            )
+-            if not fields:
+-                lines.append(f"\t\t{ts_key}: [],")
+-                continue
+-            lines.append(f"\t\t{ts_key}: [")
+-            for field_spec in fields:
+-                lines.extend(_render_field(field_spec, 3))
+-            lines.append("\t\t],")
+-        model_fields = point.get("model_state_fields") or []
+-        if model_fields:
+-            line_width, indent_width = _formatter_config()
+-            rendered = ", ".join(_ts_string(str(name)) for name in model_fields)
+-            single = f"modelStateFields: [{rendered}],"
+-            if _width(2, single, indent_width=indent_width) <= line_width:
+-                lines.append("\t\t" + single)
+-            else:
+-                lines.append("\t\tmodelStateFields: [")
+-                lines.extend(
+-                    "\t\t\t" + _ts_string(str(name)) + "," for name in model_fields
+-                )
+-                lines.append("\t\t],")
+-        slots = decision_context.slot_names_for(dp_id)
+-        if not slots:
+-            lines.append("\t\tcontextSlots: [],")
+-        else:
+-            rendered = ", ".join(_ts_string(slot) for slot in slots)
+-            lines.append(f"\t\tcontextSlots: [{rendered}],")
+-        lines.append("\t},")
++    lines.extend(_render_preparation(doc["preparation"]))
++    lines.append("")
++    lines.append("/** Exactly the eight active entries, in registry order. */")
++    lines.append("export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {")
++    for point in doc["points"]:
++        lines.extend(_render_entry(point))
+     lines.append("};")
++    lines.append("")
++    lines.extend(_render_retired(doc.get("retired") or []))
+     lines.append("")
+     return "\n".join(lines)
+ 
+
+--- before/packages/multi-workers/test_decide_registry_ts_lock.py
++++ after/packages/multi-workers/test_decide_registry_ts_lock.py
+@@ -1,15 +1,265 @@
+-"""Drift lock: the checked-in TS registry must equal a fresh render, byte for byte."""
++"""Drift lock: the checked-in TS registry must equal a fresh render, byte for byte.
++
++T04 (key ``mw-dp-consolidation``) regenerates the module from the Python side:
++``decision_points.registry_snapshot`` is the single authority for the eight
++active entry contracts (questions version, kind, role, required/optional field
++constraints, model allowlist), ``decision_context.CONTEXT_SLOTS`` for the
++``context`` slots an entry may emit, and the snapshot's ``preparation`` /
++``retired`` sections for the basis layering and the read-only retirement
++directory. The TS producers may not keep a second hand-written copy, so this
++module proves the checked-in artifact really is that one source:
++
++* the file is a byte-for-byte ``render()`` (write path == checked-in path) and
++  ``--check``/``--stdout`` write nothing at all;
++* exactly the eight active ids are entry keys, in the registry's own order, with
++  their questions version, ``kind`` and ``roleScope`` (eligibility, not a grant);
++* every declared field constraint (type, enum, caps, ``emptyIsValue``) round
++  trips field by field, in the source order;
++* the model whitelist and the PM-prepared basis contract are separate layers:
++  ``basis_catalog`` is *not* material and never rides in the trimmable
++  ``context`` block, so ``fit_context`` cannot delete core evidence;
++* the 25 retired ids are a read-only projection with no field contract, i.e.
++  zero callable aliases and no second menu.
++
++Hermetic: read-only plus a temp-free ``--stdout``/``--check`` subprocess; no
++network, no provider, no ``.mw`` writes.
++"""
+ 
+ from __future__ import annotations
+ 
++import hashlib
++import json
++import os
+ import pathlib
+ import subprocess
+ import sys
+ 
+-sys.path.insert(0, str(pathlib.Path(__file__).parent / "scripts"))  # noqa: E402
++import pytest
++
++MW_ROOT = pathlib.Path(__file__).parent
++sys.path.insert(0, str(MW_ROOT))
++sys.path.insert(0, str(MW_ROOT / "scripts"))  # noqa: E402
++
++import decision_context  # noqa: E402
++import decision_points as dpts  # noqa: E402
+ import gen_decide_registry_ts as gen  # noqa: E402
+ 
+-MW_ROOT = pathlib.Path(__file__).parent
++#: The generated const declarations this module parses (the only TS it trusts).
++ENTRY_ANCHOR = "export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = "
++PREPARATION_ANCHOR = (
++    "export const DECIDE_REGISTRY_PREPARATION: DecideRegistryPreparation = "
++)
++RETIRED_ANCHOR = (
++    "export const DECIDE_REGISTRY_RETIRED: DecideRegistryRetiredEntry[] = "
++)
++
++#: Constraint key -> generated TS property (the one naming table).
++CONSTRAINT_KEYS = {
++    "max_items": "maxItems",
++    "item_type": "itemType",
++    "max_bytes": "maxBytes",
++    "item_max_bytes": "itemMaxBytes",
++    "signed": "signed",
++    "min_value": "minValue",
++    "empty_is_value": "emptyIsValue",
++}
++#: Order the generator emits a field's properties in (``enum`` first).
++FIELD_PROPERTY_ORDER = (
++    "name",
++    "type",
++    "description",
++    "enum",
++    "maxItems",
++    "itemType",
++    "maxBytes",
++    "itemMaxBytes",
++    "signed",
++    "minValue",
++    "emptyIsValue",
++)
++
++
++# ---------------------------------------------------------------------------
++# A tiny TS literal parser: the assertions below read the checked-in artifact
++# itself (not ``render()``), so a stale or hand-edited module cannot pass.
++# ---------------------------------------------------------------------------
++
++
++class _Reference:
++    """An identifier used as a value (``DECIDE_REGISTRY_PREPARATION``)."""
++
++    def __init__(self, name: str) -> None:
++        self.name = name
++
++    def __eq__(self, other: object) -> bool:
++        return isinstance(other, _Reference) and other.name == self.name
++
++    def __repr__(self) -> str:  # pragma: no cover - assertion helper
++        return f"_Reference({self.name!r})"
++
++
++class _LiteralParser:
++    """Parse one JSON-compatible TS literal (objects/arrays/strings/numbers)."""
++
++    _IDENT = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$")
++
++    def __init__(self, text: str, index: int) -> None:
++        self.text = text
++        self.index = index
++
++    def _skip(self) -> None:
++        while self.index < len(self.text) and self.text[self.index] in " \t\r\n":
++            self.index += 1
++
++    def _expect(self, char: str) -> None:
++        self._skip()
++        assert self.text[self.index] == char, (
++            f"expected {char!r} at offset {self.index}: {self.text[self.index:self.index + 24]!r}"
++        )
++        self.index += 1
++
++    def parse(self) -> object:
++        self._skip()
++        char = self.text[self.index]
++        if char == "{":
++            return self._object()
++        if char == "[":
++            return self._array()
++        if char in "\"'":
++            return self._string()
++        if char == "-" or char.isdigit():
++            return self._number()
++        return self._identifier()
++
++    def _object(self) -> dict:
++        self._expect("{")
++        result: dict = {}
++        while True:
++            self._skip()
++            if self.text[self.index] == "}":
++                self.index += 1
++                return result
++            key = self._string() if self.text[self.index] in "\"'" else self._ident_word()
++            assert isinstance(key, str) and key, "object key must be a string"
++            assert key not in result, f"duplicate literal key: {key}"
++            self._expect(":")
++            result[key] = self.parse()
++            self._skip()
++            if self.text[self.index] == ",":
++                self.index += 1
++
++    def _array(self) -> list:
++        self._expect("[")
++        items: list = []
++        while True:
++            self._skip()
++            if self.text[self.index] == "]":
++                self.index += 1
++                return items
++            items.append(self.parse())
++            self._skip()
++            if self.text[self.index] == ",":
++                self.index += 1
++
++    def _string(self) -> str:
++        quote = self.text[self.index]
++        self.index += 1
++        chars: list[str] = []
++        while True:
++            char = self.text[self.index]
++            if char == "\\":
++                chars.append(self.text[self.index + 1])
++                self.index += 2
++                continue
++            if char == quote:
++                self.index += 1
++                return "".join(chars)
++            chars.append(char)
++            self.index += 1
++
++    def _number(self) -> int | float:
++        start = self.index
++        if self.text[self.index] == "-":
++            self.index += 1
++        while self.index < len(self.text) and (
++            self.text[self.index].isdigit() or self.text[self.index] == "."
++        ):
++            self.index += 1
++        raw = self.text[start : self.index]
++        return float(raw) if "." in raw else int(raw)
++
++    def _ident_word(self) -> str:
++        start = self.index
++        while self.index < len(self.text) and self.text[self.index] in self._IDENT:
++            self.index += 1
++        word = self.text[start : self.index]
++        assert word, f"unparsed token at offset {start}"
++        return word
++
++    def _identifier(self) -> object:
++        word = self._ident_word()
++        if word == "true":
++            return True
++        if word == "false":
++            return False
++        if word in ("null", "undefined"):
++            return None
++        return _Reference(word)
++
++
++def _generated_text() -> str:
++    return gen.output_path().read_text(encoding="utf-8")
++
++
++def _literal_after(anchor: str) -> object:
++    text = _generated_text()
++    start = text.index(anchor)
++    parser = _LiteralParser(text, start + len(anchor))
++    value = parser.parse()
++    parser._skip()
++    assert text[parser.index] == ";", f"{anchor!r}: the literal is not terminated"
++    return value
++
++
++def _generated_entries() -> dict[str, dict]:
++    entries = _literal_after(ENTRY_ANCHOR)
++    assert isinstance(entries, dict), "DECIDE_REGISTRY must be an object literal"
++    return entries
++
++
++def _snapshot_points() -> dict[str, dict]:
++    return {point["id"]: point for point in dpts.registry_snapshot()["points"]}
++
++
++def _expected_field(field_spec: dict) -> dict:
++    """The exact generated property set/order for one declared field."""
++    field: dict = {
++        "name": field_spec["name"],
++        "type": field_spec["type"],
++        "description": field_spec["description"],
++    }
++    if field_spec.get("enum"):
++        field["enum"] = list(field_spec["enum"])
++    for key, ts_key in CONSTRAINT_KEYS.items():
++        if key in field_spec:
++            field[ts_key] = field_spec[key]
++    return field
++
++
++def _declared_material_paths() -> set[str]:
++    return {
++        path
++        for dp_id in dpts.ACTIVE_DP_IDS
++        for path in (
++            set(dpts.REQUIRED_STATE_FIELDS[dp_id])
++            | set(dpts.OPTIONAL_STATE_FIELDS.get(dp_id, ()))
++        )
++    }
++
++
++# ---------------------------------------------------------------------------
++# 1. Byte lock: the checked-in artifact is the generator output
++# ---------------------------------------------------------------------------
+ 
+ 
+ def test_generated_registry_matches_a_fresh_render() -> None:
+@@ -28,36 +278,322 @@
+         cwd=MW_ROOT,
+         capture_output=True,
+         text=True,
++        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+     )
+     assert result.returncode == 0, result.stderr
+     assert result.stdout == ""
+ 
+ 
++def test_check_and_stdout_modes_write_nothing() -> None:
++    """The pure-generation modes must not touch the module or any other file."""
++    path = gen.output_path()
++    before = path.read_bytes()
++    cases = MW_ROOT / "decide_cases"
++    legacy_cases = {
++        case.name: hashlib.sha256(case.read_bytes()).hexdigest()
++        for case in sorted(cases.glob("dp*.json"))
++    }
++    assert len(legacy_cases) == 4, f"the four read-only legacy cases moved: {legacy_cases}"
++    registry_before = (MW_ROOT / "decide_registry.json").read_bytes()
++
++    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
++    checked = subprocess.run(
++        [sys.executable, "scripts/gen_decide_registry_ts.py", "--check"],
++        cwd=MW_ROOT,
++        capture_output=True,
++        text=True,
++        env=env,
++    )
++    assert checked.returncode == 0, checked.stderr
++    assert checked.stdout == ""
++    printed = subprocess.run(
++        [sys.executable, "scripts/gen_decide_registry_ts.py", "--stdout"],
++        cwd=MW_ROOT,
++        capture_output=True,
++        text=True,
++        env=env,
++    )
++    assert printed.returncode == 0, printed.stderr
++    assert printed.stdout == before.decode("utf-8"), "--stdout must print the write path"
++
++    assert path.read_bytes() == before, "--check/--stdout rewrote the generated module"
++    assert (MW_ROOT / "decide_registry.json").read_bytes() == registry_before
++    assert (
++        {
++            case.name: hashlib.sha256(case.read_bytes()).hexdigest()
++            for case in sorted(cases.glob("dp*.json"))
++        }
++        == legacy_cases
++    ), "a pure generation command wrote one of the four legacy cases"
++
++
+ def test_generated_header_and_shape_are_pinned() -> None:
+-    text = gen.output_path().read_text(encoding="utf-8")
++    text = _generated_text()
+     assert text.startswith(
+         "// @generated by packages/multi-workers/scripts/gen_decide_registry_ts.py — do not edit\n"
+     )
+-    assert "export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {" in text
++    assert ENTRY_ANCHOR.strip() + " {" in text
+     assert "export interface DecideRegistryEntry {" in text
++    assert "export interface DecideRegistryPreparation {" in text
++    assert "export interface DecideRegistryRetiredEntry {" in text
+     assert "\n\t\trequiredStateFields: [\n" in text
+ 
+ 
+-def test_rendered_entries_carry_the_registry_field_order() -> None:
+-    snapshot = gen.decision_points.registry_snapshot()
+-    text = gen.render(snapshot)
+-    for point in snapshot["points"]:
+-        assert f'\t"{point["id"]}": {{' in text
+-        fields = point.get("required_state_fields") or []
+-        positions = [text.index(f'name: "{field["name"]}"', text.index(f'"{point["id"]}": {{')) for field in fields]
+-        assert positions == sorted(positions), f"{point['id']}: field order drifted"
+-
+-
+-def test_rendered_context_slots_match_the_slot_table() -> None:
+-    import decision_context
+-
+-    text = gen.output_path().read_text(encoding="utf-8")
+-    for dp_id in ("dp1-dispatch-type", "dp2-checkpoint-split", "dp3-worker-clarify"):
+-        expected = decision_context.slot_names_for(dp_id)
+-        rendered = ", ".join(f'"{slot}"' for slot in expected)
+-        assert f"contextSlots: [{rendered}]" in text
++def test_checked_in_registry_json_is_the_same_source_snapshot() -> None:
++    """T04 takes the T03 registry over verbatim: it must stay the live snapshot."""
++    on_disk = (MW_ROOT / "decide_registry.json").read_text(encoding="utf-8")
++    assert on_disk == dpts.registry_snapshot_text(), (
++        "decide_registry.json drifted from decision_points.registry_snapshot(); "
++        "regenerate it from the Python registry instead of editing it"
++    )
++
++
++# ---------------------------------------------------------------------------
++# 2. The eight active entry contracts
++# ---------------------------------------------------------------------------
++
++
++def test_generated_registry_declares_the_eight_active_entries_in_order() -> None:
++    entries = _generated_entries()
++    assert tuple(entries) == dpts.ACTIVE_DP_IDS
++    assert len(entries) == dpts.EXPECTED_DP_COUNT == 8
++    assert set(entries).isdisjoint(dpts.RETIRED_DP_IDS), "a retired id became a callable entry"
++
++
++@pytest.mark.parametrize("dp_id", dpts.ACTIVE_DP_IDS)
++def test_generated_entry_matches_the_python_field_contract(dp_id: str) -> None:
++    entry = _generated_entries()[dp_id]
++    point = _snapshot_points()[dp_id]
++    assert entry["questionsVersion"] == point["questions_version"]
++    for key, source in (
++        ("requiredStateFields", "required_state_fields"),
++        ("optionalStateFields", "optional_state_fields"),
++    ):
++        rendered = entry[key]
++        expected = [_expected_field(spec) for spec in point.get(source) or []]
++        assert rendered == expected, f"{dp_id}/{key}: generated field contract drifted"
++        for field in rendered:
++            assert list(field) == [
++                name
++                for name in FIELD_PROPERTY_ORDER
++                if name in field
++            ], f"{dp_id}/{key}: field property order drifted"
++
++
++def test_generated_model_whitelist_matches_the_python_allowlist() -> None:
++    entries = _generated_entries()
++    for dp_id in dpts.ACTIVE_DP_IDS:
++        assert entries[dp_id]["modelStateFields"] == list(dpts.MODEL_STATE_FIELDS[dp_id]), (
++            f"{dp_id}: the model allowlist is a second hand-kept table"
++        )
++
++
++def test_generated_empty_is_value_flags_survive_the_rendering() -> None:
++    """``[]`` is a real value, not a missing one: the flag must reach TS."""
++    entries = _generated_entries()
++    flagged: dict[str, set[str]] = {}
++    for dp_id, entry in entries.items():
++        names = {
++            field["name"]
++            for field in entry["requiredStateFields"] + entry["optionalStateFields"]
++            if field.get("emptyIsValue") is True
++        }
++        if names:
++            flagged[dp_id] = names
++    assert flagged["dp-QG"] == {"review_evidence"}
++    assert flagged["dp-sign-key"] == {
++        "verification_evidence.verified",
++        "verification_evidence.unverified",
++        "unfinished_impact",
++    }
++    for dp_id, entry in entries.items():
++        for field in entry["requiredStateFields"] + entry["optionalStateFields"]:
++            expected = dpts.STATE_FIELD_DESCRIPTIONS[field["name"]].get("empty_is_value")
++            assert field.get("emptyIsValue") == expected, (
++                f"{dp_id}/{field['name']}: empty_is_value lost in generation"
++            )
++
++
++def test_generated_entries_declare_kind_and_role_without_granting_them() -> None:
++    entries = _generated_entries()
++    points = _snapshot_points()
++    for dp_id, entry in entries.items():
++        assert entry["kind"] == points[dp_id]["kind"], dp_id
++        assert entry["roleScope"] == dpts.ENTRY_ROLES[dp_id], dp_id
++    assert [dp for dp, entry in entries.items() if entry["roleScope"] == "worker"] == [
++        "dp-w-check-task"
++    ]
++    for dp_id, entry in entries.items():
++        assert not {"grants", "permissions", "authority", "allowedTools"} & set(entry), (
++            f"{dp_id}: the generated contract must describe eligibility, not grant it"
++        )
++
++
++def test_generated_module_carries_no_hand_written_choice_menu() -> None:
++    text = _generated_text()
++    for marker in ("choices:", "labels:", "instructions:", "targetEntries:"):
++        assert marker not in text, f"the generated module grew a second menu: {marker}"
++    assert "undefined" not in text
++
++
++# ---------------------------------------------------------------------------
++# 3. Preparation layering: the basis is neither material nor trimmable context
++# ---------------------------------------------------------------------------
++
++
++def test_generated_preparation_contract_is_separate_from_material() -> None:
++    preparation = _literal_after(PREPARATION_ANCHOR)
++    section = dpts.registry_snapshot()["preparation"]
++    assert preparation == {
++        "keys": list(section["keys"]),
++        "basisItemKeys": list(section["basis_item_keys"]),
++        "basisSource": section["basis_source"],
++        "independentOf": section["independent_of"],
++        "basisStateField": "preparation.basis_catalog",
++        "contextTrimmable": False,
++    }
++    assert preparation["basisStateField"] == "preparation." + section["keys"][0]
++    assert preparation["basisStateField"] not in _declared_material_paths()
++    for dp_id in dpts.ACTIVE_DP_IDS:
++        assert preparation["basisStateField"] not in dpts.MODEL_STATE_FIELDS[dp_id], dp_id
++
++
++def test_every_generated_entry_references_the_one_preparation_contract() -> None:
++    text = _generated_text()
++    for dp_id in dpts.ACTIVE_DP_IDS:
++        start = text.index(f'\t"{dp_id}": {{')
++        block = text[start : text.index("\n\t},", start)]
++        assert block.endswith("\n\t\tpreparation: DECIDE_REGISTRY_PREPARATION,"), dp_id
++
++
++def test_a_preparation_field_cannot_ride_in_the_trimmable_context() -> None:
++    assert decision_context.validate_context(
++        {"preparation.basis_catalog": "x"}, "dp-sign-key"
++    ) == ["context.preparation.basis_catalog: unknown slot"]
++    assert decision_context.validate_context({"prepared_at": "2026-10-26"}, "dp-QG") == [
++        "context.prepared_at: unknown slot"
++    ]
++
++
++# ---------------------------------------------------------------------------
++# 4. Context slots: real provenance, no core evidence, no retired producer
++# ---------------------------------------------------------------------------
++
++
++@pytest.mark.parametrize("dp_id", dpts.ACTIVE_DP_IDS)
++def test_generated_context_slots_match_the_slot_table(dp_id: str) -> None:
++    entry = _generated_entries()[dp_id]
++    expected = list(decision_context.slot_names_for(dp_id))
++    assert entry["contextSlots"] == expected, (
++        f"{dp_id}: the generated slots are a second hand-kept table"
++    )
++    rendered = ", ".join(f'"{slot}"' for slot in expected)
++    assert f"contextSlots: [{rendered}]" in _generated_text()
++
++
++def test_context_slot_provenance_names_only_active_entries() -> None:
++    producers = {
++        producer
++        for slot in decision_context.SLOT_ORDER
++        for producer in decision_context.CONTEXT_SLOTS[slot].get("producers", ())
++    }
++    assert producers <= set(dpts.ACTIVE_DP_IDS), sorted(producers - set(dpts.ACTIVE_DP_IDS))
++    assert producers == {"dp-QG", "dp-auto"}
++    assert decision_context.slot_names_for("dp-QG") == ("error_excerpt",)
++    assert decision_context.slot_names_for("dp-auto") == ("error_excerpt",)
++    for dp_id in ("dp-sign-key", "dp-route", "dp-w-type", "dp-gate-approve"):
++        assert decision_context.slot_names_for(dp_id) == (), dp_id
++    for retired_id in dpts.RETIRED_DP_IDS:
++        assert decision_context.slot_names_for(retired_id) == (), retired_id
++
++
++def test_no_context_slot_is_core_material_or_preparation() -> None:
++    declared = _declared_material_paths()
++    assert decision_context.trimmable_slot_conflicts(declared) == ()
++    assert set(decision_context.SLOT_ORDER).isdisjoint(declared)
++    assert set(decision_context.SLOT_ORDER).isdisjoint(
++        {"preparation", *(f"preparation.{key}" for key in dpts.PREPARATION_KEYS)}
++    )
++    # The sign-key four-part material and the auto candidates are evidence, not
++    # context: a fit_context cut must never be able to drop them.
++    for path in (
++        "delivery_goal",
++        "actual_completion",
++        "verification_evidence.verified",
++        "unfinished_impact",
++        "handling_options",
++        "pm_note.subject",
++    ):
++        assert path not in decision_context.SLOT_ORDER, path
++
++
++def test_generator_refuses_a_slot_that_collides_with_core_material() -> None:
++    snapshot = json.loads(json.dumps(dpts.registry_snapshot()))
++    sign = next(point for point in snapshot["points"] if point["id"] == "dp-sign-key")
++    sign["required_state_fields"][0]["name"] = "change_summary"
++    with pytest.raises(ValueError, match="collide with core decision material"):
++        gen.render(snapshot)
++
++
++def test_generator_refuses_context_provenance_of_a_retired_id(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    slots = {
++        name: {**dict(spec), "producers": tuple(spec.get("producers", ()))}
++        for name, spec in decision_context.CONTEXT_SLOTS.items()
++    }
++    slots["error_excerpt"]["producers"] = ("dp-QG", "dp4-failure-handling")
++    monkeypatch.setattr(decision_context, "CONTEXT_SLOTS", slots)
++    with pytest.raises(ValueError, match="provenance"):
++        gen.render(dpts.registry_snapshot())
++
++
++# ---------------------------------------------------------------------------
++# 5. The retired directory: read-only, 25 ids, zero aliases
++# ---------------------------------------------------------------------------
++
++
++def test_retired_projection_keeps_the_twentyfive_ids_read_only() -> None:
++    retired = _literal_after(RETIRED_ANCHOR)
++    assert isinstance(retired, list)
++    assert [record["id"] for record in retired] == [
++        record.id for record in dpts.RETIRED_DP_REGISTRY
++    ]
++    assert len(retired) == 25
++    dispositions = [record["disposition"] for record in retired]
++    assert dispositions.count("migrated") == 6
++    assert dispositions.count("retired") == 19
++    for record in retired:
++        assert list(record) == [
++            "id",
++            "tier",
++            "description",
++            "disposition",
++            "migratedTo",
++            "note",
++        ], record["id"]
++        assert record["disposition"] in dpts.RETIRED_DISPOSITIONS
++        if record["disposition"] == "migrated":
++            assert record["migratedTo"] in dpts.ACTIVE_DP_IDS, record["id"]
++        else:
++            assert record["migratedTo"] is None, record["id"]
++        for key in ("tier", "description", "note"):
++            assert isinstance(record[key], str) and record[key].strip(), record["id"]
++
++
++def test_retired_projection_is_not_a_callable_alias_or_a_second_menu() -> None:
++    entries = _generated_entries()
++    retired = _literal_after(RETIRED_ANCHOR)
++    text = _generated_text()
++    retired_ids = [record["id"] for record in retired]
++    assert set(entries).isdisjoint(retired_ids)
++    for record in retired:
++        assert not {
++            "requiredStateFields",
++            "optionalStateFields",
++            "modelStateFields",
++            "contextSlots",
++        } & set(record), f"{record['id']}: a retired id kept a callable field contract"
++        assert f'\t"{record["id"]}": {{' not in text, (
++            f"{record['id']}: rendered as an entry-shaped key (would read as an alias)"
++        )
+
+--- before/packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts
++++ after/packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts
+@@ -23,19 +23,71 @@
+ 	emptyIsValue?: boolean;
+ }
+ 
+-/** Required/optional dp state fields + model allowlist + context slots, generated from the Python registry. */
++/** How an entry's answer enum is produced (`decision_points.ENTRY_KINDS`). */
++export type DecideRegistryEntryKind = "fixed" | "dynamic-candidates" | "route-targets";
++
++/** Role eligible to *initiate* an entry: eligibility only, never a grant. */
++export type DecideRegistryRoleScope = "pm" | "worker";
++
++/**
++ * The PM-prepared basis layer (D-012A). Independent of the business
++ * material and never carried by the trimmable `context` block: a basis
++ * that could be cut away would leave an invalid request looking valid.
++ */
++export interface DecideRegistryPreparation {
++	/** Exact keys of the local `preparation` block. */
++	keys: string[];
++	/** Exact keys of one `basis_catalog` item. */
++	basisItemKeys: string[];
++	/** Who prepares the catalog (a real PM window, never a self-reported role). */
++	basisSource: string;
++	/** This layer is never derived from or merged into the business material. */
++	independentOf: string;
++	/** The one basis field the model allowlist allows besides the material. */
++	basisStateField: string;
++	/** Core evidence: never carried by the trimmable `context` block. */
++	contextTrimmable: false;
++}
++
++/** Required/optional dp state fields, role, model allowlist, context slots and preparation layering, generated from the Python registry. */
+ export interface DecideRegistryEntry {
+ 	questionsVersion: string;
++	kind: DecideRegistryEntryKind;
++	roleScope: DecideRegistryRoleScope;
+ 	requiredStateFields: DecideRegistryField[];
+ 	optionalStateFields: DecideRegistryField[];
+-	/** Exact business keys sent to the model; absent = no allowlist (legacy dp unchanged). */
++	/** Exact business keys sent to the model (every active entry declares one; absent = no allowlist). */
+ 	modelStateFields?: string[];
++	/** The only trimmable block this entry may emit: `fit_context` may cut whole slots, so core evidence is never a slot. */
+ 	contextSlots: string[];
++	preparation: DecideRegistryPreparation;
+ }
+ 
++/** One read-only retirement record (never entry-shaped, never callable). */
++export interface DecideRegistryRetiredEntry {
++	id: string;
++	tier: string;
++	description: string;
++	disposition: "migrated" | "retired";
++	migratedTo: string | null;
++	note: string;
++}
++
++export const DECIDE_REGISTRY_PREPARATION: DecideRegistryPreparation = {
++	keys: ["basis_catalog", "prepared_at"],
++	basisItemKeys: ["id", "text", "material_refs", "applies_to"],
++	basisSource: "pm-prepared",
++	independentOf: "material",
++	basisStateField: "preparation.basis_catalog",
++	contextTrimmable: false,
++};
++
++/** Exactly the eight active entries, in registry order. */
+ export const DECIDE_REGISTRY: Record<string, DecideRegistryEntry> = {
+-	"dp1-dispatch-type": {
+-		questionsVersion: "q-ac4a6184",
++	"dp-w-type": {
++		questionsVersion: "q-b06e79ab",
++		kind: "fixed",
++		roleScope: "pm",
+ 		requiredStateFields: [
+ 			{
+ 				name: "task_goal",
+@@ -53,367 +105,22 @@
+ 				description: "Task deliverables exactly as handed to the task (原文).",
+ 			},
+ 		],
+-		optionalStateFields: [],
+-		modelStateFields: ["task_goal", "task_requirements", "task_deliverables"],
++		optionalStateFields: [
++			{
++				name: "images_required",
++				type: "boolean",
++				description:
++					"Whether the dispatched task needs to read images; true means vision only, false/absent is never an image-capability proof.",
++			},
++		],
++		modelStateFields: ["task_goal", "task_requirements", "task_deliverables", "images_required"],
+ 		contextSlots: [],
+-	},
+-	"dp10-dependency": {
+-		questionsVersion: "q-3bbd9e44",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "dependency.name",
+-				type: "string",
+-				description: "Dependency package name as declared in the manifest.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "dependency.current",
+-				type: "string",
+-				description: "Version currently installed or pinned.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "dependency.target",
+-				type: "string",
+-				description: "Version the decision would move to.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "dependency.breaking",
+-				type: "boolean",
+-				description: "Whether the target version is declared semver-breaking (from its changelog/metadata).",
+-			},
+-			{
+-				name: "dependency.reviewed",
+-				type: "boolean",
+-				description: "Whether the target version's changelog was actually reviewed.",
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp11-credential": {
+-		questionsVersion: "q-080722b1",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "credential.provider",
+-				type: "string",
+-				description: "Credential provider (e.g. timi, anthropic); never a credential value.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "credential.kind",
+-				type: "string",
+-				description: "Credential kind (api-key, oauth-token, ...); never a credential value.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "credential.scope",
+-				type: "string",
+-				description: "Scope the credential grants or would grant; never a credential value.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "credential.exposed_to",
+-				type: "array",
+-				description: "Processes/roles that would see the credential (isolation facts, not values).",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp12-destructive": {
+-		questionsVersion: "q-02f737ab",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "action.command",
+-				type: "string",
+-				description: "The destructive command, redacted (no credentials); never raw secret material.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "action.targets",
+-				type: "array",
+-				description: "Files/dirs the destructive command would touch (repo-relative).",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "action.reversible",
+-				type: "boolean",
+-				description: "Whether the action can be undone in this repository (git or backup facts).",
+-			},
+-			{
+-				name: "action.backup_available",
+-				type: "boolean",
+-				description: "Whether a current backup/snapshot exists that could restore the targets.",
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp13-commit-release": {
+-		questionsVersion: "q-6d26173d",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "release.version_current",
+-				type: "string",
+-				description: "Version currently published/tagged for the packages.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "release.version_next",
+-				type: "string",
+-				description: "Version the release decision would publish.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "release.staged_paths",
+-				type: "array",
+-				description: "Paths staged for the commit/release (repo-relative).",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "release.changelog_ready",
+-				type: "boolean",
+-				description: "Whether every touched package's [Unreleased] section is updated.",
+-			},
+-			{
+-				name: "release.ci_green",
+-				type: "boolean",
+-				description: "Whether CI is green on the commit being released (recorded run status).",
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp14-rule-conflict": {
+-		questionsVersion: "q-b667b8d3",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "conflict.user_instruction",
+-				type: "string",
+-				description: "The user instruction as given, summarized (no quotes beyond one line).",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "conflict.rule_ref",
+-				type: "string",
+-				description: "The project rule the instruction conflicts with: <path>:<line> reference.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "conflict.rule_strength",
+-				type: "string",
+-				description: "How binding the rule is: hard (must ask) or advisory (may override with a reason).",
+-				enum: ["hard", "advisory"],
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "conflict.irreversible",
+-				type: "boolean",
+-				description: "Whether following the instruction has irreversible external effects.",
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp15-autopilot-gate": {
+-		questionsVersion: "q-09e25bec",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "gate.kind",
+-				type: "string",
+-				description: "Autopilot human-gate class (autopilot.gates.GATE_KINDS, 6 values).",
+-				enum: ["stage-confirm", "stage-close", "stalled", "budget-exhausted", "goal-change", "xkey-authorize"],
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "gate.pending_items",
+-				type: "array",
+-				description: "Items the human gate still lists as pending.",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "gate.age_minutes",
+-				type: "integer",
+-				description: "How long the gate has been pending, in minutes.",
+-				minValue: 0,
+-			},
+-			{
+-				name: "gate.evidence_refs",
+-				type: "array",
+-				description: "Evidence references attached to the gate (<path>:<line> or command).",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp16-goal": {
+-		questionsVersion: "q-ba34304c",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "goal.current_digest",
+-				type: "string",
+-				description: "Digest/fingerprint of the current goal document the decision is measured against.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "goal.proposed_delta",
+-				type: "string",
+-				description: "What the proposed goal change adds or removes, in one line.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "goal.alignment",
+-				type: "string",
+-				description: "Alignment verdict of the change: aligned|drift|conflict (against goal.md).",
+-				enum: ["aligned", "drift", "conflict"],
+-				maxBytes: 512,
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp17-spec-lock": {
+-		questionsVersion: "q-f81bd06d",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "spec.ac_ids",
+-				type: "array",
+-				description: "Every AC id in the locked spec (a key's full set fits: up to 128).",
+-				maxItems: 128,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "spec.ac_changed",
+-				type: "array",
+-				description: "AC ids this change touches; must be a subset of spec.ac_ids (up to 128).",
+-				maxItems: 128,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "spec.open_questions",
+-				type: "array",
+-				description: "Open questions that must be resolved before the spec can be locked.",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp18-claim": {
+-		questionsVersion: "q-094db8cc",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{ name: "claim.key", type: "string", description: "AgenticTask key whose claim conflicts.", maxBytes: 512 },
+-			{
+-				name: "claim.owner",
+-				type: "string",
+-				description: "Recorded claim owner (worker/session id from the claim index).",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "claim.heartbeat_age_min",
+-				type: "integer",
+-				description: "Minutes since the owner's last heartbeat (liveness fact, not a guess).",
+-				minValue: 0,
+-			},
+-			{
+-				name: "claim.owner_active",
+-				type: "boolean",
+-				description: "Whether the owner process was confirmed alive (pid/activity fact).",
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp19-foreign-write": {
+-		questionsVersion: "q-df9c727d",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "write.target_path",
+-				type: "string",
+-				description: "Repo-relative path the task wants to write outside its face.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "write.cross_key_owner",
+-				type: "string",
+-				description: "Key that owns the foreign path, if any (from the key index).",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "write.write_scope",
+-				type: "array",
+-				description: "The task's declared write face (repo-relative globs/paths).",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "write.foreign_paths",
+-				type: "array",
+-				description: "Paths outside the declared face that would be written.",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "write.allow_foreign_write",
+-				type: "boolean",
+-				description: "Fact about whether a previous authorization allowed this foreign write (not a grant).",
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp2-checkpoint-split": {
++		preparation: DECIDE_REGISTRY_PREPARATION,
++	},
++	"dp-pm-steer": {
+ 		questionsVersion: "q-ba8e970f",
++		kind: "fixed",
++		roleScope: "pm",
+ 		requiredStateFields: [
+ 			{
+ 				name: "task_goal",
+@@ -452,182 +159,205 @@
+ 			"worker_execution",
+ 		],
+ 		contextSlots: [],
+-	},
+-	"dp20-stage-close": {
+-		questionsVersion: "q-30afd59f",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "stage.id",
+-				type: "string",
+-				description: "Stage identifier the close decision applies to.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "stage.tasks_done",
+-				type: "integer",
+-				description: "Tasks of the stage already closed (must not exceed the total).",
+-				minValue: 0,
+-			},
+-			{
+-				name: "stage.tasks_total",
+-				type: "integer",
+-				description: "Tasks the stage contains, per its roadmap table.",
+-				minValue: 0,
+-			},
+-			{
+-				name: "stage.open_blockers",
++		preparation: DECIDE_REGISTRY_PREPARATION,
++	},
++	"dp-w-check-task": {
++		questionsVersion: "q-10671804",
++		kind: "fixed",
++		roleScope: "worker",
++		requiredStateFields: [
++			{
++				name: "task_goal",
++				type: "string",
++				description: "Task goal exactly as handed to the task (原文), no summary.",
++			},
++			{
++				name: "reachability_facts",
++				type: "string",
++				description:
++					"What is actually known about whether this task can be completed inside its authorization/budget.",
++			},
++			{
++				name: "completed",
++				type: "string",
++				description: "What is actually finished so far, with evidence references; saying none is a real statement.",
++			},
++			{ name: "remaining", type: "string", description: "What is still unfinished for this task." },
++			{
++				name: "blockers",
++				type: "string",
++				description: "What blocks completion inside the boundary, or an explicit none.",
++			},
++			{
++				name: "constraints",
++				type: "string",
++				description: "Constraints, remaining budget and authorization that bound this judgement.",
++			},
++		],
++		optionalStateFields: [
++			{
++				name: "investigation.unknown",
++				type: "string",
++				description: "The one concrete unknown the bounded evidence step would resolve (investigate branch only).",
++				maxBytes: 512,
++			},
++			{
++				name: "investigation.evidence_source",
++				type: "string",
++				description: "A source that can actually be consulted inside the existing authorization.",
++				maxBytes: 512,
++			},
++			{
++				name: "investigation.budget",
++				type: "string",
++				description: "The real remaining budget the evidence step may use (never a reset or a new grant).",
++				maxBytes: 512,
++			},
++			{
++				name: "investigation.stop_condition",
++				type: "string",
++				description: "The concrete criterion that ends the evidence step; no open-ended investigation.",
++				maxBytes: 512,
++			},
++		],
++		modelStateFields: [
++			"task_goal",
++			"reachability_facts",
++			"completed",
++			"remaining",
++			"blockers",
++			"constraints",
++			"investigation.unknown",
++			"investigation.evidence_source",
++			"investigation.budget",
++			"investigation.stop_condition",
++		],
++		contextSlots: [],
++		preparation: DECIDE_REGISTRY_PREPARATION,
++	},
++	"dp-QG": {
++		questionsVersion: "q-16b4bb5c",
++		kind: "fixed",
++		roleScope: "pm",
++		requiredStateFields: [
++			{
++				name: "review_requirements",
++				type: "string",
++				description: "The quality/acceptance requirements this review is measured against.",
++			},
++			{
++				name: "review_evidence",
+ 				type: "array",
+-				description: "Blockers still open for the stage (ids/refs).",
++				description: "Evidence references the review actually examined (<path>:<line> or command); [] when none.",
+ 				maxItems: 32,
+ 				itemType: "string",
+ 				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "stage.evidence_refs",
++				emptyIsValue: true,
++			},
++			{
++				name: "review_findings",
++				type: "string",
++				description: "What the review found, including the concrete gap for a fix verdict.",
++			},
++			{
++				name: "uncovered_scope",
++				type: "string",
++				description: "What this review did not cover; an explicit none is a real statement.",
++			},
++		],
++		optionalStateFields: [
++			{
++				name: "basis_issue",
++				type: "string",
++				description:
++					"The substantive requirement/design/acceptance problem that forces reopen; must be absent for pass.",
++				maxBytes: 512,
++			},
++		],
++		modelStateFields: ["review_requirements", "review_evidence", "review_findings", "uncovered_scope", "basis_issue"],
++		contextSlots: ["error_excerpt"],
++		preparation: DECIDE_REGISTRY_PREPARATION,
++	},
++	"dp-gate-approve": {
++		questionsVersion: "q-f5de87ef",
++		kind: "fixed",
++		roleScope: "pm",
++		requiredStateFields: [
++			{
++				name: "gate_background",
++				type: "string",
++				description: "The concrete gate matter and why it is being sent for a decision now.",
++			},
++			{
++				name: "current_state",
++				type: "string",
++				description: "The current real state of the gate facts, with unknowns marked unknown.",
++			},
++			{
++				name: "condition_evidence",
+ 				type: "array",
+-				description: "Evidence files backing the stage close (<path>:<line> or command).",
++				description: "Evidence references for the gate conditions that are claimed to hold; [] when none.",
+ 				maxItems: 32,
+ 				itemType: "string",
+ 				itemMaxBytes: 128,
++				emptyIsValue: true,
++			},
++			{
++				name: "pm_note.subject",
++				type: "string",
++				description: "The PM's pre-submission note: what exactly is being approved.",
++				maxBytes: 512,
++			},
++			{
++				name: "pm_note.planned_action",
++				type: "string",
++				description: "The limited action the PM would take after an approve (never implied by the choice alone).",
++				maxBytes: 512,
++			},
++			{
++				name: "pm_note.basis.goal",
++				type: "string",
++				description: "The goal/acceptance basis the note relies on.",
++				maxBytes: 512,
++			},
++			{
++				name: "pm_note.basis.evidence",
++				type: "string",
++				description: "The evidence the note relies on, with references.",
++				maxBytes: 512,
++			},
++			{
++				name: "pm_note.basis.budget",
++				type: "string",
++				description: "The remaining budget/limit the note relies on (no new budget is granted here).",
++				maxBytes: 512,
++			},
++			{
++				name: "pm_note.basis.authority",
++				type: "string",
++				description: "The existing authorization the note relies on; this note never creates one.",
++				maxBytes: 512,
+ 			},
+ 		],
+ 		optionalStateFields: [],
++		modelStateFields: [
++			"gate_background",
++			"current_state",
++			"condition_evidence",
++			"pm_note.subject",
++			"pm_note.planned_action",
++			"pm_note.basis.goal",
++			"pm_note.basis.evidence",
++			"pm_note.basis.budget",
++			"pm_note.basis.authority",
++		],
+ 		contextSlots: [],
+-	},
+-	"dp21-refine": {
+-		questionsVersion: "q-ddd23fe2",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "refine.clause",
+-				type: "string",
+-				description: "The requirement clause the refinement would change.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "refine.impact_paths",
+-				type: "array",
+-				description: "Files the refinement would touch (repo-relative).",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "refine.reversible",
+-				type: "boolean",
+-				description: "Whether the refinement can be undone without losing accepted work.",
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp22-debug-plan": {
+-		questionsVersion: "q-a1ed6dbc",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "debug.signal",
+-				type: "string",
+-				description: "The failing signal/stack-first-line the debug plan starts from.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "debug.last_green_ref",
+-				type: "string",
+-				description: "Last known-good reference (commit sha or run id) the plan compares against.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "debug.repro_available",
+-				type: "boolean",
+-				description: "Whether a reproduction exists/ran (recorded fact, not an assumption).",
+-			},
+-			{
+-				name: "debug.change_scope",
+-				type: "array",
+-				description: "Paths the debug change would touch (repo-relative).",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp23-snapshot": {
+-		questionsVersion: "q-f5cecffb",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "snapshot.size_bytes",
+-				type: "integer",
+-				description: "Current size of the memory snapshot artifact in bytes (fs-stated).",
+-				minValue: 0,
+-			},
+-			{
+-				name: "snapshot.delta_bytes",
+-				type: "integer",
+-				description: "New size minus old size in bytes; negative means the snapshot shrank (signed).",
+-				signed: true,
+-			},
+-			{
+-				name: "snapshot.sections_changed",
+-				type: "array",
+-				description: "Document sections the snapshot rewrite changes.",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp24-pi-trust": {
+-		questionsVersion: "q-20850ffa",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "project.path",
+-				type: "string",
+-				description: "Project path the trust decision applies to (as pi recorded it).",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "project.trust_state",
+-				type: "string",
+-				description: "Current pi trust state for the project: untrusted|trusted.",
+-				enum: ["untrusted", "trusted"],
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "project.origin",
+-				type: "string",
+-				description: "Where the project came from: user (created locally)|clone|foreign.",
+-				enum: ["user", "clone", "foreign"],
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "project.pending_changes",
+-				type: "boolean",
+-				description: "Whether the project has uncommitted changes that the trust grant would cover.",
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp25-signoff-conclusion": {
++		preparation: DECIDE_REGISTRY_PREPARATION,
++	},
++	"dp-sign-key": {
+ 		questionsVersion: "q-134a64cd",
++		kind: "fixed",
++		roleScope: "pm",
+ 		requiredStateFields: [
+ 			{
+ 				name: "delivery_goal",
+@@ -671,14 +401,17 @@
+ 			"unfinished_impact",
+ 		],
+ 		contextSlots: [],
+-	},
+-	"dp3-worker-clarify": {
++		preparation: DECIDE_REGISTRY_PREPARATION,
++	},
++	"dp-auto": {
+ 		questionsVersion: "q-21d2d577",
++		kind: "dynamic-candidates",
++		roleScope: "pm",
+ 		requiredStateFields: [
+ 			{
+ 				name: "question",
+ 				type: "string",
+-				description: "The clarifying question verbatim, written before any answer.",
++				description: "The pending question verbatim (what exactly needs a decision), written before any answer.",
+ 			},
+ 			{ name: "background.task_goal", type: "string", description: "Task goal the question is asked against." },
+ 			{
+@@ -686,17 +419,27 @@
+ 				type: "string",
+ 				description: "What is actually known so far; unknowns are marked unknown, never invented.",
+ 			},
+-			{ name: "background.decision_reason", type: "string", description: "Why this question needs a decision now." },
+-			{
+-				name: "background.constraints_impact",
+-				type: "string",
+-				description: "Constraints and the impact of each candidate handling.",
++			{
++				name: "background.tried",
++				type: "string",
++				description: "What has already been tried for this live problem, factually.",
++			},
++			{
++				name: "background.unknowns",
++				type: "string",
++				description: "The facts still unknown; never filled in by inference.",
++			},
++			{
++				name: "background.constraints",
++				type: "string",
++				description: "The authorization/budget/role constraints that bound every candidate.",
+ 			},
+ 			{
+ 				name: "handling_options",
+ 				type: "array",
+ 				description:
+-					"Problem-specific handling candidates [{id,label,description}] rendered as the native dynamic choice.",
++					"PM-prepared, problem-specific action candidates [{id,label,description,consequence,risk,conditions}]; ids only need to be unique in this request (no legacy cN/2..5 bound).",
++				maxItems: 32,
+ 				itemType: "object",
+ 			},
+ 		],
+@@ -705,226 +448,248 @@
+ 			"question",
+ 			"background.task_goal",
+ 			"background.current_state",
+-			"background.decision_reason",
+-			"background.constraints_impact",
++			"background.tried",
++			"background.unknowns",
++			"background.constraints",
+ 			"handling_options",
+ 		],
++		contextSlots: ["error_excerpt"],
++		preparation: DECIDE_REGISTRY_PREPARATION,
++	},
++	"dp-route": {
++		questionsVersion: "q-605c6874",
++		kind: "route-targets",
++		roleScope: "pm",
++		requiredStateFields: [
++			{
++				name: "decision_actor",
++				type: "string",
++				description: "The real business subject whose decision is needed (not a self-reported role claim).",
++				maxBytes: 512,
++			},
++			{
++				name: "decision_object",
++				type: "string",
++				description: "The concrete object/artefact the pending question is about.",
++				maxBytes: 512,
++			},
++			{
++				name: "question",
++				type: "string",
++				description: "The pending question verbatim (what exactly needs a decision), written before any answer.",
++			},
++		],
++		optionalStateFields: [],
++		modelStateFields: ["decision_actor", "decision_object", "question"],
+ 		contextSlots: [],
+-	},
+-	"dp4-failure-handling": {
+-		questionsVersion: "q-b93176a8",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "failure.kind",
+-				type: "string",
+-				description:
+-					"Failure class observed on the attempt: transient|deterministic|infra|unknown (from the failing step's own error report).",
+-				enum: ["transient", "deterministic", "infra", "unknown"],
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "failure.attempt",
+-				type: "integer",
+-				description: "How many attempts have already been made for this failure (0-based count).",
+-				minValue: 0,
+-			},
+-			{
+-				name: "failure.limit",
+-				type: "integer",
+-				description: "Attempt budget the task was given; it must not be exceeded.",
+-				minValue: 0,
+-			},
+-			{
+-				name: "failure.artifact_present",
+-				type: "boolean",
+-				description: "Whether the failed attempt left a usable artifact on disk (fs-stated, not assumed).",
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: ["error_excerpt"],
+-	},
+-	"dp5-test-triage": {
+-		questionsVersion: "q-cc104f59",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "test.failed_cases",
+-				type: "array",
+-				description: "Failing test ids exactly as the runner reported them.",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "test.baseline_cases",
+-				type: "array",
+-				description: "Known-failing (baseline) test ids for this project, from the recorded baseline.",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "test.changed_paths",
+-				type: "array",
+-				description: "Repo-relative paths the change touched (diff scope), not the whole write face.",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "test.repro_consistent",
+-				type: "boolean",
+-				description: "Whether repeated runs reproduced the same failures (recorded rerun result).",
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp6-qg-verdict": {
+-		questionsVersion: "q-16b4bb5c",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "qg.checks_total",
+-				type: "integer",
+-				description: "Number of quality-gate checks the verdict was computed over.",
+-				minValue: 0,
+-			},
+-			{
+-				name: "qg.checks_failed",
+-				type: "array",
+-				description: "Ids of the quality-gate checks that failed (subset of the total).",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "qg.blocking",
+-				type: "array",
+-				description: "Failure ids the quality gate reported as blocking (cannot be waived).",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "qg.scope",
+-				type: "string",
+-				description: "Which surface the verdict covers: impl (code) or spec (locked requirements).",
+-				enum: ["impl", "spec"],
+-				maxBytes: 512,
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: ["error_excerpt"],
+-	},
+-	"dp7-gate-failure": {
+-		questionsVersion: "q-c8e23cc7",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "gate.name",
+-				type: "string",
+-				description: "Gate that failed, by its recorded gate id or name.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "gate.missing_items",
+-				type: "array",
+-				description: "Checklist items the gate still reports as missing.",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "gate.verdict_age_hours",
+-				type: "integer",
+-				description: "Age in hours of the verdict that failed the freshness gate.",
+-				minValue: 0,
+-			},
+-			{
+-				name: "gate.has_config_error",
+-				type: "boolean",
+-				description: "Whether the gate failure is a configuration error rather than missing work.",
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: ["error_excerpt"],
+-	},
+-	"dp8-scope-change": {
+-		questionsVersion: "q-e5d928e8",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "scope.requested_paths",
+-				type: "array",
+-				description: "Paths the new requirement asks to write (repo-relative), as requested.",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "scope.write_scope",
+-				type: "array",
+-				description: "Paths the task may write, repo-relative (string array).",
+-			},
+-			{
+-				name: "scope.cross_key_conflicts",
+-				type: "array",
+-				description: "Paths or keys another key already claims (conflict facts from the claim index).",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "scope.requirement_delta",
+-				type: "string",
+-				description: "One-line description of what the requirement adds or removes.",
+-				maxBytes: 512,
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
+-	},
+-	"dp9-model-select": {
+-		questionsVersion: "q-bc7918b9",
+-		requiredStateFields: [
+-			{ name: "schema_version", type: "integer", description: "State schema version (currently 2)." },
+-			{ name: "decision_point", type: "string", description: "Decision point id this state was built for." },
+-			{ name: "questions_version", type: "string", description: "Registry question-set version, e.g. q-fcbd3847." },
+-			{
+-				name: "model.requested",
+-				type: "string",
+-				description: "Model id the task asked for (config or card), before fallback.",
+-				maxBytes: 512,
+-			},
+-			{
+-				name: "model.available",
+-				type: "array",
+-				description: "Model ids the transport reports as reachable right now.",
+-				maxItems: 32,
+-				itemType: "string",
+-				itemMaxBytes: 128,
+-			},
+-			{
+-				name: "model.transport_status",
+-				type: "string",
+-				description: "Observed transport state for the requested model: ok|rate-limited|unavailable.",
+-				enum: ["ok", "rate-limited", "unavailable"],
+-				maxBytes: 512,
+-			},
+-		],
+-		optionalStateFields: [],
+-		contextSlots: [],
++		preparation: DECIDE_REGISTRY_PREPARATION,
+ 	},
+ };
++
++/**
++ * The retired ids, read-only: disposition, migration target and the
++ * explanation a reader (or a refusal) may quote. No required/model field
++ * contract, no entry-shaped key -- never an alias, never a second menu.
++ */
++export const DECIDE_REGISTRY_RETIRED: DecideRegistryRetiredEntry[] = [
++	{
++		id: "dp1-dispatch-type",
++		tier: "P2",
++		description: "派发 type/角色/范围",
++		disposition: "migrated",
++		migratedTo: "dp-w-type",
++		note: "职责迁至 dp-w-type（含 vision 候选）；旧编号只读解释，不是可调用别名。",
++	},
++	{
++		id: "dp2-checkpoint-split",
++		tier: "P2",
++		description: "checkpoint 拆/收/直执",
++		disposition: "migrated",
++		migratedTo: "dp-pm-steer",
++		note: "职责迁至 dp-pm-steer；四项 ID 与不降目标语义保留。",
++	},
++	{
++		id: "dp3-worker-clarify",
++		tier: "P2",
++		description: "worker 澄清（问题原文 + 四项背景 + 针对问题的处理候选）",
++		disposition: "migrated",
++		migratedTo: "dp-w-check-task",
++		note: "职责迁至 dp-w-check-task；旧动态 2..5/cN 候选不迁移。",
++	},
++	{
++		id: "dp4-failure-handling",
++		tier: "P1",
++		description: "失败处置",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；失败事实与处置规则仍由既有框架硬检查保留。",
++	},
++	{
++		id: "dp5-test-triage",
++		tier: "P2",
++		description: "测试失败归类",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；测试基线/回归分类仍由既有测试流程与硬检查保留。",
++	},
++	{
++		id: "dp6-qg-verdict",
++		tier: "P1",
++		description: "QG 结论处置",
++		disposition: "migrated",
++		migratedTo: "dp-QG",
++		note: "职责迁至 dp-QG；pass/fix/reopen 为正式审核结论。",
++	},
++	{
++		id: "dp7-gate-failure",
++		tier: "P2",
++		description: "相位门禁失败",
++		disposition: "retired",
++		migratedTo: null,
++		note: "相位门失败后的 PM 处置交 dp-auto（职责吸收，不是别名）；原门禁判据不重写。",
++	},
++	{
++		id: "dp8-scope-change",
++		tier: "P0",
++		description: "变更范围",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；写面/范围硬检查与授权边界不因退役放宽。",
++	},
++	{
++		id: "dp9-model-select",
++		tier: "P2",
++		description: "模型/降级选择",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；模型/降级仍由既有配置与能力检查约束。",
++	},
++	{
++		id: "dp10-dependency",
++		tier: "P1",
++		description: "依赖升级",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；依赖变更仍走既有评审与 lockfile 规则。",
++	},
++	{
++		id: "dp11-credential",
++		tier: "P0",
++		description: "凭据/权限",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；凭证隔离与权限硬检查不删、不放宽。",
++	},
++	{
++		id: "dp12-destructive",
++		tier: "P0",
++		description: "破坏性操作",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；破坏性操作的人工确认与备份规则仍然生效。",
++	},
++	{
++		id: "dp13-commit-release",
++		tier: "P0",
++		description: "提交(P1) / 发布+版本号(P0)",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；提交/发布仍按发布流程与人工授权执行。",
++	},
++	{
++		id: "dp14-rule-conflict",
++		tier: "P0",
++		description: "用户指令 vs 规则",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；规则冲突仍须用户明确确认，不自动越权。",
++	},
++	{
++		id: "dp15-autopilot-gate",
++		tier: "P0",
++		description: "6 类人工门",
++		disposition: "migrated",
++		migratedTo: "dp-gate-approve",
++		note: "职责迁至 dp-gate-approve 四选项；PM note 与模型依据分别保存。",
++	},
++	{
++		id: "dp16-goal",
++		tier: "P0",
++		description: "goal 确立/变更",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；goal 采用仍按 H06 授权规则，不由退役别名放行。",
++	},
++	{
++		id: "dp17-spec-lock",
++		tier: "P1",
++		description: "spec/AC 锁定",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；AC/VC 冻结与受控变更规则不因退役消失。",
++	},
++	{
++		id: "dp18-claim",
++		tier: "P1",
++		description: "key 抢占冲突",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；claim/独占写面检查仍是硬门。",
++	},
++	{
++		id: "dp19-foreign-write",
++		tier: "P0",
++		description: "越面写预授权",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；越面写仍需明确授权与写面协调。",
++	},
++	{
++		id: "dp20-stage-close",
++		tier: "P0",
++		description: "stage 闭环",
++		disposition: "retired",
++		migratedTo: null,
++		note: "阶段关闭 gate 审批由 dp-gate-approve 承接（职责吸收，不是别名）。",
++	},
++	{
++		id: "dp21-refine",
++		tier: "P2",
++		description: "project-refine 升级",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；refine 流程如需裁决走现场准备的 dp-auto。",
++	},
++	{
++		id: "dp22-debug-plan",
++		tier: "P2",
++		description: "debug 方案确认",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；debug 流程仍按既有系统性调试规则执行。",
++	},
++	{
++		id: "dp23-snapshot",
++		tier: "P2",
++		description: "memory 快照",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；快照写入仍按既有记忆流程处理。",
++	},
++	{
++		id: "dp24-pi-trust",
++		tier: "P0",
++		description: "pi core 交互",
++		disposition: "retired",
++		migratedTo: null,
++		note: "独立 DP 职责退出；pi 信任边界与核心禁止面不变。",
++	},
++	{
++		id: "dp25-signoff-conclusion",
++		tier: "P2",
++		description: "任意 key 收尾的签收结论（按 key 计算，替代人签）",
++		disposition: "migrated",
++		migratedTo: "dp-sign-key",
++		note: "职责迁至 dp-sign-key；四部材料与三数组契约原样保留。",
++	},
++];

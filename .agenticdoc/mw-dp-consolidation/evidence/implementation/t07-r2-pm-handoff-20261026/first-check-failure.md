@@ -1,0 +1,1 @@
+Initial check.py exited 1 before any tests: before-bytes uses packages__multi-workers__<name>, not basename. Directory read confirmed actual files; no product failure. Initial script/inventory retained; fresh completion below changes only evidence coordinates.

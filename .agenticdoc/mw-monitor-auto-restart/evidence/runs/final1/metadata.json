@@ -1,0 +1,162 @@
+[
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "test_decision_monitor_auto_restart.py"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\packages\\multi-workers",
+    "start_utc": "2026-10-23T18:12:20.483880+00:00",
+    "end_utc": "2026-10-23T18:12:25.699154+00:00",
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "test_decision_monitor_auto_restart_cli.py"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\packages\\multi-workers",
+    "start_utc": "2026-10-23T18:12:25.699546+00:00",
+    "end_utc": "2026-10-23T18:12:26.091661+00:00",
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "test_decision_monitor.py"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\packages\\multi-workers",
+    "start_utc": "2026-10-23T18:12:26.092005+00:00",
+    "end_utc": "2026-10-23T18:12:44.239054+00:00",
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "test_decision_monitor_cli.py::test_monitor_parser_accepts_open_status_and_stop"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\packages\\multi-workers",
+    "start_utc": "2026-10-23T18:12:44.239497+00:00",
+    "end_utc": "2026-10-23T18:12:44.865333+00:00",
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "test_decision_monitor_cli.py::test_private_starter_argv_and_cwd_are_explicit"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\packages\\multi-workers",
+    "start_utc": "2026-10-23T18:12:44.865835+00:00",
+    "end_utc": "2026-10-23T18:12:45.266963+00:00",
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "test_decision_monitor_cli.py::test_existing_decide_run_and_sign_help_still_parse"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\packages\\multi-workers",
+    "start_utc": "2026-10-23T18:12:45.267467+00:00",
+    "end_utc": "2026-10-23T18:12:46.352295+00:00",
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "test_decision_dashboard_assets.py"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\packages\\multi-workers",
+    "start_utc": "2026-10-23T18:12:46.352785+00:00",
+    "end_utc": "2026-10-23T18:12:53.424247+00:00",
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "test_decision_dashboard_contracts.py"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\packages\\multi-workers",
+    "start_utc": "2026-10-23T18:12:53.424674+00:00",
+    "end_utc": "2026-10-23T18:12:54.345368+00:00",
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "test_decision_dashboard_playground.py"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\packages\\multi-workers",
+    "start_utc": "2026-10-23T18:12:54.345836+00:00",
+    "end_utc": "2026-10-23T18:13:03.165117+00:00",
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "test_decision_context_readable_ui.py"
+    ],
+    "cwd": "H:\\git\\Multi-Workers\\packages\\multi-workers",
+    "start_utc": "2026-10-23T18:13:03.165610+00:00",
+    "end_utc": "2026-10-23T18:15:13.344626+00:00",
+    "exit_code": 0
+  }
+]

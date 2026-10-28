@@ -1,0 +1,75 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T13:16:41.642017+00:00",
+  "commands": [
+    {
+      "mode": "generate",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t05-pm-handoff-20261027\\probe.py",
+        "generate",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t05-pm-handoff-20261027\\fixture\\generator-out"
+      ],
+      "rc": 0,
+      "deps_before": {
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_wire.py": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_lifecycle.py": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_lifecycle.py": "bdedfd4301fab76929beb0156f429f973fcb6404382b8893d2cbecbfaa711d1a",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_task_state.py": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f"
+      },
+      "deps_after": {
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_wire.py": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_lifecycle.py": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_lifecycle.py": "bdedfd4301fab76929beb0156f429f973fcb6404382b8893d2cbecbfaa711d1a",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_task_state.py": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f"
+      },
+      "T10_dependency_window_stable": true
+    },
+    {
+      "mode": "probe",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t05-pm-handoff-20261027\\probe.py",
+        "probe",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t05-pm-handoff-20261027\\fixture\\generator-out"
+      ],
+      "rc": 1,
+      "deps_before": {
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_wire.py": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_lifecycle.py": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_lifecycle.py": "bdedfd4301fab76929beb0156f429f973fcb6404382b8893d2cbecbfaa711d1a",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_task_state.py": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f"
+      },
+      "deps_after": {
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_wire.py": "8863e534f0a74edec1fc0105c0619c9dd19c85a472b82db6d622c23a7f85a5e6",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_lifecycle.py": "0c0f7fffb353cc829e054dfbeec409915cb4bebce11d998c5d810feb533dc8e4",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_task_state.py": "b01e08b0cb223d572f8c1b1ef50aa92c0cd02d6cd598e82b3abe829f5805836d",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_lifecycle.py": "bdedfd4301fab76929beb0156f429f973fcb6404382b8893d2cbecbfaa711d1a",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_task_state.py": "30c6e4dd34e459b9c6533065777cf606f8e9215d4a2ebde737a405d6d39dc23f"
+      },
+      "T10_dependency_window_stable": true
+    }
+  ],
+  "generator_output_exactly_eight_and_shipped_byte_parity": true,
+  "offline_book_and_prepared_choice_basis_checks_8_pass": true,
+  "native_active_scaffold_controls_8_pass": true,
+  "independent_template_failures": 3,
+  "future_synthesis_timestamp_cases": 8,
+  "semantic_handoff_verified": false,
+  "assigned_full_suite_still_worker_report_16P12F_not_PM_reproduced_yet": true,
+  "workbench_test_full_read_and_stable_T10_terminal_required_before_assigned_tests": true,
+  "mirror_files": 1891,
+  "eight_new_cases_exist_as_real_product_files": true,
+  "verification_changed_T05_products": [],
+  "worker_original_evidence_unchanged": true,
+  "historical_pyc_drift_preserved_no_additional_pyc_change": true,
+  "four_old_cases_and_relevant_live_baselines_unchanged": true,
+  "outside_original_two_worker_faces": [
+    "packages/multi-workers/__pycache__/decision.cpython-314.pyc"
+  ]
+}

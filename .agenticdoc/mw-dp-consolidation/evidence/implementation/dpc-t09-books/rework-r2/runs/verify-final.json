@@ -1,0 +1,54 @@
+{
+  "source": "agent-report",
+  "products": {
+    "decision_book.py": {
+      "after_sha256_on_disk": "07c08bf4aff069c2f99d606d7e6a73859873bb5b6ddd9a7c7b1f7b09375f071f",
+      "after_sha256_recorded": "07c08bf4aff069c2f99d606d7e6a73859873bb5b6ddd9a7c7b1f7b09375f071f",
+      "before_snapshot_sha256": "dbe2329aa0b84ae10c484f526e812cae36545590c17d857bbfde040f302d32a0",
+      "before_sha256_recorded": "dbe2329aa0b84ae10c484f526e812cae36545590c17d857bbfde040f302d32a0",
+      "bytes_on_disk": 62612,
+      "bytes_recorded": 62612
+    },
+    "test_decision_context_contract.py": {
+      "after_sha256_on_disk": "e1d46887fdbb2ab4e36243d6813218f31e58a4129aa3e796966801612a21e1f0",
+      "after_sha256_recorded": "e1d46887fdbb2ab4e36243d6813218f31e58a4129aa3e796966801612a21e1f0",
+      "before_snapshot_sha256": "9bbf89d6e03a6b6d60dd511d37509cc632d61e6c4ea9f3ae7c821da079ff2176",
+      "before_sha256_recorded": "9bbf89d6e03a6b6d60dd511d37509cc632d61e6c4ea9f3ae7c821da079ff2176",
+      "bytes_on_disk": 60473,
+      "bytes_recorded": 60473
+    }
+  },
+  "pyc_count": 14,
+  "runs": {
+    "baseline-1": 0,
+    "baseline-2": 0,
+    "red-1": 1,
+    "green-1": 0,
+    "green-2": 0,
+    "probe-before-red": 1,
+    "probe-after-green": 0,
+    "green-3": 0,
+    "ast-inventory": 0,
+    "capture-after": 0,
+    "inventory-after": 0
+  },
+  "mirror_modified": [
+    "packages/multi-workers/decision_book.py",
+    "packages/multi-workers/test_decision_context_contract.py"
+  ],
+  "ast_preserved_exactly": true,
+  "ast_added_functions": 7,
+  "probe_before": {
+    "base_17_passed": 4,
+    "base_17_failed": 13,
+    "total_passed": 7,
+    "total_failed": 14
+  },
+  "probe_after": {
+    "base_17_passed": 17,
+    "base_17_failed": 0,
+    "total_passed": 21,
+    "total_failed": 0
+  },
+  "problems": []
+}

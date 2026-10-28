@@ -1,0 +1,51 @@
+{
+  "T05": {
+    "schema": 1,
+    "task_key": "dpc-t05-eight-cases",
+    "run_id": "dpc-t05-eight-cases@2026-10-27T12:56:07.446Z",
+    "owner_key": "mw-dp-consolidation",
+    "kind": "coding",
+    "status": "done",
+    "started_at": "2026-10-27T12:56:07.446Z",
+    "artifacts": [
+      "output.md"
+    ],
+    "pid": 83532,
+    "last_heartbeat_at": "2026-10-27T13:11:37.662Z",
+    "ended_at": "2026-10-27T13:11:51.195Z",
+    "exit": 0
+  },
+  "T10": {
+    "schema": 1,
+    "task_key": "dpc-t10-lifecycle-state",
+    "run_id": "dpc-t10-lifecycle-state@2026-10-27T12:56:07.428Z",
+    "owner_key": "mw-dp-consolidation",
+    "kind": "coding",
+    "status": "done",
+    "started_at": "2026-10-27T12:56:07.428Z",
+    "artifacts": [
+      "output.md"
+    ],
+    "pid": 84564,
+    "last_heartbeat_at": "2026-10-27T13:18:07.724Z",
+    "ended_at": "2026-10-27T13:18:31.105Z",
+    "exit": 0
+  },
+  "bad-R2": {
+    "schema": 1,
+    "task_key": "dpc-t05-eight-cases-r2",
+    "run_id": "dpc-t05-eight-cases-r2@2026-10-27T13:28:05.534Z",
+    "owner_key": "mw-dp-consolidation",
+    "kind": "coding",
+    "status": "done",
+    "started_at": "2026-10-27T13:28:05.534Z",
+    "artifacts": [
+      "output.md",
+      "report.md"
+    ],
+    "pid": 43616,
+    "last_heartbeat_at": "2026-10-27T13:37:35.661Z",
+    "ended_at": "2026-10-27T13:37:42.326Z",
+    "exit": 0
+  }
+}

@@ -1,0 +1,33 @@
+﻿[
+  {
+    "scenario": "cli_book",
+    "rc": 0,
+    "resolutions": 1,
+    "posts": 2,
+    "distinct_authorizations": 1,
+    "every_attempt_sent_first_value": true,
+    "sink_exists": true,
+    "sink_contains_sent_value": false,
+    "sink_contains_rotated_value": false,
+    "sink_has_redaction": true
+  },
+  {
+    "scenario": "points_prod",
+    "resolutions": 1,
+    "posts": 2,
+    "distinct_authorizations": 1,
+    "every_attempt_sent_first_value": true,
+    "sink_exists": true,
+    "sink_contains_sent_value": false,
+    "sink_contains_rotated_value": false,
+    "sink_has_redaction": true
+  },
+  {
+    "scenario": "observation",
+    "refused_incomplete_capture": true,
+    "decision_status": null,
+    "posts": 0,
+    "rotated_value_stored_in_ledger": false,
+    "old_value_stored_in_ledger": false
+  }
+]

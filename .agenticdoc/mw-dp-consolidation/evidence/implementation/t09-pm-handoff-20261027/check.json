@@ -1,0 +1,89 @@
+{
+  "source": "agent-report",
+  "started_at": "2026-10-27T09:05:20.095141+00:00",
+  "observed_at": "2026-10-27T09:05:25.760274+00:00",
+  "assigned_passed": 109,
+  "assigned_runs": 2,
+  "products": [
+    {
+      "path": "packages/multi-workers/decision_book.py",
+      "before_sha256": "fc6d74a31abbddfa2c4a246f7a55cc23ba4c4844a41ed10d6547b2fc006b129f",
+      "after_sha256": "dbe2329aa0b84ae10c484f526e812cae36545590c17d857bbfde040f302d32a0",
+      "bytes": 59531,
+      "lf": 1559,
+      "crlf": 0,
+      "diff_hunks": 27,
+      "diff_bytes": 75055,
+      "worker_diff_raw_sha256": "254d18042238b93b9f43233620e372b93bd61d14dd423325bfc705dc76f6f8fd"
+    },
+    {
+      "path": "packages/multi-workers/test_decision_context_contract.py",
+      "before_sha256": "ea6429088c285382736f634a3233b7c94659c2a381e60b0ad9380a0157b8e7cf",
+      "after_sha256": "9bbf89d6e03a6b6d60dd511d37509cc632d61e6c4ea9f3ae7c821da079ff2176",
+      "bytes": 51264,
+      "lf": 1348,
+      "crlf": 0,
+      "diff_hunks": 4,
+      "diff_bytes": 87830,
+      "worker_diff_raw_sha256": "d178bf84fc3684499c4f8c6a12f0eaefcdc9f3b3b57328dd31b9d35472fb76d5"
+    }
+  ],
+  "commands": [
+    {
+      "label": "assigned-1",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t09-pm-handoff-20261027\\bootstrap.py",
+        "tests",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t09-pm-handoff-20261027\\fixture\\basetemp-1"
+      ],
+      "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+      "rc": 0,
+      "stdout": "assigned-1.stdout",
+      "stderr": "assigned-1.stderr"
+    },
+    {
+      "label": "assigned-2",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t09-pm-handoff-20261027\\bootstrap.py",
+        "tests",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t09-pm-handoff-20261027\\fixture\\basetemp-2"
+      ],
+      "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+      "rc": 0,
+      "stdout": "assigned-2.stdout",
+      "stderr": "assigned-2.stderr"
+    },
+    {
+      "label": "independent-negatives",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t09-pm-handoff-20261027\\bootstrap.py",
+        "probe",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t09-pm-handoff-20261027\\fixture\\probe-project"
+      ],
+      "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+      "rc": 1,
+      "stdout": "independent-negatives.stdout",
+      "stderr": "independent-negatives.stderr"
+    }
+  ],
+  "mirror_files": 1883,
+  "only_original_task_product_paths_changed": [
+    "packages/multi-workers/decision_book.py",
+    "packages/multi-workers/test_decision_context_contract.py"
+  ],
+  "verification_net_changes": [],
+  "worker_history_evidence_unchanged": true,
+  "relevant_live_unchanged": true,
+  "pyc_preserved": 14,
+  "full_after_source_read_by_PM": true,
+  "probe_passed": 4,
+  "probe_failed": 13,
+  "semantic_handoff_verified": false,
+  "whole_live_transient_or_exclusive_authorship_audit": false
+}

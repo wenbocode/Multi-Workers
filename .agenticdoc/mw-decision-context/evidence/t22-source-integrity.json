@@ -1,0 +1,77 @@
+{
+  "scope": "Eight source baselines, UTF-8 diff artifacts and newline assertions; not a claim about every foreign file across the whole session",
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_lifecycle.py",
+      "before_bytes": 32444,
+      "after_bytes": 34814,
+      "after_sha256": "e4ea5183cd28167a9ef35915c054d472c12b5b474817b93436564d2958d33248",
+      "before_crlf": 0,
+      "after_crlf": 0,
+      "diff_hunks": 17
+    },
+    {
+      "path": "packages/multi-workers/decision_wire.py",
+      "before_bytes": 72087,
+      "after_bytes": 72680,
+      "after_sha256": "229bebed24fadb597a5bed69f21297221277c56b135b1080e33aaddbdddfebd2",
+      "before_crlf": 0,
+      "after_crlf": 0,
+      "diff_hunks": 9
+    },
+    {
+      "path": "packages/multi-workers/decision_history.py",
+      "before_bytes": 172244,
+      "after_bytes": 174025,
+      "after_sha256": "0041e9c818a66074e9a0416e6dc3a4d79da9431cdd6328c884a25e5ea4ece162",
+      "before_crlf": 0,
+      "after_crlf": 0,
+      "diff_hunks": 4
+    },
+    {
+      "path": "packages/multi-workers/mw.py",
+      "before_bytes": 568207,
+      "after_bytes": 568665,
+      "after_sha256": "21208bb6b69c0b58d2307ce2e2ac2f29a918331fe408638ba95b41cfd3792bc6",
+      "before_crlf": 13016,
+      "after_crlf": 13022,
+      "diff_hunks": 5
+    },
+    {
+      "path": "packages/multi-workers/decision_dashboard.js",
+      "before_bytes": 147903,
+      "after_bytes": 150776,
+      "after_sha256": "67aa685ba9f4fe60883680df91b2bcf496b20e3b187e252091f6ece7cf17a370",
+      "before_crlf": 0,
+      "after_crlf": 0,
+      "diff_hunks": 2
+    },
+    {
+      "path": "packages/coding-agent/src/extensions/agent-team-loop/pm/triage-client.ts",
+      "before_bytes": 48227,
+      "after_bytes": 48631,
+      "after_sha256": "70551a67c82bd463ee040267758d2d3a2d19ae3387d9329b9a6817581c651d58",
+      "before_crlf": 0,
+      "after_crlf": 0,
+      "diff_hunks": 5
+    },
+    {
+      "path": "packages/coding-agent/src/extensions/agent-team-loop/pm/decision-tool.ts",
+      "before_bytes": 88198,
+      "after_bytes": 89846,
+      "after_sha256": "3c1388f5ce8ee8d4336be7207083f918c70c6e681c089d62522a36fc671f9f9e",
+      "before_crlf": 0,
+      "after_crlf": 0,
+      "diff_hunks": 16
+    },
+    {
+      "path": "packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts",
+      "before_bytes": 227804,
+      "after_bytes": 228859,
+      "after_sha256": "c77017a29f9194c2c200d61be108de3dbacb00e799bc2c97062b44d1300180e9",
+      "before_crlf": 0,
+      "after_crlf": 0,
+      "diff_hunks": 16
+    }
+  ]
+}

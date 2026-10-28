@@ -1,0 +1,35 @@
+{
+  "results": [
+    {
+      "label": "baseline",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-X",
+        "utf8",
+        "-m",
+        "pytest",
+        "-q",
+        "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\t21-workbench-compare-8ak4fd7m\\baseline\\packages\\multi-workers\\test_decision_context_workbench.py::test_dom_v2_record_opens_ten_node_dag_and_legacy_record_stays_log_only"
+      ],
+      "exit": 1,
+      "utc_start": "2026-10-24T08:44:13.898941+00:00",
+      "utc_end": "2026-10-24T08:44:17.500391+00:00"
+    },
+    {
+      "label": "current",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-X",
+        "utf8",
+        "-m",
+        "pytest",
+        "-q",
+        "C:\\Users\\WENBOZ~1\\AppData\\Local\\Temp\\t21-workbench-compare-8ak4fd7m\\current\\packages\\multi-workers\\test_decision_context_workbench.py::test_dom_v2_record_opens_ten_node_dag_and_legacy_record_stays_log_only"
+      ],
+      "exit": 1,
+      "utc_start": "2026-10-24T08:44:17.640563+00:00",
+      "utc_end": "2026-10-24T08:44:20.905614+00:00"
+    }
+  ],
+  "source_unchanged": true
+}

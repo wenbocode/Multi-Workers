@@ -1,0 +1,45 @@
+--- packages/multi-workers/mw.py.t22-before
++++ packages/multi-workers/mw.py
+@@ -958,7 +958,7 @@
+     """
+     if not isinstance(raw, dict):
+         return None, "envelope.meta must be a JSON object"
+-    unknown = [name for name in raw if name not in decision_lifecycle.META_KEYS]
++    unknown = [name for name in raw if name not in decision_lifecycle.META_ALLOWED_KEYS]
+     if unknown:
+         return None, f"envelope.meta carries {len(unknown)} unknown key(s)"
+     role = raw.get("initiator_role", "unknown")
+@@ -4338,6 +4338,7 @@
+         "evidence_path",
+         "evidence_sha256",
+         "event_id",
++        "task_after",
+     }
+ )
+ 
+@@ -4412,6 +4413,9 @@
+         return 2
+     decision_id = payload["decision_id"]
+     dp = payload["dp"]
++    if payload.get("task_after") is not None and (stage not in ("executed", "settled") or meta.task_key is None):
++        _decide_print({"status": "refused", "recorded": False, "error_class": "input", "error": "task_after requires an associated task and executed/settled stage"}, as_json)
++        return 2
+ 
+     cfg = _decide_config_snapshot(project_dir)
+     credential_snapshot = decision.credential_snapshot(cfg)
+@@ -4438,6 +4442,7 @@
+                     meta,
+                     action=payload.get("action"),
+                     result=payload.get("result"),
++                    task_after=payload.get("task_after"),
+                     **common,
+                 )
+             elif stage == "settled":
+@@ -4445,6 +4450,7 @@
+                     store,
+                     meta,
+                     outcome=payload.get("outcome"),
++                    task_after=payload.get("task_after"),
+                     **common,
+                 )
+             else:

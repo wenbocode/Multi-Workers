@@ -1,0 +1,16 @@
+MDC baseline: full Python suite before/at MDC B2
+command: cd packages/multi-workers; python -m pytest -q
+PM own run 2026-10-14: 6 failed, 2206 passed, 10 deselected in 317.41s
+the 6 pre-existing reds and their independent attribution:
+  1. test_autopilot_readcap_injection.py::test_baseline_left_end_bound
+     -> compares the frozen copy with `git show HEAD:...dispatch.py`; BASELINE_DIR defaults to
+        ANOTHER repo (H:\git\E2Feature\...\baseline_20260924, frozen 2026-09-24) => structural.
+  2. test_autopilot_verdict_freshness.py::test_true_below_without_resume_stays_below
+     -> PROVED pre-existing by PM A/B isolation: same failure with HEAD conductor.py in a temp copy.
+  3-4. test_launcher.py::TestTaskTypeCallsiteWiring::test_bom_historical_books_read_through_both_callsites
+       test_task_type_parity.py::test_bom_historical_books
+     -> another key's task book is missing (mw-dispatch-reliability/workers/mw-dr-glm53/task.md).
+  5-6. test_mwds_t27_service_envelope.py::TestCrossLanguageParity::test_python_mirror_matches_the_real_ts_judge
+       test_mwds_t29_producer_signal.py::TestParity::test_python_judge_matches_the_real_ts_judge
+     -> the TS subprocess runner returns None (proc is None) => dist/** not rebuilt.
+IMPORTANT: MDC's own acceptance requires zero NEW failures against this list.

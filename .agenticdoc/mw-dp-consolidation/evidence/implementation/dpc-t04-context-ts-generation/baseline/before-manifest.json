@@ -1,0 +1,72 @@
+{
+  "observed_at": "2026-10-26T06:24:14.374522+00:00",
+  "implementation_root": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree",
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_context.py",
+      "bytes": 11949,
+      "sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+      "crlf": 288,
+      "bare_lf": 0,
+      "samefile_live": false,
+      "exists_before": true,
+      "predispatch_sha256": "5eeb860518593b194aa1f48a9262f06b9113d96cbd62c03625b4b6a2dab58b06",
+      "matches_predispatch": true,
+      "baseline_copy": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t04-context-ts-generation/baseline/packages/multi-workers/decision_context.py",
+      "readback_equal": true
+    },
+    {
+      "path": "packages/multi-workers/scripts/gen_decide_registry_ts.py",
+      "bytes": 11684,
+      "sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+      "crlf": 0,
+      "bare_lf": 285,
+      "samefile_live": false,
+      "exists_before": true,
+      "predispatch_sha256": "a0ed7a80edf816c6fafb4dab6e3437690c4d45aed3a11809bf947f658317077d",
+      "matches_predispatch": true,
+      "baseline_copy": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t04-context-ts-generation/baseline/packages/multi-workers/scripts/gen_decide_registry_ts.py",
+      "readback_equal": true
+    },
+    {
+      "path": "packages/multi-workers/decide_registry.json",
+      "bytes": 29869,
+      "sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "crlf": 0,
+      "bare_lf": 894,
+      "samefile_live": false,
+      "exists_before": true,
+      "predispatch_sha256": "cc017e343f2f7702cf2fcdafc1239d543be472b4e6ab6b92d6adaaee7a06c604",
+      "matches_predispatch": true,
+      "baseline_copy": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t04-context-ts-generation/baseline/packages/multi-workers/decide_registry.json",
+      "readback_equal": true
+    },
+    {
+      "path": "packages/multi-workers/test_decide_registry_ts_lock.py",
+      "bytes": 2424,
+      "sha256": "dc6332f140f06ce9d0ca494245c1500f2f2ee14ce584c3dcf4ad821872b2a92e",
+      "crlf": 0,
+      "bare_lf": 63,
+      "samefile_live": false,
+      "exists_before": true,
+      "predispatch_sha256": "dc6332f140f06ce9d0ca494245c1500f2f2ee14ce584c3dcf4ad821872b2a92e",
+      "matches_predispatch": true,
+      "baseline_copy": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t04-context-ts-generation/baseline/packages/multi-workers/test_decide_registry_ts_lock.py",
+      "readback_equal": true
+    },
+    {
+      "path": "packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts",
+      "bytes": 30264,
+      "sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+      "crlf": 0,
+      "bare_lf": 930,
+      "samefile_live": false,
+      "exists_before": true,
+      "predispatch_sha256": "699719c2bf7e64cbb51866f8fda39784c6d0ee9b09d7762c9c49e5fbb30127e4",
+      "matches_predispatch": true,
+      "baseline_copy": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t04-context-ts-generation/baseline/packages/coding-agent/src/extensions/agent-team-loop/shared/decide-registry.generated.ts",
+      "readback_equal": true
+    }
+  ],
+  "all_match_predispatch": true
+}

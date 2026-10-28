@@ -1,0 +1,14 @@
+{
+  "previous_files": 1883,
+  "current_files": 1883,
+  "added": [],
+  "removed": [],
+  "modified": [
+    "packages/multi-workers/decision_book.py",
+    "packages/multi-workers/test_decision_context_contract.py"
+  ],
+  "outside_declared_products": [],
+  "protected_added": [],
+  "protected_removed": [],
+  "protected_modified": []
+}

@@ -1,0 +1,166 @@
+{
+  "id": "T10",
+  "task_key": "dpc-t10-lifecycle-state",
+  "card": "tasks/isolated/T10-lifecycle-state.md",
+  "stage": 2,
+  "type": "coding",
+  "execution": "worker",
+  "deps": [
+    "T03",
+    "T04",
+    "T09"
+  ],
+  "ac_refs": [
+    "AC-004",
+    "AC-012",
+    "AC-014",
+    "AC-049",
+    "AC-050",
+    "AC-051",
+    "AC-052"
+  ],
+  "vc_refs": [
+    "VC-004",
+    "VC-012",
+    "VC-014",
+    "VC-049",
+    "VC-050",
+    "VC-051",
+    "VC-052"
+  ],
+  "product_write_face": [
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_wire.py",
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_lifecycle.py",
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_task_state.py",
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_context_lifecycle.py",
+    ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_decision_task_state.py"
+  ],
+  "evidence": ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state",
+  "commands": [
+    {
+      "cwd": ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-p",
+        "no:cacheprovider",
+        "-q",
+        "test_decision_context_lifecycle.py",
+        "test_decision_task_state.py"
+      ],
+      "source_cwd": "packages/multi-workers"
+    }
+  ],
+  "goal": "真实request/action/settled/terminal与前后快照关联，独立保存PM note与模型选择依据。",
+  "requirements": "只沿用原账本/安全过滤，不回填before/null或制造时间/ID。prepare/basis来源与父后继引用可核；未执行、失败、settled不是done。先用fake生产writer对空值/秘密/生命周期不同节点验证，旧历史逐字节不改。",
+  "status": "done",
+  "code_status": "worker局部实现完成；PM独立资格未通过",
+  "verification_status": "worker三次116P及before31F85P待PM独立复验，原40setup失败stdout被覆盖、OS私有sink偏差保持；不凭exit0放行",
+  "source_product_write_face": [
+    "packages/multi-workers/decision_wire.py",
+    "packages/multi-workers/decision_lifecycle.py",
+    "packages/multi-workers/decision_task_state.py",
+    "packages/multi-workers/test_decision_context_lifecycle.py",
+    "packages/multi-workers/test_decision_task_state.py"
+  ],
+  "source_card": "tasks/T10-lifecycle-state.md",
+  "source_card_sha256": "eecfe7861c6cc2dc4a5c27c00f9128f5b9438ff86663fada4512dcd8c8033d95",
+  "observation_history": [
+    {
+      "status": "not-queued",
+      "observed_at": null,
+      "source": "agent-report",
+      "completed": null,
+      "remaining": null,
+      "blockers": null,
+      "unrecorded_prior_observation_time": true
+    }
+  ],
+  "run_id": "dpc-t10-lifecycle-state@2026-10-27T12:56:07.428Z",
+  "started_at": "2026-10-27T12:56:07.428Z",
+  "pid": 84564,
+  "dispatch_card_sha256": "46945d41cda0fd4c0e6469e7704eb26c5969ff76274a6c0aaa164674ae4c582c",
+  "dispatch_recorded_card_path_label": "tasks/T10-lifecycle-state.md",
+  "dispatch_write_face_verified": true,
+  "pre_dispatch_evidence": "evidence/implementation/s2-t05-t10-pre-dispatch-20261027/check.json",
+  "dispatch_evidence": "evidence/implementation/s2-t05-t10-dispatch-20261027/check.json",
+  "semantic_handoff_verified": false,
+  "observation": {
+    "status": "done",
+    "observed_at": "2026-10-27T13:42:53.940837+00:00",
+    "source": "agent-report",
+    "completed": [
+      "真实原done/exit0结果已完整吸收并ack",
+      "worker报告/五产品afterbytes在PM before保护"
+    ],
+    "remaining": [
+      "当前五产品与test完整源码EOF审计及新鲜独立两suite验证",
+      "真实关联/单源basis/terminal与settled分层、历史投影及消费者后继核",
+      "合法测试sink与日志丢失/越面历史独立处置"
+    ],
+    "blockers": [
+      "尚未独立验证116cases和实际record链路",
+      "首次40setup失败日志被覆盖不可伪恢复",
+      "TEMP超原evidence允许面须保持真实偏差，不事后视已授权",
+      "既有pyc1漂移不能归独占作者或清理"
+    ]
+  },
+  "pm_previous_observations": [
+    {
+      "status": "running",
+      "observed_at": "2026-10-27T12:58:21.932651+00:00",
+      "source": "agent-report",
+      "completed": null,
+      "remaining": null,
+      "blockers": null
+    }
+  ],
+  "pm_terminal_absorption_20261027": {
+    "observed_at": "2026-10-27T13:42:53.940837+00:00",
+    "source": "agent-report",
+    "status": "done",
+    "actual_run_id": "dpc-t10-lifecycle-state@2026-10-27T12:56:07.428Z",
+    "exit": 0,
+    "acked": true,
+    "semantic_handoff": false
+  },
+  "handoff_audit_attempt": {
+    "task_key": "dpc-t10-handoff-audit",
+    "run_id": "dpc-t10-handoff-audit@2026-10-28T04:04:13.035Z",
+    "status": "done",
+    "exit": 0,
+    "ended_at": "2026-10-28T04:12:21.460Z",
+    "acked": true,
+    "type": "research",
+    "pid": 74740,
+    "observed_at": "2026-10-28T04:15:00.645537+00:00",
+    "previous_observation": {
+      "status": "running",
+      "observed_at": "2026-10-28T04:06:20.013963+00:00",
+      "source": "agent-report",
+      "completed": null,
+      "remaining": null,
+      "blockers": null
+    },
+    "source": "agent-report",
+    "completed": [
+      "唯一报告全文吸收/终态ack",
+      "五产品SHA/原断言静态补证，9项预测及scope合法路径限制"
+    ],
+    "remaining": [
+      "S1/S3/S4/S5等独立fake red复现及原五面定点修复",
+      "S2/S6/S8/S9对已批真实链合同判别",
+      "assigned两suite独立验证；非116P即自动失败说法不采纳"
+    ],
+    "blockers": [
+      "具体外部fixture目录权限未获批准",
+      "产品缺口/完整交接仍待验证，不是仅目录阻塞"
+    ],
+    "pm_disposition_evidence": "evidence/implementation/t05-t10-audit-disposition-20261028/report.md",
+    "card": "tasks/isolated/T10-handoff-audit.md",
+    "evidence": "evidence/implementation/t10-handoff-audit-20261027.md",
+    "dispatch_evidence": "evidence/implementation/handoff-audit-dispatch-20261027/check.json",
+    "semantic_handoff_verified": false
+  }
+}

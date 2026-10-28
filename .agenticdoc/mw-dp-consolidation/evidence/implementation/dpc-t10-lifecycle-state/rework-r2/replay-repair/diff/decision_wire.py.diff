@@ -1,0 +1,54 @@
+--- .agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t10-lifecycle-state/rework-r2/product-repair/after-bytes/decision_wire.py (82286 bytes, sha256 429201ace7028968ae18cfbcc33dbf5aa0d2fa11b8f5d2dd7604cae0dec4e7dc)
++++ .agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_wire.py (83177 bytes, sha256 03f4373f6328b05d5abedd5d686dda3b155b08436908beb8f6d29585dcf0639c)
+@@ -83,7 +83,10 @@
+   ``(decision_id, kind word)``: two real actions stay two rows. An optional
+   ``guard`` runs inside the same lock, so a ledger-derived precondition (for
+   example a non-decreasing observation order) cannot be passed by two writers
+-  at once; its own refusal propagates and nothing is appended.
++  at once; its own refusal propagates and nothing is appended. The dedupe scan
++  runs *before* the guard: a replay appends nothing, so a precondition about new
++  rows must not refuse the retry the ``event_id`` contract exists for, while
++  every event that is really about to be written is still guarded.
+ 
+ Additive T10 extension (request / PM note / task terminal, design §4.6 AC-050):
+ 
+@@ -1991,6 +1994,13 @@
+     by two writers at once (a read-then-append outside the lock is a TOCTOU). A
+     refusal by the guard is the caller's own input error, not a capture failure:
+     it propagates as-is, nothing is appended and no failure sidecar is written.
++
++    The duplicate scan runs first, inside that same lock: an ``event_id`` this
++    ledger already records is answered ``duplicate`` (zero bytes) *before* the
++    guard, because a replay appends nothing and a precondition about the rows
++    being added has nothing to reject. Dedupe and the guard therefore take both
++    decisions on the same locked view of the ledger; a new ``event_id`` still
++    faces the guard before it is appended.
+     """
+     if event.get("schema_version") != SCHEMA_VERSION:
+         return _fail(scope, "schema", WireScopeError("schema_version mismatch"), event)
+@@ -2034,11 +2044,10 @@
+ 
+     tail_repaired = False
+     try:
+-        if guard is not None:
+-            # Ledger-derived precondition: it must see the same rows the append
+-            # is about to extend, which is only true while this lock is held.
+-            guard()
+         if dedupe_event_id:
++            # Same locked view as the guard below: a recorded id is a replay and
++            # appends nothing, so it is answered before any new-row
++            # precondition can refuse it (AC-052 idempotency).
+             event_id = event.get("event_id")
+             if not isinstance(event_id, str) or not event_id:
+                 return _fail(
+@@ -2060,6 +2069,10 @@
+                     event_id=event_id,
+                     capture_status=status if isinstance(status, str) else None,
+                 )
++        if guard is not None:
++            # Ledger-derived precondition: it must see the same rows the append
++            # is about to extend, which is only true while this lock is held.
++            guard()
+         tail_repaired = _terminate_dangling_tail(sink)
+         fd = os.open(
+             str(sink), os.O_WRONLY | os.O_CREAT | os.O_APPEND | _BINARY_FLAG, 0o644

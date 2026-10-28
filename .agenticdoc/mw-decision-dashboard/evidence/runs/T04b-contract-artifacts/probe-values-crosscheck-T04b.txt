@@ -1,0 +1,64 @@
+$ python ../../.agenticdoc/mw-decision-dashboard/evidence/runs/T04b-contract-artifacts/derive-probe-values.py
+$ cwd=packages/multi-workers
+$ exit=0
+
+derived_paths=82 validator_issues=0
+proposal_paths=82
+only_derived: []
+only_proposal: []
+value_diff (derived vs proposal):
+  action.backup_available: derived=False proposal=True
+  action.command: derived='probe' proposal='rm -rf build'
+  action.reversible: derived=False proposal=True
+  action.targets: derived=[] proposal=['build']
+  claim.heartbeat_age_min: derived=0 proposal=1
+  claim.key: derived='probe' proposal='mw-decision-dashboard'
+  claim.owner_active: derived=False proposal=True
+  conflict.rule_ref: derived='probe' proposal='AGENTS.md:1'
+  conflict.user_instruction: derived='probe' proposal='proceed'
+  credential.exposed_to: derived=[] proposal=['multi-workers']
+  credential.kind: derived='probe' proposal='api-key'
+  credential.provider: derived='probe' proposal='timi'
+  credential.scope: derived='probe' proposal='decide'
+  debug.change_scope: derived=[] proposal=['packages/multi-workers/decision_points.py']
+  debug.last_green_ref: derived='probe' proposal='HEAD'
+  debug.repro_available: derived=False proposal=True
+  debug.signal: derived='probe' proposal='AssertionError'
+  dependency.current: derived='probe' proposal='5.9.3'
+  dependency.name: derived='probe' proposal='typescript'
+  dependency.reviewed: derived=False proposal=True
+  dependency.target: derived='probe' proposal='5.9.3'
+  failure.artifact_present: derived=False proposal=True
+  gate.age_minutes: derived=0 proposal=1
+  gate.evidence_refs: derived=[] proposal=['AGENTS.md:1']
+  gate.missing_items: derived=[] proposal=['test results']
+  gate.name: derived='probe' proposal='QG'
+  gate.pending_items: derived=[] proposal=['review']
+  gate.verdict_age_hours: derived=0 proposal=1
+  goal.current_digest: derived='probe' proposal='sha256:0'
+  goal.proposed_delta: derived='probe' proposal='none'
+  model.available: derived=[] proposal=['jev-latest']
+  model.requested: derived='probe' proposal='jev-latest'
+  project.path: derived='probe' proposal='.'
+  qg.blocking: derived=[] proposal=['test_example']
+  refine.clause: derived='probe' proposal='clause'
+  refine.impact_paths: derived=[] proposal=['packages/multi-workers/decision_points.py']
+  refine.reversible: derived=False proposal=True
+  release.changelog_ready: derived=False proposal=True
+  release.ci_green: derived=False proposal=True
+  release.staged_paths: derived=[] proposal=['packages/multi-workers/decision_points.py']
+  release.version_current: derived='probe' proposal='0.0.2'
+  release.version_next: derived='probe' proposal='0.0.3'
+  scope.requested_paths: derived=[] proposal=['packages/multi-workers/decision_points.py']
+  scope.requirement_delta: derived='probe' proposal='contract probe'
+  snapshot.sections_changed: derived=[] proposal=['## Context']
+  snapshot.size_bytes: derived=0 proposal=1024
+  stage.evidence_refs: derived=[] proposal=['AGENTS.md:1']
+  stage.id: derived='probe' proposal='S2'
+  test.changed_paths: derived=[] proposal=['packages/multi-workers/decision_points.py']
+  test.failed_cases: derived=[] proposal=['test_example']
+  test.repro_consistent: derived=False proposal=True
+  write.cross_key_owner: derived='probe' proposal='mw-decision-dashboard'
+  write.target_path: derived='probe' proposal='packages/multi-workers/decision_points.py'
+  write.write_scope: derived=[] proposal=['packages/multi-workers/']
+proposal_validator_issues=0

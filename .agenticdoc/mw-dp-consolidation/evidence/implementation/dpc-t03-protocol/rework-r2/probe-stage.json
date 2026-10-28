@@ -1,0 +1,50 @@
+{
+  "synthetic_only": true,
+  "generator_run": false,
+  "ts_build": false,
+  "generated_ts": {
+    "old_pre_r2_assertions": {
+      "result": "rejected",
+      "assertion": "the generated TS changed unexpectedly; regeneration belongs to T04"
+    },
+    "new_stage": "post-t04",
+    "new_contract": {
+      "result": "accepted"
+    }
+  },
+  "one_sided_rename": {
+    "new_stage": {
+      "result": "rejected",
+      "assertion": "the generated TS registry is neither the frozen pre-T03 artifact nor the eight-entry projection: ['dp-w-type', 'dp10-dependency', 'dp11-credential', 'dp12-destructive', 'dp13-commit-release', 'dp14-rule-conflict', 'dp15-autopilot-gate', 'dp16-goal', 'dp17-spec-lock', 'dp18-claim', 'dp19-foreign-write', 'dp2-checkpoint-split', 'dp20-stage-close', 'dp21-refine', 'dp22-debug-plan', 'dp23-snapshot', 'dp24-pi-trust', 'dp25-signoff-conclusion', 'dp3-worker-clarify', 'dp4-failure-handling', 'dp5-test-triage', 'dp6-qg-verdict', 'dp7-gate-failure', 'dp8-scope-change', 'dp9-model-select']"
+    },
+    "new_contract": {
+      "result": "rejected",
+      "assertion": "the generated TS registry is neither the frozen pre-T03 artifact nor the eight-entry projection: ['dp-w-type', 'dp10-dependency', 'dp11-credential', 'dp12-destructive', 'dp13-commit-release', 'dp14-rule-conflict', 'dp15-autopilot-gate', 'dp16-goal', 'dp17-spec-lock', 'dp18-claim', 'dp19-foreign-write', 'dp2-checkpoint-split', 'dp20-stage-close', 'dp21-refine', 'dp22-debug-plan', 'dp23-snapshot', 'dp24-pi-trust', 'dp25-signoff-conclusion', 'dp3-worker-clarify', 'dp4-failure-handling', 'dp5-test-triage', 'dp6-qg-verdict', 'dp7-gate-failure', 'dp8-scope-change', 'dp9-model-select']"
+    }
+  },
+  "real_artifact_stage": "pre-t04",
+  "wiring_backed": {
+    "old_all_unwired_assertion": {
+      "result": "rejected",
+      "assertion": ""
+    },
+    "new_contract": {
+      "result": "accepted"
+    }
+  },
+  "wiring_unbacked": {
+    "new_contract": {
+      "result": "rejected",
+      "assertion": "dp-w-type: wiring cites packages/multi-workers/usage.py:1 but that file never names the entry"
+    }
+  },
+  "ts_rows_post_t04": {
+    "old_exact_equality": {
+      "result": "rejected",
+      "assertion": "the legacy required_if matrix changed; only retired ids may keep a row: ['dp-sign-key']"
+    },
+    "new_contract": {
+      "result": "accepted"
+    }
+  }
+}

@@ -1,0 +1,320 @@
+--- a/packages/multi-workers/test_decide_registry_ts_lock.py
++++ b/packages/multi-workers/test_decide_registry_ts_lock.py
+@@ -258,6 +258,87 @@
+ 
+ 
+ # ---------------------------------------------------------------------------
++# 0. The case-directory boundary: four legacy files + the eight T05 cases
++# ---------------------------------------------------------------------------
++
++#: The four pre-T05 case files, by exact name. "However many ``dp*.json`` files
++#: happen to exist" is *not* the contract: T05 adds the eight active cases next
++#: to these four read-only ones, so a count (or a glob that also matches
++#: ``dp-QG.json``) would refuse the legal coexistence instead of locking the
++#: legacy bytes.
++LEGACY_CASE_FILES: tuple[str, ...] = ("dp1.json", "dp2.json", "dp3.json", "dp25.json")
++#: The eight active case file names T05 writes. Names only: this task claims no
++#: business validity for their content.
++ACTIVE_CASE_FILES: tuple[str, ...] = tuple(f"{dp_id}.json" for dp_id in dpts.ACTIVE_DP_IDS)
++
++
++def _case_dir() -> pathlib.Path:
++    """The product case directory (the coexistence regression points it elsewhere)."""
++    return MW_ROOT / "decide_cases"
++
++
++def _sha256_file(path: pathlib.Path) -> str:
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def _case_snapshot(case_dir: pathlib.Path) -> dict[str, str]:
++    """``{file name: sha256}`` of every file of one case directory.
++
++    The four legacy files are required *by name*: a deleted or renamed one is a
++    real defect, while an extra active case is a legal state T05 introduces.
++    """
++    present = sorted(entry.name for entry in case_dir.iterdir() if entry.is_file())
++    missing = [name for name in LEGACY_CASE_FILES if name not in present]
++    assert not missing, (
++        f"the four read-only legacy cases moved: {missing} missing from {case_dir}"
++    )
++    return {name: _sha256_file(case_dir / name) for name in present}
++
++
++def _assert_case_dir_unchanged(before: dict[str, str], after: dict[str, str]) -> None:
++    """Refuse any add / delete / rewrite in a case directory (every file)."""
++    added = sorted(set(after) - set(before))
++    removed = sorted(set(before) - set(after))
++    changed = sorted(name for name in before if name in after and before[name] != after[name])
++    assert not (added or removed or changed), (
++        "a pure generation command wrote the case directory: "
++        f"added={added} removed={removed} changed={changed}"
++    )
++
++
++def _assert_bytes_unchanged(path: pathlib.Path, before: bytes, label: str) -> None:
++    """Byte witness of one generated artifact (``--check``/``--stdout`` may not write)."""
++    after = path.read_bytes()
++    assert after == before, f"a pure generation command rewrote {label}"
++
++
++def _build_case_fixture(
++    root: pathlib.Path,
++    *,
++    legacy: tuple[str, ...] = LEGACY_CASE_FILES,
++    active: tuple[str, ...] = ACTIVE_CASE_FILES,
++) -> pathlib.Path:
++    """A private case directory: real legacy bytes + synthetic active cases.
++
++    The legacy files are byte copies of the checked-in ones, so the fixture is
++    the four real read-only cases; the active ones carry a synthetic marker
++    because T05 has not produced them yet. Nothing here proves their business
++    content - only the directory boundary.
++    """
++    root.mkdir(parents=True, exist_ok=True)
++    product = MW_ROOT / "decide_cases"
++    for name in legacy:
++        (root / name).write_bytes((product / name).read_bytes())
++    for name in active:
++        (root / name).write_text(
++            json.dumps({"_synthetic": True, "case": name}, indent=2) + "\n",
++            encoding="utf-8",
++            newline="\n",
++        )
++    return root
++
++
++# ---------------------------------------------------------------------------
+ # 1. Byte lock: the checked-in artifact is the generator output
+ # ---------------------------------------------------------------------------
+ 
+@@ -285,15 +366,18 @@
+ 
+ 
+ def test_check_and_stdout_modes_write_nothing() -> None:
+-    """The pure-generation modes must not touch the module or any other file."""
++    """The pure-generation modes must not touch the module, the JSON or any case file.
++
++    The case directory is protected as a whole: the four read-only legacy cases
++    are required by name, and the run may neither add, delete nor rewrite *any*
++    file there - so the four-legacy + eight-active coexistence T05 introduces is
++    a legal state, while a write of either group is refused.
++    """
+     path = gen.output_path()
+     before = path.read_bytes()
+-    cases = MW_ROOT / "decide_cases"
+-    legacy_cases = {
+-        case.name: hashlib.sha256(case.read_bytes()).hexdigest()
+-        for case in sorted(cases.glob("dp*.json"))
+-    }
+-    assert len(legacy_cases) == 4, f"the four read-only legacy cases moved: {legacy_cases}"
++    cases = _case_dir()
++    cases_before = _case_snapshot(cases)
++    legacy_before = {name: cases_before[name] for name in LEGACY_CASE_FILES}
+     registry_before = (MW_ROOT / "decide_registry.json").read_bytes()
+ 
+     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+@@ -316,15 +400,194 @@
+     assert printed.returncode == 0, printed.stderr
+     assert printed.stdout == before.decode("utf-8"), "--stdout must print the write path"
+ 
+-    assert path.read_bytes() == before, "--check/--stdout rewrote the generated module"
+-    assert (MW_ROOT / "decide_registry.json").read_bytes() == registry_before
+-    assert (
+-        {
+-            case.name: hashlib.sha256(case.read_bytes()).hexdigest()
+-            for case in sorted(cases.glob("dp*.json"))
+-        }
+-        == legacy_cases
+-    ), "a pure generation command wrote one of the four legacy cases"
++    _assert_bytes_unchanged(path, before, "the generated module")
++    _assert_bytes_unchanged(
++        MW_ROOT / "decide_registry.json", registry_before, "decide_registry.json"
++    )
++    cases_after = _case_snapshot(cases)
++    assert {name: cases_after[name] for name in LEGACY_CASE_FILES} == legacy_before, (
++        "a pure generation command wrote one of the four legacy cases"
++    )
++    _assert_case_dir_unchanged(cases_before, cases_after)
++
++
++def test_case_dir_boundary_accepts_legacy_and_active_cases_together(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
++) -> None:
++    """T04's four legacy cases and T05's eight active cases are a legal state.
++
++    Runs the *real* ``--check``/``--stdout`` write-nothing check (the same
++    function body the product run executes, with the same assertions) against a
++    private case directory; the generated module, ``decide_registry.json`` and
++    the checked-in cases stay the real, read-only ones.
++    """
++    fixture = _build_case_fixture(tmp_path / "decide_cases")
++    assert sorted(entry.name for entry in fixture.iterdir()) == sorted(
++        LEGACY_CASE_FILES + ACTIVE_CASE_FILES
++    )
++    product_cases = _case_dir()
++    product_before = _case_snapshot(product_cases)
++    monkeypatch.setattr(sys.modules[__name__], "_case_dir", lambda: fixture)
++    test_check_and_stdout_modes_write_nothing()
++    _assert_case_dir_unchanged(product_before, _case_snapshot(product_cases))
++
++
++def test_case_dir_snapshot_requires_every_legacy_file(tmp_path: pathlib.Path) -> None:
++    """A missing legacy case is refused *by name*, not by a file count."""
++    fixture = _build_case_fixture(
++        tmp_path / "decide_cases", legacy=("dp1.json", "dp2.json", "dp3.json")
++    )
++    with pytest.raises(
++        AssertionError, match=r"legacy cases moved: \['dp25\.json'\] missing"
++    ):
++        _case_snapshot(fixture)
++
++
++@pytest.mark.parametrize(
++    ("mutation", "detail"),
++    [
++        ("add-active", r"added=\['dp-extra\.json'\]"),
++        ("add-foreign", r"added=\['notes\.txt'\]"),
++        ("rewrite-active", r"changed=\['dp-QG\.json'\]"),
++        ("delete-active", r"removed=\['dp-QG\.json'\]"),
++        ("rewrite-legacy", r"changed=\['dp1\.json'\]"),
++    ],
++)
++def test_case_dir_boundary_refuses_a_changed_case_set(
++    tmp_path: pathlib.Path, mutation: str, detail: str
++) -> None:
++    """Add / rewrite / delete inside the case directory is refused, active or legacy."""
++    fixture = _build_case_fixture(tmp_path / "decide_cases")
++    before = _case_snapshot(fixture)
++    if mutation == "add-active":
++        (fixture / "dp-extra.json").write_bytes(b'{"added": true}\n')
++    elif mutation == "add-foreign":
++        (fixture / "notes.txt").write_bytes(b"scratch\n")
++    elif mutation == "rewrite-active":
++        (fixture / "dp-QG.json").write_bytes(b'{"rewritten": true}\n')
++    elif mutation == "delete-active":
++        (fixture / "dp-QG.json").unlink()
++    else:
++        (fixture / "dp1.json").write_bytes(b'{"rewritten": true}\n')
++    with pytest.raises(AssertionError, match=detail):
++        _assert_case_dir_unchanged(before, _case_snapshot(fixture))
++
++
++def test_case_dir_boundary_refuses_a_deleted_legacy_case(tmp_path: pathlib.Path) -> None:
++    """Deleting a legacy case is refused by the existence check, not the diff."""
++    fixture = _build_case_fixture(tmp_path / "decide_cases")
++    _case_snapshot(fixture)
++    (fixture / "dp25.json").unlink()
++    with pytest.raises(AssertionError, match=r"\['dp25\.json'\] missing"):
++        _case_snapshot(fixture)
++
++
++def _assert_a_writing_command_is_refused(
++    monkeypatch: pytest.MonkeyPatch, fixture: pathlib.Path, mutate, expected: str
++) -> None:
++    """Run the real boundary with a *simulated* writer that mutates the fixture.
++
++    The simulator only proves that the fixture/guard is not gullible: it returns
++    rc=0 and the real artifact text, so the case-directory witness is the only
++    failing signal. The real ``--check``/``--stdout`` runs are executed (not
++    faked) by ``test_check_and_stdout_modes_write_nothing`` and its coexistence
++    regression above.
++    """
++    artifact = gen.output_path().read_text(encoding="utf-8")
++    state = {"mutated": False}
++
++    def simulated_run(argv, **kwargs):  # noqa: ANN001, ANN003 - mirrors subprocess.run
++        if not state["mutated"]:
++            # The two modes are one command's two invocations; the writer touches
++            # the directory once (a repeated unlink would just raise ENOENT).
++            mutate(fixture)
++            state["mutated"] = True
++        # ``--check`` prints nothing, ``--stdout`` prints the write path's text:
++        # the simulated run must satisfy the body's own mode contract so the only
++        # failing signal left is the case-directory witness.
++        printed = "" if "--check" in argv else artifact
++        return subprocess.CompletedProcess(argv, 0, stdout=printed, stderr="")
++
++    monkeypatch.setattr(sys.modules[__name__], "_case_dir", lambda: fixture)
++    monkeypatch.setattr(subprocess, "run", simulated_run)
++    with pytest.raises(AssertionError, match=expected):
++        test_check_and_stdout_modes_write_nothing()
++
++
++def test_boundary_refuses_a_command_that_writes_active_cases(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
++) -> None:
++    """A writer that adds / rewrites / deletes active cases is refused."""
++    fixture = _build_case_fixture(tmp_path / "decide_cases")
++    product_cases = _case_dir()
++    product_before = _case_snapshot(product_cases)
++
++    def mutate(root: pathlib.Path) -> None:
++        (root / "dp-QG.json").write_bytes(b'{"rewritten": true}\n')
++        (root / "dp-extra.json").write_bytes(b'{"added": true}\n')
++        (root / "dp-route.json").unlink()
++
++    _assert_a_writing_command_is_refused(
++        monkeypatch,
++        fixture,
++        mutate,
++        r"wrote the case directory: added=\['dp-extra\.json'\] "
++        r"removed=\['dp-route\.json'\] changed=\['dp-QG\.json'\]",
++    )
++    _assert_case_dir_unchanged(product_before, _case_snapshot(product_cases))
++
++
++def test_boundary_refuses_a_command_that_rewrites_a_legacy_case(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
++) -> None:
++    """A writer that rewrites one of the four legacy cases is refused by name."""
++    fixture = _build_case_fixture(tmp_path / "decide_cases")
++
++    def mutate(root: pathlib.Path) -> None:
++        (root / "dp1.json").write_bytes(b'{"rewritten": true}\n')
++
++    _assert_a_writing_command_is_refused(
++        monkeypatch, fixture, mutate, r"wrote one of the four legacy cases"
++    )
++
++
++def test_boundary_refuses_a_command_that_deletes_a_legacy_case(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
++) -> None:
++    """A writer that deletes a legacy case is refused (the required file is gone)."""
++    fixture = _build_case_fixture(tmp_path / "decide_cases")
++
++    def mutate(root: pathlib.Path) -> None:
++        (root / "dp25.json").unlink()
++
++    _assert_a_writing_command_is_refused(
++        monkeypatch, fixture, mutate, r"legacy cases moved: \['dp25\.json'\] missing"
++    )
++
++
++def test_artifact_byte_guard_refuses_ts_and_json_drift(tmp_path: pathlib.Path) -> None:
++    """The byte witness refuses a rewritten generated module or registry JSON.
++
++    Fixture-level: copies of the real artifact/JSON bytes are rewritten and the
++    same guard the production run applies must reject them. Production parity on
++    the real paths is asserted (not simulated) by the two tests above.
++    """
++    module = tmp_path / "decide-registry.generated.ts"
++    registry = tmp_path / "decide_registry.json"
++    module.write_bytes(gen.output_path().read_bytes())
++    registry.write_bytes((MW_ROOT / "decide_registry.json").read_bytes())
++    module_before = module.read_bytes()
++    registry_before = registry.read_bytes()
++    _assert_bytes_unchanged(module, module_before, "the generated module")
++    _assert_bytes_unchanged(registry, registry_before, "decide_registry.json")
++    module.write_bytes(module_before + b"// drift\n")
++    drifted = registry_before.replace(b'"schema": 4', b'"schema": 5', 1)
++    assert drifted != registry_before, "the JSON fixture mutation must really change bytes"
++    registry.write_bytes(drifted)
++    with pytest.raises(AssertionError, match=r"rewrote the generated module"):
++        _assert_bytes_unchanged(module, module_before, "the generated module")
++    with pytest.raises(AssertionError, match=r"rewrote decide_registry\.json"):
++        _assert_bytes_unchanged(registry, registry_before, "decide_registry.json")
+ 
+ 
+ def test_generated_header_and_shape_are_pinned() -> None:

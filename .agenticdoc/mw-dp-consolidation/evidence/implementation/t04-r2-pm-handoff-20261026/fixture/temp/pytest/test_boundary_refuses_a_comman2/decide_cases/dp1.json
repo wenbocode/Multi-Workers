@@ -1,0 +1,42 @@
+{
+  "book": {
+    "decision_point": "dp1-dispatch-type",
+    "notes": {
+      "evidence": {
+        "task_deliverables": "packages/multi-workers/scripts/build_decide_cases.py:119",
+        "task_goal": "packages/multi-workers/scripts/build_decide_cases.py:112",
+        "task_requirements": "packages/multi-workers/scripts/build_decide_cases.py:115"
+      }
+    },
+    "schema_version": 2,
+    "state": {
+      "decision_point": "dp1-dispatch-type",
+      "questions_version": "q-ac4a6184",
+      "schema_version": 2,
+      "task_deliverables": "旧记录只读筛选的结论说明；本任务的 worker report.md 与定向 GREEN 日志。",
+      "task_goal": "给 mw decide monitor 增加旧记录只读筛选，不重构页面，也不改动任何写入链路。",
+      "task_requirements": "只读，不写 archive/signoff/authority；不新增第二套事件协议；不改动其余 21 个 DP 的既有契约。"
+    }
+  },
+  "case_version": 1,
+  "dp": "dp1-dispatch-type",
+  "note": "合成 case：材料取自本次工作台设计的只读筛选范围，用于观察 dp1 的类型判定；不含任何凭证或生产记录正文。",
+  "questions": {
+    "triage_type": {
+      "choices": [
+        "coding",
+        "research",
+        "review"
+      ],
+      "id": "triage_type",
+      "instructions": "这个任务应该派给哪一类 worker？",
+      "labels": {
+        "coding": "需要写代码或改代码或跑命令",
+        "research": "只做检索取证不改代码",
+        "review": "审计别人已完成的产出"
+      },
+      "type": "choice"
+    }
+  },
+  "title": "旧记录只读筛选：任务类型判定"
+}

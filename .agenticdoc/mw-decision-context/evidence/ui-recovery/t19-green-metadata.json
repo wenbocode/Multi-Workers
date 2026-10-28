@@ -1,0 +1,32 @@
+[
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "H:\\git\\Multi-Workers\\packages\\multi-workers\\test_decision_context_readable_ui.py::test_all_submit_outcomes_have_plain_feedback_not_technical_logs"
+    ],
+    "cwd": "H:\\git\\Multi-Workers",
+    "utc_start": "2026-10-23T17:00:57.641815+00:00",
+    "utc_end": "2026-10-23T17:01:11.258013+00:00",
+    "exit": 0
+  },
+  {
+    "argv": [
+      "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "-q",
+      "H:\\git\\Multi-Workers\\packages\\multi-workers\\test_decision_dashboard_playground.py"
+    ],
+    "cwd": "H:\\git\\Multi-Workers",
+    "utc_start": "2026-10-23T17:01:11.258819+00:00",
+    "utc_end": "2026-10-23T17:01:20.663239+00:00",
+    "exit": 1
+  }
+]

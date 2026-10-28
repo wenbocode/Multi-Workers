@@ -1,0 +1,103 @@
+--- /dev/null
++++ after/packages/multi-workers/decide_cases/dp-sign-key.json
+@@ -0,0 +1,100 @@
++{
++  "book": {
++    "decision_point": "dp-sign-key",
++    "material": {
++      "actual_completion": "已完成五列表、四状态渲染、DAG 与日志弹窗、离线 case 选择与本地校验；facets 接线与正文投影未完成。",
++      "delivery_goal": "旧记录只读筛选在工作台可用：四状态主表、十节点 DAG、旧记录无 DAG、重试精确关联，且既有失败不被弱化。",
++      "unfinished_impact": [
++        "facets 下拉与正文依赖投影字段，未接线前只显示未记录。",
++        "真实浏览器与真实模型验收未执行，不能据此声称整条链路已验。"
++      ],
++      "verification_evidence": {
++        "unverified": [
++          "真实浏览器窗口可见性",
++          "真实模型的选择质量",
++          "facets 投影接线后的端到端链路"
++        ],
++        "verified": [
++          "workbench 用例中的四状态与十节点 DAG DOM 断言",
++          "离线 case 生成器的逐字节漂移守卫"
++        ]
++      }
++    },
++    "meta": {
++      "actor_role": "pm",
++      "key": "mw-dp-consolidation",
++      "logical_id": "case-dp-sign-key-v1",
++      "task_key": "dpc-t05-eight-cases",
++      "trigger_id": "case-dp-sign-key"
++    },
++    "notes": {
++      "evidence": {
++        "actual_completion": "packages/multi-workers/scripts/build_decide_cases.py:277",
++        "delivery_goal": "packages/multi-workers/scripts/build_decide_cases.py:273",
++        "unfinished_impact": "packages/multi-workers/scripts/build_decide_cases.py:292",
++        "verification_evidence.unverified": "packages/multi-workers/scripts/build_decide_cases.py:286",
++        "verification_evidence.verified": "packages/multi-workers/scripts/build_decide_cases.py:282"
++      }
++    },
++    "preparation": {
++      "basis_catalog": [
++        {
++          "applies_to": [
++            "finalize"
++          ],
++          "id": "sign-finalize",
++          "material_refs": [
++            "delivery_goal",
++            "verification_evidence"
++          ],
++          "text": "交付目标与已验证据对齐，未完成项不影响本阶段收尾。"
++        },
++        {
++          "applies_to": [
++            "continue"
++          ],
++          "id": "sign-continue",
++          "material_refs": [
++            "unfinished_impact",
++            "actual_completion"
++          ],
++          "text": "facets 与正文投影仍未完成，继续推进才能满足原交付目标。"
++        },
++        {
++          "applies_to": [
++            "user-confirm"
++          ],
++          "id": "sign-user-confirm",
++          "material_refs": [
++            "verification_evidence",
++            "unfinished_impact"
++          ],
++          "text": "真实浏览器与真实模型的验收未做，需要用户确认是否接受当前证据。"
++        }
++      ],
++      "prepared_at": "2026-10-27T20:56:00+00:00"
++    },
++    "schema_version": 3
++  },
++  "case_version": 1,
++  "dp": "dp-sign-key",
++  "note": "合成 case：按交付目标、实际完成、已验与未验、未完成影响四段整理，用于观察签收判断；三个证据数组按原数组契约给出真实内容。",
++  "questions": {
++    "q-conclusion": {
++      "choices": [
++        "finalize",
++        "continue",
++        "user-confirm"
++      ],
++      "id": "q-conclusion",
++      "instructions": "按交付目标、实际完成与验证证据判断：这次交付可以收尾，还是需要继续完成，或交用户确认？不以任务数量或完成声明代替证据。",
++      "labels": {
++        "continue": "继续完成：交 PM 推进未完成的缺口",
++        "finalize": "可以收尾：按交付目标与验收条件直接签收",
++        "user-confirm": "交用户确认：由 PM 提出具体待确认项"
++      },
++      "type": "choice"
++    }
++  },
++  "title": "Key 交付签收：四段材料与三个证据数组"
++}

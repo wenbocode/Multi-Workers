@@ -1,0 +1,5 @@
+test module      : H:\git\Multi-Workers\.agenticdoc\mw-decision-dashboard\evidence\runs\T07c-structural-output-safety\red-run\test_decision_history.py
+history module   : H:\git\Multi-Workers\.agenticdoc\mw-decision-dashboard\evidence\runs\T07c-structural-output-safety\red-run\decision_history.py
+has _scrub_output: False
+has structural_withheld: False
+has record.redactor: False

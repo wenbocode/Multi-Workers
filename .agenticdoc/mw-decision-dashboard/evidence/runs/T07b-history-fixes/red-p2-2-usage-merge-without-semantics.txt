@@ -1,0 +1,48 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+_____ test_record_usage_names_its_semantics_and_keeps_per_attempt_values ______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18360/test_record_usage_names_its_se0')
+
+    def test_record_usage_names_its_semantics_and_keeps_per_attempt_values(tmp_path):
+        root = _root(tmp_path)
+        decision_id = _add_decision(root, trigger="u1")
+        scope = _scope(root, decision_id=decision_id)
+        call = wire.new_call()
+        wire.record_attempt_start(scope, call, request=b'{"a":1}', url_path="/v1/decisions")
+        wire.record_attempt_end(
+            scope,
+            call,
+            response=b'{"b":2}',
+            latency_ms=1,
+            http_status=200,
+            usage={"input_tokens": 5},
+        )
+        wire.record_attempt_start(scope, call, request=b'{"a":1}', url_path="/v1/decisions")
+        wire.record_attempt_end(
+            scope,
+            call,
+            response=b'{"b":3}',
+            latency_ms=2,
+            http_status=200,
+            usage={"output_tokens": 7},
+        )
+        wire.append_event(
+            scope, wire.call_end_event(scope, call, attempts=2, latency_ms=3, available=True)
+        )
+    
+        record = _by_decision(_snapshot(root))[decision_id]
+    
+        usage = record.usage
+        assert usage.recorded is True
+>       assert usage.semantics == "last-recorded-attempt", "never passed off as a total"
+E       AssertionError: never passed off as a total
+E       assert 'none' == 'last-recorded-attempt'
+E         
+E         - last-recorded-attempt
+E         + none
+
+test_decision_history.py:1492: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_history.py::test_record_usage_names_its_semantics_and_keeps_per_attempt_values
+1 failed in 0.23s

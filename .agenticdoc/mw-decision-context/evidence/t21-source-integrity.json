@@ -1,0 +1,141 @@
+{
+  "baseline_sha256": "f7e2e19ee35eaa3e01ad2abf0c64d4585fddaae1f9b39d4650a93eaab5dbb90b",
+  "source_sha256": "2bca8a49b66702dc1d06493bee6d38be72b082b50713bb3875cd77d78f4cfd50",
+  "baseline_bytes": 142930,
+  "source_bytes": 147903,
+  "baseline_crlf": 0,
+  "source_crlf": 0,
+  "diff_regions": [
+    {
+      "operation": "replace",
+      "before_lines": [
+        508,
+        508
+      ],
+      "after_lines": [
+        508,
+        508
+      ]
+    },
+    {
+      "operation": "insert",
+      "before_lines": [
+        886,
+        885
+      ],
+      "after_lines": [
+        886,
+        935
+      ]
+    },
+    {
+      "operation": "replace",
+      "before_lines": [
+        947,
+        947
+      ],
+      "after_lines": [
+        997,
+        997
+      ]
+    },
+    {
+      "operation": "replace",
+      "before_lines": [
+        1042,
+        1042
+      ],
+      "after_lines": [
+        1092,
+        1094
+      ]
+    },
+    {
+      "operation": "replace",
+      "before_lines": [
+        1055,
+        1055
+      ],
+      "after_lines": [
+        1107,
+        1110
+      ]
+    },
+    {
+      "operation": "insert",
+      "before_lines": [
+        1517,
+        1516
+      ],
+      "after_lines": [
+        1572,
+        1572
+      ]
+    },
+    {
+      "operation": "replace",
+      "before_lines": [
+        1570,
+        1573
+      ],
+      "after_lines": [
+        1626,
+        1626
+      ]
+    }
+  ],
+  "actual_record_provenance_coverage": [
+    {
+      "node": "key",
+      "recorded_sources": 3,
+      "mapped_sources": 3
+    },
+    {
+      "node": "role",
+      "recorded_sources": 1,
+      "mapped_sources": 1
+    },
+    {
+      "node": "dp",
+      "recorded_sources": 2,
+      "mapped_sources": 2
+    },
+    {
+      "node": "input",
+      "recorded_sources": 2,
+      "mapped_sources": 2
+    },
+    {
+      "node": "decide",
+      "recorded_sources": 6,
+      "mapped_sources": 6
+    },
+    {
+      "node": "request",
+      "recorded_sources": 1,
+      "mapped_sources": 1
+    },
+    {
+      "node": "model",
+      "recorded_sources": 2,
+      "mapped_sources": 2
+    },
+    {
+      "node": "response",
+      "recorded_sources": 1,
+      "mapped_sources": 1
+    },
+    {
+      "node": "receipt",
+      "recorded_sources": 1,
+      "mapped_sources": 1
+    },
+    {
+      "node": "action",
+      "recorded_sources": 2,
+      "mapped_sources": 2
+    }
+  ],
+  "test_sha256": "9fbc8629001e6046800da24ca461fd28b1da3b2085525a46309504ce44773236",
+  "scope": "baseline diff and LF integrity; reader-generated target provenance only, no stored free text or credentials"
+}

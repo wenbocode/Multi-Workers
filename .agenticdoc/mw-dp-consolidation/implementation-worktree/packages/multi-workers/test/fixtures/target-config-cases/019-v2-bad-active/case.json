@@ -1,0 +1,12 @@
+{
+  "description": "v2 active value outside the enum fails closed (rule row 2)",
+  "env": {},
+  "error": {
+    "kind": "invalid-config",
+    "contains": [
+      "active",
+      "workspace",
+      "single"
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+﻿dp-w-type fixed q-b06e79ab [('triage_type', 'choice', None, ['coding', 'research', 'review', 'vision'])]
+dp-pm-steer fixed q-ba8e970f [('checkpoint_action', 'choice', None, ['narrow', 'split', 'direct-exec', 'escalate'])]
+dp-w-check-task fixed q-10671804 [('reachability', 'choice', None, ['continue', 'terminate', 'investigate'])]
+dp-QG fixed q-16b4bb5c [('qg_verdict', 'choice', None, ['pass', 'fix', 'reopen'])]
+dp-gate-approve fixed q-f5de87ef [('gate_decision', 'choice', None, ['approve', 'steer', 'need_fix', 'reject'])]
+dp-sign-key fixed q-134a64cd [('q-conclusion', 'choice', None, ['finalize', 'continue', 'user-confirm'])]
+dp-auto dynamic-candidates q-21d2d577 [('handling', 'choice', 'handling_options', None)]
+dp-route route-targets q-605c6874 [('entry', 'choice', None, ['dp-w-type', 'dp-pm-steer', 'dp-w-check-task', 'dp-QG', 'dp-gate-approve', 'dp-sign-key', 'dp-auto'])]

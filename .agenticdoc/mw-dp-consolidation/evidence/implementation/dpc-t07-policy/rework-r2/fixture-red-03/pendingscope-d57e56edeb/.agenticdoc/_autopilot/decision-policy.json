@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "authority_ref": "grant-wide",
+  "scope": [
+    "key:dpc-t07"
+  ],
+  "hard_limits": [
+    {
+      "unit": "round",
+      "limit": 2,
+      "usage_source": "task-card-rounds"
+    }
+  ],
+  "soft_round_extension": {
+    "allowed": true,
+    "scope": [
+      "extension:soft-round"
+    ],
+    "authority_ref": "grant-soft-round"
+  },
+  "recovery": {
+    "allowed_origins": [
+      "pm-controlled"
+    ],
+    "scope": [
+      "recovery:halted",
+      "recovery:breaker"
+    ],
+    "authority_ref": "grant-recovery",
+    "observation_conditions": [
+      "same-failure-reappears"
+    ],
+    "stop_conditions": [
+      "recovery-reason-reappears"
+    ]
+  }
+}

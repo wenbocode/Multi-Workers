@@ -1,0 +1,1011 @@
+﻿FFFFFFFFFFFFFFFFFFFFFFFFFFFFF                                            [100%]
+================================== FAILURES ===================================
+___________________ test_observation_requires_answer_intent ___________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_requires_answ0')
+
+    def test_observation_requires_answer_intent(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        test_root = tmp_path / "test-run"
+        scope = _test_scope(test_root)
+        backend = decision.FakeBackend([_ok(_dp3_answers())])
+        client = _client(backend, wire_scope=scope)
+        with pytest.raises(decision.DecisionInputError) as excinfo:
+            dpts.decide_for(
+                DP3,
+                _dp3_state(),
+                project,
+                client=client,
+                archive=False,
+                intent="act",
+>               observation=_observation(scope),
+                            ^^^^^^^^^^^^^^^^^^^
+            )
+
+test_decision_observation.py:254: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_re..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+___________________ test_observation_requires_archive_false ___________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_requires_arch0')
+
+    def test_observation_requires_archive_false(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        test_root = tmp_path / "test-run"
+        scope = _test_scope(test_root)
+        backend = decision.FakeBackend([_ok(_dp3_answers())])
+        client = _client(backend, wire_scope=scope)
+        with pytest.raises(decision.DecisionInputError) as excinfo:
+            dpts.decide_for(
+                DP3,
+                _dp3_state(),
+                project,
+                client=client,
+                archive=True,
+                intent="answer",
+>               observation=_observation(scope),
+                            ^^^^^^^^^^^^^^^^^^^
+            )
+
+test_decision_observation.py:276: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_re..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+______________ test_observation_requires_an_isolated_test_scope _______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_requires_an_i0')
+
+    def test_observation_requires_an_isolated_test_scope(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        backend = decision.FakeBackend([_ok(_dp3_answers())])
+        production = decision_wire.production_scope(project, redact=_redactor(), warn=lambda line: None)
+        client = _client(backend, wire_scope=production)
+        with pytest.raises(decision.DecisionInputError) as excinfo:
+            dpts.decide_for(
+                DP3,
+                _dp3_state(),
+                project,
+                client=client,
+                archive=False,
+                intent="answer",
+>               observation=_observation(production),
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+            )
+
+test_decision_observation.py:297: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_re..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+_____________ test_observation_requires_an_explicit_evidence_path _____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_requires_an_e0')
+
+    def test_observation_requires_an_explicit_evidence_path(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        test_root = tmp_path / "test-run"
+        scope = decision_wire.WireScope(
+            sink=decision_wire.test_wire_sink(test_root),
+            project_id="pid",
+            scope_kind="test",
+            submission_id="sub-t05",
+            redact=_redactor(),
+            evidence_path=None,
+            warn=lambda line: None,
+        )
+        backend = decision.FakeBackend([_ok(_dp3_answers())])
+        client = _client(backend, wire_scope=scope)
+        with pytest.raises(decision.DecisionInputError) as excinfo:
+            dpts.decide_for(
+                DP3,
+                _dp3_state(),
+                project,
+                client=client,
+                archive=False,
+                intent="answer",
+>               observation=_observation(scope),
+                            ^^^^^^^^^^^^^^^^^^^
+            )
+
+test_decision_observation.py:327: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_re..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+______________________ test_observe_only_must_stay_true _______________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observe_only_must_stay_tr0')
+
+    def test_observe_only_must_stay_true(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        scope = _test_scope(tmp_path / "test-run")
+        backend = decision.FakeBackend([_ok(_dp3_answers())])
+        client = _client(backend, wire_scope=scope)
+        with pytest.raises(decision.DecisionInputError) as excinfo:
+            dpts.decide_for(
+                DP3,
+                _dp3_state(),
+                project,
+                client=client,
+                archive=False,
+                intent="answer",
+>               observation=dpts.Observation(scope=scope, observe_only=False),
+                            ^^^^^^^^^^^^^^^^
+            )
+E           AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:347: AttributeError
+_______________ test_observation_scope_must_be_the_client_scope _______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_scope_must_be0')
+
+    def test_observation_scope_must_be_the_client_scope(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        other = _test_scope(tmp_path / "test-run-b")
+        client = _client(decision.FakeBackend([_ok(_dp3_answers())]), wire_scope=other)
+        with pytest.raises(decision.DecisionInputError) as excinfo:
+            dpts.decide_for(
+                DP3,
+                _dp3_state(),
+                project,
+                client=client,
+                archive=False,
+                intent="answer",
+>               observation=_observation(_test_scope(tmp_path / "test-run-a")),
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            )
+
+test_decision_observation.py:366: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_sc..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+___________ test_disabled_dp_observation_bypasses_only_the_dp_gate ____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_disabled_dp_observation_b0')
+
+    def test_disabled_dp_observation_bypasses_only_the_dp_gate(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        points_path = _write_points(
+            project, {DP3: {"tier": "P2", "enabled": False, "mode": "auto"}}
+        )
+        before = _tree(project)
+        test_root = tmp_path / "test-run"
+        scope = _test_scope(test_root)
+        backend = decision.FakeBackend([_ok(_dp3_answers())])
+        client = _client(backend, wire_scope=scope)
+    
+        outcome = dpts.decide_for(
+            DP3,
+            _dp3_state(),
+            project,
+            client=client,
+            archive=False,
+            intent="answer",
+>           observation=_observation(scope),
+                        ^^^^^^^^^^^^^^^^^^^
+        )
+
+test_decision_observation.py:396: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_disabled_dp_ob..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+______ test_production_path_of_the_same_disabled_dp_still_sends_nothing _______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_production_path_of_the_sa0')
+
+    def test_production_path_of_the_same_disabled_dp_still_sends_nothing(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": False, "mode": "auto"}})
+        backend = decision.FakeBackend([_ok(_dp3_answers())])
+        client = _client(backend)
+    
+        outcome = dpts.decide_for(
+            DP3, _dp3_state(), project, client=client, archive=True, intent="answer"
+        )
+    
+        assert outcome.status == "escalated"
+        assert outcome.escalated_reason == "disabled"
+        assert backend.calls == []
+>       assert outcome.observation is None
+               ^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'DecisionOutcome' object has no attribute 'observation'
+
+test_decision_observation.py:445: AttributeError
+_____________ test_observation_keeps_the_global_transport_switch ______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_keeps_the_glo0')
+
+    def test_observation_keeps_the_global_transport_switch(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project, enabled=False)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": False, "mode": "auto"}})
+        before = _tree(project)
+        test_root = tmp_path / "test-run"
+        scope = _test_scope(test_root)
+        backend = decision.FakeBackend([_ok(_dp3_answers())])
+        client = decision.DecisionClient(
+            cfg=decision.DecisionConfig.from_project(project)[0],
+            backend=backend,
+            wire_scope=scope,
+            evidence_path=test_root / "evidence.jsonl",
+        )
+    
+        outcome = dpts.decide_for(
+            DP3,
+            _dp3_state(),
+            project,
+            client=client,
+            archive=False,
+            intent="answer",
+>           observation=_observation(scope),
+                        ^^^^^^^^^^^^^^^^^^^
+        )
+
+test_decision_observation.py:474: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_ke..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+_______________ test_observation_input_incomplete_sends_nothing _______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_input_incompl0')
+
+    def test_observation_input_incomplete_sends_nothing(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP4: {"tier": "P1", "enabled": False, "mode": "auto"}})
+        test_root = tmp_path / "test-run"
+        scope = _test_scope(test_root)
+        backend = decision.FakeBackend([_ok({"failure_action": {"value": "retry"}})])
+        client = _client(backend, wire_scope=scope)
+    
+        outcome = dpts.decide_for(
+            DP4,
+            {"key": "k-obs"},
+            project,
+            client=client,
+            archive=False,
+            intent="answer",
+>           observation=_observation(scope),
+                        ^^^^^^^^^^^^^^^^^^^
+        )
+
+test_decision_observation.py:504: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_in..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+_______ test_observation_refuses_when_the_capture_module_is_unavailable _______
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_refuses_when_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001DA7BD1A970>
+
+    def test_observation_refuses_when_the_capture_module_is_unavailable(
+        tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        backend = decision.FakeBackend([_ok(_dp3_answers())])
+        scope = _test_scope(tmp_path / "test-run")
+        client = _client(backend, wire_scope=scope)
+        _break_wire(monkeypatch)
+    
+        with pytest.raises(decision.DecisionInputError) as excinfo:
+            dpts.decide_for(
+                DP3,
+                _dp3_state(),
+                project,
+                client=client,
+                archive=False,
+                intent="answer",
+>               observation=_observation(scope),
+                            ^^^^^^^^^^^^^^^^^^^
+            )
+
+test_decision_observation.py:542: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_re..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+____ test_production_keeps_the_business_result_when_capture_is_unavailable ____
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_production_keeps_the_busi0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001DA7BD5A9C0>
+
+    def test_production_keeps_the_business_result_when_capture_is_unavailable(
+        tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": True, "mode": "suggest"}})
+        backend = decision.FakeBackend([_ok(_dp3_answers())])
+        client = _client(backend)
+        _break_wire(monkeypatch)
+    
+        outcome = dpts.decide_for(
+            DP3, _dp3_state(), project, client=client, archive=False, intent="answer"
+        )
+    
+        assert outcome.status == "suggested", "capture never changes the decision"
+>       assert outcome.capture_status == "failed"
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'DecisionOutcome' object has no attribute 'capture_status'
+
+test_decision_observation.py:565: AttributeError
+___________ test_decision_end_reports_created_replayed_and_skipped ____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_decision_end_reports_crea0')
+
+    def test_decision_end_reports_created_replayed_and_skipped(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": True, "mode": "suggest"}})
+        client = _client(decision.FakeBackend([_ok(_dp3_answers())]))
+    
+        first = dpts.decide_for(DP3, _dp3_state(), project, client=client, intent="answer")
+        second = dpts.decide_for(DP3, _dp3_state(), project, client=client, intent="answer")
+        skipped = dpts.decide_for(
+            DP3, _dp3_state(), project, client=client, intent="answer", archive=False
+        )
+    
+>       assert (first.archive_state, second.archive_state, skipped.archive_state) == (
+                ^^^^^^^^^^^^^^^^^^^
+            "created",
+            "replayed",
+            "skipped",
+        )
+E       AttributeError: 'DecisionOutcome' object has no attribute 'archive_state'
+
+test_decision_observation.py:588: AttributeError
+____ test_archive_failure_is_recorded_then_the_original_exception_escapes _____
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_archive_failure_is_record0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001DA7BD51B50>
+
+    def test_archive_failure_is_recorded_then_the_original_exception_escapes(
+        tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": True, "mode": "suggest"}})
+        boom = RuntimeError("archive exploded")
+    
+        def writer(**kwargs):
+            raise boom
+    
+        monkeypatch.setattr(dpts, "ARCHIVE_WRITER", writer, raising=False)
+        client = _client(decision.FakeBackend([_ok(_dp3_answers())]))
+    
+        with pytest.raises(RuntimeError) as excinfo:
+            dpts.decide_for(DP3, _dp3_state(), project, client=client, intent="answer")
+        assert excinfo.value is boom, "the archive exception must not be replaced"
+    
+        ends = _of_kind(_production_wire(project), "decision-end")
+>       assert len(ends) == 1
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+test_decision_observation.py:618: AssertionError
+_______________ test_unavailable_archive_writer_reports_unknown _______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_unavailable_archive_write0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001DA7BE5C050>
+
+    def test_unavailable_archive_writer_reports_unknown(
+        tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": True, "mode": "suggest"}})
+        monkeypatch.setattr(dpts, "_resolve_archive_writer", lambda: None)
+        client = _client(decision.FakeBackend([_ok(_dp3_answers())]))
+    
+        outcome = dpts.decide_for(DP3, _dp3_state(), project, client=client, intent="answer")
+    
+        assert outcome.archived is False
+>       assert outcome.archive_state == "unknown"
+               ^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'DecisionOutcome' object has no attribute 'archive_state'
+
+test_decision_observation.py:639: AttributeError
+________ test_book_snapshot_is_labelled_book_and_keeps_the_sent_state _________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_book_snapshot_is_labelled0')
+
+    def test_book_snapshot_is_labelled_book_and_keeps_the_sent_state(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": False, "mode": "auto"}})
+        test_root = tmp_path / "test-run"
+        scope = _test_scope(test_root)
+        client = _client(decision.FakeBackend([_ok(_dp3_answers())]), wire_scope=scope)
+        book = {
+            "schema_version": 2,
+            "decision_point": DP3,
+            "state": _dp3_state(),
+            "notes": {"evidence": {"task_summary": "cmd: true"}},
+        }
+    
+        outcome = dpts.decide_for(
+            DP3,
+            _dp3_state(),
+            project,
+            client=client,
+            archive=False,
+            intent="answer",
+>           observation=_observation(scope, book=book),
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+test_decision_observation.py:672: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_book_snapshot_..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+__________ test_input_state_snapshot_records_the_rendered_candidates __________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_input_state_snapshot_reco0')
+
+    def test_input_state_snapshot_records_the_rendered_candidates(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": False, "mode": "auto"}})
+        test_root = tmp_path / "test-run"
+        scope = _test_scope(test_root)
+        client = _client(decision.FakeBackend([_ok(_dp3_answers())]), wire_scope=scope)
+    
+        outcome = dpts.decide_for(
+            DP3,
+            _dp3_state(),
+            project,
+            client=client,
+            archive=False,
+            intent="answer",
+>           observation=_observation(scope),
+                        ^^^^^^^^^^^^^^^^^^^
+        )
+
+test_decision_observation.py:712: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_input_state_sn..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+___________ test_no_snapshot_when_the_decision_never_built_a_state ____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_no_snapshot_when_the_deci0')
+
+    def test_no_snapshot_when_the_decision_never_built_a_state(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project, enabled=False)
+        test_root = tmp_path / "test-run"
+        scope = _test_scope(test_root)
+        client = _client(decision.FakeBackend([]), wire_scope=scope)
+    
+        outcome = dpts.decide_for(
+            DP3,
+            _dp3_state(),
+            project,
+            client=client,
+            archive=False,
+            intent="answer",
+>           observation=_observation(scope),
+                        ^^^^^^^^^^^^^^^^^^^
+        )
+
+test_decision_observation.py:739: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_no_snapshot_wh..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+_________ test_snapshot_free_text_goes_through_the_injected_redactor __________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_snapshot_free_text_goes_t0')
+
+    def test_snapshot_free_text_goes_through_the_injected_redactor(
+        tmp_path: pathlib.Path,
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": False, "mode": "auto"}})
+        test_root = tmp_path / "test-run"
+        scope = _test_scope(test_root)
+        client = _client(decision.FakeBackend([_ok(_dp3_answers())]), wire_scope=scope)
+        state = _dp3_state(
+            task_summary=f"key is {TEST_SECRET} for the workspace",
+            local_candidates=[{"id": "c1", "label": f"{TEST_SECRET}.json"}],
+        )
+    
+        dpts.decide_for(
+            DP3,
+            state,
+            project,
+            client=client,
+            archive=False,
+            intent="answer",
+>           observation=_observation(scope),
+                        ^^^^^^^^^^^^^^^^^^^
+        )
+
+test_decision_observation.py:770: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_snapshot_free_..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+____________ test_fresh_scope_and_redactor_per_production_decision ____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_fresh_scope_and_redactor_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001DA7BA9D9D0>
+
+    def test_fresh_scope_and_redactor_per_production_decision(
+        tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": True, "mode": "suggest"}})
+        first_secret = "sk-t05-rotate-first-0123456789"
+        second_secret = "sk-t05-rotate-second-0123456789"
+        monkeypatch.setenv("TIMI_API_KEY", first_secret)
+        client = _client(decision.FakeBackend([_ok(_dp3_answers())]))
+    
+        dpts.decide_for(
+            DP3,
+            _dp3_state(task_summary=f"secret {first_secret}"),
+            project,
+            client=client,
+            intent="answer",
+        )
+        monkeypatch.setenv("TIMI_API_KEY", second_secret)
+        dpts.decide_for(
+            DP3,
+            _dp3_state(task_summary=f"secret {second_secret}"),
+            project,
+            client=client,
+            intent="answer",
+        )
+    
+        raw = _all_text(project)
+        assert first_secret not in raw, "the first credential is still covered"
+        assert second_secret not in raw, "the rotated credential needs a fresh redactor"
+        bodies = [_snapshot_body(event) for event in _of_kind(_production_wire(project), "book-snapshot")]
+>       assert len(bodies) == 2
+E       assert 0 == 2
+E        +  where 0 = len([])
+
+test_decision_observation.py:814: AssertionError
+__________________ test_decision_end_joins_the_real_call_end __________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_decision_end_joins_the_re0')
+
+    def test_decision_end_joins_the_real_call_end(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": False, "mode": "auto"}})
+        test_root = tmp_path / "test-run"
+        scope = _test_scope(test_root)
+        client = _client(decision.FakeBackend([_ok(_dp3_answers())]), wire_scope=scope)
+    
+        outcome = dpts.decide_for(
+            DP3,
+            _dp3_state(),
+            project,
+            client=client,
+            archive=False,
+            intent="answer",
+>           observation=_observation(scope),
+                        ^^^^^^^^^^^^^^^^^^^
+        )
+
+test_decision_observation.py:839: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_decision_end_j..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+______________ test_zero_call_client_row_is_not_a_real_http_call ______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_zero_call_client_row_is_n0')
+
+    def test_zero_call_client_row_is_not_a_real_http_call(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": True, "mode": "suggest"}})
+        # Configured transport, but no backend resolves: the client reports the
+        # logical call with zero attempts (design §4.4 `zero_call`).
+        client = decision.DecisionClient(
+            cfg=decision.DecisionConfig(enabled=True), backend_factory=lambda cfg: None
+        )
+    
+        outcome = dpts.decide_for(DP3, _dp3_state(), project, client=client, intent="answer")
+    
+        assert outcome.status == "escalated"
+        assert outcome.escalated_reason == "unavailable"
+        sink = _production_wire(project)
+        calls = _of_kind(sink, "call-end")
+>       assert len(calls) == 1 and calls[0]["zero_call"] is True
+E       assert (0 == 1)
+E        +  where 0 = len([])
+
+test_decision_observation.py:870: AssertionError
+_ test_preview_matches_the_production_verdict[dp3-worker-clarify-row0-expected0] _
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_preview_matches_the_produ0')
+dp_id = 'dp3-worker-clarify', row = {'enabled': False, 'mode': 'auto'}
+expected = ('escalated', 'disabled')
+
+    @pytest.mark.parametrize(
+        ("dp_id", "row", "expected"),
+        [
+            (DP3, {"enabled": False, "mode": "auto"}, ("escalated", "disabled")),
+            (DP3, {"enabled": True, "mode": "auto"}, ("escalated", "over-authority")),
+            (DP3, {"enabled": True, "mode": "suggest"}, ("suggested", None)),
+            (DP25, {"enabled": True, "mode": "auto"}, ("acted", None)),
+        ],
+    )
+    def test_preview_matches_the_production_verdict(
+        tmp_path: pathlib.Path,
+        dp_id: str,
+        row: dict,
+        expected: tuple[str, str | None],
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {dp_id: {"tier": "P2", **row}})
+        state = _dp3_state() if dp_id == DP3 else _dp25_state()
+        answers = _dp3_answers() if dp_id == DP3 else _dp25_answers()
+    
+>       preview = dpts.authorization_preview(dp_id, project)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'authorization_preview'
+
+test_decision_observation.py:903: AttributeError
+_ test_preview_matches_the_production_verdict[dp3-worker-clarify-row1-expected1] _
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_preview_matches_the_produ1')
+dp_id = 'dp3-worker-clarify', row = {'enabled': True, 'mode': 'auto'}
+expected = ('escalated', 'over-authority')
+
+    @pytest.mark.parametrize(
+        ("dp_id", "row", "expected"),
+        [
+            (DP3, {"enabled": False, "mode": "auto"}, ("escalated", "disabled")),
+            (DP3, {"enabled": True, "mode": "auto"}, ("escalated", "over-authority")),
+            (DP3, {"enabled": True, "mode": "suggest"}, ("suggested", None)),
+            (DP25, {"enabled": True, "mode": "auto"}, ("acted", None)),
+        ],
+    )
+    def test_preview_matches_the_production_verdict(
+        tmp_path: pathlib.Path,
+        dp_id: str,
+        row: dict,
+        expected: tuple[str, str | None],
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {dp_id: {"tier": "P2", **row}})
+        state = _dp3_state() if dp_id == DP3 else _dp25_state()
+        answers = _dp3_answers() if dp_id == DP3 else _dp25_answers()
+    
+>       preview = dpts.authorization_preview(dp_id, project)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'authorization_preview'
+
+test_decision_observation.py:903: AttributeError
+_ test_preview_matches_the_production_verdict[dp3-worker-clarify-row2-expected2] _
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_preview_matches_the_produ2')
+dp_id = 'dp3-worker-clarify', row = {'enabled': True, 'mode': 'suggest'}
+expected = ('suggested', None)
+
+    @pytest.mark.parametrize(
+        ("dp_id", "row", "expected"),
+        [
+            (DP3, {"enabled": False, "mode": "auto"}, ("escalated", "disabled")),
+            (DP3, {"enabled": True, "mode": "auto"}, ("escalated", "over-authority")),
+            (DP3, {"enabled": True, "mode": "suggest"}, ("suggested", None)),
+            (DP25, {"enabled": True, "mode": "auto"}, ("acted", None)),
+        ],
+    )
+    def test_preview_matches_the_production_verdict(
+        tmp_path: pathlib.Path,
+        dp_id: str,
+        row: dict,
+        expected: tuple[str, str | None],
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {dp_id: {"tier": "P2", **row}})
+        state = _dp3_state() if dp_id == DP3 else _dp25_state()
+        answers = _dp3_answers() if dp_id == DP3 else _dp25_answers()
+    
+>       preview = dpts.authorization_preview(dp_id, project)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'authorization_preview'
+
+test_decision_observation.py:903: AttributeError
+_ test_preview_matches_the_production_verdict[dp25-signoff-conclusion-row3-expected3] _
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_preview_matches_the_produ3')
+dp_id = 'dp25-signoff-conclusion', row = {'enabled': True, 'mode': 'auto'}
+expected = ('acted', None)
+
+    @pytest.mark.parametrize(
+        ("dp_id", "row", "expected"),
+        [
+            (DP3, {"enabled": False, "mode": "auto"}, ("escalated", "disabled")),
+            (DP3, {"enabled": True, "mode": "auto"}, ("escalated", "over-authority")),
+            (DP3, {"enabled": True, "mode": "suggest"}, ("suggested", None)),
+            (DP25, {"enabled": True, "mode": "auto"}, ("acted", None)),
+        ],
+    )
+    def test_preview_matches_the_production_verdict(
+        tmp_path: pathlib.Path,
+        dp_id: str,
+        row: dict,
+        expected: tuple[str, str | None],
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {dp_id: {"tier": "P2", **row}})
+        state = _dp3_state() if dp_id == DP3 else _dp25_state()
+        answers = _dp3_answers() if dp_id == DP3 else _dp25_answers()
+    
+>       preview = dpts.authorization_preview(dp_id, project)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'authorization_preview'
+
+test_decision_observation.py:903: AttributeError
+______________ test_preview_reports_a_disabled_global_transport _______________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_preview_reports_a_disable0')
+
+    def test_preview_reports_a_disabled_global_transport(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project, enabled=False)
+    
+>       preview = dpts.authorization_preview(DP25, project)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'authorization_preview'
+
+test_decision_observation.py:925: AttributeError
+_________________ test_observation_never_invokes_the_executor _________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_never_invokes0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001DA7BE7DE80>
+
+    def test_observation_never_invokes_the_executor(
+        tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP25: {"tier": "P2", "enabled": False, "mode": "auto"}})
+        calls: list[object] = []
+    
+        def spy_executor(answers, trigger):
+            calls.append(answers)
+            return "signoff:continue"
+    
+        point = dpts._REGISTRY_BY_ID[DP25]
+        monkeypatch.setitem(
+            dpts._REGISTRY_BY_ID, DP25, dataclasses.replace(point, executor=spy_executor)
+        )
+        test_root = tmp_path / "test-run"
+        scope = _test_scope(test_root)
+        client = _client(decision.FakeBackend([_ok(_dp25_answers())]), wire_scope=scope)
+    
+        outcome = dpts.decide_for(
+            DP25,
+            _dp25_state(),
+            project,
+            client=client,
+            archive=False,
+            intent="answer",
+>           observation=_observation(scope),
+                        ^^^^^^^^^^^^^^^^^^^
+        )
+
+test_decision_observation.py:961: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_ne..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+________________ test_observation_capture_failure_is_reported _________________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_capture_failu0')
+
+    def test_observation_capture_failure_is_reported(tmp_path: pathlib.Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        _write_decide_config(project)
+        _write_points(project, {DP3: {"tier": "P2", "enabled": False, "mode": "auto"}})
+        test_root = tmp_path / "test-run"
+        scope = _test_scope(test_root)
+        client = _client(decision.FakeBackend([_ok(_dp3_answers())]), wire_scope=scope)
+        # Make every capture write fail: the sink's parent is a plain file.
+        blocker = test_root / "not-a-dir"
+        blocker.parent.mkdir(parents=True, exist_ok=True)
+        blocker.write_text("x", encoding="utf-8")
+        scope.sink = blocker / "wire.jsonl"
+    
+        outcome = dpts.decide_for(
+            DP3,
+            _dp3_state(),
+            project,
+            client=client,
+            archive=False,
+            intent="answer",
+>           observation=_observation(scope),
+                        ^^^^^^^^^^^^^^^^^^^
+        )
+
+test_decision_observation.py:996: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+scope = WireScope(sink=WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18210/test_observation_ca..._call_id=None, _warned=set(), _failed_units=set(), _writes_ok=0, _writes_partial=0, _writes_failed=0, _tail_repaired=0)
+
+    def _observation(scope, *, book: dict | None = None, submission_id: str | None = "sub-t05"):
+>       return dpts.Observation(scope=scope, book=book, submission_id=submission_id)
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: module 'decision_points' has no attribute 'Observation'
+
+test_decision_observation.py:178: AttributeError
+=========================== short test summary info ===========================
+FAILED test_decision_observation.py::test_observation_requires_answer_intent
+FAILED test_decision_observation.py::test_observation_requires_archive_false
+FAILED test_decision_observation.py::test_observation_requires_an_isolated_test_scope
+FAILED test_decision_observation.py::test_observation_requires_an_explicit_evidence_path
+FAILED test_decision_observation.py::test_observe_only_must_stay_true - Attri...
+FAILED test_decision_observation.py::test_observation_scope_must_be_the_client_scope
+FAILED test_decision_observation.py::test_disabled_dp_observation_bypasses_only_the_dp_gate
+FAILED test_decision_observation.py::test_production_path_of_the_same_disabled_dp_still_sends_nothing
+FAILED test_decision_observation.py::test_observation_keeps_the_global_transport_switch
+FAILED test_decision_observation.py::test_observation_input_incomplete_sends_nothing
+FAILED test_decision_observation.py::test_observation_refuses_when_the_capture_module_is_unavailable
+FAILED test_decision_observation.py::test_production_keeps_the_business_result_when_capture_is_unavailable
+FAILED test_decision_observation.py::test_decision_end_reports_created_replayed_and_skipped
+FAILED test_decision_observation.py::test_archive_failure_is_recorded_then_the_original_exception_escapes
+FAILED test_decision_observation.py::test_unavailable_archive_writer_reports_unknown
+FAILED test_decision_observation.py::test_book_snapshot_is_labelled_book_and_keeps_the_sent_state
+FAILED test_decision_observation.py::test_input_state_snapshot_records_the_rendered_candidates
+FAILED test_decision_observation.py::test_no_snapshot_when_the_decision_never_built_a_state
+FAILED test_decision_observation.py::test_snapshot_free_text_goes_through_the_injected_redactor
+FAILED test_decision_observation.py::test_fresh_scope_and_redactor_per_production_decision
+FAILED test_decision_observation.py::test_decision_end_joins_the_real_call_end
+FAILED test_decision_observation.py::test_zero_call_client_row_is_not_a_real_http_call
+FAILED test_decision_observation.py::test_preview_matches_the_production_verdict[dp3-worker-clarify-row0-expected0]
+FAILED test_decision_observation.py::test_preview_matches_the_production_verdict[dp3-worker-clarify-row1-expected1]
+FAILED test_decision_observation.py::test_preview_matches_the_production_verdict[dp3-worker-clarify-row2-expected2]
+FAILED test_decision_observation.py::test_preview_matches_the_production_verdict[dp25-signoff-conclusion-row3-expected3]
+FAILED test_decision_observation.py::test_preview_reports_a_disabled_global_transport
+FAILED test_decision_observation.py::test_observation_never_invokes_the_executor
+FAILED test_decision_observation.py::test_observation_capture_failure_is_reported
+29 failed in 0.53s

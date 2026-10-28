@@ -1,0 +1,6 @@
+﻿[] | typed: () | book: []
+[1] | typed: () | book: []
+[{}] | typed: () | book: [('book-placeholder', 'state.p0_open[0]')]
+33 dp ids | typed: () | book: []
+["<tbd>"] | typed: () | book: [('book-placeholder', 'state.p0_open[0]')]
+p0_open spec: {'type': 'array', 'empty_is_value': True}

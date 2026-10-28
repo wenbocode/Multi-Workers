@@ -1,0 +1,34 @@
+﻿N1 missing      book=False -> input-incomplete | calls=0 | kinds=['decision-end']
+    snapshot_ref=None detail=dp25-signoff-conclusion:k-t05k-probe: missing required state fields: p0_open
+    decision-end book_ref/archive/capture=[(None, None, None)]
+N1 missing      book=True  -> input-incomplete | calls=0 | kinds=['decision-end']
+    snapshot_ref=None detail=dp25-signoff-conclusion:k-t05k-probe: missing required state fields: p0_open
+    decision-end book_ref/archive/capture=[(None, None, None)]
+N1 null         book=False -> input-incomplete | calls=0 | kinds=['decision-end']
+    snapshot_ref=None detail=dp25-signoff-conclusion:k-t05k-probe: missing required state fields: p0_open
+    decision-end book_ref/archive/capture=[(None, None, None)]
+N1 null         book=True  -> input-incomplete | calls=0 | kinds=['decision-end']
+    snapshot_ref=None detail=dp25-signoff-conclusion:k-t05k-probe: missing required state fields: p0_open
+    decision-end book_ref/archive/capture=[(None, None, None)]
+N1 empty-string book=False -> input-incomplete | calls=0 | kinds=['decision-end']
+    snapshot_ref=None detail=dp25-signoff-conclusion: : missing required state fields: key
+    decision-end book_ref/archive/capture=[(None, None, None)]
+N1 empty-string book=True  -> input-incomplete | calls=0 | kinds=['decision-end']
+    snapshot_ref=None detail=dp25-signoff-conclusion: : missing required state fields: key
+    decision-end book_ref/archive/capture=[(None, None, None)]
+N1 legal-[]     book=False -> None | calls=1 | kinds=['call-end', 'book-snapshot', 'decision-end']
+    snapshot_ref='state-d232184e014e056b' detail=dp25-signoff-conclusion:k-t05k-probe: answer only (mode=auto), nothing acted on
+    decision-end book_ref/archive/capture=[('state-d232184e014e056b', None, None)]
+N1 legal-[]     book=True  -> None | calls=1 | kinds=['call-end', 'book-snapshot', 'decision-end']
+    snapshot_ref='book-1b499ecdcf42c02a' detail=dp25-signoff-conclusion:k-t05k-probe: answer only (mode=auto), nothing acted on
+    decision-end book_ref/archive/capture=[('book-1b499ecdcf42c02a', None, None)]
+
+N5 p0_open spec: {'type': 'array', 'description': 'Enabled P0 dp ids right now (string array; [] when none or the table is absent).', 'empty_is_value': True, 'max_items': 32, 'item_type': 'string', 'item_max_bytes': 128}
+N5 []           typed=() book=[]
+N5 legal-id     typed=() book=[]
+N5 [1]          typed=(('p0_open[0]', 'expected string, got int'),) book=[('book-state', 'state.p0_open[0]')]
+N5 [None]       typed=(('p0_open[0]', 'expected string, got NoneType'),) book=[('book-state', 'state.p0_open[0]'), ('book-placeholder', 'state.p0_open[0]')]
+N5 [{}]         typed=(('p0_open[0]', 'expected string, got dict'),) book=[('book-state', 'state.p0_open[0]'), ('book-placeholder', 'state.p0_open[0]')]
+N5 ['<tbd>']    typed=() book=[('book-placeholder', 'state.p0_open[0]')]
+N5 33 ids       typed=(('p0_open', '33 items > max_items 32'),) book=[('book-state', 'state.p0_open')]
+N5 129B item    typed=(('p0_open[0]', '129 B > 128 B'),) book=[('book-state', 'state.p0_open[0]')]

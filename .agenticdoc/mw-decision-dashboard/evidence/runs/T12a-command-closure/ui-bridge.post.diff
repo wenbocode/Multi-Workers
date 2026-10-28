@@ -1,0 +1,260 @@
+diff --git a/packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts b/packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
+index 019ac92e5..c973a1254 100644
+--- a/packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
++++ b/packages/coding-agent/src/extensions/agent-team-loop/pm/ui-bridge.ts
+@@ -2828,4 +2828,9 @@ export interface DispatchCardGate {
+ 	 * instead) and for a card without a claims block. */
+ 	warnings: string[];
++	/** A `<!-- mw-claims: v1 -->` block was seen on the card, even if no row parsed.
++	 * The receipt needs this to tell "no claims block" (silent, byte-identical)
++	 * apart from "a claims block that produced zero claims" (must shout: the
++	 * worker will otherwise run with no verdict scope and no read budget). */
++	claimsDeclared: boolean;
+ }
+ 
+@@ -2876,4 +2881,5 @@ export function readDispatchCard(input: {
+ 		caps: null,
+ 		warnings: [],
++		claimsDeclared: false,
+ 	};
+ 	if (raw === "") return { ...empty, missing: ["card_path"] };
+@@ -2908,4 +2914,5 @@ export function readDispatchCard(input: {
+ 			claims: claimBlock.claims,
+ 			caps,
++			claimsDeclared: claimBlock.present,
+ 		};
+ 	}
+@@ -2932,4 +2939,5 @@ export function readDispatchCard(input: {
+ 		caps,
+ 		warnings,
++		claimsDeclared: claimBlock.present,
+ 	};
+ }
+@@ -2962,10 +2970,17 @@ export function dispatchCardRefusal(gate: DispatchCardGate): string {
+ /** The advisory claims receipt line (design §5 G1): appended ONLY when the card
+  * declares claims, so a pre-claims card's receipt stays byte-identical
+- * (`triage-dispatch.test.ts` pins the full string). */
++ * (`triage-dispatch.test.ts` pins the full string).
++ *
++ * A declared block that parses to ZERO claims is the dangerous case (T-07): the
++ * claim ids are `C-<2+ digits>`, so an id like `C-A1` silently drops every row,
++ * which means no `read_scope`, no caps and — without this line — no signal at
++ * all. It therefore reports `claims=0(unparsed)` plus the row errors rather
++ * than staying quiet. */
+ export function claimsReceiptLine(gate: DispatchCardGate): string {
+-	if (gate.claims.length === 0) return "";
++	if (!gate.claimsDeclared && gate.claims.length === 0) return "";
+ 	const caps = gate.caps === null ? "caps=none" : `caps=${gate.caps.fileCap}/${gate.caps.byteCap}`;
+ 	const warnings = gate.warnings.length > 0 ? gate.warnings.join(", ") : "none";
+-	return `\n[claims] ${claimGateMode()} claims=${gate.claims.length} ${caps} warnings=[${warnings}]`;
++	const count = gate.claims.length > 0 ? String(gate.claims.length) : "0(unparsed)";
++	return `\n[claims] ${claimGateMode()} claims=${count} ${caps} warnings=[${warnings}]`;
+ }
+ 
+@@ -4471,7 +4486,14 @@ export async function runMwStatsCommand(
+ export const DECIDE_CONCLUSIONS = ["continue", "narrow", "revoke"] as const;
+ 
+-/** Usage line of the window face (the `--key` flag only exists on `sign`). */
++/** Usage line of the window face (the `--key` flag only exists on `sign`). The
++ * second line documents the read-only forwards (T12a): they need no key and
++ * therefore split off before the watched-key requirement. */
+ export const DECIDE_USAGE =
+-	"Usage: /mw decide show | sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <key>]";
++	"Usage: /mw decide show | sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <key>]\n" +
++	"       /mw decide dp list | dp show <id> | dp export | monitor   (read-only, no key needed)";
++
++/** The four closed read-only forwards of the window face (T12a/AC-001/AC-017).
++ * Python stays the single source of parsing, rendering and of the (zero) writes. */
++export type DecideForwardAction = "dp-list" | "dp-show" | "dp-export" | "monitor";
+ 
+ /** Parsed `/mw decide` arguments. Pure and spawn-free (the rag precedent). */
+@@ -4479,6 +4501,48 @@ export type ParsedDecideArgs =
+ 	| { action: "show" }
+ 	| { action: "sign"; conclusion: string; reason?: string; allowEmpty: boolean; key?: string }
++	| { action: "dp-list" }
++	| { action: "dp-show"; dp: string }
++	| { action: "dp-export" }
++	| { action: "monitor" }
+ 	| { action: "usage"; error: string };
+ 
++/** Notify label of a read-only forward. */
++const DECIDE_FORWARD_LABELS: Record<DecideForwardAction, string> = {
++	"dp-list": "dp list",
++	"dp-show": "dp show",
++	"dp-export": "dp export",
++	monitor: "monitor",
++};
++
++/** One accepted read-only forward: the action plus the exact Python argv. */
++export interface DecideForward {
++	action: DecideForwardAction;
++	argv: string[];
++}
++
++/**
++ * Python argv of a read-only forward, or null when the parsed input is not one.
++ *
++ * This is the SINGLE argv mapping of the window face: the caller forwards the
++ * returned vector verbatim, so `--write`, `--json`, `--live`, `--rows`, output
++ * paths and monitor status/stop arguments are structurally unrepresentable —
++ * a crafted tail can never reach Python (design §5.1: only dp list/show/export
++ * and bare monitor are allowed in the window).
++ */
++export function decideForwardArgs(parsed: ParsedDecideArgs): DecideForward | null {
++	switch (parsed.action) {
++		case "dp-list":
++			return { action: parsed.action, argv: ["dp", "list"] };
++		case "dp-show":
++			return { action: parsed.action, argv: ["dp", "show", parsed.dp] };
++		case "dp-export":
++			return { action: parsed.action, argv: ["dp", "export"] };
++		case "monitor":
++			return { action: parsed.action, argv: ["monitor"] };
++		default:
++			return null;
++	}
++}
++
+ /**
+  * Parse `/mw decide [show | sign <conclusion> [flags]]`.
+@@ -4499,4 +4563,48 @@ export function parseDecideArgs(argsText: string): ParsedDecideArgs {
+ 		return { action: "show" };
+ 	}
++	// Read-only faces (T12a) split off BEFORE the `sign` guard and before the
++	// watched-key requirement: `dp list`/`dp export` are project-level views and
++	// `dp show <id>` takes its id explicitly, so a key-less window can still list
++	// the same dp set as the CLI (AC-001) while every write/act face is refused
++	// here, before any spawn (AC-017).
++	if (sub === "dp") {
++		const dpSub = parts[1];
++		if (dpSub === "list" || dpSub === "export") {
++			if (parts.length > 2) {
++				return {
++					action: "usage",
++					error: `${DECIDE_USAGE} — \`dp ${dpSub}\` takes no arguments (read-only window face; --write/--json/paths are CLI-only)`,
++				};
++			}
++			return dpSub === "list" ? { action: "dp-list" } : { action: "dp-export" };
++		}
++		if (dpSub === "show") {
++			const dp = parts[2];
++			if (dp === undefined || dp === "" || dp.startsWith("-")) {
++				return { action: "usage", error: `${DECIDE_USAGE} — \`dp show\` needs a dp id` };
++			}
++			if (parts.length > 3) {
++				return {
++					action: "usage",
++					error: `${DECIDE_USAGE} — \`dp show\` takes exactly one dp id (read-only window face; flags are CLI-only)`,
++				};
++			}
++			return { action: "dp-show", dp };
++		}
++		const refused = dpSub === undefined ? "needs a sub" : `\`dp ${dpSub}\` is not a read-only window face`;
++		return {
++			action: "usage",
++			error: `${DECIDE_USAGE} — ${refused} (window: dp list | dp show <id> | dp export; write/act faces are CLI-only)`,
++		};
++	}
++	if (sub === "monitor") {
++		if (parts.length > 1) {
++			return {
++				action: "usage",
++				error: `${DECIDE_USAGE} — the window only forwards bare \`monitor\`; run mw decide monitor status|stop in the terminal`,
++			};
++		}
++		return { action: "monitor" };
++	}
+ 	if (sub !== "sign") {
+ 		return { action: "usage", error: `${DECIDE_USAGE} — unknown sub '${sub}'` };
+@@ -4624,4 +4732,40 @@ function decidePreviewArgs(key: string, allowEmpty: boolean): string[] {
+ }
+ 
++/**
++ * One read-only forward (T12a): Python owns argument validation, rendering and
++ * the (zero) writes — the window only relays `argv` and displays the text.
++ * A thrown runner (spawn-level bug) is reported like a failed spawn instead of
++ * escaping the command, so a broken mw.py never takes the window down.
++ *
++ * `monitor` is routing only: the service lifetime and the Chromium app window
++ * belong to the Python side, so a failure here reports Python's reason and
++ * never claims that a window opened (AC-006 is not asserted by this face).
++ */
++async function forwardDecideReadOnly(
++	ctx: ExtensionCommandContext,
++	projectDir: string,
++	forward: DecideForward,
++	runner: (projectDir: string, args: string[]) => MwCliResult,
++): Promise<void> {
++	const { action, argv } = forward;
++	const label = DECIDE_FORWARD_LABELS[action];
++	let result: MwCliResult;
++	try {
++		result = runner(projectDir, argv);
++	} catch (err) {
++		ctx.ui.notify(`mw decide ${label} failed: ${err instanceof Error ? err.message : String(err)}`, "error");
++		return;
++	}
++	if (!result.ok) {
++		const hint =
++			action === "monitor"
++				? "\n(窗口只转发 `mw decide monitor`；服务与开窗由 Python 侧负责 — status|stop 请在终端跑 mw decide monitor status|stop)"
++				: "";
++		ctx.ui.notify(`mw decide ${label} failed: ${result.error}${hint}`, "error");
++		return;
++	}
++	ctx.ui.notify(result.output || `mw decide ${label}: ok`, "info");
++}
++
+ /**
+  * `/mw decide show|sign` — the TUI face of the human sign-off (FIX-Q, user
+@@ -4647,4 +4791,26 @@ export async function runMwDecideCommand(
+ 	deps: DecideCommandDeps = {},
+ ): Promise<void> {
++	const parsed = parseDecideArgs(argsText);
++	if (parsed.action === "usage") {
++		ctx.ui.notify(parsed.error, "warning");
++		return;
++	}
++	// Read-only faces first (T12a/AC-001): `dp list|show|export` and `monitor`
++	// need neither an interactive dialog nor a watched key, so they are resolved
++	// before both guards. `decideForwardArgs` returns the exact Python argv — no
++	// caller-supplied flag survives (AC-017).
++	const forward = decideForwardArgs(parsed);
++	if (forward !== null) {
++		await forwardDecideReadOnly(ctx, projectDir, forward, deps.runner ?? decideMw);
++		return;
++	}
++	// Exhaustiveness guard, not a live branch: every parsed action other than
++	// `show`/`sign` has a forward argv, so this only keeps the compiler's
++	// narrowing honest (`parsed` is the sign face below) and fails closed with
++	// the usage line if a future variant forgets an argv mapping.
++	if (parsed.action !== "show" && parsed.action !== "sign") {
++		ctx.ui.notify(DECIDE_USAGE, "warning");
++		return;
++	}
+ 	if (ctx.hasUI !== true) {
+ 		ctx.ui.notify(
+@@ -4654,9 +4820,4 @@ export async function runMwDecideCommand(
+ 		return;
+ 	}
+-	const parsed = parseDecideArgs(argsText);
+-	if (parsed.action === "usage") {
+-		ctx.ui.notify(parsed.error, "warning");
+-		return;
+-	}
+ 	const key = (parsed.action === "sign" ? parsed.key : undefined) ?? deps.watchKey?.();
+ 	if (!key) {
+@@ -4887,4 +5048,6 @@ export function registerMwCommands(
+ 				// --human-confirmed exemption (recorded as `signed_via: tui`). Python
+ 				// stays the single source of the verdict and of the machine lines.
++				// T12a adds the closed read-only set (dp list/show/export, monitor),
++				// resolved inside runMwDecideCommand before the watched-key guard.
+ 				await runMwDecideCommand(ctx, projectDir, trimmed.slice(sub.length).trim(), { watchKey: () => watch.key });
+ 				return;
+@@ -4942,5 +5105,5 @@ export function registerMwCommands(
+ 
+ 			ctx.ui.notify(
+-				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | decide show|sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <k>] | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
++				"Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | decide show|sign <continue|narrow|revoke> [--reason <text>] [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all",
+ 				"warning",
+ 			);

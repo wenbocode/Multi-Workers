@@ -181,8 +181,10 @@ export declare const CLAIM_GATE_DEFAULT: "advisory";
 /**
  * Calibrated read budget of one dispatch unit (RQ-1 §5, D-007): 30 calls,
  * 393,216 B cumulative, from the p90 single-fetch cost (4,854 tokens) and the
- * <400k chars safe band. `perClaim` is the planning weight, `hardCap` the
- * floor(177856/4977) ceiling and `claimByteCap` the per-claim byte allowance.
+ * <400k chars safe band. `perClaim` is the fetch allowance ONE claim buys
+ * (D-014: `6 × n`, capped at `callCap`), `hardCap` the floor(177856/4977)
+ * ceiling and `claimByteCap` the per-claim byte allowance. The separate `Σ预算`
+ * planning weight (`manual` = 2) only prices the card for `claimsGaps`.
  */
 export declare const CLAIM_BUDGET: {
     readonly perClaim: 6;
@@ -251,8 +253,14 @@ export interface ClaimsGapOptions {
  */
 export declare function claimsGaps(block: ClaimBlock, opts: ClaimsGapOptions): string[];
 /**
- * Read-scope caps derived from the claims block (design §4):
- * `fileCap = min(30, Σ(manual ? 2 : 1))`, `byteCap = min(393,216, 65,536 × n)`.
+ * Read-scope caps derived from the claims block (design §4, D-014):
+ * `fileCap = min(30, perClaim × n)`, `byteCap = min(393,216, 65,536 × n)`.
+ * The file cap is a FETCH allowance per claim (6 calls), not the `Σ预算`
+ * planning weight: `Σ预算` prices a card (a `manual` claim counts double because
+ * it buys PM attention) and is gated at 40 by `claimsGaps`, while the worker
+ * needs a read budget that scales with how many claims it must settle —
+ * `Σ预算` gave a 5-claim grep card 5 calls and starved it after the 5th
+ * (measured, T-07 e2e: `5/5 calls already allowed`).
  * No claims means no derived cap — `{ fileCap: 0, byteCap: 0 }` lets the caller
  * keep the project-level default instead of zeroing a read budget.
  */

@@ -1,0 +1,310 @@
+--- frozen/decision_monitor.py
++++ current/decision_monitor.py
+@@ -18,7 +18,9 @@
+   and the identity still matches on a second read. A timeout, an unknown probe
+   error, a successful connection (even to an unrelated process) or a recycled
+   PID keeps the state and returns a manual recovery guide; alive, unprobeable,
+-  malformed or version-incompatible state is never touched. ``recover_stale``
++  malformed state is never touched. Live incompatible instances are replaced
++  only by an explicit CLI open after authenticated shutdown and process-exit
++  proof under the start lock. ``recover_stale``
+   refuses to run without a verifiable :class:`StartLockGuard` (a bare call
+   takes the lock itself) and re-checks the state/secret identity between steps
+   so a freshly published secret is never moved;
+@@ -43,7 +45,8 @@
+ 
+ Failure shapes are always explicit (``MonitorError.kind``): ``range-exhausted``,
+ ``start-lock-conflict``, ``instance-live``, ``instance-unresponsive``,
+-``instance-unknown``, ``incompatible-instance``, ``health-failed``.
++``instance-unknown``, ``incompatible-instance``, ``stop-failed``,
++``starter-failed``, ``health-failed``.
+ """
+ 
+ from __future__ import annotations
+@@ -414,18 +417,31 @@
+ 
+ 
+ def _compute_code_fingerprint() -> str:
+-    try:
+-        data = pathlib.Path(__file__).read_bytes()
+-    except OSError:
+-        return "unavailable"
+-    return hashlib.sha256(data).hexdigest()[:16]
++    """Hash the monitor source and fixed shipped UI assets, with length framing."""
++    digest = hashlib.sha256()
++    sources = [("decision_monitor.py", pathlib.Path(__file__))]
++    sources.extend((name, ASSET_DIR / name) for name in sorted(ASSET_FILES.values()))
++    for name, path in sources:
++        try:
++            data = path.read_bytes()
++        except OSError as exc:
++            raise MonitorError(
++                "instance-unknown",
++                f"cannot fingerprint the monitor source asset {name}; compatibility is unknown",
++            ) from exc
++        label = name.encode("utf-8")
++        digest.update(len(label).to_bytes(8, "big"))
++        digest.update(label)
++        digest.update(len(data).to_bytes(8, "big"))
++        digest.update(data)
++    return digest.hexdigest()[:16]
+ 
+ 
+ CODE_FINGERPRINT = _compute_code_fingerprint()
+ 
+ 
+ def code_fingerprint() -> str:
+-    """Fingerprint of the monitor module bytes (part of the health identity)."""
++    """Import-time fingerprint of monitor source + shipped UI (health identity)."""
+     return CODE_FINGERPRINT
+ 
+ 
+@@ -2649,6 +2665,112 @@
+ # ── Orchestration ───────────────────────────────────────────────────────────
+ 
+ 
++def _replacement_files_absent(root: pathlib.Path) -> bool:
++    """Only missing files prove absence; suppressed metadata errors do not."""
++    state, problem = read_state(root)
++    if problem is not None or state is not None:
++        return False
++    try:
++        secret_path(root).lstat()
++    except FileNotFoundError:
++        return True
++    except OSError:
++        return False
++    return False
++
++
++def _stop_for_replacement(
++    root: pathlib.Path,
++    identity: InstanceIdentity,
++    token: str,
++    deps: MonitorDeps,
++    guard: StartLockGuard,
++    *,
++    alive_state_probe: Callable[[int], str] | None,
++    start_ms_probe: Callable[[int], int | None] | None,
++    sleep: Callable[[float], None],
++) -> dict[str, object]:
++    """Authenticated shutdown + literal process exit; never kill or move files."""
++    guard.verify()
++    confirmed, problem = read_state(root)
++    if (
++        problem is not None
++        or confirmed is None
++        or identity_from_state(confirmed, control_root=root) != identity
++        or read_secret(root) != token
++        or identity.pid == os.getpid()
++        or _identity_liveness(
++            identity, alive_state_probe=alive_state_probe, start_ms_probe=start_ms_probe
++        ) != "alive"
++    ):
++        raise MonitorError(
++            "instance-unknown",
++            "the recorded identity/secret changed or its process cannot safely be replaced; no shutdown sent",
++            guide=recovery_guide(root),
++        )
++    attached = AttachedInstance(root, identity, token, deps)
++    try:
++        result = attached.stop()
++    except (MonitorError, OSError, ValueError) as exc:
++        raise MonitorError(
++            "stop-failed", "authenticated shutdown failed; no replacement was started",
++            details={"previous": identity.as_dict()}, guide=recovery_guide(root),
++        ) from exc
++    replacement = {
++        "previous": identity.as_dict(),
++        "stop": result,
++        "process_exit_confirmed": False,
++    }
++    if (
++        not isinstance(result, dict)
++        or result.get("stopped") is not True
++        or result.get("detail") is not None
++        or result.get("port_probe") != "refused"
++        or result.get("state") != "absent"
++        or result.get("instance_id") != identity.instance_id
++        or result.get("port") != identity.port
++    ):
++        raise MonitorError(
++            "stop-failed",
++            "shutdown was rejected or not fully confirmed; no replacement was started",
++            details={"replacement": replacement}, guide=recovery_guide(root),
++        )
++    deadline = time.monotonic() + 10.0
++    while True:
++        guard.verify()
++        if not _replacement_files_absent(root):
++            raise MonitorError(
++                "instance-unknown",
++                "state/secret remained or reappeared after shutdown; no replacement was started",
++                details={"replacement": replacement}, guide=recovery_guide(root),
++            )
++        liveness = _identity_liveness(
++            identity, alive_state_probe=alive_state_probe, start_ms_probe=start_ms_probe
++        )
++        if liveness == "dead":
++            replacement["process_exit_confirmed"] = True
++            break
++        remaining = deadline - time.monotonic()
++        if liveness == "unknown" or remaining <= 0:
++            raise MonitorError(
++                "stop-failed",
++                "the old process could not be proven exited; no replacement was started",
++                details={"replacement": replacement, "liveness": liveness},
++                guide=recovery_guide(root),
++            )
++        sleep(min(0.05, remaining))
++    # A foreign listener or publisher appearing during the exit wait is not ours.
++    guard.verify()
++    observation = probe_recorded_port(identity.port)
++    if observation["result"] != "refused" or not _replacement_files_absent(root):
++        raise MonitorError(
++            "instance-unknown",
++            "the port or recorded files changed after process exit; no replacement was started",
++            details={"replacement": replacement}, guide=recovery_guide(root),
++        )
++    return replacement
++
++
+ def _default_starter(
+     control_root: pathlib.Path,
+     deps: MonitorDeps,
+@@ -2671,15 +2793,17 @@
+     | None = None,
+     clock: Callable[[], float] | None = None,
+     health_wait_s: float = HEALTH_WAIT_S,
++    replace_incompatible: bool = False,
+     alive_state_probe: Callable[[int], str] | None = None,
+     start_ms_probe: Callable[[int], int | None] | None = None,
+     port_probe: Callable[[int], str] | None = None,
+     sleep: Callable[[float], None] = time.sleep,
+ ) -> MonitorInstance | AttachedInstance:
+-    """Start, reuse, or explicitly refuse - never silently replace a live instance.
+-
+-    The whole decision runs under the start lock: identity read, liveness probe,
+-    conservative stale recovery, publication, and the 5s health wait.
++    """Start/reuse, or opt into authenticated graceful incompatible replacement.
++
++    Default callers still refuse live incompatible instances. Only CLI open opts
++    in; the held start lock covers identity/auth, stop, literal old-process exit,
++    publication and health. No recorded process is killed or live file removed.
+     """
+     root, _source = mw_common.resolve_control_root(control_root, require_control=True)
+     root = pathlib.Path(root)
+@@ -2695,6 +2819,7 @@
+                 guide=recovery_guide(root),
+             )
+         report: dict[str, object] | None = None
++        replacement: dict[str, object] | None = None
+         if state is not None:
+             identity = identity_from_state(state, control_root=root)
+             _require_project_match(identity, root)
+@@ -2708,7 +2833,7 @@
+                 start_ms_probe=start_ms_probe,
+             )
+             if liveness == "alive":
+-                if not compatible:
++                if not compatible and not replace_incompatible:
+                     raise MonitorError(
+                         "incompatible-instance",
+                         (
+@@ -2724,22 +2849,29 @@
+                 if token is not None:
+                     data = health(identity.port, token)
+                     if data is not None and identity_matches(data, identity):
+-                        return AttachedInstance(
+-                            control_root=root,
+-                            identity=identity,
+-                            control_token=token,
+-                            deps=use_deps,
++                        if compatible:
++                            return AttachedInstance(
++                                control_root=root,
++                                identity=identity,
++                                control_token=token,
++                                deps=use_deps,
++                            )
++                        replacement = _stop_for_replacement(
++                            root, identity, token, use_deps, guard,
++                            alive_state_probe=alive_state_probe,
++                            start_ms_probe=start_ms_probe, sleep=sleep,
+                         )
+-                raise MonitorError(
+-                    "instance-unresponsive",
+-                    (
+-                        f"PID {identity.pid} is alive and owns {state_path(root)}, but its "
+-                        "health endpoint did not answer with the recorded identity; state and "
+-                        "secret were left in place"
+-                    ),
+-                    details={"state": state},
+-                    guide=recovery_guide(root),
+-                )
++                if replacement is None:
++                    raise MonitorError(
++                        "instance-unresponsive",
++                        (
++                            f"PID {identity.pid} is alive and owns {state_path(root)}, but its "
++                            "health endpoint did not answer with the recorded identity; state and "
++                            "secret were left in place"
++                        ),
++                        details={"state": state},
++                        guide=recovery_guide(root),
++                    )
+             if liveness == "unknown":
+                 raise MonitorError(
+                     "instance-unknown",
+@@ -2750,13 +2882,14 @@
+                     details={"state": state},
+                     guide=recovery_guide(root),
+                 )
+-            report = recover_stale(
+-                root,
+-                guard=guard,
+-                alive_state_probe=alive_state_probe,
+-                start_ms_probe=start_ms_probe,
+-                port_probe=port_probe,
+-            )
++            if replacement is None:
++                report = recover_stale(
++                    root,
++                    guard=guard,
++                    alive_state_probe=alive_state_probe,
++                    start_ms_probe=start_ms_probe,
++                    port_probe=port_probe,
++                )
+         else:
+             report = recover_stale(
+                 root,
+@@ -2766,7 +2899,20 @@
+                 port_probe=port_probe,
+             )
+ 
+-        instance = start(root, use_deps, port_range, clock)
++        guard.verify()
++        try:
++            instance = start(root, use_deps, port_range, clock)
++        except (MonitorError, OSError, ValueError) as exc:
++            if replacement is None:
++                raise
++            raise MonitorError(
++                "starter-failed",
++                "the old instance exited, but starting its replacement failed",
++                details={"replacement": replacement, "cause": type(exc).__name__},
++                guide=recovery_guide(root),
++            ) from exc
++        if replacement is not None:
++            instance.replacement = replacement
+         if report:
+             instance.recovery = report
+         ok, detail = wait_health(
+@@ -2787,6 +2933,7 @@
+                 details={
+                     "instance_id": instance._require_identity().instance_id,
+                     "port": instance.port,
++                    "replacement": replacement,
+                 },
+                 guide=recovery_guide(root),
+             )

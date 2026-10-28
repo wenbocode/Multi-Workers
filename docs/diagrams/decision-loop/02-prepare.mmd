@@ -1,0 +1,20 @@
+graph LR
+    subgraph BOOK["决策本"]
+        M["业务材料<br/>目标 事实 约束 证据"]
+        O["选项<br/>固定枚举 或 现场候选"]
+        B["依据清单<br/>id 文本 材料引用 适用选项"]
+        N["PM 送审前 note<br/>事项 动作 依据"]
+    end
+    L["本地身份<br/>key task 角色 关联 id"]
+
+    M --> SEND["发给模型"]
+    O --> SEND
+    B --> SEND
+    N -.->|"单独保存"| KEEP["不进模型理由"]
+    L -.->|"只留本地"| KEEP
+
+    style M fill:#E1F5EE,stroke:#0F6E56
+    style O fill:#E1F5EE,stroke:#0F6E56
+    style B fill:#E1F5EE,stroke:#0F6E56
+    style N fill:#F1EFE8,stroke:#888780
+    style L fill:#F1EFE8,stroke:#888780

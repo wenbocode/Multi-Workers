@@ -1,0 +1,52 @@
+{
+  "observed_at": "2026-10-28T07:25:26.110134+00:00",
+  "source": "agent-report",
+  "status": "executed",
+  "argv": [
+    "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+    "-B",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "-q",
+    "--basetemp",
+    "C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\dpc-t10-pm-verify-20261027\\pm-verification\\t10-r2-replay-probe-first\\pytest-basetemp",
+    "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\pm-postfix-tests\\test_replay_probe.py"
+  ],
+  "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+  "fixture": "C:\\Users\\wenbozhou\\AppData\\Local\\Temp\\dpc-t10-pm-verify-20261027\\pm-verification\\t10-r2-replay-probe-first",
+  "env_names": [
+    "COMSPEC",
+    "DPC10_GUARD_FILE",
+    "DPC10_GUARD_RUN",
+    "HOME",
+    "PATH",
+    "PATHEXT",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONIOENCODING",
+    "PYTHONPATH",
+    "PYTHONPYCACHEPREFIX",
+    "PYTHONUTF8",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "WINDIR"
+  ],
+  "rc": 1,
+  "summary": {
+    "last_line": "1 failed in 0.34s",
+    "counts": {
+      "failed": 1
+    },
+    "failed_node_ids": [
+      "..\\..\\..\\evidence\\implementation\\dpc-t10-lifecycle-state\\rework-r2\\pm-postfix-tests\\test_replay_probe.py::test_an_earlier_recorded_executed_event_can_replay_after_a_later_settlement"
+    ]
+  },
+  "protection_unchanged": true,
+  "problems": [],
+  "product_correctness": false,
+  "note": "AC052 original event-id idempotency; raw real result retained, no product changes or action authority"
+}

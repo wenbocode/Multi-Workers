@@ -1,0 +1,98 @@
+from pathlib import Path
+from datetime import datetime
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+
+root = Path('H:/git/Multi-Workers')
+key = root / '.agenticdoc/mw-dp-consolidation'
+review = key / 'evidence/design-review-input-20261026T032923'
+expected_hashes = {
+    'design.md': 'e73df377e656490d629e984c3508e1a3e5e9ca09c019bee36a6bba39fc94b7a3',
+    'evidence-requirement.md': '332d0a8a28cdef709752e7a3cea0d0793e2ddd78899376ab92473b5e734dc4a4',
+    'design-write-scope.md': '8319a45e82fb2d30e8c778615bf3c6ec7992d6fe29bc978bb269aec85a05171c',
+}
+for name, expected in expected_hashes.items():
+    assert hashlib.sha256((review / name).read_bytes()).hexdigest() == expected, name
+spec = (key / 'spec.md').read_bytes()
+assert spec == (key / 'evidence/spec-locked-20261025.md').read_bytes()
+assert hashlib.sha256(spec).hexdigest() == 'cfe737d29aed2d0c4e79d8b02107f754f254a225bb21ea8d900eaa5ba289d006'
+design = (key / 'design.md').read_text(encoding='utf-8')
+old_design = (review / 'design.md').read_text(encoding='utf-8')
+assert '状态: approved-for-plan' in design
+vc_section = design.split('## §7 Verification Contract\n', 1)[1].split('## §8 AC → VC 映射表', 1)[0]
+old_vc_section = old_design.split('## §7 Verification Contract\n', 1)[1].split('## §8 AC → VC 映射表', 1)[0]
+assert vc_section == old_vc_section, 'VC assertions/outputs/layers/sources changed'
+mapping = design.split('## §8 AC → VC 映射表', 1)[1].split('## §9', 1)[0]
+old_mapping = old_design.split('## §8 AC → VC 映射表', 1)[1].split('## §9', 1)[0]
+assert mapping == old_mapping, 'AC/VC mapping changed'
+ac_ids = set(re.findall(r'^\| (AC-\d{3}) \|', spec.decode('utf-8'), re.M))
+vc_ids = set(re.findall(r'^VC-\d{3}:', vc_section, re.M))
+rows = re.findall(r'^\| (AC-\d{3}) \|[^\n]*?\| (VC-\d{3}) \|', mapping, re.M)
+assert len(ac_ids) == len(vc_ids) == len(rows) == 53
+assert {ac for ac, _ in rows} == ac_ids
+assert {vc + ':' for _, vc in rows} == vc_ids
+assert len(re.findall(r'^       Source: AC-\d{3}', vc_section, re.M)) == 53
+pattern = r'^```mermaid\n(.*?)^```\s*$'
+graphs = re.findall(pattern, design, re.M | re.S)
+assert graphs == re.findall(pattern, old_design, re.M | re.S)
+assert len(graphs) == 12
+requirement = (key / 'evidence-requirement.md').read_text(encoding='utf-8')
+old_requirement = (review / 'evidence-requirement.md').read_text(encoding='utf-8')
+assert requirement.split('## AC-001:', 1)[1] == old_requirement.split('## AC-001:', 1)[1]
+assert len(re.findall(r'^## AC-\d{3}:', requirement, re.M)) == 53
+scope = (key / 'design-write-scope.md').read_text(encoding='utf-8')
+old_scope = (review / 'design-write-scope.md').read_text(encoding='utf-8')
+path_pattern = r'(?:packages/|\.agents/skills/agentic-task/)[A-Za-z0-9_.\-/]+'
+paths = sorted(set(re.findall(path_pattern, scope)))
+assert paths == sorted(set(re.findall(path_pattern, old_scope))), 'listed product/framework paths expanded'
+assert len(paths) >= 60
+result = {
+    'kind': 'human-design-approval-document-check-only',
+    'observed_at': datetime.now().astimezone().isoformat(timespec='seconds'),
+    'review_input_hashes_match': True,
+    'spec_locked_bytes_equal': True,
+    'vc_contract_text_equal': True,
+    'ac_vc_mapping_text_equal': True,
+    'all_mermaid_blocks_equal': True,
+    'per_ac_evidence_contract_text_equal': True,
+    'listed_product_framework_paths_equal': True,
+    'listed_path_count': len(paths),
+    'ac_count': len(ac_ids),
+    'vc_count': len(vc_ids),
+    'mapping_rows': len(rows),
+    'missing_acs': 0,
+    'unbound_vcs': 0,
+    'mermaid_blocks': len(graphs),
+    'product_tests_run': False,
+    'files': {name: {'sha256': hashlib.sha256((key / name).read_bytes()).hexdigest()}
+              for name in expected_hashes},
+    'commands': [],
+}
+logs = []
+for argv in [
+    [sys.executable, '.agents/skills/agentic-task/scripts/check_mermaid.py', '.agenticdoc/mw-dp-consolidation/design.md'],
+    [sys.executable, '.agents/skills/agentic-task/scripts/audit_phase.py', 'mw-dp-consolidation'],
+]:
+    run = subprocess.run(argv, cwd=root, env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    stdout = run.stdout.decode('utf-8')
+    stderr = run.stderr.decode('utf-8')
+    result['commands'].append({'argv': ['python'] + argv[1:], 'rc': run.returncode})
+    logs.append('COMMAND ' + ' '.join(['python'] + argv[1:]) + '\nRC ' + str(run.returncode)
+                + '\nSTDOUT\n' + stdout + '\nSTDERR\n' + stderr)
+    print(stdout, end='')
+    print(stderr, end='', file=sys.stderr)
+    if 'audit_phase.py' in argv[1]:
+        result['observed_phase'] = re.search(r'phase=(\w+)', stdout).group(1)
+suffix = 'post-gate' if '--after-advance' in sys.argv else 'pre-gate'
+base = key / ('evidence/design-approval-' + suffix + '-check-20261026')
+base.with_suffix('.json').write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8', newline='\n')
+base.with_suffix('.log').write_text('\n\n'.join(logs), encoding='utf-8', newline='\n')
+print(json.dumps(result, ensure_ascii=False, indent=2))
+assert all(command['rc'] == 0 for command in result['commands'])
+if suffix == 'post-gate':
+    assert result['observed_phase'] == 'PLAN'

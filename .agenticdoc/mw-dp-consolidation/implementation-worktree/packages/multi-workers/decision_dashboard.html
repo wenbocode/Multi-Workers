@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mw decide monitor</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header>
+  <h1>mw decide monitor</h1>
+  <p id="monitor-port" class="status" role="status"></p>
+  <p id="boot-status" class="status" role="status">正在读取一次性引导码…</p>
+  <p class="hint">本页面由本地 monitor 服务提供，只监听 127.0.0.1。打开、刷新与筛选不会发起任何模型请求；只有人工点击“显式观察提交”才会真实调用一次模型。主表只渲染后端 workbench 投影，技术事实在“日志详情”弹窗里。</p>
+</header>
+<nav aria-label="dashboard tabs">
+  <button type="button" id="tab-history" data-tab="history" aria-selected="true">决策历史</button>
+  <button type="button" id="tab-playground" data-tab="playground" aria-selected="false">DP 测试</button>
+  <button type="button" id="dashboard-refresh">刷新当前页数据（不调用模型）</button>
+</nav>
+<p id="error-banner" class="error" role="alert"></p>
+<main>
+  <section id="panel-history" data-panel="history" aria-labelledby="tab-history">
+    <form id="filter-form" class="filters">
+      <label>key
+        <select id="filter-key" name="key">
+          <option value="">全部</option>
+        </select>
+      </label>
+      <label>DP
+        <select id="filter-dp" name="dp">
+          <option value="">全部</option>
+        </select>
+      </label>
+      <label>来源
+        <select id="filter-source" name="source">
+          <option value="">全部</option>
+          <option value="human">human</option>
+          <option value="model">model</option>
+          <option value="system">system</option>
+          <option value="unknown">unknown</option>
+        </select>
+      </label>
+      <label>旧状态（仅日志）
+        <select id="filter-status" name="status">
+          <option value="">全部</option>
+          <option value="pending">pending</option>
+          <option value="ok">ok</option>
+          <option value="rework">rework</option>
+          <option value="rollback">rollback</option>
+          <option value="inconclusive">inconclusive</option>
+          <option value="unknown">unknown</option>
+        </select>
+      </label>
+      <label>范围
+        <select id="filter-scope" name="scope">
+          <option value="production" selected>production</option>
+          <option value="test">test</option>
+        </select>
+      </label>
+      <button type="button" id="filter-apply">刷新 / 应用筛选</button>
+      <button type="button" id="filter-reset">清除筛选</button>
+    </form>
+    <p id="history-safety" class="notes" role="status"></p>
+    <p id="history-summary" class="summary"></p>
+    <div class="table-wrap">
+      <table data-testid="workbench-table">
+        <caption>决策工作台（后端 workbench 投影；默认跨 key，按记录时间倒序）</caption>
+        <thead>
+          <tr>
+            <th scope="col">key / task</th>
+            <th scope="col">问题摘要</th>
+            <th scope="col">DP</th>
+            <th scope="col">选择</th>
+            <th scope="col">状态</th>
+          </tr>
+        </thead>
+        <tbody id="history-rows"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <button type="button" id="page-prev">上一页</button>
+      <span id="page-info"></span>
+      <button type="button" id="page-next">下一页</button>
+    </div>
+  </section>
+  <section id="panel-playground" data-panel="playground" aria-labelledby="tab-playground" hidden>
+    <h2>DP 测试</h2>
+    <p id="playground-boundary" class="hint">切换到本页或点击刷新时读取元数据与测试记录；只有点击“显式观察提交”才会发起真实模型请求。本页不执行业务动作、不修改授权、不写生产记录。真实浏览器可见验收与真实 Jev 端到端验收：待接入（需另行授权）。</p>
+    <p id="playground-status" class="status" role="status">尚未加载 DP 契约：点击“加载”只读取注册表与独立测试记录，不校验、不发现凭证、不发模型请求。</p>
+    <div class="pg-actions">
+      <label for="dp-select">决策点</label>
+      <select id="dp-select"></select>
+      <button type="button" id="pg-load">加载 DP 契约与测试记录（只读元数据）</button>
+      <button type="button" id="pg-refresh-history">刷新测试记录</button>
+    </div>
+    <div class="pg-actions">
+      <label for="case-select">离线 case</label>
+      <select id="case-select">
+        <option value="">（未读取）</option>
+      </select>
+      <button type="button" id="pg-cases-load">读取离线 case 列表（只读，0 模型调用）</button>
+      <button type="button" id="pg-case-open">载入所选 case 到编辑器（0 请求）</button>
+      <button type="button" id="pg-local-validate">本地结构校验（离线，0 请求）</button>
+    </div>
+    <p id="pg-case-status" class="notes"></p>
+    <div id="pg-local-out" class="pg-out" data-testid="pg-local-out"></div>
+    <section id="pg-case-questions" class="detail-section" data-testid="pg-questions-panel" aria-labelledby="pg-questions-title">
+      <h3 id="pg-questions-title">完整问题与选项（可编辑；只随本次观察请求发送）</h3>
+      <p id="pg-questions-status" class="notes" role="status"></p>
+      <div id="pg-questions" data-testid="pg-questions"></div>
+      <div class="pg-actions">
+        <button type="button" id="pg-questions-reset">恢复 case 原问题（0 请求）</button>
+      </div>
+      <p class="muted">questions 只影响本次 observe_only 观察请求：不写生产 registry/授权，不执行业务动作，不改签收。dp3 的候选只在 state.handling_options 维护一次，criteria 是只读派生，预览以 server 实际返回为准。</p>
+    </section>
+    <details id="pg-config-details">
+      <summary>DP 技术配置（按需查看）</summary>
+      <div id="pg-meta" class="detail-section" data-testid="pg-meta"></div>
+    </details>
+    <div id="pg-fields" class="table-wrap" data-testid="pg-fields"></div>
+    <label for="material-editor">业务材料 state（JSON，可编辑）</label>
+    <textarea id="material-editor" spellcheck="false" rows="14" autocomplete="off"></textarea>
+    <details id="book-advanced">
+      <summary>高级：决策本与来源标注</summary>
+      <p>notes.evidence 仅标注本地材料来源，供校验、审计和人工核对；模型不会按路径读取文件。判断所需事实必须写入业务材料。API 发送 model、业务 state 和 questions，不发送整个决策本或来源标注。</p>
+      <label for="book-editor">完整决策本（JSON；高级编辑）</label>
+      <textarea id="book-editor" spellcheck="false" rows="16" autocomplete="off"></textarea>
+    </details>
+    <div class="pg-actions">
+      <button type="button" id="pg-scaffold">生成决策本骨架（不发模型请求）</button>
+      <button type="button" id="pg-validate">校验并预览请求（不发模型请求）</button>
+      <button type="button" id="pg-submit">显式观察提交（会真实调用模型）</button>
+      <button type="button" id="pg-retry">用新 id 重试上一次提交</button>
+    </div>
+    <p id="pg-submit-id" class="notes"></p>
+    <div id="pg-validate-out" class="pg-out" data-testid="pg-validate-out"></div>
+    <div id="pg-submit-out" class="pg-out" data-testid="pg-submit-out"></div>
+    <h3>本页测试操作反馈</h3>
+    <p class="notes">仅保存在当前页内存：骨架、预览和本地拒绝不是后端决策记录，不代表调用模型。观察提交的实际事实以下方独立测试记录为准。</p>
+    <ol id="pg-operation-rows" aria-live="polite"></ol>
+    <h3>本次测试记录（独立 scope=test，不进入生产签收）</h3>
+    <p id="pg-history-meta" class="summary"></p>
+    <div class="table-wrap">
+      <table>
+        <caption>DP 测试记录（独立测试 scope，按记录时间升序）</caption>
+        <thead>
+          <tr>
+            <th scope="col">提交 id</th>
+            <th scope="col">DP</th>
+            <th scope="col">状态</th>
+            <th scope="col">retry_of</th>
+            <th scope="col">call id</th>
+            <th scope="col">book ref</th>
+            <th scope="col">zero_call</th>
+            <th scope="col">HTTP attempts</th>
+            <th scope="col">当次答案</th>
+            <th scope="col">详情</th>
+          </tr>
+        </thead>
+        <tbody id="pg-history-rows"></tbody>
+      </table>
+    </div>
+    <div id="pg-detail" class="detail-section" data-testid="pg-detail"></div>
+  </section>
+  <section id="record-dialog" role="dialog" aria-modal="true" aria-labelledby="record-dialog-title" hidden>
+    <div class="dialog-head">
+      <h2 id="record-dialog-title">决策详情</h2>
+      <div class="dialog-tabs" role="tablist" aria-label="决策详情页签">
+        <button type="button" id="record-dialog-tab-dag" data-testid="record-dialog-tab-dag" role="tab" aria-selected="true">单次 DAG</button>
+        <button type="button" id="record-dialog-tab-log" data-testid="record-dialog-tab-log" role="tab" aria-selected="false">日志结构</button>
+      </div>
+      <button type="button" id="detail-close">关闭</button>
+    </div>
+    <p id="record-dialog-meta" class="notes"></p>
+    <div id="record-dialog-dag-panel" data-testid="record-dialog-dag-panel">
+      <p id="record-dialog-dag-summary" class="notes"></p>
+      <div class="dag-layout">
+        <div class="dag-graph-wrap">
+          <div id="dag-graph" class="dag-graph" data-testid="dag-graph" role="group" aria-label="单次决策处理顺序（10 个节点）"></div>
+          <p id="dag-graph-note" class="notes" data-testid="dag-graph-note" hidden>箭头表示既定处理顺序，不代表该步已发生；每一步是否发生只看节点状态。</p>
+        </div>
+        <aside id="dag-node-detail" class="detail-section dag-side" data-testid="dag-node-detail" aria-live="polite" tabindex="0"></aside>
+      </div>
+      <p id="record-dialog-legacy-note" class="muted" hidden>旧数据无状态，不展开 DAG；只显示已有日志结构，不按 key 或时间猜关联。</p>
+    </div>
+    <div id="record-dialog-log-panel" data-testid="record-dialog-log-panel" hidden>
+      <div id="detail-panel">
+        <h3 id="detail-title">技术日志</h3>
+        <div id="detail-body"></div>
+      </div>
+    </div>
+  </section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

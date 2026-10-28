@@ -1,0 +1,22 @@
+{
+  "assertions.json": "45e1c2b6a96d13dd340128f5d32092689a6d6e4de5b5770d83791088d639d459",
+  "capture_baseline.py": "56c59bb1d2e1dcedc0445e21a60602eef93ba98d99a1118526374364c51ad9ee",
+  "green-01-first-impl.log": "71f14b98ac677e5ff8d7d1e63a21f068a8ce9c3b2eba78c953c2d976b5c67073",
+  "green-02-second-impl.log": "b165f2ea0e1a8d3c7008dfbc72517626b954d7614640bf2cf0bfbee891b73075",
+  "green-03-third-impl.log": "d7d9203ff39f945959afb3410763642e2247d063fa24c0cd845b42961c7775de",
+  "green-04-final.log": "af3cb5cf91009d6a9dab91a457bffd132812c3fefd10d16b2085dcf34d80d38a",
+  "green-05-final-rerun.log": "2c2742b7bf8cd289a3ad116cc562d64ef1f1bd0680c1869ac94eb1fe43954018",
+  "green-06-final.log": "875351a3b4eb2bfbf43c7edc4cee4e465db9d95323dc993bce8ebb2fe2ab292b",
+  "green-07-final-rerun.log": "ffd8db33512e0017dc6d102da22a404d9657e33b4fb67279493326b6818df7d5",
+  "green-08-verbose.log": "5c7a1e5c8e711aef8089f21a158edcfa9ea3d8c17d6676a7033592359e09d159",
+  "green-09-verbose.log": "b4c1086406841b9b249dcfeb9a0c081aee2b0f52a722f783886ea055dbff67d0",
+  "output.md": "7006ab72c058850db99f61e2931593c5f2ba7c48c86fcedb2666adf45a40fb2d",
+  "red-01-module-missing.log": "77987be14ae444ced48b7ce534786230ce58b9817ddcd771b4a13dbb83f661e7",
+  "red-02-facing-behaviours.log": "2bc01d03ba2f40ee3ae4a88b9e4fda85d0cc0d92330f45c08b760943d4377c31",
+  "red-03-stub-after-test-fix.log": "4f0408908c9a07e76c9eee50d7e49af6110bc78da60a4b07b27859fcc1e4c43a",
+  "report.md": "a5a3c3c736ae46eba9174fecec0d6443a8f6f80d0ad9a8182cb1b3a26ccbca1e",
+  "run_pytest.py": "6cb7ab4218e7c7240739e53df8857754c1a3de9df6472a6d27e70728b0608eac",
+  "write-scope.json": "fc2741a19f146cd7b378c142a787b1468f7a323d4a4506f1ad05fd1fc17ddb4c",
+  "write_scope_check.py": "f7fa104445fc3cd3f628c892b80cbaca300dcfe65b0815b24496a09edeeb944a",
+  "baseline/before.json": "143bad346932917a3af1cdec5d6b305c93e5108d21a0fd7dc932535ce516f414"
+}

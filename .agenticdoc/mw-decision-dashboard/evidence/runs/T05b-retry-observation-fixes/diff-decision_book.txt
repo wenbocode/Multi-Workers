@@ -1,0 +1,92 @@
+﻿diff --git a/H:/git/Multi-Workers/.agenticdoc/mw-decision-dashboard/evidence/runs/T05b-retry-observation-fixes/baseline-decision_book.py b/packages/multi-workers/decision_book.py
+index 432d6340a..d86661f29 100644
+--- a/H:/git/Multi-Workers/.agenticdoc/mw-decision-dashboard/evidence/runs/T05b-retry-observation-fixes/baseline-decision_book.py
++++ b/packages/multi-workers/decision_book.py
+@@ -580,12 +580,7 @@ def check_book(
+     state = dict(book.get("state") or {})
+     required = required_state_paths(dp_id)
+-    allowed = (
+-        set(required)
+-        | set(STRUCTURAL_STATE_FIELDS)
+-        | set(optional_state_paths(dp_id))
+-    )
+ 
+     flat = _flatten(state)
+-    issues.extend(_check_state_closed(dp_id, flat, allowed, required))
++    issues.extend(_check_state_closed(dp_id, state, flat, required))
+     issues.extend(_check_state_types(dp_id, state, flat))
+     issues.extend(_check_placeholders(dp_id, flat, required))
+@@ -597,4 +592,25 @@ def check_book(
+ 
+ 
++def observation_book_issues(
++    book: Mapping[str, Any],
++    project_dir: pathlib.Path | str | None = None,
++) -> tuple[tuple[str, str], ...]:
++    """``(path, detail)`` for a book the observation seam must refuse (T05b F2).
++
++    ``decision_points.decide_for`` cannot import this module (``decision_book``
++    imports it), so it reaches this function through
++    :func:`decision_points.register_book_validator`. The verdict is
++    :func:`check_book`'s: one authority for the book contract, so an observation
++    can never accept a book that ``mw decide book check`` refuses (schema, closed
++    state, placeholders, evidence, budget, secrets).
++    """
++    if not isinstance(book, Mapping):
++        return (("book", f"must be a JSON object, got {type(book).__name__}"),)
++    return tuple(
++        (issue.path, f"{issue.code}: {issue.detail}")
++        for issue in check_book(book, project_dir=project_dir)
++    )
++
++
+ def _check_schema(book: Mapping[str, Any]) -> list[Issue]:
+     if not isinstance(book, Mapping):
+@@ -631,10 +647,13 @@ def _check_schema(book: Mapping[str, Any]) -> list[Issue]:
+ 
+ def _check_state_closed(
+-    dp_id: str, flat: Mapping[str, Any], allowed: set[str], required: Iterable[str]
++    dp_id: str, state: Mapping[str, Any], flat: Mapping[str, Any], required: Iterable[str]
+ ) -> list[Issue]:
+-    """灏侀棴閿泦鍚堬細缂哄繀濉?+ 澶氬嚭娉ㄥ唽琛ㄦ病鏈夌殑閿紝涓や釜鏂瑰悜閮芥姤锛圓C-021/D-059锛夈€?""
++    """灏侀棴閿泦鍚堬細缂哄繀濉?+ 澶氬嚭娉ㄥ唽琛ㄦ病鏈夌殑閿紝涓や釜鏂瑰悜閮芥姤锛圓C-021/D-059锛夈€?+
++    鏈煡閿垽瀹氫笉鍦ㄦ湰妯″潡鍐嶅疄鐜颁竴濂楋細``decision_points.state_unknown_key_issues``
++    鏄敮涓€鍒ゅ畾鍣紙observation seam T05b F1 澶嶇敤鍚屼竴闈級锛屾湰鍑芥暟鍙澶栬礋璐ｄ功渚х殑
++    缂哄繀濉笌涓変釜韬唤鍊肩殑涔﹀唴涓€鑷存€с€?+    """
+     issues: list[Issue] = []
+-    required_set = set(required)
+-    optional_paths = optional_state_paths(dp_id)
+     for path in required:
+         if path not in flat:
+@@ -642,23 +661,6 @@ def _check_state_closed(
+                 Issue("book-state", f"state.{path}", f"missing required field of {dp_id}")
+             )
+-    for path in flat:
+-        if path in allowed:
+-            continue
+-        # 鍙€夊瓧娈佃嫢澹版槑涓?object锛坉p1 history锛夛紝鍏跺瓙鏍戦兘鏄悎娉曡緭鍏ャ€?-        if any(path.startswith(item + ".") for item in optional_paths):
+-            continue
+-        parent_of_required = any(item.startswith(path + ".") for item in required_set)
+-        if parent_of_required:
+-            issues.append(
+-                Issue(
+-                    "book-state",
+-                    f"state.{path}",
+-                    f"must be an object holding {sorted(item for item in required_set if item.startswith(path + '.'))}",
+-                )
+-            )
+-        else:
+-            issues.append(
+-                Issue("book-state", f"state.{path}", "not in required_state_fields (closed key set)")
+-            )
++    for path, detail in decision_points.state_unknown_key_issues(dp_id, state):
++        issues.append(Issue("book-state", f"state.{path}", detail))
+     if flat.get("schema_version") not in (None, BOOK_SCHEMA_VERSION):
+         issues.append(
+@@ -1241,2 +1243,6 @@ def _flatten(value: object, prefix: str = "") -> dict[str, Any]:
+         return out
+     return {prefix: value}
++
++
++# Register the book contract as the observation seam's (T05b F2) validator.
++decision_points.register_book_validator(observation_book_issues)

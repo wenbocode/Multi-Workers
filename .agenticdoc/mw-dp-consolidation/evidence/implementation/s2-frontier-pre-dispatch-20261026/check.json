@@ -1,0 +1,113 @@
+{
+  "observed_at": "2026-10-26T12:06:56.147195+00:00",
+  "tasks": [
+    {
+      "id": "T06",
+      "task_key": "dpc-t06-validity",
+      "card": "tasks/isolated/T06-validity.md",
+      "card_sha256": "1a81029454f59cf2e69c32643f30735efa0827c482f382ca8879c02ef37df15c",
+      "write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_validity.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_concurrency.py",
+        ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t06-validity/**"
+      ],
+      "files": [
+        {
+          "path": "packages/multi-workers/decision_validity.py",
+          "exists": false,
+          "live_exists": false
+        },
+        {
+          "path": "packages/multi-workers/test_dp_consolidation_concurrency.py",
+          "exists": false,
+          "live_exists": false
+        }
+      ]
+    },
+    {
+      "id": "T07",
+      "task_key": "dpc-t07-policy",
+      "card": "tasks/isolated/T07-policy.md",
+      "card_sha256": "88bee76800c724909e277485117335cf91d93e989ccc6d9fb09d4e9d99adeb5d",
+      "write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_policy.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_recovery.py",
+        ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t07-policy/**"
+      ],
+      "files": [
+        {
+          "path": "packages/multi-workers/decision_policy.py",
+          "exists": false,
+          "live_exists": false
+        },
+        {
+          "path": "packages/multi-workers/test_dp_consolidation_recovery.py",
+          "exists": false,
+          "live_exists": false
+        }
+      ]
+    },
+    {
+      "id": "T08",
+      "task_key": "dpc-t08-transport",
+      "card": "tasks/isolated/T08-transport.md",
+      "card_sha256": "07a719095a33f60666fef960ec89034ff96f81066bf7bea599f303178290b1e8",
+      "write_face": [
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/decision_backends.py",
+        ".agenticdoc/mw-dp-consolidation/implementation-worktree/packages/multi-workers/test_dp_consolidation_materials.py",
+        ".agenticdoc/mw-dp-consolidation/evidence/implementation/dpc-t08-transport/**"
+      ],
+      "files": [
+        {
+          "path": "packages/multi-workers/decision.py",
+          "exists": true,
+          "live_exists": true,
+          "before-bytes": {
+            "sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+            "bytes": 99249,
+            "crlf": 0,
+            "bare_lf": 2298
+          },
+          "live-before-bytes": {
+            "sha256": "c2b6d0a6f61654f986e28649899b48a79d3fd492408e0952cffa3521ae3a29e0",
+            "bytes": 99249,
+            "crlf": 0,
+            "bare_lf": 2298
+          },
+          "samefile_live": false
+        },
+        {
+          "path": "packages/multi-workers/decision_backends.py",
+          "exists": true,
+          "live_exists": true,
+          "before-bytes": {
+            "sha256": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60",
+            "bytes": 44577,
+            "crlf": 0,
+            "bare_lf": 1123
+          },
+          "live-before-bytes": {
+            "sha256": "f1c6e3aad81e64b746f32b4e7f37442122b9928f4ab9beb8b53659f111d5bb60",
+            "bytes": 44577,
+            "crlf": 0,
+            "bare_lf": 1123
+          },
+          "samefile_live": false
+        },
+        {
+          "path": "packages/multi-workers/test_dp_consolidation_materials.py",
+          "exists": false,
+          "live_exists": false
+        }
+      ]
+    }
+  ],
+  "mirror_files": 1864,
+  "unordered_product_write_overlaps": 0,
+  "t03_t04_semantic_prerequisite_verified": true,
+  "stage_is_plan_wave_not_live_autopilot": true,
+  "product_tests_run": false,
+  "product_writes": false,
+  "manual_writer_absence_proven": false
+}

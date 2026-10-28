@@ -1,0 +1,97 @@
+--- /dev/null
++++ after/packages/multi-workers/decide_cases/dp-w-type.json
+@@ -0,0 +1,94 @@
++{
++  "book": {
++    "decision_point": "dp-w-type",
++    "material": {
++      "images_required": false,
++      "task_deliverables": "旧记录只读筛选的结论说明；本次任务的 report.md 与定向验证日志。",
++      "task_goal": "给 mw decide monitor 增加旧记录只读筛选，同时保持现有写入链路完全不动。",
++      "task_requirements": "只读，不写 archive、signoff 或 authority；不新增第二套事件协议；不改其余入口的既有契约。"
++    },
++    "meta": {
++      "actor_role": "pm",
++      "key": "mw-dp-consolidation",
++      "logical_id": "case-dp-w-type-v1",
++      "task_key": "dpc-t05-eight-cases",
++      "trigger_id": "case-dp-w-type"
++    },
++    "notes": {
++      "evidence": {
++        "task_deliverables": "packages/multi-workers/scripts/build_decide_cases.py:167",
++        "task_goal": "packages/multi-workers/scripts/build_decide_cases.py:162",
++        "task_requirements": "packages/multi-workers/scripts/build_decide_cases.py:164"
++      }
++    },
++    "preparation": {
++      "basis_catalog": [
++        {
++          "applies_to": [
++            "coding"
++          ],
++          "id": "w-type-coding",
++          "material_refs": [
++            "task_requirements"
++          ],
++          "text": "工作要在既有 TypeScript 模块内改代码并跑定向测试。"
++        },
++        {
++          "applies_to": [
++            "research"
++          ],
++          "id": "w-type-research",
++          "material_refs": [
++            "task_goal"
++          ],
++          "text": "只需核对旧记录字段来源并给出取证结论，不改代码。"
++        },
++        {
++          "applies_to": [
++            "review"
++          ],
++          "id": "w-type-review",
++          "material_refs": [
++            "task_deliverables"
++          ],
++          "text": "产物已存在，本次只审计其只读性与回归覆盖。"
++        },
++        {
++          "applies_to": [
++            "vision"
++          ],
++          "id": "w-type-vision",
++          "material_refs": [
++            "images_required"
++          ],
++          "text": "材料不含图片依赖，vision 只在图像能力已证明时才是合法选择。"
++        }
++      ],
++      "prepared_at": "2026-10-27T20:56:00+00:00"
++    },
++    "schema_version": 3
++  },
++  "case_version": 1,
++  "dp": "dp-w-type",
++  "note": "合成 case：材料取自只读筛选任务的原文范围，用于观察类型判定四候选；不含任何凭证或生产记录正文。",
++  "questions": {
++    "triage_type": {
++      "choices": [
++        "coding",
++        "research",
++        "review",
++        "vision"
++      ],
++      "id": "triage_type",
++      "instructions": "这个任务应该派给哪一类 worker？",
++      "labels": {
++        "coding": "需要写代码或改代码或跑命令",
++        "research": "只做检索取证不改代码",
++        "review": "审计别人已完成的产出",
++        "vision": "需要读取图片，且有效模型必须已证明图像能力"
++      },
++      "type": "choice"
++    }
++  },
++  "title": "派发类型：旧记录只读筛选的任务类型判定"
++}

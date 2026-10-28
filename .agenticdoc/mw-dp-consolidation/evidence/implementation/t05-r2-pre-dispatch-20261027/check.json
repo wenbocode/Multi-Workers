@@ -1,0 +1,20 @@
+{
+  "source": "agent-report",
+  "observed_at": "2026-10-27T13:27:31.036132+00:00",
+  "T05_original_done_exit0_acked": true,
+  "T10_original_done_exit0_acked": true,
+  "T05_semantic_handoff": false,
+  "logical_tasks": 36,
+  "stages": 7,
+  "mirror_files": 1891,
+  "original_11_product_face_unchanged": true,
+  "R2_before_bytes_saved": 11,
+  "current_test_function_count_to_preserve": 28,
+  "card_sha256": "4721d8a94eb6f24a74e4999f98bc25446e79642bf6ec12928949e94618c1530a",
+  "card_path": "tasks/isolated/T05-eight-cases-r2.md",
+  "original_PM_and_worker_evidence_protected": true,
+  "T10_five_current_products_protected": true,
+  "pyc_current_14_preserved_with_prior_drift_not_erased": true,
+  "template_and_timestamp_red_evidence": "evidence/implementation/t05-pm-handoff-20261027/probe.json",
+  "no_product_or_DAG_write": true
+}

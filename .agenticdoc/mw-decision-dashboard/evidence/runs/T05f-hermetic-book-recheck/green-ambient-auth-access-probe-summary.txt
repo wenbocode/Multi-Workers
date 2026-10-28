@@ -1,0 +1,14 @@
+# probe summary for green-ambient-auth-access-probe.json
+ambient_path: <home>/.pi/agent/auth.json
+ambient_exists: not stat'ed (intercepted)
+bytes_read_from_ambient: 0
+hits_total: 0
+tests_with_hits: 0
+
+hits per file:
+
+hits per operation:
+
+distinct credential-discovery call chains reaching the ambient path:
+
+tests with hits:

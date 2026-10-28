@@ -36,6 +36,8 @@ import mw  # noqa: E402
 
 DP3 = "dp3-worker-clarify"
 DP6 = "dp6-qg-verdict"
+#: The generic book contract used below: identity + qg facts + error_excerpt.
+DP = DP6
 TEMPLATE = pathlib.Path(__file__).parent / "decide_book_template.json"
 CRED_ENV_VARS = ("TIMI_API_KEY",)
 
@@ -66,36 +68,54 @@ def questions_version(dp_id: str = DP3) -> str:
     return str({p["id"]: p for p in dpts.registry_snapshot()["points"]}[dp_id]["questions_version"])
 
 
-def valid_state(dp_id: str = DP3) -> dict:
-    return {
-        "schema_version": 2,
-        "decision_point": dp_id,
-        "key": "mw-decision-substitution",
-        "phase": "EXECUTE",
-        "task_type": "coding",
-        "risk": "mid",
-        "risk_source": "pm-label",
-        "authority_tier": "P2",
-        "task_summary": "worker asks which file holds the decide-points table",
-        "questions_version": questions_version(dp_id),
-        "ambiguity": {"kind": "fact", "question": "which file holds the decide points?"},
-        "local_candidates": [{"id": "c1", "label": ".mw/decide-points.json"}],
-    }
+def _legal_value(spec: dict) -> object:
+    """A legal value for one declared registry field (its own type/enum)."""
+    kind = str(spec["type"])
+    if kind == "string":
+        enum = spec.get("enum")
+        return enum[0] if isinstance(enum, list) and enum else "probe value for the contract"
+    if kind == "integer":
+        return int(spec.get("min", 1))
+    if kind == "number":
+        return float(spec.get("min", 0.5))
+    if kind == "boolean":
+        return False
+    if kind == "array":
+        if spec.get("empty_is_value"):
+            return []
+        if spec.get("item_type") == "object":
+            return [{"id": "c1", "label": "probe option", "description": "probe"}]
+        return ["probe item"]
+    raise AssertionError(f"unhandled registry type {kind!r}")
 
 
-def valid_book(dp_id: str = DP3, *, state: dict | None = None, evidence: dict | None = None) -> dict:
+def valid_state(dp_id: str = DP) -> dict:
+    """The registry contract of one dp with legal values (no dead dp fields)."""
+    state: dict = {"schema_version": 2, "decision_point": dp_id}
+    for spec in books.required_fields(dp_id):
+        name = str(spec["name"])
+        if name == "schema_version":
+            value: object = 2
+        elif name == "decision_point":
+            value = dp_id
+        elif name == "questions_version":
+            value = questions_version(dp_id)
+        else:
+            value = _legal_value(spec)
+        books._set_path(state, name, value)
+    if "questions_version" not in [str(spec["name"]) for spec in books.required_fields(dp_id)]:
+        state["questions_version"] = questions_version(dp_id)
+    return state
+
+
+def valid_book(dp_id: str = DP, *, state: dict | None = None, evidence: dict | None = None) -> dict:
     required = books.required_state_paths(dp_id)
     slots = books.context_slots(dp_id)
     context: dict = {}
     context_evidence: dict = {}
-    if "change_summary" in slots:
-        context["change_summary"] = "one file changed"
-        context_evidence["context.change_summary"] = "notes.txt:1"
-    if "candidate_snippets" in slots:
-        context["candidate_snippets"] = [
-            {"id": "c1", "path": "notes.txt", "line": 2, "text": "line2", "source": "notes.txt:2"}
-        ]
-        context_evidence["context.candidate_snippets"] = "notes.txt:2"
+    if "error_excerpt" in slots:
+        context["error_excerpt"] = "pytest exited 1: test_x failed"
+        context_evidence["context.error_excerpt"] = "notes.txt:1"
     if evidence is None:
         evidence = {path: "notes.txt:1" for path in required}
         evidence.update(context_evidence)
@@ -106,6 +126,10 @@ def valid_book(dp_id: str = DP3, *, state: dict | None = None, evidence: dict | 
         "context": context,
         "notes": {"evidence": evidence},
     }
+
+
+def book_paths(issues, code: str) -> list[str]:
+    return [issue.path for issue in issues if issue.code == code]
 
 
 def codes(issues) -> list[str]:
@@ -158,22 +182,43 @@ def enable_decide(root: pathlib.Path) -> None:
     path = root / ".mw" / "decide.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"enabled": True}), encoding="utf-8", newline="\n")
+    # dp6 is P1 (disabled by default); the run/ask CLI tests below need it on.
+    points = root / ".mw" / "decide-points.json"
+    points.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "points": {DP: {"tier": "P1", "enabled": True, "mode": "auto"}},
+                "updated_at": "2026-10-23T00:00:00Z",
+                "updated_by": "human",
+            }
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    dpts.clear_points_config_cache()
 
 
 def inject_backend(monkeypatch: pytest.MonkeyPatch, backend) -> None:
     monkeypatch.setattr(decision, "DEFAULT_BACKEND_FACTORY", lambda cfg: backend)
 
 
-def dp3_answers() -> decision.BackendOutcome:
+def answers_for(dp_id: str = DP) -> decision.BackendOutcome:
+    """Legal answers for exactly this dp's registered questions."""
+    answers: dict = {}
+    for question in dpts.get_decision_point(dp_id).questions:
+        if question["type"] == decision.QUESTION_CHOICE:
+            value = "c1" if "dynamic_choices" in question else question["choices"][0]
+            answers[str(question["id"])] = {"value": value, "confidence": 0.93}
+        elif question["type"] == decision.QUESTION_SCORE:
+            answers[str(question["id"])] = {"value": question["min"], "confidence": 0.9}
+        elif question["type"] == decision.QUESTION_NOUL:
+            answers[str(question["id"])] = {"value": 0.9}
     return decision.BackendOutcome(
         available=True,
         reason=None,
         retryable=False,
-        answers={
-            "answer_kind": {"value": "fact", "confidence": 0.93},
-            "answerable": {"value": 0.9},
-            "candidate": {"value": "c1", "confidence": 0.91},
-        },
+        answers=answers,
         latency_ms=9,
         detail="",
     )
@@ -196,22 +241,24 @@ def test_scaffold_state_key_set_matches_registry_for_every_dp() -> None:
 
 
 def test_scaffold_state_order_matches_registry() -> None:
+    # dp3's approved material: identity, then the declared business paths in
+    # registry order (question + background tree + handling_options), then the
+    # injected questions_version.
     book = books.scaffold_book(DP3)
     assert list(book["state"]) == [
         "schema_version",
         "decision_point",
-        "key",
-        "phase",
-        "task_type",
-        "risk",
-        "risk_source",
-        "authority_tier",
-        "task_summary",
+        "question",
+        "background",
+        "handling_options",
         "questions_version",
-        "ambiguity",
-        "local_candidates",
     ]
-    assert list(book["state"]["ambiguity"]) == ["kind", "question"]
+    assert list(book["state"]["background"]) == [
+        "task_goal",
+        "current_state",
+        "decision_reason",
+        "constraints_impact",
+    ]
 
 
 def test_scaffold_prefills_structural_fields_and_questions_version() -> None:
@@ -227,10 +274,10 @@ def test_scaffold_prefills_structural_fields_and_questions_version() -> None:
 def test_scaffold_uses_type_placeholders() -> None:
     book = books.scaffold_book("dp2-checkpoint-split")
     state = book["state"]
-    assert state["risk"].startswith("<string: ")
-    assert state["progress"]["elapsed_minutes"] == -1
-    assert state["progress"]["artifact_present"] is False
-    assert books.scaffold_book("dp1-dispatch-type")["state"]["scope"]["file_extensions"] == []
+    assert state["task_goal"].startswith("<string: ")
+    assert state["pm_decision_background"].startswith("<string: ")
+    assert books.scaffold_book(DP3)["state"]["handling_options"] == []
+    assert books.scaffold_book(DP6)["state"]["qg"]["checks_total"] == -1
 
 
 def test_scaffold_evidence_has_one_entry_per_required_field() -> None:
@@ -245,7 +292,9 @@ def test_scaffold_context_only_holds_the_dp_slots() -> None:
         book = books.scaffold_book(dp_id)
         assert list(book["context"]) == list(books.context_slots(dp_id))
     # 未使用的槽位是空值（与 decision_context 同形），不是占位包装。
-    assert books.scaffold_book(DP3)["context"] == {"change_summary": "", "candidate_snippets": []}
+    assert books.scaffold_book(DP6)["context"] == {"error_excerpt": ""}
+    # The four rewritten dps declare no context slot at all.
+    assert books.scaffold_book(DP3)["context"] == {}
 
 
 def test_scaffold_top_level_keys_are_the_closed_set() -> None:
@@ -335,16 +384,16 @@ def test_check_book_passes_a_legal_book(tmp_path: pathlib.Path) -> None:
 def test_check_book_flags_unreplaced_placeholders() -> None:
     issues = books.check_book(books.scaffold_book(DP3))
     assert "book-placeholder" in codes(issues)
-    assert "state.key" in paths(issues, "book-placeholder")
-    assert "state.local_candidates" in paths(issues, "book-placeholder")
+    assert "state.question" in paths(issues, "book-placeholder")
+    assert "state.background.task_goal" in paths(issues, "book-placeholder")
 
 
 def test_check_book_flags_missing_required_field(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    del book["state"]["task_summary"]
+    del book["state"]["qg"]["checks_total"]
     issues = books.check_book(book, project_dir=root)
-    assert "state.task_summary" in paths(issues, "book-state")
+    assert "state.qg.checks_total" in paths(issues, "book-state")
     assert any("missing required field" in issue.detail for issue in issues)
 
 
@@ -360,38 +409,42 @@ def test_check_book_flags_extra_state_key(tmp_path: pathlib.Path) -> None:
 def test_check_book_flags_extra_nested_state_key(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    book["state"]["ambiguity"]["expected"] = "intent"
+    book["state"]["qg"]["expected"] = "intent"
     issues = books.check_book(book, project_dir=root)
-    assert "state.ambiguity.expected" in paths(issues, "book-state")
+    assert "state.qg.expected" in paths(issues, "book-state")
 
 
 def test_check_book_flags_type_mismatch(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    book["state"]["risk"] = 3
+    book["state"]["qg"]["scope"] = 3
     issues = books.check_book(book, project_dir=root)
-    assert "state.risk" in paths(issues, "book-state")
+    assert "state.qg.scope" in paths(issues, "book-state")
     assert any("expected string" in issue.detail for issue in issues)
 
 
 def test_check_book_flags_negative_integer_placeholder(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
-    book = valid_book("dp2-checkpoint-split")
-    book["state"]["progress"] = {
-        "elapsed_minutes": -1,
-        "budget_minutes": 30,
-        "phases_done": 2,
-        "phases_total": 4,
-        "artifact_present": False,
-    }
+    book = valid_book()
+    # -1 is the integer placeholder convention of the scaffold.
+    book["state"]["qg"]["checks_total"] = -1
     issues = books.check_book(book, project_dir=root)
     assert "book-placeholder" in codes(issues)
-    assert "state.progress.elapsed_minutes" in paths(issues, "book-placeholder")
-    # 布尔 false 是真实取值，不是占位符。
-    assert "state.progress.artifact_present" not in paths(issues, "book-placeholder")
+    assert "state.qg.checks_total" in paths(issues, "book-placeholder")
+    # A declared ``empty_is_value`` array is a real value, not a placeholder.
+    dp25 = valid_book("dp25-signoff-conclusion")
+    dp25["state"]["unfinished_impact"] = []
+    dp25_issues = books.check_book(dp25, project_dir=root)
+    assert "state.unfinished_impact" not in paths(dp25_issues, "book-placeholder")
 
 
-def test_check_book_allows_structural_fields_for_a_dp_without_required_fields() -> None:
+def test_check_book_rejects_identity_only_state_for_a_typed_dp() -> None:
+    """T04: dp6 is no longer an "empty contract" — identity keys alone are not input.
+
+    The pre-T04 shape (three structural keys, no business facts) is exactly the
+    virtual-test channel design §4.5 closes: it must fail the closed-key gate
+    with one missing-required issue per business field.
+    """
     book = {
         "schema_version": 2,
         "decision_point": DP6,
@@ -402,7 +455,13 @@ def test_check_book_allows_structural_fields_for_a_dp_without_required_fields() 
         },
         "notes": {"evidence": {}},
     }
-    assert books.check_book(book) == []
+    issues = books.check_book(book)
+    assert issues, "an identity-only book must not pass the typed contract"
+    missing = book_paths(issues, "book-state")
+    for path in dpts.REQUIRED_STATE_FIELDS[DP6]:
+        if path in books.STRUCTURAL_STATE_FIELDS:
+            continue
+        assert f"state.{path}" in missing, path
 
 
 def test_check_book_flags_questions_version_drift(tmp_path: pathlib.Path) -> None:
@@ -416,7 +475,7 @@ def test_check_book_flags_questions_version_drift(tmp_path: pathlib.Path) -> Non
 def test_check_book_flags_decision_point_mismatch(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    book["state"]["decision_point"] = "dp6-qg-verdict"
+    book["state"]["decision_point"] = DP3
     issues = books.check_book(book, project_dir=root)
     assert "state.decision_point" in paths(issues, "book-state")
 
@@ -424,10 +483,10 @@ def test_check_book_flags_decision_point_mismatch(tmp_path: pathlib.Path) -> Non
 def test_check_book_flags_a_scalar_where_an_object_is_required(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    book["state"]["ambiguity"] = "fact"
+    book["state"]["qg"] = "fact"
     issues = books.check_book(book, project_dir=root)
-    assert "state.ambiguity" in paths(issues, "book-state")
-    assert "state.ambiguity.kind" in paths(issues, "book-state")
+    assert "state.qg" in paths(issues, "book-state")
+    assert "state.qg.checks_total" in paths(issues, "book-state")
 
 
 def test_check_book_flags_schema_level_problems() -> None:
@@ -455,45 +514,46 @@ def test_check_book_flags_unknown_context_slot(tmp_path: pathlib.Path) -> None:
 def test_check_book_flags_a_used_slot_without_source(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    del book["notes"]["evidence"]["context.change_summary"]
+    del book["notes"]["evidence"]["context.error_excerpt"]
     issues = books.check_book(book, project_dir=root)
-    assert "notes.evidence.context.change_summary" in paths(issues, "book-context")
+    assert "notes.evidence.context.error_excerpt" in paths(issues, "book-context")
 
 
 def test_check_book_flags_an_over_long_slot(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    limit = books.context_slot_spec("change_summary").limit
-    book["context"]["change_summary"] = "x" * (limit + 1)
+    limit = books.context_slot_spec("error_excerpt").limit
+    book["context"]["error_excerpt"] = "x" * (limit + 1)
     issues = books.check_book(book, project_dir=root)
-    assert "context.change_summary" in paths(issues, "book-context")
+    assert "context.error_excerpt" in paths(issues, "book-context")
     assert any(f"limit {limit}" in issue.detail for issue in issues)
 
 
-def test_check_book_flags_too_many_candidate_snippets(tmp_path: pathlib.Path) -> None:
-    root = make_root(tmp_path)
-    book = valid_book()
-    limit = books.context_slot_spec("candidate_snippets").limit
-    book["context"]["candidate_snippets"] = [
-        {"text": "line1", "source": "notes.txt:1"} for _index in range(limit + 1)
+def test_candidate_snippet_slot_rules_stay_in_the_shared_contract() -> None:
+    """No dp owns ``candidate_snippets`` any more; its shape rules still hold.
+
+    The slot table is the single authority (`decision_context`), so the array
+    caps/item rules are asserted there instead of through a book slot that no
+    registered dp may emit.
+    """
+    import decision_context as ctx
+
+    assert ctx.validate_context({"candidate_snippets": [{"text": "line1"}]}, None) == [
+        "context.candidate_snippets[0]: missing source"
     ]
-    issues = books.check_book(book, project_dir=root)
-    assert "context.candidate_snippets" in paths(issues, "book-context")
-
-
-def test_check_book_flags_a_candidate_item_without_source(tmp_path: pathlib.Path) -> None:
-    root = make_root(tmp_path)
-    book = valid_book()
-    book["context"]["candidate_snippets"] = [{"text": "line1"}]
-    issues = books.check_book(book, project_dir=root)
-    assert "context.candidate_snippets[0].source" in paths(issues, "book-context")
+    limit = int(ctx.CONTEXT_SLOTS["candidate_snippets"]["max_items"])
+    rows = [{"text": "line1", "source": "notes.txt:1"} for _index in range(limit + 1)]
+    assert any(
+        f"more than {limit} items" in issue
+        for issue in ctx.validate_context({"candidate_snippets": rows}, None)
+    )
 
 
 def test_check_book_ignores_empty_context_slots(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
     # scaffold 形状（空串/空数组）= 未使用，不算失败。
-    book["context"] = books.scaffold_context(DP3)
+    book["context"] = books.scaffold_context(DP)
     assert books.check_book(book, project_dir=root) == []
 
 
@@ -505,24 +565,24 @@ def test_check_book_ignores_empty_context_slots(tmp_path: pathlib.Path) -> None:
 def test_check_book_flags_missing_evidence_for_a_required_field(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    del book["notes"]["evidence"]["task_summary"]
+    del book["notes"]["evidence"]["qg.checks_total"]
     issues = books.check_book(book, project_dir=root)
-    assert "notes.evidence.task_summary" in paths(issues, "book-evidence")
+    assert "notes.evidence.qg.checks_total" in paths(issues, "book-evidence")
 
 
 def test_check_book_flags_an_out_of_range_line(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    book["notes"]["evidence"]["task_summary"] = "notes.txt:99"
+    book["notes"]["evidence"]["qg.checks_total"] = "notes.txt:99"
     issues = books.check_book(book, project_dir=root)
-    assert "notes.evidence.task_summary" in paths(issues, "book-evidence")
+    assert "notes.evidence.qg.checks_total" in paths(issues, "book-evidence")
     assert any("99 >" in issue.detail for issue in issues)
 
 
 def test_check_book_flags_a_missing_evidence_file(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    book["notes"]["evidence"]["task_summary"] = "missing.txt:1"
+    book["notes"]["evidence"]["qg.checks_total"] = "missing.txt:1"
     issues = books.check_book(book, project_dir=root)
     assert any("does not exist" in issue.detail for issue in issues)
 
@@ -532,7 +592,7 @@ def test_check_book_flags_an_evidence_path_outside_the_repository(tmp_path: path
     outside = tmp_path / "outside.txt"
     outside.write_text("a\nb\n", encoding="utf-8")
     book = valid_book()
-    book["notes"]["evidence"]["task_summary"] = f"{outside.as_posix()}:1"
+    book["notes"]["evidence"]["qg.checks_total"] = f"{outside.as_posix()}:1"
     issues = books.check_book(book, project_dir=root)
     assert any("outside the repository" in issue.detail for issue in issues)
 
@@ -548,9 +608,9 @@ def test_check_book_accepts_command_evidence(tmp_path: pathlib.Path) -> None:
 def test_check_book_flags_placeholder_evidence(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    book["notes"]["evidence"]["task_summary"] = books.EVIDENCE_PLACEHOLDER
+    book["notes"]["evidence"]["qg.checks_total"] = books.EVIDENCE_PLACEHOLDER
     issues = books.check_book(book, project_dir=root)
-    assert "notes.evidence.task_summary" in paths(issues, "book-placeholder")
+    assert "notes.evidence.qg.checks_total" in paths(issues, "book-placeholder")
 
 
 # ---------------------------------------------------------------------------
@@ -584,17 +644,17 @@ def test_check_book_flags_the_total_budget(tmp_path: pathlib.Path) -> None:
 def test_check_book_flags_credential_looking_text(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    book["state"]["task_summary"] = "use sk-abcdef123456 when calling the endpoint"
+    book["state"]["qg"]["scope"] = "use sk-abcdef123456 when calling the endpoint"
     issues = books.check_book(book, project_dir=root)
-    assert "state.task_summary" in paths(issues, "book-secret")
+    assert "state.qg.scope" in paths(issues, "book-secret")
 
 
 def test_check_book_flags_a_credential_in_the_context(tmp_path: pathlib.Path) -> None:
     root = make_root(tmp_path)
     book = valid_book()
-    book["context"]["change_summary"] = "token sk-abcdef123456"
+    book["context"]["error_excerpt"] = "token sk-abcdef123456"
     issues = books.check_book(book, project_dir=root)
-    assert "context.change_summary" in paths(issues, "book-secret")
+    assert "context.error_excerpt" in paths(issues, "book-secret")
 
 
 # ---------------------------------------------------------------------------
@@ -655,7 +715,7 @@ def test_cli_book_check_fails_with_exit_2_and_a_table(
     path = write_book(root, books.scaffold_book(DP3))
     assert mw.cmd_decide(book_args(root, "check", file=str(path))) == 2
     out = capsys.readouterr().out
-    assert "FAIL book-placeholder state.key" in out
+    assert "FAIL book-placeholder state.question" in out
     assert "issue(s)" in out
 
 
@@ -667,7 +727,7 @@ def test_cli_book_check_passes_with_exit_0_and_json(
     assert mw.cmd_decide(book_args(root, "check", file=str(path), json=True)) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
-    assert payload["books"][0]["decision_point"] == DP3
+    assert payload["books"][0]["decision_point"] == DP
 
 
 def test_cli_book_check_reports_unparseable_json(
@@ -699,7 +759,7 @@ def test_cli_run_book_with_invalid_book_sends_nothing(
 ) -> None:
     root = make_root(tmp_path)
     enable_decide(root)
-    backend = decision.FakeBackend([dp3_answers()])
+    backend = decision.FakeBackend([answers_for()])
     inject_backend(monkeypatch, backend)
     path = write_book(root, books.scaffold_book(DP3))
     assert mw.cmd_decide(run_args(root, book=str(path))) == 2
@@ -714,7 +774,7 @@ def test_cli_ask_book_with_invalid_book_sends_nothing(
 ) -> None:
     root = make_root(tmp_path)
     enable_decide(root)
-    backend = decision.FakeBackend([dp3_answers()])
+    backend = decision.FakeBackend([answers_for()])
     inject_backend(monkeypatch, backend)
     path = write_book(root, books.scaffold_book(DP3))
     rc = mw.cmd_decide(ask_args(root, book=str(path), noul=["urgent=是否紧急"]))
@@ -727,7 +787,7 @@ def test_cli_ask_book_is_exclusive_with_state(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = make_root(tmp_path)
-    backend = decision.FakeBackend([dp3_answers()])
+    backend = decision.FakeBackend([answers_for()])
     inject_backend(monkeypatch, backend)
     path = write_book(root, valid_book())
     rc = mw.cmd_decide(ask_args(root, book=str(path), state="text", noul=["q=text"]))
@@ -740,7 +800,7 @@ def test_cli_run_book_success_records_path_sha_and_evidence(
 ) -> None:
     root = make_root(tmp_path)
     enable_decide(root)
-    backend = decision.FakeBackend([dp3_answers()])
+    backend = decision.FakeBackend([answers_for()])
     inject_backend(monkeypatch, backend)
     path = write_book(root, valid_book())
     rc = mw.cmd_decide(run_args(root, book=str(path)))
@@ -749,16 +809,15 @@ def test_cli_run_book_success_records_path_sha_and_evidence(
     assert result["available"] is True
     assert result["book"]["path"] == path.relative_to(root).as_posix()
     assert result["book"]["file_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
-    evidence = {field: "notes.txt:1" for field in books.required_state_paths(DP3)}
-    evidence["context.change_summary"] = "notes.txt:1"
-    evidence["context.candidate_snippets"] = "notes.txt:2"
+    evidence = {field: "notes.txt:1" for field in books.required_state_paths(DP)}
+    evidence["context.error_excerpt"] = "notes.txt:1"
     assert result["book"]["evidence"] == evidence
     # 上下文随 state 一起发出（形状与 decision_context 一致，未被截断）。
     sent = backend.calls[0]["state"]
-    assert sent["context"]["change_summary"] == "one file changed"
+    assert sent["context"]["error_excerpt"] == "pytest exited 1: test_x failed"
     receipt_path = root / books.RECEIPTS_RELATIVE_PATH
     receipt = json.loads(receipt_path.read_text(encoding="utf-8").splitlines()[-1])
-    assert receipt["dp"] == DP3
+    assert receipt["dp"] == DP
     assert receipt["book_path"] == path.relative_to(root).as_posix()
     assert receipt["file_sha256"] == result["book"]["file_sha256"]
     assert receipt["evidence"] == result["book"]["evidence"]
@@ -774,10 +833,10 @@ def test_cli_run_book_rejects_a_dp_flag_that_disagrees(
 ) -> None:
     root = make_root(tmp_path)
     enable_decide(root)
-    backend = decision.FakeBackend([dp3_answers()])
+    backend = decision.FakeBackend([answers_for()])
     inject_backend(monkeypatch, backend)
     path = write_book(root, valid_book())
-    assert mw.cmd_decide(run_args(root, book=str(path), dp=DP6)) == 2
+    assert mw.cmd_decide(run_args(root, book=str(path), dp=DP3)) == 2
     assert backend.calls == []
     assert "disagrees" in capsys.readouterr().err
 
@@ -785,11 +844,11 @@ def test_cli_run_book_rejects_a_dp_flag_that_disagrees(
 def test_book_state_merges_context_into_state(tmp_path: pathlib.Path) -> None:
     book = valid_book()
     state = books.book_state(book)
-    assert state["context"]["change_summary"] == "one file changed"
+    assert state["context"]["error_excerpt"] == "pytest exited 1: test_x failed"
     # 原始 book 不被修改（检查器/发送面都不写回）。
     assert "context" not in book["state"]
 
 
 def test_book_state_drops_unused_scaffold_slots() -> None:
-    state = books.book_state(books.scaffold_book(DP3))
+    state = books.book_state(books.scaffold_book(DP))
     assert "context" not in state

@@ -1,0 +1,154 @@
+{
+  "observed_at": "2026-10-26T12:21:06.732947+00:00",
+  "commands": [
+    {
+      "label": "pm-green",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t07-pm-handoff-20261026\\bootstrap.py"
+      ],
+      "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+      "rc": 0
+    },
+    {
+      "label": "pm-probe",
+      "argv": [
+        "C:\\Users\\wenbozhou\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-B",
+        "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\evidence\\implementation\\t07-pm-handoff-20261026\\probe.py"
+      ],
+      "cwd": "H:\\git\\Multi-Workers\\.agenticdoc\\mw-dp-consolidation\\implementation-worktree\\packages\\multi-workers",
+      "rc": 0
+    }
+  ],
+  "files": [
+    {
+      "path": "packages/multi-workers/decision_policy.py",
+      "sha256": "f4c44456316b8c60c7934a209de389ef6366aa864f026f9ba5fba40569dde6bb",
+      "bytes": 60498,
+      "crlf": 0,
+      "bare_lf": 1785,
+      "live_exists": false
+    },
+    {
+      "path": "packages/multi-workers/test_dp_consolidation_recovery.py",
+      "sha256": "434412b3ea60e60807ea23b52cdc474e892457a0a1747ecf7cb6bf809380a974",
+      "bytes": 53478,
+      "crlf": 0,
+      "bare_lf": 1520,
+      "live_exists": false
+    }
+  ],
+  "baseline_files": 1864,
+  "before_files": 1883,
+  "after_files": 1883,
+  "drift_from_frontier": [
+    "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc",
+    "packages/multi-workers/decision.py",
+    "packages/multi-workers/decision_backends.py",
+    "packages/multi-workers/decision_policy.py",
+    "packages/multi-workers/decision_validity.py",
+    "packages/multi-workers/test_dp_consolidation_concurrency.py",
+    "packages/multi-workers/test_dp_consolidation_materials.py",
+    "packages/multi-workers/test_dp_consolidation_recovery.py"
+  ],
+  "peer_authorized_face_not_authorship_proof": [
+    "packages/multi-workers/decision.py",
+    "packages/multi-workers/decision_backends.py",
+    "packages/multi-workers/decision_validity.py",
+    "packages/multi-workers/test_dp_consolidation_concurrency.py",
+    "packages/multi-workers/test_dp_consolidation_materials.py"
+  ],
+  "out_of_face_drift": [
+    "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+    "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+    "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc"
+  ],
+  "verification_net_changes": [],
+  "pyc": [
+    {
+      "path": "packages/multi-workers/__pycache__/decision.cpython-314.pyc",
+      "sha256": "e4b51f5b85198575ba723fca7f85e48a0962da44b2820f4f53f4ebea3de80677"
+    },
+    {
+      "path": "packages/multi-workers/__pycache__/decision_backends.cpython-314.pyc",
+      "sha256": "2649c554ab1103a7c48d040de1dde3ec018ed8364ab1f7ff8e9541e46f35fe57"
+    },
+    {
+      "path": "packages/multi-workers/__pycache__/decision_context.cpython-314.pyc",
+      "sha256": "b29c8808488cf5c2c2ed47317e98f8bf6966c76871d01b6f5a9aaa470ad1d8e5"
+    },
+    {
+      "path": "packages/multi-workers/__pycache__/decision_points.cpython-314.pyc",
+      "sha256": "c57ee653f2bd8cede3eb535955dbfb50343d2182c4de6f882caf903677df43e8"
+    },
+    {
+      "path": "packages/multi-workers/__pycache__/decision_task_state.cpython-314.pyc",
+      "sha256": "4b1cc3224b96398931b28919fe7e99d59af246ff1df9f578974412425ea91ab1"
+    },
+    {
+      "path": "packages/multi-workers/__pycache__/decision_wire.cpython-314.pyc",
+      "sha256": "e9b984aa744f93adac5919d43c7286f2df67fd713d4daa0ff06a4567b9a4cbb9"
+    },
+    {
+      "path": "packages/multi-workers/__pycache__/mw_common.cpython-314.pyc",
+      "sha256": "8e7c1fdef55dae94f7fcd1e62bd580a605f2874073aef8e705d5fa10879babb0"
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/config.cpython-314.pyc",
+      "sha256": "e54a6e4004576a45d3a48769c3538cc3ecd35e3ddf28929eda15a34356cc1c5b"
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/contract_guard.cpython-314.pyc",
+      "sha256": "595357ff2cbac84f30f6b3f27132f449d7bc058155fc0ae5807742326e70f08e"
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/effective_config.cpython-314.pyc",
+      "sha256": "7f5936ad7d8a14b298dab8bbaf62b01536501305fba0932554c819aa9df0faa1"
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/gates.cpython-314.pyc",
+      "sha256": "3909b8a4fbfe71376a29a2eddabe123576bcefd5ee2b13423e9f20b9eb839a9c"
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/roadmap.cpython-314.pyc",
+      "sha256": "d0bfdbdeae20ca110ba310e4fc778ad97d5f929e3522595eb2dc1e38814a3eb8"
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/timeline.cpython-314.pyc",
+      "sha256": "3c515fe1736c61061fc8d6bc8b1ec2cd1ab27a98b3c3c097d3a09fcb3cb32739"
+    },
+    {
+      "path": "packages/multi-workers/autopilot/__pycache__/__init__.cpython-314.pyc",
+      "sha256": "1ab0437409a85f933637ad619d30b1ee6e6de990fee3d7955c3787c2326d05de"
+    }
+  ],
+  "pyc_attribution": "T08 self-reports unguarded python-c at20-16-49; independent exclusive process attribution not proven",
+  "semantic_handoff_verified": false,
+  "whole_source_or_live_audit": false
+}

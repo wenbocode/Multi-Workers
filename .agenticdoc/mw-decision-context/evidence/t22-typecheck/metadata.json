@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "node",
+    "node_modules/@typescript/native-preview/bin/tsgo.js",
+    "--noEmit"
+  ],
+  "exit": 2,
+  "scope": "standalone noEmit, not downstream full-check pass"
+}

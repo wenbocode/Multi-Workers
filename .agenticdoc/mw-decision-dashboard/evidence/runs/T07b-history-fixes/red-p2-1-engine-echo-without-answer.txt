@@ -1,0 +1,31 @@
+F.                                                                       [100%]
+================================== FAILURES ===================================
+_____________ test_authority_human_is_not_proof_of_a_human_action _____________
+
+tmp_path = WindowsPath('C:/Users/wenbozhou/AppData/Local/Temp/pytest-of-wenbozhou/pytest-18359/test_authority_human_is_not_pr0')
+
+    def test_authority_human_is_not_proof_of_a_human_action(tmp_path):
+        root = _root(tmp_path)
+        decision_id = _add_decision(
+            root,
+            key="mw-gate",
+            available=False,
+            authority="human",
+            escalated_reason="p0",
+            answer=None,
+        )
+    
+        record = _by_decision(_snapshot(root))[decision_id]
+    
+        # P2-1: available=false carries answer=None, so the recorded engine echo is
+        # *not* model output. No source can be claimed - only its absence, with basis.
+>       assert record.source.value == "unknown"
+E       AssertionError: assert 'model' == 'unknown'
+E         
+E         - unknown
+E         + model
+
+test_decision_history.py:452: AssertionError
+=========================== short test summary info ===========================
+FAILED test_decision_history.py::test_authority_human_is_not_proof_of_a_human_action
+1 failed, 1 passed in 0.24s

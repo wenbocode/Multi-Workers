@@ -1,0 +1,3 @@
+# command: H:\git\Multi-Workers\node_modules\.bin\tsgo.cmd --noEmit
+# exit: 0
+

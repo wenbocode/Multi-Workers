@@ -244,28 +244,6 @@ def test_sign_refuses_on_signoff_error_and_writes_nothing(tmp_path: pathlib.Path
 # ---------------------------------------------------------------------------
 
 
-def test_sign_auto_persists_the_mode_and_exits_zero(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
-) -> None:
-    project = _project(tmp_path)
-    _write_config(project, signoff="disable")
-    _append_true_engine_row(project)
-    _backend(monkeypatch, conclusion="continue")
-    assert mw.cmd_decide(_sign_args(project, key=KEY, auto=True)) == 0
-    out = capsys.readouterr().out
-    assert "signoff: auto" in out
-    stored = json.loads((project / ".mw" / "decide.json").read_text(encoding="utf-8"))
-    assert stored["signoff"] == "auto"
-    assert stored["enabled"] is True, "persisting signoff must keep every other key"
-    # `--auto` is the mode-persist face only; the sign step runs on the next
-    # plain invocation, which now signs without any caller-supplied conclusion.
-    assert not _sign_file(project).exists()
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
-    machines = _parse_machines(project)
-    assert machines["signed_via"] == "auto-decide"
-    assert machines["conclusion"] == "continue"
-
-
 def test_sign_disable_persists_the_mode_and_dry_run_writes_nothing(
     tmp_path: pathlib.Path, capsys
 ) -> None:
@@ -289,191 +267,6 @@ def test_sign_auto_and_disable_are_mutually_exclusive(tmp_path: pathlib.Path, ca
 # ---------------------------------------------------------------------------
 # 3. The automatic flow (AC-024, D-066)
 # ---------------------------------------------------------------------------
-
-
-def test_auto_decide_writes_signed_via_auto_decide(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
-) -> None:
-    project = _project(tmp_path)
-    _write_config(project)
-    _enable_dp25(project)
-    _append_true_engine_row(project)
-    _backend(monkeypatch, conclusion="continue")
-
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
-    machines = _parse_machines(project)
-    assert machines["conclusion"] == "continue"
-    assert machines["signed_via"] == "auto-decide"
-    assert "decide_fallback" not in machines
-    # AC-024: the audit row names the automatic face. `decide_archive._CHANGE_BY`
-    # is frozen to `human|human:p0-confirm|signoff:<conclusion>|refresh`, so the
-    # face rides the note column (`signed_via=<value>`) instead.
-    rows = [row for _lineno, row in decide_archive.iter_rows(_archive(project))]
-    assert rows[-1]["kind"] == "authority-change"
-    assert rows[-1]["by"] == "signoff:continue"
-    assert rows[-1]["note"] == "signed_via=auto-decide"
-    # The dp25 decision itself is archived (advisory, nothing executed).
-    assert any(
-        row.get("dp") == decide_signoff.SIGNOFF_DP_ID and row.get("kind") == "decide"
-        for row in rows
-    )
-    assert "signed_via: auto-decide" in capsys.readouterr().out
-
-
-def test_auto_decide_is_allowed_inside_an_agent_session(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """AC-026: the automatic face is exactly the one that must work in a session."""
-    project = _project(tmp_path)
-    _write_config(project)
-    _enable_dp25(project)
-    _append_true_engine_row(project)
-    _backend(monkeypatch, conclusion="continue")
-    monkeypatch.setenv("PI_WORKER_TASK", "task.md")
-    monkeypatch.setenv("PI_CODING_AGENT", "1")
-
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
-    assert _parse_machines(project)["signed_via"] == "auto-decide"
-
-
-def test_auto_decide_narrow_with_no_rows_is_written(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = _project(tmp_path)
-    _write_config(project)
-    _enable_dp25(project)
-    _backend(monkeypatch, conclusion="narrow")
-
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
-    machines = _parse_machines(project)
-    assert machines["conclusion"] == "narrow"
-    assert machines["signed_via"] == "auto-decide"
-    assert machines["counted_rows"] == "0"
-
-
-def test_unavailable_transport_writes_nothing_and_names_the_reason(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
-) -> None:
-    """AC-005: no `auto-llm` fallback; exit 0, no file, one explanatory line."""
-    project = _project(tmp_path)
-    _write_config(project)
-    _enable_dp25(project)
-    backend = _backend(monkeypatch, available=False)
-
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
-    out = capsys.readouterr().out
-    assert "decision model unavailable" in out
-    assert "sign-off not required" in out
-    assert not _sign_file(project).exists()
-    assert backend.calls, "the unavailable transport was actually attempted"
-    rows = [row for _lineno, row in decide_archive.iter_rows(_archive(project))]
-    assert not any(row.get("kind") == "authority-change" for row in rows)
-
-
-def test_dp25_disabled_says_not_required_and_writes_nothing(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
-) -> None:
-    project = _project(tmp_path)
-    _write_config(project)
-    # Table exists but leaves dp25 off (P1 defaults to disabled).
-    _write_points_table(project, {decide_signoff.SIGNOFF_DP_ID: {"enabled": False}})
-    backend = _backend(monkeypatch, conclusion="continue")
-
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
-    out = capsys.readouterr().out
-    assert "sign-off not required" in out
-    assert "disabled" in out
-    assert not _sign_file(project).exists()
-    assert backend.calls == [], "a disabled point must not reach the transport"
-
-
-def test_dp25_not_registered_says_not_required_and_writes_nothing(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
-) -> None:
-    project = _project(tmp_path)
-    _write_config(project)
-    _enable_dp25(project)
-    _append_true_engine_row(project)
-    backend = _backend(monkeypatch, conclusion="continue")
-    monkeypatch.setattr(
-        decide_signoff.decision_points,
-        "get_decision_point",
-        lambda dp_id: (_ for _ in ()).throw(decision.DecisionInputError("unknown dp")),
-    )
-
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
-    out = capsys.readouterr().out
-    assert "sign-off not required" in out
-    assert "not registered" in out
-    assert not _sign_file(project).exists()
-    assert backend.calls == []
-
-
-def test_sign_without_jev_says_not_required_and_writes_nothing(
-    tmp_path: pathlib.Path, capsys
-) -> None:
-    """No `.mw/decide.json`, no `--conclusion`: one line, zero writes."""
-    project = _project(tmp_path)
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
-    out = capsys.readouterr().out
-    assert "decision model unavailable" in out
-    assert "sign-off not required" in out
-    assert not _sign_file(project).exists()
-    assert not _archive(project).exists()
-
-
-def test_auto_decide_continue_still_runs_the_verdict(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
-) -> None:
-    """The model's answer never bypasses the local content check."""
-    project = _project(tmp_path)
-    _write_config(project)
-    _enable_dp25(project)
-    decide_archive.append_decide(
-        _archive(project),
-        available=True,
-        answer={"answer_kind": {"value": "fact", "confidence": 0.9}},
-        authority="binding",
-        acted=True,
-        actual_action="steer worker",
-        dp="dp3-worker-clarify",
-        key=KEY,
-        task_key="task-1",
-        trigger_id="t1",
-        state={"schema_version": 2, "decision_point": "dp3-worker-clarify"},
-        questions_version=QP,
-        mode="auto",
-        transport="timi-decisions",
-        model="jev-latest",
-        confidence_source="model-self-report",
-    )
-    _backend(monkeypatch, conclusion="continue")
-
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 2
-    assert "engine mismatch" in capsys.readouterr().err
-    assert not _sign_file(project).exists()
-
-
-def test_dp25_rows_never_enter_the_signed_counts(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The advice row cannot pad `counted_rows`/`rows_sha256` (D-067)."""
-    project = _project(tmp_path)
-    _write_config(project)
-    _enable_dp25(project)
-    _append_true_engine_row(project)
-    before = decide_signoff.collect(project, KEY)
-    _backend(monkeypatch, conclusion="continue")
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
-    after = decide_signoff.collect(project, KEY)
-    assert len(after.rows) == len(before.rows) == 1
-    assert after.sha256 == before.sha256
-    assert _parse_machines(project)["counted_rows"] == "1"
-    # dp25 did archive its own row, it is just not part of the signable set.
-    assert any(
-        row.get("dp") == decide_signoff.SIGNOFF_DP_ID
-        for _lineno, row in decide_archive.iter_rows(_archive(project))
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -566,116 +359,6 @@ def test_write_signoff_has_no_session_gate(
 # ---------------------------------------------------------------------------
 
 
-def test_dp25_is_registered_with_the_contracted_shape() -> None:
-    assert len(dpts.DP_REGISTRY) == dpts.EXPECTED_DP_COUNT == 25
-    point = dpts.get_decision_point(decide_signoff.SIGNOFF_DP_ID)
-    # W11: P2 so the sign-off default path is on (P1 defaults to disabled).
-    assert point.tier == "P2"
-    assert point.default_enabled is True
-    assert point.default_mode == "auto"
-    # P2 requires an executor; dp25's is the side-effect-free echo, so it reads
-    # `wired` (not the `_unwired_executor` placeholder that always raises).
-    assert dpts._executor_kind(point.executor) == "wired"
-    assert dpts.REQUIRED_STATE_FIELDS[point.id] == (
-        "key",
-        "rows_total",
-        "rows_available",
-        "chain_ok",
-        "p0_open",
-    )
-    [question] = point.questions
-    assert question["id"] == "q-conclusion"
-    assert question["type"] == decision.QUESTION_CHOICE
-    assert question["choices"] == ["continue", "narrow", "revoke"]
-    assert set(question["labels"]) == {"continue", "narrow", "revoke"}
-    assert "timi-decisions/jev-latest/api" in question["instructions"]
-
-
-def test_dp25_is_on_by_default_and_the_default_signoff_path_asks_jev(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """W11: no authorization-table row => registry default (P2 => enabled)."""
-    project = _project(tmp_path)
-    _write_config(project)
-    _append_true_engine_row(project)
-    backend = _backend(monkeypatch, conclusion="continue")
-    point = dpts.get_decision_point(decide_signoff.SIGNOFF_DP_ID)
-    effective = dpts.load_points_config(project).effective(point)
-    assert effective.source == "default", "no .mw/decide-points.json row exists yet"
-    assert effective.enabled is True
-    assert effective.mode == "auto"
-
-    conclusion, detail = decide_signoff.auto_conclusion(project, KEY)
-    assert conclusion == "continue", detail
-    assert backend.calls, "the default path must reach the jev transport"
-    assert detail.startswith(decide_signoff.SIGNOFF_DP_ID)
-
-    # The whole default command path, not just the helper: no table row, no
-    # `--conclusion`, yet the sign file is written from the jev answer.
-    assert mw.cmd_decide(_sign_args(project, key=KEY)) == 0
-    assert _parse_machines(project)["signed_via"] == "auto-decide"
-
-
-def test_dp25_signs_any_key_not_just_the_fixture_key(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """dp25 is the per-KEY closure point: the key rides the caller, not code.
-
-    mw-signoff-per-key ruling: every AgenticTask key can be signed with
-    `mw decide sign --key <key>` (or `--project .agenticdoc/<key>`); the state
-    carries that key and only that key's archive rows are counted.
-    """
-    other = "k-any-other-key"
-    project = _project(tmp_path, key=other)
-    _write_config(project)
-    _append_true_engine_row(project, trigger="any-1", key=other)
-    # A row for the fixture key must NOT leak into `other`'s facts.
-    _append_true_engine_row(project, trigger="fixture-1")
-    backend = _backend(monkeypatch, conclusion="continue")
-
-    facts = decide_signoff.collect(project, other)
-    assert facts.key == other
-    assert len(facts.rows) == 1, "only the requested key's rows are counted"
-
-    state = decide_signoff.signoff_state(facts, other)
-    assert state["key"] == other
-    assert state["rows_total"] == 1
-
-    conclusion, detail = decide_signoff.auto_conclusion(project, other)
-    assert conclusion == "continue", detail
-    assert backend.calls, "the jev transport answers for any key"
-
-    assert mw.cmd_decide(_sign_args(project, key=other)) == 0
-    machines = _parse_machines(project, key=other)
-    assert machines["key"] == other
-    assert machines["signed_via"] == "auto-decide"
-    assert machines["counted_rows"] == "1"
-
-
-def test_dp25_executor_is_not_called_on_the_answer_path(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`intent="answer"` returns at step 9, so the executor never runs."""
-    project = _project(tmp_path)
-    _write_config(project)
-    _append_true_engine_row(project)
-    backend = _backend(monkeypatch, conclusion="narrow")
-    point = dpts.get_decision_point(decide_signoff.SIGNOFF_DP_ID)
-    calls: list[dict] = []
-
-    def probe(answers: dict, trigger: dpts.Trigger) -> str:
-        calls.append(answers)
-        return "signoff:probe"
-
-    monkeypatch.setitem(
-        dpts._REGISTRY_BY_ID, point.id, dataclasses.replace(point, executor=probe)
-    )
-    conclusion, detail = decide_signoff.auto_conclusion(project, KEY)
-    assert conclusion == "narrow", detail
-    assert calls == [], "an answer call site must never execute the point"
-    assert backend.calls, "answering still asks the transport"
-
-
 def test_dp25_executor_echoes_the_conclusion_and_writes_nothing(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -695,26 +378,6 @@ def test_dp25_executor_echoes_the_conclusion_and_writes_nothing(
     assert not _sign_file(project).exists()
     # State fallback keeps the echo meaningful when the answer mapping is empty.
     assert point.executor({}, dpts.Trigger(data={"conclusion": "revoke"})) == "signoff:revoke"
-
-
-def test_intent_act_returns_the_echo_and_never_writes_the_sign_file(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = _project(tmp_path)
-    _write_config(project)
-    _append_true_engine_row(project)
-    backend = _backend(monkeypatch, conclusion="continue")
-    config_before = (project / ".mw" / "decide.json").read_bytes()
-    state = decide_signoff.signoff_state(decide_signoff.collect(project, KEY), KEY)
-    trigger = dpts.Trigger.from_mapping(state, key=state["key"], trigger_id="act-1")
-
-    outcome = dpts.decide_for(
-        decide_signoff.SIGNOFF_DP_ID, trigger, project, backend=backend, intent="act"
-    )
-    assert outcome.status == "acted", outcome.detail
-    assert outcome.actual_action == "signoff:continue"
-    assert not _sign_file(project).exists(), "the write stays in `mw decide sign`"
-    assert (project / ".mw" / "decide.json").read_bytes() == config_before
 
 
 def test_signoff_state_is_assembled_from_the_facts_only(tmp_path: pathlib.Path) -> None:
@@ -746,3 +409,224 @@ def test_signoff_state_is_assembled_from_the_facts_only(tmp_path: pathlib.Path) 
         "escalated_reasons",
         "engine_violations",
     }
+
+
+# ---------------------------------------------------------------------------
+# 3. The legacy count face is refused; the material face is `--stdin`
+# ---------------------------------------------------------------------------
+
+NEW_MATERIAL_KEYS = (
+    "delivery_goal",
+    "actual_completion",
+    "verification_evidence",
+    "unfinished_impact",
+)
+
+DP25_MATERIAL = {
+    "delivery_goal": "prove live coverage without a model",
+    "actual_completion": "the four-part material reaches the transport",
+    "verification_evidence": {
+        "verified": ["pytest test_decide_sign_auto.py -q"],
+        "unverified": ["real Jev endpoint (not authorized)"],
+    },
+    "unfinished_impact": [],
+}
+
+
+def _assert_legacy_refusal(completed: int, capsys, project: pathlib.Path) -> None:
+    assert completed == 2
+    err = capsys.readouterr().err
+    assert "--stdin" in err
+    for part in NEW_MATERIAL_KEYS:
+        assert part in err, err
+    assert "nothing was written" in err
+    assert not _sign_file(project).exists()
+    rows = [row for _lineno, row in decide_archive.iter_rows(_archive(project))]
+    assert not any(row.get("kind") == "authority-change" for row in rows)
+
+
+def test_sign_auto_persists_the_mode_and_exits_zero(
+    tmp_path: pathlib.Path, capsys
+) -> None:
+    project = _project(tmp_path)
+    _write_config(project, signoff="disable")
+    assert mw.cmd_decide(_sign_args(project, key=KEY, auto=True)) == 0
+    out = capsys.readouterr().out
+    assert "signoff: auto" in out
+    stored = json.loads((project / ".mw" / "decide.json").read_text(encoding="utf-8"))
+    assert stored["signoff"] == "auto"
+    assert stored["enabled"] is True, "persisting signoff must keep every other key"
+    # `--auto` is the mode-persist face only; the next plain invocation is the
+    # legacy count face, which the approved design refuses.
+    assert not _sign_file(project).exists()
+    _assert_legacy_refusal(mw.cmd_decide(_sign_args(project, key=KEY)), capsys, project)
+
+
+def test_legacy_face_is_refused_for_every_configuration(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    project = _project(tmp_path)
+    _write_config(project)
+    _enable_dp25(project)
+    _append_true_engine_row(project)
+    backend = _backend(monkeypatch, conclusion="continue")
+
+    _assert_legacy_refusal(mw.cmd_decide(_sign_args(project, key=KEY)), capsys, project)
+    assert backend.calls == [], "the refusal happens before any model call"
+
+    # A disabled dp25 row cannot change that: the entry does not ask dp25 at all.
+    _write_points_table(project, {decide_signoff.SIGNOFF_DP_ID: {"enabled": False}})
+    _assert_legacy_refusal(mw.cmd_decide(_sign_args(project, key=KEY)), capsys, project)
+    assert backend.calls == []
+
+    # A missing/typod registry point cannot change it either.
+    monkeypatch.setattr(
+        decide_signoff.decision_points,
+        "get_decision_point",
+        lambda dp_id: (_ for _ in ()).throw(decision.DecisionInputError("unknown dp")),
+    )
+    _assert_legacy_refusal(mw.cmd_decide(_sign_args(project, key=KEY)), capsys, project)
+
+
+def test_legacy_face_is_refused_inside_an_agent_session(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    project = _project(tmp_path)
+    _write_config(project)
+    monkeypatch.setenv("PI_WORKER_TASK", "task.md")
+    monkeypatch.setenv("PI_CODING_AGENT", "1")
+    _assert_legacy_refusal(mw.cmd_decide(_sign_args(project, key=KEY)), capsys, project)
+
+
+def test_sign_without_jev_is_refused_not_a_silent_success(
+    tmp_path: pathlib.Path, capsys
+) -> None:
+    project = _project(tmp_path)
+    _assert_legacy_refusal(mw.cmd_decide(_sign_args(project, key=KEY)), capsys, project)
+
+
+def test_dp25_rows_never_enter_the_signed_counts(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The advice row cannot pad `counted_rows`/`rows_sha256` (D-067)."""
+    project = _project(tmp_path)
+    _write_config(project)
+    _append_true_engine_row(project)
+    before = decide_signoff.collect(project, KEY)
+    decide_archive.append_decide(
+        _archive(project),
+        available=True,
+        answer={"q-conclusion": {"value": "finalize", "confidence": 0.9}},
+        authority="advisory",
+        acted=False,
+        actual_action="signoff:echo",
+        dp=decide_signoff.SIGNOFF_DP_ID,
+        key=KEY,
+        task_key="task-1",
+        trigger_id="dp25-1",
+        state={"delivery_goal": "g", "actual_completion": "a"},
+        questions_version=QP,
+        mode="auto",
+        transport="timi-decisions",
+        model="jev-latest",
+        confidence_source="api",
+    )
+    after = decide_signoff.collect(project, KEY)
+    assert len(after.rows) == len(before.rows) == 1
+    assert after.sha256 == before.sha256
+    assert any(
+        row.get("dp") == decide_signoff.SIGNOFF_DP_ID
+        for _lineno, row in decide_archive.iter_rows(_archive(project))
+    )
+
+
+def test_collect_counts_only_the_requested_key(tmp_path: pathlib.Path) -> None:
+    other = "k-any-other-key"
+    project = _project(tmp_path, key=other)
+    _write_config(project)
+    _append_true_engine_row(project, trigger="any-1", key=other)
+    _append_true_engine_row(project, trigger="fixture-1")
+    facts = decide_signoff.collect(project, other)
+    assert facts.key == other
+    assert len(facts.rows) == 1, "only the requested key's rows are counted"
+
+
+def test_dp25_is_registered_with_the_contracted_shape() -> None:
+    assert len(dpts.DP_REGISTRY) == dpts.EXPECTED_DP_COUNT == 25
+    point = dpts.get_decision_point(decide_signoff.SIGNOFF_DP_ID)
+    assert point.tier == "P2"
+    assert point.default_enabled is True
+    assert point.default_mode == "auto"
+    assert dpts._executor_kind(point.executor) == "wired"
+    # T01/T05: the sign-off material itself, never archive counts.
+    assert dpts.REQUIRED_STATE_FIELDS[point.id] == (
+        "delivery_goal",
+        "actual_completion",
+        "verification_evidence.verified",
+        "verification_evidence.unverified",
+        "unfinished_impact",
+    )
+    assert dpts.MODEL_STATE_FIELDS[point.id] == dpts.REQUIRED_STATE_FIELDS[point.id]
+    [question] = point.questions
+    assert question["id"] == "q-conclusion"
+    assert question["type"] == decision.QUESTION_CHOICE
+    assert question["choices"] == ["finalize", "continue", "user-confirm"]
+    assert set(question["labels"]) == {"finalize", "continue", "user-confirm"}
+
+
+def test_dp25_is_on_by_default(tmp_path: pathlib.Path) -> None:
+    project = _project(tmp_path)
+    _write_config(project)
+    point = dpts.get_decision_point(decide_signoff.SIGNOFF_DP_ID)
+    effective = dpts.load_points_config(project).effective(point)
+    assert effective.source == "default", "no .mw/decide-points.json row exists yet"
+    assert effective.enabled is True
+    assert effective.mode == "auto"
+
+
+def _dp25_trigger(trigger_id: str = "t1") -> "dpts.Trigger":
+    return dpts.Trigger.from_mapping(dict(DP25_MATERIAL), key=KEY, trigger_id=trigger_id)
+
+
+def test_dp25_executor_is_not_called_on_the_answer_path(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`intent="answer"` returns at step 9, so the executor never runs."""
+    project = _project(tmp_path)
+    _write_config(project)
+    _enable_dp25(project)
+    backend = _backend(monkeypatch, conclusion="finalize")
+    point = dpts.get_decision_point(decide_signoff.SIGNOFF_DP_ID)
+    calls: list[dict] = []
+
+    def probe(answers: dict, trigger: dpts.Trigger) -> str:
+        calls.append(answers)
+        return "signoff:probe"
+
+    monkeypatch.setitem(
+        dpts._REGISTRY_BY_ID, point.id, dataclasses.replace(point, executor=probe)
+    )
+    outcome = dpts.decide_for(
+        point.id, _dp25_trigger(), project, backend=backend, intent="answer", archive=False
+    )
+    assert outcome.status in ("acted", "suggested"), outcome.detail
+    assert calls == [], "an answer call site must never execute the point"
+    assert backend.calls, "answering still asks the transport"
+
+
+def test_intent_act_returns_the_echo_and_never_writes_the_sign_file(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(tmp_path)
+    _write_config(project)
+    _enable_dp25(project)
+    backend = _backend(monkeypatch, conclusion="finalize")
+    config_before = (project / ".mw" / "decide.json").read_bytes()
+
+    outcome = dpts.decide_for(
+        decide_signoff.SIGNOFF_DP_ID, _dp25_trigger("act-1"), project, backend=backend, intent="act"
+    )
+    assert outcome.status == "acted", outcome.detail
+    assert outcome.actual_action == "signoff:finalize"
+    assert not _sign_file(project).exists(), "the write stays in `mw decide sign`"
+    assert (project / ".mw" / "decide.json").read_bytes() == config_before

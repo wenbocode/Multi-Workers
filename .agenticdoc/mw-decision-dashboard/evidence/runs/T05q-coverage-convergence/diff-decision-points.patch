@@ -1,0 +1,68 @@
+diff --git a/.agenticdoc/mw-decision-dashboard/evidence/runs/T05q-coverage-convergence/baseline/decision_points.py b/packages/multi-workers/decision_points.py
+index b61f463c4..046307619 100644
+--- a/.agenticdoc/mw-decision-dashboard/evidence/runs/T05q-coverage-convergence/baseline/decision_points.py
++++ b/packages/multi-workers/decision_points.py
+@@ -4294,26 +4294,20 @@ def _observation_book_issues(
+     return tuple(issues)
+ 
+ 
+ def _redactor_covers(redactor: object, value: str) -> bool:
+     """True when ``redactor`` provably removes ``value`` from captured text.
+ 
+-    A redactor that raises is *not* coverage: an unusable filter never proves a
+-    credential safe. Both ``decision`` redactors expose ``hits``; a matcher
+-    without that counter is judged by whether the text changed.
++    T05q: the judgement itself lives in :func:`decision._redactor_covers` (a
++    boundary probe: complete value, long tail, protocol). ``decision_points``
++    owns its own *entry*, not its own definition of "covered", so the two
++    consumptions cannot drift: the points seam previously carried a copy of the
++    ``hits > 0`` / "text changed" test and leaked the same partial replacements
++    as the client-only path.
+     """
+-    if not value:
+-        return True
+-    try:
+-        result = redactor.redact(value)  # type: ignore[attr-defined]
+-    except Exception:  # noqa: BLE001 - an unusable redactor cannot prove safety
+-        return False
+-    hits = getattr(result, "hits", None)
+-    if isinstance(hits, int):
+-        return hits > 0
+-    return getattr(result, "text", value) != value
++    return decision._redactor_covers(redactor, value)
+ 
+ 
+ def _caller_owned_scope(capture: _DecisionCapture, client: object | None) -> Any | None:
+     """The scope this decision did **not** build itself (caller-owned ledger)."""
+     observation = capture.observation
+     if observation is not None:
+@@ -4339,19 +4333,29 @@ def _caller_scope_coverage_issue(
+     (cfg/extras, the actual ``Authorization``, the legacy timi leg), not only the
+     sent value - sending A never exempts captured B material. Any filter that
+     misses one of those values is an unprovable capture: the caller must rebuild
+     it from the snapshot instead of letting one decision send a value its ledger
+     would store raw.
+ 
++    T05q: ``_redactor_covers`` also rejects a partial replacement (a long tail of
++    the value surviving) and a filter without ``scrub_tail_prefix``; the latter is
++    reported as a protocol refusal rather than a silent zero-row capture.
++
+     The message names no value: only the fact (a count) and the remedy.
+     """
+     if scope is None or snapshot is None:
+         return None
+     redactor = getattr(scope, "redact", None)
+     if redactor is None:
+         return None
++    contract_issue = decision._capture_filter_contract_issue(redactor)
++    if contract_issue is not None:
++        # T05q F-2: a filter without the capture boundary contract would make
++        # ``WireScope.capture`` raise (swallowed into a silent zero-row capture).
++        # Refuse it here, before the transport, with the same value-free detail.
++        return f"refusing an unprovable capture: {contract_issue}"
+     values = _command_known_values(cfg, snapshot)
+     if not values:
+         return None
+     missing = sum(1 for value in values if not _redactor_covers(redactor, value))
+     if not missing:
+         return None

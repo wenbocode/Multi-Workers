@@ -1,0 +1,7 @@
+# T16 — case-prefilled scaffold
+
+User requested fix after Test4 screenshot: generating scaffold must prefill currently loaded same-DP case rather than overwrite with placeholders. Goal anchor .agenticdoc/goal.md. References: packages/multi-workers/decision_dashboard.js:2437 scaffoldSelected and :2898 openSelectedCase. Current root cause confirmed: scaffold POST only {dp}, unconditional overwrite and caseLoaded=null.
+
+Parallel analysis: single renderer and same shipped DOM test file; serial PM writer, no worker/source conflict, no research dispatch or provider. Allowed JS and test_decision_context_readable_ui.py, this key evidence/task/state. Freeze originals. Cases/registry/backend/framework/config untouched. No browser/live monitor/model/build/install/commit.
+
+Behavior: loaded case.dp and book.decision_point must equal selected dp; matching case restores clone of original loaded case book/state/notes and questions (explicit generation restores case, not implicit merge/guessed facts), retains reset provenance. Otherwise original server empty-scaffold path. Choice in dropdown alone is not loaded case. Clear old submit identifiers on new generated material. Retain zero-call/local feedback/DAG/inflight guards. Test all four native cases, source immutability, question reset, no-case and cross-DP fallback, no submit/model; RED then minimal GREEN and adjacent suites; protected npm check. Source evidence not deployment acceptance; EXECUTE unchanged.
