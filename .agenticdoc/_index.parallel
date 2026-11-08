@@ -73,3 +73,4 @@
 | mw-monitor-auto-restart | idle | EXECUTE | WENBOZHOU-PC4:15444 |  |  | 2026-10-24T01:32:53.133Z |
 | mw-dp-consolidation | active | EXECUTE | WENBOZHOU-PC4:15444 | mw-decision-context | Eight-DP-consolidation-and-joint-gate-redesign | 2026-10-28T07:05:02.240Z |
 | t22-redactor-fix | idle | SPEC | WENBOZHOU-PC4:55580 |  |  | 2026-10-25T07:30:43.579Z |
+| mw-codex-pm-workflow | idle | DONE | — | — | Codex PM dispatch, recover and verify MW task cards | 2026-11-08 15:21 |

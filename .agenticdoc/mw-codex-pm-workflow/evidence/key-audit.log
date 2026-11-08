@@ -1,0 +1,7 @@
+[audit] key=mw-codex-pm-workflow phase=DONE
+[audit]   design: PASS
+[audit]   plan: PASS
+[audit]   tasks: PASS
+[audit]   execute: PASS
+[audit]   done: PASS
+[audit] VERDICT: PASS

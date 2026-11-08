@@ -3,6 +3,7 @@
 ## AgenticTask Workflow
 
 - Non-trivial implementation (new feature, multi-file change, or anything beyond a one-line fix) requires an active AgenticTask key first: create the key (spec → claim) or record a `mini-spec.md` for the trivial-fix fast path. This applies to mid-session requirements injected after a requirements discussion too — no un-keyed "wild" implementation (untraceable, no goal alignment, no evidence, no closure). Check the active key in `.agenticdoc/_index.parallel` / `_index.md` before the first write to code.
+- When Codex acts as the interactive PM for MW workers, use the [Codex PM development and verification workflow](packages/multi-workers/docs/codex-pm.md). Follow the key from dispatch through worker completion, independent acceptance, and the AgenticTask quality gate. On resume, recover the existing task by key before dispatching more work.
 
 ## Conversational Style
 

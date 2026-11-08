@@ -1,0 +1,15 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.2.0, pluggy-1.7.0 -- C:\Program Files\Python312\python.exe
+cachedir: .pytest_cache
+rootdir: E:\gitlite\Multi-Workers\packages\multi-workers
+configfile: pytest.ini
+plugins: anyio-4.16.0
+collecting ... collected 4 items
+
+packages\multi-workers\test_codex_pm.py::test_develop_reconnect_and_verify PASSED [ 25%]
+packages\multi-workers\test_codex_pm.py::test_refusals_do_not_enqueue PASSED [ 50%]
+packages\multi-workers\test_codex_pm.py::test_failed_worker_with_output_cannot_verify PASSED [ 75%]
+packages\multi-workers\test_codex_pm.py::test_autopilot_key_has_one_dispatch_owner PASSED [100%]
+
+- generated xml file: E:\gitlite\Multi-Workers\.agenticdoc\mw-codex-pm-workflow\evidence\pytest.xml -
+============================= 4 passed in 16.09s ==============================

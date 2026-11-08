@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "E:\gitlite\Multi-Workers\.tmp\codex-pm-acceptance\test_develop_reconnect_and_ver0\check counter.py", line 2, in <module>
+    assert increment(4) == 5
+           ^^^^^^^^^^^^^^^^^
+AssertionError

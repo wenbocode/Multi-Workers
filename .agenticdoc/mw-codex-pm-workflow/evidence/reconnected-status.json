@@ -1,0 +1,29 @@
+{
+  "key": "counter",
+  "phase": "DONE",
+  "claim": "WENBOZHOU-PC5:25172",
+  "pm_state": "E:\\gitlite\\Multi-Workers\\.tmp\\codex-pm-acceptance\\test_develop_reconnect_and_ver0\\.agenticdoc\\counter\\pm-state.md",
+  "cards": [
+    "E:\\gitlite\\Multi-Workers\\.tmp\\codex-pm-acceptance\\test_develop_reconnect_and_ver0\\.agenticdoc\\counter\\tasks\\T-01.md"
+  ],
+  "pending_gates": [],
+  "tasks": [
+    {
+      "task": "pm-7-counter-T-01",
+      "card": "tasks/T-01.md",
+      "queue": "done",
+      "run": null,
+      "artifacts": {
+        "task.md": "E:\\gitlite\\Multi-Workers\\.tmp\\codex-pm-acceptance\\test_develop_reconnect_and_ver0\\.agenticdoc\\counter\\workers\\pm-7-counter-T-01\\task.md",
+        "output.md": "E:\\gitlite\\Multi-Workers\\.tmp\\codex-pm-acceptance\\test_develop_reconnect_and_ver0\\.agenticdoc\\counter\\workers\\pm-7-counter-T-01\\output.md",
+        "worker.log": "E:\\gitlite\\Multi-Workers\\.tmp\\codex-pm-acceptance\\test_develop_reconnect_and_ver0\\.agenticdoc\\counter\\workers\\pm-7-counter-T-01\\worker.log"
+      },
+      "verification": "passed",
+      "checks": [
+        "E:\\gitlite\\Multi-Workers\\.tmp\\codex-pm-acceptance\\test_develop_reconnect_and_ver0\\.agenticdoc\\counter\\evidence\\codex-pm\\pm-7-counter-T-01\\1794122229590576400-686ky3qn\\result.json",
+        "E:\\gitlite\\Multi-Workers\\.tmp\\codex-pm-acceptance\\test_develop_reconnect_and_ver0\\.agenticdoc\\counter\\evidence\\codex-pm\\pm-7-counter-T-01\\1794122229850305500-28eq5qhd\\result.json",
+        "E:\\gitlite\\Multi-Workers\\.tmp\\codex-pm-acceptance\\test_develop_reconnect_and_ver0\\.agenticdoc\\counter\\evidence\\codex-pm\\pm-7-counter-T-01\\1794122230535849500-_1u8mj5_\\result.json"
+      ]
+    }
+  ]
+}

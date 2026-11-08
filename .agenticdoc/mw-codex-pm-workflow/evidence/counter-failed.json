@@ -1,0 +1,18 @@
+{
+  "key": "counter",
+  "task": "pm-7-counter-T-01",
+  "argv": [
+    "C:\\Program Files\\Python312\\python.exe",
+    "check counter.py"
+  ],
+  "cwd": "E:\\gitlite\\Multi-Workers\\.tmp\\codex-pm-acceptance\\test_develop_reconnect_and_ver0",
+  "binding": {
+    "task_sha256": "683941288b590a46a1781895ffaac8fe356574c02d2e81cd8de071855b2b11ae",
+    "output_sha256": "76f563a2f3cc468b0e0d0a655961a056c46500001be5a7a15fb17b2f6e172c39"
+  },
+  "started": "2026-11-08T07:17:09.591575+00:00",
+  "verdict": "failed",
+  "exit_code": 1,
+  "log": "E:\\gitlite\\Multi-Workers\\.tmp\\codex-pm-acceptance\\test_develop_reconnect_and_ver0\\.agenticdoc\\counter\\evidence\\codex-pm\\pm-7-counter-T-01\\1794122229590576400-686ky3qn\\command.log",
+  "finished": "2026-11-08T07:17:09.642921+00:00"
+}

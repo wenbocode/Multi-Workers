@@ -126,6 +126,8 @@
 
 - Added the claims block and the claims-derived read budget to conductor dispatch (claim-driven-review): `autopilot/dispatch.py` parses a card's `<!-- mw-claims: v1 -->` block with the TS parser's grammar and prices the caps from *this* card's own claims (`l2_read_file_cap = min(30, Σ(类型 == manual ? 2 : 1))`, `l2_read_byte_cap = min(393216, 65536 × n)`), while an explicitly configured project-layer cap still wins per field and a claims-free card or the synthesized path renders exactly as before. The four shared constants (`CLAIM_TYPES` / `UNVERIFIED_REASONS` / `CLAIM_GATE_DEFAULT` / `CLAIM_BUDGET`) are pinned to the TS module verbatim by `test_claim_parity.py`, `MW_CLAIM_GATE` keeps the gate `advisory` by default (`enforce` is opt-in, an invalid value falls back with one diagnostic), and `tokens_per_closed_claim` joins the run metrics.
 
+- Added a Codex PM CLI to dispatch AgenticTask coding cards through the existing MW worker queue, recover results by key and retain independent acceptance command logs for each verification attempt.
+
 ### Changed
 
 - `mw review-split set on` now refuses the value instead of persisting a no-op: the `on` tier (dispatch k unit cards + merge) was cancelled with the negative verdict of `claim-driven-review-orchestration`, so a persisted `on` behaved exactly like `off`. The setter exits 2 with `mode 'on' is not wired` and writes nothing; `status` (text and `--json`) gained a `wired` field (`wired=no` for a pre-existing `on` config), so a stale file can no longer look like an active feature. Parsing is unchanged — `on` stays a legal value for a future implementation.

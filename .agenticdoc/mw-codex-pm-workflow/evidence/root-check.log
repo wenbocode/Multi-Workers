@@ -1,0 +1,18 @@
+
+> pi-monorepo@0.0.3 check
+> biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && npm run check:browser-smoke
+
+E:\gitlite\Multi-Workers\.agenticdoc\mw-dp-consolidation\implementation-worktree\biome.json configuration ━━━━━━━━━━
+
+  × Found a nested root configuration, but there's already a root configuration.
+
+  i The other configuration was found in E:\gitlite\Multi-Workers.
+
+  i Use the migration command from the root of the project to update the configuration.
+
+  $ biome migrate --write
+
+
+configuration ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Biome exited because the configuration resulted in errors. Please fix them.
