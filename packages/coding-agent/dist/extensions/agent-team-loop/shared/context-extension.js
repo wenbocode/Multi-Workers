@@ -7,6 +7,7 @@ import { LOCAL_CODEX_PROVIDER } from "./codex-proxy.js";
 import { ContextBudgetError, computeContextBudget } from "./context-budget.js";
 import { ContextController, contextPolicyFailureMessage, MwContextPolicyError, } from "./context-controller.js";
 import { CONTEXT_POLICY_FIELDS, DELEGATED_CONTEXT_FIELDS, resolveContextPolicy, updateContextPolicy, } from "./context-policy.js";
+import { NATIVE_SUMMARY_POLICY } from "./native-summary-policy.js";
 import { installProviderPolicies } from "./provider-policies.js";
 const policyFailures = new WeakMap();
 const nativeSummarySignalsByRegistry = new WeakMap();
@@ -78,14 +79,36 @@ export function registerContextPolicy(pi, options = {}) {
                 policyFailures.set(ctx.modelRegistry, error.details);
                 return contextPolicyFailureMessage(model, error);
             },
-            nativeSummaryFailure: (model, response, signal, originalFailure) => {
-                if (signal?.aborted || response.stopReason === "stop")
+            nativeSummaryComplete: (model, report, signal) => {
+                policyFailures.delete(ctx.modelRegistry);
+                pi.appendEntry("mw-native-summary-result", {
+                    provider: model.provider,
+                    model: model.id,
+                    ...(signal ? nativeAttempts.get(signal) : {}),
+                    ...report,
+                });
+            },
+            nativeSummaryPolicyFailure: (_model, response, report, signal) => {
+                if (signal?.aborted)
+                    return;
+                const details = response.diagnostics?.find((entry) => entry.type === "mw_context_policy")?.details;
+                if (!details || typeof details.code !== "string")
+                    return;
+                policyFailures.set(ctx.modelRegistry, new MwContextPolicyError(details.code, {
+                    ...details,
+                    summaryAttempts: report.attempts,
+                }).details);
+            },
+            nativeSummaryFailure: (model, response, signal, originalFailure, report) => {
+                if (signal?.aborted || (response.stopReason === "stop" && !report?.invalid))
                     return undefined;
-                const code = response.stopReason === "length"
-                    ? "SUMMARY_TRUNCATED"
-                    : response.stopReason === "aborted"
-                        ? "SUMMARY_ABORTED"
-                        : "SUMMARY_FAILED";
+                const code = report?.invalid
+                    ? "SUMMARY_INVALID"
+                    : response.stopReason === "length"
+                        ? "SUMMARY_TRUNCATED"
+                        : response.stopReason === "aborted"
+                            ? "SUMMARY_ABORTED"
+                            : "SUMMARY_FAILED";
                 const safe = binding.controller.nativeFailure(model, originalFailure ?? response, code);
                 const values = [
                     response.usage.input,
@@ -97,7 +120,8 @@ export function registerContextPolicy(pi, options = {}) {
                 const failure = new MwContextPolicyError(code, {
                     ...safe.details,
                     ...(signal ? nativeAttempts.get(signal) : {}),
-                    summaryStatus: response.stopReason,
+                    ...(report ? { summaryAttempts: report.attempts } : {}),
+                    summaryStatus: report?.summaryStatus ?? response.stopReason,
                     nativeSummaryUsage: known
                         ? { input: values[0], output: values[1], cacheRead: values[2], cacheWrite: values[3] }
                         : null,
@@ -332,6 +356,7 @@ export async function runContextCommand(pi, ctx, controlRoot, args, options = {}
             ...policy,
             compaction: { enabled: policy.compaction.enabled, triggerRatio: policy.compaction.triggerRatio },
             generationOwner: "pi-native-compaction",
+            summaryGeneration: NATIVE_SUMMARY_POLICY,
             delegatedLegacy: {
                 active: false,
                 message: "pi owns compaction generation parameters; legacy MW values below are not applied",
@@ -358,6 +383,7 @@ export async function runContextCommand(pi, ctx, controlRoot, args, options = {}
                 ...(budgetError
                     ? [`Budget unavailable: ${budgetError.code} ${JSON.stringify(budgetError.details)}`]
                     : []),
+                `Summary thinking=${NATIVE_SUMMARY_POLICY.thinking} minimumOutput=${NATIVE_SUMMARY_POLICY.minimumOutputTokens} maxAttempts=${NATIVE_SUMMARY_POLICY.maxAttempts}; output remains capped by model and current request budget`,
                 ...CONTEXT_POLICY_FIELDS.map((field) => {
                     const source = policy.sources[field];
                     const value = field === "maxTokens"

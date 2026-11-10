@@ -143,6 +143,8 @@
 
 - Fixed the extension-widget order flipping when two widgets share one placement (mw-widget-order-stability): `InteractiveMode.setExtensionWidget` no longer deletes and re-adds the widget map entry on every refresh (a `Map.set` on an existing key keeps its iteration position, so the old delete-then-set moved the refreshed widget to the end and made two pollers with different beats - the autopilot monitor and the mw-watch panel, both `belowEditor` - swap positions every few seconds). `ExtensionWidgetOptions` gains an optional `order` (ascending; ties keep registration order, and the value is carried through the RPC `setWidget` request), the monitor registers with `order: 0` and the watch panel with `order: 10`, so the monitor always renders above the watch panel regardless of refresh timing. `packages/coding-agent/test/interactive-mode-widget-order.test.ts` adds 5 cases and the dual-widget coexistence suite asserts both orders.
 
+- Fixed MW native summary truncation stopping workers immediately. Summaries now use independent output and thinking settings, retry generation once when truncated or unusable, and validate text before native persistence.
+
 ### Breaking Changes
 
 - MW context compaction generation settings now come from pi. Existing `targetRatio`, `keepRecentTokens`, `maxSummaryTokens` and `timeoutMs` overrides are shown as delegated; setting them through `/mw context` is refused. MW retains `maxTokens`, `compaction.enabled` and `compaction.triggerRatio`.

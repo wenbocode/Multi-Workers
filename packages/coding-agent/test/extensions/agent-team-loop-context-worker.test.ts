@@ -232,7 +232,7 @@ describe("context worker terminal path", () => {
 		{ status: "error", code: "SUMMARY_FAILED", category: "quota" },
 		{ status: "length", code: "SUMMARY_TRUNCATED", category: "unknown" },
 		{ status: "aborted", code: "SUMMARY_ABORTED", category: "unknown" },
-	] as const)("real worker persists $status summary diagnostics without retry or phase advance", async (failure) => {
+	] as const)("real worker persists exhausted $status summary diagnostics without phase advance", async (failure) => {
 		const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
 		const { h, taskDir, sendCalls } = await workerHarness({ policy: true, phases: true });
 		fs.writeFileSync(
@@ -247,22 +247,23 @@ describe("context worker terminal path", () => {
 		h.session.agent.state.messages = h.sessionManager.buildSessionContext().messages;
 		let summaries = 0;
 		let business = 0;
-		h.setResponses([
-			(context) => {
-				if (context.systemPrompt === SUMMARIZATION_SYSTEM_PROMPT) summaries++;
+		const attempts = failure.status === "length" ? 2 : 1;
+		h.setResponses(
+			Array.from({ length: attempts }, () => (context: Context) => {
+				if (context.systemPrompt?.startsWith(SUMMARIZATION_SYSTEM_PROMPT)) summaries++;
 				else business++;
 				return fauxAssistantMessage("PRIVATE-SUMMARY-BODY", {
 					stopReason: failure.status,
 					errorMessage:
 						failure.status === "error" ? "HTTP 429 insufficient_quota PRIVATE-API-KEY" : "PRIVATE-ERROR-TEXT",
 				});
-			},
-		]);
+			}),
+		);
 		await expect(h.session.prompt("continue assigned work")).rejects.toMatchObject({
 			details: { code: failure.code },
 		});
 		expect(exit).toHaveBeenCalledExactlyOnceWith(2);
-		expect([summaries, business, h.faux.state.callCount]).toEqual([1, 0, 1]);
+		expect([summaries, business, h.faux.state.callCount]).toEqual([attempts, 0, attempts]);
 		expect(sendCalls).toEqual([]);
 		const rawRun = fs.readFileSync(path.join(taskDir, "run.json"), "utf8");
 		const run = JSON.parse(rawRun) as Record<string, unknown>;

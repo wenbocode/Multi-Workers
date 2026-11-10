@@ -56,7 +56,7 @@
 
 变更必须恰好指定 `--global` 或 `--project`；不写 `--type` 就操作该作用域的 defaults。`clear <字段>` 只移除选定覆盖，恢复下层继承；`clear type` 移除选定类型的整条覆盖，保留其他类型。全局文件缺失时执行 clear 会先显式保存初始文档再清除指定项，因此类型删除可以持久生效。worker 仅允许 show，不能通过任务回答调高预算。
 
-show 给出实际类型、控制根、配置/模型/有效窗口、inputBudget、自动压缩状态和逐字段来源。MW 只负责 maxTokens、compaction.enabled 和 compaction.triggerRatio；摘要生成、保留近期历史、thinking、输出额度和重试使用 pi 的原生设置。旧文件中的 targetRatio、keepRecentTokens、maxSummaryTokens、timeoutMs 会明确显示为由 pi 接管，不影响当前触发和预算；设置这些旧生成字段会拒绝，clear 仍可用于清理历史覆盖。不会自动修改用户现有配置文件。
+show 给出实际类型、控制根、配置/模型/有效窗口、inputBudget、自动压缩状态和逐字段来源，并以 summaryGeneration 汇总摘要恢复策略。MW 负责 maxTokens、compaction.enabled 和 compaction.triggerRatio；摘要准备、保留近期历史、保存和重建使用 pi 原生流程。MW 在原生摘要的 provider 边界单独关闭 thinking，并为输出额度设置下述下限和有限恢复。旧文件中的 targetRatio、keepRecentTokens、maxSummaryTokens、timeoutMs 显示为旧生成字段，不影响当前触发和生成；设置这些旧字段会拒绝，clear 仍可用于清理历史覆盖。不会自动修改用户现有配置文件。
 
 配置采用 version=1，拒绝未知字段、非法 JSON、非对象 types、布尔/字符串数值、非正安全整数。触发比例必须满足 `0 < triggerRatio < 1`，旧 targetRatio 不再限制 triggerRatio。读取接受一个前置 UTF8 BOM；写入为无 BOM UTF8，使用同目录独占锁和临时文件原子替换。锁冲突不会偷锁，损坏或不可读文件不会回退到旧的宽松快照。
 
@@ -88,7 +88,11 @@ E/R/S/B 与估算值均可诊断。输出预留或固定 system/tools/任务锚�
 
 原任务的执行循环等待原生 compact 完成，再使用重建后的上下文继续。不会另开 worker、重发用户任务或回放已完成工具；工具批次全部结束后才切换上下文。print/RPC 的原始请求也等待这一过程及最终结案，不依赖后台续行消息或固定延迟。
 
-摘要请求仍经过 MW 当前预算、认证和并发限制。压缩完成后重新检查进展和实际业务预算；失败、取消、无进展或仍超预算时停止，不自动扩大配置或无限重复压缩。完整原始记录保留在会话中，resume 按原生 compaction 边界恢复。
+摘要请求仍经过 MW 当前预算、认证和并发限制。摘要关闭业务 thinking 的继承，初始输出上限为 min(模型最大输出, max(pi 原生摘要额度, 16384))。返回 length 或 stop 但正文为空（含纯 thinking）时，最多重新生成一次：要求简洁、完整保留继续任务所需状态，输出上限为 min(模型最大输出, 初始额度乘2)。每次请求独立取得并发槽并重新检查当前预算/认证；不自动提高窗口上限。不能从标题或标点证明 length 正文完整，因此不接受截断摘要。非空正文且 stop 后才交给原生保存；重生不会回放任务工具。预算/认证拒绝、父取消和其他错误不进入这条重生循环，其他瞬时上游错误沿用原生重试。
+
+恢复成功以 mw-native-summary-result 保存安全尝试信息（次数、实际额度、thinking、状态、正文长度和已知用量）；恢复耗尽以 SUMMARY_TRUNCATED 或 SUMMARY_INVALID 结案，并在 summaryAttempts 中保留同类数字，不保存摘要正文。成功恢复的多次用量合并到原生 compaction usage，不额外写第二份 token 统计。每条工具结果前2000字符的原生摘要输入策略本次未改。
+
+压缩完成后重新检查进展和实际业务预算；恢复耗尽、取消、无进展或仍超预算时停止，不无限重复压缩。完整原始记录保留在会话中，resume 按原生 compaction 边界恢复。
 
 `compaction.enabled=false` 关闭 MW 自动压缩：Trigger 到 B 内仍可发送，超过 B 则停止。手动 compact 仍可用，同样受预算检查。MW 显式请求原生压缩不要求打开 pi 自己的自动压缩开关；不会为此写入全局 settings。原生 compact/tree 通过事件 signal 身份识别，避免递归或重复计量。
 

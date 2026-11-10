@@ -38454,6 +38454,85 @@ async function runProxyCommand(pi, ctx, project, args) {
   }
 }
 
+// packages/coding-agent/src/extensions/agent-team-loop/shared/native-summary-policy.ts
+var NATIVE_SUMMARY_POLICY = {
+  minimumOutputTokens: 16384,
+  maxAttempts: 2,
+  thinking: "off",
+  outputGrowth: 2
+};
+async function runNativeSummaryPolicy(model, context, options, produce) {
+  const attempts = [];
+  const initialMaxTokens = Math.min(
+    model.maxTokens,
+    Math.max(options?.maxTokens ?? 0, NATIVE_SUMMARY_POLICY.minimumOutputTokens)
+  );
+  let accumulated;
+  for (let index = 0; index < NATIVE_SUMMARY_POLICY.maxAttempts; index++) {
+    options?.signal?.throwIfAborted();
+    const requestOptions = {
+      ...options,
+      maxTokens: Math.min(model.maxTokens, initialMaxTokens * NATIVE_SUMMARY_POLICY.outputGrowth ** index)
+    };
+    delete requestOptions.reasoning;
+    delete requestOptions.thinkingBudgets;
+    Reflect.deleteProperty(requestOptions, "reasoningEffort");
+    const request = index === 0 ? context : {
+      ...context,
+      systemPrompt: `${context.systemPrompt ?? ""}
+
+The previous summary did not finish with usable text. Generate a shorter, complete summary. Preserve the task goal, constraints, completed work, unresolved work, and information needed to continue. Omit exploration details and do not narrate reasoning.`
+    };
+    const produced = await produce(request, requestOptions);
+    const providerRequestStarted = produced.providerRequestStarted;
+    const response = options?.signal?.aborted ? { ...produced.response, stopReason: "aborted", errorMessage: "Native summary cancelled" } : produced.response;
+    const text = response.content.filter((block) => block.type === "text").map((block) => block.text).join("");
+    const invalid = response.stopReason === "stop" && (!text.trim() || response.content.some((block) => block.type === "toolCall")) || response.stopReason === "pending" || response.stopReason === "deferred" || response.stopReason === "toolUse";
+    const values = [response.usage.input, response.usage.output, response.usage.cacheRead, response.usage.cacheWrite];
+    const known = values.every((value) => Number.isFinite(value) && value >= 0) && values.some((value) => value > 0);
+    attempts.push({
+      attempt: index + 1,
+      maxTokens: requestOptions.maxTokens,
+      reasoning: "off",
+      status: response.stopReason,
+      usage: known ? { input: values[0], output: values[1], cacheRead: values[2], cacheWrite: values[3] } : null,
+      reasoningTokens: typeof response.usage.reasoning === "number" && Number.isFinite(response.usage.reasoning) && response.usage.reasoning >= 0 ? response.usage.reasoning : null,
+      textChars: text.length,
+      invalid,
+      providerRequestStarted
+    });
+    const previous = accumulated;
+    const usage = response.usage;
+    accumulated = previous ? {
+      input: previous.input + usage.input,
+      output: previous.output + usage.output,
+      cacheRead: previous.cacheRead + usage.cacheRead,
+      cacheWrite: previous.cacheWrite + usage.cacheWrite,
+      ...previous.cacheWrite1h !== void 0 || usage.cacheWrite1h !== void 0 ? { cacheWrite1h: (previous.cacheWrite1h ?? 0) + (usage.cacheWrite1h ?? 0) } : {},
+      ...previous.reasoning !== void 0 || usage.reasoning !== void 0 ? { reasoning: (previous.reasoning ?? 0) + (usage.reasoning ?? 0) } : {},
+      totalTokens: previous.totalTokens + usage.totalTokens,
+      cost: {
+        input: previous.cost.input + usage.cost.input,
+        output: previous.cost.output + usage.cost.output,
+        cacheRead: previous.cost.cacheRead + usage.cost.cacheRead,
+        cacheWrite: previous.cost.cacheWrite + usage.cost.cacheWrite,
+        total: previous.cost.total + usage.cost.total
+      }
+    } : usage;
+    if (index + 1 < NATIVE_SUMMARY_POLICY.maxAttempts && (response.stopReason === "length" || invalid) && !response.diagnostics?.some((diagnostic) => diagnostic.type === "mw_context_policy"))
+      continue;
+    return {
+      response: {
+        ...response,
+        usage: accumulated,
+        ...invalid ? { stopReason: "error", errorMessage: "Native summary produced no usable text" } : {}
+      },
+      report: { summaryStatus: response.stopReason, invalid, attempts }
+    };
+  }
+  throw new Error("Native summary attempt limit exhausted without a result");
+}
+
 // packages/coding-agent/src/extensions/agent-team-loop/shared/provider-policies.ts
 var states = /* @__PURE__ */ new WeakMap();
 var wrappers = /* @__PURE__ */ new WeakSet();
@@ -38511,27 +38590,21 @@ function installProviderPolicies(ctx, contextPolicy) {
                   requestOptions?.signal?.throwIfAborted();
                   started = true;
                   const stream5 = provider[method](resolved, request, authenticated);
-                  for await (const event of stream5) {
-                    if ((event.type === "done" || event.type === "error") && requestOptions?.signal && current.nativeSummarySignals?.has(requestOptions.signal)) {
-                      const guarded = current.nativeSummaryFailure?.(
-                        selected,
-                        await stream5.result(),
-                        requestOptions.signal
-                      );
-                      if (guarded) {
-                        transport2.push({ type: "error", reason: "error", error: guarded });
-                        transport2.end(guarded);
-                        return;
-                      }
-                    }
-                    transport2.push(event);
-                  }
-                  const result = await stream5.result();
-                  transport2.end(
-                    requestOptions?.signal && current.nativeSummarySignals?.has(requestOptions.signal) ? current.nativeSummaryFailure?.(selected, result, requestOptions.signal) ?? result : result
-                  );
+                  for await (const event of stream5) transport2.push(event);
+                  transport2.end(await stream5.result());
                 } catch (error) {
-                  const failure = requestFailure(selected, error, requestOptions?.signal, current);
+                  const failure = requestFailure(selected, error, requestOptions?.signal, current, false);
+                  if (requestOptions?.signal && current.nativeSummarySignals?.has(requestOptions.signal)) {
+                    const safe = projectSummaryFailure(error);
+                    failure.diagnostics = [
+                      ...failure.diagnostics ?? [],
+                      {
+                        type: "native_summary_transport",
+                        timestamp: Date.now(),
+                        details: { httpStatus: safe.httpStatus, code: safe.errorType }
+                      }
+                    ];
+                  }
                   transport2.push({
                     type: "error",
                     reason: failure.stopReason === "aborted" ? "aborted" : "error",
@@ -38546,6 +38619,66 @@ function installProviderPolicies(ctx, contextPolicy) {
             Object.defineProperty(stream4, "providerRequestStarted", { get: () => started });
             return stream4;
           };
+          if (options?.signal && current.nativeSummarySignals?.has(options.signal)) {
+            const summarySignal = options.signal;
+            const { response, report } = await runNativeSummaryPolicy(
+              model,
+              context,
+              options,
+              async (request, requestOptions) => {
+                let projected2;
+                try {
+                  projected2 = current.controller ? await current.controller.prepare(model, request, requestOptions, {
+                    nativeSummary: true,
+                    automaticNativeSummary: current.automaticNativeSummarySignals?.has(summarySignal)
+                  }) : request;
+                  requestOptions.signal?.throwIfAborted();
+                } catch (error) {
+                  return {
+                    response: requestFailure(model, error, summarySignal, current, false),
+                    providerRequestStarted: false
+                  };
+                }
+                const stream4 = physicalDispatch(model, projected2, requestOptions);
+                const result2 = await stream4.result();
+                if (Reflect.get(stream4, "providerRequestStarted") === true)
+                  current.controller?.observeUsage(model, projected2, requestOptions, result2.usage);
+                return {
+                  response: result2,
+                  providerRequestStarted: Reflect.get(stream4, "providerRequestStarted") === true
+                };
+              }
+            );
+            let result = response;
+            if (response.diagnostics?.some((diagnostic) => diagnostic.type === "mw_context_policy")) {
+              result = {
+                ...response,
+                diagnostics: response.diagnostics.map(
+                  (diagnostic) => diagnostic.type === "mw_context_policy" ? { ...diagnostic, details: { ...diagnostic.details, nativeSummaryReport: report } } : diagnostic
+                )
+              };
+              current.nativeSummaryPolicyFailure?.(model, result, report, summarySignal);
+            } else if (response.stopReason === "stop" && !options.signal.aborted) {
+              current.nativeSummaryComplete?.(model, report, options.signal);
+            } else if (!summarySignal.aborted) {
+              result = current.nativeSummaryFailure?.(model, response, options.signal, void 0, report) ?? response;
+            }
+            if (result.stopReason === "pending") {
+              const incomplete = {
+                ...result,
+                stopReason: "error",
+                errorMessage: "Native summary ended without a final response"
+              };
+              output.push({ type: "error", reason: "error", error: incomplete });
+              output.end(incomplete);
+              return;
+            }
+            if (result.stopReason === "error" || result.stopReason === "aborted")
+              output.push({ type: "error", reason: result.stopReason, error: result });
+            else output.push({ type: "done", reason: result.stopReason, message: result });
+            output.end(result);
+            return;
+          }
           const projected = current.controller ? await current.controller.prepare(model, context, options, {
             nativeSummary: !!options?.signal && current.nativeSummarySignals?.has(options.signal),
             automaticNativeSummary: !!options?.signal && current.automaticNativeSummarySignals?.has(options.signal)
@@ -38596,7 +38729,7 @@ function refreshAuthValues(entry, fresh, supplied, changed) {
   }
   return values;
 }
-function requestFailure(model, error, signal, state) {
+function requestFailure(model, error, signal, state, guardNativeSummary = true) {
   const policy = !signal?.aborted ? state.policyFailure?.(model, error) : void 0;
   if (policy) return policy;
   const message = {
@@ -38617,7 +38750,7 @@ function requestFailure(model, error, signal, state) {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
     }
   };
-  if (!signal?.aborted && signal && state.nativeSummarySignals?.has(signal))
+  if (guardNativeSummary && !signal?.aborted && signal && state.nativeSummarySignals?.has(signal))
     return state.nativeSummaryFailure?.(model, message, signal, error) ?? message;
   return message;
 }
@@ -38686,9 +38819,30 @@ function registerContextPolicy(pi, options = {}) {
         policyFailures.set(ctx.modelRegistry, error.details);
         return contextPolicyFailureMessage(model, error);
       },
-      nativeSummaryFailure: (model, response, signal, originalFailure) => {
-        if (signal?.aborted || response.stopReason === "stop") return void 0;
-        const code = response.stopReason === "length" ? "SUMMARY_TRUNCATED" : response.stopReason === "aborted" ? "SUMMARY_ABORTED" : "SUMMARY_FAILED";
+      nativeSummaryComplete: (model, report, signal) => {
+        policyFailures.delete(ctx.modelRegistry);
+        pi.appendEntry("mw-native-summary-result", {
+          provider: model.provider,
+          model: model.id,
+          ...signal ? nativeAttempts.get(signal) : {},
+          ...report
+        });
+      },
+      nativeSummaryPolicyFailure: (_model, response, report, signal) => {
+        if (signal?.aborted) return;
+        const details = response.diagnostics?.find((entry) => entry.type === "mw_context_policy")?.details;
+        if (!details || typeof details.code !== "string") return;
+        policyFailures.set(
+          ctx.modelRegistry,
+          new MwContextPolicyError(details.code, {
+            ...details,
+            summaryAttempts: report.attempts
+          }).details
+        );
+      },
+      nativeSummaryFailure: (model, response, signal, originalFailure, report) => {
+        if (signal?.aborted || response.stopReason === "stop" && !report?.invalid) return void 0;
+        const code = report?.invalid ? "SUMMARY_INVALID" : response.stopReason === "length" ? "SUMMARY_TRUNCATED" : response.stopReason === "aborted" ? "SUMMARY_ABORTED" : "SUMMARY_FAILED";
         const safe = binding.controller.nativeFailure(model, originalFailure ?? response, code);
         const values = [
           response.usage.input,
@@ -38700,7 +38854,8 @@ function registerContextPolicy(pi, options = {}) {
         const failure = new MwContextPolicyError(code, {
           ...safe.details,
           ...signal ? nativeAttempts.get(signal) : {},
-          summaryStatus: response.stopReason,
+          ...report ? { summaryAttempts: report.attempts } : {},
+          summaryStatus: report?.summaryStatus ?? response.stopReason,
           nativeSummaryUsage: known ? { input: values[0], output: values[1], cacheRead: values[2], cacheWrite: values[3] } : null
         });
         policyFailures.set(ctx.modelRegistry, failure.details);
@@ -38903,6 +39058,7 @@ async function runContextCommand(pi, ctx, controlRoot, args, options = {}) {
       ...policy,
       compaction: { enabled: policy.compaction.enabled, triggerRatio: policy.compaction.triggerRatio },
       generationOwner: "pi-native-compaction",
+      summaryGeneration: NATIVE_SUMMARY_POLICY,
       delegatedLegacy: {
         active: false,
         message: "pi owns compaction generation parameters; legacy MW values below are not applied",
@@ -38923,6 +39079,7 @@ async function runContextCommand(pi, ctx, controlRoot, args, options = {}) {
       `Context type=${policy.taskType} control=${policy.controlRoot}`,
       `configured=${policy.maxTokens} model=${ctx.model?.contextWindow ?? "unselected"} effective=${budget?.effectiveWindow ?? "unavailable"} inputBudget=${budget?.inputBudget ?? "unavailable"} auto=${policy.compaction.enabled}`,
       ...budgetError ? [`Budget unavailable: ${budgetError.code} ${JSON.stringify(budgetError.details)}`] : [],
+      `Summary thinking=${NATIVE_SUMMARY_POLICY.thinking} minimumOutput=${NATIVE_SUMMARY_POLICY.minimumOutputTokens} maxAttempts=${NATIVE_SUMMARY_POLICY.maxAttempts}; output remains capped by model and current request budget`,
       ...CONTEXT_POLICY_FIELDS.map((field) => {
         const source = policy.sources[field];
         const value = field === "maxTokens" ? policy.maxTokens : policy.compaction[field.slice("compaction.".length)];

@@ -280,7 +280,7 @@ describe("context provider integration", () => {
 		let summaries = 0;
 		let business = 0;
 		const h = await nativeHarness((request) => {
-			if (request.systemPrompt !== SUMMARIZATION_SYSTEM_PROMPT) {
+			if (!request.systemPrompt?.startsWith(SUMMARIZATION_SYSTEM_PROMPT)) {
 				business++;
 				return assistant();
 			}
@@ -295,7 +295,8 @@ describe("context provider integration", () => {
 			};
 		}, manager);
 		await expect(h.agentSession.prompt("continue")).rejects.toThrow(`MW_CONTEXT_POLICY:${failure.code}`);
-		expect([summaries, business]).toEqual([1, 0]);
+		const attempts = failure.status === "length" ? 2 : 1;
+		expect([summaries, business]).toEqual([attempts, 0]);
 		const details = consumeContextPolicyFailure(h.agentSession.extensionRunner.getModelRegistry());
 		expect(details).toMatchObject({
 			code: failure.code,
@@ -303,7 +304,7 @@ describe("context provider integration", () => {
 			provider: model.provider,
 			model: model.id,
 			summaryFailure: { category: failure.category },
-			nativeSummaryUsage: { input: 11, output: 7 },
+			nativeSummaryUsage: { input: 11 * attempts, output: 7 * attempts },
 		});
 		expect(typeof details?.attemptId).toBe("string");
 		expect(typeof details?.attemptStartedAt).toBe("string");
@@ -374,7 +375,7 @@ describe("context provider integration", () => {
 		).toHaveLength(0);
 	});
 
-	it("real AgentSession continues a complete parallel tool batch using separate limit=1 leases", async () => {
+	it("real AgentSession recovers a truncated summary after a parallel tool batch using separate limit=1 leases", async () => {
 		await setConcurrencyLimit(`${model.provider}/${model.id}`, 1);
 		let business = 0;
 		let summaries = 0;
@@ -388,10 +389,13 @@ describe("context provider integration", () => {
 			(request, options) => {
 				expect(readConcurrencyState().requests.filter((entry) => entry.phase === "active")).toHaveLength(1);
 				expect(options?.apiKey).toBe("stable-key");
-				if (request.systemPrompt === SUMMARIZATION_SYSTEM_PROMPT) {
+				if (request.systemPrompt?.startsWith(SUMMARIZATION_SYSTEM_PROMPT)) {
 					summaries++;
 					expect(completed).toBe(2);
-					return assistant([{ type: "text", text: "Native task and completed tool results" }]);
+					return {
+						...assistant([{ type: "text", text: "Native task and completed tool results" }]),
+						stopReason: summaries === 1 ? "length" : "stop",
+					};
 				}
 				requests.push(request);
 				business++;
@@ -421,7 +425,7 @@ describe("context provider integration", () => {
 		await h.agentSession.prompt("finish fixture; only allowed files");
 		expect([business, completed]).toEqual([2, 2]);
 		// Native compaction may summarize an older prefix and the retained split turn separately.
-		expect(summaries).toBeGreaterThanOrEqual(1);
+		expect(summaries).toBeGreaterThanOrEqual(2);
 		expect(executions.sort()).toEqual([1, 2]);
 		const ids = requests[1].messages.flatMap((message) =>
 			message.role === "assistant"
@@ -839,7 +843,9 @@ describe("context provider integration", () => {
 			);
 			expect(result.stopReason).toBe("stop");
 			expect(calls).toBe(1);
-			expect(h.session.getBranch().filter((entry) => entry.type === "custom")).toHaveLength(0);
+			expect(h.session.getBranch().filter((entry) => entry.type === "custom")).toEqual([
+				expect.objectContaining({ customType: "mw-native-summary-result" }),
+			]);
 			// The provider layer now admits the next business call without generating any summary.
 			const next = await h.runtime.completeSimple(model, history(), { signal: new AbortController().signal });
 			expect(next.stopReason).toBe("stop");

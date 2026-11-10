@@ -1,4 +1,6 @@
 import { createAssistantMessageEventStream, } from "@earendil-works/pi-ai";
+import { projectSummaryFailure } from "./context-summary-diagnostics.js";
+import { runNativeSummaryPolicy } from "./native-summary-policy.js";
 const states = new WeakMap();
 const wrappers = new WeakSet();
 /** One coordinator owns the request pipeline; each physical call owns its own slot. */
@@ -64,26 +66,25 @@ export function installProviderPolicies(ctx, contextPolicy) {
                                     requestOptions?.signal?.throwIfAborted();
                                     started = true;
                                     const stream = provider[method](resolved, request, authenticated);
-                                    for await (const event of stream) {
-                                        if ((event.type === "done" || event.type === "error") &&
-                                            requestOptions?.signal &&
-                                            current.nativeSummarySignals?.has(requestOptions.signal)) {
-                                            const guarded = current.nativeSummaryFailure?.(selected, await stream.result(), requestOptions.signal);
-                                            if (guarded) {
-                                                transport.push({ type: "error", reason: "error", error: guarded });
-                                                transport.end(guarded);
-                                                return;
-                                            }
-                                        }
+                                    for await (const event of stream)
                                         transport.push(event);
-                                    }
-                                    const result = await stream.result();
-                                    transport.end(requestOptions?.signal && current.nativeSummarySignals?.has(requestOptions.signal)
-                                        ? (current.nativeSummaryFailure?.(selected, result, requestOptions.signal) ?? result)
-                                        : result);
+                                    transport.end(await stream.result());
                                 }
                                 catch (error) {
-                                    const failure = requestFailure(selected, error, requestOptions?.signal, current);
+                                    const failure = requestFailure(selected, error, requestOptions?.signal, current, false);
+                                    if (requestOptions?.signal && current.nativeSummarySignals?.has(requestOptions.signal)) {
+                                        // Preserve allowlisted transport fields through the summary retry boundary.
+                                        // The raw Error and its body/stack never enter a diagnostic.
+                                        const safe = projectSummaryFailure(error);
+                                        failure.diagnostics = [
+                                            ...(failure.diagnostics ?? []),
+                                            {
+                                                type: "native_summary_transport",
+                                                timestamp: Date.now(),
+                                                details: { httpStatus: safe.httpStatus, code: safe.errorType },
+                                            },
+                                        ];
+                                    }
                                     transport.push({
                                         type: "error",
                                         reason: failure.stopReason === "aborted" ? "aborted" : "error",
@@ -100,6 +101,68 @@ export function installProviderPolicies(ctx, contextPolicy) {
                         Object.defineProperty(stream, "providerRequestStarted", { get: () => started });
                         return stream;
                     };
+                    if (options?.signal && current.nativeSummarySignals?.has(options.signal)) {
+                        const summarySignal = options.signal;
+                        const { response, report } = await runNativeSummaryPolicy(model, context, options, async (request, requestOptions) => {
+                            let projected;
+                            try {
+                                projected = current.controller
+                                    ? await current.controller.prepare(model, request, requestOptions, {
+                                        nativeSummary: true,
+                                        automaticNativeSummary: current.automaticNativeSummarySignals?.has(summarySignal),
+                                    })
+                                    : request;
+                                requestOptions.signal?.throwIfAborted();
+                            }
+                            catch (error) {
+                                return {
+                                    response: requestFailure(model, error, summarySignal, current, false),
+                                    providerRequestStarted: false,
+                                };
+                            }
+                            const stream = physicalDispatch(model, projected, requestOptions);
+                            const result = await stream.result();
+                            if (Reflect.get(stream, "providerRequestStarted") === true)
+                                current.controller?.observeUsage(model, projected, requestOptions, result.usage);
+                            return {
+                                response: result,
+                                providerRequestStarted: Reflect.get(stream, "providerRequestStarted") === true,
+                            };
+                        });
+                        let result = response;
+                        if (response.diagnostics?.some((diagnostic) => diagnostic.type === "mw_context_policy")) {
+                            result = {
+                                ...response,
+                                diagnostics: response.diagnostics.map((diagnostic) => diagnostic.type === "mw_context_policy"
+                                    ? { ...diagnostic, details: { ...diagnostic.details, nativeSummaryReport: report } }
+                                    : diagnostic),
+                            };
+                            current.nativeSummaryPolicyFailure?.(model, result, report, summarySignal);
+                        }
+                        else if (response.stopReason === "stop" && !options.signal.aborted) {
+                            current.nativeSummaryComplete?.(model, report, options.signal);
+                        }
+                        else if (!summarySignal.aborted) {
+                            result =
+                                current.nativeSummaryFailure?.(model, response, options.signal, undefined, report) ?? response;
+                        }
+                        if (result.stopReason === "pending") {
+                            const incomplete = {
+                                ...result,
+                                stopReason: "error",
+                                errorMessage: "Native summary ended without a final response",
+                            };
+                            output.push({ type: "error", reason: "error", error: incomplete });
+                            output.end(incomplete);
+                            return;
+                        }
+                        if (result.stopReason === "error" || result.stopReason === "aborted")
+                            output.push({ type: "error", reason: result.stopReason, error: result });
+                        else
+                            output.push({ type: "done", reason: result.stopReason, message: result });
+                        output.end(result);
+                        return;
+                    }
                     const projected = current.controller
                         ? await current.controller.prepare(model, context, options, {
                             nativeSummary: !!options?.signal && current.nativeSummarySignals?.has(options.signal),
@@ -155,7 +218,7 @@ function refreshAuthValues(entry, fresh, supplied, changed) {
     }
     return values;
 }
-function requestFailure(model, error, signal, state) {
+function requestFailure(model, error, signal, state, guardNativeSummary = true) {
     const policy = !signal?.aborted ? state.policyFailure?.(model, error) : undefined;
     if (policy)
         return policy;
@@ -177,7 +240,7 @@ function requestFailure(model, error, signal, state) {
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         },
     };
-    if (!signal?.aborted && signal && state.nativeSummarySignals?.has(signal))
+    if (guardNativeSummary && !signal?.aborted && signal && state.nativeSummarySignals?.has(signal))
         return state.nativeSummaryFailure?.(model, message, signal, error) ?? message;
     return message;
 }
