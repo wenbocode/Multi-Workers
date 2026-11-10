@@ -4,6 +4,12 @@
 
 ### Added
 
+- Added `/mw proxy start|stop|status|check [--deep]`, local Codex model routing for PM and pi workers, proxy monitor status, request preflight checks and heartbeat/deadline enforcement. Local routing uses separate provider authentication without modifying stored Codex OAuth credentials.
+
+- Added `/mw concurrency set <provider/model|provider/*> <N>`, `show`, and `clear` for same-user, machine-wide LLM concurrency limits shared by pi PM and workers, with cancellable queues, live limit changes, and dead-process slot recovery.
+
+- Added shared LLM concurrency counts and attributed worker queue badges to monitor and `list_tasks`. Added `/mw proxy models` to refresh local Codex models from the CLI cache, including cache-only models in worker dispatch validation.
+
 - Added `ExtensionContext.requestCompaction()` to request native compaction before the first model call or after a completed tool batch, with awaited completion callbacks and continuation in the current task.
 
 - Added global/project/task-type MW context budgets and `/mw context show|set|clear`. MW triggers native pi compaction while retaining request budgets; pi owns summary generation settings. PM and workers continue within the original task after compaction. Policy refusals settle workers as needs-clarification without model fallback; parent cancellation retains explicit aborted evidence.
