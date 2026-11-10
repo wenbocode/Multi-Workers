@@ -136,6 +136,7 @@ export class ExtensionRunner {
     hasPendingMessagesFn = () => false;
     getContextUsageFn = () => undefined;
     compactFn = () => { };
+    requestCompactionFn = () => { };
     getSystemPromptFn = () => "";
     getSystemPromptOptionsFn = () => ({ cwd: this.cwd });
     newSessionHandler = async () => ({ cancelled: false });
@@ -182,6 +183,7 @@ export class ExtensionRunner {
         this.shutdownHandler = contextActions.shutdown;
         this.getContextUsageFn = contextActions.getContextUsage;
         this.compactFn = contextActions.compact;
+        this.requestCompactionFn = contextActions.requestCompaction;
         this.getSystemPromptFn = contextActions.getSystemPrompt;
         this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
         // Flush provider registrations queued during extension loading
@@ -528,6 +530,10 @@ export class ExtensionRunner {
             compact: (options) => {
                 runner.assertActive();
                 runner.compactFn(options);
+            },
+            requestCompaction: (options) => {
+                runner.assertActive();
+                runner.requestCompactionFn(options);
             },
             getSystemPrompt: () => {
                 runner.assertActive();

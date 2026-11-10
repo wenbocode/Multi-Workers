@@ -1,6 +1,5 @@
-import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
-import { type ContextEstimateOptions } from "./context-budget.ts";
-import { type ContextCheckpointEntry } from "./context-checkpoint.ts";
+import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
+import { type ContextBudget, type ContextEstimateOptions } from "./context-budget.ts";
 import { type ResolvedContextPolicy } from "./context-policy.ts";
 import { type SummaryFailure } from "./context-summary-diagnostics.ts";
 export declare const CONTEXT_COMPACTION_USAGE_TYPE = "mw-context-compaction-usage";
@@ -31,21 +30,17 @@ export declare class MwContextPolicyError extends Error {
 }
 export declare function isContextPolicyFailure(message: AssistantMessage): boolean;
 export declare function contextPolicyFailureMessage(model: Model<Api>, error: MwContextPolicyError): AssistantMessage;
-export type PhysicalContextStream = AssistantMessageEventStream & {
-    readonly providerRequestStarted?: boolean;
-};
-export interface PhysicalContextIntent {
-    managedSummary?: boolean;
-}
-export type PhysicalContextDispatch = (model: Model<Api>, context: Context, options?: SimpleStreamOptions, intent?: PhysicalContextIntent) => PhysicalContextStream;
 export interface ContextControllerOptions {
     readPolicy: () => ResolvedContextPolicy | Promise<ResolvedContextPolicy>;
-    getCheckpointEntries: () => readonly ContextCheckpointEntry[];
-    /** Must resolve only after the entry is durably committed. Production appendEntry is synchronous. */
-    appendEntry: (customType: string, data: unknown) => void | Promise<void>;
     estimateOptions?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => ContextEstimateOptions;
-    taskId?: string;
 }
+export interface NativeCompactionPlan {
+    beforeTokens: number;
+    beforeBaseTokens: number;
+    policy: ResolvedContextPolicy;
+    budget: ContextBudget;
+}
+/** MW owns admission and triggering; pi owns generation, persistence and context rebuilding. */
 export declare class ContextController {
     private readonly options;
     private readonly calibration;
@@ -53,13 +48,18 @@ export declare class ContextController {
     resetCalibration(): void;
     private estimate;
     observeUsage(model: Model<Api>, context: Context, options: SimpleStreamOptions | undefined, usage: Usage): void;
-    private policy;
-    prepare(model: Model<Api>, context: Context, options: SimpleStreamOptions | undefined, physicalDispatch: PhysicalContextDispatch, mode?: {
+    private settings;
+    private failure;
+    /** Called only at complete-turn boundaries, before core native compaction is requested. */
+    planNativeCompaction(model: Model<Api>, context: Context, options?: SimpleStreamOptions): Promise<NativeCompactionPlan | undefined>;
+    /** Provider requests never generate or project summaries. They only enforce the actual budget. */
+    prepare(model: Model<Api>, context: Context, options?: SimpleStreamOptions, mode?: {
         nativeSummary?: boolean;
         budgetOnly?: boolean;
-        managedSummary?: boolean;
+        automaticNativeSummary?: boolean;
     }): Promise<Context>;
-    private prepareContext;
-    private recordUsage;
+    /** Core has already committed and rebuilt native context; reject continuation if it made no progress. */
+    assertNativeProgress(model: Model<Api>, context: Context, plan: NativeCompactionPlan, options?: SimpleStreamOptions): Promise<void>;
+    nativeFailure(model: Model<Api>, failure: unknown, code?: string): MwContextPolicyError;
 }
 //# sourceMappingURL=context-controller.d.ts.map

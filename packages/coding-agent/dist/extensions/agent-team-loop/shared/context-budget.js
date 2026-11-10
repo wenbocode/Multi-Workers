@@ -33,7 +33,6 @@ export function computeContextBudget(model, policy, explicitMaxTokens, fixedToke
         safetyMargin,
         inputBudget,
         triggerTokens: Math.floor(inputBudget * policy.compaction.triggerRatio),
-        targetTokens: Math.floor(inputBudget * policy.compaction.targetRatio),
     };
     if (inputBudget <= 0 || fixedTokens > inputBudget)
         throw new ContextBudgetError("MW_CONTEXT_BUDGET_IMPOSSIBLE", { ...budget, fixedTokens });

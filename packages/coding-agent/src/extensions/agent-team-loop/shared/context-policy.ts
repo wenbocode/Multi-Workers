@@ -25,6 +25,12 @@ export const CONTEXT_POLICY_FIELDS = [
 	"compaction.timeoutMs",
 ] as const;
 export type ContextPolicyField = (typeof CONTEXT_POLICY_FIELDS)[number];
+export const DELEGATED_CONTEXT_FIELDS: readonly ContextPolicyField[] = [
+	"compaction.targetRatio",
+	"compaction.keepRecentTokens",
+	"compaction.maxSummaryTokens",
+	"compaction.timeoutMs",
+];
 export type ContextPolicyScope = "global" | "project";
 
 export interface ContextPolicySource {
@@ -92,7 +98,10 @@ const DEFAULTS = {
 function initialGlobalDocument(): ContextPolicyDocument {
 	return {
 		version: 1,
-		defaults: { maxTokens: DEFAULTS.maxTokens, compaction: { ...DEFAULTS.compaction } },
+		defaults: {
+			maxTokens: DEFAULTS.maxTokens,
+			compaction: { enabled: DEFAULTS.compaction.enabled, triggerRatio: DEFAULTS.compaction.triggerRatio },
+		},
 		types: { coding: { maxTokens: 256000 }, research: { maxTokens: 256000 }, review: { maxTokens: 512000 } },
 	};
 }
@@ -124,17 +133,6 @@ function validateOverride(value: unknown, filePath: string, field: string): void
 	knownFields(compaction, Object.keys(DEFAULTS.compaction), filePath, `${field}.compaction`);
 	for (const [key, setting] of Object.entries(compaction))
 		validateValue(`compaction.${key}` as ContextPolicyField, setting, filePath, `${field}.compaction.${key}`);
-	if (
-		typeof compaction.targetRatio === "number" &&
-		typeof compaction.triggerRatio === "number" &&
-		compaction.targetRatio >= compaction.triggerRatio
-	)
-		throw new ContextPolicyError(
-			"MW_CONTEXT_CONFIG_INVALID",
-			filePath,
-			`${field}.compaction.targetRatio`,
-			"must be less than triggerRatio",
-		);
 }
 
 function validateValue(field: ContextPolicyField, value: unknown, filePath: string, location: string): void {
@@ -255,15 +253,6 @@ function resolveDocuments(
 		else Object.assign(policy.compaction, { [field.slice("compaction.".length)]: value });
 		policy.sources[field] = { ...source };
 	}
-	if (policy.compaction.targetRatio >= policy.compaction.triggerRatio) {
-		const source = policy.sources["compaction.targetRatio"];
-		throw new ContextPolicyError(
-			"MW_CONTEXT_CONFIG_INVALID",
-			source.path,
-			`${source.level === "type" ? `types.${taskType}` : "defaults"}.compaction.targetRatio`,
-			"resolved targetRatio must be less than triggerRatio",
-		);
-	}
 	return policy;
 }
 
@@ -304,6 +293,13 @@ export async function updateContextPolicy(options: ContextPolicyUpdate): Promise
 		if (!(CONTEXT_POLICY_FIELDS as readonly string[]).includes(options.field))
 			throw new ContextPolicyError("MW_CONTEXT_CONFIG_INVALID", filePath, String(options.field), "unknown field");
 		if (options.operation === "set") validateValue(options.field, options.value, filePath, options.field);
+		if (options.operation === "set" && DELEGATED_CONTEXT_FIELDS.includes(options.field))
+			throw new ContextPolicyError(
+				"MW_CONTEXT_NATIVE_PARAMETER",
+				filePath,
+				options.field,
+				"pi owns compaction generation parameters; configure pi compaction settings instead",
+			);
 	}
 	let release: () => void;
 	try {
@@ -346,7 +342,7 @@ export async function updateContextPolicy(options: ContextPolicyUpdate): Promise
 		}
 		const nextGlobal = options.scope === "global" ? document : global;
 		const nextProject = options.scope === "project" ? document : project;
-		// Validate inherited ratio combinations for every affected type before writing.
+		// Resolve inherited active policy values for every affected type before writing.
 		for (const taskType of new Set([
 			location.taskType,
 			options.type,

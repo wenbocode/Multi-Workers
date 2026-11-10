@@ -32,24 +32,14 @@ const zeroUsage: Usage = {
 
 describe("context budget math", () => {
 	it.each([
-		[1000000, 32768, undefined, 512000, 32768, 10240, 468992, 375193, 234496],
-		[128000, 65536, undefined, 128000, 65536, 4096, 58368, 46694, 29184],
-		[512000, 4096, undefined, 512000, 16384, 10240, 485376, 388300, 242688],
-		[512000, 65536, 40000, 512000, 40000, 10240, 461760, 369408, 230880],
-		[512000, 65536, 4096, 512000, 16384, 10240, 485376, 388300, 242688],
+		[1000000, 32768, undefined, 512000, 32768, 10240, 468992, 375193],
+		[128000, 65536, undefined, 128000, 65536, 4096, 58368, 46694],
+		[512000, 4096, undefined, 512000, 16384, 10240, 485376, 388300],
+		[512000, 65536, 40000, 512000, 40000, 10240, 461760, 369408],
+		[512000, 65536, 4096, 512000, 16384, 10240, 485376, 388300],
 	])(
 		"reserves declared output and caps model=%i output=%i override=%j",
-		(
-			contextWindow,
-			maxTokens,
-			output,
-			effectiveWindow,
-			outputReserve,
-			safetyMargin,
-			inputBudget,
-			triggerTokens,
-			targetTokens,
-		) => {
+		(contextWindow, maxTokens, output, effectiveWindow, outputReserve, safetyMargin, inputBudget, triggerTokens) => {
 			const model = Object.freeze({ contextWindow, maxTokens });
 			const original = JSON.stringify(model);
 			const policy = resolveContextPolicy({ controlRoot: root, homeDir: root });
@@ -61,7 +51,6 @@ describe("context budget math", () => {
 				safetyMargin,
 				inputBudget,
 				triggerTokens,
-				targetTokens,
 			});
 			expect(JSON.stringify(model)).toBe(original);
 			expect(fs.readdirSync(root)).toEqual([]);

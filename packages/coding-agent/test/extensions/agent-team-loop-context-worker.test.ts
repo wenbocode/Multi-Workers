@@ -12,16 +12,15 @@ import {
 } from "@earendil-works/pi-ai";
 import { streamSimple as streamFaux } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SUMMARIZATION_SYSTEM_PROMPT } from "../../src/core/compaction/utils.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import {
 	CONTEXT_COMPACTION_USAGE_TYPE,
 	type ContextCompactionUsage,
-	ContextController,
 	contextPolicyFailureMessage,
 	MwContextPolicyError,
 } from "../../src/extensions/agent-team-loop/shared/context-controller.ts";
 import { registerContextPolicy } from "../../src/extensions/agent-team-loop/shared/context-extension.ts";
-import { resolveContextPolicy } from "../../src/extensions/agent-team-loop/shared/context-policy.ts";
 import { checkRecovery } from "../../src/extensions/agent-team-loop/worker/output-sections.ts";
 import { workerModeActivate } from "../../src/extensions/agent-team-loop/worker/worker-mode.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
@@ -56,7 +55,16 @@ afterEach(() => {
 	fs.rmSync(root, { recursive: true, force: true });
 });
 
-async function workerHarness(options: { policy?: boolean; phases?: boolean; type?: "coding" | "review" } = {}) {
+async function workerHarness(
+	options: {
+		policy?: boolean;
+		phases?: boolean;
+		type?: "coding" | "review";
+		retry?: boolean;
+		worker?: boolean;
+		nativeKeepRecentTokens?: number;
+	} = {},
+) {
 	const taskDir = path.join(root, ".agenticdoc", "context-key", "workers", "context-task");
 	fs.mkdirSync(taskDir, { recursive: true });
 	const taskFile = path.join(taskDir, "task.md");
@@ -75,7 +83,10 @@ async function workerHarness(options: { policy?: boolean; phases?: boolean; type
 	}
 	const sendCalls: string[] = [];
 	const h = await createHarness({
-		settings: { retry: { enabled: false }, compaction: { enabled: false } },
+		settings: {
+			retry: { enabled: options.retry ?? false, maxRetries: 1, baseDelayMs: 1 },
+			compaction: { enabled: false, keepRecentTokens: options.nativeKeepRecentTokens ?? 1, reserveTokens: 16384 },
+		},
 		extensionFactories: [
 			async (pi) => {
 				const send = pi.sendUserMessage.bind(pi);
@@ -85,7 +96,7 @@ async function workerHarness(options: { policy?: boolean; phases?: boolean; type
 				};
 				if (options.policy)
 					registerContextPolicy(pi, { controlRoot: root, taskFile, homeDir: path.join(root, "home") });
-				await workerModeActivate(pi);
+				if (options.worker !== false) await workerModeActivate(pi);
 			},
 		],
 	});
@@ -107,6 +118,116 @@ async function workerHarness(options: { policy?: boolean; phases?: boolean; type
 }
 
 describe("context worker terminal path", () => {
+	it.each(["throw", "rejected-stream"] as const)(
+		"native provider %s is safely projected before core/worker persistence",
+		async (mode) => {
+			const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+			const { h, taskDir } = await workerHarness({ policy: true });
+			fs.writeFileSync(
+				path.join(root, ".mw/context.json"),
+				JSON.stringify({ version: 1, defaults: { maxTokens: 80000, compaction: { triggerRatio: 0.2 } } }),
+			);
+			h.sessionManager.appendMessage({ role: "user", content: "Preserve task work", timestamp: 1 });
+			h.sessionManager.appendMessage(fauxAssistantMessage("completed work ".repeat(5000)));
+			h.session.agent.state.messages = h.sessionManager.buildSessionContext().messages;
+			const failure = Object.assign(new Error("fetch failed PRIVATE-NATIVE-KEY https://private?key=secret"), {
+				code: "ECONNRESET",
+				status: 503,
+			});
+			let calls = 0;
+			const stream = () => {
+				calls++;
+				if (mode === "throw") throw failure;
+				const result = createAssistantMessageEventStream();
+				result.end(fauxAssistantMessage(""));
+				Object.defineProperty(result, "result", {
+					value: async () => {
+						throw failure;
+					},
+				});
+				return result;
+			};
+			const selected = h.getModel();
+			h.session.modelRuntime.registerNativeProvider({
+				id: selected.provider,
+				name: "Throwing native fixture",
+				getModels: () => h.models,
+				auth: { apiKey: { name: "Fixture", resolve: async () => ({ auth: { apiKey: "faux-key" } }) } },
+				stream,
+				streamSimple: stream,
+			});
+			await expect(h.session.prompt("continue assigned work")).rejects.toMatchObject({
+				details: {
+					code: "SUMMARY_FAILED",
+					summaryFailure: { category: "network", httpStatus: 503, errorType: "ECONNRESET" },
+					nativeSummaryUsage: null,
+				},
+			});
+			expect(exit).toHaveBeenCalledExactlyOnceWith(2);
+			expect(calls).toBe(1);
+			expect(h.faux.state.callCount).toBe(0);
+			const persisted = fs.readFileSync(path.join(taskDir, "run.json"), "utf8");
+			expect(persisted).not.toContain("PRIVATE-");
+			expect(persisted).not.toContain("https://private");
+			expect(JSON.stringify(h.events)).not.toContain("PRIVATE-");
+			expect(h.sessionManager.getBranch().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+		},
+	);
+	it.each(["transient", "quota", "no-progress"] as const)(
+		"native %s retry follows pi settings without leaking failed text",
+		async (kind) => {
+			const { h } = await workerHarness({
+				policy: true,
+				retry: true,
+				worker: false,
+				nativeKeepRecentTokens: kind === "no-progress" ? 100 : 1,
+			});
+			fs.writeFileSync(
+				path.join(root, ".mw/context.json"),
+				JSON.stringify({ version: 1, defaults: { maxTokens: 80000, compaction: { triggerRatio: 0.2 } } }),
+			);
+			h.sessionManager.appendMessage({ role: "user", content: "Retain all completed work", timestamp: 1 });
+			h.sessionManager.appendMessage(fauxAssistantMessage("completed work ".repeat(5000)));
+			h.sessionManager.appendMessage({ role: "user", content: "Prior confirmation", timestamp: 2 });
+			h.sessionManager.appendMessage(fauxAssistantMessage("Confirmed."));
+			h.session.agent.state.messages = h.sessionManager.buildSessionContext().messages;
+			let summaries = 0,
+				business = 0;
+			const response = (context: Context) => {
+				if (context.systemPrompt !== SUMMARIZATION_SYSTEM_PROMPT) {
+					business++;
+					return fauxAssistantMessage("Task complete without replay.");
+				}
+				summaries++;
+				if (summaries === 1)
+					return fauxAssistantMessage("", {
+						stopReason: "error",
+						errorMessage:
+							kind === "quota"
+								? "HTTP 429 insufficient_quota PRIVATE-QUOTA-KEY"
+								: "HTTP 503 service unavailable PRIVATE-TRANSIENT-KEY",
+					});
+				return fauxAssistantMessage("Native retained history: all prior work complete, continue remaining task.");
+			};
+			h.setResponses(Array.from({ length: 8 }, () => response));
+			if (kind === "quota")
+				await expect(h.session.prompt("continue assigned work")).rejects.toMatchObject({
+					details: { code: "SUMMARY_FAILED", summaryFailure: { category: "quota" } },
+				});
+			else if (kind === "no-progress")
+				await expect(h.session.prompt("continue assigned work")).rejects.toMatchObject({
+					details: { code: "SUMMARY_NO_PROGRESS" },
+				});
+			else await h.session.prompt("continue assigned work");
+			// Native split-turn compaction makes two generation calls; one transient retry adds a third.
+			expect([summaries, business]).toEqual(kind === "quota" ? [1, 0] : kind === "no-progress" ? [2, 0] : [3, 1]);
+			expect(h.sessionManager.getBranch().filter((entry) => entry.type === "compaction")).toHaveLength(
+				kind === "quota" ? 0 : 1,
+			);
+			expect(JSON.stringify(h.sessionManager.getEntries())).not.toContain("PRIVATE-");
+			expect(JSON.stringify(h.events)).not.toContain("PRIVATE-");
+		},
+	);
 	it.each([
 		{ status: "error", code: "SUMMARY_FAILED", category: "quota" },
 		{ status: "length", code: "SUMMARY_TRUNCATED", category: "unknown" },
@@ -121,15 +242,14 @@ describe("context worker terminal path", () => {
 				defaults: { maxTokens: 80000, compaction: { triggerRatio: 0.2, targetRatio: 0.1, keepRecentTokens: 100 } },
 			}),
 		);
-		h.session.agent.state.messages = [
-			{ role: "user", content: "preserve existing work", timestamp: 1 },
-			fauxAssistantMessage("completed work ".repeat(5000)),
-		];
+		h.sessionManager.appendMessage({ role: "user", content: "preserve existing work", timestamp: 1 });
+		h.sessionManager.appendMessage(fauxAssistantMessage("completed work ".repeat(5000)));
+		h.session.agent.state.messages = h.sessionManager.buildSessionContext().messages;
 		let summaries = 0;
 		let business = 0;
 		h.setResponses([
 			(context) => {
-				if (context.systemPrompt?.includes("Summarize historical task state")) summaries++;
+				if (context.systemPrompt === SUMMARIZATION_SYSTEM_PROMPT) summaries++;
 				else business++;
 				return fauxAssistantMessage("PRIVATE-SUMMARY-BODY", {
 					stopReason: failure.status,
@@ -138,7 +258,9 @@ describe("context worker terminal path", () => {
 				});
 			},
 		]);
-		await h.session.prompt("continue assigned work");
+		await expect(h.session.prompt("continue assigned work")).rejects.toMatchObject({
+			details: { code: failure.code },
+		});
 		expect(exit).toHaveBeenCalledExactlyOnceWith(2);
 		expect([summaries, business, h.faux.state.callCount]).toEqual([1, 0, 1]);
 		expect(sendCalls).toEqual([]);
@@ -158,17 +280,21 @@ describe("context worker terminal path", () => {
 			},
 		});
 		const details = run.context_policy_details as Record<string, unknown>;
-		const usage = h.sessionManager
-			.getBranch()
-			.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_COMPACTION_USAGE_TYPE);
-		expect(usage).toHaveLength(1);
-		if (usage[0].type !== "custom") throw new Error("missing usage");
-		expect(usage[0].data).toMatchObject({
-			attemptId: details.attemptId,
-			attemptStartedAt: details.attemptStartedAt,
-			providerRequestStarted: true,
-			status: failure.status,
+		expect(details.attemptId).toEqual(expect.any(String));
+		expect(details.attemptStartedAt).toEqual(expect.any(String));
+		expect(details.nativeSummaryUsage).toEqual({
+			input: expect.any(Number),
+			output: expect.any(Number),
+			cacheRead: 0,
+			cacheWrite: 0,
 		});
+		expect((details.nativeSummaryUsage as { input: number }).input).toBeGreaterThan(0);
+		expect(
+			h.sessionManager
+				.getBranch()
+				.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_COMPACTION_USAGE_TYPE),
+		).toHaveLength(0);
+		expect(h.sessionManager.getBranch().filter((entry) => entry.type === "compaction")).toHaveLength(0);
 		expect(
 			h.sessionManager
 				.getBranch()
@@ -247,7 +373,7 @@ describe("context worker terminal path", () => {
 	});
 });
 
-it("production controller appendEntry persists summary usage once for the real Python stats kernel", async () => {
+it("historical MW usage remains readable and deduplicated by the real Python stats kernel", async () => {
 	const session = SessionManager.create(root, path.join(root, "sessions"));
 	const business: AssistantMessage = {
 		...fauxAssistantMessage("business"),
@@ -264,87 +390,30 @@ it("production controller appendEntry persists summary usage once for the real P
 		},
 	};
 	session.appendMessage(business);
-	const policy = resolveContextPolicy({ controlRoot: root, homeDir: path.join(root, "home") });
-	policy.compaction = {
-		...policy.compaction,
-		triggerRatio: 0.3,
-		targetRatio: 0.2,
-		keepRecentTokens: 100,
-		maxSummaryTokens: 1000,
+	// Explicit historical fixture: current controller no longer emits this legacy record.
+	const historical: ContextCompactionUsage = {
+		version: 1,
+		attemptId: "historical-summary",
+		attemptStartedAt: new Date().toISOString(),
+		provider: model.provider,
+		model: model.id,
+		purpose: "summary",
+		providerRequestStarted: true,
+		status: "stop",
+		usage: { input: 101, output: 202, cacheRead: 303, cacheWrite: 404 },
 	};
-	const controller = new ContextController({
-		readPolicy: () => policy,
-		getCheckpointEntries: () => session.getBranch().filter((entry) => entry.type === "custom"),
-		appendEntry: (type, data) => {
-			session.appendCustomEntry(type, data);
-		},
+	session.appendCustomEntry(CONTEXT_COMPACTION_USAGE_TYPE, historical);
+	session.appendCustomEntry(CONTEXT_COMPACTION_USAGE_TYPE, historical);
+	session.appendCustomEntry(CONTEXT_COMPACTION_USAGE_TYPE, {
+		...historical,
+		attemptId: "historical-queued",
+		providerRequestStarted: false,
+		status: "aborted",
+		usage: null,
 	});
-	const context: Context = {
-		messages: [
-			{ role: "user", content: "fixed task", timestamp: 0 },
-			{ ...business, content: [{ type: "text", text: "old completed work ".repeat(4500) }] },
-			{ role: "user", content: "continue", timestamp: 1 },
-		],
-	};
-	await controller.prepare(model, context, { maxTokens: 4096 }, () => {
-		const result: AssistantMessage = {
-			...business,
-			content: [
-				{
-					type: "text",
-					text: JSON.stringify({
-						goal: "fixed task",
-						constraints: "allowed only",
-						decisions: "none",
-						changes: "none",
-						verification: "none",
-						remaining: "continue",
-					}),
-				},
-			],
-			usage: { ...business.usage, input: 101, output: 202, cacheRead: 303, cacheWrite: 404, totalTokens: 1010 },
-		};
-		const stream = createAssistantMessageEventStream();
-		stream.push({ type: "done", reason: "stop", message: result });
-		stream.end(result);
-		return stream;
-	});
-	const custom = session
-		.getBranch()
-		.find((entry) => entry.type === "custom" && entry.customType === CONTEXT_COMPACTION_USAGE_TYPE);
-	if (custom?.type !== "custom") throw new Error("production summary usage missing");
-	expect(custom.data).toMatchObject({ providerRequestStarted: true, status: "stop" });
-	session.appendCustomEntry(CONTEXT_COMPACTION_USAGE_TYPE, custom.data as ContextCompactionUsage);
-	const cancelledController = new ContextController({
-		readPolicy: () => policy,
-		getCheckpointEntries: () => [],
-		appendEntry: (type, data) => {
-			session.appendCustomEntry(type, data);
-		},
-	});
-	const parent = new AbortController();
-	let dispatchQueued = false;
-	const cancelled = cancelledController.prepare(model, context, { maxTokens: 4096, signal: parent.signal }, () => {
-		dispatchQueued = true;
-		const pending = createAssistantMessageEventStream();
-		Object.defineProperty(pending, "providerRequestStarted", { get: () => false });
-		return pending;
-	});
-	const rejection = expect(cancelled).rejects.toBeDefined();
-	await vi.waitFor(() => expect(dispatchQueued).toBe(true));
-	parent.abort();
-	await rejection;
-	const cancelledUsage = session
-		.getBranch()
-		.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_COMPACTION_USAGE_TYPE);
-	expect(cancelledUsage).toHaveLength(3);
-	const lastCancelledUsage = cancelledUsage.at(-1);
-	if (lastCancelledUsage?.type !== "custom") throw new Error("cancelled summary usage missing");
-	expect(lastCancelledUsage.data).toMatchObject({ providerRequestStarted: false, status: "aborted", usage: null });
 	session.appendMessage(contextPolicyFailureMessage(model, new MwContextPolicyError("INPUT_BUDGET")));
 	const file = session.getSessionFile();
 	if (!file) throw new Error("persisted session missing");
-	expect(fs.existsSync(file)).toBe(true);
 	const python = execFileSync(
 		process.env.PYTHON_EXE ?? "python",
 		["-m", "pytest", "-q", "test_context_usage.py", "-k", "typescript_production_session_fixture"],

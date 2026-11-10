@@ -10,7 +10,6 @@ export interface ContextBudget {
 	safetyMargin: number;
 	inputBudget: number;
 	triggerTokens: number;
-	targetTokens: number;
 }
 
 export class ContextBudgetError extends Error {
@@ -58,7 +57,6 @@ export function computeContextBudget(
 		safetyMargin,
 		inputBudget,
 		triggerTokens: Math.floor(inputBudget * policy.compaction.triggerRatio),
-		targetTokens: Math.floor(inputBudget * policy.compaction.targetRatio),
 	};
 	if (inputBudget <= 0 || fixedTokens > inputBudget)
 		throw new ContextBudgetError("MW_CONTEXT_BUDGET_IMPOSSIBLE", { ...budget, fixedTokens });

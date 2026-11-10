@@ -16,13 +16,7 @@ export interface ProviderContextPolicy {
 		model: Model<Api>,
 		context: Context,
 		options: SimpleStreamOptions | undefined,
-		dispatch: (
-			model: Model<Api>,
-			context: Context,
-			options?: SimpleStreamOptions,
-			intent?: { managedSummary?: boolean },
-		) => AssistantMessageEventStream,
-		mode: { nativeSummary?: boolean; budgetOnly?: boolean; managedSummary?: boolean },
+		mode: { nativeSummary?: boolean; budgetOnly?: boolean; automaticNativeSummary?: boolean },
 	): Promise<Context>;
 	observeUsage(
 		model: Model<Api>,
@@ -35,7 +29,14 @@ export interface ProviderContextPolicy {
 export interface ProviderPolicyHooks {
 	controller?: ProviderContextPolicy;
 	nativeSummarySignals?: WeakSet<AbortSignal>;
+	automaticNativeSummarySignals?: WeakSet<AbortSignal>;
 	policyFailure?: (model: Model<Api>, error: unknown) => AssistantMessage | undefined;
+	nativeSummaryFailure?: (
+		model: Model<Api>,
+		response: AssistantMessage,
+		signal: AbortSignal | undefined,
+		failure?: unknown,
+	) => AssistantMessage | undefined;
 	authChanged?: (model: Model<Api>) => Error;
 	limit?: (
 		model: Model<Api>,
@@ -83,7 +84,6 @@ export function installProviderPolicies(ctx: ExtensionContext, contextPolicy?: P
 						selected: Model<Api>,
 						request: Context,
 						requestOptions?: SimpleStreamOptions,
-						intent?: { managedSummary?: boolean },
 					): AssistantMessageEventStream => {
 						let started = false;
 						const start = () => {
@@ -120,15 +120,42 @@ export function installProviderPolicies(ctx: ExtensionContext, contextPolicy?: P
 									};
 									const resolved = auth.baseUrl ? { ...selected, baseUrl: auth.baseUrl } : selected;
 									// Queue/auth waits may span a policy edit. This last guard never summarizes while holding a slot.
-									await current.controller?.prepare(selected, request, requestOptions, physicalDispatch, {
+									await current.controller?.prepare(selected, request, requestOptions, {
 										budgetOnly: true,
-										managedSummary: intent?.managedSummary,
+										nativeSummary:
+											!!requestOptions?.signal && current.nativeSummarySignals?.has(requestOptions.signal),
+										automaticNativeSummary:
+											!!requestOptions?.signal &&
+											current.automaticNativeSummarySignals?.has(requestOptions.signal),
 									});
 									requestOptions?.signal?.throwIfAborted();
 									started = true;
 									const stream = provider[method](resolved, request, authenticated);
-									for await (const event of stream) transport.push(event);
-									transport.end(await stream.result());
+									for await (const event of stream) {
+										if (
+											(event.type === "done" || event.type === "error") &&
+											requestOptions?.signal &&
+											current.nativeSummarySignals?.has(requestOptions.signal)
+										) {
+											const guarded = current.nativeSummaryFailure?.(
+												selected,
+												await stream.result(),
+												requestOptions.signal,
+											);
+											if (guarded) {
+												transport.push({ type: "error", reason: "error", error: guarded });
+												transport.end(guarded);
+												return;
+											}
+										}
+										transport.push(event);
+									}
+									const result = await stream.result();
+									transport.end(
+										requestOptions?.signal && current.nativeSummarySignals?.has(requestOptions.signal)
+											? (current.nativeSummaryFailure?.(selected, result, requestOptions.signal) ?? result)
+											: result,
+									);
 								} catch (error) {
 									const failure = requestFailure(selected, error, requestOptions?.signal, current);
 									transport.push({
@@ -148,8 +175,10 @@ export function installProviderPolicies(ctx: ExtensionContext, contextPolicy?: P
 						return stream;
 					};
 					const projected = current.controller
-						? await current.controller.prepare(model, context, options, physicalDispatch, {
+						? await current.controller.prepare(model, context, options, {
 								nativeSummary: !!options?.signal && current.nativeSummarySignals?.has(options.signal),
+								automaticNativeSummary:
+									!!options?.signal && current.automaticNativeSummarySignals?.has(options.signal),
 							})
 						: context;
 					options?.signal?.throwIfAborted();
@@ -213,7 +242,7 @@ function requestFailure(
 ): AssistantMessage {
 	const policy = !signal?.aborted ? state.policyFailure?.(model, error) : undefined;
 	if (policy) return policy;
-	return {
+	const message: AssistantMessage = {
 		role: "assistant",
 		api: model.api,
 		provider: model.provider,
@@ -231,4 +260,7 @@ function requestFailure(
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 	};
+	if (!signal?.aborted && signal && state.nativeSummarySignals?.has(signal))
+		return state.nativeSummaryFailure?.(model, message, signal, error) ?? message;
+	return message;
 }

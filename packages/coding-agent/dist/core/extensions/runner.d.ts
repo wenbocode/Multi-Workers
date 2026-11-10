@@ -86,6 +86,7 @@ export declare class ExtensionRunner {
     private hasPendingMessagesFn;
     private getContextUsageFn;
     private compactFn;
+    private requestCompactionFn;
     private getSystemPromptFn;
     private getSystemPromptOptionsFn;
     private newSessionHandler;

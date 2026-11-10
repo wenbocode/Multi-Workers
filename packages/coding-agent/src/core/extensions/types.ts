@@ -302,6 +302,14 @@ export interface CompactOptions {
 	onError?: (error: Error) => void;
 }
 
+/** A deferred explicit compaction using pi's current native generation settings. */
+export interface CompactionRequestOptions {
+	/** Awaited after persistence; throwing rejects the following business request. */
+	onComplete?: (result: CompactionResult, signal: AbortSignal) => void | Promise<void>;
+	/** Awaited on failure; returning never suppresses the failure, throwing maps it. */
+	onError?: (error: Error, signal: AbortSignal) => void | Promise<void>;
+}
+
 /**
  * Context passed to extension event handlers.
  */
@@ -345,6 +353,11 @@ export interface ExtensionContext {
 	getContextUsage(): ContextUsage | undefined;
 	/** Trigger compaction without awaiting completion. */
 	compact(options?: CompactOptions): void;
+	/** Queue one native compaction before the next prompt or after a complete tool batch.
+	 * Requests at the same boundary coalesce; each callback is awaited once.
+	 * Unlike compact(), this does not abort the active agent run.
+	 */
+	requestCompaction(options?: CompactionRequestOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
 }
@@ -1649,6 +1662,7 @@ export interface ExtensionContextActions {
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
+	requestCompaction: (options?: CompactionRequestOptions) => void;
 	getSystemPrompt: () => string;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
 }

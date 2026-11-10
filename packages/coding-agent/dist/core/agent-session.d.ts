@@ -16,7 +16,7 @@ import type { Agent, AgentEvent, AgentMessage, AgentState, AgentTool, ThinkingLe
 import type { ImageContent, Model, TextContent } from "@earendil-works/pi-ai/compat";
 import { type BashResult } from "./bash-executor.ts";
 import { type CompactionResult } from "./compaction/index.ts";
-import { type ContextUsage, type ExtensionCommandContextActions, type ExtensionErrorListener, type ExtensionMode, ExtensionRunner, type ExtensionUIContext, type InputSource, type ReplacedSessionContext, type SessionStartEvent, type ShutdownHandler, type ToolDefinition, type ToolInfo } from "./extensions/index.ts";
+import { type CompactionRequestOptions, type ContextUsage, type ExtensionCommandContextActions, type ExtensionErrorListener, type ExtensionMode, ExtensionRunner, type ExtensionUIContext, type InputSource, type ReplacedSessionContext, type SessionStartEvent, type ShutdownHandler, type ToolDefinition, type ToolInfo } from "./extensions/index.ts";
 import type { CustomMessage } from "./messages.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { type PromptTemplate } from "./prompt-templates.ts";
@@ -199,6 +199,7 @@ export declare class AgentSession {
     private _isAgentRunActive;
     private _idleWaitPromise;
     private _resolveIdleWait;
+    private _settlementContinuationFrame;
     /** Tracks pending steering messages for UI display. Removed when delivered. */
     private _steeringMessages;
     /** Tracks pending follow-up messages for UI display. Removed when delivered. */
@@ -208,6 +209,9 @@ export declare class AgentSession {
     private _compactionAbortController;
     private _autoCompactionAbortController;
     private _overflowRecoveryAttempted;
+    private _pendingCompactionRequests;
+    private _requestedCompactionAbortController;
+    private _promptPreparationAbortController;
     private _branchSummaryAbortController;
     private _retryAbortController;
     private _retryAttempt;
@@ -485,6 +489,10 @@ export declare class AgentSession {
      * @param customInstructions Optional instructions for the compaction summary
      */
     compact(customInstructions?: string): Promise<CompactionResult>;
+    /** Queue an explicit native compaction at the next safe request boundary. */
+    requestCompaction(options?: CompactionRequestOptions): void;
+    private _drainCompactionRequests;
+    private _compactNow;
     /**
      * Cancel in-progress compaction (manual or auto).
      */

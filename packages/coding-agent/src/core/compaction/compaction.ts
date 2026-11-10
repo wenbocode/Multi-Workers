@@ -428,10 +428,27 @@ export function findCutPoint(
 		// Check if we've exceeded the budget
 		if (accumulatedTokens >= keepRecentTokens) {
 			// Find the closest valid cut point at or after this entry
-			for (let c = 0; c < cutPoints.length; c++) {
-				if (cutPoints[c] >= i) {
-					cutIndex = cutPoints[c];
-					break;
+			const nextCutPoint = cutPoints.find((point) => point >= i);
+			if (nextCutPoint !== undefined) {
+				cutIndex = nextCutPoint;
+			} else {
+				// At a completed tool-batch boundary there may be no later assistant.
+				// Retain the owning assistant and its entire batch, even if oversized.
+				const result = sessionEntryToContextMessages(entry).find((message) => message.role === "toolResult");
+				if (result?.role === "toolResult") {
+					for (let before = i - 1; before >= startIndex; before--) {
+						const owner = sessionEntryToContextMessages(entries[before]).some(
+							(message) =>
+								message.role === "assistant" &&
+								message.content.some((part) => part.type === "toolCall" && part.id === result.toolCallId),
+						);
+						if (owner && cutPoints.includes(before)) {
+							cutIndex = before;
+							break;
+						}
+					}
+				} else {
+					cutIndex = cutPoints[cutPoints.length - 1];
 				}
 			}
 			break;

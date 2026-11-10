@@ -8,7 +8,6 @@ export interface ContextBudget {
     safetyMargin: number;
     inputBudget: number;
     triggerTokens: number;
-    targetTokens: number;
 }
 export declare class ContextBudgetError extends Error {
     readonly code: string;

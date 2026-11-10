@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	CONTEXT_POLICY_FIELDS,
 	ContextPolicyError,
+	DELEGATED_CONTEXT_FIELDS,
 	readContextPolicyDocument,
 	resolveContextPolicy,
 	updateContextPolicy,
@@ -208,6 +209,20 @@ describe("context policy resolution", () => {
 });
 
 describe("context policy invalid inputs and atomic updates", () => {
+	it("first global write creates only active MW fields without legacy generation overrides", async () => {
+		await updateContextPolicy({
+			controlRoot,
+			homeDir,
+			scope: "global",
+			operation: "set",
+			field: "maxTokens",
+			value: 400000,
+		});
+		expect(readContextPolicyDocument(globalPath)?.defaults).toEqual({
+			maxTokens: 400000,
+			compaction: { enabled: true, triggerRatio: 0.8 },
+		});
+	});
 	it.each([
 		["[]", "$"],
 		["null", "$"],
@@ -230,8 +245,6 @@ describe("context policy invalid inputs and atomic updates", () => {
 		['{"version":1,"defaults":{"compaction":{"timeoutMs":true}}}', "timeoutMs"],
 		['{"version":1,"defaults":{"compaction":{"targetRatio":0}}}', "targetRatio"],
 		['{"version":1,"defaults":{"compaction":{"triggerRatio":1}}}', "triggerRatio"],
-		['{"version":1,"defaults":{"compaction":{"triggerRatio":0.5,"targetRatio":0.5}}}', "targetRatio"],
-		['{"version":1,"defaults":{"compaction":{"targetRatio":0.9}}}', "targetRatio"],
 	])("rejects malformed document %s with path and field %s", (text, field) => {
 		fs.mkdirSync(path.dirname(projectPath), { recursive: true });
 		fs.writeFileSync(projectPath, text);
@@ -256,24 +269,51 @@ describe("context policy invalid inputs and atomic updates", () => {
 		expect(() => resolveContextPolicy({ controlRoot, homeDir })).toThrow(projectPath);
 	});
 
-	it("rejects resolved cross-layer ratio conflicts before committing a mutation", async () => {
+	it("legacy target ratios cannot constrain the active native trigger", async () => {
 		write(globalPath, { version: 1, defaults: { compaction: { targetRatio: 0.6 } } });
 		write(projectPath, { version: 1, types: { custom: { maxTokens: 100000 } } });
-		const original = fs.readFileSync(projectPath, "utf8");
-		await expect(
-			updateContextPolicy({
-				controlRoot,
-				homeDir,
-				scope: "project",
-				operation: "set",
-				type: "custom",
-				field: "compaction.triggerRatio",
-				value: 0.55,
-			}),
-		).rejects.toThrow("targetRatio");
-		expect(fs.readFileSync(projectPath, "utf8")).toBe(original);
+		const policy = await updateContextPolicy({
+			controlRoot,
+			homeDir,
+			taskType: "custom",
+			scope: "project",
+			operation: "set",
+			type: "custom",
+			field: "compaction.triggerRatio",
+			value: 0.55,
+		});
+		expect(policy.compaction.triggerRatio).toBe(0.55);
+		expect(policy.compaction.targetRatio).toBe(0.6);
 		expect(fs.readdirSync(path.dirname(projectPath))).toEqual(["context.json"]);
 	});
+
+	it.each(DELEGATED_CONTEXT_FIELDS)(
+		"refuses setting delegated %s without writing but permits clearing old values",
+		async (field) => {
+			write(projectPath, {
+				version: 1,
+				defaults: {
+					compaction: { targetRatio: 0.9, keepRecentTokens: 20000, maxSummaryTokens: 4096, timeoutMs: 120000 },
+				},
+			});
+			const original = fs.readFileSync(projectPath, "utf8");
+			await expect(
+				updateContextPolicy({
+					controlRoot,
+					homeDir,
+					scope: "project",
+					operation: "set",
+					field,
+					value: field === "compaction.targetRatio" ? 0.4 : 1000,
+				}),
+			).rejects.toThrow("MW_CONTEXT_NATIVE_PARAMETER");
+			expect(fs.readFileSync(projectPath, "utf8")).toBe(original);
+			await updateContextPolicy({ controlRoot, homeDir, scope: "project", operation: "clear", field });
+			expect(readContextPolicyDocument(projectPath)?.defaults?.compaction).not.toHaveProperty(
+				field.slice("compaction.".length),
+			);
+		},
+	);
 
 	it("does not steal an existing lock or alter config during lock conflict", async () => {
 		write(projectPath, { version: 1, types: {} });

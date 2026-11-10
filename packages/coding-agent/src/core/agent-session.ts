@@ -68,6 +68,7 @@ import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
+	type CompactionRequestOptions,
 	type ContextUsage,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
@@ -283,6 +284,10 @@ interface ToolDefinitionEntry {
 	sourceInfo: SourceInfo;
 }
 
+interface SettlementContinuationFrame {
+	children: Promise<void>[];
+}
+
 function estimateMessagesTokens(messages: AgentMessage[]): number {
 	let tokens = 0;
 	for (const message of messages) {
@@ -315,6 +320,7 @@ export class AgentSession {
 	private _isAgentRunActive = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
+	private _settlementContinuationFrame: SettlementContinuationFrame | undefined;
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
@@ -327,6 +333,9 @@ export class AgentSession {
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
+	private _pendingCompactionRequests: CompactionRequestOptions[] = [];
+	private _requestedCompactionAbortController: AbortController | undefined;
+	private _promptPreparationAbortController: AbortController | undefined;
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -541,11 +550,13 @@ export class AgentSession {
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.(turn, signal);
 			const previousContext = previousSnapshot?.context ?? turn.context;
+			const compacted = await this._drainCompactionRequests(signal);
 
 			return {
 				...previousSnapshot,
 				context: {
 					...previousContext,
+					...(compacted ? { messages: this.agent.state.messages.slice() } : {}),
 					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
 					tools: this.agent.state.tools.slice(),
 				},
@@ -595,10 +606,28 @@ export class AgentSession {
 
 	private async _emitAgentSettled(): Promise<void> {
 		this._isAgentRunActive = false;
+		const parentFrame = this._settlementContinuationFrame;
+		const frame: SettlementContinuationFrame = { children: [] };
+		this._settlementContinuationFrame = frame;
 		try {
 			await this._extensionRunner.emit({ type: "agent_settled" });
+			// Extension-triggered phases belong to this prompt's lifetime. Nested
+			// settlements own separate frames, so no frame waits for its own run.
+			let failed = false;
+			let firstFailure: unknown;
+			for (let index = 0; index < frame.children.length; index++) {
+				try {
+					await frame.children[index];
+				} catch (error) {
+					if (!failed) firstFailure = error;
+					failed = true;
+				}
+			}
+			// A failed child must not release the parent while siblings still run.
+			if (failed) throw firstFailure;
 			this._emit({ type: "agent_settled" });
 		} finally {
+			this._settlementContinuationFrame = parentFrame;
 			this._resolveIdleWaitIfIdle();
 		}
 	}
@@ -838,6 +867,9 @@ export class AgentSession {
 	 */
 	dispose(): void {
 		try {
+			this._pendingCompactionRequests = [];
+			this._promptPreparationAbortController?.abort();
+			this._requestedCompactionAbortController?.abort();
 			this.abortRetry();
 			this.abortCompaction();
 			this.abortBranchSummary();
@@ -1062,12 +1094,19 @@ export class AgentSession {
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		this._isAgentRunActive = true;
+		const preparationAbort = this._pendingCompactionRequests.length > 0 ? new AbortController() : undefined;
+		this._promptPreparationAbortController = preparationAbort;
 		try {
-			await this.agent.prompt(messages);
+			if (preparationAbort) await this._drainCompactionRequests(preparationAbort.signal);
+			preparationAbort?.signal.throwIfAborted();
+			const prompt = this.agent.prompt(messages);
+			this._promptPreparationAbortController = undefined;
+			await prompt;
 			while (await this._handlePostAgentRun()) {
 				await this.agent.continue();
 			}
 		} finally {
+			this._promptPreparationAbortController = undefined;
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
 			await this._emitAgentSettled();
@@ -1549,7 +1588,21 @@ export class AgentSession {
 	 */
 	async abort(): Promise<void> {
 		this.abortRetry();
+		this._promptPreparationAbortController?.abort();
+		this._requestedCompactionAbortController?.abort();
 		this.agent.abort();
+		const pendingCompactions = this._pendingCompactionRequests.splice(0);
+		if (pendingCompactions.length > 0) {
+			const cancelled = new AbortController();
+			cancelled.abort();
+			for (const request of pendingCompactions) {
+				try {
+					await request.onError?.(cancelled.signal.reason, cancelled.signal);
+				} catch {
+					// Explicit cancellation wins over an extension's error mapping.
+				}
+			}
+		}
 		await this.waitForIdle();
 	}
 
@@ -1789,10 +1842,62 @@ export class AgentSession {
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
 		await this.abort();
+		return this._compactNow(customInstructions);
+	}
+
+	/** Queue an explicit native compaction at the next safe request boundary. */
+	requestCompaction(options: CompactionRequestOptions = {}): void {
+		this._pendingCompactionRequests.push(options);
+	}
+
+	private async _drainCompactionRequests(parentSignal?: AbortSignal): Promise<boolean> {
+		if (this._pendingCompactionRequests.length === 0) return false;
+		// Only this snapshot is consumed: callbacks cannot cause an unbounded drain loop.
+		const requests = this._pendingCompactionRequests.splice(0);
+		const abort = new AbortController();
+		this._requestedCompactionAbortController = abort;
+		const parentAbort = () => abort.abort(parentSignal?.reason);
+		if (parentSignal?.aborted) parentAbort();
+		else parentSignal?.addEventListener("abort", parentAbort, { once: true });
+		try {
+			abort.signal.throwIfAborted();
+			const result = await this._compactNow(undefined, abort.signal);
+			for (const request of requests) {
+				abort.signal.throwIfAborted();
+				await request.onComplete?.(result, abort.signal);
+			}
+			abort.signal.throwIfAborted();
+			return true;
+		} catch (error) {
+			let failure = error instanceof Error ? error : new Error(String(error));
+			for (const request of requests) {
+				try {
+					await request.onError?.(failure, abort.signal);
+				} catch (mapped) {
+					failure = mapped instanceof Error ? mapped : new Error(String(mapped));
+				}
+			}
+			abort.signal.throwIfAborted();
+			throw failure;
+		} finally {
+			parentSignal?.removeEventListener("abort", parentAbort);
+			this._requestedCompactionAbortController = undefined;
+		}
+	}
+
+	/** Shared native implementation; callers establish a safe boundary before entering. */
+	private async _compactNow(customInstructions?: string, parentSignal?: AbortSignal): Promise<CompactionResult> {
+		if (this._compactionAbortController || this._autoCompactionAbortController) {
+			throw new Error("Compaction is already in progress");
+		}
 		this._compactionAbortController = new AbortController();
+		const parentAbort = () => this._compactionAbortController?.abort(parentSignal?.reason);
+		if (parentSignal?.aborted) parentAbort();
+		else parentSignal?.addEventListener("abort", parentAbort, { once: true });
 		this._emit({ type: "compaction_start", reason: "manual" });
 
 		try {
+			parentSignal?.throwIfAborted();
 			if (!this.model) {
 				throw new Error(formatNoModelSelectedMessage());
 			}
@@ -1842,6 +1947,7 @@ export class AgentSession {
 			let usage: Usage | undefined;
 			let details: unknown;
 
+			parentSignal?.throwIfAborted();
 			if (extensionCompaction) {
 				// Extension provided compaction content
 				summary = extensionCompaction.summary;
@@ -1872,6 +1978,7 @@ export class AgentSession {
 			}
 
 			if (this._compactionAbortController.signal.aborted) {
+				parentSignal?.throwIfAborted();
 				throw new Error("Compaction cancelled");
 			}
 
@@ -1925,6 +2032,7 @@ export class AgentSession {
 			});
 			throw error;
 		} finally {
+			parentSignal?.removeEventListener("abort", parentAbort);
 			this._compactionAbortController = undefined;
 		}
 	}
@@ -1933,6 +2041,8 @@ export class AgentSession {
 	 * Cancel in-progress compaction (manual or auto).
 	 */
 	abortCompaction(): void {
+		this._promptPreparationAbortController?.abort();
+		this._requestedCompactionAbortController?.abort();
 		this._compactionAbortController?.abort();
 		this._autoCompactionAbortController?.abort();
 	}
@@ -2362,7 +2472,10 @@ export class AgentSession {
 		runner.bindCore(
 			{
 				sendMessage: (message, options) => {
-					this.sendCustomMessage(message, options).catch((err) => {
+					const frame = this._settlementContinuationFrame;
+					const continuation = this.sendCustomMessage(message, options);
+					frame?.children.push(continuation);
+					continuation.catch((err) => {
 						runner.emitError({
 							extensionPath: "<runtime>",
 							event: "send_message",
@@ -2371,7 +2484,10 @@ export class AgentSession {
 					});
 				},
 				sendUserMessage: (content, options) => {
-					this.sendUserMessage(content, options).catch((err) => {
+					const frame = this._settlementContinuationFrame;
+					const continuation = this.sendUserMessage(content, options);
+					frame?.children.push(continuation);
+					continuation.catch((err) => {
 						runner.emitError({
 							extensionPath: "<runtime>",
 							event: "send_user_message",
@@ -2436,6 +2552,9 @@ export class AgentSession {
 							options?.onError?.(err);
 						}
 					})();
+				},
+				requestCompaction: (options) => {
+					this.requestCompaction(options);
 				},
 				getSystemPrompt: () => this.systemPrompt,
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,
@@ -2605,6 +2724,9 @@ export class AgentSession {
 	}
 
 	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
+		this._pendingCompactionRequests = [];
+		this._promptPreparationAbortController?.abort();
+		this._requestedCompactionAbortController?.abort();
 		const previousFlagValues = this._extensionRunner.getFlagValues();
 		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
 		await this.settingsManager.reload();

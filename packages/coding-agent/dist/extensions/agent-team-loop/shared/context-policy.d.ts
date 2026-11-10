@@ -8,6 +8,7 @@ export interface ContextCompactionPolicy {
 }
 export declare const CONTEXT_POLICY_FIELDS: readonly ["maxTokens", "compaction.enabled", "compaction.triggerRatio", "compaction.targetRatio", "compaction.keepRecentTokens", "compaction.maxSummaryTokens", "compaction.timeoutMs"];
 export type ContextPolicyField = (typeof CONTEXT_POLICY_FIELDS)[number];
+export declare const DELEGATED_CONTEXT_FIELDS: readonly ContextPolicyField[];
 export type ContextPolicyScope = "global" | "project";
 export interface ContextPolicySource {
     scope: ContextPolicyScope;

@@ -99,6 +99,7 @@ describe("ExtensionRunner", () => {
 		shutdown: () => {},
 		getContextUsage: () => undefined,
 		compact: () => {},
+		requestCompaction: () => {},
 		getSystemPrompt: () => "",
 		getScopedModels: () => [],
 	};

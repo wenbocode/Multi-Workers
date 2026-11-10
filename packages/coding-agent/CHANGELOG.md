@@ -4,7 +4,9 @@
 
 ### Added
 
-- Added global/project/task-type MW context budgets and `/mw context show|set|clear`, request-budget admission, bounded managed summaries, safe failure diagnostics and worker cancellation/policy terminal handling.
+- Added `ExtensionContext.requestCompaction()` to request native compaction before the first model call or after a completed tool batch, with awaited completion callbacks and continuation in the current task.
+
+- Added global/project/task-type MW context budgets and `/mw context show|set|clear`. MW triggers native pi compaction while retaining request budgets; pi owns summary generation settings. PM and workers continue within the original task after compaction. Policy refusals settle workers as needs-clarification without model fallback; parent cancellation retains explicit aborted evidence.
 
 - `mw decide dp refresh` is no longer refused by the decision sign-off guard: it is the one-way registry -> table merge (`mw._dp_refresh` only appends the rows a registry point is missing and never rewrites an existing `enabled`/`mode`), so a new registry point such as `dp25-signoff-conclusion` can become a visible row in `.mw/decide-points.json` while `on|off|set|apply` stay blocked as authority flips that need a human (mw-signoff-per-key).
 
@@ -120,6 +122,8 @@
 
 ### Fixed
 
+- Fixed native compaction finding no history at a completed tool batch with a large final tool result. The latest assistant/tool-result batch stays intact while earlier history is summarized. Extension-triggered phase continuations are now awaited before their parent prompt returns.
+
 - 决策替身：dp3 服务未报 mode 时不再回退本地配置；签收守卫不再误拒深层 evidence 产物
 - 决策替身：签收守卫的 write/edit/bash 与 `worker_file` 通道改用同一份落位判定（首个 `evidence` 段 + 其后 `[]` 或 `["review"]`），`<key>/evidence/sign-final.md` 不再出现 `worker_file` 拒、`write` 放行的相反判定，四个通道对两个落位一致拒；深层产物 `evidence/research/evidence/sign-final.md` 仍放行（FIX-F）
 - Fixed writeless-role workers (review/verifier/reviewer/rag-research) failing to start on strict JSON-schema model deployments (mw-review-schema-lookaround): the worker_file tool embedded WORKER_FILE_PATH_RE.source as its schema `file.pattern`, and the evidence-segment guard used an ECMA negative lookahead that Azure OpenAI schema validation rejects - the first LLM call died with 502 (invalid_json_schema: regex lookaround is not supported), zero tool calls executed. The segment regex is rewritten lookaround-free with identical semantics (a segment needs at least one non-dot character, so dot-only segments stay rejected); a regression assertion pins the schema pattern lookaround-free, and the worker_file tool tests filter framework-owned task-dir files out of their snapshots.
@@ -128,6 +132,9 @@
 - Fixed the extension-widget order flipping when two widgets share one placement (mw-widget-order-stability): `InteractiveMode.setExtensionWidget` no longer deletes and re-adds the widget map entry on every refresh (a `Map.set` on an existing key keeps its iteration position, so the old delete-then-set moved the refreshed widget to the end and made two pollers with different beats - the autopilot monitor and the mw-watch panel, both `belowEditor` - swap positions every few seconds). `ExtensionWidgetOptions` gains an optional `order` (ascending; ties keep registration order, and the value is carried through the RPC `setWidget` request), the monitor registers with `order: 0` and the watch panel with `order: 10`, so the monitor always renders above the watch panel regardless of refresh timing. `packages/coding-agent/test/interactive-mode-widget-order.test.ts` adds 5 cases and the dual-widget coexistence suite asserts both orders.
 
 ### Breaking Changes
+
+- MW context compaction generation settings now come from pi. Existing `targetRatio`, `keepRecentTokens`, `maxSummaryTokens` and `timeoutMs` overrides are shown as delegated; setting them through `/mw context` is refused. MW retains `maxTokens`, `compaction.enabled` and `compaction.triggerRatio`.
+- Custom `ExtensionContext` and `ExtensionContextActions` implementations must provide `requestCompaction`.
 
 - Changed JSON and RPC `message_update` events to emit only `assistantMessageEvent` deltas, removing the cumulative `message` and `assistantMessageEvent.partial` fields that caused quadratic output growth. Clients that need partial messages must assemble deltas between `message_start` and `message_end`; the latter remains authoritative ([#7290](https://github.com/earendil-works/pi/issues/7290)).
 - `ModelRegistry.getApiKeyAndHeaders()` now returns `ProviderHeaders` with `string | null` values and preserves `null` header-deletion markers. Extensions that inspect returned headers must handle `null`; extensions forwarding them to pi-ai streams should pass them through unchanged. This prevents placeholder OpenAI credentials from being sent through Cloudflare AI Gateway ([#7030](https://github.com/earendil-works/pi/issues/7030)).

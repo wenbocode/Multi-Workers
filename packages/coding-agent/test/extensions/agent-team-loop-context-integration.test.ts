@@ -1,25 +1,24 @@
-import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { createServer, type Server } from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
-import { Agent } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	type Api,
 	type AssistantMessage,
 	type Context,
 	createAssistantMessageEventStream,
 	InMemoryCredentialStore,
-	type Message,
 	type Model,
 	type Provider,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentSession } from "../../src/core/agent-session.ts";
 import { completeSummarization } from "../../src/core/compaction/compaction.ts";
+import { SUMMARIZATION_SYSTEM_PROMPT } from "../../src/core/compaction/utils.ts";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -30,21 +29,17 @@ import { convertToLlm } from "../../src/core/messages.ts";
 import { ModelRegistry } from "../../src/core/model-registry.ts";
 import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
+import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { registerMwCommands } from "../../src/extensions/agent-team-loop/pm/ui-bridge.ts";
 import {
 	configureLocalCodex,
 	createLocalCodexPayload,
 } from "../../src/extensions/agent-team-loop/shared/codex-local.ts";
 import { computeContextBudget, estimateContext } from "../../src/extensions/agent-team-loop/shared/context-budget.ts";
-import {
-	CONTEXT_CHECKPOINT_TYPE,
-	type ContextCheckpoint,
-} from "../../src/extensions/agent-team-loop/shared/context-checkpoint.ts";
+import { CONTEXT_CHECKPOINT_TYPE } from "../../src/extensions/agent-team-loop/shared/context-checkpoint.ts";
 import {
 	CONTEXT_COMPACTION_USAGE_TYPE,
-	contextPolicyFailureMessage,
 	isContextPolicyFailure,
-	MwContextPolicyError,
 } from "../../src/extensions/agent-team-loop/shared/context-controller.ts";
 import {
 	consumeContextPolicyFailure,
@@ -59,6 +54,7 @@ import {
 } from "../../src/extensions/agent-team-loop/shared/model-concurrency.ts";
 import { registerModelConcurrency } from "../../src/extensions/agent-team-loop/shared/model-concurrency-extension.ts";
 import { allowNetwork } from "../test-network-env.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
 
 let directory: string;
 let project: string;
@@ -76,14 +72,7 @@ const model: Model<Api> = {
 	maxTokens: 4096,
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
-const summary = {
-	goal: "finish fixture",
-	constraints: "only allowed files",
-	decisions: "keep protocol",
-	changes: "fixture.ts changed",
-	verification: "two tools completed",
-	remaining: "finish response",
-};
+const nativeSessions: AgentSession[] = [];
 
 beforeEach(() => {
 	directory = fs.mkdtempSync(path.join(os.tmpdir(), "mw-context-integration-"));
@@ -100,6 +89,7 @@ beforeEach(() => {
 	writePolicy();
 });
 afterEach(async () => {
+	while (nativeSessions.length) nativeSessions.pop()?.dispose();
 	await Promise.all(
 		servers
 			.splice(0)
@@ -117,7 +107,7 @@ function writePolicy(maxTokens = 80000, enabled = true): void {
 	fs.mkdirSync(path.join(project, ".mw"), { recursive: true });
 	fs.writeFileSync(
 		path.join(project, ".mw/context.json"),
-		JSON.stringify({ version: 1, defaults: { maxTokens, compaction: { enabled, keepRecentTokens: 1000 } } }),
+		JSON.stringify({ version: 1, defaults: { maxTokens, compaction: { enabled } } }),
 	);
 }
 
@@ -227,86 +217,378 @@ async function harness(
 	};
 }
 
+async function nativeHarness(
+	handler: (context: Context, options?: SimpleStreamOptions) => AssistantMessage | Promise<AssistantMessage>,
+	manager = SessionManager.create(project, path.join(directory, "native-sessions")),
+	tools: AgentTool[] = [],
+) {
+	const h = await harness(handler, undefined, manager);
+	// Install real-session hooks on the original transport, without the lightweight harness wrapper.
+	h.runtime.registerNativeProvider(h.native);
+	const registry = h.ctx.modelRegistry;
+	const agent = new Agent({
+		getApiKey: async () => {
+			const auth = await registry.getApiKeyAndHeaders(model);
+			if (!auth.ok) throw new Error(auth.error);
+			return auth.apiKey;
+		},
+		streamFn: h.runtime.streamSimple.bind(h.runtime),
+		convertToLlm,
+		initialState: {
+			model,
+			systemPrompt: "Task constraint: only allowed files",
+			tools,
+			messages: manager.buildSessionContext().messages,
+		},
+	});
+	const result = await createTestExtensionsResult(
+		[
+			async (pi) => {
+				registerModelConcurrency(pi);
+				registerContextPolicy(pi, { controlRoot: project, homeDir: home });
+			},
+		],
+		project,
+	);
+	const resourceLoader = createTestResourceLoader({ extensionsResult: result });
+	const settings = SettingsManager.inMemory({
+		retry: { enabled: false },
+		compaction: { enabled: false, keepRecentTokens: 1, reserveTokens: 16384 },
+	});
+	const session = new AgentSession({
+		agent,
+		sessionManager: manager,
+		settingsManager: settings,
+		cwd: project,
+		modelRuntime: h.runtime,
+		resourceLoader,
+		baseToolsOverride: Object.fromEntries(tools.map((tool) => [tool.name, tool])),
+		initialActiveToolNames: tools.map((tool) => tool.name),
+	});
+	nativeSessions.push(session);
+	return { ...h, agentSession: session, settings };
+}
+
 describe("context provider integration", () => {
 	it.each([
 		{ status: "error", code: "SUMMARY_FAILED", category: "quota" },
 		{ status: "length", code: "SUMMARY_TRUNCATED", category: "unknown" },
 		{ status: "aborted", code: "SUMMARY_ABORTED", category: "unknown" },
-	] as const)("persists safe $status summary diagnostics through real runtime and session", async (failure) => {
-		const session = SessionManager.create(project, path.join(directory, "diagnostic-sessions"));
-		const context = history();
-		for (const message of context.messages) session.appendMessage(message);
+	] as const)("persists safe native $status failure without managed usage or checkpoint", async (failure) => {
+		const manager = SessionManager.create(project, path.join(directory, "failed-native"));
+		for (const message of history().messages) manager.appendMessage(message);
 		let summaries = 0;
 		let business = 0;
-		const h = await harness(
-			(request) => {
-				if (!request.systemPrompt?.includes("Summarize historical task state")) {
-					business++;
-					return assistant();
-				}
-				summaries++;
-				return {
-					...assistant([{ type: "text", text: "PRIVATE-SUMMARY-BODY" }]),
-					stopReason: failure.status,
-					errorMessage:
-						failure.status === "error"
-							? "HTTP 429 insufficient_quota Bearer PRIVATE-API-KEY https://private.invalid/?secret=PRIVATE-QUERY"
-							: "PRIVATE-ERROR-TEXT",
-				};
-			},
-			undefined,
-			session,
-		);
-		const result = await h.runtime.completeSimple(model, context);
-		h.session.appendMessage(result);
+		const h = await nativeHarness((request) => {
+			if (request.systemPrompt !== SUMMARIZATION_SYSTEM_PROMPT) {
+				business++;
+				return assistant();
+			}
+			summaries++;
+			return {
+				...assistant([{ type: "text", text: "PRIVATE-BODY" }]),
+				stopReason: failure.status,
+				errorMessage:
+					failure.status === "error"
+						? "HTTP 429 insufficient_quota PRIVATE-KEY https://secret.invalid"
+						: "PRIVATE-ERROR",
+			};
+		}, manager);
+		await expect(h.agentSession.prompt("continue")).rejects.toThrow(`MW_CONTEXT_POLICY:${failure.code}`);
 		expect([summaries, business]).toEqual([1, 0]);
-		expect(result.stopReason).toBe("error");
-		expect(result.diagnostics).toContainEqual(
-			expect.objectContaining({ type: "provider_retry_boundary", details: { outerRetryEligible: false } }),
-		);
-		const details = result.diagnostics?.find((entry) => entry.type === "mw_context_policy")?.details;
+		const details = consumeContextPolicyFailure(h.agentSession.extensionRunner.getModelRegistry());
 		expect(details).toMatchObject({
 			code: failure.code,
+			summaryStatus: failure.status,
 			provider: model.provider,
 			model: model.id,
-			summaryStatus: failure.status,
-			maxSummaryTokens: 4096,
-			summaryOutputTokens: 7,
 			summaryFailure: { category: failure.category },
-			noProviderRequest: true,
-		});
-		if (failure.status === "error") expect(details?.summaryFailure).toMatchObject({ httpStatus: 429 });
-		expect(result.errorMessage).toContain(`summary=${failure.category}`);
-		const file = session.getSessionFile();
-		if (!file) throw new Error("missing persisted diagnostic session");
-		const reopened = SessionManager.open(file);
-		const usage = reopened
-			.getBranch()
-			.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_COMPACTION_USAGE_TYPE);
-		expect(usage).toHaveLength(1);
-		if (usage[0].type !== "custom") throw new Error("missing usage");
-		expect(usage[0].data).toMatchObject({
-			attemptId: details?.attemptId,
-			attemptStartedAt: details?.attemptStartedAt,
-			providerRequestStarted: true,
-			status: failure.status,
-			usage: { input: 11, output: 7 },
+			nativeSummaryUsage: { input: 11, output: 7 },
 		});
 		expect(typeof details?.attemptId).toBe("string");
 		expect(typeof details?.attemptStartedAt).toBe("string");
+		const file = manager.getSessionFile();
+		if (!file) throw new Error("missing native failure session");
+		const reopened = SessionManager.open(file);
+		expect(reopened.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
 		expect(
 			reopened
-				.getBranch()
-				.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_CHECKPOINT_TYPE),
+				.getEntries()
+				.filter((entry) => entry.type === "custom" && entry.customType === "mw-context-policy-failure"),
+		).toEqual([expect.objectContaining({ data: details })]);
+		expect(fs.readFileSync(file, "utf8")).not.toMatch(/PRIVATE-|secret\.invalid/);
+		expect(
+			reopened
+				.getEntries()
+				.filter(
+					(entry) =>
+						entry.type === "custom" &&
+						[CONTEXT_CHECKPOINT_TYPE, CONTEXT_COMPACTION_USAGE_TYPE].includes(entry.customType),
+				),
 		).toHaveLength(0);
-		const storedAssistant = reopened
-			.getBranch()
-			.find(
-				(entry) =>
-					entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "error",
+		expect(readConcurrencyState().requests).toEqual([]);
+	});
+
+	it("native compaction persists real state and reopens without repeating the summary", async () => {
+		const manager = SessionManager.create(project, path.join(directory, "resume-native"));
+		for (const message of history().messages) manager.appendMessage(message);
+		let summaries = 0;
+		const requests: Context[] = [];
+		const respond = (request: Context) => {
+			if (request.systemPrompt === SUMMARIZATION_SYSTEM_PROMPT) {
+				summaries++;
+				return assistant([{ type: "text", text: "Native persisted task summary" }]);
+			}
+			requests.push(request);
+			return assistant();
+		};
+		const first = await nativeHarness(respond, manager);
+		await first.agentSession.prompt("continue");
+		expect(summaries).toBe(1);
+		const file = manager.getSessionFile();
+		if (!file) throw new Error("native session was not persisted");
+		const reopened = SessionManager.open(file);
+		const compactions = reopened.getEntries().filter((entry) => entry.type === "compaction");
+		expect(compactions).toHaveLength(1);
+		expect(compactions[0]).toMatchObject({
+			summary: "Native persisted task summary",
+			usage: { input: 11, output: 7 },
+		});
+		expect(reopened.buildSessionContext().messages.some((message) => message.role === "compactionSummary")).toBe(
+			true,
+		);
+		expect(reopened.getEntries().filter((entry) => entry.type === "message")).toHaveLength(5);
+		const resumed = await nativeHarness(respond, reopened);
+		await resumed.agentSession.prompt("finish after resume");
+		expect(summaries).toBe(1);
+		expect(JSON.stringify(requests.at(-1)?.messages)).toContain("Native persisted task summary");
+		expect(JSON.stringify(requests.at(-1)?.messages)).not.toContain("x".repeat(1000));
+		expect(
+			reopened
+				.getEntries()
+				.filter(
+					(entry) =>
+						entry.type === "custom" &&
+						[CONTEXT_CHECKPOINT_TYPE, CONTEXT_COMPACTION_USAGE_TYPE].includes(entry.customType),
+				),
+		).toHaveLength(0);
+	});
+
+	it("real AgentSession continues a complete parallel tool batch using separate limit=1 leases", async () => {
+		await setConcurrencyLimit(`${model.provider}/${model.id}`, 1);
+		let business = 0;
+		let summaries = 0;
+		let completed = 0;
+		const executions: number[] = [];
+		const requests: Context[] = [];
+		const manager = SessionManager.create(project, path.join(directory, "tool-native"));
+		manager.appendMessage({ role: "user", content: "existing task", timestamp: 1 });
+		manager.appendMessage(assistant([{ type: "text", text: "old work ".repeat(500) }]));
+		const h = await nativeHarness(
+			(request, options) => {
+				expect(readConcurrencyState().requests.filter((entry) => entry.phase === "active")).toHaveLength(1);
+				expect(options?.apiKey).toBe("stable-key");
+				if (request.systemPrompt === SUMMARIZATION_SYSTEM_PROMPT) {
+					summaries++;
+					expect(completed).toBe(2);
+					return assistant([{ type: "text", text: "Native task and completed tool results" }]);
+				}
+				requests.push(request);
+				business++;
+				return business === 1
+					? assistant(
+							[1, 2].map((id) => ({ type: "toolCall", id: `lookup-${id}`, name: "lookup", arguments: { id } })),
+						)
+					: assistant();
+			},
+			manager,
+			[
+				{
+					name: "lookup",
+					label: "lookup",
+					description: "fixture side effect",
+					parameters: Type.Object({ id: Type.Number() }),
+					execute: async (_id, args) => {
+						const id = (args as { id: number }).id;
+						executions.push(id);
+						await delay(id === 1 ? 20 : 1);
+						completed++;
+						return { content: [{ type: "text", text: "x".repeat(75000) }], details: undefined };
+					},
+				},
+			],
+		);
+		await h.agentSession.prompt("finish fixture; only allowed files");
+		expect([business, completed]).toEqual([2, 2]);
+		// Native compaction may summarize an older prefix and the retained split turn separately.
+		expect(summaries).toBeGreaterThanOrEqual(1);
+		expect(executions.sort()).toEqual([1, 2]);
+		const ids = requests[1].messages.flatMap((message) =>
+			message.role === "assistant"
+				? message.content.filter((part) => part.type === "toolCall").map((part) => part.id)
+				: [],
+		);
+		for (const message of requests[1].messages)
+			if (message.role === "toolResult") expect(ids).toContain(message.toolCallId);
+		expect(manager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+		expect(
+			manager
+				.getEntries()
+				.filter(
+					(entry) =>
+						entry.type === "custom" &&
+						[CONTEXT_CHECKPOINT_TYPE, CONTEXT_COMPACTION_USAGE_TYPE].includes(entry.customType),
+				),
+		).toHaveLength(0);
+		expect(readConcurrencyState().requests).toEqual([]);
+	});
+
+	it("native no-progress stops before business and preserves the original committed history", async () => {
+		const manager = SessionManager.create(project, path.join(directory, "no-progress-native"));
+		for (const message of history().messages) manager.appendMessage(message);
+		let business = 0;
+		const h = await nativeHarness((request) => {
+			if (request.systemPrompt === SUMMARIZATION_SYSTEM_PROMPT)
+				return assistant([{ type: "text", text: "y".repeat(170000) }]);
+			business++;
+			return assistant();
+		}, manager);
+		await expect(h.agentSession.prompt("continue")).rejects.toThrow("SUMMARY_NO_PROGRESS");
+		expect(business).toBe(0);
+		expect(manager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+		expect(manager.getEntries().filter((entry) => entry.type === "message")).toHaveLength(3);
+	});
+
+	it("native compaction rechecks tightened policy and a smaller model before business", async () => {
+		const manager = SessionManager.create(project, path.join(directory, "tightened-native"));
+		for (const message of history().messages) manager.appendMessage(message);
+		let calls = 0;
+		const h = await nativeHarness(() => {
+			calls++;
+			writePolicy(21000, false);
+			return assistant([{ type: "text", text: "native state" }]);
+		}, manager);
+		await expect(h.agentSession.prompt("continue")).rejects.toThrow("CURRENT_POLICY_BUDGET");
+		expect(calls).toBe(1);
+		writePolicy(80000, false);
+		expect(
+			isContextPolicyFailure(await h.runtime.completeSimple({ ...model, contextWindow: 30000 }, history(60000))),
+		).toBe(true);
+		expect(calls).toBe(1);
+	});
+
+	it.each([false, true])("queued request rereads credentials, explicit override=%s", async (explicit) => {
+		await setConcurrencyLimit(`${model.provider}/${model.id}`, 1);
+		const release = await acquireModelSlot(`${model.provider}/${model.id}`);
+		const keys: Array<string | undefined> = [];
+		const h = await harness((_request, options) => {
+			keys.push(options?.apiKey);
+			return assistant();
+		});
+		const pending = h.runtime.completeSimple(
+			model,
+			{ messages: [] },
+			explicit ? { apiKey: "explicit-override", headers: { "x-auth": "explicit-header" } } : undefined,
+		);
+		await vi.waitFor(() =>
+			expect(readConcurrencyState().requests.some((request) => request.phase === "waiting")).toBe(true),
+		);
+		h.setKey("rotated-key");
+		await release();
+		const result = await pending;
+		if (!explicit) {
+			expect(isContextPolicyFailure(result)).toBe(true);
+			expect(keys).toEqual([]);
+		} else {
+			expect(result.stopReason).toBe("stop");
+			expect(keys).toEqual(["explicit-override"]);
+		}
+		expect(readConcurrencyState().requests).toEqual([]);
+	});
+
+	it("disabling automatic compaction while a native summary is queued prevents its physical request", async () => {
+		await setConcurrencyLimit(`${model.provider}/${model.id}`, 1);
+		const release = await acquireModelSlot(`${model.provider}/${model.id}`);
+		const manager = SessionManager.create(project, path.join(directory, "disabled-queued-native"));
+		for (const message of history().messages) manager.appendMessage(message);
+		let calls = 0;
+		const h = await nativeHarness(() => {
+			calls++;
+			return assistant();
+		}, manager);
+		const pending = h.agentSession.prompt("continue");
+		const rejected = expect(pending).rejects.toThrow("AUTOCOMPACTION_DISABLED");
+		try {
+			await vi.waitFor(() =>
+				expect(readConcurrencyState().requests.some((request) => request.phase === "waiting")).toBe(true),
 			);
-		expect(storedAssistant).toMatchObject({ message: { diagnostics: result.diagnostics } });
-		expect(fs.readFileSync(file, "utf8")).not.toMatch(/PRIVATE-|Bearer|private\.invalid/);
+			writePolicy(80000, false);
+		} finally {
+			await release();
+		}
+		await rejected;
+		expect(calls).toBe(0);
+		expect(manager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+		expect(
+			manager
+				.getEntries()
+				.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_COMPACTION_USAGE_TYPE),
+		).toHaveLength(0);
+		expect(readConcurrencyState().requests).toEqual([]);
+	});
+
+	it("queued native summary cancellation makes zero physical calls and no fabricated usage", async () => {
+		await setConcurrencyLimit(`${model.provider}/${model.id}`, 1);
+		const release = await acquireModelSlot(`${model.provider}/${model.id}`);
+		const manager = SessionManager.create(project, path.join(directory, "queued-native"));
+		for (const message of history().messages) manager.appendMessage(message);
+		let calls = 0;
+		const h = await nativeHarness(() => {
+			calls++;
+			return assistant();
+		}, manager);
+		const pending = h.agentSession.prompt("continue");
+		const observed = pending.catch(() => {});
+		try {
+			await vi.waitFor(() =>
+				expect(readConcurrencyState().requests.some((request) => request.phase === "waiting")).toBe(true),
+			);
+			await h.agentSession.abort();
+			await observed;
+			expect(calls).toBe(0);
+			expect(manager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+			expect(
+				manager
+					.getEntries()
+					.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_COMPACTION_USAGE_TYPE),
+			).toHaveLength(0);
+		} finally {
+			await release();
+		}
+		await vi.waitFor(() => expect(readConcurrencyState().requests).toEqual([]));
+	});
+
+	it("native summary transport retains its concurrency lease until a cancelled transport terminates", async () => {
+		await setConcurrencyLimit(`${model.provider}/${model.id}`, 1);
+		const manager = SessionManager.create(project, path.join(directory, "late-native"));
+		for (const message of history().messages) manager.appendMessage(message);
+		let finish: (() => void) | undefined;
+		const h = await nativeHarness(
+			async () =>
+				await new Promise<AssistantMessage>((resolve) => {
+					finish = () => resolve(assistant([{ type: "text", text: "late native state" }]));
+				}),
+			manager,
+		);
+		const pending = h.agentSession.prompt("continue");
+		const observed = pending.catch(() => {});
+		await vi.waitFor(() => expect(finish).toBeDefined());
+		const aborting = h.agentSession.abort();
+		expect(readConcurrencyState().requests.filter((entry) => entry.phase === "active")).toHaveLength(1);
+		finish?.();
+		await aborting;
+		await observed;
+		expect(manager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
 		expect(readConcurrencyState().requests).toEqual([]);
 	});
 
@@ -359,153 +641,6 @@ describe("context provider integration", () => {
 		expect(isContextPolicyFailure(await h.runtime.completeSimple(model, { messages: [] }))).toBe(true);
 		expect(calls).toBe(0);
 	});
-	it.each(["empty", "missing", "error", "no-progress", "target"])(
-		"bounds the real provider %s summary failure without business or checkpoint",
-		async (failure) => {
-			const context = history(failure === "no-progress" ? 3000 : failure === "target" ? 20000 : 150000);
-			const original = structuredClone(context);
-			if (failure === "no-progress" || failure === "target") {
-				const triggerRatio = failure === "no-progress" ? 0.02 : 0.1;
-				fs.writeFileSync(
-					path.join(project, ".mw/context.json"),
-					JSON.stringify({
-						version: 1,
-						defaults: {
-							maxTokens: 80000,
-							compaction: { triggerRatio, targetRatio: triggerRatio / 2, keepRecentTokens: 100 },
-						},
-					}),
-				);
-			}
-			let summaries = 0;
-			let business = 0;
-			const h = await harness((request) => {
-				if (!request.systemPrompt?.includes("Summarize historical task state")) {
-					business++;
-					return assistant();
-				}
-				summaries++;
-				if (failure === "error")
-					return { ...assistant(), stopReason: "error", errorMessage: "fixture summary failure" };
-				if (failure === "empty") return assistant([{ type: "text", text: "" }]);
-				if (failure === "missing")
-					return assistant([{ type: "text", text: JSON.stringify({ goal: "only one field" }) }]);
-				return assistant([
-					{
-						type: "text",
-						text: JSON.stringify(Object.fromEntries(Object.keys(summary).map((key) => [key, "s".repeat(1500)]))),
-					},
-				]);
-			});
-			const result = await h.runtime.completeSimple(model, context);
-			expect(isContextPolicyFailure(result)).toBe(true);
-			expect([summaries, business]).toEqual([1, 0]);
-			expect(context).toEqual(original);
-			expect(
-				h.session
-					.getBranch()
-					.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_CHECKPOINT_TYPE),
-			).toHaveLength(0);
-			const code = result.diagnostics?.find((entry) => entry.type === "mw_context_policy")?.details?.code;
-			expect(code).toBe(
-				failure === "no-progress"
-					? "SUMMARY_NO_PROGRESS"
-					: failure === "target"
-						? "SUMMARY_TARGET_NOT_MET"
-						: failure === "error"
-							? "SUMMARY_FAILED"
-							: "SUMMARY_INVALID",
-			);
-		},
-	);
-
-	it("honors disabling automatic compaction while a managed summary waits for its slot", async () => {
-		await setConcurrencyLimit(`${model.provider}/${model.id}`, 1);
-		const release = await acquireModelSlot(`${model.provider}/${model.id}`);
-		let calls = 0;
-		const h = await harness(() => {
-			calls++;
-			return assistant();
-		});
-		const pending = h.runtime.completeSimple(model, history());
-		await vi.waitFor(() =>
-			expect(readConcurrencyState().requests.some((request) => request.phase === "waiting")).toBe(true),
-		);
-		writePolicy(80000, false);
-		await release();
-		expect(isContextPolicyFailure(await pending)).toBe(true);
-		expect(calls).toBe(0);
-		const usage = h.session
-			.getBranch()
-			.find((entry) => entry.type === "custom" && entry.customType === CONTEXT_COMPACTION_USAGE_TYPE);
-		expect((usage as { data: unknown } | undefined)?.data).toMatchObject({ providerRequestStarted: false });
-		expect(
-			h.session
-				.getBranch()
-				.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_CHECKPOINT_TYPE),
-		).toHaveLength(0);
-		expect(readConcurrencyState().requests).toEqual([]);
-	});
-	it.each(["timeout", "abort"])("records a queued summary %s as zero actual provider requests", async (mode) => {
-		await setConcurrencyLimit(`${model.provider}/${model.id}`, 1);
-		const release = await acquireModelSlot(`${model.provider}/${model.id}`);
-		const policyPath = path.join(project, ".mw/context.json");
-		const policy = JSON.parse(fs.readFileSync(policyPath, "utf8")) as {
-			defaults: { compaction: { timeoutMs: number } };
-		};
-		policy.defaults.compaction.timeoutMs = mode === "abort" ? 10000 : 100;
-		fs.writeFileSync(policyPath, JSON.stringify(policy));
-		let calls = 0;
-		const persisted = SessionManager.create(project, path.join(directory, "queued-sessions"));
-		const h = await harness(
-			() => {
-				calls++;
-				return assistant();
-			},
-			undefined,
-			persisted,
-		);
-		const parent = new AbortController();
-		try {
-			const pending = h.runtime.completeSimple(model, history(), { signal: parent.signal });
-			await vi.waitFor(
-				() => expect(readConcurrencyState().requests.some((request) => request.phase === "waiting")).toBe(true),
-				{ interval: 5 },
-			);
-			if (mode === "abort") parent.abort();
-			const result = await pending;
-			// Flush custom usage with a no-request assistant instead of a billable fixture response.
-			h.session.appendMessage(contextPolicyFailureMessage(model, new MwContextPolicyError("FIXTURE_FLUSH")));
-			expect(result.stopReason).toBe(mode === "abort" ? "aborted" : "error");
-			expect(calls).toBe(0);
-			const usage = h.session
-				.getBranch()
-				.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_COMPACTION_USAGE_TYPE);
-			expect(usage).toHaveLength(1);
-			expect((usage[0] as { data: unknown }).data).toMatchObject({ providerRequestStarted: false, usage: null });
-			const file = h.session.getSessionFile();
-			if (!file) throw new Error("missing queued session file");
-			const output = execFileSync(
-				"python",
-				["-m", "pytest", "-q", "test_context_usage.py", "-k", "typescript_queued_session_fixture"],
-				{
-					cwd: fileURLToPath(new URL("../../../multi-workers", import.meta.url)),
-					env: { ...process.env, MW_CONTEXT_TS_FIXTURE: file },
-					encoding: "utf8",
-					windowsHide: true,
-				},
-			);
-			expect(output).toContain("1 passed");
-			expect(
-				h.session
-					.getBranch()
-					.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_CHECKPOINT_TYPE),
-			).toHaveLength(0);
-		} finally {
-			await release();
-		}
-		await vi.waitFor(() => expect(readConcurrencyState().requests).toEqual([]));
-	});
 	it("rechecks the current policy after a real limiter queue wait without nested summarization", async () => {
 		writePolicy(80000, false);
 		await setConcurrencyLimit(`${model.provider}/${model.id}`, 1);
@@ -530,53 +665,6 @@ describe("context provider integration", () => {
 		expect(readConcurrencyState().requests).toEqual([]);
 	});
 
-	it("restores a persisted checkpoint only on its real SessionManager branch and invalidates it after native compaction", async () => {
-		const session = SessionManager.create(project, path.join(directory, "sessions"));
-		const context = history();
-		const ids = context.messages.map((message) => session.appendMessage(message));
-		let summaries = 0;
-		const handler = (request: Context) => {
-			if (request.systemPrompt?.includes("Summarize historical task state")) {
-				summaries++;
-				return assistant([{ type: "text", text: JSON.stringify(summary) }]);
-			}
-			return assistant();
-		};
-		const first = await harness(handler, undefined, session);
-		expect((await first.runtime.completeSimple(model, context)).stopReason).toBe("stop");
-		expect(summaries).toBe(1);
-		const file = session.getSessionFile();
-		if (!file) throw new Error("missing session file");
-		const reopened = SessionManager.open(file);
-		const seen: Context[] = [];
-		const resumed = await harness(
-			(request) => {
-				seen.push(request);
-				return handler(request);
-			},
-			undefined,
-			reopened,
-		);
-		expect((await resumed.runtime.completeSimple(model, context)).stopReason).toBe("stop");
-		expect(summaries).toBe(1);
-		expect(JSON.stringify(seen.at(-1)?.messages)).toContain("Historical task state");
-		reopened.branch(ids[0]);
-		for (const message of context.messages.slice(1)) reopened.appendMessage(message);
-		expect((await resumed.runtime.completeSimple(model, context)).stopReason).toBe("stop");
-		expect(summaries).toBe(2);
-		const latestUser = reopened
-			.getBranch()
-			.filter((entry) => entry.type === "message" && entry.message.role === "user")
-			.at(-1);
-		if (!latestUser) throw new Error("missing last user");
-		reopened.appendCompaction("native compacted task state", latestUser.id, 55000);
-		await resumed.emit("session_compact");
-		const nativeContext = { ...context, messages: convertToLlm(reopened.buildSessionContext().messages) };
-		expect((await resumed.runtime.completeSimple(model, nativeContext)).stopReason).toBe("stop");
-		expect(summaries).toBe(2);
-		expect(JSON.stringify(seen.at(-1)?.messages)).not.toContain("Historical task state");
-	});
-
 	it("keeps a cleared global type removed after a fresh controller and inherits current defaults", async () => {
 		const h = await harness(() => assistant());
 		for (const args of [
@@ -595,7 +683,10 @@ describe("context provider integration", () => {
 		fs.writeFileSync(task, "type: coding\n\nTask");
 		const restarted = await harness(() => assistant(), task);
 		expect((await restarted.runtime.completeSimple(model, { messages: [] })).stopReason).toBe("stop");
-		expect(restarted.ctx.ui.setStatus).toHaveBeenCalledWith("mw-context", "Context coding: 190000 tokens; auto on");
+		expect(restarted.ctx.ui.setStatus).toHaveBeenCalledWith(
+			"mw-context",
+			"Context coding: 190000 tokens; native auto on",
+		);
 		expect(
 			resolveContextPolicy({ controlRoot: project, homeDir: home, taskFile: task }).sources.maxTokens,
 		).toMatchObject({ scope: "global", level: "defaults", builtin: false });
@@ -615,90 +706,9 @@ describe("context provider integration", () => {
 		expect(consumeContextPolicyFailure(h.ctx.modelRegistry)?.code).toBe("NATIVE_SUMMARY_BUDGET");
 		expect(consumeContextPolicyFailure(h.ctx.modelRegistry)).toBeUndefined();
 		await completeSummarization(model, history(250000), { signal }, h.runtime.streamSimple.bind(h.runtime));
-		await h.emit("before_agent_start");
+		await h.emit("before_agent_start", { prompt: "next" });
 		expect(consumeContextPolicyFailure(h.ctx.modelRegistry)).toBeUndefined();
 	});
-	it("continues the same real Agent after a complete parallel tool batch, using separate limit=1 leases", async () => {
-		await setConcurrencyLimit(`${model.provider}/${model.id}`, 1);
-		let business = 0;
-		let summaries = 0;
-		let toolExecutions = 0;
-		let completed = 0;
-		const requests: Context[] = [];
-		const h = await harness((context, options) => {
-			expect(readConcurrencyState().requests.filter((request) => request.phase === "active")).toHaveLength(1);
-			expect(options?.apiKey).toBe("stable-key");
-			expect(options?.headers?.["x-auth"]).toBe("stable-key");
-			if (context.systemPrompt?.includes("Summarize historical task state")) {
-				summaries++;
-				expect(completed).toBe(2);
-				expect(context.tools).toEqual([]);
-				expect(options?.maxTokens).toBe(4096);
-				return assistant([{ type: "text", text: JSON.stringify(summary) }]);
-			}
-			requests.push(context);
-			business++;
-			return business === 1
-				? assistant([1, 2].map((id) => ({ type: "toolCall", id: `call-${id}`, name: "lookup", arguments: { id } })))
-				: business === 2
-					? assistant([{ type: "toolCall", id: "call-3", name: "lookup", arguments: { id: 3 } }])
-					: assistant();
-		});
-		const events: string[] = [];
-		const agent = new Agent({
-			streamFn: h.runtime.streamSimple.bind(h.runtime),
-			toolExecution: "parallel",
-			initialState: {
-				model,
-				systemPrompt: "Task constraint: only allowed files",
-				tools: [
-					{
-						name: "lookup",
-						label: "lookup",
-						description: "fixture side effect",
-						parameters: Type.Object({ id: Type.Number() }),
-						execute: async (_id, args) => {
-							const { id } = args as { id: number };
-							toolExecutions++;
-							await delay(id === 1 ? 20 : 1);
-							completed++;
-							return {
-								content: [{ type: "text", text: id < 3 ? "x".repeat(75000) : "last result" }],
-								details: undefined,
-							};
-						},
-					},
-				],
-			},
-		});
-		agent.subscribe((event) => {
-			events.push(event.type);
-			if (event.type === "message_end") h.session.appendMessage(event.message as Message);
-		});
-		await agent.prompt("finish fixture; only allowed files");
-		expect(agent.state.errorMessage).toBeUndefined();
-		expect([business, summaries, toolExecutions, completed]).toEqual([3, 1, 3, 3]);
-		expect(events.filter((event) => event === "agent_start")).toHaveLength(1);
-		expect(events.filter((event) => event === "agent_end")).toHaveLength(1);
-		expect(
-			requests[1].messages.some(
-				(message) => typeof message.content === "string" && message.content.includes("Historical task state"),
-			),
-		).toBe(true);
-		expect(requests[2].messages.filter((message) => message.role === "toolResult")).toHaveLength(1);
-		expect(agent.state.messages.filter((message) => message.role === "toolResult")).toHaveLength(3);
-		const checkpoints = h.session
-			.getBranch()
-			.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_CHECKPOINT_TYPE);
-		expect(checkpoints).toHaveLength(1);
-		const checkpoint = (checkpoints[0] as { data: ContextCheckpoint }).data;
-		expect(checkpoint.afterTokens).toBeLessThan(checkpoint.beforeTokens);
-		expect(checkpoint.afterTokens).toBeLessThanOrEqual(
-			computeContextBudget(model, resolveContextPolicy({ controlRoot: project, homeDir: home })).targetTokens,
-		);
-		expect(readConcurrencyState().requests).toEqual([]);
-	});
-
 	it("admits exactly the first-request input budget and refuses the next token without a transport", async () => {
 		writePolicy(80000, false);
 		let calls = 0;
@@ -717,22 +727,6 @@ describe("context provider integration", () => {
 			messages: [{ role: "user", content: `${content}xxx`, timestamp: 0 }],
 		});
 		expect(isContextPolicyFailure(refused)).toBe(true);
-		expect(calls).toBe(1);
-	});
-
-	it("rechecks a smaller model and a policy tightened during the summary before sending business", async () => {
-		let calls = 0;
-		const h = await harness(() => {
-			calls++;
-			writePolicy(21000, false);
-			return assistant([{ type: "text", text: JSON.stringify(summary) }]);
-		});
-		expect(isContextPolicyFailure(await h.runtime.completeSimple(model, history()))).toBe(true);
-		expect(calls).toBe(1);
-		writePolicy(80000, false);
-		expect(
-			isContextPolicyFailure(await h.runtime.completeSimple({ ...model, contextWindow: 30000 }, history(60000))),
-		).toBe(true);
 		expect(calls).toBe(1);
 	});
 
@@ -763,88 +757,6 @@ describe("context provider integration", () => {
 		expect(readConcurrencyState().requests).toEqual([]);
 	});
 
-	it.each(["timeout", "parent-abort", "noncooperative"])(
-		"keeps %s bounded and owns its actual summary lease until transport terminal",
-		async (mode) => {
-			await setConcurrencyLimit(`${model.provider}/${model.id}`, 1);
-			const policyPath = path.join(project, ".mw/context.json");
-			const policy = JSON.parse(fs.readFileSync(policyPath, "utf8")) as {
-				defaults: { compaction: { timeoutMs: number } };
-			};
-			policy.defaults.compaction.timeoutMs = mode === "parent-abort" ? 10000 : 30;
-			fs.writeFileSync(policyPath, JSON.stringify(policy));
-			const h = await harness(() => assistant());
-			let calls = 0;
-			let finish: (() => void) | undefined;
-			const parent = new AbortController();
-			const stream = (_selected: Model<Api>, _context: Context, options?: SimpleStreamOptions) => {
-				calls++;
-				const events = createAssistantMessageEventStream();
-				finish = () => {
-					const result = assistant([{ type: "text", text: JSON.stringify(summary) }]);
-					events.push({ type: "done", reason: "stop", message: result });
-					events.end(result);
-				};
-				if (mode !== "noncooperative")
-					options?.signal?.addEventListener(
-						"abort",
-						() => {
-							const result = { ...assistant(), stopReason: "aborted" as const, errorMessage: "fixture aborted" };
-							events.push({ type: "error", reason: "aborted", error: result });
-							events.end(result);
-						},
-						{ once: true },
-					);
-				return events;
-			};
-			h.runtime.registerNativeProvider({ ...h.native, stream, streamSimple: stream });
-			await h.emit("context");
-			const pending = h.runtime.completeSimple(model, history(), { signal: parent.signal });
-			await vi.waitFor(() => expect(calls).toBe(1));
-			if (mode === "parent-abort") parent.abort();
-			const result = await pending;
-			expect(result.stopReason).toBe(mode === "parent-abort" ? "aborted" : "error");
-			if (mode !== "parent-abort") expect(isContextPolicyFailure(result)).toBe(true);
-			expect(calls).toBe(1);
-			if (mode === "noncooperative") {
-				expect(readConcurrencyState().requests).toHaveLength(1);
-				finish?.();
-			}
-			await vi.waitFor(() => expect(readConcurrencyState().requests).toEqual([]));
-			expect(
-				h.session
-					.getBranch()
-					.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_CHECKPOINT_TYPE),
-			).toHaveLength(0);
-		},
-	);
-
-	it("fails safely when credentials rotate during the managed summary, before the business transport", async () => {
-		let calls = 0;
-		const h = await harness(() => {
-			calls++;
-			h.setKey("rotated-key");
-			return assistant([{ type: "text", text: JSON.stringify(summary) }]);
-		});
-		const result = await h.runtime.completeSimple(model, history());
-		expect(calls).toBe(1);
-		expect(isContextPolicyFailure(result)).toBe(true);
-		expect(result.diagnostics).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					type: "mw_context_policy",
-					details: expect.objectContaining({ code: "AUTH_CHANGED", noProviderRequest: true }),
-				}),
-			]),
-		);
-		expect(
-			h.session
-				.getBranch()
-				.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_COMPACTION_USAGE_TYPE),
-		).toHaveLength(1);
-		expect(readConcurrencyState().requests).toEqual([]);
-	});
-
 	it.each(["dual-game", "partition-engine"])(
 		"uses the control workspace and exact worker type in %s despite conflicting target policy",
 		async (workspace) => {
@@ -863,7 +775,10 @@ describe("context provider integration", () => {
 			await h.emit("context");
 			await h.runtime.completeSimple(model, { messages: [] });
 			expect(calls).toBe(1);
-			expect(h.ctx.ui.setStatus).toHaveBeenCalledWith("mw-context", "Context verifier: 80000 tokens; auto on");
+			expect(h.ctx.ui.setStatus).toHaveBeenCalledWith(
+				"mw-context",
+				"Context verifier: 80000 tokens; native auto on",
+			);
 		},
 	);
 
@@ -925,17 +840,19 @@ describe("context provider integration", () => {
 			expect(result.stopReason).toBe("stop");
 			expect(calls).toBe(1);
 			expect(h.session.getBranch().filter((entry) => entry.type === "custom")).toHaveLength(0);
-			// The next request has a different signal and must go through managed compaction.
+			// The provider layer now admits the next business call without generating any summary.
 			const next = await h.runtime.completeSimple(model, history(), { signal: new AbortController().signal });
-			expect(isContextPolicyFailure(next)).toBe(true); // Fake native response is intentionally not valid managed JSON.
+			expect(next.stopReason).toBe("stop");
 			expect(calls).toBe(2);
 		},
 	);
 
-	it("hands native threshold ownership to the controller and disables native overflow summaries with auto off", async () => {
+	it("keeps MW threshold ownership, native manual handling and disables overflow summaries with auto off", async () => {
 		const h = await harness(() => assistant());
 		const signal = new AbortController().signal;
-		expect(await h.emit("session_before_compact", { reason: "threshold", signal })).toContainEqual({ cancel: true });
+		expect(await h.emit("session_before_compact", { reason: "threshold", signal })).toContainEqual({
+			cancel: true,
+		});
 		writePolicy(80000, false);
 		expect(await h.emit("session_before_compact", { reason: "overflow", signal })).toContainEqual({ cancel: true });
 		expect(await h.emit("session_before_compact", { reason: "manual", signal })).not.toContainEqual({ cancel: true });
@@ -992,9 +909,9 @@ describe("context provider integration", () => {
 			const payload = JSON.parse(text) as { context: Context };
 			bodies.push(payload);
 			authorization.push(request.headers.authorization);
-			const summaryRequest = payload.context.systemPrompt?.includes("Summarize historical task state");
+			const summaryRequest = payload.context.systemPrompt === SUMMARIZATION_SYSTEM_PROMPT;
 			response.end(
-				`${JSON.stringify({ type: "result", text: summaryRequest ? JSON.stringify(summary) : "local done", toolCalls: [], usage: { input_tokens: 10, output_tokens: 2 } })}\n`,
+				`${JSON.stringify({ type: "result", text: summaryRequest ? "Native relay task summary" : "local done", toolCalls: [], usage: { input_tokens: 10, output_tokens: 2 } })}\n`,
 			);
 		});
 		servers.push(server);
@@ -1006,7 +923,7 @@ describe("context provider integration", () => {
 			path.join(project, ".mw/codex-local.json"),
 			JSON.stringify({ version: 1, url: `http://127.0.0.1:${address.port}`, token }),
 		);
-		const h = await harness(() => assistant());
+		const h = await nativeHarness(() => assistant());
 		configureLocalCodex(h.pi, project);
 		await h.emit("context");
 		const selected = h.runtime.getModel("openai-codex-local", "gpt-5.6-sol");
@@ -1021,16 +938,20 @@ describe("context provider integration", () => {
 		expect(estimateContext(context, { serializedPayload: wrapped, additionalTokens: 16384 }).baseTokens).toBe(
 			Math.ceil(Buffer.byteLength(wrapped) / 3) + 1024 + 16384,
 		);
-		writePolicy(120000);
+		// Exercise the actual native lifecycle against the local relay, rather than emulating a summary dispatch.
+		writePolicy(300000);
 		await setConcurrencyLimit("codex/gpt-5.6-sol", 1);
-		const compacted = await h.runtime.completeSimple(selected, history(210000), { maxTokens: 4096 });
-		expect(compacted.errorMessage).toBeUndefined();
+		for (const message of history(400000).messages) h.session.appendMessage(message);
+		h.agentSession.agent.state.messages = h.session.buildSessionContext().messages;
+		await h.agentSession.setModel(selected);
+		await h.agentSession.prompt("finish local task after native compression");
+		expect(h.session.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
 		expect(bodies).toHaveLength(3);
 		expect(
 			h.session
 				.getBranch()
 				.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_COMPACTION_USAGE_TYPE),
-		).toHaveLength(1);
+		).toHaveLength(0);
 		writePolicy(30000, false);
 		const refused = await h.runtime.completeSimple(selected, context, { maxTokens: 4096 });
 		expect(isContextPolicyFailure(refused)).toBe(true);

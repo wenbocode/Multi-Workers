@@ -1550,6 +1550,7 @@ export class InteractiveMode {
                 })();
             },
             getSystemPrompt: () => this.session.systemPrompt,
+            requestCompaction: (options) => this.session.requestCompaction(options),
         });
         // Set up the extension shortcut handler on the default editor
         this.defaultEditor.onExtensionShortcut = (data) => {

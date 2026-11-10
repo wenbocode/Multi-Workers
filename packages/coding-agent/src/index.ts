@@ -65,6 +65,7 @@ export type {
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
 	BuildSystemPromptOptions,
+	CompactionRequestOptions,
 	CompactOptions,
 	ContextEvent,
 	ContextUsage,

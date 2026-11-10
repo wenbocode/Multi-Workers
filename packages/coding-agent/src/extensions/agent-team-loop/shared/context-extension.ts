@@ -1,5 +1,9 @@
+import { randomUUID } from "node:crypto";
+import { type Context, isRetryableAssistantError } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../../../core/extensions/types.ts";
+import { convertToLlm } from "../../../core/messages.ts";
 import type { ModelRegistry } from "../../../core/model-registry.ts";
+import { buildSessionContext } from "../../../core/session-manager.ts";
 import { createLocalCodexPayload } from "./codex-local.ts";
 import { LOCAL_CODEX_PROVIDER } from "./codex-proxy.ts";
 import { type ContextBudget, ContextBudgetError, computeContextBudget } from "./context-budget.ts";
@@ -8,11 +12,13 @@ import {
 	contextPolicyFailureMessage,
 	type MwContextPolicyDetails,
 	MwContextPolicyError,
+	type NativeCompactionPlan,
 } from "./context-controller.ts";
 import {
 	CONTEXT_POLICY_FIELDS,
 	type ContextPolicyField,
 	type ContextPolicyLocation,
+	DELEGATED_CONTEXT_FIELDS,
 	type ResolvedContextPolicy,
 	resolveContextPolicy,
 	updateContextPolicy,
@@ -49,18 +55,35 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 		homeDir: options.homeDir,
 		taskFile: options.taskFile ?? (process.env.PI_WORKER_TASK || undefined),
 	};
-	const states = new WeakMap<ModelRegistry, { ctx: ExtensionContext; controller: ContextController }>();
+	const states = new WeakMap<
+		ModelRegistry,
+		{ ctx: ExtensionContext; controller: ContextController; pending: boolean }
+	>();
 	const nativeSummarySignals = new WeakSet<AbortSignal>();
-	const install = (ctx: ExtensionContext): ContextController => {
+	const automaticNativeSummarySignals = new WeakSet<AbortSignal>();
+	const nativeAttempts = new WeakMap<AbortSignal, { attemptId: string; attemptStartedAt: string }>();
+	const contextFor = (ctx: ExtensionContext, pending?: Context["messages"][number]): Context => {
+		const active = new Set(pi.getActiveTools());
+		const messages = convertToLlm(buildSessionContext(ctx.sessionManager.getBranch()).messages);
+		return {
+			systemPrompt: ctx.getSystemPrompt(),
+			messages: pending ? [...messages, pending] : messages,
+			tools: pi
+				.getAllTools()
+				.filter((tool) => active.has(tool.name))
+				.map(({ name, description, parameters }) => ({ name, description, parameters })),
+		};
+	};
+	const rememberFailure = (ctx: ExtensionContext, error: MwContextPolicyError) => {
+		policyFailures.set(ctx.modelRegistry, error.details);
+		pi.appendEntry("mw-context-policy-failure", error.details);
+		ctx.ui.setStatus("mw-context", error.message);
+	};
+	const install = (ctx: ExtensionContext) => {
 		let state = states.get(ctx.modelRegistry);
 		if (!state) {
-			const binding = { ctx };
 			const controller = new ContextController({
 				readPolicy: () => resolveContextPolicy(location),
-				getCheckpointEntries: () =>
-					binding.ctx.sessionManager.getBranch().filter((entry) => entry.type === "custom"),
-				appendEntry: (customType, data) => pi.appendEntry(customType, data),
-				taskId: location.taskFile,
 				estimateOptions: (model, context, requestOptions) =>
 					model.provider === LOCAL_CODEX_PROVIDER
 						? {
@@ -72,17 +95,54 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 							}
 						: {},
 			});
-			state = Object.assign(binding, { controller });
+			state = { ctx, controller, pending: false };
 			states.set(ctx.modelRegistry, state);
 		}
 		state.ctx = ctx;
+		const binding = state;
 		installProviderPolicies(ctx, {
 			controller: state.controller,
 			nativeSummarySignals,
+			automaticNativeSummarySignals,
 			policyFailure: (model, error) => {
 				if (!(error instanceof MwContextPolicyError)) return undefined;
 				policyFailures.set(ctx.modelRegistry, error.details);
 				return contextPolicyFailureMessage(model, error);
+			},
+			nativeSummaryFailure: (model, response, signal, originalFailure) => {
+				if (signal?.aborted || response.stopReason === "stop") return undefined;
+				const code =
+					response.stopReason === "length"
+						? "SUMMARY_TRUNCATED"
+						: response.stopReason === "aborted"
+							? "SUMMARY_ABORTED"
+							: "SUMMARY_FAILED";
+				const safe = binding.controller.nativeFailure(model, originalFailure ?? response, code);
+				const values = [
+					response.usage.input,
+					response.usage.output,
+					response.usage.cacheRead,
+					response.usage.cacheWrite,
+				];
+				const known =
+					values.every((value) => Number.isFinite(value) && value >= 0) && values.some((value) => value > 0);
+				const failure = new MwContextPolicyError(code, {
+					...safe.details,
+					...(signal ? nativeAttempts.get(signal) : {}),
+					summaryStatus: response.stopReason,
+					nativeSummaryUsage: known
+						? { input: values[0], output: values[1], cacheRead: values[2], cacheWrite: values[3] }
+						: null,
+				});
+				policyFailures.set(ctx.modelRegistry, failure.details);
+				const message = contextPolicyFailureMessage(model, failure);
+				// Native compaction owns its configured retry budget; never expose raw provider text.
+				if (isRetryableAssistantError(response)) {
+					message.errorMessage = `Provider returned error: ${message.errorMessage}`;
+					const boundary = message.diagnostics?.find((entry) => entry.type === "provider_retry_boundary");
+					if (boundary) boundary.details = { outerRetryEligible: true };
+				}
+				return message;
 			},
 			authChanged: () =>
 				new MwContextPolicyError("AUTH_CHANGED", {
@@ -93,22 +153,79 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 			const policy = resolveContextPolicy(location);
 			ctx.ui.setStatus(
 				"mw-context",
-				`Context ${policy.taskType}: ${policy.maxTokens} tokens; auto ${policy.compaction.enabled ? "on" : "off"}`,
+				`Context ${policy.taskType}: ${policy.maxTokens} tokens; native auto ${policy.compaction.enabled ? "on" : "off"}`,
 			);
 		} catch {
 			ctx.ui.setStatus("mw-context", "Context policy invalid; requests blocked");
 		}
-		return state.controller;
+		return binding;
+	};
+	const plan = async (ctx: ExtensionContext, pending?: Context["messages"][number]) => {
+		const state = install(ctx);
+		if (state.pending || !ctx.model) return;
+		const model = ctx.model;
+		let planned: NativeCompactionPlan | undefined;
+		try {
+			planned = await state.controller.planNativeCompaction(model, contextFor(ctx, pending));
+		} catch (error) {
+			if (error instanceof MwContextPolicyError) policyFailures.set(ctx.modelRegistry, error.details);
+			return;
+		}
+		if (!planned) return;
+		state.pending = true;
+		const selectedPlan = planned;
+		ctx.requestCompaction({
+			onComplete: async (_result, signal) => {
+				try {
+					nativeSummarySignalsByRegistry.set(ctx.modelRegistry, signal);
+					const current = state.ctx;
+					await state.controller.assertNativeProgress(
+						current.model ?? model,
+						contextFor(current, pending),
+						selectedPlan,
+						{ signal },
+					);
+				} catch (error) {
+					signal.throwIfAborted();
+					const failure =
+						error instanceof MwContextPolicyError ? error : state.controller.nativeFailure(model, error);
+					rememberFailure(state.ctx, failure);
+					throw failure;
+				} finally {
+					state.pending = false;
+				}
+			},
+			onError: async (error, signal) => {
+				state.pending = false;
+				nativeSummarySignalsByRegistry.set(ctx.modelRegistry, signal);
+				if (signal.aborted) throw error;
+				const details = policyFailures.get(ctx.modelRegistry);
+				const failure = details
+					? new MwContextPolicyError(details.code, details)
+					: state.controller.nativeFailure(model, error);
+				rememberFailure(state.ctx, failure);
+				throw failure;
+			},
+		});
 	};
 	pi.on("session_start", (_event, ctx) => {
 		policyFailures.delete(ctx.modelRegistry);
 		nativeSummarySignalsByRegistry.delete(ctx.modelRegistry);
-		install(ctx).resetCalibration();
+		install(ctx).controller.resetCalibration();
 	});
-	pi.on("before_agent_start", (_event, ctx) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		policyFailures.delete(ctx.modelRegistry);
 		nativeSummarySignalsByRegistry.delete(ctx.modelRegistry);
-		install(ctx);
+		await plan(ctx, {
+			role: "user",
+			content: event.images?.length ? [{ type: "text", text: event.prompt }, ...event.images] : event.prompt,
+			timestamp: Date.now(),
+		});
+	});
+	pi.on("turn_end", async (event, ctx) => {
+		if (event.message.role !== "assistant") return;
+		if (event.message.stopReason === "error" || event.message.stopReason === "aborted") return;
+		if (event.toolResults.length || ctx.hasPendingMessages()) await plan(ctx);
 	});
 	pi.on("context", (_event, ctx) => {
 		install(ctx);
@@ -119,30 +236,27 @@ export function registerContextPolicy(pi: ExtensionAPI, options: ContextExtensio
 	pi.on("session_compact", (_event, ctx) => {
 		policyFailures.delete(ctx.modelRegistry);
 		nativeSummarySignalsByRegistry.delete(ctx.modelRegistry);
-		install(ctx).resetCalibration();
+		install(ctx).controller.resetCalibration();
 	});
 	pi.on("session_tree", (_event, ctx) => {
 		policyFailures.delete(ctx.modelRegistry);
 		nativeSummarySignalsByRegistry.delete(ctx.modelRegistry);
-		install(ctx).resetCalibration();
+		install(ctx).controller.resetCalibration();
 	});
 	pi.on("session_before_compact", (event, ctx) => {
 		install(ctx);
+		// MW owns the automatic threshold; generation and overflow recovery remain native.
 		if (event.reason === "threshold") return { cancel: true };
-		if (event.reason === "overflow") {
+		if (event.reason !== "manual") {
 			try {
-				if (!resolveContextPolicy(location).compaction.enabled) {
-					ctx.ui.setStatus(
-						"mw-context",
-						"Automatic summaries disabled; adjust context policy or compact manually",
-					);
-					return { cancel: true };
-				}
+				if (!resolveContextPolicy(location).compaction.enabled) return { cancel: true };
 			} catch {
 				return { cancel: true };
 			}
 		}
 		nativeSummarySignals.add(event.signal);
+		if (states.get(ctx.modelRegistry)?.pending) automaticNativeSummarySignals.add(event.signal);
+		nativeAttempts.set(event.signal, { attemptId: randomUUID(), attemptStartedAt: new Date().toISOString() });
 		nativeSummarySignalsByRegistry.set(ctx.modelRegistry, event.signal);
 		return undefined;
 	});
@@ -237,6 +351,18 @@ export async function runContextCommand(
 		}
 		const report = {
 			...policy,
+			compaction: { enabled: policy.compaction.enabled, triggerRatio: policy.compaction.triggerRatio },
+			generationOwner: "pi-native-compaction",
+			delegatedLegacy: {
+				active: false,
+				message: "pi owns compaction generation parameters; legacy MW values below are not applied",
+				values: Object.fromEntries(
+					DELEGATED_CONTEXT_FIELDS.map((field) => [
+						field,
+						policy.compaction[field.slice("compaction.".length) as keyof typeof policy.compaction],
+					]),
+				),
+			},
 			budget,
 			budgetError,
 			modelWindow: ctx.model?.contextWindow ?? null,
@@ -262,7 +388,7 @@ export async function runContextCommand(
 							field === "maxTokens"
 								? policy.maxTokens
 								: policy.compaction[field.slice("compaction.".length) as keyof typeof policy.compaction];
-						return `${field}=${value}: ${source.path} (${source.scope}.${source.level}${source.taskType ? `:${source.taskType}` : ""}${source.builtin ? ", initial default" : ""})`;
+						return `${field}=${value}${DELEGATED_CONTEXT_FIELDS.includes(field) ? " [inactive; pi owns generation]" : ""}: ${source.path} (${source.scope}.${source.level}${source.taskType ? `:${source.taskType}` : ""}${source.builtin ? ", initial default" : ""})`;
 					}),
 					report.limitation,
 				].join("\n");
