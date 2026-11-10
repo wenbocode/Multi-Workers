@@ -127,7 +127,7 @@ function makeFixture(
 	const card =
 		opts.cardPath === undefined
 			? ""
-			: `card_path: ${opts.cardPath}\n` + (opts.cardSha === undefined ? "" : `card_sha256: ${opts.cardSha}\n`);
+			: `card_path: ${opts.cardPath}\n${opts.cardSha === undefined ? "" : `card_sha256: ${opts.cardSha}\n`}`;
 	fs.writeFileSync(path.join(taskDir, "task.md"), `${head}${card}\nwork\n`, "utf8");
 	if (opts.report !== undefined) fs.writeFileSync(path.join(taskDir, "report.md"), opts.report, "utf8");
 	if (opts.output !== undefined) fs.writeFileSync(path.join(taskDir, "output.md"), opts.output, "utf8");

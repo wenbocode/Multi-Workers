@@ -1,7 +1,10 @@
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { initiatorRoleFromWorkerTask, registerAskDecisionTool } from "./pm/decision-tool.ts";
 import { pmActivate } from "./pm/pm-orchestrator.ts";
+import { registerLocalCodex } from "./shared/codex-local.ts";
+import { registerContextPolicy } from "./shared/context-extension.ts";
 import { registerImplementationGate } from "./shared/implementation-gate.ts";
+import { registerModelConcurrency } from "./shared/model-concurrency-extension.ts";
 import { registerProtectedConfigGuard } from "./shared/protected-config.ts";
 import { registerWorktreeJunctionGuard } from "./shared/worktree-junction-guard.ts";
 import { registerDecisionSignoffGuard, registerXkeyGateGuard } from "./shared/xkey-gate-guard.ts";
@@ -34,6 +37,9 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 		return;
 	}
 	g[ACTIVATION_FLAG] = true;
+	registerLocalCodex(pi);
+	registerModelConcurrency(pi);
+	registerContextPolicy(pi);
 
 	// Cross-window config guard (2026-09-15 incident: a session cleared
 	// ~/.pi/agent/auth.json and every live window lost its credentials).

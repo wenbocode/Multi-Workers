@@ -21,6 +21,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { LOCAL_CODEX_PROVIDER } from "./codex-proxy.js";
 /** pi provider id -> user-facing prefix (mirror of the Python-side map). */
 export const PROVIDER_ID_TO_PREFIX = {
     timi: "timi",
@@ -88,7 +89,7 @@ function isFrameworkProject(cwd) {
 export function recordWindowModel(cwd, model) {
     if (!model || !isFrameworkProject(cwd))
         return;
-    const prefix = PROVIDER_ID_TO_PREFIX[model.provider];
+    const prefix = model.provider === LOCAL_CODEX_PROVIDER ? "codex" : PROVIDER_ID_TO_PREFIX[model.provider];
     if (!prefix)
         return;
     try {
@@ -166,13 +167,15 @@ export function validateModelValue(registry, cli, taskProvider, value) {
     }
     if (!provider)
         return { ok: true, message: "" };
+    const local = provider === "openai-codex" && registry.getAll().some((m) => m.provider === LOCAL_CODEX_PROVIDER);
+    const resolvedProvider = local ? LOCAL_CODEX_PROVIDER : provider;
     const ids = registry
         .getAll()
-        .filter((m) => m.provider === provider)
+        .filter((m) => m.provider === resolvedProvider)
         .map((m) => m.id);
     if (ids.length === 0)
         return { ok: true, message: "" };
-    if (registry.find(provider, modelId))
+    if (registry.find(resolvedProvider, modelId))
         return { ok: true, message: "" };
     const candidates = [...new Set(ids)].sort().slice(0, 5).join(", ");
     return {
@@ -218,7 +221,8 @@ export function modelImageCapability(registry, cli, provider, value) {
         const ids = registry.getAll().filter((m) => m.provider === resolved);
         if (ids.length === 0)
             return "unknown";
-        const model = registry.find(resolved, modelId);
+        const model = (resolved === "openai-codex" ? registry.find(LOCAL_CODEX_PROVIDER, modelId) : undefined) ??
+            registry.find(resolved, modelId);
         if (!model)
             return "unknown";
         return model.input?.includes("image") ? "yes" : "no";
@@ -286,7 +290,8 @@ export async function applyMainModelConfig(pi, ctx) {
     const provider = PREFIX_TO_PROVIDER_ID[prefix];
     if (!provider)
         return;
-    const model = ctx.modelRegistry.find(provider, modelId);
+    const model = (provider === "openai-codex" ? ctx.modelRegistry.find(LOCAL_CODEX_PROVIDER, modelId) : undefined) ??
+        ctx.modelRegistry.find(provider, modelId);
     if (!model) {
         ctx.ui.notify(`dispatch.yml main=${value} not found in the model registry — leaving the window model unchanged`, "error");
         return;

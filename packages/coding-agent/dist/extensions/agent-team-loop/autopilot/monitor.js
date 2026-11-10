@@ -38,6 +38,8 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { formatProxyStatus, proxySnapshot } from "../shared/codex-proxy.js";
+import { readConcurrencySnapshot, renderConcurrencyLines, taskQueueStatus, } from "../shared/concurrency-view.js";
 import { IndexStore } from "../shared/index-store.js";
 import { getMwStatus, readServeMeta, serveStaleness } from "../shared/mw-runner.js";
 import { WorkerStore, workerBelongsToKey, workerOwnerKey } from "../shared/worker-store.js";
@@ -415,6 +417,8 @@ export function readMonitorState(projectDir, nowMs, deps) {
     // and re-stamps `collectedAtMs` with its own (possibly injected) clock.
     return {
         serve,
+        proxy: proxySnapshot(projectDir),
+        concurrency: readConcurrencySnapshot(),
         conductor,
         autopilot,
         workers,
@@ -988,6 +992,10 @@ export function renderPendingGateLine(gate, index, total) {
  */
 export function renderMonitorLines(s) {
     const lines = [monitorHeaderLine(s)];
+    lines.push(...formatProxyStatus(s.proxy).map((line) => trunc(line, MONITOR_LINE_MAX)));
+    if (s.concurrency) {
+        lines.push(...renderConcurrencyLines(s.concurrency, s.collectedAtMs ?? 0).map((line) => trunc(line, MONITOR_LINE_MAX)));
+    }
     // G4 AC-017 (D-018): a degraded frame says so on its own line — the payload
     // below stays the last known truth, the diagnostic is explicit and in-frame
     // (no write path). Error summary first so a long path/timestamp cannot hide
@@ -1090,6 +1098,9 @@ export function renderMonitorLines(s) {
         lines.push(`workers: ${s.workers.length} running (all keys)`);
         for (const w of s.workers) {
             lines.push(trunc(`  · ${w.taskKey}  ${Math.ceil(w.elapsedMs / 60_000)}m`, MONITOR_LINE_MAX));
+            const queue = s.concurrency ? taskQueueStatus(s.concurrency, w.taskPath, s.collectedAtMs ?? 0) : "";
+            if (queue)
+                lines.push(trunc(`    ${queue}`, MONITOR_LINE_MAX));
         }
     }
     // AC-016 (D1): stage main-gate rows. Every roadmap stage is listed; the row

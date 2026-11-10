@@ -213,8 +213,7 @@ function cachedRq1BlockedCommands(): readonly string[] | undefined {
 	const write2 = pick(112);
 	const nonWrite = pick(111);
 	if (
-		write1 !== undefined &&
-		write1.includes("--glob") &&
+		write1?.includes("--glob") &&
 		write1.includes("[System.IO.File]::WriteAllText") &&
 		write2 !== undefined &&
 		write2.includes("--glob") &&

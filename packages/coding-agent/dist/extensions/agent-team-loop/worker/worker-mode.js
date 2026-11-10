@@ -11,6 +11,8 @@ import { appendEvidence } from "../rag/evidence.js";
 import { researchDocEvidence, scanCitations, validateResearchDoc } from "../rag/research-doc.js";
 import { applyRagTools, RAG_CHAT_BUDGET_HEADER, RAG_TIME_BUDGET_HEADER, registerRagTools, } from "../rag/tools.js";
 import { appendUnresolvedWriteEvent, appendWriteFileEvent, parseWriteFileEvents, repoRelativePath, } from "../shared/change-ledger.js";
+import { isContextPolicyFailure } from "../shared/context-controller.js";
+import { consumeContextPolicyFailure, consumeNativeContextAbort } from "../shared/context-extension.js";
 import { resolveDecidePolicy } from "../shared/decide-policy.js";
 import { findNonEmptyReport, hasDeliverableEvidence } from "../shared/deliverable-evidence.js";
 import { claimBudgetCaps, DISPATCH_TYPE_VOCABULARY, parseClaimsBlock } from "../shared/dispatch-card.js";
@@ -3167,11 +3169,25 @@ export async function workerModeActivate(pi, options) {
     // auto-retry attempt, so this is evidence only — counting/resend/exit live on
     // agent_settled.
     let lastAssistantText = "";
+    let lastContextPolicyCode;
+    let lastContextPolicyDetails;
+    let lastAssistantAborted = false;
     pi.on("agent_end", (event) => {
         let view;
         for (let i = event.messages.length - 1; i >= 0; i--) {
             const msg = event.messages[i];
             if (msg.role === "assistant") {
+                const policyDiagnostic = isContextPolicyFailure(msg)
+                    ? msg.diagnostics?.find((diagnostic) => diagnostic.type === "mw_context_policy")
+                    : undefined;
+                const policyCode = policyDiagnostic?.details?.code;
+                lastContextPolicyDetails = policyDiagnostic?.details;
+                lastContextPolicyCode = policyDiagnostic
+                    ? typeof policyCode === "string" && /^[A-Z0-9_]{1,100}$/.test(policyCode)
+                        ? policyCode
+                        : "UNKNOWN"
+                    : undefined;
+                lastAssistantAborted = msg.stopReason === "aborted";
                 const text = msg.content
                     .filter((c) => c.type === "text" && "text" in c)
                     .map((c) => c.text)
@@ -3985,6 +4001,56 @@ export async function workerModeActivate(pi, options) {
         killTrackedDetachedChildren();
         process.exit(3);
     }
+    /** A policy refusal is deterministic; cancellation also cannot settle as success. */
+    function contextTerminalExit(code) {
+        taskDone = true;
+        clearWatchdogTimers();
+        clearInterval(heartbeat);
+        const aborted = lastAssistantAborted;
+        const exitCode = aborted ? 1 : 2;
+        const reason = aborted ? "aborted: parent request cancelled" : `MW_CONTEXT_POLICY:${code ?? "UNKNOWN"}`;
+        if (aborted)
+            runState.aborted = true;
+        else {
+            runState.context_policy_code = code;
+            runState.context_policy_details = lastContextPolicyDetails;
+        }
+        const summary = [
+            "## 结论",
+            aborted ? "aborted：请求已取消，任务未完成。" : `needs-clarification：${reason}，任务部分交付。`,
+            "## 证据",
+            "trace.log 保留工具执行记录；已存在的产物和原始会话保留。",
+            "## 残留与未验证",
+            "未执行后续阶段或恢复自检；剩余任务需要人工接续。",
+            "## 上下文来源",
+            `任务卡：${taskPath}；当前终态：${reason}。`,
+            meta.type === "review" ? "## 未覆盖面声明" : "## 改动清单",
+            meta.type === "review"
+                ? "余下审查未完成；仅保留已有证据。"
+                : "沿用现有文件和产物；本终态处理没有执行任务工具。",
+            "## 问题与建议",
+            aborted
+                ? "确认取消原因后人工决定是否接续。"
+                : "检查 /mw context show 的预算、来源和压缩结果，手动处理后再接续。",
+        ].join("\n\n");
+        appendTrace(meta.taskKey, meta.agenticdocRoot, `[MW_CONTEXT_TERMINAL] reason=${reason} exit=${exitCode}`);
+        writeOutputGuarded({
+            taskKey: meta.taskKey,
+            agenticdocRoot: meta.agenticdocRoot,
+            exitCode,
+            summary,
+            changedFiles: collectArtifacts(taskDir),
+            verificationSteps: "No additional model verification was requested; see existing artifacts and trace.log.",
+            exitReason: reason,
+            questions: aborted
+                ? undefined
+                : "Context policy stopped the request. Inspect configuration and preserved evidence before manual continuation.",
+        });
+        recordEnd(exitCode);
+        outputWritten = true;
+        killTrackedDetachedChildren();
+        process.exit(exitCode);
+    }
     // Timers are process-lifetime by design, but a REPLACED session (`/new`,
     // `/resume`, `/fork`, harness teardown) keeps the old worker's heartbeat and
     // watchdog armed: they would keep writing [HEARTBEAT]/run.json into a task
@@ -3996,7 +4062,7 @@ export async function workerModeActivate(pi, options) {
         clearInterval(heartbeat);
         killTrackedDetachedChildren();
     });
-    pi.on("agent_settled", () => {
+    pi.on("agent_settled", (_event, ctx) => {
         try {
             // AC-010②: this handler is the settle entry point; once finishSuccess has
             // run (taskDone), later settles must not re-write phase files, re-emit
@@ -4005,6 +4071,19 @@ export async function workerModeActivate(pi, options) {
             // below is unaffected.
             if (taskDone)
                 return;
+            // Native compaction can flatten a typed refusal into an ordinary Error.
+            // Consume the extension's run-scoped diagnostic before MODEL_ERR retries.
+            if (ctx?.modelRegistry && consumeNativeContextAbort(ctx.modelRegistry))
+                lastAssistantAborted = true;
+            const bridgedFailure = ctx?.modelRegistry ? consumeContextPolicyFailure(ctx.modelRegistry) : undefined;
+            if (bridgedFailure) {
+                lastContextPolicyCode = bridgedFailure.code;
+                lastContextPolicyDetails = bridgedFailure;
+            }
+            if (lastContextPolicyCode !== undefined || lastAssistantAborted) {
+                contextTerminalExit(lastContextPolicyCode);
+                return;
+            }
             // Model-error branch (design §3.1 / D1/D3/D4, revised 2026-10-15): an error
             // settle must never advance the phase machine or reach the success path
             // (AC-003), so it sits ahead of EVERY initialSettled / phase /

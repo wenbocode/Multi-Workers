@@ -42,7 +42,6 @@ import {
 } from "../../src/extensions/agent-team-loop/worker/output-sections.ts";
 import {
 	agentProductText,
-	appendMechanicalContextSources,
 	hasReportProduct,
 	judgedProductFile,
 	MECHANICAL_CONTEXT_MARKER,
@@ -117,7 +116,7 @@ function makeFixture(
 	const card =
 		opts.cardPath === undefined
 			? ""
-			: `card_path: ${opts.cardPath}\n` + (opts.cardSha === undefined ? "" : `card_sha256: ${opts.cardSha}\n`);
+			: `card_path: ${opts.cardPath}\n${opts.cardSha === undefined ? "" : `card_sha256: ${opts.cardSha}\n`}`;
 	fs.writeFileSync(path.join(taskDir, "task.md"), `${head}${card}\nwork\n`, "utf8");
 	if (opts.report !== undefined) fs.writeFileSync(path.join(taskDir, "report.md"), opts.report, "utf8");
 	if (opts.output !== undefined) fs.writeFileSync(path.join(taskDir, "output.md"), opts.output, "utf8");
@@ -603,8 +602,7 @@ describe("AC-017(c) the --glob here-string no longer denies real writes", () => 
 		const write2 = pick(112);
 		const nonWrite = pick(111);
 		if (
-			write1 !== undefined &&
-			write1.includes("--glob") &&
+			write1?.includes("--glob") &&
 			write1.includes("[System.IO.File]::WriteAllText") &&
 			write2 !== undefined &&
 			write2.includes("--glob") &&

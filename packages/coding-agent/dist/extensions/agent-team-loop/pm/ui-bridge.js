@@ -6,12 +6,16 @@ import { VERSION } from "../../../config.js";
 import { validateRagEnabled } from "../rag/tools.js";
 import { runAgenticScript } from "../shared/agentic-scripts.js";
 import { cardDigest } from "../shared/card-digest.js";
+import { runProxyCommand } from "../shared/codex-local.js";
+import { readConcurrencySnapshot, taskQueueStatus } from "../shared/concurrency-view.js";
+import { runContextCommand } from "../shared/context-extension.js";
 import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.js";
 import { CLAIM_GATE_DEFAULT, CLAIM_TYPES, claimBudgetCaps, claimsGaps, ENVELOPE_HEADING_FAMILIES, ENVELOPE_SECTION_LABELS, parseClaimsBlock, readEnvelope, seedItemsMissing, typeExtrasMissing, } from "../shared/dispatch-card.js";
 import { DISPATCHABLE_TYPES, detectImageNeed, modelImageCapability, readRoleModel, roleForTaskType, validateModelValue, } from "../shared/dispatch-models.js";
 import { acquireLock } from "../shared/file-lock.js";
 import { formatHeartbeatAge, HEARTBEAT_STALE_MS, readTaskProgress } from "../shared/heartbeat.js";
 import { isScratchKey, keyNameRefusal, normalizeKey, parseSyntheticClaim, RESERVED_INDEX_NAMES, readIndexMdActive, syntheticClaimLive, } from "../shared/index-store.js";
+import { runConcurrencyCommand } from "../shared/model-concurrency-extension.js";
 import { buildMw, decideMw, doctorMw, getMwStatus, initMw, modelMw, partitionMw, RAG_SUBCOMMANDS, ragMw, restartMw, serveStaleness, startMw, statsMw, stopMw, targetMw, updateEnvMw, } from "../shared/mw-runner.js";
 import { readLastProductSectionBody } from "../shared/output-sections.js";
 import { SCRATCH_WORKERS_KEY, workerTaskDir } from "../shared/paths.js";
@@ -2791,7 +2795,7 @@ lifecycleRun) {
         label: "list_tasks",
         description: "List worker tasks with their current status (pending / running / done / failed / needs-clarification); every row carries its owning key. " +
             'scope "mine" (default) lists only this window\'s tasks — its watched key plus tasks it dispatched; scope "key" lists one key (pass key); scope "all" lists the whole project. ' +
-            "Acked terminal tasks are badged 'acked'. " +
+            "Acked terminal tasks are badged 'acked'. LLM queued badges show the model and wait age for workers waiting on shared concurrency limits. " +
             'READING is never restricted by the cross-key write guard: scope "all"/"key" cover other windows\' keys, so use them to inspect status before deciding anything. ' +
             "Acks are refused for another window's rows.",
         parameters: Type.Object({
@@ -2805,9 +2809,12 @@ lifecycleRun) {
                 details: undefined,
             });
             const acked = new Set(ackStore.readAll().keys());
+            const concurrency = readConcurrencySnapshot();
+            const nowMs = Date.now();
             const format = (e) => {
+                const queue = taskQueueStatus(concurrency, e.taskPath, nowMs);
                 const base = `${ownerKeyOf(e, agenticdocRoot)} :: ${e.taskKey} | ${e.status} | ${e.cli}` +
-                    `${e.model ? ` | model: ${e.model}` : ""}`;
+                    `${e.model ? ` | model: ${e.model}` : ""}${queue ? ` | ${queue}` : ""}`;
                 return acked.has(e.taskKey) ? `${base} | acked` : base;
             };
             const rows = (entries, emptyText) => entries.length === 0 ? emptyText : entries.map(format).join("\n");
@@ -3552,7 +3559,7 @@ export async function runMwModelCommand(ctx, projectDir, argsText, runner = mode
 }
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
-export const MW_COMMAND_DESCRIPTION = "Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / decide / rag / stats / run-detached / ack";
+export const MW_COMMAND_DESCRIPTION = "Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / decide / rag / stats / run-detached / ack";
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
 export const RAG_OUTPUT_MAX_LINES = 30;
@@ -4079,6 +4086,18 @@ export function registerMwCommands(pi, projectDir, workerStore, ackStore, watch,
         handler: async (_args, ctx) => {
             const trimmed = _args.trim();
             const sub = trimmed.split(/\s+/)[0] ?? "status";
+            if (sub === "context") {
+                await runContextCommand(pi, ctx, projectDir, trimmed.slice(sub.length).trim());
+                return;
+            }
+            if (sub === "concurrency") {
+                await runConcurrencyCommand(pi, ctx, trimmed.slice(sub.length).trim());
+                return;
+            }
+            if (sub === "proxy") {
+                await runProxyCommand(pi, ctx, projectDir, trimmed.slice(sub.length).trim());
+                return;
+            }
             if (sub === "build") {
                 ctx.ui.notify("Rebuilding extension bundle (bash-free)…", "info");
                 const r = buildMw();

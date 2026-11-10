@@ -1,6 +1,9 @@
 import { initiatorRoleFromWorkerTask, registerAskDecisionTool } from "./pm/decision-tool.js";
 import { pmActivate } from "./pm/pm-orchestrator.js";
+import { registerLocalCodex } from "./shared/codex-local.js";
+import { registerContextPolicy } from "./shared/context-extension.js";
 import { registerImplementationGate } from "./shared/implementation-gate.js";
+import { registerModelConcurrency } from "./shared/model-concurrency-extension.js";
 import { registerProtectedConfigGuard } from "./shared/protected-config.js";
 import { registerWorktreeJunctionGuard } from "./shared/worktree-junction-guard.js";
 import { registerDecisionSignoffGuard, registerXkeyGateGuard } from "./shared/xkey-gate-guard.js";
@@ -31,6 +34,9 @@ export async function activate(pi) {
         return;
     }
     g[ACTIVATION_FLAG] = true;
+    registerLocalCodex(pi);
+    registerModelConcurrency(pi);
+    registerContextPolicy(pi);
     // Cross-window config guard (2026-09-15 incident: a session cleared
     // ~/.pi/agent/auth.json and every live window lost its credentials).
     // Registered in EVERY mode — PM, worker, and plain interactive windows —

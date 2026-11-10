@@ -9,6 +9,9 @@ import { validateRagEnabled } from "../rag/tools.ts";
 import type { AckStore } from "../shared/ack-store.ts";
 import { runAgenticScript } from "../shared/agentic-scripts.ts";
 import { cardDigest } from "../shared/card-digest.ts";
+import { runProxyCommand } from "../shared/codex-local.ts";
+import { readConcurrencySnapshot, taskQueueStatus } from "../shared/concurrency-view.ts";
+import { runContextCommand } from "../shared/context-extension.ts";
 import { DECIDE_REGISTRY } from "../shared/decide-registry.generated.ts";
 import {
 	CLAIM_GATE_DEFAULT,
@@ -45,6 +48,7 @@ import {
 	readIndexMdActive,
 	syntheticClaimLive,
 } from "../shared/index-store.ts";
+import { runConcurrencyCommand } from "../shared/model-concurrency-extension.ts";
 import type { DoctorJson, MwCliResult } from "../shared/mw-runner.ts";
 import {
 	buildMw,
@@ -3493,7 +3497,7 @@ export function registerWorkerTools(
 		description:
 			"List worker tasks with their current status (pending / running / done / failed / needs-clarification); every row carries its owning key. " +
 			'scope "mine" (default) lists only this window\'s tasks — its watched key plus tasks it dispatched; scope "key" lists one key (pass key); scope "all" lists the whole project. ' +
-			"Acked terminal tasks are badged 'acked'. " +
+			"Acked terminal tasks are badged 'acked'. LLM queued badges show the model and wait age for workers waiting on shared concurrency limits. " +
 			'READING is never restricted by the cross-key write guard: scope "all"/"key" cover other windows\' keys, so use them to inspect status before deciding anything. ' +
 			"Acks are refused for another window's rows.",
 		parameters: Type.Object({
@@ -3509,10 +3513,13 @@ export function registerWorkerTools(
 				details: undefined,
 			});
 			const acked = new Set(ackStore.readAll().keys());
+			const concurrency = readConcurrencySnapshot();
+			const nowMs = Date.now();
 			const format = (e: WorkerEntry): string => {
+				const queue = taskQueueStatus(concurrency, e.taskPath, nowMs);
 				const base =
 					`${ownerKeyOf(e, agenticdocRoot)} :: ${e.taskKey} | ${e.status} | ${e.cli}` +
-					`${e.model ? ` | model: ${e.model}` : ""}`;
+					`${e.model ? ` | model: ${e.model}` : ""}${queue ? ` | ${queue}` : ""}`;
 				return acked.has(e.taskKey) ? `${base} | acked` : base;
 			};
 			const rows = (entries: WorkerEntry[], emptyText: string): string =>
@@ -4407,7 +4414,7 @@ export async function runMwModelCommand(
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
 export const MW_COMMAND_DESCRIPTION =
-	"Control mw: build / init / start / stop / restart / status / doctor / update / target / partition / model / decide / rag / stats / run-detached / ack";
+	"Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / decide / rag / stats / run-detached / ack";
 
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
@@ -5084,6 +5091,19 @@ export function registerMwCommands(
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const trimmed = _args.trim();
 			const sub = trimmed.split(/\s+/)[0] ?? "status";
+
+			if (sub === "context") {
+				await runContextCommand(pi, ctx, projectDir, trimmed.slice(sub.length).trim());
+				return;
+			}
+			if (sub === "concurrency") {
+				await runConcurrencyCommand(pi, ctx, trimmed.slice(sub.length).trim());
+				return;
+			}
+			if (sub === "proxy") {
+				await runProxyCommand(pi, ctx, projectDir, trimmed.slice(sub.length).trim());
+				return;
+			}
 
 			if (sub === "build") {
 				ctx.ui.notify("Rebuilding extension bundle (bash-free)…", "info");

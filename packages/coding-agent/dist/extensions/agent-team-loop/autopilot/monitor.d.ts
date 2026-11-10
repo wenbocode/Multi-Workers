@@ -37,6 +37,8 @@
  * on/off state lives only in module memory (AC-009), never in config.json.
  */
 import * as fs from "node:fs";
+import { type ProxyStatus } from "../shared/codex-proxy.ts";
+import { type ConcurrencySnapshot } from "../shared/concurrency-view.ts";
 import { type WorkerEntry } from "../shared/worker-store.ts";
 import { type BlockerClass, type ConfigResult, type GateReason, type RoadmapResult, type TimelineEvent } from "./status-model.ts";
 /** Widget id for the monitor panel (the watch widget is
@@ -202,6 +204,8 @@ export interface MonitorAutopilot {
     stageTitleByNumber?: ReadonlyMap<number, string>;
 }
 export interface MonitorSnapshot {
+    proxy?: ProxyStatus;
+    concurrency?: ConcurrencySnapshot;
     serve: MonitorServe;
     conductor: MonitorConductor;
     autopilot: MonitorAutopilot;

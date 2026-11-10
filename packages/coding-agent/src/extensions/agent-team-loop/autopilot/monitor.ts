@@ -39,6 +39,13 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { formatProxyStatus, type ProxyStatus, proxySnapshot } from "../shared/codex-proxy.ts";
+import {
+	type ConcurrencySnapshot,
+	readConcurrencySnapshot,
+	renderConcurrencyLines,
+	taskQueueStatus,
+} from "../shared/concurrency-view.ts";
 import { IndexStore } from "../shared/index-store.ts";
 import { getMwStatus, readServeMeta, serveStaleness } from "../shared/mw-runner.ts";
 import { type WorkerEntry, WorkerStore, workerBelongsToKey, workerOwnerKey } from "../shared/worker-store.ts";
@@ -266,6 +273,8 @@ export interface MonitorAutopilot {
 }
 
 export interface MonitorSnapshot {
+	proxy?: ProxyStatus;
+	concurrency?: ConcurrencySnapshot;
 	serve: MonitorServe;
 	conductor: MonitorConductor;
 	autopilot: MonitorAutopilot;
@@ -640,6 +649,8 @@ export function readMonitorState(projectDir: string, nowMs: number, deps?: Monit
 	// and re-stamps `collectedAtMs` with its own (possibly injected) clock.
 	return {
 		serve,
+		proxy: proxySnapshot(projectDir),
+		concurrency: readConcurrencySnapshot(),
 		conductor,
 		autopilot,
 		workers,
@@ -1223,6 +1234,12 @@ export function renderPendingGateLine(gate: MonitorGate, index: number, total: n
  */
 export function renderMonitorLines(s: MonitorSnapshot): string[] {
 	const lines: string[] = [monitorHeaderLine(s)];
+	lines.push(...formatProxyStatus(s.proxy).map((line) => trunc(line, MONITOR_LINE_MAX)));
+	if (s.concurrency) {
+		lines.push(
+			...renderConcurrencyLines(s.concurrency, s.collectedAtMs ?? 0).map((line) => trunc(line, MONITOR_LINE_MAX)),
+		);
+	}
 	// G4 AC-017 (D-018): a degraded frame says so on its own line — the payload
 	// below stays the last known truth, the diagnostic is explicit and in-frame
 	// (no write path). Error summary first so a long path/timestamp cannot hide
@@ -1343,6 +1360,8 @@ export function renderMonitorLines(s: MonitorSnapshot): string[] {
 		lines.push(`workers: ${s.workers.length} running (all keys)`);
 		for (const w of s.workers) {
 			lines.push(trunc(`  · ${w.taskKey}  ${Math.ceil(w.elapsedMs / 60_000)}m`, MONITOR_LINE_MAX));
+			const queue = s.concurrency ? taskQueueStatus(s.concurrency, w.taskPath, s.collectedAtMs ?? 0) : "";
+			if (queue) lines.push(trunc(`    ${queue}`, MONITOR_LINE_MAX));
 		}
 	}
 

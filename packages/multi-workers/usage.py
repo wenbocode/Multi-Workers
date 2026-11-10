@@ -11,10 +11,11 @@ session logs and are joined at query time (spec D-7).
 
 Token source of truth (spec §2):
 
-* pi session JSONL — every ``assistant`` message is exactly one provider
-  response, so usage rows are summed directly (no dedup; a failed attempt is a
-  real ``EMPTY_USAGE`` message). ``compaction`` entries carry usage too and are
-  counted as well. The four components stay apart; ``total`` is always derived.
+* pi session JSONL — provider ``assistant`` responses and native ``compaction``
+  entries are summed directly. Explicit no-request MW policy diagnostics are
+  excluded. Managed summary custom entries are deduped by attemptId before
+  window filtering, including late known-usage corrections to unknown rows.
+  The four components stay apart; ``total`` is always derived.
 * claude session JSONL — the same message is written 2-4 times, so rows are
   deduped by ``message.id`` (1.41-1.87x inflation otherwise). ``input_tokens``
   is already non-cached input.
@@ -489,11 +490,61 @@ def _pi_tokens(usage: Mapping[str, Any]) -> dict[str, int | None]:
     }
 
 
-def scan_pi_session(path: pathlib.Path) -> dict[str, Any]:
-    """Accumulate one pi session file: assistant ``message.usage`` + compaction.
+def _context_summary_usage(
+    entry: Mapping[str, object],
+) -> tuple[str, str, str, dict[str, int | None], bool] | None:
+    """Validate metadata/usage only; checkpoint bodies are never a token source."""
+    if entry.get("type") != "custom" or entry.get("customType") != "mw-context-compaction-usage":
+        return None
+    data = entry.get("data")
+    if not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != 1:
+        return None
+    if data.get("purpose") != "summary" or data.get("status") not in (
+        "stop", "length", "error", "aborted", "unknown"
+    ):
+        return None
+    for field in ("attemptId", "provider", "model"):
+        if not isinstance(data.get(field), str) or not data[field].strip():
+            return None
+    if "taskId" in data and not isinstance(data["taskId"], str):
+        return None
+    if not isinstance(data.get("providerRequestStarted"), bool):
+        return None
+    started = _parse_iso(data.get("attemptStartedAt"))
+    if started is None or "usage" not in data:
+        return None
+    raw_usage = data["usage"]
+    if raw_usage is None:
+        tokens = _new_token_map()
+    elif isinstance(raw_usage, dict) and all(
+        type(raw_usage.get(field)) is int and 0 <= raw_usage[field] <= 9007199254740991
+        for field in ("input", "output", "cacheRead", "cacheWrite")
+    ):
+        tokens = _pi_tokens(raw_usage)
+    else:
+        return None
+    return data["attemptId"], _iso(started), _pi_model_key(data), tokens, data["providerRequestStarted"]
 
-    Line prefilter: only lines containing ``"assistant"`` or ``"compaction"``
-    are JSON-parsed (RQ1 §5: full-corpus parse is 11 s, prefiltered is cheap).
+
+def _context_no_provider_request(message: Mapping[str, object]) -> bool:
+    diagnostics = message.get("diagnostics")
+    if not isinstance(diagnostics, list):
+        return False
+    for diagnostic in diagnostics:
+        if not isinstance(diagnostic, dict) or diagnostic.get("type") != "mw_context_policy":
+            continue
+        details = diagnostic.get("details")
+        if isinstance(details, dict) and details.get("noProviderRequest") is True:
+            return True
+    return False
+
+
+def scan_pi_session(path: pathlib.Path) -> dict[str, Any]:
+    """Accumulate provider usage plus native/managed summary usage.
+
+    Managed summaries dedupe across the complete session before time-window
+    filtering. A late known correction retains the original attempt timestamp.
+    Line prefilter parses only assistant, compaction, and managed usage rows.
     A torn tail or any other bad line is skipped, never fatal.
     """
     path = pathlib.Path(path)
@@ -509,6 +560,7 @@ def scan_pi_session(path: pathlib.Path) -> dict[str, Any]:
 
     models: dict[str, dict[str, Any]] = {}
     events: list[tuple[str | None, str, dict[str, int | None]]] = []
+    summary_attempts: dict[str, tuple[str, str, dict[str, int | None], bool]] = {}
     last_model: str | None = None
     last_ts: datetime | None = started
     tail = ""
@@ -533,7 +585,7 @@ def scan_pi_session(path: pathlib.Path) -> dict[str, Any]:
             if not text:
                 continue
             tail = text
-            if '"assistant"' not in text and '"compaction"' not in text:
+            if not any(marker in text for marker in ('"assistant"', '"compaction"', '"branch_summary"', '"mw-context-compaction-usage"')):
                 continue
             try:
                 entry = json.loads(text)
@@ -543,16 +595,36 @@ def scan_pi_session(path: pathlib.Path) -> dict[str, Any]:
                 continue
             kind = entry.get("type")
             usage: Any = None
+            if kind == "custom":
+                summary = _context_summary_usage(entry)
+                if summary is None:
+                    continue
+                attempt_id, attempt_stamp, model_key, tokens, request_started = summary
+                previous = summary_attempts.get(attempt_id)
+                if previous is None:
+                    summary_attempts[attempt_id] = (attempt_stamp, model_key, tokens, request_started)
+                elif previous[1] == model_key and request_started and (
+                    not previous[3] or all(value is None for value in previous[2].values())
+                ):
+                    # Known usage wins over unknown, but neither a later append
+                    # nor a changed correction timestamp moves the original call.
+                    summary_attempts[attempt_id] = (previous[0], previous[1], tokens, True)
+                stamp = _parse_iso(entry.get("timestamp"))
+                if stamp is not None:
+                    last_ts = stamp
+                continue
             if kind == "message":
                 message = entry.get("message")
                 if not isinstance(message, dict) or message.get("role") != "assistant":
+                    continue
+                if _context_no_provider_request(message):
                     continue
                 usage = message.get("usage")
                 if not isinstance(usage, dict):
                     continue
                 model_key = _pi_model_key(message)
                 last_model = model_key
-            elif kind == "compaction":
+            elif kind in ("compaction", "branch_summary"):
                 usage = entry.get("usage")
                 if not isinstance(usage, dict):
                     continue
@@ -564,10 +636,13 @@ def scan_pi_session(path: pathlib.Path) -> dict[str, Any]:
             if stamp is not None:
                 last_ts = stamp
             tokens = _pi_tokens(usage)
-            bucket = models.setdefault(model_key, {**_new_token_map(), "requests": 0})
-            _add_tokens(bucket, tokens)
-            bucket["requests"] += 1
             events.append((_iso(stamp) if stamp is not None else None, model_key, tokens))
+
+    events.extend((stamp, model_key, tokens) for stamp, model_key, tokens, started in summary_attempts.values() if started)
+    for _stamp, model_key, tokens in events:
+        bucket = models.setdefault(model_key, {**_new_token_map(), "requests": 0})
+        _add_tokens(bucket, tokens)
+        bucket["requests"] += 1
 
     # Wall clock = header -> last entry (RQ1 §6). The last entry is usually not
     # an assistant message, so read its timestamp off the raw tail line instead

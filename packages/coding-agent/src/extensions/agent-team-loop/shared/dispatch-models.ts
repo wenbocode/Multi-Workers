@@ -25,6 +25,7 @@ import * as path from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "../../../core/extensions/types.ts";
 import type { ModelRegistry } from "../../../core/model-registry.ts";
+import { LOCAL_CODEX_PROVIDER } from "./codex-proxy.ts";
 /** pi provider id -> user-facing prefix (mirror of the Python-side map). */
 export const PROVIDER_ID_TO_PREFIX: Record<string, string> = {
 	timi: "timi",
@@ -102,7 +103,7 @@ function isFrameworkProject(cwd: string): boolean {
  * unmapped provider would be an inert value on the Python side anyway). */
 export function recordWindowModel(cwd: string, model: Model<any> | undefined): void {
 	if (!model || !isFrameworkProject(cwd)) return;
-	const prefix = PROVIDER_ID_TO_PREFIX[model.provider];
+	const prefix = model.provider === LOCAL_CODEX_PROVIDER ? "codex" : PROVIDER_ID_TO_PREFIX[model.provider];
 	if (!prefix) return;
 	try {
 		fs.mkdirSync(path.join(cwd, ".mw"), { recursive: true });
@@ -184,12 +185,14 @@ export function validateModelValue(
 		return { ok: false, message: `Model value '${trimmed}' has unknown prefix '${prefix}' (valid: ${known}).` };
 	}
 	if (!provider) return { ok: true, message: "" };
+	const local = provider === "openai-codex" && registry.getAll().some((m) => m.provider === LOCAL_CODEX_PROVIDER);
+	const resolvedProvider = local ? LOCAL_CODEX_PROVIDER : provider;
 	const ids = registry
 		.getAll()
-		.filter((m) => m.provider === provider)
+		.filter((m) => m.provider === resolvedProvider)
 		.map((m) => m.id);
 	if (ids.length === 0) return { ok: true, message: "" };
-	if (registry.find(provider, modelId)) return { ok: true, message: "" };
+	if (registry.find(resolvedProvider, modelId)) return { ok: true, message: "" };
 	const candidates = [...new Set(ids)].sort().slice(0, 5).join(", ");
 	return {
 		ok: false,
@@ -242,7 +245,9 @@ export function modelImageCapability(
 		if (!resolved) return "unknown";
 		const ids = registry.getAll().filter((m) => m.provider === resolved);
 		if (ids.length === 0) return "unknown";
-		const model = registry.find(resolved, modelId);
+		const model =
+			(resolved === "openai-codex" ? registry.find(LOCAL_CODEX_PROVIDER, modelId) : undefined) ??
+			registry.find(resolved, modelId);
 		if (!model) return "unknown";
 		return model.input?.includes("image") ? "yes" : "no";
 	} catch {
@@ -303,7 +308,9 @@ export async function applyMainModelConfig(pi: ExtensionAPI, ctx: ExtensionConte
 	if (!prefix || !modelId) return;
 	const provider = PREFIX_TO_PROVIDER_ID[prefix];
 	if (!provider) return;
-	const model = ctx.modelRegistry.find(provider, modelId);
+	const model =
+		(provider === "openai-codex" ? ctx.modelRegistry.find(LOCAL_CODEX_PROVIDER, modelId) : undefined) ??
+		ctx.modelRegistry.find(provider, modelId);
 	if (!model) {
 		ctx.ui.notify(
 			`dispatch.yml main=${value} not found in the model registry — leaving the window model unchanged`,
