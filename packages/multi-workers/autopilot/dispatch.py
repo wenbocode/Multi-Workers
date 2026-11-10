@@ -1695,7 +1695,25 @@ def write_face_case_insensitive() -> bool:
 def write_face_base(project_root: pathlib.Path) -> str:
     """Base for every write-face parse: the same root `mw_common.workers_path`
     anchors, i.e. the `.agenticdoc` parent (card requirement 7)."""
-    return str(project_root)
+    return str(project_root.resolve())
+
+
+def write_face_roots(project_root: pathlib.Path) -> list[str] | None:
+    """Configured roots for separated-workspace absolute file identities."""
+    config = mw_common.load_target_config(project_root)
+    if config["mode"] == "single":
+        return None
+    if config["mode"] == "dual":
+        roots = [config["control_root"], config["game_root"], config["engine_root"]]
+    else:
+        roots = [config["control_root"], config["partition_root"], config["parent_root"],
+                 *(config.get("roots") or {}).values()]
+    return list(dict.fromkeys(root for root in roots if root is not None))
+
+
+def canonical_write_face_path(absolute_path: str) -> str:
+    """Resolve junctions and existing prefixes before comparing file identities."""
+    return str(pathlib.Path(absolute_path).resolve())
 
 
 def _card_write_face_entries(card: dict | None) -> list[str] | None:
@@ -1774,7 +1792,7 @@ def _write_face_audit(
 
 
 def _parse_inflight_write_face(
-    row: dict[str, str], *, base: str, case_insensitive: bool
+    row: dict[str, str], *, base: str, case_insensitive: bool, roots: Sequence[str] | None = None
 ) -> write_face_mod.ParseResult | write_face_mod.WriteFace:
     """The in-flight worker's own task.md `write_face:` head.
 
@@ -1790,7 +1808,8 @@ def _parse_inflight_write_face(
     except OSError:
         return write_face_mod.Undeclared()
     return write_face_mod.parse_write_face(
-        text, base=base, case_insensitive=case_insensitive
+        text, base=base, case_insensitive=case_insensitive, roots=roots,
+        canonicalize=canonical_write_face_path if roots is not None else None,
     )
 
 
@@ -1822,9 +1841,11 @@ def _write_face_verdict(
     author-fixable, so its undeclared face is held serial-only.
     """
     base = write_face_base(project_root)
+    roots = write_face_roots(project_root)
     case_insensitive = write_face_case_insensitive()
     parsed = write_face_mod.parse_write_face(
-        content, base=base, case_insensitive=case_insensitive
+        content, base=base, case_insensitive=case_insensitive, roots=roots,
+        canonicalize=canonical_write_face_path if roots is not None else None,
     )
     rows = mw_common.parse_workers_file(mw_common.workers_path(project_root))
     in_flight = [
@@ -1880,7 +1901,7 @@ def _write_face_verdict(
     for row in in_flight:
         other_key = str(row.get("task_key", ""))
         other_face = _parse_inflight_write_face(
-            row, base=base, case_insensitive=case_insensitive
+            row, base=base, case_insensitive=case_insensitive, roots=roots
         )
         if not isinstance(other_face, write_face_mod.WriteFace):
             continue  # a side that did not declare cannot prove an overlap (D-003)

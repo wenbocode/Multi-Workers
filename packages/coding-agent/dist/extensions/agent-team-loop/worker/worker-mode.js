@@ -22,6 +22,7 @@ import { controlRootFromTaskPath } from "../shared/paths.js";
 import { MW_RUN_DETACHED_TOOL, registerRunDetachedTool } from "../shared/run-detached.js";
 import { collectArtifacts, isTerminalRunStatus, newRunId, parseSupersedes, RUN_SCHEMA, runMarker, writeRunState, } from "../shared/run-store.js";
 import { findTypeEscalation, readTaskType, scanBodyTypeLines } from "../shared/task-frontmatter.js";
+import { workspaceWriteFaceOptions } from "../shared/workspace-write-face.js";
 import { parseWriteFace, parseWriteFaceEntries, writeFacesOverlap, } from "../shared/write-face.js";
 import { evidenceDirOf, matchesWriteScopeEntry, parseWriteScopeHeader, resolveOwnWriteTarget, resolveWriteSurfacePaths, } from "../shared/write-surface.js";
 import { claimCoverage, isMechanicalSection, parseVerdictTable } from "./output-sections.js";
@@ -613,13 +614,11 @@ export function parseTaskMd(taskPath) {
     // D-115 carrier convergence: parse the authoritative `write_face:` head with
     // the shared operator (D-009/AC-007) so the runtime allow face cannot drift
     // from the dispatch-time overlap operator. Entries are normalized
-    // project-root-relative, so the runtime re-parse against the worker cwd is
-    // base-independent. `write_scope` is the shared single implementation (T-10).
+    // control-root-relative. Preserve the parsed face: rebasing its normalized
+    // entries against the worker cwd would change which files they authorize.
     const writeScope = parseWriteScopeHeader(content);
-    const writeFaceParsed = parseWriteFace(content, {
-        base: path.dirname(trueAgenticdocRoot),
-        caseInsensitive: process.platform === "win32",
-    });
+    const writeFaceOptions = workspaceWriteFaceOptions(path.dirname(trueAgenticdocRoot));
+    const writeFaceParsed = parseWriteFace(content, writeFaceOptions);
     // T-04b: the claims block is an HTML comment, so the card seed's heading
     // slices never carried it — T-02 injects the block verbatim into task.md
     // (`pm/ui-bridge.ts::extractClaimsBlockText`). Parsing it here keeps the one
@@ -640,6 +639,8 @@ export function parseTaskMd(taskPath) {
         denyGlobs,
         writeScope,
         writeFaceEntries: writeFaceParsed.kind === "declared" ? [...writeFaceParsed.face.entries] : undefined,
+        writeFace: writeFaceParsed.kind === "declared" ? writeFaceParsed.face : undefined,
+        writeRoots: writeFaceOptions.roots,
         writeFaceRejected: writeFaceParsed.kind === "rejected" ? writeFaceParsed.code : undefined,
         readFileCap,
         readByteCap,
@@ -2113,24 +2114,30 @@ function samePath(a, b) {
  * must stay writable for `coding`/`repair`), so it cannot be the PM table under
  * another name. The ALLOW face below is shared with the predicate instead. */
 function bashWriteDenyReason(config, target) {
-    const workersDir = path.join(config.keyDir, "workers");
-    if (samePath(target, path.join(config.keyDir, "pm-state.md")))
+    // Targets already use realpath; anchors must use the same identity when the
+    // control workspace itself was opened through a junction or symlink.
+    const keyDir = normalizeForCompare(config.projectRoot, config.keyDir);
+    const trueRoot = normalizeForCompare(config.projectRoot, config.trueRoot);
+    const workersDir = normalizeForCompare(keyDir, "workers");
+    if (samePath(target, normalizeForCompare(keyDir, "pm-state.md")))
         return "pm-state.md";
     if (isSameOrUnder(workersDir, target)) {
         const firstSegment = path.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
-        if (firstSegment.startsWith("_workers"))
+        if ((process.platform === "win32" ? firstSegment.toLowerCase() : firstSegment).startsWith("_workers"))
             return "workers/_workers*";
     }
-    if (samePath(target, path.join(config.trueRoot, "_index.parallel")))
+    if (samePath(target, normalizeForCompare(trueRoot, "_index.parallel")))
         return "_index.parallel";
-    if (isSameOrUnder(config.trueRoot, target) && !isSameOrUnder(config.keyDir, target)) {
+    if (isSameOrUnder(trueRoot, target) && !isSameOrUnder(keyDir, target)) {
         return "other key dir / .agenticdoc root";
     }
     if (config.roleClass !== "writable" && isSameOrUnder(path.join(config.projectRoot, "packages"), target)) {
         return "packages/**";
     }
-    if (isSameOrUnder(path.join(config.projectRoot, ".git"), target))
-        return ".git/**";
+    for (const root of config.writeRoots ?? [config.projectRoot, path.dirname(config.trueRoot)]) {
+        if (isSameOrUnder(normalizeForCompare(root, ".git"), target))
+            return ".git/**";
+    }
     return null;
 }
 /** Is `absoluteTarget` inside the authoritative `write_face:` allow face
@@ -2149,6 +2156,7 @@ function matchesWriteFaceTarget(face, absoluteTarget) {
         // can never fail open (`incomparable-base` is treated as overlap).
         base: face.base,
         caseInsensitive: face.caseInsensitive,
+        roots: face.roots,
     });
     if (targetFace.kind !== "declared")
         return false;
@@ -2271,7 +2279,10 @@ export function checkBashWriteScopeTarget(config, rawTarget, verbatim, toolLabel
     // its realpath is taken so a junctioned cwd cannot make the containment check
     // depend on the unnormalized spelling.
     const insideDefaultFace = writable
-        ? isSameOrUnder(normalizeForCompare(config.projectRoot, config.projectRoot), target)
+        ? inOwnSandbox ||
+            isSameOrUnder(normalizeForCompare(config.projectRoot, config.projectRoot), target) ||
+            (config.writeFace !== undefined &&
+                (config.writeRoots ?? []).some((root) => isSameOrUnder(normalizeForCompare(root, root), target)))
         : inOwnSandbox;
     if (!insideDefaultFace) {
         return {
@@ -2299,7 +2310,7 @@ export function checkBashWriteScopeTarget(config, rawTarget, verbatim, toolLabel
         if (declaredFacePresent || declaredScopePresent) {
             const inWriteFace = config.writeFace !== undefined && matchesWriteFaceTarget(config.writeFace, target);
             const inWriteScope = config.writeScope === undefined ||
-                config.writeScope.some((entry) => matchesWriteScopeEntry(config.projectRoot, entry, target));
+                config.writeScope.some((entry) => matchesWriteScopeEntry(config.writeScopeBase ?? config.writeFace?.base ?? config.projectRoot, entry, target));
             if (declaredFacePresent && !inWriteFace) {
                 return {
                     allowed: false,
@@ -2896,20 +2907,9 @@ export async function workerModeActivate(pi, options) {
     // commands pass silently (P1: a miss is preferable to a false block). The
     // handler never touches the `tool_execution_start/end` accounting branch.
     const roleClass = isWritelessRole(meta.type) ? "writeless" : "writable";
-    // D-115 carrier resolution: the authoritative `write_face:` face is re-parsed
-    // against the worker cwd (the same shared operator as the dispatch gate), and
-    // only writable roles consult it — writeless roles keep `write_scope:` byte
-    // for byte and never see `write_face`.
-    const writeFaceEntries = roleClass === "writable" ? meta.writeFaceEntries : undefined;
-    let declaredWriteFace;
-    if (writeFaceEntries !== undefined && writeFaceEntries.length > 0) {
-        const parsed = parseWriteFaceEntries(writeFaceEntries, {
-            base: process.cwd(),
-            caseInsensitive: process.platform === "win32",
-        });
-        if (parsed.kind === "declared")
-            declaredWriteFace = parsed.face;
-    }
+    // Keep dispatch's file identity even when the launcher uses a different cwd.
+    // Writeless roles retain their existing write_scope behavior.
+    const declaredWriteFace = roleClass === "writable" ? meta.writeFace : undefined;
     const declaredWriteFaceRejected = roleClass === "writable" &&
         declaredWriteFace === undefined &&
         (meta.writeFaceRejected !== undefined || meta.writeFaceEntries !== undefined);
@@ -2920,9 +2920,11 @@ export async function workerModeActivate(pi, options) {
             keyDir: path.dirname(meta.agenticdocRoot),
             trueRoot: meta.trueAgenticdocRoot,
             writeScope: meta.writeScope,
+            writeScopeBase: path.dirname(meta.trueAgenticdocRoot),
             roleClass,
             writeFace: declaredWriteFace,
             writeFaceRejected: declaredWriteFaceRejected || undefined,
+            writeRoots: meta.writeRoots,
         }
         : undefined;
     // D-115 rule 3: two carriers present ⇒ the runtime allow face is their
@@ -2979,7 +2981,11 @@ export async function workerModeActivate(pi, options) {
                     // line (AC-008) and is deliberately NOT widened — the hatch covers an
                     // external target, not the framework's own files. (`packages/**` is
                     // writeless-only, so it is not part of that list for writable roles.)
-                    if (meta.allowForeignWrite === true && verdict.rule !== "deny") {
+                    if (meta.allowForeignWrite === true &&
+                        verdict.rule === "scope" &&
+                        meta.writeFaceEntries === undefined &&
+                        meta.writeFaceRejected === undefined &&
+                        meta.writeScope === undefined) {
                         writeScopeCounts.allowDetermined += 1;
                         appendEscapeHatchTraceLine(meta.taskKey, meta.agenticdocRoot, candidate.target);
                         continue;
@@ -3013,7 +3019,11 @@ export async function workerModeActivate(pi, options) {
                 writeScopeCounts.allowDetermined += 1;
                 return undefined;
             }
-            if (meta.allowForeignWrite === true && verdict.rule !== "deny") {
+            if (meta.allowForeignWrite === true &&
+                verdict.rule === "scope" &&
+                meta.writeFaceEntries === undefined &&
+                meta.writeFaceRejected === undefined &&
+                meta.writeScope === undefined) {
                 writeScopeCounts.allowDetermined += 1;
                 appendEscapeHatchTraceLine(meta.taskKey, meta.agenticdocRoot, rawPath);
                 return undefined;

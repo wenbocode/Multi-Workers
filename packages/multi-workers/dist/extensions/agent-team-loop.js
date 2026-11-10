@@ -41771,6 +41771,19 @@ function registerRunDetachedTool(pi, controlRoot) {
   });
 }
 
+// packages/coding-agent/src/extensions/agent-team-loop/shared/workspace-write-face.ts
+function workspaceWriteFaceOptions(controlRoot) {
+  const config = resolveWorkspaceConfig(controlRoot);
+  const options = { base: config.controlRoot, caseInsensitive: process.platform === "win32" };
+  if (config.mode === "single") return options;
+  const roots = config.mode === "dual" ? [config.controlRoot, config.gameRoot, config.engineRoot] : [config.controlRoot, config.partitionRoot, config.parentRoot, ...Object.values(config.roots ?? {})];
+  return {
+    ...options,
+    roots: [...new Set(roots.filter((root) => root !== null))],
+    canonicalize: (absolutePath) => normalizeForCompare(config.controlRoot, absolutePath)
+  };
+}
+
 // packages/coding-agent/src/extensions/agent-team-loop/shared/write-face.ts
 var WRITE_FACE_EMPTY = "write-face-empty";
 var WRITE_FACE_INVALID_ENTRY = "write-face-invalid-entry";
@@ -42094,7 +42107,7 @@ function compileNormalized(norm) {
   if (globs.length === 0) return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
   return { kind: "ok", globs };
 }
-function normalizeEntry(raw, base, caseInsensitive) {
+function normalizeEntry(raw, base, caseInsensitive, roots, canonicalize3) {
   let entry = raw.trim();
   if (entry === "" || entry === "-") return { kind: "skip" };
   if (entry.length >= 2 && entry[0] === entry[entry.length - 1] && (entry[0] === '"' || entry[0] === "'")) {
@@ -42104,7 +42117,15 @@ function normalizeEntry(raw, base, caseInsensitive) {
   if (entry.includes('"') || entry.includes("'")) return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
   entry = normalizeSeparators(entry);
   if (hasBareBang(entry)) return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
-  if (isAbsolutePath(entry)) {
+  let root;
+  if (roots !== void 0) {
+    if (entry.split("/").includes("..")) return { kind: "rejected", code: WRITE_FACE_ESCAPE };
+    let absolute = isAbsolutePath(entry) ? entry : `${normalizeSeparators(base).replace(/\/+$/, "")}/${entry}`;
+    if (canonicalize3 !== void 0) absolute = normalizeSeparators(canonicalize3(absolute));
+    root = roots.map((value) => normalizeSeparators(value).replace(/\/+$/, "")).filter((value) => toRelative(absolute, value, caseInsensitive) !== null).sort((a, b2) => b2.length - a.length)[0];
+    if (root === void 0) return { kind: "rejected", code: WRITE_FACE_OUTSIDE_BASE };
+    entry = toRelative(absolute, root, caseInsensitive) ?? "";
+  } else if (isAbsolutePath(entry)) {
     const rel = toRelative(entry, base, caseInsensitive);
     if (rel === null) return { kind: "rejected", code: WRITE_FACE_OUTSIDE_BASE };
     entry = rel;
@@ -42120,13 +42141,25 @@ function normalizeEntry(raw, base, caseInsensitive) {
   const norm = collapsed.join("/");
   const compiled = compileNormalized(norm);
   if (compiled.kind === "rejected") return compiled;
+  if (root !== void 0) {
+    const prefix = root.split("/").filter((segment) => segment !== "").map((segment) => ({ kind: "pattern", tokens: [...segment].map((ch) => ({ kind: "lit", ch })) }));
+    return {
+      kind: "ok",
+      norm: `${root}/${norm}`,
+      globs: compiled.globs.map((glob) => ({
+        ...glob,
+        text: `${root}/${glob.text}`,
+        segments: [...prefix, ...glob.segments]
+      }))
+    };
+  }
   return { kind: "ok", globs: compiled.globs, norm };
 }
-function normalizeEntries(rawEntries, base, caseInsensitive, label) {
+function normalizeEntries(rawEntries, base, caseInsensitive, label, roots, canonicalize3) {
   const globs = [];
   const entries = [];
   for (const raw of rawEntries) {
-    const r = normalizeEntry(raw, base, caseInsensitive);
+    const r = normalizeEntry(raw, base, caseInsensitive, roots, canonicalize3);
     if (r.kind === "skip") continue;
     if (r.kind === "rejected") return { kind: "rejected", code: r.code, detail: `${label} '${raw}'` };
     globs.push(...r.globs);
@@ -42136,17 +42169,25 @@ function normalizeEntries(rawEntries, base, caseInsensitive, label) {
 }
 function buildFace(rawAllow, rawDeny, opts) {
   if (rawAllow.length === 0) return { kind: "rejected", code: WRITE_FACE_EMPTY, detail: WRITE_FACE_EMPTY_DETAIL };
-  const allow = normalizeEntries(rawAllow, opts.base, opts.caseInsensitive, "entry");
+  const allow = normalizeEntries(rawAllow, opts.base, opts.caseInsensitive, "entry", opts.roots, opts.canonicalize);
   if (allow.kind === "rejected") return allow;
   if (allow.entries.length === 0) return { kind: "rejected", code: WRITE_FACE_EMPTY, detail: WRITE_FACE_EMPTY_DETAIL };
-  const denyNormalized = normalizeEntries(rawDeny, opts.base, opts.caseInsensitive, "deny entry");
+  const denyNormalized = normalizeEntries(
+    rawDeny,
+    opts.base,
+    opts.caseInsensitive,
+    "deny entry",
+    opts.roots,
+    opts.canonicalize
+  );
   if (denyNormalized.kind === "rejected") return denyNormalized;
   const face = {
     allow: allow.globs,
     entries: allow.entries,
     deny: denyNormalized.entries,
     base: opts.base,
-    caseInsensitive: opts.caseInsensitive
+    caseInsensitive: opts.caseInsensitive,
+    ...opts.roots === void 0 ? {} : { roots: opts.roots }
   };
   return { kind: "declared", face };
 }
@@ -42792,10 +42833,8 @@ function parseTaskMd(taskPath) {
   const taskKey = path37.basename(path37.dirname(taskPath));
   const trueAgenticdocRoot = path37.dirname(path37.dirname(agenticdocRoot2));
   const writeScope = parseWriteScopeHeader(content);
-  const writeFaceParsed = parseWriteFace(content, {
-    base: path37.dirname(trueAgenticdocRoot),
-    caseInsensitive: process.platform === "win32"
-  });
+  const writeFaceOptions = workspaceWriteFaceOptions(path37.dirname(trueAgenticdocRoot));
+  const writeFaceParsed = parseWriteFace(content, writeFaceOptions);
   const claimsBlock = parseClaimsBlock(content);
   return {
     type: taskType,
@@ -42811,6 +42850,8 @@ function parseTaskMd(taskPath) {
     denyGlobs,
     writeScope,
     writeFaceEntries: writeFaceParsed.kind === "declared" ? [...writeFaceParsed.face.entries] : void 0,
+    writeFace: writeFaceParsed.kind === "declared" ? writeFaceParsed.face : void 0,
+    writeRoots: writeFaceOptions.roots,
     writeFaceRejected: writeFaceParsed.kind === "rejected" ? writeFaceParsed.code : void 0,
     readFileCap,
     readByteCap,
@@ -43934,20 +43975,25 @@ function samePath3(a, b2) {
   return isSameOrUnder(a, b2) && isSameOrUnder(b2, a);
 }
 function bashWriteDenyReason(config, target) {
-  const workersDir = path37.join(config.keyDir, "workers");
-  if (samePath3(target, path37.join(config.keyDir, "pm-state.md"))) return "pm-state.md";
+  const keyDir = normalizeForCompare(config.projectRoot, config.keyDir);
+  const trueRoot = normalizeForCompare(config.projectRoot, config.trueRoot);
+  const workersDir = normalizeForCompare(keyDir, "workers");
+  if (samePath3(target, normalizeForCompare(keyDir, "pm-state.md"))) return "pm-state.md";
   if (isSameOrUnder(workersDir, target)) {
     const firstSegment = path37.relative(workersDir, target).split(/[\\/]/)[0] ?? "";
-    if (firstSegment.startsWith("_workers")) return "workers/_workers*";
+    if ((process.platform === "win32" ? firstSegment.toLowerCase() : firstSegment).startsWith("_workers"))
+      return "workers/_workers*";
   }
-  if (samePath3(target, path37.join(config.trueRoot, "_index.parallel"))) return "_index.parallel";
-  if (isSameOrUnder(config.trueRoot, target) && !isSameOrUnder(config.keyDir, target)) {
+  if (samePath3(target, normalizeForCompare(trueRoot, "_index.parallel"))) return "_index.parallel";
+  if (isSameOrUnder(trueRoot, target) && !isSameOrUnder(keyDir, target)) {
     return "other key dir / .agenticdoc root";
   }
   if (config.roleClass !== "writable" && isSameOrUnder(path37.join(config.projectRoot, "packages"), target)) {
     return "packages/**";
   }
-  if (isSameOrUnder(path37.join(config.projectRoot, ".git"), target)) return ".git/**";
+  for (const root of config.writeRoots ?? [config.projectRoot, path37.dirname(config.trueRoot)]) {
+    if (isSameOrUnder(normalizeForCompare(root, ".git"), target)) return ".git/**";
+  }
   return null;
 }
 function matchesWriteFaceTarget(face, absoluteTarget) {
@@ -43955,7 +44001,8 @@ function matchesWriteFaceTarget(face, absoluteTarget) {
     // Use the declared face's OWN base so the operator's base-equality check
     // can never fail open (`incomparable-base` is treated as overlap).
     base: face.base,
-    caseInsensitive: face.caseInsensitive
+    caseInsensitive: face.caseInsensitive,
+    roots: face.roots
   });
   if (targetFace.kind !== "declared") return false;
   const result = writeFacesOverlap(targetFace.face, face);
@@ -44021,7 +44068,7 @@ function checkBashWriteScopeTarget(config, rawTarget, verbatim, toolLabel = "bas
     };
   }
   const inOwnSandbox = resolveOwnWriteTarget(target, surfacePaths, { evidenceBasis: "project-root", basenameChannel: false }) !== null;
-  const insideDefaultFace = writable ? isSameOrUnder(normalizeForCompare(config.projectRoot, config.projectRoot), target) : inOwnSandbox;
+  const insideDefaultFace = writable ? inOwnSandbox || isSameOrUnder(normalizeForCompare(config.projectRoot, config.projectRoot), target) || config.writeFace !== void 0 && (config.writeRoots ?? []).some((root) => isSameOrUnder(normalizeForCompare(root, root), target)) : inOwnSandbox;
   if (!insideDefaultFace) {
     return {
       allowed: false,
@@ -44036,7 +44083,13 @@ function checkBashWriteScopeTarget(config, rawTarget, verbatim, toolLabel = "bas
     const declaredScopePresent = config.writeScope !== void 0;
     if (declaredFacePresent || declaredScopePresent) {
       const inWriteFace = config.writeFace !== void 0 && matchesWriteFaceTarget(config.writeFace, target);
-      const inWriteScope = config.writeScope === void 0 || config.writeScope.some((entry) => matchesWriteScopeEntry(config.projectRoot, entry, target));
+      const inWriteScope = config.writeScope === void 0 || config.writeScope.some(
+        (entry) => matchesWriteScopeEntry(
+          config.writeScopeBase ?? config.writeFace?.base ?? config.projectRoot,
+          entry,
+          target
+        )
+      );
       if (declaredFacePresent && !inWriteFace) {
         return {
           allowed: false,
@@ -44444,15 +44497,7 @@ ${DECISION_TYPE_PROMPT}` };
     });
   }
   const roleClass = isWritelessRole(meta.type) ? "writeless" : "writable";
-  const writeFaceEntries = roleClass === "writable" ? meta.writeFaceEntries : void 0;
-  let declaredWriteFace;
-  if (writeFaceEntries !== void 0 && writeFaceEntries.length > 0) {
-    const parsed = parseWriteFaceEntries(writeFaceEntries, {
-      base: process.cwd(),
-      caseInsensitive: process.platform === "win32"
-    });
-    if (parsed.kind === "declared") declaredWriteFace = parsed.face;
-  }
+  const declaredWriteFace = roleClass === "writable" ? meta.writeFace : void 0;
   const declaredWriteFaceRejected = roleClass === "writable" && declaredWriteFace === void 0 && (meta.writeFaceRejected !== void 0 || meta.writeFaceEntries !== void 0);
   const bashWriteScopeConfig = hasWriteTools(meta.type) || isShellRole(meta.type) ? {
     projectRoot: process.cwd(),
@@ -44461,9 +44506,11 @@ ${DECISION_TYPE_PROMPT}` };
     keyDir: path37.dirname(meta.agenticdocRoot),
     trueRoot: meta.trueAgenticdocRoot,
     writeScope: meta.writeScope,
+    writeScopeBase: path37.dirname(meta.trueAgenticdocRoot),
     roleClass,
     writeFace: declaredWriteFace,
-    writeFaceRejected: declaredWriteFaceRejected || void 0
+    writeFaceRejected: declaredWriteFaceRejected || void 0,
+    writeRoots: meta.writeRoots
   } : void 0;
   if ((declaredWriteFace !== void 0 || declaredWriteFaceRejected) && meta.writeScope !== void 0) {
     const faceEntries = declaredWriteFace?.entries ?? [];
@@ -44502,7 +44549,7 @@ ${DECISION_TYPE_PROMPT}` };
             writeScopeCounts.allowDetermined += 1;
             continue;
           }
-          if (meta.allowForeignWrite === true && verdict2.rule !== "deny") {
+          if (meta.allowForeignWrite === true && verdict2.rule === "scope" && meta.writeFaceEntries === void 0 && meta.writeFaceRejected === void 0 && meta.writeScope === void 0) {
             writeScopeCounts.allowDetermined += 1;
             appendEscapeHatchTraceLine(meta.taskKey, meta.agenticdocRoot, candidate.target);
             continue;
@@ -44530,7 +44577,7 @@ ${DECISION_TYPE_PROMPT}` };
         writeScopeCounts.allowDetermined += 1;
         return void 0;
       }
-      if (meta.allowForeignWrite === true && verdict.rule !== "deny") {
+      if (meta.allowForeignWrite === true && verdict.rule === "scope" && meta.writeFaceEntries === void 0 && meta.writeFaceRejected === void 0 && meta.writeScope === void 0) {
         writeScopeCounts.allowDetermined += 1;
         appendEscapeHatchTraceLine(meta.taskKey, meta.agenticdocRoot, rawPath);
         return void 0;
@@ -50221,8 +50268,7 @@ async function dispatchTask(entry, store) {
     dispatchedAt: now,
     updatedAt: now
   };
-  const base = writeFaceBase(path51.dirname(store.queuePath));
-  const caseInsensitive = writeFaceCaseInsensitive();
+  const options = workspaceWriteFaceOptions(writeFaceBase(path51.dirname(store.queuePath)));
   const release = await acquireLock(store.lockFilePath);
   try {
     let content = "";
@@ -50230,7 +50276,7 @@ async function dispatchTask(entry, store) {
       content = fs44.readFileSync(entry.taskPath, "utf8");
     } catch {
     }
-    const refusal = writeFaceVerdict({ entry, content, store, base, caseInsensitive });
+    const refusal = writeFaceVerdict({ entry, content, store, options });
     if (refusal !== null) return refusal;
     injectWorkspaceProfile(entry.taskPath);
     store.upsertWithinLock(full);
@@ -50242,10 +50288,7 @@ async function dispatchTask(entry, store) {
 function writeFaceBase(agenticdocRoot2) {
   return path51.resolve(agenticdocRoot2, "..");
 }
-function writeFaceCaseInsensitive() {
-  return process.platform === "win32";
-}
-function parseInflightWriteFace(taskPath, base, caseInsensitive) {
+function parseInflightWriteFace(taskPath, options) {
   if (taskPath.trim() === "") return null;
   let text;
   try {
@@ -50253,12 +50296,12 @@ function parseInflightWriteFace(taskPath, base, caseInsensitive) {
   } catch {
     return null;
   }
-  const parsed = parseWriteFace(text, { base, caseInsensitive });
+  const parsed = parseWriteFace(text, options);
   return parsed.kind === "declared" ? parsed.face : null;
 }
 function writeFaceVerdict(input) {
   const taskKey = input.entry.taskKey;
-  const parsed = parseWriteFace(input.content, { base: input.base, caseInsensitive: input.caseInsensitive });
+  const parsed = parseWriteFace(input.content, input.options);
   const cardBacked = (readTaskHeaderScalar(input.content, "card_path") ?? "") !== "";
   const ownerKey = workerOwnerKey({ taskPath: input.entry.taskPath });
   const inFlight = ownerKey === "" ? [] : input.store.readQueue().rows.filter(
@@ -50285,7 +50328,7 @@ function writeFaceVerdict(input) {
     };
   }
   for (const row of inFlight) {
-    const otherFace = parseInflightWriteFace(row.taskPath, input.base, input.caseInsensitive);
+    const otherFace = parseInflightWriteFace(row.taskPath, input.options);
     if (otherFace === null) continue;
     const result = writeFacesOverlap(parsed.face, otherFace);
     if (result === null) continue;

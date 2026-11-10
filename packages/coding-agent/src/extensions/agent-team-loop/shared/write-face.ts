@@ -134,11 +134,16 @@ export interface WriteFace {
 	readonly deny: readonly string[];
 	readonly base: string;
 	readonly caseInsensitive: boolean;
+	/** Configured roots for absolute identities in separated workspaces. */
+	readonly roots?: readonly string[];
 }
 
 export interface WriteFaceParseOptions {
 	readonly base: string;
 	readonly caseInsensitive: boolean;
+	readonly roots?: readonly string[];
+	/** Resolve existing path prefixes at workspace boundaries, before comparison. */
+	readonly canonicalize?: (absolutePath: string) => string;
 }
 
 /** §3.3 three states: undeclared / refused / declared. */
@@ -569,7 +574,13 @@ type NormalizeResult =
 	| { readonly kind: "rejected"; readonly code: WriteFaceRejectCode }
 	| { readonly kind: "ok"; readonly globs: readonly WriteFaceGlob[]; readonly norm: string };
 
-function normalizeEntry(raw: string, base: string, caseInsensitive: boolean): NormalizeResult {
+function normalizeEntry(
+	raw: string,
+	base: string,
+	caseInsensitive: boolean,
+	roots?: readonly string[],
+	canonicalize?: (absolutePath: string) => string,
+): NormalizeResult {
 	let entry = raw.trim();
 	if (entry === "" || entry === "-") return { kind: "skip" };
 	if (entry.length >= 2 && entry[0] === entry[entry.length - 1] && (entry[0] === '"' || entry[0] === "'")) {
@@ -579,7 +590,18 @@ function normalizeEntry(raw: string, base: string, caseInsensitive: boolean): No
 	if (entry.includes('"') || entry.includes("'")) return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
 	entry = normalizeSeparators(entry);
 	if (hasBareBang(entry)) return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
-	if (isAbsolutePath(entry)) {
+	let root: string | undefined;
+	if (roots !== undefined) {
+		if (entry.split("/").includes("..")) return { kind: "rejected", code: WRITE_FACE_ESCAPE };
+		let absolute = isAbsolutePath(entry) ? entry : `${normalizeSeparators(base).replace(/\/+$/, "")}/${entry}`;
+		if (canonicalize !== undefined) absolute = normalizeSeparators(canonicalize(absolute));
+		root = roots
+			.map((value) => normalizeSeparators(value).replace(/\/+$/, ""))
+			.filter((value) => toRelative(absolute, value, caseInsensitive) !== null)
+			.sort((a, b) => b.length - a.length)[0];
+		if (root === undefined) return { kind: "rejected", code: WRITE_FACE_OUTSIDE_BASE };
+		entry = toRelative(absolute, root, caseInsensitive) ?? "";
+	} else if (isAbsolutePath(entry)) {
 		const rel = toRelative(entry, base, caseInsensitive);
 		if (rel === null) return { kind: "rejected", code: WRITE_FACE_OUTSIDE_BASE };
 		entry = rel;
@@ -595,6 +617,23 @@ function normalizeEntry(raw: string, base: string, caseInsensitive: boolean): No
 	const norm = collapsed.join("/");
 	const compiled = compileNormalized(norm);
 	if (compiled.kind === "rejected") return compiled;
+	if (root !== undefined) {
+		// Root names are literal path components, even when they contain glob
+		// punctuation. Only the declared suffix has glob semantics.
+		const prefix: GlobSegment[] = root
+			.split("/")
+			.filter((segment) => segment !== "")
+			.map((segment) => ({ kind: "pattern", tokens: [...segment].map((ch) => ({ kind: "lit", ch })) }));
+		return {
+			kind: "ok",
+			norm: `${root}/${norm}`,
+			globs: compiled.globs.map((glob) => ({
+				...glob,
+				text: `${root}/${glob.text}`,
+				segments: [...prefix, ...glob.segments],
+			})),
+		};
+	}
 	return { kind: "ok", globs: compiled.globs, norm };
 }
 
@@ -610,11 +649,13 @@ function normalizeEntries(
 	base: string,
 	caseInsensitive: boolean,
 	label: "entry" | "deny entry",
+	roots?: readonly string[],
+	canonicalize?: (absolutePath: string) => string,
 ): NormalizedEntries {
 	const globs: WriteFaceGlob[] = [];
 	const entries: string[] = [];
 	for (const raw of rawEntries) {
-		const r = normalizeEntry(raw, base, caseInsensitive);
+		const r = normalizeEntry(raw, base, caseInsensitive, roots, canonicalize);
 		if (r.kind === "skip") continue;
 		if (r.kind === "rejected") return { kind: "rejected", code: r.code, detail: `${label} '${raw}'` };
 		globs.push(...r.globs);
@@ -629,10 +670,17 @@ function buildFace(
 	opts: WriteFaceParseOptions,
 ): WriteFaceParseResult {
 	if (rawAllow.length === 0) return { kind: "rejected", code: WRITE_FACE_EMPTY, detail: WRITE_FACE_EMPTY_DETAIL };
-	const allow = normalizeEntries(rawAllow, opts.base, opts.caseInsensitive, "entry");
+	const allow = normalizeEntries(rawAllow, opts.base, opts.caseInsensitive, "entry", opts.roots, opts.canonicalize);
 	if (allow.kind === "rejected") return allow;
 	if (allow.entries.length === 0) return { kind: "rejected", code: WRITE_FACE_EMPTY, detail: WRITE_FACE_EMPTY_DETAIL };
-	const denyNormalized = normalizeEntries(rawDeny, opts.base, opts.caseInsensitive, "deny entry");
+	const denyNormalized = normalizeEntries(
+		rawDeny,
+		opts.base,
+		opts.caseInsensitive,
+		"deny entry",
+		opts.roots,
+		opts.canonicalize,
+	);
 	if (denyNormalized.kind === "rejected") return denyNormalized;
 	const face: WriteFace = {
 		allow: allow.globs,
@@ -640,6 +688,7 @@ function buildFace(
 		deny: denyNormalized.entries,
 		base: opts.base,
 		caseInsensitive: opts.caseInsensitive,
+		...(opts.roots === undefined ? {} : { roots: opts.roots }),
 	};
 	return { kind: "declared", face };
 }

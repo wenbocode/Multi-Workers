@@ -8,7 +8,8 @@ import { controlRootFromTaskPath } from "../shared/paths.js";
 import { renderToolchainCommand, resolveWorkspaceConfig } from "../shared/target-config.js";
 import { readTaskHeaderScalar, readTaskType } from "../shared/task-frontmatter.js";
 import { workerOwnerKey } from "../shared/worker-store.js";
-import { parseWriteFace, writeFacesOverlap } from "../shared/write-face.js";
+import { workspaceWriteFaceOptions } from "../shared/workspace-write-face.js";
+import { parseWriteFace, writeFacesOverlap, } from "../shared/write-face.js";
 /** Sentinel opening the legacy (dual/single) profile block — makes
  * re-dispatch idempotent (the block is appended at most once per task.md).
  * Dual/single keep this marker and its rendered text byte-identical
@@ -300,8 +301,7 @@ export async function dispatchTask(entry, store) {
     // while this lock is held (a nested `acquireLock` backs off for 14.6h then
     // raises, RQ-D3), so the row write goes through the store's own lock-free
     // entry point (D-114: one writer implementation, no byte-mirror).
-    const base = writeFaceBase(path.dirname(store.queuePath));
-    const caseInsensitive = writeFaceCaseInsensitive();
+    const options = workspaceWriteFaceOptions(writeFaceBase(path.dirname(store.queuePath)));
     const release = await acquireLock(store.lockFilePath);
     try {
         let content = "";
@@ -312,7 +312,7 @@ export async function dispatchTask(entry, store) {
             // Unreadable task.md is "no information" (undeclared), never a
             // guessed face (D-003).
         }
-        const refusal = writeFaceVerdict({ entry, content, store, base, caseInsensitive });
+        const refusal = writeFaceVerdict({ entry, content, store, options });
         if (refusal !== null)
             return refusal;
         injectWorkspaceProfile(entry.taskPath);
@@ -338,7 +338,7 @@ export function writeFaceCaseInsensitive() {
 /** The in-flight worker's own task.md `write_face:` head, or `null` when it is
  * missing / unreadable / undeclared — a side that did not declare cannot prove
  * an overlap (D-003; mirrors `dispatch.py::_parse_inflight_write_face`). */
-function parseInflightWriteFace(taskPath, base, caseInsensitive) {
+function parseInflightWriteFace(taskPath, options) {
     if (taskPath.trim() === "")
         return null;
     let text;
@@ -348,7 +348,7 @@ function parseInflightWriteFace(taskPath, base, caseInsensitive) {
     catch {
         return null;
     }
-    const parsed = parseWriteFace(text, { base, caseInsensitive });
+    const parsed = parseWriteFace(text, options);
     return parsed.kind === "declared" ? parsed.face : null;
 }
 /** D-001..D-008 gate, called INSIDE the `workers.lock` critical section.
@@ -357,7 +357,7 @@ function parseInflightWriteFace(taskPath, base, caseInsensitive) {
  * added) using the single owner predicate and the single terminal-status set. */
 function writeFaceVerdict(input) {
     const taskKey = input.entry.taskKey;
-    const parsed = parseWriteFace(input.content, { base: input.base, caseInsensitive: input.caseInsensitive });
+    const parsed = parseWriteFace(input.content, input.options);
     // A card-backed dispatch carries `card_path:`; a hand-written internal /
     // orphan task does not. Only a card-backed undeclared face is held
     // serial-only — a card-less dispatch has no author surface to fix, so
@@ -410,7 +410,7 @@ function writeFaceVerdict(input) {
         };
     }
     for (const row of inFlight) {
-        const otherFace = parseInflightWriteFace(row.taskPath, input.base, input.caseInsensitive);
+        const otherFace = parseInflightWriteFace(row.taskPath, input.options);
         if (otherFace === null)
             continue; // D-003: cannot prove an overlap
         const result = writeFacesOverlap(parsed.face, otherFace);

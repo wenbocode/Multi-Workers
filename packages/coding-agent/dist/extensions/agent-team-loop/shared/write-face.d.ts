@@ -92,10 +92,15 @@ export interface WriteFace {
     readonly deny: readonly string[];
     readonly base: string;
     readonly caseInsensitive: boolean;
+    /** Configured roots for absolute identities in separated workspaces. */
+    readonly roots?: readonly string[];
 }
 export interface WriteFaceParseOptions {
     readonly base: string;
     readonly caseInsensitive: boolean;
+    readonly roots?: readonly string[];
+    /** Resolve existing path prefixes at workspace boundaries, before comparison. */
+    readonly canonicalize?: (absolutePath: string) => string;
 }
 /** §3.3 three states: undeclared / refused / declared. */
 export type WriteFaceParseResult = {

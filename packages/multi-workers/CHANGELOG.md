@@ -171,6 +171,8 @@
 
 ### Fixed
 
+- Fixed Python dispatch and conductor write-face checks rejecting configured dual and partition roots. Declarations now retain control-relative semantics and canonical absolute identities for overlap detection, including junction aliases.
+
 - Fixed the `config_sha_after` width in the `authority-change` archive row: the writer sliced a 16-hex value out of an already-sliced 64-hex one, so a reused digest could disagree with the table it claims to describe; the row now carries the documented 16 hex in both `override` and `settle`/`sign` paths (mw-decision-substitution W9).
 
 - Fixed conductor-dispatched `phase-writer` / `roadmap-writer` tasks settling as needs-clarification on free-form reports (E2Feature gate-0032): the S2 recovery-contract checklist is now injected for both writable internal roles (autopilot/dispatch.py `RECOVERY_CONTRACT_TYPES`), matching the settle judge that already grades any write role producing a `report.md` product; injection stays inert when no report product exists, and `verifier`/`reviewer`/`repair` verdict-settlers remain uninjected.

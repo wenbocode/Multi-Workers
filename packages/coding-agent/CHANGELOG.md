@@ -132,6 +132,8 @@
 
 ### Fixed
 
+- Fixed dual and partition worker write faces using different path bases at dispatch and runtime. Configured roots now share canonical file identities, control-workspace artifacts stay writable, and declared file limits still apply with `allow_foreign_write` enabled.
+
 - Fixed native compaction finding no history at a completed tool batch with a large final tool result. The latest assistant/tool-result batch stays intact while earlier history is summarized. Extension-triggered phase continuations are now awaited before their parent prompt returns.
 
 - 决策替身：dp3 服务未报 mode 时不再回退本地配置；签收守卫不再误拒深层 evidence 产物

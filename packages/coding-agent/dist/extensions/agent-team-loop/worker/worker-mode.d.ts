@@ -228,9 +228,11 @@ interface TaskMeta {
     /** D-115 authoritative allow carrier: normalized `write_face:` entries
      * (project-root relative, comma/block-list form both normalized). Undefined
      * when the head is absent, `-` (undeclared) or refused (`writeFaceRejected`).
-     * Writable roles re-parse these against the worker cwd, so the runtime face
-     * keeps the shared operator's semantics (D-009/AC-007). */
+     * Entries keep the control-root basis in every workspace mode. */
     writeFaceEntries?: string[];
+    /** Preserve the parsed face and configured roots across a different cwd. */
+    writeFace?: WriteFace;
+    writeRoots?: readonly string[];
     /** A `write_face:` head that is present but refused (fail-closed). Only the
      * writable role path consults this: no target outside the own sandbox is
      * allowed by the authoritative carrier. */
@@ -388,6 +390,8 @@ export interface BashWriteScopeConfig {
     /** `write_scope:` entries (project-root relative): undefined = header
      * absent (the default surface), [] = present-but-blank (fail-closed). */
     writeScope: string[] | undefined;
+    /** Header entries are control-relative even when actual tools run elsewhere. */
+    writeScopeBase?: string;
     /** Role class (D-007 / spec risk 10). `"writable"` = the role carries a
      * `write`/`edit` tool (its normal work surface is the repo, including
      * `packages/**`); `"writeless"` = it only reaches bash/`worker_file`. The
@@ -407,6 +411,8 @@ export interface BashWriteScopeConfig {
     /** A `write_face:` head that was present but refused by the shared parser
      * (D-115 fail-closed). */
     writeFaceRejected?: boolean;
+    /** Configured roots; business writes outside cwd require a declared face. */
+    writeRoots?: readonly string[];
 }
 /** Write-surface role classes (D-007). */
 export type WriteSurfaceRoleClass = "writeless" | "writable";

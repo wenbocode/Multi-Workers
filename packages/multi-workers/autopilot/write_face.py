@@ -36,7 +36,7 @@ from __future__ import annotations
 import dataclasses
 import re
 from collections import deque
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 
 # ---------------------------------------------------------------------------
 # Stable refusal codes (parse-time, fail-closed, zero side effects).
@@ -133,6 +133,7 @@ class WriteFace:
     deny_entries: tuple[str, ...]
     base: str
     case_insensitive: bool
+    roots: tuple[str, ...] | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -579,7 +580,8 @@ def _compile_normalized(norm: str) -> tuple[list[CompiledGlob] | None, str | Non
 
 
 def _normalize_entry(
-    raw: str, *, base: str, case_insensitive: bool
+    raw: str, *, base: str, case_insensitive: bool, roots: Sequence[str] | None = None,
+    canonicalize: Callable[[str], str] | None = None,
 ) -> tuple[list[CompiledGlob] | None, str | None, str | None]:
     """Normalize + compile one entry.
 
@@ -599,7 +601,23 @@ def _normalize_entry(
     bare, _extglob = _scan_bangs(entry)
     if bare:
         return None, None, WRITE_FACE_INVALID_ENTRY
-    if _is_absolute(entry):
+    root: str | None = None
+    if roots is not None:
+        if ".." in entry.split("/"):
+            return None, None, WRITE_FACE_ESCAPE
+        absolute = entry if _is_absolute(entry) else _norm_sep(base).rstrip("/") + "/" + entry
+        if canonicalize is not None:
+            absolute = _norm_sep(canonicalize(absolute))
+        matches = sorted(
+            (_norm_sep(value).rstrip("/") for value in roots
+             if _to_relative(absolute, value, case_insensitive) is not None),
+            key=len, reverse=True,
+        )
+        if not matches:
+            return None, None, WRITE_FACE_OUTSIDE_BASE
+        root = matches[0]
+        entry = _to_relative(absolute, root, case_insensitive) or ""
+    elif _is_absolute(entry):
         rel = _to_relative(entry, base, case_insensitive)
         if rel is None:
             return None, None, WRITE_FACE_OUTSIDE_BASE
@@ -618,6 +636,13 @@ def _normalize_entry(
     globs, refusal = _compile_normalized(norm)
     if refusal is not None:
         return None, None, refusal
+    if root is not None:
+        prefix = tuple(CharPattern(tuple(Lit(ch) for ch in segment))
+                       for segment in root.split("/") if segment)
+        globs = [dataclasses.replace(glob, segments=prefix + glob.segments,
+                                     entry=root + "/" + glob.entry)
+                 for glob in globs or ()]
+        norm = root + "/" + norm
     return globs, norm, None
 
 
@@ -627,7 +652,8 @@ def _normalize_entry(
 
 
 def parse_write_face(
-    text: str, *, base: str, case_insensitive: bool = False
+    text: str, *, base: str, case_insensitive: bool = False, roots: Sequence[str] | None = None,
+    canonicalize: Callable[[str], str] | None = None,
 ) -> WriteFace | ParseResult:
     """Parse the `write_face:` head of a task.md.
 
@@ -662,7 +688,7 @@ def parse_write_face(
     # - the verdict is therefore independent of the entry order.
     for raw in raw_entries:
         entry_globs, norm, refusal = _normalize_entry(
-            raw, base=base, case_insensitive=case_insensitive
+            raw, base=base, case_insensitive=case_insensitive, roots=roots, canonicalize=canonicalize
         )
         if refusal is not None:
             return Refused(refusal, detail=f"entry {raw!r}", entry=raw)
@@ -679,7 +705,7 @@ def parse_write_face(
         raw_deny = list(deny_head.block) if deny_head.block is not None else _split_single_line(deny_head.value)
         for raw in raw_deny:
             _, norm, refusal = _normalize_entry(
-                raw, base=base, case_insensitive=case_insensitive
+                raw, base=base, case_insensitive=case_insensitive, roots=roots, canonicalize=canonicalize
             )
             if refusal is not None:
                 return Refused(refusal, detail=f"deny entry {raw!r}", entry=raw)
@@ -693,6 +719,7 @@ def parse_write_face(
         deny_entries=tuple(deny_entries),
         base=base,
         case_insensitive=case_insensitive,
+        roots=tuple(roots) if roots is not None else None,
     )
 
 

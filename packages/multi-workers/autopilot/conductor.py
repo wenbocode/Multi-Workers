@@ -1894,6 +1894,8 @@ def _declared_write_face(
         dispatch.render_write_face_line(entries),
         base=dispatch.write_face_base(pathlib.Path(project_root)),
         case_insensitive=dispatch.write_face_case_insensitive(),
+        roots=dispatch.write_face_roots(pathlib.Path(project_root)),
+        canonicalize=dispatch.canonical_write_face_path,
     )
     return parsed if isinstance(parsed, write_face.WriteFace) else None
 

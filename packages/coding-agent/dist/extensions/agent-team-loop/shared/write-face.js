@@ -448,7 +448,7 @@ function compileNormalized(norm) {
         return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
     return { kind: "ok", globs };
 }
-function normalizeEntry(raw, base, caseInsensitive) {
+function normalizeEntry(raw, base, caseInsensitive, roots, canonicalize) {
     let entry = raw.trim();
     if (entry === "" || entry === "-")
         return { kind: "skip" };
@@ -462,7 +462,22 @@ function normalizeEntry(raw, base, caseInsensitive) {
     entry = normalizeSeparators(entry);
     if (hasBareBang(entry))
         return { kind: "rejected", code: WRITE_FACE_INVALID_ENTRY };
-    if (isAbsolutePath(entry)) {
+    let root;
+    if (roots !== undefined) {
+        if (entry.split("/").includes(".."))
+            return { kind: "rejected", code: WRITE_FACE_ESCAPE };
+        let absolute = isAbsolutePath(entry) ? entry : `${normalizeSeparators(base).replace(/\/+$/, "")}/${entry}`;
+        if (canonicalize !== undefined)
+            absolute = normalizeSeparators(canonicalize(absolute));
+        root = roots
+            .map((value) => normalizeSeparators(value).replace(/\/+$/, ""))
+            .filter((value) => toRelative(absolute, value, caseInsensitive) !== null)
+            .sort((a, b) => b.length - a.length)[0];
+        if (root === undefined)
+            return { kind: "rejected", code: WRITE_FACE_OUTSIDE_BASE };
+        entry = toRelative(absolute, root, caseInsensitive) ?? "";
+    }
+    else if (isAbsolutePath(entry)) {
         const rel = toRelative(entry, base, caseInsensitive);
         if (rel === null)
             return { kind: "rejected", code: WRITE_FACE_OUTSIDE_BASE };
@@ -483,16 +498,33 @@ function normalizeEntry(raw, base, caseInsensitive) {
     const compiled = compileNormalized(norm);
     if (compiled.kind === "rejected")
         return compiled;
+    if (root !== undefined) {
+        // Root names are literal path components, even when they contain glob
+        // punctuation. Only the declared suffix has glob semantics.
+        const prefix = root
+            .split("/")
+            .filter((segment) => segment !== "")
+            .map((segment) => ({ kind: "pattern", tokens: [...segment].map((ch) => ({ kind: "lit", ch })) }));
+        return {
+            kind: "ok",
+            norm: `${root}/${norm}`,
+            globs: compiled.globs.map((glob) => ({
+                ...glob,
+                text: `${root}/${glob.text}`,
+                segments: [...prefix, ...glob.segments],
+            })),
+        };
+    }
     return { kind: "ok", globs: compiled.globs, norm };
 }
 /** Normalize one raw entry list. `label` is the conductor's refusal prefix
  * (`entry` / `deny entry`, `write_face.py:668/685`); the raw text is kept
  * verbatim (no `repr` quote-selection — the caller renders). */
-function normalizeEntries(rawEntries, base, caseInsensitive, label) {
+function normalizeEntries(rawEntries, base, caseInsensitive, label, roots, canonicalize) {
     const globs = [];
     const entries = [];
     for (const raw of rawEntries) {
-        const r = normalizeEntry(raw, base, caseInsensitive);
+        const r = normalizeEntry(raw, base, caseInsensitive, roots, canonicalize);
         if (r.kind === "skip")
             continue;
         if (r.kind === "rejected")
@@ -505,12 +537,12 @@ function normalizeEntries(rawEntries, base, caseInsensitive, label) {
 function buildFace(rawAllow, rawDeny, opts) {
     if (rawAllow.length === 0)
         return { kind: "rejected", code: WRITE_FACE_EMPTY, detail: WRITE_FACE_EMPTY_DETAIL };
-    const allow = normalizeEntries(rawAllow, opts.base, opts.caseInsensitive, "entry");
+    const allow = normalizeEntries(rawAllow, opts.base, opts.caseInsensitive, "entry", opts.roots, opts.canonicalize);
     if (allow.kind === "rejected")
         return allow;
     if (allow.entries.length === 0)
         return { kind: "rejected", code: WRITE_FACE_EMPTY, detail: WRITE_FACE_EMPTY_DETAIL };
-    const denyNormalized = normalizeEntries(rawDeny, opts.base, opts.caseInsensitive, "deny entry");
+    const denyNormalized = normalizeEntries(rawDeny, opts.base, opts.caseInsensitive, "deny entry", opts.roots, opts.canonicalize);
     if (denyNormalized.kind === "rejected")
         return denyNormalized;
     const face = {
@@ -519,6 +551,7 @@ function buildFace(rawAllow, rawDeny, opts) {
         deny: denyNormalized.entries,
         base: opts.base,
         caseInsensitive: opts.caseInsensitive,
+        ...(opts.roots === undefined ? {} : { roots: opts.roots }),
     };
     return { kind: "declared", face };
 }
