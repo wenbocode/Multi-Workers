@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added project-local pi worker thinking levels through `.mw/dispatch.yml` (`thinking.default` and `thinking.roles`), passed to new worker spawns and dry runs without changing models or running workers. See the [worker thinking guide](docs/worker-thinking.md).
+
 - `mw init` installs the project collaboration guide in `AGENTS.md` and appends it once to existing instructions.
 
 - Added PM ownership guidance and a Codex-only per-key execution template to project initialization, with append-only upgrades for existing project instructions.

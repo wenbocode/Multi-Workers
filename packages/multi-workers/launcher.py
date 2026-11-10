@@ -71,6 +71,8 @@ from mw_common import (
     update_status as _update_status,
     workers_path as _workers_path,
 )
+# mw-worker-thinking: read-only policy helper (W1), consumed by pi spawns.
+from worker_thinking import resolve_worker_thinking, THINKING_LEVELS
 
 DEFAULT_POLL_INTERVAL: int = 5  # seconds — AC-001: must be <= 5
 
@@ -2163,12 +2165,46 @@ def _argv_with_session_id(cmd: list[str], session_id: str | None) -> list[str]:
     return [*cmd[:index], "--session-id", session_id, *cmd[index:]]
 
 
-def _build_command(entry: dict[str, str], session_id: str | None = None) -> list[str]:
+def _pi_argv_with_thinking(cmd: list[str], thinking: str | None) -> list[str]:
+    """Insert exactly one ``--thinking LEVEL`` before the trailing ``-p``.
+
+    mw-worker-thinking D-002: only pi consumes the level. ``None`` returns
+    ``cmd`` unchanged (historical argv byte-for-byte). Any unknown/unvalidated
+    value is rejected rather than injected, so no stray string, flag or
+    duplicate ``--thinking`` pair can ever reach the pi process.
+    """
+    if thinking is None:
+        return cmd
+    if not isinstance(thinking, str) or thinking not in THINKING_LEVELS:
+        raise ValueError(
+            f"refusing to inject invalid thinking level {thinking!r} "
+            f"(valid: {', '.join(THINKING_LEVELS)})"
+        )
+    if "--thinking" in cmd:
+        raise ValueError("refusing to inject a duplicate --thinking flag")
+    try:
+        index = len(cmd) - 1 - cmd[::-1].index("-p")
+    except ValueError:
+        return [*cmd, "--thinking", thinking]
+    return [*cmd[:index], "--thinking", thinking, *cmd[index:]]
+
+
+def _build_command(
+    entry: dict[str, str],
+    session_id: str | None = None,
+    *,
+    thinking: str | None = None,
+) -> list[str]:
     """Build one CLI argv.
 
     ``session_id`` is the launcher-assigned CLI session id (T-02): pi and claude
     accept ``--session-id`` and that is how the query side joins the run's
     session log; codex has no such flag (RQ3 §3) and silently ignores it.
+
+    ``thinking`` (mw-worker-thinking) is an optional, already-resolved pi
+    thinking level: exactly one ``--thinking LEVEL`` before ``-p`` on every pi
+    route (timi / direct / no-provider). ``None`` keeps the historical argv;
+    non-pi CLIs ignore the argument entirely.
     """
     cli = entry["cli"].lower()
     provider = entry.get("provider", "").strip()
@@ -2184,12 +2220,13 @@ def _build_command(entry: dict[str, str], session_id: str | None = None) -> list
     if cli == "pi":
         if provider == "timi":
             return _argv_with_session_id(
-                ["pi", "--provider", "timi", "--model", model or "glm-5.3", "-p", starter],
+                _pi_argv_with_thinking(
+                    ["pi", "--provider", "timi", "--model", model or "glm-5.3", "-p", starter],
+                    thinking,
+                ),
                 session_id,
             )
-        # Direct non-timi providers (anthropic / openai-codex / deepseek /
-        # zai-coding-cn, set via model prefixes): explicit --provider so the
-        # flag can never ride on pi's default-provider resolution.
+        # Direct routes selected by a model prefix always specify the provider.
         if provider in mw_common.PROVIDER_ID_TO_PREFIX:
             if not model:
                 raise RuntimeError(
@@ -2197,7 +2234,10 @@ def _build_command(entry: dict[str, str], session_id: str | None = None) -> list
                     "(no per-route default is hardcoded for direct providers)"
                 )
             return _argv_with_session_id(
-                ["pi", "--provider", provider, "--model", model, "-p", starter],
+                _pi_argv_with_thinking(
+                    ["pi", "--provider", provider, "--model", model, "-p", starter],
+                    thinking,
+                ),
                 session_id,
             )
         # Extension reads task.md via PI_WORKER_TASK; -p passes a short starter
@@ -2206,7 +2246,7 @@ def _build_command(entry: dict[str, str], session_id: str | None = None) -> list
         if model:
             cmd += ["--model", model]
         cmd += ["-p", starter]
-        return _argv_with_session_id(cmd, session_id)
+        return _argv_with_session_id(_pi_argv_with_thinking(cmd, thinking), session_id)
     elif cli == "codex":
         if provider not in ("", "codex"):
             raise RuntimeError(
@@ -2792,6 +2832,47 @@ def _worker_cwd(project_dir: pathlib.Path, config: dict | None = None) -> pathli
     return project_dir
 
 
+def _resolve_spawn_thinking(
+    project_dir: pathlib.Path, entry: dict[str, str]
+) -> tuple[str | None, str]:
+    """Resolve the pi thinking level for ONE spawn/dry-run (mw-worker-thinking).
+
+    The policy lives in the CONTROL project's .mw/dispatch.yml, never the
+    worker cwd (which can be a separate game/partition root). It is read fresh
+    on every spawn (no cache), so a re-dispatch / fallback sees the current
+    config. Fully fail-soft: an invalid block, an unsupported level or any
+    resolver error warns on stderr and yields NO override, so thinking can
+    never change the existing model resolution or spawn failure contract.
+    Non-pi callers never invoke this.
+    """
+    key = entry.get("task_key", "?")
+    try:
+        task_type, _model = _read_task_md_fields(entry["task_path"])
+        level, source, error = resolve_worker_thinking(project_dir, task_type)
+    except Exception as exc:  # noqa: BLE001 — thinking must never break a spawn
+        print(
+            f"[launcher] {key}: thinking policy unavailable ({exc}) — "
+            "no --thinking injected; pi native default applies",
+            file=sys.stderr, flush=True,
+        )
+        return None, "error"
+    if error:
+        print(
+            f"[launcher] {key}: thinking config invalid — {error} — "
+            "no --thinking injected; pi native default applies",
+            file=sys.stderr, flush=True,
+        )
+        return None, source
+    if level is not None and level not in THINKING_LEVELS:
+        print(
+            f"[launcher] {key}: unsupported thinking level {level!r} — "
+            "no --thinking injected; pi native default applies",
+            file=sys.stderr, flush=True,
+        )
+        return None, "invalid"
+    return level, source
+
+
 def _spawn(
     entry: dict[str, str],
     project_dir: pathlib.Path,
@@ -2842,11 +2923,23 @@ def _spawn(
             tried=tried_models,
         )
         session_id = _usage_session_id(effective)
-        cmd = _build_command(effective, session_id=session_id)
+        is_pi = effective["cli"].lower() == "pi"
+        thinking, thinking_source = (
+            _resolve_spawn_thinking(project_dir, entry) if is_pi else (None, "not-applicable")
+        )
+        cmd = _build_command(effective, session_id=session_id, thinking=thinking)
         print(
             f"[launcher] {entry['task_key']}: model={model_value or '(route default)'} source={model_source}",
             flush=True,
         )
+        if is_pi:
+            # Separate line: the model `source=` above is untouched (VC-002).
+            print(
+                f"[launcher] {entry['task_key']}: "
+                f"thinking={thinking if thinking is not None else 'native default'} "
+                f"thinking-source={thinking_source}",
+                flush=True,
+            )
         override_note = _model_override_note(entry, project_dir, model_value, model_source)
         if override_note:
             print(override_note, flush=True)
@@ -2913,8 +3006,15 @@ def _dry_run(project_dir: pathlib.Path, config: dict) -> None:
     entries = _parse_workers_file(_workers_path(project_dir))
     pending = [e for e in entries if e["status"] == "pending"]
     for entry in pending:
+        is_pi = entry["cli"].lower() == "pi"
         try:
-            cmd = _build_command(entry)
+            # Same control-project policy read as _spawn so the displayed argv
+            # is the real wired command, not an unwired placeholder.
+            thinking, thinking_source = (
+                _resolve_spawn_thinking(project_dir, entry)
+                if is_pi else (None, "not-applicable")
+            )
+            cmd = _build_command(entry, thinking=thinking)
             rag_config, _rag_error = mw_common.load_rag_config(project_dir)
             env = _build_env(entry, config, rag_config)
             inject_rag_env(env, entry, project_dir)
@@ -2932,6 +3032,11 @@ def _dry_run(project_dir: pathlib.Path, config: dict) -> None:
         if len(display_cmd) > 2 and len(display_cmd[-1]) > 120:
             display_cmd[-1] = display_cmd[-1][:120] + "..."
         print(f"[DRY-RUN] {env_display} {' '.join(display_cmd)}")
+        if is_pi:
+            print(
+                f"  thinking={thinking if thinking is not None else 'native default'} "
+                f"thinking-source={thinking_source}"
+            )
         print(f"  task.md: {entry['task_path']}")
 
 
