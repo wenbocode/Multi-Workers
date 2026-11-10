@@ -6,6 +6,8 @@ Codex 负责需求、任务卡、验收和 key 结案。MW 服务负责运行 wo
 
 在已完成 MW bootstrap 的控制工作区使用 AgenticTask skill。按项目 goal 编写 spec 和编号 AC，认领 key，保存返回的 ClaimId。通过 `advance_phase.py` 依次推进 design、plan、tasks 和 execute，设计中写明每条 AC 怎么验证。以下 PowerShell 示例从 Multi-Workers 仓库根运行。用于其他项目时，把 `$project` 设为控制工作区，把 `$pm`、`$mw` 指向本仓库的绝对路径。
 
+在框架生成的 `pm-state.md` 的 Snapshot 中记录 `- PM mode: codex`。从初始化安装的 `.agenticdoc/templates/codex_doc.md` 复制到本 key，仅由 Codex PM 记录内置执行、转派理由和会话接续。共享的 spec、design、plan、任务卡和 evidence 按正常流程维护。
+
 ```powershell
 $project = (Resolve-Path .).Path
 $pm = (Resolve-Path packages/multi-workers/codex_pm.py).Path
@@ -55,6 +57,8 @@ python $pm status --project $project --key $key
 ```
 
 `dispatch` 成功表示已入队。相同 key 与卡名生成稳定的 worker ID，重复调用返回已有回执。原卡改动后要返工时，新增卡名，并在卡里引用原任务与失败证据。Codex 可以关闭会话，MW 在后台继续运行。
+
+Codex 已完成部分实现时，把剩余交付、已有改动和验证结果写进同一 key 的卡，随后将回执里的任务 ID 关联回原计划项。在 `codex_doc.md` 记录交接期间继续使用 `PM mode: codex`，由 Codex 收回验收。Worker 的上下文集中在任务卡和共享文档中。
 
 同一 key 由一个 PM 推进。已列入启用的 Autopilot roadmap 的 key 由 conductor 派工，Codex 可用 `status` 观察其 worker。手动派发的 key 在结案前应保持由 Codex 管理。
 

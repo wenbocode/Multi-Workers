@@ -36,6 +36,11 @@ def invoke(project, command, *args, expected=0, claim=None):
 
 @pytest.fixture()
 def card(proj):
+    subprocess.run(
+        [sys.executable, str(CLI.with_name("mw.py")), "init", "--project", str(proj), "--no-framework"],
+        env={**os.environ, "PI_CODING_AGENT_DIR": str(proj / ".pi-test-agent"), "PYTHONUTF8": "1"},
+        capture_output=True, check=True, timeout=20,
+    )
     root = proj / ".agenticdoc"
     key = root / KEY
     (key / "tasks").mkdir(parents=True)
@@ -59,6 +64,13 @@ def card(proj):
         f"## 验收命令\n```json\n{json.dumps(COMMAND)}\n```\n## 改动历史\nFirst implementation.\n",
         encoding="utf-8")
     framework(proj, "advance_phase.py", KEY, "execute")
+    pm = key / "pm-state.md"
+    pm.write_text(pm.read_text(encoding="utf-8").replace(
+        "## 1. Snapshot", "## 1. Snapshot\n- PM mode: codex"), encoding="utf-8")
+    (key / "codex_doc.md").write_text(
+        (root / "templates" / "codex_doc.md").read_text(encoding="utf-8")
+        + "\nCodex preparation complete. T-01 transfers remaining implementation to MW.\n",
+        encoding="utf-8")
     return source
 
 
@@ -66,16 +78,25 @@ def test_develop_reconnect_and_verify(proj, card, fakebin, start_launcher, monke
     # Publish the acceptance test before dispatch, so the same assertion covers
     # the initial implementation, the negative control and the repaired product.
     (proj / "check counter.py").write_text("from counter import increment\nassert increment(4) == 5\nprint('counter verified')\n")
+    (proj / "counter.py").write_text("def increment(value): return value\n")
+    initial = subprocess.run(COMMAND, cwd=proj, capture_output=True)
+    assert initial.returncode != 0 and b"AssertionError" in initial.stderr
     (fakebin / "fake_cli.py").write_text(
         "import os\nfrom pathlib import Path\n"
         "task = Path(os.environ['PI_WORKER_TASK'])\n"
         "assert 'Increment by one' in task.read_text(encoding='utf-8')\n"
+        "assert 'Codex preparation complete' not in task.read_text(encoding='utf-8')\n"
+        "assert Path('counter.py').is_file()\n"
         "Path('counter.py').write_text('def increment(value): return value + 1\\n')\n"
         "(task.parent / 'output.md').write_text('Implemented increment in counter.py.')\n", encoding="utf-8")
     with ThreadPoolExecutor(max_workers=2) as pool:
         replies = list(pool.map(lambda _: invoke(proj, "dispatch", "--card", card.stem), range(2)))
     assert sorted(r["reused"] for r in replies) == [False, True]
     task = replies[0]["task"]
+    key_dir = card.parents[1]
+    with (key_dir / "codex_doc.md").open("a", encoding="utf-8") as stream:
+        stream.write(f"\nT-01 queued as {task}.\n")
+    assert Path(replies[0]["artifacts"]["task.md"]).parent.parent == key_dir / "workers"
     assert invoke(proj, "status")["tasks"][0]["verification"] == "unverified"
     invoke(proj, "verify", "--card", card.stem, "--", *COMMAND, expected=2)
 
@@ -101,6 +122,10 @@ def test_develop_reconnect_and_verify(proj, card, fakebin, start_launcher, monke
     assert failed["verdict"] == "failed" and "AssertionError" in Path(failed["log"]).read_text()
     worker_product.write_bytes(good)
     passed = invoke(proj, "verify", "--card", card.stem, "--", *COMMAND)
+    with (key_dir / "codex_doc.md").open("a", encoding="utf-8") as stream:
+        stream.write(f"\nT-01 PM verification passed: {passed['evidence']}\n")
+    assert Path(passed["evidence"]).is_relative_to(key_dir / "evidence")
+    assert "- PM mode: codex" in (key_dir / "pm-state.md").read_text(encoding="utf-8")
     assert passed["exit_code"] == 0 and "counter verified" in Path(passed["log"]).read_text()
     recovered = invoke(proj, "status")["tasks"][0]
     assert recovered["verification"] == "passed" and recovered["checks"] == [failed["evidence"], passed["evidence"]]

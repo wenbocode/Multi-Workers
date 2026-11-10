@@ -46,9 +46,13 @@ python packages/multi-workers/mw.py bootstrap --project .
 | 3 | `npm run build`（根；ai 构建需网络拉取 models.dev） |
 | 4 | 全局 link `pi`：已存在则校验链接目标确为本仓库（防 registry 版顶替），失败时提示 `npm uninstall -g` 修复 |
 | 5 | `setup`：克隆 AgenticTask 框架 + 全局安装扩展；Windows 上检测并填充 pi 的 `shellPath`（`~/.pi/agent/settings.json`，只在缺失/失效时写入，已有有效值不覆盖） |
-| 6 | `init`：创建 `.agenticdoc/` `.mw/` `.pi/extensions/` 脚手架 |
+| 6 | `init` 创建 `.agenticdoc/`、`.mw/`、`.pi/extensions/`，在项目根目录安装 `AGENTS.md` 协作说明 |
 | 7 | `start`：后台启动服务（无凭据路径下跳过，见步骤 1） |
 | 8 | `doctor`：全链路诊断，期望 `summary: healthy` |
+
+PM 和 worker 共用项目根目录的 `AGENTS.md`。对使用其他指令文件的客户端，可在其项目指令中要求先阅读 `AGENTS.md`。
+
+每个 key 在正常的 `spec → design → plan → tasks → execute → verify → done` 流程中，由 PM 在 `pm-state.md` 的 Snapshot 记录 `- PM mode: mw` 或 `- PM mode: codex`。初始化还会安装 `.agenticdoc/templates/codex_doc.md`，仅 Codex PM 将其复制到自己的 key，记录内置执行和同 key 转派。派工示例见 [Codex PM 工作流](docs/codex-pm.md)。已有项目重跑 init 会保留原文、追加新版协作章节一次，保留已有 Codex 模板定制。
 
 常用参数：
 
@@ -74,7 +78,7 @@ python mw.py <子命令>
 | `stop` / `status` | 停止 / 查看服务 |
 | `doctor [--json] [--fix]` | 全链路诊断：服务、代理端口、日志、队列、凭据、bundle、target、pi shellPath |
 | `bootstrap` | 新机器一键安装（见上） |
-| `init [--no-framework]` | 初始化项目脚手架；`--no-framework` 跳过 AgenticTask 框架安装 |
+| `init [--no-framework]` | 在 `--project` 目录安装[协作模板](templates/AGENTS.md)。已有 `AGENTS.md` 时保留原文，追加一次 MW 章节。`--no-framework` 仅跳过 AgenticTask 框架安装 |
 | `build [--install]` | esbuild 重建扩展 bundle（无 bash 依赖、cwd 无关）；`--install` 同时装到全局扩展目录并重建 pi dist |
 | `setup` | 一次性机器初始化：克隆框架 + 全局装扩展 + 自动填充 pi `shellPath`（Windows；幂等，不覆盖已配置值） |
 | `pull-agentictask` / `push-agentictask` | 更新 / 推送 AgenticTask 框架 |
@@ -379,6 +383,7 @@ toolchain 模板不只是注入 task.md 的文档——PM 直执时用 `mw ue-to
 | `/worker <claude\|codex\|pi> [--model <id>] <任务描述>` | 派发一个 worker |
 | `/mw build \| init \| start \| stop \| status \| doctor [fix] \| update [--apply]` | 服务与 bundle 管理（update = 锚点自检，见 [UPDATE.md](./UPDATE.md)） |
 | `/mw target show \| set \| clear` | 双工作区配置（见上） |
+| `/mw context show \| set \| clear` | 上下文预算与自动压缩；默认全局 512k、coding/research 256k、review 512k，详见[操作手册](docs/context.md) |
 | `/mw ack <task-key> \| all` | 确认终态 worker 结果 |
 
 ### 实施准入门禁（mw-implementation-gate）

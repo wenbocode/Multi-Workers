@@ -10335,6 +10335,47 @@ def _install_framework(
     return True, f"framework installed from {source}"
 
 
+def _install_project_agent_guide(project_dir: pathlib.Path) -> pathlib.Path:
+    template = (_SCRIPT_DIR / "templates" / "AGENTS.md").read_text(encoding="utf-8")
+    codex_template = (_SCRIPT_DIR / "templates" / "codex_doc.md").read_text(encoding="utf-8")
+    guide = project_dir / "AGENTS.md"
+    uppercase = project_dir / "AGENTS.MD"
+    if not guide.exists() and uppercase.is_file():
+        guide = uppercase
+
+    lock = project_dir / ".mw" / "init-agents.lock"
+    mw_common.acquire_lock(lock, deadline_s=5)
+    try:
+        codex_dst = project_dir / ".agenticdoc" / "templates" / "codex_doc.md"
+        if not codex_dst.resolve().is_relative_to(project_dir):
+            raise ValueError(f"Codex template points outside the project: {codex_dst}")
+        if not codex_dst.exists():
+            codex_dst.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write_yml(codex_dst, codex_template)
+        if not guide.resolve().is_relative_to(project_dir):
+            raise ValueError(f"project guide points outside the project: {guide}")
+        # Append in the existing encoding without rewriting project-owned bytes.
+        # The marker survives edits to the installed section.
+        original = guide.read_bytes() if guide.exists() else b""
+        encoding = "utf-8"
+        if original.startswith(b"\xff\xfe"):
+            encoding = "utf-16-le"
+        elif original.startswith(b"\xfe\xff"):
+            encoding = "utf-16-be"
+        existing = original.decode(encoding).removeprefix("\ufeff")
+        if "<!-- mw:agent-collaboration-version: 2 -->" not in existing.splitlines():
+            eol = _dominant_ending(existing)
+            separator = ""
+            if existing and not existing.endswith(eol * 2):
+                separator = eol if existing.endswith(eol) else eol * 2
+            with guide.open("ab") as stream:
+                stream.write((separator + template.replace("\n", eol)).encode(encoding))
+    finally:
+        mw_common.release_lock(lock)
+    return guide
+
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     # AC-036: bundle must exist before creating any directories
     if not _check_bundle():
@@ -10414,6 +10455,12 @@ def cmd_init(args: argparse.Namespace) -> int:
         ok, msg = _install_framework(project_dir, source=source, codex_scope=args.codex_scope)
         print(f"[mw init] {msg}" if ok else f"[mw init] Warning: {msg}", file=sys.stderr if not ok else None)
 
+    try:
+        guide = _install_project_agent_guide(project_dir)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"[mw init] Error installing project agent guide: {exc}", file=sys.stderr)
+        return 1
+    print(f"[mw init] Project agent guide: {guide}")
     print(f"[mw init] Project initialized: {project_dir}")
     return 0
 

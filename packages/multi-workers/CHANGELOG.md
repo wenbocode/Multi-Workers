@@ -4,6 +4,10 @@
 
 ### Added
 
+- `mw init` installs the project collaboration guide in `AGENTS.md` and appends it once to existing instructions.
+
+- Added PM ownership guidance and a Codex-only per-key execution template to project initialization, with append-only upgrades for existing project instructions.
+
 - Added direct pi worker dispatch for `zhient/<model>` using `ZHIENT_API_KEY` or the credential from `/login zhient`.
 
 - Added direct pi worker dispatch for `toa/hy4` and `toa/hy3`, with isolated TokenLink credentials. See the [TOA setup guide](docs/toa.md).
