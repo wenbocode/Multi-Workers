@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added the TokenLink `toa` provider to the MW extension, with streaming, tool calls and session affinity for Hy4 and Hy3.
+
 - Added `/mw proxy start|stop|status|check [--deep]`, local Codex model routing for PM and pi workers, proxy monitor status, request preflight checks and heartbeat/deadline enforcement. Local routing uses separate provider authentication without modifying stored Codex OAuth credentials.
 
 - Added `/mw concurrency set <provider/model|provider/*> <N>`, `show`, and `clear` for same-user, machine-wide LLM concurrency limits shared by pi PM and workers, with cancellable queues, live limit changes, and dead-process slot recovery.

@@ -6,6 +6,7 @@ import { configureDeepSeek } from "./shared/deepseek-provider.js";
 import { registerImplementationGate } from "./shared/implementation-gate.js";
 import { registerModelConcurrency } from "./shared/model-concurrency-extension.js";
 import { registerProtectedConfigGuard } from "./shared/protected-config.js";
+import { registerToa } from "./shared/toa-provider.js";
 import { registerWorktreeJunctionGuard } from "./shared/worktree-junction-guard.js";
 import { registerDecisionSignoffGuard, registerXkeyGateGuard } from "./shared/xkey-gate-guard.js";
 import { workerModeActivate } from "./worker/worker-mode.js";
@@ -35,6 +36,7 @@ export async function activate(pi) {
         return;
     }
     g[ACTIVATION_FLAG] = true;
+    registerToa(pi);
     configureDeepSeek(pi);
     registerLocalCodex(pi);
     registerModelConcurrency(pi);

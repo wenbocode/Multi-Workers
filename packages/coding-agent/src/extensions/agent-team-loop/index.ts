@@ -7,6 +7,7 @@ import { configureDeepSeek } from "./shared/deepseek-provider.ts";
 import { registerImplementationGate } from "./shared/implementation-gate.ts";
 import { registerModelConcurrency } from "./shared/model-concurrency-extension.ts";
 import { registerProtectedConfigGuard } from "./shared/protected-config.ts";
+import { registerToa } from "./shared/toa-provider.ts";
 import { registerWorktreeJunctionGuard } from "./shared/worktree-junction-guard.ts";
 import { registerDecisionSignoffGuard, registerXkeyGateGuard } from "./shared/xkey-gate-guard.ts";
 import { workerModeActivate } from "./worker/worker-mode.ts";
@@ -38,6 +39,7 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 		return;
 	}
 	g[ACTIVATION_FLAG] = true;
+	registerToa(pi);
 	configureDeepSeek(pi);
 	registerLocalCodex(pi);
 	registerModelConcurrency(pi);
