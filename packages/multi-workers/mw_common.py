@@ -75,7 +75,10 @@ _DEFAULT_CONFIG: dict = {
     "credentials": {
         "anthropic": {"sources": [{"env": "ANTHROPIC_API_KEY"}]},
         "anthropic-auth": {"sources": [{"env": "ANTHROPIC_AUTH_TOKEN"}]},
-        "deepseek": {"sources": [{"env": "DEEPSEEK_API_KEY"}]},
+        "deepseek": {"sources": [
+            {"env": "DEEPSEEK_API_KEY"},
+            {"file": "~/.pi/agent/auth.json", "format": "json", "field": "deepseek.key"},
+        ]},
         "timi": {"sources": [
             {"env": "TIMI_API_KEY"},
             {"file": "~/.pi/agent/auth.json", "format": "json", "field": "timi.key"},
@@ -96,6 +99,7 @@ _DEFAULT_CONFIG: dict = {
         },
         "deepseek": {
             "port": 7004, "base_url_env": "DEEPSEEK_BASE_URL",
+            "proxy_autostart": False,
             "api_key_env": "DEEPSEEK_API_KEY", "credential": "deepseek",
         },
         "timi": {"api_key_env": "TIMI_API_KEY", "credential": "timi"},
@@ -2992,7 +2996,10 @@ def _doctor_proxy(config: dict) -> list[dict]:
     for name, cfg in sorted(config.get("providers", {}).items()):
         if isinstance(cfg, dict) and cfg.get("port"):
             port = int(cfg["port"])
-            ports.append({"route": name, "port": port, "listening": port_is_bound(port)})
+            row = {"route": name, "port": port, "listening": port_is_bound(port)}
+            if cfg.get("proxy_autostart") is False:
+                row["autostart"] = False
+            ports.append(row)
     return ports
 
 
@@ -4747,12 +4754,17 @@ def format_doctor_text(report: dict) -> str:
         f"service: {'running (PID ' + str(svc['pid']) + ')' if svc['running'] else 'not running'}"
     )
     for p in report["proxy"]:
-        lines.append(f"proxy: {p['route']} port {p['port']} {'LISTENING' if p['listening'] else 'not listening'}")
+        status = "LISTENING" if p["listening"] else (
+            "disabled (native direct route)" if p.get("autostart") is False else "not listening"
+        )
+        lines.append(f"proxy: {p['route']} port {p['port']} {status}")
     avail_routes = {
         r["route"] for r in report.get("credentials", {}).get("routes", []) if r.get("available")
     }
-    if report["proxy"] and not any(p["route"] in avail_routes for p in report["proxy"]):
-        lines.append("proxy: disabled (no proxy-routed credentials; direct routes only)")
+    if report["proxy"] and not any(
+        p["route"] in avail_routes and p.get("autostart") is not False for p in report["proxy"]
+    ):
+        lines.append("proxy: disabled (no enabled proxy-routed credentials; direct routes only)")
     plog = report.get("proxy_log") or {}
     if plog.get("last_error"):
         lines.append(f"proxy_log: {plog['traceback_count']} crash(es), last: {plog['last_error']}")

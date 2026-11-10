@@ -2,6 +2,7 @@ import { initiatorRoleFromWorkerTask, registerAskDecisionTool } from "./pm/decis
 import { pmActivate } from "./pm/pm-orchestrator.js";
 import { registerLocalCodex } from "./shared/codex-local.js";
 import { registerContextPolicy } from "./shared/context-extension.js";
+import { configureDeepSeek } from "./shared/deepseek-provider.js";
 import { registerImplementationGate } from "./shared/implementation-gate.js";
 import { registerModelConcurrency } from "./shared/model-concurrency-extension.js";
 import { registerProtectedConfigGuard } from "./shared/protected-config.js";
@@ -34,6 +35,7 @@ export async function activate(pi) {
         return;
     }
     g[ACTIVATION_FLAG] = true;
+    configureDeepSeek(pi);
     registerLocalCodex(pi);
     registerModelConcurrency(pi);
     registerContextPolicy(pi);

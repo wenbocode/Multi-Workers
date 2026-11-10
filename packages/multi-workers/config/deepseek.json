@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "baseUrl": "https://api.deepseek.com",
+  "models": ["deepseek-flash", "deepseek-v4-pro"]
+}

@@ -364,8 +364,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
         if args.deepseek_port:
             proxy_cmd.append(f"--deepseek-port={args.deepseek_port}")
         # The LLM proxy only serves port-routed providers (claude / claude-cli /
-        # deepseek) and needs the private timi-proxy-cli package; direct routes
-        # (timi, zai-coding-cn, codex-native) never touch it. With no
+        # deepseek legacy bridge) and needs the private timi-proxy-cli package.
+        # Native pi DeepSeek is direct: its shared credential alone must not
+        # enable the bridge. Explicit --deepseek-port still opts into it.
+        # Direct routes (timi, zai-coding-cn, codex-native) never touch it. With no
         # proxy-routed credential available, skip it entirely instead of dying
         # on the optional dependency — fresh machines without that package hit
         # ModuleNotFoundError at import and used to take the whole service down.
@@ -374,15 +376,21 @@ def cmd_serve(args: argparse.Namespace) -> int:
             for st in precheck["routes"]
             if st["available"]
             and (config.get("providers", {}).get(st["route"]) or {}).get("port")
+            and (
+                (config["providers"][st["route"]].get("proxy_autostart") is not False)
+                or (st["route"] == "deepseek" and args.deepseek_port is not None)
+            )
         ]
+        if "deepseek" in proxy_routes and not args.deepseek_port:
+            proxy_cmd.append(f"--deepseek-port={config['providers']['deepseek']['port']}")
         # If another mw instance already has the proxy running on these ports,
         # share it instead of starting a second one (supports multiple pi windows).
         proxy_already_running = _port_is_bound(args.pi_port) and _port_is_bound(args.claude_port)
         if not proxy_routes:
             proxy_proc = None
             print(
-                "[mw serve] no proxy-routed credentials (claude/claude-cli/deepseek)"
-                " - proxy disabled; direct routes only (timi / zai-coding-cn / codex-native)",
+                "[mw serve] no enabled proxy-routed credentials (claude/claude-cli/deepseek legacy)"
+                " - proxy disabled; direct routes only (timi / zai-coding-cn / codex-native / pi deepseek)",
                 flush=True,
             )
         elif proxy_already_running:

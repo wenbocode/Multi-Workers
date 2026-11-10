@@ -3,6 +3,7 @@ import { initiatorRoleFromWorkerTask, registerAskDecisionTool } from "./pm/decis
 import { pmActivate } from "./pm/pm-orchestrator.ts";
 import { registerLocalCodex } from "./shared/codex-local.ts";
 import { registerContextPolicy } from "./shared/context-extension.ts";
+import { configureDeepSeek } from "./shared/deepseek-provider.ts";
 import { registerImplementationGate } from "./shared/implementation-gate.ts";
 import { registerModelConcurrency } from "./shared/model-concurrency-extension.ts";
 import { registerProtectedConfigGuard } from "./shared/protected-config.ts";
@@ -37,6 +38,7 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 		return;
 	}
 	g[ACTIVATION_FLAG] = true;
+	configureDeepSeek(pi);
 	registerLocalCodex(pi);
 	registerModelConcurrency(pi);
 	registerContextPolicy(pi);
