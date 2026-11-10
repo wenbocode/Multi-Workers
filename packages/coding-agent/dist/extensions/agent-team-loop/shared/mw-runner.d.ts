@@ -273,6 +273,12 @@ export declare function partitionMw(projectDir: string, args: string[]): MwCliRe
 /** `mw.py model <args...>` — dispatch model defaults (show / set / clear) and the
  * ordered fallback chains (set-fallback / clear-fallback). */
 export declare function modelMw(projectDir: string, args: string[]): MwCliResult;
+/** `mw.py thinking <args...>` — worker thinking levels (show / set / clear).
+ * Thin wrapper over the config CLI: the window face (/mw thinking) validates the
+ * closed action/target/level set and forwards an argv array, Python stays the
+ * single source of YAML parsing/validation/rendering, and `--project=<control
+ * root>` is appended here so callers never forget it. */
+export declare function thinkingMw(projectDir: string, args: string[]): MwCliResult;
 /** `mw.py decide <args...>` — decision archive / dp authority / sign-off. The
  * window face only forwards: `/mw decide show|sign` sends
  * `sign --key <k> --dry-run --json` (read-only pre-judge) or

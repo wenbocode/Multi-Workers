@@ -51,6 +51,7 @@ import decision_signoff_result
 import decision_wire
 import mw_common
 import rag_templates
+import thinking_config
 import usage
 import worktree_cmd
 from mw_common import (
@@ -8692,6 +8693,11 @@ def _model_write(
     )
 
 
+def cmd_thinking(args: argparse.Namespace) -> int:
+    """Configure thinking for new pi workers without changing models."""
+    return thinking_config.cmd_thinking(args, _atomic_write_yml)
+
+
 def cmd_model(args: argparse.Namespace) -> int:
     """Dispatch model defaults: per-role models used when a task carries no
     explicit `model:` (mw-dispatch-models). Resolution order per spawn:
@@ -12293,6 +12299,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         p = partition_sub.add_parser(action, help=help_text)
         p.add_argument("--project", required=True, help="Control workspace directory")
 
+    thinking_p = sub.add_parser(
+        "thinking", help="Worker thinking levels: show, set or clear defaults and role overrides",
+    )
+    thinking_p.add_argument("--project", default=".", help="Control project directory (default: current directory)")
+    thinking_sub = thinking_p.add_subparsers(dest="thinking_action")
+    thinking_show_p = thinking_sub.add_parser("show", help="Print effective levels and their sources")
+    thinking_set_p = thinking_sub.add_parser("set", help="Set the default or one worker role")
+    thinking_set_p.add_argument("target", metavar="DEFAULT|ROLE")
+    thinking_set_p.add_argument("level", metavar="LEVEL")
+    thinking_clear_p = thinking_sub.add_parser("clear", help="Clear the default, one role, or all thinking settings")
+    thinking_clear_p.add_argument("target", metavar="DEFAULT|ROLE|all")
+    for thinking_leaf in (thinking_show_p, thinking_set_p, thinking_clear_p):
+        thinking_leaf.add_argument("--project", default=argparse.SUPPRESS, help="Control project directory")
+
     model_p = sub.add_parser(
         "model",
         help="Dispatch model defaults: per-role models used when a task carries no explicit model",
@@ -13082,6 +13102,7 @@ if __name__ == "__main__":
         "target": cmd_target,
         "partition": cmd_partition,
         "model": cmd_model,
+        "thinking": cmd_thinking,
         "autopilot": cmd_autopilot,
         "init": cmd_init,
         "pull-agentictask": cmd_pull_agentictask,

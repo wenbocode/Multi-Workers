@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added `/mw thinking show|set|clear` to configure worker thinking independently of models, with effective-level sources, role inheritance and next-spawn semantics.
+
 - Added the Zhient gateway to the MW extension. Use `/login zhient` and select a model such as `/model zhient/gpt-6.1-sol`.
 
 - Added the TokenLink `toa` provider to the MW extension, with streaming, tool calls and session affinity for Hy4 and Hy3.

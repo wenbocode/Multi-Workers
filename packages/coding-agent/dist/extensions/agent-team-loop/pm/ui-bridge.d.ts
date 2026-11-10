@@ -1043,7 +1043,7 @@ export declare function runMwPartitionCommand(ctx: ExtensionCommandContext, proj
 export declare function runMwModelCommand(ctx: ExtensionCommandContext, projectDir: string, argsText: string, runner?: (projectDir: string, args: string[]) => MwCliResult): Promise<void>;
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
-export declare const MW_COMMAND_DESCRIPTION = "Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / decide / rag / stats / run-detached / ack";
+export declare const MW_COMMAND_DESCRIPTION = "Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / thinking / decide / rag / stats / run-detached / ack";
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
 export declare const RAG_OUTPUT_MAX_LINES = 30;

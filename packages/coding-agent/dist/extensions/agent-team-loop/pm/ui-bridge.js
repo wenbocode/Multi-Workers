@@ -37,6 +37,7 @@ import { formatDispatchAlarm, recordDispatchAlarm } from "./pm-orchestrator.js";
 import { planReviewSplitGate } from "./review-split-gate.js";
 import { StateManager } from "./state-manager.js";
 import { dispatchTask } from "./task-dispatcher.js";
+import { runMwThinkingCommand } from "./thinking-command.js";
 import { canonicalStateBytes, DP1_ID, formatTriageLedgerDetail, formatTriageReceipt, newDecisionMeta, readDecidePolicy, TRIAGE_REASON_INPUT_OVERSIZE, triageDispatchEnvelope, } from "./triage-client.js";
 export { captureDecisionTaskState };
 /** Owner key for a worker task — this window's own claim first, the shared
@@ -3559,7 +3560,7 @@ export async function runMwModelCommand(ctx, projectDir, argsText, runner = mode
 }
 /** /mw command description (exported so the registration test can assert the
  * RAG branch stays documented — VC-311). */
-export const MW_COMMAND_DESCRIPTION = "Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / decide / rag / stats / run-detached / ack";
+export const MW_COMMAND_DESCRIPTION = "Control mw: context / concurrency / proxy / build / init / start / stop / restart / status / doctor / update / target / partition / model / thinking / decide / rag / stats / run-detached / ack";
 /** Lines of `mw rag` output shown before truncation (D-307): the notify channel
  * is narrow, and `rag list` / `rag audit` outputs can be long. */
 export const RAG_OUTPUT_MAX_LINES = 30;
@@ -4201,6 +4202,10 @@ export function registerMwCommands(pi, projectDir, workerStore, ackStore, watch,
                 await runMwPartitionCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
                 return;
             }
+            if (sub === "thinking") {
+                await runMwThinkingCommand(ctx, projectDir, trimmed.slice(sub.length).trim());
+                return;
+            }
             if (sub === "model") {
                 // Dispatch model defaults + fallback chains (mw.py model show/set/clear/
                 // set-fallback/clear-fallback) — thin wrapper, Python stays the single
@@ -4271,7 +4276,7 @@ export function registerMwCommands(pi, projectDir, workerStore, ackStore, watch,
                 }
                 return;
             }
-            ctx.ui.notify("Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all", "warning");
+            ctx.ui.notify("Usage: /mw build|init|start|stop|status|doctor [fix] | update [--apply] | target show|set|clear|on|off | partition show|set|clear|on|off | model show|set|clear|set-fallback|clear-fallback | thinking show|set <default|role> <level>|clear <default|role|all> | decide show|sign [--allow-empty] [--key <k>] | decide dp list|show <id>|export | decide monitor | rag <sub> | stats [--since <window>] [--key <k>] [--type <t>] [--model <m>] [--source worker|pm] [--json] | run-detached [--cwd <dir>] [--run-dir <dir>] [--timeout-min <n>] [--heartbeat-s <n>] -- <cmd...> | ack <task-key>|all", "warning");
         },
     });
 }

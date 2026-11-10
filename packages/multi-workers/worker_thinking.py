@@ -46,6 +46,10 @@ except ImportError:  # pragma: no cover - PyYAML is an implicit MW dependency
 
 # Valid pi thinking levels, in documented order. Strict equality is required.
 THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+# Configurable worker roles (``main`` is the PM window and is intentionally
+# excluded). Single source of truth for both the resolver's validator and the
+# ``mw thinking`` CLI argument/target checks.
+THINKING_ROLES = tuple(role for role in mw_common.DISPATCH_ROLES if role != "main")
 
 _THINKING_KEYS = ("default", "roles")
 
@@ -93,7 +97,7 @@ def _validate_thinking(thinking: object, path: pathlib.Path) -> str | None:
                 f"{path}: thinking.roles must be a mapping "
                 f"(got {type(thinking['roles']).__name__})"
             )
-        valid_roles = frozenset(role for role in mw_common.DISPATCH_ROLES if role != "main")
+        valid_roles = frozenset(THINKING_ROLES)
         for role, value in roles.items():
             if role not in valid_roles:
                 return (
@@ -104,6 +108,17 @@ def _validate_thinking(thinking: object, path: pathlib.Path) -> str | None:
             if error:
                 return error
     return None
+
+
+def validate_thinking(thinking: object, path: pathlib.Path) -> str | None:
+    """Public strict validator for config writers (single rule set).
+
+    ``mw thinking`` calls this before ANY write, so a CLI-produced config is
+    validated by exactly the same rules the launcher resolver consumes. The
+    returned diagnostic may embed raw config values; CLI callers must never
+    print it verbatim — only fixed, sanitized messages belong on stderr.
+    """
+    return _validate_thinking(thinking, path)
 
 
 def resolve_worker_thinking(
