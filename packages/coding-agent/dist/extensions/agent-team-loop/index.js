@@ -37,9 +37,9 @@ export async function activate(pi) {
         return;
     }
     g[ACTIVATION_FLAG] = true;
-    registerZhient(pi);
-    registerToa(pi);
     configureDeepSeek(pi);
+    registerToa(pi);
+    registerZhient(pi);
     registerLocalCodex(pi);
     registerModelConcurrency(pi);
     registerContextPolicy(pi);
