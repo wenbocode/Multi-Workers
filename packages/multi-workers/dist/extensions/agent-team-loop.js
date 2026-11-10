@@ -57751,6 +57751,49 @@ function registerDecisionSignoffGuard(pi) {
   });
 }
 
+// packages/coding-agent/src/extensions/agent-team-loop/shared/zhient-provider.ts
+function registerZhient(pi) {
+  const models = [
+    { id: "gpt-6.1-sol", inputRate: 2, outputRate: 10, cachedRate: 0.1 },
+    { id: "gpt-6-sol", inputRate: 2, outputRate: 10, cachedRate: 0.2 },
+    { id: "gpt-6.1-terra", inputRate: 1, outputRate: 5, cachedRate: 0.05 },
+    { id: "gpt-6-astra", inputRate: 10, outputRate: 50, cachedRate: 1 },
+    { id: "gpt-5.6-sol", inputRate: 4, outputRate: 20, cachedRate: 0.4 },
+    { id: "gpt-5.6-terra", inputRate: 2, outputRate: 12, cachedRate: 0.2 },
+    { id: "codex-auto-review", inputRate: 4, outputRate: 20, cachedRate: 0.4 }
+  ].map(({ id, inputRate, outputRate, cachedRate }) => {
+    const responses = id === "gpt-6.1-sol" || id === "gpt-6-sol";
+    const reviewAlias = id === "codex-auto-review";
+    return {
+      id,
+      name: id,
+      api: responses ? "openai-responses" : "openai-completions",
+      input: reviewAlias ? ["text"] : ["text", "image"],
+      reasoning: !reviewAlias,
+      ...id === "gpt-6.1-sol" && { thinkingLevelMap: { off: null, minimal: null, xhigh: "xhigh", max: "max" } },
+      // Conservative client caps where the gateway publishes no exact limits.
+      contextWindow: reviewAlias ? 32768 : responses ? 105e4 : 1e6,
+      maxTokens: reviewAlias ? 4096 : responses ? 128e3 : 16384,
+      cost: {
+        input: inputRate,
+        output: outputRate,
+        cacheRead: cachedRate,
+        cacheWrite: inputRate * 1.25,
+        ...id === "gpt-6.1-sol" && {
+          tiers: [{ inputTokensAbove: 272e3, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }]
+        }
+      }
+    };
+  });
+  pi.registerProvider("zhient", {
+    name: "Zhient",
+    baseUrl: "https://zhient.com/v1",
+    apiKey: "$ZHIENT_API_KEY",
+    api: "openai-completions",
+    models
+  });
+}
+
 // packages/coding-agent/src/extensions/agent-team-loop/index.ts
 var ACTIVATION_FLAG = "__agentTeamLoopActivated";
 async function activate(pi) {
@@ -57762,6 +57805,7 @@ async function activate(pi) {
     return;
   }
   g2[ACTIVATION_FLAG] = true;
+  registerZhient(pi);
   registerToa(pi);
   configureDeepSeek(pi);
   registerLocalCodex(pi);

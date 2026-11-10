@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added direct pi worker dispatch for `zhient/<model>` using `ZHIENT_API_KEY` or the credential from `/login zhient`.
+
 - Added direct pi worker dispatch for `toa/hy4` and `toa/hy3`, with isolated TokenLink credentials. See the [TOA setup guide](docs/toa.md).
 
 - Added project-managed Codex CLI relay lifecycle with idempotent startup, authenticated status/login checks, request statistics and graceful draining. PM and workers discover the same project configuration without launcher environment changes.

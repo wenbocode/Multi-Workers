@@ -10,6 +10,7 @@ import { registerProtectedConfigGuard } from "./shared/protected-config.ts";
 import { registerToa } from "./shared/toa-provider.ts";
 import { registerWorktreeJunctionGuard } from "./shared/worktree-junction-guard.ts";
 import { registerDecisionSignoffGuard, registerXkeyGateGuard } from "./shared/xkey-gate-guard.ts";
+import { registerZhient } from "./shared/zhient-provider.ts";
 import { workerModeActivate } from "./worker/worker-mode.ts";
 
 // Defense against a double-load: if the same bundle is loaded twice in one host
@@ -39,6 +40,7 @@ export async function activate(pi: ExtensionAPI): Promise<void> {
 		return;
 	}
 	g[ACTIVATION_FLAG] = true;
+	registerZhient(pi);
 	registerToa(pi);
 	configureDeepSeek(pi);
 	registerLocalCodex(pi);

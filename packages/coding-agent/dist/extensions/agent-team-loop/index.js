@@ -9,6 +9,7 @@ import { registerProtectedConfigGuard } from "./shared/protected-config.js";
 import { registerToa } from "./shared/toa-provider.js";
 import { registerWorktreeJunctionGuard } from "./shared/worktree-junction-guard.js";
 import { registerDecisionSignoffGuard, registerXkeyGateGuard } from "./shared/xkey-gate-guard.js";
+import { registerZhient } from "./shared/zhient-provider.js";
 import { workerModeActivate } from "./worker/worker-mode.js";
 // Defense against a double-load: if the same bundle is loaded twice in one host
 // process (e.g. a global install AND a stale project-local copy), registering the
@@ -36,6 +37,7 @@ export async function activate(pi) {
         return;
     }
     g[ACTIVATION_FLAG] = true;
+    registerZhient(pi);
     registerToa(pi);
     configureDeepSeek(pi);
     registerLocalCodex(pi);
