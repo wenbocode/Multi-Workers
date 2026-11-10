@@ -4874,6 +4874,7 @@ describe("activation guard re-arm (double-load + session replacement)", () => {
 		const commands = new Set<string>();
 		const tools = new Set<string>();
 		const pi = {
+			registerProvider: vi.fn(),
 			on: (name: string, handler: (event?: unknown, ctx?: unknown) => Promise<unknown> | unknown) => {
 				const list = handlers.get(name) ?? [];
 				list.push(handler);
@@ -5330,6 +5331,8 @@ describe("dispatch model config", () => {
 		anthropic: "claude",
 		"openai-codex": "codex",
 		deepseek: "deepseek",
+		toa: "toa",
+		zhient: "zhient",
 		"zai-coding-cn": "zai",
 	};
 

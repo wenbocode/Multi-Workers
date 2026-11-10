@@ -8,6 +8,8 @@
 //   claude   -> pi provider "anthropic"     (direct, no mw proxy)
 //   codex    -> pi provider "openai-codex"  (codex' own config)
 //   deepseek -> pi provider "deepseek"      (direct, no mw proxy)
+//   toa      -> pi provider "toa"           (direct to TokenLink)
+//   zhient   -> pi provider "zhient"        (direct to zhient.com)
 //   zai      -> pi provider "zai-coding-cn" (direct, no mw proxy)
 //   codex_cli / claude_cli                  (CLI executors, spawn-side only)
 //
@@ -28,6 +30,8 @@ export const PROVIDER_ID_TO_PREFIX = {
     anthropic: "claude",
     "openai-codex": "codex",
     deepseek: "deepseek",
+    toa: "toa",
+    zhient: "zhient",
     "zai-coding-cn": "zai",
 };
 /** User-facing prefix -> pi provider id (inverse of PROVIDER_ID_TO_PREFIX). */

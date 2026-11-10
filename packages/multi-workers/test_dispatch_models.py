@@ -168,6 +168,8 @@ class TestParseAndCompat:
         "anthropic": "claude",
         "openai-codex": "codex",
         "deepseek": "deepseek",
+        "toa": "toa",
+        "zhient": "zhient",
         "zai-coding-cn": "zai",
     }
 
@@ -404,6 +406,35 @@ class TestDirectProviderSpawn:
         env = launcher._build_env(eff, creds)
         assert env["DEEPSEEK_API_KEY"] == "deepseek-test"
         assert "DEEPSEEK_BASE_URL" not in env  # direct: no mw proxy
+
+    @pytest.mark.parametrize(("provider", "key_env", "model"), [
+        ("toa", "TOA_API_KEY", "hy3"),
+        ("toa", "TOA_API_KEY", "hy4"),
+        ("zhient", "ZHIENT_API_KEY", "gpt-6.1-sol"),
+        ("zhient", "ZHIENT_API_KEY", "gpt-6.1-terra"),
+    ])
+    def test_direct_pi_provider(self, tmp_path, monkeypatch, provider, key_env, model):
+        config = mw_common.load_providers(pathlib.Path(__file__).with_name("providers.json"))
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.delenv(key_env, raising=False)
+        monkeypatch.setenv("TIMI_API_KEY", "other-key")
+        auth = tmp_path / ".pi/agent/auth.json"
+        auth.parent.mkdir(parents=True)
+        eff = self._eff(tmp_path, f"{provider}/{model}")
+        assert launcher._build_command(eff)[1:5] == ["--provider", provider, "--model", model]
+        assert mw_common.FALLBACK_PREFIX_TO_ROUTE[provider] == provider
+        with pytest.raises(RuntimeError, match=key_env):
+            launcher._build_env(eff, config)
+        auth.write_text(json.dumps({provider: {"type": "api_key", "key": "file-key"}}), encoding="utf-8")
+        assert launcher._build_env(eff, config)[key_env] == "file-key"
+        monkeypatch.setenv(key_env, "env-key")
+        env = launcher._build_env(eff, config)
+        assert env[key_env] == "env-key"
+        assert env["PI_WORKER_TASK"] == eff["task_path"]
+        assert "TIMI_API_KEY" not in env and "ANTHROPIC_BASE_URL" not in env
+        config["credentials"].pop(provider)  # Older custom configs omit this route.
+        assert key_env not in launcher._build_env({**eff, "provider": "timi"}, config)
 
     def test_missing_direct_credential_fails_loud(self, tmp_path: pathlib.Path,
                                                   creds: dict, monkeypatch: pytest.MonkeyPatch) -> None:

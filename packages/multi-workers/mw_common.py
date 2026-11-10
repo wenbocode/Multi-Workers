@@ -61,12 +61,13 @@ from autopilot import gates as gate_protocol  # noqa: E402  (gate queue, T-13)
 from autopilot import roadmap as roadmap_protocol  # noqa: E402  (validate_roadmap, AC-031)
 from autopilot import timeline as autopilot_timeline  # noqa: E402  (beat watermark, T-08)
 
-# Credential env vars that are never declared in providers.json but must still
-# be stripped from every worker env (kept from the pre-schema launcher).
+# Always strip these, even when a custom providers.json omits the route.
 EXTRA_CREDENTIAL_VARS: frozenset[str] = frozenset([
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
     "TIMI_BASE_URL",
+    "TOA_API_KEY",
+    "ZHIENT_API_KEY",
 ])
 
 # Fallback credential/env wiring used when providers.json is missing or
@@ -82,6 +83,14 @@ _DEFAULT_CONFIG: dict = {
         "timi": {"sources": [
             {"env": "TIMI_API_KEY"},
             {"file": "~/.pi/agent/auth.json", "format": "json", "field": "timi.key"},
+        ]},
+        "toa": {"sources": [
+            {"env": "TOA_API_KEY"},
+            {"file": "~/.pi/agent/auth.json", "format": "json", "field": "toa.key"},
+        ]},
+        "zhient": {"sources": [
+            {"env": "ZHIENT_API_KEY"},
+            {"file": "~/.pi/agent/auth.json", "format": "json", "field": "zhient.key"},
         ]},
         "zai-coding-cn": {"sources": [
             {"env": "ZAI_CODING_CN_API_KEY"},
@@ -103,8 +112,15 @@ _DEFAULT_CONFIG: dict = {
             "api_key_env": "DEEPSEEK_API_KEY", "credential": "deepseek",
         },
         "timi": {"api_key_env": "TIMI_API_KEY", "credential": "timi"},
+        "toa": {"api_key_env": "TOA_API_KEY", "credential": "toa"},
+        "zhient": {"api_key_env": "ZHIENT_API_KEY", "credential": "zhient"},
         "zai-coding-cn": {"api_key_env": "ZAI_CODING_CN_API_KEY", "credential": "zai-coding-cn"},
     },
+}
+
+# Environment names read by the direct pi adapters, independent of the configured credential source.
+DIRECT_PI_KEY_ENVS = {
+    name: _DEFAULT_CONFIG["providers"][name]["api_key_env"] for name in ("toa", "zai-coding-cn", "zhient")
 }
 
 # CLI name -> default route key when a task leaves `provider` empty.
@@ -122,6 +138,8 @@ CLI_DEFAULT_PROVIDER: dict[str, str] = {"pi": "claude", "claude": "claude-cli"}
 #       claude -> pi provider "anthropic"        (direct, no mw proxy)
 #       codex -> pi provider "openai-codex"      (codex' own config)
 #       deepseek -> pi provider "deepseek"       (direct, no mw proxy)
+#       toa -> pi provider "toa"                 (direct to TokenLink)
+#       zhient -> pi provider "zhient"           (direct to zhient.com)
 #       zai -> pi provider "zai-coding-cn"       (direct, no mw proxy)
 #   * CLI prefixes (executor transports, must match the entry cli):
 #       codex_cli -> codex exec, claude_cli -> claude CLI
@@ -129,6 +147,8 @@ CLI_DEFAULT_PROVIDER: dict[str, str] = {"pi": "claude", "claude": "claude-cli"}
 # The TS side (agent-team-loop shared/dispatch-models.ts) mirrors
 # PROVIDER_ID_TO_PREFIX; keep both maps in sync.
 MODEL_PREFIX_TO_PI_PROVIDER: dict[str, str] = {
+    "toa": "toa",
+    "zhient": "zhient",
     "timi": "timi",
     "claude": "anthropic",
     "codex": "openai-codex",
@@ -364,6 +384,8 @@ FALLBACK_TASK_TYPES = tuple(TASK_TYPE_TO_ROLE)
 # route_precheck keys; these are the providers.json / codex-native names the
 # existing checker reports.
 FALLBACK_PREFIX_TO_ROUTE: dict[str, str] = {
+    "toa": "toa",
+    "zhient": "zhient",
     "timi": "timi",
     "claude": "claude",
     "deepseek": "deepseek",

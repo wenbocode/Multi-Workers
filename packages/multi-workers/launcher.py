@@ -631,7 +631,7 @@ def _model_override_note(
 def _effective_entry(entry: dict[str, str], model_value: str) -> dict[str, str]:
     """Apply a resolved model value to a queue entry.
 
-    A provider prefix (timi/claude/codex/deepseek/zai) overrides the pi entry's
+    A registered provider prefix overrides the pi entry's
     provider — the direct connection replaces the original route (this is how
     an unset role inherits the PM window's model across providers). A *_cli
     prefix must match the entry cli (the cli itself never changes: tool
@@ -693,20 +693,18 @@ def _build_env(
         env["PI_WORKER_TASK"] = str(task_path.resolve())
         return env
 
-    # Pi + zai-coding-cn (model prefix zai/...): direct provider connection,
-    # same shape as the timi branch. Source chain: env ZAI_CODING_CN_API_KEY
-    # → pi's own ~/.pi/agent/auth.json (field zai-coding-cn.key). No base URL
-    # passthrough: the pi provider pins the coding endpoint.
-    if cli == "pi" and provider == "zai-coding-cn":
-        cred = config.get("credentials", {}).get("zai-coding-cn")
+    # These pi providers pin their own endpoint and accept only their own key.
+    if cli == "pi" and provider in mw_common.DIRECT_PI_KEY_ENVS:
+        credential_name = config.get("providers", {}).get(provider, {}).get("credential", provider)
+        cred = config.get("credentials", {}).get(credential_name)
         value, _source = mw_common.resolve_credential(cred, os.environ)
         if value is None:
             raise RuntimeError(
-                f"zai-coding-cn credential is not available "
+                f"{provider} credential is not available "
                 f"({mw_common.describe_missing(cred)})."
             )
         env = _stripped_env(config, rag_config)
-        env["ZAI_CODING_CN_API_KEY"] = value
+        env[mw_common.DIRECT_PI_KEY_ENVS[provider]] = value
         task_path = pathlib.Path(entry["task_path"])
         env["PI_WORKER_TASK"] = str(task_path.resolve())
         return env
@@ -2192,7 +2190,7 @@ def _build_command(entry: dict[str, str], session_id: str | None = None) -> list
         # Direct non-timi providers (anthropic / openai-codex / deepseek /
         # zai-coding-cn, set via model prefixes): explicit --provider so the
         # flag can never ride on pi's default-provider resolution.
-        if provider in ("anthropic", "openai-codex", "deepseek", "zai-coding-cn"):
+        if provider in mw_common.PROVIDER_ID_TO_PREFIX:
             if not model:
                 raise RuntimeError(
                     f"pi provider {provider!r} requires an explicit model "

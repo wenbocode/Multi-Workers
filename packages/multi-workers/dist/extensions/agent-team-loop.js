@@ -41341,6 +41341,8 @@ var PROVIDER_ID_TO_PREFIX = {
   anthropic: "claude",
   "openai-codex": "codex",
   deepseek: "deepseek",
+  toa: "toa",
+  zhient: "zhient",
   "zai-coding-cn": "zai"
 };
 var PREFIX_TO_PROVIDER_ID = Object.fromEntries(

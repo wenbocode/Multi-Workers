@@ -47,10 +47,10 @@ class TestLoadProviders:
     def test_shipped_schema_loads(self):
         config = load_providers(_REPO_PROVIDERS)
         assert set(config["credentials"]) == {
-            "anthropic", "anthropic-auth", "deepseek", "timi", "zai-coding-cn"
+            "anthropic", "anthropic-auth", "deepseek", "timi", "toa", "zai-coding-cn", "zhient"
         }
         assert set(config["providers"]) == {
-            "claude", "claude-cli", "deepseek", "timi", "zai-coding-cn"
+            "claude", "claude-cli", "deepseek", "timi", "toa", "zai-coding-cn", "zhient"
         }
         timi = config["providers"]["timi"]
         assert "port" not in timi
@@ -59,6 +59,9 @@ class TestLoadProviders:
         assert "port" not in zai
         assert zai["credential"] == "zai-coding-cn"
         assert zai["api_key_env"] == "ZAI_CODING_CN_API_KEY"
+        assert config["providers"]["toa"] == {"api_key_env": "TOA_API_KEY", "credential": "toa"}
+        assert config["providers"]["zhient"] == {"api_key_env": "ZHIENT_API_KEY", "credential": "zhient"}
+        assert config == mw_common.default_config()
 
     def test_missing_file_falls_back_to_defaults(self, tmp_path):
         config = load_providers(tmp_path / "nope.json")
